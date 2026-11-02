@@ -149,6 +149,22 @@ async def test_any_target_on_a_host_with_a_config_error_is_refused(tmp_path):
     assert "configuration error" in violations[0].text
 
 
+async def test_a_target_on_an_unreachable_host_is_refused_as_unreachable_not_misconfigured(
+    tmp_path,
+):
+    env = await graph_env(tmp_path)
+    env.engine.drop()
+    await env.registry.refresh("a")
+    host = env.registry.hosts()[0]
+    assert not host.reachable and host.error is not None
+
+    violations = check_plan(act(restart("shop-web-1")), env.registry, CORE, "a")
+
+    assert [(v.rule, v.step) for v in violations] == [("host_error", 1)]
+    assert "unreachable" in violations[0].text
+    assert "configuration" not in violations[0].text
+
+
 async def test_an_override_matching_no_discovered_service_still_protects_its_containers(tmp_path):
     # "database" is no Compose project or Coolify name, so discovery drops the override; the
     # protected list is read from the hosts file and must still apply.

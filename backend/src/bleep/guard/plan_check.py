@@ -85,6 +85,10 @@ def _check_step(
     host = next((h for h in registry.hosts() if h.config.id == host_id), None)
     if host is None:
         return refuse("not_found", "the host is not in the hosts file")
+    if not host.reachable:  # `error` then holds the connection failure, not a config problem
+        return refuse(
+            "host_error", "the host is unreachable right now, so its containers cannot be checked"
+        )
     if host.error is not None:
         return refuse(
             "host_error",
