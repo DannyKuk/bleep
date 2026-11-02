@@ -2,7 +2,6 @@
 
 import itertools
 import re
-from collections.abc import Callable
 
 MAX_CHARS = 8000
 MAX_RUN = 3
@@ -56,19 +55,15 @@ def strip_control(text: str | bytes) -> str:
     return _INVISIBLE.sub("", _CONTROL.sub("", text))
 
 
-WINDOW = 300
+_WORD = re.compile(r"\S+")
+MAX_LEAD = 200
 
 
-def cap_lines(
-    text: str,
-    max_line: int = MAX_LINE,
-    redact: Callable[[str], str] | None = None,
-) -> str:
+def cap_lines(text: str, max_line: int = MAX_LINE) -> str:
     """Cut each line longer than `max_line` in the middle, keeping its head and tail.
 
-    This bounds the work every later pattern can do on one line. `redact`, when given, is run on
-    the 600 characters around each cut point before cutting, so a key and its value that the
-    cut would separate are redacted first.
+    This bounds the work every later pattern can do on one line. The cut note gets a line of its
+    own (see `join_cut`).
     """
     if len(text) <= max_line:
         return text
@@ -76,29 +71,32 @@ def cap_lines(
     out = []
     for line in text.split("\n"):
         if len(line) > max_line:
-            head, tail = _cut_points(line, half)
-            if redact is not None:
-                before = len(line)
-                line, head = _redact_around(line, head, redact)
-                tail += len(line) - before
-                line, tail = _redact_around(line, tail, redact)
-                head = min(head, tail)
-            line = f"{line[:head]}[… {tail - head} chars cut]{line[tail:]}"
+            head, tail = cut_points(line, half)
+            lead = line[: len(line) - len(line.lstrip(" \t"))]
+            line = join_cut(line[:head], tail - head, line[tail:], lead)
         out.append(line)
     return "\n".join(out)
 
 
-def _redact_around(line: str, cut: int, redact: Callable[[str], str]) -> tuple[str, int]:
-    """Redact `line` within WINDOW characters of `cut`; return it and the cut's new place."""
-    start, end = max(0, cut - WINDOW), min(len(line), cut + WINDOW)
-    new = redact(line[start:end])
-    moved = min(len(redact(line[start:cut])), len(new))
-    return line[:start] + new + line[end:], start + moved
+def join_cut(head: str, dropped: int, tail: str, lead: str = "") -> str:
+    """The kept head, the `[… N chars cut]` note and the kept tail, each on its own line.
+
+    On its own line the note can never be swallowed by a value before it. The note and the
+    tail start with `lead` (the line's indentation or log prefix), so a cut line inside a YAML
+    block keeps its indentation.
+    """
+    lead = lead[:MAX_LEAD]
+    return f"{head}\n{lead}[… {dropped} chars cut]\n{lead}{tail}"
 
 
-def _cut_points(line: str, half: int) -> tuple[int, int]:
+def cut_points(line: str, half: int, whole_words: bool = False) -> tuple[int, int]:
     """Where the kept head ends and the kept tail starts: the nearest whitespace within 256
-    characters, so a secret of 200 characters or less is never split by the cut."""
+    characters, so a secret of 200 characters or less is never split by the cut.
+
+    With `whole_words`, a cut that still falls inside a word drops the rest of that word, so no
+    piece of a longer word (a long token) is kept, unless the word fills that whole side of the
+    line (a line without whitespace keeps its head and tail).
+    """
     head = half
     for i in range(half, max(half - SNAP, 0), -1):
         if line[i].isspace():
@@ -109,7 +107,14 @@ def _cut_points(line: str, half: int) -> tuple[int, int]:
         if line[i].isspace():
             tail = i
             break
-    return head, tail
+    if whole_words:
+        if head > 0 and not line[head].isspace() and not line[head - 1].isspace():
+            start = head - _WORD.match(line[head - 1 :: -1]).end()
+            head = start if start > 0 else head
+        if tail < len(line) and not line[tail].isspace() and not line[tail - 1].isspace():
+            end = _WORD.match(line, tail).end()
+            tail = end if end < len(line) else tail
+    return head, max(head, tail)
 
 
 def collapse_repeats(text: str) -> str:

@@ -58,8 +58,16 @@ def test_cap_lines_keeps_head_and_tail():
 
     line = "H" * 3000 + "M" * 100_000 + "T" * 3000
     out = cap_lines(f"short\n{line}\nafter")
-    first, capped, last = out.split("\n")
+    first, head, note, tail, last = out.split("\n")
     assert first == "short" and last == "after"
-    assert len(capped) <= 4000 and capped.startswith("HHH") and capped.endswith("TTT")
-    assert "chars cut]" in capped
+    assert head.startswith("HHH") and tail.endswith("TTT") and len(head) + len(tail) <= 4000
+    assert note == f"[… {len(line) - len(head) - len(tail)} chars cut]"
     assert cap_lines(out) == out
+
+
+def test_cut_note_keeps_the_line_indentation():
+    from bleep.guard.sanitize import cap_lines
+
+    out = cap_lines("    " + "x " * 5000)
+    head, note, tail = out.split("\n")
+    assert note.startswith("    [… ") and tail.startswith("    ")

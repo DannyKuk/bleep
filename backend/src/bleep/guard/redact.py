@@ -9,7 +9,7 @@ import re
 from collections.abc import Callable
 from functools import lru_cache
 
-from bleep.guard.sanitize import cap_lines, normalise_newlines
+from bleep.guard.sanitize import MAX_LINE, cut_points, join_cut, normalise_newlines
 
 REDACTED = "<redacted>"
 
@@ -27,13 +27,21 @@ _WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")  # SECRET_KEY, secre
 _SECRET_WORDS = {
     "password", "passwd", "pass", "pwd", "passphrase", "secret", "secrets", "token", "credential",
     "credentials", "auth", "apikey", "pw", "secretkey", "privatekey", "accesskey", "accesstoken",
+    "authkey",
 }  # fmt: skip
-_SECRET_SUFFIXES = ("password", "passwd", "apikey", "secret")  # PGPASSWORD, AWSSECRET
+_SECRET_SUFFIXES = ("password", "passwd", "apikey", "secret", "authkey")  # PGPASSWORD, TS_AUTHKEY
+# Words that keep their meaning with a trailing "s" (PASSWORDS, API_KEYS). Not "tokens": that is
+# almost always a count (max_tokens, prompt_tokens).
+_PLURALS = {
+    "password", "passwd", "pwd", "passphrase", "credential", "apikey", "key", "authkey",
+    "secretkey", "privatekey", "accesskey",
+}  # fmt: skip
 _KEY_PREFIXES = {  # `<prefix>_key` is a secret too
     "api", "access", "private", "encryption", "signing", "master", "ssh", "license", "session",
-    "jwt", "crypto", "auth", "hmac", "aes", "webhook", "app",
+    "jwt", "crypto", "auth", "hmac", "aes", "webhook", "app", "stripe", "openai", "anthropic",
+    "sendgrid", "mailgun", "admin", "client", "shared", "service", "deploy", "root",
 }  # fmt: skip
-_ENV_KEY = re.compile(r"[A-Z0-9_]+_KEY")  # APP_KEY, STRIPE_KEY, PUSHER_APP_KEY; not cache_key
+_ENV_KEY = re.compile(r"[A-Z0-9_]+_KEYS?")  # APP_KEY, STRIPE_KEY, PUSHER_APP_KEY; not cache_key
 # A word AFTER the last secret word that marks a setting about the secret: token_count,
 # password_reset, auth_method. A word before it changes nothing (reset_password_token is a token).
 _NOT_A_SECRET = {
@@ -48,7 +56,11 @@ _PLAIN_VALUES = {
     "true", "false", "yes", "no", "on", "off", "none", "null", "nil", "empty", "unset", "required",
     "enabled", "disabled", "expired", "invalid", "missing", "ok", "failed", "***", "<redacted>",
 }  # fmt: skip
-_REFERENCE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_:.-]*\}|\$[A-Z_][A-Z0-9_]*")
+# `${VAR}`, `${env:VAR}`, `${secrets.db}` and `$UPPER_VAR`; a default (`${VAR:-x}`, `${VAR:=x}`,
+# `${VAR-x}`) holds a literal value and is not a reference.
+_REFERENCE = re.compile(
+    r"\$\{[A-Za-z_][A-Za-z0-9_.]*(?::[A-Za-z_][A-Za-z0-9_.]*)?\}|\$[A-Z_][A-Z0-9_]*"
+)
 _SMALL_INT = re.compile(r"[0-9]{1,6}")
 _LOOKS_LIKE_PAIR = re.compile(r"[A-Za-z_][\w.-]*=[^=\s]")
 _PAIR_FOLLOWS = re.compile(r"[^\S\n]+[A-Za-z_][\w.-]*=\S")
@@ -62,7 +74,7 @@ def _is_secret_key(key: str) -> bool:
         return False
     if _ENV_KEY.fullmatch(key):
         return True
-    words = [w.lower() for w in _WORDS.findall(key)]
+    words = [_singular(w.lower()) for w in _WORDS.findall(key)]
     last = -1
     for index, word in enumerate(words):
         if (
@@ -80,6 +92,12 @@ def _is_secret_key(key: str) -> bool:
     return not ("id" in after and words[last] in ("token", "session"))
 
 
+def _singular(word: str) -> str:
+    if word.endswith("s") and (word[:-1] in _PLURALS or word[:-1].endswith(_SECRET_SUFFIXES)):
+        return word[:-1]
+    return word
+
+
 def _is_plain(value: str) -> bool:
     if _REFERENCE.fullmatch(value.rstrip(",;")):
         return True
@@ -87,7 +105,7 @@ def _is_plain(value: str) -> bool:
     return value in _PLAIN_VALUES or _SMALL_INT.fullmatch(value) is not None
 
 
-def _redact_pair(match: re.Match[str]) -> str:
+def _redact_pair(match: re.Match[str], nested: bool = False) -> str:
     key, separator, value = match.group(1), match.group(2), match.group(3)
     if not _is_secret_key(key) or _BLOCK_HEADER.fullmatch(value):
         return match.group(0)
@@ -101,15 +119,22 @@ def _redact_pair(match: re.Match[str]) -> str:
     ):
         return match.group(0)  # an empty password is evidence, "not set" and `true` are not secrets
     if (
-        not quote
+        not nested
+        and not quote
         and key.lower() in ("credentials", "auth")
         and _LOOKS_LIKE_PAIR.match(value)
         and _PAIR_FOLLOWS.match(match.string, match.end(3))
     ):
-        return match.group(0)  # `invalid credentials: user=bob retries=3` is a message
+        # `invalid credentials: user=bob retries=3` is a message; its own pairs are still
+        # judged, so `auth: token=x user=bob` hides x
+        return f"{key}{separator}{_KEY_VALUE.sub(_redact_nested, value)}"
     if quote:
         return f"{key}{separator}{quote}{REDACTED}{quote if closed else ''}"
     return f"{key}{separator}{REDACTED}"
+
+
+def _redact_nested(match: re.Match[str]) -> str:
+    return _redact_pair(match, nested=True)
 
 
 def _redact_flag(match: re.Match[str]) -> str:
@@ -117,7 +142,7 @@ def _redact_flag(match: re.Match[str]) -> str:
     name, space, value = match.group(1), match.group(2), match.group(3)
     quote = value[0] if value[0] in "\"'" else ""
     inner = value.strip(quote) if quote else value
-    if not _is_secret_key(name) or _is_plain(inner) or not inner:
+    if not (_is_secret_key(name) or name.lower() == "--key") or _is_plain(inner) or not inner:
         return match.group(0)
     return (
         f"{name}{space}{quote}{REDACTED}{quote if len(value) > 1 and value.endswith(quote) else ''}"
@@ -141,27 +166,44 @@ def _redact_cookie(match: re.Match[str]) -> str:
     return f"{match.group(1)}{quote}{';'.join(parts)}{quote if closed else ''}"
 
 
+# password=x, "password": "x y", password: x, [password] => x, SECRET_KEY_BASE=x, X-Api-Key: x.
+# The key is judged by `_is_secret_key`; the cheap lookahead keeps Python out of unrelated pairs.
+# An unquoted value runs to whitespace (so it fails safe on `&`, `,`, quotes) and never starts
+# with a cut note.
+_KEY_VALUE = re.compile(
+    r"(?<![A-Za-z0-9_.-])"
+    r"(?=[A-Za-z0-9_.-]{0,96}?(?:pass|pw|secret|token|credential|auth|key))"
+    r"([A-Za-z0-9_.-]{1,96})"
+    r"([\"']?\]?[ \t]*+(?:=>|:=|==|[=:])[ \t]*+(?:(?:\n[ \t]*+){1,8}(?<=[ \t]))?)"
+    r"(?!\[… )"
+    r"(\"(?:[^\"\\\n]|\\.)*+\"?|'(?:[^'\\\n]|\\.)*+'?|[^\s\"'][^\s]*+)",
+    _FLAGS,
+)
+
+
+def _redact_element(match: re.Match[str]) -> str:
+    """`<password>x</password>`: an XML element named like a secret."""
+    if not _is_secret_key(match.group(1)) or _is_plain(match.group(2)):
+        return match.group(0)
+    return f"<{match.group(1)}>{REDACTED}{match.group(3)}"
+
+
 Replacement = str | Callable[[re.Match[str]], str]
 _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
-    # password=x, "password": "x y", password: x, [password] => x, SECRET_KEY_BASE=x, X-Api-Key: x.
-    # The key is judged by `_is_secret_key`; the cheap lookahead keeps Python out of unrelated
-    # pairs. An unquoted value runs to whitespace (so it fails safe on `&`, `,`, quotes). This
-    # runs first so a value holding a token (`password=ghp_...!tail`) is one redaction.
+    # runs first so a value holding a token (`password=ghp_...!tail`) is one redaction
+    (_KEY_VALUE, _redact_pair),
     (
         re.compile(
-            r"(?<![A-Za-z0-9_.-])"
-            r"(?=[A-Za-z0-9_.-]{0,96}?(?:pass|pw|secret|token|credential|auth|key))"
-            r"([A-Za-z0-9_.-]{1,96})"
-            r"([\"']?\]?[ \t]*+(?:=>|:=|==|[=:])[ \t]*+(?:(?:\n[ \t]*+){1,8}(?<=[ \t]))?)"
-            r"(\"(?:[^\"\\\n]|\\.)*+\"?|'(?:[^'\\\n]|\\.)*+'?|[^\s\"'][^\s]*+)",
+            r"<(?=[A-Za-z0-9_.:-]{0,64}?(?:pass|pw|secret|token|credential|auth|key))"
+            r"([A-Za-z0-9_.:-]{1,64})>([^<\n]{1,512}+)(</\1>)",
             _FLAGS,
         ),
-        _redact_pair,
+        _redact_element,
     ),
-    # --db-password hunter2, --token abc: a secret option followed by its value
+    # --db-password hunter2, --api-key abc, --key abc: a secret option followed by its value
     (
         re.compile(
-            r"(?<![A-Za-z0-9_-])(--[A-Za-z0-9_-]{0,64}?(?:password|passwd|secret|token|apikey)"
+            r"(?<![A-Za-z0-9_-])(--[A-Za-z0-9_-]{0,64}?(?:password|passwd|secret|token|key)"
             r"[A-Za-z0-9_-]{0,32})([ \t]+)(?!-)"
             r"(\"(?:[^\"\\\n]|\\.)*+\"?|'(?:[^'\\\n]|\\.)*+'?|[^\s]+)",
             _FLAGS,
@@ -182,7 +224,7 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
     # cookie names stay, their values go
     (
         re.compile(
-            r"((?<![A-Za-z0-9])[A-Za-z0-9_-]{0,32}cookie[\"']?[ \t]*+[:=][ \t]*+)"
+            r"((?<![A-Za-z0-9])[A-Za-z0-9_-]{0,32}cookies?[\"']?[ \t]*+[:=][ \t]*+)"
             r"(\"(?:[^\"\\\n]|\\.)*+\"?|'(?:[^'\\\n]|\\.)*+'?|[^\n]*)",
             _FLAGS,
         ),
@@ -219,10 +261,42 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
     (re.compile(r"\$(?:apr1|2[aby]|5|6|y|argon2(?:id|i|d))\$[^\s\"']+"), REDACTED),
 ]
 
-_BLOCK_KEY = re.compile(
-    r"([ \t]*)(?:-[ \t]+)?[\"']?([A-Za-z0-9_.-]{1,96})[\"']?[ \t]*:[ \t]*[|>][-+0-9]*[ \t]*(?:#.*)?"
-)
 BLOCK_MAX_LINES = 200
+# A log prefix before the YAML: a timestamp, a Compose `web-1  | ` or a `[tag] `. It is skipped
+# before measuring indentation, so `web-1  |   x` is indented by 2.
+_LOG_PREFIX = re.compile(
+    r"(?:\d{4}-\d\d-\d\d[T ][\d:.,]{1,20}Z?[ \t]"
+    r"|[A-Za-z0-9_.-]{1,64}[ \t]*\|[ \t]"
+    r"|\[[^\]\n]{0,40}\][ \t])?"
+)
+_KEY_REVERSED = re.compile(r"[A-Za-z0-9_.-]{1,96}")
+
+
+def _lead(line: str) -> str:
+    """The log prefix and indentation of `line`."""
+    rest = line[_LOG_PREFIX.match(line).end() :]
+    return line[: len(line) - len(rest.lstrip(" \t"))]
+
+
+def _block_indent(line: str) -> int | None:
+    """If `line` ends in `<secret key>: |` (or `>`, any prefix before it), the indentation a
+    block line must exceed; otherwise None. Read from the end so it costs one pass."""
+    if len(line) > 400 or ("|" not in line and ">" not in line):
+        return None
+    text = line.split(" #", 1)[0].rstrip().rstrip("-+0123456789")
+    if not text.endswith(("|", ">")):
+        return None
+    text = text[:-1].rstrip(" \t")
+    if not text.endswith(":"):
+        return None
+    text = text[:-1].rstrip(" \t").removesuffix('"').removesuffix("'")
+    key = _KEY_REVERSED.match(text[::-1][:96])
+    if key is None or not _is_secret_key(key.group(0)[::-1]):
+        return None
+    before = text[: len(text) - key.end()]
+    if before and not before[-1].isspace() and before[-1] not in "\"'":
+        return None
+    return len(_lead(line)) - _LOG_PREFIX.match(line).end()
 
 
 def _redact_blocks(text: str) -> tuple[str, int]:
@@ -232,24 +306,23 @@ def _redact_blocks(text: str) -> tuple[str, int]:
         return text, 0
     lines, count = text.split("\n"), 0
     for i, line in enumerate(lines):
-        if ("|" not in line and ">" not in line) or len(line) > 400:
+        indent = _block_indent(line)
+        if indent is None:
             continue
-        header = _BLOCK_KEY.fullmatch(line)
-        if header is None or not _is_secret_key(header.group(2)):
-            continue
-        indent, end, last = len(header.group(1)), i + 1, i
+        end, last = i + 1, i
         while end < min(len(lines), i + 1 + BLOCK_MAX_LINES):
             body = lines[end]
             if body.strip():
-                if len(body) - len(body.lstrip()) <= indent:
+                if len(_lead(body)) - _LOG_PREFIX.match(body).end() <= indent:
                     break
                 last = end
             end += 1
         changed = False
         for j in range(i + 1, last + 1):
             body = lines[j]
-            if body.strip() and body.strip() != REDACTED:
-                lines[j] = body[: len(body) - len(body.lstrip())] + REDACTED
+            lead = _lead(body)
+            if body.strip() and body[len(lead) :] != REDACTED:
+                lines[j] = lead + REDACTED
                 changed = True
         count += changed
     return "\n".join(lines), count
@@ -344,24 +417,80 @@ def _redact_all(text: str) -> tuple[str, int]:
     return text, total
 
 
+WINDOW = 300
+KEEP_MAX = MAX_LINE // 2  # a kept piece stays under the line cap, so a second pass keeps it whole
+
+
+def _cut_line(line: str) -> tuple[str, int]:
+    """Cut a line over 4,000 characters, redacting around each cut first; return the line and the
+    number of secrets redacted in what is kept.
+
+    The kept head comes from redacting everything up to 300 characters past the head cut, the
+    kept tail from redacting everything from 300 characters before the tail cut to the end of the
+    line. Each window runs to the line's end on the kept side, so no kept token is cut by a window
+    edge, and both are under about 2,200 characters, so the work stays bounded.
+    """
+    head, tail = cut_points(line, (MAX_LINE - 300) // 2, whole_words=True)
+    kept_head = _kept_head(line[:head], line[head : head + WINDOW])
+    kept_tail = _kept_tail(line[max(0, tail - WINDOW) : tail], line[tail:])
+    found = max(0, kept_head.count(REDACTED) - line.count(REDACTED, 0, head))
+    found += max(0, kept_tail.count(REDACTED) - line.count(REDACTED, tail))
+    return join_cut(kept_head, tail - head, kept_tail, _lead(line)), found
+
+
+def _kept_head(head: str, after: str) -> str:
+    """The part of `redact(head + after)` that stands for `head`, never ending inside a
+    `<redacted>`. Where the mapping is unsure it keeps less, and any piece of the redacted window
+    is safe to keep."""
+    new = _redact_all(head + after)[0]
+    if new.endswith(after):  # `after` came through unchanged
+        end = len(new) - len(after)
+    elif new.startswith(head):  # `head` came through unchanged
+        end = len(head)
+    else:
+        end = min(len(head), len(new) - len(after))
+    end = max(0, min(end, KEEP_MAX))
+    marker = new.rfind(REDACTED, max(0, end - len(REDACTED) + 1), end + len(REDACTED) - 1)
+    if marker != -1:
+        end = marker + len(REDACTED)
+    return new[:end]
+
+
+def _kept_tail(before: str, tail: str) -> str:
+    """The part of `redact(before + tail)` that stands for `tail`; see `_kept_head`."""
+    new = _redact_all(before + tail)[0]
+    if new.startswith(before):
+        start = len(before)
+    elif new.endswith(tail):
+        start = len(new) - len(tail)
+    else:
+        start = max(len(before), len(new) - len(tail))
+    start = min(len(new), max(start, len(new) - KEEP_MAX))
+    marker = new.find(REDACTED, max(0, start - len(REDACTED) + 1), start + len(REDACTED) - 1)
+    if marker != -1:
+        start = marker
+    return new[start:]
+
+
 def redact_with_count(text: str) -> tuple[str, int]:
     """Redact secrets in free text; return the new text and how many values were replaced.
 
-    Lines over 4,000 characters are cut in the middle first (after redacting 300 characters
-    either side of each cut, so a key and value the cut would separate are caught), which bounds
-    the running time. The count is what the guard log records, one per secret value. Running it
-    again on its own output changes nothing and counts 0.
+    Lines over 4,000 characters are cut in the middle first (after redacting around each cut, so
+    a key and value the cut would separate are caught), which bounds the running time. The count
+    is what the guard log records: one per secret value in the returned text. Running it again on
+    its own output changes nothing and counts 0.
     """
-    window_count = 0
-
-    def window(piece: str) -> str:
-        nonlocal window_count
-        piece, found = _redact_all(piece)
-        window_count += found
-        return piece
-
-    text, total = _redact_all(cap_lines(normalise_newlines(text), redact=window))
-    return text, total + window_count
+    text = normalise_newlines(text)
+    found = 0
+    if len(text) > MAX_LINE:
+        lines = text.split("\n")
+        for index, line in enumerate(lines):
+            if len(line) > MAX_LINE:
+                lines[index], count = _cut_line(line)
+                found += count
+        text = "\n".join(lines)
+    text, total = _redact_all(text)
+    return text, total + found
 
 
 def redact_text(text: str) -> str:
