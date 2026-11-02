@@ -27,6 +27,7 @@ class Database:
         conn.row_factory = aiosqlite.Row
         await conn.execute("PRAGMA foreign_keys=ON")
         await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     def _migration_files(self) -> list[tuple[int, Traversable | Path]]:

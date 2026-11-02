@@ -33,6 +33,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+pythonpath = ["src"]
 # langsmith ships a pytest plugin that warns on import under Python 3.14; Bleep does not use it
 addopts = "-p no:langsmith_plugin"
 filterwarnings = [
