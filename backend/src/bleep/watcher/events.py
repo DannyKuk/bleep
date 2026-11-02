@@ -113,7 +113,9 @@ def diff(
     A container that was running and is now gone, exited with a crash exit code, or has a higher
     restart count is reported once, on the tick where the change first shows. `handled` holds the
     ids the events already reported this tick; `deliberate` those stopped or removed on purpose.
-    A clean exit is not a crash, so it makes no signal: the service shows `stopped` instead.
+    The signal is stamped with the container's own time (its finish or its new start), not the
+    tick's, so the detector sees a restart as the recovery it is. A clean exit is not a crash, so
+    it makes no signal: the service shows `stopped` instead.
     """
     now_by_id = {c.id: c for c in current}
     signals: list[Signal] = []
@@ -123,19 +125,22 @@ def diff(
         if before.id in handled or before.id in deliberate:
             continue
         after = now_by_id.get(before.id)
+        died_at = now  # removed while we were not looking: no better time is known
         if after is None:
-            exit_code = None  # removed while we were not looking: the exit code is lost
-        elif (after.state == "running" and after.restart_count > before.restart_count) or (
-            after.state in ("exited", "dead") and after.exit_code not in CLEAN_EXITS
-        ):
+            exit_code = None  # the exit code is lost too
+        elif after.state == "running" and after.restart_count > before.restart_count:
             exit_code = after.exit_code
+            died_at = after.started_at or now  # the policy already brought it back
+        elif after.state in ("exited", "dead") and after.exit_code not in CLEAN_EXITS:
+            exit_code = after.exit_code
+            died_at = after.finished_at or now
         else:
             continue
         signals.append(
             Signal(
                 subject=subject_of(before.name, before.id),
                 kind="container_died",
-                at=now,
+                at=min(died_at, now),
                 detail={"exit_code": exit_code, "restart_policy": before.restart_policy},
                 container=before.name,
             )

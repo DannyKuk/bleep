@@ -263,3 +263,41 @@ async def test_a_container_that_stays_dead_opens_after_grace_through_the_feed():
     await r.tick(60)
     [opened] = [o for o in outcomes if isinstance(o, OpenIncident)]
     assert opened.subject.service_id == "h/compose:shop"
+
+
+async def test_a_die_event_stamped_between_the_window_and_the_listing_is_not_a_second_death():
+    r = await rig(box("web-1"))
+    await r.tick()
+    r.engine.container_list[0] = box("web-1", "exited", exit_code=1)
+    real_refresh = r.registry.refresh
+
+    async def slow_refresh(host_id):
+        r.clock.advance(1)  # the listing is taken after the event window closed
+        await real_refresh(host_id)
+
+    r.registry.refresh = slow_refresh
+    await r.tick()  # the diff reports the death
+    until = r.clock.now - timedelta(seconds=1)
+    r.engine.history.append(ev("die", "web-1", until + timedelta(milliseconds=200), exitCode="1"))
+    r.registry.refresh = real_refresh
+    await r.tick()
+    assert len(r.deaths) == 1
+
+
+async def test_a_restart_the_diff_caught_alone_is_a_recovery_not_an_incident():
+    r = await rig(box("web-1", restart_policy="always"))
+    outcomes = []
+    feed = Feed(Detector(Thresholds(), r.clock), r.clock)
+    real_record = feed._record
+    feed._record = lambda o: (outcomes.extend(o), real_record(o))[1]
+    r.watcher._sink, r.watcher._on_snapshot = feed.sink, feed.snapshot
+    await r.tick()
+    r.engine.container_list[0] = box(
+        "web-1",
+        restart_policy="always",
+        restart_count=1,
+        started_at=T0 + timedelta(seconds=22),
+    )
+    await r.tick()  # events missed it; only the restart count shows
+    await r.tick(600)  # well past any grace
+    assert [o for o in outcomes if isinstance(o, OpenIncident)] == []

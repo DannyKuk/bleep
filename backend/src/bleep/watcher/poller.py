@@ -105,6 +105,7 @@ class HostWatcher:
             self._needs_reconnect = True  # reconnect on the next tick
             return False
         await reg.refresh(self.host_id)  # the registry keeps the API's snapshot current too
+        listed = max(until, self._clock())  # events up to here may describe what the listing shows
         current = reg.snapshot(self.host_id)
         if not self._reachable() or current is None:
             self._needs_reconnect = True
@@ -132,7 +133,7 @@ class HostWatcher:
             )
             for signal in reported:
                 cid = next(c.id for c in self._previous if c.name == signal.container)
-                self._covered[cid] = until
+                self._covered[cid] = listed
             signals = [*signals, *reported]
 
         self._previous = current
