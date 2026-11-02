@@ -116,7 +116,10 @@ class IncidentRunner:
         async def after_previous() -> None:
             if before is not None and not before.done():
                 await asyncio.gather(before, return_exceptions=True)
-            await run()
+            try:
+                await run()
+            except Exception:  # logged now, not found in the task at shutdown
+                log.exception("incident %s: the runner failed", incident_id)
 
         task = asyncio.create_task(after_previous(), name=f"incident {incident_id}")
         self._runs[incident_id] = task
@@ -179,14 +182,17 @@ class IncidentRunner:
 
     async def _drive(self, incident_id: str, payload: Any) -> None:
         config = self.config(incident_id)
-        await self.repo.set_status(incident_id, "investigating")
         try:
+            await self.repo.set_status(incident_id, "investigating")
             await self.graph.ainvoke(payload, config)
         except Exception as error:  # a broken run must not take the runner down
             log.exception("incident %s: graph run failed", incident_id)
-            await self.repo.set_status(incident_id, "failed")
-            text = f"The run stopped on an error ({type(error).__name__}); see the backend log."
-            await self.bus.publish(incident_id, "notice", {"text": text})
+            try:
+                await self.repo.set_status(incident_id, "failed")
+                text = f"The run stopped on an error ({type(error).__name__}); see the backend log."
+                await self.bus.publish(incident_id, "notice", {"text": text})
+            except Exception:
+                log.exception("incident %s: recording the failure failed", incident_id)
             return
         snapshot = await self.graph.aget_state(config)
         if snapshot.interrupts:

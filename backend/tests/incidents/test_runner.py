@@ -271,6 +271,46 @@ async def test_a_failing_node_marks_the_incident_failed(tmp_path, monkeypatch):
     assert notices and "RuntimeError" in notices[-1].payload["text"]
 
 
+async def test_a_status_write_that_fails_is_logged_and_fails_the_run(tmp_path, caplog):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    set_status = env.repo.set_status
+
+    async def flaky(incident_id: str, status: str) -> None:
+        if status == "investigating":
+            raise RuntimeError("database is locked")
+        await set_status(incident_id, status)
+
+    env.repo.set_status = flaky  # type: ignore[method-assign]
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        task = await runner.start(incident)
+        await runner.join()
+
+    assert task.exception() is None  # nothing left for shutdown to find
+    assert (await env.repo.get(incident.id)).status == "failed"
+    notices = [e for e in await env.bus.history(incident.id) if e.kind == "notice"]
+    assert notices and "RuntimeError" in notices[-1].payload["text"]
+    assert any(r.levelname == "ERROR" and incident.id in r.getMessage() for r in caplog.records)
+
+
+async def test_a_run_whose_every_status_write_fails_ends_logged_not_raising(tmp_path, caplog):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+
+    async def broken(incident_id: str, status: str) -> None:
+        raise RuntimeError("disk full")
+
+    env.repo.set_status = broken  # type: ignore[method-assign]
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        task = await runner.start(incident)
+        await runner.join()
+
+    assert task.exception() is None
+    assert sum(r.levelname == "ERROR" for r in caplog.records) >= 2  # the run and the status
+
+
 async def test_a_decision_for_a_run_that_is_not_waiting_changes_nothing(tmp_path):
     env = await graph_env(tmp_path)
     incident = await env.open(service(env), container="shop-web-1")
