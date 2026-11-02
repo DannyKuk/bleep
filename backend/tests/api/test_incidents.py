@@ -40,9 +40,11 @@ class Resumes:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, Decision]] = []
+        self.approval_ids: list[str] = []
 
-    async def __call__(self, incident_id: str, decision: Decision) -> None:
+    async def __call__(self, incident_id: str, decision: Decision, approval_id: str) -> None:
         self.calls.append((incident_id, decision))
+        self.approval_ids.append(approval_id)
 
 
 @pytest.fixture
@@ -207,6 +209,7 @@ def test_a_dashboard_decision_wins_the_approval_and_resumes_the_run(app_client, 
     record = call(app_client, parts.approvals.current, incident.id)
     assert record.decision.via == "dashboard"
     assert [(i, d.kind) for i, d in resumes.calls] == [(incident.id, "approve")]
+    assert resumes.approval_ids == [approval_id]  # bound to the plan the dashboard showed
 
 
 def test_an_instruction_keeps_its_text_trimmed(app_client, parts, resumes):

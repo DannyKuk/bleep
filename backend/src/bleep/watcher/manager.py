@@ -84,8 +84,8 @@ class WatcherManager:
         self._guard_log = guard_log
         self._http = http or httpx.AsyncClient()
         self._owns_http = http is None
-        self._states: dict[str, dict[str, list[ContainerSummary]]] = {}  # host -> service -> cs
         self._held: dict[str, dict[str, list[Signal]]] = {}  # host -> service id -> URL failures
+        self._announced: dict[str, tuple[str, set[str]]] = {}  # host -> (incident, URLs named)
         self._background: set[asyncio.Task[None]] = set()
         self._tasks: list[asyncio.Task[None]] = []
         self.hosts: dict[str, _HostTasks] = {
@@ -167,9 +167,12 @@ class WatcherManager:
         await self._handle(self.detector.feed(signal))
 
     async def snapshot(self, host_id: str, states: dict[str, list[ContainerSummary]]) -> None:
-        self._states[host_id] = states
-        merged = {sid: cs for host in self._states.values() for sid, cs in host.items()}
-        await self._handle(self.detector.tick(self._clock(), merged))
+        """Judge the host's pending deaths against the listing its watcher just took.
+
+        Only this host's deaths: a host that stops answering takes no listing, so its deaths
+        stay pending until it answers again instead of being judged by its last, stale one.
+        """
+        await self._handle(self.detector.tick(self._clock(), states, host_id))
 
     def _reachable(self, host_id: str) -> bool:
         return next(h for h in self.registry.hosts() if h.config.id == host_id).reachable
@@ -207,9 +210,20 @@ class WatcherManager:
             incident, created = await self.repo.open_or_attach(failures[0].subject, failures)
             if created:  # the host incident closed between the checks: this one is new
                 await self.runner.start(incident)
-        urls = sorted({str(s.detail.get("url")) for failures in held.values() for s in failures})
-        text = f"URL checks failing while the host is unreachable: {', '.join(urls)}."
-        await self.bus.publish(host_incident, "notice", {"text": text})
+        urls = {str(s.detail.get("url")) for failures in held.values() for s in failures}
+        await self._announce_urls(host_id, host_incident, urls)
+
+    async def _announce_urls(self, host_id: str, host_incident: str, urls: set[str]) -> None:
+        """Name failing URLs on the host incident's timeline once, not on every check: the
+        report is built from these events, and a long outage checks each URL every 30 s."""
+        incident, named = self._announced.get(host_id, ("", set()))
+        if incident != host_incident:
+            named = set()
+        new = urls - named
+        self._announced[host_id] = (host_incident, named | urls)
+        if new:
+            text = f"URL checks failing while the host is unreachable: {', '.join(sorted(new))}."
+            await self.bus.publish(host_incident, "notice", {"text": text})
 
     # -- the detector's outcomes ---------------------------------------------------------------
 

@@ -65,7 +65,7 @@ Paths under `backend/src/bleep/` are given from there.
 |---|---|---|
 | 1. Detect | A container dies, a URL fails or a host crosses a threshold; the detector waits out the grace window and debounces, then asks for an incident. | `watcher/detector.py` |
 | 2. Open | The incident is opened, or the signal attaches to the subject's open one. | `IncidentRepo.open_or_attach` |
-| 3. Run | The runner starts the incident's graph thread in the background (`thread_id` = incident id). | `IncidentRunner.start` |
+| 3. Run | The runner tells the channels the incident opened (Telegram gets it whatever the run ends with), then starts the incident's graph thread in the background (`thread_id` = incident id). | `IncidentRunner.start`, `Notifier.incident_opened` |
 | 4. Gather | Containers, the last 200 log lines of the affected ones through the guard, host basics, rules and similar past incidents. No model call. | `graph/nodes/gather.py` |
 | 5. Investigate | The model reads with read-only tools, at most 8 calls a round; each result is guarded and wrapped once, and every call and result streams to the bus. A spent cost budget stops here with a notice. | `graph/nodes/investigate.py` |
 | 6. Diagnose | Root cause, evidence, confidence; low confidence investigates once more, then goes on marked unsure. | `graph/nodes/diagnose.py` |

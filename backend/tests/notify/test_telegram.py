@@ -71,9 +71,11 @@ class FakeTelegram:
 class FakeRunner:
     def __init__(self) -> None:
         self.resumed: list[tuple[str, Decision]] = []
+        self.approval_ids: list[str] = []
 
-    async def resume(self, incident_id: str, decision: Decision) -> None:
+    async def resume(self, incident_id: str, decision: Decision, approval_id: str) -> None:
         self.resumed.append((incident_id, decision))
+        self.approval_ids.append(approval_id)
 
 
 class Env:
@@ -134,6 +136,7 @@ async def test_button_press_resolves_and_resumes(env):
 
     [(incident_id, decision)] = env.runner.resumed
     assert incident_id == env.incident_id
+    assert env.runner.approval_ids == [env.approval_id]  # bound to the plan on the button
     assert (decision.kind, decision.via) == ("approve", "telegram")
     assert (await env.approvals.current(env.incident_id)).decision.kind == "approve"
     [pop_up] = env.api.sent("answerCallbackQuery")
@@ -152,6 +155,7 @@ async def test_reply_to_a_proposal_becomes_an_instruction(env):
 
     [(incident_id, decision)] = env.runner.resumed
     assert incident_id == env.incident_id
+    assert env.runner.approval_ids == [env.approval_id]  # bound to the plan replied to
     assert (decision.kind, decision.text) == (
         "instruct",
         "Restart the database first, then the web container",
@@ -231,6 +235,22 @@ async def test_other_chats_are_ignored_and_logged(env, name):
     assert "approve everything" not in entry.detail
 
 
+async def test_only_the_long_poll_waits_long_and_a_send_gives_up_after_ten_seconds():
+    seen: dict[str, float] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen[request.url.path.rsplit("/", 1)[1]] = request.extensions["timeout"]["read"]
+        if request.url.path.endswith("sendMessage"):
+            return httpx.Response(200, json=fixture("send_message_ok"))
+        return httpx.Response(200, json={"ok": True, "result": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = TelegramClient(TOKEN, http)
+        await client.get_updates(None)
+        await client.send_message(CHAT, "hello")
+    assert seen == {"getUpdates": 40, "sendMessage": 10}  # a hung send blocks Approval briefly
+
+
 # --- polling ---
 
 
@@ -262,6 +282,28 @@ async def test_poll_forever_backs_off_on_an_error_and_goes_on(env):
         await env.bot.poll_forever()
     assert sleeps == [1.0, 2.0, 1.0]  # reset by the good poll
     assert len(env.runner.resumed) == 1
+
+
+async def test_poll_forever_survives_an_unexpected_error_and_logs_it(env, caplog):
+    sleeps: list[float] = []
+
+    async def stop_on_second(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise KeyboardInterrupt
+
+    env.bot._sleep = stop_on_second
+    malformed = {"ok": True, "result": [{"no_update_id": 1}]}  # a KeyError, not a TelegramError
+    env.api.updates += [
+        malformed,
+        fixture("callback_approve", APPROVAL_ID=env.approval_id),
+        malformed,
+    ]
+    with pytest.raises(KeyboardInterrupt):
+        await env.bot.poll_forever()
+    assert sleeps == [1.0, 1.0]  # backed off, carried on, and reset by the good poll
+    assert len(env.runner.resumed) == 1
+    assert any(r.levelname == "ERROR" and "telegram" in r.getMessage() for r in caplog.records)
 
 
 async def test_errors_never_carry_the_token(env):

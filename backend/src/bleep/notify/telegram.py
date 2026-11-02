@@ -28,7 +28,8 @@ log = logging.getLogger(__name__)
 
 API = "https://api.telegram.org"
 POLL_TIMEOUT_S = 30  # getUpdates long-poll length
-REQUEST_TIMEOUT_S = POLL_TIMEOUT_S + 10
+POLL_REQUEST_TIMEOUT_S = POLL_TIMEOUT_S + 10  # the long poll, plus room for the answer
+REQUEST_TIMEOUT_S = 10  # every other call: a hung send must not hold the Approval node long
 BACKOFF_START_S = 1.0
 BACKOFF_MAX_S = 60.0
 INSTRUCTION_MAX_CHARS = 1000
@@ -43,7 +44,7 @@ class TelegramError(Exception):
 class Resumer(Protocol):
     """The part of `IncidentRunner` the bot uses."""
 
-    async def resume(self, incident_id: str, decision: Decision) -> Any: ...
+    async def resume(self, incident_id: str, decision: Decision, approval_id: str) -> Any: ...
 
 
 class TelegramClient:
@@ -53,11 +54,10 @@ class TelegramClient:
         self._base = f"{API}/bot{token}"
         self.http = http
 
-    async def call(self, method: str, **params: Any) -> Any:
+    async def call(self, method: str, *, wait_s: float = REQUEST_TIMEOUT_S, **params: Any) -> Any:
+        """One Bot API call; `params` are the method's own (getUpdates has a `timeout` too)."""
         try:
-            response = await self.http.post(
-                f"{self._base}/{method}", json=params, timeout=REQUEST_TIMEOUT_S
-            )
+            response = await self.http.post(f"{self._base}/{method}", json=params, timeout=wait_s)
             body = response.json()
         except (httpx.HTTPError, ValueError, RuntimeError) as error:  # RuntimeError: client closed
             raise TelegramError(f"{method}: {type(error).__name__}") from None
@@ -72,7 +72,7 @@ class TelegramClient:
         }
         if offset is not None:
             params["offset"] = offset
-        return await self.call("getUpdates", **params)
+        return await self.call("getUpdates", wait_s=POLL_REQUEST_TIMEOUT_S, **params)
 
     async def send_message(
         self,
@@ -165,16 +165,21 @@ class TelegramBot:
         self._offset: int | None = None
 
     async def poll_forever(self) -> None:
-        """Long-poll until cancelled; an outage backs off from 1 s to 60 s and never ends it."""
+        """Long-poll until cancelled; an outage or any other error backs off from 1 s to 60 s and
+        never ends it, because a dead poller would silently stop Telegram approvals."""
         backoff = BACKOFF_START_S
         while True:
             try:
                 await self.poll_once()
                 backoff = BACKOFF_START_S
+                continue
             except TelegramError as error:
                 log.warning("telegram: %s; retrying in %.0f s", error, backoff)
-                await self._sleep(backoff)
-                backoff = min(backoff * 2, BACKOFF_MAX_S)
+            except Exception as error:  # the type only: a message could quote the token's URL
+                name = type(error).__name__
+                log.error("telegram: polling failed (%s); retrying in %.0f s", name, backoff)
+            await self._sleep(backoff)
+            backoff = min(backoff * 2, BACKOFF_MAX_S)
 
     async def poll_once(self) -> None:
         """One `getUpdates` call and the handling of what it returned."""
@@ -248,7 +253,7 @@ class TelegramBot:
         """Try to win the approval; the text to tell the human either way."""
         won = await self.approvals.resolve(incident_id, decision, approval_id)
         if won is not None:
-            await self.runner.resume(incident_id, won)
+            await self.runner.resume(incident_id, won, approval_id)
             return answer(f"answer_{_PAST[decision.kind]}")
         current = await self.approvals.current(incident_id)
         if current is not None and current.id == approval_id and current.decision is not None:

@@ -127,7 +127,7 @@ async def decide(
         if latest is not None and latest.id == body.approval_id and latest.decision is not None:
             return _already_decided(latest.decision)
         return _conflict("That plan was replaced by a newer one; reload to see it")
-    await runner.resume(incident_id, won)
+    await runner.resume(incident_id, won, body.approval_id)
     return won
 
 

@@ -55,7 +55,7 @@ async def test_a_run_goes_from_gather_to_the_interrupt_and_resumes_on_each_decis
         decision = Decision(kind=kind, text="the db instead" if kind == "instruct" else None,
                             via="dashboard", at=AT)  # fmt: skip
         assert await store.resolve(incident.id, decision) == decision
-        await runner.resume(incident.id, decision)
+        await runner.resume(incident.id, decision, record.id)
         await runner.join()
 
         state = (await runner.graph.aget_state(runner.config(incident.id))).values

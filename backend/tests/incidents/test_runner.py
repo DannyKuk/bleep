@@ -136,7 +136,7 @@ async def test_waits_for_approval_and_resumes_on_a_decision_after_a_restart(tmp_
     async with open_checkpointer(checkpoints) as saver:
         runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
         assert await runner.recover_on_boot() == []  # still waiting for the human
-        await runner.resume(incident.id, decide("reject"))
+        await runner.resume(incident.id, decide("reject"), await runner.waiting_for(incident.id))
         await runner.join()
         state = await values(runner, incident.id)
 
@@ -144,6 +144,83 @@ async def test_waits_for_approval_and_resumes_on_a_decision_after_a_restart(tmp_
     assert state["outcome"] == "rejected"
     assert (await env.repo.get(incident.id)).status == "closed"
     assert (await env.nodes(incident.id, "node_finished"))[-2:] == ["approval", "report"]
+
+
+async def test_a_decision_for_another_approval_does_not_resume_the_run(tmp_path, acting):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await runner.start(incident)
+        await runner.join()
+        waiting = await runner.waiting_for(incident.id)
+        assert waiting is not None
+
+        await runner.resume(incident.id, decide("approve"), "an-earlier-plan")
+        await runner.join()
+
+        assert await runner.waiting_for(incident.id) == waiting  # still asking the same question
+        assert "decision" not in await values(runner, incident.id)
+    assert (await env.repo.get(incident.id)).status == "awaiting_approval"
+
+
+class OpenedNotifier:
+    def __init__(self, fail: bool = False) -> None:
+        self.opened: list[str] = []
+        self.fail = fail
+
+    async def incident_opened(self, incident) -> None:
+        self.opened.append(incident.id)
+        if self.fail:
+            raise RuntimeError("telegram is down")
+
+
+async def test_a_new_run_tells_the_notifier_the_incident_opened_once(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier = OpenedNotifier()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+        await runner.start(incident)
+        await runner.join()
+        await runner.start(incident)  # finished: nothing new to tell
+        await runner.join()
+
+    assert notifier.opened == [incident.id]  # no_action, unsure and budget incidents included
+    assert await env.nodes(incident.id) == M2_PATH
+
+
+async def test_a_failing_notifier_does_not_stop_the_run(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier = OpenedNotifier(fail=True)
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+        await runner.start(incident)
+        await runner.join()
+
+    assert notifier.opened == [incident.id]
+    assert await env.nodes(incident.id) == M2_PATH
+    assert (await env.repo.get(incident.id)).status == "closed"
+
+
+async def test_a_run_going_on_after_a_restart_does_not_announce_the_incident_again(
+    tmp_path, acting
+):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier = OpenedNotifier()
+    checkpoints = tmp_path / "checkpoints.sqlite"
+    async with open_checkpointer(checkpoints) as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+        await runner.start(incident)
+        await runner.join()
+    async with open_checkpointer(checkpoints) as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+        await runner.start(incident)  # waiting at approval: picked up, not opened again
+        await runner.join()
+
+    assert notifier.opened == [incident.id]
 
 
 async def test_state_is_the_checkpointed_values_and_empty_before_a_run(tmp_path, acting):
@@ -194,19 +271,59 @@ async def test_a_failing_node_marks_the_incident_failed(tmp_path, monkeypatch):
     assert notices and "RuntimeError" in notices[-1].payload["text"]
 
 
+async def test_a_status_write_that_fails_is_logged_and_fails_the_run(tmp_path, caplog):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    set_status = env.repo.set_status
+
+    async def flaky(incident_id: str, status: str) -> None:
+        if status == "investigating":
+            raise RuntimeError("database is locked")
+        await set_status(incident_id, status)
+
+    env.repo.set_status = flaky  # type: ignore[method-assign]
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        task = await runner.start(incident)
+        await runner.join()
+
+    assert task.exception() is None  # nothing left for shutdown to find
+    assert (await env.repo.get(incident.id)).status == "failed"
+    notices = [e for e in await env.bus.history(incident.id) if e.kind == "notice"]
+    assert notices and "RuntimeError" in notices[-1].payload["text"]
+    assert any(r.levelname == "ERROR" and incident.id in r.getMessage() for r in caplog.records)
+
+
+async def test_a_run_whose_every_status_write_fails_ends_logged_not_raising(tmp_path, caplog):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+
+    async def broken(incident_id: str, status: str) -> None:
+        raise RuntimeError("disk full")
+
+    env.repo.set_status = broken  # type: ignore[method-assign]
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        task = await runner.start(incident)
+        await runner.join()
+
+    assert task.exception() is None
+    assert sum(r.levelname == "ERROR" for r in caplog.records) >= 2  # the run and the status
+
+
 async def test_a_decision_for_a_run_that_is_not_waiting_changes_nothing(tmp_path):
     env = await graph_env(tmp_path)
     incident = await env.open(service(env), container="shop-web-1")
     async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
         runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
-        await runner.resume(incident.id, decide("approve"))  # never started
+        await runner.resume(incident.id, decide("approve"), "a1")  # never started
         await runner.join()
         assert await env.nodes(incident.id) == []
         assert (await env.repo.get(incident.id)).status == "open"
 
         await runner.start(incident)
         await runner.join()
-        await runner.resume(incident.id, decide("approve"))  # already finished
+        await runner.resume(incident.id, decide("approve"), "a1")  # already finished
         await runner.join()
 
     assert await env.nodes(incident.id) == M2_PATH

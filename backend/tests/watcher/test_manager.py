@@ -172,6 +172,24 @@ async def test_a_host_down_for_five_minutes_opens_one_incident_and_the_urls_atta
     ]
 
 
+async def test_held_url_failures_are_announced_once_per_new_set_of_urls(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    await r.lose_host()
+    for _ in range(25 + 40):  # the host incident opens, then ten more minutes of failing checks
+        await r.pulse()
+    [incident] = await r.incidents()
+    failing = [
+        e.payload["text"]
+        for e in await r.bus.history(incident.id)
+        if e.kind == "notice" and "URL checks failing" in e.payload["text"]
+    ]
+    assert len(failing) == 1  # not one per URL check, which would flood the report
+    assert all(f"https://{p}.example/" in failing[0] for p in PROJECTS)
+    attached = [s for s in await r.repo.signals(incident.id) if s.kind == "url_failed"]
+    assert len(attached) > 3 * 5  # the failures themselves still attach as they come
+
+
 async def test_url_failures_before_the_host_incident_wait_for_it_instead_of_opening_their_own(
     tmp_path,
 ):
@@ -314,3 +332,58 @@ async def test_a_loop_that_dies_of_an_error_is_started_again(monkeypatch):
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
     assert len(runs) == 3
+
+
+async def test_a_death_on_an_unreachable_host_is_not_judged_by_another_hosts_ticks(tmp_path):
+    """A container on host a dies and a stops answering. Host b keeps ticking past the grace
+    window; a's last listing (the container exited) is stale, so it must not open an incident
+    for a service Bleep cannot see. The death waits for a's own next snapshot."""
+    clock = Clock()
+    engines = {
+        "a": FakeEngine("a", [box("shop-web-1", "shop", restart_policy="no")], clock=clock),
+        "b": FakeEngine("b", [box("blog-web-1", "blog", restart_policy="no")], clock=clock),
+    }
+
+    async def connect(host):
+        return None, engines[host.id]
+
+    db = Database(tmp_path / "bleep.sqlite")
+    await db.migrate()
+    registry = Registry([socket_host(id="a"), socket_host(id="b")], connect, clock=clock)
+    await registry.start()
+    repo, runner = IncidentRepo(db, clock), FakeRunner()
+    manager = WatcherManager(
+        registry,
+        Detector(Thresholds(), clock),
+        repo,
+        runner,  # type: ignore[arg-type]
+        EventBus(db, clock),
+        clock=clock,
+        http=httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200))),
+    )
+    a, b = manager.hosts["a"].watcher, manager.hosts["b"].watcher
+
+    await a.tick()
+    await b.tick()
+    clock.advance(10)
+    engines["a"].history.append(die("shop-web-1", clock.now))
+    engines["a"].container_list[0] = box(
+        "shop-web-1", "shop", state="exited", exit_code=137, restart_policy="no"
+    )
+    clock.advance(5)
+    await a.tick()  # the death is seen, and a's listing now says exited
+    engines["a"].drop()  # then a stops answering, as it often does under memory pressure
+    for _ in range(8):  # two minutes: well past the 60 s grace window
+        clock.advance(15)
+        assert await a.tick() is False
+        await b.tick()
+
+    assert await repo.list() == []
+    assert runner.started == []
+
+    engines["a"].restore()  # back, and the container is still down: a's own snapshot judges it
+    clock.advance(15)
+    assert await a.tick() is True
+    [incident] = await repo.list()
+    assert incident.subject.service_id == "a/compose:shop"
+    assert [i.id for i in runner.started] == [incident.id]

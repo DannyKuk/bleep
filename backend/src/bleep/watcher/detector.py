@@ -111,13 +111,22 @@ class Detector:
                     signals.insert(0, death)  # this incident already covers that death
                 return self._emit(signal.subject, signals, now)
 
-    def tick(self, now: datetime, states: dict[str, list[ContainerSummary]]) -> list[Outcome]:
+    def tick(
+        self,
+        now: datetime,
+        states: dict[str, list[ContainerSummary]],
+        host_id: str | None = None,
+    ) -> list[Outcome]:
         """Resolve pending deaths against current container states (keyed by service id).
+
+        With `host_id`, `states` is that host's fresh listing and only that host's deaths are
+        judged; another host's deaths wait for its own listing, so a host that stopped answering
+        is never judged by its last, stale one. Without it every pending death is judged.
 
         A container running with health healthy or none whose `started_at` is within the grace
         window of the death (and not before it) is recovered whenever it is first seen, even on a
-        late tick. One still
-        `starting` cannot be judged that way, so the manager must tick about every 10 s.
+        late tick. One still `starting` cannot be judged that way, so the manager must tick about
+        every 10 s.
         """
         by_name: dict[str, ContainerSummary] = {}
         for containers in states.values():
@@ -132,6 +141,8 @@ class Detector:
         for key in [k for k, at in self._window_start.items() if now - at >= debounce]:
             del self._window_start[key]
         for container, death in list(self._pending.items()):
+            if host_id is not None and death.subject.host_id != host_id:
+                continue
             elapsed = now - death.at
             current = by_name.get(container)
             back = (

@@ -31,6 +31,7 @@ def test_the_lifespan_wires_one_approval_store_the_guard_log_and_the_reminders(
         assert reminders.approvals is parts.approvals
         assert reminders.notifier is parts.graph_deps.notifier
         assert reminders.notifier is parts.notify.notifier  # the one real notifier, not a Null
+        assert app.state.runner.notifier is parts.notify.notifier  # announces new incidents
         assert isinstance(reminders.notifier, Notifier)
         task = app.state.reminder_task
         assert not task.done()

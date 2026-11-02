@@ -73,8 +73,9 @@ class Run:
 
     async def decide(self, incident_id: str, decision: Decision) -> None:
         """What the dashboard and Telegram do: win the approval, then resume the run."""
-        assert await self.store.resolve(incident_id, decision) == decision
-        await self.runner.resume(incident_id, decision)
+        record = await self.store.current(incident_id)
+        assert await self.store.resolve(incident_id, decision, record.id) == decision
+        await self.runner.resume(incident_id, decision, record.id)
         await self.runner.join()
 
     async def state(self, incident_id: str) -> dict:
@@ -170,9 +171,10 @@ async def test_no_action_skips_approval(run, plans):
 async def test_the_stored_winner_beats_a_different_resume_value(run, plans):
     plans[0].append(restart())
     incident_id = await run.start()
+    asked = await run.store.current(incident_id)
     assert await run.store.resolve(incident_id, decide("reject", via="telegram")) is not None
 
-    await run.runner.resume(incident_id, decide("approve"))  # a late loser resumes anyway
+    await run.runner.resume(incident_id, decide("approve"), asked.id)  # a late loser resumes
     await run.runner.join()
 
     state = await run.state(incident_id)
@@ -198,12 +200,63 @@ async def test_a_failing_notifier_does_not_strand_the_approval(run, plans):
 async def test_a_resume_nobody_recorded_is_recorded_first(run, plans):
     plans[0].append(restart())
     incident_id = await run.start()
-    await run.runner.resume(incident_id, decide("approve"))
+    asked = await run.store.current(incident_id)
+    await run.runner.resume(incident_id, decide("approve"), asked.id)
     await run.runner.join()
 
     record = await run.store.current(incident_id)
     assert record.decision == decide("approve")
     assert (await run.state(incident_id))["grant"] is not None
+
+
+async def test_a_resume_the_store_neither_takes_nor_holds_fails_the_run_plainly(run, plans):
+    """Not an `assert`: the check must hold under `python -O` too."""
+    plans[0].append(restart())
+    incident_id = await run.start()
+    asked = await run.store.current(incident_id)
+
+    async def refuse(*args) -> None:
+        return None  # the store took nothing, and still holds the approval as pending
+
+    run.store.resolve = refuse  # type: ignore[method-assign]
+    await run.runner.resume(incident_id, decide("approve"), asked.id)
+    await run.runner.join()
+
+    assert (await run.env.repo.get(incident_id)).status == "failed"
+    [notice] = [n for n in await run.events(incident_id, "notice") if "error" in n["text"]]
+    assert "ApprovalNotDecided" in notice["text"]
+    assert await run.events(incident_id, "decision") == []
+    assert (await run.state(incident_id)).get("grant") is None
+
+
+async def test_a_queued_resume_never_decides_the_next_plan(run, plans):
+    """The human answers plan A on the dashboard while the node is still sending A to Telegram.
+    The node finds A decided and goes on without interrupting; the dashboard's resume is queued
+    behind the run and must not land on plan B, which nobody has seen."""
+    plans[0].extend([restart(), restart("shop-db-1")])
+    seen = plans[1]
+    instruction = decide("instruct", "use the db")
+
+    async def answered_while_sending(incident, diagnosis, proposal, approval) -> None:
+        run.notifier.proposals.append((incident.id, proposal, approval.id))
+        if len(run.notifier.proposals) == 1:  # exactly what api/incidents.decide does
+            assert await run.store.resolve(incident.id, instruction, approval.id) == instruction
+            await run.runner.resume(incident.id, instruction, approval.id)
+
+    run.notifier.proposal = answered_while_sending  # type: ignore[method-assign]
+    incident_id = await run.start()
+
+    assert seen == [[], ["use the db"]]  # Propose ran twice: once per plan, never a third time
+    [(_, _, a_id), (_, second, b_id)] = run.notifier.proposals
+    assert second.steps[0].target == "shop-db-1"
+    plan_b = await run.store.current(incident_id)
+    assert plan_b.id == b_id and plan_b.decision is None  # B waits for a human
+    assert await run.events(incident_id, "decision") == [
+        {"kind": "instruct", "text": "use the db", "via": "dashboard"}
+    ]
+    assert (await run.env.repo.get(incident_id)).status == "awaiting_approval"
+    waiting = await run.runner.graph.aget_state(run.runner.config(incident_id))
+    assert waiting.interrupts[0].value["approval_id"] == b_id
 
 
 async def test_a_target_that_cannot_be_read_goes_back_to_propose(run, plans):

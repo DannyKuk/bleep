@@ -67,7 +67,9 @@ async def test_no_action_skips_approval(tmp_path):
 async def test_instruct_goes_back_to_propose_with_the_text(tmp_path, seen_instructions):
     env, runner, incident = await setup(tmp_path)
 
-    await runner.resume(incident.id, decide("instruct", "redeploy instead"))
+    await runner.resume(
+        incident.id, decide("instruct", "redeploy instead"), await runner.waiting_for(incident.id)
+    )
     await runner.join()
 
     assert seen_instructions == [[], ["redeploy instead"]]
@@ -78,7 +80,7 @@ async def test_instruct_goes_back_to_propose_with_the_text(tmp_path, seen_instru
 async def test_approve_reports_unverified_until_execute_exists(tmp_path, seen_instructions):
     env, runner, incident = await setup(tmp_path)
 
-    await runner.resume(incident.id, decide("approve"))
+    await runner.resume(incident.id, decide("approve"), await runner.waiting_for(incident.id))
     await runner.join()
 
     # Milestone 2 has no Execute: an approved plan is reported, never claimed as fixed.
@@ -90,7 +92,7 @@ async def test_approve_reports_unverified_until_execute_exists(tmp_path, seen_in
 async def test_reject_reports_rejected(tmp_path, seen_instructions):
     env, runner, incident = await setup(tmp_path)
 
-    await runner.resume(incident.id, decide("reject"))
+    await runner.resume(incident.id, decide("reject"), await runner.waiting_for(incident.id))
     await runner.join()
 
     assert await outcome(runner, incident.id) == "rejected"
