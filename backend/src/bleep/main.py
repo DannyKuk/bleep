@@ -1,13 +1,15 @@
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Depends, FastAPI
 
-from bleep.api import auth, hosts
+from bleep.api import auth, hosts, incidents, stream
 from bleep.api.deps import require_session
 from bleep.config import Settings, check_settings
 from bleep.graph.build import build_graph, open_checkpointer
+from bleep.incidents.reminders import ReminderLoop
 from bleep.incidents.repository import utcnow
 from bleep.incidents.runner import IncidentRunner
 from bleep.schemas.settings import Thresholds
@@ -31,7 +33,10 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
         await parts.registry.start()
         async with open_checkpointer(settings.data_dir / "checkpoints.sqlite") as saver:
             runner = IncidentRunner(
-                build_graph(parts.graph_deps, saver), parts.incidents, parts.bus
+                build_graph(parts.graph_deps, saver),
+                parts.incidents,
+                parts.bus,
+                approvals=parts.approvals,
             )
             manager = WatcherManager(
                 parts.registry,
@@ -44,13 +49,23 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 store=UrlCheckStore(parts.db),
                 watch_interval_s=settings.watch_interval_s,
             )
-            app.state.runner = runner
+            reminders = ReminderLoop(
+                parts.approvals,
+                parts.incidents,
+                parts.graph_deps.notifier,
+                parts.graph_deps.settings_store,
+            )
+            app.state.runner, app.state.reminders = runner, reminders
             await manager.start()
+            app.state.reminder_task = asyncio.create_task(reminders.run(), name="reminders")
             try:
                 yield
             finally:
+                app.state.reminder_task.cancel()
+                await asyncio.gather(app.state.reminder_task, return_exceptions=True)
                 await manager.stop()
                 await runner.close()
+                await parts.guard_log.flush()  # the runs and the watcher record into it
                 await parts.registry.close()
 
     app = FastAPI(title="Bleep", lifespan=lifespan)
@@ -66,6 +81,8 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
     protected = APIRouter(dependencies=[Depends(require_session)])
     protected.include_router(auth.session_router)
     protected.include_router(hosts.router)
+    protected.include_router(incidents.router)
+    protected.include_router(stream.router)
     api.include_router(protected)
     app.include_router(api)
     return app

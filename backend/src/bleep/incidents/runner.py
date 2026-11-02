@@ -63,6 +63,10 @@ class IncidentRunner:
         """
         return self._schedule(incident_id, lambda: self._resume(incident_id, decision))
 
+    async def state(self, incident_id: str) -> dict[str, Any]:
+        """The incident's graph state as last checkpointed; empty before its first run."""
+        return dict((await self.graph.aget_state(self.config(incident_id))).values)
+
     async def recover_on_boot(self) -> list[str]:
         """Restart every unfinished run except those waiting for a human; returns their ids.
 

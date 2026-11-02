@@ -29,6 +29,7 @@ flowchart LR
     INC --> DB
     GRAPH --> DB
     REG --> API --> FE
+    INC -->|events, live| API
     style HOSTS fill:none,stroke:#888,stroke-dasharray:5 5
 ```
 
@@ -51,7 +52,7 @@ flowchart LR
 | **Models** | `llm/` | One factory for OpenRouter and local models, structured output with a plain-JSON fallback, and a token and cost ledger with a daily cap. |
 | **Prompts** | `prompts/` | Every prompt is a `.md` file loaded with `prompts.load(name, **vars)`. |
 | **Store** | `store/` | SQLite with numbered migrations. |
-| **API** | `main.py`, `api/`, `auth/` | Login with one admin password and hashed sessions; the read API over hosts and services. |
+| **API** | `main.py`, `api/`, `auth/` | Login with one admin password and hashed sessions; the read API over hosts and services; incidents with their findings, timeline and recoveries; the dashboard's decision on an approval; the live event stream (SSE). |
 | **Dashboard** | `frontend/` | Next.js app: login and an overview of hosts and services, polled every 10 s. |
 | **Compose** | `docker-compose.yaml`, `config/socket-proxy.cfg.template` | Runs Bleep; `--profile demo` adds the socket proxy so Bleep can watch this machine. |
 
@@ -71,7 +72,7 @@ Paths under `backend/src/bleep/` are given from there.
 | 8. Approval | The target containers are snapshotted, the plan is stored as a pending approval and sent to the human; the run checkpoints and waits for a yes, a no or an instruction, through a restart if need be. The first answer wins; an instruction goes back to Propose; a pending approval is re-sent every 60 min and never approved by itself. | `graph/nodes/approval.py`, `ApprovalStore`, `ReminderLoop`, `IncidentRunner.resume` |
 | 9. Report | The outcome is set; `resolved` is only ever claimed after verification. | `graph/nodes/report.py` |
 
-Every node publishes `node_started` and `node_finished` on the bus, which stores them for the incident's timeline. On boot, `IncidentRunner.recover_on_boot` resumes every unfinished run except those waiting for approval, and delivers a decision that was recorded before a crash. The app starts the runner with the watcher manager, which calls `recover_on_boot` once at startup and starts a run only for a newly opened incident. The app does not start the reminder loop yet.
+Every node publishes `node_started` and `node_finished` on the bus, which stores them for the incident's timeline. On boot, `IncidentRunner.recover_on_boot` resumes every unfinished run except those waiting for approval, and delivers a decision that was recorded before a crash. The app starts the runner with the watcher manager, which calls `recover_on_boot` once at startup and starts a run only for a newly opened incident, and runs the reminder loop beside them. The runner, the graph, the reminders and the API share one `ApprovalStore`, so a decision from any channel is the one the run sees, also after a restart.
 
 ## Key design choices
 
@@ -114,6 +115,8 @@ One line each; the full reasoning and issue numbers are on the design page named
 **App** ([details](design/app.md))
 - **One admin password and hashed session tokens in an HttpOnly cookie.**
 - **The dashboard reaches the API through a Next.js rewrite**, so the cookie stays same-origin.
+- **A dashboard decision names the approval it answers**; a late one gets 409 naming the channel that won.
+- **The live stream is SSE with `id:` = seq**, so a reconnect replays from `Last-Event-ID`; a ping every 15 s keeps proxies from closing it.
 
 ## Decisions
 

@@ -1,9 +1,12 @@
-"""The HTTP shapes of the read API. `/openapi.json` carries them to the dashboard."""
+"""The HTTP shapes of the API. `/openapi.json` carries them to the dashboard."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
+
+from bleep.schemas.graph import Decision, Diagnosis, Outcome, Proposal, Report
+from bleep.schemas.incidents import Incident
 
 Health = Literal["ok", "degraded", "down", "stopped", "unknown"]
 
@@ -68,3 +71,52 @@ class ServiceView(BaseModel):
     containers: list[ContainerView]
     urls: list[UrlStatus]
     open_incident_id: str | None
+
+
+class ApprovalView(BaseModel):
+    """An incident's latest approval: the plan put to the human and, once decided, the answer.
+
+    `status` is `pending` until a channel decides it; the snapshots stay on the server.
+    """
+
+    id: str
+    status: Literal["pending", "approved", "rejected", "instructed"]
+    plan_hash: str
+    proposal: Proposal
+    requested_at: datetime
+    reminders: int
+    decision: Decision | None
+
+
+class IncidentDetail(BaseModel):
+    """One incident with what its run has found so far; each part is null until it exists."""
+
+    incident: Incident
+    diagnosis: Diagnosis | None
+    proposal: Proposal | None
+    approval: ApprovalView | None
+    outcome: Outcome | None
+    report: Report | None
+
+
+class DecisionBody(BaseModel):
+    """The human's answer from the dashboard to the approval with `approval_id`."""
+
+    approval_id: str
+    kind: Literal["approve", "reject", "instruct"]
+    text: str | None = Field(default=None, max_length=2000)  # the instruction, for `instruct`
+
+    @model_validator(mode="after")
+    def _instruction_has_text(self) -> Self:
+        text = (self.text or "").strip()
+        if self.kind == "instruct" and not text:
+            raise ValueError("an instruction needs text")
+        self.text = text if self.kind == "instruct" else None
+        return self
+
+
+class DecisionConflict(BaseModel):
+    """Why a decision was refused; `decided_via` names the channel that answered first."""
+
+    detail: str
+    decided_via: Literal["telegram", "dashboard"] | None = None

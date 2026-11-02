@@ -146,6 +146,19 @@ async def test_waits_for_approval_and_resumes_on_a_decision_after_a_restart(tmp_
     assert (await env.nodes(incident.id, "node_finished"))[-2:] == ["approval", "report"]
 
 
+async def test_state_is_the_checkpointed_values_and_empty_before_a_run(tmp_path, acting):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        assert await runner.state(incident.id) == {}
+        await runner.start(incident)
+        await runner.join()
+        state = await runner.state(incident.id)
+    assert state["diagnosis"].root_cause == "the container exited"
+    assert state["proposal"].steps[0].target == "shop-web-1"
+
+
 async def test_start_twice_does_not_run_the_graph_twice(tmp_path):
     env = await graph_env(tmp_path)
     incident = await env.open(service(env), container="shop-web-1")

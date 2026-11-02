@@ -2,6 +2,7 @@ from fastapi import HTTPException, Request, Response
 
 from bleep.api.cookie import COOKIE_NAME, set_session_cookie
 from bleep.config import Settings
+from bleep.incidents.runner import IncidentRunner
 from bleep.wiring import AppParts
 
 
@@ -11,6 +12,11 @@ def get_parts(request: Request) -> AppParts:
 
 def get_settings(request: Request) -> Settings:
     return request.app.state.settings
+
+
+def get_runner(request: Request) -> IncidentRunner:
+    """The runner the lifespan started; it exists only while the app runs."""
+    return request.app.state.runner
 
 
 async def require_session(request: Request, response: Response) -> str:
