@@ -404,3 +404,11 @@ async def test_a_token_with_a_chat_id_builds_the_bot_and_stop_ends_it(tmp_path):
     assert built._task is not None and not built._task.done()
     await built.stop()
     assert built._task is None
+
+
+async def test_a_closed_http_client_is_a_telegram_error_not_a_crash():
+    http = httpx.AsyncClient()
+    await http.aclose()
+
+    with pytest.raises(TelegramError):
+        await TelegramClient(TOKEN, http).send_message("42", "hello")

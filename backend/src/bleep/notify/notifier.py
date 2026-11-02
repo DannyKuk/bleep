@@ -136,10 +136,14 @@ class NotifySetup:
             self._task = asyncio.create_task(self.bot.poll_forever(), name="telegram poller")
 
     async def stop(self) -> None:
+        """Stop polling. The client stays open: runs and reminders still send until they stop."""
         if self._task is not None:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
             self._task = None
+
+    async def close(self) -> None:
+        """Close the Telegram client, after everything that sends has stopped."""
         if self._http is not None:
             await self._http.aclose()
 

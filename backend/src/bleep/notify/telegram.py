@@ -59,7 +59,7 @@ class TelegramClient:
                 f"{self._base}/{method}", json=params, timeout=REQUEST_TIMEOUT_S
             )
             body = response.json()
-        except (httpx.HTTPError, ValueError) as error:
+        except (httpx.HTTPError, ValueError, RuntimeError) as error:  # RuntimeError: client closed
             raise TelegramError(f"{method}: {type(error).__name__}") from None
         if response.status_code != 200 or not body.get("ok"):
             raise TelegramError(f"{method}: {response.status_code} {body.get('description', '')}")

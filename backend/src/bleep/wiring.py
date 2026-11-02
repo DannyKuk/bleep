@@ -72,7 +72,7 @@ def graph_deps(
     reaches the graph through one store.
     """
     store = StaticSettings()
-    deps = GraphDeps(
+    return GraphDeps(
         registry=registry,
         tools=default_registry(),
         models=model_factory(store),
@@ -84,4 +84,3 @@ def graph_deps(
         settings_store=store,
         notifier=notifier,
     )
-    return deps
