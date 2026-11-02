@@ -1,6 +1,6 @@
 import json
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
 from bleep.graph.build import build_graph
@@ -74,7 +74,15 @@ async def test_still_low_after_the_second_round_is_unsure_and_goes_on(tmp_path):
 
 
 async def test_the_graph_investigates_exactly_once_more_then_proposes(tmp_path):
-    env, _ = await setup(tmp_path, [reply(0.4, missing="the db log"), reply(0.5)])
+    # Investigate answers without a tool call, then Diagnose, twice: investigate, diagnose (low
+    # confidence), investigate again, diagnose.
+    script = [
+        AIMessage("looked"),
+        reply(0.4, missing="the db log"),
+        AIMessage("looked"),
+        reply(0.5),
+    ]
+    env, _ = await setup(tmp_path, script)
     subject = Subject(kind="service", host_id="a", service_id=env.service_id("shop"))
     incident = await env.open(subject, container="shop-web-1")
     runner = IncidentRunner(
@@ -88,8 +96,27 @@ async def test_the_graph_investigates_exactly_once_more_then_proposes(tmp_path):
     assert (await env.nodes(incident.id)).count("diagnose") == 2
     assert values["investigate_rounds"] == 2
     assert values["diagnosis"].unsure and values["diagnosis"].confidence == 0.5
-    second_prompt = env.models.model.seen[1][0].text
-    assert "the db log" in second_prompt
+    second_investigation = env.models.model.seen[2]  # Investigate's second model call
+    assert "the db log" in second_investigation[-1].text  # Diagnose's message is its instruction
+    assert isinstance(second_investigation[-1], HumanMessage)
+    assert sum("Missing" in m.text for m in second_investigation) == 1  # and nothing repeats it
+
+
+async def test_diagnose_accepts_an_investigation_cut_off_in_the_middle_of_tool_calls(tmp_path):
+    env, state = await setup(tmp_path, [reply(0.9)])
+    call = {"name": "container_logs", "args": {"container": "shop-web-1"}, "id": "c1"}
+    state["messages"] = [
+        HumanMessage("task"),
+        AIMessage("", tool_calls=[call]),
+        ToolMessage("<untrusted>boom</untrusted>", tool_call_id="c1", name="container_logs"),
+        ToolMessage("not run: the tool-call budget for this round is spent", tool_call_id="c2"),
+    ]
+
+    update = await diagnose.make(env.deps)(state)
+
+    assert update["diagnosis"].confidence == 0.9
+    sent = env.models.model.seen[0][0].text
+    assert "boom" in sent and "not run" in sent
 
 
 async def test_garbage_from_a_weak_model_gives_the_fallback_diagnosis(tmp_path):
