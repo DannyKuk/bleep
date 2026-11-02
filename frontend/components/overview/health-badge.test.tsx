@@ -8,6 +8,7 @@ const cases: [Health, string][] = [
   ["ok", "OK"],
   ["degraded", "Degraded"],
   ["down", "Down"],
+  ["stopped", "Stopped"],
   ["unknown", "Unknown"],
 ];
 

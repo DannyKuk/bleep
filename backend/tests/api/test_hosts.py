@@ -17,8 +17,16 @@ from fakes import FakeEngine, ssh_host
 T0 = datetime(2026, 11, 2, 10, 0, tzinfo=UTC)
 
 
-def c(state="running", health="none", name="c1"):
-    return ContainerSummary(id=f"id-{name}", name=name, image="img", state=state, health=health)
+def c(state="running", health="none", name="c1", exit_code=None, policy=""):
+    return ContainerSummary(
+        id=f"id-{name}",
+        name=name,
+        image="img",
+        state=state,
+        health=health,
+        exit_code=exit_code,
+        restart_policy=policy,
+    )
 
 
 @pytest.mark.parametrize(
@@ -41,6 +49,14 @@ def test_container_health_table(state, health, expected):
 
 
 @pytest.mark.parametrize(
+    ("exit_code", "expected"),
+    [(0, "stopped"), (143, "stopped"), (1, "down"), (137, "down"), (None, "down")],
+)
+def test_an_exited_container_is_stopped_only_after_a_clean_exit(exit_code, expected):
+    assert container_health(c("exited", exit_code=exit_code)) == expected
+
+
+@pytest.mark.parametrize(
     ("containers", "urls", "expected"),
     [
         ([], [], "unknown"),
@@ -53,6 +69,27 @@ def test_container_health_table(state, health, expected):
         ([c("restarting")], ["failing"], "down"),
         ([], ["failing"], "down"),
         ([], ["unknown"], "unknown"),
+        # a finished one-shot (exit 0, no restart policy) does not count
+        ([c(), c("exited", name="fetch", exit_code=0)], [], "ok"),
+        ([c("exited", name="fetch", exit_code=0, policy="no")], [], "stopped"),
+        # stopped on purpose, all of it: grey, also with a URL that now fails
+        ([c("exited", exit_code=0, policy="always")], [], "stopped"),
+        ([c("exited", exit_code=143, policy="unless-stopped")], ["failing"], "stopped"),
+        (
+            [c("exited", exit_code=0, policy="always"), c("exited", name="c2", exit_code=0)],
+            [],
+            "stopped",
+        ),
+        # one stopped among running ones is a partly working service
+        ([c(), c("exited", name="db", exit_code=0, policy="always")], [], "degraded"),
+        # crashes stay down, one-shot present or not
+        ([c("exited", exit_code=1)], [], "down"),
+        ([c("exited", exit_code=1), c("exited", name="fetch", exit_code=0)], [], "down"),
+        (
+            [c("exited", exit_code=0, policy="always"), c("exited", name="c2", exit_code=1)],
+            [],
+            "down",
+        ),
     ],
 )
 def test_service_health_is_the_worst_of_containers_and_urls(containers, urls, expected):
@@ -69,6 +106,9 @@ def test_service_health_is_the_worst_of_containers_and_urls(containers, urls, ex
         (True, T0, ["ok", "degraded"], "degraded"),
         (True, T0, ["degraded", "down", "ok"], "down"),
         (True, T0, ["unknown"], "unknown"),
+        (True, T0, ["stopped"], "ok"),
+        (True, T0, ["stopped", "ok"], "ok"),
+        (True, T0, ["stopped", "degraded"], "degraded"),
     ],
 )
 def test_host_health(reachable, last_seen, services, expected):
@@ -168,6 +208,7 @@ def test_services_shape(stocked):
                 "state": "running",
                 "health": "healthy",
                 "restart_count": 0,
+                "exit_code": None,
                 "protected": False,
             },
             {
@@ -177,6 +218,7 @@ def test_services_shape(stocked):
                 "state": "restarting",
                 "health": "none",
                 "restart_count": 7,
+                "exit_code": None,
                 "protected": True,
             },
         ],
@@ -245,8 +287,8 @@ def test_openapi_exposes_the_view_types(stocked):
     assert {"HostView", "ServiceView", "ContainerView", "UrlStatus"} <= set(schemas)
 
 
-def test_services_follow_the_engine_after_a_refresh_tick(settings, parts, monkeypatch):
-    monkeypatch.setattr("bleep.main.REFRESH_INTERVAL_S", 0.02)
+def test_services_follow_the_engine_after_a_watcher_tick(settings, parts):
+    settings.watch_interval_s = 0.02
     engine = FakeEngine("a", [c(name="web")])
 
     async def connect(host):

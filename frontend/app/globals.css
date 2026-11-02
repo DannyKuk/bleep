@@ -22,6 +22,7 @@
   --color-health-ok: var(--health-ok);
   --color-health-degraded: var(--health-degraded);
   --color-health-down: var(--health-down);
+  --color-health-stopped: var(--health-stopped);
   --color-health-unknown: var(--health-unknown);
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
@@ -46,6 +47,7 @@
   --health-ok: oklch(0.45 0.13 150);
   --health-degraded: oklch(0.48 0.12 70);
   --health-down: oklch(0.5 0.2 27);
+  --health-stopped: oklch(0.45 0.02 250);
   --health-unknown: oklch(0.45 0 0);
 }
 
@@ -66,6 +68,7 @@
   --health-ok: oklch(0.78 0.16 150);
   --health-degraded: oklch(0.82 0.15 80);
   --health-down: oklch(0.72 0.19 25);
+  --health-stopped: oklch(0.72 0.02 250);
   --health-unknown: oklch(0.72 0 0);
 }
 

@@ -31,6 +31,7 @@ log = logging.getLogger(__name__)
 KEEPALIVE_INTERVAL_S = 15
 KEEPALIVE_COUNT_MAX = 3  # a silent drop is noticed after about 45 s
 CONNECT_TIMEOUT_S = 15
+CONNECT_GRACE_S = 5  # the outer bound on a connect sits this far above asyncssh's own
 OUTPUT_CAP = 1_000_000  # bytes kept of each of stdout and stderr
 READ_CHUNK = 65_536
 CLOSE_WAIT_S = 2
@@ -249,31 +250,35 @@ class SshSession:
                 self.host.id, "no known_hosts_file set and no ~/.ssh/known_hosts to check against"
             )
         try:
-            conn = await self._connect(
-                # OpenSSH lowercases the name before the known_hosts lookup; asyncssh does not,
-                # so "MacBook-Pro-M1.local" would miss the "macbook-pro-m1.local" entry.
-                (self.host.address or "").lower(),
-                port=self.host.port,
-                username=self.host.user,
-                client_keys=[str(self.host.key_file)],
-                # [] rather than asyncssh's default (), which loads ~/.ssh/config: only
-                # hosts.yaml decides where and how Bleep connects. No agent either.
-                config=[],
-                agent_path=None,
-                **options,
-                keepalive_interval=KEEPALIVE_INTERVAL_S,
-                keepalive_count_max=KEEPALIVE_COUNT_MAX,
-                connect_timeout=CONNECT_TIMEOUT_S,
-            )
-        except (asyncssh.Error, OSError) as exc:
+            # asyncssh's own connect_timeout does not cover every stage of a handshake with a host
+            # that vanished without a FIN, so an outer bound makes sure open() always returns.
+            async with asyncio.timeout(CONNECT_TIMEOUT_S + CONNECT_GRACE_S):
+                conn = await self._connect(
+                    # OpenSSH lowercases the name before the known_hosts lookup; asyncssh does not,
+                    # so "MacBook-Pro-M1.local" would miss the "macbook-pro-m1.local" entry.
+                    (self.host.address or "").lower(),
+                    port=self.host.port,
+                    username=self.host.user,
+                    client_keys=[str(self.host.key_file)],
+                    # [] rather than asyncssh's default (), which loads ~/.ssh/config: only
+                    # hosts.yaml decides where and how Bleep connects. No agent either.
+                    config=[],
+                    agent_path=None,
+                    **options,
+                    keepalive_interval=KEEPALIVE_INTERVAL_S,
+                    keepalive_count_max=KEEPALIVE_COUNT_MAX,
+                    connect_timeout=CONNECT_TIMEOUT_S,
+                )
+        except (asyncssh.Error, OSError, TimeoutError) as exc:
             raise SshUnavailable(self.host.id, exc) from exc
         directory = Path(tempfile.mkdtemp(prefix=FORWARD_DIR_PREFIX))
         directory.chmod(0o700)
         _LIVE_DIRS.add(directory)
         socket = directory / "docker.sock"
         try:
-            listener = await conn.forward_local_path(str(socket), self.host.docker_socket)
-        except (asyncssh.Error, OSError) as exc:
+            async with asyncio.timeout(CONNECT_TIMEOUT_S):
+                listener = await conn.forward_local_path(str(socket), self.host.docker_socket)
+        except (asyncssh.Error, OSError, TimeoutError) as exc:
             conn.close()
             _LIVE_DIRS.discard(directory)
             shutil.rmtree(directory, ignore_errors=True)

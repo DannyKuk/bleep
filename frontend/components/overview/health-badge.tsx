@@ -1,4 +1,11 @@
-import { AlertTriangle, CheckCircle2, HelpCircle, XCircle, type LucideIcon } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  HelpCircle,
+  PauseCircle,
+  XCircle,
+  type LucideIcon,
+} from "lucide-react";
 
 import type { Health } from "@/lib/api-types";
 import { cn } from "@/lib/utils";
@@ -13,6 +20,11 @@ const HEALTH: Record<Health, { label: string; icon: LucideIcon; className: strin
     className: "bg-health-degraded/12 text-health-degraded",
   },
   down: { label: "Down", icon: XCircle, className: "bg-health-down/12 text-health-down" },
+  stopped: {
+    label: "Stopped",
+    icon: PauseCircle,
+    className: "bg-health-stopped/12 text-health-stopped",
+  },
   unknown: {
     label: "Unknown",
     icon: HelpCircle,

@@ -106,8 +106,11 @@ to the agent.
 
 A background loop per host:
 
-- Subscribes to Docker events (die, oom, health_status, restart) and polls container
-  state as a fallback.
+- Pulls on a timer instead of holding an event stream open: every 15 s it reconnects if
+  needed, reads Docker events since the last cursor (die, oom, health_status, restart) and
+  lists containers. A dropped connection or a sleeping host is a non-event: the next tick
+  catches up from the cursor. This suits agentless SSH to a few hosts; at hundreds of hosts
+  an agent on each host would be the right shape.
 - Polls host basics over SSH: disk, memory, load.
 - Outside-in HTTP checks of the public URLs: status code, latency, optional body match.
 

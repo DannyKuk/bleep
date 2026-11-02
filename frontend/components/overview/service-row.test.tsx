@@ -50,4 +50,21 @@ describe("ServiceRow", () => {
     render(<ServiceRow service={service()} />);
     expect(screen.queryByRole("link", { name: /incident/i })).toBeNull();
   });
+
+  it("shows a stopped service grey, and its cleanly exited container as stopped, not down", () => {
+    const base = service().containers[0];
+    render(
+      <ServiceRow
+        service={service({
+          health: "stopped",
+          containers: [{ ...base, state: "exited", health: "none", exit_code: 0 }],
+        })}
+      />,
+    );
+    expect(screen.getByText("Stopped").closest("[data-health]")).toHaveAttribute(
+      "data-health",
+      "stopped",
+    );
+    expect(screen.getByText(/exited/).className).toContain("text-health-stopped");
+  });
 });
