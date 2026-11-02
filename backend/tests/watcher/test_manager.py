@@ -172,6 +172,24 @@ async def test_a_host_down_for_five_minutes_opens_one_incident_and_the_urls_atta
     ]
 
 
+async def test_held_url_failures_are_announced_once_per_new_set_of_urls(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    await r.lose_host()
+    for _ in range(25 + 40):  # the host incident opens, then ten more minutes of failing checks
+        await r.pulse()
+    [incident] = await r.incidents()
+    failing = [
+        e.payload["text"]
+        for e in await r.bus.history(incident.id)
+        if e.kind == "notice" and "URL checks failing" in e.payload["text"]
+    ]
+    assert len(failing) == 1  # not one per URL check, which would flood the report
+    assert all(f"https://{p}.example/" in failing[0] for p in PROJECTS)
+    attached = [s for s in await r.repo.signals(incident.id) if s.kind == "url_failed"]
+    assert len(attached) > 3 * 5  # the failures themselves still attach as they come
+
+
 async def test_url_failures_before_the_host_incident_wait_for_it_instead_of_opening_their_own(
     tmp_path,
 ):

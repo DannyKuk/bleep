@@ -85,6 +85,7 @@ class WatcherManager:
         self._http = http or httpx.AsyncClient()
         self._owns_http = http is None
         self._held: dict[str, dict[str, list[Signal]]] = {}  # host -> service id -> URL failures
+        self._announced: dict[str, tuple[str, set[str]]] = {}  # host -> (incident, URLs named)
         self._background: set[asyncio.Task[None]] = set()
         self._tasks: list[asyncio.Task[None]] = []
         self.hosts: dict[str, _HostTasks] = {
@@ -209,9 +210,20 @@ class WatcherManager:
             incident, created = await self.repo.open_or_attach(failures[0].subject, failures)
             if created:  # the host incident closed between the checks: this one is new
                 await self.runner.start(incident)
-        urls = sorted({str(s.detail.get("url")) for failures in held.values() for s in failures})
-        text = f"URL checks failing while the host is unreachable: {', '.join(urls)}."
-        await self.bus.publish(host_incident, "notice", {"text": text})
+        urls = {str(s.detail.get("url")) for failures in held.values() for s in failures}
+        await self._announce_urls(host_id, host_incident, urls)
+
+    async def _announce_urls(self, host_id: str, host_incident: str, urls: set[str]) -> None:
+        """Name failing URLs on the host incident's timeline once, not on every check: the
+        report is built from these events, and a long outage checks each URL every 30 s."""
+        incident, named = self._announced.get(host_id, ("", set()))
+        if incident != host_incident:
+            named = set()
+        new = urls - named
+        self._announced[host_id] = (host_incident, named | urls)
+        if new:
+            text = f"URL checks failing while the host is unreachable: {', '.join(sorted(new))}."
+            await self.bus.publish(host_incident, "notice", {"text": text})
 
     # -- the detector's outcomes ---------------------------------------------------------------
 
