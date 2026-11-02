@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from bleep.schemas.graph import (
     ApprovalGrant,
+    ApprovalRequest,
     Decision,
     Diagnosis,
     GatherContext,
@@ -35,6 +36,7 @@ class IncidentState(TypedDict, total=False):
     diagnosis: Diagnosis | None
     proposal: Proposal | None
     instructions: list[str]
+    approval: ApprovalRequest | None
     decision: Decision | None
     grant: ApprovalGrant | None
     execution: list[StepResult]

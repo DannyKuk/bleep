@@ -7,6 +7,7 @@ from bleep.graph.state import checkpoint_serializer, checkpoint_types
 from bleep.schemas.docker import ContainerSummary, DiskUsage, HostBasics
 from bleep.schemas.graph import (
     ApprovalGrant,
+    ApprovalRequest,
     ContainerMemory,
     Decision,
     Diagnosis,
@@ -73,6 +74,7 @@ def full_state() -> dict:
             verification=VerificationPlan(containers=["shop-web-1"], urls=["http://x"]),
         ),
         "instructions": ["redeploy instead"],
+        "approval": ApprovalRequest(id="ap_1", plan_hash="h"),
         "decision": Decision(kind="approve", via="dashboard", at=AT),
         "grant": ApprovalGrant(incident_id="inc_1", plan_hash="h", token="t"),
         "execution": [StepResult(step=step, ok=True)],

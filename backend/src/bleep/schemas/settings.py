@@ -43,6 +43,7 @@ class Budgets(BaseModel):
     verify_loops: int = 2
     incident_tokens: int = 150_000
     daily_cost_usd: float = 1.0
+    approval_reminder_min: int = 60  # a pending approval is re-sent this often, never approved
 
 
 class Thresholds(BaseModel):

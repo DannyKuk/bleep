@@ -5,6 +5,7 @@ import pytest
 
 from bleep.graph.build import build_graph, open_checkpointer
 from bleep.graph.nodes import propose
+from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.runner import IncidentRunner
 from bleep.schemas.graph import Decision, PlanStep, Proposal, VerificationPlan
@@ -214,3 +215,53 @@ async def test_recover_on_boot_closes_a_finished_thread_whose_status_never_settl
         await second.join()
 
     assert (await env.repo.get(incident.id)).status == "closed"
+
+
+@pytest.mark.parametrize("status", ["awaiting_approval", "investigating"])
+async def test_a_decision_recorded_before_a_crash_is_delivered_on_boot(tmp_path, acting, status):
+    """Bleep died after the approval was decided but before the resumed run was checkpointed:
+    the incident is still `awaiting_approval` (died before `resume`) or `investigating` (died
+    inside it), and the thread is still at the interrupt."""
+    env = await graph_env(tmp_path)
+    store = ApprovalStore(env.db, "test-secret")
+    env.deps.approvals = store
+    incident = await env.open(service(env), container="shop-web-1")
+    checkpoints = tmp_path / "checkpoints.sqlite"
+    async with open_checkpointer(checkpoints) as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, store)
+        await runner.start(incident)
+        await runner.join()
+    assert await store.resolve(incident.id, decide("reject")) is not None
+    await env.repo.set_status(incident.id, status)
+
+    async with open_checkpointer(checkpoints) as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, store)
+        assert await runner.recover_on_boot() == [incident.id]
+        await runner.join()
+        state = await values(runner, incident.id)
+
+    assert state["decision"].kind == "reject"
+    assert state["outcome"] == "rejected"
+    assert (await env.repo.get(incident.id)).status == "closed"
+
+
+async def test_recover_on_boot_leaves_an_undecided_approval_waiting(tmp_path, acting):
+    env = await graph_env(tmp_path)
+    store = ApprovalStore(env.db, "test-secret")
+    env.deps.approvals = store
+    incident = await env.open(service(env), container="shop-web-1")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, store)
+        await runner.start(incident)
+        await runner.join()
+        await env.repo.set_status(incident.id, "investigating")  # died before the status settled
+
+        second = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, store)
+        assert await second.recover_on_boot() == [incident.id]
+        await second.join()
+
+    assert (await env.repo.get(incident.id)).status == "awaiting_approval"
+    assert (await store.current(incident.id)).decision is None
+    assert (
+        len([e for e in await env.bus.history(incident.id) if e.kind == "approval_requested"]) == 1
+    )
