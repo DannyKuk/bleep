@@ -260,3 +260,37 @@ async def test_explain_recovery_caps_logs_and_reply():
 async def test_explain_recovery_without_logs_skips_the_model():
     model = FakeChatModel(script=[])
     assert "no logs" in (await explain_recovery(model, "  ")).lower()
+
+
+def test_late_tick_still_sees_a_container_that_was_healthy_in_time():
+    det, clock = make()
+    s = died(clock)
+    det.feed(s)
+    up = box(health="healthy").model_copy(update={"started_at": T0 + timedelta(seconds=20)})
+    assert det.tick(clock.at(62), states(up)) == [Recovered("web-1", [s])]
+
+
+def test_late_tick_with_a_container_started_after_grace_opens():
+    det, clock = make()
+    det.feed(died(clock))
+    up = box(health="healthy").model_copy(update={"started_at": T0 + timedelta(seconds=61)})
+    assert isinstance(det.tick(clock.at(62), states(up))[0], OpenIncident)
+
+
+def test_unhealthy_during_grace_does_not_open_a_second_incident():
+    det, clock = make()
+    det.feed(died(clock))
+    clock.at(15)
+    out = det.feed(sig(SVC, "unhealthy", clock, container="web-1"))
+    assert [type(o) for o in out] == [OpenIncident]
+    assert [x.kind for x in out[0].signals] == ["container_died", "unhealthy"]
+    assert det.tick(clock.at(61), states(box(state="exited"))) == []
+
+
+def test_state_empties_after_the_windows_pass():
+    det, clock = make()
+    det.feed(died(clock))
+    det.feed(sig(HOST, "disk", clock, percent=95))
+    det.tick(clock.at(10), states(box()))
+    det.tick(clock.at(700), states(box()))
+    assert not det._deaths and not det._window_start and not det._pending

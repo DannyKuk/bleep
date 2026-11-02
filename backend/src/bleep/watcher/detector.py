@@ -69,6 +69,20 @@ class Detector:
         self._window_start: dict[str, datetime] = {}  # subject key -> when its incident opened
 
     def feed(self, signal: Signal) -> list[Outcome]:
+        """Take one signal. Contract with the watcher (details in docs/design/watcher.md):
+
+        - `signal.container` must equal `ContainerSummary.name`.
+        - Detail keys: container_died {exit_code, restart_policy}; url_failed {ok, latency_ms,
+          url}; disk {percent}; memory {available_percent}; load {load_per_cpu};
+          host_unreachable {ok}.
+        - URL and host probes are fed on every probe, good or bad, so streaks can reset.
+        - The same subject may yield `OpenIncident` again once the debounce window has passed
+          (a persistent breach, e.g. disk at 95 %). The manager dedupes against the subject's
+          open incident (`IncidentRepo.open_or_attach`), so that is expected and safe. It must
+          also handle `AttachSignals`.
+        - The kind `url_failed` means "a URL check result"; `detail.ok` says whether it passed.
+        - A second death while one is pending keeps the first death's grace window.
+        """
         now = self._clock()
         match signal.kind:
             case "container_died" | "oom":
@@ -90,16 +104,30 @@ class Detector:
             case "host_unreachable":
                 return self._unreachable(signal, now)
             case _:
-                return self._emit(signal.subject, [signal], now)
+                signals = [signal]
+                if (death := self._pending.pop(signal.container or "", None)) is not None:
+                    signals.insert(0, death)  # this incident already covers that death
+                return self._emit(signal.subject, signals, now)
 
     def tick(self, now: datetime, states: dict[str, list[ContainerSummary]]) -> list[Outcome]:
-        """Resolve pending deaths against current container states (keyed by service id)."""
+        """Resolve pending deaths against current container states (keyed by service id).
+
+        A container running with health healthy or none whose `started_at` is within the grace
+        window of the death is recovered whenever it is first seen, even on a late tick. One still
+        `starting` cannot be judged that way, so the manager must tick about every 10 s.
+        """
         by_name: dict[str, ContainerSummary] = {}
         for containers in states.values():
             for c in containers:
                 by_name[c.name] = by_name[c.id] = c
         grace = timedelta(seconds=self.t.container_grace_s)
         out: list[Outcome] = []
+        window = timedelta(seconds=self.t.repeated_window_s)
+        for container in [c for c, d in self._deaths.items() if not d or now - d[-1].at > window]:
+            del self._deaths[container]
+        debounce = timedelta(seconds=self.t.debounce_s)
+        for key in [k for k, at in self._window_start.items() if now - at >= debounce]:
+            del self._window_start[key]
         for container, death in list(self._pending.items()):
             elapsed = now - death.at
             current = by_name.get(container)
@@ -112,7 +140,9 @@ class Detector:
                     "none",
                 )
             )
-            if back and elapsed <= grace:
+            started = current.started_at if current else None
+            in_time = started <= death.at + grace if started else elapsed <= grace
+            if back and in_time:
                 del self._pending[container]
                 out.append(Recovered(container, [death]))
             elif elapsed > grace:
