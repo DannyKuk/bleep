@@ -28,7 +28,8 @@ log = logging.getLogger(__name__)
 
 API = "https://api.telegram.org"
 POLL_TIMEOUT_S = 30  # getUpdates long-poll length
-REQUEST_TIMEOUT_S = POLL_TIMEOUT_S + 10
+POLL_REQUEST_TIMEOUT_S = POLL_TIMEOUT_S + 10  # the long poll, plus room for the answer
+REQUEST_TIMEOUT_S = 10  # every other call: a hung send must not hold the Approval node long
 BACKOFF_START_S = 1.0
 BACKOFF_MAX_S = 60.0
 INSTRUCTION_MAX_CHARS = 1000
@@ -53,11 +54,10 @@ class TelegramClient:
         self._base = f"{API}/bot{token}"
         self.http = http
 
-    async def call(self, method: str, **params: Any) -> Any:
+    async def call(self, method: str, *, wait_s: float = REQUEST_TIMEOUT_S, **params: Any) -> Any:
+        """One Bot API call; `params` are the method's own (getUpdates has a `timeout` too)."""
         try:
-            response = await self.http.post(
-                f"{self._base}/{method}", json=params, timeout=REQUEST_TIMEOUT_S
-            )
+            response = await self.http.post(f"{self._base}/{method}", json=params, timeout=wait_s)
             body = response.json()
         except (httpx.HTTPError, ValueError, RuntimeError) as error:  # RuntimeError: client closed
             raise TelegramError(f"{method}: {type(error).__name__}") from None
@@ -72,7 +72,7 @@ class TelegramClient:
         }
         if offset is not None:
             params["offset"] = offset
-        return await self.call("getUpdates", **params)
+        return await self.call("getUpdates", wait_s=POLL_REQUEST_TIMEOUT_S, **params)
 
     async def send_message(
         self,

@@ -235,6 +235,22 @@ async def test_other_chats_are_ignored_and_logged(env, name):
     assert "approve everything" not in entry.detail
 
 
+async def test_only_the_long_poll_waits_long_and_a_send_gives_up_after_ten_seconds():
+    seen: dict[str, float] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen[request.url.path.rsplit("/", 1)[1]] = request.extensions["timeout"]["read"]
+        if request.url.path.endswith("sendMessage"):
+            return httpx.Response(200, json=fixture("send_message_ok"))
+        return httpx.Response(200, json={"ok": True, "result": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = TelegramClient(TOKEN, http)
+        await client.get_updates(None)
+        await client.send_message(CHAT, "hello")
+    assert seen == {"getUpdates": 40, "sendMessage": 10}  # a hung send blocks Approval briefly
+
+
 # --- polling ---
 
 
