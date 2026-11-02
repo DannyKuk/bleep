@@ -43,7 +43,7 @@ flowchart LR
 | **Runner** | `incidents/runner.py` | Runs each incident's graph in the background, resumes it after a decision or a restart, and keeps the incident's status in step. |
 | **Incident graph** | `graph/` | LangGraph state, nodes and wiring, checkpointed per incident in `checkpoints.sqlite`. |
 | **Read tools** | `tools/` | Docker reads and the host command tool for the model, each scoped to the incident's host. |
-| **Guard** | `guard/` | Redacts secrets, strips control characters, caps size and wraps untrusted text before anything reaches a model. |
+| **Guard** | `guard/` | Redacts secrets, strips control characters, caps size and wraps untrusted text before anything reaches a model; checks every proposed plan before a human sees it. |
 | **Models** | `llm/` | One factory for OpenRouter and local models, structured output with a plain-JSON fallback, and a token and cost ledger with a daily cap. |
 | **Prompts** | `prompts/` | Every prompt is a `.md` file loaded with `prompts.load(name, **vars)`. |
 | **Store** | `store/` | SQLite with numbered migrations. |
@@ -63,7 +63,7 @@ Paths under `backend/src/bleep/` are given from there.
 | 4. Gather | Containers, the last 200 log lines of the affected ones through the guard, host basics, rules and similar past incidents. No model call. | `graph/nodes/gather.py` |
 | 5. Investigate | The model reads with read-only tools, within a budget (placeholder until #17). | `graph/nodes/investigate.py` |
 | 6. Diagnose | Root cause, evidence, confidence; low confidence investigates once more, then goes on marked unsure. | `graph/nodes/diagnose.py` |
-| 7. Propose | One to three allowlisted actions, or no action (placeholder until #19). | `graph/nodes/propose.py` |
+| 7. Propose | One to three allowlisted actions, or no action with exact instructions for the human; checked in code before anyone is asked, and a refused plan goes back to the model once. | `graph/nodes/propose.py`, `guard/plan_check.py` |
 | 8. Approval | The run checkpoints and waits for a yes, a no or an instruction, through a restart if need be. | `graph/nodes/approval.py`, `IncidentRunner.resume` |
 | 9. Report | The outcome is set; `resolved` is only ever claimed after verification. | `graph/nodes/report.py` |
 
@@ -101,6 +101,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 **Guard** ([details](design/guard.md))
 - **All host text is redacted, cleaned, capped at 8,000 characters and wrapped as untrusted data with a random id.**
 - **Env values never reach the model.**
+- **Every plan is checked in code**: allowlisted, enabled actions on the incident's host only, never a protected or Bleep container, at most 3 steps.
 
 **App** ([details](design/app.md))
 - **One admin password and hashed session tokens in an HttpOnly cookie.**
