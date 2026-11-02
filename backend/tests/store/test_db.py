@@ -8,21 +8,27 @@ def tmp_db(tmp_path) -> Database:
     return Database(tmp_path / "data" / "bleep.sqlite")
 
 
-async def version(db: Database) -> int:
+async def applied(db: Database) -> list[int]:
     conn = await db.connect()
     try:
-        async with conn.execute("SELECT MAX(version), COUNT(*) FROM schema_version") as cursor:
-            top, count = await cursor.fetchone()
-        assert count == top
-        return top
+        async with conn.execute("SELECT version FROM schema_version ORDER BY version") as cursor:
+            return [row[0] for row in await cursor.fetchall()]
     finally:
         await conn.close()
+
+
+async def version(db: Database) -> int:
+    """The highest version applied, checking that every one up to it was applied once."""
+    versions = await applied(db)
+    assert versions == list(range(1, len(versions) + 1))
+    return versions[-1]
 
 
 async def test_migrate_is_idempotent(tmp_db):
     await tmp_db.migrate()
     await tmp_db.migrate()
-    assert await version(tmp_db) == len(tmp_db._migration_files())
+    # Numbers can have gaps while tasks land in parallel (0008 before 0005), so compare the sets.
+    assert await applied(tmp_db) == [number for number, _ in tmp_db._migration_files()]
 
 
 async def test_connect_sets_pragmas(tmp_db):

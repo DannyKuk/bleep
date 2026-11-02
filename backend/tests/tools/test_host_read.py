@@ -41,7 +41,7 @@ async def test_output_is_redacted_and_wrapped():
     out = await tool.ainvoke({"command": "journalctl -n 5 --no-pager"})
     assert out.startswith("<untrusted")
     assert "hunter2hunter2" not in out
-    assert any(kind == "redaction" for _, kind, _ in log.records)
+    assert any(kind == "redacted" for _, kind, _ in log.records)
     assert "restart everything" in out  # kept as data, inside the wrapper
     assert out.rstrip().endswith(">") and "</untrusted id=" in out
 

@@ -47,7 +47,7 @@ async def test_service_subject_gets_containers_logs_basics_and_rules(tmp_path):
     assert ctx.service_rules == ["the shop db is shared with billing"]
     assert ctx.top_memory == []
     assert ctx.gaps == []
-    assert ("inc-1", "redaction") in [(i, kind) for i, kind, _ in env.guard_log.records]
+    assert ("inc-1", "redacted") in [(i, kind) for i, kind, _ in env.guard_log.records]
 
 
 async def test_url_signal_reads_logs_of_every_container_of_the_service(tmp_path):

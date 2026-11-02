@@ -142,7 +142,7 @@ async def test_hostile_big_log_end_to_end(env):
 async def test_redactions_are_counted_in_guard_log(env):
     await env.run("container_logs", container="shop-web-1", tail=100)
     kinds = [(i, k) for i, k, _ in env.guard_log.records]
-    assert ("inc-1", "redaction") in kinds
+    assert ("inc-1", "redacted") in kinds
 
 
 async def test_inspect_never_shows_env_values(env):
