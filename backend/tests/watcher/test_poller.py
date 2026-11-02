@@ -7,8 +7,7 @@ from bleep.schemas.docker import ContainerSummary, DockerEvent
 from bleep.schemas.incidents import Signal
 from bleep.schemas.settings import Thresholds
 from bleep.watcher import poller
-from bleep.watcher.detector import Detector, OpenIncident
-from bleep.watcher.feed import Feed
+from bleep.watcher.detector import Detector, OpenIncident, Outcome
 from bleep.watcher.poller import HostWatcher
 from fakes import FakeEngine, socket_host
 
@@ -41,6 +40,26 @@ def ev(action, name, at, **attributes) -> DockerEvent:
         container_name=name,
         attributes={"name": name, **attributes},
     )
+
+
+class Feed:
+    """Feeds the watcher's signals to a detector and ticks it with each snapshot, as the manager."""
+
+    def __init__(self, detector: Detector, clock) -> None:
+        self.detector = detector
+        self._clock = clock
+        self._states: dict[str, dict[str, list[ContainerSummary]]] = {}
+
+    async def sink(self, signal: Signal) -> None:
+        self._record(self.detector.feed(signal))
+
+    async def snapshot(self, host_id, states) -> None:
+        self._states[host_id] = states
+        merged = {sid: cs for host in self._states.values() for sid, cs in host.items()}
+        self._record(self.detector.tick(self._clock(), merged))
+
+    def _record(self, outcomes: list[Outcome]) -> None:
+        pass
 
 
 class Rig:

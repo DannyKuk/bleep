@@ -130,3 +130,28 @@ async def test_badly_named_file_rejected(tmp_path):
     root = make_migrations(tmp_path / "m", {"init.sql": "SELECT 1;"})
     with pytest.raises(MigrationError, match="init.sql"):
         await Database(tmp_path / "db.sqlite", root).migrate()
+
+
+async def test_a_connect_cancelled_midway_leaves_no_connection_running(tmp_db, monkeypatch):
+    import asyncio
+
+    import aiosqlite.core
+
+    opened = []
+    real_init = aiosqlite.core.Connection.__init__
+
+    def tracking_init(self, *args, **kwargs):
+        real_init(self, *args, **kwargs)
+        opened.append(self)
+
+    monkeypatch.setattr(aiosqlite.core.Connection, "__init__", tracking_init)
+    for step in range(20):  # cancel at every stage of the connect
+        task = asyncio.create_task(tmp_db.connect())
+        await asyncio.sleep(step * 0.0002)
+        task.cancel()
+        [result] = await asyncio.gather(task, return_exceptions=True)
+        if not isinstance(result, BaseException):  # too late to cancel: it connected
+            await result.close()
+    await asyncio.sleep(0.05)
+    assert opened
+    assert [c for c in opened if c._thread.is_alive()] == []

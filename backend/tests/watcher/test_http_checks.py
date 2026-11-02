@@ -1,0 +1,202 @@
+import asyncio
+from datetime import UTC, datetime
+
+import httpx
+
+from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
+from bleep.hosts.registry import Registry
+from bleep.store.db import Database
+from bleep.watcher.http_checks import MAX_BODY_BYTES, UrlCheckStore, UrlWatcher, check_url
+from fakes import FakeEngine, socket_host
+from graph_env import box
+
+URL = "https://shop.example/health"
+T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
+
+
+def client(handler) -> httpx.AsyncClient:
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+def ok_handler(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, text="all good")
+
+
+async def test_a_matching_reply_passes():
+    check = await check_url(client(ok_handler), UrlCheckConfig(url=URL))
+    assert (check.ok, check.status, check.error, check.body_matched) == (True, 200, None, None)
+
+
+async def test_a_wrong_status_fails_and_says_which():
+    handler = lambda request: httpx.Response(503)  # noqa: E731
+    check = await check_url(client(handler), UrlCheckConfig(url=URL))
+    assert not check.ok
+    assert check.status == 503
+    assert check.error == "expected status 200, got 503"
+
+
+async def test_a_status_other_than_200_passes_when_expected():
+    handler = lambda request: httpx.Response(401)  # noqa: E731
+    check = await check_url(client(handler), UrlCheckConfig(url=URL, expect_status=401))
+    assert check.ok
+
+
+async def test_a_connection_error_fails_without_raising():
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    check = await check_url(client(refuse), UrlCheckConfig(url=URL))
+    assert not check.ok
+    assert check.status is None
+    assert "ConnectError" in check.error
+
+
+async def test_a_timeout_error_fails():
+    def time_out(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    check = await check_url(client(time_out), UrlCheckConfig(url=URL))
+    assert not check.ok
+    assert check.error == "timed out after 10 s"
+
+
+async def test_a_reply_that_never_completes_is_cut_off_at_the_timeout():
+    async def hang(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(30)
+        return httpx.Response(200)
+
+    check = await check_url(client(hang), UrlCheckConfig(url=URL), timeout_s=0.05)
+    assert not check.ok
+    assert check.error == "no complete reply within 0.05 s"
+
+
+async def test_a_reply_slower_than_the_limit_fails_even_with_the_right_status():
+    ticks = iter([0.0, 5.2])
+    check = await check_url(client(ok_handler), UrlCheckConfig(url=URL), clock=lambda: next(ticks))
+    assert not check.ok
+    assert check.status == 200
+    assert check.latency_ms == 5200
+    assert check.error == "slow: 5200 ms (limit 5000 ms)"
+
+
+async def test_a_reply_at_the_limit_passes():
+    ticks = iter([0.0, 5.0])
+    check = await check_url(client(ok_handler), UrlCheckConfig(url=URL), clock=lambda: next(ticks))
+    assert check.ok
+
+
+async def test_missing_body_text_fails_and_present_text_passes():
+    cfg = UrlCheckConfig(url=URL, body_contains="all good")
+    assert (await check_url(client(ok_handler), cfg)).body_matched is True
+    cfg = UrlCheckConfig(url=URL, body_contains="welcome")
+    check = await check_url(client(ok_handler), cfg)
+    assert not check.ok
+    assert check.body_matched is False
+    assert check.error == "the reply does not contain the expected text"
+
+
+async def test_redirects_are_followed():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(302, headers={"location": "/ready"})
+        return httpx.Response(200, text="ready")
+
+    check = await check_url(client(handler), UrlCheckConfig(url=URL, body_contains="ready"))
+    assert check.ok
+
+
+async def test_at_most_64_kb_of_the_body_is_read():
+    sent = 0
+
+    async def body():
+        nonlocal sent
+        for _ in range(100):  # 100 x 8 KB on offer; the check must stop early
+            sent += 8192
+            yield b"x" * 8192
+
+    handler = lambda request: httpx.Response(200, content=body())  # noqa: E731
+    check = await check_url(client(handler), UrlCheckConfig(url=URL, body_contains="needle"))
+    assert not check.ok  # the needle is nowhere in what was read
+    assert MAX_BODY_BYTES <= sent <= MAX_BODY_BYTES + 8192
+
+
+async def test_text_after_the_first_64_kb_is_not_seen():
+    text = "x" * MAX_BODY_BYTES + "needle"
+    handler = lambda request: httpx.Response(200, text=text)  # noqa: E731
+    check = await check_url(client(handler), UrlCheckConfig(url=URL, body_contains="needle"))
+    assert check.body_matched is False
+
+
+async def test_the_body_is_not_read_when_no_text_is_asked_for():
+    async def body():
+        raise AssertionError("the body must not be read")
+        yield b""
+
+    handler = lambda request: httpx.Response(200, content=body())  # noqa: E731
+    assert (await check_url(client(handler), UrlCheckConfig(url=URL))).ok
+
+
+async def test_a_binary_body_does_not_break_the_match():
+    handler = lambda request: httpx.Response(200, content=b"\xff\xfe ok \x00")  # noqa: E731
+    check = await check_url(client(handler), UrlCheckConfig(url=URL, body_contains="ok"))
+    assert check.ok
+
+
+async def test_the_watcher_checks_every_configured_url_and_feeds_each_result(tmp_path):
+    urls = [UrlCheckConfig(url="https://a.example/"), UrlCheckConfig(url="https://b.example/")]
+    host = socket_host(id="h", services={"compose:shop": ServiceOverrides(urls=urls)})
+    engine = FakeEngine("h", [box("shop-web-1", "shop")])
+
+    async def connect(_host):
+        return None, engine
+
+    registry = Registry([host], connect)
+    await registry.start()
+    db = Database(tmp_path / "bleep.sqlite")
+    await db.migrate()
+    store = UrlCheckStore(db)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200 if request.url.host == "a.example" else 500)
+
+    signals = []
+
+    async def sink(signal):
+        signals.append(signal)
+
+    watcher = UrlWatcher("h", registry, client(handler), sink, lambda: T0, store)
+    await watcher.tick()
+    by_url = {s.detail["url"]: s for s in signals}
+    assert by_url["https://a.example/"].detail["ok"] is True
+    assert by_url["https://b.example/"].detail["ok"] is False
+    assert {s.kind for s in signals} == {"url_failed"}  # the kind carries every result
+    assert {s.subject.service_id for s in signals} == {"h/compose:shop"}
+    latest = await store.latest("h")
+    assert [(c.url, c.ok, c.status) for _, c, _ in latest] == [
+        ("https://a.example/", True, 200),
+        ("https://b.example/", False, 500),
+    ]
+    await watcher.tick()  # a second tick replaces the row instead of adding one
+    assert len(await store.latest("h")) == 2
+
+
+async def test_a_failing_sink_does_not_drop_the_other_urls(tmp_path):
+    urls = [UrlCheckConfig(url="https://a.example/"), UrlCheckConfig(url="https://b.example/")]
+    host = socket_host(id="h", services={"compose:shop": ServiceOverrides(urls=urls)})
+    engine = FakeEngine("h", [box("shop-web-1", "shop")])
+
+    async def connect(_host):
+        return None, engine
+
+    registry = Registry([host], connect)
+    await registry.start()
+    seen = []
+
+    async def sink(signal):
+        seen.append(signal.detail["url"])
+        raise RuntimeError("boom")
+
+    watcher = UrlWatcher("h", registry, client(ok_handler), sink, lambda: T0)
+    checks = await watcher.tick()
+    assert len(checks) == 2
+    assert sorted(seen) == ["https://a.example/", "https://b.example/"]

@@ -1,5 +1,7 @@
 """SQLite access and numbered migrations."""
 
+import asyncio
+import contextlib
 import re
 from datetime import UTC, datetime
 from importlib import resources
@@ -16,18 +18,34 @@ class MigrationError(Exception):
     """A migration file is badly named, duplicated or fails to apply."""
 
 
+async def _close_when_open(opening: asyncio.Future[aiosqlite.Connection]) -> None:
+    with contextlib.suppress(Exception):  # if the connect itself failed there is nothing to close
+        await (await opening).close()
+
+
 class Database:
     def __init__(self, path: Path, migrations: Traversable | Path | None = None) -> None:
         self.path = path
         self.migrations = migrations if migrations is not None else PACKAGED_MIGRATIONS
 
     async def connect(self) -> aiosqlite.Connection:
+        """Open a connection. If the caller is cancelled midway, the connection is closed, not
+        left running on its own thread: the watcher is cancelled while it writes on shutdown."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        conn = await aiosqlite.connect(self.path)
-        conn.row_factory = aiosqlite.Row
-        await conn.execute("PRAGMA foreign_keys=ON")
-        await conn.execute("PRAGMA journal_mode=WAL")
-        await conn.execute("PRAGMA busy_timeout=5000")
+        opening = asyncio.ensure_future(aiosqlite.connect(self.path))
+        try:
+            conn = await asyncio.shield(opening)
+        except asyncio.CancelledError:
+            await _close_when_open(opening)
+            raise
+        try:
+            conn.row_factory = aiosqlite.Row
+            await conn.execute("PRAGMA foreign_keys=ON")
+            await conn.execute("PRAGMA journal_mode=WAL")
+            await conn.execute("PRAGMA busy_timeout=5000")
+        except BaseException:
+            await conn.close()
+            raise
         return conn
 
     def _migration_files(self) -> list[tuple[int, Traversable | Path]]:
