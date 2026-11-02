@@ -16,7 +16,10 @@ log = logging.getLogger(__name__)
 
 # USD per million tokens (input, output). OpenRouter reports the real cost of each call, so
 # this table is only the fallback; local models are free. Unknown cloud models cost None.
-PRICES: dict[str, tuple[float, float]] = {"openai/gpt-oss-20b": (0.0, 0.0)}
+PRICES: dict[str, tuple[float, float]] = {
+    "openai/gpt-6-luna": (0.10, 0.50),  # measured on OpenRouter, see molecula chat-model notes
+    "openai/gpt-oss-20b": (0.0, 0.0),
+}
 _warned: set[str] = set()
 
 
@@ -110,6 +113,9 @@ def _cost(model: str, metadata: dict[str, Any], tokens_in: int, tokens_out: int)
 
 class UsageTracker(AsyncCallbackHandler):
     """Pass in `config={"callbacks": [tracker]}`; records each model call to the ledger."""
+
+    # LangChain swallows callback errors by default; a failed write must not let spending go dark.
+    raise_error = True
 
     def __init__(self, incident_id: str, ledger: CostLedger) -> None:
         self.incident_id = incident_id

@@ -102,3 +102,22 @@ async def test_check_budget_incident_tokens(ledger):
 async def test_check_budget_passes_under_limits(ledger):
     await ledger.add("i", "m", 10, 10, 0.5)
     await check_budget(ledger, "i", Budgets())
+
+
+async def test_default_cloud_model_has_a_fallback_price(ledger):
+    model = FakeChatModel(
+        script=[reply(model_name="openai/gpt-6-luna", tin=1_000_000, tout=1_000_000)]
+    )
+    await model.ainvoke([HumanMessage("a")], config={"callbacks": [UsageTracker("i", ledger)]})
+    assert (await ledger.incident_total("i")).usd == pytest.approx(0.60)
+
+
+async def test_ledger_failure_surfaces_instead_of_failing_open(ledger):
+    class Broken(CostLedger):
+        async def add(self, *args, **kwargs):
+            raise RuntimeError("disk full")
+
+    broken = Broken(ledger.db)
+    model = FakeChatModel(script=[reply()])
+    with pytest.raises(RuntimeError, match="disk full"):
+        await model.ainvoke([HumanMessage("a")], config={"callbacks": [UsageTracker("i", broken)]})

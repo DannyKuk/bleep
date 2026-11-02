@@ -7,6 +7,8 @@ from typing import Any
 import openai
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig
+from openrouter import errors as openrouter_errors
 from pydantic import BaseModel, ValidationError
 
 from bleep import prompts
@@ -43,13 +45,31 @@ def parse_reply[T: BaseModel](schema: type[T], text: str) -> T:
     raise ValueError("no JSON object found in the reply")
 
 
+# A provider refusing tools or response_format. ChatOpenRouter does not wrap errors: it raises the
+# openrouter SDK's own (400, 404 "no endpoint supports tools", 422); ChatOpenAI raises openai's.
+# Auth, rate-limit and connection errors are deliberately absent so they propagate.
+TOOLS_REJECTED = (
+    NotImplementedError,
+    ValueError,  # parse and validation errors
+    openai.BadRequestError,
+    openai.NotFoundError,
+    openai.UnprocessableEntityError,
+    openrouter_errors.BadRequestResponseError,
+    openrouter_errors.NotFoundResponseError,
+    openrouter_errors.UnprocessableEntityResponseError,
+)
+
+
 async def _via_tools[T: BaseModel](
-    model: BaseChatModel, schema: type[T], messages: list[BaseMessage]
+    model: BaseChatModel,
+    schema: type[T],
+    messages: list[BaseMessage],
+    config: RunnableConfig | None,
 ) -> T | None:
     try:
-        result = await model.with_structured_output(schema).ainvoke(messages)
-    except NotImplementedError, ValueError, openai.BadRequestError:
-        return None  # ValueError covers parse and validation errors
+        result = await model.with_structured_output(schema).ainvoke(messages, config=config)
+    except TOOLS_REJECTED:
+        return None
     if isinstance(result, schema):
         return result
     if isinstance(result, dict):
@@ -61,15 +81,19 @@ async def _via_tools[T: BaseModel](
 
 
 async def invoke_structured[T: BaseModel](
-    model: BaseChatModel, schema: type[T], messages: list[BaseMessage], retries: int = 1
+    model: BaseChatModel,
+    schema: type[T],
+    messages: list[BaseMessage],
+    retries: int = 1,
+    config: RunnableConfig | None = None,
 ) -> T:
-    if (result := await _via_tools(model, schema, messages)) is not None:
+    if (result := await _via_tools(model, schema, messages, config)) is not None:
         return result
     ask = prompts.load("llm/json_fallback", schema=json.dumps(schema.model_json_schema()))
     conversation = [*messages, HumanMessage(ask)]
     raw = ""
     for _ in range(retries + 1):
-        reply = await model.ainvoke(conversation)
+        reply = await model.ainvoke(conversation, config=config)
         raw = reply.text
         try:
             return parse_reply(schema, raw)

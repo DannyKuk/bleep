@@ -1,8 +1,13 @@
+import httpx
+import openai
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.runnables import RunnableLambda
 from pydantic import BaseModel
 
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
+from bleep.llm.usage import CostLedger, UsageTracker
+from bleep.store.db import Database
 from fakes import FakeChatModel
 
 
@@ -60,3 +65,66 @@ async def test_garbage_raises_after_the_retry_with_truncated_text():
         await invoke_structured(model, Verdict, ASK)
     assert model.cursor == 2
     assert 0 < len(caught.value.raw) <= 500
+
+
+class RejectingTools(FakeChatModel):
+    error: Exception
+
+    def with_structured_output(self, schema, **kwargs):
+        def boom(_):
+            raise self.error
+
+        return RunnableLambda(boom)
+
+
+def _status_error(cls, status):
+    request = httpx.Request("POST", "http://local/v1/chat/completions")
+    return cls("nope", response=httpx.Response(status, request=request), body=None)
+
+
+@pytest.mark.parametrize(
+    ("cls", "status"),
+    [
+        (openai.BadRequestError, 400),
+        (openai.NotFoundError, 404),
+        (openai.UnprocessableEntityError, 422),
+    ],
+)
+async def test_provider_rejecting_tools_falls_back_to_json(cls, status):
+    model = RejectingTools(script=[AIMessage(FENCED)], error=_status_error(cls, status))
+    assert (await invoke_structured(model, Verdict, ASK)).cause == "oom"
+
+
+@pytest.mark.parametrize(
+    ("cls", "status"), [(openai.AuthenticationError, 401), (openai.RateLimitError, 429)]
+)
+async def test_auth_and_rate_limit_errors_propagate(cls, status):
+    model = RejectingTools(script=[AIMessage(FENCED)], error=_status_error(cls, status))
+    with pytest.raises(cls):
+        await invoke_structured(model, Verdict, ASK)
+    assert model.cursor == 0
+
+
+async def test_connection_error_propagates():
+    request = httpx.Request("POST", "http://local/v1")
+    model = RejectingTools(script=[], error=openai.APIConnectionError(request=request))
+    with pytest.raises(openai.APIConnectionError):
+        await invoke_structured(model, Verdict, ASK)
+
+
+async def test_all_three_calls_carry_the_tracker(tmp_path):
+    db = Database(tmp_path / "b.db")
+    await db.migrate()
+    ledger = CostLedger(db)
+    usage = {"input_tokens": 10, "output_tokens": 1, "total_tokens": 11}
+    model = FakeChatModel(
+        script=[
+            AIMessage("no tool call", usage_metadata=usage),  # tool path: text, not a tool call
+            AIMessage('{"cause": "oom"}', usage_metadata=usage),  # fallback: invalid
+            AIMessage(FENCED, usage_metadata=usage),  # retry: valid
+        ]
+    )
+    config = {"callbacks": [UsageTracker("inc", ledger)]}
+    await invoke_structured(model, Verdict, ASK, config=config)
+    assert model.cursor == 3
+    assert (await ledger.incident_total("inc")).tokens == 33
