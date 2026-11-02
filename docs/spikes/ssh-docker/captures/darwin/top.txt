@@ -1,0 +1,27 @@
+Processes: 794 total, 2 running, 792 sleeping, 2956 threads 
+2026/11/02 17:14:37
+Load Avg: 1.15, 1.80, 3.61 
+CPU usage: 1.39% user, 11.88% sys, 86.71% idle 
+SharedLibs: 1323M resident, 241M data, 496M linkedit.
+MemRegions: 139098 total, 2969M resident, 587M private, 2129M shared.
+PhysMem: 14G used (1328M wired, 725M compressor), 1611M unused.
+VM: 364T vsize, 57G framework vsize, 0(0) swapins, 0(0) swapouts.
+Networks: packets: 2449000/3044M in, 300899/81M out.
+Disks: 937958/42G read, 4379007/127G written.
+
+PID   COMMAND          %CPU TIME     #TH #WQ #PORTS MEM   PURG CMPRS PGRP PPID STATE    BOOSTS   %CPU_ME %CPU_OTHRS UID FAULTS COW  MSGSENT MSGRECV SYSBSD SYSMACH CSW    PAGEINS IDLEW POWER INSTRS CYCLES JETPRI USER       #MREGS RPRVT VPRVT VSIZE KPRVT KSHRD
+9624  top              0.0  00:00.18 1/1 0   16     4080K 0B   0B    9624 9618 running  *0[1]    0.00000 0.00000    0   1592   145  327084  163533  4408   169121  16     4       0     0.0   0      0      180    root       N/A    N/A   N/A   N/A   N/A   N/A  
+9618  sshd-session     0.0  00:00.00 1   0   15     2704K 0B   0B    9615 9615 sleeping *0[1]    0.00000 0.00000    501 653    413  61      18      449    47      35     0       0     0.0   0      0      180    dannykukic N/A    N/A   N/A   N/A   N/A   N/A  
+9615  sshd-session     0.0  00:00.09 3   2   33     3969K 0B   0B    9615 1    sleeping *0[1]    0.00000 0.00000    0   2467   232  277     107     1637   844     101    4       0     0.0   0      0      180    root       N/A    N/A   N/A   N/A   N/A   N/A  
+9560  spindump_agent   0.0  00:00.03 2   1   37     1760K 0B   0B    9560 1    sleeping *0[2]    0.00000 0.00000    501 394    59   174     65      433    331     59     3       0     0.0   0      0      0      dannykukic N/A    N/A   N/A   N/A   N/A   N/A  
+9233  Docker Desktop H 0.0  00:06.80 15  1   165    87M   0B   0B    9108 9138 sleeping *0[2920] 0.00000 0.00000    501 24830  130  24881   13148   43723  52316   25008  524     45    0.0   0      0      180    dannykukic N/A    N/A   N/A   N/A   N/A   N/A  
+9217  docker-agent     0.0  00:00.17 14  1   43     38M   0B   0B    9108 9108 sleeping *0[1]    0.00000 0.00000    501 5827   1016 82      29      4933   260     1789   2       1     0.0   0      0      180    dannykukic N/A    N/A   N/A   N/A   N/A   N/A  
+9173  SetStoreUpdateSe 0.0  00:00.03 2   1   34     2240K 0B   0B    9173 1    sleeping *0[10]   0.00000 0.00000    501 820    69   207     88      874    395     133    2       0     0.0   0      0      0      dannykukic N/A    N/A   N/A   N/A   N/A   N/A  
+9172  MTLCompilerServi 0.0  00:05.90 2   1   50     37M   0B   0B    9172 1    sleeping *0[133]  0.00000 0.00000    501 28826  252  807     533     41611  1211    5496   453     0     0.0   0      0      0      dannykukic N/A    N/A   N/A   N/A   N/A   N/A  
+9160  Docker Desktop H 0.0  00:00.21 12  1   91     6993K 0B   0B    9108 9138 sleeping *0[35]   0.00000 0.00000    501 3791   94   2056    1055    3676   2460    1595   394     11    0.0   0      0      180    dannykukic N/A    N/A   N/A   N/A   N/A   N/A  
+9158  Docker Desktop H 0.0  00:02.70 17  2   184    55M   28M  0B    9108 9138 sleeping *1[1829] 0.00000 0.00000    501 48481  120  27720   12191   33003  96421   25387  606     95    0.0   0      0      180    dannykukic N/A    N/A   N/A   N/A   N/A   N/A  
+9139  com.docker.build 0.0  00:00.12 16  1   42     17M   0B   1296K 9108 9108 sleeping *0[1]    0.00000 0.00000    501 3333   345  81      26      5119   269     3387   1348    19    0.0   0      0      180    dannykukic N/A    N/A   N/A   N/A   N/A   N/A  
+9138  Docker Desktop   0.0  00:04.54 46  1   494    77M   16K  1616K 9108 9108 sleeping *0[252]  0.00000 0.00000    501 33981  405  42093   14498   65110  177747  39135  4509    127   0.0   0      0      180    dannykukic N/A    N/A   N/A   N/A   N/A   N/A  
+9108  com.docker.backe 0.0  00:00.38 12  0   33     29M   0B   3456K 9108 9101 sleeping *0[1]    0.00000 0.00000    501 9526   857  99      44      4973   289     1834   1077    0     0.0   0      0      180    dannykukic N/A    N/A   N/A   N/A   N/A   N/A  
+9107  com.docker.backe 0.0  00:09.01 34  1   232    90M   0B   3136K 9107 9101 sleeping *0[16]   0.00000 0.00000    501 55679  9359 1173    310     436472 2420    189699 1155    824   0.0   0      0      180    dannykukic N/A    N/A   N/A   N/A   N/A   N/A  
+9104  SetStoreUpdateSe 0.0  00:00.03 2   1   34     2688K 0B   1952K 9104 1    sleeping *0[3]    0.00000 0.00000    501 834    69   171     67      684    325     94     30      0     0.0   0      0      0      dannykukic N/A    N/A   N/A   N/A   N/A   N/A  
