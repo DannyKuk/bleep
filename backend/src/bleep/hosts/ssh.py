@@ -11,9 +11,12 @@ Reconnecting is not done here on its own: the watcher calls `ensure_open()` and 
 import asyncio
 import contextlib
 import logging
+import os
 import shlex
 import shutil
+import socket
 import tempfile
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -28,7 +31,14 @@ log = logging.getLogger(__name__)
 KEEPALIVE_INTERVAL_S = 15
 KEEPALIVE_COUNT_MAX = 3  # a silent drop is noticed after about 45 s
 CONNECT_TIMEOUT_S = 15
-OUTPUT_CAP = 1_000_000  # characters kept of each of stdout and stderr
+OUTPUT_CAP = 1_000_000  # bytes kept of each of stdout and stderr
+READ_CHUNK = 65_536
+CLOSE_WAIT_S = 2
+FORWARD_DIR_PREFIX = "bleep-ssh-"
+STALE_AFTER_S = 60  # younger forward dirs may belong to a session that is still opening
+
+# Forward dirs of this process's open sessions; the sweep never touches them.
+_LIVE_DIRS: set[Path] = set()
 
 Connect = Callable[..., Awaitable[Any]]
 
@@ -53,11 +63,55 @@ class CommandResult(BaseModel):
     stderr: str
 
 
-def _cap(text: str | None) -> str:
-    text = text or ""
-    if len(text) <= OUTPUT_CAP:
-        return text
-    return text[:OUTPUT_CAP] + f"\n[output cut at {OUTPUT_CAP} characters]"
+def _text(data: bytearray, cut: bool) -> str:
+    text = bytes(data[:OUTPUT_CAP]).decode("utf-8", errors="replace")
+    return text + f"\n[output cut at {OUTPUT_CAP} bytes]" if cut else text
+
+
+async def _drain(reader: Any, sink: bytearray) -> bool:
+    """Read until EOF into `sink`; True as soon as it holds more than OUTPUT_CAP bytes."""
+    while chunk := await reader.read(READ_CHUNK):
+        sink += chunk
+        if len(sink) > OUTPUT_CAP:
+            return True
+    return False
+
+
+def _listening(path: Path) -> bool:
+    probe = socket.socket(socket.AF_UNIX)
+    probe.settimeout(0.5)
+    try:
+        probe.connect(str(path))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
+def sweep_stale_forward_dirs() -> None:
+    """Remove forward dirs that a crashed Bleep left in the temp dir.
+
+    Only this user's `bleep-ssh-*` dirs older than STALE_AFTER_S whose socket nobody listens
+    on, and never one of this process's open sessions.
+    """
+    root = Path(tempfile.gettempdir())
+    for directory in root.glob(f"{FORWARD_DIR_PREFIX}*"):
+        try:
+            info = directory.lstat()
+        except OSError:
+            continue
+        if (
+            not directory.is_dir()
+            or directory.is_symlink()
+            or info.st_uid != os.getuid()
+            or time.time() - info.st_mtime < STALE_AFTER_S
+            or directory in _LIVE_DIRS
+            or _listening(directory / "docker.sock")
+        ):
+            continue
+        shutil.rmtree(directory, ignore_errors=True)
+        log.info("removed stale ssh forward dir %s", directory)
 
 
 class SshSession:
@@ -97,7 +151,11 @@ class SshSession:
         return self._socket
 
     async def open(self) -> None:
-        """Connect and forward the Docker socket; a no-op while already connected."""
+        """Connect and forward the Docker socket; a no-op while already connected.
+
+        Also clears forward dirs a crashed run left behind.
+        """
+        await asyncio.to_thread(sweep_stale_forward_dirs)
         async with self._lock:
             self._stopped = False
             if not self.connected:
@@ -122,8 +180,10 @@ class SshSession:
     async def run(self, argv: list[str], timeout: float = 20.0) -> CommandResult:
         """Run one command given as an argv list; every argument is quoted with `shlex.join`.
 
-        A raw command string is refused. Raises `TimeoutError` after `timeout` seconds and
-        `SshUnavailable` when the connection is gone.
+        A raw command string is refused. stdout and stderr are read as bytes, at most
+        OUTPUT_CAP each. On the timeout or the cap the remote process is terminated and its
+        channel closed, so a hung command never holds one of the server's sessions. Raises
+        `TimeoutError` after `timeout` seconds and `SshUnavailable` when the connection is gone.
         """
         if not isinstance(argv, list) or not argv or not all(isinstance(arg, str) for arg in argv):
             raise TypeError("run takes a non-empty list of strings, never a command string")
@@ -131,26 +191,62 @@ class SshSession:
         if conn is None or conn.is_closed():
             raise SshUnavailable(self.host.id, "not connected")
         try:
+            process = await conn.create_process(shlex.join(argv), encoding=None)
+        except (asyncssh.Error, OSError) as exc:
+            raise SshUnavailable(self.host.id, exc) from exc
+        out, err = bytearray(), bytearray()
+        finished = False
+        cut = False
+        readers = [
+            asyncio.ensure_future(_drain(process.stdout, out)),
+            asyncio.ensure_future(_drain(process.stderr, err)),
+        ]
+        try:
             async with asyncio.timeout(timeout):
-                done = await conn.run(
-                    shlex.join(argv), check=False, encoding="utf-8", errors="replace"
-                )
+                process.stdin.write_eof()
+                for reader in asyncio.as_completed(readers):
+                    if await reader:
+                        cut = True
+                        break
+                else:
+                    await process.wait_closed()
+                    finished = True
         except TimeoutError:
             raise TimeoutError(
                 f"{argv[0]} on {self.host.id} took longer than {timeout} s"
             ) from None
         except (asyncssh.Error, OSError) as exc:
             raise SshUnavailable(self.host.id, exc) from exc
+        finally:
+            for reader in readers:
+                reader.cancel()
+            await asyncio.gather(*readers, return_exceptions=True)
+            await self._end(process, terminate=not finished)
         return CommandResult(
-            exit_code=done.exit_status, stdout=_cap(done.stdout), stderr=_cap(done.stderr)
+            exit_code=None if cut else process.exit_status,
+            stdout=_text(out, cut),
+            stderr=_text(err, cut),
         )
+
+    async def _end(self, process: Any, terminate: bool) -> None:
+        if terminate:
+            with contextlib.suppress(OSError, asyncssh.Error):  # the channel is already gone
+                process.terminate()
+        process.close()
+        with contextlib.suppress(TimeoutError, OSError, asyncssh.Error):
+            async with asyncio.timeout(CLOSE_WAIT_S):
+                await process.wait_closed()
 
     async def _rebuild(self) -> None:
         await self._teardown()
-        known_hosts = str(self.host.known_hosts_file) if self.host.known_hosts_file else None
-        if known_hosts is None:
-            log.warning(
-                "host %s has no known_hosts_file: its SSH host key is not checked", self.host.id
+        options: dict[str, Any] = {}
+        if self.host.known_hosts_file is not None:
+            options["known_hosts"] = str(self.host.known_hosts_file)
+        elif not (Path.home() / ".ssh" / "known_hosts").is_file():
+            # Left out, known_hosts makes asyncssh check ~/.ssh/known_hosts; with no file at
+            # all there is nothing to check the host key against, so refuse.
+            raise SshUnavailable(
+                self.host.id, "no known_hosts_file set and no ~/.ssh/known_hosts to check against"
             )
         try:
             conn = await self._connect(
@@ -160,20 +256,26 @@ class SshSession:
                 port=self.host.port,
                 username=self.host.user,
                 client_keys=[str(self.host.key_file)],
-                known_hosts=known_hosts,
+                # [] rather than asyncssh's default (), which loads ~/.ssh/config: only
+                # hosts.yaml decides where and how Bleep connects. No agent either.
+                config=[],
+                agent_path=None,
+                **options,
                 keepalive_interval=KEEPALIVE_INTERVAL_S,
                 keepalive_count_max=KEEPALIVE_COUNT_MAX,
                 connect_timeout=CONNECT_TIMEOUT_S,
             )
         except (asyncssh.Error, OSError) as exc:
             raise SshUnavailable(self.host.id, exc) from exc
-        directory = Path(tempfile.mkdtemp(prefix="bleep-ssh-"))
+        directory = Path(tempfile.mkdtemp(prefix=FORWARD_DIR_PREFIX))
         directory.chmod(0o700)
+        _LIVE_DIRS.add(directory)
         socket = directory / "docker.sock"
         try:
             listener = await conn.forward_local_path(str(socket), self.host.docker_socket)
         except (asyncssh.Error, OSError) as exc:
             conn.close()
+            _LIVE_DIRS.discard(directory)
             shutil.rmtree(directory, ignore_errors=True)
             raise SshUnavailable(self.host.id, exc) from exc
         self._conn, self._listener, self._dir, self._socket = conn, listener, directory, socket
@@ -188,4 +290,5 @@ class SshSession:
             with contextlib.suppress(asyncssh.Error, OSError):  # already gone
                 await conn.wait_closed()
         if directory is not None:
+            _LIVE_DIRS.discard(directory)
             shutil.rmtree(directory, ignore_errors=True)

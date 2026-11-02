@@ -16,6 +16,7 @@ The drop contract (docs/design/hosts.md):
 
 import asyncio
 import contextlib
+import re
 import threading
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
@@ -40,6 +41,11 @@ from bleep.schemas.docker import (
 CALL_TIMEOUT_S = 60  # longer than STOP_TIMEOUT_S, so a slow stop is not read as a drop
 STOP_TIMEOUT_S = 10
 INSPECT_CONCURRENCY = 8
+# Events waiting for a slow consumer. Past this the stream ends as unavailable, so the watcher
+# reconnects and replays with events(since=...) instead of events being dropped.
+EVENT_BACKLOG = 1000
+# Humanized ages that can repeat across two polls while the container restarted in between.
+_YOUNG = re.compile(r"Less than a second|\b\d+ seconds?\b")
 
 # Filtered on the engine: a Coolify host sends about 3.6 exec_* health-check events a second
 # whose action text carries the whole command line (docs/decisions/docker-over-ssh.md).
@@ -106,11 +112,12 @@ class Engine(Protocol):
 
 
 class _Stream:
-    """One open event stream: the SDK's blocking iterator and whether it was asked to stop."""
+    """One open event stream: the SDK's blocking iterator and how it is being ended."""
 
     def __init__(self, raw: Any) -> None:
         self.raw = raw
         self.stopped = False
+        self.backlogged = False
 
     def close(self) -> None:
         # Shuts the response's socket down; does not wait on the network. Already closed is fine.
@@ -142,20 +149,26 @@ class DockerSdkEngine:
         self._client_lock = asyncio.Lock()
         self._streams: set[_Stream] = set()
         self._closed = False
+        self._stop_requests = 0
         # container id -> ((State, Status) of the list row when inspected, the inspect)
         self._inspected: dict[str, tuple[tuple[str, str], dict]] = {}
 
     async def containers(self) -> list[ContainerSummary]:
         """All containers, running or not.
 
-        The sparse list (one request) lacks restart policy and start time, so containers whose
-        list row changed since their last inspect are inspected again; the others reuse it.
-        Docker's Status text ("Up 3 seconds", "Exited (1) 2 minutes ago") changes on every
-        restart, health change and exit.
+        The sparse list (one request) lacks restart policy and start time, so a container is
+        inspected again when its list row's State or Status text changed since its last inspect.
+        The text is humanized ("Up 2 hours"), so rows that can repeat across a restart are always
+        inspected: State `restarting` and ages in seconds. An act or a streamed event for the
+        container drops its cached inspect too.
         """
         rows = await self._call(lambda c: c.api.containers(all=True))
         keys = {row["Id"]: (row.get("State", ""), row.get("Status", "")) for row in rows}
-        stale = [cid for cid, key in keys.items() if self._inspected.get(cid, ((), {}))[0] != key]
+        stale = [
+            cid
+            for cid, key in keys.items()
+            if _young(*key) or self._inspected.get(cid, ((), {}))[0] != key
+        ]
         limit = asyncio.Semaphore(INSPECT_CONCURRENCY)
 
         async def refresh(cid: str) -> None:
@@ -205,37 +218,62 @@ class DockerSdkEngine:
             client.api.ping()
             return found
 
-        return [e for e in map(_event, await self._call(read)) if e is not None]
+        events = [e for e in map(_event, await self._call(read)) if e is not None]
+        for event in events:
+            self._forget_id(event.container_id)
+        return events
 
     async def stream_events(self) -> AsyncIterator[DockerEvent]:
         """Live container events. Raises `EngineUnavailable` on a drop (see the module doc)."""
+        requested = self._stop_requests
         raw = await self._call(lambda c: c.api.events(filters=EVENT_FILTERS, decode=True))
         stream = _Stream(raw)
         self._streams.add(stream)
-        loop = asyncio.get_running_loop()
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
-        # A thread of its own rather than to_thread: it blocks for the life of the stream and
-        # would hold one of the default executor's few workers for days.
-        threading.Thread(
-            target=_pump, args=(raw, loop, queue), name=f"events-{self.host_id}", daemon=True
-        ).start()
+
+        def offer(item: tuple[str, Any]) -> None:
+            """Runs on the loop for each item from the reader thread."""
+            if stream.backlogged:
+                return
+            if item[0] == "event" and queue.qsize() >= EVENT_BACKLOG:
+                stream.backlogged = True
+                stream.close()  # ends the reader thread
+                item = ("backlog", None)
+            queue.put_nowait(item)
+
         try:
+            if self._closed or self._stop_requests != requested:
+                return  # a stop arrived while the stream was being opened
+            # A thread of its own rather than to_thread: it blocks for the life of the stream
+            # and would hold one of the default executor's few workers for days.
+            threading.Thread(
+                target=_pump,
+                args=(raw, asyncio.get_running_loop(), offer),
+                name=f"events-{self.host_id}",
+                daemon=True,
+            ).start()
             while True:
                 kind, item = await queue.get()
                 if kind == "event":
                     if (event := _event(item)) is not None:
+                        self._forget_id(event.container_id)
                         yield event
                     continue
                 if stream.stopped or self._closed or self._stopping():
                     return
-                cause = item if kind == "error" else "event stream ended without a stop"
-                raise EngineUnavailable(self.host_id, cause)
+                causes = {
+                    "error": item,
+                    "end": "event stream ended without a stop",
+                    "backlog": f"event backlog of {EVENT_BACKLOG} unread events",
+                }
+                raise EngineUnavailable(self.host_id, causes[kind])
         finally:
             self._streams.discard(stream)
             stream.close()
 
     async def stop_events(self) -> None:
-        """End every open `stream_events()` normally."""
+        """End every open `stream_events()` normally, also one still being opened."""
+        self._stop_requests += 1
         for stream in list(self._streams):
             stream.stopped = True  # before closing, so the end is not read as a drop
             stream.close()
@@ -244,13 +282,13 @@ class DockerSdkEngine:
         return _info(await self._call(lambda c: c.api.info()))
 
     async def restart(self, container: str) -> None:
-        await self._call(lambda c: c.api.restart(container, timeout=STOP_TIMEOUT_S), container)
+        await self._act(lambda c: c.api.restart(container, timeout=STOP_TIMEOUT_S), container)
 
     async def stop(self, container: str) -> None:
-        await self._call(lambda c: c.api.stop(container, timeout=STOP_TIMEOUT_S), container)
+        await self._act(lambda c: c.api.stop(container, timeout=STOP_TIMEOUT_S), container)
 
     async def start(self, container: str) -> None:
-        await self._call(lambda c: c.api.start(container), container)
+        await self._act(lambda c: c.api.start(container), container)
 
     async def reconnect(self) -> None:
         """Drop the client and build a new one against the current base URL, then ping.
@@ -270,6 +308,22 @@ class DockerSdkEngine:
             old, self._client = self._client, None
         if old is not None:
             await asyncio.to_thread(_close_quietly, old)
+
+    async def _act(self, fn: Callable[[Any], object], container: str) -> None:
+        try:
+            await self._call(fn, container)
+        finally:
+            self._forget(container)  # its start time, exit code and restart count changed
+
+    def _forget(self, container: str) -> None:
+        """Drop the cached inspect of a container given by name, id or id prefix."""
+        for cid, (_, raw) in list(self._inspected.items()):
+            if cid.startswith(container) or raw.get("Name", "").lstrip("/") == container:
+                del self._inspected[cid]
+
+    def _forget_id(self, container_id: str | None) -> None:
+        if container_id is not None:
+            self._inspected.pop(container_id, None)
 
     async def _ensure_client(self) -> Any:
         if self._closed:
@@ -341,12 +395,14 @@ def connect_engine(
     )
 
 
-def _pump(raw: Any, loop: asyncio.AbstractEventLoop, queue: asyncio.Queue) -> None:
+def _pump(
+    raw: Any, loop: asyncio.AbstractEventLoop, offer: Callable[[tuple[str, Any]], None]
+) -> None:
     """Reader thread: hand each event to the loop, then how the stream ended."""
 
     def put(item: tuple[str, Any]) -> bool:
         try:
-            loop.call_soon_threadsafe(queue.put_nowait, item)
+            loop.call_soon_threadsafe(offer, item)
             return True
         except RuntimeError:
             return False  # the loop is closed; nobody is listening any more
@@ -380,6 +436,11 @@ def _time(value: str | None) -> datetime | None:
     if not value or value.startswith("0001-01-01"):
         return None
     return datetime.fromisoformat(value)
+
+
+def _young(state: str, status: str) -> bool:
+    """A row whose text may look the same on the next poll although the container restarted."""
+    return state == "restarting" or _YOUNG.search(status) is not None
 
 
 def _health(state: dict) -> Health:

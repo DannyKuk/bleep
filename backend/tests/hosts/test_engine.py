@@ -1,5 +1,6 @@
 import asyncio
 import queue
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -7,6 +8,7 @@ import docker.errors
 import pytest
 import requests
 
+from bleep.hosts import engine as engine_module
 from bleep.hosts.config import HostConfig
 from bleep.hosts.engine import (
     ContainerNotFound,
@@ -111,6 +113,7 @@ class FakeApi:
         self.log_bytes = b""
         self.stream = FakeEventStream()
         self.past_events: list[dict] = []
+        self.events_gate: threading.Event | None = None  # holds api.events() until set
         self.error: BaseException | None = None
 
     def _maybe_fail(self) -> None:
@@ -163,6 +166,8 @@ class FakeApi:
     def events(self, since=None, until=None, filters=None, decode=None):
         self._maybe_fail()
         self.calls.append(("events", since, until, filters, decode))
+        if self.events_gate is not None:
+            self.events_gate.wait(timeout=5)
         if until is not None:
             return iter(list(self.past_events))
         return self.stream
@@ -349,6 +354,56 @@ async def test_containers_use_the_sparse_list_and_inspect_only_what_changed(api,
     assert third[1].health == "starting"
 
 
+def started(at: str) -> dict:
+    return {"Status": "running", "ExitCode": 0, "StartedAt": at, "Health": {"Status": "healthy"}}
+
+
+async def test_an_act_drops_the_cached_inspect(api, engine):
+    api.rows = [list_row("c1", "a", "running", "Up 2 hours (healthy)")]
+    api.inspects["c1"] = inspect_dict("a", "c1", **started("2026-11-02T08:00:00Z"))
+    assert (await engine.containers())[0].started_at == datetime(2026, 11, 2, 8, tzinfo=UTC)
+
+    # Same list row afterwards, but the restart gave the container a new StartedAt.
+    api.inspects["c1"] = inspect_dict("a", "c1", **started("2026-11-02T10:00:00Z"))
+    await engine.restart("a")
+    assert (await engine.containers())[0].started_at == datetime(2026, 11, 2, 10, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("state", "status"),
+    [
+        ("running", "Up 5 seconds (healthy)"),
+        ("running", "Up 1 second"),
+        ("running", "Up Less than a second"),
+        ("restarting", "Restarting (1) 2 minutes ago"),
+    ],
+)
+async def test_rows_that_may_hide_a_restart_are_always_inspected(api, engine, state, status):
+    # A crash loop can show the same humanized Status on two polls with a new StartedAt.
+    api.rows = [list_row("c1", "a", state, status)]
+    api.inspects["c1"] = inspect_dict("a", "c1", **started("2026-11-02T08:00:00Z"))
+    await engine.containers()
+    api.inspects["c1"] = inspect_dict("a", "c1", **started("2026-11-02T08:00:30Z"))
+    restart_count = api.inspects["c1"]["RestartCount"] = 7
+    (fresh,) = await engine.containers()
+    assert fresh.started_at == datetime(2026, 11, 2, 8, 0, 30, tzinfo=UTC)
+    assert (await engine.inspect("c1")).restart_count == restart_count
+
+
+async def test_a_streamed_event_drops_the_cached_inspect(api, engine):
+    api.rows = [list_row("c1", "a", "running", "Up 2 hours")]
+    api.inspects["c1"] = inspect_dict("a", "c1", **started("2026-11-02T08:00:00Z"))
+    await engine.containers()
+    api.inspect_calls.clear()
+
+    api.stream.push(raw_event("die"))  # actor id c1
+    stream = engine.stream_events()
+    await anext(stream)
+    await engine.containers()
+    assert api.inspect_calls == ["c1"]
+    await stream.aclose()
+
+
 async def test_containers_skip_one_removed_between_list_and_inspect(api, engine):
     api.rows = [list_row("c1", "a"), list_row("gone", "b")]
     api.inspects["c1"] = inspect_dict("a", "c1")
@@ -526,6 +581,42 @@ async def test_stream_events_does_not_block_the_event_loop(api, engine):
     await wait_until(lambda: seen)
     await engine.stop_events()
     await task
+
+
+async def test_a_stop_during_the_initial_events_call_is_not_lost(api, engine):
+    api.events_gate = threading.Event()
+    task = asyncio.create_task(anext(engine.stream_events(), None))
+    await wait_until(lambda: any(c[0] == "events" for c in api.calls))  # blocked in api.events
+    await engine.stop_events()
+    api.events_gate.set()
+    assert await asyncio.wait_for(task, 2) is None  # returned at once, no stream left open
+    assert api.stream.closed
+
+
+async def test_a_close_during_the_initial_events_call_is_not_lost(api, engine):
+    api.events_gate = threading.Event()
+    task = asyncio.create_task(anext(engine.stream_events(), None))
+    await wait_until(lambda: any(c[0] == "events" for c in api.calls))
+    close = asyncio.create_task(engine.close())
+    api.events_gate.set()
+    await close
+    assert await asyncio.wait_for(task, 2) is None
+    assert api.stream.closed
+
+
+async def test_an_event_backlog_ends_the_stream_as_unavailable(api, engine, monkeypatch):
+    monkeypatch.setattr(engine_module, "EVENT_BACKLOG", 3)
+    for _ in range(10):
+        api.stream.push(raw_event("start"))
+    stream = engine.stream_events()
+    await anext(stream)
+    await asyncio.sleep(0.2)  # a slow consumer: the reader thread fills the queue meanwhile
+    received = 1
+    with pytest.raises(EngineUnavailable, match="backlog"):
+        async for _ in stream:
+            received += 1
+    assert received <= 1 + 3  # never more than the backlog, and the end is loud, not silent
+    assert api.stream.closed
 
 
 # -- connect_engine --------------------------------------------------------------------------

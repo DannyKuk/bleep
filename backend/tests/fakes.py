@@ -104,17 +104,70 @@ class FakeSshListener:
         self.closed = True
 
 
+class FakeSshReader:
+    """An SSHReader over fixed bytes; `hang` makes it wait forever after them, like `sleep 30`."""
+
+    def __init__(self, data: bytes, hang: bool, error: BaseException | None = None) -> None:
+        self._data = data
+        self._hang = hang
+        self._error = error
+
+    async def read(self, n: int = -1) -> bytes:
+        if self._error is not None:
+            raise self._error
+        if self._data:
+            size = len(self._data) if n < 0 else n
+            chunk, self._data = self._data[:size], self._data[size:]
+            return chunk
+        if self._hang:
+            await asyncio.Event().wait()
+        return b""
+
+
+class FakeSshProcess:
+    """Stands in for asyncssh.SSHClientProcess in bytes mode."""
+
+    def __init__(
+        self,
+        stdout: bytes,
+        stderr: bytes,
+        exit_status: int | None,
+        hang: bool,
+        error: BaseException | None,
+    ) -> None:
+        self.stdout = FakeSshReader(stdout, hang, error)
+        self.stderr = FakeSshReader(stderr, hang)
+        self.stdin = SimpleNamespace(write_eof=lambda: None)
+        self.exit_status = exit_status
+        self.terminated = False
+        self.closed = False
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        return None
+
+
 class FakeSshConnection:
-    """Stands in for asyncssh.SSHClientConnection: forward, run, close and a closed flag."""
+    """Stands in for asyncssh.SSHClientConnection: forward, create_process, close, closed flag.
+
+    `output` sets what the next process prints and how it exits; `processes` keeps every one.
+    """
 
     def __init__(self, session_ref: dict) -> None:
         self.session_ref = session_ref
         self.closed = False
         self.listeners: list[FakeSshListener] = []
         self.commands: list[str] = []
-        self.reply = SimpleNamespace(exit_status=0, stdout="ok\n", stderr="")
-        self.run_error: BaseException | None = None
-        self.run_delay = 0.0
+        self.process_kwargs: list[dict] = []
+        self.processes: list[FakeSshProcess] = []
+        self.output: dict[str, Any] = {"stdout": b"ok\n", "stderr": b"", "exit_status": 0}
+        self.hang = False
+        self.error: BaseException | None = None
         self.stopped_when_closed: bool | None = None
 
     async def forward_local_path(self, listen_path: str, dest_path: str) -> FakeSshListener:
@@ -122,14 +175,12 @@ class FakeSshConnection:
         self.listeners.append(listener)
         return listener
 
-    async def run(self, command: str, **kwargs):
+    async def create_process(self, command: str, **kwargs: Any) -> FakeSshProcess:
         self.commands.append(command)
-        self.run_kwargs = kwargs
-        if self.run_delay:
-            await asyncio.sleep(self.run_delay)
-        if self.run_error is not None:
-            raise self.run_error
-        return self.reply
+        self.process_kwargs.append(kwargs)
+        process = FakeSshProcess(hang=self.hang, error=self.error, **self.output)
+        self.processes.append(process)
+        return process
 
     def close(self) -> None:
         session = self.session_ref.get("session")
