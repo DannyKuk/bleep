@@ -55,7 +55,7 @@ async def _guard(ctx: ToolContext, source: str, text: str) -> str:
     wrapped, redactions = await asyncio.to_thread(guard_text, source, text)
     if redactions and ctx.guard_log is not None:
         ctx.guard_log.record(
-            ctx.incident_id, "redaction", f"{redactions} secret(s) redacted from {source} output"
+            ctx.incident_id, "redacted", f"{redactions} secret(s) redacted from {source} output"
         )
     return wrapped
 

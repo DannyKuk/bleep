@@ -312,7 +312,7 @@ async def test_explain_recovery_redacts_before_cutting_and_records():
     await explain_recovery(model, logs, log, "inc-9")
     text = model.seen[0][-1].content
     assert "ghp_" not in text and "A1b2A1b2" not in text
-    assert log.records and log.records[0][:2] == ("inc-9", "redaction")
+    assert log.records and log.records[0][:2] == ("inc-9", "redacted")
 
 
 def test_a_start_older_than_the_death_never_counts_as_a_recovery():
