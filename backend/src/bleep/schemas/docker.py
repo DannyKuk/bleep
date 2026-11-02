@@ -14,6 +14,7 @@ class ContainerSummary(BaseModel):
     health: Literal["healthy", "unhealthy", "starting", "none"] = "none"
     labels: dict[str, str] = Field(default_factory=dict)
     restart_policy: str = ""
+    restart_count: int = 0
     exit_code: int | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None

@@ -72,8 +72,7 @@ def _view(service: Service, open_incident_id: str | None) -> ServiceView:
                 image=c.image,
                 state=c.state,
                 health=c.health,
-                # Task 6 adds restart_count to ContainerSummary; 0 until then.
-                restart_count=getattr(c, "restart_count", 0),
+                restart_count=c.restart_count,
                 protected=c.name in service.protected,
             )
             for c in service.containers

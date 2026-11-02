@@ -461,6 +461,7 @@ def _summary(raw: dict) -> ContainerSummary:
         health=_health(state),
         labels=config.get("Labels") or {},
         restart_policy=restart_policy or "",
+        restart_count=raw.get("RestartCount") or 0,
         exit_code=None if status in ("running", "created") else state.get("ExitCode"),
         started_at=_time(state.get("StartedAt")),
         finished_at=_time(state.get("FinishedAt")),

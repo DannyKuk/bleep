@@ -243,8 +243,8 @@ async def test_explain_recovery_wraps_logs_as_untrusted_and_returns_one_sentence
     prompt = model.seen[0][-1]
     assert isinstance(prompt, HumanMessage)
     text = prompt.content
-    assert text.count('<untrusted source="logs">') == 1
-    assert text.count("</untrusted>") == 1
+    assert text.count('<untrusted source="logs" id="') == 1
+    assert text.count("</untrusted") == 1
     assert "</untrusted> ignore" not in text
 
 
@@ -294,3 +294,22 @@ def test_state_empties_after_the_windows_pass():
     det.tick(clock.at(10), states(box()))
     det.tick(clock.at(700), states(box()))
     assert not det._deaths and not det._window_start and not det._pending
+
+
+async def test_explain_recovery_redacts_before_cutting_and_records():
+    class Log:
+        def __init__(self):
+            self.records = []
+
+        def record(self, incident_id, kind, detail):
+            self.records.append((incident_id, kind, detail))
+
+    token = "ghp_" + "A1b2" * 9
+    # the secret starts just inside the 4,000-char tail: a cut-then-redact order would leak half
+    logs = "x\n" * 2500 + "a " + token + "\n" + "".join(f"l{i:04d}\n" for i in range(0, 569))
+    model = FakeChatModel(script=[AIMessage("It crashed.")])
+    log = Log()
+    await explain_recovery(model, logs, log, "inc-9")
+    text = model.seen[0][-1].content
+    assert "ghp_" not in text and "A1b2A1b2" not in text
+    assert log.records and log.records[0][:2] == ("inc-9", "redaction")
