@@ -1,4 +1,8 @@
-# App: login, sessions and the read API
+# App
+
+The dashboard and the API it reads. One bullet per choice, with the reason and the issue number.
+
+## Login, sessions and the read API
 
 How the dashboard signs in and what it reads (`auth/`, `api/`).
 
@@ -12,7 +16,7 @@ How the dashboard signs in and what it reads (`auth/`, `api/`).
 - **`require_session` guards every `/api` route except login,** through one router dependency, so a new route is protected by default. `/health` stays open and outside `/api`. A test walks the OpenAPI document and expects 401 on every other path. Reason: the safe default beats remembering to add a check (#8).
 - **Response models are pydantic schemas (`schemas/api.py`).** Reason: `/openapi.json` gives the dashboard exact types. No model carries env values or labels, so a secret in a container's environment cannot reach a response (#8).
 
-## Health rules
+### Health rules
 
 One pure function per level (`api/hosts.py`), table-tested for every state.
 
@@ -20,3 +24,18 @@ One pure function per level (`api/hosts.py`), table-tested for every state.
 - **Service.** The worst of its containers and its URLs, where a `failing` URL counts as `down`. With no data it is `unknown`. Reason: one dead dependency makes the service unusable (#8).
 - **Host.** `unknown` when unreachable with no snapshot yet, `down` when unreachable, otherwise the worst of its services (`ok` with none). Reason: an unreachable host's old containers say nothing about now, but with no snapshot there is nothing to call down (#8).
 - **URL status stays `unknown`** until the watcher records checks; `basics` is `null` until the host probe exists. Reason: the dashboard shape is fixed now so those land without an API change (#8).
+
+## Dashboard
+
+How the Next.js dashboard (`frontend/`) is built.
+
+- **Rewrite proxy, not CORS.** `next.config.ts` rewrites `/api/:path*` to the backend, so the browser only talks to the dashboard's origin and the `bleep_session` cookie (HttpOnly, SameSite=Lax) is same-origin. Reason: no CORS config, no cross-site cookie, and the backend port is never exposed to the browser (#9).
+- **`BACKEND_URL` is a build argument.** Next bakes rewrite destinations into `routes-manifest.json` at `next build`; setting the variable only when the server starts has no effect (checked by running the standalone server with a different value). The Dockerfile takes `ARG BACKEND_URL` with the default `http://backend:8000`, the Compose service name. Reason: a silent runtime variable that does nothing is worse than a documented build argument (#9).
+- **A 401 sends the browser to `/login?next=<path>`.** `apiFetch` does this once for every call, except on the login page itself, where a 401 means "wrong password". The login form only follows a `next` that starts with a single `/`. Reason: one place handles an expired session, and `next` cannot be used as an open redirect (#9).
+- **Polling every 10 s until live events.** `usePoll` fetches `/api/hosts` and `/api/services` on an interval and keeps the last good data when a refresh fails, with a small "refresh failed" line. Reason: the simplest thing that works against the M1 API; server-sent events replace it in Task 23 (#9).
+- **Health colours: green, amber, red, grey, never alone.** `--health-ok`, `--health-degraded`, `--health-down` and `--health-unknown` are CSS variables with a light and a dark value, used as text on a 12% tint of themselves. Every health also has its own icon (check, triangle, cross, question mark) and a word, so colour-blind readers and greyscale prints lose nothing. Reason: an ops screen is read under stress and at a glance; colour is a quick cue, not the only one (#9).
+- **Quiet when all is well.** Healthy rows use small tinted badges and no borders or alarms; only down and degraded things use stronger colour, plus the incident link. Reason: the eye should land on what is wrong (#9).
+- **Monospace for container names, ids and URLs.** Reason: they are copied into terminals and compared character by character (#9).
+- **Theme: system, light or dark, kept across reloads.** The pick lives in `localStorage` (`bleep:theme`); an inline script in `<head>` sets the `dark` class on `<html>` before the first paint, so there is no flash. "System" follows the OS setting live. Reason: same approach as the owner's other projects; reading storage only after hydration would flash the wrong theme on every load (#9).
+- **Unit tests mock `fetch`, nothing else.** Vitest with Testing Library and jsdom; the poll and login tests stub the global `fetch`, so no test needs a backend or network. Reason: the dashboard is built against the API contract in parallel with the backend (#9).
+- **Types are written by hand for now.** `lib/api-types.ts` follows the M1 contract; `npm run gen:api` replaces it with types generated from the backend's `/openapi.json` once that is running. The names `HostView`, `ServiceView`, `ContainerView`, `UrlStatus` and `Health` stay (#9).

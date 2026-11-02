@@ -1,0 +1,5 @@
+# Generated
+package-lock.json
+next-env.d.ts
+lib/api-types.ts
+.next/
