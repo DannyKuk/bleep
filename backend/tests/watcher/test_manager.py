@@ -14,6 +14,7 @@ from bleep.schemas.settings import Thresholds
 from bleep.store.db import Database
 from bleep.watcher import manager as manager_module
 from bleep.watcher.detector import Detector
+from bleep.watcher.http_checks import UrlCheckStore
 from bleep.watcher.manager import NO_EXPLANATION, WatcherManager
 from fakes import FakeChatModel, FakeEngine, socket_host
 
@@ -101,6 +102,7 @@ class Rig:
         }
         self.registry = Registry([socket_host(id="h", services=urls)], connect, clock=self.clock)
         self.detector = Detector(Thresholds(), self.clock)
+        self.store = UrlCheckStore(self.db)
 
         def models(role: str):
             self.roles.append(role)
@@ -115,6 +117,7 @@ class Rig:
             clock=self.clock,
             models=models if model is not None else None,
             http=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            store=self.store,
         )
 
     async def boot(self) -> Rig:
@@ -145,7 +148,9 @@ class Rig:
         self.web_up = True
 
 
-async def test_a_host_down_for_five_minutes_opens_one_incident_and_the_urls_attach_to_it(tmp_path):
+async def test_a_host_down_for_five_minutes_opens_one_incident_and_the_urls_attach_to_it(
+    tmp_path, caplog
+):
     r = await Rig(tmp_path).boot()
     await r.pulse()
     await r.lose_host()
@@ -160,6 +165,11 @@ async def test_a_host_down_for_five_minutes_opens_one_incident_and_the_urls_atta
     assert attached == {f"h/compose:{p}" for p in PROJECTS}  # all three services' failures
     notices = [e for e in await r.bus.history(incident.id) if e.kind == "notice"]
     assert notices and "unreachable" in notices[0].payload["text"]
+    assert not [rec for rec in caplog.records if rec.levelname == "ERROR"]
+    recorded = await r.store.latest("h")  # every check of the tick reached the dashboard row
+    assert sorted(check.url for _, check, _ in recorded) == [
+        f"https://{p}.example/" for p in sorted(PROJECTS)
+    ]
 
 
 async def test_url_failures_before_the_host_incident_wait_for_it_instead_of_opening_their_own(

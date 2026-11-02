@@ -190,14 +190,19 @@ class WatcherManager:
         `host_unreachable` signal; the check here keeps a host incident opened for another
         reason (a full disk) from being mistaken for it.
         """
-        held = self._held.get(host_id)
+        if not self._held.get(host_id):
+            return
         host_incident = await self.repo.open_incident_id(Subject(kind="host", host_id=host_id))
-        if not held or host_incident is None:
+        if host_incident is None:
             return
         signals = await self.repo.signals(host_incident)
         if not any(s.kind == "host_unreachable" for s in signals):
             return
-        del self._held[host_id]
+        # Claim the held failures atomically: concurrent callers for the host interleave at the
+        # awaits above, and only the first to get here may attach them.
+        held = self._held.pop(host_id, None)
+        if not held:
+            return
         for failures in held.values():
             incident, created = await self.repo.open_or_attach(failures[0].subject, failures)
             if created:  # the host incident closed between the checks: this one is new
