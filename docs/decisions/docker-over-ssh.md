@@ -46,7 +46,7 @@ Dropping the connection during an open event stream:
 - **A is also cheaper per call.** After one 200 ms connect, a ping is 24 ms on the Linux host. B's ping took 454 and 797 ms there (paramiko, ssh CLI).
 - **One connection serves both jobs.** The shell commands ran over the same asyncssh connection in 23-52 ms each, `top` 235-287 ms, and the first Linux call after connect 500 ms, so reconnect logic lives in one place.
 - **The drop is silent.** Because the iterator ends without an exception, an exception handler alone would never notice a lost host.
-- **The SDK must never run on the event loop.** The forward is served by the same loop. The constructor and every call block, so called directly they wait for their read timeout and fail (observed: 30 s, then `Error while fetching server API version`).
+- **The SDK must never run on the event loop.** The forward is served by the same loop. The constructor and every call block, so called directly they wait for their read timeout and fail (observed in an earlier run, not saved: 30 s, then `Error while fetching server API version`).
 - **Coolify labels are consistent but not uniform.** All app containers carry `coolify.resourceName`; the id label differs by Coolify version; Coolify's own containers carry no `coolify.*` labels (see the report).
 
 ## Decided along the way
@@ -104,7 +104,7 @@ Each container's version is its own `coolify.version` label (the Coolify that de
 - **Coolify databases, one-click services and preview deployments were not on the host.** Their label sets (`coolify.type` other than `application`, `pullRequestId` other than 0) are unverified; Task 5 should group them by the same fallbacks and the compose project.
 - **The compose step is test-only.** `--allow-test-container` writes to the host and the script refuses it unless `--os darwin`; it is never part of the product.
 - **No silent-drop test.** Only `close()` and `abort()` were tried; a network that vanishes without a reset was not.
-- **No container logs or sparse list on the M1** because it had no container running during the list.
+- **No container logs on the M1, and the sparse list only with 0 containers,** because it had no container running during the list.
 - **Latency depends on distance.** The Linux numbers include the path from the Mac running the spike to the server; they are a floor for one measurement, not a promise.
 - **The drop test had 0 to 15 events before the drop,** not a stream cut in the middle of a large event.
 

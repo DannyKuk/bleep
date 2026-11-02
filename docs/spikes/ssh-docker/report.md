@@ -134,6 +134,6 @@ Other details:
 
 - Linux: nothing was written; only listing, label reads, 50 log lines (not saved), event streams and the read commands. No `exec`, no env.
 - M1: one throwaway Compose project (`bleepspike`, `alpine:3`, `sleep 40`) was started and removed through the script's `--allow-test-container` flag. It ran several times while the script was being fixed (two earlier runs crashed on bug 1 above and left the container, which was removed by hand with `docker rm -f` and `docker network rm`); the final state is zero containers and no `bleepspike` network. The `alpine:3` image stays pulled.
-- The M1 has no container running during the list, so `logs` and the sparse list were not measured there, and the drop test saw no events before the drop.
+- The M1 has no container running during the list, so `logs` was not measured there and the sparse list only with 0 containers, and the drop test saw no events before the drop.
 - `--allow-test-container` is refused unless `--os darwin`; the Compose step is test-only and never meant for a real host.
 - Host keys are not checked in the spike (`known_hosts=None`); the product must pin them.

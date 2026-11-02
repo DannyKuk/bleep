@@ -60,6 +60,12 @@ services:
 """
 
 
+def redact_target(target: str) -> str:
+    """Name written to results when --display-name is absent: a .local host stays, others lose the address."""
+    user, _, host = target.rpartition("@")
+    return target if host.endswith(".local") else f"{user or '<user>'}@<remote>"
+
+
 def ms(start: float) -> float:
     return round((time.perf_counter() - start) * 1000, 1)
 
@@ -100,7 +106,7 @@ class Spike:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.user, _, self.host = args.target.rpartition("@")
-        self.results: dict = {"target": args.display_name or args.target, "os": args.os, "socket": args.socket}
+        self.results: dict = {"target": args.display_name or redact_target(args.target), "os": args.os, "socket": args.socket}
 
     async def connect(self) -> asyncssh.SSHClientConnection:
         start = time.perf_counter()
