@@ -1,0 +1,78 @@
+# Bleep. `docker compose up -d --build` runs the backend and the dashboard.
+# `--profile demo` adds a filtered socket proxy so Bleep can watch this machine's Docker engine.
+services:
+  backend:
+    build: ./backend
+    # Published on this machine only; the dashboard (port 3000) is what other machines on the LAN use.
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Without a .env value, the demo hosts file. Real hosts: BLEEP_HOSTS_FILE=/config/hosts.yaml.
+      BLEEP_HOSTS_FILE: ${BLEEP_HOSTS_FILE:-/config/hosts.demo.yaml}
+    volumes:
+      - bleep-data:/data
+      - ./config:/config:ro
+      # SSH key and known_hosts for real hosts; see docs/setup.md.
+      - ./secrets:/run/secrets:ro
+    labels:
+      # Bleep never lists, watches or acts on its own containers.
+      bleep.self: "true"
+    healthcheck:
+      # The slim image has no curl.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - default
+      - proxy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # A build arg, not an environment variable: Next.js bakes its rewrites in at build time.
+        BACKEND_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    labels:
+      bleep.self: "true"
+
+  # Only with `--profile demo`. Lets the backend reach this machine's Docker engine through an
+  # allowlist instead of the raw socket, which would be root on this machine. Allowed: read
+  # containers, events, info, version, ping, and start/stop/restart of a container. Refused:
+  # create, exec, delete, kill, image pull, volumes, networks. See docs/decisions/socket-host.md.
+  socket-proxy:
+    profiles: ["demo"]
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # The allowlist. The image's own flags can't allow restarts without also allowing create.
+      - ./config/socket-proxy.cfg.template:/usr/local/etc/haproxy/haproxy.cfg.template:ro
+    healthcheck:
+      # The image has no curl; nc only checks that haproxy accepts connections.
+      test: ["CMD", "nc", "-z", "127.0.0.1", "2375"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    # No ports published; only the backend shares this network.
+    networks:
+      - proxy
+    labels:
+      bleep.self: "true"
+
+networks:
+  # Internal: no route out, and nothing but the backend and the proxy on it.
+  proxy:
+    internal: true
+
+volumes:
+  bleep-data:

@@ -10,7 +10,10 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
 RUN uv sync --frozen --no-dev
 
-RUN useradd --system --create-home bleep && mkdir /data && chown bleep /data
+# A fixed uid/gid, so a mounted key can be chowned to it on a Linux host (docs/setup.md).
+RUN groupadd --system --gid 10001 bleep \
+    && useradd --system --create-home --uid 10001 --gid 10001 bleep \
+    && mkdir /data && chown bleep /data
 USER bleep
 
 ENV PATH="/app/.venv/bin:$PATH"
