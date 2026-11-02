@@ -15,6 +15,27 @@ Without the `demo` profile only the backend and the dashboard start, and the hos
 
 The data (the SQLite database) lives in the `bleep-data` volume. `docker compose down` keeps it; `docker compose down -v` deletes it.
 
+### A first incident, end to end
+
+This runs the whole path from a dead container to the approval question, on the dashboard and in Telegram. It needs a model key and, for the Telegram half, a bot. Tests never do this; it is the manual check.
+
+1. In `.env`, besides the two `BLEEP_` values: `OPENROUTER_API_KEY` (or `LLM_PROVIDER=local` with `LOCAL_BASE_URL` and `LOCAL_MODEL`), and for Telegram `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (send the bot a message first, then read the chat id from `https://api.telegram.org/bot<token>/getUpdates`).
+2. Start Bleep and a throwaway container for it to watch, with no restart policy:
+   ```bash
+   docker compose --profile demo up -d --build
+   docker run -d --name bleep-try --restart no nginx:1.27-alpine
+   ```
+   Log in at http://localhost:3000. Within 15 s the overview lists `bleep-try` under the Demo stack as running.
+3. Break it: `docker kill bleep-try`. Use `kill`, not `stop`: a `docker stop` (exit 0 or 143, a `stop` event) is someone's choice and opens nothing, by design ([watcher](design/watcher.md)). A kill leaves exit 137, the same as a crash, and the restart policy `no` keeps it down.
+4. What to expect:
+   - **Overview:** the service turns red (Down) at the next tick. After the 60 s grace window it is still down, so an incident opens, and the row gets an "Open incident" link. Allow about 75 s from the kill.
+   - **Incident page** (the link, or Incidents in the menu): the badge at the top right says Live. The timeline fills in (Gathered context, Investigating), and Live reasoning lists the tool calls as they happen, for example `inspect_container container=bleep-try`, each with its result folded under it. Then the Diagnosis card shows the cause (killed, exit 137, restart policy `no`), and the Proposal card a plan such as `docker.start bleep-try on demo` with Approve, Reject and "Tell Bleep something". The status badge says Awaiting approval.
+   - **Telegram:** the same plan arrives as a message with Approve and Reject buttons; a reply to it is an instruction.
+5. Answer on one side, then try the other. The dashboard locks its buttons and says, for example, "Approved on the dashboard"; a tap in Telegram afterwards is told the dashboard already decided. Approve in Telegram first instead, and the page shows "Approved on Telegram" with its buttons locked; a page that has not caught up yet answers a click with "Already decided on Telegram".
+6. Clean up: `docker rm -f bleep-try`.
+
+If the page stays on Connecting, or the reasoning only appears when the run ends, the stream is being buffered between the browser and the dashboard ([why it can happen](decisions/sse-through-next.md)).
+
 ## Real hosts
 
 1. Copy the example and edit it: `cp config/hosts.example.yaml config/hosts.yaml`. The file is gitignored. Every field is documented in the example.

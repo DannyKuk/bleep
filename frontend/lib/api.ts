@@ -3,13 +3,15 @@ export class ApiError extends Error {
   status: number;
   detail: string;
   retryAfter?: number; // seconds, from Retry-After (429)
+  body: unknown; // the parsed JSON body, for fields beyond `detail` (a 409's `decided_via`)
 
-  constructor(status: number, detail: string, retryAfter?: number) {
+  constructor(status: number, detail: string, retryAfter?: number, body: unknown = null) {
     super(detail);
     this.name = "ApiError";
     this.status = status;
     this.detail = detail;
     this.retryAfter = retryAfter;
+    this.body = body;
   }
 }
 
@@ -49,6 +51,7 @@ export async function apiFetch<T>(path: string, init: ApiInit = {}): Promise<T> 
     response.status,
     detailOf(body, response.statusText || `HTTP ${response.status}`),
     Number.isFinite(retry) && retry > 0 ? retry : undefined,
+    body,
   );
 
   if (response.status === 401 && redirectOn401 && window.location.pathname !== "/login") {

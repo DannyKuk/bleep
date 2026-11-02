@@ -54,7 +54,7 @@ flowchart LR
 | **Prompts** | `prompts/` | Every prompt is a `.md` file loaded with `prompts.load(name, **vars)`. |
 | **Store** | `store/` | SQLite with numbered migrations. |
 | **API** | `main.py`, `api/`, `auth/` | Login with one admin password and hashed sessions; the read API over hosts and services; incidents with their findings, timeline and recoveries; the dashboard's decision on an approval; the live event stream (SSE). |
-| **Dashboard** | `frontend/` | Next.js app: login and an overview of hosts and services, polled every 10 s. |
+| **Dashboard** | `frontend/` | Next.js app: login; an overview of hosts, services and self-recoveries, polled; the incident list; and each incident's page with its live reasoning, timeline, diagnosis and the plan to approve, reject or instruct, streamed through a route handler (`app/api/stream/route.ts`). |
 | **Compose** | `docker-compose.yaml`, `config/socket-proxy.cfg.template` | Runs Bleep; `--profile demo` adds the socket proxy so Bleep can watch this machine. |
 
 Paths under `backend/src/bleep/` are given from there.
@@ -70,7 +70,7 @@ Paths under `backend/src/bleep/` are given from there.
 | 5. Investigate | The model reads with read-only tools, at most 8 calls a round; each result is guarded and wrapped once, and every call and result streams to the bus. A spent cost budget stops here with a notice. | `graph/nodes/investigate.py` |
 | 6. Diagnose | Root cause, evidence, confidence; low confidence investigates once more, then goes on marked unsure. | `graph/nodes/diagnose.py` |
 | 7. Propose | One to three allowlisted actions, or no action with exact instructions for the human; checked in code before anyone is asked, and a refused plan goes back to the model once. | `graph/nodes/propose.py`, `guard/plan_check.py` |
-| 8. Approval | The target containers are snapshotted, the plan is stored as a pending approval and sent to the human; the run checkpoints and waits for a yes, a no or an instruction, through a restart if need be. The first answer wins; an instruction goes back to Propose; a pending approval is re-sent every 60 min and never approved by itself. | `graph/nodes/approval.py`, `ApprovalStore`, `ReminderLoop`, `IncidentRunner.resume` |
+| 8. Approval | The target containers are snapshotted, the plan is stored as a pending approval, sent to the human and shown with Approve, Reject and "Tell Bleep something" on the incident's page; the run checkpoints and waits for a yes, a no or an instruction, through a restart if need be. The first answer wins; an instruction goes back to Propose; a pending approval is re-sent every 60 min and never approved by itself. | `graph/nodes/approval.py`, `ApprovalStore`, `ReminderLoop`, `IncidentRunner.resume` |
 | 9. Report | The outcome is set; `resolved` is only ever claimed after verification. | `graph/nodes/report.py` |
 
 Every node publishes `node_started` and `node_finished` on the bus, which stores them for the incident's timeline. On boot, `IncidentRunner.recover_on_boot` resumes every unfinished run except those waiting for approval, and delivers a decision that was recorded before a crash. The app starts the runner with the watcher manager, which calls `recover_on_boot` once at startup and starts a run only for a newly opened incident, and runs the reminder loop beside them. The runner, the graph, the reminders and the API share one `ApprovalStore`, so a decision from any channel is the one the run sees, also after a restart.
@@ -123,6 +123,8 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **The dashboard reaches the API through a Next.js rewrite**, so the cookie stays same-origin.
 - **A dashboard decision names the approval it answers**; a late one gets 409 naming the channel that won.
 - **The live stream is SSE with `id:` = seq**, so a reconnect replays from `Last-Event-ID`; a ping every 15 s keeps proxies from closing it.
+- **The dashboard serves the stream from a route handler, not the rewrite**, because the rewrite gzips it and holds every event until the stream ends ([SSE through Next.js](decisions/sse-through-next.md)).
+- **The incident page reads the history, then streams after its last seq, and keeps each event once by seq**; a step event reloads the incident's findings.
 
 ## Decisions
 
@@ -130,3 +132,4 @@ One line each; the full reasoning and issue numbers are on the design page named
 |---|---|
 | [Docker over SSH](decisions/docker-over-ssh.md) | Forward the remote socket through one asyncssh connection per host. |
 | [Socket host](decisions/socket-host.md) | A filtered proxy with four rules, not a raw socket mount. |
+| [SSE through Next.js](decisions/sse-through-next.md) | A route handler that pipes the stream with `no-transform`; the rewrite held every event until the end. |
