@@ -1,0 +1,19 @@
+{
+  "container": "coolify-db",
+  "image": [
+    "postgres:15-alpine"
+  ],
+  "labels": {
+    "com.docker.compose.config-hash": "f7e1b092e89946a0174f1c8d34a05f63ad42a13dd37bf02cc937904b7536d02a",
+    "com.docker.compose.container-number": "1",
+    "com.docker.compose.depends_on": "",
+    "com.docker.compose.image": "sha256:1d4031d6ed0a9b774b365f99a3c16127217eb19f699d8d43fc43b732748601ef",
+    "com.docker.compose.oneoff": "False",
+    "com.docker.compose.project": "source",
+    "com.docker.compose.project.config_files": "/data/coolify/source/docker-compose.yml,/data/coolify/source/docker-compose.prod.yml",
+    "com.docker.compose.project.environment_file": "/data/coolify/source/.env",
+    "com.docker.compose.project.working_dir": "/data/coolify/source",
+    "com.docker.compose.service": "postgres",
+    "com.docker.compose.version": "5.6.1"
+  }
+}

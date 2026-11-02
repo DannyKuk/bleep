@@ -1,0 +1,9 @@
+{
+  "container": "coolify-sentinel",
+  "image": [
+    "coollabsio/sentinel:1.1.3"
+  ],
+  "labels": {
+    "coolify.managed": "true"
+  }
+}

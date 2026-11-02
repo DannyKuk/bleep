@@ -1,0 +1,252 @@
+{
+  "target": "<coolify-server>",
+  "os": "linux",
+  "socket": "/var/run/docker.sock",
+  "connect_ms": [
+    195.4,
+    197.1,
+    192.9
+  ],
+  "shell": {
+    "uname": {
+      "ms": 499.8,
+      "exit": 0,
+      "bytes": 6,
+      "stderr": ""
+    },
+    "df": {
+      "ms": 52.0,
+      "exit": 0,
+      "bytes": 1821,
+      "stderr": ""
+    },
+    "free": {
+      "ms": 47.9,
+      "exit": 0,
+      "bytes": 207,
+      "stderr": ""
+    },
+    "loadavg": {
+      "ms": 48.5,
+      "exit": 0,
+      "bytes": 29,
+      "stderr": ""
+    },
+    "nproc": {
+      "ms": 47.2,
+      "exit": 0,
+      "bytes": 2,
+      "stderr": ""
+    },
+    "uptime": {
+      "ms": 48.0,
+      "exit": 0,
+      "bytes": 71,
+      "stderr": ""
+    },
+    "top": {
+      "ms": 287.3,
+      "exit": 0,
+      "bytes": 1497,
+      "stderr": ""
+    },
+    "remote_docker_on_path": {
+      "exit": 0,
+      "ms": 70.1,
+      "stderr": ""
+    },
+    "remote_path": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
+  },
+  "mechanism_b": {
+    "ssh_cli": {
+      "ok": true,
+      "ping_ms": 796.7,
+      "containers": 9
+    },
+    "paramiko": {
+      "ok": true,
+      "ping_ms": 454.3,
+      "containers": 9
+    },
+    "dial_stdio_raw": {
+      "exit": 0,
+      "ms": 381.6,
+      "stderr": ""
+    }
+  },
+  "mechanism_a": {
+    "forward_setup_ms": 1.0,
+    "ping_ms": 45.7,
+    "ping_second_ms": 24.2,
+    "containers_list_ms": 602.2,
+    "container_count": 10,
+    "containers_list_sparse_ms": 79.6,
+    "version_ms": 50.2,
+    "info_ms": 54.6,
+    "engine": {
+      "server_version": "29.9.2",
+      "api_version": "1.56",
+      "engine_os": "Ubuntu 24.04.5 LTS",
+      "kernel": "6.8.0-147-generic",
+      "arch": "x86_64"
+    },
+    "logs_50_ms": 76.3,
+    "log_lines": 50,
+    "events_window_s": 30,
+    "events_count": 108,
+    "events_first_s": 0.05,
+    "events_sample": [
+      [
+        0.05,
+        "container",
+        "exec_create"
+      ],
+      [
+        0.05,
+        "container",
+        "exec_start"
+      ],
+      [
+        0.05,
+        "container",
+        "exec_die"
+      ],
+      [
+        0.4,
+        "container",
+        "exec_create"
+      ],
+      [
+        0.4,
+        "container",
+        "exec_start"
+      ],
+      [
+        0.45,
+        "container",
+        "exec_die"
+      ],
+      [
+        1.06,
+        "container",
+        "exec_create"
+      ],
+      [
+        1.06,
+        "container",
+        "exec_start"
+      ],
+      [
+        1.11,
+        "container",
+        "exec_die"
+      ],
+      [
+        2.59,
+        "container",
+        "exec_create"
+      ],
+      [
+        2.59,
+        "container",
+        "exec_start"
+      ],
+      [
+        2.94,
+        "container",
+        "exec_die"
+      ],
+      [
+        3.26,
+        "container",
+        "exec_create"
+      ],
+      [
+        3.26,
+        "container",
+        "exec_start"
+      ],
+      [
+        3.3,
+        "container",
+        "exec_die"
+      ],
+      [
+        3.86,
+        "container",
+        "exec_create"
+      ],
+      [
+        3.86,
+        "container",
+        "exec_start"
+      ],
+      [
+        3.92,
+        "container",
+        "exec_die"
+      ],
+      [
+        4.66,
+        "container",
+        "exec_create"
+      ],
+      [
+        4.66,
+        "container",
+        "exec_start"
+      ],
+      [
+        4.74,
+        "container",
+        "exec_die"
+      ],
+      [
+        5.45,
+        "container",
+        "exec_create"
+      ],
+      [
+        5.45,
+        "container",
+        "exec_start"
+      ],
+      [
+        5.5,
+        "container",
+        "exec_die"
+      ],
+      [
+        6.11,
+        "container",
+        "exec_create"
+      ]
+    ],
+    "events_ended_cleanly": true,
+    "events_elapsed_s": 29.5
+  },
+  "drop": [
+    {
+      "mode": "close",
+      "stream_open_after_3s": true,
+      "thread_still_blocked_after_20s": false,
+      "events_before_drop": 12,
+      "end": "iterator ended (StopIteration), no exception",
+      "ended_after_drop_ms": 2.9,
+      "ping_after_drop": "requests.exceptions.ConnectionError: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))",
+      "containers_list_after_drop": "requests.exceptions.ConnectionError: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))",
+      "total_s": 3.0
+    },
+    {
+      "mode": "abort",
+      "stream_open_after_3s": true,
+      "thread_still_blocked_after_20s": false,
+      "events_before_drop": 15,
+      "end": "iterator ended (StopIteration), no exception",
+      "ended_after_drop_ms": 1.4,
+      "ping_after_drop": "requests.exceptions.ConnectionError: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))",
+      "containers_list_after_drop": "requests.exceptions.ConnectionError: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))",
+      "total_s": 3.0
+    }
+  ]
+}

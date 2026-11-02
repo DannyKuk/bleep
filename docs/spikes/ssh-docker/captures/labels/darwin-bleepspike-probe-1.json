@@ -1,0 +1,19 @@
+{
+  "container": "bleepspike-probe-1",
+  "image": [
+    "alpine:3"
+  ],
+  "labels": {
+    "bleep.spike": "true",
+    "com.docker.compose.config-hash": "972ef333e4624a375f40ab9ea421477b6575c5e7401ce2d261d9810fbfae8c27",
+    "com.docker.compose.container-number": "1",
+    "com.docker.compose.depends_on": "",
+    "com.docker.compose.image": "sha256:e311ae748be7f56ae5cba304bc488f0786df68ee507513f654a5cc8597cffb42",
+    "com.docker.compose.oneoff": "False",
+    "com.docker.compose.project": "bleepspike",
+    "com.docker.compose.project.config_files": "-",
+    "com.docker.compose.project.working_dir": "/Users/dannykukic",
+    "com.docker.compose.service": "probe",
+    "com.docker.compose.version": "5.6.1"
+  }
+}

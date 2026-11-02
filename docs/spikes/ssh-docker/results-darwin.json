@@ -1,0 +1,184 @@
+{
+  "target": "dannykukic@MacBook-Pro-M1.local",
+  "os": "darwin",
+  "socket": "/Users/dannykukic/.docker/run/docker.sock",
+  "connect_ms": [
+    275.2,
+    184.9,
+    200.4
+  ],
+  "shell": {
+    "uname": {
+      "ms": 29.3,
+      "exit": 0,
+      "bytes": 7,
+      "stderr": ""
+    },
+    "df": {
+      "ms": 23.8,
+      "exit": 0,
+      "bytes": 895,
+      "stderr": ""
+    },
+    "vm_stat": {
+      "ms": 24.8,
+      "exit": 0,
+      "bytes": 1247,
+      "stderr": ""
+    },
+    "sysctl": {
+      "ms": 22.6,
+      "exit": 0,
+      "bytes": 33,
+      "stderr": ""
+    },
+    "uptime": {
+      "ms": 23.3,
+      "exit": 0,
+      "bytes": 65,
+      "stderr": ""
+    },
+    "top": {
+      "ms": 234.6,
+      "exit": 0,
+      "bytes": 4655,
+      "stderr": ""
+    },
+    "remote_docker_on_path": {
+      "exit": 127,
+      "ms": 18.9,
+      "stderr": "zsh:1: command not found: docker\n"
+    },
+    "remote_path": "/usr/bin:/bin:/usr/sbin:/sbin"
+  },
+  "mechanism_b": {
+    "ssh_cli": {
+      "ok": false,
+      "ms": 221.4,
+      "error": "DockerException: Error while fetching server API version: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))"
+    },
+    "paramiko": {
+      "ok": false,
+      "ms": 207.4,
+      "error": "DockerException: Error while fetching server API version: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))"
+    },
+    "dial_stdio_raw": {
+      "exit": 127,
+      "ms": 211.4,
+      "stderr": "zsh:1: command not found: docker\n"
+    }
+  },
+  "mechanism_a": {
+    "forward_setup_ms": 0.3,
+    "ping_ms": 1485.7,
+    "ping_second_ms": 11.3,
+    "containers_list_ms": 17.2,
+    "container_count": 0,
+    "containers_list_sparse_ms": 10.2,
+    "version_ms": 21.0,
+    "info_ms": 22.3,
+    "engine": {
+      "server_version": "29.9.2",
+      "api_version": "1.56",
+      "engine_os": "Docker Desktop",
+      "kernel": "7.0.14-linuxkit",
+      "arch": "aarch64"
+    },
+    "test_container_up": {
+      "exit": 0,
+      "ms": 388.9,
+      "stderr_tail": " bleepspike_default Creating \n Network bleepspike_default Creating \n Network bleepspike_default Created \n Network bleepspike_default Created \n Container bleepspike-probe-1 Creating \n Container bleepspike-probe-1 Created \n Container bleepspike-probe-1 Starting \n Container bleepspike-probe-1 Started \n"
+    },
+    "test_container_down": {
+      "exit": 0,
+      "ms": 3438.2,
+      "stderr_tail": " Container bleepspike-probe-1 Stopping \n Container bleepspike-probe-1 Stopped \n Container bleepspike-probe-1 Removing \n Container bleepspike-probe-1 Removed \n Network bleepspike_default Removing \n Network bleepspike_default Removed \n"
+    },
+    "events_window_s": 30,
+    "events_count": 11,
+    "events_first_s": 5.27,
+    "events_sample": [
+      [
+        5.27,
+        "network",
+        "create"
+      ],
+      [
+        5.3,
+        "container",
+        "create"
+      ],
+      [
+        5.37,
+        "network",
+        "connect"
+      ],
+      [
+        5.37,
+        "container",
+        "start"
+      ],
+      [
+        13.72,
+        "container",
+        "kill"
+      ],
+      [
+        16.75,
+        "container",
+        "kill"
+      ],
+      [
+        16.82,
+        "network",
+        "disconnect"
+      ],
+      [
+        16.82,
+        "container",
+        "stop"
+      ],
+      [
+        16.82,
+        "container",
+        "die"
+      ],
+      [
+        16.84,
+        "container",
+        "destroy"
+      ],
+      [
+        16.93,
+        "network",
+        "destroy"
+      ]
+    ],
+    "events_ended_cleanly": true,
+    "events_elapsed_s": 29.8
+  },
+  "drop": [
+    {
+      "mode": "close",
+      "stream_open_after_3s": true,
+      "thread_still_blocked_after_20s": false,
+      "events_before_drop": 0,
+      "end": "iterator ended (StopIteration), no exception",
+      "ended_after_drop_ms": 0.8,
+      "ping_after_drop": "requests.exceptions.ConnectionError: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))",
+      "containers_list_after_drop": "requests.exceptions.ConnectionError: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))",
+      "total_s": 3.0
+    },
+    {
+      "mode": "abort",
+      "stream_open_after_3s": true,
+      "thread_still_blocked_after_20s": false,
+      "events_before_drop": 0,
+      "end": "iterator ended (StopIteration), no exception",
+      "ended_after_drop_ms": 1.5,
+      "ping_after_drop": "requests.exceptions.ConnectionError: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))",
+      "containers_list_after_drop": "requests.exceptions.ConnectionError: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))",
+      "total_s": 3.0
+    }
+  ]
+}
