@@ -1,0 +1,9 @@
+# Agent
+
+How Bleep talks to a model, counts what it spends and copes with weak models.
+
+- **One factory, two providers.** `chat_model(settings, role)` returns `ChatOpenRouter` for `openrouter` and `ChatOpenAI` pointed at `LOCAL_BASE_URL` for `local`; the `main` and `cheap` roles pick the model id. Reason: Ollama and LM Studio speak the OpenAI protocol, so switching provider is one env var and the graph never knows which it has (#12).
+- **Cost comes from OpenRouter first.** `langchain-openrouter` copies the `usage.cost` of each response into `response_metadata["cost"]`, and `UsageTracker` records that. Without it a small price table is used (local models are free), and an unknown cloud model records tokens with no cost and one warning. Reason: the provider's own number is exact and needs no price list to keep current (#12).
+- **A ledger in SQLite with a daily cap.** Every call is a row in `usage`; `check_budget` raises `BudgetExceeded` before a call when the day's spend passes $1.00 or an incident passes 150k tokens. Days are the machine's local date. Reason: the cap has to survive restarts and stop a runaway loop before the next call, not after it (#12).
+- **Structured output falls back to plain JSON.** `invoke_structured` tries tool-based `with_structured_output`; on a parse error, a missing tool API or a bad reply it asks for JSON in plain text (`prompts/llm/json_fallback.md`), validates it with pydantic and retries once with the error. Then it raises `StructuredOutputFailed` with the truncated reply. Reason: small local models often cannot call tools reliably, and Bleep must degrade rather than stop (#12).
+- **`FakeChatModel` is a real `BaseChatModel`.** It replays scripted `AIMessage`s with tool calls and usage, and runs out loudly. Reason: graph tests exercise the real LangGraph tool loop with no network (#12).

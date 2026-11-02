@@ -10,6 +10,9 @@ dependencies = [
     "aiosqlite>=0.22.1",
     "fastapi>=0.162.0",
     "httpx>=0.28.1",
+    "langchain-core>=1.7.4",
+    "langchain-openai>=1.7.3",
+    "langchain-openrouter>=0.2.9",
     "pydantic-settings>=2.16.2",
     "pyyaml>=6.0.3",
     "uvicorn>=0.54.0",
@@ -30,6 +33,12 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+# langsmith ships a pytest plugin that warns on import under Python 3.14; Bleep does not use it
+addopts = "-p no:langsmith_plugin"
+filterwarnings = [
+    # langsmith (pulled in by langchain-core) still calls the deprecated asyncio helper
+    "ignore:.asyncio.iscoroutinefunction. is deprecated:DeprecationWarning",
+]
 
 [dependency-groups]
 dev = [

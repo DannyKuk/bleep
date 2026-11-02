@@ -22,7 +22,7 @@ async def version(db: Database) -> int:
 async def test_migrate_is_idempotent(tmp_db):
     await tmp_db.migrate()
     await tmp_db.migrate()
-    assert await version(tmp_db) == 1
+    assert await version(tmp_db) == len(tmp_db._migration_files())
 
 
 async def test_connect_sets_pragmas(tmp_db):

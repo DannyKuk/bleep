@@ -1,3 +1,14 @@
+import warnings
+
+# The LangChain packages warn on import under Python 3.14 (pydantic.v1, a deprecated asyncio
+# helper in langsmith). Import them once here with warnings silenced; pytest re-applies
+# `-W error` per test module, so a filter would not hold.
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    import langchain_core.messages  # noqa: F401
+    import langchain_openai  # noqa: F401
+    import langchain_openrouter  # noqa: F401
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
