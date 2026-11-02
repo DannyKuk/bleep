@@ -337,3 +337,30 @@ async def test_bleeps_own_containers_are_invisible_to_every_read_tool(tmp_path):
     events = await env.run("recent_events", minutes=30)
     assert "bleep-backend-1" not in events and "shop-web-1" in events
     assert "ok" in await env.run("container_logs", container="shop-web-1")
+
+
+async def test_events_labelled_bleep_self_are_dropped_even_when_not_in_the_snapshot():
+    engine = FakeEngine(
+        "a",
+        [box("shop-web-1")],
+        events=[
+            DockerEvent(
+                time=NOW,
+                type="container",
+                action="die",
+                container_name="bleep-gone-1",
+                attributes={"bleep.self": "true"},
+            ),
+            DockerEvent(time=NOW, type="container", action="die", container_name="shop-web-1"),
+        ],
+    )
+
+    async def connect(host):
+        return None, engine
+
+    registry = Registry([ssh_host(id="a", name="A")], connector=connect)
+    await registry.start()
+    env = Env(registry, engine, GuardLog())
+
+    events = await env.run("recent_events", minutes=30)
+    assert "bleep-gone-1" not in events and "shop-web-1" in events

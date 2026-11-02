@@ -8,6 +8,11 @@ SELF_LABEL = "bleep.self"
 COMPOSE_PROJECT = "com.docker.compose.project"
 
 
+def is_self(labels: dict[str, str]) -> bool:
+    """Whether these labels mark a container as Bleep's own."""
+    return labels.get(SELF_LABEL) == "true"
+
+
 class AmbiguousOverride(ValueError):
     """An override key matches no service key and the display names of several services."""
 

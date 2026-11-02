@@ -15,9 +15,9 @@ from pydantic import BaseModel, Field, ValidationError
 
 from bleep.guard.pipeline import guard_text
 from bleep.guard.redact import REDACTED, redact_env, redact_text
-from bleep.hosts.discovery import SELF_LABEL
+from bleep.hosts.discovery import is_self
 from bleep.hosts.engine import ContainerNotFound, EngineError, EngineUnavailable
-from bleep.schemas.docker import ContainerDetail, ContainerSummary
+from bleep.schemas.docker import ContainerDetail, ContainerSummary, DockerEvent
 from bleep.tools.registry import ToolContext, ToolSpec
 
 NOT_FOUND = "not found on this host"
@@ -94,7 +94,18 @@ def _find(ctx: ToolContext, ref: str) -> ContainerSummary | None:
 
 
 def _own(container: ContainerSummary) -> bool:
-    return container.labels.get(SELF_LABEL) == "true"
+    return is_self(container.labels)
+
+
+def _own_event(ctx: ToolContext, event: DockerEvent) -> bool:
+    """Docker labels every event of a Bleep container; the listing covers events without labels."""
+    if is_self(event.attributes):
+        return True
+    ref = event.container_id or event.container_name
+    known = ctx.registry.container(ctx.host_id, ref) if ref else None
+    if known is None and event.container_name:
+        known = ctx.registry.container(ctx.host_id, event.container_name)
+    return known is not None and _own(known)
 
 
 def _since(delta: timedelta) -> datetime:
@@ -203,9 +214,7 @@ async def _stats(ctx: ToolContext, container: str) -> str:
 async def _events(ctx: ToolContext, minutes: int = 30) -> str:
     now = datetime.now(UTC)
     events = await ctx.registry.engine(ctx.host_id).events(now - timedelta(minutes=minutes), now)
-    own = {c.name for c in ctx.registry.snapshot(ctx.host_id) or [] if _own(c)}
-    own |= {c.id for c in ctx.registry.snapshot(ctx.host_id) or [] if _own(c)}
-    events = [e for e in events if (e.container_name or e.container_id) not in own]
+    events = [e for e in events if not _own_event(ctx, e)]
     if not events:
         return await _guard(ctx, "events", f"(no events in the last {minutes} minutes)")
     lines = [

@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
 
-from bleep.hosts.discovery import SELF_LABEL
+from bleep.hosts.discovery import is_self
 from bleep.schemas.docker import ContainerSummary, DockerEvent
 from bleep.schemas.incidents import Signal, Subject
 
@@ -31,9 +31,7 @@ class Translation:
 
 
 def _is_self(event: DockerEvent, known: ContainerSummary | None) -> bool:
-    if event.attributes.get(SELF_LABEL) == "true":
-        return True
-    return known is not None and known.labels.get(SELF_LABEL) == "true"
+    return is_self(event.attributes) or (known is not None and is_self(known.labels))
 
 
 def _exit_code(event: DockerEvent) -> int | None:
@@ -120,7 +118,7 @@ def diff(
     now_by_id = {c.id: c for c in current}
     signals: list[Signal] = []
     for before in previous:
-        if before.labels.get(SELF_LABEL) == "true" or before.state != "running":
+        if is_self(before.labels) or before.state != "running":
             continue
         if before.id in handled or before.id in deliberate:
             continue
