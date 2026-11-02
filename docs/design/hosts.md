@@ -33,3 +33,19 @@ How Bleep reaches each host's Docker engine (`hosts/ssh.py`, `hosts/engine.py`).
 - **Host commands take an argv list only.** `run` refuses a string and joins the list with `shlex.join`. Reason: SSH exec takes one string for the remote shell, so every argument is quoted and nothing free-form reaches it (#4).
 - **A command that hangs or floods is ended.** `run` reads stdout and stderr as bytes, in chunks, up to 1,000,000 bytes each. On the 20 s timeout or on the cap it terminates the remote process and closes its channel. Reason: an abandoned channel holds one of sshd's sessions (10 by default), and when they run out every later command fails. In the smoke test, 12 timed-out `sleep 30` calls in a row left no process and no session behind (#4).
 - **`ContainerDetail.env` is raw.** Reason: the engine reports what Docker says. Redaction (`guard.redact_env`) happens in the tools, before anything reaches a model, a log or the database (#4).
+
+## Service discovery and the registry
+
+How containers become services and how Bleep keeps track of each host (`hosts/discovery.py`, `hosts/registry.py`). The label evidence is in [Docker over SSH](../decisions/docker-over-ssh.md#coolify-labels-the-grouping-rule-for-task-5).
+
+- **Service key: `coolify.applicationUuid`, else `id:<coolify.applicationId>`, else `com.docker.compose.project`, else the container name.** The display name is `coolify.resourceName`, else the key. Reason: the UUID is unique and groups an app's containers, while `resourceName` is only a name that two apps can share, and merging them would merge their incidents (#5).
+- **Coolify membership is `coolify.type == "application"`, or, without that label, the presence of `coolify.applicationId`.** Only members use the Coolify keys; a Coolify database or service falls back to its compose project or name. Reason: other resource types were not seen on a real host, and the fallback groups them safely (#5).
+- **A preview deployment (`coolify.pullRequestId` present and not `0`) is its own service,** keyed `<key>-pr-<n>` and named `<name> (PR <n>)`. Reason: a pull request's incident must not merge into the live app's, and the name keeps it from taking the app's overrides (#5).
+- **Coolify's own containers are not excluded.** They group by compose project, then by name. Reason: Danny wants to hear when `coolify-proxy` dies (#5).
+- **`source` is `coolify`, `compose` or `single`,** by the label that decided the key (#5).
+- **Overrides in `hosts.yaml` match the service key or the display name; the key wins on a conflict.** Reason: a human writes `dkwebsite`, not the UUID, but the UUID stays available for the rare name clash (#5).
+- **`protected` is the override's `protected_containers`, by container name.** Reason: act tools check a container, not a service (#5).
+- **Containers labelled `bleep.self=true` are left out of every service.** Reason: Bleep must never open an incident on itself or offer to restart itself (#5).
+- **`Registry.start()` connects all hosts at once and never raises.** A host that fails stays in the registry with `reachable=False` and the error text. Reason: Bleep must start while a host is down, and the watcher brings it back (#5).
+- **`refresh(host_id)` lists the containers.** On success the host is reachable with `last_seen` set to now. On `EngineUnavailable` it is marked unreachable, and the last snapshot and `last_seen` stay. Reason: tools and the host incident need to say what was last seen and when (#5).
+- **`reconnect(host_id)` is `SshSession.ensure_open()`, then `engine.reconnect()`,** or the connector again for a host that never connected, and raises if the host is still down. Reason: the watcher owns the backoff and the decision to give up (#5).

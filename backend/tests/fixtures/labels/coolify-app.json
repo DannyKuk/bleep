@@ -1,0 +1,28 @@
+{
+  "container": "coolify",
+  "image": [
+    "coollabsio/coolify:4.5.3"
+  ],
+  "labels": {
+    "com.docker.compose.config-hash": "30b1acdc8bc243b6c39e55f3f7f3eb6fd10a27ed8b8ca828c8c6ac6b2703f35c",
+    "com.docker.compose.container-number": "1",
+    "com.docker.compose.depends_on": "postgres:service_healthy:false,redis:service_healthy:false",
+    "com.docker.compose.image": "sha256:aef677bc0023a98a5474b1bafe667966a20f8cf0eff3e99bf47eb0652b3e632b",
+    "com.docker.compose.oneoff": "False",
+    "com.docker.compose.project": "source",
+    "com.docker.compose.project.config_files": "/data/coolify/source/docker-compose.yml,/data/coolify/source/docker-compose.prod.yml",
+    "com.docker.compose.project.environment_file": "/data/coolify/source/.env",
+    "com.docker.compose.project.working_dir": "/data/coolify/source",
+    "com.docker.compose.service": "coolify",
+    "com.docker.compose.version": "5.6.1",
+    "org.opencontainers.image.authors": "Jay Rogers (@jaydrogers)",
+    "org.opencontainers.image.description": "Supercharge your PHP experience. Based off the official PHP images, serversideup/php includes pre-configured PHP extensions and settings for enhanced performance and security. Optimized for Laravel and WordPress.",
+    "org.opencontainers.image.documentation": "https://serversideup.net/open-source/docker-php/docs/",
+    "org.opencontainers.image.licenses": "GPL-3.0-or-later",
+    "org.opencontainers.image.source": "https://github.com/serversideup/docker-php",
+    "org.opencontainers.image.title": "serversideup/php (fpm-nginx)",
+    "org.opencontainers.image.url": "https://serversideup.net/open-source/docker-php/",
+    "org.opencontainers.image.vendor": "ServerSideUp",
+    "org.opencontainers.image.version": "v5.0.3-39956014341"
+  }
+}
