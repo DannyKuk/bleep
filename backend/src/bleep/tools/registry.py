@@ -28,6 +28,8 @@ class ToolSpec:
     kind: ToolKind
     plugin: str | None
     build: Callable[[ToolContext], BaseTool]
+    # Offered only where this is true for the incident's host; None means everywhere.
+    offered: Callable[[ToolContext], bool] | None = None
 
 
 class ToolRegistry:
@@ -45,5 +47,9 @@ class ToolRegistry:
         return list(self._specs.values())
 
     def read_tools(self, ctx: ToolContext) -> list[BaseTool]:
-        """The read-only tools, built for `ctx`. Act tools are never returned here."""
-        return [s.build(ctx) for s in self._specs.values() if s.kind == "read"]
+        """The read-only tools offered on `ctx`'s host. Act tools are never returned here."""
+        return [
+            s.build(ctx)
+            for s in self._specs.values()
+            if s.kind == "read" and (s.offered is None or s.offered(ctx))
+        ]

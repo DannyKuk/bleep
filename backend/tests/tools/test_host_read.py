@@ -29,10 +29,9 @@ async def build(host_kind="ssh", shell=None):
     registry = Registry([host], connect)
     await registry.start()
     log = GuardLog()
-    tools = {
-        t.name: t for t in default_registry().read_tools(ToolContext("inc-1", "a", registry, log))
-    }
-    return tools["host_command"], log
+    from bleep.tools.host_read import SPECS
+
+    return SPECS[0].build(ToolContext("inc-1", "a", registry, log)), log
 
 
 async def test_output_is_redacted_and_wrapped():
@@ -72,7 +71,7 @@ async def test_runs_allowed_command_on_darwin():
 
 
 async def test_socket_host_has_no_host_commands():
-    tool, log = await build("socket")
+    tool, log = await build("socket")  # built directly; the registry does not offer it there
     assert await tool.ainvoke({"command": "df -P"}) == "host commands need an SSH host"
     assert log.records == []
 
@@ -90,7 +89,26 @@ async def test_timeout():
 
 
 def test_description_lists_commands_and_marks_output_untrusted():
-    tool = default_registry().read_tools(ToolContext("i", "a", None))  # type: ignore[arg-type]
-    description = next(t for t in tool if t.name == "host_command").description
+    from bleep.tools.host_read import SPECS
+
+    tool = SPECS[0].build(ToolContext("i", "a", None))  # type: ignore[arg-type]
+    description = tool.description
     for word in ("df -P", "free -b", "journalctl", "vm_stat", "uptime", "untrusted"):
         assert word in description
+
+
+async def test_host_command_is_offered_on_ssh_hosts_only():
+    async def names(kind):
+        host = ssh_host(id="a") if kind == "ssh" else socket_host()
+        shell = FakeShell("linux") if kind == "ssh" else None
+
+        async def connect(h):
+            return shell, FakeEngine("a")
+
+        registry = Registry([host], connect)
+        await registry.start()
+        ctx = ToolContext("inc-1", "a", registry, GuardLog())
+        return {t.name for t in default_registry().read_tools(ctx)}
+
+    assert "host_command" in await names("ssh")
+    assert "host_command" not in await names("socket")

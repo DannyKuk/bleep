@@ -277,7 +277,8 @@ def test_read_tools_contains_no_act_tool():
     registry.register(ToolSpec("sneaky", "act", "docker", lambda ctx: pytest.fail("built")))
     ctx = ToolContext("i", "a", None)  # type: ignore[arg-type]
     assert registry.read_tools(ctx) == []
-    assert {t.name for t in default_registry().read_tools(ctx)} == {
+    specs = {s.name for s in default_registry().specs() if s.kind == "read"}
+    assert specs == {
         "list_containers",
         "inspect_container",
         "container_logs",
@@ -308,3 +309,31 @@ async def test_sources_used_by_tools_are_valid(env):
         sources.add(re.match(r'<untrusted source="([^"]+)"', out).group(1))
     assert sources == {"containers", "inspect", "logs", "events"}
     assert all(re.fullmatch(r"[a-z0-9_.:-]{1,40}", s) for s in sources | {"error"})
+
+
+async def test_bleeps_own_containers_are_invisible_to_every_read_tool(tmp_path):
+    own = box("bleep-backend-1", labels={"bleep.self": "true"})
+    engine = FakeEngine(
+        "a",
+        [box("shop-web-1"), own],
+        logs={"bleep-backend-1": "secret own log\n", "shop-web-1": "ok\n"},
+        events=[
+            DockerEvent(time=NOW, type="container", action="die", container_name="bleep-backend-1"),
+            DockerEvent(time=NOW, type="container", action="die", container_name="shop-web-1"),
+        ],
+    )
+
+    async def connect(host):
+        return None, engine
+
+    registry = Registry([ssh_host(id="a", name="A")], connector=connect)
+    await registry.start()
+    env = Env(registry, engine, GuardLog())
+
+    assert "bleep-backend-1" not in await env.run("list_containers")
+    for tool in ("inspect_container", "container_logs", "container_stats"):
+        assert await env.run(tool, container="bleep-backend-1") == "not found on this host"
+        assert await env.run(tool, container="id-bleep-backend-1") == "not found on this host"
+    events = await env.run("recent_events", minutes=30)
+    assert "bleep-backend-1" not in events and "shop-web-1" in events
+    assert "ok" in await env.run("container_logs", container="shop-web-1")

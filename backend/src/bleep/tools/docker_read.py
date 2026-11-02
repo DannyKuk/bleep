@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from bleep.guard.pipeline import guard_text
 from bleep.guard.redact import REDACTED, redact_env, redact_text
+from bleep.hosts.discovery import SELF_LABEL
 from bleep.hosts.engine import ContainerNotFound, EngineError, EngineUnavailable
 from bleep.schemas.docker import ContainerDetail, ContainerSummary
 from bleep.tools.registry import ToolContext, ToolSpec
@@ -87,7 +88,13 @@ def _tool(
 
 
 def _find(ctx: ToolContext, ref: str) -> ContainerSummary | None:
-    return ctx.registry.container(ctx.host_id, ref)
+    """The container on this host, or None; Bleep's own containers are never found."""
+    found = ctx.registry.container(ctx.host_id, ref)
+    return None if found is not None and _own(found) else found
+
+
+def _own(container: ContainerSummary) -> bool:
+    return container.labels.get(SELF_LABEL) == "true"
 
 
 def _since(delta: timedelta) -> datetime:
@@ -112,6 +119,8 @@ async def _list(ctx: ToolContext) -> str:
     services = {c.name: s.name for s in ctx.registry.services(ctx.host_id) for c in s.containers}
     rows = ["name | service | state | health | image | restarts"]
     for c in await ctx.registry.engine(ctx.host_id).containers():
+        if _own(c):
+            continue
         rows.append(
             f"{c.name} | {services.get(c.name, '-')} | {c.state} | {c.health} | {c.image}"
             f" | {c.restart_count}"
@@ -194,6 +203,9 @@ async def _stats(ctx: ToolContext, container: str) -> str:
 async def _events(ctx: ToolContext, minutes: int = 30) -> str:
     now = datetime.now(UTC)
     events = await ctx.registry.engine(ctx.host_id).events(now - timedelta(minutes=minutes), now)
+    own = {c.name for c in ctx.registry.snapshot(ctx.host_id) or [] if _own(c)}
+    own |= {c.id for c in ctx.registry.snapshot(ctx.host_id) or [] if _own(c)}
+    events = [e for e in events if (e.container_name or e.container_id) not in own]
     if not events:
         return await _guard(ctx, "events", f"(no events in the last {minutes} minutes)")
     lines = [

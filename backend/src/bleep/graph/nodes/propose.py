@@ -3,7 +3,8 @@
 The model answers with a `Proposal`; code then checks it (`guard.plan_check`) before any human
 sees it. A refused plan goes back to the model once with the reasons; refused again, it becomes
 `no_action` with the reasons for the human. Every refusal is written to the guard log as
-`blocked_action`. An unsure diagnosis gets no plan at all. See docs/design/graph.md.
+`blocked_action`. An unsure diagnosis is proposed on too, framed as "I am not sure, here is what I
+found"; only a missing diagnosis or a spent budget skips the model. See docs/design/graph.md.
 """
 
 from typing import Literal
@@ -20,9 +21,7 @@ from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget
 from bleep.schemas.graph import Diagnosis, GatherContext, PlanStep, Proposal
 from bleep.schemas.incidents import Subject
 
-UNSURE = (
-    "Bleep is not sure of the cause, so it proposes no action; the diagnosis says what it found."
-)
+NO_DIAGNOSIS = "Bleep has no diagnosis to act on, so it proposes no action."
 NO_PLAN = "The model gave no usable plan, so Bleep proposes no action."
 BUDGET = "The incident's token budget or the day's cost cap is spent, so Bleep proposes no action."
 REFUSED = "Bleep's own checks refused the proposed plan twice, so nothing will run."
@@ -32,8 +31,8 @@ def make(deps: GraphDeps) -> Node:
     async def propose(state: IncidentState) -> dict:
         diagnosis = state.get("diagnosis")
         update: dict = {}
-        if diagnosis is None or diagnosis.unsure:
-            proposal = Proposal(kind="no_action", reason=UNSURE)
+        if diagnosis is None:
+            proposal = Proposal(kind="no_action", reason=NO_DIAGNOSIS)
         else:
             try:
                 proposal = await _plan(deps, state, diagnosis)
@@ -132,6 +131,7 @@ def _prompt(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis, enabled
         actions=", ".join(f"`{a}`" for a in sorted(enabled)) or "none",
         instructions="\n".join(f"{n}. {t}" for n, t in enumerate(instructions, 1)) or "none",
         previous=_previous(state.get("proposal")),
+        unsure=prompts.load("graph/propose_unsure") if diagnosis.unsure else "",
     )
 
 

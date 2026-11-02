@@ -70,3 +70,39 @@ async def test_a_run_goes_from_gather_to_the_interrupt_and_resumes_on_each_decis
             assert (await env.nodes(incident.id))[-2:] == ["propose", "approval"]
             assert (await store.current(incident.id)).id != record.id  # a new question
             assert (await env.repo.get(incident.id)).status == "awaiting_approval"
+
+
+async def test_an_unsure_killed_container_reaches_the_approval_with_a_start(tmp_path):
+    """The first live run: exit 137, no restart policy, confidence 0.45 twice, then a start."""
+    from fakes import FakeEngine
+    from graph_env import box
+
+    engine = FakeEngine("a", [box("bleep-try", state="exited", exit_code=137, restart_policy="no")])
+    env = await graph_env(tmp_path, engine=engine)
+    unsure = AIMessage(json.dumps(DIAGNOSIS | {"confidence": 0.45, "root_cause": "killed"}))
+    start = {"action": "docker.start", "host_id": "a", "target": "bleep-try"}
+    body = {"kind": "act", "steps": [start], "reason": "I am not sure who killed it; start it.",
+            "verification": {}}  # fmt: skip
+    env.models.model = FakeChatModel(
+        script=[
+            AIMessage("nothing to read"), unsure, AIMessage("nothing more"), unsure,
+            AIMessage(json.dumps(body)),
+        ],
+        structured_output_unsupported=True,
+    )  # fmt: skip
+    store = ApprovalStore(env.db, "test-secret")
+    env.deps.approvals = store
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, store)
+        subject = Subject(kind="service", host_id="a", service_id=env.service_id("bleep-try"))
+        incident = await env.open(subject, container="bleep-try")
+
+        await runner.start(incident)
+        await runner.join()
+
+        record = await store.current(incident.id)
+        assert record is not None and record.decision is None
+        assert (await env.repo.get(incident.id)).status == "awaiting_approval"
+        state = (await runner.graph.aget_state(runner.config(incident.id))).values
+        assert state["diagnosis"].unsure
+        assert [s.action for s in state["proposal"].steps] == ["docker.start"]
