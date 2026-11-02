@@ -6,16 +6,17 @@ later piece is passed in their place. The app passes `incidents.approvals.Approv
 """
 
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
 from langchain_core.language_models import BaseChatModel
 
+from bleep.guard.grant import grant_token, plan_hash
 from bleep.guard.log import GuardLogger
 from bleep.hosts.registry import Registry
-from bleep.incidents.approvals import grant_token, plan_hash
+from bleep.incidents.action_log import ActionLog
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.llm.factory import Role, chat_model
@@ -34,6 +35,7 @@ from bleep.schemas.graph import (
 )
 from bleep.schemas.incidents import Incident
 from bleep.schemas.settings import Budgets, ModelSettings
+from bleep.tools.docker_act import ActTool
 from bleep.tools.registry import ToolRegistry
 
 # The actions Bleep can take without a plugin; plugins add theirs (coolify.*) when enabled.
@@ -136,11 +138,12 @@ class Approvals(Protocol):
 
 
 class InMemoryApprovals:
-    """Approvals in a dict, keyed with a random secret: lost on restart, so for tests only."""
+    """Approvals in a dict, lost on restart, so for tests only. Grants are keyed with `secret`
+    (random by default); a test that runs act tools passes the one it gives them."""
 
-    def __init__(self) -> None:
+    def __init__(self, secret: str | None = None) -> None:
         self.records: dict[str, ApprovalRecord] = {}
-        self._secret = secrets.token_hex(16)
+        self._secret = secret or secrets.token_hex(16)
 
     async def request(
         self, incident_id: str, proposal: Proposal, snapshots: list[TargetSnapshot]
@@ -214,12 +217,18 @@ def model_factory(settings: SettingsSource) -> ModelFactory:
 
 @dataclass(kw_only=True)
 class GraphDeps:
+    """`tools` are the read tools Investigate offers the model; `act_tools` are run by Execute
+    alone, keyed by action name, and must be keyed with the secret that keys `approvals`' grants.
+    `action_log` is Execute's crash-safety ledger."""
+
     registry: Registry
     tools: ToolRegistry
+    act_tools: Mapping[str, ActTool]
     models: ModelFactory
     bus: EventBus
     ledger: CostLedger
     incidents: IncidentRepo
+    action_log: ActionLog
     memory: Memory = field(default_factory=NullMemory)
     approvals: Approvals = field(default_factory=InMemoryApprovals)
     notifier: Notifier = field(default_factory=NullNotifier)

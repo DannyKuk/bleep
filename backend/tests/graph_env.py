@@ -13,9 +13,10 @@ from typing import Any
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
 
-from bleep.graph.deps import GraphDeps
+from bleep.graph.deps import GraphDeps, InMemoryApprovals
 from bleep.hosts.config import HostConfig, ServiceOverrides
 from bleep.hosts.registry import Registry
+from bleep.incidents.action_log import ActionLog
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
 from bleep.llm.usage import CostLedger
@@ -23,9 +24,11 @@ from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Incident, Signal, Subject
 from bleep.store.db import Database
 from bleep.tools.default import default_registry
+from bleep.tools.docker_act import docker_act_tools
 from fakes import FakeChatModel, FakeEngine, FakeShell, ssh_host
 
 T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
+SECRET = "test-secret"  # keys the default approvals' grants and the act tools alike
 COMPOSE_PROJECT = "com.docker.compose.project"
 
 
@@ -135,10 +138,13 @@ async def graph_env(
     deps = GraphDeps(
         registry=registry,
         tools=default_registry(),
+        act_tools=docker_act_tools(SECRET, guard_log),
         models=models,
         bus=bus,
         ledger=CostLedger(db),
         incidents=repo,
+        action_log=ActionLog(db),
+        approvals=InMemoryApprovals(SECRET),
         guard_log=guard_log,
     )
     return GraphEnv(db, repo, bus, registry, engine, shell, guard_log, models, deps)

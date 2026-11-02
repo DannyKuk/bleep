@@ -9,7 +9,7 @@ import typing
 from dataclasses import dataclass
 from typing import Literal
 
-from bleep.hosts.discovery import SELF_LABEL
+from bleep.hosts.discovery import is_self
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import Action, PlanStep, Proposal
@@ -72,17 +72,29 @@ def _check_step(
     number: int, step: PlanStep, registry: Registry, enabled: set[str], host_id: str
 ) -> list[Violation]:
     what = f"step {number} ({step.action} {step.target} on {step.host_id})"
+    if step.action not in KNOWN_ACTIONS:
+        return [Violation("unknown_action", f"{what}: is not an action Bleep has", number)]
+    if step.action not in enabled:
+        return [Violation("disabled_action", f"{what}: is not enabled; its plugin is off", number)]
+    if step.host_id != host_id:
+        why = f"targets another host; this incident is on {host_id}"
+        return [Violation("other_host", f"{what}: {why}", number)]
+    return check_target(number, step, registry)
+
+
+def check_target(number: int, step: PlanStep, registry: Registry) -> list[Violation]:
+    """Every reason `step`'s target may not be acted on now, read from the registry as it stands.
+
+    Refused: a host not in the hosts file, unreachable or carrying a configuration error, a target
+    not found on it, a protected container and a Bleep container. The plan check runs it before a
+    human is asked and every act tool again right before its engine call (#24).
+    """
+    what = f"step {number} ({step.action} {step.target} on {step.host_id})"
 
     def refuse(rule: Rule, why: str) -> list[Violation]:
         return [Violation(rule, f"{what}: {why}", number)]
 
-    if step.action not in KNOWN_ACTIONS:
-        return refuse("unknown_action", "is not an action Bleep has")
-    if step.action not in enabled:
-        return refuse("disabled_action", "is not enabled; its plugin is off")
-    if step.host_id != host_id:
-        return refuse("other_host", f"targets another host; this incident is on {host_id}")
-    host = next((h for h in registry.hosts() if h.config.id == host_id), None)
+    host = next((h for h in registry.hosts() if h.config.id == step.host_id), None)
     if host is None:
         return refuse("not_found", "the host is not in the hosts file")
     if not host.reachable:  # `error` then holds the connection failure, not a config problem
@@ -97,18 +109,18 @@ def _check_step(
 
     protected = protected_names(host)
     if step.action.startswith("coolify."):
-        members = _coolify_members(registry.snapshot(host_id) or [], step.target)
+        members = _coolify_members(registry.snapshot(step.host_id) or [], step.target)
         if not members:
             return refuse("not_found", "no Coolify application by that name on this host")
     else:
-        container = registry.container(host_id, step.target)
+        container = registry.container(step.host_id, step.target)
         if container is None:
             return refuse("not_found", "no container by that name on this host")
         members = [container]
 
     found: list[Violation] = []
     for c in members:
-        if c.labels.get(SELF_LABEL) == "true":
+        if is_self(c.labels):
             found += refuse("self", f"{c.name} is one of Bleep's own containers")
         elif c.name in protected:
             found += refuse("protected", f"{c.name} is protected in the hosts file")

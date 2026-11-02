@@ -49,7 +49,9 @@ flowchart LR
 | **Notifier and Telegram bot** | `notify/`, `prompts/notify/` | The notifier the graph and the reminder loop call: it tells the dashboard bus and, when a bot token is set, Telegram. The bot long-polls Telegram; a button or a reply to a proposal becomes a decision, raced fairly against the dashboard. |
 | **Incident graph** | `graph/` | LangGraph state, nodes and wiring, checkpointed per incident in `checkpoints.sqlite`. |
 | **Read tools** | `tools/` | Docker reads and the host command tool for the model, each scoped to the incident's host. |
-| **Guard** | `guard/` | Redacts secrets, strips control characters, caps size and wraps untrusted text before anything reaches a model; checks every proposed plan before a human sees it (`guard/plan_check.py`); `guard/log.py` records what it refused, blocked or changed in the `guard_log` table. |
+| **Act tools** | `tools/docker_act.py`, `guard/grant.py` | Restart, stop and start a container for one step of an approved plan; each checks the grant against the plan, then the target (host error, protected, Bleep's own), and acts on the approved container id. Never offered to a model. |
+| **Action log** | `incidents/action_log.py` | Execute's ledger in SQLite: each step `started` before its engine call and `done`, `failed` or `skipped` after, so a restart never runs a step twice. |
+| **Guard** | `guard/` | Redacts secrets, strips control characters, caps size and wraps untrusted text before anything reaches a model; checks every proposed plan before a human sees it (`guard/plan_check.py`); hashes plans and signs and checks approval grants (`guard/grant.py`); `guard/log.py` records what it refused, blocked or changed in the `guard_log` table. |
 | **Models** | `llm/` | One factory for OpenRouter and local models, structured output with a plain-JSON fallback, and a token and cost ledger with a daily cap. |
 | **Prompts** | `prompts/` | Every prompt is a `.md` file loaded with `prompts.load(name, **vars)`. |
 | **Store** | `store/` | SQLite with numbered migrations. |
@@ -93,6 +95,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **One open incident per subject, enforced by a unique index.**
 - **An unreachable host absorbs its services' signals.**
 - **The bus persists before it fans out**, so the timeline never loses an event.
+- **Every act step is logged `started` before its engine call and finished after it**, so a resumed run never repeats a finished step.
 
 **Graph** ([details](design/graph.md))
 - **One module per node, each owning its routing**; `build.py` only wires them.
@@ -112,6 +115,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **Env values never reach the model.**
 - **Only the closing tag with the same random id ends untrusted data**, and the system prompt says so.
 - **Every plan is checked in code**: allowlisted, enabled actions on the incident's host only, never a protected or Bleep container, at most 3 steps.
+- **Act tools refuse without a grant for the exact plan**, recomputing its hash; they re-check the target with the plan check's rules and act on the approved container id, and no model is ever given them.
 
 **Notifications** ([details](design/notify.md))
 - **Telegram is optional**: without a token everything runs through the dashboard.

@@ -77,7 +77,17 @@ def full_state() -> dict:
         "approval": ApprovalRequest(id="ap_1", plan_hash="h"),
         "decision": Decision(kind="approve", via="dashboard", at=AT),
         "grant": ApprovalGrant(incident_id="inc_1", plan_hash="h", token="t"),
-        "execution": [StepResult(step=step, ok=True)],
+        "execution": [
+            StepResult(
+                step_index=0,
+                action="docker.restart",
+                target="shop-web-1",
+                ok=True,
+                detail="restarted shop-web-1",
+                started_at=AT,
+                finished_at=AT,
+            )
+        ],
         "verify_loops": 0,
         "verification": VerificationResult(ok=True),
         "outcome": "resolved",

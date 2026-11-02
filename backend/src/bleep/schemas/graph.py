@@ -1,8 +1,8 @@
 """The shapes the incident graph keeps in its state and hands between nodes.
 
 Every Milestone 2 node's model is defined here at once, so the node tasks can be built side by
-side against fixed shapes. `StepResult`, `VerificationResult` and `Report` are minimal
-placeholders that Milestone 3 (Execute, Verify, Report) fills out. See docs/design/graph.md.
+side against fixed shapes. `VerificationResult` and `Report` are minimal placeholders that
+Milestone 3 (Verify, Report) fills out. See docs/design/graph.md.
 """
 
 from datetime import datetime
@@ -152,11 +152,31 @@ class ApprovalGrant(BaseModel):
 
 
 class StepResult(BaseModel):
-    """Placeholder until Milestone 3's Execute: what one plan step did."""
+    """What one step of an approved plan did, in Bleep's own words (never host text).
 
-    step: PlanStep
+    `step_index` is the step's 0-based place in the plan. `started_at` is None for a step that
+    never ran (skipped), `finished_at` for one that has not finished.
+    """
+
+    step_index: int
+    action: Action
+    target: str
     ok: bool
     detail: str = ""
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+StepStatus = Literal["started", "done", "failed", "skipped"]
+
+
+class LoggedStep(BaseModel):
+    """One row of the action log: a step's status in its plan, and its result so far."""
+
+    plan_hash: str
+    host_id: str
+    status: StepStatus
+    result: StepResult
 
 
 class VerificationResult(BaseModel):
