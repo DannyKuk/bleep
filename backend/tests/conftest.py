@@ -38,13 +38,13 @@ def settings(tmp_path) -> Settings:
 def parts(settings) -> AppParts:
     """App parts over a temp database and an empty registry: no hosts file, no real engine."""
     db = Database(settings.data_dir / "bleep.db")
-    registry, bus = Registry([]), EventBus(db)
+    registry, bus, incidents = Registry([]), EventBus(db), IncidentRepo(db)
     return AppParts(
         db=db,
         registry=registry,
         bus=bus,
-        graph_deps=graph_deps(db, registry, bus),
-        incidents=IncidentRepo(db),
+        graph_deps=graph_deps(db, registry, bus, incidents),
+        incidents=incidents,
         sessions=SessionStore(db),
         login_limiter=LoginLimiter(),
     )

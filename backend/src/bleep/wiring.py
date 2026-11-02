@@ -29,18 +29,21 @@ def build_parts(settings: Settings) -> AppParts:
     """Build the parts; the database is migrated and the registry started by the app's lifespan."""
     db = Database(settings.data_dir / "bleep.db")
     registry = Registry(load_hosts_file(settings.hosts_file).hosts)
+    incidents = IncidentRepo(db)
     return AppParts(
         db=db,
         registry=registry,
         bus=(bus := EventBus(db)),
-        graph_deps=graph_deps(db, registry, bus),
-        incidents=IncidentRepo(db),
+        graph_deps=graph_deps(db, registry, bus, incidents),
+        incidents=incidents,
         sessions=SessionStore(db),
         login_limiter=LoginLimiter(),
     )
 
 
-def graph_deps(db: Database, registry: Registry, bus: EventBus) -> GraphDeps:
+def graph_deps(
+    db: Database, registry: Registry, bus: EventBus, incidents: IncidentRepo
+) -> GraphDeps:
     """What the incident graph runs on. Models are built when a node asks, so no key is needed."""
     store = StaticSettings()
     return GraphDeps(
@@ -49,5 +52,6 @@ def graph_deps(db: Database, registry: Registry, bus: EventBus) -> GraphDeps:
         models=model_factory(store),
         bus=bus,
         ledger=CostLedger(db),
+        incidents=incidents,
         settings_store=store,
     )
