@@ -23,41 +23,75 @@ from bleep.wiring import AppParts
 
 router = APIRouter(tags=["hosts"])
 
-_RANK: dict[Health, int] = {"unknown": 0, "ok": 1, "degraded": 2, "down": 3}
+_RANK: dict[Health, int] = {"unknown": 0, "ok": 1, "stopped": 1, "degraded": 2, "down": 3}
+
+# Exit codes of a process that was asked to stop (0, or killed by SIGTERM). 137 is left out: it
+# is also what the OOM killer leaves, so it counts as a crash.
+CLEAN_EXITS = (0, 143)
 
 
 def _worst(healths: Iterable[Health]) -> Health:
     return max(healths, key=_RANK.__getitem__, default="unknown")
 
 
+def is_finished(container: ContainerSummary) -> bool:
+    """A one-shot that ran to the end: exited 0 and no restart policy to bring it back."""
+    return (
+        container.state == "exited"
+        and container.exit_code == 0
+        and container.restart_policy in ("", "no")
+    )
+
+
+def is_stopped(container: ContainerSummary) -> bool:
+    """Exited cleanly, so a human (or a job's end) did it, not a crash."""
+    return container.state == "exited" and container.exit_code in CLEAN_EXITS
+
+
 def container_health(container: ContainerSummary) -> Health:
     """One container's health: running and healthy (or no healthcheck) is ok; starting or
-    restarting is degraded; unhealthy, exited, dead, created and paused are down."""
+    restarting is degraded; a clean exit is stopped; unhealthy, crashed, dead, created and
+    paused are down."""
     if container.state == "running":
         return {"healthy": "ok", "none": "ok", "starting": "degraded", "unhealthy": "down"}[
             container.health
         ]
     if container.state == "restarting":
         return "degraded"
+    if is_stopped(container):
+        return "stopped"
     if container.state in ("exited", "dead", "created", "paused"):
         return "down"
     return "unknown"  # a state Bleep has no rule for, such as removing
 
 
 def service_health(containers: Iterable[ContainerSummary], url_statuses: Iterable[str]) -> Health:
-    """The worst of its containers and its URLs (a failing URL is down); unknown with no data."""
+    """The worst of its containers and its URLs (a failing URL is down); unknown with no data.
+
+    Finished one-shots (exit 0, no restart policy) are left out while anything else is there.
+    When everything has exited cleanly the service is `stopped`, whatever its URLs say.
+    """
+    members = list(containers)
+    active = [c for c in members if not is_finished(c)]
+    if members and not active:
+        return "stopped"
+    healths: list[Health] = [container_health(c) for c in active]
+    if healths and all(h == "stopped" for h in healths):
+        return "stopped"
+    # One container stopped on purpose among running ones leaves the service partly working.
+    healths = ["degraded" if h == "stopped" else h for h in healths]
     from_urls: list[Health] = [
         {"ok": "ok", "failing": "down"}.get(status, "unknown") for status in url_statuses
     ]
-    return _worst([*map(container_health, containers), *from_urls])
+    return _worst([*healths, *from_urls])
 
 
 def host_health(reachable: bool, last_seen: datetime | None, services: Iterable[Health]) -> Health:
     """Unknown when unreachable with no snapshot, down when unreachable, else the worst service
-    (ok when it has none)."""
+    (ok when it has none; a stopped service counts as ok)."""
     if not reachable:
         return "unknown" if last_seen is None else "down"
-    healths = list(services)
+    healths: list[Health] = ["ok" if h == "stopped" else h for h in services]
     return _worst(healths) if healths else "ok"
 
 
@@ -81,6 +115,7 @@ def _view(service: Service, open_incident_id: str | None) -> ServiceView:
                 state=c.state,
                 health=c.health,
                 restart_count=c.restart_count,
+                exit_code=c.exit_code,
                 protected=c.name in service.protected,
             )
             for c in service.containers

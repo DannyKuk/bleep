@@ -2,7 +2,7 @@
 // regenerates this file from the backend's /openapi.json; keep the exported names below
 // (HostView, ServiceView, ContainerView, UrlStatus, Health) when switching.
 
-export type Health = "ok" | "degraded" | "down" | "unknown";
+export type Health = "ok" | "degraded" | "down" | "stopped" | "unknown";
 
 export type HostKind = "ssh" | "socket";
 
@@ -42,6 +42,7 @@ export interface ContainerView {
   state: string;
   health: ContainerHealth;
   restart_count: number;
+  exit_code: number | null;
   protected: boolean;
 }
 

@@ -1,3 +1,4 @@
+import asyncio
 import os
 import shlex
 import shutil
@@ -272,3 +273,15 @@ def test_sweep_keeps_dirs_of_live_sessions_in_this_process(forward_root, monkeyp
     monkeypatch.setattr(ssh_module, "_LIVE_DIRS", {mine})
     sweep_stale_forward_dirs()
     assert mine.exists()
+
+
+async def test_a_hung_connect_times_out_so_open_and_close_cannot_block(monkeypatch):
+    async def hangs(*args, **kwargs):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(ssh_module, "CONNECT_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(ssh_module, "CONNECT_GRACE_S", 0.02)
+    sess = SshSession(ssh_host(), connect=hangs)
+    with pytest.raises(SshUnavailable, match="TimeoutError"):
+        await asyncio.wait_for(sess.open(), 2)
+    await asyncio.wait_for(sess.close(), 2)  # the lock was released

@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     hosts_file: Path = Path("/config/hosts.yaml")
     admin_password: SecretStr
     secret: SecretStr
+    watch_interval_s: float = 15  # seconds between watcher ticks per host
     cookie_secure: bool = False  # true once the dashboard is served over https
 
 

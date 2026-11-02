@@ -30,6 +30,7 @@ export function service(overrides: Partial<ServiceView> = {}): ServiceView {
         state: "running",
         health: "healthy",
         restart_count: 0,
+        exit_code: null,
         protected: false,
       },
     ],

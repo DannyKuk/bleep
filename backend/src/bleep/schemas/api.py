@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-Health = Literal["ok", "degraded", "down", "unknown"]
+Health = Literal["ok", "degraded", "down", "stopped", "unknown"]
 
 
 class Me(BaseModel):
@@ -47,6 +47,7 @@ class ContainerView(BaseModel):
     state: str
     health: Literal["healthy", "unhealthy", "starting", "none"]
     restart_count: int
+    exit_code: int | None
     protected: bool
 
 

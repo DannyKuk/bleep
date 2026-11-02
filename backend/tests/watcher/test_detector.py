@@ -313,3 +313,22 @@ async def test_explain_recovery_redacts_before_cutting_and_records():
     text = model.seen[0][-1].content
     assert "ghp_" not in text and "A1b2A1b2" not in text
     assert log.records and log.records[0][:2] == ("inc-9", "redaction")
+
+
+def test_a_start_older_than_the_death_never_counts_as_a_recovery():
+    d, clock = make()
+    clock.at(100)
+    d.feed(died(clock))
+    old = box("running").model_copy(update={"started_at": T0 + timedelta(seconds=10)})
+    assert d.tick(clock.at(105), {"web": [old]}) == []
+    out = d.tick(clock.at(170), {"web": [old]})
+    assert [type(o) for o in out] == [OpenIncident]
+
+
+def test_a_start_after_the_death_inside_grace_is_a_recovery():
+    d, clock = make()
+    clock.at(100)
+    d.feed(died(clock))
+    new = box("running").model_copy(update={"started_at": T0 + timedelta(seconds=103)})
+    [out] = d.tick(clock.at(105), {"web": [new]})
+    assert isinstance(out, Recovered)

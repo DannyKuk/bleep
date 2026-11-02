@@ -16,7 +16,12 @@ const CONTAINER_TONE: Record<ContainerView["health"], string> = {
 function stateTone(container: ContainerView): string {
   if (container.health === "unhealthy") return "text-health-down";
   if (container.state === "running") return CONTAINER_TONE[container.health];
-  return container.state === "restarting" ? "text-health-degraded" : "text-health-down";
+  if (container.state === "restarting") return "text-health-degraded";
+  // Exited 0 or by SIGTERM: stopped on purpose or finished, not a crash.
+  if (container.state === "exited" && (container.exit_code === 0 || container.exit_code === 143)) {
+    return "text-health-stopped";
+  }
+  return "text-health-down";
 }
 
 function ContainerChip({ container }: { container: ContainerView }) {

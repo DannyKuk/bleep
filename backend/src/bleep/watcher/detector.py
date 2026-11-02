@@ -115,7 +115,8 @@ class Detector:
         """Resolve pending deaths against current container states (keyed by service id).
 
         A container running with health healthy or none whose `started_at` is within the grace
-        window of the death is recovered whenever it is first seen, even on a late tick. One still
+        window of the death (and not before it) is recovered whenever it is first seen, even on a
+        late tick. One still
         `starting` cannot be judged that way, so the manager must tick about every 10 s.
         """
         by_name: dict[str, ContainerSummary] = {}
@@ -143,8 +144,11 @@ class Detector:
                 )
             )
             started = current.started_at if current else None
+            # A start before the death is the old run, seen in a snapshot taken before the death
+            # showed: that proves nothing, so it is never a recovery.
+            fresh = started is None or started >= death.at
             in_time = started <= death.at + grace if started else elapsed <= grace
-            if back and in_time:
+            if back and fresh and in_time:
                 del self._pending[container]
                 out.append(Recovered(container, [death]))
             elif elapsed > grace:

@@ -44,6 +44,8 @@ Secrets inside the hosts file are references, `{env: NAME}` or `{file: PATH}`, n
 
 The dashboard (port 3000) is for a trusted LAN only. It has one admin login and no rate-limited public hardening. The backend's port 8000 is published on `127.0.0.1` only, so other machines reach Bleep through the dashboard, which forwards `/api` to the backend.
 
+The watcher checks every host every 15 s; `BLEEP_WATCH_INTERVAL_S` in `.env` changes that.
+
 The session cookie is not `Secure` by default, because the dashboard is plain http on the LAN. If you put it behind https, set `BLEEP_COOKIE_SECURE=true` in `.env`.
 
 ## Later

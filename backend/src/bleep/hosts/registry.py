@@ -137,6 +137,13 @@ class Registry:
             return None
         return next((s for s in self.services(host_id) if s.id == service_id), None)
 
+    def snapshot(self, host_id: str) -> list[ContainerSummary] | None:
+        """Every container of the last successful listing (Bleep's own too); None if none."""
+        entry = self._entries.get(host_id)
+        if entry is None or entry.containers is None:
+            return None
+        return list(entry.containers)
+
     def container(self, host_id: str, name_or_id: str) -> ContainerSummary | None:
         entry = self._entries.get(host_id)
         if entry is None:
