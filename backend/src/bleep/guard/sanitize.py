@@ -2,6 +2,7 @@
 
 import itertools
 import re
+from collections.abc import Callable
 
 MAX_CHARS = 8000
 MAX_RUN = 3
@@ -25,31 +26,74 @@ _INVISIBLE = re.compile(
 )
 
 
-def strip_control(text: str | bytes) -> str:
-    """Decode (bytes use errors="replace"), normalise newlines, drop ANSI and control characters."""
+def normalise_newlines(text: str | bytes) -> str:
+    """Decode (bytes use errors="replace"); CRLF, CR, U+2028 and U+2029 become a newline."""
     if isinstance(text, bytes):
         text = text.decode("utf-8", errors="replace")
-    text = text.replace("\r\n", "\n").replace("\r", "\n").replace(" ", "\n")
-    text = text.replace(" ", "\n")
-    text = _ANSI.sub("", text)
+    return (
+        text.replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace("\u2028", "\n")
+        .replace("\u2029", "\n")
+    )
+
+
+def tail_lines(text: str, limit: int) -> tuple[str, int]:
+    """Keep the last `limit` characters, starting at a line boundary; return it and the number
+    of characters dropped. This is the first bound on the work every later step does."""
+    if len(text) <= limit:
+        return text, 0
+    kept = text[-limit:]
+    newline = kept.find("\n")
+    if newline != -1:
+        kept = kept[newline + 1 :]
+    return kept, len(text) - len(kept)
+
+
+def strip_control(text: str | bytes) -> str:
+    """Normalise newlines, drop ANSI sequences, control and invisible characters."""
+    text = _ANSI.sub("", normalise_newlines(text))
     return _INVISIBLE.sub("", _CONTROL.sub("", text))
 
 
-def cap_lines(text: str, max_line: int = MAX_LINE) -> str:
+WINDOW = 300
+
+
+def cap_lines(
+    text: str,
+    max_line: int = MAX_LINE,
+    redact: Callable[[str], str] | None = None,
+) -> str:
     """Cut each line longer than `max_line` in the middle, keeping its head and tail.
 
-    This bounds the work every later pattern can do on one line, whatever the log contains.
+    This bounds the work every later pattern can do on one line. `redact`, when given, is run on
+    the 600 characters around each cut point before cutting, so a key and its value that the
+    cut would separate are redacted first.
     """
     if len(text) <= max_line:
         return text
-    half = (max_line - 40) // 2
+    half = (max_line - 300) // 2
     out = []
     for line in text.split("\n"):
         if len(line) > max_line:
             head, tail = _cut_points(line, half)
+            if redact is not None:
+                before = len(line)
+                line, head = _redact_around(line, head, redact)
+                tail += len(line) - before
+                line, tail = _redact_around(line, tail, redact)
+                head = min(head, tail)
             line = f"{line[:head]}[… {tail - head} chars cut]{line[tail:]}"
         out.append(line)
     return "\n".join(out)
+
+
+def _redact_around(line: str, cut: int, redact: Callable[[str], str]) -> tuple[str, int]:
+    """Redact `line` within WINDOW characters of `cut`; return it and the cut's new place."""
+    start, end = max(0, cut - WINDOW), min(len(line), cut + WINDOW)
+    new = redact(line[start:end])
+    moved = min(len(redact(line[start:cut])), len(new))
+    return line[:start] + new + line[end:], start + moved
 
 
 def _cut_points(line: str, half: int) -> tuple[int, int]:

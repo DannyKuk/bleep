@@ -1,3 +1,6 @@
+import re
+import time
+
 import pytest
 
 from bleep.guard.redact import redact_env, redact_text, redact_with_count
@@ -145,7 +148,7 @@ def test_key_name_stays_visible():
 CONTROLS = [
     "secret: not set",
     "token: expired",
-    "auth failed: invalid credentials: user=bob",
+    "auth failed: invalid credentials: user=bob retries=3",
     "credentials: user=bob next=1",
     'level=warn msg="login failed" auth=none',
     "auth=true auth=false auth=ok auth=required",
@@ -203,8 +206,6 @@ def test_redact_env_hides_every_value():
         "NOEQ",
     ]
 
-
-import time  # noqa: E402
 
 from bleep.guard.pipeline import guard_text  # noqa: E402
 
@@ -308,3 +309,193 @@ def test_event_loop_keeps_ticking_while_guard_runs():
         return ticks - before
 
     assert asyncio.run(run()) >= 5
+
+
+# --- round 3 -------------------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "text",
+    [
+        "reset_password_token=abc123def456",
+        "password_reset_token=abc123def456",
+        "OAUTH_PROVIDER_CLIENT_SECRET=abc999xyz",
+        "STATUS_PAGE_API_KEY=abc999xyz",
+        "HEADER_AUTH_TOKEN=abc999xyz",
+        "MAX_PASSWORD=hunter2",
+        "DIR_PASSWORD=hunter2",
+        "MODE_SECRET=x1",
+        "id_token=abc999xyz",
+        "FILE_ENCRYPTION_KEY=abc999xyz",
+        "APP_KEY=base64:abc999xyz",
+        "STRIPE_KEY=sk_live_abc123",
+        "HMAC_KEY=abc999",
+        "AES_KEY=abc999",
+        "WEBHOOK_KEY=abc999",
+        "PUSHER_APP_KEY=abc999",
+        "password=$uperSecret2024",
+        "password=$HOME_and_secret",
+        'password="${SECRET}actualvalue"',
+        "DB_PASSWORD: aB3=xY9!",
+        "client_secret: abc=defghi",
+        "token: Zm9v=YmFy",
+        "credentials: user=bob:hunter2",
+        "password => hunter2",
+        "password := hunter2",
+        "password == hunter2",
+        "$cfg = ['password' => 'hunter2']",
+        "[password] => hunter2",
+        "--db-password hunter2",
+        "--token abc999xyz",
+        "run --client-secret 'hunter 2' --verbose",
+        '{"cookie": "session=abc999; theme=dark"}',
+        "request_Cookie=session=abc999",
+        "cookie=sid=abc999",
+        "password:\n\n\n\n  hunter2",
+        "credentials: user=bob pw=hunter2",
+    ],
+)
+def test_round3_secrets(text):
+    out = redact_text(text)
+    for secret in (
+        "hunter2",
+        "hunter 2",
+        "abc999",
+        "Secret2024",
+        "actualvalue",
+        "aB3",
+        "defghi",
+        "Zm9v",
+    ):
+        assert secret not in out or secret in "".join(part for part in ["theme"]), (text, out)
+    assert redact_text(out) == out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "auth_method=password",
+        "auth_mechanism=SCRAM-SHA-256",
+        "auth_backend=ldap",
+        "mongodb://h/db?authSource=admin&replicaSet=rs0",
+        "token_audience=api",
+        "secretary=bob",
+        "password=''",
+        'password=""',
+        'password: "not set"',
+        "password: 'none'",
+        "cache_key=user:42",
+        "primary_key=id",
+        "sort_key=asc",
+        "idempotency_key=abc",
+        "--password-stdin",
+        "--token-file /run/secrets/t",
+        "docker login -p hunter",
+        "PWD=/home/app OLDPWD=/root",
+        "Cookie: ",
+        "missing cookie: please log in",
+    ],
+)
+def test_round3_controls(text):
+    assert redact_text(text) == text
+
+
+def test_flags_only_take_the_next_word():
+    assert redact_text("--db-password hunter2 --verbose") == "--db-password <redacted> --verbose"
+    assert redact_text("--password --verbose") == "--password --verbose"
+
+
+def test_cookie_names_survive_in_json():
+    assert redact_text('{"cookie": "a=1; b=2"}') == '{"cookie": "a=<redacted>; b=<redacted>"}'
+
+
+def test_block_scalar_rules():
+    text = "db:\n  password: |  # note\n    l1\n\n    l2\n  user: bob\n  host: x\n"
+    out = redact_text(text)
+    assert "l1" not in out and "l2" not in out
+    assert "user: bob" in out and "host: x" in out and out.count("\n") == text.count("\n")
+    long = "password: >-\n" + "".join(f"  secret line {i}\n" for i in range(60)) + "next: ok"
+    out = redact_text(long)
+    assert "secret line" not in out and out.endswith("next: ok")
+    assert redact_text(out) == out
+
+
+def test_one_redaction_per_secret():
+    assert redact_with_count("password=ghp_" + "A" * 20 + "!tail")[1] == 1
+    assert redact_with_count("Authorization: Bearer abc.def.ghi")[1] == 1
+    assert redact_with_count("password: |\n  a\n  b")[1] == 1
+
+
+def test_secret_straddling_a_line_cut_is_redacted_at_every_offset():
+    secret = "hunter2secretvalue"
+    for k in range(-20, 21):
+        # the boundary between key and value sits k characters from the tail cut ...
+        rest = 1850 - k
+        tail = "password: " + secret + " " + "y " * ((rest - len(secret)) // 2)
+        text_tail = "a " * 2500 + tail
+        # ... and k characters from the head cut
+        head = "a " * ((1850 + k - 10) // 2)
+        text_head = head + "password: " + secret + " " + "y " * 2500
+        for text in (text_tail, text_head):
+            for out in (guard_text("logs", text)[0], redact_text(text)):
+                assert secret not in out, k
+
+
+def test_cr_chunked_input_is_bounded():
+    text = "\r".join("token=abc " * 400 for _ in range(2500))
+    start = time.perf_counter()
+    guard_text("logs", text)
+    assert time.perf_counter() - start < 1.0
+
+
+@pytest.mark.parametrize(
+    "unit",
+    [
+        "token=abc ",
+        "a://:@!",
+        "cookie: a=b;",
+        "x" * 91 + "token ",
+        "<",
+        "\uff1c",
+        "token: |\n  x\n",
+    ],
+)
+def test_maximal_tool_input_is_fast(unit):
+    line = (unit * (4000 // len(unit) + 1))[:4000]
+    text = "\n".join([line] * 1000)
+    start = time.perf_counter()
+    out, _ = guard_text("logs", text)
+    assert time.perf_counter() - start < 1.0
+    assert len(out) <= 8300
+
+
+def test_event_loop_gap_stays_small_on_the_worst_input():
+    import asyncio
+
+    line = ("token=abc " * 401)[:4000]
+    text = "\n".join([line] * 1000)
+
+    async def run():
+        gaps, last, done = [], time.perf_counter(), False
+
+        async def ticker():
+            nonlocal last
+            while not done:
+                await asyncio.sleep(0.001)
+                now = time.perf_counter()
+                gaps.append(now - last)
+                last = now
+
+        task = asyncio.create_task(ticker())
+        await asyncio.sleep(0.01)
+        await asyncio.to_thread(guard_text, "logs", text)
+        done = True
+        await task
+        return max(gaps)
+
+    assert asyncio.run(run()) < 0.3
+
+
+def test_cut_note_counts_original_characters():
+    text = "x\n" * 300_000 + "tail"  # 600,004 characters; 64 x 8000 = 512,000 are kept
+    out = guard_text("logs", text)[0]
+    note = re.search(r"\[… (\d+) chars cut\]", out)
+    assert note and int(note.group(1)) >= len(text) - 512_000
