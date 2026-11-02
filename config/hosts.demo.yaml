@@ -1,0 +1,6 @@
+# Hosts file for the demo profile: one host reached through the socket proxy.
+hosts:
+  - id: demo
+    name: Demo stack
+    kind: socket
+    endpoint: tcp://socket-proxy:2375

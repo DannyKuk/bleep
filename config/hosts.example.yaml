@@ -1,0 +1,47 @@
+# Bleep hosts file. Every field is documented here; copy it and edit.
+# Secrets never go in this file: a secret is a reference, {env: NAME} or {file: PATH}.
+# Unknown keys are rejected, so a typo fails at startup instead of being ignored.
+
+# Optional default GitHub token, used to read the repo of a service.
+github:
+  token: {env: GITHUB_TOKEN}
+
+hosts:
+  # An SSH host: Bleep opens an SSH connection and forwards the Docker socket.
+  - id: macbook                  # unique, stable id
+    name: Spare MacBook          # shown in the UI
+    kind: ssh                    # "ssh" or "socket"
+    address: MacBook-Pro-M1.local   # ssh only, required
+    user: dannykukic             # ssh only, required
+    port: 22                     # ssh only, default 22
+    key_file: /run/secrets/ssh/id_ed25519          # ssh only, required: path to a mounted private key
+    known_hosts_file: /run/secrets/ssh/known_hosts # ssh only: path to a mounted known_hosts file
+    docker_socket: /var/run/docker.sock            # ssh only: remote Docker socket, this is the default
+    rules:                       # plain-text rules the agent is shown for this host
+      - Never restart the postgres container without telling me which app depends on it.
+
+  # A Coolify server, reached the same way. Documentation address, replace with yours.
+  - id: coolify-1
+    name: Coolify server
+    kind: ssh
+    address: 203.0.113.10
+    user: root
+    key_file: /run/secrets/ssh/id_ed25519
+    known_hosts_file: /run/secrets/ssh/known_hosts
+    services:                    # optional overrides, keyed by service name
+      shop:
+        urls:                    # public URLs checked from outside
+          - url: https://shop.example.com/health
+            expect_status: 200   # default 200
+            body_contains: ok    # optional text the body must contain
+        repo: example/shop       # GitHub repo, owner/name
+        docs_paths: [README.md, docs/runbook.md]   # repo files the agent may read
+        protected_containers: [shop-db]            # never a target of an action
+        rules:
+          - Roll back before restarting when the last deploy is under an hour old.
+
+  # A socket host (no SSH): the local socket or a socket proxy.
+  # - id: demo
+  #   name: Demo stack
+  #   kind: socket
+  #   endpoint: tcp://socket-proxy:2375            # or unix:///var/run/docker.sock
