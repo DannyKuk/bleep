@@ -49,10 +49,10 @@ What the dashboard reads about incidents and how it answers an approval (`api/in
 
 ### The stream
 
-- **Server-sent events through `sse-starlette`, one JSON `IncidentEvent` per message, no event name.** Reason: SSE goes through the Next.js rewrite and reconnects by itself, and one `onmessage` handler reads every kind (#21).
+- **Server-sent events through `sse-starlette`, one JSON `IncidentEvent` per message, no event name.** Reason: the browser's `EventSource` reconnects by itself, and one `onmessage` handler reads every kind; the dashboard serves the stream through a route handler (#21, #23).
 - **`id:` is the event's seq, and a reconnect replays from `Last-Event-ID`.** With `incident_id` the stream sends that incident's history after the cursor, then live events. The cursor is the `Last-Event-ID` header the browser sends on a reconnect, else `after` from the query (the first connect, after the page loaded `/events`), else 0. Reason: nothing published while the browser was away is lost, and nothing is sent twice (#21).
 - **Subscribe first, then read the history, then de-duplicate and fill gaps by seq.** `follow(bus, incident_id, after)` skips a live event already sent, and when the bus has dropped a slow subscriber's oldest events (a seq gap) it reads the missing ones from the history. Reason: the stream must be complete and in order even when the client is slower than the agent (#11, #21).
-- **Without `incident_id`, every incident's events, live only and without `id:`.** Reason: seq counts per incident, so it is no cursor across incidents; the overview reloads its lists on reconnect instead (#21).
+- **Without `incident_id`, every incident's events, live only and without `id:`.** Reason: seq counts per incident, so it is no cursor across incidents; the overview does not use the stream and keeps polling its lists (#21, #23).
 - **A ping comment every 15 s (`PING_S`).** Reason: proxies may close a connection that stays silent, and an incident can wait hours for a human with nothing on its stream (#21).
 - **The session is checked when the stream opens.** An open stream outlives that check; every reconnect is a new request and is checked again. Reason: re-checking an open stream would need a timer per connection for little gain on a single-admin LAN tool (#21).
 - **Closing the stream unsubscribes from the bus.** Reason: a closed tab must not leave a queue filling forever (#11, #21).
