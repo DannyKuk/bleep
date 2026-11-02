@@ -209,6 +209,26 @@ async def test_a_resume_nobody_recorded_is_recorded_first(run, plans):
     assert (await run.state(incident_id))["grant"] is not None
 
 
+async def test_a_resume_the_store_neither_takes_nor_holds_fails_the_run_plainly(run, plans):
+    """Not an `assert`: the check must hold under `python -O` too."""
+    plans[0].append(restart())
+    incident_id = await run.start()
+    asked = await run.store.current(incident_id)
+
+    async def refuse(*args) -> None:
+        return None  # the store took nothing, and still holds the approval as pending
+
+    run.store.resolve = refuse  # type: ignore[method-assign]
+    await run.runner.resume(incident_id, decide("approve"), asked.id)
+    await run.runner.join()
+
+    assert (await run.env.repo.get(incident_id)).status == "failed"
+    [notice] = [n for n in await run.events(incident_id, "notice") if "error" in n["text"]]
+    assert "ApprovalNotDecided" in notice["text"]
+    assert await run.events(incident_id, "decision") == []
+    assert (await run.state(incident_id)).get("grant") is None
+
+
 async def test_a_queued_resume_never_decides_the_next_plan(run, plans):
     """The human answers plan A on the dashboard while the node is still sending A to Telegram.
     The node finds A decided and goes on without interrupting; the dashboard's resume is queued

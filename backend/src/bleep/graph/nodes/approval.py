@@ -26,6 +26,11 @@ from bleep.schemas.graph import ApprovalRecord, Decision, Proposal, TargetSnapsh
 log = logging.getLogger(__name__)
 
 
+class ApprovalNotDecided(RuntimeError):
+    """The store refused a resumed decision but holds none for the approval: the run cannot
+    tell what the human chose, so it stops rather than guess."""
+
+
 def _why(error: Exception) -> str:
     """A short, fixed reason: engine messages are host text and do not belong in Bleep's own."""
     if isinstance(error, ContainerNotFound):
@@ -109,7 +114,8 @@ def make(deps: GraphDeps) -> Node:
             decision = await deps.approvals.resolve(incident_id, resumed, record.id)
             if decision is None:  # another channel won first; its decision stands
                 latest = await deps.approvals.current(incident_id)
-                assert latest is not None and latest.decision is not None
+                if latest is None or latest.id != record.id or latest.decision is None:
+                    raise ApprovalNotDecided(f"approval {record.id} of incident {incident_id}")
                 decision = latest.decision
 
         await deps.bus.publish(
