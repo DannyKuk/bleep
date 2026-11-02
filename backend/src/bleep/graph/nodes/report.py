@@ -9,7 +9,8 @@ follow-ups from that record, without any log text; what it writes is cut to size
 sentence that says "fixed" unless the outcome is `resolved`, and goes through
 `guard.report_check` against the logs the run read. A model that fails or a spent budget gives a
 report written from the record alone. The report is published as a `report` event, sent through
-`Notifier.report` for every outcome, and the incident is closed (`resolved` or `closed`).
+`Notifier.report` for every outcome, remembered in long-term memory with the human's decision
+(`Memory.add_report`), and the incident is closed (`resolved` or `closed`).
 """
 
 import logging
@@ -226,6 +227,19 @@ async def _write(deps: GraphDeps, incident_id: str, prompt: str) -> _Draft:
         return _Draft()
 
 
+async def _remember(
+    deps: GraphDeps,
+    incident: Incident,
+    written: Report,
+    decision: Decision | None,
+    proposal: Proposal | None,
+) -> None:
+    try:
+        await deps.memory.add_report(incident, written, decision, None, proposal=proposal)
+    except Exception as error:  # memory helps later runs; this one is done without it
+        log.warning("report: remembering %s failed: %s", incident.id, type(error).__name__)
+
+
 async def _notify(deps: GraphDeps, incident: Incident, written: Report) -> None:
     try:
         await deps.notifier.report(incident, written)
@@ -290,6 +304,8 @@ def make(deps: GraphDeps) -> Node:
         await deps.bus.publish(incident_id, "report", written.model_dump(mode="json"))
         if incident is not None:
             await _notify(deps, incident, written)
+            # Remembered before the close too; a re-run replaces the record, it never doubles it.
+            await _remember(deps, incident, written, decision, proposal)
         status = "resolved" if result == "resolved" else "closed"
         await deps.incidents.set_status(incident_id, status)
         return {"outcome": result, "report": written}

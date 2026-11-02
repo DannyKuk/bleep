@@ -9,6 +9,8 @@ with warnings.catch_warnings():
     import langchain_openai  # noqa: F401
     import langchain_openrouter  # noqa: F401
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
@@ -17,7 +19,21 @@ from bleep import prompts
 from bleep.config import Settings
 from bleep.hosts.registry import Registry
 from bleep.main import create_app
+from bleep.memory.embeddings import FakeEmbedder, FastEmbedEmbedder
 from bleep.wiring import AppParts, build_parts
+
+
+@pytest.fixture(autouse=True)
+def no_real_embedding_model(monkeypatch):
+    """Tests never download or run the local model; one opt-in test does, with
+    BLEEP_REAL_EMBEDDINGS=1."""
+    if os.environ.get("BLEEP_REAL_EMBEDDINGS"):
+        return
+
+    def refuse(self):
+        raise RuntimeError("tests use FakeEmbedder; the real model needs BLEEP_REAL_EMBEDDINGS=1")
+
+    monkeypatch.setattr(FastEmbedEmbedder, "_load", refuse)
 
 
 @pytest.fixture
@@ -33,7 +49,7 @@ def settings(tmp_path) -> Settings:
 @pytest.fixture
 def parts(settings) -> AppParts:
     """App parts over a temp database and an empty registry: no hosts file, no real engine."""
-    return build_parts(settings, Registry([]))
+    return build_parts(settings, Registry([]), embedder=FakeEmbedder())
 
 
 @pytest.fixture

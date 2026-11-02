@@ -43,12 +43,26 @@ class PastIncident(BaseModel):
     score: float
 
 
+class ServiceFact(BaseModel):
+    """Something worth knowing about a service, kept in long-term memory (Bleep's own, trusted).
+
+    `source` is `human` for a fact a person added, `report` for one taken from a report.
+    """
+
+    id: int
+    text: str
+    source: Literal["report", "human"]
+    created_at: datetime
+
+
 class GatherContext(BaseModel):
     """What Gather collected before any model ran.
 
     `logs` maps a container name to its last log lines, already redacted, cleaned, capped and
     wrapped as untrusted data (`guard.pipeline.guard_text`), so it can go into a prompt as is.
-    Everything else is Bleep's own data. `gaps` names what could not be read, one short line each.
+    Everything else is Bleep's own data. `similar` and `facts` are Bleep's memory: trusted, except
+    quoted text in them, which `memory.text` wraps as untrusted when it goes into a prompt.
+    `gaps` names what could not be read, one short line each.
     """
 
     at: datetime
@@ -60,6 +74,7 @@ class GatherContext(BaseModel):
     host_rules: list[str] = Field(default_factory=list)
     service_rules: list[str] = Field(default_factory=list)
     similar: list[PastIncident] = Field(default_factory=list)
+    facts: list[ServiceFact] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
 
 

@@ -2,9 +2,9 @@
 
 Deterministic, no model call. A service gets its containers, the last 200 log lines of the
 affected ones, the host's basics and the host and service rules; a host gets its basics and the
-containers using the most memory. Similar past incidents come from memory. Whatever cannot be
-read (an unreachable host, a vanished service) becomes a line in `gaps`, never an error, so the
-run goes on with what it has.
+containers using the most memory. Similar past incidents and the service's facts come from
+long-term memory. Whatever cannot be read (an unreachable host, a vanished service) becomes a
+line in `gaps`, never an error, so the run goes on with what it has.
 """
 
 import asyncio
@@ -126,6 +126,7 @@ async def _host(deps: GraphDeps, host: HostState, context: GatherContext) -> Non
 async def _recall(
     deps: GraphDeps, subject: Subject, signals: list[Signal], context: GatherContext
 ) -> None:
+    """The top 3 similar past incidents (the same service's first) and the service's facts."""
     what = context.service_name or subject.host_id
     kinds = ", ".join(dict.fromkeys(s.kind for s in signals))
     try:
@@ -133,3 +134,10 @@ async def _recall(
     except Exception as error:
         log.warning("gather: memory recall failed: %s", _why(error))
         context.gaps.append(f"similar incidents: {_why(error)}")
+    if subject.service_id is None:
+        return
+    try:
+        context.facts = await deps.memory.facts(subject.service_id)
+    except Exception as error:
+        log.warning("gather: reading service facts failed: %s", _why(error))
+        context.gaps.append(f"service facts: {_why(error)}")

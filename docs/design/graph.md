@@ -27,14 +27,14 @@ flowchart LR
 
 | Node | Does | Routes on |
 |---|---|---|
-| `gather` | Collects containers, recent logs, host basics, rules and similar past incidents. No model. | always to `investigate` |
+| `gather` | Collects containers, recent logs, host basics, rules, similar past incidents and the service's facts ([memory](memory.md)). No model. | always to `investigate` |
 | `investigate` | The model reads with read-only tools, at most 8 tool calls a round; every result reaches it through the guard. | `outcome == "budget"` → `report`, else `diagnose` |
 | `diagnose` | A structured `Diagnosis`. | low confidence after the first round → `investigate`, else `propose` |
 | `propose` | A `Proposal`: one to three allowlisted steps, or no action, checked in code (`guard/plan_check.py`) before a human sees it. | `act` → `approval`, `no_action` → `report` |
 | `approval` | Snapshots the target containers, stores the plan as a pending approval, notifies, and waits for the human (`interrupt()`). | `approve` → `execute`; `instruct` or a target it could not read → `propose`; `reject`, or no re-plans left → `report` |
 | `execute` | Re-reads every target against its snapshot, then runs the approved steps in order through the act tools, each logged `started` before and `done`, `failed` or `skipped` after. | ran → `verify`; stale or refused → `propose`; no re-plans left → `report` |
 | `verify` | Waits, then checks the planned containers and URLs. | failed with loop-backs left → `investigate`, else `report` |
-| `report` | Sets the outcome, writes the report (the model writes the summary, cause and follow-ups; the rest is code), publishes it, sends it to every channel and closes the incident. | end |
+| `report` | Sets the outcome, writes the report (the model writes the summary, cause and follow-ups; the rest is code), publishes it, sends it to every channel, remembers it ([memory](memory.md)) and closes the incident. | end |
 
 Every node, the topology and the runner are built. An approved plan runs in Execute and is judged by Verify before the report; only Verify's pass makes the outcome `resolved` (#25).
 
@@ -45,7 +45,7 @@ Every node, the topology and the runner are built. An approved plan runs in Exec
 | Key | Holds | Written by |
 |---|---|---|
 | `incident_id`, `subject`, `signals` | Which incident, about what, and the signals that opened it | the runner, at start |
-| `context` | `GatherContext`: containers, guarded log excerpts, host basics, top memory users (host incidents), host and service rules, similar past incidents, `gaps` | `gather` |
+| `context` | `GatherContext`: containers, guarded log excerpts, host basics, top memory users (host incidents), host and service rules, similar past incidents and the service's facts (Bleep's memory), `gaps` | `gather` |
 | `messages` | The model conversation (`add_messages` reducer) | `investigate`; `diagnose` appends "Missing: ..." for a second round |
 | `investigate_rounds`, `tool_calls_used` | Budget counters | `investigate` |
 | `diagnosis` | `Diagnosis(root_cause, category, evidence, confidence, affected_services, unsure)` | `diagnose` |
@@ -61,7 +61,7 @@ Every node, the topology and the runner are built. An approved plan runs in Exec
 - **Every Milestone 2 model is defined up front in `schemas/graph.py`.** Milestone 3 filled in the rest: `StepResult` is the act tools' result since #24 ([guard](guard.md#act-tools)), `VerificationResult` and `Check` were filled in by Verify (#26), and `Report` by the Report node (#27). Reason: the node tasks run side by side and each needs the others' shapes fixed (#16).
 - **One module per node, owning its `make(deps)` and its `route(state)`.** `graph/build.py` only wires them and lists each route's possible targets. Reason: a node task changes its own module and nothing else (#16).
 - **Dependencies are passed once, as `GraphDeps`.** Registry, tool registry, act tools, a model factory (`role → chat model`), memory, bus, approvals, notifier, guard log, settings, the cost ledger and the action log (#24). Nodes are closures over it; the state holds only data. Reason: the state is checkpointed, and a connection or a model client does not belong in a checkpoint (#16).
-- **Memory, notifier, approvals and settings are Protocols with small defaults.** `NullMemory` recalls nothing, `NullNotifier` sends nothing beyond the bus, `InMemoryApprovals` keeps requests in a dict (tests only; the app's store is `ApprovalStore`, #20), `StaticSettings` serves the default budgets, the env's model settings and the three Docker actions. Reason: the graph runs and is tested before long-term memory, Telegram and the settings store exist (#16).
+- **Memory, notifier, approvals and settings are Protocols with small defaults.** `NullMemory` recalls and keeps nothing (the app's memory is `MemoryStore`, #29), `NullNotifier` sends nothing beyond the bus, `InMemoryApprovals` keeps requests in a dict (tests only; the app's store is `ApprovalStore`, #20), `StaticSettings` serves the default budgets, the env's model settings and the three Docker actions. Reason: the graph runs and is tested without long-term memory, Telegram or the settings store (#16).
 - **`Approvals.request` takes one `TargetSnapshot` per plan target.** Reason: a plan has up to three steps, and each target must be re-checked before Execute (#16).
 - **Gather makes no model call.** It reads through the registry and the engine only; a test fails if the model factory is even asked for a model. Reason: the first look is cheap, repeatable and cannot be steered by the logs it reads (#16).
 - **Gather refreshes the host first.** It lists the containers again before reading them. Reason: the incident is about the state now, and the watcher's last poll can be 30 s old (#16).
