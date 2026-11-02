@@ -15,4 +15,5 @@ open http://localhost:3000
 ```
 
 - [Setup](docs/setup.md): real hosts, SSH keys, the LAN-only dashboard.
+- [Architecture](docs/architecture.md): the pieces and one incident from start to end.
 - [Decisions](docs/decisions/): why it is built the way it is.
