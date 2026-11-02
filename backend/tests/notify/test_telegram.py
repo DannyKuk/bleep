@@ -383,6 +383,48 @@ async def test_reminder_resends_the_plan_with_buttons_and_tells_the_bus(env):
     assert [e.kind for e in await env.bus.history(env.incident_id)] == ["reminder"]
 
 
+REPORT = Report(
+    title="container died on demo/shop",
+    summary="shop-web was stopped; Bleep started it and the shop answers again.",
+    cause="Someone stopped shop-web and its restart policy is no.",
+    action_taken="docker.start shop-web-1 on demo: done",
+    outcome="Fixed and verified",
+    follow_ups=["Set restart: unless-stopped on shop-web.", "Find out who stopped it."],
+    human_decision="Approved on Telegram",
+)
+
+
+async def test_the_report_message_says_outcome_cause_action_decision_and_next_steps(env):
+    await env.notifier.report(env.incident, REPORT)
+
+    [sent] = env.api.sent("sendMessage")
+    text = sent["text"].replace("\\", "")
+    assert text.splitlines()[:2] == [
+        f"Incident {env.incident_id}: container died on demo/shop",
+        "Fixed and verified",
+    ]
+    assert "Cause: Someone stopped shop-web and its restart policy is no." in text
+    assert "Action: docker.start shop-web-1 on demo: done" in text
+    assert "Decision: Approved on Telegram" in text
+    assert "- Set restart: unless-stopped on shop-web.\n- Find out who stopped it." in text
+    assert "reply_markup" not in sent  # nothing to answer
+    assert await env.bus.history(env.incident_id) == []  # the Report node publishes, not this
+
+
+async def test_a_report_with_nothing_done_says_so(env):
+    quiet = REPORT.model_copy(
+        update={"action_taken": None, "human_decision": None, "follow_ups": [],
+                "outcome": "No action proposed, nothing was done"}
+    )  # fmt: skip
+
+    await env.notifier.report(env.incident, quiet)
+
+    text = env.api.sent("sendMessage")[0]["text"].replace("\\", "")
+    assert "Action: nothing ran" in text
+    assert "Decision: you were not asked" in text
+    assert "Next:\nnothing" in text
+
+
 async def test_other_messages_are_sent_and_a_send_failure_does_not_raise(env):
     await env.notifier.incident_opened(env.incident)
     await env.notifier.verification(
@@ -391,7 +433,7 @@ async def test_other_messages_are_sent_and_a_send_failure_does_not_raise(env):
             ok=True, checks=[Check(kind="url", target="https://x", ok=True, detail="answering 200")]
         ),
     )
-    await env.notifier.report(env.incident, Report(summary="Restarted; healthy."))
+    await env.notifier.report(env.incident, REPORT)
     await env.notifier.notice(env.incident_id, "Cost cap reached.")
     assert len(env.api.sent("sendMessage")) == 4
 
@@ -429,7 +471,7 @@ async def test_without_a_token_the_notifier_is_bus_only(tmp_path):
     await built.notifier.proposal(incident, None, PLAN, request)
     await built.notifier.reminder(incident, request)
     await built.notifier.verification(incident, VerificationResult(ok=True))
-    await built.notifier.report(incident, Report(summary="s"))
+    await built.notifier.report(incident, REPORT)
     await built.notifier.notice(incident.id, "n")
     built.start(FakeRunner())  # nothing to start
     await built.stop()

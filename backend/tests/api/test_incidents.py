@@ -5,10 +5,28 @@ from fastapi.testclient import TestClient
 
 from bleep.incidents.repository import IncidentRepo
 from bleep.main import create_app
-from bleep.schemas.graph import Decision, Diagnosis, PlanStep, Proposal, Report, TargetSnapshot
+from bleep.schemas.graph import (
+    Decision,
+    Diagnosis,
+    PlanStep,
+    Proposal,
+    Report,
+    TargetSnapshot,
+    TimelineEntry,
+)
 from bleep.schemas.incidents import Incident, RecoveryEvent, Signal, Subject
 
 T0 = datetime(2026, 11, 2, 10, 0, tzinfo=UTC)
+REPORT = Report(
+    title="container died on a/shop",
+    summary="Restarted, not verified.",
+    cause="It ran out of memory.",
+    action_taken="docker.restart shop-web-1 on a: done",
+    outcome="Action taken, not verified",
+    timeline=[TimelineEntry(at=T0, text="Approved on the dashboard")],
+    follow_ups=["Raise its memory limit."],
+    human_decision="Approved on the dashboard",
+)
 
 
 class Clock:
@@ -140,7 +158,7 @@ def test_detail_carries_diagnosis_proposal_pending_approval_and_report(
         "diagnosis": diagnosis,
         "proposal": restart(),
         "outcome": "unverified",
-        "report": Report(summary="Restarted, not verified."),
+        "report": REPORT,
     }
 
     async def fake_state(incident_id: str) -> dict:
@@ -152,7 +170,7 @@ def test_detail_carries_diagnosis_proposal_pending_approval_and_report(
     assert body["diagnosis"]["root_cause"] == "it ran out of memory"
     assert body["proposal"]["steps"][0]["target"] == "shop-web-1"
     assert body["outcome"] == "unverified"
-    assert body["report"] == {"summary": "Restarted, not verified."}
+    assert body["report"] == REPORT.model_dump(mode="json")
     approval = body["approval"]
     assert approval["id"] == approval_id
     assert approval["status"] == "pending"

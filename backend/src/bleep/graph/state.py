@@ -39,7 +39,7 @@ class IncidentState(TypedDict, total=False):
     approval: ApprovalRequest | None
     decision: Decision | None
     grant: ApprovalGrant | None
-    execution: list[StepResult]
+    step_results: list[StepResult] | None
     verify_loops: int
     verification: VerificationResult | None
     outcome: Outcome | None

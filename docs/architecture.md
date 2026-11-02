@@ -51,12 +51,12 @@ flowchart LR
 | **Read tools** | `tools/` | Docker reads and the host command tool for the model, each scoped to the incident's host. |
 | **Act tools** | `tools/docker_act.py`, `guard/grant.py` | Restart, stop and start a container for one step of an approved plan; each checks the grant against the plan, then the target (host error, protected, Bleep's own), and acts on the approved container id. Never offered to a model. |
 | **Action log** | `incidents/action_log.py` | Execute's ledger in SQLite: each step `started` before its engine call and `done`, `failed` or `skipped` after, so a restart never runs a step twice. |
-| **Guard** | `guard/` | Redacts secrets, strips control characters, caps size and wraps untrusted text before anything reaches a model; checks every proposed plan before a human sees it (`guard/plan_check.py`); hashes plans and signs and checks approval grants (`guard/grant.py`); `guard/log.py` records what it refused, blocked or changed in the `guard_log` table. |
+| **Guard** | `guard/` | Redacts secrets, strips control characters, caps size and wraps untrusted text before anything reaches a model; checks every proposed plan before a human sees it (`guard/plan_check.py`); hashes plans and signs and checks approval grants (`guard/grant.py`); cuts log text out of every report (`guard/report_check.py`); `guard/log.py` records what it refused, blocked or changed in the `guard_log` table. |
 | **Models** | `llm/` | One factory for OpenRouter and local models, structured output with a plain-JSON fallback, and a token and cost ledger with a daily cap. |
 | **Prompts** | `prompts/` | Every prompt is a `.md` file loaded with `prompts.load(name, **vars)`. |
 | **Store** | `store/` | SQLite with numbered migrations. |
 | **API** | `main.py`, `api/`, `auth/` | Login with one admin password and hashed sessions; the read API over hosts and services; incidents with their findings, timeline and recoveries; the dashboard's decision on an approval; the live event stream (SSE). |
-| **Dashboard** | `frontend/` | Next.js app: login; an overview of hosts, services and self-recoveries, polled; the incident list; and each incident's page with its live reasoning, timeline, diagnosis and the plan to approve, reject or instruct, streamed through a route handler (`app/api/stream/route.ts`). |
+| **Dashboard** | `frontend/` | Next.js app: login; an overview of hosts, services and self-recoveries, polled; the incident list; and each incident's page with its live reasoning, timeline, diagnosis, the plan to approve, reject or instruct, and the report once the run ends, streamed through a route handler (`app/api/stream/route.ts`). |
 | **Compose** | `docker-compose.yaml`, `config/socket-proxy.cfg.template` | Runs Bleep; `--profile demo` adds the socket proxy so Bleep can watch this machine. |
 
 Paths under `backend/src/bleep/` are given from there.
@@ -74,7 +74,7 @@ Paths under `backend/src/bleep/` are given from there.
 | 7. Propose | One to three allowlisted actions, or no action with exact instructions for the human; checked in code before anyone is asked, and a refused plan goes back to the model once. | `graph/nodes/propose.py`, `guard/plan_check.py` |
 | 8. Approval | The target containers are snapshotted, the plan is stored as a pending approval, sent to the human and shown with Approve, Reject and "Tell Bleep something" on the incident's page; the run checkpoints and waits for a yes, a no or an instruction, through a restart if need be. The first answer wins; an instruction goes back to Propose; a pending approval is re-sent every 60 min and never approved by itself. | `graph/nodes/approval.py`, `ApprovalStore`, `ReminderLoop`, `IncidentRunner.resume` |
 | 9. Verify | After Execute: waits 20 s, then up to 3 checks 10 s apart; ok only when every planned container is running and healthy and every planned URL answers. A failure goes back to Investigate at most twice, then the outcome is `unverified`. Wired in after Execute (#25). | `graph/nodes/verify.py` |
-| 10. Report | The outcome is set; `resolved` is only ever claimed after verification. | `graph/nodes/report.py` |
+| 10. Report | The outcome is set in code (`resolved` only after verification) with its fixed text; the model writes the summary, cause and follow-ups from Bleep's record, anything copied from a log is cut out, and the report, with a timeline built from the stored events, goes to the bus and every channel before the incident closes. | `graph/nodes/report.py`, `guard/report_check.py`, `Notifier.report` |
 
 Every node publishes `node_started` and `node_finished` on the bus, which stores them for the incident's timeline. On boot, `IncidentRunner.recover_on_boot` resumes every unfinished run except those waiting for approval, and delivers a decision that was recorded before a crash. The app starts the runner with the watcher manager, which calls `recover_on_boot` once at startup and starts a run only for a newly opened incident, and runs the reminder loop beside them. The runner, the graph, the reminders and the API share one `ApprovalStore`, so a decision from any channel is the one the run sees, also after a restart.
 
@@ -106,6 +106,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **The checkpoint serializer rebuilds only the state's own models.**
 - **The first decision wins by one `UPDATE ... WHERE status = 'pending'`**, and a grant is an HMAC over the incident id and a plan hash that covers the resolved container ids.
 - **Reminders every 60 min, never an automatic yes.**
+- **A report is mostly code**: fixed outcome text and a timeline from the stored events; the model writes the summary, cause and follow-ups, and never "fixed" unless verified.
 
 **Agent and models** ([details](design/agent.md))
 - **One model factory for OpenRouter and local models**; structured output falls back to plain JSON for weak models.
@@ -117,6 +118,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **Only the closing tag with the same random id ends untrusted data**, and the system prompt says so.
 - **Every plan is checked in code**: allowlisted, enabled actions on the incident's host only, never a protected or Bleep container, at most 3 steps.
 - **Act tools refuse without a grant for the exact plan**, recomputing its hash; they re-check the target with the plan check's rules and act on the approved container id, and no model is ever given them.
+- **A report loses any 60-character stretch it shares with a log the run read.**
 
 **Notifications** ([details](design/notify.md))
 - **Telegram is optional**: without a token everything runs through the dashboard.

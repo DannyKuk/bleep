@@ -177,8 +177,21 @@ export interface ApprovalView {
 
 export type Outcome = "resolved" | "rejected" | "no_action" | "unverified" | "budget" | "unsure";
 
+export interface TimelineEntry {
+  at: string;
+  text: string;
+}
+
+/** The incident write-up; `outcome` is the fixed text for the run's outcome. */
 export interface Report {
+  title: string;
   summary: string;
+  cause: string;
+  action_taken: string | null;
+  outcome: string;
+  timeline: TimelineEntry[];
+  follow_ups: string[];
+  human_decision: string | null;
 }
 
 export interface IncidentDetail {
