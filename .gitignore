@@ -35,3 +35,4 @@ secrets/
 # Local dev
 .dev/
 .claude/worktrees/
+config/hosts.yaml
