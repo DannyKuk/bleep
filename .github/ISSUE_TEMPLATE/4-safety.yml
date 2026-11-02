@@ -1,0 +1,54 @@
+name: Safety finding
+description: Bleep did, or could be made to do, something to a host it should not have.
+labels: ["safety"]
+projects: ["DannyKuk/4"]
+body:
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - Change without an explicit approval
+        - Act tool ran on a protected container (Bleep's own)
+        - Command outside the allowlist
+        - Prompt injection (log, label or container output)
+        - Secret reached the model, the database or a log
+        - Claimed "fixed" without verification
+        - Raw logs pasted into a report
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: input
+    attributes:
+      label: Input
+      description: The log line, container, message or setup that caused it. Remove secrets.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What Bleep did
+      description: Trim to the relevant part.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: Refuse, ask for approval, redact, escalate, ...
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model and commit
+      placeholder: model id @ commit
+  - type: checkboxes
+    id: eval
+    attributes:
+      label: Follow-up
+      options:
+        - label: Add this input to the injection or safety eval set
