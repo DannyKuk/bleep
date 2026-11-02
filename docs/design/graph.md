@@ -29,7 +29,7 @@ flowchart LR
 | `approval` | Waits for the human (`interrupt()`). | `instruct` → `propose`, `reject` or `approve` → `report` |
 | `report` | Sets the outcome. | end |
 
-Gather, the topology and the runner are built; Investigate, Diagnose, Propose and Approval are placeholders that let a run go end to end (no-op, an `unsure` diagnosis, `no_action`, wait and route), each replaced by its own task. Execute and Verify come between Approval and Report in Milestone 3; until then an approved plan is reported with the outcome `unverified`, because nothing ran and nothing was checked.
+Gather, the topology and the runner are built; Investigate, Propose and Approval are placeholders that let a run go end to end (no-op, `no_action`, wait and route), each replaced by its own task. Execute and Verify come between Approval and Report in Milestone 3; until then an approved plan is reported with the outcome `unverified`, because nothing ran and nothing was checked.
 
 ## State
 
@@ -70,3 +70,8 @@ Gather, the topology and the runner are built; Investigate, Diagnose, Propose an
 - **`recover_on_boot` restarts every unfinished incident except those `awaiting_approval`.** Reason: those are waiting for a human, and their checkpoint holds them until a decision arrives (#16).
 - **A decision for a run that is not waiting changes nothing.** It is logged and dropped. Reason: a late or duplicate decision must not restart or fail a finished run (#16).
 - **The runner keeps the incident's status in step.** `investigating` while a run is in flight (also after a decision, so a crash then is recovered), `awaiting_approval` at the interrupt, `resolved` when the outcome is `resolved`, else `closed`. A node that raises marks the incident `failed` and publishes a `notice` naming the error type. Reason: the status is what the dashboard and the boot recovery read (#16).
+- **Diagnose is one structured model call, no tools.** It reads Gather's context and the investigation messages and returns a `Diagnosis` through `invoke_structured`, so a model without tool support still answers (#18).
+- **Low confidence means `unsure`, and the route reads that flag.** `Diagnosis.unsure` is set when confidence is below the budget's `low_confidence` (0.6 by default, read from settings when the node runs). The first unsure diagnosis, at `investigate_rounds == 1`, goes back to Investigate once; a second one goes on to Propose still unsure, so the proposal can say "I am not sure, here is what I found". Reason: the route has only the state, and the threshold is a setting (#18).
+- **The model says what is missing, and that becomes the next round's instruction.** The model fills a private `missing` field next to the diagnosis (not stored on it); Diagnose appends it as a message ("Missing: ...") so Investigate looks for exactly that. Reason: a second round without a target repeats the first (#18).
+- **Evidence entries are cut to 300 characters, at most 8.** The prompt asks for statements, and the code truncates what overruns. Reason: weak models paste log lines, and a diagnosis is shown to the human and stored in memory (#18).
+- **No diagnosis is a diagnosis, not an error.** Unparseable output (after `invoke_structured`'s retry) or a spent token or cost budget gives `category="unknown"`, `unsure=True`, "I could not form a diagnosis", with the stopped containers and gaps from Gather as evidence. A failed structured reply also gets the one re-investigation, like any low-confidence result. Reason: a weak local model must degrade, not crash the run (#18).
