@@ -120,3 +120,14 @@ def test_unreadable_or_invalid_yaml_is_a_hosts_file_error(tmp_path):
         load_hosts_file(tmp_path / "missing.yaml")
     with pytest.raises(HostsFileError):
         load_hosts_file(write(tmp_path, "hosts: [unclosed"))
+
+
+@pytest.mark.parametrize("url", ["http://host:abc/", "shop.example/health", "ftp://x.example/"])
+def test_a_bad_service_url_is_a_config_error_naming_the_host_and_the_url(tmp_path, url):
+    host = (
+        "{id: a, name: A, kind: socket, endpoint: 'unix:///s', "
+        f"services: {{shop: {{urls: [{{url: '{url}'}}]}}}}}}"
+    )
+    with pytest.raises(HostsFileError) as error:
+        load_hosts_file(write(tmp_path, f"hosts: [{host}]\n"))
+    assert "host 'a'" in str(error.value) and url in str(error.value)

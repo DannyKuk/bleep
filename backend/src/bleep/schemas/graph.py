@@ -1,8 +1,8 @@
 """The shapes the incident graph keeps in its state and hands between nodes.
 
 Every Milestone 2 node's model is defined here at once, so the node tasks can be built side by
-side against fixed shapes. `VerificationResult` and `Report` are minimal placeholders that
-Milestone 3 (Verify, Report) fills out. See docs/design/graph.md.
+side against fixed shapes. `Report` is a minimal placeholder that Milestone 3 (Report)
+fills out. See docs/design/graph.md.
 """
 
 from datetime import datetime
@@ -179,11 +179,33 @@ class LoggedStep(BaseModel):
     result: StepResult
 
 
+class Check(BaseModel):
+    """One thing Verify looked at: a container's state or a URL's answer."""
+
+    kind: Literal["container", "url"]
+    target: str  # the container name, or the URL
+    ok: bool
+    detail: str = ""  # one short line from Bleep's own checks, never host or reply text
+
+
 class VerificationResult(BaseModel):
-    """Placeholder until Milestone 3's Verify: whether the service is healthy again."""
+    """What Verify found at one check: `ok` only when every planned check passed.
+
+    `attempt` counts the checks of this verification round, from 1.
+    """
 
     ok: bool
-    detail: str = ""
+    checks: list[Check] = Field(default_factory=list)
+    attempt: int = 1
+
+    @property
+    def detail(self) -> str:
+        """The checks as short lines, for a chat message or the live view."""
+        if not self.checks:
+            return "Nothing could be checked."
+        return "\n".join(
+            f"{'ok' if c.ok else 'FAILED'} {c.kind} {c.target}: {c.detail}" for c in self.checks
+        )
 
 
 class Report(BaseModel):

@@ -200,3 +200,46 @@ async def test_a_failing_sink_does_not_drop_the_other_urls(tmp_path):
     checks = await watcher.tick()
     assert len(checks) == 2
     assert sorted(seen) == ["https://a.example/", "https://b.example/"]
+
+
+async def test_a_malformed_url_is_a_failed_check_not_an_exception():
+    check = await check_url(client(ok_handler), UrlCheckConfig(url="http://host:abc/"))
+    assert not check.ok and check.status is None
+    assert check.error and "InvalidURL" in check.error
+
+
+async def test_an_unexpected_error_from_the_client_is_a_failed_check():
+    def explode(request: httpx.Request) -> httpx.Response:
+        raise ValueError("boom")
+
+    check = await check_url(client(explode), UrlCheckConfig(url=URL))
+    assert not check.ok and check.error == "ValueError: boom"
+
+
+async def test_a_crashing_check_does_not_stop_the_watcher_from_reporting_the_url(monkeypatch):
+    from bleep.watcher import http_checks
+
+    async def crash(*args, **kwargs):
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(http_checks, "check_url", crash)
+    engine = FakeEngine("h", [box("shop-1", "shop")])
+
+    async def connect(_host):
+        return None, engine
+
+    registry = Registry(
+        [socket_host(id="h", services={"shop": ServiceOverrides(urls=[UrlCheckConfig(url=URL)])})],
+        connect,
+    )
+    await registry.start()
+    sent = []
+
+    async def sink(signal):
+        sent.append(signal)
+
+    watcher = UrlWatcher("h", registry, client(ok_handler), sink, lambda: T0)
+    checks = await watcher.tick()
+
+    assert [c.ok for c in checks] == [False]
+    assert sent and sent[0].detail["ok"] is False

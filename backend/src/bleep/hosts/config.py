@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any, Literal, Self
 
+import httpx
 import yaml
 from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError, model_validator
 
@@ -53,6 +54,17 @@ class UrlCheckConfig(Strict):
     body_contains: str | None = None
 
 
+def check_url_syntax(url: str) -> str | None:
+    """Why `url` cannot be checked, or None when it can: an http(s) URL with a host."""
+    try:
+        parsed = httpx.URL(url)
+    except (httpx.InvalidURL, ValueError) as problem:
+        return str(problem) or "not a URL"
+    if parsed.scheme not in ("http", "https") or not parsed.host:
+        return "must be an http:// or https:// URL with a host"
+    return None
+
+
 class ServiceOverrides(Strict):
     urls: list[UrlCheckConfig] = []
     repo: str | None = None
@@ -74,6 +86,16 @@ class HostConfig(Strict):
     endpoint: str | None = None
     rules: list[str] = []
     services: dict[str, ServiceOverrides] = {}
+
+    @model_validator(mode="after")
+    def _urls_are_checkable(self) -> Self:
+        for name, service in self.services.items():
+            for cfg in service.urls:
+                if (why := check_url_syntax(cfg.url)) is not None:
+                    raise ValueError(
+                        f"host {self.id!r}, service {name!r}: invalid url {cfg.url!r}: {why}"
+                    )
+        return self
 
     @model_validator(mode="after")
     def _kind_fields(self) -> Self:

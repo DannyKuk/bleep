@@ -15,6 +15,7 @@ from bleep.notify import format as fmt
 from bleep.notify.notifier import Notifier, setup
 from bleep.notify.telegram import MessageLog, TelegramBot, TelegramClient, TelegramError
 from bleep.schemas.graph import (
+    Check,
     Decision,
     Diagnosis,
     PlanStep,
@@ -385,7 +386,10 @@ async def test_reminder_resends_the_plan_with_buttons_and_tells_the_bus(env):
 async def test_other_messages_are_sent_and_a_send_failure_does_not_raise(env):
     await env.notifier.incident_opened(env.incident)
     await env.notifier.verification(
-        env.incident, VerificationResult(ok=True, detail="Answering 200.")
+        env.incident,
+        VerificationResult(
+            ok=True, checks=[Check(kind="url", target="https://x", ok=True, detail="answering 200")]
+        ),
     )
     await env.notifier.report(env.incident, Report(summary="Restarted; healthy."))
     await env.notifier.notice(env.incident_id, "Cost cap reached.")
