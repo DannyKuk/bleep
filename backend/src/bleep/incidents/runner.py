@@ -105,6 +105,8 @@ class IncidentRunner:
             await self.repo.set_status(incident.id, "awaiting_approval")
         elif snapshot.next:
             await self._drive(incident.id, None)  # None: go on from the checkpoint
+        else:  # finished, but the status never settled (cancelled or crashed just after the end)
+            await self._settle(incident.id, snapshot)
 
     async def _resume(self, incident_id: str, decision: Decision) -> None:
         if not (await self.graph.aget_state(self.config(incident_id))).interrupts:
@@ -127,10 +129,12 @@ class IncidentRunner:
         if snapshot.interrupts:
             await self.repo.set_status(incident_id, "awaiting_approval")
         elif not snapshot.next:
-            outcome = snapshot.values.get("outcome")
-            await self.repo.set_status(
-                incident_id, "resolved" if outcome == "resolved" else "closed"
-            )
+            await self._settle(incident_id, snapshot)
+
+    async def _settle(self, incident_id: str, snapshot: Any) -> None:
+        """Set the terminal status of a finished thread from its outcome."""
+        outcome = snapshot.values.get("outcome")
+        await self.repo.set_status(incident_id, "resolved" if outcome == "resolved" else "closed")
 
 
 def _initial(incident: Incident, signals: list[Signal]) -> dict[str, Any]:

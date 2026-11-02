@@ -197,3 +197,20 @@ async def test_a_decision_for_a_run_that_is_not_waiting_changes_nothing(tmp_path
 
     assert await env.nodes(incident.id) == M2_PATH
     assert (await env.repo.get(incident.id)).status == "closed"
+
+
+async def test_recover_on_boot_closes_a_finished_thread_whose_status_never_settled(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await runner.start(incident)
+        await runner.join()
+        # Bleep died after the last checkpoint but before the status was written.
+        await env.repo.set_status(incident.id, "investigating")
+
+        second = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await second.recover_on_boot()
+        await second.join()
+
+    assert (await env.repo.get(incident.id)).status == "closed"
