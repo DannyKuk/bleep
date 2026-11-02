@@ -1,10 +1,10 @@
-"""Read routes for the overview: hosts and the services on them."""
+"""Read routes for the overview and a service's page: hosts and the services on them."""
 
 from collections.abc import Iterable
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from bleep.api.deps import get_parts
 from bleep.schemas.api import (
@@ -13,6 +13,7 @@ from bleep.schemas.api import (
     DiskView,
     Health,
     HostView,
+    ServiceDetail,
     ServiceView,
     UrlStatus,
 )
@@ -170,3 +171,24 @@ async def list_services(
     parts: Annotated[AppParts, Depends(get_parts)], host_id: str | None = None
 ) -> list[ServiceView]:
     return await _service_views(parts, host_id)
+
+
+@router.get("/services/{service_id:path}")
+async def get_service(
+    service_id: str, parts: Annotated[AppParts, Depends(get_parts)]
+) -> ServiceDetail:
+    """One service as the overview shows it, with its own rules and its host's.
+
+    A service id holds a `/` (`<host>/<key>`), so this route takes the rest of the path; the facts
+    routes under `/services/{id}/facts` are registered before it (`main.create_app`).
+    """
+    service = parts.registry.service(service_id)
+    if service is None:
+        raise HTTPException(404, "no such service")
+    host = next(h for h in parts.registry.hosts() if h.config.id == service.host_id)
+    subject = Subject(kind="service", host_id=service.host_id, service_id=service.id)
+    return ServiceDetail(
+        service=_view(service, await parts.incidents.open_incident_id(subject)),
+        rules=list(service.rules),
+        host_rules=list(host.config.rules),
+    )

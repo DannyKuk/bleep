@@ -5,15 +5,18 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { DiagnosisCard } from "@/components/incident/diagnosis-card";
+import { FeedbackBar } from "@/components/incident/feedback";
 import { subjectText } from "@/components/incident/incident-list";
 import { ProposalCard } from "@/components/incident/proposal-card";
 import { ReasoningStream } from "@/components/incident/reasoning-stream";
 import { ReportView } from "@/components/incident/report-view";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import { Timeline } from "@/components/incident/timeline";
+import { serviceHref } from "@/lib/routes";
+import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
 import { ApiError, apiFetch } from "@/lib/api";
-import type { IncidentDetail, IncidentEvent } from "@/lib/api-types";
+import type { FeedbackTarget, IncidentDetail, IncidentEvent } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
 import { type StreamStatus, useIncidentStream } from "@/lib/use-incident-stream";
 import { cn } from "@/lib/utils";
@@ -78,29 +81,6 @@ function StreamBadge({ status }: { status: StreamStatus }) {
   );
 }
 
-function Panel({
-  title,
-  children,
-  className,
-}: {
-  title: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  const id = `panel-${title.toLowerCase().replaceAll(" ", "-")}`;
-  return (
-    <section
-      aria-labelledby={id}
-      className={cn("min-w-0 rounded-lg border border-border bg-card", className)}
-    >
-      <h2 id={id} className="px-4 py-3 text-sm font-semibold">
-        {title}
-      </h2>
-      <div className="border-t border-border px-4 py-3">{children}</div>
-    </section>
-  );
-}
-
 function Waiting({ children }: { children: React.ReactNode }) {
   return <p className="text-sm text-muted-foreground">{children}</p>;
 }
@@ -141,7 +121,10 @@ export function IncidentPage({ id }: { id: string }) {
     );
   }
 
-  const { incident, diagnosis, proposal, approval, outcome, report } = data;
+  const { incident, diagnosis, proposal, approval, outcome, report, feedback } = data;
+  const reload = () => setReloads((count) => count + 1);
+  const vote = (target: FeedbackTarget) => feedback.find((given) => given.target === target);
+  const serviceId = incident.subject.service_id;
   return (
     <div className="flex flex-col gap-4">
       {back}
@@ -155,7 +138,16 @@ export function IncidentPage({ id }: { id: string }) {
           </span>
         </div>
         <p className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <span className="font-mono">{subjectText(incident)}</span>
+          {serviceId ? (
+            <Link
+              href={serviceHref(serviceId)}
+              className="font-mono underline-offset-2 hover:text-foreground hover:underline"
+            >
+              {subjectText(incident)}
+            </Link>
+          ) : (
+            <span className="font-mono">{subjectText(incident)}</span>
+          )}
           <span>
             Opened <time dateTime={incident.opened_at}>{formatDateTime(incident.opened_at)}</time>
           </span>
@@ -179,19 +171,37 @@ export function IncidentPage({ id }: { id: string }) {
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel title="Diagnosis">
           {diagnosis ? (
-            <DiagnosisCard diagnosis={diagnosis} />
+            <div className="flex flex-col gap-3">
+              <DiagnosisCard diagnosis={diagnosis} />
+              <FeedbackBar
+                incidentId={incident.id}
+                target="diagnosis"
+                current={vote("diagnosis")}
+                onSaved={reload}
+              />
+            </div>
           ) : (
             <Waiting>No diagnosis yet.</Waiting>
           )}
         </Panel>
         <Panel title="Proposal">
           {proposal || approval ? (
-            <ProposalCard
-              incidentId={incident.id}
-              proposal={proposal}
-              approval={approval}
-              onDecided={() => setReloads((count) => count + 1)}
-            />
+            <div className="flex flex-col gap-3">
+              <ProposalCard
+                incidentId={incident.id}
+                proposal={proposal}
+                approval={approval}
+                onDecided={reload}
+              />
+              {proposal && (
+                <FeedbackBar
+                  incidentId={incident.id}
+                  target="proposal"
+                  current={vote("proposal")}
+                  onSaved={reload}
+                />
+              )}
+            </div>
           ) : (
             <Waiting>No plan yet.</Waiting>
           )}

@@ -1,5 +1,6 @@
 """Incident routes: the list, one incident with its findings, its timeline, the dashboard's
-decision on its approval, and the self-recoveries that never became incidents."""
+decision on its approval, the human's feedback on its findings, and the self-recoveries that never
+became incidents."""
 
 from typing import Annotated
 
@@ -9,8 +10,14 @@ from fastapi.responses import JSONResponse
 from bleep.api.deps import get_parts, get_runner
 from bleep.incidents.repository import utcnow
 from bleep.incidents.runner import IncidentRunner
-from bleep.schemas.api import ApprovalView, DecisionBody, DecisionConflict, IncidentDetail
-from bleep.schemas.graph import ApprovalRecord, Decision
+from bleep.schemas.api import (
+    ApprovalView,
+    DecisionBody,
+    DecisionConflict,
+    FeedbackBody,
+    IncidentDetail,
+)
+from bleep.schemas.graph import ApprovalRecord, Decision, Feedback
 from bleep.schemas.incidents import (
     TERMINAL_STATUSES,
     Incident,
@@ -27,6 +34,7 @@ MAX_PAGE = 200
 
 _STATUS = {"approve": "approved", "reject": "rejected", "instruct": "instructed"}
 _CHANNEL = {"telegram": "Telegram", "dashboard": "the dashboard"}
+_FINDING = {"diagnosis": "diagnosis", "proposal": "plan"}
 
 
 async def _incident(parts: AppParts, incident_id: str) -> Incident:
@@ -65,9 +73,10 @@ async def list_incidents(
     status: IncidentStatus | None = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
+    service_id: str | None = None,
 ) -> list[Incident]:
-    """Newest first."""
-    return await parts.incidents.list(status, limit, offset)
+    """Newest first; `service_id` keeps one service's (its page lists its past incidents)."""
+    return await parts.incidents.list(status, limit, offset, service_id)
 
 
 @router.get("/incidents/{incident_id}")
@@ -85,6 +94,7 @@ async def get_incident(
         approval=_approval(await parts.approvals.current(incident_id)),
         outcome=state.get("outcome"),
         report=state.get("report"),
+        feedback=await parts.memory.feedback(incident_id),
     )
 
 
@@ -129,6 +139,24 @@ async def decide(
         return _conflict("That plan was replaced by a newer one; reload to see it")
     await runner.resume(incident_id, won, body.approval_id)
     return won
+
+
+@router.post(
+    "/incidents/{incident_id}/feedback",
+    responses={409: {"description": "The run has no diagnosis or plan to rate yet"}},
+)
+async def give_feedback(
+    incident_id: str,
+    body: FeedbackBody,
+    parts: Parts,
+    runner: Annotated[IncidentRunner, Depends(get_runner)],
+) -> Feedback:
+    """A thumbs up or down on the incident's diagnosis or plan. A later vote on the same one
+    replaces it; the incident's memory record gets the votes, now or when Report writes it."""
+    await _incident(parts, incident_id)
+    if (await runner.state(incident_id)).get(body.target) is None:
+        raise HTTPException(409, f"There is no {_FINDING[body.target]} to rate yet")
+    return await parts.memory.set_feedback(incident_id, body.target, body.vote, body.note)
 
 
 @router.get("/recoveries")

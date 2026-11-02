@@ -32,10 +32,11 @@ What the dashboard reads about incidents and how it answers an approval (`api/in
 
 | Route | Returns |
 |---|---|
-| `GET /api/incidents?status=&limit=&offset=` | `Incident[]`, newest first; `limit` 1 to 200 (default 50) |
-| `GET /api/incidents/{id}` | `IncidentDetail`: the incident, `diagnosis`, `proposal`, `approval` (the latest, pending or decided), `outcome`, `report`; each null until the run has it |
+| `GET /api/incidents?status=&service_id=&limit=&offset=` | `Incident[]`, newest first; `limit` 1 to 200 (default 50); `service_id` keeps one service's |
+| `GET /api/incidents/{id}` | `IncidentDetail`: the incident, `diagnosis`, `proposal`, `approval` (the latest, pending or decided), `outcome`, `report`, each null until the run has it, and `feedback`, the human's votes |
 | `GET /api/incidents/{id}/events?after=` | `IncidentEvent[]` with `seq > after`, in seq order |
 | `POST /api/incidents/{id}/decision` | body `{approval_id, kind, text?}`; 200 with the recorded `Decision`, or 409 `{detail, decided_via}` |
+| `POST /api/incidents/{id}/feedback` | body `{target: "diagnosis" \| "proposal", vote: "up" \| "down", note?}`; 200 with the stored `Feedback`, 409 when the run has no such finding yet |
 | `GET /api/recoveries?limit=` | `RecoveryEvent[]`, newest first; `limit` 1 to 200 (default 50) |
 | `GET /api/stream?incident_id=&after=` | `text/event-stream` of `IncidentEvent` JSON |
 
@@ -45,7 +46,23 @@ What the dashboard reads about incidents and how it answers an approval (`api/in
 - **The first answer wins; a later one is 409 naming the winner.** The body is `{"detail": "Already decided on Telegram", "decided_via": "telegram"}` (or "the dashboard"), whether the other channel won before the request or inside `resolve`, between the route's read and its write. Only the winner resumes the run, with the approval id it decided (`IncidentRunner.resume`), so the resume cannot answer a newer plan. Reason: Telegram and the dashboard can answer at the same moment, and the loser should know who decided (§4.9, #21).
 - **Other refusals are 409 too, with `decided_via: null`:** nothing asked yet ("Nothing is waiting for a decision"), or the incident already resolved, closed or failed. An unknown incident is 404. Reason: one error shape for every "this decision did not count" (#21).
 - **An instruction needs text; an approve or reject drops it.** Text is trimmed, at most 2,000 characters; an empty instruction is 422. Reason: the text goes into Propose's prompt as the human's instruction, and only an instruction has a use for it (#21).
+- **Feedback needs the finding it rates.** A vote on the diagnosis or the plan before the run has one is 409 "There is no diagnosis to rate yet" (or "plan"). The note is trimmed, an empty one dropped, at most 500 characters. A second vote on the same target replaces the first, and the memory record gets the votes now or when Report writes it ([memory](memory.md)). Reason: a vote on nothing would be remembered as a judgement on a finding nobody saw (#30).
 - **Recoveries are newest first.** `IncidentRepo.recoveries` orders by time descending. Reason: with a limit, oldest first would show the same old rows forever (#21).
+
+### Services and their memory
+
+The service page's reads and a service's facts (`api/hosts.py`, `api/memory.py`).
+
+| Route | Returns |
+|---|---|
+| `GET /api/services/{id}` | `ServiceDetail`: the `ServiceView` the overview shows, its `rules` and its host's `host_rules`; 404 for a service the registry does not know |
+| `GET /api/services/{id}/facts` | `ServiceFact[]`, oldest first: `{id, text, source: "human" \| "report", created_at, incident_id}` |
+| `POST /api/services/{id}/facts` | body `{text}`; 200 with the new `ServiceFact` (`source: "human"`); 404 for an unknown service |
+| `DELETE /api/services/{id}/facts/{fact_id}` | 204; 404 when the service has no such fact |
+
+- **A service id is a path: `demo/compose:shop`.** The routes take it with `{service_id:path}`, and the facts router is registered before the hosts router, because `GET /services/{id:path}` would also match `.../facts`. The dashboard encodes the id (`demo%2Fcompose%3Ashop`); the backend sees it decoded either way. Reason: the id is the registry's own key, and a second, URL-safe id would have to be kept in step with it (#30).
+- **The service page reuses the overview's view and the incident list.** `ServiceDetail` wraps the same `ServiceView` (containers, URLs, health, open incident) and adds only the rules; past incidents are `GET /api/incidents?service_id=`. Reason: one shape per thing, so the page and the overview cannot disagree (#30).
+- **A fact needs a service Bleep knows, and text.** Trimmed, at most 500 characters, empty is 422; it is cleaned like every memory text. Listing and deleting work for a service that is gone, so its memory can still be cleared. Reason: a fact for a typo'd id would never reach an incident (#30).
 
 ### The stream
 
@@ -88,4 +105,14 @@ The incident list (`/incidents`), one incident's page (`/incidents/[id]`) and th
 - **"Tell Bleep something" is the instruction.** It opens a text box (2,000 characters at most, empty is refused) and says that nothing runs until a plan is approved. Reason: an instruction leads to a new plan, never to an action (#23).
 - **An incident's status uses the health colours:** red when it waits for a human or failed, amber while Bleep works, green when resolved, grey when closed; each with its word and icon. Reason: the same visual language as the overview, where red means "needs someone" (#23).
 - **The report sits on top of the incident's page once the run has written it** (`components/incident/report-view.tsx`): the outcome line, the summary, the cause, the action ("Nothing ran."), the decision ("You were not asked."), the follow-ups and the report's own timeline. The outcome is green only for `resolved`, amber for `unverified` and `budget`, grey otherwise (`replan_limit` included, #25). Reason: how it ended is the first thing a human looks for, and an action nobody confirmed must not look like good news (#27).
+- **Every diagnosis and plan asks "Was this right?" with Right and Wrong buttons** (`components/incident/feedback.tsx`) once the run has it. A vote is sent at once and shown pressed; "Add a note" opens a box whose text goes with the next vote; a failure says so and keeps the buttons. The service in the incident's header links to the service's page. Reason: one click is all a human gives in the middle of an outage, and the note is there when they have more to say (#30).
 - **Recoveries go on the overview, the 10 newest, polled every 30 s,** with the container, host, time and the one-line explanation. Reason: a self-recovery is not an incident, but a container that keeps recovering is worth a glance (#14, #23).
+
+### Service page (#30)
+
+One service's page (`/services/[id]`, `components/service/`), reached from the service's name on the overview and from an incident's header.
+
+- **The page shows the service's containers and URLs, its rules, its memory and its past incidents.** Rules come in two groups, the service's own and its host's, as the hosts file gives them; past incidents are the 20 newest. Reason: before a human approves a plan, what Bleep already knows and has been told about the service is one click away (#30).
+- **Memory is a list of facts, each with where it came from, and a box to add one.** A person's fact reads "Added by you"; a report's reads "Learned from an incident's report" and links that incident. Each has a delete button; a failed add or delete keeps the list and says why. Reason: a fact Bleep learned is trusted on every later incident, so the human must see where it came from and be able to remove it (#30).
+- **A service Bleep does not see any more still shows its memory and incidents,** with one line saying it is gone from its host. Reason: the facts of a removed or renamed service should be readable and deletable, not stranded (#30).
+- **The page's parts are small and take their data as props** (`FactList`, `RuleList`, the shared `Panel`), with the reads in `MemoryPanel` and `ServicePage`. Reason: the dashboard is being restyled, and a new look should not have to touch the data code (#30).

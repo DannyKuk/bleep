@@ -13,6 +13,11 @@ report written from the record alone. The report is published as a `report` even
 (`Memory.add_report`). The node does not close the incident: the runner does, once the
 report is in the checkpoint, so a crash before that leaves the incident open and the next boot
 runs the node again rather than leaving a closed incident with no stored report.
+
+When the human gave instructions on a service incident, a second model call turns the lasting
+ones ("always redeploy rather than restart") into at most two service facts
+(`Memory.replace_report_facts`). That call sees only the human's words, the plan and the service's
+name, never a diagnosis or a log, so nothing a host wrote can become a fact Bleep trusts later.
 """
 
 import logging
@@ -52,6 +57,8 @@ FOLLOW_UPS = 5
 FOLLOW_UP_CHARS = 300
 ENTRY_CHARS = 200
 NOT_DETERMINED = "Not determined."
+MAX_FACTS = 2
+FACT_CHARS = 200
 
 _FIXED = re.compile(r"\bfixed\b", re.IGNORECASE)
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
@@ -63,6 +70,12 @@ class _Draft(BaseModel):
     summary: str = ""
     cause: str = ""
     follow_ups: list[str] = Field(default_factory=list)
+
+
+class _Facts(BaseModel):
+    """The lasting facts the model found in the human's instructions."""
+
+    facts: list[str] = Field(default_factory=list)
 
 
 def outcome(state: IncidentState) -> Outcome:
@@ -214,19 +227,50 @@ def _describe_plan(proposal: Proposal | None) -> str:
     return "\n".join(lines)
 
 
+async def _ask[T: BaseModel](deps: GraphDeps, incident_id: str, schema: type[T], prompt: str) -> T:
+    await check_budget(deps.ledger, incident_id, deps.settings_store.budgets())
+    return await invoke_structured(
+        deps.models("main"),
+        schema,
+        [HumanMessage(prompt)],
+        config={"callbacks": [UsageTracker(incident_id, deps.ledger)]},
+    )
+
+
 async def _write(deps: GraphDeps, incident_id: str, prompt: str) -> _Draft:
     """The model's draft; an empty one when the budget is spent or the model fails."""
     try:
-        await check_budget(deps.ledger, incident_id, deps.settings_store.budgets())
-        return await invoke_structured(
-            deps.models("main"),
-            _Draft,
-            [HumanMessage(prompt)],
-            config={"callbacks": [UsageTracker(incident_id, deps.ledger)]},
-        )
+        return await _ask(deps, incident_id, _Draft, prompt)
     except Exception as error:  # the run must end with a report whatever the model does
         log.warning("report: writing from the record only (%s)", type(error).__name__)
         return _Draft()
+
+
+async def _learn(deps: GraphDeps, state: IncidentState) -> None:
+    """Keep what the human said is always true of the service as at most `MAX_FACTS` facts.
+
+    Only a service incident with instructions asks the model. A failure keeps no facts and
+    lets the run end: a fact helps later runs, this one is done without it.
+    """
+    subject, instructions = state["subject"], state.get("instructions") or []
+    if subject.service_id is None or not instructions:
+        return
+    incident_id, context = state["incident_id"], state.get("context")
+    proposal = state.get("proposal")
+    steps = proposal.steps if proposal is not None else []
+    prompt = prompts.load(
+        "graph/report_facts",
+        service=(context.service_name if context else None) or subject.service_id,
+        instructions="\n".join(f"{n}. {text}" for n, text in enumerate(instructions, 1)),
+        plan=_steps_text([s.model_dump() for s in steps]) or "no action",
+    )
+    try:
+        found = await _ask(deps, incident_id, _Facts, prompt)
+        texts = [_clip(text, FACT_CHARS) for text in found.facts]
+        texts = list(dict.fromkeys(text for text in texts if text))[:MAX_FACTS]
+        await deps.memory.replace_report_facts(subject.service_id, incident_id, texts)
+    except Exception as error:
+        log.warning("report: learning facts for %s failed: %s", incident_id, type(error).__name__)
 
 
 async def _remember(
@@ -237,7 +281,7 @@ async def _remember(
     proposal: Proposal | None,
 ) -> None:
     try:
-        await deps.memory.add_report(incident, written, decision, None, proposal=proposal)
+        await deps.memory.add_report(incident, written, decision, proposal=proposal)
     except Exception as error:  # memory helps later runs; this one is done without it
         log.warning("report: remembering %s failed: %s", incident.id, type(error).__name__)
 
@@ -308,7 +352,10 @@ def make(deps: GraphDeps) -> Node:
         await deps.bus.publish(incident_id, "report", written.model_dump(mode="json"))
         if incident is not None:
             await _notify(deps, incident, written)
+            # Remembered with the facts the human taught; a re-run after a crash replaces the
+            # record and those facts, it never doubles them. The runner closes the incident.
             await _remember(deps, incident, written, decision, proposal)
+            await _learn(deps, state)
         return {"outcome": result, "report": written}
 
     return report

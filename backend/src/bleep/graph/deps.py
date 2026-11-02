@@ -7,7 +7,7 @@ passes its own in their place (`memory.store.MemoryStore`, `incidents.approvals.
 
 import asyncio
 import secrets
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
@@ -48,7 +48,8 @@ ModelFactory = Callable[[Role], BaseChatModel]
 
 
 class Memory(Protocol):
-    """Long-term memory: Gather and the `recall_incidents` tool read it, Report writes to it.
+    """Long-term memory: Gather and the `recall_incidents` tool read it, Report writes to it
+    (the record and the facts the human's instructions taught).
 
     `memory.store.MemoryStore` is the SQLite one the app runs on.
     """
@@ -66,10 +67,17 @@ class Memory(Protocol):
         incident: Incident,
         report: Report,
         decision: Decision | None = None,
-        feedback: str | None = None,
         *,
         proposal: Proposal | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Remember a finished incident with the human's decision and feedback on it."""
+        ...
+
+    async def replace_report_facts(
+        self, service_id: str, incident_id: str, texts: Iterable[str]
+    ) -> list[ServiceFact]:
+        """Keep the facts the incident's report taught, in place of earlier ones from it."""
+        ...
 
 
 class NullMemory:
@@ -88,11 +96,15 @@ class NullMemory:
         incident: Incident,
         report: Report,
         decision: Decision | None = None,
-        feedback: str | None = None,
         *,
         proposal: Proposal | None = None,
     ) -> None:
         return None
+
+    async def replace_report_facts(
+        self, service_id: str, incident_id: str, texts: Iterable[str]
+    ) -> list[ServiceFact]:
+        return []
 
 
 class Notifier(Protocol):

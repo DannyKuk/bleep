@@ -46,13 +46,31 @@ class PastIncident(BaseModel):
 class ServiceFact(BaseModel):
     """Something worth knowing about a service, kept in long-term memory (Bleep's own, trusted).
 
-    `source` is `human` for a fact a person added, `report` for one taken from a report.
+    `source` is `human` for a fact a person added, `report` for one taken from a report;
+    `incident_id` names that report's incident.
     """
 
     id: int
     text: str
     source: Literal["report", "human"]
     created_at: datetime
+    incident_id: str | None = None
+
+
+FeedbackTarget = Literal["diagnosis", "proposal"]
+Vote = Literal["up", "down"]
+
+
+class Feedback(BaseModel):
+    """The human's thumbs up or down on an incident's diagnosis or plan, with an optional note.
+
+    One per target and incident; a later vote replaces it.
+    """
+
+    target: FeedbackTarget
+    vote: Vote
+    note: str | None = None
+    at: datetime
 
 
 class GatherContext(BaseModel):

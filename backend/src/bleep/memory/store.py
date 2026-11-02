@@ -2,7 +2,9 @@
 service.
 
 Report adds one record per incident (`add_report`, idempotent, so a re-run Report node replaces
-it). Gather and the `recall_incidents` tool ask `similar`: the query is embedded, every record of
+it), with the human's feedback on the incident (`set_feedback`, which also updates a record already
+written), and up to two facts learned from the human's instructions (`replace_report_facts`).
+Gather and the `recall_incidents` tool ask `similar`: the query is embedded, every record of
 the current embedder is scored by cosine with numpy (brute force; a few thousand records take
 well under a millisecond), records below `min_score` are dropped, and the same service's
 records come first. Records whose `model` is not the current embedder's name are left out until
@@ -11,16 +13,26 @@ See docs/design/memory.md.
 """
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import Literal
 
+import aiosqlite
 import numpy as np
 
 from bleep.incidents.repository import utcnow
 from bleep.memory.embeddings import Embedder
-from bleep.memory.text import clean
-from bleep.schemas.graph import Decision, PastIncident, Proposal, Report, ServiceFact
+from bleep.memory.text import NOTE_CHARS, clean, describe_feedback
+from bleep.schemas.graph import (
+    Decision,
+    Feedback,
+    FeedbackTarget,
+    PastIncident,
+    Proposal,
+    Report,
+    ServiceFact,
+    Vote,
+)
 from bleep.schemas.incidents import Incident
 from bleep.store.db import Database
 
@@ -68,13 +80,14 @@ class MemoryStore:
         incident: Incident,
         report: Report,
         decision: Decision | None = None,
-        feedback: str | None = None,
         *,
         proposal: Proposal | None = None,
     ) -> None:
         """Remember a finished incident; a second call for the same incident replaces the first.
 
         `proposal` names the plan the decision was about, so recall can say what was rejected.
+        The human's feedback is read from the incident's votes in the same write, so a vote cast
+        while the record is written is never lost (`set_feedback` updates the record after it).
         """
         title, cause = clean(report.title), clean(report.cause)
         action = clean(report.action_taken or NOTHING_RAN)
@@ -83,6 +96,8 @@ class MemoryStore:
         vector = (await self._embed([text]))[0]
         conn = await self.db.connect()
         try:
+            await conn.execute("BEGIN IMMEDIATE")
+            feedback = describe_feedback(await _votes(conn, incident.id))
             await conn.execute(
                 "INSERT OR REPLACE INTO memory_incidents (incident_id, host_id, service_id, date,"
                 " title, cause, action, outcome, human_decision, feedback, text, model, embedding)"
@@ -104,8 +119,51 @@ class MemoryStore:
                 ),
             )
             await conn.commit()
+        except BaseException:
+            await conn.rollback()
+            raise
         finally:
             await conn.close()
+
+    async def feedback(self, incident_id: str) -> list[Feedback]:
+        """The human's votes on the incident, diagnosis first."""
+        conn = await self.db.connect()
+        try:
+            return await _votes(conn, incident_id)
+        finally:
+            await conn.close()
+
+    async def set_feedback(
+        self, incident_id: str, target: FeedbackTarget, vote: Vote, note: str | None = None
+    ) -> Feedback:
+        """Keep the human's vote on a finding, replacing an earlier one on the same target, and
+        copy the incident's votes into its memory record when it has one."""
+        kept = Feedback(
+            target=target,
+            vote=vote,
+            note=clean(note, NOTE_CHARS) if note else None,
+            at=self.clock(),
+        )
+        conn = await self.db.connect()
+        try:
+            await conn.execute("BEGIN IMMEDIATE")
+            await conn.execute(
+                "INSERT OR REPLACE INTO incident_feedback (incident_id, target, vote, note, at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (incident_id, kept.target, kept.vote, kept.note, kept.at.isoformat()),
+            )
+            feedback = describe_feedback(await _votes(conn, incident_id))
+            await conn.execute(
+                "UPDATE memory_incidents SET feedback = ? WHERE incident_id = ?",
+                (clean(feedback) if feedback else None, incident_id),
+            )
+            await conn.commit()
+        except BaseException:
+            await conn.rollback()
+            raise
+        finally:
+            await conn.close()
+        return kept
 
     async def similar(
         self, text: str, service_id: str | None = None, k: int = 3, min_score: float = 0.5
@@ -188,6 +246,7 @@ class MemoryStore:
                 text=row["text"],
                 source=row["source"],
                 created_at=datetime.fromisoformat(row["created_at"]),
+                incident_id=row["incident_id"],
             )
             for row in rows
         ]
@@ -211,12 +270,71 @@ class MemoryStore:
             raise RuntimeError("the fact was stored without an id")
         return ServiceFact(id=fact_id, text=fact_text, source=source, created_at=now)
 
-    async def delete_fact(self, fact_id: int) -> bool:
-        """Forget a fact; False when there was none with that id."""
+    async def replace_report_facts(
+        self, service_id: str, incident_id: str, texts: Iterable[str]
+    ) -> list[ServiceFact]:
+        """Keep `texts` as the facts the incident's report taught, in place of any it taught
+        before (a re-run Report must not double them); the facts kept."""
+        now = self.clock()
+        cleaned = [fact for fact in (clean(text) for text in texts) if fact]
         conn = await self.db.connect()
         try:
-            cursor = await conn.execute("DELETE FROM service_facts WHERE id = ?", (fact_id,))
+            await conn.execute("BEGIN IMMEDIATE")
+            await conn.execute(
+                "DELETE FROM service_facts WHERE incident_id = ? AND source = 'report'",
+                (incident_id,),
+            )
+            kept = []
+            for text in cleaned:
+                cursor = await conn.execute(
+                    "INSERT INTO service_facts (service_id, text, source, created_at, incident_id)"
+                    " VALUES (?, ?, 'report', ?, ?)",
+                    (service_id, text, now.isoformat(), incident_id),
+                )
+                if cursor.lastrowid is None:  # SQLite always gives an id after an insert
+                    raise RuntimeError("the fact was stored without an id")
+                kept.append(
+                    ServiceFact(
+                        id=cursor.lastrowid,
+                        text=text,
+                        source="report",
+                        created_at=now,
+                        incident_id=incident_id,
+                    )
+                )
+            await conn.commit()
+        except BaseException:
+            await conn.rollback()
+            raise
+        finally:
+            await conn.close()
+        return kept
+
+    async def delete_fact(self, fact_id: int, service_id: str | None = None) -> bool:
+        """Forget a fact (only if it is `service_id`'s, when given); False when there was none."""
+        query, args = "DELETE FROM service_facts WHERE id = ?", [fact_id]
+        if service_id is not None:
+            query, args = f"{query} AND service_id = ?", [fact_id, service_id]
+        conn = await self.db.connect()
+        try:
+            cursor = await conn.execute(query, args)
             await conn.commit()
             return cursor.rowcount == 1
         finally:
             await conn.close()
+
+
+async def _votes(conn: aiosqlite.Connection, incident_id: str) -> list[Feedback]:
+    async with conn.execute(
+        "SELECT * FROM incident_feedback WHERE incident_id = ? ORDER BY target", (incident_id,)
+    ) as cursor:
+        rows = await cursor.fetchall()
+    return [
+        Feedback(
+            target=row["target"],
+            vote=row["vote"],
+            note=row["note"],
+            at=datetime.fromisoformat(row["at"]),
+        )
+        for row in rows
+    ]

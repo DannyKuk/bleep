@@ -4,6 +4,7 @@ import Link from "next/link";
 import { HealthBadge } from "@/components/overview/health-badge";
 import { Badge } from "@/components/ui/badge";
 import type { ContainerView, Health, ServiceView, UrlStatus } from "@/lib/api-types";
+import { serviceHref } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 const CONTAINER_TONE: Record<ContainerView["health"], string> = {
@@ -24,7 +25,7 @@ function stateTone(container: ContainerView): string {
   return "text-health-down";
 }
 
-function ContainerChip({ container }: { container: ContainerView }) {
+export function ContainerChip({ container }: { container: ContainerView }) {
   const detail =
     container.health === "none" ? container.state : `${container.state}, ${container.health}`;
   return (
@@ -44,7 +45,7 @@ const URL_HEALTH: Record<UrlStatus["status"], { label: string; health: Health }>
   unknown: { label: "Not checked yet", health: "unknown" },
 };
 
-function UrlItem({ url }: { url: UrlStatus }) {
+export function UrlItem({ url }: { url: UrlStatus }) {
   const { label, health } = URL_HEALTH[url.status];
   return (
     <li className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
@@ -65,7 +66,12 @@ export function ServiceRow({ service }: { service: ServiceView }) {
   return (
     <div className="flex flex-col gap-2 py-3">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium">{service.name}</span>
+        <Link
+          href={serviceHref(service.id)}
+          className="font-medium underline-offset-2 hover:underline"
+        >
+          {service.name}
+        </Link>
         <Badge>{service.source}</Badge>
         <HealthBadge health={service.health} />
         {service.open_incident_id && (

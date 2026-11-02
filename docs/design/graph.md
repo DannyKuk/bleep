@@ -34,7 +34,7 @@ flowchart LR
 | `approval` | Snapshots the target containers, stores the plan as a pending approval, notifies, and waits for the human (`interrupt()`). | `approve` → `execute`; `instruct` or a target it could not read → `propose`; `reject`, or no re-plans left → `report` |
 | `execute` | Re-reads every target against its snapshot, then runs the approved steps in order through the act tools, each logged `started` before and `done`, `failed` or `skipped` after. | ran → `verify`; stale or refused → `propose`; no re-plans left → `report` |
 | `verify` | Waits, then checks the planned containers and URLs. | failed with loop-backs left → `investigate`, else `report` |
-| `report` | Sets the outcome, writes the report (the model writes the summary, cause and follow-ups; the rest is code), publishes it, sends it to every channel and remembers it ([memory](memory.md)); the runner closes the incident once the report is checkpointed. | end |
+| `report` | Sets the outcome, writes the report (the model writes the summary, cause and follow-ups; the rest is code), publishes it, sends it to every channel, remembers it with the human's feedback and keeps the human's lasting instructions as service facts ([memory](memory.md)); the runner closes the incident once the report is checkpointed. | end |
 
 Every node, the topology and the runner are built. An approved plan runs in Execute and is judged by Verify before the report; only Verify's pass makes the outcome `resolved` (#25).
 
