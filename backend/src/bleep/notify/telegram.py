@@ -165,16 +165,21 @@ class TelegramBot:
         self._offset: int | None = None
 
     async def poll_forever(self) -> None:
-        """Long-poll until cancelled; an outage backs off from 1 s to 60 s and never ends it."""
+        """Long-poll until cancelled; an outage or any other error backs off from 1 s to 60 s and
+        never ends it, because a dead poller would silently stop Telegram approvals."""
         backoff = BACKOFF_START_S
         while True:
             try:
                 await self.poll_once()
                 backoff = BACKOFF_START_S
+                continue
             except TelegramError as error:
                 log.warning("telegram: %s; retrying in %.0f s", error, backoff)
-                await self._sleep(backoff)
-                backoff = min(backoff * 2, BACKOFF_MAX_S)
+            except Exception as error:  # the type only: a message could quote the token's URL
+                name = type(error).__name__
+                log.error("telegram: polling failed (%s); retrying in %.0f s", name, backoff)
+            await self._sleep(backoff)
+            backoff = min(backoff * 2, BACKOFF_MAX_S)
 
     async def poll_once(self) -> None:
         """One `getUpdates` call and the handling of what it returned."""

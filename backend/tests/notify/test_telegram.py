@@ -268,6 +268,28 @@ async def test_poll_forever_backs_off_on_an_error_and_goes_on(env):
     assert len(env.runner.resumed) == 1
 
 
+async def test_poll_forever_survives_an_unexpected_error_and_logs_it(env, caplog):
+    sleeps: list[float] = []
+
+    async def stop_on_second(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise KeyboardInterrupt
+
+    env.bot._sleep = stop_on_second
+    malformed = {"ok": True, "result": [{"no_update_id": 1}]}  # a KeyError, not a TelegramError
+    env.api.updates += [
+        malformed,
+        fixture("callback_approve", APPROVAL_ID=env.approval_id),
+        malformed,
+    ]
+    with pytest.raises(KeyboardInterrupt):
+        await env.bot.poll_forever()
+    assert sleeps == [1.0, 1.0]  # backed off, carried on, and reset by the good poll
+    assert len(env.runner.resumed) == 1
+    assert any(r.levelname == "ERROR" and "telegram" in r.getMessage() for r in caplog.records)
+
+
 async def test_errors_never_carry_the_token(env):
     env.api.updates.append(httpx.Response(502, text="<html>bad gateway</html>"))
     with pytest.raises(TelegramError) as error:
