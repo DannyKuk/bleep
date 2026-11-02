@@ -62,7 +62,7 @@ Paths under `backend/src/bleep/` are given from there.
 | 3. Run | The runner starts the incident's graph thread in the background (`thread_id` = incident id). | `IncidentRunner.start` |
 | 4. Gather | Containers, the last 200 log lines of the affected ones through the guard, host basics, rules and similar past incidents. No model call. | `graph/nodes/gather.py` |
 | 5. Investigate | The model reads with read-only tools, within a budget (placeholder until #17). | `graph/nodes/investigate.py` |
-| 6. Diagnose | Root cause, evidence, confidence; low confidence investigates once more (placeholder until #18). | `graph/nodes/diagnose.py` |
+| 6. Diagnose | Root cause, evidence, confidence; low confidence investigates once more, then goes on marked unsure. | `graph/nodes/diagnose.py` |
 | 7. Propose | One to three allowlisted actions, or no action (placeholder until #19). | `graph/nodes/propose.py` |
 | 8. Approval | The run checkpoints and waits for a yes, a no or an instruction, through a restart if need be. | `graph/nodes/approval.py`, `IncidentRunner.resume` |
 | 9. Report | The outcome is set; `resolved` is only ever claimed after verification. | `graph/nodes/report.py` |

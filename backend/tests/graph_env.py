@@ -4,12 +4,14 @@ Every graph test (Gather, the runner, and the node tasks after them) builds on t
 touches a real host, engine or model.
 """
 
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage
 
 from bleep.graph.deps import GraphDeps
 from bleep.hosts.config import HostConfig, ServiceOverrides
@@ -41,11 +43,20 @@ class RecordingGuardLog:
         self.records.append((incident_id, kind, detail))
 
 
+def confident_model() -> FakeChatModel:
+    """Answers every structured request (Diagnose's) with a confident diagnosis; for tests that
+    run the whole graph and do not care what the model says. A test that does replaces it."""
+    reply = {"root_cause": "the container exited", "category": "unknown", "confidence": 0.9}
+    return FakeChatModel(
+        script=[AIMessage(json.dumps(reply))] * 20, structured_output_unsupported=True
+    )
+
+
 @dataclass
 class CountingModels:
     """A model factory that hands out one `FakeChatModel` and counts every request for one."""
 
-    model: FakeChatModel = field(default_factory=lambda: FakeChatModel(script=[]))
+    model: FakeChatModel = field(default_factory=lambda: confident_model())
     calls: list[str] = field(default_factory=list)
 
     def __call__(self, role: str) -> BaseChatModel:
