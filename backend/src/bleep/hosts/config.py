@@ -59,7 +59,6 @@ class ServiceOverrides(Strict):
     docs_paths: list[str] = []
     protected_containers: list[str] = []
     rules: list[str] = []
-    github: GithubConfig | None = None
 
 
 class HostConfig(Strict):

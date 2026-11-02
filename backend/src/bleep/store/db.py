@@ -1,17 +1,25 @@
 """SQLite access and numbered migrations."""
 
+import re
 from datetime import UTC, datetime
 from importlib import resources
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
 import aiosqlite
 
-MIGRATIONS = resources.files("bleep.store") / "migrations"
+PACKAGED_MIGRATIONS = resources.files("bleep.store") / "migrations"
+MIGRATION_NAME = re.compile(r"^(\d{4})_[a-z0-9_]+\.sql$")
+
+
+class MigrationError(Exception):
+    """A migration file is badly named, duplicated or fails to apply."""
 
 
 class Database:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, migrations: Traversable | Path | None = None) -> None:
         self.path = path
+        self.migrations = migrations if migrations is not None else PACKAGED_MIGRATIONS
 
     async def connect(self) -> aiosqlite.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -21,11 +29,25 @@ class Database:
         await conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
+    def _migration_files(self) -> list[tuple[int, Traversable | Path]]:
+        found: dict[int, Traversable | Path] = {}
+        for file in self.migrations.iterdir():
+            if not file.name.endswith(".sql"):
+                continue
+            match = MIGRATION_NAME.match(file.name)
+            if match is None:
+                raise MigrationError(f"{file.name}: migration files are named NNNN_name.sql")
+            version = int(match.group(1))
+            if version in found:
+                raise MigrationError(
+                    f"{file.name}: number {version:04d} is also used by {found[version].name}"
+                )
+            found[version] = file
+        return sorted(found.items())
+
     async def migrate(self) -> None:
-        """Apply each migrations/NNNN_*.sql once, in filename order."""
-        files = sorted(
-            (f for f in MIGRATIONS.iterdir() if f.name.endswith(".sql")), key=lambda f: f.name
-        )
+        """Apply each migration once, in order; each file and its version row commit together."""
+        files = self._migration_files()
         conn = await self.connect()
         try:
             await conn.execute(
@@ -34,15 +56,18 @@ class Database:
             )
             async with conn.execute("SELECT version FROM schema_version") as cursor:
                 applied = {row["version"] for row in await cursor.fetchall()}
-            for file in files:
-                version = int(file.name.split("_", 1)[0])
+            for version, file in files:
                 if version in applied:
                     continue
-                await conn.executescript(file.read_text(encoding="utf-8"))
-                await conn.execute(
-                    "INSERT INTO schema_version (version, name, applied_at) VALUES (?, ?, ?)",
-                    (version, file.name, datetime.now(UTC).isoformat()),
+                record = (
+                    "INSERT INTO schema_version (version, name, applied_at) "
+                    f"VALUES ({version}, '{file.name}', '{datetime.now(UTC).isoformat()}')"
                 )
-                await conn.commit()
+                script = f"BEGIN;\n{file.read_text(encoding='utf-8')}\n;\n{record};\nCOMMIT;"
+                try:
+                    await conn.executescript(script)
+                except Exception as error:
+                    await conn.rollback()
+                    raise MigrationError(f"{file.name}: {error}") from error
         finally:
             await conn.close()

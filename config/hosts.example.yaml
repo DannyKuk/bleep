@@ -39,8 +39,6 @@ hosts:
         protected_containers: [shop-db]            # never a target of an action
         rules:
           - Roll back before restarting when the last deploy is under an hour old.
-        github:
-          token: {env: SHOP_GITHUB_TOKEN}          # per-service token override
 
   # A socket host (no SSH): the local socket or a socket proxy.
   # - id: demo
