@@ -13,7 +13,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
-from bleep.graph.deps import Approvals
+from bleep.graph.deps import Approvals, Notifier
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
 from bleep.schemas.graph import Decision
@@ -25,7 +25,8 @@ log = logging.getLogger(__name__)
 class IncidentRunner:
     """`approvals` is the store the graph's Approval node uses; with it, a decision recorded
     while the run was not waiting (Bleep died between the decision and the resume) is delivered
-    when the run is started again."""
+    when the run is started again. `notifier` hears `incident_opened` once, when a new
+    incident's run starts, whatever the run ends with."""
 
     def __init__(
         self,
@@ -33,11 +34,13 @@ class IncidentRunner:
         repo: IncidentRepo,
         bus: EventBus,
         approvals: Approvals | None = None,
+        notifier: Notifier | None = None,
     ) -> None:
         self.graph = graph
         self.repo = repo
         self.bus = bus
         self.approvals = approvals
+        self.notifier = notifier
         self._runs: dict[str, asyncio.Task[None]] = {}
 
     @staticmethod
@@ -128,6 +131,7 @@ class IncidentRunner:
     async def _advance(self, incident: Incident) -> None:
         snapshot = await self.graph.aget_state(self.config(incident.id))
         if not snapshot.values:  # no checkpoint yet: a new run
+            await self._announce(incident)
             signals = await self.repo.signals(incident.id)
             await self._drive(incident.id, _initial(incident, signals))
         elif snapshot.interrupts:
@@ -140,6 +144,16 @@ class IncidentRunner:
             await self._drive(incident.id, None)  # None: go on from the checkpoint
         else:  # finished, but the status never settled (cancelled or crashed just after the end)
             await self._settle(incident.id, snapshot)
+
+    async def _announce(self, incident: Incident) -> None:
+        """Tell the channels a new incident opened, before its run starts; a channel outage is
+        logged and never stops the run."""
+        if self.notifier is None:
+            return
+        try:
+            await self.notifier.incident_opened(incident)
+        except Exception as error:
+            log.warning("incident %s: announcing it failed: %s", incident.id, type(error).__name__)
 
     async def _decided(self, incident_id: str) -> Decision | None:
         """The decision on the incident's latest approval, if it has been decided."""

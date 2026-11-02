@@ -50,6 +50,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 parts.incidents,
                 parts.bus,
                 approvals=parts.approvals,
+                notifier=parts.graph_deps.notifier,
             )
             stack.push_async_callback(runner.close)
             manager = WatcherManager(

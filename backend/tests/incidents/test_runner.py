@@ -164,6 +164,65 @@ async def test_a_decision_for_another_approval_does_not_resume_the_run(tmp_path,
     assert (await env.repo.get(incident.id)).status == "awaiting_approval"
 
 
+class OpenedNotifier:
+    def __init__(self, fail: bool = False) -> None:
+        self.opened: list[str] = []
+        self.fail = fail
+
+    async def incident_opened(self, incident) -> None:
+        self.opened.append(incident.id)
+        if self.fail:
+            raise RuntimeError("telegram is down")
+
+
+async def test_a_new_run_tells_the_notifier_the_incident_opened_once(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier = OpenedNotifier()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+        await runner.start(incident)
+        await runner.join()
+        await runner.start(incident)  # finished: nothing new to tell
+        await runner.join()
+
+    assert notifier.opened == [incident.id]  # no_action, unsure and budget incidents included
+    assert await env.nodes(incident.id) == M2_PATH
+
+
+async def test_a_failing_notifier_does_not_stop_the_run(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier = OpenedNotifier(fail=True)
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+        await runner.start(incident)
+        await runner.join()
+
+    assert notifier.opened == [incident.id]
+    assert await env.nodes(incident.id) == M2_PATH
+    assert (await env.repo.get(incident.id)).status == "closed"
+
+
+async def test_a_run_going_on_after_a_restart_does_not_announce_the_incident_again(
+    tmp_path, acting
+):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier = OpenedNotifier()
+    checkpoints = tmp_path / "checkpoints.sqlite"
+    async with open_checkpointer(checkpoints) as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+        await runner.start(incident)
+        await runner.join()
+    async with open_checkpointer(checkpoints) as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+        await runner.start(incident)  # waiting at approval: picked up, not opened again
+        await runner.join()
+
+    assert notifier.opened == [incident.id]
+
+
 async def test_state_is_the_checkpointed_values_and_empty_before_a_run(tmp_path, acting):
     env = await graph_env(tmp_path)
     incident = await env.open(service(env), container="shop-web-1")
