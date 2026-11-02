@@ -13,6 +13,7 @@ describe("Timeline", () => {
           event("node_finished", { node: "gather" }),
           event("node_started", { node: "investigate" }),
           event("tool_call", { name: "container_logs", args: {} }),
+          event("report", { summary: "shop-web was started again." }),
         ]}
       />,
     );
@@ -21,6 +22,7 @@ describe("Timeline", () => {
     expect(items[0]).toHaveTextContent("Gathered context");
     expect(items[1]).toHaveTextContent("Investigating");
     expect(screen.queryByText(/container_logs/)).toBeNull();
+    expect(screen.queryByText("report")).toBeNull();
   });
 
   it("names the channel of a decision and shows notices", () => {

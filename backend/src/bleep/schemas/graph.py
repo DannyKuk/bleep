@@ -1,8 +1,8 @@
 """The shapes the incident graph keeps in its state and hands between nodes.
 
 Every Milestone 2 node's model is defined here at once, so the node tasks can be built side by
-side against fixed shapes. `Report` is a minimal placeholder that Milestone 3 (Report)
-fills out. See docs/design/graph.md.
+side against fixed shapes. Milestone 3 filled in `StepResult` (#24), `VerificationResult` and
+`Check` (#26) and `Report` (#27). See docs/design/graph.md.
 """
 
 from datetime import datetime
@@ -208,7 +208,27 @@ class VerificationResult(BaseModel):
         )
 
 
-class Report(BaseModel):
-    """Placeholder until Milestone 3's Report: the incident write-up."""
+class TimelineEntry(BaseModel):
+    """One moment of an incident, written by Bleep's code from its stored events."""
 
+    at: datetime
+    text: str
+
+
+class Report(BaseModel):
+    """The incident write-up: what happened, why, what was done and whether it worked.
+
+    The model writes `summary`, `cause` and `follow_ups`, checked by `guard.report_check` before
+    they are stored or sent; everything else is Bleep's own. `outcome` is the fixed text for the
+    run's outcome ("Fixed and verified" only for `resolved`). `action_taken` is None when nothing
+    ran.
+    """
+
+    title: str
     summary: str
+    cause: str
+    action_taken: str | None = None
+    outcome: str
+    timeline: list[TimelineEntry] = Field(default_factory=list)
+    follow_ups: list[str] = Field(default_factory=list)
+    human_decision: str | None = None

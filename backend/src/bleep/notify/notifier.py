@@ -93,7 +93,17 @@ class Notifier:
         await self._plain(name, id=incident.id, detail=result.detail)
 
     async def report(self, incident: Incident, report: Report) -> None:
-        await self._plain("report", id=incident.id, title=incident.title, summary=report.summary)
+        await self._plain(
+            "report",
+            id=incident.id,
+            title=report.title,
+            outcome=report.outcome,
+            summary=report.summary,
+            cause=report.cause,
+            action=report.action_taken or "nothing ran",
+            decision=report.human_decision or "you were not asked",
+            follow_ups="\n".join(f"- {item}" for item in report.follow_ups) or "nothing",
+        )
 
     async def notice(self, incident_id: str, text: str) -> None:
         await self._plain("notice", id=incident_id, text=text)

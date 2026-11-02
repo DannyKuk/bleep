@@ -1,7 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { approval, detail, event, incident } from "@/components/incident/fixtures";
+import { approval, detail, event, incident, report } from "@/components/incident/fixtures";
 import { DETAIL_POLL_MS, IncidentPage } from "@/components/incident/incident-page";
 import type { IncidentDetail } from "@/lib/api-types";
 
@@ -53,6 +53,20 @@ describe("IncidentPage", () => {
     expect(screen.getByText("Awaiting approval")).toBeInTheDocument();
     expect(screen.getByText(/restart policy is no/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+  });
+
+  it("shows the report once the run has written it", async () => {
+    stubBackend(
+      detail({
+        incident: incident({ status: "resolved" }),
+        outcome: "resolved",
+        report: report(),
+      }),
+    );
+    render(<IncidentPage id="inc-1" />);
+    const panel = await screen.findByRole("region", { name: "Report" });
+    expect(panel).toHaveTextContent("Fixed and verified");
+    expect(panel).toHaveTextContent("Set restart: unless-stopped on shop-web.");
   });
 
   it("reads the incident again when a step event arrives, not on tool events", async () => {

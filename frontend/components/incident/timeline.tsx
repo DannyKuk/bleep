@@ -73,6 +73,8 @@ export function timelineEntries(events: IncidentEvent[]): Entry[] {
       case "tool_call":
       case "tool_result":
         break; // the reasoning stream shows these
+      case "report":
+        break; // the report panel shows it, and the node's line says it was written
       case "proposal":
         entries.push({
           seq,

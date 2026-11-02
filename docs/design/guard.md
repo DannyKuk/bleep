@@ -59,3 +59,13 @@ How secrets and untrusted text are kept away from the model (`guard/`). Logs and
 - **A refusal raises; an engine failure is a result.** `GrantInvalid` and `StepRefused` are raised before any engine call and recorded as one `blocked_action` row naming the step (`step 1 (docker.restart shop-db-1 on a): shop-db-1 is protected in the hosts file`). An `EngineError` during the call returns `StepResult(ok=False)` with a fixed reason ("the container is gone; it was removed or recreated since approval", "host unreachable", "the engine refused the request"), never the engine's message. Reason: a refusal means nothing ran and the plan needs a human again, while a failed call may have done part and goes on to Verify; the detail ends up in the report, so it is Bleep's own text, not host text (#24).
 - **`StepResult(step_index, action, target, ok, detail, started_at, finished_at)`** with a 0-based `step_index`, timestamps from the tool's injected clock around the engine call. Reason: Execute writes it to the action log and the report reads it (#24).
 - **The act tools hold `BLEEP_SECRET` and never print it.** The field is left out of the dataclass `repr`. Reason: an act tool can end up in a log line or a traceback (#24).
+
+## Report check
+
+`check_report(report, raw_logs, record)` (`guard/report_check.py`) runs on every report before it is stored or sent.
+
+- **Any stretch of at least 60 characters that a written field shares with a log is replaced by `[log excerpt removed]`.** The logs are what the run handed the model: Gather's excerpts and every tool result in the conversation, as guarded. Whitespace is collapsed on both sides first, the spaces around a copy are kept, and copies less than 8 characters apart become one marker. Reason: reports never paste raw logs (§2), and a weak model pastes whatever the prompt says (#27).
+- **It checks the summary, the cause, the action taken and each follow-up.** The title and the timeline are Bleep's own text, built in code. Reason: only text a model or a host could have written can hold a copy (#27).
+- **A report that lost anything is recorded once as `redacted`** ("N log excerpt(s) removed from the report"). Reason: the dev panel shows what the guard changed, per incident (#27).
+- **The logs become a set of hashes of every 60-character window,** and each field is scanned once against it. Reason: the logs are already capped at 8,000 characters each, so the work is linear in what the run read (#27).
+- **Limits.** A copy shorter than 60 characters, or one with a change at least every 59 characters, is not caught, and a log line under 60 characters can never match. Reason: the aim is to stop pasted lines, not to judge paraphrase (#27).

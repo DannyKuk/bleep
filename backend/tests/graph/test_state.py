@@ -18,6 +18,7 @@ from bleep.schemas.graph import (
     Proposal,
     Report,
     StepResult,
+    TimelineEntry,
     VerificationPlan,
     VerificationResult,
 )
@@ -77,7 +78,7 @@ def full_state() -> dict:
         "approval": ApprovalRequest(id="ap_1", plan_hash="h"),
         "decision": Decision(kind="approve", via="dashboard", at=AT),
         "grant": ApprovalGrant(incident_id="inc_1", plan_hash="h", token="t"),
-        "execution": [
+        "step_results": [
             StepResult(
                 step_index=0,
                 action="docker.restart",
@@ -91,7 +92,13 @@ def full_state() -> dict:
         "verify_loops": 0,
         "verification": VerificationResult(ok=True),
         "outcome": "resolved",
-        "report": Report(summary="fixed"),
+        "report": Report(
+            title="t",
+            summary="s",
+            cause="c",
+            outcome="Fixed and verified",
+            timeline=[TimelineEntry(at=AT, text="Approved on the dashboard")],
+        ),
     }
 
 

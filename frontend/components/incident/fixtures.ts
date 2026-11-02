@@ -5,6 +5,7 @@ import type {
   IncidentDetail,
   IncidentEvent,
   Proposal,
+  Report,
 } from "@/lib/api-types";
 
 export function incident(overrides: Partial<Incident> = {}): Incident {
@@ -53,6 +54,24 @@ export function approval(overrides: Partial<ApprovalView> = {}): ApprovalView {
     requested_at: "2026-11-02T18:02:00Z",
     reminders: 0,
     decision: null,
+    ...overrides,
+  };
+}
+
+export function report(overrides: Partial<Report> = {}): Report {
+  return {
+    title: "shop-web-1 died",
+    summary: "shop-web was stopped and nothing restarted it. Bleep started it again.",
+    cause: "Someone stopped shop-web-1 and its restart policy is no.",
+    action_taken: "docker.start shop-web-1 on demo: done",
+    outcome: "Fixed and verified",
+    timeline: [
+      { at: "2026-11-02T18:00:00Z", text: "Signal: container died (shop-web-1)" },
+      { at: "2026-11-02T18:03:00Z", text: "Approved on Telegram" },
+      { at: "2026-11-02T18:04:00Z", text: "Check 1 passed" },
+    ],
+    follow_ups: ["Set restart: unless-stopped on shop-web.", "Find out who stopped it."],
+    human_decision: "Approved on Telegram",
     ...overrides,
   };
 }

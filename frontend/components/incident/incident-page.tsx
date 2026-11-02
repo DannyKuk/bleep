@@ -8,6 +8,7 @@ import { DiagnosisCard } from "@/components/incident/diagnosis-card";
 import { subjectText } from "@/components/incident/incident-list";
 import { ProposalCard } from "@/components/incident/proposal-card";
 import { ReasoningStream } from "@/components/incident/reasoning-stream";
+import { ReportView } from "@/components/incident/report-view";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import { Timeline } from "@/components/incident/timeline";
 import { Badge } from "@/components/ui/badge";
@@ -171,7 +172,7 @@ export function IncidentPage({ id }: { id: string }) {
 
       {report && (
         <Panel title="Report">
-          <p className="text-sm">{report.summary}</p>
+          <ReportView report={report} outcome={outcome} />
         </Panel>
       )}
 
