@@ -1,6 +1,7 @@
 from pathlib import Path
+from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 MIN_ADMIN_PASSWORD = 12
@@ -27,12 +28,33 @@ class Settings(BaseSettings):
         default=None, validation_alias="TELEGRAM_BOT_TOKEN"
     )
     telegram_chat_id: str | None = Field(default=None, validation_alias="TELEGRAM_CHAT_ID")
+    # Embeddings for long-term memory, also without the prefix: the local model by default, or
+    # any OpenAI-compatible `/embeddings` endpoint. A change re-embeds the memory on the next boot.
+    embeddings_provider: Literal["local", "openai"] = Field(
+        default="local", validation_alias=AliasChoices("EMBEDDINGS_PROVIDER", "embeddings_provider")
+    )
+    embeddings_model: str | None = Field(
+        default=None, validation_alias=AliasChoices("EMBEDDINGS_MODEL", "embeddings_model")
+    )
+    embeddings_base_url: str | None = Field(
+        default=None, validation_alias=AliasChoices("EMBEDDINGS_BASE_URL", "embeddings_base_url")
+    )
+    embeddings_api_key: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("EMBEDDINGS_API_KEY", "embeddings_api_key")
+    )
 
 
 def check_settings(settings: Settings) -> None:
-    """Refuse to start with a login password that is quick to guess."""
+    """Refuse to start with a login password that is quick to guess, or with an embeddings
+    endpoint that is only half configured."""
     if len(settings.admin_password.get_secret_value()) < MIN_ADMIN_PASSWORD:
         raise SettingsError(
             f"BLEEP_ADMIN_PASSWORD must be at least {MIN_ADMIN_PASSWORD} characters; "
             "set a longer one in .env"
+        )
+    if settings.embeddings_provider == "openai" and not (
+        settings.embeddings_base_url and settings.embeddings_model
+    ):
+        raise SettingsError(
+            "EMBEDDINGS_PROVIDER=openai needs EMBEDDINGS_BASE_URL and EMBEDDINGS_MODEL in .env"
         )

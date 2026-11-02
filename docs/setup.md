@@ -98,6 +98,19 @@ Without it everything works from the dashboard. To also get incidents and approv
 
 Only that chat is answered. Messages and button taps from any other chat are ignored and recorded in the guard log. The first answer wins, from Telegram or the dashboard; the other is told who won. Details: [Notifications](design/notify.md).
 
+## Memory embeddings (optional)
+
+Bleep remembers every finished incident and recalls similar ones. By default it embeds them with a small local model that ships inside the backend image (bge-small, about 11 ms per incident on a laptop, no key and no network). To use an OpenAI-compatible endpoint instead (OpenAI, LM Studio, Ollama), set in `.env`:
+
+```bash
+EMBEDDINGS_PROVIDER=openai
+EMBEDDINGS_BASE_URL=http://host.docker.internal:1234/v1   # the server's OpenAI-compatible base URL
+EMBEDDINGS_MODEL=text-embedding-nomic-embed-text-v1.5     # a model that server offers
+EMBEDDINGS_API_KEY=                                        # only if the server wants one
+```
+
+Bleep refuses to start with the provider set and the URL or the model missing. After a model change, the next start embeds the stored incidents again; until that is done they are left out of recall. Details: [Memory](design/memory.md), [Embeddings](decisions/embeddings.md).
+
 ## Later
 
 - Always-on on the spare MacBook, so Bleep watches the hosts when this laptop is closed.

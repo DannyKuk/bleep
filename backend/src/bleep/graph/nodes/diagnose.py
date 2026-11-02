@@ -19,6 +19,7 @@ from bleep.graph.deps import GraphDeps
 from bleep.graph.state import IncidentState, Node
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget
+from bleep.memory.text import describe_fact, describe_past
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import Diagnosis, Evidence, GatherContext
 from bleep.schemas.incidents import Signal, Subject
@@ -80,7 +81,9 @@ def _describe_context(context: GatherContext) -> str:
     for rule in [*context.host_rules, *context.service_rules]:
         parts.append(f"Rule from the owner: {rule}")
     for past in context.similar:
-        parts.append(f"Similar past incident: {past.model_dump_json()}")
+        parts.append(f"Similar past incident (Bleep's own record): {describe_past(past)}")
+    for fact in context.facts:
+        parts.append(f"Fact about this service (Bleep's own record): {describe_fact(fact)}")
     for gap in context.gaps:
         parts.append(f"Could not read: {gap}")
     return "\n\n".join(parts) or "(nothing was collected)"

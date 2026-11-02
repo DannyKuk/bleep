@@ -1,8 +1,8 @@
 """What the graph's nodes run on, passed in once when the graph is built.
 
 `Memory`, `Notifier`, `Approvals` and `SettingsSource` are Protocols with small defaults, so the
-graph runs (and is tested) before long-term memory, Telegram and the settings store exist; each
-later piece is passed in their place. The app passes `incidents.approvals.ApprovalStore`.
+graph runs (and is tested) without long-term memory, Telegram or the settings store; the app
+passes its own in their place (`memory.store.MemoryStore`, `incidents.approvals.ApprovalStore`).
 """
 
 import asyncio
@@ -32,6 +32,7 @@ from bleep.schemas.graph import (
     PastIncident,
     Proposal,
     Report,
+    ServiceFact,
     TargetSnapshot,
     VerificationResult,
 )
@@ -47,20 +48,51 @@ ModelFactory = Callable[[Role], BaseChatModel]
 
 
 class Memory(Protocol):
-    """Long-term memory, as Gather reads it."""
+    """Long-term memory: Gather and the `recall_incidents` tool read it, Report writes to it.
+
+    `memory.store.MemoryStore` is the SQLite one the app runs on.
+    """
 
     async def similar(
-        self, text: str, service_id: str | None = None, k: int = 3
-    ) -> list[PastIncident]: ...
+        self, text: str, service_id: str | None = None, k: int = 3, min_score: float = 0.5
+    ) -> list[PastIncident]:
+        """At most `k` past incidents like `text`, the same service's first."""
+        ...
+
+    async def facts(self, service_id: str) -> list[ServiceFact]: ...
+
+    async def add_report(
+        self,
+        incident: Incident,
+        report: Report,
+        decision: Decision | None = None,
+        feedback: str | None = None,
+        *,
+        proposal: Proposal | None = None,
+    ) -> None: ...
 
 
 class NullMemory:
-    """No memory yet: nothing is ever similar."""
+    """No memory: nothing is ever similar, no service has facts, and nothing is kept."""
 
     async def similar(
-        self, text: str, service_id: str | None = None, k: int = 3
+        self, text: str, service_id: str | None = None, k: int = 3, min_score: float = 0.5
     ) -> list[PastIncident]:
         return []
+
+    async def facts(self, service_id: str) -> list[ServiceFact]:
+        return []
+
+    async def add_report(
+        self,
+        incident: Incident,
+        report: Report,
+        decision: Decision | None = None,
+        feedback: str | None = None,
+        *,
+        proposal: Proposal | None = None,
+    ) -> None:
+        return None
 
 
 class Notifier(Protocol):

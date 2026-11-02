@@ -28,6 +28,7 @@ from bleep.guard.sanitize import MAX_CHARS, strip_control
 from bleep.guard.untrusted import SOURCE, wrap_untrusted
 from bleep.hosts.shell import CommandNotAllowed
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget
+from bleep.memory.text import describe_fact, describe_past
 from bleep.schemas.graph import GatherContext
 from bleep.schemas.incidents import Signal
 from bleep.schemas.settings import Budgets
@@ -239,6 +240,7 @@ def _task(state: IncidentState, limit: int, clock: Callable[[], datetime]) -> st
         host_rules=_bullets(context.host_rules),
         service_rules=_bullets(context.service_rules),
         similar=_similar(context),
+        facts=_facts(context),
         gaps=_bullets(context.gaps),
         budget=str(limit),
     )
@@ -305,13 +307,11 @@ def _gib(n: int) -> str:
 
 
 def _similar(context: GatherContext) -> str:
-    lines = [
-        f"- {p.date.date().isoformat()} {p.title}: cause {p.cause}; action {p.action};"
-        f" outcome {p.outcome}"
-        + (f"; the human decided: {p.human_decision}" if p.human_decision else "")
-        for p in context.similar
-    ]
-    return "\n".join(lines) or "(none)"
+    return _bullets([describe_past(p) for p in context.similar])
+
+
+def _facts(context: GatherContext) -> str:
+    return _bullets([describe_fact(f) for f in context.facts])
 
 
 def route(state: IncidentState) -> Literal["diagnose", "report"]:

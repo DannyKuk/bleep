@@ -17,6 +17,7 @@ from bleep.schemas.graph import (
     PlanStep,
     Proposal,
     Report,
+    ServiceFact,
     StepResult,
     TimelineEntry,
     VerificationPlan,
@@ -124,3 +125,31 @@ def test_checkpoint_types_cover_nested_models():
     names = {cls.__name__ for cls in checkpoint_types()}
     assert {"Subject", "Signal", "GatherContext", "ContainerSummary", "DiskUsage"} <= names
     assert {"PastIncident", "Evidence", "PlanStep", "VerificationPlan", "ApprovalGrant"} <= names
+
+
+def test_a_gather_context_with_memory_round_trips_as_its_own_models(caplog):
+    context = GatherContext(
+        at=AT,
+        similar=[
+            PastIncident(
+                incident_id="inc_0",
+                date=AT,
+                title="shop down",
+                cause="bad env",
+                action="docker.restart shop-web-1 on a: done",
+                outcome="Fixed and verified",
+                human_decision="Approved on Telegram",
+                feedback="good call",
+                score=0.82,
+            )
+        ],
+        facts=[ServiceFact(id=1, text="needs DATABASE_URL", source="human", created_at=AT)],
+    )
+    serde = checkpoint_serializer()
+    with caplog.at_level(logging.WARNING):
+        back = serde.loads_typed(serde.dumps_typed({"context": context}))["context"]
+
+    assert back == context
+    assert isinstance(back.similar[0], PastIncident)
+    assert isinstance(back.facts[0], ServiceFact)
+    assert [r.getMessage() for r in caplog.records] == []  # no "unregistered type" warning

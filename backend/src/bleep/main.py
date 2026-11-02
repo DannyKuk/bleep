@@ -21,6 +21,18 @@ from bleep.wiring import AppParts, build_parts
 log = logging.getLogger(__name__)
 
 
+async def _reembed(parts: AppParts) -> None:
+    """Embed the memory again after an embedder change. A failure (the model cannot be loaded)
+    leaves the old records out of recall until the next boot, but never stops Bleep."""
+    try:
+        count = await parts.memory.reembed()
+    except Exception as error:
+        log.warning("memory: re-embedding failed (%s); old records stay out of recall", error)
+        return
+    if count:
+        log.info("memory: re-embedded %d incident(s) with %s", count, parts.memory.embedder.name)
+
+
 async def _cancel(task: asyncio.Task[None]) -> None:
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
@@ -39,6 +51,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
             # and a normal stop runs them in reverse: stop what sends, then close what it sends on.
             stack.push_async_callback(parts.notify.close)  # last: runs and reminders still send
             await parts.db.migrate()
+            await _reembed(parts)
             await parts.registry.start()
             stack.push_async_callback(parts.registry.close)
             saver = await stack.enter_async_context(

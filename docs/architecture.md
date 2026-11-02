@@ -18,6 +18,7 @@ flowchart LR
     GRAPH["<b>Incident graph</b><br/>gather → … → report"]
     TOOLS["<b>Read tools</b><br/>through the guard"]
     LLM["<b>Models</b><br/>OpenRouter · local"]
+    MEM["<b>Memory</b><br/>past incidents · facts"]
     DB[("<b>SQLite</b><br/>bleep.db<br/>checkpoints.sqlite")]
     API["<b>FastAPI</b>"]
     FE["<b>Next.js</b>"]
@@ -26,6 +27,7 @@ flowchart LR
     REG --> DET --> INC --> RUN --> GRAPH
     GRAPH --> TOOLS --> REG
     GRAPH --> LLM
+    GRAPH --> MEM --> DB
     INC --> DB
     GRAPH --> DB
     REG --> API --> FE
@@ -48,8 +50,9 @@ flowchart LR
 | **Approvals** | `incidents/approvals.py`, `incidents/reminders.py` | Pending approvals in SQLite, decided once by whichever channel answers first; HMAC grants for approved plans; reminders that never approve. |
 | **Notifier and Telegram bot** | `notify/`, `prompts/notify/` | The notifier the graph and the reminder loop call: it tells the dashboard bus and, when a bot token is set, Telegram. The bot long-polls Telegram; a button or a reply to a proposal becomes a decision, raced fairly against the dashboard. |
 | **Incident graph** | `graph/` | LangGraph state, nodes and wiring, checkpointed per incident in `checkpoints.sqlite`. |
-| **Read tools** | `tools/` | Docker reads and the host command tool for the model, each scoped to the incident's host. |
+| **Read tools** | `tools/` | Docker reads and the host command tool for the model, each scoped to the incident's host, and `recall_incidents` over memory. |
 | **Act tools** | `tools/docker_act.py`, `guard/grant.py` | Restart, stop and start a container for one step of an approved plan; each checks the grant against the plan, then the target (host error, protected, Bleep's own), and acts on the approved container id. Never offered to a model. |
+| **Long-term memory** | `memory/`, `tools/memory.py` | Every finished incident with the human's decision, embedded by a local model (bge-small through fastembed) or an OpenAI-compatible endpoint, and facts per service. Gather recalls the 3 most similar (the same service's first) and the facts; Report writes the record; a model change re-embeds on boot. |
 | **Action log** | `incidents/action_log.py` | Execute's ledger in SQLite: each step `started` before its engine call and `done`, `failed` or `skipped` after, so a restart never runs a step twice. |
 | **Guard** | `guard/` | Redacts secrets, strips control characters, caps size and wraps untrusted text before anything reaches a model; checks every proposed plan before a human sees it (`guard/plan_check.py`); hashes plans and signs and checks approval grants (`guard/grant.py`); cuts log text out of every report (`guard/report_check.py`); `guard/log.py` records what it refused, blocked or changed in the `guard_log` table. |
 | **Models** | `llm/` | One factory for OpenRouter and local models, structured output with a plain-JSON fallback, and a token and cost ledger with a daily cap. |
@@ -68,14 +71,14 @@ Paths under `backend/src/bleep/` are given from there.
 | 1. Detect | A container dies, a URL fails or a host crosses a threshold; the detector waits out the grace window and debounces, then asks for an incident. | `watcher/detector.py` |
 | 2. Open | The incident is opened, or the signal attaches to the subject's open one. | `IncidentRepo.open_or_attach` |
 | 3. Run | The runner tells the channels the incident opened (Telegram gets it whatever the run ends with), then starts the incident's graph thread in the background (`thread_id` = incident id). | `IncidentRunner.start`, `Notifier.incident_opened` |
-| 4. Gather | Containers, the last 200 log lines of the affected ones through the guard, host basics, rules and similar past incidents. No model call. | `graph/nodes/gather.py` |
+| 4. Gather | Containers, the last 200 log lines of the affected ones through the guard, host basics, rules, the 3 most similar past incidents (the same service's first) and the service's facts. No model call. | `graph/nodes/gather.py`, `MemoryStore.similar` |
 | 5. Investigate | The model reads with read-only tools, at most 8 calls a round; each result is guarded and wrapped once, and every call and result streams to the bus. A spent cost budget stops here with a notice. | `graph/nodes/investigate.py` |
 | 6. Diagnose | Root cause, evidence, confidence; low confidence investigates once more, then goes on marked unsure, and Propose still asks the model. | `graph/nodes/diagnose.py` |
 | 7. Propose | One to three allowlisted actions, or no action with exact instructions for the human; checked in code before anyone is asked, and a refused plan goes back to the model once. | `graph/nodes/propose.py`, `guard/plan_check.py` |
 | 8. Approval | The target containers are snapshotted, the plan is stored as a pending approval, sent to the human and shown with Approve, Reject and "Tell Bleep something" on the incident's page; the run checkpoints and waits for a yes, a no or an instruction, through a restart if need be. The first answer wins; an instruction goes back to Propose; a pending approval is re-sent every 60 min and never approved by itself. | `graph/nodes/approval.py`, `ApprovalStore`, `ReminderLoop`, `IncidentRunner.resume` |
 | 9. Execute | Every target is read again. One gone, recreated or started again since approval runs nothing and goes back to Propose with a "state changed since approval" notice and a voided grant, and so does a step the guard refuses now (at most 3 re-plans a run). Otherwise the steps run in order through the act tools, each logged `started` before and `done` or `failed` after; a failed step skips the rest. After a crash a finished step is never repeated, and a started one is read on the host instead of run again. | `graph/nodes/execute.py`, `tools/docker_act.py`, `ActionLog` |
 | 10. Verify | Waits 20 s, then up to 3 checks 10 s apart; ok only when every planned container is running and healthy and every planned URL answers. A failure goes back to Investigate at most twice, then the outcome is `unverified`. | `graph/nodes/verify.py` |
-| 11. Report | The outcome is set in code (`resolved` only after verification) with its fixed text; the model writes the summary, cause and follow-ups from Bleep's record, anything copied from a log is cut out, and the report, with a timeline built from the stored events, goes to the bus and every channel before the incident closes. | `graph/nodes/report.py`, `guard/report_check.py`, `Notifier.report` |
+| 11. Report | The outcome is set in code (`resolved` only after verification) with its fixed text; the model writes the summary, cause and follow-ups from Bleep's record, anything copied from a log is cut out, and the report, with a timeline built from the stored events, goes to the bus and every channel, and into long-term memory with the human's decision, before the incident closes. | `graph/nodes/report.py`, `guard/report_check.py`, `Notifier.report`, `MemoryStore.add_report` |
 
 Every node publishes `node_started` and `node_finished` on the bus, which stores them for the incident's timeline. On boot, `IncidentRunner.recover_on_boot` resumes every unfinished run except those waiting for approval, and delivers a decision that was recorded before a crash. The app starts the runner with the watcher manager, which calls `recover_on_boot` once at startup and starts a run only for a newly opened incident, and runs the reminder loop beside them. The runner, the graph, the reminders and the API share one `ApprovalStore`, so a decision from any channel is the one the run sees, also after a restart.
 
@@ -110,6 +113,12 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **Execute re-reads every target before the first step and runs nothing if one changed since approval**; at most 3 trips back to Propose per run.
 - **A report is mostly code**: fixed outcome text and a timeline from the stored events; the model writes the summary, cause and follow-ups, and never "fixed" unless verified.
 
+**Memory** ([details](design/memory.md))
+- **A local embedding model in the backend, baked into the image**: bge-small through fastembed on two CPU threads; an OpenAI-compatible endpoint is the option ([embeddings](decisions/embeddings.md)).
+- **Vectors carry their model's name**, and a model change re-embeds on boot.
+- **Memory is Bleep's own, trusted text, except quoted stretches**, which reach the model wrapped as untrusted; stored text is redacted and has its wrapper tags escaped.
+- **The human's decision is remembered with the plan and the day**, so a rejected plan is not proposed again unannounced.
+
 **Agent and models** ([details](design/agent.md))
 - **One model factory for OpenRouter and local models**; structured output falls back to plain JSON for weak models.
 - **A cost ledger with a daily cap** stops a runaway incident before the next call.
@@ -142,3 +151,4 @@ One line each; the full reasoning and issue numbers are on the design page named
 | [Docker over SSH](decisions/docker-over-ssh.md) | Forward the remote socket through one asyncssh connection per host. |
 | [Socket host](decisions/socket-host.md) | A filtered proxy with four rules, not a raw socket mount. |
 | [SSE through Next.js](decisions/sse-through-next.md) | A route handler that pipes the stream with `no-transform`; the rewrite held every event until the end. |
+| [Embeddings](decisions/embeddings.md) | bge-small through fastembed, in-process on two threads: 11 ms and 22 ms of CPU per text, +268 MB of image. |
