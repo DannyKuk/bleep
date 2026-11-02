@@ -39,6 +39,9 @@ DIAGNOSIS = Diagnosis(
     affected_services=["shop"],
 )
 STEP = PlanStep(action="docker.start", host_id="a", target="shop-web-1")
+RESULT = StepResult(
+    step_index=0, action="docker.start", target="shop-web-1", ok=True, detail="started shop-web-1"
+)
 ACT = Proposal(
     kind="act",
     steps=[STEP],
@@ -120,7 +123,7 @@ async def test_an_unverified_run_never_says_fixed(tmp_path):
     state |= {
         "proposal": ACT,
         "decision": decide("approve"),
-        "step_results": [StepResult(step=STEP, ok=True)],
+        "step_results": [RESULT],
     }
 
     update = await run(env, state)
@@ -139,7 +142,7 @@ async def test_only_a_verified_run_is_called_fixed(tmp_path):
     state |= {
         "proposal": ACT,
         "decision": decide("approve"),
-        "step_results": [StepResult(step=STEP, ok=True)],
+        "step_results": [RESULT],
         "outcome": "resolved",
     }
 

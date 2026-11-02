@@ -153,13 +153,23 @@ def timeline(signals: list[Signal], events: list[IncidentEvent]) -> list[Entry]:
     return sorted(entries, key=lambda entry: entry.at)  # stable: equal times keep their order
 
 
-def action_taken(results: list[StepResult] | None) -> str | None:
-    """What ran, one step after another; None when nothing ran."""
+def action_taken(
+    results: list[StepResult] | None, proposal: Proposal | None, host_id: str
+) -> str | None:
+    """What ran, one step after another; None when nothing ran.
+
+    A `StepResult` names no host, so each step's host is read from the plan step at its
+    `step_index`, falling back to the incident's host (a plan only ever acts on that host).
+    """
     if not results:
         return None
+    steps = proposal.steps if proposal is not None else []
+
+    def host(r: StepResult) -> str:
+        return steps[r.step_index].host_id if 0 <= r.step_index < len(steps) else host_id
+
     return "; ".join(
-        f"{r.step.action} {r.step.target} on {r.step.host_id}: {'done' if r.ok else 'failed'}"
-        for r in results
+        f"{r.action} {r.target} on {host(r)}: {'done' if r.ok else 'failed'}" for r in results
     )
 
 
@@ -225,7 +235,7 @@ def make(deps: GraphDeps) -> Node:
         diagnosis, proposal = state.get("diagnosis"), state.get("proposal")
         decision: Decision | None = state.get("decision")
         human = decision_text(decision.kind, decision.via, decision.text) if decision else None
-        taken = action_taken(state.get("step_results"))
+        taken = action_taken(state.get("step_results"), proposal, state["subject"].host_id)
         entries = timeline(state.get("signals", []), await deps.bus.history(incident_id))
 
         prompt = prompts.load(
