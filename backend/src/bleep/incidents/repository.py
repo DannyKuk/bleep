@@ -176,6 +176,21 @@ class IncidentRepo:
         finally:
             await conn.close()
 
+    async def open_incident_id(self, subject: Subject) -> str | None:
+        """The id of the subject's open incident, if it has one."""
+        conn = await self.db.connect()
+        try:
+            return await self._open_for(conn, subject)
+        finally:
+            await conn.close()
+
+    async def _open_for(self, conn: aiosqlite.Connection, subject: Subject) -> str | None:
+        async with conn.execute(
+            f"SELECT id FROM incidents WHERE subject_key = ? AND {_OPEN}", (subject.key,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        return row["id"] if row is not None else None
+
     async def signals(self, incident_id: str) -> list[Signal]:
         conn = await self.db.connect()
         try:

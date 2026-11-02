@@ -3,6 +3,12 @@ from pathlib import Path
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+MIN_ADMIN_PASSWORD = 12
+
+
+class SettingsError(ValueError):
+    """The settings are not safe to start with."""
+
 
 class Settings(BaseSettings):
     """Bleep's own settings, read from `BLEEP_*` environment variables."""
@@ -13,3 +19,13 @@ class Settings(BaseSettings):
     hosts_file: Path = Path("/config/hosts.yaml")
     admin_password: SecretStr
     secret: SecretStr
+    cookie_secure: bool = False  # true once the dashboard is served over https
+
+
+def check_settings(settings: Settings) -> None:
+    """Refuse to start with a login password that is quick to guess."""
+    if len(settings.admin_password.get_secret_value()) < MIN_ADMIN_PASSWORD:
+        raise SettingsError(
+            f"BLEEP_ADMIN_PASSWORD must be at least {MIN_ADMIN_PASSWORD} characters; "
+            "set a longer one in .env"
+        )

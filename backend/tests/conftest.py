@@ -14,8 +14,13 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from bleep import prompts
+from bleep.auth.sessions import LoginLimiter, SessionStore
 from bleep.config import Settings
+from bleep.hosts.registry import Registry
+from bleep.incidents.repository import IncidentRepo
 from bleep.main import create_app
+from bleep.store.db import Database
+from bleep.wiring import AppParts
 
 
 @pytest.fixture
@@ -29,8 +34,21 @@ def settings(tmp_path) -> Settings:
 
 
 @pytest.fixture
-def client(settings):
-    with TestClient(create_app(settings)) as test_client:
+def parts(settings) -> AppParts:
+    """App parts over a temp database and an empty registry: no hosts file, no real engine."""
+    db = Database(settings.data_dir / "bleep.db")
+    return AppParts(
+        db=db,
+        registry=Registry([]),
+        incidents=IncidentRepo(db),
+        sessions=SessionStore(db),
+        login_limiter=LoginLimiter(),
+    )
+
+
+@pytest.fixture
+def client(settings, parts):
+    with TestClient(create_app(settings, parts)) as test_client:
         yield test_client
 
 
