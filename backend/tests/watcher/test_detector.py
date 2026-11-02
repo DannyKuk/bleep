@@ -90,6 +90,15 @@ def test_down_past_grace_opens():
     assert [x.kind for x in out[0].signals] == ["container_died", "down_past_grace"]
 
 
+def test_a_tick_for_one_host_leaves_another_hosts_deaths_pending():
+    det, clock = make()
+    det.feed(died(clock))  # on h1
+    assert det.tick(clock.at(90), {}, host_id="h2") == []  # h2's listing says nothing about h1
+    out = det.tick(clock.at(95), states(box(state="exited")), host_id="h1")
+    assert isinstance(out[0], OpenIncident)
+    assert out[0].signals[-1].kind == "down_past_grace"
+
+
 def test_container_missing_from_states_is_down_past_grace():
     det, clock = make()
     det.feed(died(clock))

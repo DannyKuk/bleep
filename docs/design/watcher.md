@@ -2,7 +2,7 @@
 
 How raw signals become incidents, self-recoveries or nothing. The decision logic is `bleep/watcher/detector.py`: pure, with an injected clock, so it is tested without Docker.
 
-## Pull model: `watcher/poller.py`, `events.py`, `feed.py`
+## Pull model: `watcher/poller.py`, `events.py`
 
 One `HostWatcher` per host ticks every 15 s (`BLEEP_WATCH_INTERVAL_S`). A tick is: reconnect if the host is down, `events(since=cursor, until=now)`, then `Registry.refresh` (which lists containers). It is pure code; no model is called.
 
@@ -15,9 +15,10 @@ One `HostWatcher` per host ticks every 15 s (`BLEEP_WATCH_INTERVAL_S`). A tick i
 - **`bleep.self` containers emit nothing,** by the event's own labels or the snapshot's (#13).
 - **The snapshot diff catches what events missed, once.** A container that was running and is now gone, exited with a crash code, or has a higher restart count is reported as `container_died` on the tick where the change first shows. A death the diff reported is remembered, so a late event for the same death is skipped, even one stamped after the tick's window but before the listing was taken. A diff death carries the container's own time (its finish, or its new start after a restart), not the tick's, so a restart the diff caught still counts as a recovery in the detector. Reason: events can be lost (the engine backlog, a window cut short), and listing and events are read a moment apart (#13).
 - **Every tick sends `host_unreachable` with `ok` to the detector,** true when the tick reached the host and false when not, so its 5-minute timer starts and resets (#13).
-- **The detector is ticked with the containers of the same tick** (`Feed.snapshot`, grouped by service id). Reason: the detector judges a recovery from `started_at` and state, which must come from the snapshot taken with the signal, not from an older one (#13).
+- **The detector is ticked with the containers of the same tick** (the watcher's `on_snapshot` hook, `WatcherManager.snapshot`, grouped by service id). Reason: the detector judges a recovery from `started_at` and state, which must come from the snapshot taken with the signal, not from an older one (#13).
 - **A start before the death is never a recovery.** `Detector.tick` treats a container whose `started_at` is earlier than the death as the old run seen in a stale snapshot: not recovered, so it opens past grace if it never restarts. Reason: otherwise a snapshot taken just before the death would clear it (#14 review, #13).
-- **The manager feeds the detector** (it replaced the `Feed` stand-in): every signal goes through one shared `Detector`, and its snapshot hook ticks the detector with the containers of all hosts (#13, #15).
+- **The manager feeds the detector:** every signal goes through one shared `Detector`, and its snapshot hook ticks the detector with that host's fresh listing (#13, #15).
+- **A host's pending deaths are judged only by that host's own listing.** `Detector.tick(now, states, host_id)` skips deaths on other hosts. A host that stops answering takes no listing, so a death seen just before it went quiet stays pending until it answers again, then is judged (recovered, or down past grace) by what it shows. Reason: judging it against the last listing while another host ticks would open a service incident for a host Bleep cannot see, a run that gathers nothing, and then the `host_unreachable` incident as a second page for one cause (#72).
 - **A tick is bounded to 60 s and never raises;** a sink that fails is logged and the rest of the tick goes on. Reason: one hung call or one bad consumer must not stop a host's watching (#13).
 - **Host basics (disk, memory, load) are not fed here.** They have their own cadence (60 s); the detector counts polls, so the 15 s tick must not feed them (#13).
 

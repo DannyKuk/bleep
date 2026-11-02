@@ -314,3 +314,58 @@ async def test_a_loop_that_dies_of_an_error_is_started_again(monkeypatch):
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
     assert len(runs) == 3
+
+
+async def test_a_death_on_an_unreachable_host_is_not_judged_by_another_hosts_ticks(tmp_path):
+    """A container on host a dies and a stops answering. Host b keeps ticking past the grace
+    window; a's last listing (the container exited) is stale, so it must not open an incident
+    for a service Bleep cannot see. The death waits for a's own next snapshot."""
+    clock = Clock()
+    engines = {
+        "a": FakeEngine("a", [box("shop-web-1", "shop", restart_policy="no")], clock=clock),
+        "b": FakeEngine("b", [box("blog-web-1", "blog", restart_policy="no")], clock=clock),
+    }
+
+    async def connect(host):
+        return None, engines[host.id]
+
+    db = Database(tmp_path / "bleep.sqlite")
+    await db.migrate()
+    registry = Registry([socket_host(id="a"), socket_host(id="b")], connect, clock=clock)
+    await registry.start()
+    repo, runner = IncidentRepo(db, clock), FakeRunner()
+    manager = WatcherManager(
+        registry,
+        Detector(Thresholds(), clock),
+        repo,
+        runner,  # type: ignore[arg-type]
+        EventBus(db, clock),
+        clock=clock,
+        http=httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200))),
+    )
+    a, b = manager.hosts["a"].watcher, manager.hosts["b"].watcher
+
+    await a.tick()
+    await b.tick()
+    clock.advance(10)
+    engines["a"].history.append(die("shop-web-1", clock.now))
+    engines["a"].container_list[0] = box(
+        "shop-web-1", "shop", state="exited", exit_code=137, restart_policy="no"
+    )
+    clock.advance(5)
+    await a.tick()  # the death is seen, and a's listing now says exited
+    engines["a"].drop()  # then a stops answering, as it often does under memory pressure
+    for _ in range(8):  # two minutes: well past the 60 s grace window
+        clock.advance(15)
+        assert await a.tick() is False
+        await b.tick()
+
+    assert await repo.list() == []
+    assert runner.started == []
+
+    engines["a"].restore()  # back, and the container is still down: a's own snapshot judges it
+    clock.advance(15)
+    assert await a.tick() is True
+    [incident] = await repo.list()
+    assert incident.subject.service_id == "a/compose:shop"
+    assert [i.id for i in runner.started] == [incident.id]
