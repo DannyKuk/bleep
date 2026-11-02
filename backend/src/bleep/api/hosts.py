@@ -7,8 +7,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from bleep.api.deps import get_parts
-from bleep.schemas.api import ContainerView, Health, HostView, ServiceView, UrlStatus
-from bleep.schemas.docker import ContainerSummary
+from bleep.schemas.api import (
+    BasicsView,
+    ContainerView,
+    DiskView,
+    Health,
+    HostView,
+    ServiceView,
+    UrlStatus,
+)
+from bleep.schemas.docker import ContainerSummary, HostBasics
 from bleep.schemas.incidents import Subject
 from bleep.schemas.services import Service
 from bleep.wiring import AppParts
@@ -92,6 +100,15 @@ async def _service_views(parts: AppParts, host_id: str | None) -> list[ServiceVi
     return views
 
 
+def _basics(basics: HostBasics | None) -> BasicsView | None:
+    if basics is None:
+        return None
+    return BasicsView(
+        **basics.model_dump(exclude={"disks"}),
+        disks=[DiskView(mount=d.mount, used_percent=d.used_percent) for d in basics.disks],
+    )
+
+
 @router.get("/hosts")
 async def list_hosts(parts: Annotated[AppParts, Depends(get_parts)]) -> list[HostView]:
     result = []
@@ -105,7 +122,7 @@ async def list_hosts(parts: Annotated[AppParts, Depends(get_parts)]) -> list[Hos
                 reachable=state.reachable,
                 last_seen=state.last_seen,
                 error=state.error,
-                basics=None,  # the host probe fills this in a later task
+                basics=_basics(state.basics),
                 service_count=len(views),
                 health=host_health(state.reachable, state.last_seen, (v.health for v in views)),
             )

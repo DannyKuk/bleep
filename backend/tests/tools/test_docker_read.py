@@ -283,6 +283,7 @@ def test_read_tools_contains_no_act_tool():
         "container_logs",
         "container_stats",
         "recent_events",
+        "host_command",
     }
 
 

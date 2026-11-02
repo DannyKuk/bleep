@@ -7,7 +7,7 @@ from bleep.hosts.config import ServiceOverrides
 from bleep.hosts.engine import EngineUnavailable
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
-from fakes import FakeEngine, ssh_host
+from fakes import FakeEngine, socket_host, ssh_host
 
 T0 = datetime(2026, 11, 2, 10, 0, tzinfo=UTC)
 
@@ -253,3 +253,120 @@ async def test_close_during_a_reconnect_closes_what_it_opened():
     assert await reconnecting is False
     assert engines["b"].closed
     assert reg.hosts()[1].reachable is False
+
+
+class Clockable:
+    def __init__(self) -> None:
+        self.now = T0
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+def basics_registry(shell, host=None, engine=None):
+    clock = Clockable()
+    host = host or ssh_host(id="a", name="A")
+    engine = engine or FakeEngine("a", [box("web")])
+
+    async def connect(h):
+        return shell, engine
+
+    return Registry([host], connect, clock=clock), clock
+
+
+async def test_refresh_fills_basics_from_the_ssh_session():
+    from fakes import FakeShell
+
+    reg, _ = basics_registry(FakeShell("linux"))
+    await reg.start()
+    basics = reg.hosts()[0].basics
+    assert basics is not None and basics.os == "Linux" and basics.cpus == 2
+
+
+async def test_basics_refresh_at_most_every_60_seconds():
+    from fakes import FakeShell
+
+    shell = FakeShell("linux")
+    reg, clock = basics_registry(shell)
+    await reg.start()
+    calls = len(shell.calls)
+    clock.now = T0 + timedelta(seconds=30)
+    await reg.refresh("a")
+    assert len(shell.calls) == calls
+    clock.now = T0 + timedelta(seconds=61)
+    await reg.refresh("a")
+    assert len(shell.calls) > calls
+
+
+async def test_basics_failure_keeps_the_old_ones_and_the_host_reachable():
+    from bleep.hosts.ssh import SshUnavailable
+    from fakes import FakeShell
+
+    shell = FakeShell("linux")
+    reg, clock = basics_registry(shell)
+    await reg.start()
+    old = reg.hosts()[0].basics
+    shell.replies[("uname", "-s")] = SshUnavailable("a", "gone")
+    clock.now = T0 + timedelta(seconds=120)
+    await reg.refresh("a")
+    state = reg.hosts()[0]
+    assert state.basics == old and state.reachable
+
+
+async def test_socket_host_basics_come_from_the_engine():
+    from bleep.schemas.docker import EngineInfo
+
+    engine = FakeEngine("a", [box("web")], info=EngineInfo(os_type="linux", cpus=4, mem_total=99))
+    reg, _ = basics_registry(None, socket_host(), engine)
+    await reg.start()
+    basics = reg.hosts()[0].basics
+    assert basics is not None and (basics.os, basics.cpus, basics.mem_total) == ("linux", 4, 99)
+    assert basics.disks == []
+
+
+async def test_registry_gives_the_shell_of_an_ssh_host():
+    from fakes import FakeShell
+
+    shell = FakeShell("linux")
+    reg, _ = basics_registry(shell)
+    await reg.start()
+    assert reg.shell("a") is shell
+
+
+async def test_failed_basics_retry_after_10_seconds_a_success_waits_60():
+    from bleep.hosts.ssh import SshUnavailable
+    from fakes import FakeShell
+
+    shell = FakeShell("linux", {("uname", "-s"): SshUnavailable("a", "gone")})
+    reg, clock = basics_registry(shell)
+    await reg.start()
+    assert reg.hosts()[0].basics is None
+    calls = len(shell.calls)
+    clock.now = T0 + timedelta(seconds=5)
+    await reg.refresh("a")
+    assert len(shell.calls) == calls  # too soon
+    del shell.replies[("uname", "-s")]
+    clock.now = T0 + timedelta(seconds=11)
+    await reg.refresh("a")
+    assert reg.hosts()[0].basics is not None
+    clock.now = T0 + timedelta(seconds=30)  # 19 s after the success
+    calls = len(shell.calls)
+    await reg.refresh("a")
+    assert len(shell.calls) == calls
+
+
+async def test_reachable_is_marked_before_basics_are_read():
+    from fakes import FakeShell
+
+    shell = FakeShell("linux")
+    reg, _ = basics_registry(shell)
+    seen = []
+    original = shell.run
+
+    async def run(argv, timeout=20.0):
+        seen.append(reg.hosts()[0].reachable)
+        return await original(argv, timeout)
+
+    shell.run = run
+    await reg.start()
+    assert seen and all(seen)

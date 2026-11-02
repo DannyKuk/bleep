@@ -84,5 +84,18 @@ class EngineInfo(BaseModel):
     containers_running: int = 0
 
 
+class DiskUsage(BaseModel):
+    mount: str
+    used_percent: float
+
+
 class HostBasics(BaseModel):
-    """Disk, memory and load of one host. Task 7 adds the fields; the registry only carries it."""
+    """Disk, memory and load of one host. A field that could not be read is None."""
+
+    os: str = ""  # "Linux", "Darwin", or the engine's OS type for a socket host
+    disks: list[DiskUsage] = Field(default_factory=list)
+    mem_total: int | None = None  # bytes
+    mem_available: int | None = None  # bytes
+    load1: float | None = None
+    load15: float | None = None
+    cpus: int | None = None

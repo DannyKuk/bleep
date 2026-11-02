@@ -9,11 +9,15 @@ from datetime import UTC, datetime
 from bleep.hosts.config import HostConfig
 from bleep.hosts.discovery import AmbiguousOverride, group_services
 from bleep.hosts.engine import Engine, EngineUnavailable, connect_engine
+from bleep.hosts.shell import HostShell, engine_basics, host_basics
 from bleep.hosts.ssh import SshSession
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.services import HostState, Service
 
 log = logging.getLogger(__name__)
+
+BASICS_EVERY_S = 60  # the host probe cadence
+BASICS_RETRY_S = 10  # after a failed read
 
 Connector = Callable[[HostConfig], Awaitable[tuple[SshSession | None, Engine]]]
 
@@ -40,6 +44,8 @@ class _Entry:
     containers: list[ContainerSummary] | None = None
     services: list[Service] | None = None
     logged: set[str] = field(default_factory=set)
+    basics_at: datetime | None = None
+    basics_wait: float = BASICS_EVERY_S
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -143,6 +149,11 @@ class Registry:
             return prefixed[0] if len(prefixed) == 1 else None
         return None
 
+    def shell(self, host_id: str) -> HostShell | None:
+        """The host's allowlisted shell: its ssh session, or None for a socket host."""
+        entry = self._entries.get(host_id)
+        return entry.session if entry is not None else None
+
     def engine(self, host_id: str) -> Engine:
         entry = self._entries[host_id]
         if entry.engine is None:
@@ -171,6 +182,30 @@ class Registry:
                 entry.logged.add(error)
                 log.warning("%s", error)
         self._mark(entry, reachable=True, last_seen=self._clock(), error=error)
+        await self._refresh_basics(entry)  # after the mark: a slow read never delays reachability
+
+    async def _refresh_basics(self, entry: _Entry) -> None:
+        """Read disk, memory and load at most every BASICS_EVERY_S; a failure keeps the old ones."""
+        now = self._clock()
+        if (
+            entry.basics_at is not None
+            and (now - entry.basics_at).total_seconds() < entry.basics_wait
+        ):
+            return
+        entry.basics_at = now
+        entry.basics_wait = BASICS_RETRY_S  # until a read succeeds
+        try:
+            if entry.session is not None:
+                basics = await host_basics(entry.session)
+            elif entry.state.config.kind == "socket" and entry.engine is not None:
+                basics = engine_basics(await entry.engine.info())
+            else:
+                return
+        except Exception as error:  # basics are a nicety: never make the host look down
+            log.warning("%s: host basics unavailable: %s", entry.state.config.id, _describe(error))
+            return
+        entry.basics_wait = BASICS_EVERY_S
+        self._mark(entry, basics=basics)
 
     def _mark(self, entry: _Entry, **changes: object) -> None:
         entry.state = replace(entry.state, **changes)

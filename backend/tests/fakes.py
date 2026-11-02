@@ -16,6 +16,7 @@ from pydantic import Field
 
 from bleep.hosts.config import HostConfig
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
+from bleep.hosts.ssh import CommandResult
 from bleep.schemas.docker import (
     ContainerDetail,
     ContainerStats,
@@ -91,6 +92,12 @@ def ssh_host(**overrides: Any) -> HostConfig:
         "known_hosts_file": Path("/keys/known_hosts"),
         "docker_socket": "/Users/danny/.docker/run/docker.sock",
     }
+    return HostConfig(**(fields | overrides))
+
+
+def socket_host(**overrides: Any) -> HostConfig:
+    """A socket HostConfig with test defaults."""
+    fields = {"id": "a", "name": "A", "kind": "socket", "endpoint": "unix:///var/run/docker.sock"}
     return HostConfig(**(fields | overrides))
 
 
@@ -360,3 +367,60 @@ class FakeEngine:
         else:
             update |= {"finished_at": at, "exit_code": 0}
         self.container_list[index] = current.model_copy(update=update)
+
+
+SHELL_FIXTURES = Path(__file__).parent / "fixtures" / "shell"
+_SHELL_FILES: dict[str, dict[tuple[str, ...], str]] = {
+    "linux": {
+        ("uname", "-s"): "uname.txt",
+        ("df", "-P"): "df.txt",
+        ("free", "-b"): "free.txt",
+        ("cat", "/proc/loadavg"): "loadavg.txt",
+        ("nproc",): "nproc.txt",
+        ("uptime",): "uptime.txt",
+        ("top", "-b", "-n", "1"): "top.txt",
+    },
+    "darwin": {
+        ("uname", "-s"): "uname.txt",
+        ("df", "-P"): "df.txt",
+        ("vm_stat",): "vm_stat.txt",
+        ("sysctl", "-n", "hw.memsize", "hw.ncpu", "vm.loadavg"): "sysctl.txt",
+        ("uptime",): "uptime.txt",
+        ("top", "-l", "1", "-n", "15"): "top.txt",
+    },
+}
+
+
+class FakeShell:
+    """A HostShell that replays recorded command output, keyed by argv.
+
+    `os` picks the fixture folder (real captures from a Linux and a macOS host). `replies` replaces
+    or adds an argv's result: a CommandResult, a string (stdout) or an exception to raise. An argv
+    with no reply exits 127, like a missing command. Every call is kept in `calls`.
+    """
+
+    def __init__(
+        self,
+        os: str = "linux",
+        replies: dict[tuple[str, ...], CommandResult | str | Exception] | None = None,
+    ) -> None:
+        self.os = os
+        self.replies = replies or {}
+        self.calls: list[list[str]] = []
+
+    async def run(self, argv: list[str], timeout: float = 20.0) -> CommandResult:
+        self.calls.append(list(argv))
+        key = tuple(argv)
+        if key in self.replies:
+            reply = self.replies[key]
+            if isinstance(reply, Exception):
+                raise reply
+            if isinstance(reply, str):
+                return CommandResult(exit_code=0, stdout=reply, stderr="")
+            return reply
+        name = _SHELL_FILES[self.os].get(key)
+        if name is None:
+            return CommandResult(exit_code=127, stdout="", stderr=f"{argv[0]}: command not found")
+        return CommandResult(
+            exit_code=0, stdout=(SHELL_FIXTURES / self.os / name).read_text(), stderr=""
+        )
