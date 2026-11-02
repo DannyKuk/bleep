@@ -1,0 +1,33 @@
+# Watcher: detection
+
+How raw signals become incidents, self-recoveries or nothing. The decision logic is `bleep/watcher/detector.py`: pure, with an injected clock, so it is tested without Docker.
+
+- **Grace window of 60 s.** A container that dies and is running and healthy (or running with no healthcheck) within `container_grace_s` is a `Recovered` event with a one-line explanation, not an incident. Reason: restart policies fix most deaths in seconds, and paging a human for those teaches them to ignore pages (#14).
+- **A healthcheck still "starting" is not recovered.** It counts as down past grace once the window ends. Reason: running but not yet healthy proves nothing about the fix (#14).
+- **Repeated deaths: 3 in 600 s open an incident, even if each recovered.** Counted per container in a sliding window. Reason: a crash loop that restarts quickly is still broken (#14).
+- **One-shot containers are ignored.** Exit code 0 with restart policy `no` or empty is `Ignored("one-shot exit 0")`; exit 0 under a restart policy is a normal death. Reason: migrations and batch jobs are meant to exit, while a service that keeps exiting 0 under `always` is not healthy (#14).
+- **Host subjects.** Disk (at or above 90 %), memory (available under 5 % for 3 polls), load (per CPU over 2.0 for 3 polls) and host unreachable (5 min) open on a host subject, not a service. Poll-count thresholds count consecutive breaches per host and reset on a good poll; the watcher feeds every poll, good or bad (`ok`, `percent`, `available_percent`, `load_per_cpu` in the signal detail). Reason: a single spike is noise, and the cause of a host problem is rarely one service (#14).
+- **URL checks.** Two consecutive failures open; a reply slower than 5000 ms counts as failed; a good check resets the count (#14).
+- **Debounce: open immediately, attach later.** The first qualifying signal for a subject emits `OpenIncident` at once; further qualifying signals for the same subject within 30 s emit `AttachSignals`, so there is never a second open inside the window. Reason: waiting out the window would delay a real outage by 30 s, and the manager only has to handle "create" and "append to the incident I just created" (#14).
+- **Pass-through kinds.** `unhealthy`, `restart_loop` and `down_past_grace` already mean a threshold was crossed at the source, so they open directly. `oom` is treated like a death and gets the grace window (#14).
+- **Defaults** (`Thresholds` in `schemas/settings.py`): grace 60 s, repeated deaths 3 in 600 s, URL failures 2, slow 5000 ms, disk 90 %, memory under 5 % for 3 polls, load per CPU 2.0 for 3 polls, host unreachable 300 s, debounce 30 s (#14).
+- **Recovery explanations.** `explain_recovery` sends the last 4,000 characters of logs, wrapped as untrusted data with any `<untrusted` tags inside escaped, to the cheap model and keeps one sentence of at most 200 characters. Reason: logs are attacker-influenced text and the line goes on the dashboard (#14).
+- **Persistent breach re-opens.** Disk at 95 % polled every minute yields an `OpenIncident` each time the 30 s window has passed. The manager dedupes against the subject's open incident (`IncidentRepo.open_or_attach` attaches), so repeats are expected and safe (#14).
+- **Late ticks.** A container running healthy (or with no healthcheck) whose `started_at` is within the grace window of its death is recovered whenever `tick` first sees it. One still `starting` cannot be judged that way, so the manager must tick about every 10 s (#14).
+- **An `unhealthy` signal for a container with a pending death** folds that death into its incident and clears it, so grace expiry does not open a second one. A second death while one is pending keeps the first death's grace window (#14).
+- **Bounded state.** `tick` drops death history older than the repeat window and debounce windows older than `debounce_s` (#14).
+
+## Signal contract for the watcher and manager
+
+| Signal kind | Detail keys | Notes |
+| --- | --- | --- |
+| `container_died` | `exit_code`, `restart_policy` | `signal.container` must equal `ContainerSummary.name` |
+| `oom` | none | treated as a death |
+| `unhealthy`, `restart_loop`, `down_past_grace` | none | open directly |
+| `url_failed` | `ok`, `latency_ms`, `url` | fed on every check, good or bad; the name means "URL check result" and `ok` says whether it passed (the kind is shared with the schema, so it is not renamed) |
+| `disk` | `percent` | fed every poll |
+| `memory` | `available_percent` | fed every poll |
+| `load` | `load_per_cpu` | fed every poll |
+| `host_unreachable` | `ok` | fed on every probe, `ok=True` resets |
+
+`tick(now, states)` takes `states` keyed by service id. The manager must handle `AttachSignals` (append to the incident just opened) as well as `OpenIncident`.
