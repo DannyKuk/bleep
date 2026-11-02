@@ -111,6 +111,41 @@ async def test_stops_when_the_model_answers_without_tool_calls(tmp_path):
     assert investigate.route(state | update) == "diagnose"
 
 
+def broken(n: int | None) -> dict:
+    return {
+        "name": "list_containers",
+        "args": '{"bad": ',
+        "id": None if n is None else f"bad-{n}",
+        "error": "JSONDecodeError",
+        "type": "invalid_tool_call",
+    }
+
+
+async def test_a_call_with_malformed_arguments_is_answered_and_the_loop_goes_on(tmp_path):
+    bad = AIMessage(content="", invalid_tool_calls=[broken(1), broken(2)])
+    env, state = await setup(tmp_path, [bad, DONE])
+
+    update = await run(env, state)
+
+    answers = tool_messages(update)
+    assert [m.tool_call_id for m in answers] == ["bad-1", "bad-2"]
+    assert all("invalid arguments" in m.content for m in answers)
+    assert env.models.model.cursor == 2
+    assert update["messages"][-1] == DONE
+    assert update["tool_calls_used"] == 2
+
+
+async def test_a_malformed_call_without_an_id_is_dropped_from_the_stored_reply(tmp_path):
+    bad = AIMessage(content="", invalid_tool_calls=[broken(None)])
+    env, state = await setup(tmp_path, [bad, DONE])
+
+    update = await run(env, state)
+
+    stored = [m for m in update["messages"] if isinstance(m, AIMessage)]
+    assert all(not m.invalid_tool_calls for m in stored)
+    assert not tool_messages(update)
+
+
 async def test_the_model_gets_the_system_rules_and_the_gathered_context(tmp_path):
     engine = shop_engine()
     engine.log_text = {"shop-web-1": "db connect failed\n"}

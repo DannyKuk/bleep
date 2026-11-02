@@ -149,10 +149,24 @@ def make(deps: GraphDeps) -> Node:
             if model is None:
                 model = deps.models("main").bind_tools(list(tools.values()))
             reply = await model.ainvoke(history, config={"callbacks": [tracker]})
+            # An invalid call (bad JSON arguments) is not an answer: it needs a reply like any
+            # call. One with no id cannot be answered, so it is dropped from what is stored.
+            invalid = [c for c in reply.invalid_tool_calls if c.get("id")]
+            if len(invalid) != len(reply.invalid_tool_calls):
+                reply.invalid_tool_calls = invalid
             new.append(reply)
             history.append(reply)
-            if not reply.tool_calls:
+            if not reply.tool_calls and not invalid:
                 break
+            for bad in invalid:
+                if used < limit:
+                    used += 1
+                    text = f"invalid arguments: {bad.get('error') or 'could not be parsed'}"
+                else:
+                    text = NOT_RUN
+                message = ToolMessage(text, tool_call_id=bad["id"], name=bad.get("name") or "")
+                new.append(message)
+                history.append(message)
             for call in reply.tool_calls:
                 if used < limit:
                     used += 1
