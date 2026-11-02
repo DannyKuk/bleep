@@ -106,7 +106,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **One module per node, each owning its routing**; `build.py` only wires them.
 - **Gather is deterministic and reads logs through the guard.**
 - **Investigate loops model ↔ read tools inside one node, at most 8 calls a round**; the cap ends the round, a spent cost budget ends the run.
-- **One checkpointed thread per incident**, resumed after a restart; runs waiting for a human stay waiting.
+- **One checkpointed thread per incident**, resumed after a restart; runs waiting for a human stay waiting. Only the runner closes an incident, after the last checkpoint, and end-to-end tests kill Bleep at each stage and check no action runs twice.
 - **The checkpoint serializer rebuilds only the state's own models.**
 - **The first decision wins by one `UPDATE ... WHERE status = 'pending'`**, and a grant is an HMAC over the incident id and a plan hash that covers the resolved container ids.
 - **Reminders every 60 min, never an automatic yes.**
