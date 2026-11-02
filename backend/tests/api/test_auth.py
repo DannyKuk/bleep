@@ -43,6 +43,12 @@ def test_every_api_route_but_login_needs_a_session(client):
         "/api/auth/logout",
         "/api/hosts",
         "/api/services",
+        "/api/incidents",
+        "/api/incidents/{incident_id}",
+        "/api/incidents/{incident_id}/events",
+        "/api/incidents/{incident_id}/decision",
+        "/api/recoveries",
+        "/api/stream",
     }
     for method, path in routes:
         response = client.request(method, path)

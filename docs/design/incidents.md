@@ -14,3 +14,4 @@ How signals become incidents and how an incident's progress reaches the dashboar
 - **`subscribe(None)` receives every incident.** Reason: the overview page shows all incidents live (#11).
 - **Subscribers unregister on exit or cancel.** Reason: a closed SSE connection must not leave a queue filling forever (#11).
 - **Clocks are injected, timestamps are UTC.** Stored as ISO strings. Reason: tests control time and ordering without sleeping (#11).
+- **The app shares one `ApprovalStore` and one `GuardLog`.** `build_parts` passes them to the graph, the runner, the API and the reminder loop; the lifespan starts the reminders with the watcher, stops them first, and flushes the guard log after the runs and the watcher stop. Reason: a decision recorded by the API or Telegram must be the one the run and the boot recovery read, and a guard record made while shutting down must not be lost (#21).

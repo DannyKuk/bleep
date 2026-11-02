@@ -26,6 +26,37 @@ One pure function per level (`api/hosts.py`), table-tested for every state.
 - **`stopped` is grey (`--health-stopped`, a blue-grey) with a pause icon and the word "Stopped",** and a cleanly exited container chip uses the same tone. `ContainerView` carries `exit_code` for this. Reason: it must read differently from `unknown` without relying on colour (#13).
 - **URL status stays `unknown`** until the watcher records checks; `basics` is `null` until the host probe exists. Reason: the dashboard shape is fixed now so those land without an API change (#8).
 
+## Incidents API and the live stream
+
+What the dashboard reads about incidents and how it answers an approval (`api/incidents.py`, `api/stream.py`). Every route is under `/api` and needs a session, like the rest.
+
+| Route | Returns |
+|---|---|
+| `GET /api/incidents?status=&limit=&offset=` | `Incident[]`, newest first; `limit` 1 to 200 (default 50) |
+| `GET /api/incidents/{id}` | `IncidentDetail`: the incident, `diagnosis`, `proposal`, `approval` (the latest, pending or decided), `outcome`, `report`; each null until the run has it |
+| `GET /api/incidents/{id}/events?after=` | `IncidentEvent[]` with `seq > after`, in seq order |
+| `POST /api/incidents/{id}/decision` | body `{approval_id, kind, text?}`; 200 with the recorded `Decision`, or 409 `{detail, decided_via}` |
+| `GET /api/recoveries?limit=` | `RecoveryEvent[]`, newest first; `limit` 1 to 200 (default 50) |
+| `GET /api/stream?incident_id=&after=` | `text/event-stream` of `IncidentEvent` JSON |
+
+- **The detail reads the run's findings from its checkpoint.** `diagnosis`, `proposal`, `outcome` and `report` come from the graph state (`IncidentRunner.state`), the approval from `ApprovalStore.current`. Reason: the checkpoint is the one place the run keeps them, so the dashboard cannot show a diagnosis the run no longer holds (#21).
+- **The approval is shown with its status and decision, never its snapshots.** `status` is `pending`, `approved`, `rejected` or `instructed`, and `decision` says who answered and when. Reason: the dashboard must show "approved on Telegram" after the fact, and the container snapshots are only for Execute (#21).
+- **A dashboard decision names the approval it answers (`approval_id`).** A decision for a plan that has since been replaced gets 409 "That plan was replaced by a newer one; reload to see it" and decides nothing; the id is passed on to `resolve`. Reason: after an instruction Propose writes a new plan, and a stale page must not approve a plan the human has not seen (§2, #20, #21).
+- **The first answer wins; a later one is 409 naming the winner.** The body is `{"detail": "Already decided on Telegram", "decided_via": "telegram"}` (or "the dashboard"), whether the other channel won before the request or inside `resolve`, between the route's read and its write. Only the winner resumes the run (`IncidentRunner.resume`). Reason: Telegram and the dashboard can answer at the same moment, and the loser should know who decided (§4.9, #21).
+- **Other refusals are 409 too, with `decided_via: null`:** nothing asked yet ("Nothing is waiting for a decision"), or the incident already resolved, closed or failed. An unknown incident is 404. Reason: one error shape for every "this decision did not count" (#21).
+- **An instruction needs text; an approve or reject drops it.** Text is trimmed, at most 2,000 characters; an empty instruction is 422. Reason: the text goes into Propose's prompt as the human's instruction, and only an instruction has a use for it (#21).
+- **Recoveries are newest first.** `IncidentRepo.recoveries` orders by time descending. Reason: with a limit, oldest first would show the same old rows forever (#21).
+
+### The stream
+
+- **Server-sent events through `sse-starlette`, one JSON `IncidentEvent` per message, no event name.** Reason: SSE goes through the Next.js rewrite and reconnects by itself, and one `onmessage` handler reads every kind (#21).
+- **`id:` is the event's seq, and a reconnect replays from `Last-Event-ID`.** With `incident_id` the stream sends that incident's history after the cursor, then live events. The cursor is the `Last-Event-ID` header the browser sends on a reconnect, else `after` from the query (the first connect, after the page loaded `/events`), else 0. Reason: nothing published while the browser was away is lost, and nothing is sent twice (#21).
+- **Subscribe first, then read the history, then de-duplicate and fill gaps by seq.** `follow(bus, incident_id, after)` skips a live event already sent, and when the bus has dropped a slow subscriber's oldest events (a seq gap) it reads the missing ones from the history. Reason: the stream must be complete and in order even when the client is slower than the agent (#11, #21).
+- **Without `incident_id`, every incident's events, live only and without `id:`.** Reason: seq counts per incident, so it is no cursor across incidents; the overview reloads its lists on reconnect instead (#21).
+- **A ping comment every 15 s (`PING_S`).** Reason: proxies may close a connection that stays silent, and an incident can wait hours for a human with nothing on its stream (#21).
+- **The session is checked when the stream opens.** An open stream outlives that check; every reconnect is a new request and is checked again. Reason: re-checking an open stream would need a timer per connection for little gain on a single-admin LAN tool (#21).
+- **Closing the stream unsubscribes from the bus.** Reason: a closed tab must not leave a queue filling forever (#11, #21).
+
 ## Dashboard
 
 How the Next.js dashboard (`frontend/`) is built.

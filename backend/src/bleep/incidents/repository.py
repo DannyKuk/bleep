@@ -235,10 +235,11 @@ class IncidentRepo:
             await conn.close()
 
     async def recoveries(self, limit: int = 100) -> list[RecoveryEvent]:
+        """The latest self-recoveries, newest first."""
         conn = await self.db.connect()
         try:
             async with conn.execute(
-                "SELECT * FROM recovery_events ORDER BY at, id LIMIT ?", (limit,)
+                "SELECT * FROM recovery_events ORDER BY at DESC, id DESC LIMIT ?", (limit,)
             ) as cursor:
                 return [
                     RecoveryEvent(
