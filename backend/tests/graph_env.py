@@ -131,12 +131,14 @@ async def graph_env(
     bus = bus or EventBus(db)
     guard_log = RecordingGuardLog()
     models = CountingModels()
+    repo = IncidentRepo(db)
     deps = GraphDeps(
         registry=registry,
         tools=default_registry(),
         models=models,
         bus=bus,
         ledger=CostLedger(db),
+        incidents=repo,
         guard_log=guard_log,
     )
-    return GraphEnv(db, IncidentRepo(db), bus, registry, engine, shell, guard_log, models, deps)
+    return GraphEnv(db, repo, bus, registry, engine, shell, guard_log, models, deps)

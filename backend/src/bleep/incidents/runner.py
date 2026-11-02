@@ -13,6 +13,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
+from bleep.graph.deps import Approvals
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
 from bleep.schemas.graph import Decision
@@ -22,10 +23,21 @@ log = logging.getLogger(__name__)
 
 
 class IncidentRunner:
-    def __init__(self, graph: CompiledStateGraph, repo: IncidentRepo, bus: EventBus) -> None:
+    """`approvals` is the store the graph's Approval node uses; with it, a decision recorded
+    while the run was not waiting (Bleep died between the decision and the resume) is delivered
+    when the run is started again."""
+
+    def __init__(
+        self,
+        graph: CompiledStateGraph,
+        repo: IncidentRepo,
+        bus: EventBus,
+        approvals: Approvals | None = None,
+    ) -> None:
         self.graph = graph
         self.repo = repo
         self.bus = bus
+        self.approvals = approvals
         self._runs: dict[str, asyncio.Task[None]] = {}
 
     @staticmethod
@@ -55,11 +67,12 @@ class IncidentRunner:
         """Restart every unfinished run except those waiting for a human; returns their ids.
 
         A run waiting for approval stays waiting: its checkpoint holds it until a decision
-        arrives through `resume`.
+        arrives through `resume`. One whose approval was decided before Bleep stopped is not
+        waiting any more, and goes on with that decision.
         """
         started = []
         for incident in await self.repo.unfinished():
-            if incident.status == "awaiting_approval":
+            if incident.status == "awaiting_approval" and await self._decided(incident.id) is None:
                 continue
             await self.start(incident)
             started.append(incident.id)
@@ -102,11 +115,22 @@ class IncidentRunner:
             signals = await self.repo.signals(incident.id)
             await self._drive(incident.id, _initial(incident, signals))
         elif snapshot.interrupts:
-            await self.repo.set_status(incident.id, "awaiting_approval")
+            decision = await self._decided(incident.id)
+            if decision is not None:  # decided, but the resume never reached a checkpoint
+                await self._drive(incident.id, Command(resume=decision))
+            else:
+                await self.repo.set_status(incident.id, "awaiting_approval")
         elif snapshot.next:
             await self._drive(incident.id, None)  # None: go on from the checkpoint
         else:  # finished, but the status never settled (cancelled or crashed just after the end)
             await self._settle(incident.id, snapshot)
+
+    async def _decided(self, incident_id: str) -> Decision | None:
+        """The decision on the incident's latest approval, if it has been decided."""
+        if self.approvals is None:
+            return None
+        record = await self.approvals.current(incident_id)
+        return record.decision if record is not None else None
 
     async def _resume(self, incident_id: str, decision: Decision) -> None:
         if not (await self.graph.aget_state(self.config(incident_id))).interrupts:

@@ -1,12 +1,10 @@
 """What the graph's nodes run on, passed in once when the graph is built.
 
 `Memory`, `Notifier`, `Approvals` and `SettingsSource` are Protocols with small defaults, so the
-graph runs (and is tested) before long-term memory, Telegram, the approvals table and the
-settings store exist; each later piece is passed in their place.
+graph runs (and is tested) before long-term memory, Telegram and the settings store exist; each
+later piece is passed in their place. The app passes `incidents.approvals.ApprovalStore`.
 """
 
-import hashlib
-import json
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -17,11 +15,14 @@ from langchain_core.language_models import BaseChatModel
 
 from bleep.guard.log import GuardLogger
 from bleep.hosts.registry import Registry
+from bleep.incidents.approvals import grant_token, plan_hash
 from bleep.incidents.bus import EventBus
-from bleep.incidents.repository import utcnow
+from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.llm.factory import Role, chat_model
 from bleep.llm.usage import CostLedger
 from bleep.schemas.graph import (
+    ApprovalGrant,
+    ApprovalRecord,
     ApprovalRequest,
     Decision,
     Diagnosis,
@@ -109,7 +110,10 @@ class NullNotifier:
 
 
 class Approvals(Protocol):
-    """Pending approvals, decided once: the first decision wins, from any channel."""
+    """Pending approvals, decided once: the first decision wins, from any channel.
+
+    `incidents.approvals.ApprovalStore` is the SQLite one the app runs on.
+    """
 
     async def request(
         self, incident_id: str, proposal: Proposal, snapshots: list[TargetSnapshot]
@@ -119,28 +123,52 @@ class Approvals(Protocol):
         """The decision if it won, None if the approval was already decided or never asked."""
         ...
 
+    async def current(self, incident_id: str) -> ApprovalRecord | None:
+        """The incident's latest approval, pending or decided."""
+        ...
 
-def plan_hash(proposal: Proposal) -> str:
-    """sha256 of the steps as canonical JSON."""
-    steps = [s.model_dump(mode="json") for s in proposal.steps]
-    return hashlib.sha256(json.dumps(steps, sort_keys=True).encode()).hexdigest()
+    async def grant(self, incident_id: str) -> ApprovalGrant | None:
+        """The grant for the incident's latest plan if, and only if, it was approved."""
+        ...
 
 
 class InMemoryApprovals:
-    """Approvals in a dict: lost on restart, so only for tests and until the SQLite one (#20)."""
+    """Approvals in a dict, keyed with a random secret: lost on restart, so for tests only."""
 
     def __init__(self) -> None:
-        self.pending: dict[str, ApprovalRequest] = {}
+        self.records: dict[str, ApprovalRecord] = {}
+        self._secret = secrets.token_hex(16)
 
     async def request(
         self, incident_id: str, proposal: Proposal, snapshots: list[TargetSnapshot]
     ) -> ApprovalRequest:
-        request = ApprovalRequest(id=secrets.token_hex(8), plan_hash=plan_hash(proposal))
-        self.pending[incident_id] = request
-        return request
+        record = ApprovalRecord(
+            id=secrets.token_hex(8),
+            incident_id=incident_id,
+            plan_hash=plan_hash(proposal, snapshots),
+            proposal=proposal,
+            snapshots=snapshots,
+            requested_at=utcnow(),
+        )
+        self.records[incident_id] = record
+        return record.request
 
     async def resolve(self, incident_id: str, decision: Decision) -> Decision | None:
-        return decision if self.pending.pop(incident_id, None) is not None else None
+        record = self.records.get(incident_id)
+        if record is None or record.decision is not None:
+            return None
+        record.decision = decision
+        return decision
+
+    async def current(self, incident_id: str) -> ApprovalRecord | None:
+        return self.records.get(incident_id)
+
+    async def grant(self, incident_id: str) -> ApprovalGrant | None:
+        record = self.records.get(incident_id)
+        if record is None or record.decision is None or record.decision.kind != "approve":
+            return None
+        token = grant_token(self._secret, incident_id, record.plan_hash)
+        return ApprovalGrant(incident_id=incident_id, plan_hash=record.plan_hash, token=token)
 
 
 class SettingsSource(Protocol):
@@ -184,6 +212,7 @@ class GraphDeps:
     models: ModelFactory
     bus: EventBus
     ledger: CostLedger
+    incidents: IncidentRepo
     memory: Memory = field(default_factory=NullMemory)
     approvals: Approvals = field(default_factory=InMemoryApprovals)
     notifier: Notifier = field(default_factory=NullNotifier)

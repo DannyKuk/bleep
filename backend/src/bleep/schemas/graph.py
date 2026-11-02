@@ -109,8 +109,13 @@ class Decision(BaseModel):
 
 
 class TargetSnapshot(BaseModel):
-    """A target container as it was when approval was asked; a change means a stale plan."""
+    """A target container as it was when approval was asked; a change means a stale plan.
 
+    `host_id` and `target` name it as the plan does; `container_id` is what the name resolved to.
+    """
+
+    host_id: str
+    target: str
     container_id: str
     created: datetime | None = None
     started_at: datetime | None = None
@@ -119,6 +124,23 @@ class TargetSnapshot(BaseModel):
 class ApprovalRequest(BaseModel):
     id: str
     plan_hash: str
+
+
+class ApprovalRecord(BaseModel):
+    """An approval as stored: the plan put to the human, its targets then, and how it ended."""
+
+    id: str
+    incident_id: str
+    plan_hash: str
+    proposal: Proposal
+    snapshots: list[TargetSnapshot] = Field(default_factory=list)
+    requested_at: datetime
+    decision: Decision | None = None  # None while pending
+    reminders: int = 0
+
+    @property
+    def request(self) -> ApprovalRequest:
+        return ApprovalRequest(id=self.id, plan_hash=self.plan_hash)
 
 
 class ApprovalGrant(BaseModel):

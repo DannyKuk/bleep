@@ -41,6 +41,7 @@ flowchart LR
 | **Detector** | `watcher/detector.py` | Pure decision logic: a signal becomes an incident, a self-recovery or nothing (grace window, repeated deaths, debounce, host thresholds). |
 | **Incidents** | `incidents/repository.py`, `incidents/bus.py` | Incidents and their signals, one open per subject; the event bus stores every event, then fans it out to live subscribers. |
 | **Runner** | `incidents/runner.py` | Runs each incident's graph in the background, resumes it after a decision or a restart, and keeps the incident's status in step. |
+| **Approvals** | `incidents/approvals.py`, `incidents/reminders.py` | Pending approvals in SQLite, decided once by whichever channel answers first; HMAC grants for approved plans; reminders that never approve. |
 | **Incident graph** | `graph/` | LangGraph state, nodes and wiring, checkpointed per incident in `checkpoints.sqlite`. |
 | **Read tools** | `tools/` | Docker reads and the host command tool for the model, each scoped to the incident's host. |
 | **Guard** | `guard/` | Redacts secrets, strips control characters, caps size and wraps untrusted text before anything reaches a model; checks every proposed plan before a human sees it (`guard/plan_check.py`); `guard/log.py` records what it refused, blocked or changed in the `guard_log` table. |
@@ -64,10 +65,10 @@ Paths under `backend/src/bleep/` are given from there.
 | 5. Investigate | The model reads with read-only tools, at most 8 calls a round; each result is guarded and wrapped once, and every call and result streams to the bus. A spent cost budget stops here with a notice. | `graph/nodes/investigate.py` |
 | 6. Diagnose | Root cause, evidence, confidence; low confidence investigates once more, then goes on marked unsure. | `graph/nodes/diagnose.py` |
 | 7. Propose | One to three allowlisted actions, or no action with exact instructions for the human; checked in code before anyone is asked, and a refused plan goes back to the model once. | `graph/nodes/propose.py`, `guard/plan_check.py` |
-| 8. Approval | The run checkpoints and waits for a yes, a no or an instruction, through a restart if need be. | `graph/nodes/approval.py`, `IncidentRunner.resume` |
+| 8. Approval | The target containers are snapshotted, the plan is stored as a pending approval and sent to the human; the run checkpoints and waits for a yes, a no or an instruction, through a restart if need be. The first answer wins; an instruction goes back to Propose; a pending approval is re-sent every 60 min and never approved by itself. | `graph/nodes/approval.py`, `ApprovalStore`, `ReminderLoop`, `IncidentRunner.resume` |
 | 9. Report | The outcome is set; `resolved` is only ever claimed after verification. | `graph/nodes/report.py` |
 
-Every node publishes `node_started` and `node_finished` on the bus, which stores them for the incident's timeline. On boot, `IncidentRunner.recover_on_boot` resumes every unfinished run except those waiting for approval. The app does not start the runner yet: the watcher manager (#15) connects it to the detector.
+Every node publishes `node_started` and `node_finished` on the bus, which stores them for the incident's timeline. On boot, `IncidentRunner.recover_on_boot` resumes every unfinished run except those waiting for approval, and delivers a decision that was recorded before a crash. The app does not start the runner or the reminder loop yet: the watcher manager (#15) connects the runner to the detector.
 
 ## Key design choices
 
@@ -94,6 +95,8 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **Investigate loops model ↔ read tools inside one node, at most 8 calls a round**; the cap ends the round, a spent cost budget ends the run.
 - **One checkpointed thread per incident**, resumed after a restart; runs waiting for a human stay waiting.
 - **The checkpoint serializer rebuilds only the state's own models.**
+- **The first decision wins by one `UPDATE ... WHERE status = 'pending'`**, and a grant is an HMAC over the incident id and a plan hash that covers the resolved container ids.
+- **Reminders every 60 min, never an automatic yes.**
 
 **Agent and models** ([details](design/agent.md))
 - **One model factory for OpenRouter and local models**; structured output falls back to plain JSON for weak models.
