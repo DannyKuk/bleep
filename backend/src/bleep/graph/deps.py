@@ -119,8 +119,11 @@ class Approvals(Protocol):
         self, incident_id: str, proposal: Proposal, snapshots: list[TargetSnapshot]
     ) -> ApprovalRequest: ...
 
-    async def resolve(self, incident_id: str, decision: Decision) -> Decision | None:
-        """The decision if it won, None if the approval was already decided or never asked."""
+    async def resolve(
+        self, incident_id: str, decision: Decision, approval_id: str | None = None
+    ) -> Decision | None:
+        """The decision if it won, None if the approval was already decided or never asked;
+        with `approval_id`, only that approval can be won."""
         ...
 
     async def current(self, incident_id: str) -> ApprovalRecord | None:
@@ -153,9 +156,13 @@ class InMemoryApprovals:
         self.records[incident_id] = record
         return record.request
 
-    async def resolve(self, incident_id: str, decision: Decision) -> Decision | None:
+    async def resolve(
+        self, incident_id: str, decision: Decision, approval_id: str | None = None
+    ) -> Decision | None:
         record = self.records.get(incident_id)
         if record is None or record.decision is not None:
+            return None
+        if approval_id is not None and record.id != approval_id:
             return None
         record.decision = decision
         return decision

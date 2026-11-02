@@ -173,6 +173,20 @@ async def test_a_decision_without_a_request_wins_nothing(db):
     assert await ApprovalStore(db, SECRET).resolve(incident_id, decide()) is None
 
 
+async def test_a_decision_for_a_superseded_approval_wins_nothing(db):
+    incident_id = await open_incident(db)
+    store = ApprovalStore(db, SECRET, Clock())
+    first = await store.request(incident_id, restart(), [snap()])
+    await store.resolve(incident_id, decide("instruct", text="restart the db too"), first.id)
+    second = await store.request(incident_id, restart("shop-db-1"), [snap("shop-db-1")])
+
+    assert await store.resolve(incident_id, decide("approve", "telegram"), first.id) is None
+    record = await store.current(incident_id)
+    assert record is not None and record.id == second.id and record.decision is None
+    assert await store.grant(incident_id) is None
+    assert await store.resolve(incident_id, decide("approve"), second.id) is not None
+
+
 async def test_current_is_the_latest_request(db):
     incident_id = await open_incident(db)
     store = ApprovalStore(db, SECRET, Clock())

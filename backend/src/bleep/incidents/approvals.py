@@ -98,15 +98,24 @@ class ApprovalStore:
             await conn.close()
         return request
 
-    async def resolve(self, incident_id: str, decision: Decision) -> Decision | None:
-        """The decision if it won, None if the approval was already decided or never asked."""
+    async def resolve(
+        self, incident_id: str, decision: Decision, approval_id: str | None = None
+    ) -> Decision | None:
+        """The decision if it won, None if the approval was already decided or never asked.
+
+        With `approval_id` it wins only that approval, so a decision made for a plan that has
+        since been replaced cannot decide the new one."""
+        sql = (
+            "UPDATE approvals SET status = ?, decision = ?"
+            " WHERE incident_id = ? AND status = 'pending'"
+        )
+        args: tuple = (_STATUS[decision.kind], decision.model_dump_json(), incident_id)
+        if approval_id is not None:
+            sql += " AND id = ?"
+            args += (approval_id,)
         conn = await self.db.connect()
         try:
-            cursor = await conn.execute(
-                "UPDATE approvals SET status = ?, decision = ?"
-                " WHERE incident_id = ? AND status = 'pending'",
-                (_STATUS[decision.kind], decision.model_dump_json(), incident_id),
-            )
+            cursor = await conn.execute(sql, args)
             await conn.commit()
             return decision if cursor.rowcount == 1 else None
         finally:

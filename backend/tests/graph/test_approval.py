@@ -181,6 +181,20 @@ async def test_the_stored_winner_beats_a_different_resume_value(run, plans):
     assert state["outcome"] == "rejected"
 
 
+async def test_a_failing_notifier_does_not_strand_the_approval(run, plans):
+    async def down(*args) -> None:
+        raise RuntimeError("telegram is down")
+
+    run.notifier.proposal = down  # type: ignore[method-assign]
+    plans[0].append(restart())
+    incident_id = await run.start()
+
+    assert (await run.env.repo.get(incident_id)).status == "awaiting_approval"
+    assert any("notif" in n["text"] for n in await run.events(incident_id, "notice"))
+    await run.decide(incident_id, decide("reject"))
+    assert (await run.state(incident_id))["decision"].kind == "reject"
+
+
 async def test_a_resume_nobody_recorded_is_recorded_first(run, plans):
     plans[0].append(restart())
     incident_id = await run.start()

@@ -12,6 +12,7 @@ and one nobody recorded is recorded first. The grant comes from the store, which
 for a plan it holds as approved.
 """
 
+import logging
 from typing import Literal
 
 from langgraph.types import interrupt
@@ -20,6 +21,8 @@ from bleep.graph.deps import GraphDeps
 from bleep.graph.state import IncidentState, Node
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.graph import ApprovalRecord, Decision, Proposal, TargetSnapshot
+
+log = logging.getLogger(__name__)
 
 
 def _why(error: Exception) -> str:
@@ -74,7 +77,15 @@ def make(deps: GraphDeps) -> Node:
         )
         incident = await deps.incidents.get(incident_id)
         if incident is not None:
-            await deps.notifier.proposal(incident, state.get("diagnosis"), proposal, request)
+            try:
+                await deps.notifier.proposal(incident, state.get("diagnosis"), proposal, request)
+            except Exception as error:  # a channel outage must not strand the stored question
+                log.warning("approval: notifying %s failed: %s", incident_id, type(error).__name__)
+                await deps.bus.publish(
+                    incident_id,
+                    "notice",
+                    {"text": "The plan could not be sent to a channel; answer it here."},
+                )
         return await deps.approvals.current(incident_id)
 
     async def approval(state: IncidentState) -> dict:
@@ -94,7 +105,7 @@ def make(deps: GraphDeps) -> Node:
         if decision is None:
             asked = {"approval_id": record.id, "proposal": proposal.model_dump(mode="json")}
             resumed = Decision.model_validate(interrupt(asked))
-            decision = await deps.approvals.resolve(incident_id, resumed)
+            decision = await deps.approvals.resolve(incident_id, resumed, record.id)
             if decision is None:  # another channel won first; its decision stands
                 latest = await deps.approvals.current(incident_id)
                 assert latest is not None and latest.decision is not None
