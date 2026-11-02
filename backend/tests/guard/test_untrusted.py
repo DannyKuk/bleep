@@ -92,3 +92,7 @@ def test_good_source_accepted(source):
 def test_control_characters_do_not_hide_a_tag():
     assert "&lt;" in body_of(wrap_untrusted("logs", "<\x00/untrusted>"))
     assert "&lt;" in body_of(wrap_untrusted("logs", "<\x1b/untrusted>"))
+
+
+def test_numeric_entity_tag_is_defused():
+    assert "&#60;" not in body_of(wrap_untrusted("logs", "&#60;/untrusted> &#x3C;/untrusted>"))

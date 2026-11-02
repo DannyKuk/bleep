@@ -6,6 +6,7 @@ import re
 MAX_CHARS = 8000
 MAX_RUN = 3
 MAX_LINE = 4000
+SNAP = 256
 
 _ANSI = re.compile(
     r"\x1b\[[0-?]*[ -/]*[@-~]"  # CSI: colours, cursor moves, erase
@@ -45,9 +46,26 @@ def cap_lines(text: str, max_line: int = MAX_LINE) -> str:
     out = []
     for line in text.split("\n"):
         if len(line) > max_line:
-            line = f"{line[:half]}[… {len(line) - 2 * half} chars cut]{line[-half:]}"
+            head, tail = _cut_points(line, half)
+            line = f"{line[:head]}[… {tail - head} chars cut]{line[tail:]}"
         out.append(line)
     return "\n".join(out)
+
+
+def _cut_points(line: str, half: int) -> tuple[int, int]:
+    """Where the kept head ends and the kept tail starts: the nearest whitespace within 256
+    characters, so a secret of 200 characters or less is never split by the cut."""
+    head = half
+    for i in range(half, max(half - SNAP, 0), -1):
+        if line[i].isspace():
+            head = i
+            break
+    tail = len(line) - half
+    for i in range(tail, min(tail + SNAP, len(line))):
+        if line[i].isspace():
+            tail = i
+            break
+    return head, tail
 
 
 def collapse_repeats(text: str) -> str:
@@ -62,11 +80,15 @@ def collapse_repeats(text: str) -> str:
     return "\n".join(out)
 
 
-def cut_tail(text: str, max_chars: int = MAX_CHARS) -> str:
-    """Keep the last `max_chars`, starting the result with `[… N chars cut]` when cutting."""
-    if len(text) <= max_chars:
+def cut_tail(text: str, max_chars: int = MAX_CHARS, already_cut: int = 0) -> str:
+    """Keep the last `max_chars`, starting the result with `[… N chars cut]` when cutting.
+
+    `already_cut` counts characters a caller dropped earlier, so N reports the original length.
+    """
+    total = already_cut + max(0, len(text) - max_chars)
+    if total == 0:
         return text
-    return f"[… {len(text) - max_chars} chars cut]\n{text[-max_chars:]}"
+    return f"[… {total} chars cut]\n{text[-max_chars:]}"
 
 
 def sanitize(text: str | bytes, max_chars: int = MAX_CHARS) -> str:

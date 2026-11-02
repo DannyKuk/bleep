@@ -16,11 +16,11 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
 from bleep import prompts
+from bleep.guard.log import GuardLogger
 from bleep.guard.pipeline import guard_text
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Thresholds
-from bleep.tools.registry import GuardLogger
 
 LOG_TAIL_CHARS = 4_000
 RECOVERY_LINE_CHARS = 200

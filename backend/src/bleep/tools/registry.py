@@ -2,19 +2,14 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Literal
 
 from langchain_core.tools import BaseTool
 
+from bleep.guard.log import GuardLogger
 from bleep.hosts.registry import Registry
 
 ToolKind = Literal["read", "act"]
-
-
-class GuardLogger(Protocol):
-    """Where guard events (redactions, blocked actions) are recorded (`guard/log.py` later)."""
-
-    def record(self, incident_id: str, kind: str, detail: str) -> None: ...
 
 
 @dataclass(frozen=True)

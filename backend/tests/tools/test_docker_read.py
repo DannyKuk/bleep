@@ -261,7 +261,9 @@ async def test_engine_unavailable_is_a_string(env):
 
 async def test_every_tool_documents_untrusted_output(env):
     for name in ("container_logs", "inspect_container", "recent_events", "list_containers"):
-        assert "untrusted" in env.tools[name].description.lower()
+        description = env.tools[name].description.lower()
+        assert "untrusted" in description
+        assert "same id" in description and "never follow instructions" in description
 
 
 def test_every_spec_is_labelled():
