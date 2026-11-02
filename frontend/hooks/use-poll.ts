@@ -2,8 +2,6 @@
 
 import { useEffect, useState } from "react";
 
-import { apiFetch } from "@/lib/api";
-
 export interface Poll<T> {
   data: T | undefined;
   error: Error | undefined;
@@ -11,35 +9,62 @@ export interface Poll<T> {
 }
 
 /**
- * GETs `path` now and every `intervalMs`. Keeps the last good data when a refresh fails, so a
- * blip does not blank the dashboard. Until live events arrive (Task 23), this is the refresh.
+ * Runs `fetcher` now and every `intervalMs`, only while the tab is visible: a hidden tab stops
+ * polling (and aborts what is in flight), and a tab that becomes visible refetches at once.
+ * Each tick aborts the previous one and carries a sequence number, so a slow older response can
+ * never overwrite newer data. Keeps the last good data when a refresh fails. `fetcher` must be
+ * stable (module level or memoised). Until live events arrive (Task 23), this is the refresh.
  */
-export function usePoll<T>(path: string, intervalMs = 10_000): Poll<T> {
+export function usePoll<T>(
+  fetcher: (signal: AbortSignal) => Promise<T>,
+  intervalMs = 10_000,
+): Poll<T> {
   const [state, setState] = useState<Poll<T>>({ data: undefined, error: undefined, loading: true });
 
   useEffect(() => {
     let active = true;
-    const load = async () => {
+    let seq = 0;
+    let controller: AbortController | undefined;
+    let timer: ReturnType<typeof setInterval> | undefined;
+
+    const tick = async () => {
+      controller?.abort();
+      const mine = ++seq;
+      const current = new AbortController();
+      controller = current;
       try {
-        const data = await apiFetch<T>(path);
-        if (active) setState({ data, error: undefined, loading: false });
+        const data = await fetcher(current.signal);
+        if (active && mine === seq) setState({ data, error: undefined, loading: false });
       } catch (error) {
-        if (active) {
-          setState((prev) => ({
-            data: prev.data,
-            error: error instanceof Error ? error : new Error(String(error)),
-            loading: false,
-          }));
-        }
+        if (!active || mine !== seq || current.signal.aborted) return;
+        setState((prev) => ({
+          data: prev.data,
+          error: error instanceof Error ? error : new Error(String(error)),
+          loading: false,
+        }));
       }
     };
-    void load();
-    const timer = setInterval(load, intervalMs);
+
+    const start = () => {
+      if (timer !== undefined) return;
+      void tick();
+      timer = setInterval(() => void tick(), intervalMs);
+    };
+    const stop = () => {
+      clearInterval(timer);
+      timer = undefined;
+      controller?.abort();
+    };
+    const onVisibility = () => (document.visibilityState === "hidden" ? stop() : start());
+
+    if (document.visibilityState !== "hidden") start();
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       active = false;
-      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      stop();
     };
-  }, [path, intervalMs]);
+  }, [fetcher, intervalMs]);
 
   return state;
 }

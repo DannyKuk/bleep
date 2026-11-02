@@ -4,6 +4,7 @@ import { Loader2, ServerOff, TriangleAlert } from "lucide-react";
 
 import { HostCard } from "@/components/overview/host-card";
 import { usePoll } from "@/hooks/use-poll";
+import { apiFetch } from "@/lib/api";
 import type { HostView, ServiceView } from "@/lib/api-types";
 
 const SETUP_DOCS = "https://github.com/DannyKuk/bleep/blob/main/docs/setup.md";
@@ -40,12 +41,20 @@ export function OverviewView({ hosts, services }: { hosts: HostView[]; services:
 
 const POLL_MS = 10_000;
 
-export function Overview() {
-  const hosts = usePoll<HostView[]>("/api/hosts", POLL_MS);
-  const services = usePoll<ServiceView[]>("/api/services", POLL_MS);
+// Both lists come from one tick and are committed together, so a host and its services never
+// show different moments.
+async function fetchOverview(signal: AbortSignal) {
+  const [hosts, services] = await Promise.all([
+    apiFetch<HostView[]>("/api/hosts", { signal }),
+    apiFetch<ServiceView[]>("/api/services", { signal }),
+  ]);
+  return { hosts, services };
+}
 
-  const error = hosts.error ?? services.error;
-  if (!hosts.data || !services.data) {
+export function Overview() {
+  const { data, error } = usePoll(fetchOverview, POLL_MS);
+
+  if (!data) {
     if (error) {
       return (
         <p role="alert" className="flex items-center gap-2 text-sm text-health-down">
@@ -69,7 +78,7 @@ export function Overview() {
           Refresh failed, showing the last data: {error.message}
         </p>
       )}
-      <OverviewView hosts={hosts.data} services={services.data} />
+      <OverviewView hosts={data.hosts} services={data.services} />
     </div>
   );
 }

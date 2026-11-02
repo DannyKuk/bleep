@@ -7,11 +7,7 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiError, apiFetch } from "@/lib/api";
-
-/** Only same-site paths: "//host" and "https://host" would make login an open redirect. */
-function safeNext(next: string): string {
-  return next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\") ? next : "/";
-}
+import { safeNext } from "@/lib/safe-next";
 
 function messageFor(error: unknown): string {
   if (error instanceof ApiError) {
@@ -62,9 +58,10 @@ export function LoginForm({ next }: { next: string }) {
         value={password}
         onChange={(event) => setPassword(event.target.value)}
         aria-invalid={error ? true : undefined}
+        aria-describedby={error ? "login-error" : undefined}
       />
       {error && (
-        <p role="alert" className="text-sm text-health-down">
+        <p id="login-error" role="alert" className="text-sm text-health-down">
           {error}
         </p>
       )}

@@ -6,19 +6,19 @@ export type Health = "ok" | "degraded" | "down" | "unknown";
 
 export type HostKind = "ssh" | "socket";
 
-export interface DiskUsage {
+export interface DiskView {
   mount: string;
   used_percent: number;
 }
 
-export interface HostBasics {
+export interface BasicsView {
   os: string;
   cpus: number;
   mem_total: number;
   mem_available: number;
   load1: number;
   load15: number;
-  disks: DiskUsage[];
+  disks: DiskView[];
 }
 
 export interface HostView {
@@ -28,7 +28,7 @@ export interface HostView {
   reachable: boolean;
   last_seen: string | null;
   error: string | null;
-  basics: HostBasics | null;
+  basics: BasicsView | null;
   service_count: number;
   health: Health;
 }
