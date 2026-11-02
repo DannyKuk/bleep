@@ -1,0 +1,1 @@
+{"ok": true, "result": [{"update_id": 700004, "message": {"message_id": 321, "from": {"id": 4242, "is_bot": false, "first_name": "Danny"}, "chat": {"id": 4242, "first_name": "Danny", "type": "private"}, "date": 1793621000, "text": "hello"}}]}

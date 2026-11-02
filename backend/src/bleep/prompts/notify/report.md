@@ -1,0 +1,3 @@
+Incident {id}: {title}
+
+{summary}

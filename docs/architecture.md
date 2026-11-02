@@ -46,6 +46,7 @@ flowchart LR
 | **Incidents** | `incidents/repository.py`, `incidents/bus.py` | Incidents and their signals, one open per subject; the event bus stores every event, then fans it out to live subscribers. |
 | **Runner** | `incidents/runner.py` | Runs each incident's graph in the background, started by the watcher manager for each newly opened incident, resumed after a decision or a restart (`recover_on_boot` at startup), and keeps the incident's status in step. |
 | **Approvals** | `incidents/approvals.py`, `incidents/reminders.py` | Pending approvals in SQLite, decided once by whichever channel answers first; HMAC grants for approved plans; reminders that never approve. |
+| **Notifier and Telegram bot** | `notify/`, `prompts/notify/` | The notifier the graph and the reminder loop call: it tells the dashboard bus and, when a bot token is set, Telegram. The bot long-polls Telegram; a button or a reply to a proposal becomes a decision, raced fairly against the dashboard. |
 | **Incident graph** | `graph/` | LangGraph state, nodes and wiring, checkpointed per incident in `checkpoints.sqlite`. |
 | **Read tools** | `tools/` | Docker reads and the host command tool for the model, each scoped to the incident's host. |
 | **Guard** | `guard/` | Redacts secrets, strips control characters, caps size and wraps untrusted text before anything reaches a model; checks every proposed plan before a human sees it (`guard/plan_check.py`); `guard/log.py` records what it refused, blocked or changed in the `guard_log` table. |
@@ -111,6 +112,11 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **Env values never reach the model.**
 - **Only the closing tag with the same random id ends untrusted data**, and the system prompt says so.
 - **Every plan is checked in code**: allowlisted, enabled actions on the incident's host only, never a protected or Bleep container, at most 3 steps.
+
+**Notifications** ([details](design/notify.md))
+- **Telegram is optional**: without a token everything runs through the dashboard.
+- **Only the configured chat is answered**; anything else is dropped and logged.
+- **A decision from either channel goes through the same first-wins `resolve`**, and the loser is told who won.
 
 **App** ([details](design/app.md))
 - **One admin password and hashed session tokens in an HttpOnly cookie.**

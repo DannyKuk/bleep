@@ -58,9 +58,11 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
             app.state.runner, app.state.reminders = runner, reminders
             await manager.start()
             app.state.reminder_task = asyncio.create_task(reminders.run(), name="reminders")
+            parts.notify.start(runner)  # polls Telegram only when a token is configured
             try:
                 yield
             finally:
+                await parts.notify.stop()
                 app.state.reminder_task.cancel()
                 await asyncio.gather(app.state.reminder_task, return_exceptions=True)
                 await manager.stop()
