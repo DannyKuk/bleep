@@ -205,7 +205,7 @@ async def test_a_failing_sink_does_not_drop_the_other_urls(tmp_path):
 async def test_a_malformed_url_is_a_failed_check_not_an_exception():
     check = await check_url(client(ok_handler), UrlCheckConfig(url="http://host:abc/"))
     assert not check.ok and check.status is None
-    assert check.error and "InvalidURL" in check.error
+    assert check.error and "InvalidURL" in check.error and "abc" not in check.error
 
 
 async def test_an_unexpected_error_from_the_client_is_a_failed_check():
@@ -213,7 +213,7 @@ async def test_an_unexpected_error_from_the_client_is_a_failed_check():
         raise ValueError("boom")
 
     check = await check_url(client(explode), UrlCheckConfig(url=URL))
-    assert not check.ok and check.error == "ValueError: boom"
+    assert not check.ok and check.error == "request failed (ValueError)"
 
 
 async def test_a_crashing_check_does_not_stop_the_watcher_from_reporting_the_url(monkeypatch):
