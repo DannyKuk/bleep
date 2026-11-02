@@ -275,7 +275,9 @@ class FakeEngine:
     async def inspect(self, container: str) -> ContainerDetail:
         self._check()
         summary = self.container_list[self._find(container)]
-        return self.details.get(summary.name) or ContainerDetail(summary=summary)
+        return self.details.get(summary.name) or ContainerDetail(
+            summary=summary, restart_count=summary.restart_count
+        )
 
     async def logs(self, container: str, tail: int = 200, since: datetime | None = None) -> str:
         self._check()

@@ -5,6 +5,7 @@ timer; it never touches Docker, the database or the network (the only I/O is the
 `explain_recovery`). Time comes from an injected clock and from the `now` passed to `tick`.
 """
 
+import asyncio
 import re
 from collections import defaultdict, deque
 from collections.abc import Callable
@@ -19,6 +20,7 @@ from bleep.guard.pipeline import guard_text
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Thresholds
+from bleep.tools.registry import GuardLogger
 
 LOG_TAIL_CHARS = 4_000
 RECOVERY_LINE_CHARS = 200
@@ -249,12 +251,22 @@ def _num(signal: Signal, key: str, default: float = 0) -> float:
     return value if isinstance(value, int | float) else default
 
 
-async def explain_recovery(model: BaseChatModel, logs_tail: str) -> str:
+async def explain_recovery(
+    model: BaseChatModel,
+    logs_tail: str,
+    guard_log: GuardLogger | None = None,
+    incident_id: str = "",
+) -> str:
     """One plain sentence on why a self-recovered container stopped, from its last logs."""
-    logs = logs_tail.strip()[-LOG_TAIL_CHARS:]
-    if not logs:
+    if not logs_tail.strip():
         return NO_LOGS_LINE
-    prompt = prompts.load("watcher/recovery_line", logs=guard_text("logs", logs)[0])
+    # Redact the whole text, then keep the tail: cutting first could leave half a secret.
+    logs, redactions = await asyncio.to_thread(
+        guard_text, "logs", logs_tail.strip(), LOG_TAIL_CHARS
+    )
+    if redactions and guard_log is not None:
+        guard_log.record(incident_id, "redaction", f"{redactions} secret(s) redacted from logs")
+    prompt = prompts.load("watcher/recovery_line", logs=logs)
     reply = await model.ainvoke([HumanMessage(prompt)])
     sentence = SENTENCE_END.split(" ".join(reply.text.split()), maxsplit=1)[0]
     if len(sentence) > RECOVERY_LINE_CHARS:

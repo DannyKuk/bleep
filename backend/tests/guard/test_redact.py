@@ -36,6 +36,49 @@ SECRETS = [
     ),
     ("-----BEGIN PRIVATE KEY-----\nMIIEow\ncut off mid", "MIIEow"),
     (f"bot token {TELEGRAM} sent", "AAHaaaa"),
+    ("SECRET_KEY=django-insecure-abc123xyz", "django-insecure"),
+    ("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "wJalrXUtn"),
+    ("JWT_SECRET_KEY=topsecretvalue", "topsecretvalue"),
+    ("GITHUB_TOKEN_VALUE=abcdef123", "abcdef123"),
+    ("X-Api-Key: abcdef123456", "abcdef123456"),
+    ("x-api-key=abcdef123456", "abcdef123456"),
+    ("DATABASE_PASS=hunter2", "hunter2"),
+    ("PGPASSWORD=hunter2", "hunter2"),
+    ("pwd=hunter2", "hunter2"),
+    ("private_key=abcdef12", "abcdef12"),
+    ("access-key=abcdef12", "abcdef12"),
+    ("credentials=abcdef12", "abcdef12"),
+    ("auth=abcdef12", "abcdef12"),
+    ("client-secret: abcdef12", "abcdef12"),
+    ('Authorization: Bearer "abc.def.ghi"', "abc.def.ghi"),
+    ("AUTHORIZATION: BEARER abc.def.ghi", "abc.def.ghi"),
+    ("Authorization:Bearer abc.def.ghi", "abc.def.ghi"),
+    ("Proxy-Authorization: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"),
+    ("headers={'Authorization': 'Bearer abc.def.ghi'}", "abc.def.ghi"),
+    ('"Authorization": "Bearer abc.def.ghi"', "abc.def.ghi"),
+    ("GET /login?user=bob&password=hunter2&x=1", "hunter2"),
+    ("GET /cb?access_token=abc123def456&state=1", "abc123def456"),
+    ("postgres://u:p@ss@db/x", "p@ss"),
+    ("mongodb+srv://admin:Sup3r!@cluster0.x.net", "Sup3r"),
+    ('"password": "ab<cd"', "ab<cd"),
+    ("password=ab<cd", "ab<cd"),
+    ("password=ab,cd;ef", "cd;ef"),
+    ('"password": "ab\\"cd"', "cd"),
+    ("password = 'hunter 2'", "hunter 2"),
+    ('password="unterminated hunter2', "hunter2"),
+    ("users=admin:$apr1$H6uskkkW$IgXLP6ewTrSuBkTrqE8wj/", "H6uskkkW"),
+    ("hash $2y$10$abcdefghijklmnopqrstuv", "abcdefghij"),
+    ("hash $6$salt$abcdefghijklmnop", "abcdefghij"),
+    ("xoxb-1234567890-abcdefghijkl", "abcdefghijkl"),
+    (
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk\n-----END OPENSSH PRIVATE KEY-----",
+        "b3Blbn",
+    ),
+    (
+        "body\n"
+        + "\n".join(["aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE3fG5hI7jK9lM1nO3pQ5rS7tU9vW1xY3zA5b"] * 3),
+        "aB3dE5gH",
+    ),
     (f"https://api.telegram.org/bot{TELEGRAM}/sendMessage", "AAHaaaa"),
 ]
 
@@ -71,6 +114,16 @@ CONTROLS = [
     "sk-short",
     "connect to postgres://db:5432/app ok",
     "user@example.com logged in",
+    "token_count=5",
+    "password_reset=true",
+    "token_type=bearer",
+    "secret_name=prod-db",
+    "keyboard=us",
+    "passenger=3",
+    "author=bob",
+    "cost $5 and $6 each",
+    "\n".join(["a" * 64 + "b"] * 3),
+    "\n".join(["0123456789abcdef" * 4] * 3),  # three container ids on their own lines
 ]
 
 
@@ -94,3 +147,50 @@ def test_redact_env_hides_every_value():
         "C=<redacted>",
         "NOEQ",
     ]
+
+
+import time  # noqa: E402
+
+from bleep.guard.pipeline import guard_text  # noqa: E402
+
+HOSTILE = {
+    "dots": "." * 1_000_000,
+    "dash_underscore": "-_" * 500_000,
+    "dashes": "-" * 1_000_000,
+    "a_dot": "a." * 500_000,
+    "downloading": "Downloading" + "." * 60_000,
+    "base64url": "aB3-_x9Z" * 125_000,
+    "eyJ": "eyJ" * 300_000,
+    "sk": "sk-" * 300_000,
+    "bearer": "bearer " * 150_000,
+    "scheme": "a.b+c-" * 100_000,
+    "token_colon": "token:" * 160_000,
+    "begin": "-----BEGIN PRIVATE KEY-----\n" * 30_000,
+    "digits": "1" * 1_000_000,
+    "esc": "\x1b[" * 300_000,
+}
+
+
+@pytest.mark.parametrize("name", list(HOSTILE))
+def test_hostile_input_is_fast(name):
+    start = time.perf_counter()
+    out, _ = guard_text("logs", HOSTILE[name])
+    assert time.perf_counter() - start < 1.0
+    assert len(out) <= 8300
+
+
+def test_redact_alone_is_bounded_too():
+    start = time.perf_counter()
+    redact_with_count("-" * 1_000_000)
+    assert time.perf_counter() - start < 1.0
+
+
+def test_stray_begin_does_not_wipe_the_log():
+    text = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(f"line {i} ok" for i in range(300))
+    out = redact_text(text)
+    assert "line 299 ok" in out and "line 0 ok" in out
+
+
+def test_secret_inside_cut_long_line_is_still_found():
+    out = redact_text("x" * 10_000 + " password=hunter2 " + "y" * 10_000)
+    assert "hunter2" not in out or "chars cut" in out

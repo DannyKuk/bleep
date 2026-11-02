@@ -37,3 +37,29 @@ def test_short_text_untouched():
 
 def test_bidi_and_zero_width_removed():
     assert strip_control("a‮b​c") == "abc"
+
+
+def test_every_format_character_is_stripped():
+    import sys
+    import unicodedata
+
+    leftovers = [
+        hex(cp)
+        for cp in range(sys.maxunicode + 1)
+        if unicodedata.category(chr(cp)) == "Cf" and strip_control(f"a{chr(cp)}b") != "ab"
+    ]
+    assert leftovers == []
+    for cp in [*range(0xE0000, 0xE0080), *range(0xFE00, 0xFE10), *range(0xE0100, 0xE01F0)]:
+        assert strip_control(f"a{chr(cp)}b") == "ab"
+
+
+def test_cap_lines_keeps_head_and_tail():
+    from bleep.guard.sanitize import cap_lines
+
+    line = "H" * 3000 + "M" * 100_000 + "T" * 3000
+    out = cap_lines(f"short\n{line}\nafter")
+    first, capped, last = out.split("\n")
+    assert first == "short" and last == "after"
+    assert len(capped) <= 4000 and capped.startswith("HHH") and capped.endswith("TTT")
+    assert "chars cut]" in capped
+    assert cap_lines(out) == out

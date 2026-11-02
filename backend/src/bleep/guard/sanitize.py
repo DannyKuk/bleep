@@ -5,6 +5,7 @@ import re
 
 MAX_CHARS = 8000
 MAX_RUN = 3
+MAX_LINE = 4000
 
 _ANSI = re.compile(
     r"\x1b\[[0-?]*[ -/]*[@-~]"  # CSI: colours, cursor moves, erase
@@ -12,24 +13,48 @@ _ANSI = re.compile(
     r"|\x1b[@-Z\\-_]"  # two-character escapes
 )
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")  # all but \n and \t
-# Bidi overrides, zero-width characters and the byte-order mark hide text from a human reader.
-_INVISIBLE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]")
+# Every Unicode "format" (Cf) character: soft hyphen, zero-width, bidi marks and overrides, the
+# byte-order mark, U+180E, the tag block; plus variation selectors. They hide text from a human
+# reader and can split a secret or a tag so a pattern misses it.
+_INVISIBLE = re.compile(
+    "[­؀-؅؜۝܏࢐࢑࣢᠋-᠏​-‏"
+    "‪-‮⁠-⁤⁦-⁯︀-️﻿￹-￻"
+    "\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3\U0001d173-\U0001d17a"
+    "\U000e0000-\U000e007f\U000e0100-\U000e01ef]"
+)
 
 
 def strip_control(text: str | bytes) -> str:
     """Decode (bytes use errors="replace"), normalise newlines, drop ANSI and control characters."""
     if isinstance(text, bytes):
         text = text.decode("utf-8", errors="replace")
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("\r\n", "\n").replace("\r", "\n").replace(" ", "\n")
+    text = text.replace(" ", "\n")
     text = _ANSI.sub("", text)
     return _INVISIBLE.sub("", _CONTROL.sub("", text))
+
+
+def cap_lines(text: str, max_line: int = MAX_LINE) -> str:
+    """Cut each line longer than `max_line` in the middle, keeping its head and tail.
+
+    This bounds the work every later pattern can do on one line, whatever the log contains.
+    """
+    if len(text) <= max_line:
+        return text
+    half = (max_line - 40) // 2
+    out = []
+    for line in text.split("\n"):
+        if len(line) > max_line:
+            line = f"{line[:half]}[… {len(line) - 2 * half} chars cut]{line[-half:]}"
+        out.append(line)
+    return "\n".join(out)
 
 
 def collapse_repeats(text: str) -> str:
     """Replace a run of more than 3 identical lines with its first line and a repeat count."""
     out: list[str] = []
     for line, group in itertools.groupby(text.split("\n")):
-        count = len(list(group))
+        count = sum(1 for _ in group)
         if count > MAX_RUN:
             out += [line, f"[… repeated {count - 1} times]"]
         else:
@@ -37,12 +62,16 @@ def collapse_repeats(text: str) -> str:
     return "\n".join(out)
 
 
-def sanitize(text: str | bytes, max_chars: int = MAX_CHARS) -> str:
-    """Strip, collapse repeated lines, then keep the last `max_chars` (the end of a log matters).
-
-    When something is cut, the result starts with `[… N chars cut]`.
-    """
-    text = collapse_repeats(strip_control(text))
+def cut_tail(text: str, max_chars: int = MAX_CHARS) -> str:
+    """Keep the last `max_chars`, starting the result with `[… N chars cut]` when cutting."""
     if len(text) <= max_chars:
         return text
     return f"[… {len(text) - max_chars} chars cut]\n{text[-max_chars:]}"
+
+
+def sanitize(text: str | bytes, max_chars: int = MAX_CHARS) -> str:
+    """Strip, cap long lines, collapse repeated lines, then keep the last `max_chars`.
+
+    The end of a log matters most, so the tail is kept.
+    """
+    return cut_tail(collapse_repeats(cap_lines(strip_control(text))), max_chars)

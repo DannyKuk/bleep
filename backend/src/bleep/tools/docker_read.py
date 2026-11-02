@@ -5,6 +5,8 @@ redacted, cleaned, cut to a size budget and wrapped in `<untrusted>` (see `guard
 Every tool is scoped to the incident's host and cannot see another host.
 """
 
+import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
@@ -12,13 +14,14 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, ValidationError
 
 from bleep.guard.pipeline import guard_text
-from bleep.guard.redact import redact_env, redact_text
+from bleep.guard.redact import REDACTED, redact_env, redact_text
 from bleep.hosts.engine import ContainerNotFound, EngineError, EngineUnavailable
 from bleep.schemas.docker import ContainerDetail, ContainerSummary
 from bleep.tools.registry import ToolContext, ToolSpec
 
 NOT_FOUND = "not found on this host"
 LABEL_CHARS = 80
+_SECRET_LABEL = re.compile(r"auth|password|passwd|secret|token|key|users", re.IGNORECASE)
 
 
 class NoArgs(BaseModel):
@@ -47,8 +50,9 @@ def _invalid(error: ValidationError) -> str:
     return f"invalid arguments: {problems}"
 
 
-def _guard(ctx: ToolContext, source: str, text: str) -> str:
-    wrapped, redactions = guard_text(source, text)
+async def _guard(ctx: ToolContext, source: str, text: str) -> str:
+    """Redact, clean and wrap `text` off the event loop, so a hostile input cannot stall it."""
+    wrapped, redactions = await asyncio.to_thread(guard_text, source, text)
     if redactions and ctx.guard_log is not None:
         ctx.guard_log.record(
             ctx.incident_id, "redaction", f"{redactions} secret(s) redacted from {source} output"
@@ -67,11 +71,11 @@ def _tool(
         try:
             return await run(ctx, **args)
         except EngineUnavailable as error:
-            return f"host unreachable: {error}"
+            return f"host unreachable: {await _guard(ctx, 'error', str(error))}"
         except ContainerNotFound:
             return NOT_FOUND
         except EngineError as error:
-            return f"docker error: {error}"
+            return f"docker error: {await _guard(ctx, 'error', str(error))}"
 
     return StructuredTool(
         name=name,
@@ -106,18 +110,13 @@ def _when(value: datetime | None) -> str:
 
 async def _list(ctx: ToolContext) -> str:
     services = {c.name: s.name for s in ctx.registry.services(ctx.host_id) for c in s.containers}
-    engine = ctx.registry.engine(ctx.host_id)
     rows = ["name | service | state | health | image | restarts"]
-    for c in await engine.containers():
-        try:
-            restarts = str((await engine.inspect(c.name)).restart_count)
-        except ContainerNotFound:  # removed since the listing
-            restarts = "?"
+    for c in await ctx.registry.engine(ctx.host_id).containers():
         rows.append(
             f"{c.name} | {services.get(c.name, '-')} | {c.state} | {c.health} | {c.image}"
-            f" | {restarts}"
+            f" | {c.restart_count}"
         )
-    return _guard(ctx, "containers", "\n".join(rows))
+    return await _guard(ctx, "containers", "\n".join(rows))
 
 
 def _describe(detail: ContainerDetail) -> str:
@@ -145,7 +144,7 @@ def _describe(detail: ContainerDetail) -> str:
     ]
     lines.append("labels:" + ("" if c.labels else " none"))
     for key, value in sorted(c.labels.items()):
-        shown = redact_text(value)
+        shown = REDACTED if _SECRET_LABEL.search(key) else redact_text(value)
         if len(shown) > LABEL_CHARS:
             shown = shown[:LABEL_CHARS] + "…"
         lines.append(f"  {key}={shown}")
@@ -165,7 +164,7 @@ async def _inspect(ctx: ToolContext, container: str) -> str:
     if found is None:
         return NOT_FOUND
     detail = await ctx.registry.engine(ctx.host_id).inspect(found.name)
-    return _guard(ctx, "inspect", _describe(detail))
+    return await _guard(ctx, "inspect", _describe(detail))
 
 
 async def _logs(
@@ -176,7 +175,7 @@ async def _logs(
         return NOT_FOUND
     since = _since(timedelta(minutes=since_minutes)) if since_minutes else None
     text = await ctx.registry.engine(ctx.host_id).logs(found.name, tail=tail, since=since)
-    return _guard(ctx, "logs", text or "(no log lines)")
+    return await _guard(ctx, "logs", text or "(no log lines)")
 
 
 async def _stats(ctx: ToolContext, container: str) -> str:
@@ -196,12 +195,12 @@ async def _events(ctx: ToolContext, minutes: int = 30) -> str:
     now = datetime.now(UTC)
     events = await ctx.registry.engine(ctx.host_id).events(now - timedelta(minutes=minutes), now)
     if not events:
-        return _guard(ctx, "events", f"(no events in the last {minutes} minutes)")
+        return await _guard(ctx, "events", f"(no events in the last {minutes} minutes)")
     lines = [
         f"{e.time.isoformat()} {e.type} {e.action} {e.container_name or e.container_id or ''}"
         for e in sorted(events, key=lambda e: e.time)
     ]
-    return _guard(ctx, "events", "\n".join(lines))
+    return await _guard(ctx, "events", "\n".join(lines))
 
 
 UNTRUSTED = (
