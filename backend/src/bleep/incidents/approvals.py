@@ -2,11 +2,10 @@
 
 Telegram and the dashboard both call `resolve`; it is one `UPDATE ... WHERE status = 'pending'`,
 so whichever answers first wins and the other gets None. A grant, the proof act tools check, is
-issued only for a plan the store holds as approved. See docs/design/graph.md.
+issued only for a plan the store holds as approved; `guard/grant.py` computes it and the act
+tools check it. See docs/design/graph.md.
 """
 
-import hashlib
-import hmac
 import json
 import secrets
 from collections.abc import Callable
@@ -15,6 +14,7 @@ from datetime import datetime
 import aiosqlite
 from pydantic import SecretStr
 
+from bleep.guard.grant import grant_token, plan_hash
 from bleep.incidents.repository import utcnow
 from bleep.schemas.graph import (
     ApprovalGrant,
@@ -28,27 +28,6 @@ from bleep.schemas.incidents import TERMINAL_STATUSES
 from bleep.store.db import Database
 
 _STATUS = {"approve": "approved", "reject": "rejected", "instruct": "instructed"}
-
-
-def plan_hash(proposal: Proposal, snapshots: list[TargetSnapshot]) -> str:
-    """sha256 of the steps as canonical JSON, each with the container id its target resolved to.
-
-    A recreated container keeps its name but not its id, so the same words make another plan.
-    Steps whose target is not a container (Coolify applications) carry `null`.
-    """
-    resolved = {(s.host_id, s.target): s.container_id for s in snapshots}
-    steps = [
-        step.model_dump(mode="json") | {"container_id": resolved.get((step.host_id, step.target))}
-        for step in proposal.steps
-    ]
-    canonical = json.dumps(steps, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode()).hexdigest()
-
-
-def grant_token(secret: str, incident_id: str, plan_hash: str) -> str:
-    """HMAC-SHA256 keyed with `BLEEP_SECRET` over the incident id followed by the plan hash."""
-    message = (incident_id + plan_hash).encode()
-    return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
 
 
 def _record(row: aiosqlite.Row) -> ApprovalRecord:
