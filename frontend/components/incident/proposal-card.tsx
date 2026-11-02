@@ -1,3 +1,5 @@
+import { useId } from "react";
+
 import { DecisionBar } from "@/components/incident/decision-bar";
 import type { ApprovalView, Proposal } from "@/lib/api-types";
 import { CHANNEL } from "@/lib/format";
@@ -8,6 +10,10 @@ const STATUS_WORD: Record<ApprovalView["status"], string> = {
   rejected: "rejected",
   instructed: "answered with an instruction",
 };
+
+// The reason Propose gives when its own checks refused a plan twice
+// (`REFUSED` in backend/src/bleep/graph/nodes/propose.py).
+const REFUSED_REASON = "Bleep's own checks refused the proposed plan twice, so nothing will run.";
 
 function samePlan(a: Proposal, b: Proposal): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
@@ -50,11 +56,28 @@ function Plan({ proposal }: { proposal: Proposal }) {
         </p>
       )}
       {proposal.human_instructions && (
-        <p className="text-xs text-muted-foreground">
-          Planned with your instruction: “{proposal.human_instructions}”
-        </p>
+        <Advice
+          title={proposal.reason === REFUSED_REASON ? "Why nothing will run" : "What to do"}
+          text={proposal.human_instructions}
+        />
       )}
     </div>
+  );
+}
+
+/**
+ * `human_instructions` is Bleep's text to the human (the fix to make for a no-action plan, or why
+ * a plan was refused), never the human's own words, which the timeline already shows.
+ */
+function Advice({ title, text }: { title: string; text: string }) {
+  const id = useId();
+  return (
+    <section aria-labelledby={id} className="flex flex-col gap-1 rounded-md border p-3">
+      <h3 id={id} className="text-sm font-medium">
+        {title}
+      </h3>
+      <p className="break-words whitespace-pre-line">{text}</p>
+    </section>
   );
 }
 
