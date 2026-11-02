@@ -1,16 +1,19 @@
 """The host registry: each host's connection, reachability and latest snapshot."""
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from bleep.hosts.config import HostConfig
-from bleep.hosts.discovery import group_services
+from bleep.hosts.discovery import AmbiguousOverride, group_services
 from bleep.hosts.engine import Engine, EngineUnavailable, connect_engine
 from bleep.hosts.ssh import SshSession
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.services import HostState, Service
+
+log = logging.getLogger(__name__)
 
 Connector = Callable[[HostConfig], Awaitable[tuple[SshSession | None, Engine]]]
 
@@ -36,6 +39,7 @@ class _Entry:
     engine: Engine | None = None
     containers: list[ContainerSummary] | None = None
     services: list[Service] | None = None
+    logged: set[str] = field(default_factory=set)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -60,10 +64,11 @@ class Registry:
     async def close(self) -> None:
         self._closed = True
         for entry in self._entries.values():
-            if entry.engine is not None:
-                await entry.engine.close()
-            if entry.session is not None:
-                await entry.session.close()
+            async with entry.lock:  # waits for an in-flight reconnect, which closes what it opened
+                if entry.engine is not None:
+                    await entry.engine.close()
+                if entry.session is not None:
+                    await entry.session.close()
 
     async def refresh(self, host_id: str) -> None:
         """List the host's containers. On a lost connection keep the last snapshot."""
@@ -83,6 +88,11 @@ class Registry:
             try:
                 if entry.engine is None:
                     session, engine = await self._connector(entry.state.config)
+                    if self._closed:  # close() ran while we were connecting
+                        await engine.close()
+                        if session is not None:
+                            await session.close()
+                        return False
                     entry.session, entry.engine = session, engine
                 else:
                     if entry.session is not None:
@@ -134,8 +144,19 @@ class Registry:
             self._mark(entry, reachable=False, error=str(error))
             return
         entry.containers = containers
-        entry.services = group_services(host_id, containers, entry.state.config.services)
-        self._mark(entry, reachable=True, last_seen=self._clock(), error=None)
+        error = None
+        try:
+            entry.services = group_services(host_id, containers, entry.state.config.services)
+        except AmbiguousOverride as problem:
+            # A config problem, not a host problem: stay reachable, keep the previous services
+            # (so protected containers stay protected) and show the text on the host.
+            error = str(problem)
+            if entry.services is None:
+                entry.services = group_services(host_id, containers, {})
+            if error not in entry.logged:
+                entry.logged.add(error)
+                log.warning("%s", error)
+        self._mark(entry, reachable=True, last_seen=self._clock(), error=error)
 
     def _mark(self, entry: _Entry, **changes: object) -> None:
         entry.state = replace(entry.state, **changes)

@@ -35,6 +35,7 @@ class Connector:
 
     async def __call__(self, host):
         self.calls.append(host.id)
+        await asyncio.sleep(0)  # let a concurrent caller interleave
         if host.id in self.fail:
             raise EngineUnavailable(host.id, "connection refused")
         return None, self.engines[host.id]
@@ -206,3 +207,49 @@ async def test_container_accepts_a_unique_id_prefix_of_12_chars():
     assert reg.container("b", "abcdef123456") is None  # ambiguous
     assert reg.container("b", "abcdef12345") is None  # too short
     assert reg.container("b", "abcdef123456aaaa").name == "x"
+
+
+def ambiguous_registry():
+    host = ssh_host(id="a", name="A", services={"app": ServiceOverrides(repo="me/app")})
+    engine = FakeEngine("a", [box("app"), box("app-web-1", "app")])
+    return Registry([host], Connector({"a": engine})), engine
+
+
+async def test_ambiguous_override_is_recorded_without_raising(caplog):
+    reg, engine = ambiguous_registry()
+    await reg.start()
+    state = reg.hosts()[0]
+    assert state.reachable and "app" in state.error and "compose:app" in state.error
+    assert len(reg.services("a")) == 2
+    first = [r for r in caplog.records if "override" in r.getMessage()]
+    await reg.refresh("a")
+    assert await reg.reconnect("a") is True
+    assert reg.hosts()[0].error is not None
+    assert len([r for r in caplog.records if "override" in r.getMessage()]) == len(first) == 1
+
+
+async def test_ambiguity_keeps_the_previous_services():
+    reg, engine = ambiguous_registry()
+    engine.container_list = [box("app-web-1", "app")]
+    await reg.start()
+    assert reg.hosts()[0].error is None
+    assert reg.service("a/compose:app").repo == "me/app"
+    engine.container_list.append(box("app"))
+    await reg.refresh("a")
+    assert reg.hosts()[0].error is not None
+    assert reg.service("a/compose:app").repo == "me/app"
+    engine.container_list.pop()
+    await reg.refresh("a")
+    assert reg.hosts()[0].error is None
+
+
+async def test_close_during_a_reconnect_closes_what_it_opened():
+    reg, engines, connector = make(fail={"b"})
+    await reg.start()
+    connector.fail.clear()
+    reconnecting = asyncio.create_task(reg.reconnect("b"))
+    await asyncio.sleep(0)  # the connector is now running
+    await reg.close()
+    assert await reconnecting is False
+    assert engines["b"].closed
+    assert reg.hosts()[1].reachable is False
