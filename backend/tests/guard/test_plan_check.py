@@ -147,3 +147,15 @@ async def test_any_target_on_a_host_with_a_config_error_is_refused(tmp_path):
 
     assert [(v.rule, v.step) for v in violations] == [("host_error", 1)]
     assert "configuration error" in violations[0].text
+
+
+async def test_an_override_matching_no_discovered_service_still_protects_its_containers(tmp_path):
+    # "database" is no Compose project or Coolify name, so discovery drops the override; the
+    # protected list is read from the hosts file and must still apply.
+    host = shop_host(services={"database": ServiceOverrides(protected_containers=["shop-db-1"])})
+    env = await graph_env(tmp_path, engine=guarded_engine(), host=host)
+    assert env.registry.hosts()[0].error is None
+
+    violations = check_plan(act(restart("shop-db-1")), env.registry, CORE, "a")
+
+    assert [(v.rule, v.step) for v in violations] == [("protected", 1)]

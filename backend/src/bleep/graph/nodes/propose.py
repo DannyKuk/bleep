@@ -13,7 +13,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.state import IncidentState, Node
-from bleep.guard.plan_check import Violation, check_plan
+from bleep.guard.plan_check import Violation, check_plan, protected_names
 from bleep.hosts.discovery import SELF_LABEL
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget
@@ -169,7 +169,8 @@ def _containers(context: GatherContext | None) -> str:
 
 def _off_limits(deps: GraphDeps, host_id: str) -> str:
     """Protected and Bleep's own containers, so the model need not learn them by refusal."""
-    protected = sorted({n for s in deps.registry.services(host_id) for n in s.protected})
+    host = next((h for h in deps.registry.hosts() if h.config.id == host_id), None)
+    protected = sorted(protected_names(host)) if host else []
     own = sorted(
         c.name for c in deps.registry.snapshot(host_id) or [] if c.labels.get(SELF_LABEL) == "true"
     )

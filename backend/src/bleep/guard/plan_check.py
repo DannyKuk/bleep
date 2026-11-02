@@ -91,7 +91,7 @@ def _check_step(
             "the host has a configuration error, so its protected containers may not be known",
         )
 
-    protected = {name for s in registry.services(host_id) for name in s.protected}
+    protected = protected_names(host)
     if step.action.startswith("coolify."):
         members = _coolify_members(registry.snapshot(host_id) or [], step.target)
         if not members:
@@ -114,3 +114,12 @@ def _check_step(
 def _coolify_members(containers: list[ContainerSummary], target: str) -> list[ContainerSummary]:
     """The containers of the Coolify application `target` names (by uuid, id or resource name)."""
     return [c for c in containers if target in (c.labels.get(k) for k in COOLIFY_APP_LABELS)]
+
+
+def protected_names(host) -> set[str]:
+    """Every name in protected_containers on the host's overrides, read from the hosts file.
+
+    This does not go through discovery, so an override whose key matches no service group
+    still protects its containers.
+    """
+    return {n for o in host.config.services.values() for n in o.protected_containers}

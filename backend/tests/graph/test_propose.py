@@ -53,9 +53,9 @@ def bad_env_engine() -> FakeEngine:
     )
 
 
-def demo_host(protected: list[str] | None = None):
+def demo_host(protected: list[str] | None = None, key: str = "shop"):
     shop = ServiceOverrides(urls=[UrlCheckConfig(url=HEALTH)], protected_containers=protected or [])
-    return shop_host(rules=[], services={"shop": shop})
+    return shop_host(rules=[], services={key: shop})
 
 
 def reply(**proposal: Any) -> AIMessage:
@@ -71,9 +71,15 @@ def acting(*steps: dict) -> AIMessage:
     return reply(kind="act", steps=list(steps), reason="restart it", verification={})
 
 
-async def setup(tmp_path, *script: AIMessage, protected: list[str] | None = None, **state: Any):
+async def setup(
+    tmp_path,
+    *script: AIMessage,
+    protected: list[str] | None = None,
+    key: str = "shop",
+    **state: Any,
+):
     """A graph env on the bad-env stack, the model scripted, and Propose's input state."""
-    env = await graph_env(tmp_path, engine=bad_env_engine(), host=demo_host(protected))
+    env = await graph_env(tmp_path, engine=bad_env_engine(), host=demo_host(protected, key))
     env.models.model.script = list(script)
     subject = Subject(kind="service", host_id="a", service_id=env.service_id("shop"))
     signals = [Signal(subject=subject, kind="restart_loop", at=T0, container="shop-web-1")]
@@ -217,3 +223,13 @@ def test_route_sends_only_an_act_plan_to_approval():
     assert propose.route({"proposal": act}) == "approval"
     assert propose.route({"proposal": Proposal(kind="no_action", reason="x")}) == "report"
     assert propose.route({}) == "report"
+
+
+async def test_off_limits_lists_protected_containers_of_an_override_matching_no_service(tmp_path):
+    env, state = await setup(
+        tmp_path, acting(restart("shop-web-1")), protected=["shop-db-1"], key="database"
+    )
+
+    await propose.make(env.deps)(state)
+
+    assert "- shop-db-1 (protected)" in prompt(env)
