@@ -50,9 +50,12 @@ class IncidentRunner:
     async def start(self, incident: Incident) -> asyncio.Task[None]:
         """Run the incident's graph in the background, from where its thread stands.
 
-        A new thread starts at Gather; one with a checkpoint goes on from it, and one already
-        waiting for approval or finished is left as it is. Calling it while a run is in flight
-        returns that run, so the graph never runs twice at once for one incident.
+        A new thread tells the notifier the incident opened, then starts at Gather. One with a
+        checkpoint mid-graph goes on from it. One waiting for approval stays waiting, unless its
+        approval was decided before a restart: then it goes on with the stored decision. A
+        finished one is not run again; only its terminal status is settled if a crash left it
+        unset. Calling it while a run is in flight returns that run, so the graph never runs
+        twice at once for one incident.
         """
         running = self._runs.get(incident.id)
         if running is not None and not running.done():

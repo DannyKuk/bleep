@@ -25,7 +25,7 @@ This runs the whole path from a dead container to the approval question, on the 
    docker compose --profile demo up -d --build
    docker run -d --name bleep-try --restart no nginx:1.27-alpine
    ```
-   Log in at http://localhost:3000. Within 15 s the overview lists `bleep-try` under the Demo stack as running.
+   Log in at http://localhost:3000. Within about 30 s the overview lists `bleep-try` under the Demo stack as running.
 3. Break it: `docker kill bleep-try`. Use `kill`, not `stop`: a `docker stop` (exit 0 or 143, a `stop` event) is someone's choice and opens nothing, by design ([watcher](design/watcher.md)). A kill leaves exit 137, the same as a crash, and the restart policy `no` keeps it down.
 4. What to expect:
    - **Overview:** the service turns red (Down) at the next tick. After the 60 s grace window it is still down, so an incident opens, and the row gets an "Open incident" link. Allow about 75 s from the kill.
