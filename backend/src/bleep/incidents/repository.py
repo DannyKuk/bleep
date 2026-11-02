@@ -176,6 +176,17 @@ class IncidentRepo:
         finally:
             await conn.close()
 
+    async def unfinished(self) -> list[Incident]:
+        """Every incident not yet resolved, closed or failed, oldest first."""
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                f"SELECT * FROM incidents WHERE {_OPEN} ORDER BY opened_at, id"
+            ) as cursor:
+                return [_incident(row) for row in await cursor.fetchall()]
+        finally:
+            await conn.close()
+
     async def open_incident_id(self, subject: Subject) -> str | None:
         """The id of the subject's open incident, if it has one."""
         conn = await self.db.connect()

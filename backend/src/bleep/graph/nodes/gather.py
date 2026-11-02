@@ -1,0 +1,135 @@
+"""Gather: collect what is known about the incident before any model runs.
+
+Deterministic, no model call. A service gets its containers, the last 200 log lines of the
+affected ones, the host's basics and the host and service rules; a host gets its basics and the
+containers using the most memory. Similar past incidents come from memory. Whatever cannot be
+read (an unreachable host, a vanished service) becomes a line in `gaps`, never an error, so the
+run goes on with what it has.
+"""
+
+import asyncio
+import logging
+
+from bleep.graph.deps import GraphDeps
+from bleep.graph.state import IncidentState, Node
+from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
+from bleep.schemas.graph import ContainerMemory, GatherContext
+from bleep.schemas.incidents import Signal, Subject
+from bleep.schemas.services import HostState, Service
+from bleep.tools.docker_read import _guard
+from bleep.tools.registry import ToolContext
+
+log = logging.getLogger(__name__)
+
+LOG_TAIL = 200  # lines per container
+MAX_LOG_CONTAINERS = 5  # so a large service cannot flood the prompt
+TOP_MEMORY = 5
+STATS_AT_ONCE = 8  # concurrent `docker stats` calls on one host
+
+
+def _why(error: Exception) -> str:
+    """A short, fixed reason: engine messages are host text and do not belong in Bleep's own."""
+    if isinstance(error, EngineUnavailable):
+        return "host unreachable"
+    if isinstance(error, ContainerNotFound):
+        return "container not found"
+    return type(error).__name__
+
+
+def _affected(service: Service, signals: list[Signal]) -> list[str]:
+    """The containers the signals name; when none do (a URL check), every one of the service."""
+    names = [c.name for c in service.containers]
+    named = {s.container for s in signals if s.container}
+    return [n for n in names if n in named] or names
+
+
+def make(deps: GraphDeps) -> Node:
+    async def gather(state: IncidentState) -> dict:
+        subject = state["subject"]
+        signals = state.get("signals", [])
+        ctx = ToolContext(state["incident_id"], subject.host_id, deps.registry, deps.guard_log)
+        context = GatherContext(at=deps.clock())
+
+        host = next((h for h in deps.registry.hosts() if h.config.id == subject.host_id), None)
+        if host is None:
+            context.gaps.append(f"host {subject.host_id} is not in the hosts file")
+            return {"context": context}
+        try:
+            await deps.registry.refresh(subject.host_id)  # the state now, not the last poll's
+        except Exception as error:
+            context.gaps.append(f"container list: {_why(error)}")
+        host = next(h for h in deps.registry.hosts() if h.config.id == subject.host_id)
+        if not host.reachable:
+            context.gaps.append("host unreachable: containers and basics are the last ones seen")
+        context.basics = host.basics
+        context.host_rules = list(host.config.rules)
+
+        if subject.kind == "service":
+            await _service(deps, ctx, subject, signals, context)
+        else:
+            await _host(deps, host, context)
+        await _recall(deps, subject, signals, context)
+        return {"context": context}
+
+    return gather
+
+
+async def _service(
+    deps: GraphDeps,
+    ctx: ToolContext,
+    subject: Subject,
+    signals: list[Signal],
+    context: GatherContext,
+) -> None:
+    service = deps.registry.service(subject.service_id or "")
+    if service is None:
+        context.gaps.append(f"service {subject.service_id} is no longer on host {subject.host_id}")
+        return
+    context.service_name = service.name
+    context.containers = list(service.containers)
+    context.service_rules = list(service.rules)
+    for name in _affected(service, signals)[:MAX_LOG_CONTAINERS]:
+        try:
+            text = await deps.registry.engine(subject.host_id).logs(name, tail=LOG_TAIL)
+        except Exception as error:
+            context.gaps.append(f"logs of {name}: {_why(error)}")
+            continue
+        context.logs[name] = await _guard(ctx, "logs", text or "(no log lines)")
+
+
+async def _host(deps: GraphDeps, host: HostState, context: GatherContext) -> None:
+    host_id = host.config.id
+    try:
+        engine = deps.registry.engine(host_id)
+        running = [c.name for c in await engine.containers() if c.state == "running"]
+    except Exception as error:
+        context.gaps.append(f"container list: {_why(error)}")
+        return
+    limit = asyncio.Semaphore(STATS_AT_ONCE)
+
+    async def memory(name: str) -> ContainerMemory | None:
+        async with limit:
+            try:
+                s = await engine.stats(name)
+            except Exception as error:
+                log.info("gather: no stats for %s on %s: %s", name, host_id, _why(error))
+                return None
+        return ContainerMemory(
+            name=name, mem_usage=s.mem_usage, mem_limit=s.mem_limit, mem_percent=s.mem_percent
+        )
+
+    found = [m for m in await asyncio.gather(*(memory(n) for n in running)) if m is not None]
+    found.sort(key=lambda m: m.mem_usage, reverse=True)
+    context.top_memory = [m for m in found if m.mem_usage > 0][:TOP_MEMORY]
+
+
+async def _recall(
+    deps: GraphDeps, subject: Subject, signals: list[Signal], context: GatherContext
+) -> None:
+    what = context.service_name or subject.host_id
+    kinds = ", ".join(dict.fromkeys(s.kind for s in signals))
+    try:
+        context.similar = await deps.memory.similar(f"{what}: {kinds}", subject.service_id, k=3)
+    except Exception as error:
+        log.warning("gather: memory recall failed: %s", _why(error))
+        context.gaps.append(f"similar incidents: {_why(error)}")

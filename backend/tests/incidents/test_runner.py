@@ -1,0 +1,216 @@
+import asyncio
+from datetime import UTC, datetime
+
+import pytest
+
+from bleep.graph.build import build_graph, open_checkpointer
+from bleep.graph.nodes import propose
+from bleep.incidents.bus import EventBus
+from bleep.incidents.runner import IncidentRunner
+from bleep.schemas.graph import Decision, PlanStep, Proposal, VerificationPlan
+from bleep.schemas.incidents import Subject
+from graph_env import graph_env
+
+M2_PATH = ["gather", "investigate", "diagnose", "propose", "report"]
+
+
+def service(env) -> Subject:
+    return Subject(kind="service", host_id="a", service_id=env.service_id("shop"))
+
+
+def decide(kind: str, text: str | None = None) -> Decision:
+    return Decision(kind=kind, text=text, via="dashboard", at=datetime(2026, 11, 2, tzinfo=UTC))
+
+
+@pytest.fixture
+def acting(monkeypatch):
+    """Make Propose return a one-step restart, so the run reaches Approval."""
+
+    def make(deps):
+        async def node(state):
+            return {
+                "proposal": Proposal(
+                    kind="act",
+                    steps=[PlanStep(action="docker.restart", host_id="a", target="shop-web-1")],
+                    reason="it exited",
+                    verification=VerificationPlan(containers=["shop-web-1"]),
+                )
+            }
+
+        return node
+
+    monkeypatch.setattr(propose, "make", make)
+
+
+async def values(runner: IncidentRunner, incident_id: str) -> dict:
+    return (await runner.graph.aget_state(runner.config(incident_id))).values
+
+
+async def test_start_runs_every_node_in_order_and_closes(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await runner.start(incident)
+        await runner.join()
+
+        assert await env.nodes(incident.id) == M2_PATH
+        assert await env.nodes(incident.id, "node_finished") == M2_PATH
+        state = await values(runner, incident.id)
+        assert [s.container for s in state["signals"]] == ["shop-web-1"]
+        assert state["context"].service_name == "shop"
+        assert state["outcome"] == "no_action"
+    assert (await env.repo.get(incident.id)).status == "closed"
+
+
+class BlockingBus(EventBus):
+    """Hangs forever when a node starts, as if Bleep died at that moment."""
+
+    def __init__(self, db, node: str) -> None:
+        super().__init__(db)
+        self.node = node
+        self.reached = asyncio.Event()
+
+    async def publish(self, incident_id, kind, payload=None):
+        if kind == "node_started" and (payload or {}).get("node") == self.node:
+            self.reached.set()
+            await asyncio.Event().wait()
+        return await super().publish(incident_id, kind, payload)
+
+
+async def test_interrupted_run_resumes_from_the_checkpoint_on_a_new_runner(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    checkpoints = tmp_path / "checkpoints.sqlite"
+
+    env.deps.bus = BlockingBus(env.db, "diagnose")
+    async with open_checkpointer(checkpoints) as saver:
+        first = IncidentRunner(build_graph(env.deps, saver), env.repo, env.deps.bus)
+        await first.start(incident)
+        await asyncio.wait_for(env.deps.bus.reached.wait(), 5)
+        await first.close()  # the process dies mid-graph
+    assert (await env.repo.get(incident.id)).status == "investigating"
+    assert await env.nodes(incident.id) == ["gather", "investigate"]
+
+    env.deps.bus = env.bus
+    async with open_checkpointer(checkpoints) as saver:
+        second = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        assert await second.recover_on_boot() == [incident.id]
+        await second.join()
+
+    # Gather and Investigate ran once: the new runner went on from the last checkpoint.
+    assert await env.nodes(incident.id) == M2_PATH
+    assert (await env.repo.get(incident.id)).status == "closed"
+
+
+async def test_recover_on_boot_skips_awaiting_approval_and_finished_runs(tmp_path):
+    env = await graph_env(tmp_path)
+    waiting = await env.open(service(env), container="shop-web-1")
+    fresh = await env.open(Subject(kind="host", host_id="a"), kind="disk")
+    done = await env.open(Subject(kind="service", host_id="a", service_id="a/gone"))
+    await env.repo.set_status(waiting.id, "awaiting_approval")
+    await env.repo.set_status(done.id, "closed")
+
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        assert await runner.recover_on_boot() == [fresh.id]
+        await runner.join()
+
+    assert await env.nodes(waiting.id) == []
+    assert await env.nodes(done.id) == []
+    assert await env.nodes(fresh.id) == M2_PATH  # never started before the restart: starts now
+
+
+async def test_waits_for_approval_and_resumes_on_a_decision_after_a_restart(tmp_path, acting):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    checkpoints = tmp_path / "checkpoints.sqlite"
+    async with open_checkpointer(checkpoints) as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await runner.start(incident)
+        await runner.join()
+    assert (await env.repo.get(incident.id)).status == "awaiting_approval"
+    assert (await env.nodes(incident.id))[-1] == "approval"
+
+    async with open_checkpointer(checkpoints) as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        assert await runner.recover_on_boot() == []  # still waiting for the human
+        await runner.resume(incident.id, decide("reject"))
+        await runner.join()
+        state = await values(runner, incident.id)
+
+    assert state["decision"].kind == "reject"
+    assert state["outcome"] == "rejected"
+    assert (await env.repo.get(incident.id)).status == "closed"
+    assert (await env.nodes(incident.id, "node_finished"))[-2:] == ["approval", "report"]
+
+
+async def test_start_twice_does_not_run_the_graph_twice(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await runner.start(incident)
+        await runner.start(incident)  # while the first run is in flight
+        await runner.join()
+        await runner.start(incident)  # after it finished
+        await runner.join()
+
+    assert await env.nodes(incident.id) == M2_PATH
+
+
+async def test_a_failing_node_marks_the_incident_failed(tmp_path, monkeypatch):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+
+    def make(deps):
+        async def node(state):
+            raise RuntimeError("boom")
+
+        return node
+
+    monkeypatch.setattr(propose, "make", make)
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await runner.start(incident)
+        await runner.join()
+
+    assert (await env.repo.get(incident.id)).status == "failed"
+    notices = [e for e in await env.bus.history(incident.id) if e.kind == "notice"]
+    assert notices and "RuntimeError" in notices[-1].payload["text"]
+
+
+async def test_a_decision_for_a_run_that_is_not_waiting_changes_nothing(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await runner.resume(incident.id, decide("approve"))  # never started
+        await runner.join()
+        assert await env.nodes(incident.id) == []
+        assert (await env.repo.get(incident.id)).status == "open"
+
+        await runner.start(incident)
+        await runner.join()
+        await runner.resume(incident.id, decide("approve"))  # already finished
+        await runner.join()
+
+    assert await env.nodes(incident.id) == M2_PATH
+    assert (await env.repo.get(incident.id)).status == "closed"
+
+
+async def test_recover_on_boot_closes_a_finished_thread_whose_status_never_settled(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await runner.start(incident)
+        await runner.join()
+        # Bleep died after the last checkpoint but before the status was written.
+        await env.repo.set_status(incident.id, "investigating")
+
+        second = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await second.recover_on_boot()
+        await second.join()
+
+    assert (await env.repo.get(incident.id)).status == "closed"

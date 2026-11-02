@@ -1,0 +1,72 @@
+# Graph
+
+How one incident is worked: the LangGraph state, the nodes in order, where the loops go, and how a run survives a restart (`backend/src/bleep/graph/`, `backend/src/bleep/incidents/runner.py`).
+
+## Node order
+
+```mermaid
+flowchart LR
+    S((start)) --> G[gather]
+    G --> I[investigate]
+    I -->|budget spent| R[report]
+    I --> D[diagnose]
+    D -->|low confidence, first round| I
+    D --> P[propose]
+    P -->|no action| R
+    P -->|act| A[approval]
+    A -->|instruct| P
+    A -->|reject| R
+    A -->|approve| R
+    R --> E((end))
+```
+
+| Node | Does | Routes on |
+|---|---|---|
+| `gather` | Collects containers, recent logs, host basics, rules and similar past incidents. No model. | always to `investigate` |
+| `investigate` | The model reads with read-only tools, within a tool-call budget. | `outcome == "budget"` → `report`, else `diagnose` |
+| `diagnose` | A structured `Diagnosis`. | low confidence after the first round → `investigate`, else `propose` |
+| `propose` | A `Proposal`: one to three allowlisted steps, or no action. | `act` → `approval`, `no_action` → `report` |
+| `approval` | Waits for the human (`interrupt()`). | `instruct` → `propose`, `reject` or `approve` → `report` |
+| `report` | Sets the outcome. | end |
+
+Gather, the topology and the runner are built; Investigate, Diagnose, Propose and Approval are placeholders that let a run go end to end (no-op, an `unsure` diagnosis, `no_action`, wait and route), each replaced by its own task. Execute and Verify come between Approval and Report in Milestone 3; until then an approved plan is reported with the outcome `unverified`, because nothing ran and nothing was checked.
+
+## State
+
+`IncidentState` (`graph/state.py`) is a `TypedDict`; the models it holds are in `schemas/graph.py`.
+
+| Key | Holds | Written by |
+|---|---|---|
+| `incident_id`, `subject`, `signals` | Which incident, about what, and the signals that opened it | the runner, at start |
+| `context` | `GatherContext`: containers, guarded log excerpts, host basics, top memory users (host incidents), host and service rules, similar past incidents, `gaps` | `gather` |
+| `messages` | The model conversation (`add_messages` reducer) | `investigate` |
+| `investigate_rounds`, `tool_calls_used` | Budget counters | `investigate` |
+| `diagnosis` | `Diagnosis(root_cause, category, evidence, confidence, affected_services, unsure)` | `diagnose` |
+| `proposal`, `instructions` | `Proposal(kind, steps, reason, verification, human_instructions)`; the human's instructions so far | `propose`, `approval` |
+| `decision`, `grant` | The human's `Decision`; the `ApprovalGrant` act tools check | `approval` |
+| `execution`, `verify_loops`, `verification` | Step results and the verify loop | Milestone 3 |
+| `outcome`, `report` | `resolved`, `rejected`, `no_action`, `unverified`, `budget` or `unsure`; the write-up | `report` (or a node that ends the run early) |
+
+## Choices
+
+- **Every Milestone 2 model is defined up front in `schemas/graph.py`.** `StepResult`, `VerificationResult` and `Report` are minimal placeholders for Milestone 3. Reason: the node tasks run side by side and each needs the others' shapes fixed (#16).
+- **One module per node, owning its `make(deps)` and its `route(state)`.** `graph/build.py` only wires them and lists each route's possible targets. Reason: a node task changes its own module and nothing else (#16).
+- **Dependencies are passed once, as `GraphDeps`.** Registry, tool registry, a model factory (`role → chat model`), memory, bus, approvals, notifier, guard log, settings and the cost ledger. Nodes are closures over it; the state holds only data. Reason: the state is checkpointed, and a connection or a model client does not belong in a checkpoint (#16).
+- **Memory, notifier, approvals and settings are Protocols with small defaults.** `NullMemory` recalls nothing, `NullNotifier` sends nothing beyond the bus, `InMemoryApprovals` keeps requests in a dict, `StaticSettings` serves the default budgets, the env's model settings and the three Docker actions. Reason: the graph runs and is tested before long-term memory, Telegram, the approvals table and the settings store exist (#16).
+- **`Approvals.request` takes one `TargetSnapshot` per plan target.** Reason: a plan has up to three steps, and each target must be re-checked before Execute (#16).
+- **Gather makes no model call.** It reads through the registry and the engine only; a test fails if the model factory is even asked for a model. Reason: the first look is cheap, repeatable and cannot be steered by the logs it reads (#16).
+- **Gather refreshes the host first.** It lists the containers again before reading them. Reason: the incident is about the state now, and the watcher's last poll can be 30 s old (#16).
+- **Log excerpts: the last 200 lines of each affected container, through the guard.** Affected means the containers the signals name, or every container of the service when none does (a URL check), at most 5. Each excerpt goes through `guard_text` (redacted, cleaned, capped at 8,000 characters, wrapped as `<untrusted>`), and redactions are recorded in the guard log. Reason: logs are the main way hostile text reaches the model, so they enter the state already safe to put in a prompt (#16).
+- **A host incident gets the top 5 containers by memory.** `docker stats` on the running containers, at most 8 at once. Reason: when a host runs out of memory the first question is who is using it (#16).
+- **Basics come from the registry, not a new SSH read.** Reason: the registry reads them at most every 60 s already; a second read would double the SSH traffic for no new information (#16).
+- **What Gather cannot read becomes a line in `gaps`, never an error.** An unreachable host, a vanished service or a failed recall each add one fixed, short line ("logs of shop-web-1: host unreachable"); engine error text is not copied in. Reason: the run must go on with what it has, and Bleep's own lines must not carry host text (#16).
+- **Similar incidents are asked for with `"<service or host>: <signal kinds>"` and the service id, top 3.** Reason: what failed and where is the useful similarity at the start of an incident, and the id lets memory rank the same service first (#16).
+- **Every node publishes `node_started` and `node_finished` with `{"node": name}`.** A wrapper in `build.py` does it, so no node can forget. Reason: these events are the live reasoning view (#16).
+- **A node that calls `interrupt()` runs again from its first line on resume.** It publishes `node_started` again and no `node_finished` before the pause, and anything it does before `interrupt()` must be safe to repeat. Reason: that is how LangGraph resumes; the approval node is the one this matters for (#16).
+- **Checkpoints go to `checkpoints.sqlite` through `AsyncSqliteSaver`, one thread per incident (`thread_id` = incident id).** `open_checkpointer(path)` opens it for the app's lifetime. Reason: a run can wait hours for a human and must outlive a restart (#16).
+- **The checkpoint serializer may rebuild only the state's own models.** `checkpoint_types()` walks `IncidentState` for every pydantic model, nested ones included, and passes them to LangGraph's `allowed_msgpack_modules`. Reason: without the list LangGraph rebuilds any class a checkpoint row names, and already warns that it will stop doing so (#16).
+- **The runner runs each incident in a background task.** `start(incident)` and `resume(incident_id, decision)` return at once; one incident never runs twice at the same time, and a second `start` while one is in flight returns that run. Reason: the watcher and the Telegram poller must not wait for a model (#16).
+- **`start` goes on from wherever the thread stands.** No checkpoint: a new run from Gather with the incident's signals. A checkpoint mid-graph: on from it. Waiting at approval or finished: left as it is. Reason: starting an incident twice, or after a restart, must never repeat work (#16).
+- **`recover_on_boot` restarts every unfinished incident except those `awaiting_approval`.** Reason: those are waiting for a human, and their checkpoint holds them until a decision arrives (#16).
+- **A decision for a run that is not waiting changes nothing.** It is logged and dropped. Reason: a late or duplicate decision must not restart or fail a finished run (#16).
+- **The runner keeps the incident's status in step.** `investigating` while a run is in flight (also after a decision, so a crash then is recovered), `awaiting_approval` at the interrupt, `resolved` when the outcome is `resolved`, else `closed`. A node that raises marks the incident `failed` and publishes a `notice` naming the error type. Reason: the status is what the dashboard and the boot recovery read (#16).
