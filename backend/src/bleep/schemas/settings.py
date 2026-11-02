@@ -43,3 +43,20 @@ class Budgets(BaseModel):
     verify_loops: int = 2
     incident_tokens: int = 150_000
     daily_cost_usd: float = 1.0
+
+
+class Thresholds(BaseModel):
+    """When a signal becomes an incident. Seconds unless the name says otherwise."""
+
+    container_grace_s: int = 60
+    repeated_deaths: int = 3
+    repeated_window_s: int = 600
+    url_failures_to_open: int = 2
+    url_slow_ms: int = 5000
+    disk_percent: float = 90
+    memory_available_percent_min: float = 5
+    memory_polls: int = 3
+    load_per_cpu: float = 2.0
+    load_polls: int = 3
+    host_unreachable_s: int = 300
+    debounce_s: int = 30
