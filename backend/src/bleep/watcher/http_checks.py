@@ -1,6 +1,6 @@
 """Outside-in URL checks: does the public URL answer the way the service's owner expects?
 
-`check_url` is one check and is also what Verify (Task 24) uses after a fix. `UrlWatcher` runs
+`check_url` is one check and is also what Verify uses after a fix. `UrlWatcher` runs
 every configured URL of one host on a timer and feeds each result to the detector, good or bad,
 so its failure streaks can reset (docs/design/watcher.md).
 """
@@ -48,7 +48,8 @@ async def check_url(
     """One GET, redirects followed. Never raises: every failure is a `UrlCheck` with `ok` False.
 
     Fails on a wrong status, a timeout, a connection error, a reply slower than `slow_ms` or a
-    body (first 64 KB only) without `body_contains`. The error text never quotes the body.
+    body (first 64 KB only) without `body_contains`. The error text never quotes the body,
+    a header or any other text the server sent.
     """
     started = clock()
     status: int | None = None
@@ -67,8 +68,8 @@ async def check_url(
         error = f"no complete reply within {timeout_s:g} s"
     except httpx.TimeoutException:
         error = f"timed out after {timeout_s:g} s"
-    except httpx.HTTPError as problem:
-        error = f"{type(problem).__name__}: {problem}".strip(": ")
+    except Exception as problem:  # httpx.HTTPError, InvalidURL, a bad header: this URL failed
+        error = f"request failed ({type(problem).__name__})"  # never the text: a server wrote it
     latency_ms = round((clock() - started) * 1000)
     if error is None:
         if status != cfg.expect_status:
@@ -190,7 +191,16 @@ class UrlWatcher:
         return list(await asyncio.gather(*(self._one(sid, cfg) for sid, cfg in targets)))
 
     async def _one(self, service_id: str, cfg: UrlCheckConfig) -> UrlCheck:
-        check = await check_url(self._client, cfg)
+        try:
+            check = await check_url(self._client, cfg)
+        except Exception as problem:  # check_url does not raise; if it ever does, this URL failed
+            log.exception("url check %s for host %s crashed", cfg.url, self.host_id)
+            check = UrlCheck(
+                url=cfg.url,
+                ok=False,
+                latency_ms=0,
+                error=f"check crashed: {type(problem).__name__}",
+            )
         at = self._clock()
         signal = Signal(
             subject=Subject(kind="service", host_id=self.host_id, service_id=service_id),

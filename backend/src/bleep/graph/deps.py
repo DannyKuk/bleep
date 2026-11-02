@@ -5,12 +5,14 @@ graph runs (and is tested) before long-term memory, Telegram and the settings st
 later piece is passed in their place. The app passes `incidents.approvals.ApprovalStore`.
 """
 
+import asyncio
 import secrets
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
+import httpx
 from langchain_core.language_models import BaseChatModel
 
 from bleep.guard.grant import grant_token, plan_hash
@@ -235,3 +237,7 @@ class GraphDeps:
     guard_log: GuardLogger | None = None
     settings_store: SettingsSource = field(default_factory=StaticSettings)
     clock: Callable[[], datetime] = utcnow
+    # Waiting between verification checks; tests pass one that only records the delay.
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+    # The client Verify checks URLs with; None makes it open one for the run of the node.
+    http: httpx.AsyncClient | None = None

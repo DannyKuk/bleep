@@ -27,6 +27,7 @@ flowchart LR
 | `diagnose` | A structured `Diagnosis`. | low confidence after the first round → `investigate`, else `propose` |
 | `propose` | A `Proposal`: one to three allowlisted steps, or no action, checked in code (`guard/plan_check.py`) before a human sees it. | `act` → `approval`, `no_action` → `report` |
 | `approval` | Snapshots the target containers, stores the plan as a pending approval, notifies, and waits for the human (`interrupt()`). | `instruct` or a target it could not read → `propose`, `reject` or `approve` → `report` |
+| `verify` | Waits, then checks the planned containers and URLs; built and tested on its own, wired in after Execute (#25). | failed with loop-backs left → `investigate`, else `report` |
 | `report` | Sets the outcome. | end |
 
 Gather, Investigate, Diagnose, Propose, Approval, the topology and the runner are built; Report is still the Milestone 2 stub that only sets the outcome. Execute and Verify come between Approval and Report in Milestone 3; until then an approved plan is reported with the outcome `unverified`, because nothing ran and nothing was checked.
@@ -44,12 +45,13 @@ Gather, Investigate, Diagnose, Propose, Approval, the topology and the runner ar
 | `diagnosis` | `Diagnosis(root_cause, category, evidence, confidence, affected_services, unsure)` | `diagnose` |
 | `proposal`, `instructions` | `Proposal(kind, steps, reason, verification, human_instructions)`; the human's instructions so far | `propose`, `approval` |
 | `approval`, `decision`, `grant` | The approval this run last consumed (`ApprovalRequest(id, plan_hash)`); the human's `Decision`; the `ApprovalGrant` act tools check | `approval` |
-| `execution`, `verify_loops`, `verification` | Step results and the verify loop | Milestone 3 |
+| `execution` | Step results | Milestone 3 |
+| `verify_loops`, `verification` | Loop-backs from Verify so far; the last `VerificationResult(ok, checks, attempt)` | `verify` |
 | `outcome`, `report` | `resolved`, `rejected`, `no_action`, `unverified`, `budget` or `unsure`; the write-up | `report` (or a node that ends the run early) |
 
 ## Choices
 
-- **Every Milestone 2 model is defined up front in `schemas/graph.py`.** `VerificationResult` and `Report` are minimal placeholders for Milestone 3; `StepResult` is the act tools' result since #24 ([guard](guard.md#act-tools)). Reason: the node tasks run side by side and each needs the others' shapes fixed (#16).
+- **Every Milestone 2 model is defined up front in `schemas/graph.py`.** `Report` is a minimal placeholder for Milestone 3; `StepResult` is the act tools' result since #24 ([guard](guard.md#act-tools)), and `VerificationResult` and `Check` were filled in by Verify (#26). Reason: the node tasks run side by side and each needs the others' shapes fixed (#16).
 - **One module per node, owning its `make(deps)` and its `route(state)`.** `graph/build.py` only wires them and lists each route's possible targets. Reason: a node task changes its own module and nothing else (#16).
 - **Dependencies are passed once, as `GraphDeps`.** Registry, tool registry, act tools, a model factory (`role → chat model`), memory, bus, approvals, notifier, guard log, settings, the cost ledger and the action log (#24). Nodes are closures over it; the state holds only data. Reason: the state is checkpointed, and a connection or a model client does not belong in a checkpoint (#16).
 - **Memory, notifier, approvals and settings are Protocols with small defaults.** `NullMemory` recalls nothing, `NullNotifier` sends nothing beyond the bus, `InMemoryApprovals` keeps requests in a dict (tests only; the app's store is `ApprovalStore`, #20), `StaticSettings` serves the default budgets, the env's model settings and the three Docker actions. Reason: the graph runs and is tested before long-term memory, Telegram and the settings store exist (#16).
@@ -108,3 +110,11 @@ Gather, Investigate, Diagnose, Propose, Approval, the topology and the runner ar
 - **The node publishes `approval_requested` (`approval_id`, `plan_hash`) and `decision` (`kind`, `text`, `via`), and calls `Notifier.proposal`.** Reason: the bus is the dashboard's timeline; the notifier carries the question to Telegram (#20).
 - **An instruction appends its text to `instructions` and goes back to Propose**; a reject goes to Report with the outcome `rejected`; a `no_action` proposal never reaches Approval (Propose routes it to Report). Reason: §4.4 step 5 (#20).
 - **Reminders re-send a pending approval every `approval_reminder_min` minutes (60) and never decide it.** The n-th reminder is due n periods after the request; the count is stored, so after downtime one reminder goes out, not one per missed period, and it is counted before it is sent (a crash loses a reminder rather than repeating one). Only approvals of open incidents are reminded. The period is read from the settings at every tick. Reason: a plan can wait days for an answer, and Bleep must never act without an explicit yes (§2, §4.4) (#20).
+
+## Verify
+
+- **Waits 20 s, then checks up to 3 times, 10 s apart, and stops at the first check where everything passes.** The waits are `deps.sleep` (default `asyncio.sleep`), so tests inject a clock and never sleep. Reason: a restarted service needs time to come up, and one early failed check should not condemn a fix (#26).
+- **A check is ok only when every planned container is running and healthy (or running with no healthcheck) and every planned URL passes `check_url`.** Containers are read live with `inspect`, not from the registry's last poll. A URL the service already configures keeps its expected status and body text; one the model added gets the defaults. Reason: "running" alone is not "fixed" (§2) (#26).
+- **An empty verification plan falls back to the service's containers (minus protected ones) and URLs, then to the containers the steps acted on.** With nothing at all to check the outcome is `unverified` at once. Reason: a proposal that forgot to say what to check must not make a fix look verified by checking nothing (#26).
+- **A failure with fewer than `Budgets.verify_loops` (2) loop-backs so far goes to Investigate, then `unverified`.** `verify_loops` counts loop-backs, so a stubborn failure is verified three times in all. The loop-back appends `prompts/graph/verify_failed.md` with the failed checks only (Bleep's own one-line details; a URL failure names its kind, never text the server sent), which Investigate reads as the next round's instruction, as with Diagnose's. Success sets the outcome `resolved`; nothing else does. Reason: a second look is cheap, an endless one is not (#26).
+- **Each check publishes a `verification` event (`ok`, `attempt`, `checks`); the notifier hears the final result of the round once.** A notifier that raises is logged and does not fail the node. Reason: the live view shows progress; a chat message per check would be noise (#26).
