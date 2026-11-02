@@ -190,7 +190,7 @@ async def test_a_failing_notifier_does_not_strand_the_approval(run, plans):
     incident_id = await run.start()
 
     assert (await run.env.repo.get(incident_id)).status == "awaiting_approval"
-    assert any("notif" in n["text"] for n in await run.events(incident_id, "notice"))
+    assert any("channel" in n["text"] for n in await run.events(incident_id, "notice"))
     await run.decide(incident_id, decide("reject"))
     assert (await run.state(incident_id))["decision"].kind == "reject"
 
