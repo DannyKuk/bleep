@@ -39,9 +39,9 @@ async def _host_command(ctx: ToolContext, command: str) -> str:
         return NEEDS_SSH
     try:
         name = (await shell.run(["uname", "-s"], 20.0)).stdout.strip()
-        if name not in ("Linux", "Darwin"):
+        if name != "Linux" and name != "Darwin":
             return f"host commands are not supported on {await _guard(ctx, 'error', name)}"
-        text = await run_allowed(shell, command, name)  # type: ignore[arg-type]
+        text = await run_allowed(shell, command, name)
     except CommandNotAllowed as refusal:
         if ctx.guard_log is not None:
             ctx.guard_log.record(ctx.incident_id, "refused_command", command[:200])

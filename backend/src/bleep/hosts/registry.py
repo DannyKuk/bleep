@@ -17,6 +17,7 @@ from bleep.schemas.services import HostState, Service
 log = logging.getLogger(__name__)
 
 BASICS_EVERY_S = 60  # the host probe cadence
+BASICS_RETRY_S = 10  # after a failed read
 
 Connector = Callable[[HostConfig], Awaitable[tuple[SshSession | None, Engine]]]
 
@@ -44,6 +45,7 @@ class _Entry:
     services: list[Service] | None = None
     logged: set[str] = field(default_factory=set)
     basics_at: datetime | None = None
+    basics_wait: float = BASICS_EVERY_S
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -179,15 +181,19 @@ class Registry:
             if error not in entry.logged:
                 entry.logged.add(error)
                 log.warning("%s", error)
-        await self._refresh_basics(entry)
         self._mark(entry, reachable=True, last_seen=self._clock(), error=error)
+        await self._refresh_basics(entry)  # after the mark: a slow read never delays reachability
 
     async def _refresh_basics(self, entry: _Entry) -> None:
         """Read disk, memory and load at most every BASICS_EVERY_S; a failure keeps the old ones."""
         now = self._clock()
-        if entry.basics_at is not None and (now - entry.basics_at).total_seconds() < BASICS_EVERY_S:
+        if (
+            entry.basics_at is not None
+            and (now - entry.basics_at).total_seconds() < entry.basics_wait
+        ):
             return
-        entry.basics_at = now  # a failed read waits a full interval too
+        entry.basics_at = now
+        entry.basics_wait = BASICS_RETRY_S  # until a read succeeds
         try:
             if entry.session is not None:
                 basics = await host_basics(entry.session)
@@ -198,6 +204,7 @@ class Registry:
         except Exception as error:  # basics are a nicety: never make the host look down
             log.warning("%s: host basics unavailable: %s", entry.state.config.id, _describe(error))
             return
+        entry.basics_wait = BASICS_EVERY_S
         self._mark(entry, basics=basics)
 
     def _mark(self, entry: _Entry, **changes: object) -> None:

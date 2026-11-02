@@ -331,3 +331,42 @@ async def test_registry_gives_the_shell_of_an_ssh_host():
     reg, _ = basics_registry(shell)
     await reg.start()
     assert reg.shell("a") is shell
+
+
+async def test_failed_basics_retry_after_10_seconds_a_success_waits_60():
+    from bleep.hosts.ssh import SshUnavailable
+    from fakes import FakeShell
+
+    shell = FakeShell("linux", {("uname", "-s"): SshUnavailable("a", "gone")})
+    reg, clock = basics_registry(shell)
+    await reg.start()
+    assert reg.hosts()[0].basics is None
+    calls = len(shell.calls)
+    clock.now = T0 + timedelta(seconds=5)
+    await reg.refresh("a")
+    assert len(shell.calls) == calls  # too soon
+    del shell.replies[("uname", "-s")]
+    clock.now = T0 + timedelta(seconds=11)
+    await reg.refresh("a")
+    assert reg.hosts()[0].basics is not None
+    clock.now = T0 + timedelta(seconds=30)  # 19 s after the success
+    calls = len(shell.calls)
+    await reg.refresh("a")
+    assert len(shell.calls) == calls
+
+
+async def test_reachable_is_marked_before_basics_are_read():
+    from fakes import FakeShell
+
+    shell = FakeShell("linux")
+    reg, _ = basics_registry(shell)
+    seen = []
+    original = shell.run
+
+    async def run(argv, timeout=20.0):
+        seen.append(reg.hosts()[0].reachable)
+        return await original(argv, timeout)
+
+    shell.run = run
+    await reg.start()
+    assert seen and all(seen)

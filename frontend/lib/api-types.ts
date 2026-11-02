@@ -13,11 +13,11 @@ export interface DiskView {
 
 export interface BasicsView {
   os: string;
-  cpus: number;
-  mem_total: number;
-  mem_available: number;
-  load1: number;
-  load15: number;
+  cpus: number | null;
+  mem_total: number | null;
+  mem_available: number | null;
+  load1: number | null;
+  load15: number | null;
   disks: DiskView[];
 }
 
