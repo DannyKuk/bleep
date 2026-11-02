@@ -9,7 +9,7 @@ import re
 from collections.abc import Callable
 from functools import lru_cache
 
-from bleep.guard.sanitize import MAX_LINE, cut_points, join_cut, normalise_newlines
+from bleep.guard.sanitize import MAX_LINE, VALUE_END, cut_points, join_cut, normalise_newlines
 
 REDACTED = "<redacted>"
 
@@ -30,16 +30,26 @@ _SECRET_WORDS = {
     "authkey",
 }  # fmt: skip
 _SECRET_SUFFIXES = ("password", "passwd", "apikey", "secret", "authkey")  # PGPASSWORD, TS_AUTHKEY
-# Words that keep their meaning with a trailing "s" (PASSWORDS, API_KEYS). Not "tokens": that is
-# almost always a count (max_tokens, prompt_tokens).
+# Words that keep their meaning with a trailing "s" (PASSWORDS, API_KEYS, access_tokens).
 _PLURALS = {
     "password", "passwd", "pwd", "passphrase", "credential", "apikey", "key", "authkey",
-    "secretkey", "privatekey", "accesskey",
+    "secretkey", "privatekey", "accesskey", "token",
 }  # fmt: skip
-_KEY_PREFIXES = {  # `<prefix>_key` is a secret too
-    "api", "access", "private", "encryption", "signing", "master", "ssh", "license", "session",
-    "jwt", "crypto", "auth", "hmac", "aes", "webhook", "app", "stripe", "openai", "anthropic",
-    "sendgrid", "mailgun", "admin", "client", "shared", "service", "deploy", "root",
+# `<x>_key` and `xKey` are secrets (stripe_key, aws_key, googleKey) unless x says the key is an
+# identifier: a database, cache, map or storage key.
+_PLAIN_KEY_PREFIXES = {
+    "cache", "primary", "foreign", "sort", "partition", "routing", "idempotency", "hash", "row",
+    "map", "dict", "lookup", "unique", "composite", "shard", "object", "s3", "bucket", "cursor",
+    "page", "version", "public", "index", "lock", "queue", "job", "group", "order", "message",
+    "event", "metric", "label", "tag", "field", "column", "config", "setting", "translation",
+    "dedup", "dedupe", "limit", "ratelimit", "request", "trace", "correlation", "natural",
+    "surrogate", "compound", "parent", "child", "ref", "cluster", "node", "redis", "kafka", "file",
+    "registry", "record", "entity", "item", "list", "table", "sequence", "id",
+}  # fmt: skip
+# After `tokens`, a count: max_tokens, prompt_tokens. Other `*_tokens` are secrets.
+_TOKEN_COUNTS = {
+    "max", "min", "prompt", "completion", "total", "input", "output", "num", "cached", "reasoning",
+    "context", "audio", "remaining", "used",
 }  # fmt: skip
 _ENV_KEY = re.compile(r"[A-Z0-9_]+_KEYS?")  # APP_KEY, STRIPE_KEY, PUSHER_APP_KEY; not cache_key
 # A word AFTER the last secret word that marks a setting about the secret: token_count,
@@ -49,17 +59,19 @@ _NOT_A_SECRET = {
     "expiration", "ttl", "endpoint", "header", "prefix", "limit", "max", "min", "mode", "size",
     "bytes", "format", "algorithm", "alg", "kind", "provider", "status", "required", "enabled",
     "disabled", "policy", "dir", "folder", "method", "mechanism", "backend", "source", "audience",
-    "scheme", "stdin",
+    "scheme", "stdin", "used", "hashes",
 }  # fmt: skip
 # Values that are never secrets, compared case-insensitively against the whole value.
 _PLAIN_VALUES = {
     "true", "false", "yes", "no", "on", "off", "none", "null", "nil", "empty", "unset", "required",
     "enabled", "disabled", "expired", "invalid", "missing", "ok", "failed", "***", "<redacted>",
 }  # fmt: skip
-# `${VAR}`, `${env:VAR}`, `${secrets.db}` and `$UPPER_VAR`; a default (`${VAR:-x}`, `${VAR:=x}`,
-# `${VAR-x}`) holds a literal value and is not a reference.
+# `${VAR}`, `${secrets.db}`, `${env:VAR}` (a known source before the colon) and `$UPPER_VAR`. A
+# default (`${VAR:-x}`, `${VAR:=x}`, `${VAR-x}`, Spring's `${VAR:x}`) holds a literal value and is
+# not a reference.
 _REFERENCE = re.compile(
-    r"\$\{[A-Za-z_][A-Za-z0-9_.]*(?::[A-Za-z_][A-Za-z0-9_.]*)?\}|\$[A-Z_][A-Z0-9_]*"
+    r"\$\{(?:(?:env|file|secrets|secret|vault|ssm|sys|aws):)?[A-Za-z_][A-Za-z0-9_.]*\}"
+    r"|\$[A-Z_][A-Z0-9_]*"
 )
 _SMALL_INT = re.compile(r"[0-9]{1,6}")
 _LOOKS_LIKE_PAIR = re.compile(r"[A-Za-z_][\w.-]*=[^=\s]")
@@ -74,14 +86,20 @@ def _is_secret_key(key: str) -> bool:
         return False
     if _ENV_KEY.fullmatch(key):
         return True
-    words = [_singular(w.lower()) for w in _WORDS.findall(key)]
+    raw = [w.lower() for w in _WORDS.findall(key)]
+    words = [_singular(w) for w in raw]
     last = -1
     for index, word in enumerate(words):
+        before = words[index - 1] if index > 0 else None
+        if before and before.isdigit() and index > 1:
+            before = words[index - 2] + before  # s3_key, i18n_key
+        if raw[index] == "tokens" and before in _TOKEN_COUNTS:
+            continue
         if (
             word in _SECRET_WORDS
             or word.endswith(_SECRET_SUFFIXES)
             or (len(word) > 5 and word.endswith("token"))
-            or (word == "key" and index > 0 and words[index - 1] in _KEY_PREFIXES)
+            or (word == "key" and before is not None and before not in _PLAIN_KEY_PREFIXES)
         ):
             last = index
     if last < 0:
@@ -93,8 +111,9 @@ def _is_secret_key(key: str) -> bool:
 
 
 def _singular(word: str) -> str:
-    if word.endswith("s") and (word[:-1] in _PLURALS or word[:-1].endswith(_SECRET_SUFFIXES)):
-        return word[:-1]
+    stem = word[:-1]
+    if word.endswith("s") and (stem in _PLURALS or stem.endswith((*_SECRET_SUFFIXES, "token"))):
+        return stem
     return word
 
 
@@ -262,10 +281,12 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
 ]
 
 BLOCK_MAX_LINES = 200
-# A log prefix before the YAML: a timestamp, a Compose `web-1  | ` or a `[tag] `. It is skipped
+# A log prefix before the YAML: a timestamp, syslog's `Nov  2 10:00:00 host app: `, a Compose
+# `web-1  | ` or a `[tag] `. It is skipped
 # before measuring indentation, so `web-1  |   x` is indented by 2.
 _LOG_PREFIX = re.compile(
     r"(?:\d{4}-\d\d-\d\d[T ][\d:.,]{1,20}Z?[ \t]"
+    r"|[A-Z][a-z]{2} [ \d]\d \d\d:\d\d:\d\d [^\s:]{1,64} [^\s:\[]{1,64}(?:\[\d{1,10}\])?: "
     r"|[A-Za-z0-9_.-]{1,64}[ \t]*\|[ \t]"
     r"|\[[^\]\n]{0,40}\][ \t])?"
 )
@@ -428,21 +449,29 @@ def _cut_line(line: str) -> tuple[str, int]:
     The kept head comes from redacting everything up to 300 characters past the head cut, the
     kept tail from redacting everything from 300 characters before the tail cut to the end of the
     line. Each window runs to the line's end on the kept side, so no kept token is cut by a window
-    edge, and both are under about 2,200 characters, so the work stays bounded.
+    edge, and both are under about 2,200 characters, so the work stays bounded. If the head window
+    ends inside a redacted value and no value end follows before the tail, that value fills the
+    tail too, and the tail is dropped.
     """
-    head, tail = cut_points(line, (MAX_LINE - 300) // 2, whole_words=True)
-    kept_head = _kept_head(line[:head], line[head : head + WINDOW])
+    head, tail = cut_points(line, (MAX_LINE - 300) // 2, at_value_ends=True)
+    kept_head, open_value = _kept_head(line[:head], line[head : head + WINDOW])
+    if open_value and not VALUE_END.search(line, min(head + WINDOW, tail), tail + 1):
+        tail = len(line)  # the redacted value runs on through the middle and the whole tail
     kept_tail = _kept_tail(line[max(0, tail - WINDOW) : tail], line[tail:])
     found = max(0, kept_head.count(REDACTED) - line.count(REDACTED, 0, head))
     found += max(0, kept_tail.count(REDACTED) - line.count(REDACTED, tail))
     return join_cut(kept_head, tail - head, kept_tail, _lead(line)), found
 
 
-def _kept_head(head: str, after: str) -> str:
+# A JWT the head window's far edge cut before its third segment, so the JWT pattern missed it.
+_CUT_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*\Z")
+
+
+def _kept_head(head: str, after: str) -> tuple[str, bool]:
     """The part of `redact(head + after)` that stands for `head`, never ending inside a
-    `<redacted>`. Where the mapping is unsure it keeps less, and any piece of the redacted window
-    is safe to keep."""
-    new = _redact_all(head + after)[0]
+    `<redacted>`, and whether the window ended inside a redacted value. Where the mapping is
+    unsure it keeps less, and any piece of the redacted window is safe to keep."""
+    new = _CUT_JWT.sub(REDACTED, _redact_all(head + after)[0])
     if new.endswith(after):  # `after` came through unchanged
         end = len(new) - len(after)
     elif new.startswith(head):  # `head` came through unchanged
@@ -453,7 +482,7 @@ def _kept_head(head: str, after: str) -> str:
     marker = new.rfind(REDACTED, max(0, end - len(REDACTED) + 1), end + len(REDACTED) - 1)
     if marker != -1:
         end = marker + len(REDACTED)
-    return new[:end]
+    return new[:end], new.endswith(REDACTED)
 
 
 def _kept_tail(before: str, tail: str) -> str:

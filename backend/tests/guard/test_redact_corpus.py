@@ -41,7 +41,7 @@ def test_secret_across_the_far_window_edge_is_redacted(secret, needles):
     for after in range(1450 - len(secret), 1650):
         for pad in ("a ", " a"):  # both phases, so the tail cut lands on every offset
             line = pad * 2500 + " " + secret + " " + ("y " * 1200)[:after]
-            tail = cut_points(line, HALF, whole_words=True)[1]
+            tail = cut_points(line, HALF, at_value_ends=True)[1]
             covered.add((tail + WINDOW) - line.index(secret))
             for out in (redact_text(line), guard_text("logs", line)[0]):
                 assert not any(n in out for n in needles), after
@@ -161,3 +161,80 @@ def test_many_short_secrets_on_a_cut_line_stay_idempotent():
     out, count = redact_with_count("pw=a " * 2000)
     assert "pw=a " not in out and redact_with_count(out) == (out, 0)
     assert count == out.count("<redacted>")
+
+
+def _b64(n: int, seed: int) -> str:
+    import base64
+    import random
+
+    rng = random.Random(seed)
+    return base64.urlsafe_b64encode(bytes(rng.randrange(256) for _ in range(n))).decode()[:n]
+
+
+@pytest.mark.parametrize("separators", [(",", ":"), (", ", ": ")])
+def test_compact_json_token_on_the_tail_cut_is_gone(separators):
+    payload, sig = _b64(900, 1), _b64(342, 2)
+    token = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9." + payload + "." + sig
+    headers = {"host": "api", "user-agent": "x" * 1500, "x-access-token": token, "accept": "*/*"}
+    record = {"level": "info", "msg": "upstream request", "req": {"headers": headers}}
+    line = json.dumps({**record, "body": "y" * 1700}, separators=separators)
+    out = guard_text("logs", line)[0]
+    assert sig[-40:] not in out and payload[-60:-20] not in out
+
+
+@pytest.mark.parametrize("key", ["access_token", "password", "session"])
+@pytest.mark.parametrize("length", [1000, 2500, 4000])
+def test_long_json_value_spanning_the_cut_middle_is_gone(key, length):
+    secret = "eyJhbGciOiJSUzI1NiJ9.eyJ" + _b64(length, 7) + "." + _b64(342, 8)
+    for pre in range(1000, 1900, 150):
+        for post in range(0, 1900, 300):
+            line = json.dumps({"a": "x" * pre, key: secret, "b": "y" * post}, separators=(",", ":"))
+            out = guard_text("logs", line)[0]
+            assert not any(secret[i : i + 16] in out for i in range(0, len(secret) - 16, 8)), pre
+
+
+def test_cookie_value_spanning_the_cut_middle_is_gone():
+    secret = _b64(2500, 3)
+    for pre in range(1000, 1900, 150):
+        line = "x" * pre + " Cookie: session=" + secret + ";theme=" + "y" * 900
+        out = guard_text("logs", line)[0]
+        assert not any(secret[i : i + 16] in out for i in range(0, len(secret) - 16, 8)), pre
+
+
+def test_head_cut_moves_back_at_most_256_characters():
+    line = '{"msg":"upstream request","pad":"' + "p" * 6000 + '"}'
+    head = redact_text(line).split("\n")[0]
+    assert len(head) >= HALF - 256
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "password=${DB_PASSWORD:hUnt3rZq9}",
+        "spring.datasource.password=${DB_PASSWORD:hUnt3rZq9}",
+        "password=${foo:hUnt3rZq9}",
+        "aws_key=hUnt3rZq9",
+        "googleKey: hUnt3rZq9",
+        "access_tokens=hUnt3rZq9",
+        "tokens: hUnt3rZq9",
+        "Nov  2 10:00:00 host app: password: |\nNov  2 10:00:01 host app:   hUnt3rZq9",
+    ],
+)
+def test_spring_defaults_vendor_keys_token_lists_and_syslog_blocks_are_redacted(text):
+    assert "hUnt3rZq9" not in redact_text(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "password=${env:DB_PASSWORD}",
+        "password=${vault:db}",
+        "cache_key=user:42",
+        "s3_key=uploads/a.png",
+        "partitionKey=tenant",
+        "total_tokens=1234",
+        "password_hashes=bcrypt",
+    ],
+)
+def test_sources_identifier_keys_and_token_counts_stay_readable(text):
+    assert redact_text(text) == text

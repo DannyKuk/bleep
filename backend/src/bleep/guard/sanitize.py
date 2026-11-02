@@ -55,7 +55,8 @@ def strip_control(text: str | bytes) -> str:
     return _INVISIBLE.sub("", _CONTROL.sub("", text))
 
 
-_WORD = re.compile(r"\S+")
+_SPACE = re.compile(r"\s")
+VALUE_END = re.compile(r"[\s\"',;&]")  # where an unquoted or quoted value can end
 MAX_LEAD = 200
 
 
@@ -89,31 +90,26 @@ def join_cut(head: str, dropped: int, tail: str, lead: str = "") -> str:
     return f"{head}\n{lead}[… {dropped} chars cut]\n{lead}{tail}"
 
 
-def cut_points(line: str, half: int, whole_words: bool = False) -> tuple[int, int]:
+def cut_points(line: str, half: int, at_value_ends: bool = False) -> tuple[int, int]:
     """Where the kept head ends and the kept tail starts: the nearest whitespace within 256
     characters, so a secret of 200 characters or less is never split by the cut.
 
-    With `whole_words`, a cut that still falls inside a word drops the rest of that word, so no
-    piece of a longer word (a long token) is kept, unless the word fills that whole side of the
-    line (a line without whitespace keeps its head and tail).
+    With `at_value_ends`, a quote, `,`, `;` or `&` also ends a value, so compact JSON and cookie
+    lines are cut between values. The head still moves back at most 256 characters; the tail moves
+    forward to the first value end however far it is, so the rest of a value that straddles the
+    tail cut is dropped. With no value end after it, the tail stays (a line without one keeps its
+    head and tail).
     """
+    ends = VALUE_END if at_value_ends else _SPACE
     head = half
     for i in range(half, max(half - SNAP, 0), -1):
-        if line[i].isspace():
+        if ends.match(line, i):
             head = i
             break
     tail = len(line) - half
-    for i in range(tail, min(tail + SNAP, len(line))):
-        if line[i].isspace():
-            tail = i
-            break
-    if whole_words:
-        if head > 0 and not line[head].isspace() and not line[head - 1].isspace():
-            start = head - _WORD.match(line[head - 1 :: -1]).end()
-            head = start if start > 0 else head
-        if tail < len(line) and not line[tail].isspace() and not line[tail - 1].isspace():
-            end = _WORD.match(line, tail).end()
-            tail = end if end < len(line) else tail
+    found = ends.search(line, tail, len(line) if at_value_ends else tail + SNAP)
+    if found:
+        tail = found.start()
     return head, max(head, tail)
 
 
