@@ -188,14 +188,90 @@ async def test_the_humans_instructions_are_in_the_next_prompt(tmp_path):
     assert "docker.restart shop-web-1" in sent.split("## Your previous plan")[1]
 
 
-async def test_an_unsure_diagnosis_proposes_no_action_without_a_model(tmp_path):
+async def test_an_unsure_diagnosis_still_asks_the_model_with_the_not_sure_framing(tmp_path):
     unsure = WEB_BROKEN.model_copy(update={"unsure": True, "confidence": 0.3})
-    env, state = await setup(tmp_path, diagnosis=unsure)
+    answer = reply(
+        kind="act",
+        steps=[restart("shop-web-1")],
+        reason="I am not sure why it fell over, but it is stopped; a restart is the smallest step.",
+        verification={},
+    )
+    env, state = await setup(tmp_path, answer, diagnosis=unsure)
 
+    update = await propose.make(env.deps)(state)
+
+    assert update["proposal"].kind == "act" and len(env.models.calls) == 1
+    assert "## Bleep is not sure" in prompt(env) and "I am not sure" in prompt(env)
+    assert propose.route(update) == "approval"  # the plan check and the human still apply
+
+
+async def test_a_sure_diagnosis_has_no_not_sure_section(tmp_path):
+    env, state = await setup(tmp_path, acting(restart("shop-web-1")))
+    await propose.make(env.deps)(state)
+    assert "Bleep is not sure" not in prompt(env)
+
+
+async def test_an_unsure_diagnosis_with_a_refused_plan_is_still_checked(tmp_path):
+    unsure = WEB_BROKEN.model_copy(update={"unsure": True, "confidence": 0.3})
+    env, state = await setup(
+        tmp_path, acting(restart("bleep-backend-1")), acting(restart("bleep-backend-1")),
+        diagnosis=unsure,
+    )  # fmt: skip
     proposal = (await propose.make(env.deps)(state))["proposal"]
+    assert proposal.kind == "no_action" and blocked(env)
 
+
+async def test_no_diagnosis_skips_the_model(tmp_path):
+    env, state = await setup(tmp_path, diagnosis=None)
+    proposal = (await propose.make(env.deps)(state))["proposal"]
     assert proposal.kind == "no_action" and proposal.steps == []
     assert env.models.calls == []
+
+
+async def test_the_live_run_a_killed_container_with_no_restart_policy_is_proposed_a_start(
+    tmp_path,
+):
+    from bleep.guard.plan_check import check_plan
+
+    engine = FakeEngine(
+        "a",
+        [
+            box("bleep-try", state="exited", exit_code=137, restart_policy="no"),
+            box("bleep-backend-1", "bleep", labels={"bleep.self": "true"}),
+        ],
+    )
+    env = await graph_env(tmp_path, engine=engine, host=demo_host(key="bleep-try"))
+    start = {"action": "docker.start", "host_id": "a", "target": "bleep-try"}
+    env.models.model.script = [
+        reply(
+            kind="act",
+            steps=[start],
+            reason="I am not sure who killed bleep-try (exit 137, no OOM); starting it is safe.",
+            verification={"containers": ["bleep-try"]},
+        )
+    ]
+    env.models.model.structured_output_unsupported = False
+    subject = Subject(kind="service", host_id="a", service_id=env.service_id("bleep-try"))
+    incident = await env.open(subject, kind="container_died", container="bleep-try")
+    base = {"incident_id": incident.id, "subject": subject}
+    context = (await gather.make(env.deps)(base))["context"]
+    unsure = Diagnosis(
+        root_cause="terminated by a kill signal; the sender is not established",
+        category="unknown",
+        confidence=0.45,
+        unsure=True,
+    )
+    state = base | {"context": context, "diagnosis": unsure}
+
+    update = await propose.make(env.deps)(state)
+
+    steps = update["proposal"].steps
+    assert steps == [PlanStep(action="docker.start", host_id="a", target="bleep-try")]
+    assert (
+        check_plan(update["proposal"], env.registry, env.deps.settings_store.enabled_actions(), "a")
+        == []
+    )
+    assert propose.route(update) == "approval"
 
 
 async def test_a_model_that_returns_no_usable_plan_degrades_to_no_action(tmp_path):

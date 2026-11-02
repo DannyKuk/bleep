@@ -15,8 +15,9 @@ from pydantic import BaseModel, Field, ValidationError
 
 from bleep.guard.pipeline import guard_text
 from bleep.guard.redact import REDACTED, redact_env, redact_text
+from bleep.hosts.discovery import is_self
 from bleep.hosts.engine import ContainerNotFound, EngineError, EngineUnavailable
-from bleep.schemas.docker import ContainerDetail, ContainerSummary
+from bleep.schemas.docker import ContainerDetail, ContainerSummary, DockerEvent
 from bleep.tools.registry import ToolContext, ToolSpec
 
 NOT_FOUND = "not found on this host"
@@ -87,7 +88,24 @@ def _tool(
 
 
 def _find(ctx: ToolContext, ref: str) -> ContainerSummary | None:
-    return ctx.registry.container(ctx.host_id, ref)
+    """The container on this host, or None; Bleep's own containers are never found."""
+    found = ctx.registry.container(ctx.host_id, ref)
+    return None if found is not None and _own(found) else found
+
+
+def _own(container: ContainerSummary) -> bool:
+    return is_self(container.labels)
+
+
+def _own_event(ctx: ToolContext, event: DockerEvent) -> bool:
+    """Docker labels every event of a Bleep container; the listing covers events without labels."""
+    if is_self(event.attributes):
+        return True
+    ref = event.container_id or event.container_name
+    known = ctx.registry.container(ctx.host_id, ref) if ref else None
+    if known is None and event.container_name:
+        known = ctx.registry.container(ctx.host_id, event.container_name)
+    return known is not None and _own(known)
 
 
 def _since(delta: timedelta) -> datetime:
@@ -112,6 +130,8 @@ async def _list(ctx: ToolContext) -> str:
     services = {c.name: s.name for s in ctx.registry.services(ctx.host_id) for c in s.containers}
     rows = ["name | service | state | health | image | restarts"]
     for c in await ctx.registry.engine(ctx.host_id).containers():
+        if _own(c):
+            continue
         rows.append(
             f"{c.name} | {services.get(c.name, '-')} | {c.state} | {c.health} | {c.image}"
             f" | {c.restart_count}"
@@ -194,6 +214,7 @@ async def _stats(ctx: ToolContext, container: str) -> str:
 async def _events(ctx: ToolContext, minutes: int = 30) -> str:
     now = datetime.now(UTC)
     events = await ctx.registry.engine(ctx.host_id).events(now - timedelta(minutes=minutes), now)
+    events = [e for e in events if not _own_event(ctx, e)]
     if not events:
         return await _guard(ctx, "events", f"(no events in the last {minutes} minutes)")
     lines = [

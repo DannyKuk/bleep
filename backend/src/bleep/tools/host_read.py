@@ -66,4 +66,9 @@ def _build(ctx: ToolContext) -> StructuredTool:
     )
 
 
-SPECS = [ToolSpec("host_command", "read", "host", _build)]
+def _offered(ctx: ToolContext) -> bool:
+    """A socket host has no shell, so the tool could only fail there."""
+    return ctx.registry.shell(ctx.host_id) is not None
+
+
+SPECS = [ToolSpec("host_command", "read", "host", _build, _offered)]

@@ -156,3 +156,12 @@ async def test_spent_budget_gives_the_fallback_without_a_model_call(tmp_path):
 
     assert d.unsure and d.category == "unknown"
     assert env.models.calls == []
+
+
+def test_the_diagnose_prompt_rates_the_failure_and_remedy_not_the_trigger():
+    from bleep import prompts
+
+    text = prompts.load("graph/diagnose", subject="s", signals="s", context="c", investigation="i")
+    assert "what broke, why the service is down, and what would bring it back" in text
+    assert "exit code 137" in text and "confident diagnosis" in text
+    assert "who or what triggered it" in text
