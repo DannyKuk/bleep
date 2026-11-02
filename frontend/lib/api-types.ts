@@ -1,4 +1,4 @@
-// Hand-written from the M1 API contract (Tasks 8 and 9). Once Task 8 lands, `npm run gen:api`
+// Hand-written from the API contract (Tasks 8, 9 and 21). Once Task 8 lands, `npm run gen:api`
 // regenerates this file from the backend's /openapi.json; keep the exported names below
 // (HostView, ServiceView, ContainerView, UrlStatus, Health) when switching.
 
@@ -65,4 +65,139 @@ export interface ServiceView {
   containers: ContainerView[];
   urls: UrlStatus[];
   open_incident_id: string | null;
+}
+
+// Incidents (Task 21's contract: schemas/incidents.py, schemas/graph.py, schemas/api.py).
+
+export type IncidentStatus =
+  | "open"
+  | "investigating"
+  | "awaiting_approval"
+  | "executing"
+  | "verifying"
+  | "resolved"
+  | "closed"
+  | "failed";
+
+export interface Subject {
+  kind: "service" | "host";
+  host_id: string;
+  service_id: string | null;
+}
+
+export interface Incident {
+  id: string;
+  subject: Subject;
+  status: IncidentStatus;
+  opened_at: string;
+  closed_at: string | null;
+  title: string;
+  cost_usd: number | null;
+  tokens: number;
+}
+
+/** One entry of an incident's timeline. `kind` is free-form on the wire; `payload` depends on it. */
+export interface IncidentEvent {
+  incident_id: string;
+  seq: number;
+  kind: string;
+  payload: Record<string, unknown>;
+  at: string;
+}
+
+export interface RecoveryEvent {
+  id: number | null;
+  host_id: string;
+  service_id: string | null;
+  container: string;
+  at: string;
+  explanation: string;
+}
+
+export interface Evidence {
+  source: string;
+  detail: string;
+}
+
+export interface Diagnosis {
+  root_cause: string;
+  category: "config" | "resource" | "dependency" | "code" | "network" | "host" | "unknown";
+  evidence: Evidence[];
+  confidence: number;
+  affected_services: string[];
+  unsure: boolean;
+}
+
+export type Action =
+  | "docker.restart"
+  | "docker.stop"
+  | "docker.start"
+  | "coolify.redeploy"
+  | "coolify.set_env";
+
+export interface PlanStep {
+  action: Action;
+  host_id: string;
+  target: string;
+  params: Record<string, string>;
+}
+
+export interface VerificationPlan {
+  containers: string[];
+  urls: string[];
+}
+
+export interface Proposal {
+  kind: "act" | "no_action";
+  steps: PlanStep[];
+  reason: string;
+  verification: VerificationPlan;
+  human_instructions: string | null;
+}
+
+export type DecisionKind = "approve" | "reject" | "instruct";
+export type Channel = "telegram" | "dashboard";
+
+export interface Decision {
+  kind: DecisionKind;
+  text: string | null;
+  via: Channel;
+  at: string;
+}
+
+export interface ApprovalView {
+  id: string;
+  status: "pending" | "approved" | "rejected" | "instructed";
+  plan_hash: string;
+  proposal: Proposal;
+  requested_at: string;
+  reminders: number;
+  decision: Decision | null;
+}
+
+export type Outcome = "resolved" | "rejected" | "no_action" | "unverified" | "budget" | "unsure";
+
+export interface Report {
+  summary: string;
+}
+
+export interface IncidentDetail {
+  incident: Incident;
+  diagnosis: Diagnosis | null;
+  proposal: Proposal | null;
+  approval: ApprovalView | null;
+  outcome: Outcome | null;
+  report: Report | null;
+}
+
+export interface DecisionBody {
+  approval_id: string;
+  kind: DecisionKind;
+  text?: string;
+}
+
+/** The 409 body of a decision that did not count; `decided_via` names the channel that won. */
+export interface DecisionConflict {
+  detail: string;
+  decided_via: Channel | null;
 }
