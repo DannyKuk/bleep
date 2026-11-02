@@ -25,11 +25,11 @@ flowchart LR
 | `gather` | Collects containers, recent logs, host basics, rules and similar past incidents. No model. | always to `investigate` |
 | `investigate` | The model reads with read-only tools, within a tool-call budget. | `outcome == "budget"` → `report`, else `diagnose` |
 | `diagnose` | A structured `Diagnosis`. | low confidence after the first round → `investigate`, else `propose` |
-| `propose` | A `Proposal`: one to three allowlisted steps, or no action. | `act` → `approval`, `no_action` → `report` |
+| `propose` | A `Proposal`: one to three allowlisted steps, or no action, checked in code (`guard/plan_check.py`) before a human sees it. | `act` → `approval`, `no_action` → `report` |
 | `approval` | Waits for the human (`interrupt()`). | `instruct` → `propose`, `reject` or `approve` → `report` |
 | `report` | Sets the outcome. | end |
 
-Gather, the topology and the runner are built; Investigate, Propose and Approval are placeholders that let a run go end to end (no-op, `no_action`, wait and route), each replaced by its own task. Execute and Verify come between Approval and Report in Milestone 3; until then an approved plan is reported with the outcome `unverified`, because nothing ran and nothing was checked.
+Gather, Diagnose, Propose, the topology and the runner are built; Investigate and Approval are placeholders that let a run go end to end (no-op, wait and route), each replaced by its own task. Execute and Verify come between Approval and Report in Milestone 3; until then an approved plan is reported with the outcome `unverified`, because nothing ran and nothing was checked.
 
 ## State
 
@@ -75,3 +75,10 @@ Gather, the topology and the runner are built; Investigate, Propose and Approval
 - **The model says what is missing, and that becomes the next round's instruction.** The model fills a private `missing` field next to the diagnosis (not stored on it); Diagnose appends it as a message ("Missing: ...") so Investigate looks for exactly that. Reason: a second round without a target repeats the first (#18).
 - **Evidence entries are cut to 300 characters, at most 8.** The prompt asks for statements, and the code truncates what overruns. Reason: weak models paste log lines, and a diagnosis is shown to the human and stored in memory (#18).
 - **No diagnosis is a diagnosis, not an error.** Unparseable output (after `invoke_structured`'s retry) or a spent token or cost budget gives `category="unknown"`, `unsure=True`, "I could not form a diagnosis", with the stopped containers and gaps from Gather as evidence. A failed structured reply also gets the one re-investigation, like any low-confidence result. Reason: a weak local model must degrade, not crash the run (#18).
+- **Propose asks for a whole plan in one structured answer.** One to three ordered steps or `no_action`, a reason and a verification plan (containers and URLs), through `invoke_structured`, so a model without tool calls answers in plain JSON. Reason: the human approves the plan as a whole, and a weak local model must still be able to answer (#19).
+- **Propose's prompt carries Bleep's own facts, not the logs.** The diagnosis with its evidence, the service's containers, the off-limits list (protected and Bleep's own containers), the host and service rules, the service's health URLs, the actions enabled right now, every instruction the human has given and the previous plan (`prompts/graph/propose.md`). Reason: the diagnosis already carries the evidence; keeping raw host text out of the step that writes the plan narrows what an injected log line can steer, and naming the off-limits containers spares a refusal round (#19).
+- **The enabled actions are read from `settings_store` each time Propose runs.** Reason: turning a plugin off must stop its actions on the next plan, not after a restart (#19).
+- **A plan the code refuses goes back to the model once; refused again, it becomes `no_action`.** The model sees each violation's text (`prompts/graph/propose_retry.md`); after a second refusal the human gets the reasons, the refused steps and the model's reason in `human_instructions`, and nothing goes to approval. Reason: a model often fixes a plan once it can read why it was refused, and one that does not should not get a third try at a guarded action (#19).
+- **An unsure diagnosis gets `no_action` without a model call.** Reason: Bleep does not propose an action for a cause it says it does not know; the human gets what it found instead (#19).
+- **Propose degrades instead of failing.** No usable structured answer gives `no_action`; a spent token budget or daily cap gives `no_action` with the outcome `budget`, checked before each of its (at most two) model calls. Reason: an incident must always end with a report, never a crashed run (#19).
+- **The final proposal is published as a `proposal` event.** Reason: the live view shows the plan, or why there is none, as soon as it exists (#19).
