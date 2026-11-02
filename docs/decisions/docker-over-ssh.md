@@ -90,7 +90,7 @@ Each container's version is its own `coolify.version` label (the Coolify that de
 
 **The rule (controller ruling):**
 
-- **Service key:** `coolify.applicationUuid`, else `coolify.applicationId` prefixed (for example `id:4`) so ids cannot collide with UUIDs, else `com.docker.compose.project`, else the container name.
+- **Service key:** `coolify.applicationUuid`, else `coolify.applicationId` prefixed (for example `id:4`) so ids cannot collide with UUIDs, else `compose:<com.docker.compose.project>`, else `container:<name>`. The compose and container keys are namespaced (#5) so a single container `app`, a compose project `app` and a project named like a UUID cannot merge; display names stay unprefixed.
 - **Display name:** `coolify.resourceName` when present, else the key.
 - **Coolify app membership:** `coolify.type == "application"` when the label exists. On a version without `coolify.type`, a container with `coolify.applicationId` counts. (The saved 4.1.2 labels do carry `coolify.type`, so this only covers versions we have not seen.)
 - **Preview deployments:** `coolify.pullRequestId` present and not `"0"` makes their own service, keyed `<uuid>-pr-<n>`.

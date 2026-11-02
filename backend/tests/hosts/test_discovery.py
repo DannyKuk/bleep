@@ -1,8 +1,10 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
-from bleep.hosts.discovery import group_services
+from bleep.hosts.discovery import AmbiguousOverride, group_services
 from bleep.schemas.docker import ContainerSummary
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "labels"
@@ -88,7 +90,7 @@ def test_a_non_application_coolify_type_is_not_an_app():
         },
     )
     (svc,) = group_services("h", [db], {})
-    assert (svc.id, svc.source) == ("h/p", "compose")
+    assert (svc.id, svc.source) == ("h/compose:p", "compose")
 
 
 def test_preview_deployment_gets_its_own_service():
@@ -113,9 +115,13 @@ def test_coolify_internal_containers_fall_back_to_compose_then_name():
             {},
         )
     )
-    assert set(svcs) == {"h/source", "h/coolify-proxy", "h/coolify-sentinel"}
-    assert svcs["h/source"].source == "compose"
-    assert svcs["h/coolify-sentinel"].source == "single"
+    assert set(svcs) == {
+        "h/compose:source",
+        "h/compose:coolify-proxy",
+        "h/container:coolify-sentinel",
+    }
+    assert svcs["h/compose:source"].source == "compose"
+    assert svcs["h/container:coolify-sentinel"].source == "single"
 
 
 def test_compose_project_groups_containers():
@@ -129,7 +135,7 @@ def test_compose_project_groups_containers():
 
 def test_unlabelled_container_is_its_own_service():
     (svc,) = group_services("h", [box("redis")], {})
-    assert (svc.id, svc.name, svc.source) == ("h/redis", "redis", "single")
+    assert (svc.id, svc.name, svc.source) == ("h/container:redis", "redis", "single")
 
 
 def test_bleep_self_containers_are_excluded():
@@ -179,3 +185,33 @@ def test_preview_does_not_inherit_the_apps_override():
         "h", [preview], {"dkwebsite": ServiceOverrides(protected_containers=["x"])}
     )
     assert svc.protected == set()
+
+
+def test_single_container_and_compose_project_with_one_name_stay_separate():
+    svcs = group_services("h", [box("app"), compose("app-web-1", "app")], {})
+    assert sorted(s.id for s in svcs) == ["h/compose:app", "h/container:app"]
+    assert {s.name for s in svcs} == {"app"}
+
+
+def test_compose_project_named_like_a_uuid_does_not_merge_with_the_coolify_app():
+    uuid = "vclhwoxxy60z4vk70g0vpesq"
+    svcs = group_services(
+        "h",
+        [captured("coolify-4.5.0-dkwebsite"), compose("x-1", uuid), compose("y-1", "z-pr-1")],
+        {},
+    )
+    assert sorted(s.id for s in svcs) == [f"h/compose:{uuid}", "h/compose:z-pr-1", f"h/{uuid}"]
+
+
+def test_override_by_name_matching_two_services_is_an_error():
+    with pytest.raises(AmbiguousOverride, match="compose:app"):
+        group_services("h", [box("app"), compose("app-web-1", "app")], {"app": ServiceOverrides()})
+
+
+def test_override_by_key_disambiguates_equal_names():
+    svcs = group_services(
+        "h",
+        [box("app"), compose("app-web-1", "app")],
+        {"compose:app": ServiceOverrides(repo="me/app")},
+    )
+    assert {s.id: s.repo for s in svcs} == {"h/compose:app": "me/app", "h/container:app": None}

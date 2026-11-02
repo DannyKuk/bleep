@@ -8,6 +8,10 @@ SELF_LABEL = "bleep.self"
 COMPOSE_PROJECT = "com.docker.compose.project"
 
 
+class AmbiguousOverride(ValueError):
+    """An override key matches no service key and the display names of several services."""
+
+
 def _is_coolify_app(labels: dict[str, str]) -> bool:
     if "coolify.type" in labels:
         return labels["coolify.type"] == "application"
@@ -24,15 +28,15 @@ def _classify(container: ContainerSummary) -> tuple[str, str, str]:
         elif labels.get("coolify.applicationId"):
             key = f"id:{labels['coolify.applicationId']}"
         else:
-            key = project or container.name
+            key = f"compose:{project}" if project else f"container:{container.name}"
         name = labels.get("coolify.resourceName") or key
         pr = labels.get("coolify.pullRequestId", "0")
         if pr not in ("", "0"):
             key, name = f"{key}-pr-{pr}", f"{name} (PR {pr})"
         return key, name, "coolify"
     if project:
-        return project, project, "compose"
-    return container.name, container.name, "single"
+        return f"compose:{project}", project, "compose"
+    return f"container:{container.name}", container.name, "single"
 
 
 def group_services(
@@ -50,9 +54,23 @@ def group_services(
             groups[key] = (name, source, [])
         groups[key][2].append(container)
 
+    by_key: dict[str, ServiceOverrides] = {}
+    for okey, over in overrides.items():
+        if okey in groups:
+            by_key[okey] = over
+            continue
+        named = [k for k, (name, _, _) in groups.items() if name == okey and k not in overrides]
+        if len(named) > 1:
+            raise AmbiguousOverride(
+                f"host {host_id}: override {okey!r} matches the display name of several "
+                f"services ({', '.join(named)}); use one of those keys instead"
+            )
+        if named:
+            by_key[named[0]] = over
+
     services = []
     for key, (name, source, members) in groups.items():
-        over = overrides.get(key) or overrides.get(name) or ServiceOverrides()
+        over = by_key.get(key) or ServiceOverrides()
         services.append(
             Service(
                 id=f"{host_id}/{key}",

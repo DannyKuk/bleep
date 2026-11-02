@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -58,9 +59,9 @@ async def test_start_connects_every_host_and_lists_services():
     await reg.start()
     assert sorted(connector.calls) == ["a", "b"]
     assert all(h.reachable and h.last_seen == T0 and h.error is None for h in reg.hosts())
-    assert sorted(s.id for s in reg.services()) == ["a/shop", "b/redis"]
-    assert [s.id for s in reg.services("a")] == ["a/shop"]
-    assert reg.service("a/shop").repo == "me/shop"
+    assert sorted(s.id for s in reg.services()) == ["a/compose:shop", "b/container:redis"]
+    assert [s.id for s in reg.services("a")] == ["a/compose:shop"]
+    assert reg.service("a/compose:shop").repo == "me/shop"
     assert reg.service("nope/x") is None
 
 
@@ -97,7 +98,7 @@ async def test_refresh_failure_keeps_snapshot_and_last_seen():
     assert not state.reachable
     assert state.last_seen == T0
     assert "simulated drop" in state.error
-    assert [s.id for s in reg.services("a")] == ["a/shop"]
+    assert [s.id for s in reg.services("a")] == ["a/compose:shop"]
 
 
 async def test_refresh_recovers_and_picks_up_changes():
@@ -112,16 +113,15 @@ async def test_refresh_recovers_and_picks_up_changes():
     await reg.refresh("a")
     state = {h.config.id: h for h in reg.hosts()}["a"]
     assert state.reachable and state.error is None and state.last_seen == clock.now
-    assert sorted(s.id for s in reg.services("a")) == ["a/cache", "a/shop"]
+    assert sorted(s.id for s in reg.services("a")) == ["a/compose:shop", "a/container:cache"]
 
 
 async def test_reconnect_connects_a_host_that_was_down_at_start():
     reg, _, connector = make(fail={"b"})
     await reg.start()
     connector.fail.clear()
-    await reg.reconnect("b")
-    await reg.refresh("b")
-    assert [s.id for s in reg.services("b")] == ["b/redis"]
+    assert await reg.reconnect("b") is True
+    assert [s.id for s in reg.services("b")] == ["b/container:redis"]
 
 
 async def test_reconnect_reopens_session_then_engine():
@@ -130,17 +130,17 @@ async def test_reconnect_reopens_session_then_engine():
     engines["a"].drop()
     await reg.refresh("a")
     engines["a"].restore()
-    await reg.reconnect("a")
+    assert await reg.reconnect("a") is True
     assert engines["a"].reconnects == 1
+    assert {h.config.id: h for h in reg.hosts()}["a"].reachable
     assert reg.engine("a") is engines["a"]
 
 
-async def test_reconnect_failure_raises_and_marks_unreachable():
+async def test_reconnect_failure_is_recorded_not_raised():
     reg, engines, _ = make()
     await reg.start()
     engines["a"].drop()
-    with pytest.raises(EngineUnavailable):
-        await reg.reconnect("a")
+    assert await reg.reconnect("a") is False
     assert not {h.config.id: h for h in reg.hosts()}["a"].reachable
 
 
@@ -169,3 +169,40 @@ async def test_start_survives_an_unexpected_connector_error():
     reg._connector = broken
     await reg.start()
     assert all(not h.reachable and "boom" in h.error for h in reg.hosts())
+
+
+async def test_concurrent_reconnects_connect_once():
+    reg, _, connector = make(fail={"b"})
+    await reg.start()
+    connector.fail.clear()
+    connector.calls.clear()
+    results = await asyncio.gather(reg.reconnect("b"), reg.reconnect("b"))
+    assert results == [True, True]
+    assert connector.calls == ["b"]
+
+
+async def test_after_close_nothing_connects_or_refreshes():
+    reg, engines, connector = make(fail={"b"})
+    await reg.start()
+    await reg.close()
+    connector.fail.clear()
+    connector.calls.clear()
+    engines["a"].restore()
+    assert await reg.reconnect("b") is False
+    await reg.refresh("a")
+    assert connector.calls == []
+    assert engines["a"].reconnects == 0
+
+
+async def test_container_accepts_a_unique_id_prefix_of_12_chars():
+    reg, engines, _ = make()
+    engines["b"].container_list = [
+        ContainerSummary(id="abcdef123456aaaa", name="x", image="i", state="running"),
+        ContainerSummary(id="abcdef123456bbbb", name="y", image="i", state="running"),
+        ContainerSummary(id="ffffffffffffcccc", name="z", image="i", state="running"),
+    ]
+    await reg.start()
+    assert reg.container("b", "ffffffffffff").name == "z"
+    assert reg.container("b", "abcdef123456") is None  # ambiguous
+    assert reg.container("b", "abcdef12345") is None  # too short
+    assert reg.container("b", "abcdef123456aaaa").name == "x"
