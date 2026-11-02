@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from bleep.auth.sessions import LoginLimiter, SessionStore
 from bleep.config import Settings
-from bleep.graph.deps import GraphDeps, StaticSettings, model_factory
+from bleep.graph.deps import GraphDeps, Notifier, StaticSettings, model_factory
 from bleep.guard.log import GuardLog
 from bleep.hosts.config import load_hosts_file
 from bleep.hosts.registry import Registry
@@ -10,6 +10,8 @@ from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
 from bleep.llm.usage import CostLedger
+from bleep.notify.notifier import NotifySetup
+from bleep.notify.notifier import setup as setup_notify
 from bleep.store.db import Database
 from bleep.tools.default import default_registry
 
@@ -27,6 +29,7 @@ class AppParts:
     guard_log: GuardLog
     sessions: SessionStore
     login_limiter: LoginLimiter
+    notify: NotifySetup
 
 
 def build_parts(settings: Settings, registry: Registry | None = None) -> AppParts:
@@ -39,16 +42,18 @@ def build_parts(settings: Settings, registry: Registry | None = None) -> AppPart
         registry = Registry(load_hosts_file(settings.hosts_file).hosts)
     bus, incidents = EventBus(db), IncidentRepo(db)
     approvals, guard_log = ApprovalStore(db, settings.secret), GuardLog(db)
+    notify = setup_notify(settings, db, bus, approvals, guard_log)
     return AppParts(
         db=db,
         registry=registry,
         bus=bus,
-        graph_deps=graph_deps(db, registry, bus, incidents, approvals, guard_log),
+        graph_deps=graph_deps(db, registry, bus, incidents, approvals, guard_log, notify.notifier),
         incidents=incidents,
         approvals=approvals,
         guard_log=guard_log,
         sessions=SessionStore(db),
         login_limiter=LoginLimiter(),
+        notify=notify,
     )
 
 
@@ -59,6 +64,7 @@ def graph_deps(
     incidents: IncidentRepo,
     approvals: ApprovalStore,
     guard_log: GuardLog,
+    notifier: Notifier,
 ) -> GraphDeps:
     """What the incident graph runs on. Models are built when a node asks, so no key is needed.
 
@@ -76,4 +82,5 @@ def graph_deps(
         approvals=approvals,
         guard_log=guard_log,
         settings_store=store,
+        notifier=notifier,
     )

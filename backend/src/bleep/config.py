@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 MIN_ADMIN_PASSWORD = 12
@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     secret: SecretStr
     watch_interval_s: float = 15  # seconds between watcher ticks per host
     cookie_secure: bool = False  # true once the dashboard is served over https
+    # Telegram is optional and has its own names in .env (no BLEEP_ prefix). Only this chat is
+    # answered. The token is a secret: it stays out of the database, the bus and the logs.
+    telegram_bot_token: SecretStr | None = Field(
+        default=None, validation_alias="TELEGRAM_BOT_TOKEN"
+    )
+    telegram_chat_id: str | None = Field(default=None, validation_alias="TELEGRAM_CHAT_ID")
 
 
 def check_settings(settings: Settings) -> None:

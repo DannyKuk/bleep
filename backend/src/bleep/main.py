@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import APIRouter, Depends, FastAPI
 
@@ -21,6 +21,11 @@ from bleep.wiring import AppParts, build_parts
 log = logging.getLogger(__name__)
 
 
+async def _cancel(task: asyncio.Task[None]) -> None:
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
 def create_app(settings: Settings | None = None, parts: AppParts | None = None) -> FastAPI:
     """Build the app. Tests pass prebuilt `parts` (a fake-engine registry, a temp database)."""
     settings = settings or Settings()
@@ -29,15 +34,24 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        await parts.db.migrate()
-        await parts.registry.start()
-        async with open_checkpointer(settings.data_dir / "checkpoints.sqlite") as saver:
+        async with AsyncExitStack() as stack:
+            # Pushed in start order, so a failure at any point closes exactly what was opened,
+            # and a normal stop runs them in reverse: stop what sends, then close what it sends on.
+            stack.push_async_callback(parts.notify.close)  # last: runs and reminders still send
+            await parts.db.migrate()
+            await parts.registry.start()
+            stack.push_async_callback(parts.registry.close)
+            saver = await stack.enter_async_context(
+                open_checkpointer(settings.data_dir / "checkpoints.sqlite")
+            )
+            stack.push_async_callback(parts.guard_log.flush)  # the runs and the watcher record
             runner = IncidentRunner(
                 build_graph(parts.graph_deps, saver),
                 parts.incidents,
                 parts.bus,
                 approvals=parts.approvals,
             )
+            stack.push_async_callback(runner.close)
             manager = WatcherManager(
                 parts.registry,
                 Detector(Thresholds(), utcnow),
@@ -56,17 +70,13 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 parts.graph_deps.settings_store,
             )
             app.state.runner, app.state.reminders = runner, reminders
+            stack.push_async_callback(manager.stop)
             await manager.start()
             app.state.reminder_task = asyncio.create_task(reminders.run(), name="reminders")
-            try:
-                yield
-            finally:
-                app.state.reminder_task.cancel()
-                await asyncio.gather(app.state.reminder_task, return_exceptions=True)
-                await manager.stop()
-                await runner.close()
-                await parts.guard_log.flush()  # the runs and the watcher record into it
-                await parts.registry.close()
+            stack.push_async_callback(_cancel, app.state.reminder_task)
+            stack.push_async_callback(parts.notify.stop)
+            parts.notify.start(runner)  # polls Telegram only when a token is configured
+            yield
 
     app = FastAPI(title="Bleep", lifespan=lifespan)
     app.state.settings = settings

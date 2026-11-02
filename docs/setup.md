@@ -48,6 +48,16 @@ The watcher checks every host every 15 s; `BLEEP_WATCH_INTERVAL_S` in `.env` cha
 
 The session cookie is not `Secure` by default, because the dashboard is plain http on the LAN. If you put it behind https, set `BLEEP_COOKIE_SECURE=true` in `.env`.
 
+## Telegram (optional)
+
+Without it everything works from the dashboard. To also get incidents and approve from your phone:
+
+1. Create a bot with BotFather and put its token in `.env` as `TELEGRAM_BOT_TOKEN`.
+2. Send the bot any message, then read your chat id from `https://api.telegram.org/bot<token>/getUpdates` (`result[0].message.chat.id`) and set `TELEGRAM_CHAT_ID` in `.env`.
+3. Restart Bleep. A proposal arrives with Approve and Reject buttons; reply to the message to give an instruction instead.
+
+Only that chat is answered. Messages and button taps from any other chat are ignored and recorded in the guard log. The first answer wins, from Telegram or the dashboard; the other is told who won. Details: [Notifications](design/notify.md).
+
 ## Later
 
 - Always-on on the spare MacBook, so Bleep watches the hosts when this laptop is closed.
