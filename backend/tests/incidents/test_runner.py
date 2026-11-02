@@ -136,7 +136,7 @@ async def test_waits_for_approval_and_resumes_on_a_decision_after_a_restart(tmp_
     async with open_checkpointer(checkpoints) as saver:
         runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
         assert await runner.recover_on_boot() == []  # still waiting for the human
-        await runner.resume(incident.id, decide("reject"))
+        await runner.resume(incident.id, decide("reject"), await runner.waiting_for(incident.id))
         await runner.join()
         state = await values(runner, incident.id)
 
@@ -144,6 +144,24 @@ async def test_waits_for_approval_and_resumes_on_a_decision_after_a_restart(tmp_
     assert state["outcome"] == "rejected"
     assert (await env.repo.get(incident.id)).status == "closed"
     assert (await env.nodes(incident.id, "node_finished"))[-2:] == ["approval", "report"]
+
+
+async def test_a_decision_for_another_approval_does_not_resume_the_run(tmp_path, acting):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await runner.start(incident)
+        await runner.join()
+        waiting = await runner.waiting_for(incident.id)
+        assert waiting is not None
+
+        await runner.resume(incident.id, decide("approve"), "an-earlier-plan")
+        await runner.join()
+
+        assert await runner.waiting_for(incident.id) == waiting  # still asking the same question
+        assert "decision" not in await values(runner, incident.id)
+    assert (await env.repo.get(incident.id)).status == "awaiting_approval"
 
 
 async def test_state_is_the_checkpointed_values_and_empty_before_a_run(tmp_path, acting):
@@ -199,14 +217,14 @@ async def test_a_decision_for_a_run_that_is_not_waiting_changes_nothing(tmp_path
     incident = await env.open(service(env), container="shop-web-1")
     async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
         runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
-        await runner.resume(incident.id, decide("approve"))  # never started
+        await runner.resume(incident.id, decide("approve"), "a1")  # never started
         await runner.join()
         assert await env.nodes(incident.id) == []
         assert (await env.repo.get(incident.id)).status == "open"
 
         await runner.start(incident)
         await runner.join()
-        await runner.resume(incident.id, decide("approve"))  # already finished
+        await runner.resume(incident.id, decide("approve"), "a1")  # already finished
         await runner.join()
 
     assert await env.nodes(incident.id) == M2_PATH

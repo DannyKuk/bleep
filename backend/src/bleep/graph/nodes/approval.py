@@ -2,7 +2,8 @@
 
 The node reads each target container (its id and start time, so Execute can tell a stale plan),
 stores the plan as a pending approval, publishes `approval_requested`, notifies, and calls
-`interrupt()`. `IncidentRunner.resume` continues it once a channel has won the approval.
+`interrupt()` with the approval's id. `IncidentRunner.resume` continues it once a channel has won
+the approval, and only if the run is waiting on that same approval.
 
 A node that interrupts runs again from its first line on resume, so it asks only when the
 incident's latest approval is one the run has already consumed (`state["approval"]`); otherwise

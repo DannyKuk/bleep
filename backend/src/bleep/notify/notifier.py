@@ -186,5 +186,5 @@ def setup(
 class _NoRunner:
     """Stands in until `start(runner)`; a decision cannot arrive before the bot is polling."""
 
-    async def resume(self, incident_id, decision) -> None:
+    async def resume(self, incident_id, decision, approval_id) -> None:
         raise RuntimeError("the Telegram bot was used before it was started")

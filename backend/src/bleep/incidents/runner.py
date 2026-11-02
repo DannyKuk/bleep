@@ -56,12 +56,24 @@ class IncidentRunner:
             return running
         return self._schedule(incident.id, lambda: self._advance(incident))
 
-    async def resume(self, incident_id: str, decision: Decision) -> asyncio.Task[None]:
+    async def resume(
+        self, incident_id: str, decision: Decision, approval_id: str
+    ) -> asyncio.Task[None]:
         """Continue a run waiting at Approval with the human's decision, in the background.
 
-        A run that is not waiting (finished, or never started) is left alone.
+        `approval_id` is the approval the decision was made for. The run goes on only if it is
+        waiting on that approval: a resume queued behind a run that already consumed the
+        decision must not answer the next plan, which nobody has seen. A run that is not
+        waiting (finished, never started, or waiting on another approval) is left alone.
         """
-        return self._schedule(incident_id, lambda: self._resume(incident_id, decision))
+        return self._schedule(incident_id, lambda: self._resume(incident_id, decision, approval_id))
+
+    async def waiting_for(self, incident_id: str) -> str | None:
+        """The id of the approval the run is waiting on at its interrupt; None if not waiting."""
+        snapshot = await self.graph.aget_state(self.config(incident_id))
+        if not snapshot.interrupts:
+            return None
+        return snapshot.interrupts[0].value.get("approval_id")
 
     async def state(self, incident_id: str) -> dict[str, Any]:
         """The incident's graph state as last checkpointed; empty before its first run."""
@@ -136,9 +148,18 @@ class IncidentRunner:
         record = await self.approvals.current(incident_id)
         return record.decision if record is not None else None
 
-    async def _resume(self, incident_id: str, decision: Decision) -> None:
-        if not (await self.graph.aget_state(self.config(incident_id))).interrupts:
+    async def _resume(self, incident_id: str, decision: Decision, approval_id: str) -> None:
+        waiting = await self.waiting_for(incident_id)
+        if waiting is None:
             log.warning("incident %s: a decision arrived but the run is not waiting", incident_id)
+            return
+        if waiting != approval_id:
+            log.warning(
+                "incident %s: a decision for approval %s arrived, but the run waits on %s",
+                incident_id,
+                approval_id,
+                waiting,
+            )
             return
         await self._drive(incident_id, Command(resume=decision))
 

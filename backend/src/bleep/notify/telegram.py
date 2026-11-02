@@ -43,7 +43,7 @@ class TelegramError(Exception):
 class Resumer(Protocol):
     """The part of `IncidentRunner` the bot uses."""
 
-    async def resume(self, incident_id: str, decision: Decision) -> Any: ...
+    async def resume(self, incident_id: str, decision: Decision, approval_id: str) -> Any: ...
 
 
 class TelegramClient:
@@ -248,7 +248,7 @@ class TelegramBot:
         """Try to win the approval; the text to tell the human either way."""
         won = await self.approvals.resolve(incident_id, decision, approval_id)
         if won is not None:
-            await self.runner.resume(incident_id, won)
+            await self.runner.resume(incident_id, won, approval_id)
             return answer(f"answer_{_PAST[decision.kind]}")
         current = await self.approvals.current(incident_id)
         if current is not None and current.id == approval_id and current.decision is not None:

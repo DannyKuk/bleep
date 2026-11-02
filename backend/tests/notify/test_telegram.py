@@ -71,9 +71,11 @@ class FakeTelegram:
 class FakeRunner:
     def __init__(self) -> None:
         self.resumed: list[tuple[str, Decision]] = []
+        self.approval_ids: list[str] = []
 
-    async def resume(self, incident_id: str, decision: Decision) -> None:
+    async def resume(self, incident_id: str, decision: Decision, approval_id: str) -> None:
         self.resumed.append((incident_id, decision))
+        self.approval_ids.append(approval_id)
 
 
 class Env:
@@ -134,6 +136,7 @@ async def test_button_press_resolves_and_resumes(env):
 
     [(incident_id, decision)] = env.runner.resumed
     assert incident_id == env.incident_id
+    assert env.runner.approval_ids == [env.approval_id]  # bound to the plan on the button
     assert (decision.kind, decision.via) == ("approve", "telegram")
     assert (await env.approvals.current(env.incident_id)).decision.kind == "approve"
     [pop_up] = env.api.sent("answerCallbackQuery")
@@ -152,6 +155,7 @@ async def test_reply_to_a_proposal_becomes_an_instruction(env):
 
     [(incident_id, decision)] = env.runner.resumed
     assert incident_id == env.incident_id
+    assert env.runner.approval_ids == [env.approval_id]  # bound to the plan replied to
     assert (decision.kind, decision.text) == (
         "instruct",
         "Restart the database first, then the web container",
