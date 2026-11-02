@@ -1,0 +1,79 @@
+name: Bug
+description: Something doesn't work the way it should.
+labels: ["bug"]
+projects: ["DannyKuk/4"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw. Include the exact error text or the incident id.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should happen
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Hosts and discovery
+        - Watcher and detection
+        - Incident graph
+        - Tools and guard
+        - Memory and knowledge
+        - Plugins
+        - Telegram
+        - Dashboard
+        - Evals
+        - Docker and setup
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options:
+        - Docker Compose
+        - Local dev (uv run / npm run dev)
+        - Code only (found in review or a test)
+    validations:
+      required: true
+  - type: dropdown
+    id: model
+    attributes:
+      label: Model
+      options:
+        - Cloud (OpenRouter)
+        - Local (Ollama / LM Studio)
+        - Not LLM-related
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The relevant backend log lines. Remove secrets first.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Commit
+  - type: textarea
+    id: source
+    attributes:
+      label: Where in the code (if known)
+      placeholder: "`backend/src/bleep/...`, design section"

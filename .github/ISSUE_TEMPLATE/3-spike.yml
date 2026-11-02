@@ -1,0 +1,29 @@
+name: Spike
+description: A question to answer with evidence before building on it.
+labels: ["spike"]
+projects: ["DannyKuk/4"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What we need to know, and what depends on the answer.
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: How to check
+      description: The experiment, the data or the host it runs against, and the numbers or output that settle it.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: Usually a decision doc in `docs/decisions/` with the answer, and the scripts kept in `docs/spikes/`.
+      placeholder: |
+        - [ ]
+        - [ ]
+    validations:
+      required: true

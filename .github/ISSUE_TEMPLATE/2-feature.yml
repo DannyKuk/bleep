@@ -1,0 +1,45 @@
+name: Feature
+description: New behaviour or a bigger improvement.
+labels: ["enhancement"]
+projects: ["DannyKuk/4"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What the user can do afterwards, and why it matters.
+    validations:
+      required: true
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: Proposed behaviour
+      description: How it should work from the user's side. Rough is fine.
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: Checkable acceptance criteria.
+      placeholder: |
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: out
+    attributes:
+      label: Out of scope
+      description: What this deliberately does not include.
+  - type: input
+    id: design
+    attributes:
+      label: Design section
+      description: The section of the design this implements.
+      placeholder: "docs/superpowers/specs/2026-11-02-bleep-design.md, section 4.3"
+  - type: checkboxes
+    id: bar
+    attributes:
+      label: Bar
+      options:
+        - label: Every write to a host stays behind an explicit approval
+        - label: Works with a local model, or the plan says why it can't
