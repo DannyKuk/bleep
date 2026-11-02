@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
@@ -36,6 +37,7 @@ class EventBus:
         self.db = db
         self.clock = clock
         self.queue_size = queue_size
+        self._lock = asyncio.Lock()
         self._subscribers: list[tuple[str | None, asyncio.Queue[IncidentEvent]]] = []
 
     @property
@@ -46,8 +48,22 @@ class EventBus:
         self, incident_id: str, kind: str, payload: dict[str, Any] | None = None
     ) -> IncidentEvent:
         """Persist the event with the next `seq` of its incident, then fan it out."""
-        at = self.clock()
         body = payload or {}
+        # One lock for persist plus fan-out, so subscribers see events in seq order.
+        async with self._lock:
+            at = self.clock()
+            seq = await self._persist(incident_id, kind, body, at)
+            event = IncidentEvent(incident_id=incident_id, seq=seq, kind=kind, payload=body, at=at)
+            for target, queue in list(self._subscribers):
+                if target is None or target == incident_id:
+                    if queue.full():
+                        queue.get_nowait()  # drop the oldest; the subscriber fills from history
+                    queue.put_nowait(event)
+        return event
+
+    async def _persist(
+        self, incident_id: str, kind: str, body: dict[str, Any], at: datetime
+    ) -> int:
         conn = await self.db.connect()
         try:
             await conn.execute("BEGIN IMMEDIATE")
@@ -69,30 +85,38 @@ class EventBus:
                 raise
         finally:
             await conn.close()
-        event = IncidentEvent(incident_id=incident_id, seq=seq, kind=kind, payload=body, at=at)
-        for target, queue in list(self._subscribers):
-            if target is None or target == incident_id:
-                if queue.full():
-                    queue.get_nowait()  # drop the oldest; the subscriber fills gaps from history
-                queue.put_nowait(event)
-        return event
+        return seq
 
-    async def subscribe(self, incident_id: str | None) -> AsyncIterator[IncidentEvent]:
+    @asynccontextmanager
+    async def subscribe(
+        self, incident_id: str | None
+    ) -> AsyncIterator[AsyncIterator[IncidentEvent]]:
         """Live events for one incident, or for all of them with None.
 
-        Registers when iteration starts and unregisters when the iterator is closed or
-        cancelled. A subscriber that falls behind loses its oldest events; `history` has them.
+        Registers on enter and unregisters on exit or cancel. A subscriber that falls behind
+        loses its oldest events; `history` has them. The catch-up pattern, with no gap:
+
+            async with bus.subscribe(incident_id) as events:
+                seen = await bus.history(incident_id)       # after registering
+                last = max((e.seq for e in seen), default=0)
+                ...send `seen`, then for each live event with seq > last: send it, update last
         """
         entry: tuple[str | None, asyncio.Queue[IncidentEvent]] = (
             incident_id,
             asyncio.Queue(self.queue_size),
         )
         self._subscribers.append(entry)
-        try:
+
+        async def events() -> AsyncIterator[IncidentEvent]:
             while True:
                 yield await entry[1].get()
+
+        stream = events()
+        try:
+            yield stream
         finally:
             self._subscribers.remove(entry)
+            await stream.aclose()
 
     async def history(self, incident_id: str, after_seq: int = 0) -> list[IncidentEvent]:
         conn = await self.db.connect()

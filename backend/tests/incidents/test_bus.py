@@ -55,51 +55,70 @@ async def test_concurrent_publishes_get_distinct_seq(parts):
 
 async def test_two_subscribers_both_receive(parts):
     bus, (a, b) = parts
-    one, two, everything = bus.subscribe(a), bus.subscribe(a), bus.subscribe(None)
-    t1, t2, t3 = (asyncio.create_task(take(s, 2)) for s in (one, two, everything))
-    await asyncio.sleep(0.05)
-    await bus.publish(a, "notice", {"n": 1})
-    await bus.publish(b, "notice", {"n": 2})
-    await bus.publish(a, "notice", {"n": 3})
-    assert [e.payload["n"] for e in await t1] == [1, 3]
-    assert [e.payload["n"] for e in await t2] == [1, 3]
-    assert [e.payload["n"] for e in await t3] == [1, 2]
+    async with bus.subscribe(a) as one, bus.subscribe(a) as two, bus.subscribe(None) as every:
+        await bus.publish(a, "notice", {"n": 1})
+        await bus.publish(b, "notice", {"n": 2})
+        await bus.publish(a, "notice", {"n": 3})
+        assert [e.payload["n"] for e in await take(one, 2)] == [1, 3]
+        assert [e.payload["n"] for e in await take(two, 2)] == [1, 3]
+        assert [e.payload["n"] for e in await take(every, 3)] == [1, 2, 3]
 
 
 async def test_slow_subscriber_does_not_block_and_history_fills_gap(parts):
     bus, (a, _) = parts
-    stream = bus.subscribe(a)
-    first = asyncio.create_task(anext(stream))  # registers the subscriber
-    await asyncio.sleep(0.05)
-    for i in range(10):  # queue_size is 4; nobody is reading
-        await asyncio.wait_for(bus.publish(a, "notice", {"i": i}), timeout=2)
-    got = [await first] + await take(stream, 4)
-    seqs = [e.seq for e in got]
-    assert seqs == sorted(seqs) and seqs[-1] == 10  # newest kept, oldest dropped
-    assert seqs[1] > 2  # the middle events were dropped
-    filled = await bus.history(a, after_seq=0)
-    assert [e.seq for e in filled] == list(range(1, 11))
+    async with bus.subscribe(a) as stream:
+        for i in range(10):  # queue_size is 4; nobody is reading
+            await asyncio.wait_for(bus.publish(a, "notice", {"i": i}), timeout=2)
+        seqs = [e.seq for e in await take(stream, 4)]
+    assert seqs == [7, 8, 9, 10]  # newest kept, oldest dropped
+    assert [e.seq for e in await bus.history(a)] == list(range(1, 11))
+
+
+async def test_event_between_subscribe_and_history_is_seen_once(parts):
+    bus, (a, _) = parts
+    await bus.publish(a, "notice", {"n": 1})
+    async with bus.subscribe(a) as stream:
+        await bus.publish(a, "notice", {"n": 2})  # lands after subscribing, before history
+        seen = await bus.history(a)
+        last = max(e.seq for e in seen)
+        await bus.publish(a, "notice", {"n": 3})
+        delivered = [e.seq for e in seen]
+        for _ in range(2):  # live queue holds seq 2 (duplicate of history) and 3
+            event = await asyncio.wait_for(anext(stream), 1)
+            if event.seq > last:
+                delivered.append(event.seq)
+                last = event.seq
+    assert delivered == [1, 2, 3]
+
+
+async def test_concurrent_publishes_reach_subscribers_in_seq_order(parts):
+    bus, (a, _) = parts
+    bus.queue_size = 64
+    async with bus.subscribe(a) as one, bus.subscribe(None) as two:
+        await asyncio.gather(*(bus.publish(a, "notice", {"i": i}) for i in range(20)))
+        for stream in (one, two):
+            seqs = [e.seq for e in await take(stream, 20)]
+            assert seqs == list(range(1, 21))
 
 
 async def test_cancel_removes_subscriber(parts):
     bus, (a, _) = parts
-    stream = bus.subscribe(a)
-    task = asyncio.create_task(anext(stream))
+
+    async def consume():
+        async with bus.subscribe(a) as stream:
+            await anext(stream)
+
+    task = asyncio.create_task(consume())
     await asyncio.sleep(0.05)
     assert bus.subscriber_count == 1
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    await stream.aclose()
     assert bus.subscriber_count == 0
 
 
-async def test_aclose_removes_subscriber(parts):
+async def test_exit_removes_subscriber(parts):
     bus, (a, _) = parts
-    stream = bus.subscribe(None)
-    task = asyncio.create_task(anext(stream))
-    await asyncio.sleep(0.05)
-    await bus.publish(a, "notice", {})
-    await task
-    await stream.aclose()
+    async with bus.subscribe(None):
+        assert bus.subscriber_count == 1
     assert bus.subscriber_count == 0

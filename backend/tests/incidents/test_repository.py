@@ -36,7 +36,7 @@ async def test_first_signals_open_an_incident(repo):
     assert incident.id.startswith("inc_")
     assert incident.status == "open"
     assert incident.subject == svc()
-    assert incident.opened_at == T0 or incident.opened_at.tzinfo is not None
+    assert incident.opened_at == T0
     assert [s.kind for s in await repo.signals(incident.id)] == ["url_failed"]
 
 
