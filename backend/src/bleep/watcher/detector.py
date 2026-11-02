@@ -15,6 +15,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
 from bleep import prompts
+from bleep.guard.pipeline import guard_text
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Thresholds
@@ -23,7 +24,6 @@ LOG_TAIL_CHARS = 4_000
 RECOVERY_LINE_CHARS = 200
 NO_LOGS_LINE = "No logs were available to explain the restart."
 SENTENCE_END = re.compile(r"(?<=[.!?])\s")
-UNTRUSTED_TAG = re.compile(r"<(/?)untrusted", re.IGNORECASE)
 
 # Signals that already mean "past a threshold" because the source applied one (Docker only reports
 # unhealthy after the healthcheck retries ran out) or the detector produced them.
@@ -249,17 +249,12 @@ def _num(signal: Signal, key: str, default: float = 0) -> float:
     return value if isinstance(value, int | float) else default
 
 
-def _wrap_untrusted(source: str, text: str) -> str:  # replaced by guard.untrusted in Task 6
-    safe = UNTRUSTED_TAG.sub(lambda m: f"&lt;{m.group(1)}untrusted", text)
-    return f'<untrusted source="{source}">\n{safe}\n</untrusted>'
-
-
 async def explain_recovery(model: BaseChatModel, logs_tail: str) -> str:
     """One plain sentence on why a self-recovered container stopped, from its last logs."""
     logs = logs_tail.strip()[-LOG_TAIL_CHARS:]
     if not logs:
         return NO_LOGS_LINE
-    prompt = prompts.load("watcher/recovery_line", logs=_wrap_untrusted("logs", logs))
+    prompt = prompts.load("watcher/recovery_line", logs=guard_text("logs", logs)[0])
     reply = await model.ainvoke([HumanMessage(prompt)])
     sentence = SENTENCE_END.split(" ".join(reply.text.split()), maxsplit=1)[0]
     if len(sentence) > RECOVERY_LINE_CHARS:
