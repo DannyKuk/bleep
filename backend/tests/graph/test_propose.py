@@ -81,6 +81,7 @@ async def setup(
     """A graph env on the bad-env stack, the model scripted, and Propose's input state."""
     env = await graph_env(tmp_path, engine=bad_env_engine(), host=demo_host(protected, key))
     env.models.model.script = list(script)
+    env.models.model.structured_output_unsupported = False  # the replies are tool calls
     subject = Subject(kind="service", host_id="a", service_id=env.service_id("shop"))
     signals = [Signal(subject=subject, kind="restart_loop", at=T0, container="shop-web-1")]
     incident = await env.open(subject, kind="restart_loop", container="shop-web-1")
