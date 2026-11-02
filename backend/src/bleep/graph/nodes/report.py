@@ -39,6 +39,7 @@ OUTCOME_TEXT: dict[str, str] = {
     "no_action": "No action proposed, nothing was done",
     "unsure": "Cause not found, nothing was done",
     "budget": "Stopped, the model budget is spent",
+    "replan_limit": "Stopped after too many new plans",
 }
 CHANNEL = {"telegram": "Telegram", "dashboard": "the dashboard"}
 FINISHED = {"gather": "Gathered the context", "diagnose": "Diagnosed"}
@@ -62,9 +63,12 @@ class _Draft(BaseModel):
 
 
 def outcome(state: IncidentState) -> Outcome:
-    """An outcome set earlier (a spent budget) stands; otherwise it follows the decision."""
+    """An outcome set earlier (a spent budget) stands; otherwise anything that ran is
+    `unverified`, and the rest follows the decision."""
     if state.get("outcome"):
         return state["outcome"]  # type: ignore[return-value]
+    if any(r.started_at is not None for r in state.get("step_results") or []):
+        return "unverified"  # a later plan was rejected or empty, but an earlier one ran
     decision = state.get("decision")
     proposal = state.get("proposal")
     if decision is not None and decision.kind == "reject":
@@ -159,7 +163,8 @@ def action_taken(
     """What ran, one step after another; None when nothing ran.
 
     A `StepResult` names no host, so each step's host is read from the plan step at its
-    `step_index`, falling back to the incident's host (a plan only ever acts on that host).
+    `step_index`, falling back to the incident's host (a plan only ever acts on that host). A step
+    that never started (one after a failed step) reads "skipped".
     """
     if not results:
         return None
@@ -168,9 +173,12 @@ def action_taken(
     def host(r: StepResult) -> str:
         return steps[r.step_index].host_id if 0 <= r.step_index < len(steps) else host_id
 
-    return "; ".join(
-        f"{r.action} {r.target} on {host(r)}: {'done' if r.ok else 'failed'}" for r in results
-    )
+    def status(r: StepResult) -> str:
+        if r.ok:
+            return "done"
+        return "skipped" if r.started_at is None else "failed"
+
+    return "; ".join(f"{r.action} {r.target} on {host(r)}: {status(r)}" for r in results)
 
 
 def _raw_logs(state: IncidentState) -> list[str]:

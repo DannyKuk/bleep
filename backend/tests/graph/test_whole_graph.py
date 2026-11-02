@@ -60,8 +60,9 @@ async def test_a_run_goes_from_gather_to_the_interrupt_and_resumes_on_each_decis
 
         state = (await runner.graph.aget_state(runner.config(incident.id))).values
         if kind == "approve":
-            assert state["grant"] is not None and state["outcome"] == "unverified"
-            assert (await env.repo.get(incident.id)).status == "closed"
+            assert state["grant"] is not None and state["outcome"] == "resolved"
+            assert [a.action for a in env.engine.acts] == ["restart"]
+            assert (await env.repo.get(incident.id)).status == "resolved"
         elif kind == "reject":
             assert state["outcome"] == "rejected"
             assert (await env.repo.get(incident.id)).status == "closed"

@@ -29,6 +29,7 @@ Rule = Literal[
     "not_found",
     "protected",
     "self",
+    "unknown_url",
 ]
 
 
@@ -49,7 +50,8 @@ def check_plan(
     Refused: an `act` plan with no steps or over 3, a `no_action` with steps, an unknown or
     disabled action, a target on another host, any target on a host whose state carries an error
     (an ambiguous override means its protected list may not apply), a target not found on the
-    host, a protected container and a Bleep container (`bleep.self=true`).
+    host, a protected container, a Bleep container (`bleep.self=true`), and a verification URL
+    that is not one of the host's health checks in the hosts file.
     """
     violations: list[Violation] = []
     if proposal.kind == "no_action" and proposal.steps:
@@ -65,7 +67,26 @@ def check_plan(
         )
     for number, step in enumerate(proposal.steps, start=1):
         violations.extend(_check_step(number, step, registry, enabled_actions, host_id))
+    if proposal.kind == "act":
+        violations.extend(_check_urls(proposal, registry, host_id))
     return violations
+
+
+def _check_urls(proposal: Proposal, registry: Registry, host_id: str) -> list[Violation]:
+    """Verify fetches every URL of a plan that ran, so only the host's configured health checks
+    may be named: a model-made URL could point Bleep's requests anywhere."""
+    host = next((h for h in registry.hosts() if h.config.id == host_id), None)
+    services = host.config.services.values() if host is not None else []
+    configured = {cfg.url for overrides in services for cfg in overrides.urls}
+    return [
+        Violation(
+            "unknown_url",
+            f"verification url {url}: is not a health check of host {host_id} in the hosts file;"
+            " only those can be checked",
+        )
+        for url in proposal.verification.urls
+        if url not in configured
+    ]
 
 
 def _check_step(

@@ -1,4 +1,4 @@
-"""The Milestone 2 topology: which node follows which, with the placeholder nodes."""
+"""The topology: which node follows which, with a scripted Propose."""
 
 from datetime import UTC, datetime
 
@@ -77,16 +77,49 @@ async def test_instruct_goes_back_to_propose_with_the_text(tmp_path, seen_instru
     assert (await env.repo.get(incident.id)).status == "awaiting_approval"
 
 
-async def test_approve_reports_unverified_until_execute_exists(tmp_path, seen_instructions):
+async def test_approve_executes_verifies_and_reports(tmp_path, seen_instructions):
     env, runner, incident = await setup(tmp_path)
 
     await runner.resume(incident.id, decide("approve"), await runner.waiting_for(incident.id))
     await runner.join()
 
-    # Milestone 2 has no Execute: an approved plan is reported, never claimed as fixed.
-    assert await outcome(runner, incident.id) == "unverified"
-    assert (await env.nodes(incident.id, "node_finished"))[-2:] == ["approval", "report"]
+    assert await outcome(runner, incident.id) == "resolved"
+    assert [a.action for a in env.engine.acts] == ["restart"]
+    finished = await env.nodes(incident.id, "node_finished")
+    assert finished[-4:] == ["approval", "execute", "verify", "report"]
+    assert (await env.repo.get(incident.id)).status == "resolved"
+
+
+async def test_a_target_recreated_before_the_yes_is_planned_and_asked_again(
+    tmp_path, seen_instructions
+):
+    env, runner, incident = await setup(tmp_path)
+    env.engine.container_list[0] = env.engine.container_list[0].model_copy(update={"id": "new"})
+    await env.registry.refresh("a")
+
+    await runner.resume(incident.id, decide("approve"), await runner.waiting_for(incident.id))
+    await runner.join()
+
+    assert env.engine.acts == []
+    assert (await env.nodes(incident.id))[-4:] == ["approval", "execute", "propose", "approval"]
+    notices = [e.payload["text"] for e in await env.bus.history(incident.id) if e.kind == "notice"]
+    assert any("state changed since approval" in n for n in notices)
+    assert (await env.repo.get(incident.id)).status == "awaiting_approval"
+
+
+async def test_instructions_stop_after_the_replan_budget(tmp_path, seen_instructions):
+    env, runner, incident = await setup(tmp_path)
+    for n in range(4):
+        text = f"try {n}"
+        await runner.resume(
+            incident.id, decide("instruct", text), await runner.waiting_for(incident.id)
+        )
+        await runner.join()
+
+    assert len(seen_instructions) == 4  # the first plan and three new ones
+    assert await outcome(runner, incident.id) == "replan_limit"
     assert (await env.repo.get(incident.id)).status == "closed"
+    assert env.engine.acts == []
 
 
 async def test_reject_reports_rejected(tmp_path, seen_instructions):

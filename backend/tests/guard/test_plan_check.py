@@ -1,7 +1,7 @@
 from bleep.graph.deps import CORE_ACTIONS
 from bleep.guard.plan_check import check_plan
-from bleep.hosts.config import ServiceOverrides
-from bleep.schemas.graph import PlanStep, Proposal
+from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
+from bleep.schemas.graph import PlanStep, Proposal, VerificationPlan
 from fakes import FakeEngine
 from graph_env import box, graph_env, shop_host
 
@@ -175,3 +175,30 @@ async def test_an_override_matching_no_discovered_service_still_protects_its_con
     violations = check_plan(act(restart("shop-db-1")), env.registry, CORE, "a")
 
     assert [(v.rule, v.step) for v in violations] == [("protected", 1)]
+
+
+async def test_a_verification_url_must_be_a_health_check_of_the_host(tmp_path):
+    shop = "https://shop.example/health"
+    host = shop_host(
+        services={
+            "shop": ServiceOverrides(urls=[UrlCheckConfig(url=shop)]),
+            "blog": ServiceOverrides(urls=[UrlCheckConfig(url="https://blog.example/")]),
+        }
+    )
+    env = await graph_env(tmp_path, host=host)
+    proposal = act(restart("shop-web-1"))
+
+    def check(*urls: str) -> list:
+        planned = proposal.model_copy(update={"verification": VerificationPlan(urls=list(urls))})
+        return check_plan(planned, env.registry, CORE, "a")
+
+    assert check(shop, "https://blog.example/") == []  # any health check of the host
+    refused = check(shop, "http://169.254.169.254/latest/meta-data/")
+    assert [(v.rule, v.step) for v in refused] == [("unknown_url", None)]
+    assert "169.254.169.254" in refused[0].text and "hosts file" in refused[0].text
+    on_b = proposal.model_copy(update={"verification": VerificationPlan(urls=[shop])})
+    assert "unknown_url" in [v.rule for v in check_plan(on_b, env.registry, CORE, "b")]
+    nothing_runs = Proposal(
+        kind="no_action", reason="r", verification=VerificationPlan(urls=["http://x.example/"])
+    )
+    assert check_plan(nothing_runs, env.registry, CORE, "a") == []  # Verify never runs for it

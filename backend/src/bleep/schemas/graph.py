@@ -12,7 +12,9 @@ from pydantic import BaseModel, Field
 
 from bleep.schemas.docker import ContainerSummary, HostBasics
 
-Outcome = Literal["resolved", "rejected", "no_action", "unverified", "budget", "unsure"]
+Outcome = Literal[
+    "resolved", "rejected", "no_action", "unverified", "budget", "unsure", "replan_limit"
+]
 Action = Literal[
     "docker.restart", "docker.stop", "docker.start", "coolify.redeploy", "coolify.set_env"
 ]

@@ -34,6 +34,12 @@ class RecordingNotifier:
     async def proposal(self, incident, diagnosis, proposal, approval) -> None:
         self.proposals.append((incident.id, proposal, approval.id))
 
+    async def verification(self, incident, result) -> None:
+        return None
+
+    async def report(self, incident, report) -> None:
+        return None
+
 
 @pytest.fixture
 def plans(monkeypatch):
@@ -118,7 +124,9 @@ async def test_approve_carries_a_grant_for_the_approved_plan(run, plans):
     assert state["decision"].kind == "approve"
     assert state["grant"].plan_hash == record.plan_hash
     assert state["grant"].token == grant_token(SECRET, incident_id, record.plan_hash)
-    assert state["outcome"] == "unverified"  # nothing ran yet: never "resolved"
+    # Execute restarted it and Verify saw it running; only that may say "resolved".
+    assert state["outcome"] == "resolved"
+    assert [r.ok for r in state["step_results"]] == [True]
     assert await run.events(incident_id, "decision") == [
         {"kind": "approve", "text": None, "via": "telegram"}
     ]
@@ -271,12 +279,30 @@ async def test_a_target_that_cannot_be_read_goes_back_to_propose(run, plans):
     assert (await run.state(incident_id))["outcome"] == "no_action"
 
 
+async def test_a_target_that_never_becomes_readable_ends_after_the_replan_budget(run, plans):
+    plans[0].append(restart("gone-1"))  # Propose keeps proposing it
+    incident_id = await run.start()
+
+    _, seen = plans
+    assert len(seen) == 4  # the first plan and three new ones, then the run stops
+    assert (await run.state(incident_id))["outcome"] == "replan_limit"
+    assert "stopped after 3 new plans" in (await run.events(incident_id, "notice"))[-1]["text"]
+    assert (await run.env.nodes(incident_id))[-2:] == ["approval", "report"]
+    assert (await run.env.repo.get(incident_id)).status == "closed"
+
+
 def test_route():
     act = restart()
-    assert approval.route({"proposal": act, "decision": decide("approve")}) == "report"
+    assert approval.route({"proposal": act, "decision": decide("approve")}) == "execute"
     assert approval.route({"proposal": act, "decision": decide("reject")}) == "report"
     assert approval.route({"proposal": act, "decision": decide("instruct", "x")}) == "propose"
     assert approval.route({"proposal": act, "decision": None}) == "propose"
     no_action = Proposal(kind="no_action", reason="r")
     assert approval.route({"proposal": no_action, "decision": None}) == "report"
     assert approval.route({}) == "report"
+    out_of_replans = {
+        "proposal": act,
+        "decision": decide("instruct", "x"),
+        "outcome": "replan_limit",
+    }
+    assert approval.route(out_of_replans) == "report"

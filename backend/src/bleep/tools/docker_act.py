@@ -81,16 +81,7 @@ class ActTool:
         Raises `GrantInvalid` or `StepRefused` without touching the engine. An engine failure is
         a result with `ok=False`, not an exception: the call was made and may have done part.
         """
-        try:
-            container_id = self._authorize(step, grant, registry, plan, step_index)
-        except GrantInvalid as refusal:
-            what = f"step {step_index + 1} ({step.action} {step.target} on {step.host_id})"
-            self._blocked(plan, f"{what}: refused, {refusal}")
-            raise
-        except StepRefused as refusal:
-            self._blocked(plan, str(refusal))
-            raise
-
+        container_id = self.check(step, grant, registry, plan=plan, step_index=step_index)
         method, done = _DOCKER[self.name]
         started = self.clock()
         try:
@@ -109,6 +100,30 @@ class ActTool:
             started_at=started,
             finished_at=self.clock(),
         )
+
+    def check(
+        self,
+        step: PlanStep,
+        grant: ApprovalGrant | None,
+        registry: Registry,
+        *,
+        plan: ApprovalRecord,
+        step_index: int,
+    ) -> str:
+        """Every check `run` makes before its engine call, without the call: the container id it
+        would act on. Raises `GrantInvalid` or `StepRefused`, recorded as `blocked_action`.
+
+        Execute runs it for every step before the first one runs, so a plan the guard refuses
+        runs no step at all."""
+        try:
+            return self._authorize(step, grant, registry, plan, step_index)
+        except GrantInvalid as refusal:
+            what = f"step {step_index + 1} ({step.action} {step.target} on {step.host_id})"
+            self._blocked(plan, f"{what}: refused, {refusal}")
+            raise
+        except StepRefused as refusal:
+            self._blocked(plan, str(refusal))
+            raise
 
     def _blocked(self, plan: ApprovalRecord, text: str) -> None:
         if self.guard_log is not None:

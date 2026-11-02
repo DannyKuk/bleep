@@ -34,6 +34,25 @@ This runs the whole path from a dead container to the approval question, on the 
 5. Answer on one side, then try the other. The dashboard locks its buttons and says, for example, "Approved on the dashboard"; a tap in Telegram afterwards is told the dashboard already decided. Approve in Telegram first instead, and the page shows "Approved on Telegram" with its buttons locked; a page that has not caught up yet answers a click with "Already decided on Telegram".
 6. Clean up: `docker rm -f bleep-try`.
 
+### Approve, run, verify and report
+
+This continues past the approval: Bleep restarts what is down, checks the service and writes the report. It needs the same model key (and the bot for the Telegram half). Tests never do this; it is the manual check for Execute, Verify and Report.
+
+1. With Bleep running as above, start a small stack whose web container depends on a database, both with no restart policy and one Compose project label, so the overview groups them as one service:
+   ```bash
+   docker run -d --name bleep-try-db --restart no --label com.docker.compose.project=bleep-try redis:7-alpine
+   docker run -d --name bleep-try-web --restart no --label com.docker.compose.project=bleep-try nginx:1.27-alpine
+   ```
+   Within about 30 s the overview lists the `bleep-try` service with both containers running.
+2. Stop the dependency the way a crash does: `docker kill bleep-try-db` (a `docker stop` opens nothing, by design). After about 75 s an incident opens, and the Proposal card shows a plan such as `docker.start bleep-try-db on demo`.
+3. Approve on the dashboard. What to expect:
+   - **Timeline:** "Approved on the dashboard", "Ran the plan" with `docker.start bleep-try-db: started` and `docker.start bleep-try-db: done` under it, then "Checking the service" for about 20 s and "Check 1 passed" (a failed check is followed by up to two more, 10 s apart).
+   - **Report card:** the outcome "Fixed and verified", the action taken `docker.start bleep-try-db on demo: done`, "Approved on the dashboard" and the timeline. The incident's status is Resolved.
+   - **Telegram:** the verification result and then the report arrive in the chat.
+   - `docker ps` shows `bleep-try-db` running again, with a new start time.
+4. Optional, the stale-plan refusal: kill the database again, wait for the next proposal, and before approving run `docker start bleep-try-db` yourself. Approve: the timeline says "The plan did not run, the state changed since approval: bleep-try-db on demo was started again. Planning again.", nothing is restarted, and a new plan is proposed for the container as it is now (usually no action, since it is running).
+5. Clean up: `docker rm -f bleep-try-db bleep-try-web`.
+
 If the page stays on Connecting, or the reasoning only appears when the run ends, the stream is being buffered between the browser and the dashboard ([why it can happen](decisions/sse-through-next.md)).
 
 ## Real hosts
