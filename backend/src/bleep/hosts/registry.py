@@ -104,6 +104,20 @@ class Registry:
             await self._refresh(host_id, entry)
             return entry.state.reachable
 
+    async def refresh_all(self) -> None:
+        """Refresh every reachable host and try to reconnect the others, at once. Never raises."""
+
+        async def one(host_id: str, entry: _Entry) -> None:
+            try:
+                if entry.state.reachable:
+                    await self.refresh(host_id)
+                else:
+                    await self.reconnect(host_id)
+            except Exception:  # one host must not stop the others or the loop
+                log.exception("refresh of host %s failed", host_id)
+
+        await asyncio.gather(*(one(i, e) for i, e in self._entries.items()))
+
     def hosts(self) -> list[HostState]:
         return [e.state for e in self._entries.values()]
 

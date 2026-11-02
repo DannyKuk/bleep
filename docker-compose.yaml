@@ -56,6 +56,13 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       # The allowlist. The image's own flags can't allow restarts without also allowing create.
       - ./config/socket-proxy.cfg.template:/usr/local/etc/haproxy/haproxy.cfg.template:ro
+    healthcheck:
+      # The image has no curl; nc only checks that haproxy accepts connections.
+      test: ["CMD", "nc", "-z", "127.0.0.1", "2375"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
     # No ports published; only the backend shares this network.
     networks:
       - proxy

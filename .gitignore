@@ -26,7 +26,8 @@ npm-debug.log*
 .env
 .env.*
 !.env.example
-secrets/
+secrets/*
+!secrets/.gitkeep
 /data/
 *.sqlite
 *.sqlite-journal

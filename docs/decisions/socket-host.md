@@ -12,7 +12,7 @@ Bleep needs to watch the containers of the machine it runs on (the `demo` profil
 - **The proxy with its flags**, as the task first described: `CONTAINERS=1 EVENTS=1 INFO=1 PING=1 VERSION=1 ALLOW_START=1 ALLOW_STOP=1 ALLOW_RESTARTS=1`.
   - Without `POST=1`, restart was refused with 403: the stock config denies every non-GET request first.
   - With `POST=1`, restart worked, and so did `POST /containers/create`, `POST /containers/<id>/exec` and `DELETE /containers/<id>`, because `CONTAINERS=1` allows any path that starts with `/containers`.
-- **The proxy with its own rules** (`config/socket-proxy.cfg.template`, mounted over the image's template, so the pinned image stays untouched). It allows a POST only when the path is `/containers/<name>/(start|stop|restart)`, then denies any other non-GET, denies reads that copy data out of a container (`archive`, `export`, `attach`), allows reads under `/containers`, `/events`, `/info`, `/version`, `/_ping`, and denies the rest. The proxy's environment flags are not used.
+- **The proxy with its own rules** (`config/socket-proxy.cfg.template`, mounted over the image's template, so the pinned image stays untouched). Every rule is an exact path. A path with `..` or `//`, raw or decoded, is refused first. A POST is allowed only for `/containers/<name>/(start|stop|restart)`, a GET only for the container list, `/containers/<name>/(json|logs|stats)`, `/events`, `/info`, `/version` and `/_ping`; everything else is refused. A first version allowed reads by prefix and refused `archive` and `export` by name; dot segments, `//` and extra path segments walked around that, which is why it is an allowlist. The proxy's environment flags are not used.
 
 The calls were made from inside the backend container with urllib against `http://socket-proxy:2375`, with a throwaway `alpine sleep 300` container as the target.
 
@@ -28,21 +28,23 @@ Stock flags, with `POST=1`:
 | `DELETE /containers/<id>?force=1` | 204 (the target was deleted) |
 | `POST /images/create`, `/volumes/create`, `/networks/create` | 403 |
 
-Own rules (the shipped config):
+Own rules (the shipped config), sent as exact paths with `http.client` from inside the backend container, and through the docker SDK:
 
 | Call | Status |
 |---|---|
-| `GET /_ping`, `/version`, `/info`, `/containers/json`, `/containers/<id>/json`, `/containers/<id>/logs`, `/events` | 200 |
-| `GET /v1.45/containers/json` (versioned path) | 200 |
-| `POST /containers/<id>/restart`, `stop`, `start` | 204 |
-| `POST /containers/create`, also versioned | 403 |
-| `POST /containers/<id>/exec` | 403 |
-| `DELETE /containers/<id>?force=1` | 403 |
-| `POST /containers/<id>/kill` | 403 |
-| `POST /images/create` (pull) | 403 |
-| `GET /images/json`, `GET /volumes`, `GET /networks` | 403 |
-| `POST /volumes/create`, `POST /networks/create` | 403 |
-| `GET /containers/<id>/archive`, `GET /containers/<id>/export` | 403 |
+| `GET /containers/json`, `/containers/<name>/json`, `/containers/<name>/logs`, `/containers/<name>/stats?stream=0`, `/info`, `/_ping`, `/version` | 200 |
+| the same with a version prefix (`/v1.45/containers/json`, `/v1.45/containers/<name>/logs`) | 200 |
+| SDK: version negotiation, ping, list, info, logs, stats, an open `events` stream (received a `kill` event after a restart) | all worked |
+| `POST /containers/<name>/restart`, `stop`, `/v1.45/.../start` | 204 |
+| `GET /containers/x/../<name>/archive`, `/containers/<name>/../<name>/archive` | 403 |
+| `GET /containers//<name>/archive`, `/containers/a/<name>/archive` | 403 |
+| `GET /containers/<name>/%2e%2e/<name>/archive`, `/containers/<name>%2F..%2F<name>/archive`, `/containers%2F<name>/archive` | 403 |
+| `GET /v1.45/containers/<name>/archive`, `/v1.45/containers//<name>/export` | 403 |
+| `GET /containers/<name>/attach`, `/top`, `/changes`; `GET /containers/json/../../images/json` | 403 |
+| `GET /images/json`, `/volumes`, `/networks` | 403 |
+| `POST /containers/create`, `POST /containers/<name>/exec`, `/kill`, `DELETE /containers/<name>?force=1` | 403 |
+| `POST /images/create` (pull), `/volumes/create`, `/networks/create` | 403 |
+| `POST /containers//<name>/restart`, `/containers/x/../<name>/restart`, `/containers/<name>/%72estart` | 403 |
 
 End to end: after `docker compose --profile demo up -d --build`, the backend was healthy, a login through the dashboard on port 3000 returned 204, and `GET /api/services` listed the local engine's containers in three service groups, with none of Bleep's own containers.
 
@@ -55,10 +57,11 @@ End to end: after `docker compose --profile demo up -d --build`, the backend was
 ## Limits
 
 - Restart, stop and start of any container are allowed, including the proxy's and Bleep's own. Bleep's own tools decide what the agent may act on; the proxy does not.
-- Reading logs and container configuration can expose secrets that are in a container's environment. Bleep redacts them before a model sees them, but the proxy does not.
+- The proxy cannot stop a read of `/containers/<id>/json`, which carries a container's environment variables, secrets included. Bleep redacts the env in its inspect tool (Task 6, the guard), so a prompt-injected model never sees raw env; the proxy itself does nothing about it.
+- Quiet event and log streams stay open: the proxy's backend for them has no server or tunnel timeout.
 - The socket is mounted read-only into the proxy, which only stops the proxy from replacing the file; it does not limit the API calls it forwards. The proxy itself runs as root with the socket, so it is the one component that must be trusted.
 - Measured on Docker Desktop for macOS only. On Linux the same template applies, but the socket's group and path are the machine's.
-- The rules match paths. A new Docker API area under `/containers` that writes would be refused until the file allows it, and a new read would be allowed.
+- The allowlist is exact paths of what Bleep calls today. A tool that needs another call (`top`, say) needs a line in the template.
 
 ## Reproduce
 

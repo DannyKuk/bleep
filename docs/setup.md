@@ -23,9 +23,10 @@ The data (the SQLite database) lives in the `bleep-data` volume. `docker compose
    mkdir -p secrets/ssh
    cp ~/.ssh/bleep_deploy_key secrets/ssh/id_ed25519
    ssh-keyscan -H your-host >> secrets/ssh/known_hosts
-   chmod 600 secrets/ssh/id_ed25519
-   chmod 644 secrets/ssh/known_hosts
    ```
+   Keep the key at mode 600, and make the backend's user able to read it. The backend runs as uid and gid 10001, fixed in its image.
+   - **Linux:** `sudo chown 10001:10001 secrets/ssh/* && chmod 600 secrets/ssh/*`. Without the chown, a 600 key owned by your own user is unreadable inside the container.
+   - **Docker Desktop on macOS:** the bind mount maps ownership to the container's user, so `chmod 600 secrets/ssh/*` is enough.
    `./secrets` is mounted read-only at `/run/secrets`. Check the fingerprint `ssh-keyscan` returned against one you trust before relying on it.
 3. In `.env`, set `BLEEP_HOSTS_FILE=/config/hosts.yaml`. When it is unset, compose uses `/config/hosts.demo.yaml`.
 4. `docker compose up -d --build` (without the `demo` profile if you don't want the local engine watched).

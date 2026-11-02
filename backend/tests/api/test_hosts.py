@@ -1,4 +1,5 @@
 import json
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -241,3 +242,24 @@ def test_no_env_values_or_labels_in_any_response(stocked):
 def test_openapi_exposes_the_view_types(stocked):
     schemas = stocked.get("/openapi.json").json()["components"]["schemas"]
     assert {"HostView", "ServiceView", "ContainerView", "UrlStatus"} <= set(schemas)
+
+
+def test_services_follow_the_engine_after_a_refresh_tick(settings, parts, monkeypatch):
+    monkeypatch.setattr("bleep.main.REFRESH_INTERVAL_S", 0.02)
+    engine = FakeEngine("a", [c(name="web")])
+
+    async def connect(host):
+        return None, engine
+
+    parts.registry = Registry([ssh_host(id="a")], connect, clock=lambda: T0)
+    with TestClient(create_app(settings, parts)) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        assert [s["name"] for s in client.get("/api/services").json()] == ["web"]
+        engine.container_list.append(c(name="worker"))
+        names = []
+        for _ in range(100):
+            names = sorted(s["name"] for s in client.get("/api/services").json())
+            if names == ["web", "worker"]:
+                break
+            time.sleep(0.02)
+    assert names == ["web", "worker"]
