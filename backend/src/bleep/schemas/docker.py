@@ -81,3 +81,7 @@ class EngineInfo(BaseModel):
     mem_total: int = 0  # bytes
     containers: int = 0
     containers_running: int = 0
+
+
+class HostBasics(BaseModel):
+    """Disk, memory and load of one host. Task 7 adds the fields; the registry only carries it."""
