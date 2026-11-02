@@ -19,11 +19,12 @@ class DiskView(BaseModel):
 
 class BasicsView(BaseModel):
     os: str
-    cpus: int
-    mem_total: int
-    mem_available: int
-    load1: float
-    load15: float
+    # None when the host could not tell (a socket host has no load; a parse can fail)
+    cpus: int | None
+    mem_total: int | None
+    mem_available: int | None
+    load1: float | None
+    load15: float | None
     disks: list[DiskView]
 
 

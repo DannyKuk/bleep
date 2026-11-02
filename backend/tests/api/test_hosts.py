@@ -264,3 +264,34 @@ def test_services_follow_the_engine_after_a_refresh_tick(settings, parts, monkey
                 break
             time.sleep(0.02)
     assert names == ["web", "worker"]
+
+
+def test_hosts_carry_basics_when_known(stocked, parts):
+    from bleep.schemas.docker import DiskUsage, HostBasics
+
+    entry = parts.registry._entries["a"]
+    entry.state = type(entry.state)(
+        **{
+            **entry.state.__dict__,
+            "basics": HostBasics(
+                os="Linux",
+                disks=[DiskUsage(mount="/", used_percent=49)],
+                mem_total=4000,
+                mem_available=2000,
+                load1=0.4,
+                load15=0.3,
+                cpus=2,
+            ),
+        }
+    )
+    body = {h["id"]: h for h in stocked.get("/api/hosts").json()}
+    assert body["a"]["basics"] == {
+        "os": "Linux",
+        "cpus": 2,
+        "mem_total": 4000,
+        "mem_available": 2000,
+        "load1": 0.4,
+        "load15": 0.3,
+        "disks": [{"mount": "/", "used_percent": 49.0}],
+    }
+    assert body["b"]["basics"] is None

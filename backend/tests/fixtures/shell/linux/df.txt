@@ -1,0 +1,16 @@
+Filesystem     1024-blocks     Used Available Capacity Mounted on
+tmpfs               391156     1704    389452       1% /run
+/dev/sda1         39037036 17989176  19403140      49% /
+tmpfs              1955776        0   1955776       0% /dev/shm
+tmpfs                 5120        0      5120       0% /run/lock
+/dev/sda15          258087      146    257942       1% /boot/efi
+tmpfs               391152       12    391140       1% /run/user/0
+overlay           39037036 17989176  19403140      49% /var/lib/docker/rootfs/overlayfs/8c7d78fa1bf814393fca00e20c4903a895ca7d909c5fbe465d5432e3728918d6
+overlay           39037036 17989176  19403140      49% /var/lib/docker/rootfs/overlayfs/531f7d53fd043cc4e6f0602ba1dc6289a8a6e96f1cd40d56fd85dd389bd229c4
+overlay           39037036 17989176  19403140      49% /var/lib/docker/rootfs/overlayfs/d12cd3322678f2a474b92aea23d202debad7579ea37f925e57613795b0896554
+overlay           39037036 17989176  19403140      49% /var/lib/docker/rootfs/overlayfs/8c1f913bdca22730dc8585628a0c8e5e193e934e44c61f2346e46990bf0394ab
+overlay           39037036 17989176  19403140      49% /var/lib/docker/rootfs/overlayfs/e174e590abdebc8e12037ebd93c7228db305def85fc2d27625d64c6594e31cca
+overlay           39037036 17989176  19403140      49% /var/lib/docker/rootfs/overlayfs/0be1404796fc99740e931ab0e6d0d91853b6e11a21898c7939632000be901e96
+overlay           39037036 17989176  19403140      49% /var/lib/docker/rootfs/overlayfs/d5a834f58563315114ff502b73a3449d2131d0626ca2aeaa9eaf673af67efb14
+overlay           39037036 17989176  19403140      49% /var/lib/docker/rootfs/overlayfs/b9991f773020da0db2c2b7916f23af261456c4b69ac7efbe9f8f6581569b0f77
+overlay           39037036 17989176  19403140      49% /var/lib/docker/rootfs/overlayfs/b32badd47475d72c3158de09add2182c7002ef5ab957e9a9a1fe7899993909ee
