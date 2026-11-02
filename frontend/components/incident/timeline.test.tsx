@@ -39,4 +39,26 @@ describe("Timeline", () => {
     expect(screen.getByText(/Instruction from Telegram/)).toHaveTextContent("Check the db");
     expect(screen.getByText(/could not be sent to a channel/)).toBeInTheDocument();
   });
+
+  it("shows each step of the plan as it starts and ends, and each check", () => {
+    render(
+      <Timeline
+        events={[
+          event("action", { action: "docker.restart", target: "shop-db-1", status: "started" }),
+          event("action", { action: "docker.restart", target: "shop-db-1", status: "failed" }),
+          event("action", { action: "docker.start", target: "shop-web-1", status: "skipped" }),
+          event("verification", { ok: false, attempt: 1, checks: [] }),
+          event("verification", { ok: true, attempt: 2, checks: [] }),
+        ]}
+      />,
+    );
+    const items = within(screen.getByRole("list", { name: "Timeline" })).getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual([
+      expect.stringContaining("docker.restart shop-db-1: started"),
+      expect.stringContaining("docker.restart shop-db-1: failed"),
+      expect.stringContaining("docker.start shop-web-1: skipped"),
+      expect.stringContaining("Check 1 failed"),
+      expect.stringContaining("Check 2 passed"),
+    ]);
+  });
 });

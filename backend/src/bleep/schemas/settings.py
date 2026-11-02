@@ -41,6 +41,9 @@ class Budgets(BaseModel):
     investigate_tool_calls: int = 8
     low_confidence: float = 0.6
     verify_loops: int = 2
+    # Times one run may go back to Propose from Approval or Execute (an instruction, a target that
+    # cannot be read, a plan gone stale); one more ends the run with the outcome `replan_limit`.
+    replans: int = 3
     incident_tokens: int = 150_000
     daily_cost_usd: float = 1.0
     approval_reminder_min: int = 60  # a pending approval is re-sent this often, never approved

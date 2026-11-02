@@ -175,7 +175,14 @@ export interface ApprovalView {
   decision: Decision | null;
 }
 
-export type Outcome = "resolved" | "rejected" | "no_action" | "unverified" | "budget" | "unsure";
+export type Outcome =
+  | "resolved"
+  | "rejected"
+  | "no_action"
+  | "unverified"
+  | "budget"
+  | "unsure"
+  | "replan_limit";
 
 export interface TimelineEntry {
   at: string;

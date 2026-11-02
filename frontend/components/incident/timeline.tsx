@@ -94,6 +94,24 @@ export function timelineEntries(events: IncidentEvent[]): Entry[] {
           text: decisionText(payload),
         });
         break;
+      case "action": // Execute, one per step status change
+        entries.push({
+          seq,
+          at,
+          icon: payload.status === "done" ? CheckCircle2 : Circle,
+          text: `${String(payload.action ?? "")} ${String(payload.target ?? "")}: ${String(payload.status ?? "")}`,
+          tone: payload.status === "failed" ? "text-health-down" : undefined,
+        });
+        break;
+      case "verification":
+        entries.push({
+          seq,
+          at,
+          icon: payload.ok ? CheckCircle2 : Circle,
+          text: `Check ${String(payload.attempt ?? 1)} ${payload.ok ? "passed" : "failed"}`,
+          tone: payload.ok ? undefined : "text-health-degraded",
+        });
+        break;
       case "notice":
         entries.push({
           seq,

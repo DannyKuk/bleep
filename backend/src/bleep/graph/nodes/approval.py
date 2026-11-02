@@ -19,6 +19,7 @@ from typing import Literal
 from langgraph.types import interrupt
 
 from bleep.graph.deps import GraphDeps
+from bleep.graph.replan import replan
 from bleep.graph.state import IncidentState, Node
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.graph import ApprovalRecord, Decision, Proposal, TargetSnapshot
@@ -67,14 +68,12 @@ async def _snapshots(deps: GraphDeps, proposal: Proposal) -> tuple[list[TargetSn
 
 
 def make(deps: GraphDeps) -> Node:
-    async def ask(state: IncidentState, proposal: Proposal) -> ApprovalRecord | None:
-        """Store, publish and send the question; None when a target cannot be read."""
+    async def ask(state: IncidentState, proposal: Proposal) -> ApprovalRecord | list[str]:
+        """Store, publish and send the question; the unread targets when one cannot be read."""
         incident_id = state["incident_id"]
         snapshots, unread = await _snapshots(deps, proposal)
         if unread:
-            text = "The plan was not put to you, a target could not be read: " + "; ".join(unread)
-            await deps.bus.publish(incident_id, "notice", {"text": text + ". Planning again."})
-            return None
+            return unread
         request = await deps.approvals.request(incident_id, proposal, snapshots)
         await deps.bus.publish(
             incident_id,
@@ -103,14 +102,17 @@ def make(deps: GraphDeps) -> Node:
         record = await deps.approvals.current(incident_id)
         consumed = state.get("approval")
         if record is None or (consumed is not None and record.id == consumed.id):
-            record = await ask(state, proposal)
-            if record is None:
-                return {"decision": None, "grant": None}
+            asked = await ask(state, proposal)
+            if isinstance(asked, list):
+                notice = "The plan was not put to you, a target could not be read: "
+                notice += "; ".join(asked) + "."
+                return {"decision": None, "grant": None, **await replan(deps, state, notice)}
+            record = asked
 
         decision = record.decision  # set when it was decided while the run was not waiting
         if decision is None:
-            asked = {"approval_id": record.id, "proposal": proposal.model_dump(mode="json")}
-            resumed = Decision.model_validate(interrupt(asked))
+            question = {"approval_id": record.id, "proposal": proposal.model_dump(mode="json")}
+            resumed = Decision.model_validate(interrupt(question))
             decision = await deps.approvals.resolve(incident_id, resumed, record.id)
             if decision is None:  # another channel won first; its decision stands
                 latest = await deps.approvals.current(incident_id)
@@ -129,22 +131,22 @@ def make(deps: GraphDeps) -> Node:
             "decision": decision,
             "grant": await deps.approvals.grant(incident_id) if approved else None,
         }
-        if decision.kind == "instruct" and decision.text:
-            update["instructions"] = [*state.get("instructions", []), decision.text]
+        if decision.kind == "instruct":
+            if decision.text:
+                update["instructions"] = [*state.get("instructions", []), decision.text]
+            update |= await replan(deps, state)
         return update
 
     return approval
 
 
-def route(state: IncidentState) -> Literal["propose", "report"]:
-    """An instruction goes back to Propose, and so does a plan that could not be put to the
-    human; a no closes with a report.
-
-    A yes goes to the report too until Execute exists (Milestone 3), which reports the plan as
-    approved but unverified.
-    """
+def route(state: IncidentState) -> Literal["propose", "execute", "report"]:
+    """A yes goes to Execute; an instruction goes back to Propose, and so does a plan that could
+    not be put to the human; a no closes with a report, and so does a run out of re-plans."""
     proposal = state.get("proposal")
-    if proposal is None or proposal.kind != "act":
+    if proposal is None or proposal.kind != "act" or state.get("outcome") is not None:
         return "report"
     decision = state.get("decision")
-    return "propose" if decision is None or decision.kind == "instruct" else "report"
+    if decision is None or decision.kind == "instruct":
+        return "propose"
+    return "execute" if decision.kind == "approve" else "report"

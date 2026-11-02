@@ -285,6 +285,7 @@ OUTCOMES = {
     "no_action": "No action proposed, nothing was done",
     "unsure": "Cause not found, nothing was done",
     "budget": "Stopped, the model budget is spent",
+    "replan_limit": "Stopped after too many new plans",
 }
 
 
@@ -350,3 +351,41 @@ def test_outcome_rules_hold():
     assert report.outcome({}) == "no_action"
     # approved, but nothing checked: never "resolved"
     assert report.outcome({"proposal": ACT, "decision": decide("approve")}) == "unverified"
+
+
+def test_every_outcome_has_its_fixed_text():
+    assert report.OUTCOME_TEXT == OUTCOMES
+
+
+async def test_a_plan_that_ran_before_a_rejected_one_is_unverified_not_nothing_done(tmp_path):
+    """Verify sent the run back after a restart ran; the second plan was rejected."""
+    env, state, _ = await setup(tmp_path, written())
+    ran = RESULT.model_copy(update={"started_at": T0})
+    state |= {"proposal": ACT, "decision": decide("reject"), "step_results": [ran]}
+
+    update = await run(env, state)
+
+    assert update["outcome"] == "unverified"
+    assert update["report"].action_taken == "docker.start shop-web-1 on a: done"
+
+
+def test_action_taken_names_each_step_done_failed_or_skipped():
+    plan = ACT.model_copy(update={"steps": [STEP, STEP.model_copy(update={"host_id": "b"}), STEP]})
+    results = [
+        RESULT.model_copy(update={"started_at": T0}),
+        RESULT.model_copy(update={"step_index": 1, "ok": False, "started_at": T0}),
+        RESULT.model_copy(update={"step_index": 2, "ok": False}),  # never started
+    ]
+
+    assert report.action_taken(results, plan, "a") == (
+        "docker.start shop-web-1 on a: done; docker.start shop-web-1 on b: failed; "
+        "docker.start shop-web-1 on a: skipped"
+    )
+
+
+def test_action_taken_falls_back_to_the_incidents_host():
+    beyond = RESULT.model_copy(update={"step_index": 5, "started_at": T0})
+
+    assert report.action_taken([beyond], ACT, "a") == "docker.start shop-web-1 on a: done"
+    assert report.action_taken([RESULT], None, "c") == "docker.start shop-web-1 on c: done"
+    assert report.action_taken([], ACT, "a") is None

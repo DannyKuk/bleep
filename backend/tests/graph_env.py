@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
 
@@ -36,6 +37,16 @@ def box(name: str, project: str | None = None, **fields: Any) -> ContainerSummar
     labels = {COMPOSE_PROJECT: project} if project else {}
     defaults: dict[str, Any] = {"image": "img:1", "state": "running", "labels": labels}
     return ContainerSummary(id=f"id-{name}", name=name, **(defaults | fields))
+
+
+async def no_wait(_seconds: float) -> None:
+    """Verify's waits, skipped: a test that cares about them passes its own clock."""
+
+
+def unreachable_urls(request: httpx.Request) -> httpx.Response:
+    """Every URL check fails without leaving the process; a test that checks URLs passes its own
+    transport."""
+    return httpx.Response(503)
 
 
 class RecordingGuardLog:
@@ -146,5 +157,7 @@ async def graph_env(
         action_log=ActionLog(db),
         approvals=InMemoryApprovals(SECRET),
         guard_log=guard_log,
+        sleep=no_wait,
+        http=httpx.AsyncClient(transport=httpx.MockTransport(unreachable_urls)),
     )
     return GraphEnv(db, repo, bus, registry, engine, shell, guard_log, models, deps)

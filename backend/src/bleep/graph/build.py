@@ -16,7 +16,16 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from bleep.graph.deps import GraphDeps
-from bleep.graph.nodes import approval, diagnose, gather, investigate, propose, report
+from bleep.graph.nodes import (
+    approval,
+    diagnose,
+    execute,
+    gather,
+    investigate,
+    propose,
+    report,
+    verify,
+)
 from bleep.graph.state import IncidentState, Node, checkpoint_serializer
 from bleep.incidents.bus import EventBus
 
@@ -37,9 +46,10 @@ def _traced(bus: EventBus, name: str, node: Node) -> Node:
 
 
 def build_graph(deps: GraphDeps, checkpointer: BaseCheckpointSaver) -> CompiledStateGraph:
-    """gather → investigate → diagnose → propose → approval → report, with the loops back."""
+    """gather → investigate → diagnose → propose → approval → execute → verify → report, with
+    the loops back."""
     graph = StateGraph(IncidentState)
-    for module in (gather, investigate, diagnose, propose, approval, report):
+    for module in (gather, investigate, diagnose, propose, approval, execute, verify, report):
         name = module.__name__.rsplit(".", 1)[-1]
         graph.add_node(name, _traced(deps.bus, name, module.make(deps)))
     graph.add_edge(START, "gather")
@@ -47,7 +57,9 @@ def build_graph(deps: GraphDeps, checkpointer: BaseCheckpointSaver) -> CompiledS
     graph.add_conditional_edges("investigate", investigate.route, ["diagnose", "report"])
     graph.add_conditional_edges("diagnose", diagnose.route, ["investigate", "propose"])
     graph.add_conditional_edges("propose", propose.route, ["approval", "report"])
-    graph.add_conditional_edges("approval", approval.route, ["propose", "report"])
+    graph.add_conditional_edges("approval", approval.route, ["propose", "execute", "report"])
+    graph.add_conditional_edges("execute", execute.route, ["propose", "verify", "report"])
+    graph.add_conditional_edges("verify", verify.route, ["investigate", "report"])
     graph.add_edge("report", END)
     return graph.compile(checkpointer=checkpointer)
 
