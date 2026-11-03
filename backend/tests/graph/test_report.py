@@ -151,7 +151,7 @@ async def test_only_a_verified_run_is_called_fixed(tmp_path):
     assert update["outcome"] == "resolved"
     assert update["report"].outcome == "Fixed and verified"
     assert update["report"].summary == "Started shop-web; it is fixed."
-    assert (await env.repo.get(state["incident_id"])).status == "resolved"
+    assert (await env.repo.get(state["incident_id"])).status == "open"  # closed by the runner
 
 
 async def test_a_model_that_pastes_a_log_line_has_it_removed(tmp_path):
@@ -263,7 +263,7 @@ async def test_rejected_and_no_action_get_a_report_without_action(tmp_path, extr
     assert stored.outcome == text
     assert stored.title == TITLE
     assert notified.reports == [(state["incident_id"], stored)]
-    assert (await env.repo.get(state["incident_id"])).status == "closed"
+    assert (await env.repo.get(state["incident_id"])).status == "open"  # closed by the runner
 
 
 async def test_no_action_keeps_the_humans_instructions_as_a_follow_up_without_a_model(tmp_path):
@@ -290,7 +290,7 @@ OUTCOMES = {
 
 
 @pytest.mark.parametrize("outcome", list(OUTCOMES))
-async def test_every_outcome_is_reported_stored_published_and_closed(tmp_path, outcome):
+async def test_every_outcome_is_reported_stored_and_published(tmp_path, outcome):
     env, state, notified = await setup(tmp_path, written())
     state |= {"proposal": ACT, "decision": decide("approve"), "outcome": outcome}
 
@@ -302,8 +302,7 @@ async def test_every_outcome_is_reported_stored_published_and_closed(tmp_path, o
     assert notified.reports == [(state["incident_id"], stored)]
     events = [e for e in await env.bus.history(state["incident_id"]) if e.kind == "report"]
     assert [Report.model_validate(e.payload) for e in events] == [stored]
-    status = (await env.repo.get(state["incident_id"])).status
-    assert status == ("resolved" if outcome == "resolved" else "closed")
+    assert (await env.repo.get(state["incident_id"])).status == "open"  # closed by the runner
     if outcome != "resolved":
         assert "fixed" not in stored.model_dump_json().lower()
 
@@ -327,7 +326,7 @@ async def test_a_failing_model_or_channel_still_ends_with_a_report(tmp_path):
     update = await run(env, state)
 
     assert update["report"].summary == f"{TITLE}: rejected, nothing was done."
-    assert (await env.repo.get(state["incident_id"])).status == "closed"
+    assert (await env.repo.get(state["incident_id"])).status == "open"  # closed by the runner
     assert [e.kind for e in await env.bus.history(state["incident_id"])] == ["report"]
 
 

@@ -10,7 +10,9 @@ sentence that says "fixed" unless the outcome is `resolved`, and goes through
 `guard.report_check` against the logs the run read. A model that fails or a spent budget gives a
 report written from the record alone. The report is published as a `report` event, sent through
 `Notifier.report` for every outcome, remembered in long-term memory with the human's decision
-(`Memory.add_report`), and the incident is closed (`resolved` or `closed`).
+(`Memory.add_report`). The node does not close the incident: the runner does, once the
+report is in the checkpoint, so a crash before that leaves the incident open and the next boot
+runs the node again rather than leaving a closed incident with no stored report.
 """
 
 import logging
@@ -299,15 +301,14 @@ def make(deps: GraphDeps) -> Node:
 
         written = check_report(written, _raw_logs(state), record)
 
-        # Published and sent before the incident is closed: a crash in between runs the node
-        # again (a second message) rather than leaving a closed incident with no report.
+        # Published, sent and remembered here; the runner closes the incident once this update
+        # is checkpointed. A crash before that runs the node again (a second message; memory
+        # replaces its record, it never doubles it) rather than closing an incident whose
+        # report never reached the checkpoint, where the API reads it.
         await deps.bus.publish(incident_id, "report", written.model_dump(mode="json"))
         if incident is not None:
             await _notify(deps, incident, written)
-            # Remembered before the close too; a re-run replaces the record, it never doubles it.
             await _remember(deps, incident, written, decision, proposal)
-        status = "resolved" if result == "resolved" else "closed"
-        await deps.incidents.set_status(incident_id, status)
         return {"outcome": result, "report": written}
 
     return report

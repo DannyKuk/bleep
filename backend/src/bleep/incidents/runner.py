@@ -204,7 +204,10 @@ class IncidentRunner:
             await self._settle(incident_id, snapshot)
 
     async def _settle(self, incident_id: str, snapshot: Any) -> None:
-        """Set the terminal status of a finished thread from its outcome."""
+        """Set the terminal status of a finished thread from its outcome.
+
+        The only place an incident is closed: after the run's last checkpoint, so a crash before
+        it leaves the incident open and `recover_on_boot` finishes the run."""
         outcome = snapshot.values.get("outcome")
         await self.repo.set_status(incident_id, "resolved" if outcome == "resolved" else "closed")
 

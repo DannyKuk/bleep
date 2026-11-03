@@ -118,7 +118,7 @@ async def test_report_remembers_and_the_next_incident_hears_what_the_human_rejec
     update = await report.make(env.deps)(state)
 
     assert update["outcome"] == "rejected"
-    assert (await env.repo.get(first.id)).status == "closed"
+    assert (await env.repo.get(first.id)).status == "open"  # closed by the runner
     ctx = await gather_for(env, shop(env))
     [past] = ctx.similar
     assert past.incident_id == first.id
@@ -145,7 +145,7 @@ async def test_a_memory_that_cannot_remember_does_not_stop_the_report(tmp_path, 
     update = await report.make(env.deps)(state)
 
     assert update["report"].outcome == "No action proposed, nothing was done"
-    assert (await env.repo.get(incident.id)).status == "closed"
+    assert (await env.repo.get(incident.id)).status == "open"  # closed by the runner
     assert "remembering" in caplog.text and "RuntimeError" in caplog.text
 
 
