@@ -52,6 +52,8 @@ flowchart LR
 | **Incident graph** | `graph/` | LangGraph state, nodes and wiring, checkpointed per incident in `checkpoints.sqlite`. |
 | **Read tools** | `tools/` | Docker reads and the host command tool for the model, each scoped to the incident's host, and `recall_incidents` over memory. |
 | **Act tools** | `tools/docker_act.py`, `guard/grant.py` | Restart, stop and start a container for one step of an approved plan; each checks the grant against the plan, then the target (host error, protected, Bleep's own), and acts on the approved container id. Never offered to a model. |
+| **Plugins** | `plugins/`, `api/plugins.py` | Tools that share one connection, switched on and off as a whole: their read tools join Investigate's and their actions the plan check's enabled set while they are on. Secrets are env variable names, never stored or shown. |
+| **Settings store** | `incidents/settings_store.py`, `api/settings.py`, `guard/secret_fields.py` | Non-secret settings a person changes from the dashboard (model choice, budgets, thresholds, hosts' and services' rules, URLs and protected containers, plugin toggles), stored in SQLite over the hosts file and the defaults, in force at once; a body carrying anything secret-shaped is refused. |
 | **Long-term memory** | `memory/`, `tools/memory.py` | Every finished incident with the human's decision and feedback, embedded by a local model (bge-small through fastembed) or an OpenAI-compatible endpoint, and facts per service. Gather recalls the 3 most similar (the same service's first) and the facts; Report writes the record and learns facts from the human's instructions; a model change re-embeds on boot. |
 | **Action log** | `incidents/action_log.py` | Execute's ledger in SQLite: each step `started` before its engine call and `done`, `failed` or `skipped` after, so a restart never runs a step twice. |
 | **Guard** | `guard/` | Redacts secrets, strips control characters, caps size and wraps untrusted text before anything reaches a model; checks every proposed plan before a human sees it (`guard/plan_check.py`); hashes plans and signs and checks approval grants (`guard/grant.py`); cuts log text out of every report (`guard/report_check.py`); `guard/log.py` records what it refused, blocked or changed in the `guard_log` table. |
@@ -59,7 +61,7 @@ flowchart LR
 | **Tracing** | `llm/tracing.py`, `docker-compose.observability.yaml` | Off by default; `TRACING=langfuse` or `langsmith` adds a tracer's callbacks to every graph run, one Langfuse trace per incident with the incident as its session, and stores the trace's link on the incident. `--profile observability` runs a self-hosted Langfuse. |
 | **Prompts** | `prompts/` | Every prompt is a `.md` file loaded with `prompts.load(name, **vars)`. |
 | **Store** | `store/` | SQLite with numbered migrations. |
-| **API** | `main.py`, `api/`, `auth/` | Login with one admin password and hashed sessions; the read API over hosts and services; incidents with their findings, timeline and recoveries; the dashboard's decision on an approval and feedback on the findings; a service's facts; the live event stream (SSE). |
+| **API** | `main.py`, `api/`, `auth/` | Login with one admin password and hashed sessions; the read API over hosts and services; incidents with their findings, timeline and recoveries; the dashboard's decision on an approval and feedback on the findings; a service's facts; the settings and the plugins; the live event stream (SSE). |
 | **Dashboard** | `frontend/` | Next.js app: login; an overview of hosts, services and self-recoveries, polled; the incident list; each incident's page with its live reasoning, timeline, diagnosis, the plan to approve, reject or instruct, a vote on both, and the report once the run ends, streamed through a route handler (`app/api/stream/route.ts`); and each service's page with its URLs, rules, facts and past incidents. |
 | **Compose** | `docker-compose.yaml`, `config/socket-proxy.cfg.template` | Runs Bleep; `--profile demo` adds the socket proxy so Bleep can watch this machine. |
 | **Demo shop** | `demo/`, `config/hosts.demo.yaml` | A proxy, a web app, its database and a worker for Bleep to watch, as their own Compose project `shop`, and `demo/fault.sh`, which switches eight faults on and off ([demo](demo.md)). |
@@ -136,6 +138,14 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **Every plan is checked in code**: allowlisted, enabled actions on the incident's host only, never a protected or Bleep container, never a Docker action on a container that works unless it is the incident's own (named by a signal, the service of a URL-only incident, a top memory user of a host memory incident) or the human names it, at most 3 steps.
 - **Act tools refuse without a grant for the exact plan**, recomputing its hash; they re-check the target with the plan check's rules and act on the approved container id, and no model is ever given them.
 - **A report loses any 60-character stretch it shares with a log the run read.**
+
+**Plugins** ([details](design/plugins.md))
+- **A plugin is read from the registry at every use**, so switching it off takes its tools out of the next round, fails its actions in the plan check and leaves Execute no handler for them.
+- **A plugin's secrets are env variable names**, shown only as set or not; its settings model may not hold a secret-named field.
+
+**Settings** ([details](design/settings.md))
+- **Database override > hosts file > defaults, in force at once**; the dashboard can protect a container but never unprotect one the hosts file protects.
+- **A settings body with a secret-shaped key or value anywhere is refused with 422**, naming where and never what.
 
 **Notifications** ([details](design/notify.md))
 - **Telegram is optional**: without a token everything runs through the dashboard.

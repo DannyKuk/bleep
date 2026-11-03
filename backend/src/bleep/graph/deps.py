@@ -39,8 +39,7 @@ from bleep.schemas.graph import (
 )
 from bleep.schemas.incidents import Incident
 from bleep.schemas.settings import Budgets, ModelSettings
-from bleep.tools.docker_act import ActTool
-from bleep.tools.registry import ToolRegistry
+from bleep.tools.registry import ActHandler, ToolRegistry
 
 # The actions Bleep can take without a plugin; plugins add theirs (coolify.*) when enabled.
 CORE_ACTIONS: frozenset[str] = frozenset({"docker.restart", "docker.stop", "docker.start"})
@@ -286,7 +285,7 @@ class GraphDeps:
 
     registry: Registry
     tools: ToolRegistry
-    act_tools: Mapping[str, ActTool]
+    act_tools: Mapping[str, ActHandler]
     models: ModelFactory
     bus: EventBus
     ledger: CostLedger

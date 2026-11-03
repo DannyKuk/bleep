@@ -23,7 +23,7 @@ _FLAGS = re.IGNORECASE
 _SCHEME = r"(?:bearer|basic|token|digest)"
 
 # --- key names: split into words and judged in Python ----------------------------------------
-_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")  # SECRET_KEY, secretKey, APIKey
+WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")  # SECRET_KEY, secretKey, APIKey
 _SECRET_WORDS = {
     "password", "passwd", "pass", "pwd", "passphrase", "secret", "secrets", "token", "credential",
     "credentials", "auth", "apikey", "pw", "secretkey", "privatekey", "accesskey", "accesstoken",
@@ -86,7 +86,7 @@ def _is_secret_key(key: str) -> bool:
         return False
     if _ENV_KEY.fullmatch(key):
         return True
-    raw = [w.lower() for w in _WORDS.findall(key)]
+    raw = [w.lower() for w in WORDS.findall(key)]
     words = [_singular(w) for w in raw]
     last = -1
     for index, word in enumerate(words):

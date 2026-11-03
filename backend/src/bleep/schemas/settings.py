@@ -1,9 +1,20 @@
-"""Settings the agent reads: which models to call, and how much it may spend."""
+"""Settings the agent reads (which models to call, how much it may spend, when a signal is an
+incident) and the overrides a person may set from the dashboard."""
 
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import AliasChoices, BaseModel, Field, SecretStr
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    StringConstraints,
+    field_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from bleep.hosts.config import UrlCheckConfig, check_url_syntax
 
 
 def _env(name: str, field: str) -> AliasChoices:
@@ -64,3 +75,114 @@ class Thresholds(BaseModel):
     load_polls: int = 3
     host_unreachable_s: int = 300
     debounce_s: int = 30
+
+
+# What a person may change from the dashboard (#36). Each field left out keeps the value below it:
+# the hosts file, else the defaults above. Bounds keep a typo from switching a guard off.
+ModelName = Annotated[str, StringConstraints(min_length=1, max_length=200, pattern=r"^[\w./:@-]+$")]
+RuleText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+ContainerName = Annotated[
+    str, StringConstraints(min_length=1, max_length=255, pattern=r"^[A-Za-z0-9][\w.-]*$")
+]
+ServiceKey = Annotated[str, StringConstraints(min_length=1, max_length=255)]
+
+
+class _Overrides(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ModelOverrides(_Overrides):
+    """The model choice; the base URL of a local model and every API key stay in the env."""
+
+    provider: Literal["openrouter", "local"] | None = None
+    model: ModelName | None = None
+    cheap_model: ModelName | None = None
+    local_model: ModelName | None = None
+
+
+class BudgetOverrides(_Overrides):
+    investigate_tool_calls: int | None = Field(None, ge=1, le=50)
+    low_confidence: float | None = Field(None, ge=0, le=1)
+    verify_loops: int | None = Field(None, ge=0, le=5)
+    replans: int | None = Field(None, ge=0, le=10)
+    incident_tokens: int | None = Field(None, ge=1_000, le=2_000_000)
+    daily_cost_usd: float | None = Field(None, ge=0, le=100)
+    approval_reminder_min: int | None = Field(None, ge=5, le=1_440)
+
+
+class ThresholdOverrides(_Overrides):
+    container_grace_s: int | None = Field(None, ge=0, le=3_600)
+    repeated_deaths: int | None = Field(None, ge=2, le=100)
+    repeated_window_s: int | None = Field(None, ge=60, le=86_400)
+    url_failures_to_open: int | None = Field(None, ge=1, le=20)
+    url_slow_ms: int | None = Field(None, ge=100, le=60_000)
+    disk_percent: float | None = Field(None, ge=50, le=100)
+    memory_available_percent_min: float | None = Field(None, ge=0, le=50)
+    memory_polls: int | None = Field(None, ge=1, le=60)
+    load_per_cpu: float | None = Field(None, gt=0, le=100)
+    load_polls: int | None = Field(None, ge=1, le=60)
+    host_unreachable_s: int | None = Field(None, ge=30, le=86_400)
+    debounce_s: int | None = Field(None, ge=0, le=3_600)
+
+
+class ServiceSettings(_Overrides):
+    """One service's overrides. `urls` and `rules` replace the hosts file's; protected
+    containers are added to the hosts file's, which the dashboard can never unprotect."""
+
+    urls: list[UrlCheckConfig] | None = Field(None, max_length=20)
+    rules: list[RuleText] | None = Field(None, max_length=50)
+    protected_containers: list[ContainerName] | None = Field(None, max_length=100)
+
+    @field_validator("urls")
+    @classmethod
+    def _checkable(cls, urls: list[UrlCheckConfig] | None) -> list[UrlCheckConfig] | None:
+        for cfg in urls or []:
+            if (why := check_url_syntax(cfg.url)) is not None:
+                raise ValueError(f"invalid url: {why}")
+        return urls
+
+
+class HostSettings(_Overrides):
+    rules: list[RuleText] | None = Field(None, max_length=50)
+    services: dict[ServiceKey, ServiceSettings] = Field(default_factory=dict, max_length=200)
+
+
+class SettingsUpdate(_Overrides):
+    """`PUT /api/settings`. A section given replaces that section's overrides, and under `hosts`
+    each host given replaces that host's; `{}` clears one. Sections left out stay as they are."""
+
+    models: ModelOverrides | None = None
+    budgets: BudgetOverrides | None = None
+    thresholds: ThresholdOverrides | None = None
+    hosts: dict[str, HostSettings] | None = None
+
+
+class ModelChoice(BaseModel):
+    provider: Literal["openrouter", "local"]
+    model: str
+    cheap_model: str
+    local_model: str
+
+
+class ServiceSettingsView(BaseModel):
+    urls: list[UrlCheckConfig]
+    rules: list[str]
+    protected_containers: list[str]
+
+
+class HostSettingsView(BaseModel):
+    id: str
+    name: str
+    rules: list[str]
+    services: dict[str, ServiceSettingsView]
+
+
+class SettingsView(BaseModel):
+    """`GET /api/settings`: the values in force, and the database's overrides that changed them."""
+
+    models: ModelChoice
+    budgets: Budgets
+    thresholds: Thresholds
+    hosts: list[HostSettingsView]
+    plugins: dict[str, bool]
+    overrides: dict[str, Any]  # a `SettingsUpdate` without the fields left at the layers below

@@ -1,0 +1,24 @@
+# Settings
+
+What a person can change from the dashboard and how it takes effect (`backend/src/bleep/incidents/settings_store.py`, `api/settings.py`, `guard/secret_fields.py`). Secrets stay in the environment or in files the hosts file names; only non-secret settings are stored, in SQLite (spec §4.10).
+
+| Piece | Path | What it does |
+|---|---|---|
+| **Settings store** | `incidents/settings_store.py`, the `settings` table (`0001_init.sql`) | The overrides, one JSON row per section; the values in force, computed from the layers below; the graph's `SettingsSource`. |
+| **Schemas** | `schemas/settings.py` | `SettingsUpdate` and its sections with their bounds, and `SettingsView`. |
+| **Secret check** | `guard/secret_fields.py` | Finds a secret-shaped key or value anywhere in a body. |
+| **Routes** | `api/settings.py` | `GET /api/settings` (values in force and the overrides) and `PUT /api/settings`. |
+
+## Choices
+
+- **Precedence is database override > hosts file > defaults; the model choice's defaults come from the env.** The store keeps only what a person changed and computes the values in force on every read. Reason: clearing an override brings the hosts file's value back, and a hosts file edit still shows where nothing overrides it (#36).
+- **A person can change the model choice (`provider`, `model`, `cheap_model`, `local_model`), the budgets, the thresholds, each host's rules and each service's URLs, rules and protected containers, and switch plugins.** The local model's base URL, every API key and every connection field (address, key file, endpoint, socket) stay in the env and the hosts file. Reason: these are the settings the settings page and the dev panel edit; a base URL decides where incident text is sent, and a connection field where Bleep logs in (#36).
+- **The `settings` table already existed from the first migration, so this needed none.** Each section is a row: `models`, `budgets`, `thresholds`, `host:<id>`, `plugin:<name>` (#36).
+- **A `PUT` replaces each section it names and leaves the others; under `hosts` it replaces each host it names; `{}` clears.** Reason: the settings page and the dev panel write different sections, and one page open on old values must not undo the other's change (#36).
+- **A service's URLs and rules replace the hosts file's, but its protected containers are added to them: the dashboard can protect a container and never unprotect one the hosts file protects.** Reason: protection is a guard that blocks act tools even after an approval; lifting it should take an edit of the file on the server, not a click in a browser session (#36).
+- **The merged host goes into the registry at once (`Registry.override`), which regroups the services from the last listing.** Reason: the URL checks, the plan check, Verify and Gather all read the host's config from the registry, so every one of them sees the same value from the next read on (#36).
+- **Every value takes effect without a restart.** The graph reads budgets, models and enabled actions from the store as each node runs; the detector reads the thresholds on every signal. Reason: a budget or a threshold is changed when it is wrong now (#36).
+- **Budgets and thresholds have bounds**: for example 1 to 50 tool calls per round, a daily cap of $0 to $100, at most 5 verify loops, a disk threshold of 50 to 100 %. A rule is at most 500 characters, a service at most 20 URLs. Reason: a typo must not switch a guard off or let one incident spend without end (#36).
+- **A body is checked for secrets before it is validated, and refused with 422 naming where, never what.** Any key at any depth that looks like a secret's name is refused: the name is lower-cased with `_`, `-` and `.` removed and matched for `token`, `secret`, `passw`, `apikey`, `privatekey`, `credential` and similar, or ends in the word `key`, so `TOKEN`, `apiKey`, `x-api-key` and `Db_Password` all are. The settings models' own field names are trusted (`incident_tokens` is a budget). Any string, key or value, that redaction would change is refused too: a token in a rule, a password in a URL. Validation errors are returned without the values sent. Reason: rules and URLs reach the model, the database must never hold a secret, and a 422 that echoes the body would put the secret in a response and in logs (#36).
+- **The check is stricter than redaction's own.** `token_file`, `key_file` and a service named `x-api-key` are refused here, though redaction would leave them. Reason: a settings key that only might be a secret costs a person a rename; a missed one costs a leak (#36).
+- **A stored row is checked again on load, and one that no longer fits is left out with a warning**: a host gone from the hosts file, a field renamed, a value out of bounds or anything secret-shaped. Reason: Bleep must start on the layers below rather than refuse to start, and a row written behind the API's back gets no further than one written through it (#36).

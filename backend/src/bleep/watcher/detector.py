@@ -61,14 +61,21 @@ Outcome = OpenIncident | AttachSignals | Recovered | Ignored
 
 
 class Detector:
-    def __init__(self, thresholds: Thresholds, clock: Callable[[], datetime]) -> None:
-        self.t = thresholds
+    def __init__(
+        self, thresholds: Thresholds | Callable[[], Thresholds], clock: Callable[[], datetime]
+    ) -> None:
+        # A callable is read on every signal, so a threshold changed in the settings holds at once.
+        self._thresholds = thresholds
         self._clock = clock
         self._pending: dict[str, Signal] = {}  # container -> first death not yet resolved
         self._deaths: dict[str, deque[Signal]] = defaultdict(deque)
         self._streaks: dict[tuple[str, ...], list[Signal]] = {}
         self._down_since: dict[str, datetime] = {}  # host key -> first failed probe
         self._window_start: dict[str, datetime] = {}  # subject key -> when its incident opened
+
+    @property
+    def t(self) -> Thresholds:
+        return self._thresholds() if callable(self._thresholds) else self._thresholds
 
     def feed(self, signal: Signal) -> list[Outcome]:
         """Take one signal. Contract with the watcher (details in docs/design/watcher.md):
