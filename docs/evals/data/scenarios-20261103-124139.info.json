@@ -209,7 +209,7 @@
   "commit": "d715fc9",
   "command": "uv run --group evals python -m evals.run --judge manual --repeat 1 --append data/evals/scenarios-20261103-124139.jsonl",
   "raw": "../../data/evals/scenarios-20261103-124139.jsonl",
-  "report": "docs/evals/scenarios-2026-11-03.md",
+  "report": null,
   "grader": null,
   "grades": null
 }
