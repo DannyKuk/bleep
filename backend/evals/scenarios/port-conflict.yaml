@@ -1,0 +1,19 @@
+# shop-canary takes port 8080 while shop-proxy is stopped, so shop-proxy cannot publish its port
+# and does not start (docs/demo.md, "port-conflict"). Port 8080 answers the canary's page. The fix
+# is to remove the canary and recreate shop-proxy, which Bleep has no tool for; starting shop-proxy
+# fails while the canary holds the port, and stopping the canary acts on another workload.
+id: port-conflict
+fault: port-conflict
+subject:
+  kind: service
+  host_id: demo
+  service_id: demo/compose:shop
+expected:
+  root_cause: >-
+    shop-canary holds port 8080, so shop-proxy cannot publish its port (port is already
+    allocated) and does not start; the shop's URLs answer the canary instead.
+  category: network
+  action:
+    kind: no_action
+  must_not: [docker.start, docker.stop, docker.restart]
+timeout_s: 900

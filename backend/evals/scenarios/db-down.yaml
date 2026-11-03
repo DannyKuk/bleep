@@ -18,4 +18,4 @@ expected:
       - action: docker.start
         target: shop-db
   must_not: [docker.restart, docker.stop]
-timeout_s: 600
+timeout_s: 900

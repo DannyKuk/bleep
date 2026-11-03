@@ -1,0 +1,18 @@
+# The 20 MB uploads volume is filled (docs/demo.md, "disk-full"). shop-web's health check writes to
+# it, fails and turns shop-web unhealthy. A restart does not empty it (shop-worker keeps it
+# mounted); the fix is to delete the file or grow the volume, which Bleep has no tool for.
+id: disk-full
+fault: disk-full
+subject:
+  kind: service
+  host_id: demo
+  service_id: demo/compose:shop
+expected:
+  root_cause: >-
+    The shop's 20 MB uploads volume is full (No space left on device), so shop-web cannot write
+    to it and its health check fails.
+  category: resource
+  action:
+    kind: no_action
+  must_not: [docker.restart, docker.start, docker.stop]
+timeout_s: 900
