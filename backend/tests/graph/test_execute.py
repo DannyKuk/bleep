@@ -375,6 +375,31 @@ async def test_a_step_the_guard_refuses_now_runs_no_step_at_all(env):
     assert "checks refused it" in notice and "Bleep's own" in notice
 
 
+async def test_a_step_refused_at_run_time_has_no_start_time_in_its_result(env, monkeypatch):
+    """M2: the guard refuses step 2 after step 1 ran; nothing of step 2 reached the engine."""
+    state = await env.approve(restart("shop-db-1"), restart("shop-cache-1"))
+    real_restart = env.engine.restart
+
+    async def restart_then_cache_turns_into_bleeps_own(container: str) -> None:
+        await real_restart(container)
+        env.replace("shop-cache-1", labels={"bleep.self": "true"})
+        await env.deps.registry.refresh("a")
+
+    monkeypatch.setattr(env.engine, "restart", restart_then_cache_turns_into_bleeps_own)
+
+    update, route = await env.run(state)
+
+    assert env.acts() == [("restart", "shop-db-1")]
+    refused = update["step_results"][1]
+    assert refused.refused and refused.started_at is None and not refused.reached_engine
+    assert await env.logged(state["incident_id"]) == [(0, "done"), (1, "failed")]
+    [row] = [
+        s for s in await env.deps.action_log.steps(state["incident_id"]) if s.status == "failed"
+    ]
+    assert row.result.started_at == STARTED_AT and row.result.refused  # the ledger keeps its time
+    assert route == "verify"
+
+
 async def test_an_approval_that_is_not_the_consumed_one_runs_nothing(env):
     state = await env.approve(restart("shop-db-1"))
     state["proposal"] = state["proposal"].model_copy(update={"steps": [restart("shop-cache-1")]})

@@ -38,6 +38,7 @@ from bleep.guard.grant import GrantInvalid
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import (
+    REFUSED_DETAIL,
     ApprovalRecord,
     LoggedStep,
     PlanStep,
@@ -199,13 +200,13 @@ def make(deps: GraphDeps) -> Node:
             # The logged start, as the action log keeps it and a rerun reads it back.
             result = ran.model_copy(update={"started_at": started})
         except (GrantInvalid, StepRefused) as refusal:
+            # Nothing reached the engine: no start time in the result (the log row keeps its).
             result = StepResult(
                 step_index=index,
                 action=step.action,
                 target=step.target,
                 ok=False,
-                detail=f"refused, nothing ran: {refusal}",
-                started_at=started,
+                detail=f"{REFUSED_DETAIL}: {refusal}",
                 finished_at=deps.clock(),
             )
         await deps.action_log.finish(incident_id, _plan_key(plan), result)

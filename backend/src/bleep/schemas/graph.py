@@ -12,9 +12,7 @@ from pydantic import BaseModel, Field
 
 from bleep.schemas.docker import ContainerSummary, HostBasics
 
-Outcome = Literal[
-    "resolved", "rejected", "no_action", "unverified", "budget", "unsure", "replan_limit"
-]
+Outcome = Literal["resolved", "rejected", "no_action", "unverified", "budget", "replan_limit"]
 Action = Literal[
     "docker.restart", "docker.stop", "docker.start", "coolify.redeploy", "coolify.set_env"
 ]
@@ -190,11 +188,14 @@ class ApprovalGrant(BaseModel):
     token: str
 
 
+REFUSED_DETAIL = "refused, nothing ran"  # how a step the act tool refused at run time begins
+
+
 class StepResult(BaseModel):
     """What one step of an approved plan did, in Bleep's own words (never host text).
 
     `step_index` is the step's 0-based place in the plan. `started_at` is None for a step that
-    never ran (skipped), `finished_at` for one that has not finished.
+    never ran (skipped, or refused at run time), `finished_at` for one that has not finished.
     """
 
     step_index: int
@@ -204,6 +205,17 @@ class StepResult(BaseModel):
     detail: str = ""
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+    @property
+    def refused(self) -> bool:
+        """The act tool refused the step at run time, so it never reached the engine. Its action
+        log row keeps a start time all the same, so this reads the detail, not `started_at`."""
+        return not self.ok and self.detail.startswith(REFUSED_DETAIL)
+
+    @property
+    def reached_engine(self) -> bool:
+        """The step was started and not refused, so it may have changed the host."""
+        return self.started_at is not None and not self.refused
 
 
 StepStatus = Literal["started", "done", "failed", "skipped"]
