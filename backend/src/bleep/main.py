@@ -58,12 +58,14 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 open_checkpointer(settings.data_dir / "checkpoints.sqlite")
             )
             stack.push_async_callback(parts.guard_log.flush)  # the runs and the watcher record
+            stack.push_async_callback(parts.tracer.close)  # after the runs: sends their last spans
             runner = IncidentRunner(
                 build_graph(parts.graph_deps, saver),
                 parts.incidents,
                 parts.bus,
                 approvals=parts.approvals,
                 notifier=parts.graph_deps.notifier,
+                tracer=parts.tracer,
             )
             stack.push_async_callback(runner.close)
             manager = WatcherManager(

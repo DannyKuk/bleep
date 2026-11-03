@@ -75,6 +75,7 @@ class Incident(BaseModel):
     title: str
     cost_usd: float | None = None
     tokens: int = 0
+    trace_url: str | None = None  # set when tracing is on (docs/design/observability.md)
 
 
 class IncidentEvent(BaseModel):

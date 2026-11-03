@@ -16,6 +16,7 @@ from langgraph.types import Command
 from bleep.graph.deps import Approvals, Notifier
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
+from bleep.llm.tracing import NoTracing, Tracer
 from bleep.schemas.graph import Decision
 from bleep.schemas.incidents import Incident, Signal
 
@@ -26,7 +27,8 @@ class IncidentRunner:
     """`approvals` is the store the graph's Approval node uses; with it, a decision recorded
     while the run was not waiting (Bleep died between the decision and the resume) is delivered
     when the run is started again. `notifier` hears `incident_opened` once, when a new
-    incident's run starts, whatever the run ends with, and a `notice` when a run fails."""
+    incident's run starts, whatever the run ends with, and a `notice` when a run fails. `tracer`
+    adds its callbacks to every graph invocation of an incident; without one, none are added."""
 
     def __init__(
         self,
@@ -35,17 +37,23 @@ class IncidentRunner:
         bus: EventBus,
         approvals: Approvals | None = None,
         notifier: Notifier | None = None,
+        tracer: Tracer | None = None,
     ) -> None:
         self.graph = graph
         self.repo = repo
         self.bus = bus
         self.approvals = approvals
         self.notifier = notifier
+        self.tracer = tracer or NoTracing()
         self._runs: dict[str, asyncio.Task[None]] = {}
 
     @staticmethod
     def config(incident_id: str) -> RunnableConfig:
         return {"configurable": {"thread_id": incident_id}}
+
+    def run_config(self, incident: Incident) -> RunnableConfig:
+        """The config of one graph invocation: the thread, plus the tracer's part."""
+        return {**self.tracer.run_config(incident), **self.config(incident.id)}
 
     async def start(self, incident: Incident) -> asyncio.Task[None]:
         """Run the incident's graph in the background, from where its thread stands.
@@ -199,7 +207,7 @@ class IncidentRunner:
         config = self.config(incident_id)
         try:
             await self.repo.set_status(incident_id, "investigating")
-            await self.graph.ainvoke(payload, config)
+            await self.graph.ainvoke(payload, await self._traced(incident_id))
         except Exception as error:  # a broken run must not take the runner down
             log.exception("incident %s: graph run failed", incident_id)
             text = f"The run stopped on an error ({type(error).__name__}); see the backend log."
@@ -215,6 +223,16 @@ class IncidentRunner:
             await self.repo.set_status(incident_id, "awaiting_approval")
         elif not snapshot.next:
             await self._settle(incident_id, snapshot)
+
+    async def _traced(self, incident_id: str) -> RunnableConfig:
+        """The run's config, after storing the link to its trace on the incident."""
+        incident = await self.repo.get(incident_id)
+        if incident is None:
+            return self.config(incident_id)
+        url = self.tracer.trace_url(incident)
+        if url is not None and url != incident.trace_url:
+            await self.repo.set_trace_url(incident_id, url)
+        return self.run_config(incident)
 
     async def _settle(self, incident_id: str, snapshot: Any) -> None:
         """Set the terminal status of a finished thread from its outcome.

@@ -148,6 +148,19 @@ def test_detail_of_a_fresh_incident_has_nothing_yet(app_client, parts):
     assert body["report"] is None
 
 
+def test_detail_and_list_carry_the_trace_link_and_no_tracing_key(app_client, parts):
+    incident = open_incident(app_client, parts)
+    assert app_client.get(f"/api/incidents/{incident.id}").json()["incident"]["trace_url"] is None
+
+    url = "http://localhost:3001/trace/0123456789abcdef0123456789abcdef"
+    call(app_client, parts.incidents.set_trace_url, incident.id, url)
+
+    detail = app_client.get(f"/api/incidents/{incident.id}")
+    assert detail.json()["incident"]["trace_url"] == url
+    assert app_client.get("/api/incidents").json()[0]["trace_url"] == url
+    assert "LANGFUSE" not in detail.text.upper() and "secret" not in detail.text.lower()
+
+
 def test_detail_carries_diagnosis_proposal_pending_approval_and_report(
     app_client, parts, monkeypatch
 ):

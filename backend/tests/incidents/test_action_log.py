@@ -122,17 +122,20 @@ async def test_rows_written_before_the_plan_key_rename_keep_their_key(tmp_path):
             (old / file.name).write_text(file.read_text())
     db = Database(tmp_path / "bleep.sqlite", migrations=old)
     await db.migrate()
-    subject = Subject(kind="service", host_id="a", service_id="a/compose:shop")
-    incident, _ = await IncidentRepo(db).open_or_attach(
-        subject, [Signal(subject=subject, kind="container_died", at=T0)]
-    )
+    incident_id = "inc_before_0012"
     conn = await db.connect()
-    try:
+    try:  # plain SQL: the repository reads columns added by later migrations
+        await conn.execute(
+            "INSERT INTO incidents (id, kind, host_id, service_id, subject_key, status, title,"
+            " opened_at) VALUES (?, 'service', 'a', 'a/compose:shop',"
+            " 'service:a:a/compose:shop', 'open', 'container died', ?)",
+            (incident_id, T0.isoformat()),
+        )
         await conn.execute(
             "INSERT INTO action_log (incident_id, plan_hash, step_index, action, host_id, target,"
             " status, started_at) VALUES (?, 'h1:ap1', 0, 'docker.restart', 'a', 'shop-web-1',"
             " 'started', ?)",
-            (incident.id, T0.isoformat()),
+            (incident_id, T0.isoformat()),
         )
         await conn.commit()
     finally:
@@ -141,9 +144,9 @@ async def test_rows_written_before_the_plan_key_rename_keep_their_key(tmp_path):
     await Database(tmp_path / "bleep.sqlite").migrate()
 
     log = ActionLog(Database(tmp_path / "bleep.sqlite"))
-    [step] = await log.steps(incident.id)
+    [step] = await log.steps(incident_id)
     assert (step.plan_key, step.status) == ("h1:ap1", "started")
-    assert await log.start(incident.id, "h1:ap1", 0, restart()) is None
+    assert await log.start(incident_id, "h1:ap1", 0, restart()) is None
 
 
 async def test_finish_changes_only_a_started_step(env):

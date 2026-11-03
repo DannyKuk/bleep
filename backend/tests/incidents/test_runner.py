@@ -2,6 +2,7 @@ import asyncio
 from datetime import UTC, datetime
 
 import pytest
+from langchain_core.callbacks import BaseCallbackHandler
 
 from bleep.graph.build import build_graph, open_checkpointer
 from bleep.graph.nodes import propose
@@ -439,3 +440,66 @@ async def test_recover_on_boot_leaves_an_undecided_approval_waiting(tmp_path, ac
     assert (
         len([e for e in await env.bus.history(incident.id) if e.kind == "approval_requested"]) == 1
     )
+
+
+class RootRuns(BaseCallbackHandler):
+    """Records the metadata of each graph invocation's root run, as a tracer would see it."""
+
+    def __init__(self) -> None:
+        self.roots: list[dict] = []
+
+    def on_chain_start(self, serialized, inputs, *, run_id, parent_run_id=None, **kwargs):
+        if parent_run_id is None:
+            self.roots.append(
+                {"name": kwargs.get("name"), "tags": kwargs.get("tags"), **kwargs["metadata"]}
+            )
+
+
+class RecordingTracer:
+    def __init__(self) -> None:
+        self.seen = RootRuns()
+
+    def run_config(self, incident):
+        return {
+            "callbacks": [self.seen],
+            "run_name": f"incident:{incident.title}",
+            "tags": ["host:a"],
+            "metadata": {"session": incident.id},
+        }
+
+    def trace_url(self, incident):
+        return f"http://traces.test/{incident.id}"
+
+    async def close(self):
+        return None
+
+
+async def test_every_run_of_an_incident_carries_its_id_as_the_trace_session(tmp_path, acting):
+    """The first run stops at Approval; the resume is a second graph invocation. Both are traced
+    with the incident as their session, and the link is stored on the incident."""
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    tracer = RecordingTracer()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, tracer=tracer)
+        await runner.start(incident)
+        await runner.join()
+        await runner.resume(incident.id, decide("reject"), await runner.waiting_for(incident.id))
+        await runner.join()
+
+    assert [root["session"] for root in tracer.seen.roots] == [incident.id, incident.id]
+    assert {root["name"] for root in tracer.seen.roots} == {f"incident:{incident.title}"}
+    assert all(root["thread_id"] == incident.id for root in tracer.seen.roots)
+    assert (await env.repo.get(incident.id)).trace_url == f"http://traces.test/{incident.id}"
+
+
+async def test_without_a_tracer_a_run_gets_no_callbacks_and_no_link(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        assert runner.run_config(incident) == {"configurable": {"thread_id": incident.id}}
+        await runner.start(incident)
+        await runner.join()
+
+    assert (await env.repo.get(incident.id)).trace_url is None

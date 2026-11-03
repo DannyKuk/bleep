@@ -12,6 +12,7 @@ from bleep.incidents.action_log import ActionLog
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
+from bleep.llm.tracing import Tracer, TracingSettings, build_tracer
 from bleep.llm.usage import CostLedger
 from bleep.memory.embeddings import (
     DEFAULT_LOCAL_MODEL,
@@ -42,6 +43,7 @@ class AppParts:
     login_limiter: LoginLimiter
     notify: NotifySetup
     memory: MemoryStore
+    tracer: Tracer
 
 
 def build_embedder(settings: Settings) -> Embedder:
@@ -58,12 +60,16 @@ def build_embedder(settings: Settings) -> Embedder:
 
 
 def build_parts(
-    settings: Settings, registry: Registry | None = None, embedder: Embedder | None = None
+    settings: Settings,
+    registry: Registry | None = None,
+    embedder: Embedder | None = None,
+    tracer: Tracer | None = None,
 ) -> AppParts:
     """Build the parts; the database is migrated and the registry started by the app's lifespan.
 
-    `registry` replaces the one read from the hosts file (tests pass an empty or fake one), and
-    `embedder` the one the settings name (tests pass `FakeEmbedder`).
+    `registry` replaces the one read from the hosts file (tests pass an empty or fake one),
+    `embedder` the one the settings name (tests pass `FakeEmbedder`), and `tracer` the one
+    `TRACING` names.
     """
     db = Database(settings.data_dir / "bleep.db")
     if registry is None:
@@ -94,6 +100,7 @@ def build_parts(
         login_limiter=LoginLimiter(),
         notify=notify,
         memory=memory,
+        tracer=tracer or build_tracer(TracingSettings()),
     )
 
 

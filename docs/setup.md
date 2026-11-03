@@ -113,6 +113,16 @@ EMBEDDINGS_API_KEY=                                        # only if the server 
 
 Bleep refuses to start with the provider set and the URL or the model missing. After a model change, the next start embeds the stored incidents again; until that is done they are left out of recall. Details: [Memory](design/memory.md), [Embeddings](decisions/embeddings.md).
 
+## Tracing (optional)
+
+Every incident run can become one trace, with the incident as its session. For a self-hosted Langfuse, fill in the `LANGFUSE_INIT_*`, `LANGFUSE_SALT`, `LANGFUSE_ENCRYPTION_KEY` and `LANGFUSE_NEXTAUTH_SECRET` lines of `.env` (`.env.example` says how), then:
+
+```bash
+docker compose -f docker-compose.yaml -f docker-compose.observability.yaml --profile observability up -d --build
+```
+
+Langfuse creates its project, keys and login from `.env` on first start; the UI is at http://localhost:3001, and each incident carries a link to its trace (`trace_url`). For Langfuse elsewhere or LangSmith, set `TRACING` and the variables listed in `.env.example` instead. Bleep refuses to start when `TRACING` names a tracer whose keys are missing. Details: [Observability](design/observability.md).
+
 ## Later
 
 - Always-on on the spare MacBook, so Bleep watches the hosts when this laptop is closed.

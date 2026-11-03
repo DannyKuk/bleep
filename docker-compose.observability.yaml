@@ -1,0 +1,155 @@
+# Optional: a self-hosted Langfuse that receives one trace per incident.
+#   docker compose -f docker-compose.yaml -f docker-compose.observability.yaml --profile observability up -d
+# Taken from Langfuse's own docker-compose.yml (v4.74.0), trimmed to what tracing needs; see
+# docs/design/observability.md. The project, its keys and the login are created on first start
+# from the LANGFUSE_INIT_* values in .env, so no clicks in the UI are needed. The UI is at
+# http://localhost:3001 (3000 is Bleep's dashboard); nothing else is published.
+
+x-langfuse-env: &langfuse-env
+  NEXTAUTH_URL: http://localhost:3001
+  DATABASE_URL: postgresql://postgres:${LANGFUSE_POSTGRES_PASSWORD:-postgres}@langfuse-postgres:5432/postgres
+  SALT: ${LANGFUSE_SALT:?set LANGFUSE_SALT in .env}
+  ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?set LANGFUSE_ENCRYPTION_KEY in .env (openssl rand -hex 32)}
+  TELEMETRY_ENABLED: "false"
+  CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+  CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+  CLICKHOUSE_USER: clickhouse
+  CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-miniosecret}
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  REDIS_HOST: langfuse-redis
+  REDIS_PORT: "6379"
+  REDIS_AUTH: ${LANGFUSE_REDIS_PASSWORD:-myredissecret}
+
+x-langfuse-depends: &langfuse-depends
+  langfuse-postgres:
+    condition: service_healthy
+  langfuse-minio:
+    condition: service_healthy
+  langfuse-redis:
+    condition: service_healthy
+  langfuse-clickhouse:
+    condition: service_healthy
+
+x-observability: &observability
+  profiles: ["observability"]
+  restart: unless-stopped
+  labels:
+    # Part of Bleep's own stack: never watched, never a target.
+    bleep.self: "true"
+
+services:
+  backend:
+    environment:
+      # With this file, tracing goes to the Langfuse below unless .env sets TRACING otherwise.
+      TRACING: ${TRACING:-langfuse}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:?set LANGFUSE_INIT_PROJECT_PUBLIC_KEY in .env}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:?set LANGFUSE_INIT_PROJECT_SECRET_KEY in .env}
+      LANGFUSE_BASE_URL: http://langfuse-web:3000
+      LANGFUSE_UI_URL: http://localhost:3001
+      LANGFUSE_PROJECT_ID: bleep  # LANGFUSE_INIT_PROJECT_ID below; the trace links name it
+
+  langfuse-worker:
+    <<: *observability
+    image: langfuse/langfuse-worker:4.74.0
+    depends_on: *langfuse-depends
+    environment: *langfuse-env
+
+  langfuse-web:
+    <<: *observability
+    image: langfuse/langfuse:4.74.0
+    depends_on: *langfuse-depends
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?set LANGFUSE_NEXTAUTH_SECRET in .env}
+      LANGFUSE_INIT_ORG_ID: bleep
+      LANGFUSE_INIT_ORG_NAME: Bleep
+      LANGFUSE_INIT_PROJECT_ID: bleep
+      LANGFUSE_INIT_PROJECT_NAME: Bleep
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:?set LANGFUSE_INIT_PROJECT_PUBLIC_KEY in .env}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:?set LANGFUSE_INIT_PROJECT_SECRET_KEY in .env}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:?set LANGFUSE_INIT_USER_EMAIL in .env}
+      LANGFUSE_INIT_USER_NAME: Bleep admin
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:?set LANGFUSE_INIT_USER_PASSWORD in .env}
+      LANGFUSE_DISABLE_SIGNUP_ONBOARDING: "true"
+      AUTH_DISABLE_SIGNUP: "true"
+
+  langfuse-clickhouse:
+    <<: *observability
+    image: clickhouse/clickhouse-server:26.3.62.3
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+    volumes:
+      - langfuse-clickhouse-data:/var/lib/clickhouse
+      - langfuse-clickhouse-logs:/var/log/clickhouse-server
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 1s
+
+  langfuse-minio:
+    <<: *observability
+    image: cgr.dev/chainguard/minio:latest
+    entrypoint: sh
+    # Creates the bucket before the server starts.
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_PASSWORD:-miniosecret}
+    volumes:
+      - langfuse-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 1s
+      timeout: 5s
+      retries: 5
+      start_period: 1s
+
+  langfuse-redis:
+    <<: *observability
+    image: redis:7.4
+    command: --requirepass ${LANGFUSE_REDIS_PASSWORD:-myredissecret} --maxmemory-policy noeviction
+    volumes:
+      - langfuse-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+
+  langfuse-postgres:
+    <<: *observability
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${LANGFUSE_POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: postgres
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - langfuse-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  langfuse-postgres-data:
+  langfuse-clickhouse-data:
+  langfuse-clickhouse-logs:
+  langfuse-minio-data:
+  langfuse-redis-data:

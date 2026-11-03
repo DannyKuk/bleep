@@ -41,6 +41,7 @@ def _incident(row: aiosqlite.Row) -> Incident:
         title=row["title"],
         cost_usd=row["cost_usd"],
         tokens=row["tokens"],
+        trace_url=row["trace_url"],
     )
 
 
@@ -144,6 +145,16 @@ class IncidentRepo:
             await conn.execute(
                 "UPDATE incidents SET status = ?, closed_at = COALESCE(?, closed_at) WHERE id = ?",
                 (status, closed_at, incident_id),
+            )
+            await conn.commit()
+        finally:
+            await conn.close()
+
+    async def set_trace_url(self, incident_id: str, url: str) -> None:
+        conn = await self.db.connect()
+        try:
+            await conn.execute(
+                "UPDATE incidents SET trace_url = ? WHERE id = ?", (url, incident_id)
             )
             await conn.commit()
         finally:
