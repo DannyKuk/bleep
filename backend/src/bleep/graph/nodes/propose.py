@@ -15,9 +15,10 @@ from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.state import IncidentState, Node
 from bleep.guard.plan_check import Violation, check_plan, protected_names
-from bleep.hosts.discovery import SELF_LABEL
+from bleep.hosts.discovery import is_self
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget
+from bleep.memory.text import describe_fact, describe_past
 from bleep.schemas.graph import Diagnosis, GatherContext, PlanStep, Proposal
 from bleep.schemas.incidents import Subject
 
@@ -112,6 +113,7 @@ def _step(step: PlanStep) -> str:
 
 
 # The prompt's sections are Bleep's own data, one fact per line, "none" when there is nothing.
+# Memory is Bleep's own too; `describe_past` and `describe_fact` wrap any quote in it as untrusted.
 
 
 def _prompt(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis, enabled: set[str]) -> str:
@@ -126,6 +128,8 @@ def _prompt(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis, enabled
         containers=_containers(context),
         off_limits=_off_limits(deps, subject.host_id),
         rules="\n".join(f"- {r}" for r in rules) or "none",
+        similar=_lines([describe_past(p) for p in context.similar] if context else []),
+        facts=_lines([describe_fact(f) for f in context.facts] if context else []),
         urls="\n".join(f"- {u}" for u in _urls(deps, subject)) or "none",
         host_id=subject.host_id,
         actions=", ".join(f"`{a}`" for a in sorted(enabled)) or "none",
@@ -133,6 +137,10 @@ def _prompt(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis, enabled
         previous=_previous(state.get("proposal")),
         unsure=prompts.load("graph/propose_unsure") if diagnosis.unsure else "",
     )
+
+
+def _lines(lines: list[str]) -> str:
+    return "\n".join(f"- {line}" for line in lines) or "none"
 
 
 def _subject(subject: Subject, context: GatherContext | None) -> str:
@@ -171,9 +179,7 @@ def _off_limits(deps: GraphDeps, host_id: str) -> str:
     """Protected and Bleep's own containers, so the model need not learn them by refusal."""
     host = next((h for h in deps.registry.hosts() if h.config.id == host_id), None)
     protected = sorted(protected_names(host)) if host else []
-    own = sorted(
-        c.name for c in deps.registry.snapshot(host_id) or [] if c.labels.get(SELF_LABEL) == "true"
-    )
+    own = sorted(c.name for c in deps.registry.snapshot(host_id) or [] if is_self(c.labels))
     lines = [f"- {n} (protected)" for n in protected] + [f"- {n} (Bleep itself)" for n in own]
     return "\n".join(lines) or "none"
 
