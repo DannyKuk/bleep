@@ -8,6 +8,7 @@ from pydantic import SecretStr
 from bleep.schemas.graph import Diagnosis, Evidence
 from bleep.schemas.settings import ModelSettings
 from evals.judge import (
+    MANUAL,
     Completion,
     JudgeError,
     RootCauseJudge,
@@ -151,3 +152,11 @@ async def test_a_low_score_fails():
     assert judgement.score == pytest.approx(0.2)
     assert judgement.passed is False
     assert judgement.usd is None
+
+
+async def test_the_manual_judge_needs_no_key_and_leaves_the_grade_to_a_human(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    judge = build_judge(MANUAL, CLOUD)
+    assert judge.name == "manual"
+    assert await judge.judge("shop-db is stopped", DIAGNOSIS) is None
+    check_distinct(MANUAL, "openai/gpt-6-luna")

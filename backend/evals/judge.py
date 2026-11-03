@@ -2,9 +2,10 @@
 diagnosis names the scenario's expected root cause, and scores it from 0 to 1.
 
 The judge is named by `EVAL_JUDGE_MODEL`: an OpenRouter model id (`openai/gpt-6-luna` by default,
-`OPENROUTER_API_KEY` from the environment or `.env`), or `claude-code[:<model>]`, which runs the
-local Claude Code CLI with no tools on the human's own login. The harness refuses a judge that is
-the model under test. See docs/design/evals.md.
+`OPENROUTER_API_KEY` from the environment or `.env`), `claude-code[:<model>]`, which runs the
+local Claude Code CLI with no tools on the human's own login, or `manual`, which calls no model
+and leaves each root cause for a grade by hand (`python -m evals.report --grades`). The harness
+refuses a judge that is the model under test. See docs/design/evals.md.
 """
 
 import asyncio
@@ -31,6 +32,7 @@ os.environ["DEEPEVAL_DISABLE_DOTENV"] = "1"
 
 DEFAULT_JUDGE = "openai/gpt-6-luna"
 CLAUDE_CODE = "claude-code"
+MANUAL = "manual"  # no judge call: the root cause is graded by hand afterwards
 PASS_SCORE = 0.7  # the steps give a middling score to the right component for a wrong reason
 CLI_TIMEOUT_S = 300
 
@@ -64,9 +66,19 @@ class Judgement(BaseModel):
 class Judge(Protocol):
     name: str
 
-    async def judge(self, expected: str, diagnosis: Diagnosis) -> Judgement:
-        """How well `diagnosis` names the `expected` root cause."""
+    async def judge(self, expected: str, diagnosis: Diagnosis) -> Judgement | None:
+        """How well `diagnosis` names the `expected` root cause; None leaves it to a human."""
         ...
+
+
+class ManualJudge:
+    """Calls no model: the root cause stays pending until a grades file is applied to the raw
+    results (`python -m evals.report --grades`)."""
+
+    name = MANUAL
+
+    async def judge(self, expected: str, diagnosis: Diagnosis) -> None:
+        return None
 
 
 def model_under_test(models: ModelSettings) -> str:
@@ -151,8 +163,10 @@ def claude_code(model: str | None, run: CliRunner = _run_cli) -> Complete:
     return complete
 
 
-def build_judge(spec: str, models: ModelSettings) -> RootCauseJudge:
+def build_judge(spec: str, models: ModelSettings) -> Judge:
     """The judge `spec` names. The OpenRouter key comes from `models` or the environment."""
+    if spec == MANUAL:
+        return ManualJudge()
     if spec == CLAUDE_CODE or spec.startswith(f"{CLAUDE_CODE}:"):
         if shutil.which("claude") is None:
             raise JudgeError("EVAL_JUDGE_MODEL=claude-code needs the claude CLI on PATH")

@@ -1,9 +1,24 @@
 """The dated report and the raw JSONL a run writes."""
 
+import json
 from datetime import UTC, date, datetime
 
+import pytest
+
 from bleep.schemas.graph import Diagnosis, PlanStep, Proposal
-from evals.report import RunInfo, append_jsonl, read_jsonl, render, report_path
+from evals.report import (
+    GradeError,
+    RunInfo,
+    append_jsonl,
+    apply_grades,
+    main,
+    read_grades,
+    read_info,
+    read_jsonl,
+    render,
+    report_path,
+    write_info,
+)
 from evals.scenarios import Scenario, ScenarioResult
 
 SCENARIO = Scenario.model_validate(
@@ -136,3 +151,117 @@ def test_results_round_trip_through_the_jsonl(tmp_path):
         append_jsonl(path, r)
     assert len(path.read_text(encoding="utf-8").splitlines()) == 2
     assert read_jsonl(path) == RESULTS
+
+
+def test_a_run_is_named_by_its_scenario_and_number():
+    assert result(2).run_id == "db-down/2"
+
+
+def grades_file(tmp_path, *grades: dict) -> object:
+    path = tmp_path / "grades.jsonl"
+    path.write_text("".join(json.dumps(g) + "\n" for g in grades), encoding="utf-8")
+    return path
+
+
+def test_grades_by_hand_set_each_runs_root_cause(tmp_path):
+    blank = {"root_cause_score": None, "root_cause_pass": False, "judge_reason": None}
+    pending = [r.model_copy(update=blank | {"judge": "manual"}) for r in RESULTS]
+    path = grades_file(
+        tmp_path,
+        {"run_id": "db-down/2", "root_cause_pass": True, "root_cause_score": 0.9, "note": "right"},
+        {"run_id": "db-down/1", "root_cause_pass": False, "root_cause_score": 0.2, "note": "web"},
+    )
+    graded = apply_grades(pending, read_grades(path))
+    assert [(r.root_cause_score, r.root_cause_pass, r.judge_reason) for r in graded] == [
+        (0.2, False, "web"),
+        (0.9, True, "right"),
+    ]
+    assert pending[0].root_cause_score is None  # the raw results stay as they were
+
+
+def test_a_grade_for_no_run_or_a_run_graded_twice_is_refused(tmp_path):
+    grade = {"run_id": "db-down/1", "root_cause_pass": True, "root_cause_score": 1.0, "note": ""}
+    with pytest.raises(GradeError, match="hung/1"):
+        apply_grades(RESULTS, read_grades(grades_file(tmp_path, grade | {"run_id": "hung/1"})))
+    with pytest.raises(GradeError, match="db-down/1"):
+        apply_grades(RESULTS, read_grades(grades_file(tmp_path, grade, grade)))
+
+
+def test_a_grade_out_of_range_is_refused(tmp_path):
+    bad = {"run_id": "db-down/1", "root_cause_pass": True, "root_cause_score": 1.5, "note": ""}
+    with pytest.raises(GradeError, match="line 1"):
+        read_grades(grades_file(tmp_path, bad))
+
+
+MANUAL = INFO.model_copy(update={"judge": "manual"})
+PENDING = [
+    r.model_copy(update={"root_cause_score": None, "root_cause_pass": False, "judge_reason": None,
+                         "judge": "manual", "judge_usd": None})
+    for r in RESULTS
+]  # fmt: skip
+
+
+def test_runs_left_for_a_grade_by_hand_say_so():
+    text = render(MANUAL, PENDING)
+    assert "| 1 | pending |" in text
+    assert "2 diagnosed runs wait for a grade by hand." in text
+    assert "Judge: none, graded by hand." in text
+    assert "GEval" not in text
+
+
+def test_a_report_graded_by_hand_names_who_graded_and_links_the_grades():
+    info = MANUAL.model_copy(
+        update={"grader": "Claude (Opus 5.5)", "grades": "data/grades.jsonl",
+                "raw": "data/scenarios-20261103-140000.jsonl"}
+    )  # fmt: skip
+    right = {"root_cause_score": 1.0, "root_cause_pass": True}
+    graded = [r.model_copy(update=right) for r in PENDING]
+    text = render(info, graded)
+    assert "Claude (Opus 5.5), by hand" in text.split("## Setup")[1].split("## db-down")[0]
+    assert "Claude (Opus 5.5) graded the root causes by hand" in text.split("## Setup")[0]
+    assert "[`grades.jsonl`](data/grades.jsonl)" in text
+    assert "| 1 | 1.00 pass |" in text and "pending" not in text
+
+
+def test_the_run_info_round_trips_next_to_its_raw_file(tmp_path):
+    raw = tmp_path / "scenarios-20261103-140000.jsonl"
+    assert read_info(raw) is None
+    write_info(raw, INFO)
+    assert (tmp_path / "scenarios-20261103-140000.info.json").is_file()
+    assert read_info(raw) == INFO
+
+
+def test_the_report_command_renders_a_batch_with_its_grades(tmp_path, capsys):
+    data = tmp_path / "docs" / "evals" / "data"
+    raw = data / "scenarios-20261103-140000.jsonl"
+    for r in PENDING:
+        append_jsonl(raw, r)
+    write_info(raw, MANUAL)
+    grades = grades_file(
+        data,
+        {"run_id": "db-down/1", "root_cause_pass": True, "root_cause_score": 1.0, "note": "db"},
+        {"run_id": "db-down/2", "root_cause_pass": False, "root_cause_score": 0.0, "note": "no"},
+    )
+    out = tmp_path / "docs" / "evals" / "scenarios-2026-11-03.md"
+
+    code = main([str(raw), "--grades", str(grades), "--grader", "Claude (Opus 5.5)",
+                 "--out", str(out)])  # fmt: skip
+
+    assert code == 0
+    text = out.read_text(encoding="utf-8")
+    assert "[`scenarios-20261103-140000.jsonl`](data/scenarios-20261103-140000.jsonl)" in text
+    assert "[`grades.jsonl`](data/grades.jsonl)" in text
+    assert "| 1 | 1.00 pass |" in text and "| 2 | 0.00 fail |" in text
+    assert "  - Judge: no" in text
+    assert "python -m evals.report" in text  # how to render it again
+
+
+def test_the_report_command_needs_the_batchs_info_and_a_grader(tmp_path, capsys):
+    raw = tmp_path / "scenarios-20261103-140000.jsonl"
+    append_jsonl(raw, PENDING[0])
+    assert main([str(raw), "--out", str(tmp_path / "r.md")]) == 2
+    assert "scenarios-20261103-140000.info.json" in capsys.readouterr().err
+    write_info(raw, MANUAL)
+    grades = grades_file(tmp_path)
+    assert main([str(raw), "--grades", str(grades), "--out", str(tmp_path / "r.md")]) == 2
+    assert "--grader" in capsys.readouterr().err

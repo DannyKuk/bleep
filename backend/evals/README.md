@@ -2,7 +2,7 @@
 
 Real faults on the demo stack, a real model, scored. Each run switches one fault on with `demo/fault.sh`, lets Bleep's own watcher open the incident, runs the incident graph to the end of Propose and stops there (nothing is ever executed), switches the fault off, and scores what Bleep found:
 
-- **Root cause**: a judge model (DeepEval GEval) scores 0 to 1 how well the diagnosis names the scenario's expected root cause; 0.7 or more passes. The judge is never the model under test.
+- **Root cause**: a judge model (DeepEval GEval) scores 0 to 1 how well the diagnosis names the scenario's expected root cause; 0.7 or more passes. The judge is never the model under test. Or it is graded by hand: the `manual` judge leaves it pending and a grades file sets it ([below](#grading-by-hand)).
 - **Category**: the diagnosis's category, exactly.
 - **Plan**: exact match on action and target; an **unnecessary action** is a step beyond the expected plan, or one the scenario forbids.
 - **Cost of getting there**: tool calls, tokens, cost, the largest single prompt, and the seconds from the fault to the incident and to the diagnosis.
@@ -22,7 +22,7 @@ How it works and why is in [docs/design/evals.md](../../docs/design/evals.md). T
 
    The harness runs on this machine, not in a container, so a `host.docker.internal` URL from `.env` is read as `localhost`. The same goes for the hosts file's URLs: the backend checks the shop at `http://host.docker.internal:8080`, shop-proxy's published port, and the harness at `http://localhost:8080`. A URL on a bare container name (`http://shop-web:8000`) does not answer from here; the harness logs it.
 
-4. Make the judge reachable: `OPENROUTER_API_KEY` in `.env` for the default judge, or `export EVAL_JUDGE_MODEL=claude-code` to judge with the Claude Code CLI on your own plan.
+4. Make the judge reachable: `OPENROUTER_API_KEY` in `.env` for the default judge, or `export EVAL_JUDGE_MODEL=claude-code` to judge with the Claude Code CLI on your own plan, or `--judge manual` to grade by hand afterwards.
 
 `demo/fault.sh` switches the faults. It runs compose on `demo/compose.yaml` itself and acts on the engine `docker` points at; for a socket host the harness sets its `DOCKER_HOST` to the engine it watches (`EVAL_DOCKER_ENDPOINT`, below), so both act on the same one. For an SSH host the script keeps your shell's `DOCKER_HOST`, which must point at that host's engine ([on another host](../../docs/demo.md#on-another-host)).
 
@@ -34,10 +34,11 @@ From `backend/`:
 uv run --group evals python -m evals.run --repeat 3        # every scenario, three runs each
 uv run --group evals python -m evals.run --only db-down    # one scenario
 uv run --group evals python -m evals.run --model other-model
+uv run --group evals python -m evals.run --judge manual    # root causes graded by hand later
 uv run --group evals python -m evals.run --append data/evals/scenarios-20261103-104336.jsonl
 ```
 
-`--append` continues an earlier batch: its runs go into that batch's raw file, numbered after the runs already there, and the report covers all of them. A suite can so run one repeat at a time, with the demo shop and the model server free for something else in between, and still end in one report. Each batch writes a report; the last one has every run. The harness refuses a raw file of another model under test.
+`--append` continues an earlier batch: its runs go into that batch's raw file, numbered after the runs already there, and the report covers all of them. A suite can so run one repeat at a time, with the demo shop and the model server free for something else in between, and still end in one report: each batch writes the same report again (the one named in the raw file's `.info.json`), with every run so far. The harness refuses a raw file of another model under test.
 
 `--model` replaces the model for the provider in use (`LOCAL_MODEL` for `local`, `LLM_MODEL` for `openrouter`). Each run takes up to its scenario's `timeout_s`, and the harness waits `EVAL_SETTLE_S` between runs.
 
@@ -48,7 +49,7 @@ Read from the environment, then the repo's `.env`.
 | Variable | Default | What it sets |
 |---|---|---|
 | `LLM_PROVIDER`, `LLM_MODEL`, `LOCAL_BASE_URL`, `LOCAL_MODEL` | Bleep's defaults | The model under test, as for Bleep itself. |
-| `EVAL_JUDGE_MODEL` | `openai/gpt-6-luna` | The judge: an OpenRouter model id (needs `OPENROUTER_API_KEY`), or `claude-code` / `claude-code:<model>` (needs the `claude` CLI). |
+| `EVAL_JUDGE_MODEL` | `openai/gpt-6-luna` | The judge: an OpenRouter model id (needs `OPENROUTER_API_KEY`), `claude-code` / `claude-code:<model>` (needs the `claude` CLI), or `manual` (no judge call; graded by hand). `--judge` sets it for one run. |
 | `EVAL_DOCKER_ENDPOINT` | `DOCKER_HOST`, else Docker Desktop's socket, else `unix:///var/run/docker.sock` | The demo host's Docker engine as this machine reaches it; also the fault script's `DOCKER_HOST` for a socket host. |
 | `EVAL_HOSTS_FILE` | `config/hosts.demo.yaml` | The hosts file the demo host's rules and URLs come from. |
 | `EVAL_HOST_ID` | `demo` | The host in that file. |
@@ -65,7 +66,25 @@ Bleep's settings cannot cap the model's output tokens: `ModelSettings` has no su
 ## What a run writes
 
 - `data/evals/scenarios-<YYYYMMDD-HHMMSS>.jsonl`: one line per run, written as the run finishes, with the diagnosis, the plan and every score (`ScenarioResult` in `scenarios.py`).
-- `docs/evals/scenarios-YYYY-MM-DD.md`: the report, with the setup, a table per scenario, the totals, the cost and what the numbers show. A second report on the same day gets `-2`, `-3`, ... Read every failed diagnosis by hand before you trust a pass rate, and note judge mistakes in the report.
+- `data/evals/scenarios-<YYYYMMDD-HHMMSS>.info.json`: the batch's setup (model, judge, scenarios, commit, command, its report), which `evals.report` and a later `--append` batch read.
+- `docs/evals/scenarios-YYYY-MM-DD.md`: the report, with the setup, a table per scenario, the totals, the cost and what the numbers show. A second suite on the same day gets `-2`, `-3`, ... Read every failed diagnosis by hand before you trust a pass rate, and note judge mistakes in the report.
+
+## Grading by hand
+
+With `--judge manual` (or `EVAL_JUDGE_MODEL=manual`) the harness calls no judge: every diagnosed run's root cause is `pending` in the report, and the category and the plan are scored as always. A human then reads each diagnosis against the scenario's expected root cause and writes a grades file, one JSON line per run:
+
+```json
+{"run_id": "db-down/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-db stopped"}
+```
+
+`run_id` is `<scenario>/<run>`; the score is 0 to 1; the note shows in the report as the judge's reason. Apply it from `backend/`:
+
+```bash
+uv run --group evals python -m evals.report ../docs/evals/data/scenarios-20261103-120000.jsonl \
+  --grades ../docs/evals/data/grades-scenarios-2026-11-03.jsonl --grader "Claude (Opus 5.5)"
+```
+
+It reads the raw file and its `.info.json` (copy both together), applies the grades, and writes the batch's report again (or `--out`), naming who graded and linking the raw file and the grades relative to the report, so keep them next to it (`docs/evals/data/`) and anyone can check every grade. A grade for a run that is not in the raw file, or a run graded twice, is refused; a run left without a grade stays pending. The raw file is never changed.
 
 ## A scenario
 

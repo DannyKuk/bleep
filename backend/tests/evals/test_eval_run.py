@@ -18,8 +18,8 @@ from bleep.hosts.config import HostConfig
 from bleep.schemas.docker import DockerEvent
 from bleep.schemas.graph import Diagnosis
 from bleep.schemas.settings import ModelSettings
-from evals.judge import JudgeError, Judgement
-from evals.report import append_jsonl
+from evals.judge import JudgeError, Judgement, ManualJudge
+from evals.report import RunInfo, append_jsonl, write_info
 from evals.run import (
     REPO,
     DemoFaults,
@@ -34,6 +34,7 @@ from evals.run import (
     live_backend,
     main,
     out_of_context,
+    report_for,
     run_scenario,
     run_suite,
     summary,
@@ -514,3 +515,44 @@ async def test_a_failing_fault_script_is_a_fault_error(tmp_path):
     os.chmod(script, 0o755)
     with pytest.raises(FaultError, match="no such fault"):
         await DemoFaults(script).switch("nope", "on")
+
+
+async def test_a_manual_judge_leaves_the_root_cause_pending_and_the_exact_checks_standing(tmp_path):
+    fake = engine()
+    model = FakeChatModel(script=script(), structured_output_unsupported=True)
+
+    result = await run_scenario(
+        SCENARIO, settings(tmp_path), faults=FakeFaults(fake), judge=ManualJudge(),
+        connector=connector(fake), models=Models(model),
+    )  # fmt: skip
+
+    assert result.judge == "manual" and result.diagnosis is not None
+    assert result.root_cause_score is None and result.root_cause_pass is False
+    assert result.judge_reason is None and result.judge_usd is None
+    assert result.action_correct is True
+    assert "root cause pending" in summary(result)
+
+
+def test_the_judge_flag_picks_the_manual_judge_over_the_settings(tmp_path, capsys):
+    same = settings(tmp_path, judge_model="tiny-local", fault_script=REPO / "demo" / "fault.sh")
+    assert main(["--judge", "manual", "--only", "nope"], settings=same) == 2
+    err = capsys.readouterr().err
+    assert "no scenario 'nope'" in err and "model under test" not in err
+
+
+def test_a_later_batch_rewrites_the_report_of_the_earlier_ones(tmp_path):
+    reports = tmp_path / "docs" / "evals"
+    raw = tmp_path / "scenarios-20261103-104336.jsonl"
+    started = datetime(2026, 11, 3, 10, 43, 36, tzinfo=UTC)
+    first = report_for(raw, started, reports)
+    assert first == reports / "scenarios-2026-11-03.md"
+
+    info = RunInfo(
+        started_at=started, finished_at=started, model="tiny-local", provider="local",
+        judge="manual", repeat=1, scenarios=[SCENARIO], command="x", raw=str(raw),
+        report=str(first),
+    )  # fmt: skip
+    write_info(raw, info)
+    reports.mkdir(parents=True)
+    first.write_text("batch 1", encoding="utf-8")
+    assert report_for(raw, started, reports) == first
