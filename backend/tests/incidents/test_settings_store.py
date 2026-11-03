@@ -16,7 +16,7 @@ from bleep.schemas.plugins import PluginUpdate
 from bleep.schemas.settings import ModelSettings, SettingsUpdate, Thresholds
 from bleep.store.db import Database
 from bleep.watcher.detector import Detector
-from fakes import COOLIFY_TOKEN, FakeCoolifyPlugin, FakeEngine, socket_host
+from fakes import COOLIFY_TOKEN, FakeCoolifyPlugin, FakeEngine, socket_host, ssh_host
 
 T0 = datetime(2026, 11, 3, 10, 0, tzinfo=UTC)
 FILE_URL = "https://shop.example.test/health"
@@ -321,3 +321,34 @@ async def test_a_settings_change_alone_keeps_the_stored_toggle_of_a_plugin_off_f
     await again.load()
     assert plugins_after.is_enabled("coolify")
     assert plugins_after.settings("coolify").url == "https://c2.test"
+
+
+async def test_host_views_show_the_connection_from_the_hosts_file_and_never_a_key(db, tmp_path):
+    key = tmp_path / "id_ed25519"
+    key.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\nnot-a-real-key\n")
+    ssh = ssh_host(id="m1", key_file=key)
+    gone = ssh_host(id="m2", key_file=tmp_path / "missing")
+    socket = socket_host(id="a", endpoint="tcp://socket-proxy:2375")
+
+    async def connect(_host):
+        return None, FakeEngine("a", [])
+
+    store, _ = make_store(db, Registry([ssh, gone, socket], connect, clock=lambda: T0))
+    m1, m2, a = (view.connection for view in store.host_views())
+    assert (m1.kind, m1.address, m1.user, m1.port) == ("ssh", "m1.local", "danny", 2222)
+    assert m1.docker_socket == "/Users/danny/.docker/run/docker.sock"
+    assert m1.key_file is not None and m1.key_file.file == str(key) and m1.key_file.set
+    assert m2.key_file is not None and not m2.key_file.set
+    assert a.kind == "socket" and a.endpoint == "tcp://socket-proxy:2375"
+    assert a.address is None and a.key_file is None and a.port is None
+    assert "not-a-real-key" not in str([v.model_dump() for v in store.host_views()])
+
+
+async def test_host_views_say_which_protected_containers_the_hosts_file_fixes(db):
+    registry = hosts_file_registry()
+    store, _ = make_store(db, registry)
+    services = {"compose:shop": {"protected_containers": ["shop-web-1", "shop-db-1"]}}
+    await store.update(SettingsUpdate.model_validate({"hosts": {"a": {"services": services}}}))
+    shop = store.host_views()[0].services["compose:shop"]
+    assert shop.protected_containers == ["shop-db-1", "shop-web-1"]
+    assert shop.hosts_file_protected_containers == ["shop-db-1"]

@@ -12,18 +12,23 @@ from pydantic import ValidationError
 
 from bleep.api.deps import get_parts
 from bleep.incidents.settings_store import SettingsRefused, check_body
-from bleep.schemas.settings import SettingsUpdate, SettingsView
+from bleep.schemas.settings import SecretStatus, SettingsUpdate, SettingsView
 from bleep.wiring import AppParts
 
 router = APIRouter(tags=["settings"])
 
 Parts = Annotated[AppParts, Depends(get_parts)]
 
+MODEL_KEY_ENV = "OPENROUTER_API_KEY"  # `ModelSettings.openrouter_api_key`
+
 
 def settings_view(parts: AppParts) -> SettingsView:
     store = parts.settings_store
     return SettingsView(
         models=store.model_choice(),
+        model_key=SecretStatus(
+            env=MODEL_KEY_ENV, set=store.models().openrouter_api_key is not None
+        ),
         budgets=store.budgets(),
         thresholds=store.thresholds(),
         hosts=store.host_views(),

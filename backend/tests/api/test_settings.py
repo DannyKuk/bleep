@@ -134,6 +134,29 @@ def test_settings_never_show_a_model_key(app):
     assert "api_key" not in response.text
 
 
+def test_settings_say_whether_the_model_key_is_set_by_its_variable(app):
+    assert app.get("/api/settings").json()["model_key"] == {
+        "env": "OPENROUTER_API_KEY",
+        "file": None,
+        "set": True,
+    }
+
+
+def test_settings_say_when_the_model_key_is_missing(settings, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    parts = build_parts(settings, Registry([]), FakeEmbedder())
+    with TestClient(create_app(settings, parts)) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        assert client.get("/api/settings").json()["model_key"]["set"] is False
+
+
+def test_settings_show_the_hosts_connection_and_which_protection_is_fixed(app):
+    host = app.get("/api/settings").json()["hosts"][0]
+    assert host["connection"]["kind"] == "socket"
+    assert host["connection"]["endpoint"] == "unix:///var/run/docker.sock"
+    assert host["services"]["compose:shop"]["hosts_file_protected_containers"] == []
+
+
 def test_plugins_list_settings_and_whether_secrets_are_set_never_the_value(app):
     response = app.put(
         "/api/plugins/coolify",

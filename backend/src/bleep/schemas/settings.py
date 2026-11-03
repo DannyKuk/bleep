@@ -166,15 +166,39 @@ class ModelChoice(BaseModel):
     local_model: str
 
 
+class SecretStatus(BaseModel):
+    """A secret Bleep reads: the environment variable or the file it comes from, and whether it
+    is there. Never its value."""
+
+    env: str | None = None
+    file: str | None = None
+    set: bool
+
+
+class HostConnectionView(BaseModel):
+    """How Bleep reaches a host, as the hosts file says; the dashboard never changes it."""
+
+    kind: Literal["ssh", "socket"]
+    address: str | None = None
+    user: str | None = None
+    port: int | None = None
+    docker_socket: str | None = None  # the socket on an ssh host
+    endpoint: str | None = None  # a socket host's unix:// or tcp:// endpoint
+    key_file: SecretStatus | None = None
+    known_hosts_file: str | None = None
+
+
 class ServiceSettingsView(BaseModel):
     urls: list[UrlCheckConfig]
     rules: list[str]
-    protected_containers: list[str]
+    protected_containers: list[str]  # the hosts file's and the dashboard's
+    hosts_file_protected_containers: list[str]  # those the dashboard cannot unprotect
 
 
 class HostSettingsView(BaseModel):
     id: str
     name: str
+    connection: HostConnectionView
     rules: list[str]
     services: dict[str, ServiceSettingsView]
 
@@ -183,6 +207,7 @@ class SettingsView(BaseModel):
     """`GET /api/settings`: the values in force, and the database's overrides that changed them."""
 
     models: ModelChoice
+    model_key: SecretStatus  # the OpenRouter key's variable; a local model needs none
     budgets: Budgets
     thresholds: Thresholds
     hosts: list[HostSettingsView]

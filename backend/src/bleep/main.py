@@ -5,7 +5,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import APIRouter, Depends, FastAPI
 
-from bleep.api import auth, hosts, incidents, memory, plugins, stream
+from bleep.api import auth, hosts, incidents, memory, plugins, stream, telegram
 from bleep.api import settings as settings_api
 from bleep.api.deps import require_session
 from bleep.config import Settings, check_settings
@@ -114,6 +114,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
     protected.include_router(stream.router)
     protected.include_router(settings_api.router)
     protected.include_router(plugins.router)
+    protected.include_router(telegram.router)
     api.include_router(protected)
     app.include_router(api)
     return app

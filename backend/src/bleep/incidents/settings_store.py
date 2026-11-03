@@ -27,11 +27,13 @@ from bleep.schemas.plugins import PluginUpdate
 from bleep.schemas.settings import (
     BudgetOverrides,
     Budgets,
+    HostConnectionView,
     HostSettings,
     HostSettingsView,
     ModelChoice,
     ModelOverrides,
     ModelSettings,
+    SecretStatus,
     ServiceSettings,
     ServiceSettingsView,
     SettingsUpdate,
@@ -131,11 +133,20 @@ class SettingsStore:
                     urls=over.urls,
                     rules=over.rules,
                     protected_containers=over.protected_containers,
+                    hosts_file_protected_containers=(
+                        base.services[key].protected_containers if key in base.services else []
+                    ),
                 )
                 for key, over in config.services.items()
             }
             views.append(
-                HostSettingsView(id=host_id, name=base.name, rules=config.rules, services=services)
+                HostSettingsView(
+                    id=host_id,
+                    name=base.name,
+                    connection=_connection(base),
+                    rules=config.rules,
+                    services=services,
+                )
             )
         return views
 
@@ -285,6 +296,21 @@ class SettingsStore:
             await conn.commit()
         finally:
             await conn.close()
+
+
+def _connection(host: HostConfig) -> HostConnectionView:
+    if host.kind == "socket":
+        return HostConnectionView(kind="socket", endpoint=host.endpoint)
+    key = host.key_file
+    return HostConnectionView(
+        kind="ssh",
+        address=host.address,
+        user=host.user,
+        port=host.port,
+        docker_socket=host.docker_socket,
+        key_file=SecretStatus(file=str(key), set=key.is_file()) if key is not None else None,
+        known_hosts_file=str(host.known_hosts_file) if host.known_hosts_file else None,
+    )
 
 
 def _layer[T: BaseModel](base: T, overrides: BaseModel | None) -> T:
