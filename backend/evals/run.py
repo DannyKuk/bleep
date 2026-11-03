@@ -18,8 +18,9 @@ import os
 import subprocess
 import sys
 import tempfile
-from collections.abc import Awaitable, Callable, Sequence
-from datetime import datetime
+from collections import Counter
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol, Self
 
@@ -50,7 +51,7 @@ from bleep.watcher.http_checks import UrlCheckStore
 from bleep.watcher.manager import WatcherManager
 from evals.judge import DEFAULT_JUDGE, Judge, JudgeError, build_judge, check_distinct
 from evals.judge import model_under_test as tested_model
-from evals.report import RunInfo, append_jsonl, render, report_path
+from evals.report import RunInfo, append_jsonl, read_jsonl, render, report_path
 from evals.scenarios import (
     Scenario,
     ScenarioError,
@@ -468,14 +469,19 @@ async def run_suite(
     connector: Connector = connect_host,
     models: ModelFactory | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    done: Mapping[str, int] | None = None,
 ) -> list[ScenarioResult]:
-    """Every scenario `repeat` times, one after another, with `settle_s` between runs."""
+    """Every scenario `repeat` times, one after another, with `settle_s` between runs. `done`
+    is how many runs each scenario already has from an earlier batch: its runs are numbered
+    after them."""
+    done = done or {}
     results: list[ScenarioResult] = []
     for scenario in scenarios:
-        for run in range(1, repeat + 1):
+        first = done.get(scenario.id, 0) + 1
+        for run in range(first, first + repeat):
             if results:
                 await sleep(settings.settle_s)
-            log.info("scenario %s, run %d of %d", scenario.id, run, repeat)
+            log.info("scenario %s, run %d of %d", scenario.id, run, first + repeat - 1)
             result = await run_scenario(
                 scenario,
                 settings,
@@ -509,6 +515,24 @@ async def demo_containers(
         await registry.close()
 
 
+def earlier_batch(raw: Path, now: datetime, model: str) -> tuple[list[ScenarioResult], datetime]:
+    """The runs an earlier batch wrote to `raw`, and when that batch started, read from the
+    file's name (`scenarios-<YYYYMMDD-HHMMSS>.jsonl`, in UTC), else `now`. A suite can run in
+    batches this way, one repeat at a time, and still end in one report. Runs of another model
+    under test are refused: one report measures one model."""
+    if not raw.is_file():
+        raise EvalError(f"no earlier batch at {raw}")
+    earlier = read_jsonl(raw)
+    others = sorted({r.model for r in earlier} - {model})
+    if others:
+        raise EvalError(f"{raw} has runs of {', '.join(others)}, not of {model}")
+    try:
+        started = datetime.strptime(raw.stem, "scenarios-%Y%m%d-%H%M%S").replace(tzinfo=UTC)
+    except ValueError:
+        started = now
+    return earlier, started
+
+
 def _commit() -> str | None:
     try:
         out = subprocess.run(
@@ -530,6 +554,8 @@ def _command(args: argparse.Namespace) -> str:
     if args.only:
         parts.append(f"--only {args.only}")
     parts.append(f"--repeat {args.repeat}")
+    if args.append:
+        parts.append(f"--append {args.append}")
     return " ".join(parts)
 
 
@@ -538,19 +564,36 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", help="the model under test; default: Bleep's model settings")
     parser.add_argument("--only", help="run one scenario, by id")
     parser.add_argument("--repeat", type=int, default=1, help="runs per scenario (default 1)")
+    parser.add_argument(
+        "--append",
+        metavar="JSONL",
+        help="continue an earlier batch: add these runs to its raw file (a path from the repo "
+        "root), numbered after its runs, and report on all of them",
+    )
     return parser
 
 
 async def _run(
-    args: argparse.Namespace, settings: EvalSettings, scenarios: list[Scenario], judge: Judge
+    args: argparse.Namespace,
+    settings: EvalSettings,
+    scenarios: list[Scenario],
+    judge: Judge,
+    batch: tuple[list[ScenarioResult], datetime],
 ) -> int:
+    """`batch` is the earlier runs this one continues (`--append`) and when the suite started:
+    none and now for a new suite."""
     if live_backend(await demo_containers(settings)):
         log.warning(
             "Bleep's backend is running on this engine: it will see the faults too, open its own "
             "incidents and page you. Stop it first: docker compose stop backend"
         )
-    started = utcnow()
-    raw = RAW_DIR / f"scenarios-{started:%Y%m%d-%H%M%S}.jsonl"
+    earlier, started = batch
+    raw = (
+        REPO / args.append if args.append else RAW_DIR / f"scenarios-{started:%Y%m%d-%H%M%S}.jsonl"
+    )
+    done: dict[str, int] = {}
+    for r in earlier:
+        done[r.id] = max(done.get(r.id, 0), r.run)
     results = await run_suite(
         scenarios,
         settings,
@@ -558,6 +601,7 @@ async def _run(
         faults=DemoFaults(settings.fault_script, fault_docker_host(settings, eval_host(settings))),
         judge=judge,
         on_result=lambda result: append_jsonl(raw, result),
+        done=done,
     )
     info = RunInfo(
         started_at=started,
@@ -565,12 +609,13 @@ async def _run(
         model=tested_model(settings.models),
         provider=settings.models.provider,
         judge=judge.name,
-        repeat=args.repeat,
+        repeat=max(Counter(r.id for r in earlier + results).values(), default=args.repeat),
         scenarios=scenarios,
         commit=_commit(),
         command=_command(args),
-        raw=str(raw.relative_to(REPO)),
+        raw=str(raw.relative_to(REPO)) if raw.is_relative_to(REPO) else str(raw),
     )
+    results = earlier + results
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     report = report_path(started.date(), REPORTS_DIR)
     report.write_text(render(info, results), encoding="utf-8")
@@ -592,8 +637,10 @@ def main(argv: Sequence[str] | None = None, settings: EvalSettings | None = None
         scenarios = load_scenarios(only=args.only)
         if not settings.fault_script.is_file():
             raise EvalError(f"no fault script at {settings.fault_script}")
+        now, model = utcnow(), tested_model(settings.models)
+        batch = earlier_batch(REPO / args.append, now, model) if args.append else ([], now)
         judge = build_judge(settings.judge_model, settings.models)
-        return asyncio.run(_run(args, settings, scenarios, judge))
+        return asyncio.run(_run(args, settings, scenarios, judge, batch))
     except (EvalError, JudgeError, ScenarioError) as error:
         print(f"evals: {error}", file=sys.stderr)
         return 2

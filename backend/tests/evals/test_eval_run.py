@@ -19,6 +19,7 @@ from bleep.schemas.docker import DockerEvent
 from bleep.schemas.graph import Diagnosis
 from bleep.schemas.settings import ModelSettings
 from evals.judge import JudgeError, Judgement
+from evals.report import append_jsonl
 from evals.run import (
     REPO,
     DemoFaults,
@@ -27,6 +28,7 @@ from evals.run import (
     FaultError,
     demo_containers,
     docker_endpoint,
+    earlier_batch,
     eval_host,
     fault_docker_host,
     live_backend,
@@ -36,7 +38,7 @@ from evals.run import (
     run_suite,
     summary,
 )
-from evals.scenarios import Scenario
+from evals.scenarios import Scenario, ScenarioResult
 from fakes import FakeChatModel, FakeEngine
 from graph_env import box
 
@@ -347,6 +349,50 @@ async def test_the_suite_numbers_the_runs_settles_between_them_and_hands_each_re
     assert [r.run for r in results] == [1, 2]
     assert handed == [("db-down", 1), ("db-down", 2)]
     assert waits == [7]
+
+
+async def test_a_later_batch_numbers_its_runs_after_the_earlier_ones(tmp_path):
+    fake = engine()
+
+    async def connect(_host: HostConfig):
+        return None, fake
+
+    model = FakeChatModel(script=script(), structured_output_unsupported=True)
+    results = await run_suite(
+        [SCENARIO], settings(tmp_path), 1, faults=FakeFaults(fake), judge=FakeJudge(),
+        connector=connect, models=Models(model), done={"db-down": 2, "hung": 3},
+    )  # fmt: skip
+
+    assert [(r.id, r.run, r.error) for r in results] == [("db-down", 3, None)]
+
+
+def test_an_earlier_batch_gives_its_runs_and_when_it_started(tmp_path):
+    raw = tmp_path / "scenarios-20261103-104336.jsonl"
+    for run in (1, 2):
+        append_jsonl(raw, ScenarioResult(id="db-down", run=run, model="tiny-local", judge="j"))
+    now = datetime(2026, 11, 3, 13, 0, tzinfo=UTC)
+
+    earlier, started = earlier_batch(raw, now, "tiny-local")
+
+    assert [r.run for r in earlier] == [1, 2]
+    assert started == datetime(2026, 11, 3, 10, 43, 36, tzinfo=UTC)
+    renamed = raw.rename(tmp_path / "mine.jsonl")
+    assert earlier_batch(renamed, now, "tiny-local")[1] == now
+
+
+def test_an_earlier_batch_must_exist_and_be_of_the_same_model(tmp_path):
+    with pytest.raises(EvalError, match="no earlier batch"):
+        earlier_batch(tmp_path / "none.jsonl", datetime.now(UTC), "tiny-local")
+    raw = tmp_path / "scenarios-20261103-104336.jsonl"
+    append_jsonl(raw, ScenarioResult(id="db-down", model="vendor/big", judge="j"))
+    with pytest.raises(EvalError, match="vendor/big, not of tiny-local"):
+        earlier_batch(raw, datetime.now(UTC), "tiny-local")
+
+
+def test_main_refuses_a_missing_earlier_batch_before_any_fault(tmp_path, capsys):
+    missing = settings(tmp_path, fault_script=REPO / "demo" / "fault.sh")
+    assert main(["--append", str(tmp_path / "none.jsonl")], settings=missing) == 2
+    assert "no earlier batch" in capsys.readouterr().err
 
 
 def test_the_demo_host_is_reached_from_this_machine(tmp_path, caplog):

@@ -34,7 +34,10 @@ From `backend/`:
 uv run --group evals python -m evals.run --repeat 3        # every scenario, three runs each
 uv run --group evals python -m evals.run --only db-down    # one scenario
 uv run --group evals python -m evals.run --model other-model
+uv run --group evals python -m evals.run --append data/evals/scenarios-20261103-104336.jsonl
 ```
+
+`--append` continues an earlier batch: its runs go into that batch's raw file, numbered after the runs already there, and the report covers all of them. A suite can so run one repeat at a time, with the demo shop and the model server free for something else in between, and still end in one report. Each batch writes a report; the last one has every run. The harness refuses a raw file of another model under test.
 
 `--model` replaces the model for the provider in use (`LOCAL_MODEL` for `local`, `LLM_MODEL` for `openrouter`). Each run takes up to its scenario's `timeout_s`, and the harness waits `EVAL_SETTLE_S` between runs.
 
