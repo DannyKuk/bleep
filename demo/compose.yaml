@@ -1,14 +1,14 @@
-# The demo shop, the stack Bleep watches in the demo: shop-proxy -> shop-web -> shop-db, and a
-# worker. docker-compose.yaml includes this file, so `docker compose --profile demo up -d` starts
-# it beside Bleep. demo/fault.sh switches its faults; docs/demo.md walks through them.
+# The demo shop, the stack Bleep watches in the demo: shop-proxy -> shop-web -> shop-db, and
+# shop-worker. Its own Compose project, so Bleep groups it as the service `shop`:
 #
-# On another host it runs on its own: `docker compose -f demo/compose.yaml --profile demo up -d`.
-# Included, the services join Bleep's own Compose project and this name is not used.
+#   docker compose -f demo/compose.yaml up -d --build
+#
+# Bleep checks its URLs through the published port 8080. demo/fault.sh switches its faults;
+# docs/demo.md walks through them.
 name: shop
 
 services:
   shop-web:
-    profiles: ["demo"]
     build: ./shop
     container_name: shop-web
     restart: unless-stopped
@@ -29,7 +29,6 @@ services:
         condition: service_healthy
 
   shop-db:
-    profiles: ["demo"]
     image: postgres:17-alpine
     container_name: shop-db
     restart: unless-stopped
@@ -47,25 +46,22 @@ services:
       retries: 5
 
   shop-proxy:
-    profiles: ["demo"]
-    image: caddy:2.11.7-alpine
+    # Caddy with both Caddyfiles in the image (demo/proxy).
+    build: ./proxy
     container_name: shop-proxy
     restart: unless-stopped
     # --resume starts from the last config Caddy loaded (kept in its /config volume), so a
-    # restart keeps a config that was reloaded live. Load an edited Caddyfile with
+    # restart keeps a config that was reloaded live. Load one of the image's Caddyfiles with
     # `docker exec shop-proxy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile`.
     command: ["caddy", "run", "--resume", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
     ports:
       - "8080:8080"
-    volumes:
-      - ./proxy:/etc/caddy:ro
     depends_on:
       - shop-web
 
-  worker:
-    profiles: ["demo"]
+  shop-worker:
     build: ./worker
-    container_name: worker
+    container_name: shop-worker
     restart: unless-stopped
     mem_limit: 64m
     # No swap beyond the limit, so going past 64 MB is an OOM kill, not a slow swap.
@@ -76,8 +72,8 @@ services:
       - uploads:/uploads:ro
 
 volumes:
-  # Uploads live in memory, capped at 20 MB. shop-web writes them and the worker reads them; the
-  # volume keeps its files while either container runs.
+  # Uploads live in memory, capped at 20 MB. shop-web writes them and shop-worker reads them;
+  # the volume keeps its files while either container runs.
   uploads:
     driver_opts:
       type: tmpfs

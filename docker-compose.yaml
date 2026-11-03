@@ -1,12 +1,6 @@
 # Bleep. `docker compose up -d --build` runs the backend and the dashboard.
-# `--profile demo` adds a filtered socket proxy so Bleep can watch this machine's Docker engine,
-# and the demo shop from demo/compose.yaml for it to watch (docs/demo.md).
-# The project name is fixed: the demo shop's containers carry it, and the demo hosts file keys
-# their service by it (config/hosts.demo.yaml).
-name: bleep
-
-include:
-  - demo/compose.yaml
+# `--profile demo` adds a filtered socket proxy so Bleep can watch this machine's Docker engine.
+# The demo shop it watches is its own Compose project in demo/compose.yaml (docs/demo.md).
 
 services:
   backend:
@@ -25,6 +19,10 @@ services:
       - ./config:/config:ro
       # SSH key and known_hosts for real hosts; see docs/setup.md.
       - ./secrets:/run/secrets:ro
+    extra_hosts:
+      # This machine, as Docker Desktop already names it; on Linux too. The demo shop's URL
+      # checks (port 8080) and a local model server are reached through it.
+      - "host.docker.internal:host-gateway"
     labels:
       # Bleep never lists, watches or acts on its own containers.
       bleep.self: "true"

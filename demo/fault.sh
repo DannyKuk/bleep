@@ -6,11 +6,13 @@
 #
 # Faults: bad-env oom db-down bad-deploy disk-full port-conflict misroute hung.
 # docs/demo.md says what each one breaks and what Bleep should find and propose.
-# Run it on the machine the demo shop runs on; it needs docker with the compose plugin.
+# It needs docker with the compose plugin, and acts on the engine docker points at: this
+# machine's, or another's through DOCKER_HOST (docs/demo.md, "On another host").
 set -euo pipefail
 
 FAULTS="bad-env oom db-down bad-deploy disk-full port-conflict misroute hung"
 FILL_FILE=/uploads/catalog-export.bin
+COMPOSE_FILE=$(cd "$(dirname "$0")" && pwd)/compose.yaml
 
 usage() {
   echo "usage: $0 <fault> on|off   (faults: $FAULTS)" >&2
@@ -18,22 +20,8 @@ usage() {
   exit 2
 }
 
-label() { docker inspect -f "{{index .Config.Labels \"$2\"}}" "$1"; }
-
-# docker compose, pointed at the project shop-web was started from: Bleep's own project when the
-# shop came in through docker-compose.yaml's include, or the shop's when it runs on its own.
-compose() {
-  local project dir files args=()
-  if ! project=$(label shop-web com.docker.compose.project 2>/dev/null); then
-    echo "no shop-web container: start the demo shop first (docs/demo.md)" >&2
-    exit 1
-  fi
-  dir=$(label shop-web com.docker.compose.project.working_dir)
-  files=$(label shop-web com.docker.compose.project.config_files)
-  IFS=, read -ra list <<<"$files"
-  for file in "${list[@]}"; do args+=(-f "$file"); done
-  docker compose -p "$project" --project-directory "$dir" "${args[@]}" "$@"
-}
+# docker compose on the shop's own project, `shop`.
+compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 
 # Recreate a service from its Compose definition; the caller's environment picks the variant.
 recreate() { compose up -d --no-deps "$1"; }
@@ -53,8 +41,8 @@ caddy_load() {
 bad_env_on() { SHOP_DATABASE_URL=postgresql://shop:shop@db:5432/shop recreate shop-web; }
 bad_env_off() { recreate shop-web; }
 
-oom_on() { WORKER_BATCH_MB=256 recreate worker; }
-oom_off() { recreate worker; }
+oom_on() { WORKER_BATCH_MB=256 recreate shop-worker; }
+oom_off() { recreate shop-worker; }
 
 db_down_on() { docker stop shop-db; }
 db_down_off() { docker start shop-db; }
@@ -63,8 +51,20 @@ bad_deploy_on() { SHOP_VERSION=2 recreate shop-web; }
 bad_deploy_off() { recreate shop-web; }
 
 disk_full_on() {
-  # Writes until the 20 MB uploads volume is full; the write ends with "No space left on device".
-  docker exec shop-web sh -c "cat /dev/zero > $FILL_FILE" || true
+  # Writes until the 20 MB uploads volume is full. The write is meant to fail, with
+  # "No space left on device"; any other failure is a real one.
+  local err
+  if err=$(docker exec shop-web sh -c "cat /dev/zero > $FILL_FILE" 2>&1); then
+    echo "the uploads volume did not fill" >&2
+    return 1
+  fi
+  case "$err" in
+    *"No space left on device"*) ;;
+    *)
+      echo "$err" >&2
+      return 1
+      ;;
+  esac
 }
 disk_full_off() { docker exec shop-web rm -f "$FILL_FILE"; }
 
@@ -100,9 +100,9 @@ all_off() {
   docker rm -f shop-canary 2>/dev/null || true
   docker start shop-db
   docker exec shop-web rm -f "$FILL_FILE" 2>/dev/null || true
-  # Recreating puts shop-web and the worker back on their defaults, ends a freeze and gives
+  # Recreating puts shop-web and shop-worker back on their defaults, ends a freeze and gives
   # shop-proxy its port back.
-  compose up -d --no-deps --force-recreate shop-web worker shop-proxy
+  compose up -d --no-deps --force-recreate shop-web shop-worker shop-proxy
   caddy_load Caddyfile
 }
 

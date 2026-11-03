@@ -11,7 +11,7 @@ docker compose --profile demo up -d --build
 
 Open http://localhost:3000 and log in with the admin password. Bleep refuses to start with a shorter password. A random secret: `openssl rand -hex 32`.
 
-The profile also starts a small shop for Bleep to watch, on port 8080; [Demo](demo.md) lists its faults and how to switch them.
+For something to watch, start the demo shop with `docker compose -f demo/compose.yaml up -d --build`. It serves on port 8080; [Demo](demo.md) lists its faults and how to switch them.
 
 Without the `demo` profile only the backend and the dashboard start, and the hosts file has to name a host you reach some other way.
 

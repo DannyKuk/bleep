@@ -6,14 +6,14 @@ hosts:
     kind: socket
     endpoint: tcp://socket-proxy:2375
     services:
-      # The demo shop comes in through docker-compose.yaml's include, so its containers carry
-      # Bleep's own Compose project, `bleep`, and group into the service of that name.
-      bleep:
-        # Checked from the backend over the Compose network, through shop-proxy.
+      # The demo shop's Compose project is `shop`, so its containers group into this service.
+      shop:
+        # Checked from the backend through shop-proxy's published port on this machine.
         urls:
-          - url: http://shop-proxy:8080/health
+          - url: http://host.docker.internal:8080/health
             body_contains: '"status":"ok"'
-          - url: http://shop-proxy:8080/api/items
+          - url: http://host.docker.internal:8080/api/items
+            body_contains: Coffee beans
         repo: DannyKuk/bleep
         rules:
           - shop-db holds the shop's items. Never stop or restart it. Starting it when it is stopped is fine.
