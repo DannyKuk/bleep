@@ -37,7 +37,7 @@ from bleep.graph.state import IncidentState, Node
 from bleep.guard.log import GuardKind
 from bleep.guard.report_check import check_report
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
-from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget
+from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.schemas.graph import (
     FACT_CHARS,
     Decision,
@@ -304,7 +304,7 @@ async def _ask[T: BaseModel](deps: GraphDeps, incident_id: str, schema: type[T],
         deps.models("main"),
         schema,
         [HumanMessage(prompt)],
-        config={"callbacks": [UsageTracker(incident_id, deps.ledger)]},
+        config=tracked(UsageTracker(incident_id, deps.ledger)),
     )
 
 

@@ -443,16 +443,27 @@ async def test_recover_on_boot_leaves_an_undecided_approval_waiting(tmp_path, ac
 
 
 class RootRuns(BaseCallbackHandler):
-    """Records the metadata of each graph invocation's root run, as a tracer would see it."""
+    """Records what a tracer sees: each graph invocation's root run, and the session of every
+    model and tool call under them."""
 
     def __init__(self) -> None:
         self.roots: list[dict] = []
+        self.calls: list[tuple[str, str | None, str | None]] = []
 
     def on_chain_start(self, serialized, inputs, *, run_id, parent_run_id=None, **kwargs):
         if parent_run_id is None:
             self.roots.append(
                 {"name": kwargs.get("name"), "tags": kwargs.get("tags"), **kwargs["metadata"]}
             )
+
+    def on_chat_model_start(self, serialized, messages, *, run_id, metadata=None, **kwargs):
+        self._call("model", metadata or {})
+
+    def on_tool_start(self, serialized, input_str, *, run_id, metadata=None, **kwargs):
+        self._call("tool", metadata or {})
+
+    def _call(self, kind: str, metadata: dict) -> None:
+        self.calls.append((kind, metadata.get("session"), metadata.get("langgraph_node")))
 
 
 class RecordingTracer:
@@ -490,6 +501,11 @@ async def test_every_run_of_an_incident_carries_its_id_as_the_trace_session(tmp_
     assert [root["session"] for root in tracer.seen.roots] == [incident.id, incident.id]
     assert {root["name"] for root in tracer.seen.roots} == {f"incident:{incident.title}"}
     assert all(root["thread_id"] == incident.id for root in tracer.seen.roots)
+    # The callbacks reach the model call of every node that makes one (Propose is stubbed here),
+    # beside the cost tracker each node passes: not only the roots.
+    model_nodes = {node for kind, _, node in tracer.seen.calls if kind == "model"}
+    assert model_nodes == {"investigate", "diagnose", "report"}
+    assert {session for _, session, _ in tracer.seen.calls} == {incident.id}
     assert (await env.repo.get(incident.id)).trace_url == f"http://traces.test/{incident.id}"
 
 
@@ -503,3 +519,22 @@ async def test_without_a_tracer_a_run_gets_no_callbacks_and_no_link(tmp_path):
         await runner.join()
 
     assert (await env.repo.get(incident.id)).trace_url is None
+
+
+class BrokenTracer(RecordingTracer):
+    def run_config(self, incident):
+        raise RuntimeError("tracing backend misconfigured")
+
+
+async def test_a_failing_tracer_never_stops_the_run(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(
+            build_graph(env.deps, saver), env.repo, env.bus, tracer=BrokenTracer()
+        )
+        await runner.start(incident)
+        await runner.join()
+
+    assert await env.nodes(incident.id) == M2_PATH
+    assert (await env.repo.get(incident.id)).status == "closed"

@@ -4,6 +4,8 @@
 # docs/design/observability.md. The project, its keys and the login are created on first start
 # from the LANGFUSE_INIT_* values in .env, so no clicks in the UI are needed. The UI is at
 # http://localhost:3001 (3000 is Bleep's dashboard); nothing else is published.
+# Pass this file only with --profile observability: it switches the backend's tracing on, and
+# without the profile no Langfuse runs to take the traces, so they are dropped.
 
 x-langfuse-env: &langfuse-env
   NEXTAUTH_URL: http://localhost:3001
@@ -102,7 +104,8 @@ services:
 
   langfuse-minio:
     <<: *observability
-    image: cgr.dev/chainguard/minio:latest
+    # Chainguard's free images have only `latest`, so the digest pins it (RELEASE.2026-10-23).
+    image: cgr.dev/chainguard/minio:latest@sha256:3c60a2a8c4d33409a9bc7a623a7fcbfb4605adc3d89422d2f53b3f673a6e5597
     entrypoint: sh
     # Creates the bucket before the server starts.
     command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'

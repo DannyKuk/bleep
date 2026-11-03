@@ -121,7 +121,7 @@ Every incident run can become one trace, with the incident as its session. For a
 docker compose -f docker-compose.yaml -f docker-compose.observability.yaml --profile observability up -d --build
 ```
 
-Langfuse creates its project, keys and login from `.env` on first start; the UI is at http://localhost:3001, and each incident carries a link to its trace (`trace_url`). For Langfuse elsewhere or LangSmith, set `TRACING` and the variables listed in `.env.example` instead. Bleep refuses to start when `TRACING` names a tracer whose keys are missing. Details: [Observability](design/observability.md).
+Langfuse creates its project, keys and login from `.env` on first start; the UI is at http://localhost:3001, and each incident carries a link to its trace (`trace_url`). For Langfuse elsewhere or LangSmith, set `TRACING` and the variables listed in `.env.example` instead. Pass `docker-compose.observability.yaml` only with the profile: it turns the backend's tracing on, and without the profile no Langfuse runs. Bleep refuses to start when `TRACING` names a tracer whose keys are missing. Details: [Observability](design/observability.md).
 
 ## Later
 

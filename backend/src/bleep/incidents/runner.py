@@ -13,10 +13,9 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
-from bleep.graph.deps import Approvals, Notifier
+from bleep.graph.deps import Approvals, Notifier, Tracer
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
-from bleep.llm.tracing import NoTracing, Tracer
 from bleep.schemas.graph import Decision
 from bleep.schemas.incidents import Incident, Signal
 
@@ -44,7 +43,7 @@ class IncidentRunner:
         self.bus = bus
         self.approvals = approvals
         self.notifier = notifier
-        self.tracer = tracer or NoTracing()
+        self.tracer = tracer
         self._runs: dict[str, asyncio.Task[None]] = {}
 
     @staticmethod
@@ -53,7 +52,8 @@ class IncidentRunner:
 
     def run_config(self, incident: Incident) -> RunnableConfig:
         """The config of one graph invocation: the thread, plus the tracer's part."""
-        return {**self.tracer.run_config(incident), **self.config(incident.id)}
+        traced = self.tracer.run_config(incident) if self.tracer is not None else {}
+        return {**traced, **self.config(incident.id)}
 
     async def start(self, incident: Incident) -> asyncio.Task[None]:
         """Run the incident's graph in the background, from where its thread stands.
@@ -225,14 +225,24 @@ class IncidentRunner:
             await self._settle(incident_id, snapshot)
 
     async def _traced(self, incident_id: str) -> RunnableConfig:
-        """The run's config, after storing the link to its trace on the incident."""
+        """The run's config, after storing the link to its trace on the incident. Tracing is
+        optional: if it fails, the run goes on untraced."""
         incident = await self.repo.get(incident_id)
-        if incident is None:
+        if self.tracer is None or incident is None:
             return self.config(incident_id)
-        url = self.tracer.trace_url(incident)
-        if url is not None and url != incident.trace_url:
-            await self.repo.set_trace_url(incident_id, url)
-        return self.run_config(incident)
+        try:
+            url = self.tracer.trace_url(incident)
+            if url is not None and url != incident.trace_url:
+                await self.repo.set_trace_url(incident_id, url)
+            return self.run_config(incident)
+        except Exception as error:
+            # By type only: a tracing client's message may quote its endpoint or key.
+            log.warning(
+                "incident %s: tracing failed (%s); running untraced",
+                incident_id,
+                type(error).__name__,
+            )
+            return self.config(incident_id)
 
     async def _settle(self, incident_id: str, snapshot: Any) -> None:
         """Set the terminal status of a finished thread from its outcome.

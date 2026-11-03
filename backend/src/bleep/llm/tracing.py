@@ -7,7 +7,7 @@ the environment and stay in the tracing client; nothing here puts them in the ru
 """
 
 import asyncio
-from typing import Literal, Protocol
+from typing import Literal
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tracers.langchain import LangChainTracer
@@ -50,20 +50,6 @@ class TracingSettings(BaseSettings):
     langsmith_project: str = Field("bleep", validation_alias=_env("LANGSMITH_PROJECT"))
 
 
-class Tracer(Protocol):
-    def run_config(self, incident: Incident) -> RunnableConfig:
-        """What a graph run of `incident` adds to its config; empty when tracing is off."""
-        ...
-
-    def trace_url(self, incident: Incident) -> str | None:
-        """The link to the incident's trace, known before the trace exists; None if none."""
-        ...
-
-    async def close(self) -> None:
-        """Send what is still buffered."""
-        ...
-
-
 def trace_name(incident: Incident) -> str:
     return f"incident:{incident.title}"
 
@@ -77,6 +63,8 @@ def trace_tags(incident: Incident) -> list[str]:
 
 
 class NoTracing:
+    """Tracing off: nothing is added to a run."""
+
     def run_config(self, incident: Incident) -> RunnableConfig:
         return {}
 
@@ -168,7 +156,7 @@ class LangSmithTracing:
         await asyncio.to_thread(self._client.flush)
 
 
-def build_tracer(settings: TracingSettings) -> Tracer:
+def build_tracer(settings: TracingSettings) -> NoTracing | LangfuseTracing | LangSmithTracing:
     """The tracer `TRACING` names; refuses to start with its keys missing."""
     if settings.tracing == "langfuse":
         missing = [

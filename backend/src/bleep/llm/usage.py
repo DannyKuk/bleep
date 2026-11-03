@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.outputs import ChatGeneration, LLMResult
+from langchain_core.runnables import RunnableConfig
+from langchain_core.runnables.config import ensure_config, merge_configs
 
 from bleep.schemas.settings import Budgets
 from bleep.store.db import Database
@@ -143,3 +145,10 @@ async def check_budget(ledger: CostLedger, incident_id: str, budgets: Budgets) -
         raise BudgetExceeded("daily_cost")
     if (await ledger.incident_total(incident_id)).tokens >= budgets.incident_tokens:
         raise BudgetExceeded("incident_tokens")
+
+
+def tracked(tracker: UsageTracker) -> RunnableConfig:
+    """The config for a model call inside a node: the node's own callbacks (a tracer's among
+    them) plus `tracker`. `config={"callbacks": [tracker]}` alone would replace them, and the
+    call would drop out of the incident's trace."""
+    return merge_configs(ensure_config(), {"callbacks": [tracker]})

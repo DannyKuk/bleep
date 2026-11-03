@@ -4,7 +4,7 @@ from pydantic import SecretStr
 
 from bleep.auth.sessions import LoginLimiter, SessionStore
 from bleep.config import Settings
-from bleep.graph.deps import GraphDeps, Notifier, StaticSettings, model_factory
+from bleep.graph.deps import GraphDeps, Notifier, StaticSettings, Tracer, model_factory
 from bleep.guard.log import GuardLog
 from bleep.hosts.config import load_hosts_file
 from bleep.hosts.registry import Registry
@@ -12,7 +12,7 @@ from bleep.incidents.action_log import ActionLog
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
-from bleep.llm.tracing import Tracer, TracingSettings, build_tracer
+from bleep.llm.tracing import TracingSettings, build_tracer
 from bleep.llm.usage import CostLedger
 from bleep.memory.embeddings import (
     DEFAULT_LOCAL_MODEL,
