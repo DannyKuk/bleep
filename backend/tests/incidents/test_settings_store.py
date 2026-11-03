@@ -295,3 +295,29 @@ async def test_a_stored_row_holding_a_secret_is_never_loaded(db):
     assert registry.hosts()[0].config.rules == ["file rule"]
     assert store.overrides().hosts == {}
     assert plugins.snapshot("coolify") == (None, None)  # the plugin row was not applied
+
+
+async def test_a_stored_plugin_whose_code_now_fails_to_build_does_not_stop_bleep(db):
+    class Exploding(FakeCoolifyPlugin):
+        def tools(self, ctx):
+            raise RuntimeError("cannot build")
+
+    await _store_raw(db, "plugin:coolify", {"enabled": True, "settings": {"url": "https://c.test"}})
+    await _store_raw(db, "budgets", {"verify_loops": 1})
+    plugins = PluginRegistry([Exploding()], SecretStr("s"), env={"COOLIFY_TOKEN": COOLIFY_TOKEN})
+    store = SettingsStore(db, hosts_file_registry(), plugins, clock=lambda: T0)
+    await store.load()
+    assert not plugins.is_enabled("coolify")
+    assert store.budgets().verify_loops == 1
+
+
+async def test_a_settings_change_alone_keeps_the_stored_toggle_of_a_plugin_off_for_its_secret(db):
+    await _store_raw(db, "plugin:coolify", {"enabled": True, "settings": {"url": "https://c.test"}})
+    store, plugins = make_store(db, hosts_file_registry(), env={})
+    await store.load()
+    await store.set_plugin("coolify", PluginUpdate(settings={"url": "https://c2.test"}))
+    assert not plugins.is_enabled("coolify")
+    again, plugins_after = make_store(db, hosts_file_registry())  # the secret is back
+    await again.load()
+    assert plugins_after.is_enabled("coolify")
+    assert plugins_after.settings("coolify").url == "https://c2.test"

@@ -51,3 +51,33 @@ def test_an_allowed_field_is_trusted_by_name_only():
 
 def test_plain_text_passes():
     assert find_secrets({"rules": ["never restart postgres without asking"]}) == []
+
+
+@pytest.mark.parametrize("name", ["ｔｏｋｅｎ", "pаssword", "pass​word", "to​ken", "ＡＰＩ_ＫＥＹ"])
+def test_look_alike_and_invisible_characters_do_not_hide_a_secret_name(name):
+    assert is_secret_field(name)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "pаssword=hunter2xyz",  # Cyrillic а
+        "pass​word=hunter2xyz",
+        "ｐａｓｓｗｏｒｄ=hunter2xyz",
+        "https://shop.example.test/h?key=hunter2xyz",
+        "https://shop.example.test/h?a=1&api_key=hunter2xyz",
+    ],
+)
+def test_look_alike_values_and_secret_query_parameters_are_found(value):
+    assert find_secrets({"rules": [value]}) == ["rules[0]"]
+
+
+def test_a_url_with_a_plain_query_passes():
+    assert find_secrets({"url": "https://shop.example.test/health?full=1"}) == []
+
+
+def test_a_deeply_nested_body_is_walked_without_recursion():
+    body: dict = {"token": "x"}
+    for _ in range(5_000):
+        body = {"a": body}
+    assert len(find_secrets(body)) == 1

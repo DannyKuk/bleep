@@ -151,6 +151,8 @@ class SettingsStore:
                     self._load_row(key, value)
                 except (ValueError, ValidationError, PluginError, UnknownPlugin) as problem:
                     log.warning("settings: stored %s left out: %s", key, _why(problem))
+                except Exception as problem:  # a plugin's own code failed: Bleep starts anyway
+                    log.warning("settings: stored %s left out: %s", key, type(problem).__name__)
             self._apply_hosts()
 
     async def update(self, update: SettingsUpdate) -> None:
@@ -194,7 +196,10 @@ class SettingsStore:
             settings = old.settings
             if update.settings is not None:
                 settings = self._plugins.settings(name).model_dump(mode="json")
-            row = _PluginRow(enabled=on, settings=settings)
+            # A change of settings alone keeps the stored toggle: a plugin that is off only because
+            # its secret was unset at boot stays switched on for the next boot.
+            enabled = update.enabled if update.enabled is not None else old.enabled
+            row = _PluginRow(enabled=enabled, settings=settings)
             try:
                 await self._write({f"{PLUGIN_PREFIX}{name}": row})
             except BaseException:
@@ -310,7 +315,9 @@ def _merged_host(base: HostConfig, host: HostSettings) -> HostConfig:
     try:
         return HostConfig.model_validate(data)
     except ValidationError as error:
-        raise SettingsRefused(f"host {base.id}: {_why(error)}") from None
+        # Only where, not the message: the hosts file's own messages quote the value.
+        where = sorted({".".join(str(p) for p in e["loc"]) or "host" for e in error.errors()})
+        raise SettingsRefused(f"host {base.id}: invalid {', '.join(where)}") from None
 
 
 def check_body(data: Any) -> None:

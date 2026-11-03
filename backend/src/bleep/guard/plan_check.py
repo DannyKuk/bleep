@@ -101,7 +101,7 @@ def _check_urls(proposal: Proposal, registry: Registry, host_id: str) -> list[Vi
     return [
         Violation(
             "unknown_url",
-            f"verification url {url}: is not a health check of host {host_id} in the hosts file;"
+            f"verification url {url}: is not a health check of host {host_id} in its settings;"
             " only those can be checked",
         )
         for url in proposal.verification.urls

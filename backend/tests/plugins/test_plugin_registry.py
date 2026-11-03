@@ -202,3 +202,26 @@ def test_a_plugin_cannot_add_a_docker_action_or_an_unprefixed_tool():
     with pytest.raises(ValueError, match="must be named coolify_"):
         registry.enable("coolify", True)
     assert not registry.is_enabled("coolify")
+
+
+@pytest.mark.parametrize("name", ["docker", "Coolify", "a_b", "has-dash", ""])
+def test_a_plugin_name_that_could_reach_another_namespace_is_refused(name):
+    class Named(FakeCoolifyPlugin):
+        pass
+
+    Named.name = name
+    with pytest.raises(ValueError, match="plugin name"):
+        plugins(plugin=Named())
+
+
+def test_a_plugin_whose_own_code_fails_to_build_is_refused_in_bleeps_words():
+    class Exploding(FakeCoolifyPlugin):
+        def tools(self, ctx):
+            raise RuntimeError(f"cannot reach {ctx.settings.url} with {COOLIFY_TOKEN}")
+
+    registry = plugins(plugin=Exploding())
+    registry.configure("coolify", {"url": "https://coolify.example.test"})
+    with pytest.raises(PluginError) as refusal:
+        registry.enable("coolify", True)
+    assert str(refusal.value) == "plugin coolify could not be switched on (RuntimeError)"
+    assert not registry.is_enabled("coolify")

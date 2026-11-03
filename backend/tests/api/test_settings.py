@@ -213,3 +213,33 @@ def test_switching_a_plugin_off_reaches_the_next_incident(app):
 def test_settings_reach_the_graph(app):
     app.put("/api/settings", json={"budgets": {"investigate_tool_calls": 3}})
     assert app.parts.graph_deps.settings_store.budgets().investigate_tool_calls == 3
+
+
+def test_a_bad_url_is_refused_without_echoing_it(app):
+    url = "https://shop.example.test:hunter2xyz/health"
+    body = {"hosts": {"a": {"services": {"compose:shop": {"urls": [{"url": url}]}}}}}
+    response = app.put("/api/settings", json=body)
+    assert response.status_code == 422
+    assert "hunter2xyz" not in response.text
+
+
+def test_a_deeply_nested_body_is_refused_not_a_crash(app):
+    body: dict = {"x": 1}
+    for _ in range(1_000):
+        body = {"hosts": body}
+    assert app.put("/api/settings", json=body).status_code == 422
+    assert app.get("/api/settings").status_code == 200
+
+
+def test_a_plugin_that_fails_to_build_is_a_422(app, monkeypatch):
+    plugin = app.parts.plugins.get("coolify")
+
+    def explode(ctx):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(plugin, "tools", explode)
+    response = app.put(
+        "/api/plugins/coolify", json={"enabled": True, "settings": {"url": "https://c.test"}}
+    )
+    assert response.status_code == 422
+    assert app.get("/api/plugins").json()[0]["enabled"] is False

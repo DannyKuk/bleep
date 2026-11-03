@@ -10,6 +10,7 @@ them even for a plan approved before.
 import asyncio
 import logging
 import os
+import re
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -27,6 +28,10 @@ from bleep.tools.registry import ActHandler, ToolSpec, check_kind
 log = logging.getLogger(__name__)
 
 HEALTH_TIMEOUT_S = 5.0
+# No `_` in a name, so one plugin's tool prefix (`a_`) is never inside another's (`a_b_`), and
+# never `docker`, the core actions' namespace.
+_PLUGIN_NAME = re.compile(r"[a-z][a-z0-9]{0,31}")
+_RESERVED_NAMES = frozenset({"docker"})
 
 
 class PluginError(ValueError):
@@ -178,9 +183,17 @@ class PluginRegistry:
             grant_secret=self._grant_secret,
             guard_log=self._guard_log,
         )
-        tools = plugin.tools(ctx)
-        handlers = plugin.act_handlers(ctx)
-        _check_built(plugin, tools, handlers)
+        try:
+            tools = plugin.tools(ctx)
+            handlers = plugin.act_handlers(ctx)
+            _check_built(plugin, tools, handlers)
+        except PluginError:
+            raise
+        except Exception as error:  # the plugin's own code: its text could quote a setting
+            log.warning("plugin %s could not be built: %s", plugin.name, type(error).__name__)
+            raise PluginError(
+                f"plugin {plugin.name} could not be switched on ({type(error).__name__})"
+            ) from None
         return _Active(ctx, tools, handlers)
 
     def _validate(self, plugin: Plugin, values: Mapping[str, Any]) -> BaseModel:
@@ -228,7 +241,13 @@ class _ActTools(Mapping[str, ActHandler]):
 
 
 def _check_plugin(plugin: Plugin) -> None:
-    """Refuse a plugin whose settings could hold a secret: the settings are stored and shown."""
+    """Refuse a plugin with a name that could reach a core namespace, or whose settings could
+    hold a secret: the settings are stored and shown."""
+    if not _PLUGIN_NAME.fullmatch(plugin.name) or plugin.name in _RESERVED_NAMES:
+        raise ValueError(
+            f"plugin name {plugin.name!r} must be lower-case letters and digits and not "
+            f"{', '.join(sorted(_RESERVED_NAMES))}"
+        )
     model = plugin.settings_model
     if model.model_config.get("extra") != "forbid":
         raise ValueError(f"plugin {plugin.name!r}: settings_model must forbid extra fields")
@@ -245,10 +264,10 @@ def _check_built(plugin: Plugin, tools: list[ToolSpec], handlers: dict[str, ActH
     for spec in tools:
         check_kind(spec)
         if spec.plugin != plugin.name or not spec.name.startswith(f"{plugin.name}_"):
-            raise ValueError(
+            raise PluginError(
                 f"plugin {plugin.name!r}: tool {spec.name!r} must be named {plugin.name}_... "
                 "and carry the plugin's name"
             )
     for action in handlers:
         if not action.startswith(f"{plugin.name}.") or action not in KNOWN_ACTIONS:
-            raise ValueError(f"plugin {plugin.name!r}: {action!r} is not one of its actions")
+            raise PluginError(f"plugin {plugin.name!r}: {action!r} is not one of its actions")

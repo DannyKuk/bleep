@@ -42,7 +42,7 @@ _FOLD_WINDOW = 256
 _TAG = re.compile(r"[\s/\\]*untrusted")
 
 
-def _fold(chunk: str) -> str:
+def fold(chunk: str) -> str:
     """Fold a short stretch of text the way a reader would see it: NFKC, no invisible, control
     or combining characters, look-alike letters mapped to Latin, lower case."""
     folded = unicodedata.normalize("NFKC", chunk)
@@ -52,7 +52,7 @@ def _fold(chunk: str) -> str:
 
 def _neutralise(match: re.Match[str]) -> str:
     window = match.string[match.end() : match.end() + _FOLD_WINDOW]
-    return "&lt;" if _TAG.match(_fold(window)) else match.group(0)
+    return "&lt;" if _TAG.match(fold(window)) else match.group(0)
 
 
 def escape_untrusted(text: str) -> str:

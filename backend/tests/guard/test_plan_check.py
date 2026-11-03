@@ -211,7 +211,7 @@ async def test_a_verification_url_must_be_a_health_check_of_the_host(tmp_path):
     assert check(shop, "https://blog.example/") == []  # any health check of the host
     refused = check(shop, "http://169.254.169.254/latest/meta-data/")
     assert [(v.rule, v.step) for v in refused] == [("unknown_url", None)]
-    assert "169.254.169.254" in refused[0].text and "hosts file" in refused[0].text
+    assert "169.254.169.254" in refused[0].text and "in its settings" in refused[0].text
     on_b = proposal.model_copy(update={"verification": VerificationPlan(urls=[shop])})
     assert "unknown_url" in [
         v.rule for v in check_plan(on_b, env.registry, CORE, "b", incident_containers=SHOP_WEB)

@@ -102,7 +102,7 @@ class ModelOverrides(_Overrides):
 
 class BudgetOverrides(_Overrides):
     investigate_tool_calls: int | None = Field(None, ge=1, le=50)
-    low_confidence: float | None = Field(None, ge=0, le=1)
+    low_confidence: float | None = Field(None, ge=0.1, le=0.95)
     verify_loops: int | None = Field(None, ge=0, le=5)
     replans: int | None = Field(None, ge=0, le=10)
     incident_tokens: int | None = Field(None, ge=1_000, le=2_000_000)
@@ -116,10 +116,10 @@ class ThresholdOverrides(_Overrides):
     repeated_window_s: int | None = Field(None, ge=60, le=86_400)
     url_failures_to_open: int | None = Field(None, ge=1, le=20)
     url_slow_ms: int | None = Field(None, ge=100, le=60_000)
-    disk_percent: float | None = Field(None, ge=50, le=100)
-    memory_available_percent_min: float | None = Field(None, ge=0, le=50)
+    disk_percent: float | None = Field(None, ge=50, le=99)
+    memory_available_percent_min: float | None = Field(None, ge=1, le=50)
     memory_polls: int | None = Field(None, ge=1, le=60)
-    load_per_cpu: float | None = Field(None, gt=0, le=100)
+    load_per_cpu: float | None = Field(None, ge=0.5, le=20)
     load_polls: int | None = Field(None, ge=1, le=60)
     host_unreachable_s: int | None = Field(None, ge=30, le=86_400)
     debounce_s: int | None = Field(None, ge=0, le=3_600)
@@ -137,8 +137,10 @@ class ServiceSettings(_Overrides):
     @classmethod
     def _checkable(cls, urls: list[UrlCheckConfig] | None) -> list[UrlCheckConfig] | None:
         for cfg in urls or []:
-            if (why := check_url_syntax(cfg.url)) is not None:
-                raise ValueError(f"invalid url: {why}")
+            if check_url_syntax(cfg.url) is not None:
+                raise ValueError(
+                    "invalid url: must be http:// or https:// with a host and a valid port"
+                )
         return urls
 
 
