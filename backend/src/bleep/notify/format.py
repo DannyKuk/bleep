@@ -53,11 +53,18 @@ def answer(name: str, **values: str) -> str:
 
 
 def steps_text(proposal: Proposal) -> str:
-    """One line per step: `1. docker.restart shop-web-1 on demo`."""
+    """One line per step: `1. docker.restart shop-web-1 on demo`, with the step's params after
+    it when it has any, since the human approves those too (an MCP tool and its arguments)."""
     return "\n".join(
-        f"{n}. {step.action} {step.target} on {step.host_id}"
+        f"{n}. {step.action} {step.target} on {step.host_id}{_params_text(step.params)}"
         for n, step in enumerate(proposal.steps, 1)
     )
+
+
+def _params_text(params: dict[str, str]) -> str:
+    if not params:
+        return ""
+    return " (" + ", ".join(f"{key}={value}" for key, value in params.items()) + ")"
 
 
 def confidence_text(diagnosis: Diagnosis | None) -> tuple[str, str, str]:

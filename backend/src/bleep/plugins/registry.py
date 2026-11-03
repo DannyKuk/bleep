@@ -161,7 +161,10 @@ class PluginRegistry:
             enabled=active is not None,
             settings=self._shown_settings(name),
             settings_schema=plugin.settings_model.model_json_schema(),
-            secrets=[PluginSecret(env=env, set=bool(self._env.get(env))) for env in plugin.secrets],
+            secrets=[
+                PluginSecret(env=env, set=bool(self._env.get(env)))
+                for env in self._secret_envs(name)
+            ],
             health=await self._health(plugin, active.ctx) if active is not None else None,
         )
 
@@ -171,15 +174,23 @@ class PluginRegistry:
         except PluginError:  # required settings not given yet: nothing to show
             return {}
 
+    def _secret_envs(self, name: str) -> tuple[str, ...]:
+        plugin = self.get(name)
+        try:
+            return plugin.secret_envs(self.settings(name))
+        except PluginError:  # required settings not given yet: only the fixed ones are known
+            return plugin.secrets
+
     def _activate(self, plugin: Plugin, settings: BaseModel) -> _Active:
-        missing = [env for env in plugin.secrets if not self._env.get(env)]
+        envs = plugin.secret_envs(settings)
+        missing = [env for env in envs if not self._env.get(env)]
         if missing:
             raise PluginError(
                 f"plugin {plugin.name} needs {', '.join(missing)} set in the environment first"
             )
         ctx = PluginContext(
             settings=settings,
-            secrets={env: SecretStr(self._env[env]) for env in plugin.secrets},
+            secrets={env: SecretStr(self._env[env]) for env in envs},
             grant_secret=self._grant_secret,
             guard_log=self._guard_log,
         )

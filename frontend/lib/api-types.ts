@@ -137,7 +137,8 @@ export type Action =
   | "docker.stop"
   | "docker.start"
   | "coolify.redeploy"
-  | "coolify.set_env";
+  | "coolify.set_env"
+  | "mcp.call";
 
 export interface PlanStep {
   action: Action;

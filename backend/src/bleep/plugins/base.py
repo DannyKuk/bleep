@@ -50,6 +50,11 @@ class Plugin(ABC):
     def tools(self, ctx: PluginContext) -> list[ToolSpec]:
         """The plugin's tools, each labelled read or act; read tools join Investigate's."""
 
+    def secret_envs(self, settings: BaseModel) -> tuple[str, ...]:
+        """The environment variables this plugin needs with `settings`: `secrets`, unless the
+        plugin lets its settings name one (the MCP plugin's `auth_env`)."""
+        return self.secrets
+
     def act_handlers(self, ctx: PluginContext) -> dict[str, ActHandler]:
         """The actions the plugin can run for an approved plan, by action name."""
         return {}

@@ -366,6 +366,20 @@ async def test_model_text_is_redacted_before_it_leaves(env):
     assert "abcdef1234567890abcdef" not in env.api.sent("sendMessage")[0]["text"]
 
 
+def test_a_steps_params_are_shown_so_the_human_sees_what_is_approved():
+    step = PlanStep(
+        action="mcp.call",
+        host_id="demo",
+        target="shop-web-1",
+        params={"tool": "pause_monitor", "arguments": '{"name": "shop"}'},
+    )
+    proposal = Proposal(kind="act", steps=[step], reason="the monitor flaps")
+    assert fmt.steps_text(proposal) == (
+        '1. mcp.call shop-web-1 on demo (tool=pause_monitor, arguments={"name": "shop"})'
+    )
+    assert fmt.steps_text(PLAN) == "1. docker.restart shop-web-1 on demo"
+
+
 def test_long_messages_are_cut_below_the_limit_without_a_dangling_escape():
     text = fmt.render("notice", id="inc_1", text="." * 5000)
     assert len(text) <= fmt.TELEGRAM_LIMIT

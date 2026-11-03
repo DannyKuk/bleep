@@ -30,6 +30,7 @@ from bleep.memory.store import MemoryStore
 from bleep.notify.notifier import NotifySetup
 from bleep.notify.notifier import setup as setup_notify
 from bleep.plugins.base import Plugin
+from bleep.plugins.mcp_url import McpUrlPlugin
 from bleep.plugins.registry import PluginRegistry
 from bleep.store.db import Database
 from bleep.tools.default import default_registry
@@ -60,7 +61,7 @@ class AppParts:
 
 
 # Every plugin Bleep has; each is off until a person switches it on.
-PLUGINS: tuple[type[Plugin], ...] = ()
+PLUGINS: tuple[type[Plugin], ...] = (McpUrlPlugin,)
 
 
 def build_embedder(settings: Settings) -> Embedder:
