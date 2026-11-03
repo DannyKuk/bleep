@@ -46,7 +46,7 @@ What the dashboard reads about incidents and how it answers an approval (`api/in
 - **The first answer wins; a later one is 409 naming the winner.** The body is `{"detail": "Already decided on Telegram", "decided_via": "telegram"}` (or "the dashboard"), whether the other channel won before the request or inside `resolve`, between the route's read and its write. Only the winner resumes the run, with the approval id it decided (`IncidentRunner.resume`), so the resume cannot answer a newer plan. Reason: Telegram and the dashboard can answer at the same moment, and the loser should know who decided (§4.9, #21).
 - **Other refusals are 409 too, with `decided_via: null`:** nothing asked yet ("Nothing is waiting for a decision"), or the incident already resolved, closed or failed. An unknown incident is 404. Reason: one error shape for every "this decision did not count" (#21).
 - **An instruction needs text; an approve or reject drops it.** Text is trimmed, at most 2,000 characters; an empty instruction is 422. Reason: the text goes into Propose's prompt as the human's instruction, and only an instruction has a use for it (#21).
-- **Feedback needs the finding it rates.** A vote on the diagnosis or the plan before the run has one is 409 "There is no diagnosis to rate yet" (or "plan"). The note is trimmed, an empty one dropped, at most 500 characters. A second vote on the same target replaces the first, and the memory record gets the votes now or when Report writes it ([memory](memory.md)). Reason: a vote on nothing would be remembered as a judgement on a finding nobody saw (#30).
+- **Feedback needs the finding it rates.** A vote on the diagnosis or the plan before the run has one is 409 "There is no diagnosis to rate yet" (or "plan"). The note is trimmed, an empty one dropped, at most 200 characters, the length memory keeps (#87). A second vote on the same target replaces the first, and the memory record gets the votes now or when Report writes it ([memory](memory.md)). Reason: a vote on nothing would be remembered as a judgement on a finding nobody saw (#30).
 - **Recoveries are newest first.** `IncidentRepo.recoveries` orders by time descending. Reason: with a limit, oldest first would show the same old rows forever (#21).
 
 ### Services and their memory
@@ -55,14 +55,14 @@ The service page's reads and a service's facts (`api/hosts.py`, `api/memory.py`)
 
 | Route | Returns |
 |---|---|
-| `GET /api/services/{id}` | `ServiceDetail`: the `ServiceView` the overview shows, its `rules` and its host's `host_rules`; 404 for a service the registry does not know |
+| `GET /api/services/{id}` | `ServiceDetail`: the `ServiceView` the overview shows, its `rules` and its host's `host_rules`; 404 for a service the registry does not know, or whose host is gone |
 | `GET /api/services/{id}/facts` | `ServiceFact[]`, oldest first: `{id, text, source: "human" \| "report", created_at, incident_id}` |
 | `POST /api/services/{id}/facts` | body `{text}`; 200 with the new `ServiceFact` (`source: "human"`); 404 for an unknown service |
 | `DELETE /api/services/{id}/facts/{fact_id}` | 204; 404 when the service has no such fact |
 
 - **A service id is a path: `demo/compose:shop`.** The routes take it with `{service_id:path}`, and the facts router is registered before the hosts router, because `GET /services/{id:path}` would also match `.../facts`. The dashboard encodes the id (`demo%2Fcompose%3Ashop`); the backend sees it decoded either way. Reason: the id is the registry's own key, and a second, URL-safe id would have to be kept in step with it (#30).
 - **The service page reuses the overview's view and the incident list.** `ServiceDetail` wraps the same `ServiceView` (containers, URLs, health, open incident) and adds only the rules; past incidents are `GET /api/incidents?service_id=`. Reason: one shape per thing, so the page and the overview cannot disagree (#30).
-- **A fact needs a service Bleep knows, and text.** Trimmed, at most 500 characters, empty is 422; it is cleaned like every memory text. Listing and deleting work for a service that is gone, so its memory can still be cleared. Reason: a fact for a typo'd id would never reach an incident (#30).
+- **A fact needs a service Bleep knows, and text.** Trimmed, at most 200 characters (the length memory keeps, #87), empty is 422; it is cleaned like every memory text. Listing and deleting work for a service that is gone, so its memory can still be cleared. Reason: a fact for a typo'd id would never reach an incident (#30).
 
 ### The stream
 
