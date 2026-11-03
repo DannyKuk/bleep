@@ -245,3 +245,20 @@ def test_tracing_to_langfuse_without_its_keys_refuses_to_start(settings, monkeyp
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
     with pytest.raises(SettingsError, match="LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY"):
         build_parts(settings, Registry([]))
+
+
+def test_the_github_client_reads_with_the_hosts_file_token(settings, tmp_path, monkeypatch):
+    hosts = tmp_path / "hosts.yaml"
+    hosts.write_text(
+        "github:\n  token: {env: BLEEP_TEST_GITHUB_TOKEN}\n"
+        "hosts:\n  - {id: demo, name: Demo, kind: socket, endpoint: 'tcp://127.0.0.1:1'}\n",
+        encoding="utf-8",
+    )
+    with_file = settings.model_copy(update={"hosts_file": hosts})
+    monkeypatch.setenv("BLEEP_TEST_GITHUB_TOKEN", "ghp_test")
+    assert build_parts(with_file).github.authenticated
+    monkeypatch.delenv("BLEEP_TEST_GITHUB_TOKEN")
+    parts = build_parts(with_file)
+    assert not parts.github.authenticated
+    names = {s.name for s in parts.graph_deps.tools.specs()}
+    assert {"recent_commits", "commit_diff"} <= names

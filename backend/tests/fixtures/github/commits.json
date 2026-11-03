@@ -1,0 +1,56 @@
+[
+ {
+  "sha": "4189b7f051c6c51ce74c3bee1a5f269f9c50c6b2",
+  "commit": {
+   "author": {
+    "name": "Kar Petrosyan",
+    "date": "2025-02-27T16:38:39Z"
+   },
+   "committer": {
+    "name": "GitHub",
+    "date": "2025-02-27T16:38:39Z"
+   },
+   "message": "fix typo (#3519)"
+  },
+  "author": {
+   "login": "karpetrosyan"
+  },
+  "html_url": "https://github.com/encode/httpx/commit/4189b7f051c6c51ce74c3bee1a5f269f9c50c6b2"
+ },
+ {
+  "sha": "15e21e9ea3cad4f06e22a7e704aabefdf43d2e29",
+  "commit": {
+   "author": {
+    "name": "Daniel Arvelini",
+    "date": "2024-11-29T11:15:56Z"
+   },
+   "committer": {
+    "name": "GitHub",
+    "date": "2024-11-29T11:15:56Z"
+   },
+   "message": "Updating deprecated docstring Client() class (#3426)"
+  },
+  "author": {
+   "login": "Danarvelini"
+  },
+  "html_url": "https://github.com/encode/httpx/commit/15e21e9ea3cad4f06e22a7e704aabefdf43d2e29"
+ },
+ {
+  "sha": "80960fa31918d7663c3f4c3ad61661cf0e80628f",
+  "commit": {
+   "author": {
+    "name": "Tom Christie",
+    "date": "2024-11-28T14:50:04Z"
+   },
+   "committer": {
+    "name": "GitHub",
+    "date": "2024-11-28T14:50:04Z"
+   },
+   "message": "Version 0.28.0. (#3419)"
+  },
+  "author": {
+   "login": "lovelydinosaur"
+  },
+  "html_url": "https://github.com/encode/httpx/commit/80960fa31918d7663c3f4c3ad61661cf0e80628f"
+ }
+]

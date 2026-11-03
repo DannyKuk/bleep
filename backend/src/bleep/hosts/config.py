@@ -4,12 +4,23 @@ Secrets never appear in the file. A secret is a reference, {env: NAME} or {file:
 """
 
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal, Self
 
 import httpx
 import yaml
-from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+
+# A GitHub repo, owner/name; `.` and `..` are no names, since they would change a request's path.
+REPO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/(?!\.\.?$)[A-Za-z0-9._-]{1,100}")
 
 
 class HostsFileError(Exception):
@@ -71,6 +82,13 @@ class ServiceOverrides(Strict):
     docs_paths: list[str] = []
     protected_containers: list[str] = []
     rules: list[str] = []
+
+    @field_validator("repo")
+    @classmethod
+    def _repo_name(cls, value: str | None) -> str | None:
+        if value is not None and not REPO_NAME.fullmatch(value):
+            raise ValueError(f"repo {value!r} must be a GitHub repo name, owner/name")
+        return value
 
 
 class HostConfig(Strict):

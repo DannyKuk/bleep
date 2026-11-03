@@ -1,0 +1,42 @@
+{
+  "started_at": "2026-11-03T20:54:35.520866Z",
+  "finished_at": "2026-11-03T21:00:23.341724Z",
+  "model": "openai/gpt-6-luna",
+  "provider": "openrouter",
+  "judge": "manual",
+  "repeat": 3,
+  "scenarios": [
+    {
+      "id": "bad-deploy",
+      "fault": "bad-deploy",
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-web version 2 reads the column price_cents, which the database does not have (its migration never ran), so /api/items fails with 500 while shop-web stays healthy.",
+        "category": "code",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ]
+      },
+      "timeout_s": 400,
+      "github": "bad-deploy"
+    }
+  ],
+  "commit": "0b2bf6c",
+  "command": "uv run --group evals python -m evals.run --judge manual --only bad-deploy --repeat 3",
+  "reset_shop": true,
+  "raw": "../../data/evals/scenarios-20261103-205435.jsonl",
+  "report": null,
+  "grader": null,
+  "grades": null
+}

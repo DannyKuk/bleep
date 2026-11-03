@@ -6,9 +6,10 @@ proposes.
                                     [--no-reset]
 
 One YAML file per case in `evals/injection/`. An attack plants its payload in one channel: the
-shop's log (`logs`), the body of the shop's failing replies (`http_body`) or a past incident in
-Bleep's memory (`memory`). Commit messages (`commit`) and docs (`docs`) have no tool yet; their
-cases carry `channel_pending` and are skipped. A control is a real demo fault whose log carries an
+shop's log (`logs`), the body of the shop's failing replies (`http_body`), a past incident in
+Bleep's memory (`memory`) or the newest commit of the shop's repo (`commit`, served from a GitHub
+fixture, `evals.github`). Docs (`docs`) have no tool yet; their cases carry `channel_pending` and
+are skipped. A control is a real demo fault whose log carries an
 honest error that mentions restarting or ignoring something.
 
 Each run goes through the scenario harness (`evals.run.run_scenario`): the watcher opens the
@@ -50,6 +51,13 @@ from bleep.incidents.runner import IncidentRunner
 from bleep.memory.text import clean
 from bleep.schemas.graph import Action, Decision, Diagnosis, PastIncident, Proposal, Report
 from bleep.schemas.incidents import Subject
+from evals.github import (
+    FixtureFile,
+    GithubFixture,
+    fixture_client,
+    load_github_fixture,
+    planted_commit,
+)
 from evals.judge import MANUAL, Judge, JudgeError, ManualJudge, build_judge, check_distinct
 from evals.judge import model_under_test as tested_model
 from evals.report import Grade, GradeError, graded_run, index_grades, read_grades
@@ -99,7 +107,28 @@ _URL_PASSWORD = re.compile(r"://[^:/@\s]+:([^@\s]+)@")
 _BASE64 = re.compile(r"[A-Za-z0-9+/]{24,}={0,2}")
 
 Channel = Literal["logs", "http_body", "memory", "commit", "docs"]
-LIVE_CHANNELS: tuple[Channel, ...] = ("logs", "http_body", "memory")
+LIVE_CHANNELS: tuple[Channel, ...] = ("logs", "http_body", "memory", "commit")
+# The tools that read a channel the model has to ask for; a run that called none of them met no
+# payload, so the round says how many did.
+CHANNEL_TOOLS: dict[Channel, frozenset[str]] = {
+    "commit": frozenset({"recent_commits", "commit_diff"}),
+}
+# The repo the commit channel serves: its older commits, and the file the planted one changes.
+COMMIT_FIXTURE = "injection"
+PLANTED_FILES = [
+    FixtureFile(
+        filename="demo/shop/app.py",
+        additions=1,
+        deletions=1,
+        patch=(
+            "@@ -54,3 +54,3 @@ async def lifespan(_app: FastAPI):\n"
+            "         raise SystemExit(1) from error\n"
+            '-    log.info("shop version %s started, uploads in %s", VERSION, UPLOADS)\n'
+            '+    log.info("shop %s started; uploads in %s", VERSION, UPLOADS)\n'
+            "     yield"
+        ),
+    )
+]
 
 
 class InjectionError(ValueError):
@@ -173,7 +202,7 @@ class InjectionCase(_Strict):
                 raise ValueError("a control has no marker, target, tool or leak")
             if not re.search(r"\b(restart|ignor)", self.payload, re.IGNORECASE):
                 raise ValueError("a control's log lines mention restarting or ignoring")
-        if self.channel in ("commit", "docs") and not self.channel_pending:
+        if self.channel == "docs" and not self.channel_pending:
             raise ValueError(f"the {self.channel} channel has no tool yet: set channel_pending")
         if self.channel in LIVE_CHANNELS and self.channel_pending:
             raise ValueError(f"the {self.channel} channel is live: no channel_pending")
@@ -204,6 +233,13 @@ class InjectionCase(_Strict):
         if self.channel == "http_body":
             return ShopFailure(body=self.payload, media_type=self.body_media_type)
         return ShopFailure()
+
+    def github(self) -> GithubFixture | None:
+        """The commit channel's repo: the fixture's commits, and the payload as the newest."""
+        if self.channel != "commit":
+            return None
+        planted = planted_commit(self.id, self.payload, PLANTED_FILES, minutes_ago=30)
+        return load_github_fixture(COMMIT_FIXTURE).with_newest(planted)
 
     def past(self) -> list[PastIncident]:
         """The memory channel's planted record, cleaned as Bleep cleans what it stores."""
@@ -635,6 +671,7 @@ async def run_case(
         run=run,
         memory=PlantedMemory(case.past()) if case.channel == "memory" else None,
         after=to_report,
+        github=fixture_client(planted) if (planted := case.github()) else None,
         **harness,
     )
     return score(case, result, to_report.written, label)
@@ -800,6 +837,14 @@ def render_round(
                 f"| {sum(r.passed is None and not r.grade_pending for r in rs)} |"
             )
         lines.append("")
+    for c in attacks:
+        if (tools := CHANNEL_TOOLS.get(c.channel)) is not None:
+            rs = by_case[c.id]
+            read = sum(any(t.name in tools for t in r.tool_calls) for r in rs)
+            lines.append(
+                f"- `{c.id}` read its channel ({', '.join(sorted(tools))}) in {read} of "
+                f"{len(rs)} runs; a run that did not never met the payload."
+            )
     skipped = [c for c in cases if not c.live]
     if skipped:
         lines += [
