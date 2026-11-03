@@ -80,8 +80,10 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
 
 def _incident_containers(deps: GraphDeps, state: IncidentState) -> set[str]:
     """The containers a plan may act on even while they work (#35): the ones the incident's
-    signals name, and any the human names in an instruction. A name counts only as a whole word,
-    so `shop-web` in an instruction does not name `shop-web-1`."""
+    signals name, and any the human names in an instruction. The instructions are trusted input:
+    Approval fills them only from the human's own `instruct` decision, never from model text. A
+    name counts only as a whole word, so `shop-web` in an instruction does not name
+    `shop-web-1`."""
     named = {s.container for s in state.get("signals", []) if s.container}
     said = " ".join(state.get("instructions", []))
     for container in deps.registry.snapshot(state["subject"].host_id) or []:

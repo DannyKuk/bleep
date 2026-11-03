@@ -1,0 +1,1 @@
+{"run_id": "bad-env/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "Round 2: names DATABASE_URL pointing at the host db, which does not exist on the network, so DNS fails and shop-web exits while shop-db runs. Right, at confidence 0.95."}

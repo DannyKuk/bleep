@@ -1,0 +1,8 @@
+{"run_id": "db-down/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "shop-db stopped, so shop-web can't resolve it and fails its checks."}
+{"run_id": "hung/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "A blocked asyncio event loop makes the health check time out; the plan (restart shop-web) is exact."}
+{"run_id": "bad-env/1", "root_cause_pass": false, "root_cause_score": 0.3, "note": "Wrong. It blames shop-db being killed and destroyed, which was the harness's own reset 1 s before the fault (seen through recent_events), even though its own evidence shows shop-web failing to resolve host 'db'. The bad hostname in DATABASE_URL is never named. Confounded by the harness's events in recent_events."}
+{"run_id": "oom/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "A 256 MB batch against a 64 MiB limit gives OOM kills (exit 137) and restarts."}
+{"run_id": "bad-deploy/1", "root_cause_pass": true, "root_cause_score": 0.8, "note": "The mechanism is right (a query for a missing price_cents column gives 500s); the version change and the missing migration are not named."}
+{"run_id": "disk-full/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "The uploads volume is out of space (Errno 28)."}
+{"run_id": "port-conflict/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "shop-canary holds 8080, so shop-proxy can't bind and exits."}
+{"run_id": "misroute/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "The proxy reloaded Caddyfile.misroute, which points upstreams at port 8001, where nothing listens, so 502s; it mislabels the file as 'malformed' and points the human at compose.yaml instead of the Caddyfile."}
