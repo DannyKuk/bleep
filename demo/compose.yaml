@@ -1,0 +1,82 @@
+# The demo shop, the stack Bleep watches in the demo: shop-proxy -> shop-web -> shop-db, and
+# shop-worker. Its own Compose project, so Bleep groups it as the service `shop`:
+#
+#   docker compose -f demo/compose.yaml up -d --build
+#
+# Bleep checks its URLs through the published port 8080. demo/fault.sh switches its faults;
+# docs/demo.md walks through them.
+name: shop
+
+services:
+  shop-web:
+    build: ./shop
+    container_name: shop-web
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${SHOP_DATABASE_URL:-postgresql://shop:shop@shop-db:5432/shop}
+      SHOP_VERSION: ${SHOP_VERSION:-1}
+    volumes:
+      - uploads:/uploads
+    healthcheck:
+      # The slim image has no curl.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      shop-db:
+        condition: service_healthy
+
+  shop-db:
+    image: postgres:17-alpine
+    container_name: shop-db
+    restart: unless-stopped
+    environment:
+      # A demo-only credential; nothing outside the Compose network reaches the database.
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD: shop
+      POSTGRES_DB: shop
+    volumes:
+      - shop-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "shop", "-d", "shop"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  shop-proxy:
+    # Caddy with both Caddyfiles in the image (demo/proxy).
+    build: ./proxy
+    container_name: shop-proxy
+    restart: unless-stopped
+    # --resume starts from the last config Caddy loaded (kept in its /config volume), so a
+    # restart keeps a config that was reloaded live. Load one of the image's Caddyfiles with
+    # `docker exec shop-proxy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile`.
+    command: ["caddy", "run", "--resume", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    ports:
+      - "8080:8080"
+    depends_on:
+      - shop-web
+
+  shop-worker:
+    build: ./worker
+    container_name: shop-worker
+    restart: unless-stopped
+    mem_limit: 64m
+    # No swap beyond the limit, so going past 64 MB is an OOM kill, not a slow swap.
+    memswap_limit: 64m
+    environment:
+      WORKER_BATCH_MB: ${WORKER_BATCH_MB:-8}
+    volumes:
+      - uploads:/uploads:ro
+
+volumes:
+  # Uploads live in memory, capped at 20 MB. shop-web writes them and shop-worker reads them;
+  # the volume keeps its files while either container runs.
+  uploads:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=20m
+  shop-db:

@@ -15,5 +15,6 @@ open http://localhost:3000
 ```
 
 - [Setup](docs/setup.md): real hosts, SSH keys, the LAN-only dashboard.
+- [Demo](docs/demo.md): the demo shop and its eight faults, with what Bleep should find and propose for each.
 - [Architecture](docs/architecture.md): the pieces and one incident from start to end.
 - [Decisions](docs/decisions/): why it is built the way it is.
