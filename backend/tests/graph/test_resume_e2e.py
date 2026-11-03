@@ -483,7 +483,7 @@ async def test_the_same_plan_approved_again_runs_once_more_and_a_crash_never_run
         assert state["outcome"] == "resolved"
         assert await third.status(incident.id) == "resolved"
         logged = await third.action_log.steps(incident.id)
-        assert [(s.plan_hash, s.status) for s in logged] == [
+        assert [(s.plan_key, s.status) for s in logged] == [
             (f"{asked[0]['plan_hash']}:{first_id}", "done"),
             (f"{asked[0]['plan_hash']}:{second_id}", "done"),
         ]

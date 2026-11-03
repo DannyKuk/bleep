@@ -1,6 +1,7 @@
 """Approval: put the plan to the human and wait for a yes, a no or an instruction.
 
-The node reads each target container (its id and start time, so Execute can tell a stale plan),
+The node reads each target container (its id, start time, restart count and state, so Execute
+can tell a stale plan),
 stores the plan as a pending approval, publishes `approval_requested`, notifies, and calls
 `interrupt()` with the approval's id. `IncidentRunner.resume` continues it once a channel has won
 the approval, and only if the run is waiting on that same approval.
@@ -62,6 +63,8 @@ async def _snapshots(deps: GraphDeps, proposal: Proposal) -> tuple[list[TargetSn
                 target=step.target,
                 container_id=summary.id,
                 started_at=summary.started_at,
+                restart_count=summary.restart_count,
+                state=summary.state,
             )
         )
     return snapshots, unread

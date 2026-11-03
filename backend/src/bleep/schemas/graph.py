@@ -147,6 +147,8 @@ class TargetSnapshot(BaseModel):
     """A target container as it was when approval was asked; a change means a stale plan.
 
     `host_id` and `target` name it as the plan does; `container_id` is what the name resolved to.
+    `restart_count` and `state` tell a restart policy's own restarts from a start by hand; they
+    are None in an approval stored before #87, and then any new start time is stale.
     """
 
     host_id: str
@@ -154,6 +156,8 @@ class TargetSnapshot(BaseModel):
     container_id: str
     created: datetime | None = None
     started_at: datetime | None = None
+    restart_count: int | None = None
+    state: str | None = None
 
 
 class ApprovalRequest(BaseModel):
@@ -206,9 +210,11 @@ StepStatus = Literal["started", "done", "failed", "skipped"]
 
 
 class LoggedStep(BaseModel):
-    """One row of the action log: a step's status in its plan, and its result so far."""
+    """One row of the action log: a step's status in its plan, and its result so far.
 
-    plan_hash: str
+    `plan_key` is the plan hash followed by the approval's id, `<hash>:<approval id>`."""
+
+    plan_key: str
     host_id: str
     status: StepStatus
     result: StepResult

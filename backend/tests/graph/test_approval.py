@@ -104,8 +104,8 @@ async def test_an_act_plan_asks_once_notifies_and_waits(run, plans):
 
     record = await run.store.current(incident_id)
     assert record is not None and record.decision is None
-    assert [(s.target, s.container_id) for s in record.snapshots] == [
-        ("shop-web-1", "id-shop-web-1")
+    assert [(s.target, s.container_id, s.state, s.restart_count) for s in record.snapshots] == [
+        ("shop-web-1", "id-shop-web-1", "exited", 0)
     ]
     assert await run.events(incident_id, "approval_requested") == [
         {"approval_id": record.id, "plan_hash": record.plan_hash}

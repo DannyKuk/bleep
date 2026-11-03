@@ -1,5 +1,6 @@
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from importlib import resources
 
 import pytest
 
@@ -56,7 +57,7 @@ async def test_a_step_is_started_then_done(env):
     assert started == T0 + timedelta(seconds=1)
     assert await log.steps(inc) == [
         LoggedStep(
-            plan_hash="h1",
+            plan_key="h1",
             host_id="a",
             status="started",
             result=StepResult(
@@ -101,16 +102,48 @@ async def test_a_finished_step_cannot_be_started_again(env):
     assert [s.status for s in await log.steps(inc)] == ["done"]
 
 
-async def test_starting_a_started_step_again_moves_its_start_time(env):
-    # A resume that decides to repeat an unfinished step compares against the latest attempt.
+async def test_a_started_step_cannot_be_started_again(env):
+    # A started step may have reached the engine: the ledger never lets it run a second time.
     log, inc, _ = env
     first = await log.start(inc, "h1", 0, restart())
 
-    second = await log.start(inc, "h1", 0, restart())
-
-    assert second is not None and second > first
+    assert await log.start(inc, "h1", 0, restart()) is None
     [step] = await log.steps(inc)
-    assert (step.status, step.result.started_at) == ("started", second)
+    assert (step.status, step.result.started_at) == ("started", first)
+
+
+async def test_rows_written_before_the_plan_key_rename_keep_their_key(tmp_path):
+    """Migration 0012 renames `plan_hash` to `plan_key`; the rows already there move with it."""
+    packaged = resources.files("bleep.store") / "migrations"
+    old = tmp_path / "migrations"
+    old.mkdir()
+    for file in packaged.iterdir():
+        if file.name.endswith(".sql") and int(file.name[:4]) < 12:
+            (old / file.name).write_text(file.read_text())
+    db = Database(tmp_path / "bleep.sqlite", migrations=old)
+    await db.migrate()
+    subject = Subject(kind="service", host_id="a", service_id="a/compose:shop")
+    incident, _ = await IncidentRepo(db).open_or_attach(
+        subject, [Signal(subject=subject, kind="container_died", at=T0)]
+    )
+    conn = await db.connect()
+    try:
+        await conn.execute(
+            "INSERT INTO action_log (incident_id, plan_hash, step_index, action, host_id, target,"
+            " status, started_at) VALUES (?, 'h1:ap1', 0, 'docker.restart', 'a', 'shop-web-1',"
+            " 'started', ?)",
+            (incident.id, T0.isoformat()),
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
+
+    await Database(tmp_path / "bleep.sqlite").migrate()
+
+    log = ActionLog(Database(tmp_path / "bleep.sqlite"))
+    [step] = await log.steps(incident.id)
+    assert (step.plan_key, step.status) == ("h1:ap1", "started")
+    assert await log.start(incident.id, "h1:ap1", 0, restart()) is None
 
 
 async def test_finish_changes_only_a_started_step(env):
@@ -152,7 +185,7 @@ async def test_steps_come_back_in_the_order_they_were_written_across_plans(env):
 
     steps = await log.steps(inc)
 
-    assert [(s.plan_hash, s.result.step_index, s.status) for s in steps] == [
+    assert [(s.plan_key, s.result.step_index, s.status) for s in steps] == [
         ("h1", 0, "failed"),
         ("h1", 1, "skipped"),
         ("h2", 0, "started"),
