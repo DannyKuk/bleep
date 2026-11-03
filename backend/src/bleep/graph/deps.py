@@ -283,5 +283,5 @@ class GraphDeps:
     clock: Callable[[], datetime] = utcnow
     # Waiting between verification checks; tests pass one that only records the delay.
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
-    # The client Verify checks URLs with; None makes it open one for the run of the node.
+    # The client Verify checks URLs with; None makes it open one for each check and close it after.
     http: httpx.AsyncClient | None = None

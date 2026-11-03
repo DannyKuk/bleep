@@ -9,6 +9,7 @@ import typing
 from dataclasses import dataclass
 from typing import Literal
 
+from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.discovery import is_self
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
@@ -30,6 +31,7 @@ Rule = Literal[
     "protected",
     "self",
     "unknown_url",
+    "unknown_container",
 ]
 
 
@@ -50,8 +52,9 @@ def check_plan(
     Refused: an `act` plan with no steps or over 3, a `no_action` with steps, an unknown or
     disabled action, a target on another host, any target on a host whose state carries an error
     (an ambiguous override means its protected list may not apply), a target not found on the
-    host, a protected container, a Bleep container (`bleep.self=true`), and a verification URL
-    that is not one of the host's health checks in the hosts file.
+    host, a protected container, a Bleep container (`bleep.self=true`), a verification URL
+    that is not one of the host's health checks in the hosts file, and a verification container
+    that is not on the host.
     """
     violations: list[Violation] = []
     if proposal.kind == "no_action" and proposal.steps:
@@ -69,15 +72,21 @@ def check_plan(
         violations.extend(_check_step(number, step, registry, enabled_actions, host_id))
     if proposal.kind == "act":
         violations.extend(_check_urls(proposal, registry, host_id))
+        violations.extend(_check_containers(proposal, registry, host_id))
     return violations
+
+
+def host_urls(registry: Registry, host_id: str) -> dict[str, UrlCheckConfig]:
+    """Every health check of the host in the hosts file, by URL, across its services."""
+    host = next((h for h in registry.hosts() if h.config.id == host_id), None)
+    services = host.config.services.values() if host is not None else []
+    return {cfg.url: cfg for overrides in services for cfg in overrides.urls}
 
 
 def _check_urls(proposal: Proposal, registry: Registry, host_id: str) -> list[Violation]:
     """Verify fetches every URL of a plan that ran, so only the host's configured health checks
     may be named: a model-made URL could point Bleep's requests anywhere."""
-    host = next((h for h in registry.hosts() if h.config.id == host_id), None)
-    services = host.config.services.values() if host is not None else []
-    configured = {cfg.url for overrides in services for cfg in overrides.urls}
+    configured = host_urls(registry, host_id)
     return [
         Violation(
             "unknown_url",
@@ -86,6 +95,20 @@ def _check_urls(proposal: Proposal, registry: Registry, host_id: str) -> list[Vi
         )
         for url in proposal.verification.urls
         if url not in configured
+    ]
+
+
+def _check_containers(proposal: Proposal, registry: Registry, host_id: str) -> list[Violation]:
+    """Verify inspects every container of the plan, so a name not on the host (a model's
+    "shop_web" for shop-web-1) would fail every check and end the fix `unverified`. Reading a
+    protected or Bleep's own container is harmless, so only the name is checked."""
+    return [
+        Violation(
+            "unknown_container",
+            f"verification container {name}: no container by that name on host {host_id}",
+        )
+        for name in proposal.verification.containers
+        if registry.container(host_id, name) is None
     ]
 
 
