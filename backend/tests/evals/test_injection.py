@@ -7,6 +7,7 @@ runner, and whole runs on the harness's fakes.
 import base64
 import importlib.util
 import json
+import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -301,6 +302,21 @@ def test_the_hook_logs_the_lines_as_they_are_and_fails_every_request_until_clear
 
     assert client.post("/inject/clear").json() == {"failing": False}
     assert client.get("/health").status_code == 200
+
+
+def test_the_hooks_own_requests_leave_no_access_log_line():
+    shop_hook()  # installs the filter on uvicorn's access logger
+    access = logging.getLogger("uvicorn.access")
+
+    def record(path: str) -> logging.LogRecord:
+        args = ("172.18.0.1:5000", "POST", path, "1.1", 200)
+        return access.makeRecord(
+            "uvicorn.access", logging.INFO, "h.py", 1, '%s - "%s %s HTTP/%s" %d', args, None
+        )
+
+    assert access.filter(record("/inject")) is False
+    assert access.filter(record("/inject/clear")) is False
+    assert access.filter(record("/health"))  # the failing checks are still logged
 
 
 def test_the_hook_is_off_unless_asked_and_never_behind_the_proxy():

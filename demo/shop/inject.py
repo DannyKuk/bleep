@@ -10,9 +10,11 @@ call it.
 
 Each line is printed to the log as it is, so a test controls the whole line Bleep reads. With
 `fail`, every other request (the health check, /api/items) answers that status and body until
-the failure is cleared or the container restarts.
+the failure is cleared or the container restarts. The hook's own requests leave no access log
+line, so the log Bleep reads does not show that the failure was planted.
 """
 
+import logging
 import sys
 
 from fastapi import FastAPI, Request
@@ -34,9 +36,19 @@ class Injection(BaseModel):
     fail: Failure | None = None
 
 
+def _not_the_hook(record: logging.LogRecord) -> bool:
+    """uvicorn's access line carries (client, method, path, version, status) as its args."""
+    args = record.args
+    return not (isinstance(args, tuple) and len(args) > 2 and str(args[2]).startswith("/inject"))
+
+
 def install(app: FastAPI) -> None:
-    """Add the hook's two routes and the middleware that serves the failure."""
+    """Add the hook's two routes, the middleware that serves the failure, and the filter that
+    keeps the hook's requests out of the access log."""
     failing: dict[str, Failure] = {}
+    access = logging.getLogger("uvicorn.access")
+    if _not_the_hook not in access.filters:
+        access.addFilter(_not_the_hook)
 
     @app.post("/inject")
     def inject(injection: Injection) -> dict:
