@@ -100,4 +100,8 @@ async def test_the_plans_docs_demo_expects_pass_the_plan_check(tmp_path):
             reason="docs/demo.md",
             verification=VerificationPlan(containers=verify, urls=urls),
         )
-        assert check_plan(proposal, env.registry, set(CORE_ACTIONS), host.id) == [], action
+        # In both faults the incident's signals name the container the plan acts on.
+        found = check_plan(
+            proposal, env.registry, set(CORE_ACTIONS), host.id, incident_containers=[target]
+        )
+        assert found == [], action

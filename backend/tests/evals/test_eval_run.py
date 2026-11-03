@@ -100,7 +100,7 @@ def engine() -> FakeEngine:
         "demo",
         [
             box("shop-web", "shop", health="healthy"),
-            box("shop-db", "shop"),
+            box("shop-db", "shop", state="exited"),  # db-down: the plan starts it
             box("blog-web", "blog"),
         ],
     )

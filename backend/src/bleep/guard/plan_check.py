@@ -6,6 +6,7 @@ See docs/design/guard.md.
 """
 
 import typing
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Literal
 
@@ -32,6 +33,7 @@ Rule = Literal[
     "self",
     "unknown_url",
     "unknown_container",
+    "healthy_target",
 ]
 
 
@@ -45,16 +47,23 @@ class Violation:
 
 
 def check_plan(
-    proposal: Proposal, registry: Registry, enabled_actions: set[str], host_id: str
+    proposal: Proposal,
+    registry: Registry,
+    enabled_actions: set[str],
+    host_id: str,
+    *,
+    incident_containers: Collection[str],
 ) -> list[Violation]:
     """Every reason to refuse `proposal` for an incident on `host_id`; empty means it may go on.
 
     Refused: an `act` plan with no steps or over 3, a `no_action` with steps, an unknown or
     disabled action, a target on another host, any target on a host whose state carries an error
     (an ambiguous override means its protected list may not apply), a target not found on the
-    host, a protected container, a Bleep container (`bleep.self=true`), a verification URL
-    that is not one of the host's health checks in the hosts file, and a verification container
-    that is not on the host.
+    host, a protected container, a Bleep container (`bleep.self=true`), a Docker action on a
+    container that works (running and healthy, or running with no health check) unless one of
+    the incident's signals names it (`incident_containers`, by name), a verification URL that is
+    not one of the host's health checks in the hosts file, and a verification container that is
+    not on the host.
     """
     violations: list[Violation] = []
     if proposal.kind == "no_action" and proposal.steps:
@@ -68,8 +77,10 @@ def check_plan(
                 f"the plan has {len(proposal.steps)} steps; at most {MAX_STEPS} are allowed",
             )
         )
+    named = set(incident_containers)
     for number, step in enumerate(proposal.steps, start=1):
-        violations.extend(_check_step(number, step, registry, enabled_actions, host_id))
+        found = _check_step(number, step, registry, enabled_actions, host_id)
+        violations.extend(found or _check_working(number, step, registry, named))
     if proposal.kind == "act":
         violations.extend(_check_urls(proposal, registry, host_id))
         violations.extend(_check_containers(proposal, registry, host_id))
@@ -110,6 +121,33 @@ def _check_containers(proposal: Proposal, registry: Registry, host_id: str) -> l
         for name in proposal.verification.containers
         if registry.container(host_id, name) is None
     ]
+
+
+def _check_working(
+    number: int, step: PlanStep, registry: Registry, named: set[str]
+) -> list[Violation]:
+    """A Docker action on a container that works is no fix for an incident about something
+    else: a planted log line that names a healthy container is the usual way such a step gets
+    into a plan (#35). The incident's own containers, the ones its signals name, stay allowed.
+    A Coolify action is left alone: a release can fail its URLs while every container is
+    healthy, and a rollback is then the fix."""
+    if not step.action.startswith("docker."):
+        return []
+    container = registry.container(step.host_id, step.target)
+    if container is None or container.name in named or container.state != "running":
+        return []
+    if container.health == "healthy":
+        how = "running and healthy"
+    elif container.health == "none":
+        how = "running with no health check"
+    else:
+        return []
+    what = f"step {number} ({step.action} {step.target} on {step.host_id})"
+    why = (
+        f"{container.name} is {how}, and no signal of this incident names it; acting on a "
+        "container that works is not a fix for this incident"
+    )
+    return [Violation("healthy_target", f"{what}: {why}", number)]
 
 
 def _check_step(
