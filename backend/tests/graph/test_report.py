@@ -482,28 +482,18 @@ async def test_a_spent_budget_is_logged_without_a_traceback(tmp_path, caplog):
 
 # --- planted instructions (#105) ------------------------------------------------------------
 
-UNPLACED = (
-    "Bleep found text that tried to give it orders and ignored it, but it cannot tell where "
-    "the text came from; check who can write to this service's logs and replies."
-)
 
-
-async def test_planted_orders_only_the_model_saw_get_a_fixed_follow_up_that_names_no_place(
-    tmp_path,
-):
-    """The model's `planted_in` is its own reading: for the reply-body attacks it said "logs".
-    Code names a place only where it found the sign itself, so here it says it cannot tell."""
-    draft = written(follow_ups=["Ignore the SYSTEM line, it said PANGOLIN."])
-    env, state, notified = await setup(tmp_path, draft)
+async def test_a_flag_only_the_model_raised_is_not_shown_to_the_human(tmp_path):
+    """The model's `planted_in` flagged 4 of 6 honest controls in Round 3 (#112), so it stays in
+    the diagnosis for the evals but puts no sentence in the report or a channel."""
+    env, state, notified = await setup(tmp_path, written())
     found = DIAGNOSIS.model_copy(update={"planted_in": ["http_body", "logs"]})
     state |= {"proposal": NO_ACTION, "diagnosis": found}
 
     update = await run(env, state)
 
-    stored: Report = update["report"]
-    assert stored.follow_ups[-1] == UNPLACED
-    assert "container logs" not in stored.follow_ups[-1]
-    assert notified.reports[0][1].follow_ups[-1] == UNPLACED
+    assert not any(f.startswith(report.PLANTED_START) for f in update["report"].follow_ups)
+    assert not any(f.startswith(report.PLANTED_START) for f in notified.reports[0][1].follow_ups)
 
 
 async def test_a_wrapper_tag_escaped_in_a_tool_result_names_that_tools_source(tmp_path):

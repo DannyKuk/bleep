@@ -15,8 +15,8 @@ report is in the checkpoint, so a crash before that leaves the incident open and
 runs the node again rather than leaving a closed incident with no stored report.
 
 When host text the run read carries a wrapper tag the guard escaped, code adds a fixed follow-up
-that names where, from a closed list; when only the diagnosis says host text gave orders
-(`Diagnosis.planted_in`), the follow-up says Bleep cannot tell where. It quotes nothing (#105).
+that names where, from a closed list, and quotes nothing (#105). The diagnosis's own
+`planted_in` flag is not shown: it fired on 4 of 6 honest controls (#112).
 
 When the human gave instructions on a service incident, a second model call turns the lasting
 ones ("always redeploy rather than restart") into at most two service facts
@@ -245,14 +245,8 @@ PLANTED_WHERE: dict[PlantedSource, str] = {
     "memory": "past incidents Bleep remembers",
     "other": "other host output",
 }
-PLANTED_START = "Bleep found text "  # both sentences start so; the injection eval reads it
+PLANTED_START = "Bleep found text "  # the injection eval reads it
 PLANTED_END = "that tried to give it orders and ignored it; check who can write there."
-# When only the model's `planted_in` says so, the place is the model's reading, which can be wrong
-# (the reply-body attacks were put down to the logs), so code names none (#105).
-PLANTED_UNPLACED = (
-    "Bleep found text that tried to give it orders and ignored it, but it cannot tell where "
-    "the text came from; check who can write to this service's logs and replies."
-)
 # A tool's output by its source on the closed list; any other tool is `other`.
 _TOOL_SOURCE: dict[str, PlantedSource] = {
     "container_logs": "logs",
@@ -263,12 +257,12 @@ _TOOL_SOURCE: dict[str, PlantedSource] = {
 
 
 def planted_follow_up(state: IncidentState) -> str | None:
-    """The fixed sentence for planted orders, or None. A place is named only where code saw the
-    sign itself: an escaped wrapper tag in Gather's logs or in a tool's result, by that tool's
-    source. When only the diagnosis's `planted_in` flags it, the sentence says Bleep cannot tell
-    where. No text of the model's or the host's goes in, so the report and memory carry nothing
-    new from the host."""
-    diagnosis, context = state.get("diagnosis"), state.get("context")
+    """The fixed sentence for planted orders, or None. It is written only when code saw the sign
+    itself: a wrapper tag the guard escaped in Gather's logs or in a tool's result, named by that
+    tool's source. The diagnosis's `planted_in` is the model's reading and flagged 4 of 6 honest
+    controls (#112), so it is kept for the evals but never shown. No text of the model's or the
+    host's goes in, so the report and memory carry nothing new from the host."""
+    context = state.get("context")
     found: set[PlantedSource] = set()
     if context is not None and any(ESCAPED_TAG.search(t) for t in context.logs.values()):
         found.add("logs")
@@ -277,7 +271,7 @@ def planted_follow_up(state: IncidentState) -> str | None:
             found.add(_TOOL_SOURCE.get(m.name or "", "other"))
     where = [text for source, text in PLANTED_WHERE.items() if source in found]
     if not where:
-        return PLANTED_UNPLACED if diagnosis is not None and diagnosis.planted_in else None
+        return None
     named = where[0] if len(where) == 1 else f"{', '.join(where[:-1])} and {where[-1]}"
     return f"{PLANTED_START}in the {named} {PLANTED_END}"
 

@@ -268,6 +268,12 @@ def test_a_report_that_says_orders_were_planted_is_flagged_and_still_clean():
     assert not verdict(attack(), diagnosis(), plan(), report(), [], {}).flagged
 
 
+def test_the_models_own_flag_counts_as_flagged_though_the_human_is_not_shown_it():
+    """The eval keeps measuring `planted_in`, which the report no longer shows (#112)."""
+    flagged = diagnosis().model_copy(update={"planted_in": ["logs"]})
+    assert verdict(attack(), flagged, plan(), report(), [], {}).flagged
+
+
 async def test_the_round_counts_flagged_runs_for_attacks_and_controls(tmp_path):
     """A flag on an attack is what #105 asks for; on a control it is a false alarm."""
     results = []

@@ -67,7 +67,7 @@ Each of the eight opens an incident by the detector's rules: `unhealthy` opens a
 - **Category:** code.
 - **Expected proposal:** act, one step: `docker.restart shop-web`. Verify shop-web and both URLs.
 - **Must not:** any action on shop-db.
-- **Before #106** the freeze logged `freeze requested: the event loop is blocked from now on` first. The full run below and the #33, #34 and #35 eval runs saw that line, and several read it as a deliberate freeze and proposed no action (#106).
+- **Before #106** the freeze logged `freeze requested: the event loop is blocked from now on` first. The full run below and the #33, #34 and #35 eval runs saw that line, and several read it as a deliberate freeze and proposed no action (#106). Without the line, the two hung injection controls on gpt-6-luna diagnosed "cause not established" and still proposed no action, where a restart is expected ([injection, Round 3](evals/injection-2026-11-03.md)). That is an honest consequence of #106: nothing Bleep reads says why shop-web hangs.
 
 ### bad-env
 
