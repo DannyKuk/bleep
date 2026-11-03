@@ -121,3 +121,69 @@ async def test_ledger_failure_surfaces_instead_of_failing_open(ledger):
     model = FakeChatModel(script=[reply()])
     with pytest.raises(RuntimeError, match="disk full"):
         await model.ainvoke([HumanMessage("a")], config={"callbacks": [UsageTracker("i", broken)]})
+
+
+async def three_incidents_over_two_days(tmp_path) -> CostLedger:
+    db = Database(tmp_path / "bleep.db")
+    await db.migrate()
+    clock = Clock(datetime(2026, 11, 2, 23, 0))
+    ledger = CostLedger(db, clock=clock)
+    await ledger.add("inc-1", "openai/gpt-6-luna", 1000, 100, 0.25)
+    await ledger.add("inc-2", "openai/gpt-6-luna", 2000, 200, 0.5)
+    clock.now = datetime(2026, 11, 3, 9, 0)
+    await ledger.add("inc-1", "openai/gpt-6-luna", 500, 50, 0.125)
+    await ledger.add("inc-3", "mystery/m", 300, 30, None)
+    await ledger.add("inc-3", "openai/gpt-oss-20b", 10, 1, 0.0)
+    return ledger
+
+
+async def test_cost_per_incident_sums_the_ledger_rows_newest_first(tmp_path):
+    ledger = await three_incidents_over_two_days(tmp_path)
+
+    rows = await ledger.by_incident()
+
+    assert [(r.key, r.calls, r.tokens_in, r.tokens_out) for r in rows] == [
+        ("inc-3", 2, 310, 31),
+        ("inc-1", 2, 1500, 150),
+        ("inc-2", 1, 2000, 200),
+    ]
+    assert [r.usd for r in rows] == [pytest.approx(0.0), pytest.approx(0.375), pytest.approx(0.5)]
+    assert [r.unpriced for r in rows] == [1, 0, 0]
+    for row in rows:
+        total = await ledger.incident_total(row.key)
+        assert (row.tokens_in, row.tokens_out, row.usd) == (
+            total.tokens_in,
+            total.tokens_out,
+            total.usd,
+        )
+
+
+async def test_cost_per_day_sums_the_ledger_rows_and_today_matches_the_cap_check(tmp_path):
+    ledger = await three_incidents_over_two_days(tmp_path)
+
+    days = await ledger.by_day(days=30)
+
+    assert [(d.key, d.calls, d.tokens_in, d.tokens_out, d.unpriced) for d in days] == [
+        ("2026-11-03", 3, 810, 81, 1),
+        ("2026-11-02", 2, 3000, 300, 0),
+    ]
+    assert days[0].usd == pytest.approx(await ledger.spent_today())
+    assert days[1].usd == pytest.approx(0.75)
+    incidents = await ledger.by_incident()
+    assert sum(d.tokens_in for d in days) == sum(r.tokens_in for r in incidents)
+    assert sum(d.usd or 0 for d in days) == pytest.approx(sum(r.usd or 0 for r in incidents))
+
+
+async def test_cost_per_day_keeps_only_the_days_asked_for(tmp_path):
+    ledger = await three_incidents_over_two_days(tmp_path)
+    assert [d.key for d in await ledger.by_day(days=1)] == ["2026-11-03"]
+
+
+async def test_a_day_of_unpriced_calls_only_has_no_cost(tmp_path):
+    db = Database(tmp_path / "bleep.db")
+    await db.migrate()
+    ledger = CostLedger(db, clock=Clock(datetime(2026, 11, 3, 9, 0)))
+    await ledger.add("inc-1", "mystery/m", 10, 1, None)
+    [day] = await ledger.by_day()
+    [incident] = await ledger.by_incident()
+    assert (day.usd, day.unpriced, incident.usd, incident.unpriced) == (None, 1, None, 1)

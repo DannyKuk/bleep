@@ -88,6 +88,8 @@ The dashboard (port 3000) is for a trusted LAN only. It has one admin login and 
 
 The watcher checks every host every 15 s; `BLEEP_WATCH_INTERVAL_S` in `.env` changes that.
 
+The dev panel (models, prompts, budgets, cost per incident and per day, the guard log) is off; set `BLEEP_DEV_PANEL=true` in `.env` and restart to get it under Dev in the dashboard ([dev panel](design/dev-panel.md)).
+
 The session cookie is not `Secure` by default, because the dashboard is plain http on the LAN. If you put it behind https, set `BLEEP_COOKIE_SECURE=true` in `.env`.
 
 ## Telegram (optional)

@@ -13,6 +13,7 @@ from bleep.hosts.registry import Registry
 from bleep.incidents.action_log import ActionLog
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
+from bleep.incidents.prompt_overrides import PromptOverrideStore
 from bleep.incidents.repository import IncidentRepo
 from bleep.incidents.settings_store import SettingsStore
 from bleep.knowledge.index import KnowledgeIndex
@@ -57,6 +58,7 @@ class AppParts:
     github: GithubClient
     knowledge: KnowledgeIndex
     knowledge_refresher: KnowledgeRefresher
+    prompt_overrides: PromptOverrideStore
 
 
 # Every plugin Bleep has; each is off until a person switches it on.
@@ -144,6 +146,7 @@ def build_parts(
         knowledge_refresher=KnowledgeRefresher(
             knowledge, reports=memory, repos=GithubRepoDocs(github, registry)
         ),
+        prompt_overrides=PromptOverrideStore(db),
     )
 
 
