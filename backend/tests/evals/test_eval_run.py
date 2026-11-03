@@ -40,6 +40,7 @@ from evals.run import (
     run_scenario,
     run_suite,
     shop_items_url,
+    suite_scenarios,
     summary,
 )
 from evals.scenarios import Scenario, ScenarioResult
@@ -694,3 +695,18 @@ def test_the_reset_waits_on_the_shops_item_url(tmp_path):
     assert shop_items_url(shipped) == "http://localhost:8080/api/items"
     with pytest.raises(EvalError, match="--no-reset"):
         shop_items_url(eval_host(settings(tmp_path)))
+
+
+def test_a_later_batch_of_other_scenarios_keeps_the_earlier_ones_in_the_report(tmp_path):
+    """#35 ran one scenario per batch with --only and --append; the report must list all."""
+    hung = SCENARIO.model_copy(update={"id": "hung", "fault": "hung"})
+    raw = tmp_path / "scenarios-20261103-142124.jsonl"
+    assert suite_scenarios(raw, [SCENARIO]) == [SCENARIO]  # a new suite: this batch's own
+    started = datetime(2026, 11, 3, 14, 21, 24, tzinfo=UTC)
+    info = RunInfo(
+        started_at=started, finished_at=started, model="tiny-local", provider="local",
+        judge="manual", repeat=1, scenarios=[SCENARIO], command="x", raw=str(raw),
+    )  # fmt: skip
+    write_info(raw, info)
+    assert suite_scenarios(raw, [hung]) == [SCENARIO, hung]
+    assert suite_scenarios(raw, [hung, SCENARIO]) == [SCENARIO, hung]

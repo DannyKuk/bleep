@@ -737,6 +737,16 @@ def earlier_batch(raw: Path, now: datetime, model: str) -> tuple[list[ScenarioRe
     return earlier, started
 
 
+def suite_scenarios(raw: Path, scenarios: Sequence[Scenario]) -> list[Scenario]:
+    """The scenarios a suite's report covers: an earlier batch's (from the raw file's
+    `.info.json`), then this batch's new ones. A suite run one scenario per batch (`--only` with
+    `--append`) so still reports on every one of them."""
+    earlier = read_info(raw)
+    covered = list(earlier.scenarios) if earlier is not None else []
+    known = {s.id for s in covered}
+    return covered + [s for s in scenarios if s.id not in known]
+
+
 def report_for(raw: Path, started: datetime, reports_dir: Path) -> Path:
     """The report a batch writes: the one an earlier batch of the same suite wrote (named in
     the raw file's `.info.json`), so the suite ends in one report, else a new dated one."""
@@ -845,7 +855,7 @@ async def _run(
         provider=settings.models.provider,
         judge=judge.name,
         repeat=max(Counter(r.id for r in earlier + results).values(), default=args.repeat),
-        scenarios=scenarios,
+        scenarios=suite_scenarios(raw, scenarios),
         commit=_commit(),
         command=_command(args),
         reset_shop=reset is not None,
