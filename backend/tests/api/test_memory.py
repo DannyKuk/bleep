@@ -218,6 +218,15 @@ def test_a_fact_needs_text_and_a_service_bleep_knows(app_client):
 # --- the service page ---
 
 
+def test_a_service_whose_host_is_gone_is_a_404_not_a_500(app_client, parts, monkeypatch):
+    """The host list and the services are read apart; a host gone in between is not found."""
+    monkeypatch.setattr(parts.registry, "hosts", lambda: [])
+
+    answer = app_client.get(SHOP_PATH)
+
+    assert answer.status_code == 404
+
+
 def test_the_service_detail_has_its_urls_and_rules(app_client):
     body = app_client.get(SHOP_PATH).json()
 

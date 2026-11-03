@@ -271,6 +271,50 @@ async def test_a_failing_node_marks_the_incident_failed(tmp_path, monkeypatch):
     assert notices and "RuntimeError" in notices[-1].payload["text"]
 
 
+class NoticeNotifier:
+    """Records notices; with `fail`, every send raises as a channel outage would."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.notices: list[tuple[str, str]] = []
+        self.fail = fail
+
+    async def incident_opened(self, incident) -> None:
+        return None
+
+    async def notice(self, incident_id: str, text: str) -> None:
+        if self.fail:
+            raise RuntimeError("telegram is down")
+        self.notices.append((incident_id, text))
+
+
+@pytest.mark.parametrize("fail", [False, True])
+async def test_a_failing_run_tells_the_channels_too(tmp_path, monkeypatch, fail, caplog):
+    """M10: after an approval the human waits on Telegram; a run that dies must say so there."""
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+
+    def make(deps):
+        async def node(state):
+            raise RuntimeError("boom")
+
+        return node
+
+    monkeypatch.setattr(propose, "make", make)
+    notifier = NoticeNotifier(fail=fail)
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+        task = await runner.start(incident)
+        await runner.join()
+
+    assert task.exception() is None
+    assert (await env.repo.get(incident.id)).status == "failed"
+    [notice] = [e.payload["text"] for e in await env.bus.history(incident.id) if e.kind == "notice"]
+    if fail:
+        assert "telling the channels" in caplog.text
+    else:
+        assert notifier.notices == [(incident.id, notice)] and "RuntimeError" in notice
+
+
 async def test_a_status_write_that_fails_is_logged_and_fails_the_run(tmp_path, caplog):
     env = await graph_env(tmp_path)
     incident = await env.open(service(env), container="shop-web-1")
