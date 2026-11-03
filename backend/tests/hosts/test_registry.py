@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from bleep.hosts.config import ServiceOverrides
+from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.engine import EngineUnavailable
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
@@ -370,3 +370,35 @@ async def test_reachable_is_marked_before_basics_are_read():
     shell.run = run
     await reg.start()
     assert seen and all(seen)
+
+
+async def test_override_puts_rules_and_services_in_force_and_keeps_the_connection():
+    host = socket_host(id="a", rules=["file rule"])
+    web = ContainerSummary(
+        id="id-web", name="web-1", image="i", state="running",
+        labels={"com.docker.compose.project": "shop"},
+    )  # fmt: skip
+
+    async def connect(_host):
+        return None, FakeEngine("a", [web])
+
+    registry = Registry([host], connect)
+    await registry.start()
+    urls = [UrlCheckConfig(url="https://shop.example.test/ready")]
+    registry.override("a", ["db rule"], {"compose:shop": ServiceOverrides(urls=urls)})
+    state = registry.hosts()[0]
+    assert state.config.rules == ["db rule"]
+    assert state.config.endpoint == host.endpoint
+    assert registry.service("a/compose:shop").urls == urls  # regrouped without a new listing
+
+
+async def test_override_on_an_unreachable_host_keeps_its_connection_error():
+    async def refuse(_host):
+        raise OSError("connection refused")
+
+    registry = Registry([socket_host(id="a")], refuse)
+    await registry.start()
+    registry.override("a", ["db rule"], {})
+    state = registry.hosts()[0]
+    assert state.config.rules == ["db rule"]
+    assert not state.reachable and state.error == "connection refused"

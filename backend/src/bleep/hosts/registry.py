@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
-from bleep.hosts.config import HostConfig
+from bleep.hosts.config import HostConfig, ServiceOverrides
 from bleep.hosts.discovery import AmbiguousOverride, group_services
 from bleep.hosts.engine import Engine, EngineUnavailable, connect_engine
 from bleep.hosts.shell import HostShell, engine_basics, host_basics
@@ -156,6 +156,20 @@ class Registry:
             return prefixed[0] if len(prefixed) == 1 else None
         return None
 
+    def override(
+        self, host_id: str, rules: list[str], services: dict[str, ServiceOverrides]
+    ) -> None:
+        """Put the host's rules and service overrides in force, the hosts file's merged with the
+        settings store's; the connection stays as it is. The services are regrouped from the last
+        listing at once, so the URL checks, the plan check and Gather all read the new values."""
+        entry = self._entries[host_id]
+        config = entry.state.config.model_copy(update={"rules": rules, "services": services})
+        self._mark(entry, config=config)
+        if entry.containers is not None:
+            error = self._group(host_id, entry)
+            if entry.state.reachable:  # an unreachable host's error is its connection failure
+                self._mark(entry, error=error)
+
     def shell(self, host_id: str) -> HostShell | None:
         """The host's allowlisted shell: its ssh session, or None for a socket host."""
         entry = self._entries.get(host_id)
@@ -176,7 +190,13 @@ class Registry:
             self._mark(entry, reachable=False, error=str(error))
             return
         entry.containers = containers
-        error = None
+        error = self._group(host_id, entry)
+        self._mark(entry, reachable=True, last_seen=self._clock(), error=error)
+        await self._refresh_basics(entry)  # after the mark: a slow read never delays reachability
+
+    def _group(self, host_id: str, entry: _Entry) -> str | None:
+        """Group the last listing into services; the configuration problem, if there is one."""
+        containers = entry.containers or []
         try:
             entry.services = group_services(host_id, containers, entry.state.config.services)
         except AmbiguousOverride as problem:
@@ -188,8 +208,8 @@ class Registry:
             if error not in entry.logged:
                 entry.logged.add(error)
                 log.warning("%s", error)
-        self._mark(entry, reachable=True, last_seen=self._clock(), error=error)
-        await self._refresh_basics(entry)  # after the mark: a slow read never delays reachability
+            return error
+        return None
 
     async def _refresh_basics(self, entry: _Entry) -> None:
         """Read disk, memory and load at most every BASICS_EVERY_S; a failure keeps the old ones."""

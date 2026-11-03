@@ -5,14 +5,14 @@ from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import APIRouter, Depends, FastAPI
 
-from bleep.api import auth, hosts, incidents, memory, stream
+from bleep.api import auth, hosts, incidents, memory, plugins, stream
+from bleep.api import settings as settings_api
 from bleep.api.deps import require_session
 from bleep.config import Settings, check_settings
 from bleep.graph.build import build_graph, open_checkpointer
 from bleep.incidents.reminders import ReminderLoop
 from bleep.incidents.repository import utcnow
 from bleep.incidents.runner import IncidentRunner
-from bleep.schemas.settings import Thresholds
 from bleep.watcher.detector import Detector
 from bleep.watcher.http_checks import UrlCheckStore
 from bleep.watcher.manager import WatcherManager
@@ -51,6 +51,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
             # and a normal stop runs them in reverse: stop what sends, then close what it sends on.
             stack.push_async_callback(parts.notify.close)  # last: runs and reminders still send
             await parts.db.migrate()
+            await parts.settings_store.load()  # before the registry starts, so overrides hold
             await _reembed(parts)
             await parts.registry.start()
             stack.push_async_callback(parts.registry.close)
@@ -70,7 +71,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
             stack.push_async_callback(runner.close)
             manager = WatcherManager(
                 parts.registry,
-                Detector(Thresholds(), utcnow),
+                Detector(parts.settings_store.thresholds, utcnow),
                 parts.incidents,
                 runner,
                 parts.bus,
@@ -111,6 +112,8 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
     protected.include_router(hosts.router)
     protected.include_router(incidents.router)
     protected.include_router(stream.router)
+    protected.include_router(settings_api.router)
+    protected.include_router(plugins.router)
     api.include_router(protected)
     app.include_router(api)
     return app

@@ -12,11 +12,13 @@ from langchain_core.callbacks import AsyncCallbackManagerForLLMRun, CallbackMana
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
-from pydantic import Field
+from langchain_core.tools import BaseTool, tool
+from pydantic import BaseModel, ConfigDict, Field
 
 from bleep.hosts.config import HostConfig
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.hosts.ssh import CommandResult
+from bleep.plugins.base import Plugin, PluginContext
 from bleep.schemas.docker import (
     ContainerDetail,
     ContainerStats,
@@ -24,6 +26,9 @@ from bleep.schemas.docker import (
     DockerEvent,
     EngineInfo,
 )
+from bleep.schemas.graph import PlanStep, StepResult
+from bleep.schemas.plugins import PluginHealth
+from bleep.tools.registry import ActHandler, ToolContext, ToolSpec
 
 
 class FakeChatModel(BaseChatModel):
@@ -424,3 +429,71 @@ class FakeShell:
         return CommandResult(
             exit_code=0, stdout=(SHELL_FIXTURES / self.os / name).read_text(), stderr=""
         )
+
+
+COOLIFY_TOKEN = "cool-token-4f9a2b7c1d"  # the fake plugin's secret; no response may carry it
+
+
+class FakeCoolifySettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+    team: str = "main"
+
+
+class FakeActHandler:
+    """An act handler that records what it was asked to run and runs nothing."""
+
+    def __init__(self, action: str) -> None:
+        self.action = action
+        self.ran: list[PlanStep] = []
+
+    def check(self, step: PlanStep, grant: Any, registry: Any, *, plan: Any, step_index: int):
+        return step.target
+
+    async def run(
+        self, step: PlanStep, grant: Any, registry: Any, *, plan: Any, step_index: int
+    ) -> StepResult:
+        self.ran.append(step)
+        return StepResult(
+            step_index=step_index,
+            action=step.action,
+            target=step.target,
+            ok=True,
+            detail="redeployed",
+            finished_at=datetime(2026, 11, 3, tzinfo=UTC),
+        )
+
+
+class FakeCoolifyPlugin(Plugin):
+    """A plugin shaped like Coolify: one read tool, one act action and a token from the env.
+    Its health check echoes the token, as a careless real one might."""
+
+    name = "coolify"
+    title = "Coolify"
+    settings_model = FakeCoolifySettings
+    secrets = ("COOLIFY_TOKEN",)
+
+    def __init__(self) -> None:
+        self.contexts: list[PluginContext] = []
+        self.handler = FakeActHandler("coolify.redeploy")
+
+    def tools(self, ctx: PluginContext) -> list[ToolSpec]:
+        self.contexts.append(ctx)
+
+        def build(tool_ctx: ToolContext) -> BaseTool:
+            @tool
+            def coolify_applications() -> str:
+                """List the Coolify applications."""
+                return "shop"
+
+            return coolify_applications
+
+        return [ToolSpec("coolify_applications", "read", "coolify", build)]
+
+    def act_handlers(self, ctx: PluginContext) -> dict[str, ActHandler]:
+        return {"coolify.redeploy": self.handler}
+
+    async def health(self, ctx: PluginContext) -> PluginHealth:
+        token = ctx.secrets["COOLIFY_TOKEN"].get_secret_value()
+        return PluginHealth(ok=True, detail=f"reached {ctx.settings.url} as {token}")
