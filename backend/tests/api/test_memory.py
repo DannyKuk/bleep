@@ -1,11 +1,13 @@
 """Feedback on an incident's findings, a service's facts, and the service page's read (#30)."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
 
+from bleep.graph.nodes import gather
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.registry import Registry
 from bleep.incidents.repository import IncidentRepo
@@ -198,7 +200,12 @@ def test_deleting_a_fact_removes_it_from_recall(app_client, parts):
 
     assert app_client.delete(f"{SHOP_PATH}/facts/{fact.id}").status_code == 204
 
-    assert call(app_client, parts.memory.facts, SHOP) == [kept]
+    # The next incident's Gather, the way the graph reads memory, no longer sees it.
+    deps = replace(parts.graph_deps, memory=parts.memory, registry=parts.registry)
+    subject = Subject(kind="service", host_id="a", service_id=SHOP)
+    state = {"incident_id": "inc-next", "subject": subject, "signals": []}
+    context = call(app_client, gather.make(deps), state)["context"]
+    assert context.facts == [kept]
 
 
 def test_a_fact_is_deleted_only_through_its_own_service(app_client, parts):

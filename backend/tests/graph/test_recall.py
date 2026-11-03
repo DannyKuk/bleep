@@ -341,3 +341,8 @@ async def test_a_model_that_fails_to_list_facts_still_ends_with_a_report(tmp_pat
     assert update["report"].title  # the report is written; the runner closes the incident (#28)
     assert await store.facts(env.service_id("shop")) == []
     assert "learning facts" in caplog.text
+    # Published and remembered all the same: only the facts were lost.
+    events = [e for e in await env.bus.history(incident.id) if e.kind == "report"]
+    assert [Report.model_validate(e.payload) for e in events] == [update["report"]]
+    [past] = await store.similar(update["report"].title, env.service_id("shop"), min_score=0)
+    assert past.incident_id == incident.id

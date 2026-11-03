@@ -21,7 +21,7 @@ import httpx
 from langchain_core.messages import AIMessage
 
 from bleep.graph.build import build_graph, open_checkpointer
-from bleep.graph.deps import GraphDeps, StaticSettings
+from bleep.graph.deps import GraphDeps, NullNotifier, StaticSettings
 from bleep.hosts.config import HostConfig, ServiceOverrides, UrlCheckConfig
 from bleep.hosts.registry import Registry
 from bleep.incidents.action_log import ActionLog
@@ -118,9 +118,20 @@ class World:
     config: HostConfig = field(default_factory=shop_host)
     budgets: Budgets = field(default_factory=Budgets)
     answering: Callable[[], bool] = lambda: True  # whether the service's URL answers
+    reports: list[str] = field(default_factory=list)  # the incident ids the channels were sent
 
     def urls(self, request: httpx.Request) -> httpx.Response:
         return httpx.Response(200 if self.answering() else 503)
+
+
+class Channels(NullNotifier):
+    """The human's chat: it outlives Bleep, and keeps every report it was sent."""
+
+    def __init__(self, world: World) -> None:
+        self.world = world
+
+    async def report(self, incident, report) -> None:
+        self.world.reports.append(incident.id)
 
 
 @dataclass
@@ -188,6 +199,7 @@ async def bleep(
         incidents=repo,
         action_log=action_log,
         approvals=approvals,
+        notifier=Channels(world),
         guard_log=guard_log,
         settings_store=StaticSettings(budget_limits=world.budgets),
         sleep=sleep,
@@ -516,3 +528,6 @@ async def test_killed_after_the_report_before_its_checkpoint_the_run_is_finished
         assert state["outcome"] == "resolved"
         assert state["report"].outcome == "Fixed and verified"
         assert await third.status(incident.id) == "resolved"
+        # The accepted cost of closing only after the checkpoint: the report goes out twice.
+        assert len(await third.events(incident.id, "report")) == 2
+        assert w.reports == [incident.id, incident.id]

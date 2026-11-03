@@ -172,7 +172,7 @@ Every node, the topology and the runner are built. An approved plan runs in Exec
 | After `started`, before the engine call | Execute runs again and reports the step failed, not run again | 0 |
 | After `done`, before Execute's checkpoint | Execute runs again and keeps the logged result | 1 |
 | During Verify's wait | Verify runs again from its start | 1 |
-| After the report went out, before its checkpoint | Report runs again and the runner closes the incident | 1 |
+| After the report went out, before its checkpoint | Report runs again, so the report is published and sent a second time, and the runner closes the incident | 1 |
 | The same plan approved again after Verify's loop-back, killed after its second restart | The second approval's step is confirmed, not repeated; late answers to either question change nothing | 2 |
 
 - **A process is cut off by cancelling its runner's tasks at a hook that never returns.** The hooks sit inside the engine call, in Verify's wait and in the bus before an event is stored. Reason: a cancelled task writes nothing more, as a killed process does, and each crash point is exact (#28).
