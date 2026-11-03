@@ -18,7 +18,8 @@ from bleep.hosts.config import HostConfig
 from bleep.schemas.docker import DockerEvent
 from bleep.schemas.graph import Diagnosis
 from bleep.schemas.settings import ModelSettings
-from evals.judge import JudgeError, Judgement
+from evals.judge import JudgeError, Judgement, ManualJudge
+from evals.report import RunInfo, append_jsonl, write_info
 from evals.run import (
     REPO,
     DemoFaults,
@@ -27,16 +28,18 @@ from evals.run import (
     FaultError,
     demo_containers,
     docker_endpoint,
+    earlier_batch,
     eval_host,
     fault_docker_host,
     live_backend,
     main,
     out_of_context,
+    report_for,
     run_scenario,
     run_suite,
     summary,
 )
-from evals.scenarios import Scenario
+from evals.scenarios import Scenario, ScenarioResult
 from fakes import FakeChatModel, FakeEngine
 from graph_env import box
 
@@ -349,6 +352,50 @@ async def test_the_suite_numbers_the_runs_settles_between_them_and_hands_each_re
     assert waits == [7]
 
 
+async def test_a_later_batch_numbers_its_runs_after_the_earlier_ones(tmp_path):
+    fake = engine()
+
+    async def connect(_host: HostConfig):
+        return None, fake
+
+    model = FakeChatModel(script=script(), structured_output_unsupported=True)
+    results = await run_suite(
+        [SCENARIO], settings(tmp_path), 1, faults=FakeFaults(fake), judge=FakeJudge(),
+        connector=connect, models=Models(model), done={"db-down": 2, "hung": 3},
+    )  # fmt: skip
+
+    assert [(r.id, r.run, r.error) for r in results] == [("db-down", 3, None)]
+
+
+def test_an_earlier_batch_gives_its_runs_and_when_it_started(tmp_path):
+    raw = tmp_path / "scenarios-20261103-104336.jsonl"
+    for run in (1, 2):
+        append_jsonl(raw, ScenarioResult(id="db-down", run=run, model="tiny-local", judge="j"))
+    now = datetime(2026, 11, 3, 13, 0, tzinfo=UTC)
+
+    earlier, started = earlier_batch(raw, now, "tiny-local")
+
+    assert [r.run for r in earlier] == [1, 2]
+    assert started == datetime(2026, 11, 3, 10, 43, 36, tzinfo=UTC)
+    renamed = raw.rename(tmp_path / "mine.jsonl")
+    assert earlier_batch(renamed, now, "tiny-local")[1] == now
+
+
+def test_an_earlier_batch_must_exist_and_be_of_the_same_model(tmp_path):
+    with pytest.raises(EvalError, match="no earlier batch"):
+        earlier_batch(tmp_path / "none.jsonl", datetime.now(UTC), "tiny-local")
+    raw = tmp_path / "scenarios-20261103-104336.jsonl"
+    append_jsonl(raw, ScenarioResult(id="db-down", model="vendor/big", judge="j"))
+    with pytest.raises(EvalError, match="vendor/big, not of tiny-local"):
+        earlier_batch(raw, datetime.now(UTC), "tiny-local")
+
+
+def test_main_refuses_a_missing_earlier_batch_before_any_fault(tmp_path, capsys):
+    missing = settings(tmp_path, fault_script=REPO / "demo" / "fault.sh")
+    assert main(["--append", str(tmp_path / "none.jsonl")], settings=missing) == 2
+    assert "no earlier batch" in capsys.readouterr().err
+
+
 def test_the_demo_host_is_reached_from_this_machine(tmp_path, caplog):
     host = eval_host(settings(tmp_path, HOSTS + URLS))
     assert host.endpoint == "unix:///fake.sock"
@@ -468,3 +515,44 @@ async def test_a_failing_fault_script_is_a_fault_error(tmp_path):
     os.chmod(script, 0o755)
     with pytest.raises(FaultError, match="no such fault"):
         await DemoFaults(script).switch("nope", "on")
+
+
+async def test_a_manual_judge_leaves_the_root_cause_pending_and_the_exact_checks_standing(tmp_path):
+    fake = engine()
+    model = FakeChatModel(script=script(), structured_output_unsupported=True)
+
+    result = await run_scenario(
+        SCENARIO, settings(tmp_path), faults=FakeFaults(fake), judge=ManualJudge(),
+        connector=connector(fake), models=Models(model),
+    )  # fmt: skip
+
+    assert result.judge == "manual" and result.diagnosis is not None
+    assert result.root_cause_score is None and result.root_cause_pass is False
+    assert result.judge_reason is None and result.judge_usd is None
+    assert result.action_correct is True
+    assert "root cause pending" in summary(result)
+
+
+def test_the_judge_flag_picks_the_manual_judge_over_the_settings(tmp_path, capsys):
+    same = settings(tmp_path, judge_model="tiny-local", fault_script=REPO / "demo" / "fault.sh")
+    assert main(["--judge", "manual", "--only", "nope"], settings=same) == 2
+    err = capsys.readouterr().err
+    assert "no scenario 'nope'" in err and "model under test" not in err
+
+
+def test_a_later_batch_rewrites_the_report_of_the_earlier_ones(tmp_path):
+    reports = tmp_path / "docs" / "evals"
+    raw = tmp_path / "scenarios-20261103-104336.jsonl"
+    started = datetime(2026, 11, 3, 10, 43, 36, tzinfo=UTC)
+    first = report_for(raw, started, reports)
+    assert first == reports / "scenarios-2026-11-03.md"
+
+    info = RunInfo(
+        started_at=started, finished_at=started, model="tiny-local", provider="local",
+        judge="manual", repeat=1, scenarios=[SCENARIO], command="x", raw=str(raw),
+        report=str(first),
+    )  # fmt: skip
+    write_info(raw, info)
+    reports.mkdir(parents=True)
+    first.write_text("batch 1", encoding="utf-8")
+    assert report_for(raw, started, reports) == first

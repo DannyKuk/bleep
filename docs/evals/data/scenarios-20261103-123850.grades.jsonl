@@ -1,0 +1,1 @@
+{"run_id": "bad-deploy/1", "root_cause_pass": true, "root_cause_score": 0.75, "note": "Timing-check run: the right mechanism (a missing price_cents column gives 500s), at low confidence (0.45, unsure); the version change isn't named."}

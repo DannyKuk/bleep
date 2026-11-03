@@ -147,10 +147,11 @@ class ScenarioResult(BaseModel):
     `steps` counts the model's tool calls while investigating. `tokens` and `usd` are the model
     under test's, for the whole run; `peak_prompt_tokens` is its largest single prompt, the
     number that meets a small context window first. Times are seconds from the fault going on.
-    `root_cause_score` is the judge's 0-1 score, None when there was nothing to judge or the judge
-    failed. A run that ended early is a failed run: `failure` says how (`timeout`, `context_length`
-    when a model call reached its length limit before it answered, or `error`), and `error` says
-    what happened.
+    `root_cause_score` is the judge's 0-1 score, None when there was nothing to judge, the judge
+    failed, or the grade is left to a human (the `manual` judge) and not applied yet. A run that
+    ended early is a failed run: `failure` says how (`timeout`, `context_length` when a model
+    call reached its length limit before it answered, or `error`), and `error` says what
+    happened.
     """
 
     id: str
@@ -176,3 +177,8 @@ class ScenarioResult(BaseModel):
     seconds_to_diagnosis: float | None = None
     failure: Failure | None = None
     error: str | None = None
+
+    @property
+    def run_id(self) -> str:
+        """`<scenario>/<run>`, the name a grade by hand gives the run."""
+        return f"{self.id}/{self.run}"

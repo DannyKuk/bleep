@@ -1,0 +1,20 @@
+# shop-web's event loop is blocked by its /freeze debug hook (docs/demo.md, "hung"). It still runs
+# but answers nothing, so its health check times out and it turns unhealthy. A restart clears it.
+id: hung
+fault: hung
+subject:
+  kind: service
+  host_id: demo
+  service_id: demo/compose:shop
+expected:
+  root_cause: >-
+    shop-web's event loop is blocked (a freeze request), so it answers no request and its health
+    check times out, although the container is still running.
+  category: code
+  action:
+    kind: act
+    steps:
+      - action: docker.restart
+        target: shop-web
+  must_not: [docker.stop]
+timeout_s: 400

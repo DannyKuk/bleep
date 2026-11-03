@@ -62,7 +62,7 @@ flowchart LR
 | **Dashboard** | `frontend/` | Next.js app: login; an overview of hosts, services and self-recoveries, polled; the incident list; each incident's page with its live reasoning, timeline, diagnosis, the plan to approve, reject or instruct, a vote on both, and the report once the run ends, streamed through a route handler (`app/api/stream/route.ts`); and each service's page with its URLs, rules, facts and past incidents. |
 | **Compose** | `docker-compose.yaml`, `config/socket-proxy.cfg.template` | Runs Bleep; `--profile demo` adds the socket proxy so Bleep can watch this machine. |
 | **Demo shop** | `demo/`, `config/hosts.demo.yaml` | A proxy, a web app, its database and a worker for Bleep to watch, as their own Compose project `shop`, and `demo/fault.sh`, which switches eight faults on and off ([demo](demo.md)). |
-| **Eval harness** | `backend/evals/` | `python -m evals.run`: switches a demo fault on, runs Bleep's watcher and graph in-process to the end of Propose with a real model, switches it off, and scores the root cause (a judge model through DeepEval), the category and the plan (exact); writes JSONL and a dated report ([how to run it](../backend/evals/README.md)). |
+| **Eval harness** | `backend/evals/` | `python -m evals.run`: switches a demo fault on, runs Bleep's watcher and graph in-process to the end of Propose with a real model, switches it off, and scores the root cause (a judge model through DeepEval, or by hand with `python -m evals.report --grades`), the category and the plan (exact); writes JSONL and a dated report ([how to run it](../backend/evals/README.md)). |
 
 Paths under `backend/src/bleep/` are given from there.
 
@@ -154,7 +154,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 
 **Evals** ([details](design/evals.md))
 - **A scenario runs Bleep's own watcher and graph in-process on a throwaway database and stops before Approval**: nothing is executed, sent or remembered.
-- **The judge is never the model under test**: an OpenRouter model or the Claude Code CLI scores the root cause; the plan is checked exactly, and acting where no action is expected counts as an unnecessary action.
+- **The judge is never the model under test**: an OpenRouter model or the Claude Code CLI scores the root cause, or a human grades it by hand from a grades file kept next to the report; the plan is checked exactly, and acting where no action is expected counts as an unnecessary action.
 - **Every run records its largest single prompt**, the number a small local context meets first; a run whose model call reaches its length limit is a failed run with reason `context_length`, counted in the report.
 
 ## Decisions
@@ -165,3 +165,9 @@ One line each; the full reasoning and issue numbers are on the design page named
 | [Socket host](decisions/socket-host.md) | A filtered proxy with four rules, not a raw socket mount. |
 | [SSE through Next.js](decisions/sse-through-next.md) | A route handler that pipes the stream with `no-transform`; the rewrite held every event until the end. |
 | [Embeddings](decisions/embeddings.md) | bge-small through fastembed, in-process on two threads: 11 ms and 22 ms of CPU per text, +268 MB of image. |
+
+## Eval reports
+
+| Report | What it measured |
+|---|---|
+| [Scenarios, 2026-11-03](evals/scenarios-2026-11-03.md) | The eight demo faults on `openai/gpt-6-luna`, 3 runs each: root cause right in 21 of 24 (hung 0 of 3 on a shop with stale logs, 3 of 3 on a reset shop), plan exact in 18 of 24, $0.0035 and about 70 s to a diagnosis per run. |

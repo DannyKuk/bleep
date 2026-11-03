@@ -1,20 +1,37 @@
-"""What a run leaves behind: one JSON line per scenario run as it finishes (`data/evals/`), and
-the dated report (`docs/evals/scenarios-YYYY-MM-DD.md`) with the setup, a table per scenario,
-the totals, the cost and what the numbers show."""
+"""What a run leaves behind: one JSON line per scenario run as it finishes (`data/evals/`), the
+batch's setup next to it (`<raw>.info.json`), and the dated report
+(`docs/evals/scenarios-YYYY-MM-DD.md`) with the setup, a table per scenario, the totals, the cost
+and what the numbers show.
 
+Runs judged `manual` leave their root cause pending. A grades file written by hand, one JSON line
+per run, is applied to the raw results and the report rendered again:
+
+    cd backend && uv run --group evals python -m evals.report <raw.jsonl> --grades <grades.jsonl> \
+        --grader "<who graded>" [--out <report.md>]
+"""
+
+import argparse
+import os
+import shlex
+import sys
 from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from evals.judge import PASS_SCORE
+from evals.judge import MANUAL, PASS_SCORE
 from evals.scenarios import Scenario, ScenarioResult
+
+REPO = Path(__file__).resolve().parents[2]
+BACKEND = REPO / "backend"
 
 
 class RunInfo(BaseModel):
-    """How the run was set up, for the report's Setup section. `raw` is the JSONL's path
-    relative to the repo."""
+    """How the run was set up, for the report's Setup section. `raw` is the JSONL's path as the
+    report links it, relative to the report's folder. `report` is the report's path relative to
+    the repo, which a later batch of the same suite writes again. `grader` and `grades` are set
+    once grades by hand are applied: who graded, and the grades file as the report links it."""
 
     started_at: datetime
     finished_at: datetime
@@ -26,6 +43,84 @@ class RunInfo(BaseModel):
     commit: str | None = None
     command: str
     raw: str
+    report: str | None = None
+    grader: str | None = None
+    grades: str | None = None
+
+
+def info_path(raw: Path) -> Path:
+    """The batch's setup, next to its raw file: `<raw stem>.info.json`."""
+    return raw.with_name(f"{raw.stem}.info.json")
+
+
+def write_info(raw: Path, info: RunInfo) -> None:
+    path = info_path(raw)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(info.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+
+def read_info(raw: Path) -> RunInfo | None:
+    path = info_path(raw)
+    if not path.is_file():
+        return None
+    return RunInfo.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+class GradeError(ValueError):
+    """A grades file that is malformed or does not fit the runs."""
+
+
+class Grade(BaseModel):
+    """One run's root cause, graded by hand against the scenario's expected root cause."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str  # `<scenario>/<run>`, as `ScenarioResult.run_id`
+    root_cause_pass: bool
+    root_cause_score: float = Field(ge=0, le=1)
+    note: str = ""
+
+
+def read_grades(path: Path) -> list[Grade]:
+    grades = []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for number, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
+            grades.append(Grade.model_validate_json(line))
+        except ValidationError as error:
+            raise GradeError(f"{path}, line {number}: {error}") from error
+    return grades
+
+
+def apply_grades(
+    results: Sequence[ScenarioResult], grades: Sequence[Grade]
+) -> list[ScenarioResult]:
+    """The results with each graded run's root cause score, pass and note (as the judge's
+    reason). A grade for a run that is not in the results, or a run graded twice, is refused;
+    a run with no grade stays as it was."""
+    known = {r.run_id for r in results}
+    by_run: dict[str, Grade] = {}
+    for grade in grades:
+        if grade.run_id not in known:
+            raise GradeError(f"a grade for {grade.run_id}, which is not a run in the results")
+        if grade.run_id in by_run:
+            raise GradeError(f"{grade.run_id} is graded twice")
+        by_run[grade.run_id] = grade
+    graded = []
+    for r in results:
+        grade = by_run.get(r.run_id)
+        if grade is None:
+            graded.append(r)
+            continue
+        update = {
+            "root_cause_score": grade.root_cause_score,
+            "root_cause_pass": grade.root_cause_pass,
+            "judge_reason": grade.note or None,
+        }
+        graded.append(r.model_copy(update=update))
+    return graded
 
 
 def report_path(day: date, docs_dir: Path) -> Path:
@@ -96,7 +191,23 @@ def _expected_plan(scenario: Scenario) -> str:
     return plan + (" in this order" if action.ordered and len(action.steps) > 1 else "")
 
 
+def _link(path: str) -> str:
+    return f"[`{Path(path).name}`]({path})"
+
+
+def _by_hand(info: RunInfo) -> bool:
+    return info.judge == MANUAL
+
+
+def _pending(result: ScenarioResult) -> bool:
+    """A diagnosed run left for a grade by hand that has none yet."""
+    graded = result.root_cause_score is not None
+    return result.judge == MANUAL and result.diagnosis is not None and not graded
+
+
 def _score(result: ScenarioResult) -> str:
+    if _pending(result):
+        return "pending"
     if result.root_cause_score is None:
         return "n/a"
     return f"{result.root_cause_score:.2f} {'pass' if result.root_cause_pass else 'fail'}"
@@ -191,23 +302,54 @@ def _what_it_shows(results: list[ScenarioResult]) -> list[str]:
             "length limit before it answered, its reasoning having filled the context. Give the "
             "model a larger context, or cap its output (backend/evals/README.md)."
         )
-    unjudged = [r for r in results if r.diagnosis and r.root_cause_score is None]
+    pending = [r for r in results if _pending(r)]
+    if pending:
+        lines.append(f"- {_plural(len(pending), 'diagnosed run')} wait for a grade by hand.")
+    unjudged = [
+        r for r in results if r.diagnosis and r.root_cause_score is None and not _pending(r)
+    ]
     if unjudged:
         lines.append(f"- The judge gave no score for {_plural(len(unjudged), 'diagnosed run')}.")
     return lines
 
 
-def render(info: RunInfo, results: list[ScenarioResult]) -> str:
+def _judge_row(info: RunInfo) -> str:
+    if not _by_hand(info):
+        return (
+            f"| Judge | `{info.judge}` through DeepEval GEval; a root cause passes at "
+            f"{PASS_SCORE} or more |"
+        )
+    if info.grader is None:
+        return "| Judge | by hand, not graded yet |"
+    where = f"; every grade and its note in {_link(info.grades)}" if info.grades else ""
+    return f"| Judge | {info.grader}, by hand, against each scenario's expected root cause{where} |"
+
+
+def _who_judged(info: RunInfo) -> str:
+    if not _by_hand(info):
+        return f"`{info.judge}` judged the root causes"
+    if info.grader is None:
+        return "the root causes wait for a grade by hand"
+    return f"{info.grader} graded the root causes by hand"
+
+
+def render(info: RunInfo, results: list[ScenarioResult], regrade: str | None = None) -> str:
+    """The report. `regrade` is the command that applied the grades by hand, if any."""
     minutes = (info.finished_at - info.started_at).total_seconds() / 60
     ids = ", ".join(s.id for s in info.scenarios)
     faults, runs = _plural(len(info.scenarios), "demo fault"), _plural(info.repeat, "run")
     tested_note = " (a local model costs nothing per call)" if info.provider == "local" else ""
     judge_note = " (billed to a plan, not per call)" if info.judge.startswith("claude-code") else ""
+    judge_cost = (
+        "none, graded by hand"
+        if _by_hand(info)
+        else _usd(_total_usd([r.judge_usd for r in results])) + judge_note
+    )
     lines = [
         f"# Scenario evals, {info.started_at.date().isoformat()}",
         "",
-        f"> `{info.model}` diagnosed and proposed for {faults}, {runs} each; `{info.judge}` "
-        f"judged the root causes. The root cause passed in "
+        f"> `{info.model}` diagnosed and proposed for {faults}, {runs} each; "
+        f"{_who_judged(info)}. The root cause passed in "
         f"{_count([r.root_cause_pass for r in results])} runs and the plan was exact in "
         f"{_count([r.action_correct for r in results])}."
         + (
@@ -221,13 +363,13 @@ def render(info: RunInfo, results: list[ScenarioResult]) -> str:
         "| | |",
         "|---|---|",
         f"| Model under test | `{info.model}` (provider `{info.provider}`) |",
-        f"| Judge | `{info.judge}` through DeepEval GEval; a root cause passes at "
-        f"{PASS_SCORE} or more |",
+        _judge_row(info),
         f"| Scenarios | {ids}, {runs} each |",
         f"| When | {info.started_at:%Y-%m-%d %H:%M} UTC, {minutes:.0f} min |",
         f"| Commit | `{info.commit or 'unknown'}` |",
-        f"| Raw data | `{info.raw}` |",
+        f"| Raw data | {_link(info.raw)} |",
         f"| Reproduce | `{info.command}` (in `backend/`) |",
+        *([f"| Graded | `{regrade}` (in `backend/`) |"] if regrade else []),
         "",
         "Each run switches the fault on, lets Bleep's watcher open the incident and runs the graph "
         "to the end of Propose, then switches the fault off. Nothing is executed. Times count from "
@@ -253,7 +395,7 @@ def render(info: RunInfo, results: list[ScenarioResult]) -> str:
         "## Cost",
         "",
         f"- Model under test: {_usd(_total_usd([r.usd for r in results]))}{tested_note}.",
-        f"- Judge: {_usd(_total_usd([r.judge_usd for r in results]))}{judge_note}.",
+        f"- Judge: {judge_cost}.",
         "",
         "## What it shows",
         "",
@@ -261,3 +403,66 @@ def render(info: RunInfo, results: list[ScenarioResult]) -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def _from_backend(path: Path) -> str:
+    """`path` as a command run in `backend/` names it."""
+    path = path.resolve()
+    return os.path.relpath(path, BACKEND) if path.is_relative_to(REPO) else str(path)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m evals.report",
+        description="Render a batch's report again from its raw file, with grades by hand.",
+    )
+    parser.add_argument("raw", type=Path, help="the batch's raw JSONL; its .info.json next to it")
+    parser.add_argument("--grades", type=Path, help="grades by hand, one JSON line per run")
+    parser.add_argument("--grader", help="who graded, as the report names them")
+    parser.add_argument(
+        "--out", type=Path, help="the report to write; default: the batch's own report"
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        info = read_info(args.raw)
+        if info is None:
+            raise GradeError(f"no batch setup at {info_path(args.raw)}")
+        if args.grades and not args.grader:
+            raise GradeError("--grades needs --grader, who graded them")
+        if args.out:
+            out = args.out
+        elif info.report:
+            out = REPO / info.report
+        else:
+            raise GradeError("the batch names no report; give --out")
+        results = read_jsonl(args.raw)
+        here = out.resolve().parent
+        update: dict[str, str | None] = {"raw": os.path.relpath(args.raw.resolve(), here)}
+        regrade = None
+        if args.grades:
+            results = apply_grades(results, read_grades(args.grades))
+            update |= {
+                "grader": args.grader,
+                "grades": os.path.relpath(args.grades.resolve(), here),
+            }
+            regrade = shlex.join(
+                ["uv", "run", "--group", "evals", "python", "-m", "evals.report"]
+                + [_from_backend(args.raw), "--grades", _from_backend(args.grades)]
+                + ["--grader", args.grader, "--out", _from_backend(out)]
+            )
+        info = info.model_copy(update=update)
+    except (OSError, ValidationError, GradeError) as error:
+        print(f"evals.report: {error}", file=sys.stderr)
+        return 2
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(render(info, results, regrade), encoding="utf-8")
+    print(f"report: {out}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
