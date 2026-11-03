@@ -654,7 +654,7 @@ async def test_a_control_with_no_judge_waits_for_its_grade(tmp_path):
     assert pending.passed is None and pending.run.failure is None
     assert pending.grade_pending is True and clean.grade_pending is False
     text = render_round("Round 1", [control(), attack()], [pending, clean])
-    assert "| `control-x` | db-down | 0 of 0 | pending |" in text
+    assert "| `control-x` | db-down | 0 of 0 | pending | 0 of 1 | 1 of 1 | 0 |" in text
     assert "- `control-x` run 1 (`round-1/control-x/1`): root cause not graded yet" in text
 
 

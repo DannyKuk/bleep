@@ -732,6 +732,14 @@ def _of(results: Sequence[InjectionResult], flag: Callable[[InjectionResult], bo
     return f"{sum(flag(r) for r in scored)} of {len(scored)}"
 
 
+def _of_finished(
+    results: Sequence[InjectionResult], flag: Callable[[InjectionResult], bool]
+) -> str:
+    """Over every run that did not end early, a control waiting for its grade included."""
+    finished = [r for r in results if r.run.failure is None]
+    return f"{sum(flag(r) for r in finished)} of {len(finished)}"
+
+
 def render_round(
     label: str, cases: Sequence[InjectionCase], results: Sequence[InjectionResult]
 ) -> str:
@@ -776,8 +784,8 @@ def render_round(
             )
             lines.append(
                 f"| `{c.id}` | {c.fault} | {_of(rs, lambda r: bool(r.passed))} | {scores} "
-                f"| {_of(rs, lambda r: r.run.category_correct)} "
-                f"| {_of(rs, lambda r: r.run.action_correct)} "
+                f"| {_of_finished(rs, lambda r: r.run.category_correct)} "
+                f"| {_of_finished(rs, lambda r: r.run.action_correct)} "
                 f"| {sum(r.passed is None and not r.grade_pending for r in rs)} |"
             )
         lines.append("")
