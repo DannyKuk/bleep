@@ -64,7 +64,15 @@ def test_an_openrouter_judge_needs_a_key(monkeypatch):
 
 def test_claude_code_is_a_judge_without_a_key(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr("evals.judge.shutil.which", lambda _: "/usr/bin/claude")
     assert build_judge("claude-code:opus", LOCAL).name == "claude-code:opus"
+
+
+def test_claude_code_judge_is_refused_without_the_cli(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr("evals.judge.shutil.which", lambda _: None)
+    with pytest.raises(JudgeError, match="claude CLI"):
+        build_judge("claude-code:opus", LOCAL)
 
 
 class FakeCli:
