@@ -214,14 +214,15 @@ def test_a_plugin_name_that_could_reach_another_namespace_is_refused(name):
         plugins(plugin=Named())
 
 
-def test_a_plugin_whose_own_code_fails_to_build_is_refused_in_bleeps_words():
+@pytest.mark.parametrize("error", [RuntimeError, PluginError])
+def test_a_plugin_whose_own_code_fails_to_build_is_refused_in_bleeps_words(error):
     class Exploding(FakeCoolifyPlugin):
         def tools(self, ctx):
-            raise RuntimeError(f"cannot reach {ctx.settings.url} with {COOLIFY_TOKEN}")
+            raise error(f"cannot reach {ctx.settings.url} with {COOLIFY_TOKEN}")
 
     registry = plugins(plugin=Exploding())
     registry.configure("coolify", {"url": "https://coolify.example.test"})
     with pytest.raises(PluginError) as refusal:
         registry.enable("coolify", True)
-    assert str(refusal.value) == "plugin coolify could not be switched on (RuntimeError)"
+    assert str(refusal.value) == f"plugin coolify could not be switched on ({error.__name__})"
     assert not registry.is_enabled("coolify")

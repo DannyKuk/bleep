@@ -186,14 +186,12 @@ class PluginRegistry:
         try:
             tools = plugin.tools(ctx)
             handlers = plugin.act_handlers(ctx)
-            _check_built(plugin, tools, handlers)
-        except PluginError:
-            raise
-        except Exception as error:  # the plugin's own code: its text could quote a setting
+        except Exception as error:  # PluginError too: the plugin's text could quote a secret
             log.warning("plugin %s could not be built: %s", plugin.name, type(error).__name__)
             raise PluginError(
                 f"plugin {plugin.name} could not be switched on ({type(error).__name__})"
             ) from None
+        _check_built(plugin, tools, handlers)  # Bleep's own words, so they pass through
         return _Active(ctx, tools, handlers)
 
     def _validate(self, plugin: Plugin, values: Mapping[str, Any]) -> BaseModel:
