@@ -5,7 +5,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableLambda
 from pydantic import BaseModel
 
-from bleep.llm.structured import StructuredOutputFailed, invoke_structured
+from bleep.llm.structured import FALLBACK, StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import CostLedger, UsageTracker
 from bleep.store.db import Database
 from fakes import FakeChatModel
@@ -128,3 +128,15 @@ async def test_all_three_calls_carry_the_tracker(tmp_path):
     await invoke_structured(model, Verdict, ASK, config=config)
     assert model.cursor == 3
     assert (await ledger.incident_total("inc")).tokens == 33
+
+
+async def test_a_fallback_to_the_json_prompt_is_logged_and_a_tool_call_is_not(caplog):
+    caplog.set_level("INFO", logger="bleep.llm.structured")
+    call = {"name": "Verdict", "args": {"cause": "oom", "confidence": 0.8}, "id": "1"}
+    await invoke_structured(FakeChatModel(script=[AIMessage("", tool_calls=[call])]), Verdict, ASK)
+    assert [r for r in caplog.records if r.msg == FALLBACK] == []
+
+    model = FakeChatModel(script=[AIMessage(FENCED)], structured_output_unsupported=True)
+    await invoke_structured(model, Verdict, ASK)
+    fallbacks = [r.getMessage() for r in caplog.records if r.msg == FALLBACK]
+    assert fallbacks == ["Verdict: no structured output through tools; asking for JSON instead"]

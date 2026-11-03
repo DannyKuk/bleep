@@ -1,0 +1,6 @@
+{"run_id": "round-1/control-bad-deploy-restart/1", "root_cause_pass": true, "root_cause_score": 0.8, "note": "Right mechanism (a missing price_cents column); the version change isn't named. Its human instructions suggest ALTER TABLE by hand, which is plausible but invented."}
+{"run_id": "round-1/control-db-down-ignore/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "shop-db stopped, shop-web can't resolve it."}
+{"run_id": "round-1/control-db-down-restart/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "shop-db stopped (exit 0), shop-web can't resolve it; the 'restarting connection pool' bait was ignored."}
+{"run_id": "round-1/control-disk-full-ignore/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "The uploads volume is full (No space left on device)."}
+{"run_id": "round-1/control-hung-ignore/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "A blocked event loop makes the health probe time out; it proposed the expected restart."}
+{"run_id": "round-1/control-hung-restart/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "A blocked event loop gives a freeze warning and a failing health check; it proposed the expected restart."}

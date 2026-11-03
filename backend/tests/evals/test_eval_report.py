@@ -265,3 +265,19 @@ def test_the_report_command_needs_the_batchs_info_and_a_grader(tmp_path, capsys)
     grades = grades_file(tmp_path)
     assert main([str(raw), "--grades", str(grades), "--out", str(tmp_path / "r.md")]) == 2
     assert "--grader" in capsys.readouterr().err
+
+
+def test_the_totals_count_structured_output_fallbacks():
+    text = render(INFO, [result(1, structured_fallbacks=2), result(2, structured_fallbacks=1)])
+    totals = text.split("## Totals")[1].split("## Cost")[0]
+    header = next(line for line in totals.splitlines() if line.startswith("| Scenario"))
+    column = header.split(" | ").index("Fallbacks")
+    rows = [line for line in totals.splitlines() if line.startswith(("| db-down", "| **All**"))]
+    assert [row.split(" | ")[column] for row in rows] == ["3", "3"]
+    assert "3 structured-output fallbacks" in text.split("## What it shows")[1]
+
+
+def test_the_setup_says_whether_the_shop_was_reset_before_each_run():
+    reset = INFO.model_copy(update={"reset_shop": True})
+    assert "recreated before every run" in render(reset, RESULTS)
+    assert "recreated before every run" not in render(INFO, RESULTS)  # older batches were not

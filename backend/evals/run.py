@@ -1,27 +1,29 @@
 """Run fault scenarios on the demo stack and score what Bleep diagnoses and proposes.
 
     cd backend && uv run --group evals python -m evals.run [--model X] [--judge J] [--only id]
-        [--repeat N] [--append raw.jsonl]
+        [--repeat N] [--append raw.jsonl] [--no-reset]
 
 Each run builds Bleep's watcher and incident graph in this process, on a throwaway SQLite
-database, with Telegram off, no memory and no act tools. It switches the scenario's fault on with
-`demo/fault.sh`, waits for the watcher to open the scenario's incident, runs the graph to the end
-of Propose and stops there: evals never execute anything. Then it switches the fault off, has the
-judge score the root cause (or leaves it for a grade by hand with the `manual` judge), and checks
-the category and the plan exactly. Results go to `data/evals/` as JSONL while the run goes, and
-to a dated report in `docs/evals/` at the end.
+database, with Telegram off, no memory and no act tools. Before each run it recreates the demo
+shop's containers, so no earlier run's log reaches this one (#104). It switches the scenario's
+fault on with `demo/fault.sh`, waits for the watcher to open the scenario's incident, runs the
+graph to the end of Propose and stops there: evals never execute anything. Then it switches the
+fault off, has the judge score the root cause (or leaves it for a grade by hand with the `manual`
+judge), and checks the category and the plan exactly. Results go to `data/evals/` as JSONL while
+the run goes, and to a dated report in `docs/evals/` at the end.
 See README.md next to this file and docs/design/evals.md.
 """
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import os
 import subprocess
 import sys
 import tempfile
 from collections import Counter
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol, Self
@@ -49,6 +51,7 @@ from bleep.incidents.action_log import ActionLog
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.incidents.runner import IncidentRunner
+from bleep.llm import structured
 from bleep.llm.usage import CostLedger
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Incident, Subject
@@ -91,6 +94,12 @@ FAULT_TIMEOUT_S = 300
 COMPOSE_SERVICE = "com.docker.compose.service"
 DOCKER_DESKTOP_SOCKET = Path.home() / ".docker" / "run" / "docker.sock"
 LOCAL_NAMES = ("localhost", "127.0.0.1")
+DEMO_COMPOSE = REPO / "demo" / "compose.yaml"
+# The shop's containers with a health check; the reset waits until both are healthy.
+SHOP_HEALTHY = ("shop-web", "shop-db")
+ITEMS_PATH = "/api/items"
+RESET_TIMEOUT_S = 180
+RESET_POLL_S = 3
 
 
 def _from_this_machine(url: str) -> str:
@@ -153,6 +162,104 @@ class Faults(Protocol):
 # Called after Propose, while the run's database and watcher are still open, with the fault off.
 # The injection tests (evals/injection.py) use it to take a run on to its report.
 AfterPropose = Callable[[CompiledStateGraph, GraphDeps, ScenarioResult], Awaitable[None]]
+
+
+# Runs a command with this stdin and environment: (exit code, stdout, stderr).
+Runner = Callable[[list[str], str, dict[str, str]], Awaitable[tuple[int, str, str]]]
+
+
+async def _exec(argv: list[str], stdin: str, env: dict[str, str]) -> tuple[int, str, str]:
+    process = await asyncio.create_subprocess_exec(
+        *argv,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    out, err = await process.communicate(stdin.encode())
+    return process.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
+
+
+class ShopReset:
+    """Puts the demo shop back to a fresh start before a run (#104): every container recreated
+    from `demo/compose.yaml` (`up -d --force-recreate`), so every log starts empty, with the
+    volumes kept, so shop-db keeps its items. It returns once shop-web and shop-db report
+    healthy and the shop's item URL answers 200, and raises `EvalError` when the recreate fails
+    or the shop is not back within `timeout_s`: the next run would meet a broken stack.
+
+    `fault.sh all off` alone is not enough: it only stops and starts shop-db, whose log then
+    keeps an earlier fault's errors. `docker_host`, as for the fault script, is the engine the
+    harness watches, and `env` adds to the environment Compose reads (the injection tests'
+    hook and key)."""
+
+    def __init__(
+        self,
+        compose_file: Path,
+        items_url: str,
+        *,
+        docker_host: str | None = None,
+        env: Mapping[str, str] | None = None,
+        run: Runner = _exec,
+        http: httpx.AsyncClient | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        timeout_s: float = RESET_TIMEOUT_S,
+    ) -> None:
+        self.compose_file = compose_file
+        self.items_url = items_url
+        self.env = os.environ | dict(env or {})
+        if docker_host:
+            self.env["DOCKER_HOST"] = docker_host
+        self.timeout_s = timeout_s
+        self._run = run
+        self._http = http
+        self._sleep = sleep
+
+    async def __call__(self) -> None:
+        up = ["docker", "compose", "-f", str(self.compose_file), "up", "-d", "--force-recreate"]
+        try:
+            code, _out, err = await asyncio.wait_for(self._run(up, "", self.env), self.timeout_s)
+        except TimeoutError:
+            raise EvalError(f"recreating the shop took over {self.timeout_s:.0f} s") from None
+        if code != 0:
+            raise EvalError(f"recreating the shop failed: {err.strip()[-500:]}")
+        async with contextlib.AsyncExitStack() as stack:
+            http = self._http or await stack.enter_async_context(httpx.AsyncClient(timeout=10))
+            await self._until_ready(http)
+
+    async def _until_ready(self, http: httpx.AsyncClient) -> None:
+        inspect = ["docker", "inspect", "-f", "{{.State.Health.Status}}", *SHOP_HEALTHY]
+        waited, why = 0.0, ""
+        while waited <= self.timeout_s:
+            await self._sleep(RESET_POLL_S)
+            waited += RESET_POLL_S
+            code, out, err = await self._run(inspect, "", self.env)
+            health = out.split()
+            if code != 0:
+                why = err.strip()[-200:]
+                continue
+            if health != ["healthy"] * len(SHOP_HEALTHY):
+                why = ", ".join(f"{n} {s}" for n, s in zip(SHOP_HEALTHY, health, strict=False))
+                continue
+            try:
+                answer = await http.get(self.items_url)
+            except httpx.HTTPError as error:
+                why = f"{self.items_url} did not answer: {error}"
+                continue
+            if answer.status_code == 200:
+                return
+            why = f"{self.items_url} answered {answer.status_code}"
+        raise EvalError(f"the shop is not back after {self.timeout_s:.0f} s: {why}")
+
+
+def shop_items_url(host: HostConfig) -> str:
+    """The URL the reset waits on: the host's URL check on the shop's item list."""
+    for service in host.services.values():
+        for check in service.urls:
+            if httpx.URL(check.url).path == ITEMS_PATH:
+                return check.url
+    raise EvalError(
+        f"host {host.id} checks no {ITEMS_PATH} URL for the reset to wait on; run with --no-reset"
+    )
 
 
 class DemoFaults:
@@ -246,6 +353,33 @@ def live_backend(containers: Sequence[ContainerSummary]) -> bool:
         is_self(c.labels) and c.labels.get(COMPOSE_SERVICE) == "backend" and c.state == "running"
         for c in containers
     )
+
+
+class _FallbackCounter(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(logging.INFO)
+        self.count = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.msg == structured.FALLBACK:
+            self.count += 1
+
+
+@contextlib.contextmanager
+def counting_fallbacks() -> Iterator[_FallbackCounter]:
+    """Counts the structured-output fallbacks while it is open: model calls that gave no
+    structured output through tools, so Bleep asked for JSON in the reply instead
+    (`bleep.llm.structured`). Runs go one at a time, so the count is the run's."""
+    counter, logger = _FallbackCounter(), structured.log
+    level = logger.level
+    logger.addHandler(counter)
+    if not logger.isEnabledFor(logging.INFO):
+        logger.setLevel(logging.INFO)
+    try:
+        yield counter
+    finally:
+        logger.removeHandler(counter)
+        logger.setLevel(level)
 
 
 class IncidentCatcher(IncidentRunner):
@@ -374,7 +508,10 @@ async def run_scenario(
         model=tested_model(settings.models),
         judge=judge.name if judge is not None else "none",
     )
-    with tempfile.TemporaryDirectory(prefix="bleep-eval-") as folder:
+    with (
+        counting_fallbacks() as fallbacks,
+        tempfile.TemporaryDirectory(prefix="bleep-eval-") as folder,
+    ):
         db = Database(Path(folder) / "bleep.db")
         await db.migrate()
         registry = Registry([eval_host(settings)], connector)
@@ -408,6 +545,7 @@ async def run_scenario(
                         await deps.guard_log.flush()
         finally:
             await registry.close()
+    result.structured_fallbacks = fallbacks.count
     if result.diagnosis is not None and judge is not None:
         await _judge(scenario, judge, result)
     return result
@@ -511,6 +649,9 @@ def summary(result: ScenarioResult) -> str:
         f"{result.id} run {result.run}: root cause {score}, plan {plan}, {calls}, "
         f"{result.tokens:,} tokens (largest prompt {result.peak_prompt_tokens:,})"
     )
+    if result.structured_fallbacks:
+        n = result.structured_fallbacks
+        line += f", {n} structured-output fallback" + ("" if n == 1 else "s")
     if result.failure == "context_length":
         return line + f"; failed, out of context: {result.error}"
     return line + (f"; {result.error}" if result.error else "")
@@ -528,16 +669,21 @@ async def run_suite(
     models: ModelFactory | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     done: Mapping[str, int] | None = None,
+    reset: Callable[[], Awaitable[None]] | None = None,
 ) -> list[ScenarioResult]:
     """Every scenario `repeat` times, one after another, with `settle_s` between runs. `done`
     is how many runs each scenario already has from an earlier batch: its runs are numbered
-    after them."""
+    after them. `reset` (a `ShopReset`) runs before every run instead of the settle wait: it
+    returns once the shop answers again."""
     done = done or {}
     results: list[ScenarioResult] = []
     for scenario in scenarios:
         first = done.get(scenario.id, 0) + 1
         for run in range(first, first + repeat):
-            if results:
+            if reset is not None:
+                log.info("resetting the shop")
+                await reset()
+            elif results:
                 await sleep(settings.settle_s)
             log.info("scenario %s, run %d of %d", scenario.id, run, first + repeat - 1)
             result = await run_scenario(
@@ -591,6 +737,16 @@ def earlier_batch(raw: Path, now: datetime, model: str) -> tuple[list[ScenarioRe
     return earlier, started
 
 
+def suite_scenarios(raw: Path, scenarios: Sequence[Scenario]) -> list[Scenario]:
+    """The scenarios a suite's report covers: an earlier batch's (from the raw file's
+    `.info.json`), then this batch's new ones. A suite run one scenario per batch (`--only` with
+    `--append`) so still reports on every one of them."""
+    earlier = read_info(raw)
+    covered = list(earlier.scenarios) if earlier is not None else []
+    known = {s.id for s in covered}
+    return covered + [s for s in scenarios if s.id not in known]
+
+
 def report_for(raw: Path, started: datetime, reports_dir: Path) -> Path:
     """The report a batch writes: the one an earlier batch of the same suite wrote (named in
     the raw file's `.info.json`), so the suite ends in one report, else a new dated one."""
@@ -625,6 +781,8 @@ def _command(args: argparse.Namespace) -> str:
     parts.append(f"--repeat {args.repeat}")
     if args.append:
         parts.append(f"--append {args.append}")
+    if args.no_reset:
+        parts.append("--no-reset")
     return " ".join(parts)
 
 
@@ -643,6 +801,11 @@ def _parser() -> argparse.ArgumentParser:
         metavar="JSONL",
         help="continue an earlier batch: add these runs to its raw file (a path from the repo "
         "root), numbered after its runs, and report on all of them",
+    )
+    parser.add_argument(
+        "--no-reset",
+        action="store_true",
+        help="do not recreate the shop's containers before each run; wait EVAL_SETTLE_S instead",
     )
     return parser
 
@@ -668,14 +831,20 @@ async def _run(
     done: dict[str, int] = {}
     for r in earlier:
         done[r.id] = max(done.get(r.id, 0), r.run)
+    host = eval_host(settings)
+    docker_host = fault_docker_host(settings, host)
+    reset = None if args.no_reset else ShopReset(
+        DEMO_COMPOSE, shop_items_url(host), docker_host=docker_host
+    )  # fmt: skip
     results = await run_suite(
         scenarios,
         settings,
         args.repeat,
-        faults=DemoFaults(settings.fault_script, fault_docker_host(settings, eval_host(settings))),
+        faults=DemoFaults(settings.fault_script, docker_host),
         judge=judge,
         on_result=lambda result: append_jsonl(raw, result),
         done=done,
+        reset=reset,
     )
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     report = report_for(raw, started, REPORTS_DIR)
@@ -686,9 +855,10 @@ async def _run(
         provider=settings.models.provider,
         judge=judge.name,
         repeat=max(Counter(r.id for r in earlier + results).values(), default=args.repeat),
-        scenarios=scenarios,
+        scenarios=suite_scenarios(raw, scenarios),
         commit=_commit(),
         command=_command(args),
+        reset_shop=reset is not None,
         raw=os.path.relpath(raw, report.parent),
         report=str(report.relative_to(REPO)) if report.is_relative_to(REPO) else str(report),
     )

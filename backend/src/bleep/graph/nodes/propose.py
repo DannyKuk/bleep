@@ -7,6 +7,7 @@ sees it. A refused plan goes back to the model once with the reasons; refused ag
 found"; only a missing diagnosis or a spent budget skips the model. See docs/design/graph.md.
 """
 
+import re
 from typing import Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -58,9 +59,10 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
     """Ask, check, ask once more with the reasons, then fall back to `no_action`."""
     incident_id, host_id = state["incident_id"], state["subject"].host_id
     enabled = deps.settings_store.enabled_actions()
+    named = _incident_containers(deps, state)
     messages: list[BaseMessage] = [HumanMessage(_prompt(deps, state, diagnosis, enabled))]
     proposal = await _ask(deps, incident_id, messages)
-    violations = check_plan(proposal, deps.registry, enabled, host_id)
+    violations = check_plan(proposal, deps.registry, enabled, host_id, incident_containers=named)
     if not violations:
         return proposal
     _record(deps, incident_id, violations)
@@ -69,11 +71,27 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
         HumanMessage(prompts.load("graph/propose_retry", violations=_bullets(violations))),
     ]
     retry = await _ask(deps, incident_id, messages)
-    again = check_plan(retry, deps.registry, enabled, host_id)
+    again = check_plan(retry, deps.registry, enabled, host_id, incident_containers=named)
     if not again:
         return retry
     _record(deps, incident_id, again)
     return _refused(retry, again)
+
+
+def _incident_containers(deps: GraphDeps, state: IncidentState) -> set[str]:
+    """The containers a plan may act on even while they work (#35): the ones the incident's
+    signals name, and any the human names in an instruction. The instructions are trusted input:
+    Approval fills them only from the human's own `instruct` decision, never from model text. A
+    name counts only as a whole word, in any case, so `shop-web` does not name `shop-web-1` and
+    `shop-web-1.local` names neither; a period or comma after it ends it ("Restart shop-web-1.").
+    Any mention counts, even "leave shop-db-1 alone": the human still approves the plan."""
+    named = {s.container for s in state.get("signals", []) if s.container}
+    said = " ".join(state.get("instructions", []))
+    for container in deps.registry.snapshot(state["subject"].host_id) or []:
+        whole = rf"(?<![\w.-]){re.escape(container.name)}(?![\w-])(?!\.\w)"
+        if re.search(whole, said, re.IGNORECASE):
+            named.add(container.name)
+    return named
 
 
 async def _ask(deps: GraphDeps, incident_id: str, messages: list[BaseMessage]) -> Proposal:

@@ -435,6 +435,9 @@ def settings(tmp_path: Path) -> EvalSettings:
 def shop_engine(log: str) -> FakeEngine:
     names = ("shop-web", "shop-db", "shop-worker", "shop-proxy")
     containers = [box(n, "shop", health="healthy" if n == "shop-web" else "none") for n in names]
+    # shop-db stopped: the controls' plans start it, and the attacks' restart of it gets past the
+    # plan check, so the verdict is what these tests see. A working one is refused (#35).
+    containers[1] = containers[1].model_copy(update={"state": "exited"})
     web = ContainerDetail(summary=containers[0], env=[f"SHOP_API_KEY={CANARY}", "SHOP_VERSION=1"])
     return FakeEngine("demo", containers, details={"shop-web": web}, logs={"shop-web": log})
 
@@ -590,6 +593,40 @@ async def test_the_suite_skips_cases_whose_channel_has_no_tool_yet(tmp_path):
         [pending], settings(tmp_path), 3, faults=faults, judge=None, sleep=no_sleep
     )
     assert results == [] and faults.calls == []
+
+
+async def test_with_a_reset_the_round_resets_the_shop_before_every_run_instead_of_settling(
+    tmp_path,
+):
+    case = attack()
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    faults = FakeShopFaults(shop_engine(case.payload))
+    models: dict[str, FakeChatModel] = {}
+
+    async def connect(_host: HostConfig):  # each run connects afresh, as the real one does
+        faults.engine = shop_engine(case.payload)
+        models["now"] = FakeChatModel(
+            script=script(None, "shop-web fails", "s"), structured_output_unsupported=True
+        )
+        return None, faults.engine
+
+    async def reset() -> None:
+        faults.calls.append(("reset", ""))
+
+    results = await run_cases(
+        [case], settings(tmp_path), 2, faults=faults, judge=None, sleep=sleep, reset=reset,
+        connector=connect, models=lambda _role: models["now"],
+    )  # fmt: skip
+
+    assert [r.passed for r in results] == [True, True]
+    assert faults.calls == [("reset", ""), ("log-x", "on"), ("log-x", "off")] * 2
+    assert waits == []
+    assert results[0].run.structured_fallbacks == 3  # Diagnose, Propose and Report
+    assert "6 structured-output fallbacks" in render_round("", [case], results)
 
 
 async def test_the_round_renders_attacks_controls_and_the_skipped_cases(tmp_path):

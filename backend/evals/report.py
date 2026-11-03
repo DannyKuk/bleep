@@ -31,7 +31,9 @@ class RunInfo(BaseModel):
     """How the run was set up, for the report's Setup section. `raw` is the JSONL's path as the
     report links it, relative to the report's folder. `report` is the report's path relative to
     the repo, which a later batch of the same suite writes again. `grader` and `grades` are set
-    once grades by hand are applied: who graded, and the grades file as the report links it."""
+    once grades by hand are applied: who graded, and the grades file as the report links it.
+    `reset_shop` says the shop's containers were recreated before every run (#104); batches
+    from before the reset have it false."""
 
     started_at: datetime
     finished_at: datetime
@@ -42,6 +44,7 @@ class RunInfo(BaseModel):
     scenarios: list[Scenario]
     commit: str | None = None
     command: str
+    reset_shop: bool = False
     raw: str
     report: str | None = None
     grader: str | None = None
@@ -273,6 +276,7 @@ def _totals_row(name: str, results: list[ScenarioResult]) -> str:
         f"| {_count([r.unnecessary_action for r in results])} "
         f"| {len([r for r in results if r.failure])} "
         f"| {len(_out_of_context(results))} "
+        f"| {sum(r.structured_fallbacks for r in results)} "
         f"| {steps or 0:.1f} | {tokens or 0:,.0f} "
         f"| {max((r.peak_prompt_tokens for r in results), default=0):,} "
         f"| {_usd(_total_usd([r.usd for r in results]))} "
@@ -292,6 +296,12 @@ def _what_it_shows(results: list[ScenarioResult]) -> list[str]:
         lines.append(
             f"- The largest single prompt was {peak.peak_prompt_tokens:,} tokens "
             f"({peak.id}, run {peak.run})."
+        )
+        fallbacks = sum(r.structured_fallbacks for r in results)
+        lines.append(
+            f"- {_plural(fallbacks, 'structured-output fallback')} in "
+            f"{_plural(sum(r.structured_fallbacks > 0 for r in results), 'run')}: model calls "
+            "that gave no structured output through tools, so Bleep asked for JSON instead."
         )
     ended = [r for r in results if r.error]
     if ended:
@@ -378,7 +388,14 @@ def render(info: RunInfo, results: list[ScenarioResult], regrade: str | None = N
         "Each run switches the fault on, lets Bleep's watcher open the incident and runs the graph "
         "to the end of Propose, then switches the fault off. Nothing is executed. Times count from "
         "the fault going on; steps are the model's tool calls; peak prompt is the largest single "
-        "prompt of the run.",
+        "prompt of the run; fallbacks are model calls that gave no structured output through "
+        "tools, so Bleep asked for JSON in the reply instead."
+        + (
+            " The shop's containers were recreated before every run, volumes kept, so no earlier "
+            "run's log reached the next."
+            if info.reset_shop
+            else ""
+        ),
         "",
     ]
     for scenario in info.scenarios:
@@ -387,9 +404,9 @@ def render(info: RunInfo, results: list[ScenarioResult], regrade: str | None = N
         "## Totals",
         "",
         "| Scenario | Runs | Root cause | Category | Exact plan | Unnecessary | Failed "
-        "| Out of context | Mean steps | Mean tokens | Max peak prompt | Cost "
+        "| Out of context | Fallbacks | Mean steps | Mean tokens | Max peak prompt | Cost "
         "| Mean to diagnosis |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for scenario in info.scenarios:
         lines.append(_totals_row(scenario.id, [r for r in results if r.id == scenario.id]))

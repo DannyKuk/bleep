@@ -1,0 +1,41 @@
+{
+  "started_at": "2026-11-03T15:28:05.118401Z",
+  "finished_at": "2026-11-03T15:28:54.417123Z",
+  "model": "openai/gpt-oss-20b",
+  "provider": "local",
+  "judge": "manual",
+  "repeat": 1,
+  "scenarios": [
+    {
+      "id": "bad-env",
+      "fault": "bad-env",
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-web's DATABASE_URL names the host `db`, which does not exist on the shop's network (the database is shop-db), so shop-web cannot reach its database, exits at startup and keeps being restarted.",
+        "category": "config",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ]
+      },
+      "timeout_s": 400
+    }
+  ],
+  "commit": "8c142e9",
+  "command": "uv run --group evals python -m evals.run --judge manual --only bad-env --repeat 1",
+  "reset_shop": true,
+  "raw": "../../data/evals/scenarios-20261103-152805.jsonl",
+  "report": "docs/evals/scenarios-local-2026-11-03.md",
+  "grader": null,
+  "grades": null
+}
