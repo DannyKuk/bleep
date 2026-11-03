@@ -210,7 +210,7 @@
   "command": "uv run --group evals python -m evals.run --judge manual --only <scenario> --repeat 1 [--append data/evals/scenarios-20261103-142124.jsonl]",
   "reset_shop": true,
   "raw": "../../data/evals/scenarios-20261103-142124.jsonl",
-  "report": "docs/evals/scenarios-local-2026-11-03.md",
+  "report": null,
   "grader": null,
   "grades": null
 }

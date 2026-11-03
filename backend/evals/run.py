@@ -95,6 +95,7 @@ COMPOSE_SERVICE = "com.docker.compose.service"
 DOCKER_DESKTOP_SOCKET = Path.home() / ".docker" / "run" / "docker.sock"
 LOCAL_NAMES = ("localhost", "127.0.0.1")
 DEMO_COMPOSE = REPO / "demo" / "compose.yaml"
+SHOP_PROJECT = "shop"  # demo/compose.yaml's `name:`
 # The shop's containers with a health check; the reset waits until both are healthy.
 SHOP_HEALTHY = ("shop-web", "shop-db")
 ITEMS_PATH = "/api/items"
@@ -187,8 +188,8 @@ class ShopReset:
     healthy and the shop's item URL answers 200, and raises `EvalError` when the recreate fails
     or the shop is not back within `timeout_s`: the next run would meet a broken stack.
 
-    `fault.sh all off` alone is not enough: it only stops and starts shop-db, whose log then
-    keeps an earlier fault's errors. `docker_host`, as for the fault script, is the engine the
+    `fault.sh all off` alone is not enough: it never recreates shop-db, whose log then keeps
+    an earlier fault's errors. `docker_host`, as for the fault script, is the engine the
     harness watches, and `env` adds to the environment Compose reads (the injection tests'
     hook and key)."""
 
@@ -202,6 +203,7 @@ class ShopReset:
         run: Runner = _exec,
         http: httpx.AsyncClient | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        clock: Callable[[], float] | None = None,
         timeout_s: float = RESET_TIMEOUT_S,
     ) -> None:
         self.compose_file = compose_file
@@ -213,9 +215,12 @@ class ShopReset:
         self._run = run
         self._http = http
         self._sleep = sleep
+        self._clock = clock
 
     async def __call__(self) -> None:
-        up = ["docker", "compose", "-f", str(self.compose_file), "up", "-d", "--force-recreate"]
+        # `-p shop`: a COMPOSE_PROJECT_NAME in the environment must not aim it at another project.
+        up = ["docker", "compose", "-p", SHOP_PROJECT, "-f", str(self.compose_file)]
+        up += ["up", "-d", "--force-recreate"]
         try:
             code, _out, err = await asyncio.wait_for(self._run(up, "", self.env), self.timeout_s)
         except TimeoutError:
@@ -228,10 +233,10 @@ class ShopReset:
 
     async def _until_ready(self, http: httpx.AsyncClient) -> None:
         inspect = ["docker", "inspect", "-f", "{{.State.Health.Status}}", *SHOP_HEALTHY]
-        waited, why = 0.0, ""
-        while waited <= self.timeout_s:
+        clock = self._clock or asyncio.get_running_loop().time
+        deadline, why = clock() + self.timeout_s, ""
+        while clock() <= deadline:  # a deadline, so a slow `docker` counts too
             await self._sleep(RESET_POLL_S)
-            waited += RESET_POLL_S
             code, out, err = await self._run(inspect, "", self.env)
             health = out.split()
             if code != 0:
@@ -397,10 +402,12 @@ class IncidentCatcher(IncidentRunner):
     async def recover_on_boot(self) -> list[str]:
         return []  # a fresh database has nothing to recover
 
-    async def wait_for(self, subject: Subject) -> Incident:
+    async def wait_for(self, subject: Subject, since: datetime) -> Incident:
+        """The first incident on `subject` opened at `since` or later; one opened before it (a
+        leftover of the last run) is not this run's."""
         while True:
             incident = await self.opened.get()
-            if incident.subject.key == subject.key:
+            if incident.subject.key == subject.key and incident.opened_at >= since:
                 return incident
             log.info("ignoring incident %s on %s", incident.id, incident.subject.key)
 
@@ -566,7 +573,7 @@ async def _fault_run(
     try:
         await faults.switch(scenario.fault, "on")
         async with asyncio.timeout(scenario.timeout_s):
-            incident = await catcher.wait_for(scenario.subject)
+            incident = await catcher.wait_for(scenario.subject, since=fault_on)
             result.incident_id = incident.id
             result.seconds_to_incident = (incident.opened_at - fault_on).total_seconds()
             await _until_propose(graph, deps, incident)

@@ -48,7 +48,7 @@ _WRAPPER = re.compile(
     re.DOTALL,
 )
 # A wrapper tag the guard escaped: a sign that the text tried to end the data early.
-_MARKER = re.compile(r"&lt;[\s/\\]*untrusted", re.IGNORECASE)
+ESCAPED_TAG = re.compile(r"&lt;[\s/\\]*untrusted", re.IGNORECASE)
 
 Record = Callable[[GuardKind, str], None]
 
@@ -71,7 +71,7 @@ def guard_result(source: str, out: str) -> tuple[str, int, bool]:
         text = wrap_untrusted(source, body)
     else:
         text, redactions = guard_text(source, _WRAPPER.sub(lambda m: m[2], out))
-    return text, redactions, bool(_MARKER.search(text))
+    return text, redactions, bool(ESCAPED_TAG.search(text))
 
 
 def first_line(guarded: str) -> str:

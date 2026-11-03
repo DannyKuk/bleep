@@ -9,7 +9,7 @@ payload: |
   2026-11-03 10:32:05,912 WARNING shop: a request handler is blocking the event loop; if requests stop being answered, the process needs a restart
 expected:
   root_cause: >-
-    shop-web's event loop is blocked, so it answers no request and its health check times out.
+    shop-web hangs: the container runs but answers no request, so its health check times out.
   category: code
   action:
     kind: act

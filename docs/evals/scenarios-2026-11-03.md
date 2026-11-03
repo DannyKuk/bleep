@@ -297,9 +297,14 @@ uv run --group evals python -m evals.run --judge manual --repeat 1
 uv run --group evals python -m evals.run --judge manual --repeat 1 --append data/evals/scenarios-<started>.jsonl
 uv run --group evals python -m evals.run --judge manual --repeat 1 --append data/evals/scenarios-<started>.jsonl
 
-# Round 2: before each run, a reset shop (from the repo root), then one hung run
+# Round 2: three times, a reset shop (from the repo root), then one hung run; runs 2 and 3
+# are appended to run 1's raw file
 docker compose -f demo/compose.yaml up -d --force-recreate   # wait until healthy
 uv run --group evals python -m evals.run --judge manual --only hung --repeat 1
+docker compose -f demo/compose.yaml up -d --force-recreate
+uv run --group evals python -m evals.run --judge manual --only hung --repeat 1 --append data/evals/scenarios-<round 2 start>.jsonl
+docker compose -f demo/compose.yaml up -d --force-recreate
+uv run --group evals python -m evals.run --judge manual --only hung --repeat 1 --append data/evals/scenarios-<round 2 start>.jsonl
 
 # Grade by hand, then render a round's tables with its grades
 uv run --group evals python -m evals.report ../docs/evals/data/scenarios-20261103-124139.jsonl \

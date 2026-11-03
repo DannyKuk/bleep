@@ -281,3 +281,32 @@ def test_the_setup_says_whether_the_shop_was_reset_before_each_run():
     reset = INFO.model_copy(update={"reset_shop": True})
     assert "recreated before every run" in render(reset, RESULTS)
     assert "recreated before every run" not in render(INFO, RESULTS)  # older batches were not
+
+
+def test_a_grade_for_a_run_a_judge_model_scored_is_refused(tmp_path):
+    """Grading by hand is for a `manual` batch: a judge's score must not be overwritten."""
+    grade = {"run_id": "db-down/1", "root_cause_pass": True, "root_cause_score": 1.0, "note": ""}
+    with pytest.raises(GradeError, match="db-down/1.*openai/gpt-6-luna"):
+        apply_grades(RESULTS, read_grades(grades_file(tmp_path, grade)))
+
+
+@pytest.mark.parametrize(("passed", "score"), [(True, 0.6), (False, 0.7)])
+def test_a_grade_whose_pass_disagrees_with_its_score_is_refused(tmp_path, passed, score):
+    bad = {"run_id": "db-down/1", "root_cause_pass": passed, "root_cause_score": score}
+    with pytest.raises(GradeError, match=r"(?s)line 1.*a pass is a score of 0\.7 or more"):
+        read_grades(grades_file(tmp_path, bad))
+
+
+def test_a_grade_by_hand_clears_the_judges_cost(tmp_path):
+    spent = [r.model_copy(update={"judge_usd": 0.003}) for r in PENDING]
+    grade = {"run_id": "db-down/1", "root_cause_pass": True, "root_cause_score": 1.0}
+    (graded, _) = apply_grades(spent, read_grades(grades_file(tmp_path, grade)))
+    assert graded.judge_usd is None
+
+
+def test_out_of_context_advice_names_only_what_can_be_done():
+    cut = result(3, diagnosis=None, proposal=None, root_cause_score=None,
+                 root_cause_pass=False, failure="context_length", error="length")  # fmt: skip
+    text = render(INFO, [*RESULTS, cut])
+    assert "Give the model a larger context (backend/evals/README.md)." in text
+    assert "cap its output" not in text

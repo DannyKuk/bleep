@@ -43,6 +43,8 @@ def test_the_model_under_test_is_the_one_the_provider_uses():
         ("openai/gpt-6-luna", "GPT-6-Luna"),
         ("qwen/huihui-qwen3.8-27b-abliterated", "huihui-qwen3.8-27b-abliterated"),
         ("claude-code:claude-opus-5-5", "anthropic/claude-opus-5-5"),
+        ("openai/gpt-6-luna:free", "openai/gpt-6-luna"),  # an OpenRouter variant tag
+        ("qwen/qwen3-32b", "qwen/qwen3-32b:nitro"),
     ],
 )
 def test_the_judge_may_not_be_the_model_under_test(judge, tested):

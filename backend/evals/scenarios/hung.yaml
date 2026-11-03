@@ -1,5 +1,7 @@
-# shop-web's event loop is blocked by its /freeze debug hook (docs/demo.md, "hung"). It still runs
-# but answers nothing, so its health check times out and it turns unhealthy. A restart clears it.
+# shop-web's event loop is blocked by its /freeze debug hook (docs/demo.md, "hung"), which logs
+# nothing. It still runs but answers nothing, so its health check times out and it turns unhealthy.
+# Nothing Bleep can read says why it hangs, so the expected cause is the hang itself. A restart
+# clears it.
 id: hung
 fault: hung
 subject:
@@ -8,8 +10,7 @@ subject:
   service_id: demo/compose:shop
 expected:
   root_cause: >-
-    shop-web's event loop is blocked (a freeze request), so it answers no request and its health
-    check times out, although the container is still running.
+    shop-web hangs: the container runs but answers no request, so its health check times out.
   category: code
   action:
     kind: act

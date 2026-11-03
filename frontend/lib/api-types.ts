@@ -126,7 +126,11 @@ export interface Diagnosis {
   confidence: number;
   affected_services: string[];
   unsure: boolean;
+  /** Where host text gave orders, from a closed list; it never carries that text (#105). */
+  planted_in: PlantedSource[];
 }
+
+export type PlantedSource = "logs" | "events" | "inspect" | "http_body" | "memory" | "other";
 
 export type Action =
   | "docker.restart"

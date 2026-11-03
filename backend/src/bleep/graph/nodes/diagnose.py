@@ -9,10 +9,11 @@ diagnosis instead of an error, built from what Gather saw.
 """
 
 import logging
+import typing
 from typing import Literal
 
 from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
@@ -21,7 +22,7 @@ from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget
 from bleep.memory.text import describe_fact, describe_past
 from bleep.schemas.docker import ContainerSummary
-from bleep.schemas.graph import Diagnosis, Evidence, GatherContext
+from bleep.schemas.graph import Diagnosis, Evidence, GatherContext, PlantedSource
 from bleep.schemas.incidents import Signal, Subject
 
 log = logging.getLogger(__name__)
@@ -33,10 +34,30 @@ MISSING_LIMIT = 300
 FALLBACK_CAUSE = "I could not form a diagnosis"
 
 
+SOURCES: tuple[PlantedSource, ...] = typing.get_args(PlantedSource)
+
+
 class _Draft(Diagnosis):
-    """What the model fills in: a diagnosis plus, when unsure, what it still needs to know."""
+    """What the model fills in: a diagnosis plus, when unsure, what it still needs to know.
+    `planted_in` takes any text here, so one word off the list does not fail the whole answer;
+    `_planted` maps it onto the list."""
 
     missing: str = Field(default="")
+    planted_in: list[str] = Field(default_factory=list)  # type: ignore[assignment]
+
+    @field_validator("planted_in", mode="before")
+    @classmethod
+    def _as_list(cls, value: object) -> object:
+        """A weak model's null is none, and a bare word is a list of one."""
+        if value is None:
+            return []
+        return [value] if isinstance(value, str) else value
+
+
+def _planted(said: list[str]) -> list[PlantedSource]:
+    """The sources the model named, on the closed list, in its order; anything else is `other`."""
+    found = {s if s in SOURCES else "other" for s in (x.strip().lower() for x in said)}
+    return [s for s in SOURCES if s in found]
 
 
 def _clip(text: str, limit: int) -> str:
@@ -168,6 +189,7 @@ def make(deps: GraphDeps) -> Node:
             confidence=draft.confidence,
             affected_services=draft.affected_services,
             unsure=draft.confidence < budgets.low_confidence,
+            planted_in=_planted(draft.planted_in),
         )
         update: dict = {"diagnosis": diagnosis}
         if diagnosis.unsure and rounds == 1:

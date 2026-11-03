@@ -27,6 +27,12 @@ NO_DIAGNOSIS = "Bleep has no diagnosis to act on, so it proposes no action."
 NO_PLAN = "The model gave no usable plan, so Bleep proposes no action."
 BUDGET = "The incident's token budget or the day's cost cap is spent, so Bleep proposes no action."
 REFUSED = "Bleep's own checks refused the proposed plan twice, so nothing will run."
+# After a refusal the run goes to the report, so no instruction can follow: the human's way on is
+# to act by hand (#112).
+BY_HAND = (
+    "A container that works is acted on only when it is this incident's own. If it is the one at "
+    "fault, act on it by hand."
+)
 
 
 def make(deps: GraphDeps) -> Node:
@@ -79,15 +85,29 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
 
 
 def _incident_containers(deps: GraphDeps, state: IncidentState) -> set[str]:
-    """The containers a plan may act on even while they work (#35): the ones the incident's
-    signals name, and any the human names in an instruction. The instructions are trusted input:
-    Approval fills them only from the human's own `instruct` decision, never from model text. A
-    name counts only as a whole word, in any case, so `shop-web` does not name `shop-web-1` and
-    `shop-web-1.local` names neither; a period or comma after it ends it ("Restart shop-web-1.").
-    Any mention counts, even "leave shop-db-1 alone": the human still approves the plan."""
-    named = {s.container for s in state.get("signals", []) if s.container}
+    """The containers a plan may act on even while they work (#35, #112), read only from trusted
+    sources, never from the diagnosis, a plan, a tool result, the logs or memory:
+
+    - the ones the incident's signals name (engine-reported names);
+    - for a service incident no signal names a container of (its URL checks failed and nothing
+      else), the service's own containers, from the registry: the URL is the only symptom, so
+      any of them may be the one at fault;
+    - for a host incident about memory, the top memory users Gather measured;
+    - any the human names in an instruction. Approval fills the instructions only from the
+      human's own `instruct` decision. A name counts only as a whole word, in any case, so
+      `shop-web` does not name `shop-web-1` and `shop-web-1.local` names neither; a period or
+      comma after it ends it ("Restart shop-web-1."). Any mention counts, even "leave shop-db-1
+      alone": the human still approves the plan."""
+    subject, signals = state["subject"], state.get("signals", [])
+    named = {s.container for s in signals if s.container}
+    if subject.kind == "service" and signals and not named:
+        service = deps.registry.service(subject.service_id or "")
+        named |= {c.name for c in service.containers} if service else set()
+    context = state.get("context")
+    if subject.kind == "host" and context and any(s.kind == "memory" for s in signals):
+        named |= {m.name for m in context.top_memory}
     said = " ".join(state.get("instructions", []))
-    for container in deps.registry.snapshot(state["subject"].host_id) or []:
+    for container in deps.registry.snapshot(subject.host_id) or []:
         whole = rf"(?<![\w.-]){re.escape(container.name)}(?![\w-])(?!\.\w)"
         if re.search(whole, said, re.IGNORECASE):
             named.add(container.name)
@@ -113,6 +133,8 @@ def _refused(proposal: Proposal, violations: list[Violation]) -> Proposal:
     steps = [f"{n}. {_step(s)}" for n, s in enumerate(proposal.steps, start=1)]
     lines = [REFUSED, "Why:", _bullets(violations), "The refused plan:", *(steps or ["no steps"])]
     lines.append(f"The model's reason: {proposal.reason}")
+    if any(v.rule == "healthy_target" for v in violations):
+        lines.append(BY_HAND)
     return Proposal(
         kind="no_action",
         reason=REFUSED,

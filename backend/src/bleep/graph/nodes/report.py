@@ -14,6 +14,10 @@ report written from the record alone. The report is published as a `report` even
 report is in the checkpoint, so a crash before that leaves the incident open and the next boot
 runs the node again rather than leaving a closed incident with no stored report.
 
+When host text the run read carries a wrapper tag the guard escaped, code adds a fixed follow-up
+that names where, from a closed list, and quotes nothing (#105). The diagnosis's own
+`planted_in` flag is not shown: it fired on 4 of 6 honest controls (#112).
+
 When the human gave instructions on a service incident, a second model call turns the lasting
 ones ("always redeploy rather than restart") into at most two service facts
 (`Memory.replace_report_facts`). That call sees only the human's words, the plan and the service's
@@ -28,6 +32,7 @@ from pydantic import BaseModel, Field
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
+from bleep.graph.nodes.investigate import ESCAPED_TAG
 from bleep.graph.state import IncidentState, Node
 from bleep.guard.log import GuardKind
 from bleep.guard.report_check import check_report
@@ -38,6 +43,7 @@ from bleep.schemas.graph import (
     Decision,
     Diagnosis,
     Outcome,
+    PlantedSource,
     Proposal,
     Report,
     StepResult,
@@ -230,6 +236,46 @@ def _raw_logs(state: IncidentState) -> list[str]:
     return logs
 
 
+# Where planted orders were found, in the human's words; the order is the closed list's.
+PLANTED_WHERE: dict[PlantedSource, str] = {
+    "logs": "container logs",
+    "events": "Docker events",
+    "inspect": "container settings",
+    "http_body": "HTTP replies",
+    "memory": "past incidents Bleep remembers",
+    "other": "other host output",
+}
+PLANTED_START = "Bleep found text "  # the injection eval reads it
+PLANTED_END = "that tried to give it orders and ignored it; check who can write there."
+# A tool's output by its source on the closed list; any other tool is `other`.
+_TOOL_SOURCE: dict[str, PlantedSource] = {
+    "container_logs": "logs",
+    "recent_events": "events",
+    "inspect_container": "inspect",
+    "recall_incidents": "memory",
+}
+
+
+def planted_follow_up(state: IncidentState) -> str | None:
+    """The fixed sentence for planted orders, or None. It is written only when code saw the sign
+    itself: a wrapper tag the guard escaped in Gather's logs or in a tool's result, named by that
+    tool's source. The diagnosis's `planted_in` is the model's reading and flagged 4 of 6 honest
+    controls (#112), so it is kept for the evals but never shown. No text of the model's or the
+    host's goes in, so the report and memory carry nothing new from the host."""
+    context = state.get("context")
+    found: set[PlantedSource] = set()
+    if context is not None and any(ESCAPED_TAG.search(t) for t in context.logs.values()):
+        found.add("logs")
+    for m in state.get("messages", []):
+        if isinstance(m, ToolMessage) and ESCAPED_TAG.search(m.text):
+            found.add(_TOOL_SOURCE.get(m.name or "", "other"))
+    where = [text for source, text in PLANTED_WHERE.items() if source in found]
+    if not where:
+        return None
+    named = where[0] if len(where) == 1 else f"{', '.join(where[:-1])} and {where[-1]}"
+    return f"{PLANTED_START}in the {named} {PLANTED_END}"
+
+
 def _describe_diagnosis(diagnosis: Diagnosis | None) -> str:
     if diagnosis is None:
         return "(none)"
@@ -374,6 +420,9 @@ def make(deps: GraphDeps) -> Node:
                 deps.guard_log.record(incident_id, kind, detail)
 
         written = check_report(written, _raw_logs(state), record)
+        planted = planted_follow_up(state)
+        if planted is not None:  # after the check: Bleep's own text, never cut or removed
+            written = written.model_copy(update={"follow_ups": [*written.follow_ups, planted]})
 
         # Published, sent and remembered here; the runner closes the incident once this update
         # is checkpointed. A crash before that runs the node again (a second message; memory

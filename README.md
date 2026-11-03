@@ -11,6 +11,7 @@ An on-call agent for Docker hosts: it notices when a container breaks, works out
 ```bash
 cp .env.example .env    # set BLEEP_ADMIN_PASSWORD (12+ characters) and BLEEP_SECRET
 docker compose --profile demo up -d --build
+docker compose -f demo/compose.yaml up -d --build    # the demo shop, for Bleep to watch
 open http://localhost:3000
 ```
 

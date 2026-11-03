@@ -3,9 +3,11 @@
 No Docker here: these read docker-compose.yaml, demo/compose.yaml and config/hosts.demo.yaml.
 """
 
+import ast
 from pathlib import Path
 
 import httpx
+import pytest
 import yaml
 
 from bleep.graph.deps import CORE_ACTIONS
@@ -23,10 +25,11 @@ HOSTS = load_hosts_file(REPO / "config" / "hosts.demo.yaml")
 SHOP = ("shop-web", "shop-db", "shop-proxy", "shop-worker")
 
 
-def shop_containers() -> list:
-    """The demo shop as the engine lists it, beside Bleep's own containers."""
+def shop_containers(**states: dict) -> list:
+    """The demo shop as the engine lists it, beside Bleep's own containers. `states` gives a
+    container's state and health as a fault leaves them; the rest run with no health check."""
     own = {COMPOSE_PROJECT: "bleep", SELF_LABEL: "true"}
-    shop = [box(name, DEMO["name"]) for name in SHOP]
+    shop = [box(name, DEMO["name"], **states.get(name, {})) for name in SHOP]
     return shop + [box("bleep-backend-1", labels=own), box("bleep-socket-proxy-1", labels=own)]
 
 
@@ -80,28 +83,63 @@ def test_the_demo_hosts_file_describes_the_shop_service():
         ("host.docker.internal", 8080)
     }
     assert service.urls[0].body_contains == '"status":"ok"'
+    assert service.urls[1].body_contains == "Coffee beans"
     # shop-db is guarded by a rule, not by protected_containers: starting it is the db-down fix.
     assert service.protected == set()
     assert any("shop-db" in rule for rule in service.rules)
 
 
-async def test_the_plans_docs_demo_expects_pass_the_plan_check(tmp_path):
+# Each fault's containers as it leaves them at Propose, and the container its signal names
+# (docs/demo.md): the stopped shop-db is no signal of its own.
+UNHEALTHY = {"state": "running", "health": "unhealthy"}
+FAULTS = {
+    "db-down": (
+        {"shop-db": {"state": "exited", "exit_code": 0}, "shop-web": UNHEALTHY},
+        "shop-web",
+    ),
+    "hung": ({"shop-web": UNHEALTHY}, "shop-web"),
+}
+
+
+@pytest.mark.parametrize(
+    ("fault", "action", "target", "verify"),
+    [
+        ("db-down", "docker.start", "shop-db", ["shop-db", "shop-web"]),
+        ("hung", "docker.restart", "shop-web", ["shop-web"]),
+    ],
+)
+async def test_the_plans_docs_demo_expects_pass_the_plan_check(
+    tmp_path, fault, action, target, verify
+):
     (host,) = HOSTS.hosts
-    env = await graph_env(tmp_path, engine=FakeEngine(host.id, shop_containers()), host=host)
+    states, signalled = FAULTS[fault]
+    engine = FakeEngine(host.id, shop_containers(**states))
+    env = await graph_env(tmp_path, engine=engine, host=host)
     urls = [u.url for u in host.services["shop"].urls]
-    expected = (
-        ("docker.start", "shop-db", ["shop-db", "shop-web"]),
-        ("docker.restart", "shop-web", ["shop-web"]),
+    proposal = Proposal(
+        kind="act",
+        steps=[PlanStep(action=action, host_id=host.id, target=target)],
+        reason="docs/demo.md",
+        verification=VerificationPlan(containers=verify, urls=urls),
     )
-    for action, target, verify in expected:
-        proposal = Proposal(
-            kind="act",
-            steps=[PlanStep(action=action, host_id=host.id, target=target)],
-            reason="docs/demo.md",
-            verification=VerificationPlan(containers=verify, urls=urls),
-        )
-        # In both faults the incident's signals name the container the plan acts on.
-        found = check_plan(
-            proposal, env.registry, set(CORE_ACTIONS), host.id, incident_containers=[target]
-        )
-        assert found == [], action
+    found = check_plan(
+        proposal, env.registry, set(CORE_ACTIONS), host.id, incident_containers=[signalled]
+    )
+    assert found == []
+
+
+def test_the_hung_fault_freezes_without_saying_so():
+    """A real hang does not announce itself, so /freeze writes no line before it blocks (#106)."""
+    tree = ast.parse((REPO / "demo" / "shop" / "app.py").read_text(encoding="utf-8"))
+    (freeze,) = [n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef | ast.FunctionDef)
+                 and n.name == "freeze"]  # fmt: skip
+    body = [n for stmt in freeze.body for n in ast.walk(stmt)]  # not its @app.post decorator
+    assert [ast.unparse(n.func) for n in body if isinstance(n, ast.Call)] == ["time.sleep"]
+
+
+def test_the_fault_script_runs_compose_on_the_shop_project_alone():
+    """COMPOSE_FILE and COMPOSE_PROJECT_NAME are Compose's own variables: one in the caller's
+    environment must not point fault.sh at another project."""
+    script = (REPO / "demo" / "fault.sh").read_text(encoding="utf-8")
+    assert 'compose() { docker compose -p shop -f "$SHOP_COMPOSE" "$@"; }' in script
+    assert "COMPOSE_FILE" not in script

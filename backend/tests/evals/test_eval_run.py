@@ -4,7 +4,7 @@ measured and scored."""
 
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -18,6 +18,7 @@ from openai.types.chat import ChatCompletion
 from bleep.hosts.config import HostConfig
 from bleep.schemas.docker import DockerEvent
 from bleep.schemas.graph import Diagnosis
+from bleep.schemas.incidents import Incident, Subject
 from bleep.schemas.settings import ModelSettings
 from evals.judge import JudgeError, Judgement, ManualJudge
 from evals.report import RunInfo, append_jsonl, write_info
@@ -27,6 +28,7 @@ from evals.run import (
     EvalError,
     EvalSettings,
     FaultError,
+    IncidentCatcher,
     ShopReset,
     demo_containers,
     docker_endpoint,
@@ -596,6 +598,22 @@ def test_a_later_batch_rewrites_the_report_of_the_earlier_ones(tmp_path):
     assert report_for(raw, started, reports) == first
 
 
+async def test_the_catcher_skips_an_incident_opened_before_the_fault():
+    """An incident the watcher opened on the shop before the fault went on (a leftover of the
+    last run) is not this run's: its time to incident would be negative."""
+    catcher = IncidentCatcher(None, None, None)  # type: ignore[arg-type]
+    subject = Subject(kind="service", host_id="demo", service_id="demo/compose:shop")
+    fault_on = datetime(2026, 11, 3, 12, 0, tzinfo=UTC)
+
+    def opened(id_: str, seconds: int) -> Incident:
+        at = fault_on + timedelta(seconds=seconds)
+        return Incident(id=id_, subject=subject, status="open", opened_at=at, title="shop")
+
+    await catcher.start(opened("stale", -5))
+    await catcher.start(opened("fresh", 40))
+    assert (await catcher.wait_for(subject, since=fault_on)).id == "fresh"
+
+
 # --- the shop reset (#104) ----------------------------------------------------------------------
 
 COMPOSE = Path("/repo/demo/compose.yaml")
@@ -651,7 +669,10 @@ async def test_the_shop_reset_recreates_every_container_and_waits_until_it_answe
 
     commands = [argv for argv, _ in docker.calls]
     # Every container recreated, so every log starts empty; no `down -v`: volumes are kept.
-    assert commands[0] == ["docker", "compose", "-f", str(COMPOSE), "up", "-d", "--force-recreate"]
+    # `-p shop` keeps a COMPOSE_PROJECT_NAME in the environment from aiming it elsewhere.
+    assert commands[0] == [
+        "docker", "compose", "-p", "shop", "-f", str(COMPOSE), "up", "-d", "--force-recreate"
+    ]  # fmt: skip
     assert (
         commands[1:]
         == [["docker", "inspect", "-f", "{{.State.Health.Status}}", "shop-web", "shop-db"]] * 4
@@ -665,15 +686,19 @@ async def test_the_shop_reset_recreates_every_container_and_waits_until_it_answe
 
 async def test_a_shop_that_does_not_come_back_stops_the_suite():
     client, _ = items_server([])
+    sleep, clock = fake_time()
     reset = ShopReset(
-        COMPOSE, ITEMS, run=FakeDockerCli(never_healthy=True), http=client, sleep=no_sleep,
-        timeout_s=10,
+        COMPOSE, ITEMS, run=FakeDockerCli(never_healthy=True), http=client, sleep=sleep,
+        clock=clock, timeout_s=10,
     )  # fmt: skip
     with pytest.raises(EvalError, match="not back after 10 s: shop-web starting"):
         await reset()
 
     down, _ = items_server([503] * 99)
-    reset = ShopReset(COMPOSE, ITEMS, run=FakeDockerCli(), http=down, sleep=no_sleep, timeout_s=10)
+    sleep, clock = fake_time()
+    reset = ShopReset(
+        COMPOSE, ITEMS, run=FakeDockerCli(), http=down, sleep=sleep, clock=clock, timeout_s=10
+    )
     with pytest.raises(EvalError, match="503"):
         await reset()
 
@@ -688,6 +713,35 @@ async def test_a_failed_recreate_stops_the_suite_with_composes_error():
 
 async def no_sleep(_seconds: float) -> None:
     return None
+
+
+def fake_time() -> tuple:
+    """A sleep that moves a fake clock instead of waiting, and the clock."""
+    now = [0.0]
+
+    async def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    return sleep, lambda: now[0]
+
+
+async def test_the_reset_gives_up_on_time_even_when_docker_is_slow():
+    """The timeout is a deadline on the clock, not a count of the sleeps between looks: a
+    `docker inspect` that takes 30 s each must not stretch 60 s into ten minutes."""
+    now = [0.0]
+    docker = FakeDockerCli(never_healthy=True)
+
+    async def slow(argv: list[str], stdin: str, env: dict[str, str]):
+        now[0] += 30
+        return await docker(argv, stdin, env)
+
+    client, _ = items_server([])
+    reset = ShopReset(
+        COMPOSE, ITEMS, run=slow, http=client, sleep=no_sleep, timeout_s=60, clock=lambda: now[0]
+    )
+    with pytest.raises(EvalError, match="not back after 60 s"):
+        await reset()
+    assert sum(argv[1] == "inspect" for argv, _ in docker.calls) <= 3
 
 
 def test_the_reset_waits_on_the_shops_item_url(tmp_path):
