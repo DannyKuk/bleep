@@ -813,3 +813,10 @@ async def test_the_suite_offers_knowledge_search_over_the_snapshot_when_given_an
 
     assert "knowledge_search" in {t.name for t in model.bound_tools}
     assert len(await index.document_ids("docker:")) >= 20
+
+
+def test_the_reproduce_command_keeps_the_knowledge_switch():
+    from evals.run import _command, _parser
+
+    assert "--no-knowledge" in _command(_parser().parse_args(["--no-knowledge"]))
+    assert "--no-knowledge" not in _command(_parser().parse_args([]))

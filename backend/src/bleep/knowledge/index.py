@@ -138,25 +138,25 @@ class KnowledgeIndex:
             vectors.extend(await self._embed(texts[start : start + EMBED_BATCH]))
         return vectors
 
-    async def last_refresh(self, name: str) -> datetime | None:
-        """When the refresh `name` last ran, if ever."""
+    async def last_refresh(self, name: str) -> tuple[datetime, str] | None:
+        """When the refresh `name` last ran and what it covered, if it ever ran."""
         conn = await self.db.connect()
         try:
             async with conn.execute(
-                "SELECT at FROM knowledge_refreshes WHERE name = ?", (name,)
+                "SELECT at, scope FROM knowledge_refreshes WHERE name = ?", (name,)
             ) as cursor:
                 row = await cursor.fetchone()
         finally:
             await conn.close()
-        return None if row is None else datetime.fromisoformat(row["at"])
+        return None if row is None else (datetime.fromisoformat(row["at"]), row["scope"])
 
-    async def mark_refresh(self, name: str) -> None:
-        """Note that the refresh `name` ran now."""
+    async def mark_refresh(self, name: str, scope: str = "") -> None:
+        """Note that the refresh `name` ran now, over `scope`."""
         conn = await self.db.connect()
         try:
             await conn.execute(
-                "INSERT OR REPLACE INTO knowledge_refreshes (name, at) VALUES (?, ?)",
-                (name, self.clock().isoformat()),
+                "INSERT OR REPLACE INTO knowledge_refreshes (name, at, scope) VALUES (?, ?, ?)",
+                (name, self.clock().isoformat(), scope),
             )
             await conn.commit()
         finally:

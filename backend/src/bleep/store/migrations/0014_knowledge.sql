@@ -14,11 +14,12 @@ CREATE TABLE knowledge_documents (
 );
 CREATE INDEX knowledge_documents_source ON knowledge_documents (source, model);
 
--- When a refresh that costs more than embedding last ran ("repos": GitHub requests), so a restart
--- does not repeat it within the day.
+-- When a refresh that costs more than embedding last ran ("repos": GitHub requests) and what it
+-- covered (the linked repos), so a restart with the same repos does not repeat it within the day.
 CREATE TABLE knowledge_refreshes (
     name TEXT PRIMARY KEY,
-    at TEXT NOT NULL
+    at TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE knowledge_chunks (

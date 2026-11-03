@@ -251,7 +251,7 @@ async def test_a_restart_within_the_day_does_not_read_the_repos_again(tmp_path):
 
     repos.doc_files = doc_files  # type: ignore[method-assign]
     await KnowledgeRefresher(index, repos=repos, snapshot_dir=None).refresh_repos()
-    assert await index.last_refresh("repos") == wall[0]
+    assert await index.last_refresh("repos") == (wall[0], "acme/shop")
     wall[0] = wall[0].replace(hour=18)  # restarted six hours later
     naps: list[float] = []
 
@@ -273,3 +273,35 @@ async def test_a_restart_within_the_day_does_not_read_the_repos_again(tmp_path):
     with pytest.raises(asyncio.CancelledError):
         await restarted.run()
     assert asked == ["acme/shop", "acme/shop"]
+
+
+async def test_a_newly_linked_repo_or_a_failed_refresh_is_read_again_at_the_next_start(tmp_path):
+    db = Database(tmp_path / "bleep.db")
+    await db.migrate()
+    wall = [datetime(2026, 11, 3, 12, tzinfo=UTC)]
+    index = KnowledgeIndex(db, FakeEmbedder(), clock=lambda: wall[0])
+    repos = Repos({"acme/shop": [readme("acme/shop")]})
+    await KnowledgeRefresher(index, repos=repos, snapshot_dir=None).refresh_repos()
+
+    async def stop(_seconds: float) -> None:
+        raise asyncio.CancelledError
+
+    async def restart() -> None:
+        refresher = KnowledgeRefresher(
+            index, repos=repos, snapshot_dir=None, sleep=stop, monotonic=lambda: 0.0
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await refresher.run()
+
+    wall[0] = wall[0].replace(hour=13)
+    repos.files["acme/api"] = [readme("acme/api")]  # linked an hour later
+    await restart()
+    assert await index.document_ids("repo:acme/api:") == {"repo:acme/api:README.md"}
+    assert await index.last_refresh("repos") == (wall[0], "acme/api\nacme/shop")
+
+    wall[0] = wall[0].replace(hour=14)
+    repos.failing = {"acme/api", "acme/shop"}  # GitHub unreachable: nothing read
+    repos.files["acme/blog"] = [readme("acme/blog")]
+    repos.failing.add("acme/blog")
+    await restart()
+    assert (await index.last_refresh("repos"))[0] == wall[0].replace(hour=13)  # not marked

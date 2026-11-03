@@ -22,7 +22,7 @@ from bleep.tools.registry import ToolContext, ToolSpec
 SEARCH_K = 5
 NOTHING = "Nothing in the knowledge base matches that search."
 HEADER_ROOM = 200  # the intro line and the separators between the hits
-QUERY_CHARS = 80  # of the query, repeated in the intro (its repr at most doubles it)
+QUERY_CHARS = 120  # of the query, repeated in the intro
 WHERE_CHARS = 200  # of a hit's title and headings
 URL_CHARS = 200
 SOURCE_LABEL: dict[KnowledgeSource, str] = {
@@ -72,16 +72,23 @@ def _clean(text: str) -> tuple[str, int]:
     return escape_untrusted(redacted), count
 
 
+def _line(text: str, limit: int) -> tuple[str, int]:
+    """`text` cleaned, on one line and cut to `limit`, and the secrets redacted from it. It is
+    redacted before it is cut, so a secret on the cut point cannot leave half of itself."""
+    cleaned, count = _clean(text)
+    return _cut(" ".join(cleaned.split()), limit), count
+
+
 def describe_hits(query: str, hits: list[KnowledgeHit]) -> tuple[str, int]:
     """The hits as one text, closest first, each within its share of the size cap, and the
     number of secrets redacted from them."""
     share = (MAX_CHARS - HEADER_ROOM) // len(hits)
-    asked, redactions = _clean(_cut(query, QUERY_CHARS))
-    parts = [f"Knowledge search for {asked!r}, closest first:"]
+    asked, redactions = _line(query, QUERY_CHARS)
+    parts = [f'Knowledge search for "{asked}", closest first:']
     for n, hit in enumerate(hits, start=1):
         where = hit.heading if hit.heading.startswith(hit.title) else f"{hit.title} > {hit.heading}"
-        where, found_where = _clean(_cut(where.rstrip(" >"), WHERE_CHARS))
-        url, found_url = _clean(_cut(hit.url, URL_CHARS))
+        where, found_where = _line(where.rstrip(" >"), WHERE_CHARS)
+        url, found_url = _line(hit.url, URL_CHARS)
         text, found_text = _clean(hit.text)
         head = f"[{n}] {SOURCE_LABEL[hit.source]}: {where} (score {hit.score:.2f})\n{url}\n"
         parts.append(head + _cut(text, share - len(head)))

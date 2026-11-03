@@ -140,3 +140,31 @@ async def test_a_page_with_a_huge_heading_or_many_wrapper_tags_cannot_push_the_b
     assert "chars cut" not in out
     assert len(out) <= MAX_CHARS + 100  # the wrapper's two lines
     assert out.count("</untrusted") == 1
+
+
+async def test_a_secret_across_a_cut_in_the_heading_url_or_query_is_redacted_whole():
+    secret = "postgres://shop:S3cretPassw0rd99@db/shop"
+    long_heading = "x" * 180 + " " + secret
+    leaky = KnowledgeHit(
+        source="repo",
+        title="acme/shop: docs/x.md",
+        url="https://github.com/acme/shop/blob/main/docs/x.md?" + "q" * 170 + "&k=" + secret,
+        heading=long_heading,
+        text="ok",
+        score=0.5,
+    )
+    guard_log = GuardLog()
+    _, search = tool(Index([leaky]), guard_log)
+
+    out = await search.ainvoke({"query": "y" * 100 + " " + secret})
+
+    assert "S3cretPass" not in out
+    assert any(kind == "redacted" for _, kind, _ in guard_log.records)
+
+
+async def test_an_odd_query_cannot_grow_the_intro_past_its_room():
+    _, search = tool(Index([hit(n, "word " * 600) for n in range(1, 6)]))
+
+    out = await search.ainvoke({"query": "\U000f0000" * 120 + "\n" * 50})
+
+    assert "chars cut" not in out and "[1] Docker docs: Page 1" in out

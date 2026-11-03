@@ -7,6 +7,7 @@ repo and does not drop its docs.
 """
 
 import contextlib
+import logging
 from collections.abc import Iterable
 from typing import Protocol
 
@@ -14,6 +15,8 @@ from bleep.hosts.github import GithubClient, GithubError, GithubUnavailable, Not
 from bleep.knowledge.ingest import MAX_REPO_FILES
 from bleep.schemas.github import RepoFile
 from bleep.schemas.services import HostState
+
+log = logging.getLogger(__name__)
 
 DEFAULT_DOCS = ("docs",)
 MARKDOWN = (".md", ".markdown")
@@ -31,9 +34,10 @@ def _is_markdown(path: str) -> bool:
 
 class GithubRepoDocs:
     """`RepoDocs` over GitHub: each linked repo's README, then the markdown under its doc paths,
-    at most `MAX_REPO_FILES` files. A missing README, folder or file is skipped, and so is a doc
-    path that is a file but not markdown; a rate limit or an outage is raised, so the repo keeps
-    the docs it had."""
+    at most `MAX_REPO_FILES` files. A missing README or folder is skipped, and so is a doc path
+    whose last part has an extension other than markdown (a compose file, say) and a file that
+    cannot be read (gone, too large); any other GitHub error is raised, so the repo keeps the docs
+    it had."""
 
     def __init__(self, client: GithubClient, registry: HostsSource) -> None:
         self.client = client
@@ -55,11 +59,11 @@ class GithubRepoDocs:
     async def _markdown_under(self, repo: str, path: str) -> list[str]:
         if _is_markdown(path):
             return [path]
+        if "." in path.rsplit("/", 1)[-1]:  # another kind of file (compose.yaml): not a doc
+            return []
         try:
             entries = await self.client.list_files(repo, path, max_files=MAX_REPO_FILES)
-        except RateLimited, GithubUnavailable:
-            raise
-        except GithubError:  # missing, or a file that is not markdown (a compose file, say)
+        except NotFound:
             return []
         return [e.path for e in entries if _is_markdown(e.path)]
 
@@ -70,8 +74,10 @@ class GithubRepoDocs:
                 break
             try:
                 files.append(await self.client.read_file(repo, path))
-            except NotFound:
-                continue
+            except RateLimited, GithubUnavailable:
+                raise
+            except GithubError as error:  # gone, too large (over 1 MB) or unreadable: skip it
+                log.info("knowledge: skipped %s in %s (%s)", path, repo, error)
         return files
 
     async def doc_files(self, repo: str) -> list[RepoFile]:

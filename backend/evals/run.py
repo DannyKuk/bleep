@@ -818,6 +818,8 @@ def _command(args: argparse.Namespace) -> str:
         parts.append(f"--append {args.append}")
     if args.no_reset:
         parts.append("--no-reset")
+    if args.no_knowledge:
+        parts.append("--no-knowledge")
     return " ".join(parts)
 
 

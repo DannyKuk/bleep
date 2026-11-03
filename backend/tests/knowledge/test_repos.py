@@ -146,14 +146,13 @@ async def test_the_refresher_indexes_a_repos_docs_with_their_github_links(tmp_pa
 
 
 async def test_a_doc_path_that_is_a_file_but_not_markdown_is_skipped_not_fatal():
-    routes = HTTPX | {
-        "/repos/encode/httpx/contents/compose.yaml": recorded("contents-docs-http2.json")
-    }
+    github = GitHub(HTTPX)
     hosts = linked(ServiceOverrides(repo=REPO, docs_paths=["compose.yaml", "docs"]))
 
-    files = await GithubRepoDocs(GitHub(routes).client(), hosts).doc_files(REPO)
+    files = await GithubRepoDocs(github.client(), hosts).doc_files(REPO)
 
     assert [f.path for f in files] == ["README.md", "docs/http2.md"]
+    assert "/repos/encode/httpx/contents/compose.yaml" not in github.asked
 
 
 async def test_an_outage_while_listing_is_raised_so_the_repo_keeps_its_docs():
@@ -164,3 +163,16 @@ async def test_an_outage_while_listing_is_raised_so_the_repo_keeps_its_docs():
 
     with pytest.raises(GithubUnavailable):
         await docs.doc_files(REPO)
+
+
+async def test_a_file_too_large_to_read_is_skipped_and_the_rest_are_kept():
+    too_large = json.loads((FIXTURES / "contents-docs-http2.json").read_text(encoding="utf-8"))
+    too_large |= {"path": "docs/api.md", "encoding": "none", "content": None}
+    routes = HTTPX | {
+        "/repos/encode/httpx/contents/docs/api.md": httpx.Response(200, json=too_large)
+    }
+    hosts = linked(ServiceOverrides(repo=REPO))
+
+    files = await GithubRepoDocs(GitHub(routes).client(), hosts).doc_files(REPO)
+
+    assert [f.path for f in files] == ["README.md", "docs/http2.md"]

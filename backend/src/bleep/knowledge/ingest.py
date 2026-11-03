@@ -134,6 +134,10 @@ def repo_documents(repo: str, files: list[RepoFile]) -> list[KnowledgeDocument]:
     ]
 
 
+def _scope(repos: list[str]) -> str:
+    return "\n".join(sorted(repos))
+
+
 class KnowledgeRefresher:
     def __init__(
         self,
@@ -171,11 +175,12 @@ class KnowledgeRefresher:
         """Sync every linked repo's docs; how many documents were embedded. A repo that cannot be
         read keeps the docs it had; a repo no longer linked loses them. A rate limit stops the
         refresh there: without a token GitHub allows 60 requests an hour, and the rest would fail
-        too."""
+        too. The refresh is marked done, with the repos it covered, only when it read at least one
+        repo (or there was none to read), so a restart after GitHub was unreachable tries again."""
         if self.repos is None:
             return 0
         linked = await self.repos.linked_repos()
-        embedded = 0
+        embedded, read = 0, 0
         for repo in linked:
             try:
                 files = await self.repos.doc_files(repo)
@@ -185,6 +190,7 @@ class KnowledgeRefresher:
             except Exception as error:  # the next daily refresh tries again
                 log.warning("knowledge: could not read the docs of %s (%s)", repo, error)
                 continue
+            read += 1
             prefix = repo_prefix(repo)
             embedded += (
                 await self.index.sync("repo", repo_documents(repo, files), prefix)
@@ -193,7 +199,8 @@ class KnowledgeRefresher:
         await self.index.remove(
             i for i in await self.index.document_ids("repo:") if not i.startswith(kept)
         )
-        await self.index.mark_refresh(REPOS_REFRESH)
+        if read or not linked:
+            await self.index.mark_refresh(REPOS_REFRESH, _scope(linked))
         return embedded
 
     async def _safely(self, name: str, refresh: Callable[[], Awaitable[object]]) -> None:
@@ -205,17 +212,20 @@ class KnowledgeRefresher:
         log.info("knowledge: refreshed %s: %s", name, result)
 
     async def _repos_wait(self) -> float:
-        """Seconds until repo docs are due: none on a first start, and what is left of the day
-        since the last refresh otherwise, so a restart costs no GitHub requests. A clock that
-        moved back counts as due."""
+        """Seconds until repo docs are due: what is left of the day since the last refresh when
+        it covered the repos linked now, so a restart costs no GitHub requests. A first start, a
+        repo linked or unlinked since, and a clock that moved back are all due at once."""
+        if self.repos is None:
+            return 0.0
         try:
             last = await self.index.last_refresh(REPOS_REFRESH)
+            linked = await self.repos.linked_repos()
         except Exception as error:  # an unreadable record only means refreshing early
             log.warning("knowledge: could not read the last repo refresh (%s)", error)
             return 0.0
-        if last is None:
+        if last is None or last[1] != _scope(linked):
             return 0.0
-        since = (self.index.clock() - last).total_seconds()
+        since = (self.index.clock() - last[0]).total_seconds()
         return self.repos_every_s - since if 0 <= since < self.repos_every_s else 0.0
 
     async def run(self) -> None:
