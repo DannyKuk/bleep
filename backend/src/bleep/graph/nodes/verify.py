@@ -4,7 +4,7 @@ After Execute the node waits 20 s, then checks up to 3 times, 10 s apart, and st
 check where everything passes. A check passes only when every planned container is running and
 healthy (or running with no healthcheck) and every planned URL passes `check_url`. The plan is
 the proposal's verification plan; when that is empty it falls back to the affected service's
-containers and URLs, and then to the containers the plan's steps acted on.
+containers (protected ones too) and URLs, and then to the containers the plan's steps acted on.
 
 Passing sets the outcome `resolved`. A failure with fewer than `verify_loops` (2) loop-backs so
 far hands the failed checks to Investigate as the next round's instruction (an appended message,
@@ -23,6 +23,7 @@ from langchain_core.messages import HumanMessage
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.state import IncidentState, Node
+from bleep.guard.plan_check import host_urls
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.graph import Check, Proposal, VerificationResult
@@ -39,17 +40,24 @@ CHECKS = 3  # at most, per round
 def _plan(
     deps: GraphDeps, subject: Subject, proposal: Proposal | None
 ) -> tuple[list[str], list[UrlCheckConfig]]:
-    """The containers and URLs to check, from the plan or else from what it acted on."""
+    """The containers and URLs to check, from the plan or else from what it acted on.
+
+    A planned URL keeps its expected status and body text from the hosts file, whichever of the
+    host's services it belongs to (the plan check allows any of them). The fallback checks every
+    container of the service, protected ones too: reading one is harmless, and leaving out a
+    database that is still down would let a check of the web container alone pass.
+    """
     planned = proposal.verification if proposal is not None else None
     service = deps.registry.service(subject.service_id) if subject.service_id else None
-    known = {cfg.url: cfg for cfg in service.urls} if service is not None else {}
+    known = host_urls(deps.registry, subject.host_id)
+    if service is not None:
+        known |= {cfg.url: cfg for cfg in service.urls}
     containers = list(planned.containers) if planned is not None else []
     urls = [known.get(u) or UrlCheckConfig(url=u) for u in (planned.urls if planned else [])]
     if containers or urls:
         return containers, urls
     if service is not None:
-        names = [c.name for c in service.containers if c.name not in service.protected]
-        return names, list(service.urls)
+        return [c.name for c in service.containers], list(service.urls)
     acted = proposal.steps if proposal is not None else []
     return [s.target for s in acted if s.action.startswith("docker.")], []
 
@@ -107,7 +115,6 @@ def make(deps: GraphDeps) -> Node:
         result = VerificationResult(ok=False)
         if not containers and not urls:
             # Nothing to look at is not a pass, and another look at nothing would not help either.
-            result = VerificationResult(ok=False, checks=[])
             await deps.bus.publish(incident_id, "verification", _payload(result))
         else:
             await deps.sleep(SETTLE_S)

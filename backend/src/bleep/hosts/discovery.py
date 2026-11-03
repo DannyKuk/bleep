@@ -52,7 +52,7 @@ def group_services(
     """Group containers into services, in order of first appearance. Pure."""
     groups: dict[str, tuple[str, str, list[ContainerSummary]]] = {}
     for container in containers:
-        if container.labels.get(SELF_LABEL) == "true":
+        if is_self(container.labels):
             continue
         key, name, source = _classify(container)
         if key not in groups:

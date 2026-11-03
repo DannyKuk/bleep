@@ -3,9 +3,11 @@ run a step twice.
 
 Before the first step every target is read again and compared with the snapshot taken when the
 human was asked: a target that is gone, recreated (another container id) or started again
-(another start time) since then makes the plan stale, and so does an approval that is not the one
-this run consumed. Every step then goes through its act tool's own checks (the grant against the
-stored plan, and the target against the guard's rules). A stale or refused plan runs nothing: the
+(another start time with the same restart count) since then makes the plan stale, and so does an
+approval that is not the one this run consumed. A start time moved by a rising restart count is a
+restart policy repeating the failure the human approved a fix for, so it is not stale. Every step
+then goes through its act tool's own checks (the grant against the stored plan, and the target
+against the guard's rules). A stale or refused plan runs nothing: the
 grant is voided, a `notice` says why, and the run goes back to Propose for a new plan and a new
 question, at most `Budgets.replans` times (`graph/replan.py`).
 
@@ -16,9 +18,10 @@ results are appended to `step_results`. Then Verify judges what happened.
 
 A node rerun after a crash reads the log first. A finished step is never run again. A step left
 `started` may have reached the engine, so it is never run again either: its target is read on the
-host and the step counts as done when its effect shows (the container started, or stopped, at or
-after the step's start time), else as failed. A step not yet started is checked against its
-snapshot again before it runs, since the first check happened before the crash.
+host and the step counts as done when its effect shows (the container started, or stopped, later
+than the start time in the approval's snapshot, both on the host's clock), else as failed. A step
+not yet started is checked against its snapshot again before it runs, since the first check
+happened before the crash.
 
 The log's plan key is the plan hash followed by the approval's id: the same plan approved twice
 (after Verify sent the run back) has the same hash and must still run the second time.
@@ -26,7 +29,6 @@ See docs/design/graph.md.
 """
 
 import logging
-from datetime import datetime
 from typing import Literal
 
 from bleep.graph.deps import GraphDeps
@@ -36,6 +38,7 @@ from bleep.guard.grant import GrantInvalid
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import (
+    REFUSED_DETAIL,
     ApprovalRecord,
     LoggedStep,
     PlanStep,
@@ -104,21 +107,51 @@ async def _changes(
             changes.append(f"{where} {why}")
         elif summary.id != snapshot.container_id:
             changes.append(f"{where} was recreated")
-        elif key not in touched and summary.started_at != snapshot.started_at:
+        elif key not in touched and _started_again(snapshot, summary):
             changes.append(f"{where} was started again")
     return changes
 
 
-def _took_effect(step: PlanStep, summary: ContainerSummary, since: datetime | None) -> bool:
-    """Whether the host shows `step`'s effect at or after `since`, the step's logged start."""
-    if since is None:
+def _started_again(snapshot: TargetSnapshot, summary: ContainerSummary) -> bool:
+    """Whether someone started the container since approval.
+
+    A restart policy restarts a crash-looping container on its own and moves its start time
+    every time; that raises the restart count, and the human approved a fix for exactly that
+    failure, so it is not a change. A moved start time with the same count is a start by hand
+    (or by another tool). Without a count (an approval stored before #87) any move counts.
+    """
+    if summary.started_at == snapshot.started_at:
         return False
+    policy_restarted = (
+        snapshot.restart_count is not None and summary.restart_count > snapshot.restart_count
+    )
+    return not policy_restarted
+
+
+def _took_effect(step: PlanStep, summary: ContainerSummary, snapshot: TargetSnapshot) -> bool:
+    """Whether the host shows `step`'s effect: a start or a finish later than the start time the
+    snapshot holds.
+
+    Both times are the host's own, so a host clock ahead of or behind Bleep's does not matter.
+    The check before the step found the start time unchanged (or moved only by a restart
+    policy), so a later start or finish is the step's doing; under a restart policy it may be
+    the policy's, and Verify judges the service either way.
+    """
+    before = snapshot.started_at
     if step.action in ("docker.restart", "docker.start"):
         started = summary.started_at
-        return summary.state == "running" and started is not None and started >= since
+        return (
+            summary.state == "running"
+            and started is not None
+            and (before is None or started > before)
+        )
     if step.action == "docker.stop":
         finished = summary.finished_at
-        return summary.state != "running" and finished is not None and finished >= since
+        return (
+            summary.state != "running"
+            and finished is not None
+            and (before is None or finished > before)
+        )
     return False
 
 
@@ -148,11 +181,11 @@ def make(deps: GraphDeps) -> Node:
     ) -> StepResult:
         incident_id = state["incident_id"]
         started = await deps.action_log.start(incident_id, _plan_key(plan), index, step)
-        if started is None:  # finished by an earlier attempt after all: never run it again
+        if started is None:  # an earlier attempt wrote the step after all: never run it again
             row = next(
                 s
                 for s in await deps.action_log.steps(incident_id)
-                if s.plan_hash == _plan_key(plan) and s.result.step_index == index
+                if s.plan_key == _plan_key(plan) and s.result.step_index == index
             )
             return row.result
         await publish(incident_id, step, "started")
@@ -167,13 +200,13 @@ def make(deps: GraphDeps) -> Node:
             # The logged start, as the action log keeps it and a rerun reads it back.
             result = ran.model_copy(update={"started_at": started})
         except (GrantInvalid, StepRefused) as refusal:
+            # Nothing reached the engine: no start time in the result (the log row keeps its).
             result = StepResult(
                 step_index=index,
                 action=step.action,
                 target=step.target,
                 ok=False,
-                detail=f"refused, nothing ran: {refusal}",
-                started_at=started,
+                detail=f"{REFUSED_DETAIL}: {refusal}",
                 finished_at=deps.clock(),
             )
         await deps.action_log.finish(incident_id, _plan_key(plan), result)
@@ -190,7 +223,7 @@ def make(deps: GraphDeps) -> Node:
         summary, why = await _read(
             deps, step.host_id, snapshot.container_id if snapshot else step.target
         )
-        if summary is not None and _took_effect(step, summary, since):
+        if summary is not None and snapshot is not None and _took_effect(step, summary, snapshot):
             word = DONE_WORD.get(step.action, "ran")
             ok, detail = True, f"{word} {step.target}, confirmed after a restart"
         else:
@@ -220,8 +253,14 @@ def make(deps: GraphDeps) -> Node:
         )
 
     async def back_to_propose(state: IncidentState, notice: str) -> dict:
+        """Void the grant and plan again. The decision goes too, since the yes was for this plan
+        and a next "no action" must not report it; a run out of re-plans keeps it, so its
+        report says the human approved and Bleep stopped."""
         log.info("execute: %s back to propose: %s", state["incident_id"], notice)
-        return {"grant": None, **await replan(deps, state, notice)}
+        update = await replan(deps, state, notice)
+        if update.get("outcome") is None:
+            update["decision"] = None
+        return {"grant": None, **update}
 
     async def execute(state: IncidentState) -> dict:
         incident_id = state["incident_id"]
@@ -241,7 +280,7 @@ def make(deps: GraphDeps) -> Node:
         logged = {
             s.result.step_index: s
             for s in await deps.action_log.steps(incident_id)
-            if s.plan_hash == _plan_key(plan)
+            if s.plan_key == _plan_key(plan)
         }
         if not logged:  # nothing of this plan has run: check everything before the first step
             changes = await _changes(deps, plan, steps, set())

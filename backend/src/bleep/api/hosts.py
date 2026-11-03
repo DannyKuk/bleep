@@ -183,9 +183,13 @@ async def get_service(
     routes under `/services/{id}/facts` are registered before it (`main.create_app`).
     """
     service = parts.registry.service(service_id)
-    if service is None:
+    host = (
+        next((h for h in parts.registry.hosts() if h.config.id == service.host_id), None)
+        if service is not None
+        else None
+    )
+    if service is None or host is None:
         raise HTTPException(404, "no such service")
-    host = next(h for h in parts.registry.hosts() if h.config.id == service.host_id)
     subject = Subject(kind="service", host_id=service.host_id, service_id=service.id)
     return ServiceDetail(
         service=_view(service, await parts.incidents.open_incident_id(subject)),

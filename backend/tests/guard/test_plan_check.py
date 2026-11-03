@@ -202,3 +202,20 @@ async def test_a_verification_url_must_be_a_health_check_of_the_host(tmp_path):
         kind="no_action", reason="r", verification=VerificationPlan(urls=["http://x.example/"])
     )
     assert check_plan(nothing_runs, env.registry, CORE, "a") == []  # Verify never runs for it
+
+
+async def test_a_verification_container_must_be_on_the_host(tmp_path):
+    """M5: Verify inspects every named container; a wrong name would fail every check."""
+    env = await graph_env(tmp_path, engine=guarded_engine(), host=guarded_host())
+
+    def check(*containers: str) -> list:
+        planned = act(restart("shop-web-1")).model_copy(
+            update={"verification": VerificationPlan(containers=list(containers))}
+        )
+        return check_plan(planned, env.registry, CORE, "a")
+
+    # Reading a protected or Bleep's own container is harmless: only a name not there is refused.
+    assert check("shop-web-1", "shop-db-1", "bleep-backend-1") == []
+    refused = check("shop-web-1", "shop_web")
+    assert [(v.rule, v.step) for v in refused] == [("unknown_container", None)]
+    assert "shop_web" in refused[0].text and "host a" in refused[0].text

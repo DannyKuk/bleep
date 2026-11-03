@@ -181,7 +181,6 @@ export type Outcome =
   | "no_action"
   | "unverified"
   | "budget"
-  | "unsure"
   | "replan_limit";
 
 export interface TimelineEntry {

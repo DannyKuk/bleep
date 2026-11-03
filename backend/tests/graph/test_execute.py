@@ -26,6 +26,10 @@ def start(target: str) -> PlanStep:
     return PlanStep(action="docker.start", host_id="a", target=target)
 
 
+def stop(target: str) -> PlanStep:
+    return PlanStep(action="docker.stop", host_id="a", target=target)
+
+
 def engine() -> FakeEngine:
     return FakeEngine(
         "a",
@@ -47,7 +51,11 @@ class Env:
         self.engine: FakeEngine = env.engine
         self.deps.action_log.clock = lambda: STARTED_AT
 
-    async def approve(self, *steps: PlanStep, incident_id: str | None = None) -> dict:
+    async def approve(
+        self, *steps: PlanStep, incident_id: str | None = None, counts: bool = True
+    ) -> dict:
+        """Approve `steps`; `counts=False` snapshots as an approval stored before #87 did, with
+        no restart count or state."""
         if incident_id is None:
             subject = Subject(kind="service", host_id="a", service_id=self.env.service_id("shop"))
             incident_id = (await self.env.open(subject)).id
@@ -61,6 +69,8 @@ class Env:
                     target=target,
                     container_id=summary.id,
                     started_at=summary.started_at,
+                    restart_count=summary.restart_count if counts else None,
+                    state=summary.state if counts else None,
                 )
             )
         request = await self.deps.approvals.request(incident_id, proposal, snapshots)
@@ -131,6 +141,8 @@ async def test_a_container_recreated_since_approval_goes_back_to_propose_untouch
     assert env.acts() == []  # not even the step whose target did not change
     assert await env.logged(state["incident_id"]) == []
     assert update["grant"] is None and update["replans"] == 1
+    # The yes was for this plan: a next plan of "no action" must not read "Approved on ...".
+    assert update["decision"] is None
     assert route == "propose"
     notice = (await env.events(state["incident_id"], "notice"))[-1]["text"]
     assert "state changed since approval" in notice
@@ -146,6 +158,53 @@ async def test_a_container_started_again_since_approval_is_stale_too(env):
     assert env.acts() == [] and route == "propose"
     notice = (await env.events(state["incident_id"], "notice"))[-1]["text"]
     assert "shop-db-1 on a was started again" in notice
+
+
+async def test_a_crash_looping_container_is_acted_on_at_the_first_approval(env):
+    """I1 (the M3 review's repro): Docker's restart policy restarts a failing container on its
+    own and moves its start time each time. A rising restart count is that policy repeating the
+    failure the human approved a fix for, not a reason to ask again."""
+    env.replace("shop-db-1", state="restarting", restart_count=5)
+    replans, rounds, route, update = 0, 0, "propose", {}
+    state: dict = {}
+    while route == "propose":
+        rounds += 1
+        state = await env.approve(restart("shop-db-1"), incident_id=state.get("incident_id"))
+        state["replans"] = replans
+        # The human takes a minute to answer; the policy restarted the container meanwhile.
+        env.replace(
+            "shop-db-1", started_at=T0 + timedelta(minutes=rounds), restart_count=5 + rounds
+        )
+        update, route = await env.run(state)
+        replans = update.get("replans", replans)
+
+    assert rounds == 1 and route == "verify"  # one yes was enough
+    assert env.acts() == [("restart", "shop-db-1")]
+    assert await env.logged(state["incident_id"]) == [(0, "done")]
+    assert await env.events(state["incident_id"], "notice") == []
+
+
+async def test_a_container_started_by_hand_since_approval_is_stale_even_in_a_crash_loop(env):
+    """The opposite case: the same id and restart count with a moved start time is a start by
+    hand (or by another tool), so the human approved a plan for a world that has changed."""
+    env.replace("shop-db-1", state="restarting", restart_count=5)
+    state = await env.approve(restart("shop-db-1"))
+    env.replace("shop-db-1", state="running", started_at=LATER)  # restart count unchanged
+
+    update, route = await env.run(state)
+
+    assert env.acts() == [] and route == "propose" and update["grant"] is None
+    notice = (await env.events(state["incident_id"], "notice"))[-1]["text"]
+    assert "shop-db-1 on a was started again" in notice
+
+
+async def test_an_approval_stored_without_a_restart_count_treats_any_new_start_as_stale(env):
+    state = await env.approve(restart("shop-db-1"), counts=False)
+    env.replace("shop-db-1", started_at=LATER, restart_count=1)
+
+    update, route = await env.run(state)
+
+    assert env.acts() == [] and route == "propose"
 
 
 async def test_a_target_gone_since_approval_is_stale(env):
@@ -200,6 +259,52 @@ async def test_a_crash_after_started_does_not_restart_again_when_it_took_effect(
     assert first.ok and "confirmed after a restart" in first.detail
     assert first.started_at == STARTED_AT
     assert route == "verify"
+
+
+async def test_a_crash_after_started_is_judged_on_the_hosts_clock_not_bleeps(env):
+    """The host's clock runs a minute behind Bleep's: the restart's new start time is earlier
+    than the action log's start, yet later than the start time the snapshot holds."""
+    state = await env.approve(restart("shop-db-1"))
+    plan = await env.deps.approvals.current(state["incident_id"])
+    await env.deps.action_log.start(
+        state["incident_id"], f"{plan.plan_hash}:{plan.id}", 0, restart("shop-db-1")
+    )
+    env.replace("shop-db-1", started_at=STARTED_AT - timedelta(seconds=30))
+
+    update, route = await env.run(state)
+
+    assert env.acts() == []
+    assert await env.logged(state["incident_id"]) == [(0, "done")]
+    assert "confirmed after a restart" in update["step_results"][0].detail
+
+
+async def test_a_crashed_stop_is_confirmed_when_the_container_stopped_after_approval(env):
+    state = await env.approve(stop("shop-db-1"))
+    plan = await env.deps.approvals.current(state["incident_id"])
+    await env.deps.action_log.start(
+        state["incident_id"], f"{plan.plan_hash}:{plan.id}", 0, stop("shop-db-1")
+    )
+    env.replace("shop-db-1", state="exited", finished_at=APPROVED_AT + timedelta(seconds=5))
+
+    update, route = await env.run(state)
+
+    assert env.acts() == []  # never stopped twice
+    assert await env.logged(state["incident_id"]) == [(0, "done")]
+    assert update["step_results"][0].detail == "stopped shop-db-1, confirmed after a restart"
+
+
+async def test_a_crashed_stop_with_the_container_still_running_fails_without_a_second_stop(env):
+    state = await env.approve(stop("shop-db-1"))
+    plan = await env.deps.approvals.current(state["incident_id"])
+    await env.deps.action_log.start(
+        state["incident_id"], f"{plan.plan_hash}:{plan.id}", 0, stop("shop-db-1")
+    )
+
+    update, route = await env.run(state)
+
+    assert env.acts() == []
+    assert await env.logged(state["incident_id"]) == [(0, "failed")]
+    assert "not run again" in update["step_results"][0].detail
 
 
 async def test_a_crash_after_started_with_no_sign_of_the_step_fails_it_without_running_it(env):
@@ -270,6 +375,31 @@ async def test_a_step_the_guard_refuses_now_runs_no_step_at_all(env):
     assert "checks refused it" in notice and "Bleep's own" in notice
 
 
+async def test_a_step_refused_at_run_time_has_no_start_time_in_its_result(env, monkeypatch):
+    """M2: the guard refuses step 2 after step 1 ran; nothing of step 2 reached the engine."""
+    state = await env.approve(restart("shop-db-1"), restart("shop-cache-1"))
+    real_restart = env.engine.restart
+
+    async def restart_then_cache_turns_into_bleeps_own(container: str) -> None:
+        await real_restart(container)
+        env.replace("shop-cache-1", labels={"bleep.self": "true"})
+        await env.deps.registry.refresh("a")
+
+    monkeypatch.setattr(env.engine, "restart", restart_then_cache_turns_into_bleeps_own)
+
+    update, route = await env.run(state)
+
+    assert env.acts() == [("restart", "shop-db-1")]
+    refused = update["step_results"][1]
+    assert refused.refused and refused.started_at is None and not refused.reached_engine
+    assert await env.logged(state["incident_id"]) == [(0, "done"), (1, "failed")]
+    [row] = [
+        s for s in await env.deps.action_log.steps(state["incident_id"]) if s.status == "failed"
+    ]
+    assert row.result.started_at == STARTED_AT and row.result.refused  # the ledger keeps its time
+    assert route == "verify"
+
+
 async def test_an_approval_that_is_not_the_consumed_one_runs_nothing(env):
     state = await env.approve(restart("shop-db-1"))
     state["proposal"] = state["proposal"].model_copy(update={"steps": [restart("shop-cache-1")]})
@@ -288,6 +418,7 @@ async def test_out_of_replans_a_stale_plan_ends_the_run(env):
     update, route = await env.run(state)
 
     assert update["outcome"] == "replan_limit" and route == "report"
+    assert "decision" not in update  # the report says the human approved, then Bleep stopped
     notice = (await env.events(state["incident_id"], "notice"))[-1]["text"]
     assert "state changed since approval" in notice and "stopped after 2 new plans" in notice
 

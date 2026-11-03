@@ -50,8 +50,8 @@ def healthy_engine() -> FakeEngine:
     )
 
 
-async def setup(tmp_path, replies, plan=None, sleeps=None, engine=None, urls=True):
-    host = shop_host(
+async def setup(tmp_path, replies, plan=None, sleeps=None, engine=None, urls=True, host=None):
+    host = host or shop_host(
         services={"shop": ServiceOverrides(urls=[UrlCheckConfig(url=URL)] if urls else [])}
     )
     env = await graph_env(tmp_path, engine=engine or healthy_engine(), host=host)
@@ -189,6 +189,29 @@ async def test_an_empty_plan_falls_back_to_the_services_containers_and_urls(tmp_
     assert update["outcome"] == "resolved"
 
 
+async def test_the_fallback_keeps_a_protected_container_since_reading_it_is_harmless(tmp_path):
+    """A protected database still down must fail the check, not be left out of it."""
+    host = shop_host(
+        services={
+            "shop": ServiceOverrides(
+                urls=[UrlCheckConfig(url=URL)], protected_containers=["shop-db-1"]
+            )
+        }
+    )
+    engine = FakeEngine(
+        "a", [box("shop-web-1", "shop", health="healthy"), box("shop-db-1", "shop", state="exited")]
+    )
+    env, state = await setup(
+        tmp_path, Replies(200), plan=VerificationPlan(), engine=engine, host=host
+    )
+
+    update, _ = await run(env, state)
+
+    targets = [(c.target, c.ok) for c in update["verification"].checks if c.kind == "container"]
+    assert targets == [("shop-web-1", True), ("shop-db-1", False)]
+    assert "outcome" not in update  # not resolved: the database is down
+
+
 async def test_with_nothing_to_check_it_is_unverified_at_once(tmp_path):
     env, state = await setup(tmp_path, Replies(200), plan=VerificationPlan())
     state["subject"] = Subject(kind="host", host_id="a")
@@ -209,6 +232,30 @@ async def test_a_plan_url_unknown_to_the_service_is_checked_too(tmp_path):
 
     update, _ = await run(env, state)
 
+    assert [(c.kind, c.ok) for c in update["verification"].checks] == [("url", True)]
+
+
+async def test_a_plan_url_of_another_service_on_the_host_keeps_its_own_config(tmp_path):
+    """M6: the plan check allows any health check of the host, so Verify must find its expected
+    status and body text wherever the hosts file puts it."""
+    blog = UrlCheckConfig(url="https://blog.example/", expect_status=204, body_contains="ok")
+    seen: list[str] = []
+
+    def replies(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(204, text="all ok")
+
+    host = shop_host(
+        services={
+            "shop": ServiceOverrides(urls=[UrlCheckConfig(url=URL)]),
+            "blog": ServiceOverrides(urls=[blog]),
+        }
+    )
+    env, state = await setup(tmp_path, replies, plan=VerificationPlan(urls=[blog.url]), host=host)
+
+    update, _ = await run(env, state)
+
+    assert seen == [blog.url]
     assert [(c.kind, c.ok) for c in update["verification"].checks] == [("url", True)]
 
 

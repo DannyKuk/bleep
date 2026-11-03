@@ -6,7 +6,7 @@ never `resolved`. The report around it is mostly Bleep's own: the title, the fix
 the action taken (from `step_results`), the human's decision with its channel, and a timeline
 built from the incident's stored bus events. One model call writes the summary, the cause and the
 follow-ups from that record, without any log text; what it writes is cut to size, loses every
-sentence that says "fixed" unless the outcome is `resolved`, and goes through
+sentence that says "fixed" unless the outcome reads "Fixed and verified", and goes through
 `guard.report_check` against the logs the run read. A model that fails or a spent budget gives a
 report written from the record alone. The report is published as a `report` event, sent through
 `Notifier.report` for every outcome, remembered in long-term memory with the human's decision
@@ -31,24 +31,36 @@ from bleep.graph.deps import GraphDeps
 from bleep.graph.state import IncidentState, Node
 from bleep.guard.log import GuardKind
 from bleep.guard.report_check import check_report
-from bleep.llm.structured import invoke_structured
-from bleep.llm.usage import UsageTracker, check_budget
-from bleep.schemas.graph import Decision, Diagnosis, Outcome, Proposal, Report, StepResult
+from bleep.llm.structured import StructuredOutputFailed, invoke_structured
+from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget
+from bleep.schemas.graph import (
+    FACT_CHARS,
+    Decision,
+    Diagnosis,
+    Outcome,
+    Proposal,
+    Report,
+    StepResult,
+)
 from bleep.schemas.graph import TimelineEntry as Entry
 from bleep.schemas.incidents import Incident, IncidentEvent, Signal
 
 log = logging.getLogger(__name__)
 
-# What the report says for each outcome; only `resolved` may ever say fixed.
+# What the report says for each outcome; only `resolved` may ever say fixed (see `outcome_text`).
 OUTCOME_TEXT: dict[str, str] = {
     "resolved": "Fixed and verified",
     "unverified": "Action taken, not verified",
     "rejected": "Rejected, nothing was done",
     "no_action": "No action proposed, nothing was done",
-    "unsure": "Cause not found, nothing was done",
     "budget": "Stopped, the model budget is spent",
     "replan_limit": "Stopped after too many new plans",
 }
+# `resolved` when the checks passed but no step of the plan succeeded: the service came back on its
+# own (a restart policy, Coolify), so it is not "Fixed".
+HEALTHY_ANYWAY = "Healthy again (verified); no step of the plan succeeded"
+# Added to an early stop (budget, re-plans) after Verify sent back a run in which a step ran.
+NOT_VERIFIED = "an earlier action was not verified"
 CHANNEL = {"telegram": "Telegram", "dashboard": "the dashboard"}
 FINISHED = {"gather": "Gathered the context", "diagnose": "Diagnosed"}
 SUMMARY_CHARS = 800
@@ -58,7 +70,6 @@ FOLLOW_UP_CHARS = 300
 ENTRY_CHARS = 200
 NOT_DETERMINED = "Not determined."
 MAX_FACTS = 2
-FACT_CHARS = 200
 
 _FIXED = re.compile(r"\bfixed\b", re.IGNORECASE)
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
@@ -83,7 +94,7 @@ def outcome(state: IncidentState) -> Outcome:
     `unverified`, and the rest follows the decision."""
     if state.get("outcome"):
         return state["outcome"]  # type: ignore[return-value]
-    if any(r.started_at is not None for r in state.get("step_results") or []):
+    if any(r.reached_engine for r in state.get("step_results") or []):
         return "unverified"  # a later plan was rejected or empty, but an earlier one ran
     decision = state.get("decision")
     proposal = state.get("proposal")
@@ -92,6 +103,17 @@ def outcome(state: IncidentState) -> Outcome:
     if proposal is None or proposal.kind == "no_action":
         return "no_action"
     return "unverified"  # approved, but nothing ran or was checked: never claim "fixed"
+
+
+def outcome_text(result: Outcome, results: list[StepResult] | None) -> str:
+    """The outcome's fixed text, told apart where the outcome alone would mislead: a pass with no
+    step that succeeded, and an early stop after an action Verify could not confirm."""
+    results = results or []
+    if result == "resolved" and not any(r.ok for r in results):
+        return HEALTHY_ANYWAY
+    if result in ("budget", "replan_limit") and any(r.reached_engine for r in results):
+        return f"{OUTCOME_TEXT[result]}; {NOT_VERIFIED}"
+    return OUTCOME_TEXT[result]
 
 
 def _clip(text: str, limit: int) -> str:
@@ -180,7 +202,8 @@ def action_taken(
 
     A `StepResult` names no host, so each step's host is read from the plan step at its
     `step_index`, falling back to the incident's host (a plan only ever acts on that host). A step
-    that never started (one after a failed step) reads "skipped".
+    that never started (one after a failed step) reads "skipped", and one the act tool refused at
+    run time "refused".
     """
     if not results:
         return None
@@ -192,6 +215,8 @@ def action_taken(
     def status(r: StepResult) -> str:
         if r.ok:
             return "done"
+        if r.refused:
+            return "refused"
         return "skipped" if r.started_at is None else "failed"
 
     return "; ".join(f"{r.action} {r.target} on {host(r)}: {status(r)}" for r in results)
@@ -241,9 +266,13 @@ async def _write(deps: GraphDeps, incident_id: str, prompt: str) -> _Draft:
     """The model's draft; an empty one when the budget is spent or the model fails."""
     try:
         return await _ask(deps, incident_id, _Draft, prompt)
-    except Exception as error:  # the run must end with a report whatever the model does
+    except (BudgetExceeded, StructuredOutputFailed) as error:  # expected: the type says it all
         log.warning("report: writing from the record only (%s)", type(error).__name__)
-        return _Draft()
+    except Exception as error:  # the run must end with a report whatever the model does
+        log.warning(
+            "report: writing from the record only (%s)", type(error).__name__, exc_info=True
+        )
+    return _Draft()
 
 
 async def _learn(deps: GraphDeps, state: IncidentState) -> None:
@@ -297,19 +326,21 @@ def make(deps: GraphDeps) -> Node:
     async def report(state: IncidentState) -> dict:
         incident_id = state["incident_id"]
         result = outcome(state)
-        outcome_text = OUTCOME_TEXT[result]
+        results = state.get("step_results")
+        said = outcome_text(result, results)
+        fixed = said == OUTCOME_TEXT["resolved"]  # only then may the report say "fixed"
         incident = await deps.incidents.get(incident_id)
         title = incident.title if incident is not None else state["subject"].key
         diagnosis, proposal = state.get("diagnosis"), state.get("proposal")
         decision: Decision | None = state.get("decision")
         human = decision_text(decision.kind, decision.via, decision.text) if decision else None
-        taken = action_taken(state.get("step_results"), proposal, state["subject"].host_id)
+        taken = action_taken(results, proposal, state["subject"].host_id)
         entries = timeline(state.get("signals", []), await deps.bus.history(incident_id))
 
         prompt = prompts.load(
             "graph/report",
             title=title,
-            outcome=outcome_text,
+            outcome=said,
             diagnosis=_describe_diagnosis(diagnosis),
             plan=_describe_plan(proposal),
             decision=human or "(the human was not asked)",
@@ -320,7 +351,7 @@ def make(deps: GraphDeps) -> Node:
 
         def own(text: str, limit: int) -> str:
             text = _clip(text, limit)
-            return text if result == "resolved" else _no_fixed_claim(text)
+            return text if fixed else _no_fixed_claim(text)
 
         follow_ups = [own(item, FOLLOW_UP_CHARS) for item in draft.follow_ups[:FOLLOW_UPS]]
         follow_ups = [item for item in follow_ups if item]
@@ -329,11 +360,10 @@ def make(deps: GraphDeps) -> Node:
         root_cause = diagnosis.root_cause if diagnosis is not None else ""
         written = Report(
             title=title,
-            summary=own(draft.summary, SUMMARY_CHARS)
-            or f"{title}: {outcome_text[0].lower()}{outcome_text[1:]}.",
+            summary=own(draft.summary, SUMMARY_CHARS) or f"{title}: {said[0].lower()}{said[1:]}.",
             cause=own(draft.cause, CAUSE_CHARS) or own(root_cause, CAUSE_CHARS) or NOT_DETERMINED,
             action_taken=taken,
-            outcome=outcome_text,
+            outcome=said,
             timeline=entries,
             follow_ups=[item for item in follow_ups if item],
             human_decision=human,

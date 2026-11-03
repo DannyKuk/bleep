@@ -26,7 +26,7 @@ class IncidentRunner:
     """`approvals` is the store the graph's Approval node uses; with it, a decision recorded
     while the run was not waiting (Bleep died between the decision and the resume) is delivered
     when the run is started again. `notifier` hears `incident_opened` once, when a new
-    incident's run starts, whatever the run ends with."""
+    incident's run starts, whatever the run ends with, and a `notice` when a run fails."""
 
     def __init__(
         self,
@@ -161,6 +161,18 @@ class IncidentRunner:
         except Exception as error:
             log.warning("incident %s: announcing it failed: %s", incident.id, type(error).__name__)
 
+    async def _tell(self, incident_id: str, text: str) -> None:
+        """Send a notice to the channels: a human who approved on Telegram hears of a run that
+        died there too. A channel outage is logged and changes nothing."""
+        if self.notifier is None:
+            return
+        try:
+            await self.notifier.notice(incident_id, text)
+        except Exception as error:
+            log.warning(
+                "incident %s: telling the channels failed: %s", incident_id, type(error).__name__
+            )
+
     async def _decided(self, incident_id: str) -> Decision | None:
         """The decision on the incident's latest approval, if it has been decided."""
         if self.approvals is None:
@@ -190,12 +202,13 @@ class IncidentRunner:
             await self.graph.ainvoke(payload, config)
         except Exception as error:  # a broken run must not take the runner down
             log.exception("incident %s: graph run failed", incident_id)
+            text = f"The run stopped on an error ({type(error).__name__}); see the backend log."
             try:
                 await self.repo.set_status(incident_id, "failed")
-                text = f"The run stopped on an error ({type(error).__name__}); see the backend log."
                 await self.bus.publish(incident_id, "notice", {"text": text})
             except Exception:
                 log.exception("incident %s: recording the failure failed", incident_id)
+            await self._tell(incident_id, text)
             return
         snapshot = await self.graph.aget_state(config)
         if snapshot.interrupts:

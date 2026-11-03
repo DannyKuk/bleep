@@ -283,7 +283,6 @@ OUTCOMES = {
     "unverified": "Action taken, not verified",
     "rejected": "Rejected, nothing was done",
     "no_action": "No action proposed, nothing was done",
-    "unsure": "Cause not found, nothing was done",
     "budget": "Stopped, the model budget is spent",
     "replan_limit": "Stopped after too many new plans",
 }
@@ -293,6 +292,8 @@ OUTCOMES = {
 async def test_every_outcome_is_reported_stored_and_published(tmp_path, outcome):
     env, state, notified = await setup(tmp_path, written())
     state |= {"proposal": ACT, "decision": decide("approve"), "outcome": outcome}
+    if outcome == "resolved":
+        state["step_results"] = [RESULT]  # a verified fix that Bleep's step made
 
     update = await run(env, state)
 
@@ -388,3 +389,92 @@ def test_action_taken_falls_back_to_the_incidents_host():
     assert report.action_taken([beyond], ACT, "a") == "docker.start shop-web-1 on a: done"
     assert report.action_taken([RESULT], None, "c") == "docker.start shop-web-1 on c: done"
     assert report.action_taken([], ACT, "a") is None
+
+
+REFUSED = StepResult(
+    step_index=0,
+    action="docker.start",
+    target="shop-web-1",
+    ok=False,
+    detail="refused, nothing ran: step 1 (docker.start shop-web-1 on a): protected",
+)
+
+
+def test_a_refused_step_is_named_refused_and_counts_as_nothing_started():
+    """M2: a step the act tool refused at run time never reached the engine."""
+    assert report.action_taken([REFUSED], ACT, "a") == "docker.start shop-web-1 on a: refused"
+    # The log row keeps its start time; read back after a crash, it is still not "started".
+    logged = REFUSED.model_copy(update={"started_at": T0})
+    assert report.action_taken([logged], ACT, "a") == "docker.start shop-web-1 on a: refused"
+    state = {"proposal": NO_ACTION, "step_results": [logged]}
+    assert report.outcome(state) == "no_action"
+
+
+async def test_healthy_again_with_no_step_that_succeeded_is_not_called_fixed(tmp_path):
+    """M3: the service came back on its own (a restart policy, Coolify) while every step failed."""
+    claims = written(summary="Bleep fixed shop-web. It answers again.")
+    env, state, notified = await setup(tmp_path, claims)
+    failed = RESULT.model_copy(update={"ok": False, "detail": "the engine refused the request"})
+    state |= {
+        "proposal": ACT,
+        "decision": decide("approve"),
+        "step_results": [failed.model_copy(update={"started_at": T0})],
+        "outcome": "resolved",
+    }
+
+    update = await run(env, state)
+
+    assert update["outcome"] == "resolved"
+    written_report: Report = update["report"]
+    assert written_report.outcome == "Healthy again (verified); no step of the plan succeeded"
+    assert "fixed" not in written_report.model_dump_json().lower()
+    assert written_report.action_taken == "docker.start shop-web-1 on a: failed"
+
+
+@pytest.mark.parametrize(
+    ("outcome", "text"),
+    [
+        ("budget", "Stopped, the model budget is spent; an earlier action was not verified"),
+        ("replan_limit", "Stopped after too many new plans; an earlier action was not verified"),
+    ],
+)
+async def test_an_early_stop_after_an_action_says_the_action_was_not_verified(
+    tmp_path, outcome, text
+):
+    """M4: Verify sent the run back after a restart, and the next round ran out of budget or
+    re-plans."""
+    env, state, _ = await setup(tmp_path, written())
+    ran = RESULT.model_copy(update={"started_at": T0})
+    state |= {"proposal": ACT, "step_results": [ran], "outcome": outcome}
+
+    update = await run(env, state)
+
+    assert update["outcome"] == outcome
+    assert update["report"].outcome == text
+
+
+async def test_a_bug_in_the_report_call_is_logged_with_its_traceback(tmp_path, caplog):
+    env, state, _ = await setup(tmp_path)
+
+    def broken(_role):
+        raise AttributeError("a bug, not a model failure")
+
+    env.deps.models = broken  # type: ignore[assignment]
+    state |= {"proposal": NO_ACTION}
+
+    update = await run(env, state)
+
+    assert update["report"].outcome == "No action proposed, nothing was done"
+    [record] = [r for r in caplog.records if "writing from the record only" in r.getMessage()]
+    assert record.exc_info is not None and record.exc_info[0] is AttributeError
+
+
+async def test_a_spent_budget_is_logged_without_a_traceback(tmp_path, caplog):
+    env, state, _ = await setup(tmp_path)
+    env.deps.settings_store = StaticSettings(budget_limits=Budgets(daily_cost_usd=0))
+    state |= {"proposal": NO_ACTION}
+
+    await run(env, state)
+
+    [record] = [r for r in caplog.records if "writing from the record only" in r.getMessage()]
+    assert record.exc_info is None

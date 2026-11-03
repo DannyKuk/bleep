@@ -6,6 +6,8 @@ from typing import Literal, Self
 from pydantic import BaseModel, Field, model_validator
 
 from bleep.schemas.graph import (
+    FACT_CHARS,
+    NOTE_CHARS,
     Decision,
     Diagnosis,
     Feedback,
@@ -132,9 +134,6 @@ class DecisionConflict(BaseModel):
     decided_via: Literal["telegram", "dashboard"] | None = None
 
 
-NOTE_CHARS = 500
-
-
 class FeedbackBody(BaseModel):
     """A thumbs up or down on the incident's diagnosis or plan; the note is trimmed and an empty
     one dropped."""
@@ -152,7 +151,7 @@ class FeedbackBody(BaseModel):
 class FactBody(BaseModel):
     """A fact a person adds to a service; trimmed, and empty is refused."""
 
-    text: str = Field(max_length=NOTE_CHARS)
+    text: str = Field(max_length=FACT_CHARS)
 
     @model_validator(mode="after")
     def _has_text(self) -> Self:

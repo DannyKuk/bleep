@@ -12,9 +12,7 @@ from pydantic import BaseModel, Field
 
 from bleep.schemas.docker import ContainerSummary, HostBasics
 
-Outcome = Literal[
-    "resolved", "rejected", "no_action", "unverified", "budget", "unsure", "replan_limit"
-]
+Outcome = Literal["resolved", "rejected", "no_action", "unverified", "budget", "replan_limit"]
 Action = Literal[
     "docker.restart", "docker.stop", "docker.start", "coolify.redeploy", "coolify.set_env"
 ]
@@ -41,6 +39,12 @@ class PastIncident(BaseModel):
     human_decision: str | None = None
     feedback: str | None = None
     score: float
+
+
+# One limit for each kind of text a person or a report adds to memory, shared by the API, the
+# store and Report, so what the dashboard accepts is what memory keeps.
+FACT_CHARS = 200  # a service fact
+NOTE_CHARS = 200  # a feedback note, inside a past incident's one line
 
 
 class ServiceFact(BaseModel):
@@ -147,6 +151,8 @@ class TargetSnapshot(BaseModel):
     """A target container as it was when approval was asked; a change means a stale plan.
 
     `host_id` and `target` name it as the plan does; `container_id` is what the name resolved to.
+    `restart_count` and `state` tell a restart policy's own restarts from a start by hand; they
+    are None in an approval stored before #87, and then any new start time is stale.
     """
 
     host_id: str
@@ -154,6 +160,8 @@ class TargetSnapshot(BaseModel):
     container_id: str
     created: datetime | None = None
     started_at: datetime | None = None
+    restart_count: int | None = None
+    state: str | None = None
 
 
 class ApprovalRequest(BaseModel):
@@ -186,11 +194,14 @@ class ApprovalGrant(BaseModel):
     token: str
 
 
+REFUSED_DETAIL = "refused, nothing ran"  # how a step the act tool refused at run time begins
+
+
 class StepResult(BaseModel):
     """What one step of an approved plan did, in Bleep's own words (never host text).
 
     `step_index` is the step's 0-based place in the plan. `started_at` is None for a step that
-    never ran (skipped), `finished_at` for one that has not finished.
+    never ran (skipped, or refused at run time), `finished_at` for one that has not finished.
     """
 
     step_index: int
@@ -201,14 +212,27 @@ class StepResult(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
 
+    @property
+    def refused(self) -> bool:
+        """The act tool refused the step at run time, so it never reached the engine. Its action
+        log row keeps a start time all the same, so this reads the detail, not `started_at`."""
+        return not self.ok and self.detail.startswith(REFUSED_DETAIL)
+
+    @property
+    def reached_engine(self) -> bool:
+        """The step was started and not refused, so it may have changed the host."""
+        return self.started_at is not None and not self.refused
+
 
 StepStatus = Literal["started", "done", "failed", "skipped"]
 
 
 class LoggedStep(BaseModel):
-    """One row of the action log: a step's status in its plan, and its result so far."""
+    """One row of the action log: a step's status in its plan, and its result so far.
 
-    plan_hash: str
+    `plan_key` is the plan hash followed by the approval's id, `<hash>:<approval id>`."""
+
+    plan_key: str
     host_id: str
     status: StepStatus
     result: StepResult
