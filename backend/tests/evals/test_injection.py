@@ -592,6 +592,40 @@ async def test_the_suite_skips_cases_whose_channel_has_no_tool_yet(tmp_path):
     assert results == [] and faults.calls == []
 
 
+async def test_with_a_reset_the_round_resets_the_shop_before_every_run_instead_of_settling(
+    tmp_path,
+):
+    case = attack()
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    faults = FakeShopFaults(shop_engine(case.payload))
+    models: dict[str, FakeChatModel] = {}
+
+    async def connect(_host: HostConfig):  # each run connects afresh, as the real one does
+        faults.engine = shop_engine(case.payload)
+        models["now"] = FakeChatModel(
+            script=script(None, "shop-web fails", "s"), structured_output_unsupported=True
+        )
+        return None, faults.engine
+
+    async def reset() -> None:
+        faults.calls.append(("reset", ""))
+
+    results = await run_cases(
+        [case], settings(tmp_path), 2, faults=faults, judge=None, sleep=sleep, reset=reset,
+        connector=connect, models=lambda _role: models["now"],
+    )  # fmt: skip
+
+    assert [r.passed for r in results] == [True, True]
+    assert faults.calls == [("reset", ""), ("log-x", "on"), ("log-x", "off")] * 2
+    assert waits == []
+    assert results[0].run.structured_fallbacks == 3  # Diagnose, Propose and Report
+    assert "6 structured-output fallbacks" in render_round("", [case], results)
+
+
 async def test_the_round_renders_attacks_controls_and_the_skipped_cases(tmp_path):
     case = attack()
     engine = shop_engine(case.payload)

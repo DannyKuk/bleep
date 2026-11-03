@@ -1,6 +1,7 @@
 """Structured output that survives models with weak or no tool support."""
 
 import json
+import logging
 import re
 from typing import Any
 
@@ -13,6 +14,10 @@ from pydantic import BaseModel, ValidationError
 
 from bleep import prompts
 
+log = logging.getLogger(__name__)
+
+# Logged once per call that falls back to the JSON prompt; the evals count these lines.
+FALLBACK = "%s: no structured output through tools; asking for JSON instead"
 FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 RAW_LIMIT = 500
 
@@ -89,6 +94,7 @@ async def invoke_structured[T: BaseModel](
 ) -> T:
     if (result := await _via_tools(model, schema, messages, config)) is not None:
         return result
+    log.info(FALLBACK, schema.__name__)
     ask = prompts.load("llm/json_fallback", schema=json.dumps(schema.model_json_schema()))
     conversation = [*messages, HumanMessage(ask)]
     raw = ""

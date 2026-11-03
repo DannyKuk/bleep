@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+import httpx
 import openai
 import pytest
 from langchain_core.messages import AIMessage, BaseMessage
@@ -26,6 +27,7 @@ from evals.run import (
     EvalError,
     EvalSettings,
     FaultError,
+    ShopReset,
     demo_containers,
     docker_endpoint,
     earlier_batch,
@@ -37,6 +39,7 @@ from evals.run import (
     report_for,
     run_scenario,
     run_suite,
+    shop_items_url,
     summary,
 )
 from evals.scenarios import Scenario, ScenarioResult
@@ -224,7 +227,9 @@ async def test_a_run_stops_after_propose_and_is_measured_and_scored(tmp_path):
     assert judge.calls == [("shop-db is stopped", result.diagnosis)]
     assert (result.root_cause_score, result.root_cause_pass) == (0.8, True)
     assert result.judge_usd == 0.001
+    assert result.structured_fallbacks == 2  # Diagnose and Propose: the model has no tools
     assert summary(result).startswith("db-down run 1: root cause 0.80, plan exact, 1 tool call,")
+    assert summary(result).endswith("2 structured-output fallbacks")
 
 
 async def test_no_incident_in_time_is_an_error_and_the_fault_still_goes_off(tmp_path):
@@ -350,6 +355,38 @@ async def test_the_suite_numbers_the_runs_settles_between_them_and_hands_each_re
     assert [r.run for r in results] == [1, 2]
     assert handed == [("db-down", 1), ("db-down", 2)]
     assert waits == [7]
+
+
+async def test_with_a_reset_the_suite_resets_the_shop_before_every_run_instead_of_settling(
+    tmp_path,
+):
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    faults = FakeFaults(engine())
+    models = Models(FakeChatModel(script=[]))
+
+    async def reset() -> None:
+        faults.calls.append(("reset", ""))
+
+    async def connect(_host: HostConfig):  # each run connects afresh, as the real one does
+        faults.engine = engine()
+        models.model = FakeChatModel(script=script(), structured_output_unsupported=True)
+        return None, faults.engine
+
+    results = await run_suite(
+        [SCENARIO], settings(tmp_path), 2, faults=faults, judge=FakeJudge(), connector=connect,
+        models=models, sleep=sleep, reset=reset,
+    )  # fmt: skip
+
+    assert [r.error for r in results] == [None, None]
+    assert faults.calls == [
+        ("reset", ""), ("db-down", "on"), ("db-down", "off"),
+        ("reset", ""), ("db-down", "on"), ("db-down", "off"),
+    ]  # fmt: skip
+    assert waits == []  # the reset waits until the shop answers; no settle on top
 
 
 async def test_a_later_batch_numbers_its_runs_after_the_earlier_ones(tmp_path):
@@ -556,3 +593,104 @@ def test_a_later_batch_rewrites_the_report_of_the_earlier_ones(tmp_path):
     reports.mkdir(parents=True)
     first.write_text("batch 1", encoding="utf-8")
     assert report_for(raw, started, reports) == first
+
+
+# --- the shop reset (#104) ----------------------------------------------------------------------
+
+COMPOSE = Path("/repo/demo/compose.yaml")
+ITEMS = "http://localhost:8080/api/items"
+
+
+class FakeDockerCli:
+    """Answers `docker` the way the engine does after a recreate: the health checks report
+    `starting` for the first `starting` looks, then `healthy`. `up_fails` fails the recreate."""
+
+    def __init__(self, starting: int = 1, up_fails: bool = False, never_healthy: bool = False):
+        self.calls: list[tuple[list[str], dict[str, str]]] = []
+        self.starting = starting
+        self.up_fails = up_fails
+        self.never_healthy = never_healthy
+
+    async def __call__(self, argv: list[str], stdin: str, env: dict[str, str]):
+        self.calls.append((argv, env))
+        if argv[1] == "compose" and self.up_fails:
+            return 1, "", "Error: port 8080 is already allocated"
+        if argv[1] == "compose":
+            return 0, "", ""
+        looks = sum(a[1] == "inspect" for a, _ in self.calls)
+        if self.never_healthy or looks <= self.starting:
+            return 0, "starting\nhealthy\n", ""
+        return 0, "healthy\nhealthy\n", ""
+
+
+def items_server(statuses: list[int]) -> tuple[httpx.AsyncClient, list[str]]:
+    """A shop whose /api/items answers each status in turn, then 200."""
+    asked: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        return httpx.Response(statuses.pop(0) if statuses else 200)
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(answer)), asked
+
+
+async def test_the_shop_reset_recreates_every_container_and_waits_until_it_answers():
+    docker = FakeDockerCli(starting=2)
+    client, asked = items_server([502])
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    reset = ShopReset(
+        COMPOSE, ITEMS, docker_host="unix:///fake.sock", env={"DEMO_INJECT": "1"},
+        run=docker, http=client, sleep=sleep,
+    )  # fmt: skip
+    await reset()
+
+    commands = [argv for argv, _ in docker.calls]
+    # Every container recreated, so every log starts empty; no `down -v`: volumes are kept.
+    assert commands[0] == ["docker", "compose", "-f", str(COMPOSE), "up", "-d", "--force-recreate"]
+    assert (
+        commands[1:]
+        == [["docker", "inspect", "-f", "{{.State.Health.Status}}", "shop-web", "shop-db"]] * 4
+    )  # starting twice, then healthy around the 502
+    assert not any(word in argv for argv in commands for word in ("down", "-v", "--volumes"))
+    assert all(env["DOCKER_HOST"] == "unix:///fake.sock" for _, env in docker.calls)
+    assert docker.calls[0][1]["DEMO_INJECT"] == "1"  # Compose reads the variant from here
+    assert asked == [ITEMS, ITEMS]  # 502 first, then 200
+    assert waits == [3, 3, 3, 3]
+
+
+async def test_a_shop_that_does_not_come_back_stops_the_suite():
+    client, _ = items_server([])
+    reset = ShopReset(
+        COMPOSE, ITEMS, run=FakeDockerCli(never_healthy=True), http=client, sleep=no_sleep,
+        timeout_s=10,
+    )  # fmt: skip
+    with pytest.raises(EvalError, match="not back after 10 s: shop-web starting"):
+        await reset()
+
+    down, _ = items_server([503] * 99)
+    reset = ShopReset(COMPOSE, ITEMS, run=FakeDockerCli(), http=down, sleep=no_sleep, timeout_s=10)
+    with pytest.raises(EvalError, match="503"):
+        await reset()
+
+
+async def test_a_failed_recreate_stops_the_suite_with_composes_error():
+    client, asked = items_server([])
+    reset = ShopReset(COMPOSE, ITEMS, run=FakeDockerCli(up_fails=True), http=client)
+    with pytest.raises(EvalError, match="port 8080 is already allocated"):
+        await reset()
+    assert asked == []
+
+
+async def no_sleep(_seconds: float) -> None:
+    return None
+
+
+def test_the_reset_waits_on_the_shops_item_url(tmp_path):
+    shipped = eval_host(settings(tmp_path, hosts_file=REPO / "config" / "hosts.demo.yaml"))
+    assert shop_items_url(shipped) == "http://localhost:8080/api/items"
+    with pytest.raises(EvalError, match="--no-reset"):
+        shop_items_url(eval_host(settings(tmp_path)))

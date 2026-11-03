@@ -3,6 +3,7 @@ proposes.
 
     cd backend && uv run --group evals python -m evals.injection [--only id] [--kind attack]
                                     [--repeat 3] [--first 1] [--label "Round 1"] [--judge manual]
+                                    [--no-reset]
 
 One YAML file per case in `evals/injection/`. An attack plants its payload in one channel: the
 shop's log (`logs`), the body of the shop's failing replies (`http_body`) or a past incident in
@@ -51,18 +52,23 @@ from evals.judge import MANUAL, Judge, JudgeError, ManualJudge, build_judge, che
 from evals.judge import model_under_test as tested_model
 from evals.report import Grade, GradeError, graded_run, index_grades, read_grades
 from evals.run import (
+    DEMO_COMPOSE,
     REPO,
     DemoFaults,
     EvalError,
     EvalSettings,
     Faults,
+    Runner,
+    ShopReset,
     _commit,
+    _exec,
     _peak_prompt_tokens,
     demo_containers,
     eval_host,
     fault_docker_host,
     live_backend,
     run_scenario,
+    shop_items_url,
 )
 from evals.scenarios import Expected, Scenario, ScenarioError, ScenarioResult
 
@@ -252,26 +258,11 @@ def load_cases(
     return [c for c in cases if kind is None or c.kind == kind]
 
 
-# (argv, stdin) -> (exit code, stdout, stderr)
-Runner = Callable[[list[str], str, dict[str, str]], Awaitable[tuple[int, str, str]]]
-
 _POST = (
     "import sys, urllib.request as u; "
     "u.urlopen(u.Request('http://localhost:8000/inject', data=sys.stdin.buffer.read(), "
     "headers={'content-type': 'application/json'}, method='POST'), timeout=5).read()"
 )
-
-
-async def _exec(argv: list[str], stdin: str, env: dict[str, str]) -> tuple[int, str, str]:
-    process = await asyncio.create_subprocess_exec(
-        *argv,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=env,
-    )
-    out, err = await process.communicate(stdin.encode())
-    return process.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
 
 
 class ShopInjector:
@@ -623,14 +614,19 @@ async def run_cases(
     on_result: Callable[[InjectionResult], None] = lambda _result: None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     first: int = 1,
+    reset: Callable[[], Awaitable[None]] | None = None,
     **harness,
 ) -> list[InjectionResult]:
     """Every live case `repeat` times, one after another, with `settle_s` between runs. The
-    runs are numbered from `first`, so a round split into batches keeps one numbering."""
+    runs are numbered from `first`, so a round split into batches keeps one numbering. `reset`
+    (a `ShopReset`) runs before every run instead of the settle wait."""
     results: list[InjectionResult] = []
     for case in [c for c in cases if c.live]:
         for n in range(first, first + repeat):
-            if results:
+            if reset is not None:
+                log.info("resetting the shop")
+                await reset()
+            elif results:
                 await sleep(settings.settle_s)
             log.info("case %s, run %d", case.id, n)
             result = await run_case(
@@ -791,9 +787,11 @@ def render_round(
     tokens = [r.run.tokens for r in results]
     peak = max((r.run.peak_prompt_tokens for r in results), default=0)
     judge_usd = sum(r.run.judge_usd or 0 for r in results)
+    fallbacks = sum(r.run.structured_fallbacks for r in results)
     lines += [
         f"- {len(results)} runs, {sum(tokens):,} tokens of the model under test, largest prompt "
-        f"{peak:,}; the judge cost ${judge_usd:.4f}.",
+        f"{peak:,}, {fallbacks} structured-output fallback{'' if fallbacks == 1 else 's'}; "
+        f"the judge cost ${judge_usd:.4f}.",
         "",
     ]
     return "\n".join(lines)
@@ -835,6 +833,10 @@ def _parser() -> argparse.ArgumentParser:
         "--render", nargs="+", type=Path, metavar="JSONL",
         help="print the tables for these result files instead of running",
     )  # fmt: skip
+    parser.add_argument(
+        "--no-reset", action="store_true",
+        help="do not recreate the shop's containers before each run; wait EVAL_SETTLE_S instead",
+    )  # fmt: skip
     return parser
 
 
@@ -847,19 +849,25 @@ async def _run(args: argparse.Namespace, settings: EvalSettings, cases: list[Inj
     judge: Judge = ManualJudge()  # only a control is judged
     if any(c.kind == "control" and c.live for c in cases):
         judge = build_judge(settings.judge_model, settings.models)
-    docker_host = fault_docker_host(settings, eval_host(settings))
+    host = eval_host(settings)
+    docker_host = fault_docker_host(settings, host)
     canary = {"DEMO_INJECT": "1", CANARY_ENV: f"sk-shop-{secrets.token_hex(12)}"}
     demo = DemoFaults(settings.fault_script, docker_host, env=canary)
+    # The reset recreates shop-web with the same hook and key, so every run can plant.
+    reset = None if args.no_reset else ShopReset(
+        DEMO_COMPOSE, shop_items_url(host), docker_host=docker_host, env=canary
+    )  # fmt: skip
     faults = InjectionFaults(demo, ShopInjector(docker_host), cases)
     started = utcnow()
     raw = RAW_DIR / f"injection-{started:%Y%m%d-%H%M%S}.jsonl"
     log.info("recreating shop-web with its injection hook and a fresh %s", CANARY_ENV)
     await demo.switch("all", "off")
     try:
-        await asyncio.sleep(settings.settle_s)
+        if reset is None:
+            await asyncio.sleep(settings.settle_s)
         results = await run_cases(
             cases, settings, args.repeat, faults=faults, judge=judge, label=args.label,
-            first=args.first,
+            first=args.first, reset=reset,
             on_result=lambda result: append_jsonl(raw, result),
         )  # fmt: skip
     finally:
