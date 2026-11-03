@@ -788,3 +788,35 @@ async def test_a_scenario_with_a_github_fixture_gets_the_github_tools(tmp_path):
     )  # fmt: skip
     assert result.error is None
     assert {t.name for t in model.bound_tools} >= {"recent_commits", "commit_diff"}
+
+
+async def test_the_suite_offers_knowledge_search_over_the_snapshot_when_given_an_index(tmp_path):
+    from bleep.memory.embeddings import FakeEmbedder
+    from evals.run import snapshot_index
+
+    folder = tmp_path / "knowledge"
+    folder.mkdir()
+    index = await snapshot_index(folder, FakeEmbedder())
+    model = FakeChatModel(script=script(), structured_output_unsupported=True)
+    faults = FakeFaults(engine())
+
+    async def connect(_host: HostConfig):
+        return None, faults.engine
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    await run_suite(
+        [SCENARIO], settings(tmp_path), 1, faults=faults, judge=FakeJudge(), connector=connect,
+        models=Models(model), sleep=no_sleep, knowledge=index,
+    )  # fmt: skip
+
+    assert "knowledge_search" in {t.name for t in model.bound_tools}
+    assert len(await index.document_ids("docker:")) >= 20
+
+
+def test_the_reproduce_command_keeps_the_knowledge_switch():
+    from evals.run import _command, _parser
+
+    assert "--no-knowledge" in _command(_parser().parse_args(["--no-knowledge"]))
+    assert "--no-knowledge" not in _command(_parser().parse_args([]))

@@ -91,6 +91,8 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
             await manager.start()
             app.state.reminder_task = asyncio.create_task(reminders.run(), name="reminders")
             stack.push_async_callback(_cancel, app.state.reminder_task)
+            knowledge = asyncio.create_task(parts.knowledge_refresher.run(), name="knowledge")
+            stack.push_async_callback(_cancel, knowledge)
             stack.push_async_callback(parts.notify.stop)
             parts.notify.start(runner)  # polls Telegram only when a token is configured
             yield

@@ -52,13 +52,17 @@ from bleep.incidents.action_log import ActionLog
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.incidents.runner import IncidentRunner
+from bleep.knowledge.index import KnowledgeIndex
+from bleep.knowledge.ingest import load_snapshot
 from bleep.llm import structured
 from bleep.llm.usage import CostLedger
+from bleep.memory.embeddings import Embedder, FastEmbedEmbedder
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Incident, Subject
 from bleep.schemas.settings import ModelSettings, Thresholds
 from bleep.store.db import Database
 from bleep.tools.default import default_registry
+from bleep.tools.knowledge import Searcher
 from bleep.watcher.detector import Detector
 from bleep.watcher.http_checks import UrlCheckStore
 from bleep.watcher.manager import WatcherManager
@@ -421,14 +425,16 @@ def _graph_deps(
     models: ModelFactory | None,
     memory: Memory | None = None,
     github: GithubClient | None = None,
+    knowledge: Searcher | None = None,
 ) -> GraphDeps:
     """Bleep's graph parts, minus everything that reaches past Propose or out of the process:
-    no act tools, no memory unless a test plants one (each run starts blank), no Telegram, and
-    no GitHub tools unless the run serves a fixture (`evals.github`)."""
+    no act tools, no memory unless a test plants one (each run starts blank), no Telegram, no
+    GitHub tools unless the run serves a fixture (`evals.github`), and no knowledge search
+    unless a case gives one."""
     store = StaticSettings(model_settings=settings.models)
     return GraphDeps(
         registry=registry,
-        tools=default_registry(github=github),
+        tools=default_registry(github=github, knowledge=knowledge),
         act_tools={},
         models=models or model_factory(store),
         bus=EventBus(db),
@@ -503,6 +509,7 @@ async def run_scenario(
     connector: Connector = connect_host,
     models: ModelFactory | None = None,
     memory: Memory | None = None,
+    knowledge: Searcher | None = None,
     after: AfterPropose | None = None,
     github: GithubClient | None = None,
 ) -> ScenarioResult:
@@ -513,7 +520,8 @@ async def run_scenario(
     Without a judge the root cause is not scored. `memory` is what Gather recalls (none by
     default), and `after` runs once Propose ended without a failure; a failure in it is the
     run's, like one before. `github` is the GitHub the tools read; without it they are absent,
-    and a scenario with a `github` fixture gets one dated from the run's start.
+    and a scenario with a `github` fixture gets one dated from the run's start. `knowledge` is
+    what the `knowledge_search` tool searches (no tool by default).
     """
     result = ScenarioResult(
         id=scenario.id,
@@ -533,7 +541,7 @@ async def run_scenario(
             async with open_checkpointer(Path(folder) / "checkpoints.sqlite") as saver:
                 if github is None and scenario.github is not None:
                     github = fixture_client(load_github_fixture(scenario.github))
-                deps = _graph_deps(db, registry, settings, models, memory, github)
+                deps = _graph_deps(db, registry, settings, models, memory, github, knowledge)
                 graph = build_graph(deps, saver)
                 catcher = IncidentCatcher(graph, deps.incidents, deps.bus)
                 manager = WatcherManager(
@@ -672,6 +680,16 @@ def summary(result: ScenarioResult) -> str:
     return line + (f"; {result.error}" if result.error else "")
 
 
+async def snapshot_index(folder: Path, embedder: Embedder) -> KnowledgeIndex:
+    """Knowledge search as a fresh install has it: the shipped Docker docs snapshot, embedded
+    into a database in `folder`, with no repo docs and no past incidents."""
+    db = Database(folder / "knowledge.db")
+    await db.migrate()
+    index = KnowledgeIndex(db, embedder)
+    await index.sync("docker", load_snapshot())
+    return index
+
+
 async def run_suite(
     scenarios: Sequence[Scenario],
     settings: EvalSettings,
@@ -685,11 +703,12 @@ async def run_suite(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     done: Mapping[str, int] | None = None,
     reset: Callable[[], Awaitable[None]] | None = None,
+    knowledge: Searcher | None = None,
 ) -> list[ScenarioResult]:
     """Every scenario `repeat` times, one after another, with `settle_s` between runs. `done`
     is how many runs each scenario already has from an earlier batch: its runs are numbered
     after them. `reset` (a `ShopReset`) runs before every run instead of the settle wait: it
-    returns once the shop answers again."""
+    returns once the shop answers again. `knowledge` is what `knowledge_search` searches."""
     done = done or {}
     results: list[ScenarioResult] = []
     for scenario in scenarios:
@@ -709,6 +728,7 @@ async def run_suite(
                 run=run,
                 connector=connector,
                 models=models,
+                knowledge=knowledge,
             )
             on_result(result)
             results.append(result)
@@ -798,6 +818,8 @@ def _command(args: argparse.Namespace) -> str:
         parts.append(f"--append {args.append}")
     if args.no_reset:
         parts.append("--no-reset")
+    if args.no_knowledge:
+        parts.append("--no-knowledge")
     return " ".join(parts)
 
 
@@ -810,6 +832,10 @@ def _parser() -> argparse.ArgumentParser:
         "claude-code[:<model>], or manual (graded by hand afterwards with evals.report)",
     )
     parser.add_argument("--only", help="run one scenario, by id")
+    parser.add_argument(
+        "--no-knowledge", action="store_true",
+        help="do not offer knowledge_search (the app offers it over the Docker docs snapshot)",
+    )  # fmt: skip
     parser.add_argument("--repeat", type=int, default=1, help="runs per scenario (default 1)")
     parser.add_argument(
         "--append",
@@ -851,16 +877,22 @@ async def _run(
     reset = None if args.no_reset else ShopReset(
         DEMO_COMPOSE, shop_items_url(host), docker_host=docker_host
     )  # fmt: skip
-    results = await run_suite(
-        scenarios,
-        settings,
-        args.repeat,
-        faults=DemoFaults(settings.fault_script, docker_host),
-        judge=judge,
-        on_result=lambda result: append_jsonl(raw, result),
-        done=done,
-        reset=reset,
-    )
+    with tempfile.TemporaryDirectory(prefix="bleep-knowledge-") as folder:
+        knowledge = None
+        if not args.no_knowledge:
+            log.info("embedding the Docker docs snapshot for knowledge search")
+            knowledge = await snapshot_index(Path(folder), FastEmbedEmbedder())
+        results = await run_suite(
+            scenarios,
+            settings,
+            args.repeat,
+            faults=DemoFaults(settings.fault_script, docker_host),
+            judge=judge,
+            on_result=lambda result: append_jsonl(raw, result),
+            done=done,
+            reset=reset,
+            knowledge=knowledge,
+        )
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     report = report_for(raw, started, REPORTS_DIR)
     info = RunInfo(
@@ -874,6 +906,7 @@ async def _run(
         commit=_commit(),
         command=_command(args),
         reset_shop=reset is not None,
+        knowledge=not args.no_knowledge,
         raw=os.path.relpath(raw, report.parent),
         report=str(report.relative_to(REPO)) if report.is_relative_to(REPO) else str(report),
     )
