@@ -12,6 +12,9 @@ import re
 from dataclasses import dataclass
 
 MAX_TOKENS = 300
+# Part of every document's content hash: raise it when how a chunk is cut or counted changes, so
+# installs embed their documents again.
+CHUNK_VERSION = 2
 OVERLAP = 50
 
 # Letters run as one token; digits in threes and every mark (underscore too) as one each, because
@@ -69,11 +72,19 @@ def _sections(text: str) -> list[tuple[tuple[str, ...], list[str]]]:
 
 
 def _split_line(line: str, limit: int) -> list[str]:
-    """A line over `limit` tokens as pieces of whole words, each within it."""
+    """A line over `limit` tokens as pieces of whole words, each within it. A word over the limit
+    by itself (a long URL, base64, minified JSON) is cut every `limit` characters, which are
+    never more than `limit` tokens."""
     if estimate_tokens(line) <= limit:
         return [line]
     pieces, current = [], []
     for word in line.split():
+        if estimate_tokens(word) > limit:
+            if current:
+                pieces.append(" ".join(current))
+                current = []
+            pieces += [word[i : i + limit] for i in range(0, len(word), limit)]
+            continue
         if current and estimate_tokens(" ".join([*current, word])) > limit:
             pieces.append(" ".join(current))
             current = []

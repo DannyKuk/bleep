@@ -59,7 +59,7 @@ Raw data, one JSON line per question after a totals line: [`data/knowledge-20261
 
 - **The snapshot answers the questions Bleep asks it, and search finds the page.** Every expected page was in the top 5 at every chunk size, and first at 200 and 300 tokens.
 - **Smaller chunks rank the right page first more often.** At 400 and 600 tokens, two questions (#2, the on-failure policy's ten-second rule, and #3, the OOM killer) put a page that mentions the subject in passing (`compose-deploy`, `running-containers`) above the page about it. A shorter chunk is more about one thing.
-- **Ingest is a one-time cost.** Inside the backend image (Docker Desktop on the same laptop, `--network none`, the baked-in model), the first sync of the snapshot embedded 27 pages in 33.5 s; a second sync found all 27 unchanged and took 0.02 s, and a search took 7 ms. Later starts skip every page whose content hash is unchanged and embed nothing.
+- **Ingest is a one-time cost.** Inside the backend image (Docker Desktop on the same laptop, `--network none`, the baked-in model), the first sync of the snapshot embedded 27 pages in 31.9 s; a second sync found all 27 unchanged and took 0.02 s, and a search took 7 ms ([output](../spikes/knowledge-chunks/ingest_in_image.txt)). An earlier build of this branch took 33.5 s for the first sync, so expect a few seconds either way. Later starts skip every page whose content hash is unchanged and embed nothing.
 - **Search is cheap.** 6 ms for the query embedding plus a matrix product over 444 vectors.
 
 ## Limits
@@ -67,7 +67,7 @@ Raw data, one JSON line per question after a totals line: [`data/knowledge-20261
 - **20 questions, written by the person who chose the pages.** They name each page's subject plainly. Questions from a real incident are vaguer, and some have no answer in the snapshot; this check does not measure either. It is a check that retrieval works on this corpus, not a benchmark.
 - **One expected page per question.** Where two pages both answer (health checks are in the Dockerfile reference, the `docker run` reference and the Compose reference), only the one named counts.
 - **Docker docs only.** Repo docs and past incidents are searched the same way but are not in this check.
-- **One machine.** The retrieval runs were outside Docker. The ingest in the backend image (below) was timed once.
+- **One machine.** The retrieval runs were outside Docker. The ingest in the backend image was timed on two builds, once each.
 
 ## Reproduce
 
@@ -78,4 +78,10 @@ uv run python -m evals.knowledge --max-tokens 400 --label chunks-400
 uv run python -m evals.knowledge --overlap 0 --label overlap-0
 ```
 
-The ingest in the image was timed with `docker build -t bleep-backend backend` and a one-off `docker run --rm --network none --entrypoint python bleep-backend -c ...` that runs `KnowledgeIndex.sync("docker", load_snapshot())` twice on a temporary database and one `search`.
+The ingest in the image:
+
+```bash
+docker build -t bleep-backend backend
+docker run --rm --network none -v "$PWD/docs/spikes/knowledge-chunks:/bench:ro" \
+    --entrypoint python bleep-backend /bench/ingest_in_image.py
+```

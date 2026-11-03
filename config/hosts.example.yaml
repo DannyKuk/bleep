@@ -36,7 +36,7 @@ hosts:
             expect_status: 200   # default 200
             body_contains: ok    # optional text the body must contain
         repo: example/shop       # GitHub repo, owner/name
-        docs_paths: [README.md, docs/runbook.md]   # repo files the agent may read
+        docs_paths: [docs/runbook.md, ops]          # markdown files or folders for knowledge search (default docs)
         protected_containers: [shop-db]            # never a target of an action
         rules:
           - Roll back before restarting when the last deploy is under an hour old.

@@ -2,8 +2,9 @@
 README and docs, and past incident reports. The model decides when to call it.
 
 Docs and repo pages are text from outside Bleep, so the result is guarded as host output is:
-redacted, cleaned and wrapped once as untrusted data. Each hit gets an equal share of the 8,000
-characters, so the closest one is never cut away to fit the others.
+redacted, cleaned and wrapped once as untrusted data. Each hit is cleaned, redacted and escaped
+first and then cut to an equal share of the 8,000 characters, its title, headings and link
+included, so the final guard has nothing left to grow and the closest hit is never the one cut.
 """
 
 from typing import Protocol
@@ -11,14 +12,19 @@ from typing import Protocol
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from bleep.guard.sanitize import MAX_CHARS
+from bleep.guard.redact import redact_with_count
+from bleep.guard.sanitize import MAX_CHARS, strip_control
+from bleep.guard.untrusted import escape_untrusted
 from bleep.schemas.knowledge import KnowledgeHit, KnowledgeSource
 from bleep.tools.docker_read import _guard, _invalid
 from bleep.tools.registry import ToolContext, ToolSpec
 
 SEARCH_K = 5
 NOTHING = "Nothing in the knowledge base matches that search."
-HEADER_ROOM = 200  # the intro line and the wrapper around the hits
+HEADER_ROOM = 200  # the intro line and the separators between the hits
+QUERY_CHARS = 80  # of the query, repeated in the intro (its repr at most doubles it)
+WHERE_CHARS = 200  # of a hit's title and headings
+URL_CHARS = 200
 SOURCE_LABEL: dict[KnowledgeSource, str] = {
     "docker": "Docker docs",
     "repo": "repo docs",
@@ -58,18 +64,29 @@ def _cut(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: max(0, limit - 1)] + "…"
 
 
-def describe_hits(query: str, hits: list[KnowledgeHit]) -> str:
-    """The hits as one text, closest first, each within its share of the size cap."""
+def _clean(text: str) -> tuple[str, int]:
+    """`text` as the guard leaves it (no control characters, secrets or wrapper tags), and the
+    number of secrets redacted. The guard does this again on the whole result, and finds nothing
+    more to change."""
+    redacted, count = redact_with_count(strip_control(text))
+    return escape_untrusted(redacted), count
+
+
+def describe_hits(query: str, hits: list[KnowledgeHit]) -> tuple[str, int]:
+    """The hits as one text, closest first, each within its share of the size cap, and the
+    number of secrets redacted from them."""
     share = (MAX_CHARS - HEADER_ROOM) // len(hits)
-    parts = [f"Knowledge search for {query!r}, closest first:"]
+    asked, redactions = _clean(_cut(query, QUERY_CHARS))
+    parts = [f"Knowledge search for {asked!r}, closest first:"]
     for n, hit in enumerate(hits, start=1):
         where = hit.heading if hit.heading.startswith(hit.title) else f"{hit.title} > {hit.heading}"
-        head = (
-            f"[{n}] {SOURCE_LABEL[hit.source]}: {where.rstrip(' >')} (score {hit.score:.2f})\n"
-            f"{hit.url}\n"
-        )
-        parts.append(head + _cut(hit.text, share - len(head) - 2))
-    return "\n\n".join(parts)
+        where, found_where = _clean(_cut(where.rstrip(" >"), WHERE_CHARS))
+        url, found_url = _clean(_cut(hit.url, URL_CHARS))
+        text, found_text = _clean(hit.text)
+        head = f"[{n}] {SOURCE_LABEL[hit.source]}: {where} (score {hit.score:.2f})\n{url}\n"
+        parts.append(head + _cut(text, share - len(head)))
+        redactions += found_where + found_url + found_text
+    return "\n\n".join(parts), redactions
 
 
 def knowledge_specs(index: Searcher) -> list[ToolSpec]:
@@ -81,7 +98,14 @@ def knowledge_specs(index: Searcher) -> list[ToolSpec]:
             hits = await index.search(query, k=SEARCH_K, sources=wanted)
             if not hits:
                 return NOTHING
-            return await _guard(ctx, "knowledge", describe_hits(query, hits))
+            text, redactions = describe_hits(query, hits)
+            if redactions and ctx.guard_log is not None:
+                ctx.guard_log.record(
+                    ctx.incident_id,
+                    "redacted",
+                    f"{redactions} secret(s) redacted from knowledge output",
+                )
+            return await _guard(ctx, "knowledge", text)
 
         return StructuredTool(
             name="knowledge_search",

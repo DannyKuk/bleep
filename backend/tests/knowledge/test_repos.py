@@ -143,3 +143,24 @@ async def test_the_refresher_indexes_a_repos_docs_with_their_github_links(tmp_pa
     }
     [hit] = await index.search("HTTP/2 support", k=1, sources={"repo"})
     assert hit.url.startswith("https://github.com/encode/httpx/blob/")
+
+
+async def test_a_doc_path_that_is_a_file_but_not_markdown_is_skipped_not_fatal():
+    routes = HTTPX | {
+        "/repos/encode/httpx/contents/compose.yaml": recorded("contents-docs-http2.json")
+    }
+    hosts = linked(ServiceOverrides(repo=REPO, docs_paths=["compose.yaml", "docs"]))
+
+    files = await GithubRepoDocs(GitHub(routes).client(), hosts).doc_files(REPO)
+
+    assert [f.path for f in files] == ["README.md", "docs/http2.md"]
+
+
+async def test_an_outage_while_listing_is_raised_so_the_repo_keeps_its_docs():
+    from bleep.hosts.github import GithubUnavailable
+
+    routes = HTTPX | {"/repos/encode/httpx/contents/docs": httpx.Response(503)}
+    docs = GithubRepoDocs(GitHub(routes).client(), linked(ServiceOverrides(repo=REPO)))
+
+    with pytest.raises(GithubUnavailable):
+        await docs.doc_files(REPO)

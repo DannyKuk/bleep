@@ -14,6 +14,13 @@ CREATE TABLE knowledge_documents (
 );
 CREATE INDEX knowledge_documents_source ON knowledge_documents (source, model);
 
+-- When a refresh that costs more than embedding last ran ("repos": GitHub requests), so a restart
+-- does not repeat it within the day.
+CREATE TABLE knowledge_refreshes (
+    name TEXT PRIMARY KEY,
+    at TEXT NOT NULL
+);
+
 CREATE TABLE knowledge_chunks (
     document_id TEXT NOT NULL REFERENCES knowledge_documents (id) ON DELETE CASCADE,
     position INTEGER NOT NULL,

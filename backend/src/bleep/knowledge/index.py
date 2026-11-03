@@ -13,12 +13,11 @@ import hashlib
 import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 import numpy as np
 
-from bleep.incidents.repository import utcnow
-from bleep.knowledge.chunking import MAX_TOKENS, OVERLAP, Chunk, chunk_markdown
+from bleep.knowledge.chunking import CHUNK_VERSION, MAX_TOKENS, OVERLAP, Chunk, chunk_markdown
 from bleep.memory.embeddings import Embedder
 from bleep.schemas.knowledge import KnowledgeDocument, KnowledgeHit, KnowledgeSource
 from bleep.store.db import Database
@@ -35,8 +34,9 @@ class SyncResult:
 
 
 def content_hash(doc: KnowledgeDocument, max_tokens: int, overlap: int) -> str:
-    """What the chunks and their embedded text are made from, chunk settings included."""
-    payload = json.dumps([doc.title, doc.url, doc.text, max_tokens, overlap])
+    """What the chunks and their embedded text are made from, chunk settings and the chunking's
+    version included."""
+    payload = json.dumps([doc.title, doc.url, doc.text, max_tokens, overlap, CHUNK_VERSION])
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
@@ -59,7 +59,7 @@ class KnowledgeIndex:
         *,
         max_tokens: int = MAX_TOKENS,
         overlap: int = OVERLAP,
-        clock: Callable[[], datetime] = utcnow,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.db = db
         self.embedder = embedder
@@ -137,6 +137,30 @@ class KnowledgeIndex:
         for start in range(0, len(texts), EMBED_BATCH):
             vectors.extend(await self._embed(texts[start : start + EMBED_BATCH]))
         return vectors
+
+    async def last_refresh(self, name: str) -> datetime | None:
+        """When the refresh `name` last ran, if ever."""
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                "SELECT at FROM knowledge_refreshes WHERE name = ?", (name,)
+            ) as cursor:
+                row = await cursor.fetchone()
+        finally:
+            await conn.close()
+        return None if row is None else datetime.fromisoformat(row["at"])
+
+    async def mark_refresh(self, name: str) -> None:
+        """Note that the refresh `name` ran now."""
+        conn = await self.db.connect()
+        try:
+            await conn.execute(
+                "INSERT OR REPLACE INTO knowledge_refreshes (name, at) VALUES (?, ?)",
+                (name, self.clock().isoformat()),
+            )
+            await conn.commit()
+        finally:
+            await conn.close()
 
     async def document_ids(self, prefix: str) -> set[str]:
         """The ids of the documents whose id starts with `prefix`."""

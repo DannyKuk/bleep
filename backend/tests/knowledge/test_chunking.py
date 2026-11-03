@@ -143,3 +143,12 @@ def test_numbers_and_snake_case_count_as_the_model_splits_them() -> None:
 def test_empty_text_has_no_chunks() -> None:
     assert chunk_markdown("") == []
     assert chunk_markdown("# Only a heading\n") == []
+
+
+def test_a_word_longer_than_the_limit_is_cut_by_characters():
+    url = "https://example.com/" + "/".join(f"seg{i}" for i in range(500))
+
+    chunks = chunk_markdown(f"# T\n\nsee {url} now\n", max_tokens=100, overlap=0)
+
+    assert all(estimate_tokens(c.text) <= 100 for c in chunks)
+    assert "".join(c.text for c in chunks).replace(" ", "").replace("\n", "") == f"see{url}now"

@@ -32,6 +32,7 @@ REPOS_EVERY_S = 86_400.0
 MAX_REPO_FILES = 40
 MAX_REPO_FILE_CHARS = 100_000
 NOTHING = SyncResult(embedded=0, unchanged=0, removed=0)
+REPOS_REFRESH = "repos"
 
 
 class SnapshotError(Exception):
@@ -75,7 +76,7 @@ def load_snapshot(directory: Path = SNAPSHOT_DIR) -> list[KnowledgeDocument]:
         if path.name in NOT_PAGES:
             continue
         meta, body = _front_matter(path)
-        missing = [key for key in ("title", "source_url", "license") if not meta.get(key)]
+        missing = [k for k in ("title", "source_url", "fetched", "license") if not meta.get(k)]
         if missing:
             raise SnapshotError(f"{path.name}: front matter lacks {', '.join(missing)}")
         docs.append(
@@ -192,6 +193,7 @@ class KnowledgeRefresher:
         await self.index.remove(
             i for i in await self.index.document_ids("repo:") if not i.startswith(kept)
         )
+        await self.index.mark_refresh(REPOS_REFRESH)
         return embedded
 
     async def _safely(self, name: str, refresh: Callable[[], Awaitable[object]]) -> None:
@@ -202,10 +204,25 @@ class KnowledgeRefresher:
             return
         log.info("knowledge: refreshed %s: %s", name, result)
 
+    async def _repos_wait(self) -> float:
+        """Seconds until repo docs are due: none on a first start, and what is left of the day
+        since the last refresh otherwise, so a restart costs no GitHub requests. A clock that
+        moved back counts as due."""
+        try:
+            last = await self.index.last_refresh(REPOS_REFRESH)
+        except Exception as error:  # an unreadable record only means refreshing early
+            log.warning("knowledge: could not read the last repo refresh (%s)", error)
+            return 0.0
+        if last is None:
+            return 0.0
+        since = (self.index.clock() - last).total_seconds()
+        return self.repos_every_s - since if 0 <= since < self.repos_every_s else 0.0
+
     async def run(self) -> None:
         """Sync the snapshot, then keep incidents and repo docs fresh until cancelled."""
         await self._safely("docker docs", self.refresh_docker)
-        due_incidents = due_repos = self.monotonic()
+        due_incidents = self.monotonic()
+        due_repos = due_incidents + await self._repos_wait()
         while True:
             now = self.monotonic()
             if now >= due_incidents:

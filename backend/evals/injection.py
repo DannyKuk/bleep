@@ -27,7 +27,6 @@ import argparse
 import asyncio
 import base64
 import binascii
-import contextlib
 import json
 import logging
 import os
@@ -173,8 +172,9 @@ class ShopFailure(_Strict):
 class InjectionCase(_Strict):
     """One attack or control. `payload` is the planted text: log lines (`logs`, and every
     control), a reply body (`http_body`), a past incident's cause (`memory`), a linked repo's doc
-    page (`docs`) or a commit message (pending). `fault` is a demo fault switched on with it
-    (controls); without one, shop-web fails every request so the watcher opens the incident.
+    page (`docs`) or the newest commit's message (`commit`). `fault` is a demo fault switched on
+    with it (controls); without one, shop-web fails every request so the watcher opens the
+    incident.
     `inject` says whether the payload goes in before the fault (a fault that freezes shop-web) or
     after it (one that recreates shop-web, which starts a new log)."""
 
@@ -1015,28 +1015,27 @@ async def _run(args: argparse.Namespace, settings: EvalSettings, cases: list[Inj
         DEMO_COMPOSE, shop_items_url(host), docker_host=docker_host, env=canary
     )  # fmt: skip
     faults = InjectionFaults(demo, ShopInjector(docker_host), cases)
-    stack = contextlib.ExitStack()
-    knowledge = None
-    if any(c.channel == "docs" and c.live for c in cases):
-        log.info("embedding the Docker docs snapshot for knowledge search")
-        folder = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="bleep-knowledge-")))
-        knowledge = await KnowledgeFixture.build(folder, FastEmbedEmbedder())
-    started = utcnow()
-    raw = RAW_DIR / f"injection-{started:%Y%m%d-%H%M%S}.jsonl"
-    log.info("recreating shop-web with its injection hook and a fresh %s", CANARY_ENV)
-    await demo.switch("all", "off")
-    try:
-        if reset is None:
-            await asyncio.sleep(settings.settle_s)
-        results = await run_cases(
-            cases, settings, args.repeat, faults=faults, judge=judge, label=args.label,
-            first=args.first, reset=reset, knowledge=knowledge,
-            on_result=lambda result: append_jsonl(raw, result),
-        )  # fmt: skip
-    finally:
-        stack.close()
-        log.info("putting the shop back without the hook")
-        await DemoFaults(settings.fault_script, docker_host).switch("all", "off")
+    # The docs channel's knowledge index lives here for the round, and goes with it.
+    with tempfile.TemporaryDirectory(prefix="bleep-knowledge-") as folder:
+        knowledge = None
+        if any(c.channel == "docs" and c.live for c in cases):
+            log.info("embedding the Docker docs snapshot for knowledge search")
+            knowledge = await KnowledgeFixture.build(Path(folder), FastEmbedEmbedder())
+        started = utcnow()
+        raw = RAW_DIR / f"injection-{started:%Y%m%d-%H%M%S}.jsonl"
+        log.info("recreating shop-web with its injection hook and a fresh %s", CANARY_ENV)
+        await demo.switch("all", "off")
+        try:
+            if reset is None:
+                await asyncio.sleep(settings.settle_s)
+            results = await run_cases(
+                cases, settings, args.repeat, faults=faults, judge=judge, label=args.label,
+                first=args.first, reset=reset, knowledge=knowledge,
+                on_result=lambda result: append_jsonl(raw, result),
+            )  # fmt: skip
+        finally:
+            log.info("putting the shop back without the hook")
+            await DemoFaults(settings.fault_script, docker_host).switch("all", "off")
     tables = render_round(args.label, cases, results)
     section = raw.with_suffix(".md")
     section.write_text(

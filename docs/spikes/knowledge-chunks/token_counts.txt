@@ -1,0 +1,3 @@
+limit 300, current estimate: 444 chunks; model tokens median 203, max 398, over 512: 0; model/estimate median 1.18
+limit 400, current estimate: 378 chunks; model tokens median 205, max 518, over 512: 1; model/estimate median 1.17
+limit 400, first estimate: 369 chunks; model tokens median 205, max 862, over 512: 7; model/estimate median 1.21

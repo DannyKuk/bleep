@@ -10,7 +10,7 @@ import contextlib
 from collections.abc import Iterable
 from typing import Protocol
 
-from bleep.hosts.github import GithubClient, NotFound
+from bleep.hosts.github import GithubClient, GithubError, GithubUnavailable, NotFound, RateLimited
 from bleep.knowledge.ingest import MAX_REPO_FILES
 from bleep.schemas.github import RepoFile
 from bleep.schemas.services import HostState
@@ -31,8 +31,9 @@ def _is_markdown(path: str) -> bool:
 
 class GithubRepoDocs:
     """`RepoDocs` over GitHub: each linked repo's README, then the markdown under its doc paths,
-    at most `MAX_REPO_FILES` files. A missing README, folder or file is skipped; any other GitHub
-    error (rate limit, outage) is raised, so the repo keeps the docs it had."""
+    at most `MAX_REPO_FILES` files. A missing README, folder or file is skipped, and so is a doc
+    path that is a file but not markdown; a rate limit or an outage is raised, so the repo keeps
+    the docs it had."""
 
     def __init__(self, client: GithubClient, registry: HostsSource) -> None:
         self.client = client
@@ -56,7 +57,9 @@ class GithubRepoDocs:
             return [path]
         try:
             entries = await self.client.list_files(repo, path, max_files=MAX_REPO_FILES)
-        except NotFound:
+        except RateLimited, GithubUnavailable:
+            raise
+        except GithubError:  # missing, or a file that is not markdown (a compose file, say)
             return []
         return [e.path for e in entries if _is_markdown(e.path)]
 

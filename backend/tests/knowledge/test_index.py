@@ -190,3 +190,11 @@ async def test_the_heading_path_is_part_of_what_is_embedded(env):
         text.startswith("Start containers automatically > Restart policy details")
         for text in embedded
     )
+
+
+async def test_a_new_chunking_version_embeds_unchanged_documents_again(env, monkeypatch):
+    await env.index.ingest(VOLUMES)
+
+    monkeypatch.setattr("bleep.knowledge.index.CHUNK_VERSION", 999)
+
+    assert await env.index.ingest(VOLUMES) is True

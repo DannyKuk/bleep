@@ -109,7 +109,12 @@ def test_a_snapshot_page_keeps_its_front_matter_as_title_and_url(tmp_path):
 
 @pytest.mark.parametrize(
     "text",
-    ["# no front matter\n", "---\ntitle: T\n---\nbody\n", "---\n: [\n---\nbody\n"],
+    [
+        "# no front matter\n",
+        "---\ntitle: T\n---\nbody\n",
+        "---\n: [\n---\nbody\n",
+        "---\ntitle: T\nsource_url: u\nlicense: Apache-2.0\n---\nno fetch date\n",
+    ],
 )
 def test_a_page_without_a_title_source_and_licence_is_refused(tmp_path, text):
     folder = snapshot(tmp_path, {"bad.md": text})
@@ -229,3 +234,42 @@ async def test_the_loop_refreshes_on_schedule_and_survives_a_failing_source(inde
     assert await index.document_ids("docker:") == {"docker:volumes"}
     assert await index.document_ids("incident:") == {"incident:inc_1"}
     assert await index.document_ids("repo:") == set()
+
+
+async def test_a_restart_within_the_day_does_not_read_the_repos_again(tmp_path):
+    db = Database(tmp_path / "bleep.db")
+    await db.migrate()
+    wall = [datetime(2026, 11, 3, 12, tzinfo=UTC)]
+    index = KnowledgeIndex(db, FakeEmbedder(), clock=lambda: wall[0])
+    repos = Repos({"acme/shop": [readme("acme/shop")]})
+    asked: list[str] = []
+    real = repos.doc_files
+
+    async def doc_files(repo: str):
+        asked.append(repo)
+        return await real(repo)
+
+    repos.doc_files = doc_files  # type: ignore[method-assign]
+    await KnowledgeRefresher(index, repos=repos, snapshot_dir=None).refresh_repos()
+    assert await index.last_refresh("repos") == wall[0]
+    wall[0] = wall[0].replace(hour=18)  # restarted six hours later
+    naps: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        naps.append(seconds)
+        raise asyncio.CancelledError
+
+    restarted = KnowledgeRefresher(
+        index, repos=repos, snapshot_dir=None, incidents_every_s=600, sleep=sleep,
+        monotonic=lambda: 0.0,
+    )  # fmt: skip
+    with pytest.raises(asyncio.CancelledError):
+        await restarted.run()
+
+    assert asked == ["acme/shop"]  # only the first refresh read GitHub
+    assert naps == [600]
+
+    wall[0] = wall[0].replace(day=5)  # two days later: due at once
+    with pytest.raises(asyncio.CancelledError):
+        await restarted.run()
+    assert asked == ["acme/shop", "acme/shop"]

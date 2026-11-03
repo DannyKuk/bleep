@@ -15,6 +15,7 @@ from evals.knowledge import (
 PAGE = """---
 title: {title}
 source_url: https://docs.docker.com/{slug}/
+fetched: '2026-11-03'
 license: Apache-2.0
 ---
 

@@ -34,7 +34,8 @@ Overlap made no difference at 200 and a small one at 400 (95% hit@1 without, 90%
 - **One hit per page.** Search scores every chunk, keeps each page's best, and returns the 5 best pages. Reason: a long reference page (Compose `services`) would otherwise fill all 5 slots with its own sections.
 - **The page title and headings are embedded with each chunk, and returned with it.** Reason: "`start_period`" alone says nothing about health checks; under "Dockerfile reference > HEALTHCHECK" it does, and the model sees where the text is from.
 - **Table padding is squeezed out before counting.** Docker's tables are padded to align columns; the restart policy table was mostly spaces.
-- **The chunk settings are part of the content hash**, so changing them re-embeds every page on the next start, and leaving them unchanged embeds nothing.
+- **The chunk settings and a chunking version are part of the content hash**, so changing either re-embeds every page on the next start, and leaving them unchanged embeds nothing. `CHUNK_VERSION` goes up whenever the cutting or the token estimate changes (#39 review).
+- **A single word longer than the limit is cut by characters.** A long URL, base64 or minified JSON in a repo's docs would otherwise make one chunk far over the limit; no word in the snapshot is that long, so its 444 chunks are unchanged (#39 review).
 
 ## Limits
 
@@ -50,4 +51,10 @@ uv run python -m evals.knowledge --max-tokens 300                     # Bleep's 
 uv run python -m evals.knowledge --max-tokens 400 --label chunks-400   # and 200, 600; --overlap 0
 ```
 
-The token counts came from a scratch script over `chunk_markdown` and `fastembed`'s tokenizer (`TextEmbedding("BAAI/bge-small-en-v1.5").model.tokenizer`, truncation off), not kept in the repo.
+The token counts come from [`docs/spikes/knowledge-chunks/token_counts.py`](../spikes/knowledge-chunks/token_counts.py), which chunks the snapshot and counts each chunk, with its title and headings, using the model's own tokenizer; its output on this snapshot is in [`token_counts.txt`](../spikes/knowledge-chunks/token_counts.txt):
+
+```bash
+cd backend
+uv run python ../docs/spikes/knowledge-chunks/token_counts.py --max-tokens 300
+uv run python ../docs/spikes/knowledge-chunks/token_counts.py --max-tokens 400 --first-estimate
+```

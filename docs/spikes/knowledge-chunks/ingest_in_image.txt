@@ -1,0 +1,3 @@
+first sync: SyncResult(embedded=27, unchanged=0, removed=0), 31.88 s
+second sync: SyncResult(embedded=0, unchanged=27, removed=0), 0.02 s
+search: 7 ms, first hit 'Running containers'
