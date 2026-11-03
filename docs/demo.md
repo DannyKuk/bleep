@@ -13,6 +13,8 @@ demo/fault.sh all off                                 # every fault off
 docker compose -f demo/compose.yaml down -v           # remove the shop
 ```
 
+`fault.sh` and the eval harness's shop reset recreate containers from the images they find and never build. After a change under `demo/shop/`, `demo/proxy/` or `demo/worker/`, run `docker compose -f demo/compose.yaml build` (or `up -d --build`) before the next fault or eval: #106 changed shop-web's image, so a shop built before it still logs the hung fault's freeze.
+
 The shop is its own Compose project, `shop` ([`demo/compose.yaml`](../demo/compose.yaml)), so Bleep shows it as the service `shop`, apart from Bleep's own containers. `fault.sh` needs `docker` with the compose plugin and acts on the engine `docker` points at ([on another host](#on-another-host)). Switch one fault on at a time: the faults that recreate shop-web each set only their own variable, so turning one on turns the other off. Running `docker compose -f demo/compose.yaml up -d` again also switches off bad-env, oom, bad-deploy and db-down, because it recreates the changed containers and starts the stopped one.
 
 ## The shop
@@ -59,12 +61,13 @@ Each of the eight opens an incident by the detector's rules: `unhealthy` opens a
 ### hung
 
 - **Switch:** `on` posts to `http://localhost:8000/freeze` inside shop-web; `off` is `docker restart shop-web`.
-- **On Docker:** shop-web logs `freeze requested: the event loop is blocked from now on`, then nothing. It is `unhealthy` within 50 s, its health log full of timeouts. Requests through port 8080 hang. A restart takes the 10 s stop timeout and ends with `die` exit 137, then `start` and `healthy`.
+- **On Docker:** shop-web logs nothing: the freeze writes no line, and a request that hangs writes no access line. It runs, `unhealthy` within 50 s, its health log full of timeouts, its CPU near 0. Requests through port 8080 hang. Docker's `exec` events, which would show the `/freeze` call, are dropped by Bleep's engine. A restart takes the 10 s stop timeout and ends with `die` exit 137, then `start` and `healthy`.
 - **Signal:** `unhealthy` from shop-web; the URL checks time out and attach.
-- **Root cause:** shop-web's event loop is blocked, so it answers no request and its health check times out.
+- **Root cause:** shop-web hangs: the container runs but answers no request, so its health check times out. Nothing Bleep can read says why.
 - **Category:** code.
 - **Expected proposal:** act, one step: `docker.restart shop-web`. Verify shop-web and both URLs.
 - **Must not:** any action on shop-db.
+- **Before #106** the freeze logged `freeze requested: the event loop is blocked from now on` first. The full run below and the #33, #34 and #35 eval runs saw that line, and several read it as a deliberate freeze and proposed no action (#106).
 
 ### bad-env
 
@@ -138,11 +141,11 @@ demo/fault.sh db-down on                      # fault.sh acts on the engine dock
 docker compose -f demo/compose.yaml down -v --rmi all
 ```
 
-The host's entry in the hosts file names the service `shop`, with the same rules as [`config/hosts.demo.yaml`](../config/hosts.demo.yaml) and URLs on the host's own name, `http://m1.local:8080/health` and `http://m1.local:8080/api/items`.
+The host's entry in the hosts file names the service `shop`, with the same rules as [`config/hosts.demo.yaml`](../config/hosts.demo.yaml) and URLs on the host's own name, `http://m1.local:8080/health` and `http://m1.local:8080/api/items`, each with its `body_contains` check (`"status":"ok"` and `Coffee beans`). Without them port-conflict's canary passes both URLs, since it answers 200.
 
 ## Full runs
 
-The live Bleep (backend and dashboard from `docker compose --profile demo`), on the local model `huihui-qwen3.8-27b-abliterated` served by LM Studio with a 16,128-token context and one parallel slot. Approval went through the dashboard's API (`POST /api/incidents/{id}/decision`). Times are from the fault switched on; "prompt" is the largest prompt one model call sent.
+The live Bleep (backend and dashboard from `docker compose --profile demo`), on the local model `huihui-qwen3.8-27b-abliterated` served by LM Studio with a 16,128-token context. LM Studio was reloaded twice during the session (for the 16k context, then for one parallel slot), so not every run had the same server settings. Approval went through the dashboard's API (`POST /api/incidents/{id}/decision`). Times are from the fault switched on; "prompt" is the largest prompt one model call sent.
 
 | Run | Opened (signal) | Proposal ready | Approved to verified | Model calls, largest prompt | Outcome |
 |---|---|---|---|---|---|

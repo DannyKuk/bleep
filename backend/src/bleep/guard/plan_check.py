@@ -60,10 +60,10 @@ def check_plan(
     disabled action, a target on another host, any target on a host whose state carries an error
     (an ambiguous override means its protected list may not apply), a target not found on the
     host, a protected container, a Bleep container (`bleep.self=true`), a Docker action on a
-    container that works (running and healthy, or running with no health check) unless one of
-    the incident's signals names it (`incident_containers`, by name), a verification URL that is
-    not one of the host's health checks in the hosts file, and a verification container that is
-    not on the host.
+    container that works (running and healthy, or running with no health check) unless it is one
+    of the incident's own (`incident_containers`, by name; Propose says which), a verification
+    URL that is not one of the host's health checks in the hosts file, and a verification
+    container that is not on the host.
     """
     violations: list[Violation] = []
     if proposal.kind == "no_action" and proposal.steps:
@@ -128,7 +128,8 @@ def _check_working(
 ) -> list[Violation]:
     """A Docker action on a container that works is no fix for an incident about something
     else: a planted log line that names a healthy container is the usual way such a step gets
-    into a plan (#35). The incident's own containers, the ones its signals name, stay allowed.
+    into a plan (#35). The incident's own containers stay allowed; Propose's
+    `_incident_containers` says which those are, from trusted sources only (#112).
     A Coolify action is left alone: a release can fail its URLs while every container is
     healthy, and a rollback is then the fix."""
     if not step.action.startswith("docker."):
@@ -144,9 +145,8 @@ def _check_working(
         return []
     what = f"step {number} ({step.action} {step.target} on {step.host_id})"
     why = (
-        f"{container.name} is {how}, and no signal of this incident names it; acting on a "
-        "container that works is not a fix for this incident. If it is the one to act on, "
-        "naming it in an instruction lifts this refusal"
+        f"{container.name} is {how}, and it is not one of this incident's containers; acting on "
+        "a container that works is not a fix for this incident"
     )
     return [Violation("healthy_target", f"{what}: {why}", number)]
 

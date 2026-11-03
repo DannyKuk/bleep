@@ -18,7 +18,7 @@ from collections.abc import Collection, Sequence
 from datetime import date, datetime
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from evals.judge import MANUAL, PASS_SCORE
 from evals.scenarios import Scenario, ScenarioResult
@@ -83,6 +83,17 @@ class Grade(BaseModel):
     root_cause_score: float = Field(ge=0, le=1)
     note: str = ""
 
+    @model_validator(mode="after")
+    def _pass_matches_score(self) -> Grade:
+        """A pass is a score of PASS_SCORE or more, as for the judge, so the two cannot disagree."""
+        if self.root_cause_pass != (self.root_cause_score >= PASS_SCORE):
+            verdict = "pass" if self.root_cause_pass else "fail"
+            raise ValueError(
+                f"{self.run_id}: a {verdict} with score {self.root_cause_score}; a pass is a score "
+                f"of {PASS_SCORE} or more"
+            )
+        return self
+
 
 def read_grades(path: Path) -> list[Grade]:
     grades = []
@@ -112,11 +123,12 @@ def index_grades(grades: Sequence[Grade], run_ids: Collection[str]) -> dict[str,
 
 def graded_run(result: ScenarioResult, grade: Grade) -> ScenarioResult:
     """A copy of `result` with the grade's root cause score, pass and note (as the judge's
-    reason)."""
+    reason). No judge model was paid for a grade by hand, so its cost is cleared."""
     update = {
         "root_cause_score": grade.root_cause_score,
         "root_cause_pass": grade.root_cause_pass,
         "judge_reason": grade.note or None,
+        "judge_usd": None,
     }
     return result.model_copy(update=update)
 
@@ -125,8 +137,15 @@ def apply_grades(
     results: Sequence[ScenarioResult], grades: Sequence[Grade]
 ) -> list[ScenarioResult]:
     """The results with each graded run's grade applied. A grade for a run that is not in the
-    results, or a run graded twice, is refused; a run with no grade stays as it was."""
+    results, a run graded twice, or a run a judge model scored (only a `manual` batch is graded by
+    hand) is refused; a run with no grade stays as it was."""
     by_run = index_grades(grades, {r.run_id for r in results})
+    for r in results:
+        if r.run_id in by_run and r.judge != MANUAL:
+            raise GradeError(
+                f"a grade for {r.run_id}, whose root cause the judge {r.judge} scored; only a "
+                "batch run with --judge manual is graded by hand"
+            )
     return [graded_run(r, by_run[r.run_id]) if r.run_id in by_run else r for r in results]
 
 
@@ -314,7 +333,7 @@ def _what_it_shows(results: list[ScenarioResult]) -> list[str]:
         lines.append(
             f"- {_plural(len(cut), 'run')} failed with `context_length`: a model call reached its "
             "length limit before it answered, its reasoning having filled the context. Give the "
-            "model a larger context, or cap its output (backend/evals/README.md)."
+            "model a larger context (backend/evals/README.md)."
         )
     pending = [r for r in results if _pending(r)]
     if pending:

@@ -13,6 +13,9 @@ from pydantic import BaseModel, Field
 from bleep.schemas.docker import ContainerSummary, HostBasics
 
 Outcome = Literal["resolved", "rejected", "no_action", "unverified", "budget", "replan_limit"]
+# Where host text gave orders or posed as Bleep (#105): a closed list, so the diagnosis can say
+# where without carrying any of that text.
+PlantedSource = Literal["logs", "events", "inspect", "http_body", "memory", "other"]
 Action = Literal[
     "docker.restart", "docker.stop", "docker.start", "coolify.redeploy", "coolify.set_env"
 ]
@@ -112,6 +115,7 @@ class Diagnosis(BaseModel):
     confidence: float = Field(ge=0, le=1)
     affected_services: list[str] = Field(default_factory=list)
     unsure: bool = False
+    planted_in: list[PlantedSource] = Field(default_factory=list)
 
 
 class PlanStep(BaseModel):

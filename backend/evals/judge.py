@@ -87,8 +87,9 @@ def model_under_test(models: ModelSettings) -> str:
 
 
 def _base_name(model: str) -> str:
+    """The model's own name: no provider prefix, no OpenRouter variant tag (`:free`, `:nitro`)."""
     name = model.removeprefix(CLAUDE_CODE).removeprefix(":")
-    return name.rsplit("/", 1)[-1].strip().lower()
+    return name.rsplit("/", 1)[-1].split(":", 1)[0].strip().lower()
 
 
 def check_distinct(judge: str, tested: str) -> None:

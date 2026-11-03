@@ -12,7 +12,7 @@ set -euo pipefail
 
 FAULTS="bad-env oom db-down bad-deploy disk-full port-conflict misroute hung"
 FILL_FILE=/uploads/catalog-export.bin
-COMPOSE_FILE=$(cd "$(dirname "$0")" && pwd)/compose.yaml
+SHOP_COMPOSE=$(cd "$(dirname "$0")" && pwd)/compose.yaml
 
 usage() {
   echo "usage: $0 <fault> on|off   (faults: $FAULTS)" >&2
@@ -21,7 +21,7 @@ usage() {
 }
 
 # docker compose on the shop's own project, `shop`.
-compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
+compose() { docker compose -p shop -f "$SHOP_COMPOSE" "$@"; }
 
 # Recreate a service from its Compose definition; the caller's environment picks the variant.
 recreate() { compose up -d --no-deps "$1"; }

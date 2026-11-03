@@ -35,7 +35,7 @@
   "command": "uv run --group evals python -m evals.run --judge manual --only bad-env --repeat 1",
   "reset_shop": true,
   "raw": "../../data/evals/scenarios-20261103-152805.jsonl",
-  "report": "docs/evals/scenarios-local-2026-11-03.md",
+  "report": null,
   "grader": null,
   "grades": null
 }

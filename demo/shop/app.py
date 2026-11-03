@@ -93,7 +93,7 @@ def items() -> list[dict]:
 
 @app.post("/freeze")
 async def freeze() -> None:
-    """Debug hook: block the event loop, so every request after this one hangs."""
-    log.warning("freeze requested: the event loop is blocked from now on")
+    """Debug hook: block the event loop, so every request after this one hangs. It writes no log
+    line first: a real hang does not announce itself (#106)."""
     while True:
         time.sleep(3600)

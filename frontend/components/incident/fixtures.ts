@@ -30,6 +30,7 @@ export function diagnosis(overrides: Partial<Diagnosis> = {}): Diagnosis {
     confidence: 0.82,
     affected_services: ["shop"],
     unsure: false,
+    planted_in: [],
     ...overrides,
   };
 }
