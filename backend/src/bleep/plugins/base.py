@@ -37,23 +37,20 @@ class Plugin(ABC):
 
     `settings_model` must forbid unknown fields and may not have a field that looks like a secret;
     `secrets` names the environment variables the plugin needs, every one of which must be set
-    before it can be switched on. Tool names start with `<name>_` and act actions with `<name>.`,
-    so a plugin can neither shadow a core tool nor add a Docker action.
+    before it can be switched on, and `optional_secrets` those it uses when they are set. Tool
+    names start with `<name>_` and act actions with `<name>.`, so a plugin can neither shadow a
+    core tool nor add a Docker action.
     """
 
     name: ClassVar[str]
     title: ClassVar[str]
     settings_model: ClassVar[type[BaseModel]]
     secrets: ClassVar[tuple[str, ...]] = ()
+    optional_secrets: ClassVar[tuple[str, ...]] = ()
 
     @abstractmethod
     def tools(self, ctx: PluginContext) -> list[ToolSpec]:
         """The plugin's tools, each labelled read or act; read tools join Investigate's."""
-
-    def secret_envs(self, settings: BaseModel) -> tuple[str, ...]:
-        """The environment variables this plugin needs with `settings`: `secrets`, unless the
-        plugin lets its settings name one (the MCP plugin's `auth_env`)."""
-        return self.secrets
 
     def act_handlers(self, ctx: PluginContext) -> dict[str, ActHandler]:
         """The actions the plugin can run for an approved plan, by action name."""

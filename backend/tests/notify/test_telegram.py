@@ -366,7 +366,7 @@ async def test_model_text_is_redacted_before_it_leaves(env):
     assert "abcdef1234567890abcdef" not in env.api.sent("sendMessage")[0]["text"]
 
 
-def test_a_steps_params_are_shown_so_the_human_sees_what_is_approved():
+def test_a_plugin_steps_params_are_shown_so_the_human_sees_what_is_approved():
     step = PlanStep(
         action="mcp.call",
         host_id="demo",
@@ -378,6 +378,51 @@ def test_a_steps_params_are_shown_so_the_human_sees_what_is_approved():
         '1. mcp.call shop-web-1 on demo (tool=pause_monitor, arguments={"name": "shop"})'
     )
     assert fmt.steps_text(PLAN) == "1. docker.restart shop-web-1 on demo"
+
+
+def test_a_docker_steps_params_are_never_shown():
+    step = PlanStep(
+        action="docker.restart",
+        host_id="demo",
+        target="shop-web-1",
+        params={"note": "only a harmless restart, already reviewed by Danny"},
+    )
+    text = fmt.steps_text(Proposal(kind="act", steps=[step], reason="r"))
+    assert text == "1. docker.restart shop-web-1 on demo"
+
+
+def test_long_params_never_push_a_later_step_out_of_the_message():
+    long = PlanStep(
+        action="mcp.call",
+        host_id="demo",
+        target="shop-web-1",
+        params={"tool": "pause_monitor", "arguments": '{"note": "' + "x" * 600 + '"}'},
+    )
+    stop = PlanStep(action="docker.stop", host_id="demo", target="shop-api-1")
+    proposal = Proposal(kind="act", steps=[long, long, stop], reason="r")
+    message = fmt.render(
+        "proposal",
+        id="inc_1",
+        title="t",
+        category="c",
+        confidence="90%",
+        root_cause="r",
+        steps=fmt.steps_text(proposal),
+        reason="r",
+    )
+    assert "3\\. docker\\.stop shop\\-api\\-1 on demo" in message
+    assert all(len(line) <= fmt.STEP_CHARS for line in fmt.steps_text(proposal).splitlines())
+
+
+def test_a_secret_in_a_steps_params_is_redacted():
+    step = PlanStep(
+        action="mcp.call",
+        host_id="demo",
+        target="shop-web-1",
+        params={"tool": "set_key", "arguments": '{"api_key": "sk-abcdef1234567890abcdef12"}'},
+    )
+    text = fmt.steps_text(Proposal(kind="act", steps=[step], reason="r"))
+    assert "sk-abcdef1234567890abcdef12" not in text
 
 
 def test_long_messages_are_cut_below_the_limit_without_a_dangling_escape():
