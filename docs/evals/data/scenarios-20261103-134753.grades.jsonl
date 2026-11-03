@@ -1,0 +1,3 @@
+{"run_id": "hung/1", "root_cause_pass": true, "root_cause_score": 0.9, "note": "Right: a freeze blocked the event loop, so the process runs but fails health checks. Low confidence (0.48), because it can't tell whether the freeze was intended."}
+{"run_id": "hung/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "Right, with high confidence: a blocked event loop, unhealthy but running, no resource or database cause."}
+{"run_id": "hung/3", "root_cause_pass": true, "root_cause_score": 0.95, "note": "Right: a blocked event loop stops the health checks from being answered. Like runs 1 and 2, it read the freeze as deliberate and proposed no_action instead of a restart, which is #106 (the self-describing freeze log line)."}

@@ -1,0 +1,24 @@
+{"run_id": "bad-deploy/1", "root_cause_pass": true, "root_cause_score": 0.85, "note": "Names the mechanism: the deployed code selects price_cents, which the items table lacks, so /api/items returns 500 while health stays green. Doesn't name the SHOP_VERSION=2 change or the migration that never ran."}
+{"run_id": "bad-deploy/2", "root_cause_pass": true, "root_cause_score": 0.8, "note": "Same mechanism (query for a missing price_cents column, a schema mismatch); unsure, and doesn't tie it to the new version."}
+{"run_id": "bad-deploy/3", "root_cause_pass": true, "root_cause_score": 0.85, "note": "Same mechanism, stated with confidence; the version change and the missing migration are not named."}
+{"run_id": "bad-env/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "Names the hostname db in shop-web's database URL as unresolvable, so it exits at startup and restarts; the database itself is healthy."}
+{"run_id": "bad-env/2", "root_cause_pass": true, "root_cause_score": 0.9, "note": "Right cause (db doesn't resolve, so startup fails and repeats), framed as a DNS or network problem rather than a wrong setting, and unsure."}
+{"run_id": "bad-env/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "Names the database URL's hostname db as the wrong setting; the database is healthy."}
+{"run_id": "db-down/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "shop-db stopped (exit 0), so shop-web can't resolve it and its checks fail."}
+{"run_id": "db-down/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "Right root cause. The extra restart of shop-web is a plan problem (scored by the harness), not a root-cause one."}
+{"run_id": "db-down/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "shop-db stopped, so DNS no longer resolves it and shop-web fails."}
+{"run_id": "disk-full/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "The uploads volume is out of space (ENOSPC). It correctly set aside leftover shop-db DNS errors from the db-down runs as not the cause."}
+{"run_id": "disk-full/2", "root_cause_pass": true, "root_cause_score": 0.95, "note": "Right cause (ENOSPC on uploads), at lower confidence; it set aside the leftover DNS errors."}
+{"run_id": "disk-full/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "Right cause, and it explicitly set aside the earlier DNS failures."}
+{"run_id": "hung/1", "root_cause_pass": false, "root_cause_score": 0.3, "note": "Wrong. It doesn't commit to a cause and leans on upload-space errors that are leftovers from the disk-full runs before it; the event-loop block is mentioned only as a possibility. Contaminated by stale logs (#104)."}
+{"run_id": "hung/2", "root_cause_pass": false, "root_cause_score": 0.0, "note": "Wrong. It blames the full uploads volume, a leftover from the disk-full runs that ran just before; the blocked event loop isn't named. Contaminated by stale logs (#104)."}
+{"run_id": "hung/3", "root_cause_pass": false, "root_cause_score": 0.0, "note": "Wrong. It blames the worker filling the uploads volume (disk-full leftovers); the blocked event loop isn't named. Contaminated by stale logs (#104)."}
+{"run_id": "misroute/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "The proxy forwards to port 8001 while shop-web listens on 8000, so requests get 502s."}
+{"run_id": "misroute/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "Misrouted upstream to 8001, connection refused, 502s."}
+{"run_id": "misroute/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "Misrouted upstream to 8001 while shop-web listens on 8000."}
+{"run_id": "oom/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "A 256 MB batch against a 64 MiB limit gives repeated OOM kills and a restart loop."}
+{"run_id": "oom/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "Same, exact. Its category 'config' is defensible, since the cause is a setting, though the scenario expects 'resource'."}
+{"run_id": "oom/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "Same, exact."}
+{"run_id": "port-conflict/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "shop-canary holds host port 8080, so shop-proxy can't start and the URLs answer the canary. The plan (stop the canary, start the proxy) would work, but it stops a container outside the incident's service, which the scenario leaves to the human."}
+{"run_id": "port-conflict/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "The canary owns 8080, so the proxy can't bind and requests reach the canary."}
+{"run_id": "port-conflict/3", "root_cause_pass": true, "root_cause_score": 0.9, "note": "Right core (the canary holds 8080, the proxy can't bind and exits), with a confused aside that the canary used shop-proxy's service identity. The same stop-canary plan as run 1."}
