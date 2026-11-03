@@ -15,6 +15,9 @@ from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
 from bleep.incidents.settings_store import SettingsStore
+from bleep.knowledge.index import KnowledgeIndex
+from bleep.knowledge.ingest import KnowledgeRefresher
+from bleep.knowledge.repos import GithubRepoDocs
 from bleep.llm.tracing import TracingSettings, build_tracer
 from bleep.llm.usage import CostLedger
 from bleep.memory.embeddings import (
@@ -52,6 +55,8 @@ class AppParts:
     plugins: PluginRegistry
     settings_store: SettingsStore
     github: GithubClient
+    knowledge: KnowledgeIndex
+    knowledge_refresher: KnowledgeRefresher
 
 
 # Every plugin Bleep has; each is off until a person switches it on.
@@ -96,7 +101,9 @@ def build_parts(
     bus, incidents = EventBus(db), IncidentRepo(db)
     approvals, guard_log = ApprovalStore(db, settings.secret), GuardLog(db)
     notify = setup_notify(settings, db, bus, approvals, guard_log)
-    memory = MemoryStore(db, embedder or build_embedder(settings))
+    embedder = embedder or build_embedder(settings)  # one model, loaded once, for both
+    memory = MemoryStore(db, embedder)
+    knowledge = KnowledgeIndex(db, embedder)
     plugin_registry = PluginRegistry(
         [cls() for cls in PLUGINS] if plugins is None else plugins,
         settings.secret,
@@ -120,6 +127,7 @@ def build_parts(
             store,
             plugin_registry,
             github,
+            knowledge,
         ),
         incidents=incidents,
         approvals=approvals,
@@ -132,6 +140,10 @@ def build_parts(
         plugins=plugin_registry,
         settings_store=store,
         github=github,
+        knowledge=knowledge,
+        knowledge_refresher=KnowledgeRefresher(
+            knowledge, reports=memory, repos=GithubRepoDocs(github, registry)
+        ),
     )
 
 
@@ -148,6 +160,7 @@ def graph_deps(
     settings_store: SettingsSource,
     plugins: PluginRegistry,
     github: GithubClient | None = None,
+    knowledge: KnowledgeIndex | None = None,
 ) -> GraphDeps:
     """What the incident graph runs on. Models are built when a node asks, so no key is needed.
 
@@ -156,11 +169,12 @@ def graph_deps(
     `BLEEP_SECRET` it signs them with. `memory` is read by Gather and the `recall_incidents`
     tool and written by Report. The switched-on `plugins` add their read tools and act handlers,
     read at each use, and `settings_store` their actions to the plan check's enabled set.
-    With `github`, a service with a `repo` gets the GitHub tools.
+    With `github`, a service with a `repo` gets the GitHub tools; `knowledge` is searched by the
+    `knowledge_search` tool.
     """
     return GraphDeps(
         registry=registry,
-        tools=default_registry(memory, plugins, github),
+        tools=default_registry(memory, plugins, github, knowledge),
         act_tools=plugins.act_tools(docker_act_tools(secret, guard_log)),
         models=model_factory(settings_store),
         bus=bus,

@@ -404,3 +404,19 @@ def test_the_real_local_model_ranks_a_similar_incident_above_an_unrelated_one():
 
     assert query.shape == (384,)
     assert query @ similar > query @ unrelated
+
+
+async def test_all_records_lists_every_remembered_incident_oldest_first(env):
+    assert await env.store.all_records() == []
+    first = await env.incident(SHOP)
+    await env.store.add_report(first, report("database connection refused"))
+    host = await env.incident(None, kind="disk")
+    await env.store.add_report(host, report("build cache filled the disk", title="disk full"))
+
+    records = await env.store.all_records()
+
+    assert [r.incident_id for r in records] == [first.id, host.id]
+    assert records[0].service_id == SHOP and records[1].service_id is None
+    assert records[1].host_id == "a"
+    assert records[1].title == "disk full"
+    assert records[0].action == "nothing ran"

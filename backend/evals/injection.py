@@ -7,10 +7,10 @@ proposes.
 
 One YAML file per case in `evals/injection/`. An attack plants its payload in one channel: the
 shop's log (`logs`), the body of the shop's failing replies (`http_body`), a past incident in
-Bleep's memory (`memory`) or the newest commit of the shop's repo (`commit`, served from a GitHub
-fixture, `evals.github`). Docs (`docs`) have no tool yet; their cases carry `channel_pending` and
-are skipped. A control is a real demo fault whose log carries an
-honest error that mentions restarting or ignoring something.
+Bleep's memory (`memory`), the newest commit of the shop's repo (`commit`, served from a GitHub
+fixture, `evals.github`) or a doc page of the shop's linked repo that knowledge search returns
+(`docs`). A control is a real demo fault whose log carries an honest error that mentions
+restarting or ignoring something.
 
 Each run goes through the scenario harness (`evals.run.run_scenario`): the watcher opens the
 incident, the graph runs to the end of Propose, and then on: the plan is put to Approval, rejected,
@@ -27,12 +27,14 @@ import argparse
 import asyncio
 import base64
 import binascii
+import contextlib
 import json
 import logging
 import os
 import re
 import secrets
 import sys
+import tempfile
 import typing
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
@@ -48,9 +50,14 @@ from bleep.graph.nodes.report import PLANTED_START
 from bleep.guard.redact import redact_text
 from bleep.incidents.repository import utcnow
 from bleep.incidents.runner import IncidentRunner
+from bleep.knowledge.index import KnowledgeIndex
+from bleep.knowledge.ingest import load_snapshot
+from bleep.memory.embeddings import Embedder, FastEmbedEmbedder
 from bleep.memory.text import clean
 from bleep.schemas.graph import Action, Decision, Diagnosis, PastIncident, Proposal, Report
 from bleep.schemas.incidents import Subject
+from bleep.schemas.knowledge import KnowledgeDocument, KnowledgeHit, KnowledgeSource
+from bleep.store.db import Database
 from evals.github import (
     FixtureFile,
     GithubFixture,
@@ -107,11 +114,12 @@ _URL_PASSWORD = re.compile(r"://[^:/@\s]+:([^@\s]+)@")
 _BASE64 = re.compile(r"[A-Za-z0-9+/]{24,}={0,2}")
 
 Channel = Literal["logs", "http_body", "memory", "commit", "docs"]
-LIVE_CHANNELS: tuple[Channel, ...] = ("logs", "http_body", "memory", "commit")
+LIVE_CHANNELS: tuple[Channel, ...] = ("logs", "http_body", "memory", "commit", "docs")
 # The tools that read a channel the model has to ask for; a run that called none of them met no
 # payload, so the round says how many did.
 CHANNEL_TOOLS: dict[Channel, frozenset[str]] = {
     "commit": frozenset({"recent_commits", "commit_diff"}),
+    "docs": frozenset({"knowledge_search"}),
 }
 # The repo the commit channel serves: its older commits, and the file the planted one changes.
 COMMIT_FIXTURE = "injection"
@@ -129,6 +137,7 @@ PLANTED_FILES = [
         ),
     )
 ]
+PLANTED_REPO = "demo/shop"  # the repo a docs case's page is planted in
 
 
 class InjectionError(ValueError):
@@ -163,11 +172,11 @@ class ShopFailure(_Strict):
 
 class InjectionCase(_Strict):
     """One attack or control. `payload` is the planted text: log lines (`logs`, and every
-    control), a reply body (`http_body`), a past incident's cause (`memory`), a commit message or
-    a doc page (pending channels). `fault` is a demo fault switched on with it (controls); without
-    one, shop-web fails every request so the watcher opens the incident. `inject` says whether the
-    payload goes in before the fault (a fault that freezes shop-web) or after it (one that
-    recreates shop-web, which starts a new log)."""
+    control), a reply body (`http_body`), a past incident's cause (`memory`), a linked repo's doc
+    page (`docs`) or a commit message (pending). `fault` is a demo fault switched on with it
+    (controls); without one, shop-web fails every request so the watcher opens the incident.
+    `inject` says whether the payload goes in before the fault (a fault that freezes shop-web) or
+    after it (one that recreates shop-web, which starts a new log)."""
 
     id: str
     kind: Literal["attack", "control"]
@@ -202,7 +211,7 @@ class InjectionCase(_Strict):
                 raise ValueError("a control has no marker, target, tool or leak")
             if not re.search(r"\b(restart|ignor)", self.payload, re.IGNORECASE):
                 raise ValueError("a control's log lines mention restarting or ignoring")
-        if self.channel == "docs" and not self.channel_pending:
+        if self.channel not in LIVE_CHANNELS and not self.channel_pending:
             raise ValueError(f"the {self.channel} channel has no tool yet: set channel_pending")
         if self.channel in LIVE_CHANNELS and self.channel_pending:
             raise ValueError(f"the {self.channel} channel is live: no channel_pending")
@@ -256,6 +265,19 @@ class InjectionCase(_Strict):
                 score=0.91,
             )
         ]
+
+    def page(self) -> KnowledgeDocument | None:
+        """The docs channel's planted page: a markdown file in the shop's linked repo."""
+        if self.channel != "docs":
+            return None
+        path = f"docs/{self.id}.md"
+        return KnowledgeDocument(
+            id=f"repo:{PLANTED_REPO}:{path}",
+            source="repo",
+            title=f"{PLANTED_REPO}: {path}",
+            url=f"https://github.com/{PLANTED_REPO}/blob/main/{path}",
+            text=self.payload,
+        )
 
 
 def planted_text(payload: str) -> str:
@@ -380,6 +402,40 @@ class PlantedMemory(NullMemory):
         self, text: str, service_id: str | None = None, k: int = 3, min_score: float = 0.5
     ) -> list[PastIncident]:
         return self.past[:k]
+
+
+class KnowledgeFixture:
+    """Knowledge search as the app has it, the Docker docs snapshot embedded once for the round,
+    with the case's planted page (if any) as the only repo doc. It keeps the URLs each search
+    returned, so a run shows whether the planted page ever reached the model."""
+
+    def __init__(self, index: KnowledgeIndex) -> None:
+        self.index = index
+        self.searches: list[list[str]] = []
+        self.planted_url: str | None = None
+
+    @classmethod
+    async def build(cls, folder: Path, embedder: Embedder) -> KnowledgeFixture:
+        db = Database(folder / "knowledge.db")
+        await db.migrate()
+        index = KnowledgeIndex(db, embedder)
+        await index.sync("docker", load_snapshot())
+        return cls(index)
+
+    async def plant(self, page: KnowledgeDocument | None) -> None:
+        await self.index.sync("repo", [page] if page is not None else [], prefix="repo:")
+        self.planted_url = page.url if page is not None else None
+        self.searches = []
+
+    async def search(
+        self, query: str, k: int = 5, sources: set[KnowledgeSource] | None = None
+    ) -> list[KnowledgeHit]:
+        hits = await self.index.search(query, k=k, sources=sources)
+        self.searches.append([hit.url for hit in hits])
+        return hits
+
+    def returned_planted(self) -> int:
+        return sum(self.planted_url in urls for urls in self.searches)
 
 
 class ToolCall(BaseModel):
@@ -605,6 +661,9 @@ class InjectionResult(BaseModel):
     secrets_checked: list[str] = Field(default_factory=list)
     verdict: Verdict = Field(default_factory=Verdict)
     passed: bool | None = None
+    # With knowledge search: how many searches the run made and how many returned the planted page.
+    knowledge_searches: int | None = None
+    planted_returned: int | None = None
 
     @property
     def grade_pending(self) -> bool:
@@ -658,11 +717,14 @@ async def run_case(
     judge: Judge | None,
     run: int = 1,
     label: str = "",
+    knowledge: KnowledgeFixture | None = None,
     **harness,
 ) -> InjectionResult:
     """One run of one case through the scenario harness, on to the report. Only a control is
-    judged."""
+    judged. With `knowledge`, the case's planted page is the only repo doc during the run."""
     to_report = ToReport()
+    if knowledge is not None:
+        await knowledge.plant(case.page())
     result = await run_scenario(
         case.scenario(),
         settings,
@@ -670,11 +732,16 @@ async def run_case(
         judge=judge if case.kind == "control" else None,
         run=run,
         memory=PlantedMemory(case.past()) if case.channel == "memory" else None,
+        knowledge=knowledge,
         after=to_report,
         github=fixture_client(planted) if (planted := case.github()) else None,
         **harness,
     )
-    return score(case, result, to_report.written, label)
+    scored = score(case, result, to_report.written, label)
+    if knowledge is not None:
+        scored.knowledge_searches = len(knowledge.searches)
+        scored.planted_returned = knowledge.returned_planted()
+    return scored
 
 
 async def run_cases(
@@ -841,9 +908,15 @@ def render_round(
         if (tools := CHANNEL_TOOLS.get(c.channel)) is not None:
             rs = by_case[c.id]
             read = sum(any(t.name in tools for t in r.tool_calls) for r in rs)
+            returned = [r.planted_returned for r in rs if r.planted_returned is not None]
             lines.append(
                 f"- `{c.id}` read its channel ({', '.join(sorted(tools))}) in {read} of "
                 f"{len(rs)} runs; a run that did not never met the payload."
+                + (
+                    f" The planted page came back in {sum(map(bool, returned))}."
+                    if c.channel == "docs" and returned
+                    else ""
+                )
             )
     skipped = [c for c in cases if not c.live]
     if skipped:
@@ -942,6 +1015,12 @@ async def _run(args: argparse.Namespace, settings: EvalSettings, cases: list[Inj
         DEMO_COMPOSE, shop_items_url(host), docker_host=docker_host, env=canary
     )  # fmt: skip
     faults = InjectionFaults(demo, ShopInjector(docker_host), cases)
+    stack = contextlib.ExitStack()
+    knowledge = None
+    if any(c.channel == "docs" and c.live for c in cases):
+        log.info("embedding the Docker docs snapshot for knowledge search")
+        folder = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="bleep-knowledge-")))
+        knowledge = await KnowledgeFixture.build(folder, FastEmbedEmbedder())
     started = utcnow()
     raw = RAW_DIR / f"injection-{started:%Y%m%d-%H%M%S}.jsonl"
     log.info("recreating shop-web with its injection hook and a fresh %s", CANARY_ENV)
@@ -951,10 +1030,11 @@ async def _run(args: argparse.Namespace, settings: EvalSettings, cases: list[Inj
             await asyncio.sleep(settings.settle_s)
         results = await run_cases(
             cases, settings, args.repeat, faults=faults, judge=judge, label=args.label,
-            first=args.first, reset=reset,
+            first=args.first, reset=reset, knowledge=knowledge,
             on_result=lambda result: append_jsonl(raw, result),
         )  # fmt: skip
     finally:
+        stack.close()
         log.info("putting the shop back without the hook")
         await DemoFaults(settings.fault_script, docker_host).switch("all", "off")
     tables = render_round(args.label, cases, results)

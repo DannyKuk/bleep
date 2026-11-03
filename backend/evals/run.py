@@ -59,6 +59,7 @@ from bleep.schemas.incidents import Incident, Subject
 from bleep.schemas.settings import ModelSettings, Thresholds
 from bleep.store.db import Database
 from bleep.tools.default import default_registry
+from bleep.tools.knowledge import Searcher
 from bleep.watcher.detector import Detector
 from bleep.watcher.http_checks import UrlCheckStore
 from bleep.watcher.manager import WatcherManager
@@ -421,14 +422,16 @@ def _graph_deps(
     models: ModelFactory | None,
     memory: Memory | None = None,
     github: GithubClient | None = None,
+    knowledge: Searcher | None = None,
 ) -> GraphDeps:
     """Bleep's graph parts, minus everything that reaches past Propose or out of the process:
-    no act tools, no memory unless a test plants one (each run starts blank), no Telegram, and
-    no GitHub tools unless the run serves a fixture (`evals.github`)."""
+    no act tools, no memory unless a test plants one (each run starts blank), no Telegram, no
+    GitHub tools unless the run serves a fixture (`evals.github`), and no knowledge search
+    unless a case gives one."""
     store = StaticSettings(model_settings=settings.models)
     return GraphDeps(
         registry=registry,
-        tools=default_registry(github=github),
+        tools=default_registry(github=github, knowledge=knowledge),
         act_tools={},
         models=models or model_factory(store),
         bus=EventBus(db),
@@ -503,6 +506,7 @@ async def run_scenario(
     connector: Connector = connect_host,
     models: ModelFactory | None = None,
     memory: Memory | None = None,
+    knowledge: Searcher | None = None,
     after: AfterPropose | None = None,
     github: GithubClient | None = None,
 ) -> ScenarioResult:
@@ -513,7 +517,8 @@ async def run_scenario(
     Without a judge the root cause is not scored. `memory` is what Gather recalls (none by
     default), and `after` runs once Propose ended without a failure; a failure in it is the
     run's, like one before. `github` is the GitHub the tools read; without it they are absent,
-    and a scenario with a `github` fixture gets one dated from the run's start.
+    and a scenario with a `github` fixture gets one dated from the run's start. `knowledge` is
+    what the `knowledge_search` tool searches (no tool by default).
     """
     result = ScenarioResult(
         id=scenario.id,
@@ -533,7 +538,7 @@ async def run_scenario(
             async with open_checkpointer(Path(folder) / "checkpoints.sqlite") as saver:
                 if github is None and scenario.github is not None:
                     github = fixture_client(load_github_fixture(scenario.github))
-                deps = _graph_deps(db, registry, settings, models, memory, github)
+                deps = _graph_deps(db, registry, settings, models, memory, github, knowledge)
                 graph = build_graph(deps, saver)
                 catcher = IncidentCatcher(graph, deps.incidents, deps.bus)
                 manager = WatcherManager(
