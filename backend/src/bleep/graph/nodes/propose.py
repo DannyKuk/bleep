@@ -82,12 +82,14 @@ def _incident_containers(deps: GraphDeps, state: IncidentState) -> set[str]:
     """The containers a plan may act on even while they work (#35): the ones the incident's
     signals name, and any the human names in an instruction. The instructions are trusted input:
     Approval fills them only from the human's own `instruct` decision, never from model text. A
-    name counts only as a whole word, so `shop-web` in an instruction does not name
-    `shop-web-1`."""
+    name counts only as a whole word, in any case, so `shop-web` does not name `shop-web-1` and
+    `shop-web-1.local` names neither; a period or comma after it ends it ("Restart shop-web-1.").
+    Any mention counts, even "leave shop-db-1 alone": the human still approves the plan."""
     named = {s.container for s in state.get("signals", []) if s.container}
     said = " ".join(state.get("instructions", []))
     for container in deps.registry.snapshot(state["subject"].host_id) or []:
-        if re.search(rf"(?<![\w.-]){re.escape(container.name)}(?![\w.-])", said):
+        whole = rf"(?<![\w.-]){re.escape(container.name)}(?![\w-])(?!\.\w)"
+        if re.search(whole, said, re.IGNORECASE):
             named.add(container.name)
     return named
 

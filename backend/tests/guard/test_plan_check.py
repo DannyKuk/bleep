@@ -296,6 +296,7 @@ async def test_the_refusal_says_the_container_works_and_the_incident_does_not_na
     assert "shop-proxy-1 is running with no health check" in proxy.text
     assert "shop-worker-1 is running and healthy" in worker.text
     assert "no signal of this incident names it" in proxy.text
+    assert "naming it in an instruction lifts this refusal" in proxy.text
 
 
 async def test_a_coolify_action_on_a_working_application_is_left_to_the_human(tmp_path):

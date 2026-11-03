@@ -145,7 +145,8 @@ def _check_working(
     what = f"step {number} ({step.action} {step.target} on {step.host_id})"
     why = (
         f"{container.name} is {how}, and no signal of this incident names it; acting on a "
-        "container that works is not a fix for this incident"
+        "container that works is not a fix for this incident. If it is the one to act on, "
+        "naming it in an instruction lifts this refusal"
     )
     return [Violation("healthy_target", f"{what}: {why}", number)]
 

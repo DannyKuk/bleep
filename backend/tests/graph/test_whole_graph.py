@@ -52,7 +52,7 @@ async def test_a_run_goes_from_gather_to_the_interrupt_and_resumes_on_each_decis
         assert record is not None and record.decision is None
         assert (await env.repo.get(incident.id)).status == "awaiting_approval"
 
-        text = "restart shop-db-1 instead" if kind == "instruct" else None
+        text = "The db instead: restart shop-db-1." if kind == "instruct" else None
         decision = Decision(kind=kind, text=text, via="dashboard", at=AT)
         assert await store.resolve(incident.id, decision) == decision
         await runner.resume(incident.id, decision, record.id)
@@ -67,7 +67,7 @@ async def test_a_run_goes_from_gather_to_the_interrupt_and_resumes_on_each_decis
             assert state["outcome"] == "rejected"
             assert (await env.repo.get(incident.id)).status == "closed"
         else:
-            assert state["instructions"] == ["restart shop-db-1 instead"]
+            assert state["instructions"] == ["The db instead: restart shop-db-1."]
             assert (await env.nodes(incident.id))[-2:] == ["propose", "approval"]
             assert (await store.current(incident.id)).id != record.id  # a new question
             assert (await env.repo.get(incident.id)).status == "awaiting_approval"
