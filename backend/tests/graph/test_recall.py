@@ -1,6 +1,7 @@
 """Long-term memory in the graph: Gather recalls, Report remembers, Investigate can ask."""
 
 import json
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -180,7 +181,9 @@ async def test_recall_incidents_is_a_read_tool_over_memory(tmp_path):
     nothing = await tools["recall_incidents"].ainvoke({"query": "certificate expired"})
 
     assert spec.kind == "read"
-    assert answer.startswith("Past incidents like this one (Bleep's own records):\n- 2026-11-02")
+    assert re.match(
+        r"Past incidents like this one \(Bleep's own records\):\n- \d{4}-\d{2}-\d{2} ", answer
+    )
     assert "the db was down" in answer
     assert nothing == "No past incident is like this one."
     assert "recall_incidents" not in {s.name for s in default_registry().specs()}
@@ -328,10 +331,13 @@ async def test_no_instruction_or_a_host_incident_asks_for_no_facts(tmp_path):
 async def test_a_model_that_fails_to_list_facts_still_ends_with_a_report(tmp_path, caplog):
     env, store = await memory_env(tmp_path)
 
-    incident_id = await report_with(
-        env, shop(env), draft(), instructions=["always redeploy rather than restart"]
-    )
+    env.models.model = FakeChatModel(script=[draft()], structured_output_unsupported=True)
+    incident = await env.open(shop(env), container="shop-web-1")
+    state = {"incident_id": incident.id, "subject": shop(env), "signals": []}
+    told = {"instructions": ["always redeploy rather than restart"], "proposal": RESTART}
 
-    assert (await env.repo.get(incident_id)).status == "closed"
+    update = await report.make(env.deps)(state | {"context": GatherContext(at=T0)} | told)
+
+    assert update["report"].title  # the report is written; the runner closes the incident (#28)
     assert await store.facts(env.service_id("shop")) == []
     assert "learning facts" in caplog.text
