@@ -5,7 +5,16 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
 
-from bleep.schemas.graph import Decision, Diagnosis, Outcome, Proposal, Report
+from bleep.schemas.graph import (
+    Decision,
+    Diagnosis,
+    Feedback,
+    FeedbackTarget,
+    Outcome,
+    Proposal,
+    Report,
+    Vote,
+)
 from bleep.schemas.incidents import Incident
 
 Health = Literal["ok", "degraded", "down", "stopped", "unknown"]
@@ -97,6 +106,7 @@ class IncidentDetail(BaseModel):
     approval: ApprovalView | None
     outcome: Outcome | None
     report: Report | None
+    feedback: list[Feedback] = Field(default_factory=list)  # the human's votes, by target
 
 
 class DecisionBody(BaseModel):
@@ -120,3 +130,42 @@ class DecisionConflict(BaseModel):
 
     detail: str
     decided_via: Literal["telegram", "dashboard"] | None = None
+
+
+NOTE_CHARS = 500
+
+
+class FeedbackBody(BaseModel):
+    """A thumbs up or down on the incident's diagnosis or plan; the note is trimmed and an empty
+    one dropped."""
+
+    target: FeedbackTarget
+    vote: Vote
+    note: str | None = Field(default=None, max_length=NOTE_CHARS)
+
+    @model_validator(mode="after")
+    def _trim(self) -> Self:
+        self.note = (self.note or "").strip() or None
+        return self
+
+
+class FactBody(BaseModel):
+    """A fact a person adds to a service; trimmed, and empty is refused."""
+
+    text: str = Field(max_length=NOTE_CHARS)
+
+    @model_validator(mode="after")
+    def _has_text(self) -> Self:
+        self.text = self.text.strip()
+        if not self.text:
+            raise ValueError("a fact needs text")
+        return self
+
+
+class ServiceDetail(BaseModel):
+    """One service for its page: the overview's view of it plus the rules Bleep follows for it
+    (its own and its host's)."""
+
+    service: ServiceView
+    rules: list[str]
+    host_rules: list[str]

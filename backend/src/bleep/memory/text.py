@@ -12,9 +12,11 @@ import re
 from bleep.guard.redact import redact_text
 from bleep.guard.sanitize import strip_control
 from bleep.guard.untrusted import escape_untrusted, wrap_untrusted
-from bleep.schemas.graph import PastIncident, ServiceFact
+from bleep.schemas.graph import Feedback, PastIncident, ServiceFact
 
 FIELD_CHARS = 500
+NOTE_CHARS = 200  # a feedback note, inside a record's one line
+_FINDING = {"diagnosis": "the diagnosis", "proposal": "the plan"}
 QUOTE_SOURCE = "memory.quote"
 # A stretch in straight, typographic or back quotes, on one line. Single quotes are left alone:
 # they are apostrophes far more often than quotes.
@@ -55,3 +57,15 @@ def describe_fact(fact: ServiceFact) -> str:
     """A service fact as one line for a prompt."""
     origin = "a person" if fact.source == "human" else "a report"
     return label_quotes(f"{fact.text} (from {origin}, {fact.created_at:%Y-%m-%d})")
+
+
+def describe_feedback(votes: list[Feedback]) -> str | None:
+    """The human's votes in words, diagnosis first: "the diagnosis was wrong (it was the disk)
+    and the plan was right"; None without votes."""
+    ordered = sorted(votes, key=lambda vote: list(_FINDING).index(vote.target))
+    parts = [
+        f"{_FINDING[vote.target]} was {'right' if vote.vote == 'up' else 'wrong'}"
+        + (f" ({clean(vote.note, NOTE_CHARS)})" if vote.note else "")
+        for vote in ordered
+    ]
+    return " and ".join(parts) or None

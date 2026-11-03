@@ -84,6 +84,7 @@ export function detail(overrides: Partial<IncidentDetail> = {}): IncidentDetail 
     approval: approval(),
     outcome: null,
     report: null,
+    feedback: [],
     ...overrides,
   };
 }

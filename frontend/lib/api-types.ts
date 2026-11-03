@@ -208,6 +208,8 @@ export interface IncidentDetail {
   approval: ApprovalView | null;
   outcome: Outcome | null;
   report: Report | null;
+  /** The human's votes on the diagnosis and the plan (Task 30), at most one per target. */
+  feedback: Feedback[];
 }
 
 export interface DecisionBody {
@@ -220,4 +222,43 @@ export interface DecisionBody {
 export interface DecisionConflict {
   detail: string;
   decided_via: Channel | null;
+}
+
+// Feedback and memory (Task 30: schemas/graph.py, schemas/api.py).
+
+export type FeedbackTarget = "diagnosis" | "proposal";
+export type Vote = "up" | "down";
+
+export interface Feedback {
+  target: FeedbackTarget;
+  vote: Vote;
+  note: string | null;
+  at: string;
+}
+
+export interface FeedbackBody {
+  target: FeedbackTarget;
+  vote: Vote;
+  note?: string;
+}
+
+export interface ServiceFact {
+  id: number;
+  text: string;
+  /** `human` for a fact a person added, `report` for one learned from an incident's report. */
+  source: "report" | "human";
+  created_at: string;
+  /** The incident a report fact came from; null for a person's. */
+  incident_id: string | null;
+}
+
+export interface FactBody {
+  text: string;
+}
+
+/** One service for its page: the overview's view plus its rules and its host's. */
+export interface ServiceDetail {
+  service: ServiceView;
+  rules: string[];
+  host_rules: string[];
 }

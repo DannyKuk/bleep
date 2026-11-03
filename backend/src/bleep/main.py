@@ -5,7 +5,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import APIRouter, Depends, FastAPI
 
-from bleep.api import auth, hosts, incidents, stream
+from bleep.api import auth, hosts, incidents, memory, stream
 from bleep.api.deps import require_session
 from bleep.config import Settings, check_settings
 from bleep.graph.build import build_graph, open_checkpointer
@@ -104,6 +104,8 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
     api.include_router(auth.login_router)  # the only route open without a session
     protected = APIRouter(dependencies=[Depends(require_session)])
     protected.include_router(auth.session_router)
+    # Before hosts: a service id holds a "/", and `GET /services/{id:path}` would take ".../facts".
+    protected.include_router(memory.router)
     protected.include_router(hosts.router)
     protected.include_router(incidents.router)
     protected.include_router(stream.router)

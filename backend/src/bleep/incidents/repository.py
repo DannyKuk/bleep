@@ -162,13 +162,21 @@ class IncidentRepo:
             await conn.close()
 
     async def list(
-        self, status: IncidentStatus | None = None, limit: int = 50, offset: int = 0
+        self,
+        status: IncidentStatus | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        service_id: str | None = None,
     ) -> list[Incident]:
-        where, args = ("WHERE status = ?", [status]) if status else ("", [])
+        """Newest first, optionally only those with `status` or of the service `service_id`."""
+        filters = {"status": status, "service_id": service_id}
+        given = {column: value for column, value in filters.items() if value is not None}
+        where = " AND ".join(f"{column} = ?" for column in given)
+        args: list[object] = list(given.values())
         conn = await self.db.connect()
         try:
             async with conn.execute(
-                f"SELECT * FROM incidents {where}"
+                f"SELECT * FROM incidents {'WHERE ' + where if where else ''}"
                 " ORDER BY opened_at DESC, id DESC LIMIT ? OFFSET ?",
                 [*args, limit, offset],
             ) as cursor:
