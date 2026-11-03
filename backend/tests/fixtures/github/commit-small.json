@@ -1,0 +1,33 @@
+{
+ "sha": "15e21e9ea3cad4f06e22a7e704aabefdf43d2e29",
+ "commit": {
+  "author": {
+   "name": "Daniel Arvelini",
+   "date": "2024-11-29T11:15:56Z"
+  },
+  "committer": {
+   "name": "GitHub",
+   "date": "2024-11-29T11:15:56Z"
+  },
+  "message": "Updating deprecated docstring Client() class (#3426)"
+ },
+ "author": {
+  "login": "Danarvelini"
+ },
+ "html_url": "https://github.com/encode/httpx/commit/15e21e9ea3cad4f06e22a7e704aabefdf43d2e29",
+ "stats": {
+  "total": 2,
+  "additions": 0,
+  "deletions": 2
+ },
+ "files": [
+  {
+   "filename": "httpx/_client.py",
+   "status": "modified",
+   "additions": 0,
+   "deletions": 2,
+   "changes": 2,
+   "patch": "@@ -620,8 +620,6 @@ class Client(BaseClient):\n     * **http2** - *(optional)* A boolean indicating if HTTP/2 support should be\n     enabled. Defaults to `False`.\n     * **proxy** - *(optional)* A proxy URL where all the traffic should be routed.\n-    * **proxies** - *(optional)* A dictionary mapping proxy keys to proxy\n-    URLs.\n     * **timeout** - *(optional)* The timeout configuration to use when sending\n     requests.\n     * **limits** - *(optional)* The limits configuration to use."
+  }
+ ]
+}

@@ -764,3 +764,27 @@ def test_a_later_batch_of_other_scenarios_keeps_the_earlier_ones_in_the_report(t
     write_info(raw, info)
     assert suite_scenarios(raw, [hung]) == [SCENARIO, hung]
     assert suite_scenarios(raw, [hung, SCENARIO]) == [SCENARIO, hung]
+
+
+async def test_a_scenario_with_a_github_fixture_gets_the_github_tools(tmp_path):
+    fake = engine()
+    model = FakeChatModel(script=script(), structured_output_unsupported=True)
+    with_repo = HOSTS + "    services:\n      shop:\n        repo: DannyKuk/bleep\n"
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    plain = await run_scenario(
+        SCENARIO, settings(tmp_path / "a", with_repo), faults=FakeFaults(fake),
+        judge=FakeJudge(), connector=connector(fake), models=Models(model),
+    )  # fmt: skip
+    assert plain.error is None
+    assert not {t.name for t in model.bound_tools} & {"recent_commits", "commit_diff"}
+
+    fake = engine()
+    model = FakeChatModel(script=script(), structured_output_unsupported=True)
+    served = SCENARIO.model_copy(update={"github": "bad-deploy"})
+    result = await run_scenario(
+        served, settings(tmp_path / "b", with_repo), faults=FakeFaults(fake),
+        judge=FakeJudge(), connector=connector(fake), models=Models(model),
+    )  # fmt: skip
+    assert result.error is None
+    assert {t.name for t in model.bound_tools} >= {"recent_commits", "commit_diff"}

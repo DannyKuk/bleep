@@ -1,0 +1,72 @@
+[
+ {
+  "name": "authentication.md",
+  "path": "docs/advanced/authentication.md",
+  "type": "file",
+  "size": 8554,
+  "html_url": "https://github.com/encode/httpx/blob/master/docs/advanced/authentication.md"
+ },
+ {
+  "name": "clients.md",
+  "path": "docs/advanced/clients.md",
+  "type": "file",
+  "size": 11456,
+  "html_url": "https://github.com/encode/httpx/blob/master/docs/advanced/clients.md"
+ },
+ {
+  "name": "event-hooks.md",
+  "path": "docs/advanced/event-hooks.md",
+  "type": "file",
+  "size": 2419,
+  "html_url": "https://github.com/encode/httpx/blob/master/docs/advanced/event-hooks.md"
+ },
+ {
+  "name": "extensions.md",
+  "path": "docs/advanced/extensions.md",
+  "type": "file",
+  "size": 9447,
+  "html_url": "https://github.com/encode/httpx/blob/master/docs/advanced/extensions.md"
+ },
+ {
+  "name": "proxies.md",
+  "path": "docs/advanced/proxies.md",
+  "type": "file",
+  "size": 3563,
+  "html_url": "https://github.com/encode/httpx/blob/master/docs/advanced/proxies.md"
+ },
+ {
+  "name": "resource-limits.md",
+  "path": "docs/advanced/resource-limits.md",
+  "type": "file",
+  "size": 596,
+  "html_url": "https://github.com/encode/httpx/blob/master/docs/advanced/resource-limits.md"
+ },
+ {
+  "name": "ssl.md",
+  "path": "docs/advanced/ssl.md",
+  "type": "file",
+  "size": 3623,
+  "html_url": "https://github.com/encode/httpx/blob/master/docs/advanced/ssl.md"
+ },
+ {
+  "name": "text-encodings.md",
+  "path": "docs/advanced/text-encodings.md",
+  "type": "file",
+  "size": 3655,
+  "html_url": "https://github.com/encode/httpx/blob/master/docs/advanced/text-encodings.md"
+ },
+ {
+  "name": "timeouts.md",
+  "path": "docs/advanced/timeouts.md",
+  "type": "file",
+  "size": 2763,
+  "html_url": "https://github.com/encode/httpx/blob/master/docs/advanced/timeouts.md"
+ },
+ {
+  "name": "transports.md",
+  "path": "docs/advanced/transports.md",
+  "type": "file",
+  "size": 14201,
+  "html_url": "https://github.com/encode/httpx/blob/master/docs/advanced/transports.md"
+ }
+]

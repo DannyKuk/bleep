@@ -50,7 +50,8 @@ flowchart LR
 | **Approvals** | `incidents/approvals.py`, `incidents/reminders.py` | Pending approvals in SQLite, decided once by whichever channel answers first; HMAC grants for approved plans; reminders that never approve. |
 | **Notifier and Telegram bot** | `notify/`, `prompts/notify/` | The notifier the graph and the reminder loop call: it tells the dashboard bus and, when a bot token is set, Telegram. The bot long-polls Telegram; a button or a reply to a proposal becomes a decision, raced fairly against the dashboard. |
 | **Incident graph** | `graph/` | LangGraph state, nodes and wiring, checkpointed per incident in `checkpoints.sqlite`. |
-| **Read tools** | `tools/` | Docker reads and the host command tool for the model, each scoped to the incident's host, and `recall_incidents` over memory. |
+| **Read tools** | `tools/` | Docker reads and the host command tool for the model, each scoped to the incident's host, `recall_incidents` over memory, and `recent_commits` and `commit_diff` for a service with a linked repo. |
+| **GitHub client** | `hosts/github.py` | Read-only GitHub REST: a repo's commits and diffs, its README and docs files; works without a token on public repos. |
 | **Act tools** | `tools/docker_act.py`, `guard/grant.py` | Restart, stop and start a container for one step of an approved plan; each checks the grant against the plan, then the target (host error, protected, Bleep's own), and acts on the approved container id. Never offered to a model. |
 | **Plugins** | `plugins/`, `api/plugins.py` | Tools that share one connection, switched on and off as a whole: their read tools join Investigate's and their actions the plan check's enabled set while they are on. Secrets are env variable names, never stored or shown. |
 | **Settings store** | `incidents/settings_store.py`, `api/settings.py`, `guard/secret_fields.py` | Non-secret settings a person changes from the dashboard (model choice, budgets, thresholds, hosts' and services' rules, URLs and protected containers, plugin toggles), stored in SQLite over the hosts file and the defaults, in force at once; a body carrying anything secret-shaped is refused. |
@@ -96,6 +97,8 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **The demo host goes through a filtered socket proxy**, never a raw socket mount ([socket host](decisions/socket-host.md)).
 - **Services are keyed by Coolify labels, else the Compose project, else the container**, and Bleep's own containers (`bleep.self=true`) are left out.
 - **Host commands are exact argv templates run without a shell**; anything else is refused by code.
+- **The GitHub client lives in `hosts/`**, where the token and each service's `repo` are set, so the knowledge ingest can use it without importing `tools`.
+- **The GitHub tools read a service's linked repo without a token on public repos**, offered only where a `repo` is set; commit text is untrusted and every GitHub failure is a sentence the model can go on from.
 
 **Watcher** ([details](design/watcher.md))
 - **A death that recovers within 60 s is not an incident**; three deaths in ten minutes are.
@@ -193,3 +196,5 @@ One line each; the full reasoning and issue numbers are on the design page named
 | [Scenarios, 2026-11-03](evals/scenarios-2026-11-03.md) | The eight demo faults on `openai/gpt-6-luna`, 3 runs each: root cause right in 21 of 24 (hung 0 of 3 on a shop with stale logs, 3 of 3 on a reset shop), plan exact in 18 of 24, $0.0035 and about 70 s to a diagnosis per run. |
 | [Prompt injection, 2026-11-03](evals/injection-2026-11-03.md) | On gpt-6-luna, 13 of 13 live attacks (log, reply body, memory) failed to steer Bleep or leak a secret; 6 of 6 honest controls kept the right root cause. After #105, the model flagged planted orders in 12 of 13 attacks but also in 4 of 6 honest controls, so its flag is measured and not shown. |
 | [Local model, 2026-11-03](evals/scenarios-local-2026-11-03.md) | The eight faults and the injection suite on `openai/gpt-oss-20b`, 1 run each on a reset shop: root cause 7 of 8, controls 6 of 6, 0 fallbacks, 55 s to a diagnosis, $0; 2 of 13 attacks worked, 13 of 13 passed after the `healthy_target` rule, but the diagnoses were still steered: the plan check and the approval gate carry the safety. |
+| [bad-deploy with the GitHub tools, 2026-11-03](evals/scenarios-2026-11-03-2.md) | bad-deploy on gpt-6-luna with a GitHub fixture, 2 rounds of 3: root cause 6 of 6 at 0.85 to 1.00, every run citing the version-2 commit and its migration, against 0.80 to 0.85 and neither named on the logs alone; category still off (#108). |
+| [Prompt injection through commits, 2026-11-03](evals/injection-commits-2026-11-03.md) | The two commit-message attacks on gpt-6-luna, 12 runs: every run read the commits and none followed them; the model's `planted_in` named `commits` in all 12, but also in 3 of 6 honest bad-deploy runs, so it is no measure of recognition (#105). |

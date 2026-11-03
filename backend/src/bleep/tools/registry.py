@@ -15,12 +15,13 @@ ToolKind = Literal["read", "act"]
 
 @dataclass(frozen=True)
 class ToolContext:
-    """What a tool is scoped to: one incident on one host."""
+    """What a tool is scoped to: one incident on one host, and its service when it has one."""
 
     incident_id: str
     host_id: str
     registry: Registry
     guard_log: GuardLogger | None = None
+    service_id: str | None = None
 
 
 @dataclass(frozen=True)

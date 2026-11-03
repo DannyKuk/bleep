@@ -2,7 +2,8 @@
 # Secrets never go in this file: a secret is a reference, {env: NAME} or {file: PATH}.
 # Unknown keys are rejected, so a typo fails at startup instead of being ignored.
 
-# Optional default GitHub token, used to read the repo of a service.
+# Optional GitHub token, used to read every service's repo (recent commits and diffs). Without
+# it, or when the variable is unset or empty, Bleep reads public repos only (60 requests an hour).
 github:
   token: {env: GITHUB_TOKEN}
 

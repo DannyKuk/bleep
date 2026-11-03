@@ -46,6 +46,7 @@ from bleep.graph.deps import (
 from bleep.guard.log import GuardLog
 from bleep.hosts.config import HostConfig, ServiceOverrides, load_hosts_file
 from bleep.hosts.discovery import is_self
+from bleep.hosts.github import GithubClient
 from bleep.hosts.registry import Connector, Registry, connect_host
 from bleep.incidents.action_log import ActionLog
 from bleep.incidents.bus import EventBus
@@ -61,6 +62,7 @@ from bleep.tools.default import default_registry
 from bleep.watcher.detector import Detector
 from bleep.watcher.http_checks import UrlCheckStore
 from bleep.watcher.manager import WatcherManager
+from evals.github import fixture_client, load_github_fixture
 from evals.judge import DEFAULT_JUDGE, MANUAL, Judge, JudgeError, build_judge, check_distinct
 from evals.judge import model_under_test as tested_model
 from evals.report import (
@@ -418,13 +420,15 @@ def _graph_deps(
     settings: EvalSettings,
     models: ModelFactory | None,
     memory: Memory | None = None,
+    github: GithubClient | None = None,
 ) -> GraphDeps:
     """Bleep's graph parts, minus everything that reaches past Propose or out of the process:
-    no act tools, no memory unless a test plants one (each run starts blank), no Telegram."""
+    no act tools, no memory unless a test plants one (each run starts blank), no Telegram, and
+    no GitHub tools unless the run serves a fixture (`evals.github`)."""
     store = StaticSettings(model_settings=settings.models)
     return GraphDeps(
         registry=registry,
-        tools=default_registry(),
+        tools=default_registry(github=github),
         act_tools={},
         models=models or model_factory(store),
         bus=EventBus(db),
@@ -500,6 +504,7 @@ async def run_scenario(
     models: ModelFactory | None = None,
     memory: Memory | None = None,
     after: AfterPropose | None = None,
+    github: GithubClient | None = None,
 ) -> ScenarioResult:
     """One run: fault on, the scenario's incident to the end of Propose, fault off, scored.
 
@@ -507,7 +512,8 @@ async def run_scenario(
     that cannot be switched off raises `FaultError`: the next run would meet a broken stack.
     Without a judge the root cause is not scored. `memory` is what Gather recalls (none by
     default), and `after` runs once Propose ended without a failure; a failure in it is the
-    run's, like one before.
+    run's, like one before. `github` is the GitHub the tools read; without it they are absent,
+    and a scenario with a `github` fixture gets one dated from the run's start.
     """
     result = ScenarioResult(
         id=scenario.id,
@@ -525,7 +531,9 @@ async def run_scenario(
         await registry.start()
         try:
             async with open_checkpointer(Path(folder) / "checkpoints.sqlite") as saver:
-                deps = _graph_deps(db, registry, settings, models, memory)
+                if github is None and scenario.github is not None:
+                    github = fixture_client(load_github_fixture(scenario.github))
+                deps = _graph_deps(db, registry, settings, models, memory, github)
                 graph = build_graph(deps, saver)
                 catcher = IncidentCatcher(graph, deps.incidents, deps.bus)
                 manager = WatcherManager(

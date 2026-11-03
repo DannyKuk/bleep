@@ -1,0 +1,18 @@
+{
+ "commits": [
+  {
+   "sha": "a2696ac3d02b358c7074eea32e2063e38e6ddfd6",
+   "minutes_ago": 1500,
+   "author": "shop-dev",
+   "message": "Log the shop version at startup",
+   "files": [
+    {
+     "filename": "demo/shop/app.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -53,7 +53,7 @@ async def lifespan(_app: FastAPI):\n     except psycopg.Error as error:\n         log.error(\"cannot reach the database, exiting: %s\", error)\n         raise SystemExit(1) from error\n-    log.info(\"shop started, uploads in %s\", UPLOADS)\n+    log.info(\"shop version %s started, uploads in %s\", VERSION, UPLOADS)\n     yield"
+    }
+   ]
+  }
+ ]
+}
