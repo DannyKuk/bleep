@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Literal, Protocol, Self
 
 import httpx
+import openai
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -33,7 +34,6 @@ from bleep.graph.deps import GraphDeps, ModelFactory, StaticSettings, model_fact
 from bleep.guard.log import GuardLog
 from bleep.hosts.config import HostConfig, ServiceOverrides, load_hosts_file
 from bleep.hosts.discovery import is_self
-from bleep.hosts.engine import ContainerNotFound
 from bleep.hosts.registry import Connector, Registry, connect_host
 from bleep.incidents.action_log import ActionLog
 from bleep.incidents.bus import EventBus
@@ -72,21 +72,16 @@ STOP_BEFORE = ["approval", "report"]
 FAULT_TIMEOUT_S = 300
 COMPOSE_SERVICE = "com.docker.compose.service"
 DOCKER_DESKTOP_SOCKET = Path.home() / ".docker" / "run" / "docker.sock"
+LOCAL_NAMES = ("localhost", "127.0.0.1")
 
 
-# (container name, container port) -> the port it is published on, on this machine
-Published = dict[tuple[str, int], int]
-
-
-def _from_this_machine(url: str, published: Published | None = None) -> str:
-    """A URL as this machine reaches it. `host.docker.internal` is a container's name for this
-    machine; a container's own name and port become `localhost` and the port it is published on."""
+def _from_this_machine(url: str) -> str:
+    """A URL as this machine reaches it: `host.docker.internal` is a container's name for this
+    machine, so it becomes `localhost`. The demo shop's URLs go through shop-proxy's published
+    port, 8080, so `http://host.docker.internal:8080` is `http://localhost:8080` here."""
     parsed = httpx.URL(url)
     if parsed.host == "host.docker.internal":
         return str(parsed.copy_with(host="localhost"))
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    if published and (parsed.host, port) in published:
-        return str(parsed.copy_with(host="localhost", port=published[(parsed.host, port)]))
     return url
 
 
@@ -138,14 +133,21 @@ class Faults(Protocol):
 
 
 class DemoFaults:
-    """`demo/fault.sh <fault> on|off`, run from the repo root."""
+    """`demo/fault.sh <fault> on|off`, run from the repo root. The script runs compose on its own
+    file and acts on the engine `docker` points at, so `docker_host`, when given, is its
+    `DOCKER_HOST`: the engine the harness watches. It exits 0 once the fault is switched, 2 on a
+    fault or state it does not know, and non-zero when a docker command fails."""
 
-    def __init__(self, script: Path, timeout_s: float = FAULT_TIMEOUT_S) -> None:
+    def __init__(
+        self, script: Path, docker_host: str | None = None, timeout_s: float = FAULT_TIMEOUT_S
+    ) -> None:
         self.script = script
+        self.docker_host = docker_host
         self.timeout_s = timeout_s
 
     async def switch(self, fault: str, state: Literal["on", "off"]) -> None:
         what = f"{self.script.name} {fault} {state}"
+        env = os.environ | ({"DOCKER_HOST": self.docker_host} if self.docker_host else {})
         process = await asyncio.create_subprocess_exec(
             str(self.script),
             fault,
@@ -153,6 +155,7 @@ class DemoFaults:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=REPO,
+            env=env,
         )
         try:
             _, err = await asyncio.wait_for(process.communicate(), self.timeout_s)
@@ -175,7 +178,12 @@ def docker_endpoint(settings: EvalSettings) -> str:
     return "unix:///var/run/docker.sock"
 
 
-def _demo_host(settings: EvalSettings) -> HostConfig:
+def eval_host(settings: EvalSettings) -> HostConfig:
+    """The demo host from the hosts file, reached from this machine. A socket host talks to the
+    local engine instead of the proxy inside Compose, and a URL for `host.docker.internal` goes
+    to `localhost`. Rules, protected containers and the rest stay as the file says. A URL on a
+    bare name, as a container is named on a Compose network, does not answer from here: it is
+    logged, since its checks fail and could open an incident of their own."""
     hosts = load_hosts_file(settings.hosts_file).hosts
     host = next((h for h in hosts if h.id == settings.host_id), None)
     if host is None:
@@ -183,55 +191,22 @@ def _demo_host(settings: EvalSettings) -> HostConfig:
         raise EvalError(f"no host {settings.host_id!r} in {settings.hosts_file}; known: {known}")
     if host.kind == "socket":
         host = host.model_copy(update={"endpoint": docker_endpoint(settings)})
-    return host
-
-
-async def _published(host: HostConfig, connector: Connector, names: set[str]) -> Published:
-    """The published ports of the containers named in `names`; a name that is no container on
-    the host is left out."""
-    try:
-        session, engine = await connector(host)
-    except Exception as error:
-        where = host.endpoint or host.address
-        raise EvalError(f"cannot reach the demo host's Docker engine ({where}): {error}") from error
-    published: Published = {}
-    try:
-        for name in sorted(names):
-            try:
-                detail = await engine.inspect(name)
-            except ContainerNotFound:
-                continue
-            for binding in detail.ports:
-                number, _, _protocol = binding.container_port.partition("/")
-                if binding.host_port and number.isdigit():
-                    published[(name, int(number))] = int(binding.host_port)
-    finally:
-        await engine.close()
-        if session is not None:
-            await session.close()
-    return published
-
-
-async def eval_host(settings: EvalSettings, connector: Connector = connect_host) -> HostConfig:
-    """The demo host from the hosts file, reached from this machine. A socket host talks to the
-    local engine instead of the proxy inside Compose; a URL for `host.docker.internal`, or for a
-    container by name, goes to the port it is published on here. Rules, protected containers and
-    the rest stay as the file says. A URL that stays out of reach is logged: its checks fail."""
-    host = _demo_host(settings)
-    urls = [u.url for service in host.services.values() for u in service.urls]
-    names = {httpx.URL(url).host for url in urls} - {"localhost", "127.0.0.1"}
-    published = await _published(host, connector, names) if names else {}
     services: dict[str, ServiceOverrides] = {}
     for name, service in host.services.items():
-        moved = [
-            u.model_copy(update={"url": _from_this_machine(u.url, published)}) for u in service.urls
-        ]
-        for before, after in zip(service.urls, moved, strict=True):
-            host_name = httpx.URL(after.url).host
-            if after.url == before.url and host_name not in ("localhost", "127.0.0.1"):
-                log.warning("%s may not answer from this machine; its checks may fail", after.url)
+        moved = [u.model_copy(update={"url": _from_this_machine(u.url)}) for u in service.urls]
+        for check in moved:
+            host_name = httpx.URL(check.url).host
+            if host_name not in LOCAL_NAMES and "." not in host_name:
+                log.warning("%s may not answer from this machine; its checks may fail", check.url)
         services[name] = service.model_copy(update={"urls": moved})
     return host.model_copy(update={"services": services})
+
+
+def fault_docker_host(settings: EvalSettings, host: HostConfig) -> str | None:
+    """The `DOCKER_HOST` the fault script gets, so it breaks the engine the harness watches: a
+    socket host's engine as this machine reaches it. For an SSH host it is None, and the
+    script acts on whatever `docker` points at (docs/demo.md, "On another host")."""
+    return docker_endpoint(settings) if host.kind == "socket" else None
 
 
 def live_backend(containers: Sequence[ContainerSummary]) -> bool:
@@ -359,7 +334,7 @@ async def run_scenario(
     with tempfile.TemporaryDirectory(prefix="bleep-eval-") as folder:
         db = Database(Path(folder) / "bleep.db")
         await db.migrate()
-        registry = Registry([await eval_host(settings, connector)], connector)
+        registry = Registry([eval_host(settings)], connector)
         await registry.start()
         try:
             async with open_checkpointer(Path(folder) / "checkpoints.sqlite") as saver:
@@ -411,9 +386,15 @@ async def _fault_run(
             await _until_propose(graph, deps, incident)
     except TimeoutError:
         where = "waiting for the incident" if incident is None else "before Propose ended"
+        result.failure = "timeout"
         result.error = f"timed out after {scenario.timeout_s} s {where}"
     except Exception as error:  # the run's failure is a result, not the harness's
-        log.exception("scenario %s run %d failed", scenario.id, result.run)
+        if out_of_context(error):
+            log.warning("scenario %s run %d ran out of context: %s", scenario.id, result.run, error)
+            result.failure = "context_length"
+        else:
+            log.exception("scenario %s run %d failed", scenario.id, result.run)
+            result.failure = "error"
         result.error = f"{type(error).__name__}: {error}"
     finally:
         await faults.switch(scenario.fault, "off")
@@ -425,6 +406,26 @@ async def _fault_run(
     result.action_correct, result.unnecessary_action = plan.action_correct, plan.unnecessary_action
     result.forbidden = plan.forbidden
     result.category_correct = score_category(scenario.expected, result.diagnosis)
+
+
+def out_of_context(error: BaseException) -> bool:
+    """Whether a model call ended on its length limit before it answered: openai's
+    `LengthFinishReasonError`, raised by a structured call whose reply was cut off. A reasoning
+    model with a small context can spend all of it thinking (docs/demo.md, "Full runs"). It is
+    looked for in the error's causes too, and in an exception group's members."""
+    seen: set[int] = set()
+    pending: list[BaseException] = [error]
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, openai.LengthFinishReasonError):
+            return True
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(current.exceptions)
+        pending.extend(e for e in (current.__cause__, current.__context__) if e is not None)
+    return False
 
 
 async def _judge(scenario: Scenario, judge: Judge, result: ScenarioResult) -> None:
@@ -451,6 +452,8 @@ def summary(result: ScenarioResult) -> str:
         f"{result.id} run {result.run}: root cause {score}, plan {plan}, {calls}, "
         f"{result.tokens:,} tokens (largest prompt {result.peak_prompt_tokens:,})"
     )
+    if result.failure == "context_length":
+        return line + f"; failed, out of context: {result.error}"
     return line + (f"; {result.error}" if result.error else "")
 
 
@@ -492,7 +495,7 @@ async def demo_containers(
     settings: EvalSettings, connector: Connector = connect_host
 ) -> list[ContainerSummary]:
     """The demo host's containers now; `EvalError` when its engine cannot be reached."""
-    host = await eval_host(settings, connector)
+    host = eval_host(settings)
     registry = Registry([host], connector)
     await registry.start()
     try:
@@ -552,7 +555,7 @@ async def _run(
         scenarios,
         settings,
         args.repeat,
-        faults=DemoFaults(settings.fault_script),
+        faults=DemoFaults(settings.fault_script, fault_docker_host(settings, eval_host(settings))),
         judge=judge,
         on_result=lambda result: append_jsonl(raw, result),
     )

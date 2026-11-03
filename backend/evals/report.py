@@ -102,6 +102,10 @@ def _score(result: ScenarioResult) -> str:
     return f"{result.root_cause_score:.2f} {'pass' if result.root_cause_pass else 'fail'}"
 
 
+def _out_of_context(results: Sequence[ScenarioResult]) -> list[ScenarioResult]:
+    return [r for r in results if r.failure == "context_length"]
+
+
 def _yes(flag: bool) -> str:
     return "yes" if flag else "no"
 
@@ -132,7 +136,8 @@ def _scenario_section(scenario: Scenario, results: list[ScenarioResult]) -> list
     lines.append("")
     for r in results:
         if r.error:
-            lines.append(f"- Run {r.run} ended early: {_cell(r.error)}")
+            how = f" ({r.failure})" if r.failure else ""
+            lines.append(f"- Run {r.run} failed{how}: {_cell(r.error)}")
         if r.diagnosis:
             lines.append(f"- Run {r.run} diagnosis: {_cell(r.diagnosis.root_cause)}")
         if r.judge_reason:
@@ -151,6 +156,8 @@ def _totals_row(name: str, results: list[ScenarioResult]) -> str:
         f"| {_count([r.category_correct for r in results])} "
         f"| {_count([r.action_correct for r in results])} "
         f"| {_count([r.unnecessary_action for r in results])} "
+        f"| {len([r for r in results if r.failure])} "
+        f"| {len(_out_of_context(results))} "
         f"| {steps or 0:.1f} | {tokens or 0:,.0f} "
         f"| {max((r.peak_prompt_tokens for r in results), default=0):,} "
         f"| {_usd(_total_usd([r.usd for r in results]))} "
@@ -175,7 +182,14 @@ def _what_it_shows(results: list[ScenarioResult]) -> list[str]:
     if ended:
         names = ", ".join(f"{r.id} run {r.run}" for r in ended)
         lines.append(
-            f"- {_plural(len(ended), 'run')} ended early ({names}); the errors are listed above."
+            f"- {_plural(len(ended), 'run')} failed ({names}); the errors are listed above."
+        )
+    cut = _out_of_context(results)
+    if cut:
+        lines.append(
+            f"- {_plural(len(cut), 'run')} failed with `context_length`: a model call reached its "
+            "length limit before it answered, its reasoning having filled the context. Give the "
+            "model a larger context, or cap its output (backend/evals/README.md)."
         )
     unjudged = [r for r in results if r.diagnosis and r.root_cause_score is None]
     if unjudged:
@@ -195,7 +209,12 @@ def render(info: RunInfo, results: list[ScenarioResult]) -> str:
         f"> `{info.model}` diagnosed and proposed for {faults}, {runs} each; `{info.judge}` "
         f"judged the root causes. The root cause passed in "
         f"{_count([r.root_cause_pass for r in results])} runs and the plan was exact in "
-        f"{_count([r.action_correct for r in results])}.",
+        f"{_count([r.action_correct for r in results])}."
+        + (
+            f" {_plural(len(_out_of_context(results)), 'run')} ran out of context."
+            if _out_of_context(results)
+            else ""
+        ),
         "",
         "## Setup",
         "",
@@ -221,9 +240,10 @@ def render(info: RunInfo, results: list[ScenarioResult]) -> str:
     lines += [
         "## Totals",
         "",
-        "| Scenario | Runs | Root cause | Category | Exact plan | Unnecessary | Mean steps "
-        "| Mean tokens | Max peak prompt | Cost | Mean to diagnosis |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        "| Scenario | Runs | Root cause | Category | Exact plan | Unnecessary | Failed "
+        "| Out of context | Mean steps | Mean tokens | Max peak prompt | Cost "
+        "| Mean to diagnosis |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for scenario in info.scenarios:
         lines.append(_totals_row(scenario.id, [r for r in results if r.id == scenario.id]))

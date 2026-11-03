@@ -1,12 +1,12 @@
-# The shop's database is stopped. The shop's containers form one service, the Compose project
-# `bleep` on the demo host (docker-compose.yaml includes demo/compose.yaml), so the incident opens
-# on it. The fix is to start the database again; restarting the web app would not bring it back.
+# The shop's database is stopped (docs/demo.md, "db-down"). The shop's containers form one service,
+# its own Compose project `shop` on the demo host (demo/compose.yaml), so the incident opens on it.
+# The fix is to start the database again; restarting the web app would not bring it back.
 id: db-down
 fault: db-down
 subject:
   kind: service
   host_id: demo
-  service_id: demo/compose:bleep
+  service_id: demo/compose:shop
 expected:
   root_cause: >-
     The database container shop-db is stopped, so shop-web cannot connect to its database and

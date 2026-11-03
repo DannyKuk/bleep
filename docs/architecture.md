@@ -155,7 +155,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 **Evals** ([details](design/evals.md))
 - **A scenario runs Bleep's own watcher and graph in-process on a throwaway database and stops before Approval**: nothing is executed, sent or remembered.
 - **The judge is never the model under test**: an OpenRouter model or the Claude Code CLI scores the root cause; the plan is checked exactly, and acting where no action is expected counts as an unnecessary action.
-- **Every run records its largest single prompt**, the number a small local context meets first.
+- **Every run records its largest single prompt**, the number a small local context meets first; a run whose model call reaches its length limit is a failed run with reason `context_length`, counted in the report.
 
 ## Decisions
 

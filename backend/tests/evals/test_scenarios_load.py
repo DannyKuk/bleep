@@ -10,7 +10,7 @@ from evals.scenarios import SCENARIOS_DIR, ScenarioError, load_scenario, load_sc
 GOOD = {
     "id": "db-down",
     "fault": "db-down",
-    "subject": {"kind": "service", "host_id": "demo", "service_id": "demo/compose:bleep"},
+    "subject": {"kind": "service", "host_id": "demo", "service_id": "demo/compose:shop"},
     "expected": {
         "root_cause": "The database container shop-db is stopped.",
         "category": "dependency",
@@ -41,7 +41,7 @@ def test_every_shipped_scenario_loads():
 def test_a_scenario_loads_with_its_defaults(tmp_path):
     body = {k: v for k, v in GOOD.items() if k != "timeout_s"}
     scenario = load_scenario(write(tmp_path, "db-down", body))
-    assert scenario.subject.key == "service:demo:demo/compose:bleep"
+    assert scenario.subject.key == "service:demo:demo/compose:shop"
     assert scenario.expected.action.ordered is False
     assert scenario.timeout_s == 600
 
@@ -91,3 +91,30 @@ def test_an_unknown_only_names_the_known_scenarios(tmp_path):
     write(tmp_path, "db-down", GOOD)
     with pytest.raises(ScenarioError, match="db-down"):
         load_scenarios(tmp_path, only="nope")
+
+
+REPO = SCENARIOS_DIR.parents[2]
+
+
+def _demo_faults() -> set[str]:
+    """The faults `demo/fault.sh` switches, from its `FAULTS=` line."""
+    for line in (REPO / "demo" / "fault.sh").read_text(encoding="utf-8").splitlines():
+        if line.startswith("FAULTS="):
+            return set(line.partition("=")[2].strip('"').split())
+    raise AssertionError("demo/fault.sh has no FAULTS= line")
+
+
+def test_every_shipped_scenario_fits_the_demo_shop():
+    """Each scenario switches a fault fault.sh knows, opens on a service of the demo hosts file
+    (the shop's own Compose project), and names the shop's containers as Compose names them."""
+    compose = yaml.safe_load((REPO / "demo" / "compose.yaml").read_text(encoding="utf-8"))
+    containers = {s["container_name"] for s in compose["services"].values()}
+    hosts = yaml.safe_load((REPO / "config" / "hosts.demo.yaml").read_text(encoding="utf-8"))
+    services = {
+        f"{h['id']}/compose:{name}": h["id"] for h in hosts["hosts"] for name in h["services"]
+    }
+    assert compose["name"] == "shop" and "demo/compose:shop" in services
+    for scenario in load_scenarios():
+        assert scenario.fault in _demo_faults(), scenario.id
+        assert services.get(scenario.subject.service_id) == scenario.subject.host_id, scenario.id
+        assert {t for _, t in scenario.expected.action.pairs} <= containers, scenario.id

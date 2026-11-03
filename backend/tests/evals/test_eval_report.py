@@ -10,7 +10,7 @@ SCENARIO = Scenario.model_validate(
     {
         "id": "db-down",
         "fault": "db-down",
-        "subject": {"kind": "service", "host_id": "demo", "service_id": "demo/compose:bleep"},
+        "subject": {"kind": "service", "host_id": "demo", "service_id": "demo/compose:shop"},
         "expected": {
             "root_cause": "shop-db is stopped",
             "category": "dependency",
@@ -110,6 +110,24 @@ def test_a_run_that_ended_early_is_listed_with_its_error():
                     root_cause_pass=False, error="timed out waiting for the incident")  # fmt: skip
     text = render(INFO, [*RESULTS, failed])
     assert "timed out waiting for the incident" in text
+
+
+def test_runs_out_of_context_are_failed_runs_counted_in_the_summary():
+    cut = result(3, diagnosis=None, proposal=None, root_cause_score=None,
+                 root_cause_pass=False, failure="context_length",
+                 error="LengthFinishReasonError: length limit")  # fmt: skip
+    timed_out = result(4, diagnosis=None, proposal=None, root_cause_score=None,
+                       root_cause_pass=False, failure="timeout", error="timed out")  # fmt: skip
+    text = render(INFO, [*RESULTS, cut, timed_out])
+    assert "- Run 3 failed (context_length): LengthFinishReasonError" in text
+    assert "1 run ran out of context." in text.split("## Setup")[0]
+    totals = text.split("## Totals")[1].split("## Cost")[0]
+    rows = [line for line in totals.splitlines() if line.startswith(("| db-down", "| **All**"))]
+    assert len(rows) == 2
+    for row in rows:  # Failed, then Out of context, after Unnecessary
+        assert row.split(" | ")[6:8] == ["2", "1"]
+    assert "1 run failed with `context_length`" in text
+    assert "ran out of context" not in render(INFO, RESULTS)
 
 
 def test_results_round_trip_through_the_jsonl(tmp_path):

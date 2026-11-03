@@ -8,15 +8,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+import openai
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatResult
+from openai.types.chat import ChatCompletion
 
 from bleep.hosts.config import HostConfig
-from bleep.schemas.docker import ContainerDetail, DockerEvent, PortBinding
+from bleep.schemas.docker import DockerEvent
 from bleep.schemas.graph import Diagnosis
 from bleep.schemas.settings import ModelSettings
 from evals.judge import JudgeError, Judgement
 from evals.run import (
+    REPO,
     DemoFaults,
     EvalError,
     EvalSettings,
@@ -24,8 +28,10 @@ from evals.run import (
     demo_containers,
     docker_endpoint,
     eval_host,
+    fault_docker_host,
     live_backend,
     main,
+    out_of_context,
     run_scenario,
     run_suite,
     summary,
@@ -34,7 +40,7 @@ from evals.scenarios import Scenario
 from fakes import FakeChatModel, FakeEngine
 from graph_env import box
 
-SERVICE = "demo/compose:bleep"
+SERVICE = "demo/compose:shop"
 SCENARIO = Scenario.model_validate(
     {
         "id": "db-down",
@@ -60,12 +66,11 @@ hosts:
 """
 URLS = """
     services:
-      bleep:
+      shop:
         urls:
-          - url: http://host.docker.internal:8080/api/items
-          - url: http://shop-proxy:8080/health
+          - url: http://host.docker.internal:8080/health
           - url: http://shop-web:8000/health
-          - url: https://shop.example.com/
+          - url: http://m1.local:8080/api/items
 """
 
 
@@ -88,8 +93,8 @@ def engine() -> FakeEngine:
     return FakeEngine(
         "demo",
         [
-            box("shop-web", "bleep", health="healthy"),
-            box("shop-db", "bleep"),
+            box("shop-web", "shop", health="healthy"),
+            box("shop-db", "shop"),
             box("blog-web", "blog"),
         ],
     )
@@ -149,6 +154,25 @@ def script() -> list[AIMessage]:
         reply(json.dumps(diagnosis), tokens_in=3000),
         reply(json.dumps(plan), tokens_in=2800),
     ]
+
+
+class OutOfContext(FakeChatModel):
+    """Answers the first `answers` calls from its script, then reaches its length limit the way
+    a reasoning model with a small context does: openai's `LengthFinishReasonError`."""
+
+    answers: int = 2
+
+    async def _agenerate(self, messages: list[BaseMessage], *args, **kwargs) -> ChatResult:
+        if self.cursor >= self.answers:
+            raise length_error()
+        return await super()._agenerate(messages, *args, **kwargs)
+
+
+def length_error() -> openai.LengthFinishReasonError:
+    completion = ChatCompletion(
+        id="cut-off", choices=[], created=0, model="tiny-local", object="chat.completion"
+    )
+    return openai.LengthFinishReasonError(completion=completion)
 
 
 class Models:
@@ -233,6 +257,50 @@ async def test_a_failing_model_is_an_error_and_the_fault_still_goes_off(tmp_path
     assert result.root_cause_score is None
 
 
+async def test_a_model_out_of_context_is_a_failed_run_with_its_reason(tmp_path):
+    fake = engine()
+    faults, judge = FakeFaults(fake), FakeJudge()
+    model = OutOfContext(script=script(), structured_output_unsupported=True)
+
+    result = await run_scenario(
+        SCENARIO, settings(tmp_path), faults=faults, judge=judge, connector=connector(fake),
+        models=Models(model),
+    )  # fmt: skip
+
+    assert result.failure == "context_length"
+    assert result.error is not None and result.error.startswith("LengthFinishReasonError:")
+    assert faults.calls[-1] == ("db-down", "off")
+    assert result.incident_id is not None and result.steps == 1  # Investigate's work is kept
+    assert result.diagnosis is None and result.root_cause_score is None and judge.calls == []
+    assert "failed, out of context" in summary(result)
+
+
+async def test_other_failures_say_how_the_run_ended(tmp_path):
+    fake = engine()
+    failed = await run_scenario(
+        SCENARIO, settings(tmp_path), faults=FakeFaults(fake), judge=FakeJudge(),
+        connector=connector(fake), models=Models(FakeChatModel(script=[])),
+    )  # fmt: skip
+    late = await run_scenario(
+        SCENARIO.model_copy(update={"timeout_s": 1}), settings(tmp_path),
+        faults=FakeFaults(engine(), symptoms=[]), judge=FakeJudge(), connector=connector(engine()),
+        models=Models(FakeChatModel(script=[])),
+    )  # fmt: skip
+    assert (failed.failure, late.failure) == ("error", "timeout")
+
+
+def test_a_length_limit_is_found_behind_a_wrapping_error():
+    try:
+        try:
+            raise length_error()
+        except openai.LengthFinishReasonError as cut:
+            raise RuntimeError("the node failed") from cut
+    except RuntimeError as wrapped:
+        assert out_of_context(wrapped)
+    assert out_of_context(ExceptionGroup("runs", [ValueError("x"), length_error()]))
+    assert not out_of_context(RuntimeError("the node failed"))
+
+
 async def test_a_judge_that_fails_leaves_the_score_empty_and_the_exact_checks_standing(tmp_path):
     fake = engine()
     model = FakeChatModel(script=script(), structured_output_unsupported=True)
@@ -281,29 +349,33 @@ async def test_the_suite_numbers_the_runs_settles_between_them_and_hands_each_re
     assert waits == [7]
 
 
-async def test_the_demo_host_is_reached_from_this_machine(tmp_path):
-    proxy = box("shop-proxy", "bleep")
-    published = [PortBinding(container_port="8080/tcp", host_ip="0.0.0.0", host_port="18080")]
-    fake = FakeEngine(
-        "demo",
-        [proxy, box("shop-web", "bleep")],
-        details={"shop-proxy": ContainerDetail(summary=proxy, ports=published)},
-    )
-    host = await eval_host(settings(tmp_path, HOSTS + URLS), connector(fake))
+def test_the_demo_host_is_reached_from_this_machine(tmp_path, caplog):
+    host = eval_host(settings(tmp_path, HOSTS + URLS))
     assert host.endpoint == "unix:///fake.sock"
     assert host.rules == ["shop-db holds the shop's items"]
-    assert [u.url for u in host.services["bleep"].urls] == [
-        "http://localhost:8080/api/items",  # host.docker.internal is this machine
-        "http://localhost:18080/health",  # shop-proxy's 8080 is published on 18080
-        "http://shop-web:8000/health",  # not published: left as it is
-        "https://shop.example.com/",
+    assert [u.url for u in host.services["shop"].urls] == [
+        "http://localhost:8080/health",  # host.docker.internal:8080 is shop-proxy's port here
+        "http://shop-web:8000/health",  # a container's name: left as it is, and logged
+        "http://m1.local:8080/api/items",  # another machine answers here too
     ]
-    assert fake.closed  # the engine was only borrowed
+    warned = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert warned == ["http://shop-web:8000/health may not answer from this machine; its checks "
+                      "may fail"]  # fmt: skip
 
 
-async def test_an_unknown_host_is_refused(tmp_path):
+def test_the_shipped_demo_host_is_the_shop_on_port_8080(tmp_path):
+    shipped = settings(tmp_path, hosts_file=REPO / "config" / "hosts.demo.yaml")
+    host = eval_host(shipped)
+    assert list(host.services) == ["shop"]
+    assert [u.url for u in host.services["shop"].urls] == [
+        "http://localhost:8080/health",
+        "http://localhost:8080/api/items",
+    ]
+
+
+def test_an_unknown_host_is_refused(tmp_path):
     with pytest.raises(EvalError, match="demo"):
-        await eval_host(settings(tmp_path, host_id="nope"), connector(engine()))
+        eval_host(settings(tmp_path, host_id="nope"))
 
 
 def test_the_docker_endpoint_falls_back_to_docker_host(tmp_path, monkeypatch):
@@ -335,7 +407,7 @@ def test_a_running_bleep_backend_is_noticed():
     backend = {"bleep.self": "true", "com.docker.compose.service": "backend"}
     assert live_backend([box("bleep-backend-1", labels=backend)])
     assert not live_backend([box("bleep-backend-1", labels=backend, state="exited")])
-    assert not live_backend([box("shop-web", "bleep")])
+    assert not live_backend([box("shop-web", "shop")])
 
 
 def test_the_model_flag_names_the_local_model_when_the_provider_is_local(tmp_path):
@@ -363,6 +435,31 @@ async def test_the_fault_script_gets_the_fault_and_the_state(tmp_path):
     await DemoFaults(script).switch("db-down", "on")
     await DemoFaults(script).switch("db-down", "off")
     assert out.read_text(encoding="utf-8").splitlines() == ["db-down on", "db-down off"]
+
+
+async def test_the_fault_script_acts_on_the_engine_the_harness_watches(tmp_path, monkeypatch):
+    monkeypatch.setenv("DOCKER_HOST", "unix:///from/the/shell.sock")
+    out = tmp_path / "docker_host"
+    script = tmp_path / "fault.sh"
+    script.write_text(f'#!/bin/sh\necho "$DOCKER_HOST" >> {out}\n', encoding="utf-8")
+    os.chmod(script, 0o755)
+    socket_host = eval_host(settings(tmp_path))
+    await DemoFaults(script, fault_docker_host(settings(tmp_path), socket_host)).switch(
+        "hung", "on"
+    )
+    await DemoFaults(script).switch("hung", "off")  # an SSH host: the shell's DOCKER_HOST
+    assert out.read_text(encoding="utf-8").splitlines() == [
+        "unix:///fake.sock",
+        "unix:///from/the/shell.sock",
+    ]
+
+
+def test_an_ssh_host_leaves_the_fault_scripts_docker_host_alone(tmp_path):
+    ssh = HostConfig(
+        id="m1", name="M1", kind="ssh", address="m1.local", user="me", key_file="/k",
+        known_hosts_file="/kh",
+    )  # fmt: skip
+    assert fault_docker_host(settings(tmp_path), ssh) is None
 
 
 async def test_a_failing_fault_script_is_a_fault_error(tmp_path):

@@ -19,6 +19,8 @@ from bleep.schemas.incidents import Subject
 SCENARIOS_DIR = Path(__file__).parent / "scenarios"
 CATEGORIES: tuple[str, ...] = typing.get_args(Diagnosis.model_fields["category"].annotation)
 MAX_STEPS = 3  # the plan check's limit (guard/plan_check.py)
+# How a run ended early: out of time, out of the model's context, or any other error.
+Failure = Literal["timeout", "context_length", "error"]
 
 
 class ScenarioError(ValueError):
@@ -146,7 +148,9 @@ class ScenarioResult(BaseModel):
     under test's, for the whole run; `peak_prompt_tokens` is its largest single prompt, the
     number that meets a small context window first. Times are seconds from the fault going on.
     `root_cause_score` is the judge's 0-1 score, None when there was nothing to judge or the judge
-    failed; `error` says why a run ended early.
+    failed. A run that ended early is a failed run: `failure` says how (`timeout`, `context_length`
+    when a model call reached its length limit before it answered, or `error`), and `error` says
+    what happened.
     """
 
     id: str
@@ -170,4 +174,5 @@ class ScenarioResult(BaseModel):
     judge_usd: float | None = None
     seconds_to_incident: float | None = None
     seconds_to_diagnosis: float | None = None
+    failure: Failure | None = None
     error: str | None = None
