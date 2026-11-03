@@ -24,7 +24,6 @@ from bleep.schemas.docker import ContainerDetail, DockerEvent
 from bleep.schemas.graph import Diagnosis, Evidence, PlanStep, Proposal, Report
 from bleep.schemas.settings import ModelSettings
 from evals.injection import (
-    Grade,
     InjectionCase,
     InjectionError,
     InjectionFaults,
@@ -37,14 +36,14 @@ from evals.injection import (
     load_cases,
     main,
     planted_text,
-    read_grades,
     render_round,
     run_case,
     run_cases,
     secret_values,
     verdict,
 )
-from evals.judge import Judgement
+from evals.judge import Judgement, ManualJudge
+from evals.report import Grade, GradeError
 from evals.run import REPO, EvalError, EvalSettings
 from fakes import FakeChatModel, FakeEngine
 from graph_env import box
@@ -626,14 +625,14 @@ def test_the_base64_helper_ignores_text_that_is_not_base64():
 
 
 async def graded_pair(tmp_path) -> tuple[InjectionResult, InjectionResult]:
-    """A control run with no judge, and an attack run, both from round "Round 1"."""
+    """A control run with the manual judge, and an attack run, both from round "Round 1"."""
     engine = shop_engine(control().payload)
     model = FakeChatModel(
         script=script(("docker.start", "shop-db"), "shop-db is stopped", "s"),
         structured_output_unsupported=True,
     )
     pending = await run_case(
-        control(), settings(tmp_path), faults=FakeShopFaults(engine), judge=None,
+        control(), settings(tmp_path), faults=FakeShopFaults(engine), judge=ManualJudge(),
         label="Round 1", **harness(engine, model),
     )  # fmt: skip
     engine = shop_engine(attack().payload)
@@ -647,9 +646,10 @@ async def graded_pair(tmp_path) -> tuple[InjectionResult, InjectionResult]:
     return pending, clean
 
 
-async def test_a_control_with_no_judge_waits_for_its_grade(tmp_path):
+async def test_a_control_with_the_manual_judge_waits_for_its_grade(tmp_path):
     pending, clean = await graded_pair(tmp_path)
 
+    assert pending.run.judge == "manual"
     assert pending.run_id == "round-1/control-x/1" and clean.run_id == "round-1/log-x/1"
     assert pending.passed is None and pending.run.failure is None
     assert pending.grade_pending is True and clean.grade_pending is False
@@ -658,43 +658,41 @@ async def test_a_control_with_no_judge_waits_for_its_grade(tmp_path):
     assert "- `control-x` run 1 (`round-1/control-x/1`): root cause not graded yet" in text
 
 
-async def test_grades_by_hand_score_the_controls_and_leave_the_attacks_mechanical(tmp_path):
+async def test_a_grade_by_hand_scores_a_control(tmp_path):
     pending, clean = await graded_pair(tmp_path)
-    grades = [
-        Grade(run_id="round-1/control-x/1", root_cause_pass=False, root_cause_score=0.4,
-              note="names the wrong container"),
-        Grade(run_id="round-1/log-x/1", root_cause_pass=False, root_cause_score=0.0, note="x"),
-        Grade(run_id="round-2/control-x/1", root_cause_pass=True, root_cause_score=1.0, note=""),
-    ]  # fmt: skip
+    grade = Grade(run_id="round-1/control-x/1", root_cause_pass=False, root_cause_score=0.4,
+                  note="names the wrong container")  # fmt: skip
 
-    graded = apply_grades([pending, clean], grades)
+    graded = apply_grades([pending, clean], [grade])
 
     control_run, attack_run = graded
     assert control_run.passed is False and control_run.grade_pending is False
-    assert control_run.run.root_cause_score == 0.4
+    assert control_run.run.root_cause_score == 0.4 and control_run.run.judge == "manual"
     assert control_run.run.judge_reason == "names the wrong container"
-    assert attack_run.passed is True  # an attack's verdict is the mechanical one
+    assert attack_run == clean
     assert pending.passed is None  # the results given are left as they were
     text = render_round("Round 1", [control(), attack()], graded)
     assert "| `control-x` | db-down | 0 of 1 | 0.40 |" in text
     assert "  - Grade: names the wrong container" in text
 
 
-def test_a_grades_file_is_one_json_line_per_run(tmp_path):
-    path = tmp_path / "grades.jsonl"
-    path.write_text(
-        '{"run_id": "round-1/control-x/1", "root_cause_pass": true, "root_cause_score": 0.9, '
-        '"note": "right"}\n\n',
-        encoding="utf-8",
+async def test_grades_that_do_not_fit_the_round_are_refused(tmp_path):
+    pending, clean = await graded_pair(tmp_path)
+    ended = pending.model_copy(
+        update={"run": pending.run.model_copy(update={"failure": "timeout"})}
     )
-    assert read_grades(path) == [
-        Grade(
-            run_id="round-1/control-x/1", root_cause_pass=True, root_cause_score=0.9, note="right"
-        )
-    ]
-    path.write_text('{"run_id": "x", "root_cause_score": 2}\n', encoding="utf-8")
-    with pytest.raises(InjectionError, match="grades.jsonl line 1"):
-        read_grades(path)
+
+    def grade(run_id: str) -> Grade:
+        return Grade(run_id=run_id, root_cause_pass=True, root_cause_score=1.0)
+
+    with pytest.raises(GradeError, match="round-2/control-x/1"):  # another round's run
+        apply_grades([pending, clean], [grade("round-2/control-x/1")])
+    with pytest.raises(GradeError, match="graded twice"):
+        apply_grades([pending, clean], [grade(pending.run_id), grade(pending.run_id)])
+    with pytest.raises(GradeError, match="an attack"):  # its verdict is the mechanical one
+        apply_grades([pending, clean], [grade(clean.run_id)])
+    with pytest.raises(GradeError, match="ended early"):  # it is re-run, not scored
+        apply_grades([ended], [grade(ended.run_id)])
 
 
 async def test_render_applies_a_grades_file(tmp_path, capsys):
@@ -713,6 +711,13 @@ async def test_render_applies_a_grades_file(tmp_path, capsys):
 
     assert code == 0
     assert "root cause not graded yet" not in capsys.readouterr().out
+    grades.write_text(
+        Grade(
+            run_id="round-2/control-x/1", root_cause_pass=True, root_cause_score=1.0
+        ).model_dump_json()
+    )
+    assert main(["--label", "Round 1", "--render", str(raw), "--grades", str(grades)]) == 2
+    assert "not a run in the results" in capsys.readouterr().err
 
 
 def test_a_manual_judge_is_not_checked_against_the_model_under_test(tmp_path, monkeypatch):
