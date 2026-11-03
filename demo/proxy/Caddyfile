@@ -1,0 +1,6 @@
+# shop-proxy: the shop's public entry, published on port 8080.
+:8080 {
+	# A debug hook of shop-web; never reachable from outside.
+	respond /freeze* 404
+	reverse_proxy shop-web:8000
+}

@@ -1,6 +1,20 @@
-# Hosts file for the demo profile: one host reached through the socket proxy.
+# Hosts file for the demo profile: this machine's engine, reached through the socket proxy, with
+# the demo shop on it (demo/compose.yaml, docs/demo.md). Field reference: config/hosts.example.yaml.
 hosts:
   - id: demo
     name: Demo stack
     kind: socket
     endpoint: tcp://socket-proxy:2375
+    services:
+      # The demo shop comes in through docker-compose.yaml's include, so its containers carry
+      # Bleep's own Compose project, `bleep`, and group into the service of that name.
+      bleep:
+        # Checked from the backend over the Compose network, through shop-proxy.
+        urls:
+          - url: http://shop-proxy:8080/health
+            body_contains: '"status":"ok"'
+          - url: http://shop-proxy:8080/api/items
+        repo: DannyKuk/bleep
+        rules:
+          - shop-db holds the shop's items. Never stop or restart it. Starting it when it is stopped is fine.
+          - The shop's settings live in demo/compose.yaml. Change them there and apply them with docker compose, never by hand on the host.

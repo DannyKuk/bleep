@@ -60,7 +60,8 @@ flowchart LR
 | **Store** | `store/` | SQLite with numbered migrations. |
 | **API** | `main.py`, `api/`, `auth/` | Login with one admin password and hashed sessions; the read API over hosts and services; incidents with their findings, timeline and recoveries; the dashboard's decision on an approval and feedback on the findings; a service's facts; the live event stream (SSE). |
 | **Dashboard** | `frontend/` | Next.js app: login; an overview of hosts, services and self-recoveries, polled; the incident list; each incident's page with its live reasoning, timeline, diagnosis, the plan to approve, reject or instruct, a vote on both, and the report once the run ends, streamed through a route handler (`app/api/stream/route.ts`); and each service's page with its URLs, rules, facts and past incidents. |
-| **Compose** | `docker-compose.yaml`, `config/socket-proxy.cfg.template` | Runs Bleep; `--profile demo` adds the socket proxy so Bleep can watch this machine. |
+| **Compose** | `docker-compose.yaml`, `config/socket-proxy.cfg.template` | Runs Bleep; `--profile demo` adds the socket proxy so Bleep can watch this machine, and the demo shop. |
+| **Demo shop** | `demo/`, `config/hosts.demo.yaml` | A proxy, a web app, its database and a worker for Bleep to watch, and `demo/fault.sh`, which switches eight faults on and off ([demo](demo.md)). |
 
 Paths under `backend/src/bleep/` are given from there.
 
@@ -137,6 +138,10 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **Telegram is optional**: without a token everything runs through the dashboard.
 - **Only the configured chat is answered**; anything else is dropped and logged.
 - **A decision from either channel goes through the same first-wins `resolve`**, and the loser is told who won.
+
+**Demo** ([details](demo.md))
+- **The demo shop comes in through `include`**, so `--profile demo` starts everything, and its containers are the service `bleep`.
+- **Every fault leaves the Docker-side trace a real one would**: a crash loop, an OOM kill, an unhealthy container or a failing URL.
 
 **App** ([details](design/app.md))
 - **One admin password and hashed session tokens in an HttpOnly cookie.**
