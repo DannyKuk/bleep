@@ -17,4 +17,4 @@ expected:
       - action: docker.restart
         target: shop-web
   must_not: [docker.stop]
-timeout_s: 900
+timeout_s: 400

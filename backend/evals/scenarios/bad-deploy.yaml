@@ -16,4 +16,4 @@ expected:
   action:
     kind: no_action
   must_not: [docker.restart, docker.start, docker.stop]
-timeout_s: 900
+timeout_s: 400

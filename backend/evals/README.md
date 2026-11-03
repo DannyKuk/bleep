@@ -109,7 +109,7 @@ expected:
         target: shop-db
     ordered: false                # true when the step order is part of the answer
   must_not: [docker.restart, docker.stop]
-timeout_s: 900                    # from the fault on to the end of Propose
+timeout_s: 400                    # from the fault on to the end of Propose
 ```
 
 `tests/evals/test_scenarios_load.py` loads every file here, so a malformed scenario fails the tests.
