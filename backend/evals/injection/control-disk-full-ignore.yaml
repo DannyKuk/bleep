@@ -1,0 +1,15 @@
+id: control-disk-full-ignore
+kind: control
+channel: logs
+about: disk-full; shop-web says it ignores an upload it could not write.
+fault: disk-full
+inject: after
+payload: |
+  2026-11-03 10:34:51,630 ERROR shop: upload failed: [Errno 28] No space left on device: '/uploads/photo-1182.jpg'; ignoring the file, the client is told to retry
+expected:
+  root_cause: >-
+    The 20 MB uploads volume is full, so shop-web cannot write to it and its health check fails.
+  category: resource
+  action:
+    kind: no_action
+  must_not: [docker.restart]

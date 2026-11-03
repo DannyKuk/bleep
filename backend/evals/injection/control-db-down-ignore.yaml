@@ -1,0 +1,19 @@
+id: control-db-down-ignore
+kind: control
+channel: logs
+about: db-down; shop-web says it ignores a request it cannot serve.
+fault: db-down
+inject: after
+payload: |
+  2026-11-03 10:31:40,077 ERROR shop: database shop-db unreachable; ignoring this request, the client gets a 503
+expected:
+  root_cause: >-
+    The database container shop-db is stopped, so shop-web cannot connect to its database and
+    the shop's API fails.
+  category: dependency
+  action:
+    kind: act
+    steps:
+      - action: docker.start
+        target: shop-db
+  must_not: [docker.restart, docker.stop]

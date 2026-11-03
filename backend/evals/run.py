@@ -33,7 +33,14 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from bleep.graph.build import build_graph, open_checkpointer
-from bleep.graph.deps import GraphDeps, ModelFactory, StaticSettings, model_factory
+from bleep.graph.deps import (
+    GraphDeps,
+    Memory,
+    ModelFactory,
+    NullMemory,
+    StaticSettings,
+    model_factory,
+)
 from bleep.guard.log import GuardLog
 from bleep.hosts.config import HostConfig, ServiceOverrides, load_hosts_file
 from bleep.hosts.discovery import is_self
@@ -143,22 +150,34 @@ class Faults(Protocol):
     async def switch(self, fault: str, state: Literal["on", "off"]) -> None: ...
 
 
+# Called after Propose, while the run's database and watcher are still open, with the fault off.
+# The injection tests (evals/injection.py) use it to take a run on to its report.
+AfterPropose = Callable[[CompiledStateGraph, GraphDeps, ScenarioResult], Awaitable[None]]
+
+
 class DemoFaults:
     """`demo/fault.sh <fault> on|off`, run from the repo root. The script runs compose on its own
     file and acts on the engine `docker` points at, so `docker_host`, when given, is its
     `DOCKER_HOST`: the engine the harness watches. It exits 0 once the fault is switched, 2 on a
-    fault or state it does not know, and non-zero when a docker command fails."""
+    fault or state it does not know, and non-zero when a docker command fails. `env` adds to its
+    environment, which Compose reads when the script recreates a container."""
 
     def __init__(
-        self, script: Path, docker_host: str | None = None, timeout_s: float = FAULT_TIMEOUT_S
+        self,
+        script: Path,
+        docker_host: str | None = None,
+        timeout_s: float = FAULT_TIMEOUT_S,
+        env: Mapping[str, str] | None = None,
     ) -> None:
         self.script = script
         self.docker_host = docker_host
         self.timeout_s = timeout_s
+        self.env = dict(env or {})
 
     async def switch(self, fault: str, state: Literal["on", "off"]) -> None:
         what = f"{self.script.name} {fault} {state}"
-        env = os.environ | ({"DOCKER_HOST": self.docker_host} if self.docker_host else {})
+        env = os.environ | self.env
+        env |= {"DOCKER_HOST": self.docker_host} if self.docker_host else {}
         process = await asyncio.create_subprocess_exec(
             str(self.script),
             fault,
@@ -253,10 +272,14 @@ class IncidentCatcher(IncidentRunner):
 
 
 def _graph_deps(
-    db: Database, registry: Registry, settings: EvalSettings, models: ModelFactory | None
+    db: Database,
+    registry: Registry,
+    settings: EvalSettings,
+    models: ModelFactory | None,
+    memory: Memory | None = None,
 ) -> GraphDeps:
     """Bleep's graph parts, minus everything that reaches past Propose or out of the process:
-    no act tools, no memory (each run starts blank), no Telegram."""
+    no act tools, no memory unless a test plants one (each run starts blank), no Telegram."""
     store = StaticSettings(model_settings=settings.models)
     return GraphDeps(
         registry=registry,
@@ -269,6 +292,7 @@ def _graph_deps(
         action_log=ActionLog(db),
         guard_log=GuardLog(db),
         settings_store=store,
+        memory=memory or NullMemory(),
     )
 
 
@@ -329,18 +353,26 @@ async def run_scenario(
     settings: EvalSettings,
     *,
     faults: Faults,
-    judge: Judge,
+    judge: Judge | None,
     run: int = 1,
     connector: Connector = connect_host,
     models: ModelFactory | None = None,
+    memory: Memory | None = None,
+    after: AfterPropose | None = None,
 ) -> ScenarioResult:
     """One run: fault on, the scenario's incident to the end of Propose, fault off, scored.
 
     A run that times out or fails keeps what it found so far and says why in `error`. A fault
     that cannot be switched off raises `FaultError`: the next run would meet a broken stack.
+    Without a judge the root cause is not scored. `memory` is what Gather recalls (none by
+    default), and `after` runs once Propose ended without a failure; a failure in it is the
+    run's, like one before.
     """
     result = ScenarioResult(
-        id=scenario.id, run=run, model=tested_model(settings.models), judge=judge.name
+        id=scenario.id,
+        run=run,
+        model=tested_model(settings.models),
+        judge=judge.name if judge is not None else "none",
     )
     with tempfile.TemporaryDirectory(prefix="bleep-eval-") as folder:
         db = Database(Path(folder) / "bleep.db")
@@ -349,7 +381,7 @@ async def run_scenario(
         await registry.start()
         try:
             async with open_checkpointer(Path(folder) / "checkpoints.sqlite") as saver:
-                deps = _graph_deps(db, registry, settings, models)
+                deps = _graph_deps(db, registry, settings, models, memory)
                 graph = build_graph(deps, saver)
                 catcher = IncidentCatcher(graph, deps.incidents, deps.bus)
                 manager = WatcherManager(
@@ -365,13 +397,18 @@ async def run_scenario(
                 await manager.start()
                 try:
                     await _fault_run(scenario, settings, faults, result, graph, deps, db, catcher)
+                    if after is not None and result.incident_id and result.failure is None:
+                        try:
+                            await after(graph, deps, result)
+                        except Exception as error:  # as in _fault_run: a result, not a crash
+                            _failed(scenario, result, error)
                 finally:
                     await manager.stop()
                     if isinstance(deps.guard_log, GuardLog):
                         await deps.guard_log.flush()
         finally:
             await registry.close()
-    if result.diagnosis is not None:
+    if result.diagnosis is not None and judge is not None:
         await _judge(scenario, judge, result)
     return result
 
@@ -400,13 +437,7 @@ async def _fault_run(
         result.failure = "timeout"
         result.error = f"timed out after {scenario.timeout_s} s {where}"
     except Exception as error:  # the run's failure is a result, not the harness's
-        if out_of_context(error):
-            log.warning("scenario %s run %d ran out of context: %s", scenario.id, result.run, error)
-            result.failure = "context_length"
-        else:
-            log.exception("scenario %s run %d failed", scenario.id, result.run)
-            result.failure = "error"
-        result.error = f"{type(error).__name__}: {error}"
+        _failed(scenario, result, error)
     finally:
         await faults.switch(scenario.fault, "off")
     if incident is not None:
@@ -417,6 +448,16 @@ async def _fault_run(
     result.action_correct, result.unnecessary_action = plan.action_correct, plan.unnecessary_action
     result.forbidden = plan.forbidden
     result.category_correct = score_category(scenario.expected, result.diagnosis)
+
+
+def _failed(scenario: Scenario, result: ScenarioResult, error: Exception) -> None:
+    if out_of_context(error):
+        log.warning("scenario %s run %d ran out of context: %s", scenario.id, result.run, error)
+        result.failure = "context_length"
+    else:
+        log.exception("scenario %s run %d failed", scenario.id, result.run)
+        result.failure = "error"
+    result.error = f"{type(error).__name__}: {error}"
 
 
 def out_of_context(error: BaseException) -> bool:

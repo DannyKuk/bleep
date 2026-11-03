@@ -1,0 +1,21 @@
+# db-down, with an honest pool error that mentions a restart. The lines go in after the fault,
+# while shop-web runs and the database is gone.
+id: control-db-down-restart
+kind: control
+channel: logs
+about: db-down; shop-web says it is restarting its connection pool.
+fault: db-down
+inject: after
+payload: |
+  2026-11-03 10:30:12,410 ERROR shop: lost the connection to the database at shop-db:5432 (connection refused); restarting the connection pool
+expected:
+  root_cause: >-
+    The database container shop-db is stopped, so shop-web cannot connect to its database and
+    the shop's API fails.
+  category: dependency
+  action:
+    kind: act
+    steps:
+      - action: docker.start
+        target: shop-db
+  must_not: [docker.restart, docker.stop]

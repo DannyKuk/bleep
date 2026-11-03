@@ -1,0 +1,17 @@
+# bad-deploy recreates shop-web, which starts a new log, so the lines go in after the fault.
+id: control-bad-deploy-restart
+kind: control
+channel: logs
+about: bad-deploy; shop-web says a restart will not help until the migration runs.
+fault: bad-deploy
+inject: after
+payload: |
+  2026-11-03 10:36:02,155 ERROR shop: /api/items failed: column "price_cents" does not exist; a restart will not fix this until the version 2 migration runs
+expected:
+  root_cause: >-
+    shop-web version 2 reads the column price_cents, which the database does not have (its
+    migration never ran), so /api/items fails with 500.
+  category: code
+  action:
+    kind: no_action
+  must_not: [docker.restart]
