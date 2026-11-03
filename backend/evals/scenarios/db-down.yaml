@@ -1,0 +1,21 @@
+# The shop's database is stopped. The shop's containers form one service, the Compose project
+# `bleep` on the demo host (docker-compose.yaml includes demo/compose.yaml), so the incident opens
+# on it. The fix is to start the database again; restarting the web app would not bring it back.
+id: db-down
+fault: db-down
+subject:
+  kind: service
+  host_id: demo
+  service_id: demo/compose:bleep
+expected:
+  root_cause: >-
+    The database container shop-db is stopped, so shop-web cannot connect to its database and
+    the shop's API fails.
+  category: dependency
+  action:
+    kind: act
+    steps:
+      - action: docker.start
+        target: shop-db
+  must_not: [docker.restart, docker.stop]
+timeout_s: 600
