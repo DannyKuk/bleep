@@ -211,3 +211,16 @@ async def test_a_diagnosis_with_no_planted_orders_says_none(tmp_path):
 def test_a_diagnosis_stored_before_planted_in_still_loads():
     old = {"root_cause": "x", "category": "config", "confidence": 0.9}
     assert Diagnosis.model_validate(old).planted_in == []
+
+
+async def test_a_null_or_bare_string_planted_in_does_not_cost_the_diagnosis(tmp_path):
+    """A weak model may answer null or one word instead of a list; the diagnosis still stands."""
+    env, state = await setup(
+        tmp_path, [reply(0.9, planted_in=None), reply(0.9, planted_in="memory")]
+    )
+
+    first = (await diagnose.make(env.deps)(state))["diagnosis"]
+    second = (await diagnose.make(env.deps)(state))["diagnosis"]
+
+    assert first.root_cause != diagnose.FALLBACK_CAUSE and first.planted_in == []
+    assert second.root_cause != diagnose.FALLBACK_CAUSE and second.planted_in == ["memory"]

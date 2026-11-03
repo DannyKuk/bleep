@@ -258,6 +258,7 @@ _TOOL_SOURCE: dict[str, PlantedSource] = {
     "container_logs": "logs",
     "recent_events": "events",
     "inspect_container": "inspect",
+    "recall_incidents": "memory",
 }
 
 

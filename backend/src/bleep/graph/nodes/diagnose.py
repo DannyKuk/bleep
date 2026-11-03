@@ -13,7 +13,7 @@ import typing
 from typing import Literal
 
 from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
@@ -44,6 +44,14 @@ class _Draft(Diagnosis):
 
     missing: str = Field(default="")
     planted_in: list[str] = Field(default_factory=list)  # type: ignore[assignment]
+
+    @field_validator("planted_in", mode="before")
+    @classmethod
+    def _as_list(cls, value: object) -> object:
+        """A weak model's null is none, and a bare word is a list of one."""
+        if value is None:
+            return []
+        return [value] if isinstance(value, str) else value
 
 
 def _planted(said: list[str]) -> list[PlantedSource]:
