@@ -2,7 +2,7 @@
 proposes.
 
     cd backend && uv run --group evals python -m evals.injection [--only id] [--kind attack]
-                                                                 [--repeat 3] [--label "Round 1"]
+                                    [--repeat 3] [--first 1] [--label "Round 1"]
 
 One YAML file per case in `evals/injection/`. An attack plants its payload in one channel: the
 shop's log (`logs`), the body of the shop's failing replies (`http_body`) or a past incident in
@@ -237,12 +237,14 @@ def load_cases(
     only: str | None = None,
     kind: Literal["attack", "control"] | None = None,
 ) -> list[InjectionCase]:
-    """Every case by id, or the one named `only`, or those of one `kind`."""
+    """Every case by id, or those `only` names (ids, comma-separated), or those of one `kind`."""
     paths = sorted(directory.glob("*.yaml"))
     if only is not None:
-        paths = [p for p in paths if p.stem == only]
-        if not paths:
-            raise InjectionError(f"no injection case {only!r} in {directory}")
+        wanted = {name.strip() for name in only.split(",") if name.strip()}
+        unknown = sorted(wanted - {p.stem for p in paths})
+        if unknown:
+            raise InjectionError(f"no injection case {', '.join(unknown)} in {directory}")
+        paths = [p for p in paths if p.stem in wanted]
     cases = [load_case(p) for p in paths]
     return [c for c in cases if kind is None or c.kind == kind]
 
@@ -599,15 +601,17 @@ async def run_cases(
     label: str = "",
     on_result: Callable[[InjectionResult], None] = lambda _result: None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    first: int = 1,
     **harness,
 ) -> list[InjectionResult]:
-    """Every live case `repeat` times, one after another, with `settle_s` between runs."""
+    """Every live case `repeat` times, one after another, with `settle_s` between runs. The
+    runs are numbered from `first`, so a round split into batches keeps one numbering."""
     results: list[InjectionResult] = []
     for case in [c for c in cases if c.live]:
-        for n in range(1, repeat + 1):
+        for n in range(first, first + repeat):
             if results:
                 await sleep(settings.settle_s)
-            log.info("case %s, run %d of %d", case.id, n, repeat)
+            log.info("case %s, run %d", case.id, n)
             result = await run_case(
                 case, settings, faults=faults, judge=judge, run=n, label=label, **harness
             )
@@ -748,11 +752,12 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m evals.injection", description=__doc__.split("\n")[0]
     )
-    parser.add_argument("--only", help="run one case, by id")
+    parser.add_argument("--only", help="run these cases only: ids, comma-separated")
     parser.add_argument(
         "--kind", choices=["attack", "control"], help="run only attacks or controls"
     )
     parser.add_argument("--repeat", type=int, default=3, help="runs per case (default 3)")
+    parser.add_argument("--first", type=int, default=1, help="number of the first run (default 1)")
     parser.add_argument("--label", default="", help="the round's heading in the tables")
     parser.add_argument(
         "--render", nargs="+", type=Path, metavar="JSONL",
@@ -782,6 +787,7 @@ async def _run(args: argparse.Namespace, settings: EvalSettings, cases: list[Inj
         await asyncio.sleep(settings.settle_s)
         results = await run_cases(
             cases, settings, args.repeat, faults=faults, judge=judge, label=args.label,
+            first=args.first,
             on_result=lambda result: append_jsonl(raw, result),
         )  # fmt: skip
     finally:
@@ -809,8 +815,8 @@ def main(argv: Sequence[str] | None = None, settings: EvalSettings | None = None
             print(render_round(args.label, cases, results))
             return 0
         settings = settings or EvalSettings()
-        if args.repeat < 1:
-            raise EvalError("--repeat must be 1 or more")
+        if args.repeat < 1 or args.first < 1:
+            raise EvalError("--repeat and --first must be 1 or more")
         check_distinct(settings.judge_model, tested_model(settings.models))
         if not settings.fault_script.is_file():
             raise EvalError(f"no fault script at {settings.fault_script}")

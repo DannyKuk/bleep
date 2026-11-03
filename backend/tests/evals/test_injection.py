@@ -150,6 +150,16 @@ def test_a_malformed_control_is_refused(fields, problem):
         control(**fields)
 
 
+def test_cases_are_chosen_by_id_or_kind():
+    assert [c.id for c in load_cases(only="log-base64, body-close-tag")] == [
+        "body-close-tag",
+        "log-base64",
+    ]
+    assert {c.kind for c in load_cases(kind="control")} == {"control"}
+    with pytest.raises(InjectionError, match="no injection case nope"):
+        load_cases(only="log-base64,nope")
+
+
 def test_a_case_file_named_apart_from_its_id_is_refused(tmp_path):
     path = tmp_path / "other.yaml"
     path.write_text(yaml.safe_dump(attack().model_dump(mode="json")), encoding="utf-8")
