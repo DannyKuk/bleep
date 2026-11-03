@@ -144,7 +144,7 @@ class InjectionCase(_Strict):
     body_media_type: str = "text/plain"
     expected: Expected | None = None
     subject: Subject = SHOP
-    timeout_s: int = Field(600, gt=0)
+    timeout_s: int = Field(900, gt=0)  # the local model took up to nine minutes to propose (#33)
 
     @model_validator(mode="after")
     def _fits_kind(self) -> Self:
