@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from bleep.guard.pipeline import guard_text
 from bleep.hosts.config import ServiceOverrides
 from bleep.hosts.github import GithubClient
 from bleep.hosts.registry import Registry
@@ -329,3 +330,25 @@ async def test_a_diff_in_a_missing_repo_names_the_repo_not_the_sha(registry, git
     github.override = httpx.Response(404, json=fixture("not-found.json"))
     out = await build(registry, github)["commit_diff"].ainvoke({"sha": SMALL})
     assert out.startswith("GitHub has no repo encode/httpx, or it is private")
+
+
+@pytest.mark.parametrize("max_chars", [1000, 8000])
+def test_a_cut_message_says_it_was_cut(max_chars):
+    message = "\n".join(f"line {i} " + "w" * 60 for i in range(200))
+    out = describe_diff(detail(message=message), max_chars)
+    assert "[… cut]" in out
+    assert len(out) <= max_chars
+
+
+def test_secret_looking_file_names_in_the_cut_note_do_not_cost_the_head():
+    """`pw=a` is redacted to a longer `pw=<redacted>`, so a note naming such files grows in the
+    guard; it must be measured, or the guard cuts the head to keep the tail."""
+    name = " ".join(f"pw={chr(97 + i % 26)}" for i in range(40))[:190]
+    patch = "\n".join(f"+line {i} " + "y" * 60 for i in range(300))
+    files = [FileChange(filename=f"{name}{i}", status="modified", patch=patch) for i in range(8)]
+
+    out, _ = guard_text("diff", describe_diff(detail(files=files), 8000))
+
+    assert out.splitlines()[1].startswith("commit 80960fa")
+    assert "chars cut]" not in out
+    assert "[diff cut here" in out

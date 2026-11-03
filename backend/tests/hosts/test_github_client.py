@@ -355,3 +355,19 @@ def test_the_hosts_file_refuses_a_repo_that_is_not_owner_and_name():
     for bad in ["bleep", "DannyKuk/..", "https://github.com/DannyKuk/bleep"]:
         with pytest.raises(ValidationError, match="owner/name"):
             ServiceOverrides(repo=bad)
+
+
+async def test_a_secondary_limit_waits_for_retry_after_not_the_primary_reset():
+    headers = {
+        "retry-after": "60",
+        "x-ratelimit-remaining": "4000",
+        "x-ratelimit-reset": "1793740561",
+    }
+    github, _ = client(
+        {"/repos/encode/httpx/commits": httpx.Response(403, json={}, headers=headers)}
+    )
+    before = datetime.now(UTC)
+    with pytest.raises(RateLimited) as caught:
+        await github.commits(REPO, SINCE)
+    assert caught.value.reset_at is not None
+    assert 55 <= (caught.value.reset_at - before).total_seconds() <= 65

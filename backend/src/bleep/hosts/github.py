@@ -147,13 +147,16 @@ def check_path(path: str) -> None:
 
 
 def _reset_at(response: httpx.Response) -> datetime | None:
-    """From `x-ratelimit-reset` (epoch seconds), else `retry-after` (seconds from now)."""
-    reset, retry = response.headers.get("x-ratelimit-reset"), response.headers.get("retry-after")
+    """From `retry-after` (seconds from now) when GitHub sends it, a secondary limit's own wait;
+    else from `x-ratelimit-reset` (epoch seconds) when the primary limit is spent. Every answer
+    carries `x-ratelimit-reset`, so it says nothing about a secondary limit."""
+    headers = response.headers
+    reset, retry = headers.get("x-ratelimit-reset"), headers.get("retry-after")
     try:
-        if reset:
-            return datetime.fromtimestamp(int(reset), UTC)
         if retry:
             return datetime.now(UTC) + timedelta(seconds=int(retry))
+        if reset and headers.get("x-ratelimit-remaining") == "0":
+            return datetime.fromtimestamp(int(reset), UTC)
     except ValueError, OverflowError, OSError:
         return None
     return None
@@ -241,7 +244,7 @@ class GithubClient:
     async def readme(self, repo: str) -> RepoFile:
         """The repo's README, whatever its file name. `NotFound` when it has none."""
         check_repo(repo)
-        data = await self._get(f"/repos/{repo}/readme", None, f"a README in {repo}", "file")
+        data = await self._get(f"/repos/{repo}/readme", None, f"README in {repo}", "file")
         return _file(_parse(_RawFile, data))
 
     async def list_files(

@@ -26,7 +26,6 @@ Clock = Callable[[], datetime]
 
 COMMITS = 20  # asked for per call; the newest that fit are shown
 MESSAGE_CHARS = 600  # of one commit's message in the list
-DIFF_MESSAGE_CHARS = 1500
 AUTHOR_CHARS = 80  # a git author name is whatever the pusher set
 NAME_CHARS = 200  # of one file name
 NOTE_CHARS = 240  # room kept for a cut note
@@ -89,6 +88,14 @@ def _cut(text: str, limit: int) -> str:
 def _size(text: str) -> int:
     """How long `text` is once the guard has cleaned, redacted and escaped it."""
     return len(escape_untrusted(redact_text(strip_control(text))))
+
+
+def _cut_to(text: str, room: int) -> str:
+    """`text` if its guarded size fits `room`, else its longest head that fits with the cut
+    note after it."""
+    if _size(text) <= room:
+        return text
+    return _shrink(text, room - len(CUT) - 1).rstrip() + f" {CUT}"
 
 
 def _shrink(text: str, room: int) -> str:
@@ -154,10 +161,9 @@ def _file_line(f) -> str:
 def _head(detail: CommitDetail, room: int) -> str:
     """The sha, author, date, message and as many changed files as fit `room`; the files left
     out are counted."""
-    message = _cut(detail.message.strip(), min(DIFF_MESSAGE_CHARS, room // 3))
     lines = [
         f"commit {detail.sha[:7]} by {_cut(detail.author, AUTHOR_CHARS)} on {_when(detail.date)}",
-        _shrink(message, room // 3) if _size(message) > room // 3 else message,
+        _cut_to(detail.message.strip(), room // 3),
         "",
         f"{len(detail.files)} files changed, +{detail.additions} -{detail.deletions}:",
     ]
@@ -195,7 +201,8 @@ def describe_diff(detail: CommitDetail, max_chars: int) -> str:
             text += _shrink(block, room - used)
         left = [g.filename for g in detail.files[i:]]
         named = ", ".join(left[:5]) + (f" and {len(left) - 5} more" if len(left) > 5 else "")
-        return text + f"\n\n[diff cut here; not shown in full: {_cut(named, NOTE_CHARS - 60)}]"
+        head = "\n\n[diff cut here; not shown in full: "
+        return text + head + _cut_to(named, NOTE_CHARS - _size(head) - 1) + "]"
     return text
 
 
