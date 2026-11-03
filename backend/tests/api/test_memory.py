@@ -155,7 +155,7 @@ def test_feedback_needs_the_finding_it_rates(app_client, parts, findings):
     [
         {"target": "report", "vote": "up"},
         {"target": "diagnosis", "vote": "sideways"},
-        {"target": "diagnosis", "vote": "up", "note": "x" * 501},
+        {"target": "diagnosis", "vote": "up", "note": "x" * 201},
     ],
 )
 def test_feedback_refuses_unknown_targets_votes_and_long_notes(app_client, parts, findings, body):
@@ -210,7 +210,7 @@ def test_a_fact_is_deleted_only_through_its_own_service(app_client, parts):
 
 def test_a_fact_needs_text_and_a_service_bleep_knows(app_client):
     assert app_client.post(f"{SHOP_PATH}/facts", json={"text": "   "}).status_code == 422
-    assert app_client.post(f"{SHOP_PATH}/facts", json={"text": "x" * 501}).status_code == 422
+    assert app_client.post(f"{SHOP_PATH}/facts", json={"text": "x" * 201}).status_code == 422
     unknown = app_client.post("/api/services/a%2Fcompose%3Anope/facts", json={"text": "hi"})
     assert unknown.status_code == 404
 

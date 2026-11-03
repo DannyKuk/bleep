@@ -33,7 +33,15 @@ from bleep.guard.log import GuardKind
 from bleep.guard.report_check import check_report
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget
-from bleep.schemas.graph import Decision, Diagnosis, Outcome, Proposal, Report, StepResult
+from bleep.schemas.graph import (
+    FACT_CHARS,
+    Decision,
+    Diagnosis,
+    Outcome,
+    Proposal,
+    Report,
+    StepResult,
+)
 from bleep.schemas.graph import TimelineEntry as Entry
 from bleep.schemas.incidents import Incident, IncidentEvent, Signal
 
@@ -62,7 +70,6 @@ FOLLOW_UP_CHARS = 300
 ENTRY_CHARS = 200
 NOT_DETERMINED = "Not determined."
 MAX_FACTS = 2
-FACT_CHARS = 200
 
 _FIXED = re.compile(r"\bfixed\b", re.IGNORECASE)
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")

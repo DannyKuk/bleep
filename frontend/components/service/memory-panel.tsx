@@ -10,7 +10,7 @@ import { apiFetch } from "@/lib/api";
 import type { FactBody, ServiceFact } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
 
-const MAX_FACT = 500;
+const MAX_FACT = 200; // the API's limit (FACT_CHARS)
 
 const why = (error: unknown) => (error instanceof Error ? error.message : String(error));
 

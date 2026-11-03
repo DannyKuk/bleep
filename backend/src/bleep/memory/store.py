@@ -22,8 +22,10 @@ import numpy as np
 
 from bleep.incidents.repository import utcnow
 from bleep.memory.embeddings import Embedder
-from bleep.memory.text import NOTE_CHARS, clean, describe_feedback
+from bleep.memory.text import clean, describe_feedback
 from bleep.schemas.graph import (
+    FACT_CHARS,
+    NOTE_CHARS,
     Decision,
     Feedback,
     FeedbackTarget,
@@ -254,7 +256,7 @@ class MemoryStore:
     async def add_fact(
         self, service_id: str, text: str, source: Literal["report", "human"] = "human"
     ) -> ServiceFact:
-        fact_text, now = clean(text), self.clock()
+        fact_text, now = clean(text, FACT_CHARS), self.clock()
         conn = await self.db.connect()
         try:
             cursor = await conn.execute(
@@ -276,7 +278,7 @@ class MemoryStore:
         """Keep `texts` as the facts the incident's report taught, in place of any it taught
         before (a re-run Report must not double them); the facts kept."""
         now = self.clock()
-        cleaned = [fact for fact in (clean(text) for text in texts) if fact]
+        cleaned = [fact for fact in (clean(text, FACT_CHARS) for text in texts) if fact]
         conn = await self.db.connect()
         try:
             await conn.execute("BEGIN IMMEDIATE")

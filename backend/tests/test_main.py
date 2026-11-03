@@ -191,9 +191,10 @@ def test_the_embedder_follows_the_settings(settings):
     embedder = build_embedder(remote)
     assert isinstance(embedder, OpenAICompatEmbedder)
     assert embedder.name == "openai:text-embedding-nomic-embed-text-v1.5"
-    assert isinstance(
-        build_embedder(settings.model_copy(update={"embeddings_model": "x/y"})), FastEmbedEmbedder
-    )
+    # EMBEDDINGS_MODEL is the endpoint's model: the local one is the model baked into the image.
+    local = build_embedder(settings.model_copy(update={"embeddings_model": "x/y"}))
+    assert isinstance(local, FastEmbedEmbedder)
+    assert local.name == "fastembed:BAAI/bge-small-en-v1.5"
     half = settings.model_copy(update={"embeddings_provider": "openai"})
     with pytest.raises(SettingsError, match="EMBEDDINGS_BASE_URL"):
         check_settings(half)

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
 import type { Feedback, FeedbackBody, FeedbackTarget, Vote } from "@/lib/api-types";
 
-const MAX_NOTE = 500;
+const MAX_NOTE = 200; // the API's limit (NOTE_CHARS)
 const FINDING: Record<FeedbackTarget, string> = { diagnosis: "diagnosis", proposal: "plan" };
 const VOTES: { vote: Vote; label: string; Icon: typeof ThumbsUp }[] = [
   { vote: "up", label: "Right", Icon: ThumbsUp },

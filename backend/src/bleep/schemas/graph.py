@@ -41,6 +41,12 @@ class PastIncident(BaseModel):
     score: float
 
 
+# One limit for each kind of text a person or a report adds to memory, shared by the API, the
+# store and Report, so what the dashboard accepts is what memory keeps.
+FACT_CHARS = 200  # a service fact
+NOTE_CHARS = 200  # a feedback note, inside a past incident's one line
+
+
 class ServiceFact(BaseModel):
     """Something worth knowing about a service, kept in long-term memory (Bleep's own, trusted).
 

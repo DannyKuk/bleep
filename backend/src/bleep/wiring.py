@@ -46,14 +46,15 @@ class AppParts:
 
 def build_embedder(settings: Settings) -> Embedder:
     """The local model unless the settings name an OpenAI-compatible endpoint (checked complete
-    by `check_settings`)."""
+    by `check_settings`). `EMBEDDINGS_MODEL` names the endpoint's model only: the local model is
+    the one baked into the image, and another could not be downloaded there."""
     if settings.embeddings_provider == "openai":
         return OpenAICompatEmbedder(
             settings.embeddings_base_url or "",
             settings.embeddings_model or "",
             settings.embeddings_api_key,
         )
-    return FastEmbedEmbedder(settings.embeddings_model or DEFAULT_LOCAL_MODEL)
+    return FastEmbedEmbedder(DEFAULT_LOCAL_MODEL)
 
 
 def build_parts(
