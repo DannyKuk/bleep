@@ -62,6 +62,7 @@ flowchart LR
 | **Dashboard** | `frontend/` | Next.js app: login; an overview of hosts, services and self-recoveries, polled; the incident list; each incident's page with its live reasoning, timeline, diagnosis, the plan to approve, reject or instruct, a vote on both, and the report once the run ends, streamed through a route handler (`app/api/stream/route.ts`); and each service's page with its URLs, rules, facts and past incidents. |
 | **Compose** | `docker-compose.yaml`, `config/socket-proxy.cfg.template` | Runs Bleep; `--profile demo` adds the socket proxy so Bleep can watch this machine. |
 | **Demo shop** | `demo/`, `config/hosts.demo.yaml` | A proxy, a web app, its database and a worker for Bleep to watch, as their own Compose project `shop`, and `demo/fault.sh`, which switches eight faults on and off ([demo](demo.md)). |
+| **Eval harness** | `backend/evals/` | `python -m evals.run`: switches a demo fault on, runs Bleep's watcher and graph in-process to the end of Propose with a real model, switches it off, and scores the root cause (a judge model through DeepEval), the category and the plan (exact); writes JSONL and a dated report ([how to run it](../backend/evals/README.md)). |
 
 Paths under `backend/src/bleep/` are given from there.
 
@@ -150,6 +151,11 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **The live stream is SSE with `id:` = seq**, so a reconnect replays from `Last-Event-ID`; a ping every 15 s keeps proxies from closing it.
 - **The dashboard serves the stream from a route handler, not the rewrite**, because the rewrite gzips it and holds every event until the stream ends ([SSE through Next.js](decisions/sse-through-next.md)).
 - **The incident page reads the history, then streams after its last seq, and keeps each event once by seq**; a step event reloads the incident's findings.
+
+**Evals** ([details](design/evals.md))
+- **A scenario runs Bleep's own watcher and graph in-process on a throwaway database and stops before Approval**: nothing is executed, sent or remembered.
+- **The judge is never the model under test**: an OpenRouter model or the Claude Code CLI scores the root cause; the plan is checked exactly, and acting where no action is expected counts as an unnecessary action.
+- **Every run records its largest single prompt**, the number a small local context meets first; a run whose model call reaches its length limit is a failed run with reason `context_length`, counted in the report.
 
 ## Decisions
 

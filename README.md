@@ -18,3 +18,4 @@ open http://localhost:3000
 - [Demo](docs/demo.md): the demo shop and its eight faults, with what Bleep should find and propose for each.
 - [Architecture](docs/architecture.md): the pieces and one incident from start to end.
 - [Decisions](docs/decisions/): why it is built the way it is.
+- [Evals](docs/design/evals.md): how Bleep is scored on real faults, and [how to run them](backend/evals/README.md).

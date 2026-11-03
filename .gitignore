@@ -8,6 +8,8 @@ __pycache__/
 .venv/
 .pytest_cache/
 .ruff_cache/
+# DeepEval's working folder (the eval harness)
+.deepeval/
 .mypy_cache/
 .coverage
 htmlcov/
