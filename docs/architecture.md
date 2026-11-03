@@ -56,6 +56,7 @@ flowchart LR
 | **Action log** | `incidents/action_log.py` | Execute's ledger in SQLite: each step `started` before its engine call and `done`, `failed` or `skipped` after, so a restart never runs a step twice. |
 | **Guard** | `guard/` | Redacts secrets, strips control characters, caps size and wraps untrusted text before anything reaches a model; checks every proposed plan before a human sees it (`guard/plan_check.py`); hashes plans and signs and checks approval grants (`guard/grant.py`); cuts log text out of every report (`guard/report_check.py`); `guard/log.py` records what it refused, blocked or changed in the `guard_log` table. |
 | **Models** | `llm/` | One factory for OpenRouter and local models, structured output with a plain-JSON fallback, and a token and cost ledger with a daily cap. |
+| **Tracing** | `llm/tracing.py`, `docker-compose.observability.yaml` | Off by default; `TRACING=langfuse` or `langsmith` adds a tracer's callbacks to every graph run, one Langfuse trace per incident with the incident as its session, and stores the trace's link on the incident. `--profile observability` runs a self-hosted Langfuse. |
 | **Prompts** | `prompts/` | Every prompt is a `.md` file loaded with `prompts.load(name, **vars)`. |
 | **Store** | `store/` | SQLite with numbered migrations. |
 | **API** | `main.py`, `api/`, `auth/` | Login with one admin password and hashed sessions; the read API over hosts and services; incidents with their findings, timeline and recoveries; the dashboard's decision on an approval and feedback on the findings; a service's facts; the live event stream (SSE). |
@@ -140,6 +141,11 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **Telegram is optional**: without a token everything runs through the dashboard.
 - **Only the configured chat is answered**; anything else is dropped and logged.
 - **A decision from either channel goes through the same first-wins `resolve`**, and the loser is told who won.
+
+**Observability** ([details](design/observability.md))
+- **Tracing is off unless `TRACING` names Langfuse or LangSmith**, and off adds no callbacks at all.
+- **The callbacks go on the graph run, not the model**, and the trace id is derived from the incident id, so the run and every resume after a decision are one trace, its link known before it starts.
+- **Self-hosted Langfuse v4 in its own Compose file**, set up from `.env` by headless init, only its UI published on `127.0.0.1:3001`.
 
 **Demo** ([details](demo.md))
 - **The demo shop is its own Compose project, `shop`**, so it is the service `shop`, and Bleep checks its URLs through its published port.

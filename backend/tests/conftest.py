@@ -24,6 +24,13 @@ from bleep.wiring import AppParts, build_parts
 
 
 @pytest.fixture(autouse=True)
+def no_tracing_from_the_shell(monkeypatch):
+    """A `TRACING` exported to try the Langfuse profile must not make the tests send traces."""
+    for name in ("TRACING", "LANGSMITH_TRACING", "LANGCHAIN_TRACING_V2"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def no_real_embedding_model(monkeypatch):
     """Tests never download or run the local model; one opt-in test does, with
     BLEEP_REAL_EMBEDDINGS=1."""

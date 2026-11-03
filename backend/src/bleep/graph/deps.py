@@ -14,6 +14,7 @@ from typing import Protocol
 
 import httpx
 from langchain_core.language_models import BaseChatModel
+from langchain_core.runnables import RunnableConfig
 
 from bleep.guard.grant import grant_token, plan_hash
 from bleep.guard.log import GuardLogger
@@ -105,6 +106,22 @@ class NullMemory:
         self, service_id: str, incident_id: str, texts: Iterable[str]
     ) -> list[ServiceFact]:
         return []
+
+
+class Tracer(Protocol):
+    """Traces incident runs (`bleep.llm.tracing`); the runner asks it for each graph run."""
+
+    def run_config(self, incident: Incident) -> RunnableConfig:
+        """What a graph run of `incident` adds to its config; empty when tracing is off."""
+        ...
+
+    def trace_url(self, incident: Incident) -> str | None:
+        """The link to the incident's trace, known before the trace exists; None if none."""
+        ...
+
+    async def close(self) -> None:
+        """Send what is still buffered."""
+        ...
 
 
 class Notifier(Protocol):

@@ -19,7 +19,7 @@ from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.state import IncidentState, Node
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
-from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget
+from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.memory.text import describe_fact, describe_past
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import Diagnosis, Evidence, GatherContext, PlantedSource
@@ -172,7 +172,7 @@ def make(deps: GraphDeps) -> Node:
                 deps.models("main"),
                 _Draft,
                 [HumanMessage(prompt)],
-                config={"callbacks": [UsageTracker(incident_id, deps.ledger)]},
+                config=tracked(UsageTracker(incident_id, deps.ledger)),
             )
         except BudgetExceeded as spent:
             log.info("diagnose: %s budget spent, no model call", spent.kind)

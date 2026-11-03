@@ -213,3 +213,35 @@ def test_the_embeddings_settings_are_read_from_their_env_names(monkeypatch, tmp_
     assert loaded.embeddings_base_url == "http://x/v1" and loaded.embeddings_model == "m"
     assert loaded.embeddings_api_key is not None
     assert loaded.embeddings_api_key.get_secret_value() == "k"
+
+
+def test_the_runner_traces_with_the_parts_tracer_and_it_is_flushed_at_shutdown(settings, parts):
+    closed: list[bool] = []
+
+    class Tracer:
+        def run_config(self, incident):
+            return {}
+
+        def trace_url(self, incident):
+            return None
+
+        async def close(self) -> None:
+            closed.append(True)
+
+    parts.tracer = Tracer()
+    app = create_app(settings, parts)
+    with TestClient(app):
+        assert app.state.runner.tracer is parts.tracer
+        assert not closed
+    assert closed == [True]
+
+
+def test_tracing_to_langfuse_without_its_keys_refuses_to_start(settings, monkeypatch):
+    from bleep.config import SettingsError
+    from bleep.hosts.registry import Registry
+
+    monkeypatch.setenv("TRACING", "langfuse")
+    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+    with pytest.raises(SettingsError, match="LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY"):
+        build_parts(settings, Registry([]))

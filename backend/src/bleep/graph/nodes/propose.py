@@ -18,7 +18,7 @@ from bleep.graph.state import IncidentState, Node
 from bleep.guard.plan_check import Violation, check_plan, protected_names
 from bleep.hosts.discovery import is_self
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
-from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget
+from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.memory.text import describe_fact, describe_past
 from bleep.schemas.graph import Diagnosis, GatherContext, PlanStep, Proposal
 from bleep.schemas.incidents import Subject
@@ -117,9 +117,7 @@ def _incident_containers(deps: GraphDeps, state: IncidentState) -> set[str]:
 async def _ask(deps: GraphDeps, incident_id: str, messages: list[BaseMessage]) -> Proposal:
     await check_budget(deps.ledger, incident_id, deps.settings_store.budgets())
     tracker = UsageTracker(incident_id, deps.ledger)
-    return await invoke_structured(
-        deps.models("main"), Proposal, messages, config={"callbacks": [tracker]}
-    )
+    return await invoke_structured(deps.models("main"), Proposal, messages, config=tracked(tracker))
 
 
 def _record(deps: GraphDeps, incident_id: str, violations: list[Violation]) -> None:
