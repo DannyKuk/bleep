@@ -50,13 +50,11 @@ from bleep.guard.redact import redact_text
 from bleep.incidents.repository import utcnow
 from bleep.incidents.runner import IncidentRunner
 from bleep.knowledge.index import KnowledgeIndex
-from bleep.knowledge.ingest import load_snapshot
 from bleep.memory.embeddings import Embedder, FastEmbedEmbedder
 from bleep.memory.text import clean
 from bleep.schemas.graph import Action, Decision, Diagnosis, PastIncident, Proposal, Report
 from bleep.schemas.incidents import Subject
 from bleep.schemas.knowledge import KnowledgeDocument, KnowledgeHit, KnowledgeSource
-from bleep.store.db import Database
 from evals.github import (
     FixtureFile,
     GithubFixture,
@@ -85,6 +83,7 @@ from evals.run import (
     live_backend,
     run_scenario,
     shop_items_url,
+    snapshot_index,
 )
 from evals.scenarios import Expected, Scenario, ScenarioError, ScenarioResult
 
@@ -416,11 +415,7 @@ class KnowledgeFixture:
 
     @classmethod
     async def build(cls, folder: Path, embedder: Embedder) -> KnowledgeFixture:
-        db = Database(folder / "knowledge.db")
-        await db.migrate()
-        index = KnowledgeIndex(db, embedder)
-        await index.sync("docker", load_snapshot())
-        return cls(index)
+        return cls(await snapshot_index(folder, embedder))
 
     async def plant(self, page: KnowledgeDocument | None) -> None:
         await self.index.sync("repo", [page] if page is not None else [], prefix="repo:")

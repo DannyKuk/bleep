@@ -33,7 +33,8 @@ class RunInfo(BaseModel):
     the repo, which a later batch of the same suite writes again. `grader` and `grades` are set
     once grades by hand are applied: who graded, and the grades file as the report links it.
     `reset_shop` says the shop's containers were recreated before every run (#104); batches
-    from before the reset have it false."""
+    from before the reset have it false. `knowledge` says the model was offered
+    `knowledge_search` over the Docker docs snapshot (#39); batches from before it have it false."""
 
     started_at: datetime
     finished_at: datetime
@@ -45,6 +46,7 @@ class RunInfo(BaseModel):
     commit: str | None = None
     command: str
     reset_shop: bool = False
+    knowledge: bool = False
     raw: str
     report: str | None = None
     grader: str | None = None
@@ -413,6 +415,11 @@ def render(info: RunInfo, results: list[ScenarioResult], regrade: str | None = N
             " The shop's containers were recreated before every run, volumes kept, so no earlier "
             "run's log reached the next."
             if info.reset_shop
+            else ""
+        )
+        + (
+            " Knowledge search was offered over the shipped Docker docs snapshot, as in the app."
+            if info.knowledge
             else ""
         ),
         "",
