@@ -44,7 +44,7 @@ Every incident below opens on the service `bleep` of host `demo`. The "on Docker
 | [port-conflict](#port-conflict) | starts shop-canary on port 8080 | `url_failed` (both URLs) | no action |
 | [misroute](#misroute) | loads the wrong Caddyfile | `url_failed` (both URLs) | no action |
 
-With today's detector each of the eight opens an incident: `unhealthy` opens at once, three deaths in 600 s open, and two URL failures in a row open ([watcher](design/watcher.md)). "No action" proposals carry the human instructions given here; each is what `fault.sh <fault> off` does. The compose commands run from the repository root.
+By the detector's rules, read from the code and not yet observed in a full dashboard run, each of the eight should open an incident: `unhealthy` opens at once, three deaths in 600 s open, and two URL failures in a row open ([watcher](design/watcher.md)). "No action" proposals carry the human instructions given here; each is what `fault.sh <fault> off` does. The compose commands run from the repository root.
 
 ### db-down
 
