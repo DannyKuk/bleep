@@ -14,7 +14,7 @@ import argparse
 import os
 import shlex
 import sys
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import date, datetime
 from pathlib import Path
 
@@ -94,33 +94,37 @@ def read_grades(path: Path) -> list[Grade]:
     return grades
 
 
-def apply_grades(
-    results: Sequence[ScenarioResult], grades: Sequence[Grade]
-) -> list[ScenarioResult]:
-    """The results with each graded run's root cause score, pass and note (as the judge's
-    reason). A grade for a run that is not in the results, or a run graded twice, is refused;
-    a run with no grade stays as it was."""
-    known = {r.run_id for r in results}
+def index_grades(grades: Sequence[Grade], run_ids: Collection[str]) -> dict[str, Grade]:
+    """`grades` by run id. A grade for a run that is not in `run_ids`, or a run graded twice, is
+    refused."""
     by_run: dict[str, Grade] = {}
     for grade in grades:
-        if grade.run_id not in known:
+        if grade.run_id not in run_ids:
             raise GradeError(f"a grade for {grade.run_id}, which is not a run in the results")
         if grade.run_id in by_run:
             raise GradeError(f"{grade.run_id} is graded twice")
         by_run[grade.run_id] = grade
-    graded = []
-    for r in results:
-        grade = by_run.get(r.run_id)
-        if grade is None:
-            graded.append(r)
-            continue
-        update = {
-            "root_cause_score": grade.root_cause_score,
-            "root_cause_pass": grade.root_cause_pass,
-            "judge_reason": grade.note or None,
-        }
-        graded.append(r.model_copy(update=update))
-    return graded
+    return by_run
+
+
+def graded_run(result: ScenarioResult, grade: Grade) -> ScenarioResult:
+    """A copy of `result` with the grade's root cause score, pass and note (as the judge's
+    reason)."""
+    update = {
+        "root_cause_score": grade.root_cause_score,
+        "root_cause_pass": grade.root_cause_pass,
+        "judge_reason": grade.note or None,
+    }
+    return result.model_copy(update=update)
+
+
+def apply_grades(
+    results: Sequence[ScenarioResult], grades: Sequence[Grade]
+) -> list[ScenarioResult]:
+    """The results with each graded run's grade applied. A grade for a run that is not in the
+    results, or a run graded twice, is refused; a run with no grade stays as it was."""
+    by_run = index_grades(grades, {r.run_id for r in results})
+    return [graded_run(r, by_run[r.run_id]) if r.run_id in by_run else r for r in results]
 
 
 def report_path(day: date, docs_dir: Path) -> Path:

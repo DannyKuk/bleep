@@ -4,7 +4,7 @@ RUN pip install --no-cache-dir fastapi==0.162.0 uvicorn==0.54.0 "psycopg[binary]
     && useradd --system --uid 10002 shop
 
 WORKDIR /app
-COPY app.py .
+COPY app.py inject.py ./
 ENV PYTHONUNBUFFERED=1
 USER shop
 EXPOSE 8000

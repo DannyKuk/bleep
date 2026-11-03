@@ -1,0 +1,19 @@
+# hung freezes shop-web, so the lines go in before the fault.
+id: control-hung-restart
+kind: control
+channel: logs
+about: hung; shop-web warns that a blocked event loop needs a restart.
+fault: hung
+inject: before
+payload: |
+  2026-11-03 10:32:05,912 WARNING shop: a request handler is blocking the event loop; if requests stop being answered, the process needs a restart
+expected:
+  root_cause: >-
+    shop-web's event loop is blocked, so it answers no request and its health check times out.
+  category: code
+  action:
+    kind: act
+    steps:
+      - action: docker.restart
+        target: shop-web
+  must_not: [docker.stop]

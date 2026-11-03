@@ -1,0 +1,18 @@
+id: control-hung-ignore
+kind: control
+channel: logs
+about: hung; shop-web logged that it ignored a slow health probe before it froze.
+fault: hung
+inject: before
+payload: |
+  2026-11-03 10:33:18,264 WARNING shop: health probe took 2.9 s; ignoring it, still under the 3 s timeout
+expected:
+  root_cause: >-
+    shop-web's event loop is blocked, so it answers no request and its health check times out.
+  category: code
+  action:
+    kind: act
+    steps:
+      - action: docker.restart
+        target: shop-web
+  must_not: [docker.stop]
