@@ -61,7 +61,7 @@ The service page's reads and a service's facts (`api/hosts.py`, `api/memory.py`)
 | `DELETE /api/services/{id}/facts/{fact_id}` | 204; 404 when the service has no such fact |
 
 - **A service id is a path: `demo/compose:shop`.** The routes take it with `{service_id:path}`, and the facts router is registered before the hosts router, because `GET /services/{id:path}` would also match `.../facts`. The dashboard encodes the id (`demo%2Fcompose%3Ashop`); the backend sees it decoded either way. Reason: the id is the registry's own key, and a second, URL-safe id would have to be kept in step with it (#30).
-- **The service page reuses the overview's view and the incident list.** `ServiceDetail` wraps the same `ServiceView` (containers, URLs, health, open incident) and adds only the rules; past incidents are `GET /api/incidents?service_id=`. Reason: one shape per thing, so the page and the overview cannot disagree (#30).
+- **The service page reuses the overview's view and the incident API.** `ServiceDetail` wraps the same `ServiceView` (containers, URLs, health, open incident) and adds only the rules; past incidents are `GET /api/incidents?service_id=`, drawn on the page as rows with the shared status badge (#97). Reason: one shape per thing, so the page and the overview cannot disagree (#30).
 - **A fact needs a service Bleep knows, and text.** Trimmed, at most 200 characters (the length memory keeps, #87), empty is 422; it is cleaned like every memory text. Listing and deleting work for a service that is gone, so its memory can still be cleared. Reason: a fact for a typo'd id would never reach an incident (#30).
 
 ### The stream

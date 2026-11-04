@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Loader2, TriangleAlert } from "lucide-react";
+import { Loader2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -179,19 +179,35 @@ export function ServicePage({ id }: { id: string }) {
   const incidents = useOnce<Incident[]>(
     `/api/incidents?service_id=${encoded}&limit=${PAST_INCIDENTS}`,
   );
-  const service = detail.data?.service;
+  const data = detail.data;
+  const service = data?.service;
   const missing = detail.error instanceof ApiError && detail.error.status === 404;
   const name = service?.name ?? id.split(":").pop() ?? id;
 
   return (
     <div className="flex flex-col gap-4">
-      <Link
-        href="/"
-        className="inline-flex min-h-11 items-center gap-1 self-start text-sm font-bold text-accent hover:underline"
-      >
-        <ArrowLeft aria-hidden className="size-4" />
-        Overview
-      </Link>
+      <nav aria-label="Breadcrumb">
+        <ol className="flex flex-wrap items-center gap-x-2 text-sm text-ink-2">
+          <li>
+            <Link
+              href="/"
+              className="inline-flex min-h-11 items-center font-bold text-accent hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            >
+              Home
+            </Link>
+          </li>
+          {service && (
+            <>
+              <li aria-hidden>&rsaquo;</li>
+              <li className="font-mono">{service.host_id}</li>
+            </>
+          )}
+          <li aria-hidden>&rsaquo;</li>
+          <li aria-current="page" className="font-bold text-ink">
+            {name}
+          </li>
+        </ol>
+      </nav>
 
       <header className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -222,7 +238,7 @@ export function ServicePage({ id }: { id: string }) {
         <Panel title={`What I know about ${name}`} className="lg:col-span-2">
           <MemoryPanel serviceId={id} />
         </Panel>
-        {service && (
+        {service && data && (
           <>
             <Panel title="Checked from outside">
               {service.urls.length > 0 ? (
@@ -247,7 +263,7 @@ export function ServicePage({ id }: { id: string }) {
               )}
             </Panel>
             <Panel title="Rules I follow" className="lg:col-span-2">
-              <RuleList rules={detail.data!.rules} hostRules={detail.data!.host_rules} />
+              <RuleList rules={data.rules} hostRules={data.host_rules} />
             </Panel>
           </>
         )}
