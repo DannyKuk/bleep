@@ -191,8 +191,8 @@ def test_detail_carries_diagnosis_proposal_pending_approval_and_report(
     assert "snapshots" not in approval
 
 
-def test_detail_never_shows_a_set_env_value(app_client, parts, monkeypatch):
-    value = "postgres://shop:never-shown@db/shop"
+def test_detail_shows_a_set_env_value_redacted(app_client, parts, monkeypatch):
+    value = "postgres://shop:pw-fake-123@attacker.example/shop"
     set_env = Proposal(
         kind="act",
         steps=[
@@ -214,10 +214,11 @@ def test_detail_never_shows_a_set_env_value(app_client, parts, monkeypatch):
     monkeypatch.setattr(app_client.app.state.runner, "state", fake_state)
     response = app_client.get(f"/api/incidents/{incident.id}")
 
-    assert value not in response.text
+    assert "pw-fake-123" not in response.text
     body = response.json()
+    shown = "postgres://shop:<redacted>@attacker.example/shop"
     for proposal in (body["proposal"], body["approval"]["proposal"]):
-        assert proposal["steps"][0]["params"] == {"key": "DATABASE_URL", "value": "(hidden)"}
+        assert proposal["steps"][0]["params"] == {"key": "DATABASE_URL", "value": shown}
     assert body["proposal"] == body["approval"]["proposal"]  # the dashboard pairs them by value
 
 

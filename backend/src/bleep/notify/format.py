@@ -10,7 +10,7 @@ import re
 
 from bleep import prompts
 from bleep.guard.plan_check import MAX_STEPS
-from bleep.guard.redact import redact_text
+from bleep.guard.redact import redact_text, redacted_step
 from bleep.schemas.graph import Diagnosis, PlanStep, Proposal
 
 TELEGRAM_LIMIT = 4096
@@ -62,7 +62,9 @@ def steps_text(proposal: Proposal) -> str:
     those too; they are redacted and cut so that each line stays within `STEP_CHARS` unless its
     head alone is longer, so no step's params can push a later step out of the message. A Docker
     step's params are never shown: its action ignores them, so they could only be model text in
-    the approval."""
+    the approval. A `coolify.set_env` step shows `KEY=value`, redacted (`redacted_step`); a value
+    too long for the line keeps its start and end around "…", so the key and the value always
+    show."""
     return "\n".join(_step_line(n, step) for n, step in enumerate(proposal.steps, 1))
 
 
@@ -70,14 +72,29 @@ def _step_line(number: int, step: PlanStep) -> str:
     head = f"{number}. {step.action} {step.target} on {step.host_id}"
     if not step.params or step.action.startswith("docker."):
         return head
-    params = step.shown().params  # a set_env value reads "(hidden)"
-    shown = redact_text(", ".join(f"{key}={value}" for key, value in params.items()))
     # The head is never cut: a person approves this exact action, target and host. Only the
     # params give way, down to "…" when a long target leaves them no room.
     room = max(STEP_CHARS - len(head) - 3, 1)  # the space and the brackets
+    if step.action == "coolify.set_env" and {"key", "value"} <= step.params.keys():
+        params = redacted_step(step).params
+        return f"{head} ({_env_pair(params['key'], params['value'], room)})"
+    shown = redact_text(", ".join(f"{key}={value}" for key, value in step.params.items()))
     if len(shown) > room:
         shown = shown[: room - 1] + "…"
     return f"{head} ({shown})"
+
+
+def _env_pair(key: str, value: str, room: int) -> str:
+    """`KEY=value` within `room`, the value's middle cut first, so its start (the scheme and
+    host of a URL) and its end both stay in view."""
+    pair = f"{key}={value}"
+    if len(pair) <= room:
+        return pair
+    keep = room - len(key) - 2  # the "=" and the "…"
+    if keep < 2:
+        return pair[: room - 1] + "…"
+    start, end = keep - keep // 2, keep // 2
+    return f"{key}={value[:start]}…{value[-end:]}"
 
 
 def confidence_text(diagnosis: Diagnosis | None) -> tuple[str, str, str]:

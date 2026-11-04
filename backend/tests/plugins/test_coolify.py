@@ -1,10 +1,13 @@
 import asyncio
+import gzip
+import inspect
 import json
 import re
 from pathlib import Path
 
 import httpx
 import pytest
+import zstandard
 from pydantic import SecretStr
 
 from bleep.plugins.base import PluginContext
@@ -13,6 +16,7 @@ from bleep.plugins.coolify.plugin import (
     CoolifyPlugin,
     CoolifySettings,
     CoolifyUrlRefused,
+    _no_userinfo,
     check_url,
 )
 from bleep.plugins.registry import PluginError, PluginRegistry
@@ -41,6 +45,21 @@ def app_box(name: str, uuid: str = SHOP, resource: str = "shop", **fields) -> ob
         "coolify.pullRequestId": "0",
     }
     return box(name, labels=labels | fields.pop("labels", {}), **fields)
+
+
+class Raw(httpx.AsyncBaseTransport):
+    """Like `httpx.MockTransport`, but hands the answer over unread, as the network does; the mock
+    reads (and inflates) it first, which would hide what the client does with the raw stream."""
+
+    def __init__(self, handler) -> None:
+        self.handler = handler
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        answer = self.handler(request)
+        if inspect.isawaitable(answer):
+            answer = await answer
+        body = httpx.ByteStream(b"".join(answer.stream))
+        return httpx.Response(answer.status_code, headers=answer.headers, stream=body)
 
 
 class Coolify:
@@ -75,7 +94,7 @@ def context(guard_log=None) -> PluginContext:
 
 
 def client(coolify, **limits) -> CoolifyClient:
-    return CoolifyClient(BASE, SecretStr(TOKEN), transport=httpx.MockTransport(coolify), **limits)
+    return CoolifyClient(BASE, SecretStr(TOKEN), transport=Raw(coolify), **limits)
 
 
 def engine(*extra) -> FakeEngine:
@@ -96,7 +115,7 @@ class Env:
         self.registry = built.registry
         self.coolify = coolify
         self.guard_log = guard_log
-        plugin = CoolifyPlugin(transport=httpx.MockTransport(coolify))
+        plugin = CoolifyPlugin(transport=Raw(coolify))
         self.tools = {spec.name: spec for spec in plugin.tools(context(guard_log))}
 
     def tool_ctx(self, host_id: str = "a") -> ToolContext:
@@ -193,11 +212,45 @@ async def test_one_odd_record_does_not_lose_the_others():
     assert [d.status for d in await client(coolify).deployments(SHOP)] == [None, "failed"]
 
 
+@pytest.mark.parametrize("encoding", ["gzip", "zstd"])
+async def test_a_compressed_answer_is_refused_without_inflating_it(encoding):
+    plain = b"[" + b" " * 50_000_000 + b"]"  # 50 MB once inflated
+    packed = gzip.compress(plain) if encoding == "gzip" else zstandard.compress(plain)
+    seen: list[httpx.Request] = []
+
+    def compressed(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, content=packed, headers={"Content-Encoding": encoding})
+
+    with pytest.raises(CoolifyError, match="compressed answer"):
+        await client(compressed).applications()
+
+    assert len(packed) < 2_000_000 and seen[0].headers["accept-encoding"] == "identity"
+
+
+async def test_a_uuid_that_could_change_the_request_path_is_never_sent():
+    coolify = Coolify()
+
+    with pytest.raises(CoolifyError, match="not a Coolify uuid"):
+        await client(coolify).deployments("../../servers")
+
+    assert coolify.requests == []
+
+
+async def test_an_application_whose_uuid_is_not_one_is_skipped():
+    apps = fixture("applications.json")
+    apps[0]["uuid"] = "../../servers?x="
+    coolify = Coolify()
+    coolify.routes[("GET", "/api/v1/applications")] = httpx.Response(200, json=apps)
+
+    assert [a.uuid for a in await client(coolify).applications()] == [BLOG]
+
+
 async def test_an_unreachable_coolify_is_unavailable_without_httpxs_message():
     def refuse(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError(f"cannot connect to {BASE} with {TOKEN}")
 
-    broken = CoolifyClient(BASE, SecretStr(TOKEN), transport=httpx.MockTransport(refuse))
+    broken = CoolifyClient(BASE, SecretStr(TOKEN), transport=Raw(refuse))
     with pytest.raises(CoolifyUnavailable) as raised:
         await broken.applications()
 
@@ -229,6 +282,23 @@ async def test_a_token_in_a_repo_url_or_domain_is_never_shown(env):
     assert "glpat" not in out and "hunter2" not in out and "oauth2" not in out
     assert "repo=https://gitlab.com/example/blog.git@main" in out
     assert "domains=https://blog.example.com,https://blog-admin.example.com" in out
+
+
+@pytest.mark.parametrize(
+    ("raw", "shown"),
+    [
+        ("https://u:pa/ss@gitlab.com/example/blog.git", "https://gitlab.com/example/blog.git"),
+        ("oauth2:glpat-fake0000@gitlab.com/example/blog", "gitlab.com/example/blog"),
+        ("git@github.com:example/blog.git", "github.com:example/blog.git"),
+        (
+            "https://a@x.example.com, https://b:c@y.example.com",
+            "https://x.example.com, https://y.example.com",
+        ),
+        ("example/blog", "example/blog"),
+    ],
+)
+def test_everything_up_to_the_last_at_sign_is_cut(raw, shown):
+    assert _no_userinfo(raw) == shown
 
 
 async def test_deployments_by_name_show_status_commit_and_trigger_but_never_logs(env):
@@ -289,7 +359,7 @@ ENV = {"COOLIFY_URL": BASE, "COOLIFY_TOKEN": TOKEN}
 
 
 def registry(coolify: Coolify, env: dict[str, str] | None = None) -> PluginRegistry:
-    plugin = CoolifyPlugin(transport=httpx.MockTransport(coolify))
+    plugin = CoolifyPlugin(transport=Raw(coolify))
     return PluginRegistry([plugin], SecretStr(SECRET), env=ENV if env is None else env)
 
 
@@ -333,7 +403,10 @@ async def test_the_address_is_no_setting_a_person_can_change():
         "http://127.0.0.1:8000",
         "http://100.101.102.103:8000",  # Tailscale
         "http://[::1]:8000",
+        "http://172.20.0.4:8000",
+        "http://[fd12:3456::7]:8000",
         "http://coolify:8000",  # a Docker service name
+        "https://coolify.example.com/coolify",
     ],
 )
 def test_https_or_a_nearby_address_is_accepted(url):
@@ -348,6 +421,21 @@ def test_https_or_a_nearby_address_is_accepted(url):
         "ftp://10.0.0.5",
         "https://admin:pw@coolify.example.com",
         "coolify.example.com",
+        "http://134744072",  # 8.8.8.8 as one integer
+        "http://0x08080808",  # 8.8.8.8 in hex
+        "http://2001:db8::1",
+        "http://[2002:808:808::1]:8000",  # 6to4
+        "http://[2001:0:4136:e378::1]",  # Teredo
+        "http://169.254.169.254",  # cloud metadata
+        "http://0.0.0.0:8000",
+        "http://[::]:8000",
+        "http://198.18.0.1",
+        "http://240.0.0.1",
+        "http://255.255.255.255",
+        "http://[fe80::1%25eth0]:8000",
+        "https://coolify.example.com/?redirect=x",
+        "https://coolify.example.com/#x",
+        "https://coolify.example.com/?",
     ],
 )
 def test_a_url_the_token_must_not_travel_to_is_refused(url):

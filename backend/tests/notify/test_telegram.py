@@ -451,37 +451,63 @@ def test_a_secret_in_a_steps_params_is_redacted():
     assert "sk-abcdef1234567890abcdef12" not in text
 
 
-SET_ENV_VALUE = "postgres://shop:never-shown@db/shop"
-SET_ENV_PLAN = Proposal(
-    kind="act",
-    steps=[
+def set_env_plan(value: str, key: str = "DATABASE_URL") -> Proposal:
+    steps = [
         PlanStep(
             action="coolify.set_env",
             host_id="demo",
             target="shop",
-            params={"key": "DATABASE_URL", "value": SET_ENV_VALUE},
+            params={"key": key, "value": value},
         ),
         PlanStep(action="coolify.redeploy", host_id="demo", target="shop"),
-    ],
-    reason="the release reads a new variable",
-)
+    ]
+    return Proposal(kind="act", steps=steps, reason="the release reads a new variable")
 
 
-def test_a_set_env_step_shows_its_key_and_never_its_value():
-    assert fmt.steps_text(SET_ENV_PLAN) == (
-        "1. coolify.set_env shop on demo (key=DATABASE_URL, value=(hidden))\n"
+def test_a_set_env_step_shows_its_key_and_value_to_the_approver():
+    # Danny's decision (#38): a planted value such as an attacker's host must be visible.
+    plan = set_env_plan("postgres://shop@attacker.example:5432/shop")
+
+    assert fmt.steps_text(plan) == (
+        "1. coolify.set_env shop on demo (DATABASE_URL=postgres://shop@attacker.example:5432/shop)\n"
         "2. coolify.redeploy shop on demo"
     )
 
 
-async def test_a_set_env_value_never_reaches_telegram(env):
+@pytest.mark.parametrize(
+    ("key", "value", "shown"),
+    [
+        (
+            "DATABASE_URL",
+            "postgres://shop:pw-fake-123@db.internal/shop",
+            "DATABASE_URL=postgres://shop:<redacted>@db.internal/shop",
+        ),
+        ("STRIPE_KEY", "sk_live_fakefakefake0000", "STRIPE_KEY=<redacted>"),
+    ],
+)
+def test_a_secret_inside_a_set_env_value_is_redacted_and_the_rest_shown(key, value, shown):
+    assert f"({shown})" in fmt.steps_text(set_env_plan(value, key))
+
+
+def test_a_long_set_env_value_keeps_its_start_and_end():
+    value = "https://attacker.example/" + "x" * 400 + "/end"
+
+    line = fmt.steps_text(set_env_plan(value, "WEBHOOK")).splitlines()[0]
+
+    assert len(line) <= fmt.STEP_CHARS
+    assert "(WEBHOOK=https://attacker.example/" in line and line.endswith("x/end)")
+    assert "…" in line
+
+
+async def test_the_approval_message_shows_the_set_env_value_redacted(env):
+    plan = set_env_plan("postgres://shop:pw-fake-123@attacker.example/shop")
     request = (await env.approvals.current(env.incident_id)).request
 
-    await env.notifier.proposal(env.incident, None, SET_ENV_PLAN, request)
+    await env.notifier.proposal(env.incident, None, plan, request)
 
     text = env.api.sent("sendMessage")[0]["text"]
-    assert "never" not in text
-    assert r"key\=DATABASE\_URL, value\=\(hidden\)" in text
+    assert "pw\\-fake" not in text and "pw-fake" not in text
+    assert r"DATABASE\_URL\=postgres://shop:<redacted\>@attacker\.example/shop" in text
 
 
 def test_long_messages_are_cut_below_the_limit_without_a_dangling_escape():

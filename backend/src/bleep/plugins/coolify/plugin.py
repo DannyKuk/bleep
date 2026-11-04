@@ -16,6 +16,7 @@ import asyncio
 import ipaddress
 import logging
 import re
+import socket
 from collections.abc import Awaitable, Callable
 
 import httpx
@@ -38,8 +39,22 @@ TOKEN_ENV = "COOLIFY_TOKEN"
 MESSAGE_CHARS = 200  # of one commit message in the deployments list
 _VERSION = re.compile(r"v?\d+(\.\d+){1,3}[\w.-]{0,20}")
 _UUID_LABEL, _ID_LABEL = "coolify.applicationUuid", "coolify.applicationId"
-_CGNAT = ipaddress.ip_network("100.64.0.0/10")  # Tailscale's addresses among others
-_USERINFO = re.compile(r"(?<=://)[^/@\s]+@")
+# The addresses Bleep sends the token to over plain http: loopback, private and CGNAT (Tailscale).
+NEARBY = tuple(
+    ipaddress.ip_network(net)
+    for net in (
+        "127.0.0.0/8",
+        "::1/128",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "100.64.0.0/10",
+        "fc00::/7",
+    )
+)
+# A single-label name, such as a Docker service; one starting with a digit could be an address.
+_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,62}")
+_ITEM = re.compile(r"[^\s,]+")
 APPLICATIONS = (
     "List the Coolify applications: name, uuid, status (running:healthy, exited:unhealthy, ...),"
     " domains, git repo and branch, deployed commit and build pack. The ones whose containers"
@@ -71,13 +86,23 @@ class CoolifyUrlRefused(ValueError):
 
 
 def _nearby(host: str) -> bool:
-    """A host whose traffic stays on this machine or its network: a loopback, private or CGNAT
-    address, or a single-label name such as a Docker service. No DNS lookup is made."""
+    """A host whose traffic stays on this machine or its network: an address in `NEARBY`, or a
+    single-label name such as a Docker service. No DNS lookup is made: where a name resolves
+    (Docker's DNS, else the host's search domains) is the operator's to set up."""
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
-        return "." not in host
-    return ip.is_loopback or ip.is_private or (ip.version == 4 and ip in _CGNAT)
+        return bool(_NAME.fullmatch(host)) and not _inet_aton(host)
+    return any(ip in net for net in NEARBY if net.version == ip.version)
+
+
+def _inet_aton(host: str) -> bool:
+    """Whether the C library would read `host` as an IPv4 address (`134744072`, `0x8080808`)."""
+    try:
+        socket.inet_aton(host)
+    except OSError:
+        return False
+    return True
 
 
 def check_url(raw: str) -> str:
@@ -89,6 +114,8 @@ def check_url(raw: str) -> str:
         raise CoolifyUrlRefused(f"{URL_ENV} is not a URL") from None
     if url.scheme not in ("http", "https") or not url.host or url.userinfo:
         raise CoolifyUrlRefused(f"{URL_ENV} must be an http(s) URL with a host and no password")
+    if url.query or url.fragment or "?" in raw or "#" in raw:
+        raise CoolifyUrlRefused(f"{URL_ENV} must have no query or fragment")
     if url.scheme == "http" and not _nearby(url.host):
         raise CoolifyUrlRefused(
             f"{URL_ENV} must use https unless it is a private address or a Docker service name;"
@@ -117,8 +144,18 @@ def _host_apps(registry: Registry, host_id: str) -> set[str]:
 
 
 def _no_userinfo(text: str) -> str:
-    """A repo URL or domain list without any `user:token@` in it."""
-    return _USERINFO.sub("", text)
+    """A repo URL or domain list without any `user:token@` in it: each item loses everything up to
+    its last `@`, after the scheme if it has one. A path with an `@` loses more than it must."""
+
+    def strip(match: re.Match[str]) -> str:
+        item = match.group(0)
+        if "@" not in item:
+            return item
+        scheme, sep, rest = item.partition("://")
+        host = (rest if sep else item).rsplit("@", 1)[1]
+        return f"{scheme}://{host}" if sep else host
+
+    return _ITEM.sub(strip, text)
 
 
 def _failed(error: CoolifyError) -> str:
