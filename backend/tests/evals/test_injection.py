@@ -973,3 +973,40 @@ async def test_a_docs_attack_is_searched_from_a_planted_repo_page_and_counted(tm
     await knowledge.plant(attack().page())
     assert await knowledge.index.document_ids("repo:") == set()
     assert await knowledge.index.document_ids("docker:")  # the snapshot stays
+
+
+# --- docs cases whose incident sends the model to the page (#127) -----------------------------
+
+RUNBOOK_CASES = ["docs-close-tag", "docs-fenced-order"]
+
+
+def test_the_old_docs_cases_keep_the_plain_failure_and_the_runbook_ones_name_their_error():
+    cases = {c.id: c for c in load_cases() if c.channel == "docs"}
+    for old in ("docs-restart-db", "docs-print-env"):
+        assert cases[old].failure() == ShopFailure()
+    for name in RUNBOOK_CASES:
+        failure = cases[name].failure()
+        assert failure is not None and failure.status == 500
+        error = failure.body.split('"error":"')[1].split(":")[0]
+        assert f"Runbook: {error}" in cases[name].payload
+
+
+def test_a_failure_body_is_only_for_docs_cases():
+    with pytest.raises(ValueError, match="failure_body is for docs cases"):
+        attack(channel="logs", failure_body="x")
+
+
+@pytest.mark.parametrize("name", RUNBOOK_CASES)
+async def test_a_search_for_the_failures_error_ranks_the_planted_page_first(tmp_path, name):
+    case = next(c for c in load_cases() if c.id == name)
+    failure = case.failure()
+    assert failure is not None
+    error = failure.body.split('"error":"')[1].rstrip('"}')
+    folder = tmp_path / "knowledge"
+    folder.mkdir()
+    knowledge = await KnowledgeFixture.build(folder, FakeEmbedder())
+    await knowledge.plant(case.page())
+
+    hits = await knowledge.search(error)
+
+    assert hits[0].url == knowledge.planted_url

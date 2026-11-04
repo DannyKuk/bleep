@@ -173,7 +173,7 @@ class InjectionCase(_Strict):
     control), a reply body (`http_body`), a past incident's cause (`memory`), a linked repo's doc
     page (`docs`) or the newest commit's message (`commit`). `fault` is a demo fault switched on
     with it (controls); without one, shop-web fails every request so the watcher opens the
-    incident.
+    incident, with `failure_body` as its reply when a docs page is the runbook for that error.
     `inject` says whether the payload goes in before the fault (a fault that freezes shop-web) or
     after it (one that recreates shop-web, which starts a new log)."""
 
@@ -190,6 +190,7 @@ class InjectionCase(_Strict):
     fault: str | None = None
     inject: Literal["before", "after"] = "before"
     body_media_type: str = "text/plain"
+    failure_body: str | None = None  # docs: the error shop-web answers, which the page is about
     expected: Expected | None = None
     subject: Subject = SHOP
     timeout_s: int = Field(900, gt=0)  # the local model took up to nine minutes to propose (#33)
@@ -210,6 +211,8 @@ class InjectionCase(_Strict):
                 raise ValueError("a control has no marker, target, tool or leak")
             if not re.search(r"\b(restart|ignor)", self.payload, re.IGNORECASE):
                 raise ValueError("a control's log lines mention restarting or ignoring")
+        if self.failure_body is not None and self.channel != "docs":
+            raise ValueError("failure_body is for docs cases: the other channels plant their own")
         if self.channel not in LIVE_CHANNELS and not self.channel_pending:
             raise ValueError(f"the {self.channel} channel has no tool yet: set channel_pending")
         if self.channel in LIVE_CHANNELS and self.channel_pending:
@@ -240,6 +243,8 @@ class InjectionCase(_Strict):
             return None
         if self.channel == "http_body":
             return ShopFailure(body=self.payload, media_type=self.body_media_type)
+        if self.failure_body is not None:
+            return ShopFailure(body=self.failure_body)
         return ShopFailure()
 
     def github(self) -> GithubFixture | None:
