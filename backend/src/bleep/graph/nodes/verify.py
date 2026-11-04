@@ -5,6 +5,10 @@ check where everything passes. A check passes only when every planned container 
 healthy (or running with no healthcheck) and every planned URL passes `check_url`. The plan is
 the proposal's verification plan; when that is empty it falls back to the affected service's
 containers (protected ones too) and URLs, and then to the containers the plan's steps acted on.
+A Coolify application the plan redeployed is checked as a whole, read from the engine each time:
+the redeploy replaced its containers under new names, so they are left out of the name checks.
+The redeploy step ends only once Coolify reports its deployment over (`plugins/coolify`), so the
+wait here starts after the new containers are up.
 
 Passing sets the outcome `resolved`. A failure with fewer than `verify_loops` (2) loop-backs so
 far hands the failed checks to Investigate as the next round's instruction (an appended message,
@@ -23,7 +27,7 @@ from langchain_core.messages import HumanMessage
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.state import IncidentState, Node
-from bleep.guard.plan_check import host_urls
+from bleep.guard.plan_check import coolify_members, host_urls
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.graph import Check, Proposal, VerificationResult
@@ -35,6 +39,12 @@ log = logging.getLogger(__name__)
 SETTLE_S = 20  # before the first check, for the service to come up
 RECHECK_S = 10  # between checks
 CHECKS = 3  # at most, per round
+
+
+def _redeployed(proposal: Proposal | None) -> list[str]:
+    """The Coolify applications the plan redeployed, each checked as a whole."""
+    steps = proposal.steps if proposal is not None else []
+    return list(dict.fromkeys(s.target for s in steps if s.action == "coolify.redeploy"))
 
 
 def _plan(
@@ -57,7 +67,10 @@ def _plan(
     if containers or urls:
         return containers, urls
     if service is not None:
-        return [c.name for c in service.containers], list(service.urls)
+        # A redeployed application's containers are replaced; its own check covers them.
+        apps = _redeployed(proposal)
+        replaced = {c.name for app in apps for c in coolify_members(service.containers, app)}
+        return [c.name for c in service.containers if c.name not in replaced], list(service.urls)
     acted = proposal.steps if proposal is not None else []
     return [s.target for s in acted if s.action.startswith("docker.")], []
 
@@ -81,6 +94,29 @@ async def _check_container(deps: GraphDeps, host_id: str, name: str) -> Check:
     )
 
 
+async def _check_application(deps: GraphDeps, host_id: str, app: str) -> Check:
+    """A redeployed Coolify application, read from the engine now: at least one container of
+    it (previews aside) running, and none unhealthy or still starting."""
+    target = f"{app} (Coolify application)"
+    try:
+        listed = await deps.registry.engine(host_id).containers()
+    except EngineUnavailable, KeyError:
+        return Check(kind="container", target=target, ok=False, detail="host not reachable")
+    running = [
+        c
+        for c in coolify_members(listed, app)
+        if c.state == "running" and c.labels.get("coolify.pullRequestId", "0") in ("", "0")
+    ]
+    if not running:
+        return Check(kind="container", target=target, ok=False, detail="no container running")
+    bad = next((c for c in running if c.health in ("unhealthy", "starting")), None)
+    if bad is not None:
+        return Check(
+            kind="container", target=target, ok=False, detail=f"{bad.name} is {bad.health}"
+        )
+    return Check(kind="container", target=target, ok=True, detail=f"{len(running)} running")
+
+
 async def _check_url(client: httpx.AsyncClient, cfg: UrlCheckConfig) -> Check:
     result = await check_url(client, cfg)
     if result.ok:
@@ -94,12 +130,17 @@ def _describe(result: VerificationResult) -> str:
 
 def make(deps: GraphDeps) -> Node:
     async def one_check(
-        host_id: str, containers: list[str], urls: list[UrlCheckConfig], attempt: int
+        host_id: str,
+        containers: list[str],
+        urls: list[UrlCheckConfig],
+        apps: list[str],
+        attempt: int,
     ) -> VerificationResult:
         owned = deps.http is None
         client = deps.http or httpx.AsyncClient()
         try:
-            checks = [await _check_container(deps, host_id, name) for name in containers]
+            checks = [await _check_application(deps, host_id, app) for app in apps]
+            checks += [await _check_container(deps, host_id, name) for name in containers]
             checks += [await _check_url(client, cfg) for cfg in urls]
         finally:
             if owned:
@@ -111,15 +152,16 @@ def make(deps: GraphDeps) -> Node:
         subject = state["subject"]
         proposal = state.get("proposal")
         containers, urls = _plan(deps, subject, proposal)
+        apps = _redeployed(proposal)
 
         result = VerificationResult(ok=False)
-        if not containers and not urls:
+        if not containers and not urls and not apps:
             # Nothing to look at is not a pass, and another look at nothing would not help either.
             await deps.bus.publish(incident_id, "verification", _payload(result))
         else:
             await deps.sleep(SETTLE_S)
             for attempt in range(1, CHECKS + 1):
-                result = await one_check(subject.host_id, containers, urls, attempt)
+                result = await one_check(subject.host_id, containers, urls, apps, attempt)
                 await deps.bus.publish(incident_id, "verification", _payload(result))
                 if result.ok or attempt == CHECKS:
                     break

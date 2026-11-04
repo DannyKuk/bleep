@@ -366,6 +366,32 @@ async def test_model_text_is_redacted_before_it_leaves(env):
     assert "abcdef1234567890abcdef" not in env.api.sent("sendMessage")[0]["text"]
 
 
+async def test_a_set_env_value_never_reaches_telegram(env):
+    # #43 renders the steps anew (`steps_text`); whichever lands second keeps this test.
+    value = "postgres://shop:never-shown@db/shop"
+    steps = [
+        PlanStep(
+            action="coolify.set_env",
+            host_id="demo",
+            target="shop",
+            params={"key": "DATABASE_URL", "value": value},
+        ),
+        PlanStep(action="coolify.redeploy", host_id="demo", target="shop"),
+    ]
+    plan = Proposal(kind="act", steps=steps, reason="the release reads a new variable")
+    request = (await env.approvals.current(env.incident_id)).request
+
+    await env.notifier.proposal(env.incident, None, plan, request)
+
+    text = env.api.sent("sendMessage")[0]["text"]
+    assert "never\\-shown" not in text and "never-shown" not in text
+    assert r"coolify\.set\_env shop on demo \(key\=DATABASE\_URL, value\=\(hidden\)\)" in text
+    assert fmt.steps_text(plan) == (
+        "1. coolify.set_env shop on demo (key=DATABASE_URL, value=(hidden))\n"
+        "2. coolify.redeploy shop on demo"
+    )
+
+
 def test_long_messages_are_cut_below_the_limit_without_a_dangling_escape():
     text = fmt.render("notice", id="inc_1", text="." * 5000)
     assert len(text) <= fmt.TELEGRAM_LIMIT

@@ -11,7 +11,7 @@ import json
 
 from pydantic import SecretStr
 
-from bleep.schemas.graph import ApprovalGrant, Proposal, TargetSnapshot
+from bleep.schemas.graph import ApprovalGrant, ApprovalRecord, PlanStep, Proposal, TargetSnapshot
 
 
 class GrantInvalid(Exception):
@@ -57,3 +57,21 @@ def verify_grant(
     expected = grant_token(key, incident_id, plan_hash)
     if not hmac.compare_digest(grant.token.encode(), expected.encode()):
         raise GrantInvalid("the grant's token does not match")
+
+
+def verify_step(
+    step: PlanStep,
+    grant: ApprovalGrant | None,
+    plan: ApprovalRecord,
+    step_index: int,
+    secret: SecretStr | str,
+) -> None:
+    """Raise `GrantInvalid` unless `step` is step `step_index` of the approved `plan` and `grant`
+    was issued for that plan as it is now (its hash recomputed, not read). Every act handler runs
+    this before anything else."""
+    steps = plan.proposal.steps
+    if not 0 <= step_index < len(steps):
+        raise GrantInvalid(f"the approved plan has no step {step_index + 1}")
+    if steps[step_index] != step:
+        raise GrantInvalid(f"this is not step {step_index + 1} of the approved plan")
+    verify_grant(grant, plan.incident_id, plan_hash(plan.proposal, plan.snapshots), secret)

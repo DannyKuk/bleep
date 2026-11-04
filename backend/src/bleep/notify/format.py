@@ -53,11 +53,9 @@ def answer(name: str, **values: str) -> str:
 
 
 def steps_text(proposal: Proposal) -> str:
-    """One line per step: `1. docker.restart shop-web-1 on demo`."""
-    return "\n".join(
-        f"{n}. {step.action} {step.target} on {step.host_id}"
-        for n, step in enumerate(proposal.steps, 1)
-    )
+    """One line per step: `1. docker.restart shop-web-1 on demo`, with its params, a set_env
+    value hidden (`PlanStep.text`)."""
+    return "\n".join(f"{n}. {step.text()}" for n, step in enumerate(proposal.steps, 1))
 
 
 def confidence_text(diagnosis: Diagnosis | None) -> tuple[str, str, str]:

@@ -135,11 +135,27 @@ class Diagnosis(BaseModel):
     planted_in: list[PlantedSource] = Field(default_factory=list)
 
 
+# Params whose value is never shown, logged or put in a prompt: an env value can be a secret.
+HIDDEN_PARAMS: dict[str, frozenset[str]] = {"coolify.set_env": frozenset({"value"})}
+HIDDEN = "(hidden)"
+
+
 class PlanStep(BaseModel):
     action: Action
     host_id: str
     target: str  # container name, or the Coolify application for coolify.* actions
     params: dict[str, str] = Field(default_factory=dict)
+
+    def shown(self) -> PlanStep:
+        """The step as people, logs and prompts see it: hidden params read `(hidden)`."""
+        hidden = HIDDEN_PARAMS.get(self.action, frozenset())
+        params = {k: HIDDEN if k in hidden else v for k, v in self.params.items()}
+        return self.model_copy(update={"params": params})
+
+    def text(self) -> str:
+        """`coolify.set_env shop on a (key=PORT, value=(hidden))`, with hidden params hidden."""
+        params = ", ".join(f"{k}={v}" for k, v in sorted(self.shown().params.items()))
+        return f"{self.action} {self.target} on {self.host_id}" + (f" ({params})" if params else "")
 
 
 class VerificationPlan(BaseModel):
@@ -159,6 +175,11 @@ class Proposal(BaseModel):
     reason: str
     verification: VerificationPlan = Field(default_factory=VerificationPlan)
     human_instructions: str | None = None
+
+    def shown(self) -> Proposal:
+        """The plan as people, logs and prompts see it (`PlanStep.shown`); Execute alone reads
+        the real one."""
+        return self.model_copy(update={"steps": [s.shown() for s in self.steps]})
 
 
 class Decision(BaseModel):

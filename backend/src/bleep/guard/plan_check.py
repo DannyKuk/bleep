@@ -5,6 +5,7 @@
 See docs/design/guard.md.
 """
 
+import re
 import typing
 from collections.abc import Collection
 from dataclasses import dataclass
@@ -20,6 +21,13 @@ MAX_STEPS = 3
 KNOWN_ACTIONS: frozenset[str] = frozenset(typing.get_args(Action))
 # The labels a Coolify application's containers carry; a coolify.* target is one of their values.
 COOLIFY_APP_LABELS = ("coolify.applicationUuid", "coolify.applicationId", "coolify.resourceName")
+# The params each action takes; an action not listed here takes whatever it is given.
+ACTION_PARAMS: dict[str, frozenset[str]] = {
+    "coolify.redeploy": frozenset(),
+    "coolify.set_env": frozenset({"key", "value"}),
+}
+ENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,254}")
+MAX_ENV_VALUE = 10_000
 
 Rule = Literal[
     "plan_shape",
@@ -29,6 +37,7 @@ Rule = Literal[
     "other_host",
     "host_error",
     "not_found",
+    "bad_params",
     "protected",
     "self",
     "unknown_url",
@@ -162,7 +171,26 @@ def _check_step(
     if step.host_id != host_id:
         why = f"targets another host; this incident is on {host_id}"
         return [Violation("other_host", f"{what}: {why}", number)]
-    return check_target(number, step, registry)
+    return check_params(number, step) or check_target(number, step, registry)
+
+
+def check_params(number: int, step: PlanStep) -> list[Violation]:
+    """A Coolify step takes exactly its params: none for a redeploy, `key` and `value` for a
+    set_env, with a key Coolify accepts. The text never quotes a value."""
+    wanted = ACTION_PARAMS.get(step.action)
+    if wanted is None:
+        return []
+    what = f"step {number} ({step.action} {step.target} on {step.host_id})"
+    if set(step.params) != wanted:
+        takes = ", ".join(sorted(wanted)) or "no params"
+        return [Violation("bad_params", f"{what}: takes {takes}", number)]
+    if "key" in wanted and not ENV_KEY.fullmatch(step.params["key"]):
+        why = "key must be letters, digits and _, not starting with a digit"
+        return [Violation("bad_params", f"{what}: {why}", number)]
+    if len(step.params.get("value", "")) > MAX_ENV_VALUE:
+        why = f"value is longer than {MAX_ENV_VALUE} characters"
+        return [Violation("bad_params", f"{what}: {why}", number)]
+    return []
 
 
 def check_target(number: int, step: PlanStep, registry: Registry) -> list[Violation]:
@@ -192,7 +220,7 @@ def check_target(number: int, step: PlanStep, registry: Registry) -> list[Violat
 
     protected = protected_names(host)
     if step.action.startswith("coolify."):
-        members = _coolify_members(registry.snapshot(step.host_id) or [], step.target)
+        members = coolify_members(registry.snapshot(step.host_id) or [], step.target)
         if not members:
             return refuse("not_found", "no Coolify application by that name on this host")
     else:
@@ -210,7 +238,7 @@ def check_target(number: int, step: PlanStep, registry: Registry) -> list[Violat
     return found
 
 
-def _coolify_members(containers: list[ContainerSummary], target: str) -> list[ContainerSummary]:
+def coolify_members(containers: list[ContainerSummary], target: str) -> list[ContainerSummary]:
     """The containers of the Coolify application `target` names (by uuid, id or resource name)."""
     return [c for c in containers if target in (c.labels.get(k) for k in COOLIFY_APP_LABELS)]
 

@@ -1,4 +1,5 @@
 import httpx
+import pytest
 
 from bleep.graph.nodes import verify
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
@@ -325,3 +326,56 @@ async def test_a_hostile_redirect_target_is_not_quoted_to_the_model(tmp_path):
     update, _ = await run(env, state)
 
     assert "IGNORE_ALL" not in update["messages"][0].content
+
+
+WEB_APP = {
+    "coolify.type": "application",
+    "coolify.applicationUuid": "web0uuid",
+    "coolify.resourceName": "web",
+}
+
+
+def redeployed(state: dict, *steps: PlanStep, containers: list[str] | None = None) -> dict:
+    steps = steps or (PlanStep(action="coolify.redeploy", host_id="a", target="web"),)
+    plan = VerificationPlan(containers=containers or [], urls=[URL])
+    proposal = Proposal(kind="act", steps=list(steps), reason="r", verification=plan)
+    return state | {"proposal": proposal}
+
+
+async def test_a_redeployed_application_is_checked_by_its_new_containers(tmp_path):
+    # The deploy replaced web0uuid-1 by web0uuid-2; the registry may still list the old one.
+    engine = FakeEngine(
+        "a", [box("web0uuid-2", labels=WEB_APP, health="healthy"), box("shop-db-1", "shop")]
+    )
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state, containers=["shop-db-1"]))
+
+    assert update["outcome"] == "resolved"
+    checks = [(c.target, c.ok, c.detail) for c in update["verification"].checks]
+    assert checks[0] == ("web (Coolify application)", True, "1 running")
+
+
+@pytest.mark.parametrize(
+    ("containers", "detail"),
+    [
+        ([], "no container running"),
+        ([box("web0uuid-2", labels=WEB_APP, state="exited")], "no container running"),
+        ([box("web0uuid-2", labels=WEB_APP, health="unhealthy")], "web0uuid-2 is unhealthy"),
+        (
+            [box("web0uuid-pr", labels=WEB_APP | {"coolify.pullRequestId": "7"})],
+            "no container running",
+        ),
+    ],
+)
+async def test_a_redeployed_application_with_nothing_healthy_running_fails(
+    tmp_path, containers, detail
+):
+    engine = FakeEngine("a", [*containers, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state))
+
+    first = update["verification"].checks[0]
+    assert (first.ok, first.detail) == (False, detail)
+    assert "outcome" not in update or update["outcome"] != "resolved"

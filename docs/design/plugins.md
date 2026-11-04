@@ -8,7 +8,7 @@ How Bleep takes on tools that share one connection, such as a Coolify instance (
 | **Registry** | `plugins/registry.py` | Which plugins are switched on, with what settings; their tools, act handlers and actions, read at every use; the view the API shows. |
 | **Routes** | `api/plugins.py` | `GET /api/plugins` and `PUT /api/plugins/{name}` (`{enabled, settings}`, either part optional). |
 | **List** | `wiring.py` (`PLUGINS`) | Every plugin Bleep has: Coolify. |
-| **Coolify** | `plugins/coolify/` | Read tools `coolify_applications`, `coolify_deployments` and `coolify_env_keys` ([below](#coolify)); no actions. |
+| **Coolify** | `plugins/coolify/` | Read tools `coolify_applications`, `coolify_deployments` and `coolify_env_keys`; actions `coolify.redeploy` and `coolify.set_env` ([below](#coolify)). |
 
 ## Choices
 
@@ -26,7 +26,7 @@ How Bleep takes on tools that share one connection, such as a Coolify instance (
 
 ## Coolify
 
-Setting `base_url` (where Coolify answers, such as `http://10.0.0.5:8000`; the API is under `/api/v1`, and a URL with a user or password is refused); secret `COOLIFY_TOKEN`, a Coolify API token sent as `Authorization: Bearer`. The plugin reads only, so a token with the read right is enough. It has no act handler, so `coolify.redeploy` and `coolify.set_env` stay out of the plan check's enabled set even while it is on.
+Settings `base_url` (where Coolify answers, such as `http://10.0.0.5:8000`; the API is under `/api/v1`, and a URL with a user or password is refused) and `deploy_timeout_s` (default 900); secret `COOLIFY_TOKEN`, a Coolify API token sent as `Authorization: Bearer`, with the read, deploy and write rights.
 
 ### Endpoints
 
@@ -35,16 +35,16 @@ Checked on 2026-11-04 against the OpenAPI spec of Coolify v4.6.0 (`openapi.yaml`
 | Use | Request | Token right |
 |---|---|---|
 | Health | `GET /api/v1/version` | read |
-| `coolify_applications`, and finding an app by name | `GET /api/v1/applications` | read |
+| `coolify_applications`, finding an app by name, and an action's app by its id | `GET /api/v1/applications` | read |
 | `coolify_deployments` | `GET /api/v1/deployments/applications/{uuid}?take=5` | read |
 | `coolify_env_keys` | `GET /api/v1/applications/{uuid}/envs` | read |
 
-The two actions' endpoints were checked the same way; Bleep does not call them:
+The actions, checked the same way:
 
 | Action | Request | Token right |
 |---|---|---|
-| `coolify.redeploy` | `POST /api/v1/deploy?uuid={uuid}&force=false` answers `{deployments: [{deployment_uuid, ...}]}`; `GET /api/v1/deployments/{deployment_uuid}` reads its status | deploy, read |
-| `coolify.set_env` | `PATCH /api/v1/applications/{uuid}/envs` `{key, value}` updates a key and answers 404 for a key the application lacks; `POST` the same body creates one | write |
+| `coolify.redeploy` | `POST /api/v1/deploy?uuid={uuid}&force=false` answers `{deployments: [{deployment_uuid, ...}]}`; `GET /api/v1/deployments/{deployment_uuid}` reads its status, every 10 s until it ends | deploy, read |
+| `coolify.set_env` | `PATCH /api/v1/applications/{uuid}/envs` `{key, value}` updates a key and answers 404 for a key the application lacks; Bleep then `POST`s the same body to create it | write |
 
 Two things the spec does not say: `GET /deploy` answers that POST is required (v4.6.0 routes it to `post_required`), and `GET /deployments/applications/{uuid}` is documented as a list of applications but answers `{count, deployments}`. A deployment's status is one of `queued`, `in_progress`, `finished`, `failed` and `cancelled-by-user` (`App\Enums\ApplicationDeploymentStatus`).
 
@@ -59,7 +59,11 @@ Three GET requests to a production Coolify server on 2026-11-04 with a root toke
 ### Choices
 
 - **Bleep reads only the fields it names (`schemas/coolify.py`), and never an env var's value.** The application list carries webhook secrets and an application's deployments their build logs; the models drop every other field when the answer is parsed, and `coolify_env_keys` parses keys and flags only. What is shown still goes through the guard like any tool output (redacted, cleaned, wrapped as untrusted, source `coolify`). Reason: the real server's answers hold secrets in fields the spec does not mark as such (#38).
-- **A Coolify failure is one fixed sentence**, never Coolify's answer or httpx's message: "Coolify refused the token (401); check COOLIFY_TOKEN", "Coolify could not be reached (ConnectError)", "Coolify has no such application". A tool returns it as its result, the health check as its text. Redirects are not followed. Reason: an error text can echo the URL or a value, and the token must never be sent elsewhere (#38).
-- **The read tools are offered on a host whose containers carry Coolify application labels**, and list the applications that run there first, marked "(on this host)" by the uuid or id their containers carry. An application is named to a tool by its uuid or its name; two of one name are refused with a request for the uuid. Reason: one Coolify can manage several servers, and a name is not unique (#38).
+- **A Coolify failure is one fixed sentence**, never Coolify's answer or httpx's message: "Coolify refused the token (401); check COOLIFY_TOKEN", "Coolify could not be reached (ConnectError)", "Coolify has no such application". A tool returns it as its result, an action as its step's detail, the health check as its text. Redirects are not followed. Reason: an error text can echo the URL or a value, and the token must never be sent elsewhere (#38).
+- **The read tools are offered on a host whose containers carry Coolify application labels**, and list the applications that run there first, marked "(on this host)" by the uuid or id their containers carry. An application is named to a tool by its uuid or its name; two of one name are refused with a request for the uuid. An action's target is the application its containers name on the incident's host (uuid, id or resource name, as the plan check matches it); containers that carry only `coolify.applicationId` (an older Coolify) are matched to the application with that id. Reason: one Coolify can manage several servers, a name is not unique, and a plan cannot reach an application the host does not run (#38).
 - **The health check reads `GET /version` with the token** and says "Coolify 4.6.0 answers with the token", or only "Coolify answers with the token" when the answer does not look like a version. Reason: it proves the address and the token at once, and an answer that is not a version is not repeated on the plugins page (#38).
-- **Limits.** `coolify_deployments` leaves out the build logs, which a root token is shown; a failed build is seen by its status only. No eval covers these tools yet: the demo stack has no Coolify (#38).
+- **An action runs the same checks as a Docker act tool before it calls Coolify**: the step is the approved plan's, the grant is for that plan (`guard/grant.verify_step`, shared with the Docker act tools), the target passes `check_target`, and the params pass `check_params`. A refusal is a `blocked_action` row and nothing is sent (#38).
+- **A redeploy waits for its deployment to end.** `coolify.redeploy` returns only when Coolify reports `finished` (ok), `failed` or `cancelled-by-user` (failed), or after `deploy_timeout_s` (failed, "Bleep stopped waiting"); a 5xx while it polls is asked again. Verify then waits its 20 s and checks. Reason: checking the service while Coolify is still building would judge the old release (#38).
+- **Verify checks a redeployed application as a whole.** Coolify names an application's containers anew at every deploy (`<uuid>-<timestamp>`, or `<service>-<uuid>-<timestamp>` for a compose app, in the [saved labels](../spikes/ssh-docker/captures/labels/)), so Propose drops verification containers of an application its plan redeploys, and Verify reads the engine at each check for that application's containers: at least one running, none unhealthy or starting, preview containers left out. Reason: the old names would fail every check of a deploy that worked (#38).
+- **A `set_env` value is never shown, logged or put in a prompt.** `PlanStep.shown()` replaces it with `(hidden)` in the `proposal` event, the dashboard's API, the Telegram message (`notify/format.steps_text`), the interrupt payload and the earlier plan in a re-plan's prompt; the step's result names the key only, a refusal never quotes it, and the log lines name the error's type. The real value stays in the approved plan, because the grant's hash covers it and Execute sends it. Reason: an env value can be a secret, and the human approves the key and the redeploy (#38).
+- **Limits.** `coolify_deployments` leaves out the build logs, which a root token is shown; a failed build is seen by its status only. A `set_env` value is stored with the incident's approval and checkpoint in SQLite, as the plan is; the model wrote it, so it is in that one Propose call's output and its retry, and in a trace when tracing is on. A redeploy that times out still goes to Verify, which may check while Coolify is still deploying. No eval covers these tools or actions yet: the demo stack has no Coolify (#38).

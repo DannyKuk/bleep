@@ -311,3 +311,32 @@ async def test_a_protected_working_container_gets_one_refusal_not_two(tmp_path):
     plan = act(restart("shop-db-1"))  # running, no health check, and protected
     violations = check_plan(plan, env.registry, CORE, "a", incident_containers=[])
     assert [(v.rule, v.step) for v in violations] == [("protected", 1)]
+
+
+def set_env(target: str, **params: str) -> PlanStep:
+    return PlanStep(action="coolify.set_env", host_id="a", target=target, params=params)
+
+
+async def test_coolify_steps_take_exactly_their_params(tmp_path):
+    engine = guarded_engine()
+    engine.container_list = [c for c in engine.container_list if c.name != "api-db-1"]
+    env = await graph_env(tmp_path, engine=engine, host=guarded_host())
+    secret = "s3cr3t-value-never-quoted"
+    proposals = {
+        "ok": act(set_env("api", key="PORT", value=secret), coolify("api")),
+        "no value": act(set_env("api", key="PORT")),
+        "extra": act(set_env("api", key="PORT", value=secret, scope="all")),
+        "bad key": act(set_env("api", key="PORT NUMBER", value=secret)),
+        "redeploy with params": act(
+            PlanStep(action="coolify.redeploy", host_id="a", target="api", params={"force": "1"})
+        ),
+    }
+    found = {
+        name: check_plan(p, env.registry, WITH_COOLIFY, "a", incident_containers=SHOP_WEB)
+        for name, p in proposals.items()
+    }
+
+    assert found["ok"] == []
+    for name in ("no value", "extra", "bad key", "redeploy with params"):
+        assert [(v.rule, v.step) for v in found[name]] == [("bad_params", 1)], name
+    assert all(secret not in v.text for vs in found.values() for v in vs)

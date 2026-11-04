@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 
 from pydantic import SecretStr
 
-from bleep.guard.grant import GrantInvalid, plan_hash, verify_grant
+from bleep.guard.grant import GrantInvalid, verify_step
 from bleep.guard.log import GuardLogger
 from bleep.guard.plan_check import check_target
 from bleep.hosts.discovery import is_self
@@ -143,12 +143,7 @@ class ActTool:
         what = f"step {step_index + 1} ({step.action} {step.target} on {step.host_id})"
         if step.action != self.name:
             raise StepRefused(f"{what}: {self.name} cannot run {step.action}")
-        steps = plan.proposal.steps
-        if not 0 <= step_index < len(steps):
-            raise GrantInvalid(f"the approved plan has no step {step_index + 1}")
-        if steps[step_index] != step:
-            raise GrantInvalid(f"this is not step {step_index + 1} of the approved plan")
-        verify_grant(grant, plan.incident_id, plan_hash(plan.proposal, plan.snapshots), self.secret)
+        verify_step(step, grant, plan, step_index, self.secret)
 
         violations = check_target(step_index + 1, step, registry)
         if violations:

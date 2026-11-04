@@ -15,12 +15,13 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.state import IncidentState, Node
-from bleep.guard.plan_check import Violation, check_plan, protected_names
+from bleep.guard.plan_check import Violation, check_plan, coolify_members, protected_names
 from bleep.hosts.discovery import is_self
+from bleep.hosts.registry import Registry
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.memory.text import describe_fact, describe_past
-from bleep.schemas.graph import Diagnosis, GatherContext, PlanStep, Proposal
+from bleep.schemas.graph import Diagnosis, GatherContext, Proposal
 from bleep.schemas.incidents import Subject
 
 NO_DIAGNOSIS = "Bleep has no diagnosis to act on, so it proposes no action."
@@ -49,7 +50,8 @@ def make(deps: GraphDeps) -> Node:
                 update["outcome"] = "budget"
             except StructuredOutputFailed:
                 proposal = Proposal(kind="no_action", reason=NO_PLAN)
-        await deps.bus.publish(state["incident_id"], "proposal", proposal.model_dump(mode="json"))
+        shown = proposal.shown().model_dump(mode="json")
+        await deps.bus.publish(state["incident_id"], "proposal", shown)
         return update | {"proposal": proposal}
 
     return propose
@@ -67,7 +69,7 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
     enabled = deps.settings_store.enabled_actions()
     named = _incident_containers(deps, state)
     messages: list[BaseMessage] = [HumanMessage(_prompt(deps, state, diagnosis, enabled))]
-    proposal = await _ask(deps, incident_id, messages)
+    proposal = _without_replaced(await _ask(deps, incident_id, messages), deps.registry)
     violations = check_plan(proposal, deps.registry, enabled, host_id, incident_containers=named)
     if not violations:
         return proposal
@@ -76,12 +78,30 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
         AIMessage(proposal.model_dump_json()),
         HumanMessage(prompts.load("graph/propose_retry", violations=_bullets(violations))),
     ]
-    retry = await _ask(deps, incident_id, messages)
+    retry = _without_replaced(await _ask(deps, incident_id, messages), deps.registry)
     again = check_plan(retry, deps.registry, enabled, host_id, incident_containers=named)
     if not again:
         return retry
     _record(deps, incident_id, again)
     return _refused(retry, again)
+
+
+def _without_replaced(proposal: Proposal, registry: Registry) -> Proposal:
+    """The plan without verification checks of containers a redeploy replaces: Coolify names
+    the new ones afresh, so the old names would fail every check. Verify checks a redeployed
+    application's new containers itself."""
+    replaced = {
+        c.name
+        for s in proposal.steps
+        if s.action == "coolify.redeploy"
+        for c in coolify_members(registry.snapshot(s.host_id) or [], s.target)
+    }
+    planned = proposal.verification.containers
+    if not replaced.intersection(planned):
+        return proposal
+    kept = [name for name in planned if name not in replaced]
+    verification = proposal.verification.model_copy(update={"containers": kept})
+    return proposal.model_copy(update={"verification": verification})
 
 
 def _incident_containers(deps: GraphDeps, state: IncidentState) -> set[str]:
@@ -128,7 +148,7 @@ def _record(deps: GraphDeps, incident_id: str, violations: list[Violation]) -> N
 
 def _refused(proposal: Proposal, violations: list[Violation]) -> Proposal:
     """`no_action` that tells the human what was refused and why."""
-    steps = [f"{n}. {_step(s)}" for n, s in enumerate(proposal.steps, start=1)]
+    steps = [f"{n}. {s.text()}" for n, s in enumerate(proposal.steps, start=1)]
     lines = [REFUSED, "Why:", _bullets(violations), "The refused plan:", *(steps or ["no steps"])]
     lines.append(f"The model's reason: {proposal.reason}")
     if any(v.rule == "healthy_target" for v in violations):
@@ -143,11 +163,6 @@ def _refused(proposal: Proposal, violations: list[Violation]) -> Proposal:
 
 def _bullets(violations: list[Violation]) -> str:
     return "\n".join(f"- {v.text}" for v in violations)
-
-
-def _step(step: PlanStep) -> str:
-    params = ", ".join(f"{k}={v}" for k, v in sorted(step.params.items()))
-    return f"{step.action} {step.target} on {step.host_id}" + (f" ({params})" if params else "")
 
 
 # The prompt's sections are Bleep's own data, one fact per line, "none" when there is nothing.
@@ -231,7 +246,7 @@ def _previous(proposal: Proposal | None) -> str:
     if proposal is None:
         return "none"
     lines = [f"{proposal.kind}: {proposal.reason}"]
-    lines += [f"{n}. {_step(s)}" for n, s in enumerate(proposal.steps, start=1)]
+    lines += [f"{n}. {s.text()}" for n, s in enumerate(proposal.steps, start=1)]
     if proposal.human_instructions:
         lines.append(f"Instructions you gave: {proposal.human_instructions}")
     return "\n".join(lines)
