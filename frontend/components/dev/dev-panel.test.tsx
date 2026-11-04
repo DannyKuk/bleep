@@ -12,7 +12,13 @@ function stubRoutes(dev: Response) {
     if (path === "/api/settings") return json(settingsView());
     if (path === "/api/dev/prompts") return json([prompt()]);
     if (path.startsWith("/api/dev/costs"))
-      return json({ incidents: [], days: [], daily_cap_usd: 1, spent_today_usd: 0 });
+      return json({
+        incidents: [],
+        days: [],
+        daily_cap_usd: 1,
+        spent_today_usd: 0,
+        unpriced_today: 0,
+      });
     return json([]);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -54,7 +60,13 @@ describe("DevPanel", () => {
       if (path === "/api/settings") return json(settingsView());
       if (path === "/api/dev/prompts") return json([prompt()]);
       if (path.startsWith("/api/dev/costs"))
-        return json({ incidents: [], days: [], daily_cap_usd: 1, spent_today_usd: 0 });
+        return json({
+          incidents: [],
+          days: [],
+          daily_cap_usd: 1,
+          spent_today_usd: 0,
+          unpriced_today: 0,
+        });
       return json([]);
     });
     await userEvent.selectOptions(provider, "local");
@@ -88,7 +100,13 @@ describe("DevPanel", () => {
       }
       if (path === "/api/dev/prompts") return json([prompt()]);
       if (path.startsWith("/api/dev/costs"))
-        return json({ incidents: [], days: [], daily_cap_usd: 1, spent_today_usd: 0 });
+        return json({
+          incidents: [],
+          days: [],
+          daily_cap_usd: 1,
+          spent_today_usd: 0,
+          unpriced_today: 0,
+        });
       return json([]);
     });
     vi.stubGlobal("fetch", fetchMock);

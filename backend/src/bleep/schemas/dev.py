@@ -49,6 +49,8 @@ class IncidentCost(Usage):
     status: IncidentStatus | None = None
     opened_at: datetime | None = None
     trace_url: str | None = None
+    # Prompt name to a hash of the override's text, as the run started; None when not recorded.
+    prompt_overrides: dict[str, str] | None = None
 
 
 class DayCost(Usage):
@@ -59,7 +61,8 @@ class CostView(BaseModel):
     incidents: list[IncidentCost]
     days: list[DayCost]
     daily_cap_usd: float
-    spent_today_usd: float
+    spent_today_usd: float  # the priced calls only, as the daily cap counts them
+    unpriced_today: int  # today's calls without a known price, left out of `spent_today_usd`
 
 
 class GuardEntryView(BaseModel):

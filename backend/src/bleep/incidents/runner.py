@@ -13,6 +13,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
+from bleep import prompts
 from bleep.graph.deps import Approvals, Notifier, Tracer
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
@@ -58,7 +59,8 @@ class IncidentRunner:
     async def start(self, incident: Incident) -> asyncio.Task[None]:
         """Run the incident's graph in the background, from where its thread stands.
 
-        A new thread tells the notifier the incident opened, then starts at Gather. One with a
+        A new thread records the prompt overrides in force on the incident, tells the notifier
+        the incident opened, then starts at Gather. One with a
         checkpoint mid-graph goes on from it. One waiting for approval stays waiting, unless its
         approval was decided before a restart: then it goes on with the stored decision. A
         finished one is not run again; only its terminal status is settled if a crash left it
@@ -145,6 +147,7 @@ class IncidentRunner:
     async def _advance(self, incident: Incident) -> None:
         snapshot = await self.graph.aget_state(self.config(incident.id))
         if not snapshot.values:  # no checkpoint yet: a new run
+            await self.repo.record_prompt_overrides(incident.id, prompts.override_versions())
             await self._announce(incident)
             signals = await self.repo.signals(incident.id)
             await self._drive(incident.id, _initial(incident, signals))

@@ -17,7 +17,13 @@ from bleep import prompts
 from bleep.api.deps import get_parts
 from bleep.api.settings import parse_body, stale_response, version_of
 from bleep.guard.log import GuardKind
-from bleep.incidents.prompt_overrides import PromptRefused, PromptStale, UnknownPrompt
+from bleep.guard.redact import redact_text
+from bleep.incidents.prompt_overrides import (
+    PromptRefused,
+    PromptStale,
+    UnknownPrompt,
+    check_lines,
+)
 from bleep.llm.usage import UsageSum
 from bleep.schemas.dev import (
     CostView,
@@ -30,7 +36,8 @@ from bleep.schemas.dev import (
 )
 from bleep.wiring import AppParts
 
-router = APIRouter(prefix="/dev", tags=["dev"])
+# Left out of `/openapi.json`, which answers without a session.
+router = APIRouter(prefix="/dev", tags=["dev"], include_in_schema=False)
 
 Parts = Annotated[AppParts, Depends(get_parts)]
 MAX_ROWS = 500
@@ -89,6 +96,11 @@ async def set_prompt(
     if name not in prompts.overridable_names():
         raise HTTPException(404, "no such prompt")
     version = _version(if_match)
+    if isinstance(body, dict) and isinstance(body.get("text"), str):
+        try:
+            check_lines(body["text"])  # before the body's secret check reads it as a secret
+        except PromptRefused as refusal:
+            raise HTTPException(422, str(refusal)) from None
     override = parse_body(body, PromptOverrideBody)
     try:
         await parts.prompt_overrides.set(name, override.text, version=version)
@@ -138,21 +150,27 @@ async def costs(
     limit: Annotated[int, Query(ge=1, le=MAX_ROWS)] = 100,
 ) -> CostView:
     """Tokens and dollars from the usage ledger, per incident (the latest first, with the link to
-    its trace) and per local day (today first)."""
+    its trace and the prompt overrides its run started with) and per local day (today first)."""
     ledger = parts.graph_deps.ledger
+    sums = await ledger.by_incident(limit)
+    incidents = await parts.incidents.get_many([row.key for row in sums])
     rows = []
-    for row in await ledger.by_incident(limit):
+    for row in sums:
         cost = IncidentCost(incident_id=row.key, **_usage(row))
-        incident = await parts.incidents.get(row.key)
+        incident = incidents.get(row.key)
         if incident is not None:
             cost.title, cost.status = incident.title, incident.status
             cost.opened_at, cost.trace_url = incident.opened_at, incident.trace_url
+            cost.prompt_overrides = incident.prompt_overrides
         rows.append(cost)
+    day_rows = [DayCost(day=row.key, **_usage(row)) for row in await ledger.by_day(days)]
+    today = ledger.clock().date()
     return CostView(
         incidents=rows,
-        days=[DayCost(day=row.key, **_usage(row)) for row in await ledger.by_day(days)],
+        days=day_rows,
         daily_cap_usd=parts.settings_store.budgets().daily_cost_usd,
         spent_today_usd=await ledger.spent_today(),
+        unpriced_today=next((d.unpriced for d in day_rows if d.day == today), 0),
     )
 
 
@@ -163,9 +181,12 @@ async def guard_log(
     incident_id: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_ROWS)] = 200,
 ) -> list[GuardEntryView]:
-    """What the guard refused, blocked or changed, newest first."""
+    """What the guard refused, blocked or changed, newest first. A detail is redacted here: a
+    refused command is stored as the model wrote it, and it can hold a secret the model echoed."""
     entries = await parts.guard_log.recent(incident_id, kind, limit)
     return [
-        GuardEntryView(id=e.id, incident_id=e.incident_id, kind=e.kind, detail=e.detail, at=e.at)
+        GuardEntryView(
+            id=e.id, incident_id=e.incident_id, kind=e.kind, detail=redact_text(e.detail), at=e.at
+        )
         for e in entries
     ]

@@ -81,3 +81,14 @@ def test_a_deeply_nested_body_is_walked_without_recursion():
     for _ in range(5_000):
         body = {"a": body}
     assert len(find_secrets(body)) == 1
+
+
+def test_plain_text_over_4000_characters_in_short_lines_passes():
+    text = "\n".join(["Restart the shop only after its database is healthy."] * 100)
+    assert len(text) > 4_000
+    assert find_secrets(text) == []
+
+
+def test_a_look_alike_secret_on_one_line_of_many_is_found():
+    text = "\n".join(["plain words here"] * 100 + ["pаssword=hunter2xyz"])
+    assert find_secrets(text) == ["body"]

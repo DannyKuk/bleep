@@ -170,6 +170,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **Off unless `BLEEP_DEV_PANEL=true`, and then behind the admin session**; off, every `/api/dev` path is a 404 and the nav hides it.
 - **A prompt override must use exactly its file's placeholders and hold no secret**; reset deletes it and the loader reads the file again.
 - **The Telegram texts and `graph/system` cannot be overridden; a save or reset sends the prompt's version (`If-Match`) and is recorded in the guard log by name, never with its text.**
+- **Each incident records the overrides its run started with, by name and hash**; with the panel off, `PUT /api/settings` refuses the models and the budgets.
 
 **Notifications** ([details](design/notify.md))
 - **Telegram is optional**: without a token everything runs through the dashboard.

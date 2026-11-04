@@ -59,6 +59,10 @@ def test_an_override_is_filled_with_the_same_checks_as_a_file(tmp_prompts):
         "Hello {name} }",
         "Hello {name!r}",
         "Hello {name}\x00",  # a control byte
+        "Hello {name}\x85",  # a C1 control (NEL)
+        "Hello {name}\x9b31m",  # a C1 CSI
+        "Hello {name} ‮deliver‬",  # a bidi override
+        "Hello {name} ⁦isolated⁩",  # a bidi isolate
     ],
 )
 def test_check_override_refuses_what_the_loader_would(tmp_prompts, text):

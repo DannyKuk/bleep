@@ -80,6 +80,8 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 parts.bus,
                 models=parts.graph_deps.models,
                 guard_log=parts.graph_deps.guard_log,
+                ledger=parts.graph_deps.ledger,
+                budgets=parts.settings_store.budgets,
                 store=UrlCheckStore(parts.db),
                 watch_interval_s=settings.watch_interval_s,
             )

@@ -328,6 +328,9 @@ export interface IncidentCost extends Usage {
   status: IncidentStatus | null;
   opened_at: string | null;
   trace_url: string | null;
+  /** The prompt overrides in force when the incident's run started: name to a hash of the text.
+   * `null` when none was recorded (no incident, or a run that started before the record). */
+  prompt_overrides: Record<string, string> | null;
 }
 
 export interface DayCost extends Usage {
@@ -339,7 +342,10 @@ export interface CostView {
   incidents: IncidentCost[];
   days: DayCost[];
   daily_cap_usd: number;
+  /** The priced calls only, as the daily cap counts them. */
   spent_today_usd: number;
+  /** Today's calls without a known price, left out of `spent_today_usd`. */
+  unpriced_today: number;
 }
 
 /** What the guard refused, blocked or changed (`guard/log.py` `GuardKind`). */

@@ -1,8 +1,9 @@
 """Incidents and their signals in SQLite. At most one incident is open per subject."""
 
+import json
 import secrets
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import UTC, datetime
 
 import aiosqlite
@@ -42,6 +43,7 @@ def _incident(row: aiosqlite.Row) -> Incident:
         cost_usd=row["cost_usd"],
         tokens=row["tokens"],
         trace_url=row["trace_url"],
+        prompt_overrides=json.loads(row["prompt_overrides"]) if row["prompt_overrides"] else None,
     )
 
 
@@ -160,6 +162,21 @@ class IncidentRepo:
         finally:
             await conn.close()
 
+    async def record_prompt_overrides(self, incident_id: str, versions: dict[str, str]) -> None:
+        """Record the prompt overrides in force as the incident's run starts (name to
+        `prompts.text_version`). Only the first record counts: a run started again after a crash
+        keeps what it started with."""
+        conn = await self.db.connect()
+        try:
+            await conn.execute(
+                "UPDATE incidents SET prompt_overrides = ?"
+                " WHERE id = ? AND prompt_overrides IS NULL",
+                (json.dumps(versions, sort_keys=True), incident_id),
+            )
+            await conn.commit()
+        finally:
+            await conn.close()
+
     async def _get(self, conn: aiosqlite.Connection, incident_id: str) -> Incident | None:
         async with conn.execute("SELECT * FROM incidents WHERE id = ?", (incident_id,)) as cursor:
             row = await cursor.fetchone()
@@ -169,6 +186,20 @@ class IncidentRepo:
         conn = await self.db.connect()
         try:
             return await self._get(conn, incident_id)
+        finally:
+            await conn.close()
+
+    async def get_many(self, incident_ids: Collection[str]) -> dict[str, Incident]:
+        """The incidents among `incident_ids` that exist, by id, in one query."""
+        ids = list(dict.fromkeys(incident_ids))
+        if not ids:
+            return {}
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                f"SELECT * FROM incidents WHERE id IN ({', '.join('?' * len(ids))})", ids
+            ) as cursor:
+                return {row["id"]: _incident(row) for row in await cursor.fetchall()}
         finally:
             await conn.close()
 

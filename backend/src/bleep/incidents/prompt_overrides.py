@@ -8,8 +8,6 @@ name, never with its text. See docs/design/dev-panel.md.
 """
 
 import asyncio
-import hashlib
-import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -17,6 +15,7 @@ from datetime import datetime
 
 from bleep import prompts
 from bleep.guard.log import GuardLogger
+from bleep.guard.sanitize import MAX_LINE
 from bleep.guard.secret_fields import find_secrets
 from bleep.incidents.repository import utcnow
 from bleep.store.db import Database
@@ -69,8 +68,7 @@ class PromptOverrideStore:
         """A hash of the override in force for `name` (or of none), from its content, so it holds
         across a restart."""
         override = self._overrides.get(name)
-        text = override.text if override is not None else None
-        return hashlib.sha256(json.dumps({"text": text}).encode()).hexdigest()[:16]
+        return prompts.text_version(override.text if override is not None else None)
 
     async def load(self) -> None:
         """Read the stored overrides and put them in force. One that no longer fits (its file
@@ -152,6 +150,7 @@ class PromptOverrideStore:
 def _check(name: str, text: str) -> None:
     if name not in prompts.overridable_names():
         raise UnknownPrompt(name)
+    check_lines(text)
     if find_secrets(text):
         raise PromptRefused(
             "a prompt never holds a secret, and this text looks like it does. "
@@ -161,3 +160,15 @@ def _check(name: str, text: str) -> None:
         prompts.check_override(name, text)
     except prompts.PromptError as error:
         raise PromptRefused(str(error)) from None
+
+
+def check_lines(text: str) -> None:
+    """Raise `PromptRefused` for what redaction would reshape, so the secret check, which reads
+    any change as a secret, is never the reason given: redaction turns other line breaks into
+    newlines and cuts a line over 4,000 characters."""
+    if any(mark in text for mark in ("\r", "\u2028", "\u2029")):
+        raise PromptRefused(
+            "line breaks must be plain newlines; CR, CRLF, U+2028 and U+2029 are not allowed"
+        )
+    if any(len(line) > MAX_LINE for line in text.split("\n")):
+        raise PromptRefused(f"a line is over {MAX_LINE:,} characters; break it up")

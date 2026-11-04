@@ -102,6 +102,31 @@ async def test_an_override_holding_a_secret_is_refused_without_quoting_it(db):
     assert await stored(db) == {}
 
 
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        ("Be careful.\r\nVery careful.", "plain newlines"),
+        ("Be careful.\rVery careful.", "plain newlines"),
+        ("Be careful. Very careful.", "plain newlines"),
+        ("Be careful. Very careful.", "plain newlines"),
+        ("Be careful. " + "x" * 4_000, "4,000 characters"),
+    ],
+)
+async def test_an_override_redaction_would_reshape_is_refused_for_that_reason(db, text, reason):
+    store = new_store(db)
+    with pytest.raises(PromptRefused) as refused:
+        await save(store, "graph/propose_unsure", text)
+    assert reason in str(refused.value)
+    assert "secret" not in str(refused.value)
+    assert await stored(db) == {}
+
+
+async def test_long_lines_under_the_cap_and_plain_newlines_are_accepted(db):
+    text = "Be careful.\n" + "x" * 4_000 + "\nVery careful."
+    await save(new_store(db), "graph/propose_unsure", text)
+    assert await stored(db) == {"graph/propose_unsure": text}
+
+
 @pytest.mark.parametrize("name", ["graph/nope", "../config", "evals/judge_system"])
 async def test_only_the_apps_prompt_files_can_be_overridden(db, name):
     with pytest.raises(UnknownPrompt):

@@ -7,7 +7,8 @@ probe (disk, memory, load) and the URL checks. Every signal goes through the one
 - `OpenIncident` and `AttachSignals` go to `IncidentRepo.open_or_attach`; the incident runner
   starts only when that call newly opened the incident.
 - `Recovered` is logged with a one-line explanation from the cheap model, off the watcher's
-  tick so a slow model never delays the next pull.
+  tick so a slow model never delays the next pull. The call is in the usage ledger under
+  `RECOVERY_USAGE` and is skipped once the day's cost cap is spent.
 
 See docs/design/watcher.md.
 """
@@ -18,6 +19,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 
 import httpx
+from langchain_core.language_models import BaseChatModel
 
 from bleep.graph.deps import ModelFactory
 from bleep.guard.log import GuardLogger
@@ -25,8 +27,10 @@ from bleep.hosts.registry import Registry
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.incidents.runner import IncidentRunner
+from bleep.llm.usage import BudgetExceeded, CostLedger, UsageTracker, check_daily_cap
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import RecoveryEvent, Signal, Subject
+from bleep.schemas.settings import Budgets
 from bleep.watcher import host_probe, http_checks, poller
 from bleep.watcher.detector import (
     AttachSignals,
@@ -47,6 +51,8 @@ HELD_PER_SERVICE = 5  # URL failures kept per service while its host is unreacha
 RESTART_BACKOFF_S = (1, 2, 5, 15, 60)
 LOG_TAIL_LINES = 50
 NO_EXPLANATION = "No explanation could be generated for this restart."
+CAP_SPENT_EXPLANATION = "No explanation: the daily cost cap is spent."
+RECOVERY_USAGE = "recoveries"  # the usage ledger's key for recovery lines, which have no incident
 
 
 class _HostTasks:
@@ -68,6 +74,8 @@ class WatcherManager:
         clock: Callable[[], datetime] = utcnow,
         models: ModelFactory | None = None,
         guard_log: GuardLogger | None = None,
+        ledger: CostLedger | None = None,
+        budgets: Callable[[], Budgets] | None = None,
         http: httpx.AsyncClient | None = None,
         store: UrlCheckStore | None = None,
         watch_interval_s: float = poller.INTERVAL_S,
@@ -82,6 +90,8 @@ class WatcherManager:
         self._clock = clock
         self._models = models
         self._guard_log = guard_log
+        self._ledger = ledger
+        self._budgets = budgets
         self._http = http or httpx.AsyncClient()
         self._owns_http = http is None
         self._held: dict[str, dict[str, list[Signal]]] = {}  # host -> service id -> URL failures
@@ -260,6 +270,16 @@ class WatcherManager:
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
+    async def _explain(self, model: BaseChatModel, logs: str) -> str:
+        """The model's line, counted in the usage ledger and refused once the daily cap is spent,
+        like an incident's calls."""
+        config = None
+        if self._ledger is not None:
+            if self._budgets is not None:
+                await check_daily_cap(self._ledger, self._budgets())
+            config = {"callbacks": [UsageTracker(RECOVERY_USAGE, self._ledger)]}
+        return await explain_recovery(model, logs, self._guard_log, "", config)
+
     async def _log_recovery(self, recovered: Recovered) -> None:
         death = recovered.signals[0]
         host_id = death.subject.host_id
@@ -271,9 +291,9 @@ class WatcherManager:
         explanation = NO_EXPLANATION
         if self._models is not None:
             try:
-                explanation = await explain_recovery(
-                    self._models("cheap"), logs, self._guard_log, ""
-                )
+                explanation = await self._explain(self._models("cheap"), logs)
+            except BudgetExceeded:
+                explanation = CAP_SPENT_EXPLANATION
             except Exception:
                 log.exception("explaining the recovery of %s failed", recovered.container)
         try:

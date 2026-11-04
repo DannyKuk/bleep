@@ -51,7 +51,9 @@ def put_plugin(client: TestClient, name: str, json: object, version: str | None 
 @pytest.fixture
 def app(settings, monkeypatch):
     """A logged-in client over host `a` (the `shop` service with a URL in the hosts file) with
-    the fake Coolify plugin, its token and a model key in the env."""
+    the fake Coolify plugin, its token and a model key in the env, and the dev panel on, which
+    edits the models and the budgets."""
+    settings.dev_panel = True
     monkeypatch.setenv("COOLIFY_TOKEN", COOLIFY_TOKEN)
     monkeypatch.setenv("OPENROUTER_API_KEY", OPENROUTER_KEY)
     host = socket_host(
@@ -143,6 +145,38 @@ def test_an_invalid_body_is_refused_with_reasons_and_without_its_values(app):
     assert response.status_code == 422
     assert "lots-and-lots" not in response.text
     assert response.json()["detail"][0]["loc"] == ["budgets", "daily_cost_usd"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"models": {"model": "openai/other"}},
+        {"budgets": {"daily_cost_usd": 50}},
+        {"budgets": {}},
+        {"thresholds": {"disk_percent": 80}, "models": {}},
+    ],
+)
+def test_with_the_dev_panel_off_the_models_and_budgets_are_refused(settings, app, body):
+    settings.dev_panel = False
+    before = app.get("/api/settings").json()
+    response = put_settings(app, body)
+    assert response.status_code == 403
+    assert "BLEEP_DEV_PANEL" in response.json()["detail"]
+    after = app.get("/api/settings").json()
+    assert (after["overrides"], after["version"]) == (before["overrides"], before["version"])
+
+
+def test_with_the_dev_panel_off_the_other_sections_are_still_saved(settings, app):
+    settings.dev_panel = False
+    response = put_settings(app, {"thresholds": {"disk_percent": 80}, "models": None})
+    assert response.status_code == 200
+    assert response.json()["thresholds"]["disk_percent"] == 80
+
+
+def test_with_the_dev_panel_off_a_secret_is_still_refused_as_one(settings, app):
+    settings.dev_panel = False
+    response = put_settings(app, {"models": {"openrouter_api_key": "abc"}})
+    assert response.status_code == 422
 
 
 def test_an_unknown_host_is_refused(app):

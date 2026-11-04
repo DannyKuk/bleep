@@ -4,6 +4,8 @@ The dev panel can stand an override in for a file (`use_overrides`); `load` read
 when there is one and the file otherwise, and fills both with the same checks.
 """
 
+import hashlib
+import json
 import re
 import string
 from collections.abc import Mapping
@@ -16,7 +18,9 @@ NAME = re.compile(r"^[a-z0-9_]+(?:/[a-z0-9_]+)*$")
 # untrusted-data rule with no placeholder to check an override against.
 NOT_OVERRIDABLE_AREAS = ("evals/", "notify/")
 NOT_OVERRIDABLE = frozenset({"graph/system"})
-_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# C0 and C1 controls but tab and line breaks, and the bidi overrides and isolates, which reorder
+# what a reader of the panel sees without changing what the model reads.
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
 
 _overrides: dict[str, str] = {}
 
@@ -69,7 +73,7 @@ def check_override(name: str, text: str) -> None:
     if name not in overridable_names():
         raise PromptError(f"no prompt named {name!r} can be overridden")
     if _CONTROL.search(text):
-        raise PromptError("control characters are not allowed")
+        raise PromptError("control characters and bidi overrides are not allowed")
     needed, given = placeholders(file_text(name)), placeholders(text)
     if needed != given:
         missing = ", ".join(f"{{{p}}}" for p in sorted(needed - given)) or "none"
@@ -84,6 +88,17 @@ def use_overrides(overrides: Mapping[str, str]) -> None:
     stand in for the files; `{}` puts every file back."""
     global _overrides
     _overrides = dict(overrides)  # swapped whole, so a load never sees half an update
+
+
+def text_version(text: str | None) -> str:
+    """A short hash of an override's text, `None` standing for no override: the dev panel's
+    version of a prompt, and what an incident records of each override it ran with."""
+    return hashlib.sha256(json.dumps({"text": text}).encode()).hexdigest()[:16]
+
+
+def override_versions() -> dict[str, str]:
+    """The overrides in force, as prompt name to `text_version` of the text; never the text."""
+    return {name: text_version(text) for name, text in sorted(_overrides.items())}
 
 
 def load(name: str, /, **variables: str) -> str:

@@ -147,3 +147,30 @@ async def test_log_recovery(repo):
     saved = await repo.log_recovery(event)
     assert saved.id is not None
     assert await repo.recoveries() == [saved]
+
+
+async def test_the_overrides_an_incident_started_with_are_recorded_once(repo):
+    incident, _ = await repo.open_or_attach(svc(), [sig(svc())])
+    assert incident.prompt_overrides is None
+
+    await repo.record_prompt_overrides(incident.id, {"graph/propose": "a1b2c3"})
+    await repo.record_prompt_overrides(incident.id, {"graph/propose": "d4e5f6"})
+    assert (await repo.get(incident.id)).prompt_overrides == {"graph/propose": "a1b2c3"}
+
+
+async def test_an_incident_started_without_overrides_records_none_in_force(repo):
+    incident, _ = await repo.open_or_attach(svc(), [sig(svc())])
+    await repo.record_prompt_overrides(incident.id, {})
+    await repo.record_prompt_overrides(incident.id, {"graph/propose": "d4e5f6"})
+    assert (await repo.get(incident.id)).prompt_overrides == {}
+
+
+async def test_get_many_reads_the_incidents_named_and_skips_unknown_ids(repo):
+    web, _ = await repo.open_or_attach(svc("web"), [sig(svc("web"))])
+    db, _ = await repo.open_or_attach(svc("db"), [sig(svc("db"))])
+    found = await repo.get_many([web.id, "not-an-incident", db.id])
+    assert {key: incident.title for key, incident in found.items()} == {
+        web.id: web.title,
+        db.id: db.title,
+    }
+    assert await repo.get_many([]) == {}

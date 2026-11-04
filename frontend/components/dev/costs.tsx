@@ -10,9 +10,20 @@ import type { CostView, Usage } from "@/lib/api-types";
 
 const DAYS = 30;
 
-/** Only an http(s) link is rendered as one. */
+/** Only an http(s) link is rendered as one; any other is shown as text. */
 export const isWebLink = (url: string | null): url is string =>
   url !== null && /^https?:\/\//i.test(url);
+
+export const UNPRICED_NOTE =
+  'Dollars sum only the calls with a known price. "+ N unpriced" counts the calls without one: they are in no dollar figure and do not count toward the daily cap.';
+
+/** Today's spend against the cap, and the calls today it leaves out. */
+export function todayText({ spent_today_usd, daily_cap_usd, unpriced_today }: CostView): string {
+  const spent = `Today: ${formatUsd(spent_today_usd)} of the ${formatUsd(daily_cap_usd)} daily cap.`;
+  if (unpriced_today === 0) return spent;
+  const calls = unpriced_today === 1 ? "1 call today has" : `${unpriced_today} calls today have`;
+  return `${spent} ${calls} no known price and ${unpriced_today === 1 ? "is" : "are"} not in that sum.`;
+}
 
 /** The cost, with how many calls it leaves out because their price is unknown. */
 export function costText({ usd, unpriced }: Usage): string {
@@ -33,6 +44,23 @@ function UsageCells({ usage }: { usage: Usage }) {
   );
 }
 
+/** The prompt overrides the incident's run started with, each with the start of its hash. */
+function OverrideList({ overrides }: { overrides: Record<string, string> | null }) {
+  if (overrides === null) return <span className="text-muted-foreground">not recorded</span>;
+  const names = Object.keys(overrides).sort();
+  if (names.length === 0) return <span className="text-muted-foreground">none</span>;
+  return (
+    <ul className="flex flex-col gap-0.5">
+      {names.map((name) => (
+        <li key={name} className="font-mono text-xs">
+          <span title={`override version ${overrides[name]}`}>{name}</span>{" "}
+          <span className="text-muted-foreground">{overrides[name].slice(0, 8)}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function UsageHeads() {
   return (
     <>
@@ -47,9 +75,7 @@ function UsageHeads() {
 export function CostTables({ costs }: { costs: CostView }) {
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-sm">
-        Today: {formatUsd(costs.spent_today_usd)} of the {formatUsd(costs.daily_cap_usd)} daily cap
-      </p>
+      <p className="text-sm">{todayText(costs)}</p>
       <div className="overflow-x-auto">
         <table aria-label="Cost per day" className="w-full text-sm">
           <thead className="border-b border-border">
@@ -82,12 +108,15 @@ export function CostTables({ costs }: { costs: CostView }) {
               <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">Incident</th>
               <UsageHeads />
               <th className={head}>Trace</th>
+              <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">
+                Prompt overrides
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {costs.incidents.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-2 py-3 text-muted-foreground">
+                <td colSpan={7} className="px-2 py-3 text-muted-foreground">
                   No incident has called a model yet.
                 </td>
               </tr>
@@ -119,18 +148,31 @@ export function CostTables({ costs }: { costs: CostView }) {
                       Trace
                       <ExternalLink aria-hidden className="size-3.5" />
                     </a>
+                  ) : row.trace_url ? (
+                    <span className="font-mono text-xs break-all whitespace-normal">
+                      {row.trace_url}
+                    </span>
                   ) : (
                     <span className="text-muted-foreground">none</span>
                   )}
+                </td>
+                <td className="px-2 py-1.5">
+                  <OverrideList overrides={row.prompt_overrides} />
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {hasUnpriced(costs) && <p className="text-xs text-muted-foreground">{UNPRICED_NOTE}</p>}
     </div>
   );
 }
+
+const hasUnpriced = (costs: CostView) =>
+  costs.unpriced_today > 0 ||
+  costs.days.some((day) => day.unpriced > 0) ||
+  costs.incidents.some((row) => row.unpriced > 0);
 
 /** Tokens and dollars from the usage ledger, per day and per incident. */
 export function CostsPanel() {

@@ -8,14 +8,20 @@ from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.registry import Registry
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
+from bleep.llm.usage import CostLedger
 from bleep.schemas.docker import ContainerSummary, DockerEvent
 from bleep.schemas.incidents import Incident, Signal, Subject
-from bleep.schemas.settings import Thresholds
+from bleep.schemas.settings import Budgets, Thresholds
 from bleep.store.db import Database
 from bleep.watcher import manager as manager_module
 from bleep.watcher.detector import Detector
 from bleep.watcher.http_checks import UrlCheckStore
-from bleep.watcher.manager import NO_EXPLANATION, WatcherManager
+from bleep.watcher.manager import (
+    CAP_SPENT_EXPLANATION,
+    NO_EXPLANATION,
+    RECOVERY_USAGE,
+    WatcherManager,
+)
 from fakes import FakeChatModel, FakeEngine, socket_host
 
 T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
@@ -73,7 +79,9 @@ def die(name: str, at: datetime) -> DockerEvent:
 
 
 class Rig:
-    def __init__(self, tmp_path, model: FakeChatModel | None = None) -> None:
+    def __init__(
+        self, tmp_path, model: FakeChatModel | None = None, budgets: Budgets | None = None
+    ) -> None:
         self.clock = Clock()
         self.engine = FakeEngine(
             "h",
@@ -83,6 +91,8 @@ class Rig:
         )
         self.db = Database(tmp_path / "bleep.sqlite")
         self.repo = IncidentRepo(self.db, self.clock)
+        self.ledger = CostLedger(self.db, self.clock)
+        self.budgets = budgets or Budgets()
         self.bus = EventBus(self.db, self.clock)
         self.runner = FakeRunner()
         self.web_up = True
@@ -118,6 +128,8 @@ class Rig:
             models=models if model is not None else None,
             http=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
             store=self.store,
+            ledger=self.ledger,
+            budgets=lambda: self.budgets,
         )
 
     async def boot(self) -> Rig:
@@ -287,6 +299,45 @@ async def test_a_self_recovered_container_is_logged_with_a_one_line_explanation(
     assert "OOM killed" in str(model.seen[0][0].content)
     assert await r.incidents() == []
     assert r.runner.started == []
+
+
+async def recover_shop(r: Rig) -> None:
+    r.engine.container_list[0] = box("shop-web-1", "shop", restart_policy="always")
+    await r.pulse(urls=False)
+    died = r.clock.now + timedelta(seconds=2)
+    r.engine.history.append(die("shop-web-1", died))
+    r.engine.container_list[0] = box(
+        "shop-web-1", "shop", restart_policy="always", started_at=died + timedelta(seconds=3)
+    )
+    await r.pulse(urls=False)
+    await r.manager.drain()
+
+
+def priced_reply(text: str) -> AIMessage:
+    return AIMessage(
+        text,
+        usage_metadata={"input_tokens": 300, "output_tokens": 20, "total_tokens": 320},
+        response_metadata={"model_name": "openai/gpt-6-luna", "cost": 0.002},
+    )
+
+
+async def test_the_recovery_lines_model_call_is_in_the_usage_ledger_and_the_daily_spend(tmp_path):
+    r = await Rig(tmp_path, FakeChatModel(script=[priced_reply("It ran out of memory.")])).boot()
+    await recover_shop(r)
+    [row] = await r.ledger.by_incident()
+    assert (row.key, row.calls, row.tokens_in, row.tokens_out) == (RECOVERY_USAGE, 1, 300, 20)
+    assert await r.ledger.spent_today() == 0.002
+
+
+async def test_with_the_daily_cap_spent_the_recovery_is_logged_without_a_model_call(tmp_path):
+    model = FakeChatModel(script=[priced_reply("It ran out of memory.")])
+    r = await Rig(tmp_path, model, Budgets(daily_cost_usd=0.5)).boot()
+    await r.ledger.add("inc-1", "openai/gpt-6-luna", 1000, 100, 0.5)
+    await recover_shop(r)
+    [recovery] = await r.repo.recoveries()
+    assert recovery.explanation == CAP_SPENT_EXPLANATION
+    assert model.seen == []
+    assert [row.key for row in await r.ledger.by_incident()] == ["inc-1"]
 
 
 async def test_a_recovery_is_logged_even_when_the_model_fails(tmp_path):

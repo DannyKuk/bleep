@@ -68,8 +68,9 @@ def _secret_name(name: str) -> bool:
 
 def _holds_secret(text: str) -> bool:
     """Redaction would change it, as written or folded, or it is a URL with a secret-named
-    query parameter (`?key=...`)."""
-    folded = fold(text)
+    query parameter (`?key=...`). Folded line by line: `fold` drops newlines, and text joined
+    into one line over 4,000 characters is cut by redaction, which reads as a secret."""
+    folded = "\n".join(fold(line) for line in text.split("\n"))
     return (
         redact_text(text) != text
         or redact_text(folded) != folded
