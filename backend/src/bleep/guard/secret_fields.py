@@ -7,11 +7,13 @@ a rule, a password in a URL). Only `allowed` names, the settings models' own fie
 `incident_tokens` is a budget, not a token. See docs/design/settings.md.
 """
 
+import itertools
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Iterator
 from typing import Any
 
 from bleep.guard.redact import WORDS, redact_text
+from bleep.guard.sanitize import MAX_LINE
 from bleep.guard.untrusted import fold
 
 # Matched against the name in lower case with everything but letters and digits removed, so case,
@@ -68,11 +70,27 @@ def _secret_name(name: str) -> bool:
 
 def _holds_secret(text: str) -> bool:
     """Redaction would change it, as written or folded, or it is a URL with a secret-named
-    query parameter (`?key=...`). Folded line by line: `fold` drops newlines, and text joined
-    into one line over 4,000 characters is cut by redaction, which reads as a secret."""
-    folded = "\n".join(fold(line) for line in text.split("\n"))
-    return (
-        redact_text(text) != text
-        or redact_text(folded) != folded
-        or any(_secret_name(m) for m in _QUERY_NAME.findall(folded))
+    query parameter (`?key=...`)."""
+    if redact_text(text) != text:
+        return True
+    return any(
+        redact_text(piece) != piece or any(_secret_name(m) for m in _QUERY_NAME.findall(piece))
+        for piece in _folded_pieces(text)
     )
+
+
+def _folded_pieces(text: str) -> Iterator[str]:
+    """What the folded checks read. `fold` drops newlines, so a short text is read folded whole,
+    as one line, and a secret split by a newline (`pass\nword=x`, a wrapped token) is joined
+    again. A text whose folded form is over 4,000 characters would be cut by redaction, which
+    reads as a secret, so it is read line by line instead, and each two adjacent lines joined
+    where they fit."""
+    whole = fold(text)
+    if len(whole) <= MAX_LINE:
+        yield whole
+        return
+    lines = [fold(line) for line in text.split("\n")]
+    yield from lines
+    for first, second in itertools.pairwise(lines):
+        if len(first) + len(second) <= MAX_LINE:
+            yield first + second

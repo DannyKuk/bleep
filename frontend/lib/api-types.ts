@@ -94,6 +94,11 @@ export interface Incident {
   title: string;
   cost_usd: number | null;
   tokens: number;
+  /** The link to the incident's trace, when tracing stored one. */
+  trace_url: string | null;
+  /** The prompt overrides in force when its run started: name to a hash of the text. `null` before
+   * the run started, or for a run started before the record existed. */
+  prompt_overrides: Record<string, string> | null;
 }
 
 /** One entry of an incident's timeline. `kind` is free-form on the wire; `payload` depends on it. */

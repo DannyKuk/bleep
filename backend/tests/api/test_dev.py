@@ -198,6 +198,14 @@ def test_a_long_override_in_short_lines_is_saved(dev_client):
     assert response.json()["override"] == text
 
 
+def test_an_override_with_a_token_wrapped_across_lines_is_a_422_and_not_stored(dev_client):
+    wrapped = f"{GITHUB_TOKEN[:20]}\n{GITHUB_TOKEN[20:]}"
+    response = put_prompt(dev_client, RETRY, {"text": f"{retry_file()}\n{wrapped}"})
+    assert response.status_code == 422
+    assert GITHUB_TOKEN[:20] not in response.text
+    assert prompts.load(RETRY, error="x") == retry_file().format(error="x")
+
+
 @pytest.mark.parametrize("body", [{"text": ""}, {"text": "x" * 20_001}, {}, {"txt": "{error}"}])
 def test_an_invalid_body_is_a_422(dev_client, body):
     assert put_prompt(dev_client, RETRY, body).status_code == 422

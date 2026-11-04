@@ -92,3 +92,38 @@ def test_plain_text_over_4000_characters_in_short_lines_passes():
 def test_a_look_alike_secret_on_one_line_of_many_is_found():
     text = "\n".join(["plain words here"] * 100 + ["pаssword=hunter2xyz"])
     assert find_secrets(text) == ["body"]
+
+
+WRAPPED_TOKEN = "ghp_" + "A" * 18 + "\n" + "B" * 18
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "pass\nword=hunter2xyz",
+        "password=\nhunter2xyz",
+        "password\n=hunter2xyz",
+        "https://x.io/a?to\nken=abcdef123",
+        WRAPPED_TOKEN,
+    ],
+)
+def test_a_secret_split_by_a_newline_is_found(text):
+    assert find_secrets(text) == ["body"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "pass\nword=hunter2xyz",
+        "password=\nhunter2xyz",
+        "https://x.io/a?to\nken=abcdef123",
+        WRAPPED_TOKEN,
+    ],
+)
+def test_a_secret_split_by_a_newline_in_a_long_text_is_found(text):
+    filler = "\n".join(["Restart the shop only after its database is healthy."] * 100)
+    assert find_secrets(f"{filler}\n{text}\n{filler}") == ["body"]
+
+
+def test_long_lines_under_the_cut_pass():
+    assert find_secrets("\n".join(["x" * 3_500] * 4)) == []

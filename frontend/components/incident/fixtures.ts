@@ -18,6 +18,8 @@ export function incident(overrides: Partial<Incident> = {}): Incident {
     title: "shop-web-1 died",
     cost_usd: 0.012,
     tokens: 5400,
+    trace_url: null,
+    prompt_overrides: null,
     ...overrides,
   };
 }
