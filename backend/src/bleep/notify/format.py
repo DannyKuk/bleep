@@ -9,11 +9,14 @@ log line.
 import re
 
 from bleep import prompts
+from bleep.guard.plan_check import MAX_STEPS
 from bleep.guard.redact import redact_text
-from bleep.schemas.graph import Diagnosis, Proposal
+from bleep.schemas.graph import Diagnosis, PlanStep, Proposal
 
 TELEGRAM_LIMIT = 4096
 FIELD_CHARS = 600  # one value; keeps a message far below the limit
+# One step of a plan; with at most MAX_STEPS steps the list stays within FIELD_CHARS.
+STEP_CHARS = (FIELD_CHARS - MAX_STEPS) // MAX_STEPS
 _SPECIAL = re.compile(r"([_*\[\]()~`>#+\-=|{}.!\\])")
 _MARK = re.compile(r"\x00(\w+)\x00")
 
@@ -53,11 +56,27 @@ def answer(name: str, **values: str) -> str:
 
 
 def steps_text(proposal: Proposal) -> str:
-    """One line per step: `1. docker.restart shop-web-1 on demo`."""
-    return "\n".join(
-        f"{n}. {step.action} {step.target} on {step.host_id}"
-        for n, step in enumerate(proposal.steps, 1)
-    )
+    """One line per step: `1. docker.restart shop-web-1 on demo`.
+
+    A plugin step's params follow it (an MCP tool and its arguments), since the human approves
+    those too; they are redacted and cut so that each line stays within `STEP_CHARS` unless its
+    head alone is longer, so no step's params can push a later step out of the message. A Docker
+    step's params are never shown: its action ignores them, so they could only be model text in
+    the approval."""
+    return "\n".join(_step_line(n, step) for n, step in enumerate(proposal.steps, 1))
+
+
+def _step_line(number: int, step: PlanStep) -> str:
+    head = f"{number}. {step.action} {step.target} on {step.host_id}"
+    if not step.params or step.action.startswith("docker."):
+        return head
+    shown = redact_text(", ".join(f"{key}={value}" for key, value in step.params.items()))
+    # The head is never cut: a person approves this exact action, target and host. Only the
+    # params give way, down to "…" when a long target leaves them no room.
+    room = max(STEP_CHARS - len(head) - 3, 1)  # the space and the brackets
+    if len(shown) > room:
+        shown = shown[: room - 1] + "…"
+    return f"{head} ({shown})"
 
 
 def confidence_text(diagnosis: Diagnosis | None) -> tuple[str, str, str]:
