@@ -313,5 +313,46 @@ describe("IncidentPage", () => {
       expect(screen.getByRole("textbox")).toHaveValue("Restart only shop-api");
       expect(container.querySelector("[data-pinned]")).toBeNull();
     });
+
+    it("keeps a feedback note and a vote in flight when the screen turns", async () => {
+      const votes: ((reply: Response) => void)[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn<typeof fetch>(async (input, init) => {
+          if (String(input).includes("/events")) return json([]);
+          if (init?.method === "POST") return new Promise<Response>((done) => votes.push(done));
+          return json(detail());
+        }),
+      );
+      render(<IncidentPage id="inc-1" />);
+      const found = () => screen.getByRole("region", { name: "What I found" });
+      await within(await screen.findByRole("region", { name: "What I found" })).findByRole(
+        "button",
+        { name: "Add a note" },
+      );
+      await userEvent.click(within(found()).getByRole("button", { name: "Add a note" }));
+      await userEvent.type(within(found()).getByRole("textbox"), "It was the proxy");
+
+      await turn(true);
+      expect(within(found()).getByRole("textbox")).toHaveValue("It was the proxy");
+      await userEvent.click(within(found()).getByRole("button", { name: "Wrong" }));
+      expect(within(found()).getByRole("button", { name: "Wrong" })).toBeDisabled();
+
+      await turn(false);
+      expect(within(found()).getByRole("textbox")).toHaveValue("It was the proxy");
+      expect(within(found()).getByRole("button", { name: "Wrong" })).toBeDisabled();
+      await act(async () =>
+        votes[0](
+          json({
+            target: "diagnosis",
+            vote: "down",
+            note: "It was the proxy",
+            at: "2026-11-02T18:10:00Z",
+          }),
+        ),
+      );
+      expect(await within(found()).findByRole("status")).toHaveTextContent("Marked wrong");
+      expect(votes).toHaveLength(1);
+    });
   });
 });
