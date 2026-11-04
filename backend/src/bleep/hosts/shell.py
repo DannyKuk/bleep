@@ -125,21 +125,21 @@ _PSEUDO_FS = {"tmpfs", "devtmpfs", "overlay", "shm", "squashfs", "devfs"}
 _DF_ROW = re.compile(r"(?P<fs>.+?)\s+\d+\s+\d+\s+\d+\s+(?P<pct>\d+)%\s+(?P<mount>/.*)")
 
 
-class _Unreadable(Exception):
-    pass
+class HostUnreadable(Exception):
+    """A basics command failed (non-zero exit) or its output did not parse."""
 
 
 async def _out(shell: HostShell, argv: list[str]) -> str:
     result = await shell.run(argv, COMMAND_TIMEOUT_S)
     if result.exit_code != 0:
-        raise _Unreadable(f"exit {result.exit_code}: {result.stderr.strip()[:200]}")
+        raise HostUnreadable(f"exit {result.exit_code}: {result.stderr.strip()[:200]}")
     return result.stdout
 
 
 def _field[T](label: str, read: Callable[[], T]) -> T | None:
     try:
         return read()
-    except (_Unreadable, ValueError, KeyError, IndexError) as error:
+    except (HostUnreadable, ValueError, KeyError, IndexError) as error:
         log.warning("host basics: could not read %s: %s", label, error)
         return None
 
@@ -163,7 +163,7 @@ def _disks(df: str, os: str) -> list[DiskUsage]:
             seen.add(mount)
             disks.append(DiskUsage(mount=mount, used_percent=int(row["pct"])))
     if not disks:
-        raise _Unreadable("no filesystems in df output")
+        raise HostUnreadable("no filesystems in df output")
     return disks
 
 
@@ -172,13 +172,13 @@ def _free(text: str) -> tuple[int, int]:
         parts = line.split()
         if parts and parts[0] == "Mem:":
             return int(parts[1]), int(parts[6])  # total, available
-    raise _Unreadable("no Mem: line")
+    raise HostUnreadable("no Mem: line")
 
 
 def _vm_available(text: str) -> int:
     size = re.search(r"page size of (\d+) bytes", text)
     if size is None:
-        raise _Unreadable("no page size")
+        raise HostUnreadable("no page size")
     pages = {}
     for line in text.splitlines():
         key, _, value = line.partition(":")
@@ -192,7 +192,9 @@ def _vm_available(text: str) -> int:
 async def host_basics(shell: HostShell) -> HostBasics:
     """Disk, memory, load and CPUs of a Linux or macOS host. A field it cannot read is None.
 
-    Raises only what the shell raises (a lost connection), so the caller keeps the old basics.
+    Raises what the shell raises (a lost connection) and `HostUnreadable` when `uname -s` fails;
+    a later command that fails only leaves its fields None. Either way the caller keeps what it
+    had (the registry its old basics; Verify fails the reading).
     """
     name = (await _out(shell, ["uname", "-s"])).strip()
     if name == "Linux":
@@ -207,7 +209,7 @@ async def _gather(shell: HostShell, *argvs: list[str]) -> list[str | None]:
     async def one(argv: list[str]) -> str | None:
         try:
             return await _out(shell, argv)
-        except _Unreadable as error:
+        except HostUnreadable as error:
             log.warning("host basics: %s failed: %s", argv[0], error)
             return None
 

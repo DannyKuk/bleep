@@ -38,7 +38,7 @@ from bleep.schemas.graph import (
     VerificationResult,
 )
 from bleep.schemas.incidents import Incident
-from bleep.schemas.settings import Budgets, ModelSettings
+from bleep.schemas.settings import Budgets, ModelSettings, Thresholds
 from bleep.tools.registry import ActHandler, ToolRegistry
 
 # The actions Bleep can take without a plugin; plugins add theirs (coolify.*) when enabled.
@@ -248,6 +248,8 @@ class SettingsSource(Protocol):
 
     def budgets(self) -> Budgets: ...
 
+    def thresholds(self) -> Thresholds: ...
+
     def models(self) -> ModelSettings: ...
 
     def enabled_actions(self) -> set[str]: ...
@@ -259,11 +261,15 @@ class StaticSettings:
     replaces it with values a human can change from the dashboard."""
 
     budget_limits: Budgets = field(default_factory=Budgets)
+    threshold_limits: Thresholds = field(default_factory=Thresholds)
     model_settings: ModelSettings = field(default_factory=ModelSettings)
     actions: frozenset[str] = CORE_ACTIONS
 
     def budgets(self) -> Budgets:
         return self.budget_limits
+
+    def thresholds(self) -> Thresholds:
+        return self.threshold_limits
 
     def models(self) -> ModelSettings:
         return self.model_settings

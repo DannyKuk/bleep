@@ -12,6 +12,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 
+from bleep.hosts.readings import readings
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import HostBasics
 from bleep.schemas.incidents import Signal, Subject
@@ -62,19 +63,7 @@ class HostProbe:
     def _signals(self, basics: HostBasics) -> list[Signal]:
         subject = Subject(kind="host", host_id=self.host_id)
         at = self._clock()
-        signals: list[Signal] = []
-        if basics.disks:
-            worst = max(basics.disks, key=lambda d: d.used_percent)
-            detail = {"percent": worst.used_percent, "mount": worst.mount}
-            signals.append(Signal(subject=subject, kind="disk", at=at, detail=detail))
-        if basics.mem_total and basics.mem_available is not None:
-            percent = basics.mem_available / basics.mem_total * 100
-            signals.append(
-                Signal(subject=subject, kind="memory", at=at, detail={"available_percent": percent})
-            )
-        if basics.load15 is not None and basics.cpus:
-            per_cpu = basics.load15 / basics.cpus
-            signals.append(
-                Signal(subject=subject, kind="load", at=at, detail={"load_per_cpu": per_cpu})
-            )
-        return signals
+        return [
+            Signal(subject=subject, kind=kind, at=at, detail=detail)
+            for kind, detail in readings(basics).items()
+        ]
