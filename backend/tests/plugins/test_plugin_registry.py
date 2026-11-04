@@ -1,5 +1,5 @@
 import pytest
-from pydantic import BaseModel, ConfigDict, SecretStr
+from pydantic import BaseModel, ConfigDict, SecretBytes, SecretStr
 
 from bleep.guard.plan_check import check_plan
 from bleep.hosts.registry import Registry
@@ -169,6 +169,28 @@ def test_a_plugin_whose_settings_could_hold_a_secret_is_refused(field):
 
     with pytest.raises(ValueError, match="look like secrets"):
         plugins(plugin=Leaky())
+
+
+class _Nested(BaseModel):
+    value: SecretStr
+
+
+@pytest.mark.parametrize(
+    "annotation", [SecretStr, SecretStr | None, list[SecretStr], SecretBytes, _Nested]
+)
+def test_a_plugin_whose_settings_have_a_secret_type_under_a_plain_name_is_refused(annotation):
+    """Secrets come from the env only: a `SecretStr` field would be stored and shown."""
+    model = type(
+        "Typed",
+        (BaseModel,),
+        {"__annotations__": {"auth": annotation}, "model_config": {"extra": "forbid"}},
+    )
+
+    class Typed(FakeCoolifyPlugin):
+        settings_model = model
+
+    with pytest.raises(ValueError, match="auth look like secrets"):
+        plugins(plugin=Typed())
 
 
 def test_a_plugin_whose_settings_allow_extra_fields_is_refused():

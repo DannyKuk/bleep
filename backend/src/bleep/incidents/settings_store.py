@@ -4,20 +4,26 @@ Precedence is database override > hosts file > defaults (and the env for the mod
 store keeps only what was changed, one section per row; the values in force are computed from the
 layers below on every read, so clearing an override brings the hosts file's value back. It is the
 graph's `SettingsSource`: nodes read budgets, models and enabled actions from it as they run.
-Secrets never get in: the API refuses them before they reach `update`, and `load` refuses a
-stored row that holds one. See docs/design/settings.md.
+Every change names the `version` of the overrides it was built from and is refused when they have
+changed since, so a stale page never reverts someone else's change. Secrets never get in: the API
+refuses them before they reach `update`, and `load` refuses a stored row that holds one. See
+docs/design/settings.md.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
+import os
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
 from bleep.graph.deps import CORE_ACTIONS
+from bleep.guard.redact import REDACTED
 from bleep.guard.secret_fields import find_secrets
 from bleep.hosts.config import HostConfig, ServiceOverrides, UrlCheckConfig
 from bleep.hosts.registry import Registry
@@ -50,6 +56,14 @@ PLUGIN_PREFIX = "plugin:"
 
 class SettingsRefused(ValueError):
     """The update is not applied; the text says why and never holds a submitted value."""
+
+
+class SettingsStale(Exception):
+    """The update was built from overrides that have changed since; nothing is applied."""
+
+    def __init__(self, current: str) -> None:
+        super().__init__("the settings changed since this version was read")
+        self.current = current
 
 
 class _PluginRow(BaseModel):
@@ -116,6 +130,19 @@ class SettingsStore:
     def overrides(self) -> SettingsUpdate:
         return self._overrides.model_copy(deep=True)
 
+    def version(self) -> str:
+        """A hash of the overrides `update` replaces, as they are stored. It is computed from their
+        content, so it holds across a restart and needs no counter of its own; plugins are not
+        part of it."""
+        sections: dict[str, BaseModel | None] = {
+            name: getattr(self._overrides, name) for name in ("models", "budgets", "thresholds")
+        }
+        for host_id, host in (self._overrides.hosts or {}).items():
+            sections[f"{HOST_PREFIX}{host_id}"] = host
+        stored = {key: _stored(model) for key, model in sections.items() if model is not None}
+        content = json.dumps({key: value for key, value in stored.items() if value}, sort_keys=True)
+        return hashlib.sha256(content.encode()).hexdigest()[:16]
+
     def plugin_toggles(self) -> dict[str, bool]:
         return {name: self._plugins.is_enabled(name) for name in self._plugins.names()}
 
@@ -166,12 +193,15 @@ class SettingsStore:
                     log.warning("settings: stored %s left out: %s", key, type(problem).__name__)
             self._apply_hosts()
 
-    async def update(self, update: SettingsUpdate) -> None:
-        """Store and apply `update` (see `SettingsUpdate` for what replaces what). Raises
-        `SettingsRefused` with nothing changed for a host not in the hosts file, an invalid
-        merged host, or a secret."""
+    async def update(self, update: SettingsUpdate, *, version: str) -> None:
+        """Store and apply `update` (see `SettingsUpdate` for what replaces what), built from the
+        overrides at `version`. Raises `SettingsStale` when they have changed since, and
+        `SettingsRefused` for a host not in the hosts file, an invalid merged host, or a secret;
+        either way nothing changes."""
         _refuse_secrets(update.model_dump(mode="json", exclude_none=True))
         async with self._lock:
+            if version != self.version():
+                raise SettingsStale(self.version())
             merged = self._overrides.model_copy(deep=True)
             writes: dict[str, BaseModel] = {}
             for section in ("models", "budgets", "thresholds"):
@@ -283,7 +313,7 @@ class SettingsStore:
         conn = await self._db.connect()
         try:
             for key, model in sections.items():
-                value = model.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
+                value = _stored(model)
                 if value:
                     await conn.execute(
                         "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) "
@@ -300,17 +330,38 @@ class SettingsStore:
 
 def _connection(host: HostConfig) -> HostConnectionView:
     if host.kind == "socket":
-        return HostConnectionView(kind="socket", endpoint=host.endpoint)
+        return HostConnectionView(kind="socket", endpoint=_without_userinfo(host.endpoint))
     key = host.key_file
     return HostConnectionView(
         kind="ssh",
-        address=host.address,
+        address=_without_userinfo(host.address),
         user=host.user,
         port=host.port,
         docker_socket=host.docker_socket,
-        key_file=SecretStatus(file=str(key), set=key.is_file()) if key is not None else None,
+        key_file=SecretStatus(file=str(key), set=_readable(key)) if key is not None else None,
         known_hosts_file=str(host.known_hosts_file) if host.known_hosts_file else None,
     )
+
+
+def _stored(model: BaseModel) -> dict[str, Any]:
+    """A section as it is stored: only what differs from the layers below."""
+    return model.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
+
+
+def _without_userinfo(address: str | None) -> str | None:
+    """`tcp://user:pass@host:2375` as `tcp://<redacted>@host:2375`. Everything up to the last `@`
+    goes, since a password may hold `@` and `/`."""
+    if address is None or "@" not in address:
+        return address
+    scheme, sep, rest = address.partition("://")
+    if not sep:
+        scheme, rest = "", address
+    return f"{scheme}{sep}{REDACTED}@{rest.rpartition('@')[2]}"
+
+
+def _readable(path: Path) -> bool:
+    """Whether Bleep could read the key file; it is never opened here."""
+    return path.is_file() and os.access(path, os.R_OK)
 
 
 def _layer[T: BaseModel](base: T, overrides: BaseModel | None) -> T:

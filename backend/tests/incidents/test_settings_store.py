@@ -1,4 +1,6 @@
+import asyncio
 import json
+import os
 from datetime import UTC, datetime
 
 import pytest
@@ -8,7 +10,7 @@ from bleep.graph.deps import CORE_ACTIONS
 from bleep.guard.plan_check import check_plan, host_urls, protected_names
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.registry import Registry
-from bleep.incidents.settings_store import SettingsRefused, SettingsStore
+from bleep.incidents.settings_store import SettingsRefused, SettingsStale, SettingsStore
 from bleep.plugins.registry import PluginError, PluginRegistry
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import PlanStep, Proposal
@@ -70,6 +72,13 @@ def make_store(db: Database, registry: Registry, env: dict[str, str] | None = No
     return SettingsStore(db, registry, plugins, models=models, clock=lambda: T0), plugins
 
 
+async def save(store: SettingsStore, update: SettingsUpdate | dict) -> None:
+    """A change built from the overrides as they are now."""
+    if isinstance(update, dict):
+        update = SettingsUpdate.model_validate(update)
+    await store.update(update, version=store.version())
+
+
 def url_override(urls: list[str]) -> SettingsUpdate:
     services = {"compose:shop": {"urls": [{"url": u} for u in urls]}}
     return SettingsUpdate.model_validate({"hosts": {"a": {"services": services}}})
@@ -90,7 +99,7 @@ async def test_a_database_url_wins_over_the_hosts_file_everywhere_it_is_read(db)
     registry = hosts_file_registry()
     store, _ = make_store(db, registry)
     await registry.start()
-    await store.update(url_override([DB_URL]))
+    await save(store, url_override([DB_URL]))
     assert [u.url for u in registry.service(SHOP).urls] == [DB_URL]  # the URL checks read this
     assert set(host_urls(registry, "a")) == {DB_URL}  # the plan check and Verify read this
     assert [u.url for u in store.host_views()[0].services["compose:shop"].urls] == [DB_URL]
@@ -102,16 +111,16 @@ async def test_clearing_an_override_brings_the_hosts_file_value_back(db):
     registry = hosts_file_registry()
     store, _ = make_store(db, registry)
     await registry.start()
-    await store.update(url_override([DB_URL]))
-    await store.update(SettingsUpdate.model_validate({"hosts": {"a": {}}}))
+    await save(store, url_override([DB_URL]))
+    await save(store, {"hosts": {"a": {}}})
     assert [u.url for u in registry.service(SHOP).urls] == [FILE_URL]
     assert store.overrides().hosts == {}
 
 
 async def test_overrides_survive_a_restart(db):
     first, _ = make_store(db, hosts_file_registry())
-    await first.update(url_override([DB_URL]))
-    await first.update(SettingsUpdate.model_validate({"budgets": {"daily_cost_usd": 0.25}}))
+    await save(first, url_override([DB_URL]))
+    await save(first, {"budgets": {"daily_cost_usd": 0.25}})
     registry = hosts_file_registry()
     second, _ = make_store(db, registry)
     await second.load()
@@ -125,7 +134,7 @@ async def test_host_rules_override_and_the_service_overrides_stay(db):
     registry = hosts_file_registry()
     store, _ = make_store(db, registry)
     await registry.start()
-    await store.update(SettingsUpdate.model_validate({"hosts": {"a": {"rules": ["db rule"]}}}))
+    await save(store, {"hosts": {"a": {"rules": ["db rule"]}}})
     host = registry.hosts()[0]
     assert host.config.rules == ["db rule"]  # what Gather shows the agent
     assert host.config.kind == "socket" and host.config.endpoint is not None  # connection kept
@@ -136,7 +145,7 @@ async def test_the_dashboard_can_add_protected_containers_but_never_unprotect_on
     store, _ = make_store(db, registry)
     await registry.start()
     services = {"compose:shop": {"protected_containers": ["shop-web-1"]}}
-    await store.update(SettingsUpdate.model_validate({"hosts": {"a": {"services": services}}}))
+    await save(store, {"hosts": {"a": {"services": services}}})
     assert protected_names(registry.hosts()[0]) == {"shop-db-1", "shop-web-1"}
     step = PlanStep(action="docker.restart", host_id="a", target="shop-web-1")
     proposal = Proposal(kind="act", steps=[step], reason="r")
@@ -148,7 +157,7 @@ async def test_the_dashboard_can_add_protected_containers_but_never_unprotect_on
     }
     assert "protected" in rules
     services = {"compose:shop": {"protected_containers": []}}
-    await store.update(SettingsUpdate.model_validate({"hosts": {"a": {"services": services}}}))
+    await save(store, {"hosts": {"a": {"services": services}}})
     assert protected_names(registry.hosts()[0]) == {"shop-db-1"}
 
 
@@ -159,7 +168,7 @@ async def test_a_host_not_in_the_hosts_file_is_refused_and_nothing_changes(db):
         {"budgets": {"verify_loops": 1}, "hosts": {"ghost": {"rules": ["x"]}}}
     )
     with pytest.raises(SettingsRefused, match="ghost"):
-        await store.update(update)
+        await save(store, update)
     assert store.budgets().verify_loops == 2
     reloaded, _ = make_store(db, hosts_file_registry())
     await reloaded.load()
@@ -172,7 +181,7 @@ async def test_a_secret_in_a_rule_is_refused(db):
         {"hosts": {"a": {"rules": ["log in with password=hunter2hunter2"]}}}
     )
     with pytest.raises(SettingsRefused) as refusal:
-        await store.update(update)
+        await save(store, update)
     assert "hunter2" not in str(refusal.value)
     assert "hosts.a.rules[0]" in str(refusal.value)
 
@@ -189,7 +198,7 @@ def test_bounds_keep_a_budget_from_switching_a_guard_off():
 
 async def test_the_model_choice_changes_and_the_env_key_stays(db):
     store, _ = make_store(db, hosts_file_registry())
-    await store.update(SettingsUpdate.model_validate({"models": {"cheap_model": "openai/m2"}}))
+    await save(store, {"models": {"cheap_model": "openai/m2"}})
     models = store.models()
     assert (models.model, models.cheap_model) == ("openai/m1", "openai/m2")
     assert models.openrouter_api_key.get_secret_value() == "sk-or-env-key"
@@ -199,7 +208,7 @@ async def test_the_model_choice_changes_and_the_env_key_stays(db):
 async def test_thresholds_reach_a_running_detector_at_once(db):
     store, _ = make_store(db, hosts_file_registry())
     detector = Detector(store.thresholds, lambda: T0)
-    await store.update(SettingsUpdate.model_validate({"thresholds": {"disk_percent": 75}}))
+    await save(store, {"thresholds": {"disk_percent": 75}})
     assert detector.t.disk_percent == 75
 
 
@@ -348,7 +357,100 @@ async def test_host_views_say_which_protected_containers_the_hosts_file_fixes(db
     registry = hosts_file_registry()
     store, _ = make_store(db, registry)
     services = {"compose:shop": {"protected_containers": ["shop-web-1", "shop-db-1"]}}
-    await store.update(SettingsUpdate.model_validate({"hosts": {"a": {"services": services}}}))
+    await save(store, {"hosts": {"a": {"services": services}}})
     shop = store.host_views()[0].services["compose:shop"]
     assert shop.protected_containers == ["shop-db-1", "shop-web-1"]
     assert shop.hosts_file_protected_containers == ["shop-db-1"]
+
+
+async def test_a_change_built_from_a_stale_version_is_refused_and_nothing_changes(db):
+    store, _ = make_store(db, hosts_file_registry())
+    read = store.version()
+    protect = {"compose:shop": {"protected_containers": ["shop-web-1"]}}
+    await save(store, {"hosts": {"a": {"services": protect}}})
+    after = store.version()
+    assert after != read  # protecting a container is a new version
+
+    stale = SettingsUpdate.model_validate({"hosts": {"a": {"rules": ["stale rule"]}}})
+    with pytest.raises(SettingsStale) as refused:
+        await store.update(stale, version=read)
+    assert refused.value.current == after
+    assert store.version() == after
+    assert "shop-web-1" in store.host_views()[0].services["compose:shop"].protected_containers
+    assert store.host_views()[0].rules == ["file rule"]
+    again, _ = make_store(db, hosts_file_registry())
+    await again.load()
+    assert again.overrides() == store.overrides()  # nothing written either
+
+
+async def test_of_two_writers_from_one_version_only_the_first_is_applied(db):
+    store, _ = make_store(db, hosts_file_registry())
+    read = store.version()
+    first = SettingsUpdate.model_validate({"thresholds": {"disk_percent": 80}})
+    second = SettingsUpdate.model_validate({"thresholds": {"memory_polls": 9}})
+    results = await asyncio.gather(
+        store.update(first, version=read),
+        store.update(second, version=read),
+        return_exceptions=True,
+    )
+    assert results[0] is None and isinstance(results[1], SettingsStale)
+    assert store.thresholds().disk_percent == 80
+    assert store.thresholds().memory_polls == Thresholds().memory_polls
+
+
+async def test_the_version_holds_across_a_restart_and_follows_the_content(db):
+    first, _ = make_store(db, hosts_file_registry())
+    empty = first.version()
+    await save(first, {"budgets": {"daily_cost_usd": 0.25}})
+    second, _ = make_store(db, hosts_file_registry())
+    await second.load()
+    assert second.version() == first.version() != empty
+    await save(second, {"budgets": {}})
+    assert second.version() == empty
+
+
+async def test_a_plugin_change_leaves_the_version_alone(db):
+    store, _ = make_store(db, hosts_file_registry())
+    before = store.version()
+    await store.set_plugin("coolify", PluginUpdate(settings={"url": "https://c.test"}))
+    assert store.version() == before
+
+
+async def test_a_connection_never_shows_the_userinfo_of_an_endpoint_or_address(db):
+    hosts = [
+        socket_host(id="a", endpoint="tcp://bleep:hunter2@socket-proxy:2375"),
+        socket_host(id="b", endpoint="tcp://p/a@ss@proxy:2375"),
+        ssh_host(id="m1", address="danny:hunter2@m1.local"),
+    ]
+
+    async def connect(_host):
+        return None, FakeEngine("a", [])
+
+    store, _ = make_store(db, Registry(hosts, connect, clock=lambda: T0))
+    a, b, m1 = (view.connection for view in store.host_views())
+    assert a.endpoint == "tcp://<redacted>@socket-proxy:2375"
+    assert b.endpoint == "tcp://<redacted>@proxy:2375"
+    assert m1.address == "<redacted>@m1.local"
+    shown = str([v.model_dump() for v in store.host_views()])
+    assert "hunter2" not in shown and "bleep:" not in shown and "p/a" not in shown
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
+async def test_a_key_file_bleep_cannot_read_is_not_set(db, tmp_path):
+    key = tmp_path / "id_ed25519"
+    key.write_text("not-a-real-key\n")
+    key.chmod(0o000)
+    folder = tmp_path / "a-folder"
+    folder.mkdir()
+
+    async def connect(_host):
+        return None, FakeEngine("a", [])
+
+    hosts = [ssh_host(id="m1", key_file=key), ssh_host(id="m2", key_file=folder)]
+    store, _ = make_store(db, Registry(hosts, connect, clock=lambda: T0))
+    try:
+        m1, m2 = (view.connection for view in store.host_views())
+        assert m1.key_file is not None and not m1.key_file.set
+        assert m2.key_file is not None and not m2.key_file.set
+    finally:
+        key.chmod(0o600)

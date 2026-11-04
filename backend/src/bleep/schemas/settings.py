@@ -213,3 +213,4 @@ class SettingsView(BaseModel):
     hosts: list[HostSettingsView]
     plugins: dict[str, bool]
     overrides: dict[str, Any]  # a `SettingsUpdate` without the fields left at the layers below
+    version: str  # of `overrides`; a `PUT /api/settings` sends it back in `If-Match`
