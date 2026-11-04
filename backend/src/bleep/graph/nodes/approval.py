@@ -1,5 +1,9 @@
 """Approval: put the plan to the human and wait for a yes, a no or an instruction.
 
+A plan the plan check refused twice (`Proposal.refused`) is put the same way while re-plans
+remain, but only an instruction (back to Propose) or a no (on to the report) can answer it; a
+yes is never recorded for it and never gets a grant (#113).
+
 The node reads each target (a container's id, start time, restart count and state, or the
 uuid a Coolify application name resolves to, so Execute can tell a stale plan), stores the plan
 as a pending approval, publishes `approval_requested`, notifies, and calls `interrupt()` with
@@ -20,7 +24,7 @@ from typing import Literal
 from langgraph.types import interrupt
 
 from bleep.graph.deps import GraphDeps
-from bleep.graph.replan import replan
+from bleep.graph.replan import replan, replans_left
 from bleep.graph.state import IncidentState, Node
 from bleep.graph.targets import read_app_uuid
 from bleep.guard.grant import binds_app
@@ -116,8 +120,14 @@ def make(deps: GraphDeps) -> Node:
     async def approval(state: IncidentState) -> dict:
         incident_id = state["incident_id"]
         proposal = state.get("proposal")
-        if proposal is None or proposal.kind != "act":
+        if proposal is None or not (proposal.kind == "act" or proposal.refused):
             return {"decision": None, "grant": None}  # nothing to approve: route goes to report
+        if proposal.refused and not replans_left(deps, state):
+            # No instruction could follow. When the run already went back to Propose (any re-plan
+            # counts: an instruction, a stale plan, an unreadable target) the budget is spent and
+            # the run ends as `replan_limit`; with no trip so far it is the plain refusal.
+            ended = await replan(deps, state) if state.get("replans", 0) else {}
+            return {"decision": None, "grant": None, **ended}
 
         record = await deps.approvals.current(incident_id)
         consumed = state.get("approval")
@@ -144,9 +154,10 @@ def make(deps: GraphDeps) -> Node:
         await deps.bus.publish(
             incident_id,
             "decision",
-            {"kind": decision.kind, "text": decision.text, "via": decision.via},
+            {"kind": decision.kind, "text": decision.text, "via": decision.via}
+            | ({"refused": True} if proposal.refused else {}),
         )
-        approved = decision.kind == "approve"
+        approved = decision.kind == "approve" and proposal.kind == "act"
         update: dict = {
             "approval": record.request,
             "decision": decision,
@@ -163,11 +174,16 @@ def make(deps: GraphDeps) -> Node:
 
 def route(state: IncidentState) -> Literal["propose", "execute", "report"]:
     """A yes goes to Execute; an instruction goes back to Propose, and so does a plan that could
-    not be put to the human; a no closes with a report, and so does a run out of re-plans."""
+    not be put to the human; a no closes with a report, and so does a run out of re-plans. A
+    refused plan has only the instruction (back to Propose) or the report: never Execute."""
     proposal = state.get("proposal")
-    if proposal is None or proposal.kind != "act" or state.get("outcome") is not None:
+    if proposal is None or state.get("outcome") is not None:
         return "report"
     decision = state.get("decision")
+    if proposal.refused:
+        return "propose" if decision is not None and decision.kind == "instruct" else "report"
+    if proposal.kind != "act":
+        return "report"
     if decision is None or decision.kind == "instruct":
         return "propose"
     return "execute" if decision.kind == "approve" else "report"

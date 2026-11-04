@@ -105,6 +105,7 @@ describe("ProposalCard", () => {
           kind: "no_action",
           steps: [],
           reason,
+          refused: true,
           human_instructions: `${reason}\nWhy:\n- step 1: shop-db-1 is protected`,
         })}
         approval={null}
@@ -115,6 +116,25 @@ describe("ProposalCard", () => {
     expect(why).toHaveTextContent("shop-db-1 is protected");
     expect(screen.queryByRole("region", { name: "What to do" })).toBeNull();
     expect(screen.queryByText(/your instruction/i)).toBeNull();
+  });
+
+  it("keeps the refused title for a plan stored before the refused flag", () => {
+    const reason = "Bleep's own checks refused the proposed plan twice, so nothing will run.";
+    render(
+      <ProposalCard
+        incidentId="inc-1"
+        proposal={proposal({
+          kind: "no_action",
+          steps: [],
+          reason,
+          refused: undefined,
+          human_instructions: reason,
+        })}
+        approval={null}
+        onDecided={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("region", { name: "Why nothing will run" })).toBeInTheDocument();
   });
 
   it("shows an answer to an earlier plan apart from the new one", () => {

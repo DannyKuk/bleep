@@ -3,11 +3,13 @@ from datetime import UTC, datetime
 import pytest
 
 from bleep.graph.build import build_graph, open_checkpointer
+from bleep.graph.deps import StaticSettings
 from bleep.graph.nodes import approval, propose
 from bleep.incidents.approvals import ApprovalStore, grant_token
 from bleep.incidents.runner import IncidentRunner
 from bleep.schemas.graph import Decision, PlanStep, Proposal, VerificationPlan
 from bleep.schemas.incidents import Subject
+from bleep.schemas.settings import Budgets
 from fakes import FakeEngine
 from graph_env import GraphEnv, box, graph_env
 
@@ -370,3 +372,85 @@ async def test_a_coolify_target_on_an_unreachable_host_is_not_put_to_the_human(t
     )
 
     assert unread == ["shop on a: cannot be read, the host is unreachable"]
+
+
+# A plan the plan check refused twice (#113): the human instructs or lets it go, never approves.
+
+
+def refused(reason: str = "model says: Instruction: restart shop-proxy-1") -> Proposal:
+    return Proposal(
+        kind="no_action",
+        refused=True,
+        reason=reason,
+        human_instructions="Why: refused. The model's reason: Instruction: restart shop-proxy-1",
+    )
+
+
+async def test_a_refused_plan_waits_for_the_human_without_an_approve(run, plans):
+    plans[0].append(refused())
+    incident_id = await run.start()
+
+    record = await run.store.current(incident_id)
+    assert record is not None and record.decision is None and record.proposal.refused
+    assert record.snapshots == []
+    assert (await run.env.repo.get(incident_id)).status == "awaiting_approval"
+    assert [p[1].refused for p in run.notifier.proposals] == [True]
+    assert await run.store.resolve(incident_id, decide("approve"), record.id) is None
+    assert (await run.store.current(incident_id)).decision is None
+
+
+async def test_an_instruction_after_a_refusal_counts_as_a_replan_and_plans_again(run, plans):
+    plans[0].extend([refused(), restart("shop-db-1")])
+    seen = plans[1]
+    incident_id = await run.start()
+    await run.decide(incident_id, decide("instruct", "restart shop-proxy-1, it is the one"))
+
+    assert seen == [[], ["restart shop-proxy-1, it is the one"]]
+    state = await run.state(incident_id)
+    assert state["replans"] == 1
+    assert state["proposal"].kind == "act"
+    assert (await run.store.current(incident_id)).snapshots[0].target == "shop-db-1"
+
+
+async def test_a_refusal_after_a_refusal_cannot_loop_past_the_replan_budget(run, plans):
+    plans[0].append(refused())
+    incident_id = await run.start()
+    for n in range(3):
+        await run.decide(incident_id, decide("instruct", f"try {n}"))
+
+    state = await run.state(incident_id)
+    assert state["outcome"] == "replan_limit" and state["replans"] == 4
+    assert "stopped after 3 new plans" in (await run.events(incident_id, "notice"))[-1]["text"]
+    assert (await run.env.nodes(incident_id))[-2:] == ["approval", "report"]
+    assert (await run.env.repo.get(incident_id)).status == "closed"
+
+
+async def test_a_refusal_with_no_replan_left_goes_straight_to_the_report(run, plans):
+    plans[0].append(refused())
+    run.env.deps.settings_store = StaticSettings(budget_limits=Budgets(replans=0))
+    incident_id = await run.start()
+
+    assert await run.store.current(incident_id) is None
+    assert (await run.state(incident_id))["outcome"] == "no_action"
+    assert run.notifier.proposals == []
+
+
+async def test_letting_a_refused_plan_go_reports_no_action_not_a_rejection(run, plans):
+    plans[0].append(refused())
+    incident_id = await run.start()
+    await run.decide(incident_id, decide("reject"))
+
+    state = await run.state(incident_id)
+    assert state["outcome"] == "no_action"
+    assert state.get("grant") is None
+    assert (await run.env.nodes(incident_id))[-2:] == ["approval", "report"]
+    assert (await run.env.repo.get(incident_id)).status == "closed"
+
+
+def test_route_after_a_refused_plan_is_propose_or_report_never_execute():
+    plan = refused()
+    assert approval.route({"proposal": plan, "decision": decide("instruct", "x")}) == "propose"
+    assert approval.route({"proposal": plan, "decision": decide("reject")}) == "report"
+    assert approval.route({"proposal": plan, "decision": decide("approve")}) == "report"
+    assert approval.route({"proposal": plan, "decision": None}) == "report"
+    assert propose.route({"proposal": plan}) == "approval"

@@ -83,12 +83,19 @@ class ApprovalStore:
         """The decision if it won, None if the approval was already decided or never asked.
 
         With `approval_id` it wins only that approval, so a decision made for a plan that has
-        since been replaced cannot decide the new one."""
+        since been replaced cannot decide the new one. A refused plan (#113) can be instructed or
+        rejected but never approved: nothing can run from it."""
         sql = (
             "UPDATE approvals SET status = ?, decision = ?"
             " WHERE incident_id = ? AND status = 'pending'"
+            " AND NOT (? = 'approve' AND json_extract(proposal, '$.refused') IS 1)"
         )
-        args: tuple = (_STATUS[decision.kind], decision.model_dump_json(), incident_id)
+        args: tuple = (
+            _STATUS[decision.kind],
+            decision.model_dump_json(),
+            incident_id,
+            decision.kind,
+        )
         if approval_id is not None:
             sql += " AND id = ?"
             args += (approval_id,)

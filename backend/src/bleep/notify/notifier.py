@@ -69,6 +69,17 @@ class Notifier:
         if self.telegram is None:
             return
         cause, category, confidence = fmt.confidence_text(diagnosis)
+        if proposal.refused:
+            text = fmt.render(
+                "refused",
+                id=incident.id,
+                title=fmt.prose_line(incident.title),
+                root_cause=fmt.prose_line(cause),
+                reasons=_reasons(proposal),
+                steps=_refused_steps(proposal),
+            )
+            await self._ask(incident, approval, text, approvable=False, reject_label="Let it go")
+            return
         text = fmt.render(
             "proposal",
             id=incident.id,
@@ -88,6 +99,14 @@ class Notifier:
         current = await self.approvals.current(incident.id) if self.approvals else None
         if current is None or current.id != approval.id:
             return  # no plan to show
+        if current.proposal.refused:
+            text = fmt.render(
+                "refused_reminder", id=incident.id, title=fmt.prose_line(incident.title)
+            )
+            await self._safely(
+                self._ask(incident, approval, text, approvable=False, reject_label="Let it go")
+            )
+            return
         text = fmt.render(
             "reminder",
             id=incident.id,
@@ -118,13 +137,19 @@ class Notifier:
         await self._plain("notice", id=incident_id, text=text)
 
     async def _ask(
-        self, incident: Incident, approval: ApprovalRequest, text: str, *, approvable: bool = True
+        self,
+        incident: Incident,
+        approval: ApprovalRequest,
+        text: str,
+        *,
+        approvable: bool = True,
+        reject_label: str = "Reject",
     ) -> None:
         """Send a plan with its buttons and remember which incident the message is about. A plan
         the message cannot show in full (`fmt.shows_in_full`) gets Reject only."""
         assert self.telegram is not None and self.chat_id is not None
         buttons = [("Approve", f"approve:{approval.id}")] if approvable else []
-        buttons.append(("Reject", f"reject:{approval.id}"))
+        buttons.append((reject_label, f"reject:{approval.id}"))
         message_id = await self.telegram.send_message(self.chat_id, text, buttons)
         if self.messages is not None:
             await self.messages.add(message_id, incident.id, approval.id, utcnow())
@@ -141,6 +166,16 @@ class Notifier:
             await sending
         except TelegramError as error:
             log.warning("telegram: could not send: %s", error)
+
+
+def _refused_steps(proposal: Proposal) -> fmt.Redacted:
+    """The steps the plan check refused, as `steps_text` shows a plan's steps."""
+    shown = fmt.steps_text(proposal.model_copy(update={"steps": proposal.refused_steps}))
+    return shown if shown.strip() else fmt.Redacted("no steps")
+
+
+def _reasons(proposal: Proposal) -> fmt.Redacted:
+    return fmt.Redacted("\n".join(f"- {fmt.prose_line(text)}" for text in proposal.refusal_reasons))
 
 
 @dataclass

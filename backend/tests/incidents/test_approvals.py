@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import hmac
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -271,3 +272,51 @@ async def test_the_reminder_period_comes_from_the_settings(db):
     assert await loop.tick(T0 + timedelta(minutes=15)) != []
     assert await loop.tick(T0 + timedelta(minutes=29)) == []
     assert await loop.tick(T0 + timedelta(minutes=30)) != []
+
+
+# --- refused plans (#113) ---
+
+
+def refused() -> Proposal:
+    return Proposal(kind="no_action", reason="refused", refused=True)
+
+
+async def test_a_refused_plan_cannot_be_approved_but_can_be_instructed_or_let_go(db):
+    store = ApprovalStore(db, SECRET, Clock())
+    first = await open_incident(db, "a/one")
+    await store.request(first, refused(), [])
+    assert await store.resolve(first, decide("approve")) is None
+    assert (await store.current(first)).decision is None
+    assert await store.grant(first) is None
+    assert await store.resolve(first, decide("instruct", text="x")) is not None
+
+    second = await open_incident(db, "a/two")
+    await store.request(second, refused(), [])
+    assert await store.resolve(second, decide("reject")) is not None
+
+
+async def test_a_plan_stored_before_the_refused_flag_can_still_be_approved(db):
+    incident_id = await open_incident(db)
+    store = ApprovalStore(db, SECRET, Clock())
+    request = await store.request(incident_id, restart(), [snap()])
+    old = restart().model_dump(mode="json")
+    for key in ("refused", "refused_steps", "refusal_reasons"):
+        old.pop(key)
+    conn = await db.connect()
+    try:
+        await conn.execute("UPDATE approvals SET proposal = ?", (json.dumps(old),))
+        await conn.commit()
+    finally:
+        await conn.close()
+
+    assert await store.resolve(incident_id, decide("approve"), request.id) is not None
+
+
+async def test_the_in_memory_approvals_refuse_an_approve_on_a_refused_plan_too():
+    from bleep.graph.deps import InMemoryApprovals
+
+    store = InMemoryApprovals(SECRET)
+    await store.request("inc", refused(), [])
+
+    assert await store.resolve("inc", decide("approve")) is None
+    assert await store.resolve("inc", decide("reject")) is not None

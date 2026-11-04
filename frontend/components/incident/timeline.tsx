@@ -42,7 +42,9 @@ function channel(payload: Record<string, unknown>): string {
 function decisionText(payload: Record<string, unknown>): string {
   const where = channel(payload);
   if (payload.kind === "approve") return `Approved on ${where}`;
-  if (payload.kind === "reject") return `Rejected on ${where}`;
+  if (payload.kind === "reject") {
+    return payload.refused === true ? `Let go on ${where}` : `Rejected on ${where}`;
+  }
   return `Instruction from ${where}: “${String(payload.text ?? "")}”`;
 }
 

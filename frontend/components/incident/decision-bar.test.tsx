@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { DecisionBar } from "@/components/incident/decision-bar";
-import { approval } from "@/components/incident/fixtures";
+import { approval, proposal } from "@/components/incident/fixtures";
 
 function reply(status: number, body: unknown) {
   const fetchMock = vi.fn<typeof fetch>(
@@ -37,7 +37,51 @@ function buttons() {
   ];
 }
 
+const refusedApproval = () =>
+  approval({
+    proposal: proposal({ kind: "no_action", steps: [], refused: true, reason: "refused" }),
+  });
+
 describe("DecisionBar", () => {
+  it("offers a refused plan an instruction and Let it go, never Approve", async () => {
+    const fetchMock = reply(200, decided("instruct", "dashboard", "restart shop-proxy-1"));
+    render(<DecisionBar incidentId="inc-1" approval={refusedApproval()} onDecided={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Let it go" })).toBeEnabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Tell Bleep something" }));
+    await userEvent.type(screen.getByRole("textbox"), "restart shop-proxy-1");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(sent(fetchMock)).toEqual({
+      approval_id: "appr-1",
+      kind: "instruct",
+      text: "restart shop-proxy-1",
+    });
+  });
+
+  it("says a refused plan was let go, not rejected", async () => {
+    reply(200, decided("reject", "dashboard"));
+    render(<DecisionBar incidentId="inc-1" approval={refusedApproval()} onDecided={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Let it go" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(/Let go on the dashboard/),
+    );
+  });
+
+  it("sends a reject when a refused plan is let go", async () => {
+    const fetchMock = reply(200, decided("reject", "dashboard"));
+    render(<DecisionBar incidentId="inc-1" approval={refusedApproval()} onDecided={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Let it go" }));
+
+    expect(sent(fetchMock)).toEqual({ approval_id: "appr-1", kind: "reject" });
+  });
+
   it("sends the approval it shows and locks after the decision", async () => {
     const fetchMock = reply(200, decided("approve", "dashboard"));
     const onDecided = vi.fn();

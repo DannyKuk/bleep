@@ -10,15 +10,16 @@ import { CHANNEL, formatDateTime } from "@/lib/format";
 
 const MAX_INSTRUCTION = 2000;
 
-function decidedText(decision: Decision): string {
+function decidedText(decision: Decision, refused: boolean): string {
   const where = CHANNEL[decision.via];
   if (decision.kind === "approve") return `Approved on ${where}`;
-  if (decision.kind === "reject") return `Rejected on ${where}`;
+  if (decision.kind === "reject") return refused ? `Let go on ${where}` : `Rejected on ${where}`;
   return `Instruction sent from ${where}: “${decision.text ?? ""}”`;
 }
 
 /**
- * Approve, reject or instruct one approval. The request names the approval it answers, so a stale
+ * Approve, reject or instruct one approval. A plan Bleep's own checks refused has no Approve and
+ * Reject reads "Let it go". The request names the approval it answers, so a stale
  * page cannot approve a plan it never showed. After any answer, or a 409 saying another channel
  * answered first, the buttons lock and the outcome stays on screen. Render it with
  * `key={approval.id}` so a new plan gets fresh buttons.
@@ -41,6 +42,7 @@ export function DecisionBar({
   const [text, setText] = useState("");
   const textId = useId();
 
+  const refused = approval.proposal.refused === true;
   const decision = approval.decision ?? mine;
   const locked = decision !== null || conflict !== null || sending !== null;
 
@@ -76,13 +78,15 @@ export function DecisionBar({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" disabled={locked} onClick={() => void decide("approve")}>
-          {spinner("approve") ?? <Check aria-hidden />}
-          Approve
-        </Button>
+        {!refused && (
+          <Button size="sm" disabled={locked} onClick={() => void decide("approve")}>
+            {spinner("approve") ?? <Check aria-hidden />}
+            Approve
+          </Button>
+        )}
         <Button size="sm" variant="outline" disabled={locked} onClick={() => void decide("reject")}>
           {spinner("reject") ?? <X aria-hidden />}
-          Reject
+          {refused ? "Let it go" : "Reject"}
         </Button>
         <Button
           size="sm"
@@ -146,7 +150,7 @@ export function DecisionBar({
       )}
       {decision && (
         <p role="status" className="text-sm text-muted-foreground">
-          {decidedText(decision)}, {formatDateTime(decision.at)}
+          {decidedText(decision, refused)}, {formatDateTime(decision.at)}
         </p>
       )}
     </div>

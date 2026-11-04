@@ -14,6 +14,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
+from bleep.graph.replan import replans_left
 from bleep.graph.state import IncidentState, Node
 from bleep.guard.plan_check import (
     StepRule,
@@ -28,7 +29,7 @@ from bleep.hosts.registry import Registry
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.memory.text import describe_fact, describe_past
-from bleep.schemas.graph import Diagnosis, GatherContext, PlanStep, Proposal
+from bleep.schemas.graph import Diagnosis, GatherContext, PlanStep, Proposal, ProposalDraft
 from bleep.schemas.incidents import Subject
 from bleep.tools.registry import ActCatalog, PlanRules
 
@@ -37,9 +38,15 @@ NO_PLAN = "The model gave no usable plan, so Bleep proposes no action."
 BUDGET = "The incident's token budget or the day's cost cap is spent, so Bleep proposes no action."
 REFUSED = "Bleep's own checks refused the proposed plan twice, so nothing will run."
 MCP_CALL = "mcp.call"
-# After a refusal the run goes to the report, so no instruction can follow: the human's way on is
-# to act by hand (#112).
+INSTRUCT = (
+    "You can tell Bleep what to do instead and it will plan again with that; it can also let "
+    "this go. Nothing can be approved from a refused plan."
+)
 BY_HAND = (
+    "A container that works is acted on only when it is this incident's own or when you name it "
+    "in an instruction. If it is the one at fault, name it, or act on it by hand."
+)
+BY_HAND_ONLY = (
     "A container that works is acted on only when it is this incident's own. If it is the one at "
     "fault, act on it by hand."
 )
@@ -67,9 +74,13 @@ def make(deps: GraphDeps) -> Node:
 
 
 def route(state: IncidentState) -> Literal["approval", "report"]:
-    """A plan that acts needs a human's yes; "no action" goes straight to the report."""
+    """A plan that acts needs a human's yes, and a refused plan the human's instruction or
+    dismissal (Approval sends it on to the report itself once no re-plan is left); any other
+    "no action" goes straight to the report."""
     proposal = state.get("proposal")
-    return "approval" if proposal is not None and proposal.kind == "act" else "report"
+    if proposal is None:
+        return "report"
+    return "approval" if proposal.kind == "act" or proposal.refused else "report"
 
 
 async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> Proposal:
@@ -92,7 +103,7 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
         return proposal
     _record(deps, incident_id, violations)
     messages += [
-        AIMessage(proposal.model_dump_json()),
+        AIMessage(proposal.model_dump_json(include=set(ProposalDraft.model_fields))),
         HumanMessage(prompts.load("graph/propose_retry", violations=_bullets(violations))),
     ]
     retry = _without_replaced(await _ask(deps, incident_id, messages), deps.registry)
@@ -100,7 +111,7 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
     if not again:
         return retry
     _record(deps, incident_id, again)
-    return _refused(retry, again)
+    return _refused(retry, again, can_instruct=replans_left(deps, state))
 
 
 def _step_rules(deps: GraphDeps) -> dict[str, StepRule]:
@@ -177,9 +188,10 @@ def _incident_containers(deps: GraphDeps, state: IncidentState) -> set[str]:
 async def _ask(deps: GraphDeps, incident_id: str, messages: list[BaseMessage]) -> Proposal:
     await check_budget(deps.ledger, incident_id, deps.settings_store.budgets())
     tracker = UsageTracker(incident_id, deps.ledger)
-    return await invoke_structured(
-        deps.models("main"), Proposal, messages, config=tracked(tracker), guard=deps.guard()
+    draft = await invoke_structured(
+        deps.models("main"), ProposalDraft, messages, config=tracked(tracker), guard=deps.guard()
     )
+    return Proposal.from_draft(draft)
 
 
 def _record(deps: GraphDeps, incident_id: str, violations: list[Violation]) -> None:
@@ -188,15 +200,20 @@ def _record(deps: GraphDeps, incident_id: str, violations: list[Violation]) -> N
             deps.guard_log.record(incident_id, "blocked_action", v.text)
 
 
-def _refused(proposal: Proposal, violations: list[Violation]) -> Proposal:
-    """`no_action` that tells the human what was refused and why."""
+def _refused(proposal: Proposal, violations: list[Violation], *, can_instruct: bool) -> Proposal:
+    """`no_action` that tells the human what was refused and why, and what they can do next."""
     steps = [f"{n}. {_step(redacted_step(s))}" for n, s in enumerate(proposal.steps, start=1)]
     lines = [REFUSED, "Why:", _bullets(violations), "The refused plan:", *(steps or ["no steps"])]
     lines.append(f"The model's reason: {proposal.reason}")
     if any(v.rule == "healthy_target" for v in violations):
-        lines.append(BY_HAND)
+        lines.append(BY_HAND if can_instruct else BY_HAND_ONLY)
+    if can_instruct:
+        lines.append(INSTRUCT)
     return Proposal(
         kind="no_action",
+        refused=True,
+        refused_steps=[redacted_step(s) for s in proposal.steps],
+        refusal_reasons=[v.text for v in violations],
         reason=REFUSED,
         verification=proposal.verification,
         human_instructions="\n".join(lines),

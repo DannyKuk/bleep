@@ -610,4 +610,9 @@ def redacted_step(step: PlanStep) -> PlanStep:
 def redacted_proposal(proposal: Proposal) -> Proposal:
     """The plan as the dashboard, the event stream and a chat show it (`redacted_step`); Execute
     alone reads the real one."""
-    return proposal.model_copy(update={"steps": [redacted_step(s) for s in proposal.steps]})
+    return proposal.model_copy(
+        update={
+            "steps": [redacted_step(s) for s in proposal.steps],
+            "refused_steps": [redacted_step(s) for s in proposal.refused_steps],
+        }
+    )

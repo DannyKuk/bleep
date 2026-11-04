@@ -54,6 +54,8 @@ def decision_memory(decision: Decision | None, proposal: Proposal | None) -> str
     if decision.kind == "approve":
         return f"approved {plan} on {day}"
     if decision.kind == "reject":
+        if proposal is not None and proposal.refused:
+            return f"let go of the refused plan on {day}"  # not a plan the human turned down
         return f"rejected {plan} on {day}"
     return f"instructed on {day}: {decision.text or ''}"
 

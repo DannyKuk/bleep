@@ -651,3 +651,10 @@ async def test_a_wrapper_tag_escaped_in_a_knowledge_search_names_the_documents(t
         "Bleep found text in the documents Bleep searched that tried to give it orders and "
         "ignored it; check who can write there."
     )
+
+
+def test_decision_text_says_let_go_for_a_refused_plan():
+    from bleep.graph.nodes.report import decision_text
+
+    assert decision_text("reject", "dashboard", let_go=True) == "Let go on the dashboard"
+    assert decision_text("reject", "dashboard") == "Rejected on the dashboard"

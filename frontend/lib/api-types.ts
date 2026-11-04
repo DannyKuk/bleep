@@ -164,6 +164,8 @@ export interface Proposal {
   reason: string;
   verification: VerificationPlan;
   human_instructions: string | null;
+  /** Bleep's own checks refused the plan twice: it can be instructed or let go, never approved. */
+  refused?: boolean;
 }
 
 export type DecisionKind = "approve" | "reject" | "instruct";
