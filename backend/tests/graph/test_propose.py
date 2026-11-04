@@ -617,6 +617,14 @@ async def test_a_refused_working_container_points_the_human_at_a_remedy_that_exi
     assert "act on it by hand" in told
 
 
+WEB_APP = {
+    "coolify.type": "application",
+    "coolify.applicationUuid": "web0uuid",
+    "coolify.resourceName": "web",
+}
+WEB_BOX = "web0uuid-074501234567"  # Coolify names an app's containers anew at every deploy
+
+
 async def test_a_set_env_value_is_kept_for_execute_shown_redacted_and_never_logged(
     tmp_path, caplog
 ):
@@ -628,20 +636,27 @@ async def test_a_set_env_value_is_kept_for_execute_shown_redacted_and_never_logg
         "target": "web",
         "params": {"key": "DATABASE_URL", "value": value},
     }
-    plan = reply(kind="act", steps=[set_env], reason="web reads a new variable", verification={})
-    engine = bad_env_engine()
-    web = {"coolify.type": "application", "coolify.applicationUuid": "u-web"}
-    engine.container_list.append(
-        box("u-web-074501234567", labels=web | {"coolify.resourceName": "web"})
+    redeploy = {"action": "coolify.redeploy", "host_id": "a", "target": "web"}
+    plan = reply(
+        kind="act",
+        steps=[set_env, redeploy],
+        reason="web reads a new variable",
+        verification={"containers": [WEB_BOX, "shop-db-1"]},
     )
+    engine = bad_env_engine()
+    engine.container_list.append(box(WEB_BOX, labels=WEB_APP))
     env, state = await setup(tmp_path, plan, plan, engine=engine)
-    env.deps.settings_store = StaticSettings(actions=CORE_ACTIONS | {"coolify.set_env"})
+    env.deps.settings_store = StaticSettings(
+        actions=CORE_ACTIONS | {"coolify.set_env", "coolify.redeploy"}
+    )
     node = propose.make(env.deps)
 
     first = (await node(state))["proposal"]
     await node(state | {"proposal": first})
 
     assert first.kind == "act" and first.steps[0].params["value"] == value
+    # The redeploy replaces web's container, so Verify checks the application instead.
+    assert first.verification.containers == ["shop-db-1"]
     events = [
         e.payload for e in await env.bus.history(state["incident_id"]) if e.kind == "proposal"
     ]

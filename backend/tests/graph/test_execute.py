@@ -434,3 +434,29 @@ async def test_the_same_plan_approved_again_after_verify_runs_again(env):
     assert env.acts() == [("restart", "shop-db-1"), ("restart", "shop-db-1")]
     assert [r.ok for r in update["step_results"]] == [True, True]  # both runs, in order
     assert route == "verify"
+
+
+async def test_a_coolify_step_left_started_is_not_judged_as_a_container(env):
+    subject = Subject(kind="service", host_id="a", service_id=env.env.service_id("shop"))
+    incident_id = (await env.env.open(subject)).id
+    step = PlanStep(action="coolify.redeploy", host_id="a", target="shop")
+    proposal = Proposal(kind="act", steps=[step], reason="a bad release")
+    request = await env.deps.approvals.request(incident_id, proposal, [])
+    decision = Decision(kind="approve", via="dashboard", at=APPROVED_AT)
+    await env.deps.approvals.resolve(incident_id, decision, request.id)
+    state = {
+        "incident_id": incident_id,
+        "subject": subject,
+        "proposal": proposal,
+        "approval": request,
+        "decision": decision,
+        "grant": await env.deps.approvals.grant(incident_id),
+    }
+    key = f"{request.plan_hash}:{request.id}"
+    await env.deps.action_log.start(incident_id, key, 0, step)
+
+    update, _ = await env.run(state)
+
+    detail = update["step_results"][0].detail
+    assert "gone" not in detail and "container" not in detail
+    assert "check the application in Coolify" in detail and "not run again" in detail

@@ -2,7 +2,9 @@ import asyncio
 import gzip
 import inspect
 import json
+import logging
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -10,9 +12,12 @@ import pytest
 import zstandard
 from pydantic import SecretStr
 
+from bleep.guard.grant import GrantInvalid, grant_token, plan_hash
+from bleep.hosts.config import ServiceOverrides
 from bleep.plugins.base import PluginContext
 from bleep.plugins.coolify.client import CoolifyClient, CoolifyError, CoolifyUnavailable
 from bleep.plugins.coolify.plugin import (
+    POLL_S,
     CoolifyPlugin,
     CoolifySettings,
     CoolifyUrlRefused,
@@ -20,6 +25,8 @@ from bleep.plugins.coolify.plugin import (
     check_url,
 )
 from bleep.plugins.registry import PluginError, PluginRegistry
+from bleep.schemas.graph import ApprovalGrant, ApprovalRecord, PlanStep, Proposal
+from bleep.tools.docker_act import StepRefused
 from bleep.tools.registry import ToolContext
 from fakes import FakeEngine
 from graph_env import RecordingGuardLog, box, graph_env, shop_host
@@ -30,6 +37,9 @@ TOKEN = "cool-root-token-7d1e9f"
 SECRET = "test-secret"
 SHOP = "shop0uuid0000000000000a1"
 BLOG = "blog0uuid0000000000000b2"
+DEPLOYMENT = "dep0uuid00000000000000141"
+NEW_VALUE = "postgres://shop:brand-new-password@db/shop"
+T0 = datetime(2026, 11, 4, 8, 0, tzinfo=UTC)
 WRAPPED = re.compile(r'^<untrusted source="coolify" id="(\w+)">\n.*\n</untrusted id="\1">$', re.S)
 
 
@@ -67,6 +77,8 @@ class Coolify:
 
     def __init__(self) -> None:
         self.requests: list[httpx.Request] = []
+        self.statuses = ["queued", "in_progress", "finished"]
+        self.busy = 0  # deployment reads answered 502 first
         self.routes: dict[tuple[str, str], httpx.Response] = {
             ("GET", "/api/v1/version"): httpx.Response(200, text="4.6.0"),
             ("GET", "/api/v1/applications"): httpx.Response(200, json=fixture("applications.json")),
@@ -76,17 +88,46 @@ class Coolify:
             ("GET", f"/api/v1/applications/{SHOP}/envs"): httpx.Response(
                 200, json=fixture("envs.json")
             ),
+            ("POST", "/api/v1/deploy"): httpx.Response(200, json=fixture("deploy.json")),
+            ("PATCH", f"/api/v1/applications/{SHOP}/envs"): httpx.Response(201, json={}),
+            ("POST", f"/api/v1/applications/{SHOP}/envs"): httpx.Response(201, json={}),
         }
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
+        if request.url.path == f"/api/v1/deployments/{DEPLOYMENT}":
+            if self.busy:
+                self.busy -= 1
+                return httpx.Response(502)
+            status = self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
+            return httpx.Response(200, json={"deployment_uuid": DEPLOYMENT, "status": status})
         found = self.routes.get((request.method, request.url.path))
         return found if found is not None else httpx.Response(404, json={"message": "Not found"})
 
+    def sent(self, method: str, path: str) -> list[httpx.Request]:
+        return [r for r in self.requests if (r.method, r.url.path) == (method, f"/api/v1{path}")]
 
-def context(guard_log=None) -> PluginContext:
+
+class Sleeps:
+    """A sleep that does not wait and moves `now` on by what it was asked to wait, plus `lag`
+    seconds per call for a Coolify that answers slowly."""
+
+    def __init__(self) -> None:
+        self.waits: list[float] = []
+        self.now = T0
+        self.lag = 0.0
+
+    async def __call__(self, seconds: float) -> None:
+        self.waits.append(seconds)
+        self.now += timedelta(seconds=seconds + self.lag)
+
+    def clock(self) -> datetime:
+        return self.now
+
+
+def context(guard_log=None, **settings) -> PluginContext:
     return PluginContext(
-        settings=CoolifySettings(),
+        settings=CoolifySettings(**settings),
         secrets={"COOLIFY_URL": SecretStr(BASE), "COOLIFY_TOKEN": SecretStr(TOKEN)},
         grant_secret=SecretStr(SECRET),
         guard_log=guard_log,
@@ -115,8 +156,11 @@ class Env:
         self.registry = built.registry
         self.coolify = coolify
         self.guard_log = guard_log
-        plugin = CoolifyPlugin(transport=Raw(coolify))
-        self.tools = {spec.name: spec for spec in plugin.tools(context(guard_log))}
+        self.sleeps = Sleeps()
+        plugin = CoolifyPlugin(transport=Raw(coolify), sleep=self.sleeps, clock=self.sleeps.clock)
+        ctx = context(guard_log, deploy_timeout_s=120)
+        self.tools = {spec.name: spec for spec in plugin.tools(ctx)}
+        self.handlers = plugin.act_handlers(ctx)
 
     def tool_ctx(self, host_id: str = "a") -> ToolContext:
         return ToolContext("inc_1", host_id, self.registry, self.guard_log)
@@ -124,15 +168,45 @@ class Env:
     async def read(self, name: str, **args) -> str:
         return await self.tools[name].build(self.tool_ctx()).ainvoke(args)
 
+    async def act(self, record: ApprovalRecord, grant: ApprovalGrant | None, index: int = 0):
+        the_step = record.proposal.steps[index]
+        handler = self.handlers[the_step.action]
+        return await handler.run(the_step, grant, self.registry, plan=record, step_index=index)
+
 
 @pytest.fixture
 async def env(tmp_path) -> Env:
     return await make_env(tmp_path)
 
 
-async def make_env(tmp_path, eng: FakeEngine | None = None) -> Env:
-    built = await graph_env(tmp_path, engine=eng or engine(), host=shop_host())
+async def make_env(tmp_path, eng: FakeEngine | None = None, protected=()) -> Env:
+    host = shop_host(services={"db": ServiceOverrides(protected_containers=list(protected))})
+    built = await graph_env(tmp_path, engine=eng or engine(), host=host)
     return Env(built, Coolify(), RecordingGuardLog())
+
+
+def step(action: str = "coolify.redeploy", target: str = "shop", **params: str) -> PlanStep:
+    return PlanStep(action=action, host_id="a", target=target, params=params)  # type: ignore[arg-type]
+
+
+def plan(*steps: PlanStep, incident_id: str = "inc_1") -> ApprovalRecord:
+    proposal = Proposal(kind="act", steps=list(steps or (step(),)), reason="the release is broken")
+    return ApprovalRecord(
+        id="ap_1",
+        incident_id=incident_id,
+        plan_hash=plan_hash(proposal, []),
+        proposal=proposal,
+        requested_at=T0,
+    )
+
+
+def grant_for(record: ApprovalRecord, secret: str = SECRET) -> ApprovalGrant:
+    token = grant_token(secret, record.incident_id, record.plan_hash)
+    return ApprovalGrant(incident_id=record.incident_id, plan_hash=record.plan_hash, token=token)
+
+
+def writes(coolify: Coolify) -> list[httpx.Request]:
+    return [r for r in coolify.requests if r.method != "GET"]
 
 
 # --- the client ---
@@ -257,6 +331,17 @@ async def test_an_unreachable_coolify_is_unavailable_without_httpxs_message():
     assert str(raised.value) == "Coolify could not be reached (ConnectError)"
 
 
+async def test_an_env_var_the_application_lacks_is_created():
+    coolify = Coolify()
+    coolify.routes[("PATCH", f"/api/v1/applications/{SHOP}/envs")] = httpx.Response(404)
+
+    how = await client(coolify).set_env(SHOP, "PORT", SecretStr("3000"))
+
+    assert how == "created"
+    assert [r.method for r in writes(coolify)] == ["PATCH", "POST"]
+    assert json.loads(coolify.requests[-1].content) == {"key": "PORT", "value": "3000"}
+
+
 # --- the read tools ---
 
 
@@ -354,6 +439,220 @@ async def test_the_tools_are_offered_only_on_a_host_running_coolify_applications
         assert not spec.offered(without.tool_ctx())
 
 
+# --- the actions ---
+
+
+async def test_a_redeploy_without_a_grant_is_refused_and_nothing_is_sent(env):
+    record = plan()
+
+    with pytest.raises(GrantInvalid):
+        await env.act(record, None)
+
+    assert env.coolify.requests == []
+    assert [kind for _, kind, _ in env.guard_log.records] == ["blocked_action"]
+
+
+async def test_a_grant_for_another_plan_or_secret_is_refused(env):
+    record = plan()
+    other = plan(step(action="coolify.set_env", key="PORT", value="1"))
+
+    for grant in (grant_for(other), grant_for(record, "another-secret")):
+        with pytest.raises(GrantInvalid):
+            await env.act(record, grant)
+
+    assert env.coolify.requests == []
+
+
+async def test_an_application_with_a_protected_container_is_refused(tmp_path):
+    env = await make_env(
+        tmp_path, engine(app_box("db-app-1", uuid="db0uuid", resource="db")), protected=["db-app-1"]
+    )
+    record = plan(step(target="db"))
+
+    with pytest.raises(StepRefused, match="protected"):
+        await env.act(record, grant_for(record))
+
+    assert env.coolify.requests == []
+
+
+@pytest.mark.parametrize("target", ["bleep", "bleep0uuid"])
+async def test_bleeps_own_coolify_application_is_never_redeployed(tmp_path, target):
+    # Bleep deployed through Coolify: one container of its application carries bleep.self.
+    own = app_box(
+        "bleep-backend", uuid="bleep0uuid", resource="bleep", labels={"bleep.self": "true"}
+    )
+    web = app_box("bleep-frontend", uuid="bleep0uuid", resource="bleep")
+    env = await make_env(tmp_path, engine(own, web))
+    record = plan(step(target=target))
+
+    with pytest.raises(StepRefused, match="Bleep's own"):
+        await env.act(record, grant_for(record))
+
+    assert env.coolify.requests == []
+
+
+async def test_an_application_this_host_does_not_run_is_refused(env):
+    record = plan(step(target=BLOG))
+
+    with pytest.raises(StepRefused, match="no Coolify application"):
+        await env.act(record, grant_for(record))
+
+    assert env.coolify.requests == []
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{}, {"key": "PORT"}, {"key": "1PORT", "value": "x"}, {"key": "A", "value": "x" * 10_001}],
+)
+async def test_a_set_env_with_bad_params_is_refused_without_quoting_the_value(env, params):
+    record = plan(step(action="coolify.set_env", **params))
+
+    with pytest.raises(StepRefused) as raised:
+        await env.act(record, grant_for(record))
+
+    assert "xxxx" not in str(raised.value)
+    assert env.coolify.requests == []
+
+
+async def test_a_redeploy_waits_until_the_deployment_finished(env):
+    record = plan()
+
+    result = await env.act(record, grant_for(record))
+
+    assert result.ok
+    assert result.detail == f"redeploy of shop finished (deployment {DEPLOYMENT})"
+    (deploy,) = env.coolify.sent("POST", "/deploy")
+    assert deploy.url.params["uuid"] == SHOP and deploy.url.params["force"] == "false"
+    assert len(env.coolify.sent("GET", f"/deployments/{DEPLOYMENT}")) == 3
+    assert env.sleeps.waits == [POLL_S] * 3
+    # Nothing is read after the deployment finished: the step ends there and Verify follows.
+    assert env.coolify.requests[-1].url.path == f"/api/v1/deployments/{DEPLOYMENT}"
+
+
+@pytest.mark.parametrize("status", ["failed", "cancelled-by-user"])
+async def test_a_failed_deployment_fails_the_step(env, status):
+    env.coolify.statuses = ["in_progress", status]
+    record = plan()
+
+    result = await env.act(record, grant_for(record))
+
+    assert not result.ok and status in result.detail
+
+
+async def test_a_deployment_that_never_ends_fails_the_step_at_the_timeout(env):
+    env.coolify.statuses = ["in_progress"]
+    record = plan()
+
+    result = await env.act(record, grant_for(record))
+
+    assert not result.ok and "had not finished after 120 s" in result.detail
+    assert sum(env.sleeps.waits) == 120
+
+
+async def test_the_deploy_wait_is_bounded_by_wall_time_when_coolify_answers_slowly(env):
+    env.coolify.statuses = ["in_progress"]
+    env.sleeps.lag = 50  # each answer takes 50 s on top of the 10 s wait
+    record = plan()
+
+    result = await env.act(record, grant_for(record))
+
+    assert not result.ok and "had not finished after 120 s" in result.detail
+    assert len(env.coolify.sent("GET", f"/deployments/{DEPLOYMENT}")) == 2
+
+
+async def test_a_deploy_request_that_times_out_says_one_may_be_queued(env):
+    env.coolify.routes[("POST", "/api/v1/deploy")] = httpx.Response(504)
+    record = plan()
+
+    result = await env.act(record, grant_for(record))
+
+    assert not result.ok and "a deployment of shop may already be queued" in result.detail
+
+
+async def test_a_coolify_error_while_polling_says_the_deployment_may_still_run(env):
+    env.coolify.statuses = ["in_progress"]
+    record = plan()
+    original = env.coolify.__call__
+
+    def broken(request):
+        if request.url.path.startswith("/api/v1/deployments/"):
+            env.coolify.requests.append(request)
+            return httpx.Response(401)
+        return original(request)
+
+    env.handlers = CoolifyPlugin(
+        transport=Raw(broken), sleep=env.sleeps, clock=env.sleeps.clock
+    ).act_handlers(context(env.guard_log))
+
+    result = await env.act(record, grant_for(record))
+
+    assert not result.ok and f"deployment {DEPLOYMENT} of shop was queued and may" in result.detail
+
+
+async def test_coolify_busy_while_deploying_is_asked_again(env):
+    env.coolify.busy = 2
+    env.coolify.statuses = ["finished"]
+    record = plan()
+
+    assert (await env.act(record, grant_for(record))).ok
+    assert len(env.coolify.sent("GET", f"/deployments/{DEPLOYMENT}")) == 3
+
+
+async def test_a_coolify_failure_while_acting_is_a_failed_result(env):
+    env.coolify.routes[("POST", "/api/v1/deploy")] = httpx.Response(401)
+    record = plan()
+
+    result = await env.act(record, grant_for(record))
+
+    assert not result.ok
+    assert result.detail == "Coolify: Coolify refused the token (401); check COOLIFY_TOKEN"
+
+
+async def test_an_application_labelled_by_id_only_is_refused(tmp_path):
+    # Coolify's API never shows an application's id, so a target is never matched on it.
+    old = box("old-app", labels={"coolify.type": "application", "coolify.applicationId": "2"})
+    env = await make_env(tmp_path, FakeEngine("a", [old]))
+    record = plan(step(target="2"))
+
+    with pytest.raises(StepRefused, match="no Coolify application by that name or uuid"):
+        await env.act(record, grant_for(record))
+
+    assert env.coolify.requests == []
+
+
+async def test_a_set_env_value_reaches_coolify_and_nothing_else(env, caplog):
+    caplog.set_level(logging.DEBUG)
+    record = plan(step(action="coolify.set_env", key="DATABASE_URL", value=NEW_VALUE))
+
+    result = await env.act(record, grant_for(record))
+
+    assert result.ok
+    assert result.detail == "updated DATABASE_URL on shop; it applies at the next deploy"
+    (patch,) = writes(env.coolify)
+    assert json.loads(patch.content) == {"key": "DATABASE_URL", "value": NEW_VALUE}
+    assert NEW_VALUE not in result.model_dump_json()
+    assert NEW_VALUE not in caplog.text
+    assert all(NEW_VALUE not in str(r) for r in env.guard_log.records)
+
+
+async def test_a_refused_set_env_never_logs_its_value(env, caplog):
+    caplog.set_level(logging.DEBUG)
+    record = plan(step(action="coolify.set_env", key="DATABASE_URL", value=NEW_VALUE))
+
+    with pytest.raises(GrantInvalid):
+        await env.act(record, None)
+
+    assert NEW_VALUE not in caplog.text
+    assert all(NEW_VALUE not in str(r) for r in env.guard_log.records)
+
+
+def test_a_handler_never_prints_its_secrets():
+    handlers = CoolifyPlugin().act_handlers(context())
+
+    for handler in handlers.values():
+        assert SECRET not in repr(handler) and TOKEN not in repr(handler)
+
+
 # --- the plugin ---
 
 ENV = {"COOLIFY_URL": BASE, "COOLIFY_TOKEN": TOKEN}
@@ -364,7 +663,7 @@ def registry(coolify: Coolify, env: dict[str, str] | None = None) -> PluginRegis
     return PluginRegistry([plugin], SecretStr(SECRET), env=ENV if env is None else env)
 
 
-async def test_switched_on_it_adds_its_read_tools_and_no_action():
+async def test_switched_on_it_adds_its_read_tools_and_both_actions():
     plugins = registry(Coolify())
     plugins.set("coolify", {}, True)
 
@@ -374,7 +673,8 @@ async def test_switched_on_it_adds_its_read_tools_and_no_action():
         "coolify_env_keys",
     }
     assert all(s.kind == "read" for s in plugins.tool_specs())
-    assert plugins.actions() == set()
+    assert plugins.actions() == {"coolify.redeploy", "coolify.set_env"}
+    assert plugins.settings("coolify").model_dump() == {"deploy_timeout_s": 900}
 
 
 @pytest.mark.parametrize("missing", ["COOLIFY_URL", "COOLIFY_TOKEN"])

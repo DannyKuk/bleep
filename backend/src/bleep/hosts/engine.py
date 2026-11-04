@@ -465,6 +465,7 @@ def _summary(raw: dict) -> ContainerSummary:
         exit_code=None if status in ("running", "created") else state.get("ExitCode"),
         started_at=_time(state.get("StartedAt")),
         finished_at=_time(state.get("FinishedAt")),
+        created_at=_time(raw.get("Created")),
     )
 
 

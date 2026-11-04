@@ -1,4 +1,5 @@
-"""The Coolify plugin: read an instance's applications, their deployments and env keys.
+"""The Coolify plugin: read an instance's applications, their deployments and env keys, and for
+an approved plan redeploy an application or set one of its env vars.
 
 Where Coolify answers and the token come from the environment (`COOLIFY_URL`, `COOLIFY_TOKEN`),
 never from a setting a person can change: the token goes to that address with every request.
@@ -8,8 +9,16 @@ single-label Docker service name (`check_url`).
 The read tools are offered on a host that runs Coolify applications (containers with Coolify's
 application labels). What they return was set in Coolify or by a commit, so it is redacted,
 cleaned and wrapped as untrusted like every other tool output, and an env var's value is never
-read at all. Every Coolify failure comes back as a sentence the model can go on from. The plugin
-has no actions. See docs/design/plugins.md.
+read at all. Every Coolify failure comes back as a sentence the model can go on from.
+
+An action runs the Docker act tools' checks first (`tools/docker_act.py`): the step is the
+approved plan's and the grant is for that plan, the target passes the plan check's target rules
+(a Coolify application none of whose containers is protected or Bleep's own) and its params.
+The application is named by its containers' labels as the registry sees them, so a plan cannot
+reach an application this host does not run. A redeploy waits until Coolify reports the
+deployment finished, failed or cancelled (at most `deploy_timeout_s`), so Verify checks the
+service only after the new containers are up. A set_env value goes to Coolify and nowhere else:
+not into a result, a log line or the guard log. See docs/design/plugins.md.
 """
 
 import asyncio
@@ -18,25 +27,35 @@ import logging
 import re
 import socket
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from langchain_core.tools import BaseTool, StructuredTool
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
+from bleep.guard.grant import GrantInvalid, verify_step
+from bleep.guard.log import GuardLogger
 from bleep.guard.pipeline import guard_text
+from bleep.guard.plan_check import NoCoolifyApp, check_params, check_target, coolify_app_uuid
 from bleep.hosts.registry import Registry
 from bleep.plugins.base import Plugin, PluginContext
-from bleep.plugins.coolify.client import CoolifyClient, CoolifyError
+from bleep.plugins.coolify.client import CoolifyClient, CoolifyError, CoolifyUnavailable
 from bleep.schemas.coolify import CoolifyApplication, CoolifyDeployment, CoolifyEnvKey
+from bleep.schemas.graph import Action, ApprovalGrant, ApprovalRecord, PlanStep, StepResult
 from bleep.schemas.plugins import PluginHealth
+from bleep.tools.docker_act import StepRefused
 from bleep.tools.docker_read import UNTRUSTED
-from bleep.tools.registry import ToolContext, ToolSpec
+from bleep.tools.registry import ActHandler, ToolContext, ToolSpec
 
 log = logging.getLogger(__name__)
 
 URL_ENV = "COOLIFY_URL"
 TOKEN_ENV = "COOLIFY_TOKEN"
 MESSAGE_CHARS = 200  # of one commit message in the deployments list
+POLL_S = 10  # between reads of a running deployment
+DONE = {"finished"}
+ENDED = {"finished", "failed", "cancelled-by-user"}
 _VERSION = re.compile(r"v?\d+(\.\d+){1,3}[\w.-]{0,20}")
 _UUID_LABEL, _ID_LABEL = "coolify.applicationUuid", "coolify.applicationId"
 # The addresses Bleep sends the token to over plain http: loopback, private and CGNAT (Tailscale).
@@ -70,15 +89,20 @@ DEPLOYMENTS = (
 ENV_KEYS = (
     "List the environment variable keys a Coolify application has, with whether each is used at"
     " build time, at run time or in previews. Values are never shown. Use it when a setting may be"
-    " missing or misnamed. `app` is the application's uuid or name from coolify_applications."
-    + UNTRUSTED
+    " missing or misnamed. A coolify.set_env takes effect only at the next deployment, so a plan"
+    " that sets one redeploys the application after it. `app` is the application's uuid or name"
+    " from coolify_applications." + UNTRUSTED
 )
 
 
 class CoolifySettings(BaseModel):
-    """Nothing to set yet: the address and the token are in the env."""
+    """The address and the token are in the env; only how long a redeploy may take is set."""
 
     model_config = ConfigDict(extra="forbid")
+
+    deploy_timeout_s: int = Field(
+        900, ge=60, le=3600, description="How long a redeploy may take before Bleep stops waiting"
+    )
 
 
 class CoolifyUrlRefused(ValueError):
@@ -296,16 +320,138 @@ def read_specs(client: CoolifyClient) -> list[ToolSpec]:
     return [ToolSpec(name, "read", "coolify", build, offered) for name, build in builds.items()]
 
 
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+@dataclass(frozen=True)
+class CoolifyAction:
+    """One Coolify action, run only for a step of an approved plan (see the module docstring)."""
+
+    name: Action
+    client: CoolifyClient
+    secret: SecretStr | str = field(repr=False)  # BLEEP_SECRET, the grants' key
+    deploy_timeout_s: int = 900
+    guard_log: GuardLogger | None = None
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+    clock: Callable[[], datetime] = _utcnow
+
+    def check(
+        self,
+        step: PlanStep,
+        grant: ApprovalGrant | None,
+        registry: Registry,
+        *,
+        plan: ApprovalRecord,
+        step_index: int,
+    ) -> str:
+        """Every check `run` makes before it calls Coolify: the application's uuid. Raises
+        `GrantInvalid` or `StepRefused`, recorded as `blocked_action`."""
+        what = f"step {step_index + 1} ({step.action} {step.target} on {step.host_id})"
+        try:
+            if step.action != self.name:
+                raise StepRefused(f"{what}: {self.name} cannot run {step.action}")
+            verify_step(step, grant, plan, step_index, self.secret)
+            violations = check_params(step_index + 1, step) or check_target(
+                step_index + 1, step, registry
+            )
+            if violations:
+                raise StepRefused("; ".join(v.text for v in violations))
+            try:
+                return coolify_app_uuid(registry, step)
+            except NoCoolifyApp:
+                raise StepRefused(
+                    f"{what}: names no single Coolify application on this host"
+                ) from None
+        except GrantInvalid as refusal:
+            self._blocked(plan, f"{what}: refused, {refusal}")
+            raise
+        except StepRefused as refusal:
+            self._blocked(plan, str(refusal))
+            raise
+
+    async def run(
+        self,
+        step: PlanStep,
+        grant: ApprovalGrant | None,
+        registry: Registry,
+        *,
+        plan: ApprovalRecord,
+        step_index: int,
+    ) -> StepResult:
+        """Run `step` under `grant`. A Coolify failure is a result with `ok=False`."""
+        uuid = self.check(step, grant, registry, plan=plan, step_index=step_index)
+        started = self.clock()
+        try:
+            if self.name == "coolify.redeploy":
+                ok, detail = await self._redeploy(uuid, step.target)
+            else:
+                key = step.params["key"]
+                how = await self.client.set_env(uuid, key, SecretStr(step.params["value"]))
+                ok, detail = True, f"{how} {key} on {step.target}; it applies at the next deploy"
+        except CoolifyError as error:
+            log.warning("%s failed on %s: %s", self.name, step.host_id, type(error).__name__)
+            ok, detail = False, f"Coolify: {error}"
+        return StepResult(
+            step_index=step_index,
+            action=self.name,
+            target=step.target,
+            ok=ok,
+            detail=detail,
+            started_at=started,
+            finished_at=self.clock(),
+        )
+
+    async def _redeploy(self, uuid: str, target: str) -> tuple[bool, str]:
+        """Queue a deployment and wait until it ends, for at most `deploy_timeout_s` of wall time
+        (by `clock`, so slow answers count too); whether it finished, and how it went."""
+        try:
+            deployment = await self.client.deploy(uuid)
+        except CoolifyUnavailable as error:  # the request may have reached Coolify all the same
+            return False, f"Coolify: {error}; a deployment of {target} may already be queued"
+        deadline = self.clock() + timedelta(seconds=self.deploy_timeout_s)
+        while self.clock() < deadline:
+            await self.sleep(POLL_S)
+            try:
+                status = (await self.client.deployment(deployment)).status
+            except CoolifyUnavailable:  # timeouts, refused connections, 429 and 5xx: ask again
+                continue
+            except CoolifyError as error:
+                return False, (
+                    f"Coolify: {error}; deployment {deployment} of {target} was queued and may"
+                    " still run, Bleep stopped following it"
+                )
+            if status in ENDED:
+                ok = status in DONE
+                return ok, f"redeploy of {target} {status} (deployment {deployment})"
+        return False, (
+            f"redeploy of {target} had not finished after {self.deploy_timeout_s} s "
+            f"(deployment {deployment}); Bleep stopped waiting, it may still run in Coolify"
+        )
+
+    def _blocked(self, plan: ApprovalRecord, text: str) -> None:
+        if self.guard_log is not None:
+            self.guard_log.record(plan.incident_id, "blocked_action", text)
+
+
 class CoolifyPlugin(Plugin):
-    """`transport` is for tests: a mock transport in place of the network."""
+    """`transport`, `sleep` and `clock` are for tests: a mock transport, and a sleep that does not
+    wait with the clock that measures a redeploy's deadline."""
 
     name = "coolify"
     title = "Coolify"
     settings_model = CoolifySettings
     secrets = (URL_ENV, TOKEN_ENV)
 
-    def __init__(self, transport: httpx.AsyncBaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        transport: httpx.AsyncBaseTransport | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        clock: Callable[[], datetime] = _utcnow,
+    ) -> None:
         self._transport = transport
+        self._sleep = sleep
+        self._clock = clock
 
     def client(self, ctx: PluginContext) -> CoolifyClient:
         """Raises `CoolifyUrlRefused` for a `COOLIFY_URL` Bleep must not send the token to; the
@@ -319,6 +465,21 @@ class CoolifyPlugin(Plugin):
 
     def tools(self, ctx: PluginContext) -> list[ToolSpec]:
         return read_specs(self.client(ctx))
+
+    def act_handlers(self, ctx: PluginContext) -> dict[str, ActHandler]:
+        timeout = CoolifySettings.model_validate(ctx.settings.model_dump()).deploy_timeout_s
+        return {
+            action: CoolifyAction(
+                name=action,
+                client=self.client(ctx),
+                secret=ctx.grant_secret,
+                deploy_timeout_s=timeout,
+                guard_log=ctx.guard_log,
+                sleep=self._sleep,
+                clock=self._clock,
+            )
+            for action in ("coolify.redeploy", "coolify.set_env")
+        }
 
     async def health(self, ctx: PluginContext) -> PluginHealth:
         """Coolify's version, read with the token; the error's own words when that fails."""

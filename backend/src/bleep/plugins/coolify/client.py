@@ -1,5 +1,5 @@
-"""A small read-only client for the Coolify API (v4, `/api/v1`): its version, the applications,
-their deployments and their env keys.
+"""A small client for the Coolify API (v4, `/api/v1`): its version, the applications, their
+deployments and env keys, and the two writes Bleep's actions make, a deploy and an env var.
 
 The endpoints and the shapes seen on a real server are in docs/design/plugins.md. The token goes
 only into the Authorization header and is never logged; redirects are not followed, so it is
@@ -11,7 +11,7 @@ echo the URL or a value).
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from pydantic import BaseModel, SecretStr, ValidationError
@@ -33,7 +33,7 @@ class CoolifyUnavailable(CoolifyError):
 
 
 class CoolifyNotFound(CoolifyError):
-    """No such application."""
+    """No such application, deployment or env var."""
 
 
 class CoolifyClient:
@@ -77,17 +77,62 @@ class CoolifyClient:
         listed = data.get("deployments") if isinstance(data, dict) else data
         return _parse_list(CoolifyDeployment, listed)
 
+    async def deployment(self, deployment_uuid: str) -> CoolifyDeployment:
+        _check_uuid(deployment_uuid)
+        data = _json(await self._get(f"/deployments/{deployment_uuid}", "deployment"))
+        try:
+            return CoolifyDeployment.model_validate(data)
+        except ValidationError:
+            raise CoolifyError("Coolify's answer has an unexpected shape") from None
+
     async def env_keys(self, app_uuid: str) -> list[CoolifyEnvKey]:
         """The application's env vars, keys and flags only: the values are never parsed."""
         _check_uuid(app_uuid)
         body = await self._get(f"/applications/{app_uuid}/envs", "application")
         return _parse_list(CoolifyEnvKey, _json(body))
 
+    async def deploy(self, app_uuid: str) -> str:
+        """Queue a deployment of the application; its deployment uuid."""
+        _check_uuid(app_uuid)
+        params = {"uuid": app_uuid, "force": "false"}
+        data = _json(await self._call("POST", "/deploy", "application", params=params))
+        queued = data.get("deployments") if isinstance(data, dict) else None
+        found = [d.get("deployment_uuid") for d in queued or [] if isinstance(d, dict)]
+        if not found or not isinstance(found[0], str) or not UUID.fullmatch(found[0]):
+            raise CoolifyError("Coolify queued no deployment Bleep can follow")
+        return found[0]
+
+    async def set_env(
+        self, app_uuid: str, key: str, value: SecretStr
+    ) -> Literal["updated", "created"]:
+        """Set one env var: update it when the application has it, else create it. Coolify's
+        answer holds the value, so it is read for its status only."""
+        _check_uuid(app_uuid)
+        body = {"key": key, "value": value.get_secret_value()}
+        path = f"/applications/{app_uuid}/envs"
+        try:
+            await self._call("PATCH", path, "env var", payload=body)
+            return "updated"
+        except CoolifyNotFound:
+            await self._call("POST", path, "application", payload=body)
+            return "created"
+
     async def _get(self, path: str, what: str, *, params: dict[str, str] | None = None) -> bytes:
+        return await self._call("GET", path, what, params=params)
+
+    async def _call(
+        self,
+        method: str,
+        path: str,
+        what: str,
+        *,
+        params: dict[str, str] | None = None,
+        payload: dict[str, str] | None = None,
+    ) -> bytes:
         """The body of a 2xx answer, or the `CoolifyError` for any other."""
         try:
             async with asyncio.timeout(self._deadline_s):
-                status, body = await self._fetch(path, params)
+                status, body = await self._fetch(method, path, params, payload)
         except TimeoutError:
             raise CoolifyUnavailable(
                 f"Coolify did not answer within {self._deadline_s:g} s"
@@ -112,7 +157,13 @@ class CoolifyClient:
             )
         raise CoolifyError(f"Coolify refused the {what} request ({status})")
 
-    async def _fetch(self, path: str, params: dict[str, str] | None) -> tuple[int, bytes]:
+    async def _fetch(
+        self,
+        method: str,
+        path: str,
+        params: dict[str, str] | None,
+        payload: dict[str, str] | None,
+    ) -> tuple[int, bytes]:
         headers = {
             "Authorization": f"Bearer {self._token.get_secret_value()}",
             "Accept": "application/json",
@@ -128,7 +179,7 @@ class CoolifyClient:
                 headers=headers,
                 follow_redirects=False,
             ) as http,
-            http.stream("GET", path, params=params) as response,
+            http.stream(method, path, params=params, json=payload) as response,
         ):
             encoding = response.headers.get("content-encoding", "identity").strip().lower()
             if encoding not in ("", "identity"):

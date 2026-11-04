@@ -15,9 +15,10 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.state import IncidentState, Node
-from bleep.guard.plan_check import Violation, check_plan, protected_names
+from bleep.guard.plan_check import Violation, check_plan, coolify_members, protected_names
 from bleep.guard.redact import redacted_proposal, redacted_step
 from bleep.hosts.discovery import is_self
+from bleep.hosts.registry import Registry
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.memory.text import describe_fact, describe_past
@@ -69,7 +70,7 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
     enabled = deps.settings_store.enabled_actions()
     named = _incident_containers(deps, state)
     messages: list[BaseMessage] = [HumanMessage(_prompt(deps, state, diagnosis, enabled))]
-    proposal = await _ask(deps, incident_id, messages)
+    proposal = _without_replaced(await _ask(deps, incident_id, messages), deps.registry)
     violations = check_plan(proposal, deps.registry, enabled, host_id, incident_containers=named)
     if not violations:
         return proposal
@@ -78,12 +79,30 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
         AIMessage(proposal.model_dump_json()),
         HumanMessage(prompts.load("graph/propose_retry", violations=_bullets(violations))),
     ]
-    retry = await _ask(deps, incident_id, messages)
+    retry = _without_replaced(await _ask(deps, incident_id, messages), deps.registry)
     again = check_plan(retry, deps.registry, enabled, host_id, incident_containers=named)
     if not again:
         return retry
     _record(deps, incident_id, again)
     return _refused(retry, again)
+
+
+def _without_replaced(proposal: Proposal, registry: Registry) -> Proposal:
+    """The plan without verification checks of containers a redeploy replaces: Coolify names
+    the new ones afresh, so the old names would fail every check. Verify checks a redeployed
+    application's new containers itself."""
+    replaced = {
+        c.name
+        for s in proposal.steps
+        if s.action == "coolify.redeploy"
+        for c in coolify_members(registry.snapshot(s.host_id) or [], s.target)
+    }
+    planned = proposal.verification.containers
+    if not replaced.intersection(planned):
+        return proposal
+    kept = [name for name in planned if name not in replaced]
+    verification = proposal.verification.model_copy(update={"containers": kept})
+    return proposal.model_copy(update={"verification": verification})
 
 
 def _incident_containers(deps: GraphDeps, state: IncidentState) -> set[str]:
