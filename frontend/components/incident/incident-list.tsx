@@ -38,7 +38,7 @@ export function IncidentListView({ incidents }: { incidents: Incident[] }) {
         <li key={incident.id}>
           <Link
             href={`/incidents/${incident.id}`}
-            className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 hover:bg-soft focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           >
             <span className="min-w-0 flex-1 basis-60 text-sm font-medium">{incident.title}</span>
             <IncidentStatusBadge status={incident.status} />

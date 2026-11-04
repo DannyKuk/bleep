@@ -4,72 +4,120 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
+  --font-sans: var(--font-nunito), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* The Bleep tokens, as utilities: bg-surface, text-ink-2, border-line, bg-ok-bg, fill-blob ... */
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-soft: var(--soft);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
   --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
+  --color-accent-ink: var(--accent-ink);
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-down: var(--down);
+  --color-down-bg: var(--down-bg);
+  --color-stop: var(--stop);
+  --color-stop-bg: var(--stop-bg);
+  --color-blob: var(--blob);
+  --color-hand: var(--hand);
+  --color-cup: var(--cup);
+  --color-screen: var(--screen);
+
+  /* The names the existing components use, mapped onto the tokens above. */
+  --color-background: var(--bg);
+  --color-foreground: var(--ink);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--ink);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-ink);
+  --color-muted: var(--soft);
+  --color-muted-foreground: var(--ink-2);
+  --color-accent-foreground: var(--accent-ink);
+  --color-border: var(--line);
+  --color-input: var(--line);
+  --color-ring: var(--accent);
   --color-health-ok: var(--health-ok);
+  --color-health-ok-bg: var(--health-ok-bg);
   --color-health-degraded: var(--health-degraded);
+  --color-health-degraded-bg: var(--health-degraded-bg);
   --color-health-down: var(--health-down);
+  --color-health-down-bg: var(--health-down-bg);
   --color-health-stopped: var(--health-stopped);
+  --color-health-stopped-bg: var(--health-stopped-bg);
   --color-health-unknown: var(--health-unknown);
+  --color-health-unknown-bg: var(--health-unknown-bg);
+
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
+  --radius-field: 14px;
+  --radius-row: 20px;
+  --radius-card-sm: 22px;
+  --radius-card: 28px;
 }
 
-/* shadcn neutral palette. Health colours are tuned per theme to keep text contrast of at least
-   4.5:1 on the card/background (they sit as text on a 12% tint of themselves). */
+/* The Bleep tokens (docs/design/app.md). The contrast test reads the two blocks below, so every
+   value here is a plain hex colour or a color-mix of two tokens. */
 :root {
-  --background: oklch(0.985 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.45 0 0);
-  --accent: oklch(0.94 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --border: oklch(0.9 0 0);
-  --input: oklch(0.85 0 0);
-  --ring: oklch(0.55 0 0);
-  --health-ok: oklch(0.45 0.13 150);
-  --health-degraded: oklch(0.48 0.12 70);
-  --health-down: oklch(0.5 0.2 27);
-  --health-stopped: oklch(0.45 0.02 250);
-  --health-unknown: oklch(0.45 0 0);
+  --bg: #f3f3fa;
+  --surface: #ffffff;
+  --soft: #eeedf8;
+  --line: #e2e1ef;
+  --ink: #1c1b33;
+  --ink-2: #5a5873;
+  --accent: #5847e0;
+  --accent-ink: #ffffff;
+  --ok: #1c7448;
+  --ok-bg: #e2f4ea;
+  --warn: #835400;
+  --warn-bg: #fbefd6;
+  --down: #be2f22;
+  --down-bg: #fde8e5;
+  --stop: #566075;
+  --stop-bg: #eceef3;
+  --blob: #b9afff;
+  --hand: #9f93f7;
+  --cup: #6b5ce7;
+  --screen: #27234a;
+
+  --health-ok: var(--ok);
+  --health-ok-bg: var(--ok-bg);
+  --health-degraded: var(--warn);
+  --health-degraded-bg: var(--warn-bg);
+  --health-down: var(--down);
+  --health-down-bg: var(--down-bg);
+  --health-stopped: var(--stop);
+  --health-stopped-bg: var(--stop-bg);
+  --health-unknown: var(--stop);
+  --health-unknown-bg: var(--stop-bg);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.19 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.72 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 16%);
-  --ring: oklch(0.65 0 0);
-  --health-ok: oklch(0.78 0.16 150);
-  --health-degraded: oklch(0.82 0.15 80);
-  --health-down: oklch(0.72 0.19 25);
-  --health-stopped: oklch(0.72 0.02 250);
-  --health-unknown: oklch(0.72 0 0);
+  --bg: #14132a;
+  --surface: #1d1c37;
+  --soft: #262447;
+  --line: #2e2c4e;
+  --ink: #eeedf9;
+  --ink-2: #aba9c8;
+  --accent: #a99eff;
+  --accent-ink: #14132a;
+  --ok: #66d6a3;
+  --ok-bg: color-mix(in srgb, var(--ok) 13%, var(--surface));
+  --warn: #f3c557;
+  --warn-bg: color-mix(in srgb, var(--warn) 13%, var(--surface));
+  --down: #ff8473;
+  --down-bg: color-mix(in srgb, var(--down) 14%, var(--surface));
+  --stop: #a9b1c3;
+  --stop-bg: color-mix(in srgb, var(--stop) 13%, var(--surface));
+  --blob: #9d92ff;
+  --hand: #b6adff;
+  --cup: #c4bcff;
+  --screen: #14122b;
 }
 
 @layer base {

@@ -23,7 +23,7 @@ describe("IncidentListView", () => {
       "href",
       "/incidents/inc-1",
     );
-    expect(screen.getByText("Awaiting approval")).toBeInTheDocument();
+    expect(screen.getByText("Needs your yes")).toBeInTheDocument();
     expect(screen.getByText("demo/compose:shop")).toBeInTheDocument();
     expect(screen.getByText("Resolved")).toBeInTheDocument();
     expect(screen.getByText("host spare")).toBeInTheDocument();

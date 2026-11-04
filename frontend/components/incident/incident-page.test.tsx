@@ -50,7 +50,7 @@ describe("IncidentPage", () => {
     stubBackend(detail());
     render(<IncidentPage id="inc-1" />);
     expect(await screen.findByRole("heading", { name: "shop-web-1 died" })).toBeInTheDocument();
-    expect(screen.getByText("Awaiting approval")).toBeInTheDocument();
+    expect(screen.getByText("Needs your yes")).toBeInTheDocument();
     expect(screen.getByText(/restart policy is no/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
   });
@@ -132,7 +132,7 @@ describe("IncidentPage", () => {
 
     await act(async () => void vi.advanceTimersByTime(DETAIL_POLL_MS));
     expect(detailReads(fetchMock)).toBe(2);
-    expect(screen.getByText("Awaiting approval")).toBeInTheDocument();
+    expect(screen.getByText("Needs your yes")).toBeInTheDocument();
   });
 
   it("says so when there is no such incident", async () => {

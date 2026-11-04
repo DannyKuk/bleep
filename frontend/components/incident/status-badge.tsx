@@ -6,7 +6,7 @@ import type { Health, IncidentStatus } from "@/lib/api-types";
 const STATUS: Record<IncidentStatus, { health: Health; label: string }> = {
   open: { health: "degraded", label: "Open" },
   investigating: { health: "degraded", label: "Investigating" },
-  awaiting_approval: { health: "down", label: "Awaiting approval" },
+  awaiting_approval: { health: "down", label: "Needs your yes" },
   executing: { health: "degraded", label: "Executing" },
   verifying: { health: "degraded", label: "Verifying" },
   paused: { health: "degraded", label: "Paused" },
