@@ -19,9 +19,10 @@ wait here starts after the new containers are up.
 
 Passing sets the outcome `resolved`. A failure with fewer than `verify_loops` (2) loop-backs so
 far hands the failed checks to Investigate as the next round's instruction (an appended message,
-as Diagnose's loop-back does); otherwise the outcome is `unverified`, and so it is at once when
-there was nothing to check. Nothing here says "fixed": that word needs a passing check. The
-clock that waits is `deps.sleep`, so tests never sleep.
+as Diagnose's loop-back does; when the only failure is the missing evidence after an approved
+stop, it asks for that evidence, not for a new fix); otherwise the outcome is `unverified`, and
+so it is at once when there was nothing to check. Nothing here says "fixed": that word needs a
+passing check. The clock that waits is `deps.sleep`, so tests never sleep.
 Each check publishes a `verification` event; the notifier hears the round's final result once.
 """
 
@@ -382,6 +383,15 @@ def _reading(kind: str, detail: dict, t: Thresholds) -> str:
             )
 
 
+def _loop_back_prompt(result: VerificationResult) -> str:
+    """`verify_unproven` when every failed check is only the missing evidence after an approved
+    stop, so Investigate looks for that evidence instead of a fault; else `verify_failed`."""
+    failed = [c for c in result.checks if not c.ok]
+    if failed and all(c.kind == "symptom" and c.detail == UNPROVEN for c in failed):
+        return "graph/verify_unproven"
+    return "graph/verify_failed"
+
+
 def _describe(result: VerificationResult) -> str:
     return "\n".join(f"- {c.kind} {c.target}: {c.detail}" for c in result.checks if not c.ok)
 
@@ -456,7 +466,7 @@ def make(deps: GraphDeps) -> Node:
             update["messages"] = [
                 HumanMessage(
                     prompts.load(
-                        "graph/verify_failed",
+                        _loop_back_prompt(result),
                         checks=_describe(result),
                         budget=str(deps.settings_store.budgets().investigate_tool_calls),
                     )
