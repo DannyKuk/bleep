@@ -7,6 +7,7 @@ See docs/design/guard.md.
 
 import re
 import typing
+import unicodedata
 from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Literal
@@ -118,7 +119,8 @@ def _check_set_env_redeploy(proposal: Proposal) -> list[Violation]:
         what = f"step {number} ({step.action} {step.target} on {step.host_id})"
         why = (
             f"an env var applies only at the next deploy; add a coolify.redeploy of {step.target}"
-            f" on {step.host_id} after this step"
+            f" on {step.host_id} after this step, naming the application exactly as this step"
+            " does"
         )
         found.append(Violation("set_env_without_redeploy", f"{what}: {why}", number))
     return found
@@ -263,9 +265,10 @@ def check_target(number: int, step: PlanStep, registry: Registry) -> list[Violat
             )
             return refuse("not_found", why)
         # Coolify names an app's containers anew at every deploy, so its uuid and its name
-        # protect it too, not only a container name that lasts until the next deploy.
+        # protect it too, not only a container name that lasts until the next deploy. The name
+        # label is Coolify's slug of the app's name, so a protected name is compared slugged.
         names = {c.labels.get(COOLIFY_NAME) for c in members} - {None}
-        held = sorted((uuids | names) & protected)
+        held = sorted(uuids & protected) + sorted(p for p in protected if coolify_slug(p) in names)
         if held:
             return refuse(
                 "protected", f"the Coolify application {held[0]} is protected in the hosts file"
@@ -290,11 +293,30 @@ def coolify_members(containers: list[ContainerSummary], target: str) -> list[Con
     return [c for c in containers if target in (c.labels.get(k) for k in COOLIFY_APP_LABELS)]
 
 
+class NoCoolifyApp(LookupError):
+    """A Coolify step's target names no single application on its host now."""
+
+
 def coolify_app_uuid(registry: Registry, step: PlanStep) -> str:
-    """The one application uuid a Coolify step's target names on its host; `check_target` has
-    already refused a target that names none or several."""
+    """The one application uuid a Coolify step's target names on its host; raises
+    `NoCoolifyApp` when it names none or several (`check_target` refuses both first)."""
     members = coolify_members(registry.snapshot(step.host_id) or [], step.target)
-    return next(c.labels[COOLIFY_UUID] for c in members if c.labels.get(COOLIFY_UUID))
+    uuids = {c.labels[COOLIFY_UUID] for c in members if c.labels.get(COOLIFY_UUID)}
+    if len(uuids) != 1:
+        raise NoCoolifyApp(step.target)
+    return uuids.pop()
+
+
+def coolify_slug(name: str) -> str:
+    """`name` as Coolify writes it into `coolify.resourceName`: Laravel's `Str::slug`
+    (`defaultLabels` in Coolify's bootstrap/helpers/docker.php). Lower-case ASCII, `_` and runs
+    of spaces or `-` become one `-`, `@` reads `at`, anything else that is not a letter or a
+    digit is dropped, and `-` is trimmed: `Shop API` is `shop-api`, `static:main` `staticmain`.
+    Laravel transliterates with a table; NFKD with the marks dropped stands in for it."""
+    text = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    text = re.sub(r"_+", "-", text).replace("@", "-at-")
+    text = re.sub(r"[^-a-z0-9\s]+", "", text.lower())
+    return re.sub(r"[-\s]+", "-", text).strip("-")
 
 
 def protected_names(host) -> set[str]:

@@ -335,20 +335,42 @@ WEB_APP = {
     "coolify.applicationUuid": "web0uuid",
     "coolify.resourceName": "web",
 }
+DEPLOYED_AT = datetime(2026, 11, 4, 9, 0, tzinfo=UTC)
+NEW = DEPLOYED_AT + timedelta(minutes=3)  # made by the redeploy
 
 
-def redeployed(state: dict, *steps: PlanStep, containers: list[str] | None = None) -> dict:
+def deploy_result(index: int = 0, target: str = "web", started=DEPLOYED_AT) -> StepResult:
+    return StepResult(
+        step_index=index,
+        action="coolify.redeploy",
+        target=target,
+        ok=started is not None,
+        detail="redeploy of web finished" if started else "skipped: step 1 did not succeed",
+        started_at=started,
+    )
+
+
+def redeployed(
+    state: dict,
+    *steps: PlanStep,
+    containers: list[str] | None = None,
+    results: list[StepResult] | None = None,
+) -> dict:
     steps = steps or (PlanStep(action="coolify.redeploy", host_id="a", target="web"),)
     plan = VerificationPlan(containers=containers or [], urls=[URL])
     proposal = Proposal(kind="act", steps=list(steps), reason="r", verification=plan)
-    return state | {"proposal": proposal}
+    return state | {"proposal": proposal, "step_results": results or [deploy_result()]}
+
+
+def web(name: str = "web0uuid-2", **fields):
+    return box(
+        name, labels=fields.pop("labels", WEB_APP), created_at=fields.pop("created", NEW), **fields
+    )
 
 
 async def test_a_redeployed_application_is_checked_by_its_new_containers(tmp_path):
     # The deploy replaced web0uuid-1 by web0uuid-2; the registry may still list the old one.
-    engine = FakeEngine(
-        "a", [box("web0uuid-2", labels=WEB_APP, health="healthy"), box("shop-db-1", "shop")]
-    )
+    engine = FakeEngine("a", [web(health="healthy"), box("shop-db-1", "shop")])
     env, state = await setup(tmp_path, Replies(200), engine=engine)
 
     update, _ = await run(env, redeployed(state, containers=["shop-db-1"]))
@@ -361,12 +383,12 @@ async def test_a_redeployed_application_is_checked_by_its_new_containers(tmp_pat
 @pytest.mark.parametrize(
     ("containers", "detail"),
     [
-        ([], "no container running"),
-        ([box("web0uuid-2", labels=WEB_APP, state="exited")], "no container running"),
-        ([box("web0uuid-2", labels=WEB_APP, health="unhealthy")], "web0uuid-2 is unhealthy"),
+        ([], "no container made by the redeploy"),
+        ([web(state="exited")], "no container made by the redeploy"),
+        ([web(health="unhealthy")], "web0uuid-2 is unhealthy"),
         (
-            [box("web0uuid-pr", labels=WEB_APP | {"coolify.pullRequestId": "7"})],
-            "no container running",
+            [web("web0uuid-pr", labels=WEB_APP | {"coolify.pullRequestId": "7"})],
+            "no container made by the redeploy",
         ),
     ],
 )
@@ -383,38 +405,56 @@ async def test_a_redeployed_application_with_nothing_healthy_running_fails(
     assert "outcome" not in update or update["outcome"] != "resolved"
 
 
-DEPLOYED_AT = datetime(2026, 11, 4, 9, 0, tzinfo=UTC)
-
-
-def with_deploy(state: dict) -> dict:
-    result = StepResult(
-        step_index=0,
-        action="coolify.redeploy",
-        target="web",
-        ok=True,
-        detail="redeploy of web finished",
-        started_at=DEPLOYED_AT,
-    )
-    return redeployed(state) | {"step_results": [result]}
-
-
 @pytest.mark.parametrize(
-    ("started", "ok"),
+    ("created", "started", "ok"),
     [
-        (DEPLOYED_AT + timedelta(minutes=3), True),
-        (DEPLOYED_AT - timedelta(seconds=60), True),  # within the clock slack
-        (DEPLOYED_AT - timedelta(hours=2), False),  # the old release, still up
-        (None, False),
+        (NEW, NEW, True),
+        (DEPLOYED_AT - timedelta(seconds=60), DEPLOYED_AT, True),  # within the clock slack
+        (DEPLOYED_AT - timedelta(hours=2), DEPLOYED_AT - timedelta(hours=2), False),  # old, up
+        # The old release restarting after the deploy began: a new start, the old creation time.
+        (DEPLOYED_AT - timedelta(hours=2), NEW, False),
+        (None, NEW, False),
     ],
 )
-async def test_after_a_redeploy_only_a_container_started_since_counts(tmp_path, started, ok):
-    web = box("web0uuid-2", labels=WEB_APP, health="healthy", started_at=started)
-    engine = FakeEngine("a", [web, box("shop-db-1", "shop")])
+async def test_after_a_redeploy_only_a_container_it_made_counts(tmp_path, created, started, ok):
+    container = web(health="healthy", created=created, started_at=started)
+    engine = FakeEngine("a", [container, box("shop-db-1", "shop")])
     env, state = await setup(tmp_path, Replies(200), engine=engine)
 
-    update, _ = await run(env, with_deploy(state))
+    update, _ = await run(env, redeployed(state))
 
     first = update["verification"].checks[0]
     assert first.ok is ok
     if not ok:
-        assert first.detail == "no container started since the redeploy"
+        assert first.detail == "no container made by the redeploy"
+
+
+async def test_a_redeploy_that_never_started_fails_the_application_check(tmp_path):
+    set_env = PlanStep(
+        action="coolify.set_env", host_id="a", target="web", params={"key": "A", "value": "1"}
+    )
+    redeploy = PlanStep(action="coolify.redeploy", host_id="a", target="web")
+    failed = StepResult(step_index=0, action="coolify.set_env", target="web", ok=False)
+    engine = FakeEngine("a", [web(health="healthy"), box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(
+        env,
+        redeployed(state, set_env, redeploy, results=[failed, deploy_result(1, started=None)]),
+    )
+
+    first = update["verification"].checks[0]
+    assert (first.ok, first.detail) == (False, "not redeployed")
+
+
+async def test_only_this_plans_redeploy_counts(tmp_path):
+    # An earlier plan redeployed web and Verify sent the run back; this plan's redeploy was
+    # refused at run time, so the earlier start must not vouch for the containers now.
+    earlier = deploy_result(started=DEPLOYED_AT)
+    refused = deploy_result(started=None)
+    engine = FakeEngine("a", [web(health="healthy"), box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state, results=[earlier, refused]))
+
+    assert update["verification"].checks[0].detail == "not redeployed"

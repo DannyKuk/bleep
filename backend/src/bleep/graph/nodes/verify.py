@@ -96,12 +96,23 @@ async def _check_container(deps: GraphDeps, host_id: str, name: str) -> Check:
     )
 
 
-def _deploy_starts(results: list[StepResult] | None) -> dict[str, datetime]:
-    """When each redeployed application's redeploy step started, on Bleep's clock."""
+def _deploy_starts(
+    proposal: Proposal | None, results: list[StepResult] | None
+) -> dict[str, datetime]:
+    """When each application this plan redeployed had its redeploy step start, on Bleep's clock.
+
+    Only this plan's results count: `step_results` keeps earlier plans' too, and Execute appends
+    one result per step of the plan it ran, so this plan's are the last of them. A redeploy that
+    never started (skipped, or refused at run time) has no start and its app no entry."""
+    steps = proposal.steps if proposal is not None else []
+    current = (results or [])[-len(steps) :] if steps else []
     starts: dict[str, datetime] = {}
-    for r in results or []:
-        if r.action == "coolify.redeploy" and r.started_at is not None:
-            starts[r.target] = r.started_at
+    for r in current:
+        if not 0 <= r.step_index < len(steps):
+            continue
+        step = steps[r.step_index]
+        if step.action == "coolify.redeploy" and r.target == step.target and r.started_at:
+            starts[step.target] = r.started_at
     return starts
 
 
@@ -109,29 +120,35 @@ async def _check_application(
     deps: GraphDeps, host_id: str, app: str, since: datetime | None
 ) -> Check:
     """A redeployed Coolify application, read from the engine now: at least one container of
-    it (previews aside) running that started after its redeploy began, and none of those
-    unhealthy or still starting.
+    it (previews aside) running that was created after its redeploy began, and none of those
+    unhealthy or still starting. `since` None (the redeploy never started) fails the check.
 
-    The start time is the host's and `since` is Bleep's, so `CLOCK_SLACK_S` of skew is allowed: a
-    host clock further behind makes new containers look old and the check fail, the safe side; a
-    container restarted within that slack before the deploy counts. A container with no start
-    time does not count. Without `since` (no redeploy step started) any running one counts."""
+    The creation time is the host's and `since` is Bleep's, so `CLOCK_SLACK_S` of skew is
+    allowed. A host clock further behind makes new containers look old and the check fail, the
+    safe side; a host clock ahead widens the window by as much, so a container created within
+    the slack plus that lead before the deploy counts. A restart keeps a container's creation
+    time, so an old container restarting after the deploy does not count. One with no creation
+    time does not count either."""
     target = f"{app} (Coolify application)"
+    if since is None:
+        return Check(kind="container", target=target, ok=False, detail="not redeployed")
     try:
         listed = await deps.registry.engine(host_id).containers()
     except EngineUnavailable, KeyError:
         return Check(kind="container", target=target, ok=False, detail="host not reachable")
-    floor = since - timedelta(seconds=CLOCK_SLACK_S) if since is not None else None
+    floor = since - timedelta(seconds=CLOCK_SLACK_S)
     running = [
         c
         for c in coolify_members(listed, app)
         if c.state == "running"
         and c.labels.get("coolify.pullRequestId", "0") in ("", "0")
-        and (floor is None or (c.started_at is not None and c.started_at >= floor))
+        and c.created_at is not None
+        and c.created_at >= floor
     ]
     if not running:
-        why = "no container running" if floor is None else "no container started since the redeploy"
-        return Check(kind="container", target=target, ok=False, detail=why)
+        return Check(
+            kind="container", target=target, ok=False, detail="no container made by the redeploy"
+        )
     bad = next((c for c in running if c.health in ("unhealthy", "starting")), None)
     if bad is not None:
         return Check(
@@ -177,7 +194,7 @@ def make(deps: GraphDeps) -> Node:
         proposal = state.get("proposal")
         containers, urls = _plan(deps, subject, proposal)
         apps = _redeployed(proposal)
-        starts = _deploy_starts(state.get("step_results"))
+        starts = _deploy_starts(proposal, state.get("step_results"))
 
         result = VerificationResult(ok=False)
         if not containers and not urls and not apps:

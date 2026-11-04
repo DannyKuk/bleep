@@ -29,6 +29,7 @@ def inspect_dict(name="shop-web-1", cid="c1", **state) -> dict:
     return {
         "Id": cid,
         "Name": f"/{name}",
+        "Created": "2026-11-02T08:59:58.5Z",
         "RestartCount": 2,
         "Config": {
             "Image": "shop:latest",
@@ -263,6 +264,7 @@ async def test_inspect_maps_state_health_oom_and_exit_code(api, engine):
     assert s.labels == {"com.docker.compose.project": "shop"}
     assert s.started_at == datetime(2026, 11, 2, 9, 0, 0, 123456, tzinfo=UTC)
     assert s.finished_at == datetime(2026, 11, 2, 9, 30, tzinfo=UTC)
+    assert s.created_at == datetime(2026, 11, 2, 8, 59, 58, 500000, tzinfo=UTC)
     assert detail.oom_killed is True
     assert detail.restart_count == 2
     assert detail.mem_limit == 536870912

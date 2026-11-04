@@ -1,7 +1,7 @@
 import pytest
 
 from bleep.graph.deps import CORE_ACTIONS
-from bleep.guard.plan_check import check_plan
+from bleep.guard.plan_check import NoCoolifyApp, check_plan, coolify_app_uuid, coolify_slug
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.schemas.graph import PlanStep, Proposal, VerificationPlan
 from fakes import FakeEngine
@@ -432,3 +432,61 @@ async def test_a_set_env_needs_a_redeploy_of_the_same_app_after_it(tmp_path, ste
 
     assert (not found) is ok
     assert all(rule == "set_env_without_redeploy" for rule, _ in found)
+
+
+@pytest.mark.parametrize(
+    ("name", "slug"),
+    [
+        ("Shop API", "shop-api"),
+        ("My First Project", "my-first-project"),
+        # A Coolify app's default name holds its branch; the saved label drops the colon.
+        (
+            "easy-pointment-static:main-cr2hzhk4nvabtad0zinjw1ev",
+            "easy-pointment-staticmain-cr2hzhk4nvabtad0zinjw1ev",
+        ),
+        ("Molecula", "molecula"),
+        ("api_v2  --  beta", "api-v2-beta"),
+        ("café@home", "cafe-at-home"),
+    ],
+)
+def test_a_name_is_slugged_as_coolify_writes_its_label(name, slug):
+    assert coolify_slug(name) == slug
+
+
+@pytest.mark.parametrize("protected", ["Shop API", "shop-api", "SHOP-API"])
+async def test_a_coolify_app_is_protected_by_its_name_as_a_person_writes_it(tmp_path, protected):
+    app = coolify_app("u-shop", "shop-api")
+    found = await check(
+        tmp_path, act(coolify("shop-api")), [box("u-shop-1", labels=app)], [protected]
+    )
+
+    assert found == [("protected", 1)]
+
+
+async def test_a_uuid_protects_only_exactly(tmp_path):
+    app = coolify_app("u-shop", "shop-api")
+    containers = [box("u-shop-1", labels=app)]
+
+    assert await check(tmp_path, act(coolify("shop-api")), containers, ["U-SHOP"]) == []
+
+
+async def test_two_set_envs_need_a_redeploy_after_each_and_on_the_same_host(tmp_path):
+    containers = [box("api-1", labels=coolify_app("u-api", "api"))]
+    two = act(
+        set_env("api", key="A", value="1"), set_env("api", key="B", value="2"), coolify("api")
+    )
+    elsewhere = act(
+        set_env("api", key="A", value="1"),
+        PlanStep(action="coolify.redeploy", host_id="b", target="api"),
+    )
+
+    assert await check(tmp_path, two, containers) == []
+    found = await check(tmp_path, elsewhere, containers)
+    assert ("set_env_without_redeploy", 1) in found
+
+
+async def test_an_app_uuid_is_a_typed_refusal_when_the_target_names_none(tmp_path):
+    env = await graph_env(tmp_path, engine=FakeEngine("a", []), host=shop_host())
+
+    with pytest.raises(NoCoolifyApp):
+        coolify_app_uuid(env.registry, coolify("api"))

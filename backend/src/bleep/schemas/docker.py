@@ -16,8 +16,9 @@ class ContainerSummary(BaseModel):
     restart_policy: str = ""
     restart_count: int = 0
     exit_code: int | None = None
-    started_at: datetime | None = None
+    started_at: datetime | None = None  # the last start: a restart moves it
     finished_at: datetime | None = None
+    created_at: datetime | None = None  # when the container was made; a restart keeps it
 
 
 class PortBinding(BaseModel):

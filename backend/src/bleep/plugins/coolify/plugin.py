@@ -37,7 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from bleep.guard.grant import GrantInvalid, verify_step
 from bleep.guard.log import GuardLogger
 from bleep.guard.pipeline import guard_text
-from bleep.guard.plan_check import check_params, check_target, coolify_app_uuid
+from bleep.guard.plan_check import NoCoolifyApp, check_params, check_target, coolify_app_uuid
 from bleep.hosts.registry import Registry
 from bleep.plugins.base import Plugin, PluginContext
 from bleep.plugins.coolify.client import CoolifyClient, CoolifyError, CoolifyUnavailable
@@ -357,7 +357,12 @@ class CoolifyAction:
             )
             if violations:
                 raise StepRefused("; ".join(v.text for v in violations))
-            return coolify_app_uuid(registry, step)
+            try:
+                return coolify_app_uuid(registry, step)
+            except NoCoolifyApp:
+                raise StepRefused(
+                    f"{what}: names no single Coolify application on this host"
+                ) from None
         except GrantInvalid as refusal:
             self._blocked(plan, f"{what}: refused, {refusal}")
             raise
