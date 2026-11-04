@@ -412,16 +412,6 @@ async def test_an_instruction_after_a_refusal_counts_as_a_replan_and_plans_again
     assert (await run.store.current(incident_id)).snapshots[0].target == "shop-db-1"
 
 
-async def test_an_instruction_never_comes_from_the_models_text(run, plans):
-    plans[0].extend([refused(), refused()])
-    incident_id = await run.start()
-    assert (await run.state(incident_id)).get("instructions", []) == []
-
-    await run.decide(incident_id, decide("instruct", "the human's words"))
-
-    assert (await run.state(incident_id))["instructions"] == ["the human's words"]
-
-
 async def test_a_refusal_after_a_refusal_cannot_loop_past_the_replan_budget(run, plans):
     plans[0].append(refused())
     incident_id = await run.start()

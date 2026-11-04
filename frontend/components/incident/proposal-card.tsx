@@ -11,6 +11,14 @@ const STATUS_WORD: Record<ApprovalView["status"], string> = {
   instructed: "answered with an instruction",
 };
 
+// What Propose said before `refused` existed, so an older refused plan keeps its title
+// (`REFUSED` in backend/src/bleep/graph/nodes/propose.py).
+const REFUSED_REASON = "Bleep's own checks refused the proposed plan twice, so nothing will run.";
+
+function isRefused(proposal: Proposal): boolean {
+  return proposal.refused === true || proposal.reason === REFUSED_REASON;
+}
+
 function samePlan(a: Proposal, b: Proposal): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -53,7 +61,7 @@ function Plan({ proposal }: { proposal: Proposal }) {
       )}
       {proposal.human_instructions && (
         <Advice
-          title={proposal.refused ? "Why nothing will run" : "What to do"}
+          title={isRefused(proposal) ? "Why nothing will run" : "What to do"}
           text={proposal.human_instructions}
         />
       )}

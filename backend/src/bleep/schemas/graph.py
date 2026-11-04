@@ -152,8 +152,9 @@ class VerificationPlan(BaseModel):
     urls: list[str] = Field(default_factory=list)
 
 
-class Proposal(BaseModel):
-    """A plan approved as a whole: no steps for `no_action`, one to three for `act`.
+class ProposalDraft(BaseModel):
+    """What the model writes: a plan approved as a whole, no steps for `no_action`, one to three
+    for `act`. This is the only plan schema the model sees; `Proposal` adds what only code sets.
 
     The step count is checked by `check_plan` (a violation goes back to the model), not by this
     model, so a model's over-long plan reaches the check instead of failing to parse.
@@ -164,9 +165,24 @@ class Proposal(BaseModel):
     reason: str
     verification: VerificationPlan = Field(default_factory=VerificationPlan)
     human_instructions: str | None = None
-    # A `no_action` made by the plan check refusing the model's plan twice (#113): the human is
-    # asked to instruct or let it go, and no approval can ever make it run.
+
+
+class Proposal(ProposalDraft):
+    """A plan as the run holds it: the model's draft, and for a refusal what code adds.
+
+    `refused` is a `no_action` made by the plan check refusing the model's plan twice (#113): the
+    human is asked to instruct or let it go, and no approval can ever make it run. Only
+    `propose._refused` sets `refused`, `refused_steps` and `refusal_reasons`; the model never
+    sees them (`ProposalDraft` is its schema) and `propose` builds every plan from a draft.
+    """
+
     refused: bool = False
+    refused_steps: list[PlanStep] = Field(default_factory=list)
+    refusal_reasons: list[str] = Field(default_factory=list)
+
+    @classmethod
+    def from_draft(cls, draft: ProposalDraft) -> Proposal:
+        return cls(**draft.model_dump())
 
 
 class Decision(BaseModel):

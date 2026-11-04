@@ -88,7 +88,7 @@ class ApprovalStore:
         sql = (
             "UPDATE approvals SET status = ?, decision = ?"
             " WHERE incident_id = ? AND status = 'pending'"
-            " AND NOT (? = 'approve' AND json_extract(proposal, '$.refused') = 1)"
+            " AND NOT (? = 'approve' AND json_extract(proposal, '$.refused') IS 1)"
         )
         args: tuple = (
             _STATUS[decision.kind],

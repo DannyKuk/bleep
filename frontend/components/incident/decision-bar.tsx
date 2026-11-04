@@ -10,10 +10,10 @@ import { CHANNEL, formatDateTime } from "@/lib/format";
 
 const MAX_INSTRUCTION = 2000;
 
-function decidedText(decision: Decision): string {
+function decidedText(decision: Decision, refused: boolean): string {
   const where = CHANNEL[decision.via];
   if (decision.kind === "approve") return `Approved on ${where}`;
-  if (decision.kind === "reject") return `Rejected on ${where}`;
+  if (decision.kind === "reject") return refused ? `Let go on ${where}` : `Rejected on ${where}`;
   return `Instruction sent from ${where}: “${decision.text ?? ""}”`;
 }
 
@@ -42,7 +42,7 @@ export function DecisionBar({
   const [text, setText] = useState("");
   const textId = useId();
 
-  const refused = approval.proposal.refused;
+  const refused = approval.proposal.refused === true;
   const decision = approval.decision ?? mine;
   const locked = decision !== null || conflict !== null || sending !== null;
 
@@ -150,7 +150,7 @@ export function DecisionBar({
       )}
       {decision && (
         <p role="status" className="text-sm text-muted-foreground">
-          {decidedText(decision)}, {formatDateTime(decision.at)}
+          {decidedText(decision, refused)}, {formatDateTime(decision.at)}
         </p>
       )}
     </div>

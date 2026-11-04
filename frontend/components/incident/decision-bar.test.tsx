@@ -62,6 +62,17 @@ describe("DecisionBar", () => {
     });
   });
 
+  it("says a refused plan was let go, not rejected", async () => {
+    reply(200, decided("reject", "dashboard"));
+    render(<DecisionBar incidentId="inc-1" approval={refusedApproval()} onDecided={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Let it go" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(/Let go on the dashboard/),
+    );
+  });
+
   it("sends a reject when a refused plan is let go", async () => {
     const fetchMock = reply(200, decided("reject", "dashboard"));
     render(<DecisionBar incidentId="inc-1" approval={refusedApproval()} onDecided={vi.fn()} />);

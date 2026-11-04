@@ -138,13 +138,16 @@ def _no_fixed_claim(text: str) -> str:
     return " ".join(s for s in sentences if s and not _FIXED.search(s))
 
 
-def decision_text(kind: str, via: str | None, text: str | None = None) -> str:
-    """The decision as one line, with its channel: "Approved on Telegram"."""
+def decision_text(
+    kind: str, via: str | None, text: str | None = None, *, let_go: bool = False
+) -> str:
+    """The decision as one line, with its channel: "Approved on Telegram". `let_go` is a reject
+    of a plan Bleep's own checks refused."""
     where = CHANNEL.get(via or "", "a channel")
     if kind == "approve":
         return f"Approved on {where}"
     if kind == "reject":
-        return f"Rejected on {where}"
+        return f"Let go on {where}" if let_go else f"Rejected on {where}"
     return f"Instruction from {where}: {_clip(text or '', ENTRY_CHARS)}"
 
 
@@ -176,7 +179,12 @@ def _event_text(event: IncidentEvent, tool_calls: int) -> str | None:
         case "reminder":
             return "Reminder sent"
         case "decision":
-            return decision_text(str(payload.get("kind")), payload.get("via"), payload.get("text"))
+            return decision_text(
+                str(payload.get("kind")),
+                payload.get("via"),
+                payload.get("text"),
+                let_go=bool(payload.get("refused")),
+            )
         case "action":  # Execute, one per step status change: {action, target, status}
             action, target = payload.get("action", "?"), payload.get("target", "?")
             return f"{action} {target}: {payload.get('status', '?')}"
@@ -399,7 +407,12 @@ def make(deps: GraphDeps) -> Node:
         incident = await deps.incidents.get(incident_id)
         title = incident.title if incident is not None else state["subject"].key
         decision: Decision | None = state.get("decision")
-        human = decision_text(decision.kind, decision.via, decision.text) if decision else None
+        let_go = bool(proposal and proposal.refused)
+        human = (
+            decision_text(decision.kind, decision.via, decision.text, let_go=let_go)
+            if decision
+            else None
+        )
         taken = action_taken(results, proposal, state["subject"].host_id)
         entries = timeline(state.get("signals", []), await deps.bus.history(incident_id))
 

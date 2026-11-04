@@ -29,7 +29,7 @@ from bleep.hosts.registry import Registry
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.memory.text import describe_fact, describe_past
-from bleep.schemas.graph import Diagnosis, GatherContext, PlanStep, Proposal
+from bleep.schemas.graph import Diagnosis, GatherContext, PlanStep, Proposal, ProposalDraft
 from bleep.schemas.incidents import Subject
 from bleep.tools.registry import ActCatalog, PlanRules
 
@@ -45,6 +45,10 @@ INSTRUCT = (
 BY_HAND = (
     "A container that works is acted on only when it is this incident's own or when you name it "
     "in an instruction. If it is the one at fault, name it, or act on it by hand."
+)
+BY_HAND_ONLY = (
+    "A container that works is acted on only when it is this incident's own. If it is the one at "
+    "fault, act on it by hand."
 )
 
 
@@ -184,9 +188,10 @@ def _incident_containers(deps: GraphDeps, state: IncidentState) -> set[str]:
 async def _ask(deps: GraphDeps, incident_id: str, messages: list[BaseMessage]) -> Proposal:
     await check_budget(deps.ledger, incident_id, deps.settings_store.budgets())
     tracker = UsageTracker(incident_id, deps.ledger)
-    return await invoke_structured(
-        deps.models("main"), Proposal, messages, config=tracked(tracker), guard=deps.guard()
+    draft = await invoke_structured(
+        deps.models("main"), ProposalDraft, messages, config=tracked(tracker), guard=deps.guard()
     )
+    return Proposal.from_draft(draft)
 
 
 def _record(deps: GraphDeps, incident_id: str, violations: list[Violation]) -> None:
@@ -201,12 +206,14 @@ def _refused(proposal: Proposal, violations: list[Violation], *, can_instruct: b
     lines = [REFUSED, "Why:", _bullets(violations), "The refused plan:", *(steps or ["no steps"])]
     lines.append(f"The model's reason: {proposal.reason}")
     if any(v.rule == "healthy_target" for v in violations):
-        lines.append(BY_HAND)
+        lines.append(BY_HAND if can_instruct else BY_HAND_ONLY)
     if can_instruct:
         lines.append(INSTRUCT)
     return Proposal(
         kind="no_action",
         refused=True,
+        refused_steps=[redacted_step(s) for s in proposal.steps],
+        refusal_reasons=[v.text for v in violations],
         reason=REFUSED,
         verification=proposal.verification,
         human_instructions="\n".join(lines),

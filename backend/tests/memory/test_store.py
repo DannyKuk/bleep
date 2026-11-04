@@ -420,3 +420,15 @@ async def test_all_records_lists_every_remembered_incident_oldest_first(env):
     assert records[1].host_id == "a"
     assert records[1].title == "disk full"
     assert records[0].action == "nothing ran"
+
+
+def test_letting_a_refused_plan_go_is_not_remembered_as_a_rejection():
+    from bleep.memory.store import decision_memory
+
+    plan = Proposal(kind="no_action", reason="r", refused=True)
+    let_go = Decision(kind="reject", via="dashboard", at=datetime(2026, 11, 10, 9, tzinfo=UTC))
+
+    said = decision_memory(let_go, plan)
+
+    assert said == "let go of the refused plan on 2026-11-10"
+    assert "rejected" not in said

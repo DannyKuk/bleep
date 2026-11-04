@@ -277,9 +277,13 @@ class TelegramBot:
 
     async def _resolve(self, incident_id: str, approval_id: str, decision: Decision) -> str:
         """Try to win the approval; the text to tell the human either way."""
+        before = await self.approvals.current(incident_id)
         won = await self.approvals.resolve(incident_id, decision, approval_id)
         if won is not None:
             await self.runner.resume(incident_id, won, approval_id)
+            refused = before is not None and before.id == approval_id and before.proposal.refused
+            if refused and decision.kind == "reject":
+                return answer("answer_let_go")
             return answer(f"answer_{_PAST[decision.kind]}")
         current = await self.approvals.current(incident_id)
         if current is not None and current.id == approval_id and current.decision is not None:

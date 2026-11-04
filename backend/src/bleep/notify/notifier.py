@@ -75,7 +75,8 @@ class Notifier:
                 id=incident.id,
                 title=fmt.prose_line(incident.title),
                 root_cause=fmt.prose_line(cause),
-                steps=fmt.steps_text(proposal),
+                reasons=_reasons(proposal),
+                steps=_refused_steps(proposal),
             )
             await self._ask(incident, approval, text, approvable=False, reject_label="Let it go")
             return
@@ -165,6 +166,16 @@ class Notifier:
             await sending
         except TelegramError as error:
             log.warning("telegram: could not send: %s", error)
+
+
+def _refused_steps(proposal: Proposal) -> fmt.Redacted:
+    """The steps the plan check refused, as `steps_text` shows a plan's steps."""
+    shown = fmt.steps_text(proposal.model_copy(update={"steps": proposal.refused_steps}))
+    return shown if shown.strip() else fmt.Redacted("no steps")
+
+
+def _reasons(proposal: Proposal) -> fmt.Redacted:
+    return fmt.Redacted("\n".join(f"- {fmt.prose_line(text)}" for text in proposal.refusal_reasons))
 
 
 @dataclass

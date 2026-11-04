@@ -959,12 +959,12 @@ def test_blank_looking_characters_cannot_pad_a_fake_step_onto_its_own_line(code)
     assert fmt.prose_line(f"ok{chr(code) * 40}{FAKE_STEP}") == f"ok {FAKE_STEP}"
 
 
-async def refused_incident(env):
+async def refused_incident(env, plan: Proposal | None = None):
     subject = Subject(kind="service", host_id="demo", service_id="demo/blog")
     incident, _ = await IncidentRepo(env.db).open_or_attach(
         subject, [Signal(subject=subject, kind="container_died", at=T0)]
     )
-    plan = Proposal(kind="no_action", refused=True, reason="refused")
+    plan = plan or Proposal(kind="no_action", refused=True, reason="refused")
     return incident, plan, await env.approvals.request(incident.id, plan, [])
 
 
@@ -993,3 +993,32 @@ async def test_an_approve_press_for_a_refused_plan_is_refused(env):
     assert (await env.approvals.current(incident.id)).decision is None
     [pop_up] = env.api.sent("answerCallbackQuery")
     assert "cannot be approved" in pop_up["text"]
+
+
+async def test_the_refused_message_shows_the_refused_steps_and_the_reasons(env):
+    plan = Proposal(
+        kind="no_action",
+        refused=True,
+        reason="refused",
+        refused_steps=[PlanStep(action="docker.restart", host_id="demo", target="shop-proxy-1")],
+        refusal_reasons=["step 1: shop-proxy-1 is running, not one of this incident's containers"],
+    )
+    incident, plan, request = await refused_incident(env, plan)
+
+    await env.notifier.proposal(incident, None, plan, request)
+
+    text = env.api.sent("sendMessage")[-1]["text"]
+    assert r"1\. docker\.restart shop\-proxy\-1 on demo" in text
+    assert "is running, not one of this incident" in text
+    assert "The refused plan:\nno steps" not in text
+
+
+async def test_letting_a_refused_plan_go_answers_that_it_was_let_go(env):
+    incident, plan, request = await refused_incident(env)
+    await env.notifier.proposal(incident, None, plan, request)
+    env.api.updates.append(fixture("callback_reject", APPROVAL_ID=request.id))
+
+    await env.bot.poll_once()
+
+    [pop_up] = env.api.sent("answerCallbackQuery")
+    assert "Let go" in pop_up["text"] and "Rejected" not in pop_up["text"]

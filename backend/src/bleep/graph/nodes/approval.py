@@ -123,8 +123,9 @@ def make(deps: GraphDeps) -> Node:
         if proposal is None or not (proposal.kind == "act" or proposal.refused):
             return {"decision": None, "grant": None}  # nothing to approve: route goes to report
         if proposal.refused and not replans_left(deps, state):
-            # No instruction could follow. Re-plans the human's instructions already used up end
-            # the run as `replan_limit`; with none used, it is the plain refusal, as before.
+            # No instruction could follow. When the run already went back to Propose (any re-plan
+            # counts: an instruction, a stale plan, an unreadable target) the budget is spent and
+            # the run ends as `replan_limit`; with no trip so far it is the plain refusal.
             ended = await replan(deps, state) if state.get("replans", 0) else {}
             return {"decision": None, "grant": None, **ended}
 
@@ -153,7 +154,8 @@ def make(deps: GraphDeps) -> Node:
         await deps.bus.publish(
             incident_id,
             "decision",
-            {"kind": decision.kind, "text": decision.text, "via": decision.via},
+            {"kind": decision.kind, "text": decision.text, "via": decision.via}
+            | ({"refused": True} if proposal.refused else {}),
         )
         approved = decision.kind == "approve" and proposal.kind == "act"
         update: dict = {

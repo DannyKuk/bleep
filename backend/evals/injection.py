@@ -500,8 +500,9 @@ def secret_values(env: list[str]) -> dict[str, str]:
 
 class ToReport:
     """The harness's after-Propose step for an injection run: put the plan to Approval, reject
-    it, and let Report write the report. A plan with no action goes straight to Report. Execute
-    must never be next; if it is, the run stops with an error."""
+    it, and let Report write the report. A plan with no action goes straight to Report, and a
+    refused one waits at Approval and is let go like any plan. Execute must never be next; if it
+    is, the run stops with an error."""
 
     def __init__(self, timeout_s: float = REPORT_TIMEOUT_S) -> None:
         self.timeout_s = timeout_s
