@@ -296,15 +296,19 @@ async def test_the_incidents_symptoms_are_checked_once_and_a_stopped_target_is_l
     update, _ = await run(env, state)
 
     targets = [(c.kind, c.target) for c in update["verification"].checks]
-    assert targets == [("container", "shop-web-1"), ("url", URL)]
+    assert targets == [
+        ("container", "shop-web-1"),
+        ("container", "shop-db-1 (stopped by the plan)"),
+        ("url", URL),
+    ]
 
 
 async def test_stopping_the_signalled_container_is_judged_by_the_services_urls(tmp_path):
     """The plan stops the crashed container and checks only the database; the shop still
     answers 503, so this is no fix, though no signal reported the URL."""
-    env, state = await setup(
-        tmp_path, Replies(503), plan=VerificationPlan(containers=["shop-db-1"])
-    )
+    stopped = FakeEngine("a", [box("shop-web-1", "shop", state="exited"), box("shop-db-1", "shop")])
+    plan = VerificationPlan(containers=["shop-db-1"])
+    env, state = await setup(tmp_path, Replies(503), plan=plan, engine=stopped)
     stop = PlanStep(action="docker.stop", host_id="a", target="shop-web-1")
     died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
     state |= {
@@ -316,8 +320,52 @@ async def test_stopping_the_signalled_container_is_judged_by_the_services_urls(t
     update, _ = await run(env, state)
 
     checks = [(c.kind, c.target, c.ok) for c in update["verification"].checks]
-    assert checks == [("container", "shop-db-1", True), ("url", URL, False)]
+    assert checks == [
+        ("container", "shop-db-1", True),
+        ("container", "shop-web-1 (stopped by the plan)", True),
+        ("url", URL, False),
+    ]
     assert update["outcome"] == "unverified"
+
+
+@pytest.mark.parametrize(("state_now", "ok"), [("exited", True), ("running", False)])
+async def test_with_no_url_a_stop_is_judged_by_the_stopped_container_itself(
+    tmp_path, state_now, ok
+):
+    """No service URL to tell: checking the database alone would say nothing about the stop."""
+    engine = FakeEngine("a", [box("shop-web-1", "shop", state=state_now), box("shop-db-1", "shop")])
+    plan = VerificationPlan(containers=["shop-db-1"])
+    env, state = await setup(tmp_path, Replies(200), plan=plan, engine=engine, urls=False)
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-web-1")
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
+    state |= {
+        "proposal": state["proposal"].model_copy(update={"steps": [stop]}),
+        "signals": [died],
+        "verify_loops": 2,
+    }
+
+    update, _ = await run(env, state)
+
+    checks = {c.target: (c.ok, c.detail) for c in update["verification"].checks}
+    assert checks["shop-web-1 (stopped by the plan)"][0] is ok
+    assert update["outcome"] == ("resolved" if ok else "unverified")
+
+
+async def test_a_stop_with_an_empty_plan_checks_the_stopped_container_as_one_that_must_run(
+    tmp_path,
+):
+    """The fallback puts the stopped container among those that must run: it fails, the safe
+    side, and is not checked twice."""
+    engine = FakeEngine("a", [box("shop-web-1", "shop", state="exited"), box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), plan=VerificationPlan(), engine=engine)
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-web-1")
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
+    state |= {"proposal": state["proposal"].model_copy(update={"steps": [stop]}), "signals": [died]}
+
+    update, _ = await run(env, state)
+
+    checks = [(c.target, c.ok, c.detail) for c in update["verification"].checks if c.kind != "url"]
+    assert checks == [("shop-web-1", False, "is exited"), ("shop-db-1", True, "running")]
 
 
 async def test_a_plan_url_unknown_to_the_service_is_checked_too(tmp_path):
@@ -569,3 +617,46 @@ async def test_a_redeploy_passes_when_a_signal_named_a_container_it_replaced(tmp
     targets = [c.target for c in update["verification"].checks]
     assert "web0uuid-1" not in targets and URL in targets
     assert update["outcome"] == "resolved"
+
+
+PREVIEW = WEB_APP | {"coolify.pullRequestId": "7"}
+
+
+async def test_a_redeploy_of_the_main_app_does_not_count_a_preview_as_replaced(tmp_path):
+    """The incident is on the preview web0uuid-pr-7; redeploying the main app leaves it down."""
+    preview = web("web0uuid-pr-7", labels=PREVIEW, state="exited", created=DEPLOYED_AT)
+    engine = FakeEngine("a", [web(health="healthy"), preview, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="web0uuid-pr-7")
+    step = PlanStep(action="coolify.redeploy", host_id="a", target="web0uuid")
+    state = redeployed(state, step) | {
+        "signals": [died],
+        "context": GatherContext(at=T0, containers=[preview]),
+        "verify_loops": 2,
+    }
+
+    update, _ = await run(env, state)
+
+    checks = {c.target: c.ok for c in update["verification"].checks}
+    assert checks["web0uuid-pr-7"] is False
+    assert update["outcome"] == "unverified"
+
+
+async def test_a_stale_listing_of_another_app_by_the_same_name_replaces_nothing_of_it(tmp_path):
+    """Gather saw an older app named web (since deleted); the redeploy of today's web does not
+    make that app's container count as replaced."""
+    gone = box("old0uuid-1", labels={**WEB_APP, "coolify.applicationUuid": "old0uuid"})
+    engine = FakeEngine("a", [web(health="healthy"), box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="old0uuid-1")
+    state = redeployed(state) | {
+        "signals": [died],
+        "context": GatherContext(at=T0, containers=[gone]),
+        "verify_loops": 2,
+    }
+
+    update, _ = await run(env, state)
+
+    checks = {c.target: (c.ok, c.detail) for c in update["verification"].checks}
+    assert checks["old0uuid-1"] == (False, "not found")
+    assert update["outcome"] == "unverified"
