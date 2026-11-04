@@ -12,6 +12,7 @@ import unicodedata
 from bleep import prompts
 from bleep.guard.plan_check import MAX_STEPS
 from bleep.guard.redact import redact_text, redacted_step
+from bleep.guard.sanitize import INVISIBLE_CHARS
 from bleep.schemas.graph import Diagnosis, PlanStep, Proposal
 
 TELEGRAM_LIMIT = 4096
@@ -97,7 +98,12 @@ def shows_in_full(proposal: Proposal) -> bool:
 
 # Whitespace, and letters and marks that render blank (Braille blank, the Hangul fillers, the
 # Khmer inherent vowels, the combining grapheme joiner): a run of either could pad a line.
-_SPACES = re.compile(r"[\s\u034f\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0]+")
+_INVISIBLE = re.compile(INVISIBLE_CHARS)
+_FILLERS = re.compile(r"[\u034f\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0]")
+# They only switch a character between text and emoji look: common after an emoji, and a single
+# one cannot hide a name, so a step line drops them instead of marking them.
+_PRESENTATION = re.compile("[\ufe0e\ufe0f]")
+_SPACES = re.compile(r"\s+")
 
 
 def prose_line(text: str) -> Redacted:
@@ -105,14 +111,18 @@ def prose_line(text: str) -> Redacted:
     redacted line: breaks read `⏎`, format characters `�`, and a run of blanks is one space. So
     it can never start a line of its own that reads like a plan step, not even by padding with
     spaces until the chat wraps it there."""
-    return Redacted(_SPACES.sub(" ", _one_line(redact_text(text.strip()))))
+    return Redacted(_SPACES.sub(" ", _one_line(_FILLERS.sub(" ", redact_text(text.strip())))))
 
 
 def _one_line(text: str) -> str:
     """`text` on one visible line: breaks and control characters read `⏎`, format characters
-    (Unicode category Cf: bidi overrides and isolates, zero-width marks) read `�`."""
+    (Unicode category Cf: bidi overrides and isolates, zero-width marks) and the other characters
+    that draw nothing (`INVISIBLE_CHARS`: the grapheme joiner, fillers, variation selectors) read
+    `�`; U+FE0E and U+FE0F are dropped."""
     text = _BREAKS.sub(LINE_BREAK, text)
-    return "".join(HIDDEN_FORMAT if unicodedata.category(c) == "Cf" else c for c in text)
+    text = _PRESENTATION.sub("", text)
+    hidden = (c for c in text if unicodedata.category(c) == "Cf" or _INVISIBLE.fullmatch(c))
+    return text.translate({ord(c): HIDDEN_FORMAT for c in hidden})
 
 
 def _step_line(number: int, step: PlanStep) -> tuple[str, bool]:

@@ -1,7 +1,12 @@
 import pytest
 
 from bleep.graph.deps import CORE_ACTIONS
-from bleep.guard.plan_check import NoCoolifyApp, check_plan, coolify_app_uuid
+from bleep.guard.plan_check import (
+    NoCoolifyApp,
+    check_plan,
+    coolify_app_uuid,
+    named_off_limits,
+)
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.coolify_names import coolify_slug
 from bleep.schemas.graph import PlanStep, Proposal, VerificationPlan
@@ -519,3 +524,66 @@ async def test_an_empty_resource_name_label_protects_nothing(tmp_path):
     )
 
     assert found == []
+
+
+async def off_limits(tmp_path, arguments):
+    env = await graph_env(tmp_path, engine=guarded_engine(), host=guarded_host())
+    return named_off_limits(arguments, env.registry, "a")
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "shop-db-1",
+        "SHOP-DB-1",
+        "shop\u200b-db-1",  # zero-width space
+        "sh\u00adop-db\u2060-1",  # soft hyphen, word joiner
+        "\u202eshop-db-1",  # bidi override
+        "ｓｈｏｐ－ｄｂ－１",  # fullwidth
+        "shop%2Ddb-1",
+        "shop%2ddb%2D1",
+        "shop%252Ddb-1",  # encoded twice
+        "shop%E2%80%8B-db-1",  # an encoded zero-width space
+        "%EF%BD%93hop-db-1",  # an encoded fullwidth s
+        "shop\x00-db-1",  # a control byte
+    ],
+)
+async def test_a_protected_name_is_found_however_it_is_spelled(tmp_path, spelling):
+    for arguments in ({"c": spelling}, {spelling: 1}, {"a": [{"b": f"run {spelling} now"}]}):
+        found = await off_limits(tmp_path, arguments)
+
+        assert found is not None and found[0] == "protected"
+
+
+@pytest.mark.parametrize(
+    "spelling", ["bleep\u200d-backend-1", "ＢＬＥＥＰ-backend-1", "bleep%2Dbackend-1"]
+)
+async def test_one_of_bleeps_own_containers_is_found_however_it_is_spelled(tmp_path, spelling):
+    found = await off_limits(tmp_path, {"c": spelling})
+
+    assert found is not None and found[0] == "self"
+
+
+def encoded(times: int) -> str:
+    text = "shop%2Ddb-1"  # one level of encoding
+    for _ in range(times - 1):
+        text = text.replace("%", "%25")
+    return text
+
+
+@pytest.mark.parametrize(("times", "found"), [(4, True), (5, True), (6, False)])
+async def test_decoding_goes_five_rounds_deep(tmp_path, times, found):
+    assert (await off_limits(tmp_path, {"c": encoded(times)}) is not None) is found
+
+
+async def test_other_names_pass(tmp_path):
+    assert await off_limits(tmp_path, {"c": "shop-web-1 and shop\u200b-api"}) is None
+
+
+@pytest.mark.parametrize(
+    "filler", ["\u034f", "\u17b4", "\u17b5", "\u115f", "\u1160", "\u3164", "\uffa0"]
+)
+async def test_a_character_that_draws_nothing_cannot_split_a_name(tmp_path, filler):
+    found = await off_limits(tmp_path, {"c": f"shop{filler}-db-1"})
+
+    assert found is not None and found[0] == "protected"

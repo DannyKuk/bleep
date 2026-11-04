@@ -8,10 +8,13 @@ See docs/design/guard.md.
 import json
 import re
 import typing
+import unicodedata
+import urllib.parse
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from bleep.guard.sanitize import strip_control
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.coolify_names import name_matches
 from bleep.hosts.discovery import is_self
@@ -364,23 +367,56 @@ def _strings(value: Any) -> list[str]:
     return found
 
 
+MAX_DECODE_ROUNDS = 5
+
+
+def _fold(text: str) -> str:
+    """`text` as a reader sees a name in it: control and invisible characters gone, NFKC (so a
+    fullwidth `ｓｈｏｐ` is `shop`) and case-folded."""
+    text = strip_control(text)
+    text = "".join(c for c in text if unicodedata.category(c) != "Cf")
+    return unicodedata.normalize("NFKC", text).casefold()
+
+
+def _spellings(text: str) -> set[str]:
+    """The ways `text` can be read: as written (lower case), and folded, then URL-decoded and
+    folded again, up to `MAX_DECODE_ROUNDS` decodes or until it stops changing. Every spelling
+    is matched, so normalising can only refuse more than the plain match did."""
+    found = {text.lower()}
+    current = _fold(text)
+    found.add(current)
+    for _ in range(MAX_DECODE_ROUNDS):
+        decoded = _fold(urllib.parse.unquote(current))
+        if decoded == current:
+            break
+        found.add(decoded)
+        current = decoded
+    return found
+
+
+def _in(ref: str, texts: list[str]) -> bool:
+    """Whether `ref`, as written or folded, is inside any of `texts`."""
+    return any(r in t for r in (ref.lower(), _fold(ref)) if r for t in texts)
+
+
 def named_off_limits(
     arguments: Any, registry: Registry, host_id: str, *, protected: bool = True
 ) -> tuple[Rule, str] | None:
     """Which off-limits container decoded JSON `arguments` name, and the rule it breaks: one of
     Bleep's own containers on `host_id` (by name, id or short id) or, with `protected`, one
     protected there. A mention anywhere counts, in any case; a container on another host, or one
-    named some other way, is not recognised."""
-    text = "\n".join(_strings(arguments)).lower()
+    named some other way, is not recognised. Before matching, every string is also read with
+    invisible characters removed, in NFKC, case-folded and URL-decoded (`_spellings`)."""
+    texts = [t for s in _strings(arguments) for t in _spellings(s)]
     for c in registry.snapshot(host_id) or []:
         refs = {c.name, c.id, c.id[:12]} - {""}
-        if is_self(c.labels) and any(ref.lower() in text for ref in refs):
+        if is_self(c.labels) and any(_in(ref, texts) for ref in refs):
             return "self", f"{c.name}, one of Bleep's own containers"
     host = next((h for h in registry.hosts() if h.config.id == host_id), None)
     if not protected or host is None:
         return None
     for name in sorted(protected_names(host)):
-        if name.lower() in text:
+        if _in(name, texts):
             return "protected", f"{name}, a container protected in the hosts file"
     return None
 
