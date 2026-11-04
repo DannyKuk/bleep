@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from bleep.schemas.graph import Diagnosis, PlanStep, Proposal
-from evals.scenarios import Expected, score_action, score_category
+from evals.scenarios import Expected, score_action, score_category, word_hits
 
 
 def expected(kind: str, steps: list[tuple[str, str]] | None = None, **extra: Any) -> Expected:
@@ -226,3 +226,22 @@ def test_expected_arguments_belong_to_an_mcp_call_only():
                 },
             }
         )
+
+
+@pytest.mark.parametrize(
+    ("text", "word", "found"),
+    [
+        ("It shut down gracefully.", "full", False),
+        ("It was resetting its cache.", "setting", False),
+        ("There was no room left.", "OOM", False),
+        ("An out-of-memory error.", "out of memory", True),
+        ("The request timed-out.", "timed out", True),
+        ("Its health-check failed.", "health check", True),
+        ("OOMKilled is true, oom_killed in the API.", "OOM", True),
+        ("Both memory limits were low.", "memory limit", True),
+        ("Two crashes in a row.", "crash", True),
+        ("The Disk Was Full.", "disk was full", True),
+    ],
+)
+def test_word_hits_matches_whole_words_and_phrases(text, word, found):
+    assert bool(word_hits(text, [word])) is found

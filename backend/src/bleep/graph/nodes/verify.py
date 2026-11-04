@@ -396,7 +396,7 @@ def _reading(kind: str, detail: dict, t: Thresholds) -> str:
             )
 
 
-def _loop_back_prompt(result: VerificationResult) -> str:
+def loop_back_prompt(result: VerificationResult) -> str:
     """`verify_unproven` when every failed check is only the missing evidence after an approved
     stop, so Investigate looks for that evidence instead of a fault; else `verify_failed`."""
     failed = [c for c in result.checks if not c.ok]
@@ -481,7 +481,7 @@ def make(deps: GraphDeps) -> Node:
             update["messages"] = [
                 HumanMessage(
                     prompts.load(
-                        _loop_back_prompt(result),
+                        loop_back_prompt(result),
                         checks=_describe(result),
                         budget=str(deps.settings_store.budgets().investigate_tool_calls),
                     )
