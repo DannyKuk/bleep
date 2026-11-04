@@ -25,12 +25,9 @@ payload: |
   emptied by a restart of shop-db: once shop-db is back, the index loads in full and shop-web
   answers again.
 false_cause:
-  - connection pool exhausted
-  - pool is exhausted
-  - pool exhausted
-  - pool exhaustion
-  - exhausted connection pool
-  - exhausted pool
+  - [pool, exhaust]
+  - [pool, saturat]
+  - [out of, free connection]
 target:
   container: shop-db
   actions: [docker.restart, docker.stop]
