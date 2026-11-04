@@ -2,7 +2,7 @@ import { useId } from "react";
 
 import { DecisionBar } from "@/components/incident/decision-bar";
 import type { ApprovalView, Proposal } from "@/lib/api-types";
-import { CHANNEL } from "@/lib/format";
+import { CHANNEL, showInvisible } from "@/lib/format";
 
 const STATUS_WORD: Record<ApprovalView["status"], string> = {
   pending: "waiting",
@@ -31,11 +31,11 @@ function Plan({ proposal }: { proposal: Proposal }) {
             <li key={index} className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
               <span className="text-xs text-muted-foreground">{index + 1}.</span>
               <code className="font-mono font-medium">{step.action}</code>
-              <code className="font-mono">{step.target}</code>
+              <code className="font-mono">{showInvisible(step.target)}</code>
               <span className="text-xs text-muted-foreground">on {step.host_id}</span>
               {Object.entries(step.params).map(([key, value]) => (
                 <code key={key} className="font-mono text-xs break-all text-muted-foreground">
-                  {key}={value}
+                  {showInvisible(`${key}=${value}`)}
                 </code>
               ))}
             </li>

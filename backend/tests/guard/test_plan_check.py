@@ -564,10 +564,26 @@ async def test_one_of_bleeps_own_containers_is_found_however_it_is_spelled(tmp_p
     assert found is not None and found[0] == "self"
 
 
-async def test_decoding_stops_after_a_few_rounds_and_other_names_pass(tmp_path):
-    deep = "shop%2Ddb-1"
-    for _ in range(8):
-        deep = deep.replace("%", "%25")
+def encoded(times: int) -> str:
+    text = "shop%2Ddb-1"  # one level of encoding
+    for _ in range(times - 1):
+        text = text.replace("%", "%25")
+    return text
 
-    assert await off_limits(tmp_path, {"c": deep}) is None
+
+@pytest.mark.parametrize(("times", "found"), [(4, True), (5, True), (6, False)])
+async def test_decoding_goes_five_rounds_deep(tmp_path, times, found):
+    assert (await off_limits(tmp_path, {"c": encoded(times)}) is not None) is found
+
+
+async def test_other_names_pass(tmp_path):
     assert await off_limits(tmp_path, {"c": "shop-web-1 and shop\u200b-api"}) is None
+
+
+@pytest.mark.parametrize(
+    "filler", ["\u034f", "\u17b4", "\u17b5", "\u115f", "\u1160", "\u3164", "\uffa0"]
+)
+async def test_a_character_that_draws_nothing_cannot_split_a_name(tmp_path, filler):
+    found = await off_limits(tmp_path, {"c": f"shop{filler}-db-1"})
+
+    assert found is not None and found[0] == "protected"

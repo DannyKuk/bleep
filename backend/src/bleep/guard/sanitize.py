@@ -15,13 +15,16 @@ _ANSI = re.compile(
 )
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")  # all but \n and \t
 # Every Unicode "format" (Cf) character: soft hyphen, zero-width, bidi marks and overrides, the
-# byte-order mark, U+180E, the tag block; plus variation selectors. They hide text from a human
-# reader and can split a secret or a tag so a pattern misses it.
+# byte-order mark, U+180E, the tag block; plus variation selectors, and the characters that are
+# not Cf but draw nothing: the combining grapheme joiner U+034F, the Khmer inherent vowels
+# U+17B4 and U+17B5, and the Hangul and halfwidth Hangul fillers U+115F, U+1160, U+3164 and
+# U+FFA0. They hide text from a human reader and can split a secret or a tag so a pattern misses it.
 INVISIBLE_CHARS = (
     "[­؀-؅؜۝܏࢐࢑࣢᠋-᠏​-‏"
     "‪-‮⁠-⁤⁦-⁯︀-️﻿￹-￻"
     "\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3\U0001d173-\U0001d17a"
-    "\U000e0000-\U000e007f\U000e0100-\U000e01ef]"
+    "\U000e0000-\U000e007f\U000e0100-\U000e01ef"
+    "\u034f\u115f\u1160\u17b4\u17b5\u3164\uffa0]"
 )
 _INVISIBLE = re.compile(INVISIBLE_CHARS)
 

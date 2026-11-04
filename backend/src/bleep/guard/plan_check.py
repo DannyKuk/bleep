@@ -379,17 +379,17 @@ def _fold(text: str) -> str:
 
 
 def _spellings(text: str) -> set[str]:
-    """The ways `text` can be read: as written (lower case), and folded and URL-decoded until it
-    stops changing (`MAX_DECODE_ROUNDS` at most). Every spelling is matched, so normalising can
-    only refuse more than the plain match did."""
+    """The ways `text` can be read: as written (lower case), and folded, then URL-decoded and
+    folded again, up to `MAX_DECODE_ROUNDS` decodes or until it stops changing. Every spelling
+    is matched, so normalising can only refuse more than the plain match did."""
     found = {text.lower()}
-    current = text
+    current = _fold(text)
+    found.add(current)
     for _ in range(MAX_DECODE_ROUNDS):
-        folded = _fold(current)
-        found.add(folded)
-        decoded = urllib.parse.unquote(folded)
-        if decoded == folded:
+        decoded = _fold(urllib.parse.unquote(current))
+        if decoded == current:
             break
+        found.add(decoded)
         current = decoded
     return found
 

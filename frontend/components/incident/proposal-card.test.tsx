@@ -22,6 +22,24 @@ describe("ProposalCard", () => {
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
   });
 
+  it("shows a character that draws nothing in a step's params as a mark", () => {
+    const hidden = proposal({
+      steps: [
+        {
+          action: "mcp.call",
+          host_id: "demo",
+          target: "shop-web-1",
+          params: { arguments: '{"c": "shop\u200b-db-1\u034f"}' },
+        },
+      ],
+    });
+    render(
+      <ProposalCard incidentId="inc-1" proposal={hidden} approval={null} onDecided={vi.fn()} />,
+    );
+    const steps = within(screen.getByRole("list", { name: "Steps" }));
+    expect(steps.getByText('arguments={"c": "shop\uFFFD-db-1\uFFFD"}')).toBeInTheDocument();
+  });
+
   it("says no action is proposed, with no buttons", () => {
     render(
       <ProposalCard

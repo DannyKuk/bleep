@@ -71,3 +71,7 @@ def test_cut_note_keeps_the_line_indentation():
     out = cap_lines("    " + "x " * 5000)
     head, note, tail = out.split("\n")
     assert note.startswith("    [… ") and tail.startswith("    ")
+
+
+def test_characters_that_draw_nothing_but_are_not_format_characters_are_stripped():
+    assert strip_control("a\u034f\u17b4\u17b5\u115f\u1160\u3164\uffa0b") == "ab"
