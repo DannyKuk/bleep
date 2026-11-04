@@ -85,6 +85,7 @@ from evals.scenarios import (
     Scenario,
     ScenarioError,
     ScenarioResult,
+    ToolCallRecord,
     load_scenarios,
     score_action,
     score_category,
@@ -495,7 +496,12 @@ async def _collect(
     result.diagnosis = state.get("diagnosis")
     result.proposal = state.get("proposal")
     events = await deps.bus.history(incident.id)
-    result.steps = sum(e.kind == "tool_call" for e in events)
+    result.tool_calls = [
+        ToolCallRecord.of(e.payload.get("name"), e.payload.get("args"))
+        for e in events
+        if e.kind == "tool_call"
+    ]
+    result.steps = len(result.tool_calls)
     diagnosed = [
         e.at for e in events if e.kind == "node_finished" and e.payload.get("node") == "diagnose"
     ]

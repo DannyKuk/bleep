@@ -345,3 +345,25 @@ def test_an_mcp_call_shows_its_tool_and_the_arguments_the_scenario_expects():
 
     assert '`mcp.call shop-proxy (caddy_reload) with {"container": "shop-proxy"}`' in text
     assert "mcp.call shop-proxy (caddy_reload)" in text.split("## db-down")[1]
+
+
+def test_the_tools_a_run_called_are_a_column_and_old_runs_show_none():
+    from evals.scenarios import ToolCallRecord
+
+    calls = [ToolCallRecord.of("list_containers", {}), ToolCallRecord.of("read_logs", {"n": 5})]
+    text = render(INFO, [result(1, tool_calls=calls), result(2)])
+    assert "| Tools |" in text
+    assert '`list_containers`, `read_logs({"n": 5})`' in text
+    assert "| n/a |" in text
+
+
+def test_a_raw_line_from_before_tool_calls_were_kept_still_loads():
+    line = result(1).model_dump_json(exclude={"tool_calls"})
+    assert ScenarioResult.model_validate_json(line).tool_calls == []
+
+
+def test_long_arguments_are_cut_short():
+    from evals.scenarios import ARGS_SHOWN, ToolCallRecord
+
+    call = ToolCallRecord.of("read_logs", {"pattern": "x" * 500})
+    assert len(call.args) == ARGS_SHOWN and call.args.endswith("…")

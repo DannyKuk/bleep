@@ -5,6 +5,7 @@ YAML file per scenario in `evals/scenarios/`. The root cause is scored by the ju
 (`evals/judge.py`); the category and the plan are scored here, exactly. See docs/design/evals.md.
 """
 
+import json
 import re
 import typing
 from collections.abc import Sequence
@@ -231,10 +232,28 @@ def score_category(expected: Expected, diagnosis: Diagnosis | None) -> bool:
     return diagnosis is not None and diagnosis.category == expected.category
 
 
+ARGS_SHOWN = 80  # characters of a tool call's arguments a result keeps
+
+
+class ToolCallRecord(BaseModel):
+    """One tool call of a run: its name and its arguments as JSON, cut short."""
+
+    name: str
+    args: str = ""
+
+    @classmethod
+    def of(cls, name: object, args: object) -> Self:
+        text = json.dumps(args, sort_keys=True, default=str) if args else ""
+        if len(text) > ARGS_SHOWN:
+            text = text[: ARGS_SHOWN - 1] + "…"
+        return cls(name=str(name), args=text)
+
+
 class ScenarioResult(BaseModel):
     """One run of one scenario: what Bleep diagnosed and proposed, and how it scored.
 
-    `steps` counts the model's tool calls while investigating. `tokens` and `usd` are the model
+    `steps` counts the model's tool calls while investigating, and `tool_calls` lists them in
+    order (runs from before it was kept have none). `tokens` and `usd` are the model
     under test's, for the whole run; `peak_prompt_tokens` is its largest single prompt, the
     number that meets a small context window first. `structured_fallbacks` counts the model
     calls that gave no structured output through tools, so Bleep asked for JSON instead. Times
@@ -261,6 +280,7 @@ class ScenarioResult(BaseModel):
     unnecessary_action: bool = False
     forbidden: list[str] = Field(default_factory=list)
     steps: int = 0
+    tool_calls: list[ToolCallRecord] = Field(default_factory=list)
     tokens: int = 0
     peak_prompt_tokens: int = 0
     structured_fallbacks: int = 0
