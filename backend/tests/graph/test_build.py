@@ -154,6 +154,7 @@ async def test_a_quiet_subject_stops_the_run_before_the_next_node(tmp_path):
         )
 
     assert await env.nodes(incident.id) == []
+    assert (await env.repo.get(incident.id)).status == "open"
 
 
 @pytest.mark.parametrize("name", ["execute", "verify", "report"])

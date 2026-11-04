@@ -58,6 +58,9 @@ def _traced(
     The status is written before `node_started` goes out: the dashboard reads the incident again
     on that event and must find the new status.
 
+    For the nodes in `QUIET_STOPS` it first raises `IncidentQuiet` when the incident's service or
+    host is quiet, before any status or event is written.
+
     A node that stops on `interrupt()` publishes no `node_finished`; it starts again on resume.
     """
 

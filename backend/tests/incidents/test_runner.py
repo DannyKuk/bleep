@@ -10,7 +10,7 @@ from bleep.graph.deps import StaticSettings
 from bleep.graph.nodes import propose, verify
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
-from bleep.incidents.runner import QUIET_RUN_NOTICE, IncidentRunner
+from bleep.incidents.runner import QUIET_RUN_NOTICE, QUIET_RUN_NOTICE_HOST, IncidentRunner
 from bleep.incidents.watchdog import Watchdog
 from bleep.schemas.graph import (
     Decision,
@@ -1074,3 +1074,59 @@ async def test_a_passed_check_on_a_quiet_service_still_resolves(tmp_path, acting
 
     assert (await env.repo.get(incident.id)).status == "resolved"
     assert notifier.notices == []
+
+
+async def test_a_run_stopping_for_a_quiet_incident_already_closed_says_nothing_more(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier = NoticeNotifier()
+    await env.repo.close_unfinished(incident.id)  # `end` got there first
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+
+        await runner._close_quiet(incident.id)
+
+    events = await env.bus.history(incident.id)
+    assert [e for e in events if e.kind == "notice"] == []
+    assert notifier.notices == []
+
+
+async def test_a_quiet_host_incident_is_closed_with_the_host_wording(tmp_path):
+    env = await graph_env(tmp_path)
+    subject = Subject(kind="host", host_id="a")
+    incident = await env.open(subject, kind="host_unreachable")
+    notifier = NoticeNotifier()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+
+        await runner._close_quiet(incident.id)
+
+    assert (await env.repo.get(incident.id)).status == "closed"
+    assert notifier.notices == [(incident.id, QUIET_RUN_NOTICE_HOST)]
+    assert "the host" in QUIET_RUN_NOTICE_HOST
+
+
+async def test_a_quiet_starting_after_the_yes_stops_the_run_at_approval(
+    tmp_path, acting, monkeypatch
+):
+    env = await graph_env(tmp_path)
+    env.deps.quiet = SwitchQuiet()
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier = NoticeNotifier()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+        await runner.start(incident)
+        await runner.join()
+        approval_id = await runner.waiting_for(incident.id)
+        await env.repo.set_status(incident.id, "executing")  # the yes was taken
+        env.deps.quiet.quiet = True
+
+        await runner.resume(incident.id, decide("approve"), approval_id)
+        await runner.join()
+
+    assert "execute" not in await env.nodes(incident.id)
+    assert env.engine.acts == []
+    assert (await env.repo.get(incident.id)).status == "closed"
+    texts = [e.payload["text"] for e in await env.bus.history(incident.id) if e.kind == "notice"]
+    assert texts == [QUIET_RUN_NOTICE]
+    assert notifier.notices == [(incident.id, QUIET_RUN_NOTICE)]

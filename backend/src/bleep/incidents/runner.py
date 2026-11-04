@@ -37,6 +37,7 @@ AFTER_PAUSE = "after_pause"  # config flag: this run goes on from a pause
 MAX_PAUSE_MIN = 60  # the longest wait between two retries of a paused run
 LONG_PAUSE_S = 3600  # a run paused this long in all gets one more notice
 QUIET_RUN_NOTICE = "Closed: the service was made quiet while I worked on it, so I stopped here."
+QUIET_RUN_NOTICE_HOST = "Closed: the host was made quiet while I worked on it, so I stopped here."
 
 
 class IncidentRunner:
@@ -319,11 +320,12 @@ class IncidentRunner:
     async def _close_quiet(self, incident_id: str) -> None:
         """Close an incident whose run stopped because its service or host went quiet."""
         incident = await self.repo.get(incident_id)
-        await self.repo.close_unfinished(incident_id)
+        before = await self.repo.close_unfinished(incident_id)
         self._forget_pauses(incident_id)
-        text = QUIET_RUN_NOTICE
-        if incident is not None and incident.subject.kind == "host":
-            text = text.replace("the service", "the host")
+        if before is None:  # already closed, e.g. by `end` as the quiet started: it said why
+            return
+        is_host = incident is not None and incident.subject.kind == "host"
+        text = QUIET_RUN_NOTICE_HOST if is_host else QUIET_RUN_NOTICE
         await self.bus.publish(incident_id, "notice", {"text": text})
         await self._tell(incident_id, text)
 
