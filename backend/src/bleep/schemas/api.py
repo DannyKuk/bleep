@@ -18,7 +18,7 @@ from bleep.schemas.graph import (
     Vote,
 )
 from bleep.schemas.incidents import Incident
-from bleep.schemas.quiet import QuietMode, QuietScope
+from bleep.schemas.quiet import QuietMode, QuietScope, QuietState
 
 Health = Literal["ok", "degraded", "down", "stopped", "unknown"]
 
@@ -50,6 +50,10 @@ class QuietView(BaseModel):
     mode: QuietMode
     until: datetime | None
     since: datetime
+
+    @classmethod
+    def of(cls, state: QuietState) -> Self:
+        return cls(scope=state.scope, mode=state.mode, until=state.until, since=state.since)
 
 
 class HostView(BaseModel):

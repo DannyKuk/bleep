@@ -43,7 +43,7 @@ async def _stored_checks(parts: AppParts, host_id: str) -> Checks:
 def quiet_view(state: QuietState | None) -> QuietView | None:
     if state is None:
         return None
-    return QuietView(scope=state.scope, mode=state.mode, until=state.until, since=state.since)
+    return QuietView.of(state)
 
 
 def _quiet_of(service: Service, active: list[QuietState]) -> QuietState | None:

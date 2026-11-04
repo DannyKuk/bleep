@@ -78,7 +78,7 @@ def test_a_bad_request_is_422_and_names_the_field(client, body, field):
     response = client.put(SHOP_PATH, json=body)
     assert response.status_code == 422
     assert field in str(response.json()["detail"])
-    assert client.get("/api/services").json()[0]["quiet"] is None
+    assert shop(client)["quiet"] is None
 
 
 def test_leave_alone_with_until_is_422_and_snooze_in_the_past_is_422(client):

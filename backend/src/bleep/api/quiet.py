@@ -54,7 +54,7 @@ async def _set(
     parts: AppParts, scope: QuietScope, target_id: str, request: QuietRequest
 ) -> QuietView:
     state = await parts.quiet.set(scope, target_id, request.mode, request.until)
-    return QuietView(scope=state.scope, mode=state.mode, until=state.until, since=state.since)
+    return QuietView.of(state)
 
 
 def _problem(field: str, kind: str, message: str) -> HTTPException:
