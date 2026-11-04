@@ -1,13 +1,14 @@
 "use client";
 
 import { Moon } from "lucide-react";
-import { useState, type ReactElement } from "react";
+import { useRef, useState, type ReactElement } from "react";
 
 import { SaveError, problemsOf } from "@/components/settings/save-error";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -16,6 +17,7 @@ import {
 import type { QuietView } from "@/lib/api-types";
 import {
   clearQuiet,
+  morningLabel,
   quietLabel,
   setQuiet,
   snoozeUntil,
@@ -24,10 +26,10 @@ import {
   type SnoozeChoice,
 } from "@/lib/quiet-api";
 
-const SNOOZES: { choice: SnoozeChoice; label: string }[] = [
+const snoozes = (now: Date): { choice: SnoozeChoice; label: string }[] => [
   { choice: "1h", label: "For 1 hour" },
   { choice: "4h", label: "For 4 hours" },
-  { choice: "morning", label: "Until tomorrow 8:00" },
+  { choice: "morning", label: morningLabel(now) },
 ];
 
 interface QuietMenuProps {
@@ -40,17 +42,22 @@ interface QuietMenuProps {
 /** The moon menu: snooze the target, leave it alone, or watch it again. */
 export function QuietMenu({ target, quiet, onChanged, trigger }: QuietMenuProps) {
   const [open, setOpen] = useState(false);
+  const busy = useRef(false);
   const [problems, setProblems] = useState<string[]>([]);
   const own = quiet !== null && quiet.scope === target.scope;
   const throughHost = quiet !== null && !own;
 
   async function apply(change: () => Promise<unknown>) {
+    if (busy.current) return;
+    busy.current = true;
     setProblems([]);
     try {
       await change();
     } catch (error) {
       setProblems(problemsOf(error));
       return;
+    } finally {
+      busy.current = false;
     }
     setOpen(false);
     onChanged();
@@ -77,10 +84,12 @@ export function QuietMenu({ target, quiet, onChanged, trigger }: QuietMenuProps)
       />
       <DropdownMenuContent>
         {quiet && (
-          <DropdownMenuLabel>
-            {quietLabel(quiet, new Date())}
-            {throughHost && " (set on its host)"}
-          </DropdownMenuLabel>
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>
+              {quietLabel(quiet, new Date())}
+              {throughHost && " (set on its host)"}
+            </DropdownMenuLabel>
+          </DropdownMenuGroup>
         )}
         {own && (
           <DropdownMenuItem closeOnClick={false} onClick={() => apply(() => clearQuiet(target))}>
@@ -88,7 +97,7 @@ export function QuietMenu({ target, quiet, onChanged, trigger }: QuietMenuProps)
           </DropdownMenuItem>
         )}
         {quiet && <DropdownMenuSeparator />}
-        {SNOOZES.map(({ choice, label }) => (
+        {snoozes(new Date()).map(({ choice, label }) => (
           <DropdownMenuItem
             key={choice}
             closeOnClick={false}

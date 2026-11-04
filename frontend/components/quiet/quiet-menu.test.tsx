@@ -77,4 +77,18 @@ describe("QuietMenu", () => {
     await waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("ignores a second choice while the first is in flight", async () => {
+    let release: (reply: Response) => void = () => {};
+    const fetchMock = vi.fn<typeof fetch>(
+      () => new Promise<Response>((resolve) => (release = resolve)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<QuietMenu target={service} quiet={null} onChanged={() => {}} />);
+    await openMenu();
+    const choice = await item("For 1 hour");
+    await userEvent.dblClick(choice);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    release(json(view));
+  });
 });

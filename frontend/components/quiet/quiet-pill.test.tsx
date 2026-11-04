@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { QuietPill } from "@/components/quiet/quiet-pill";
-import { quietLabel, snoozeUntil } from "@/lib/quiet-api";
+import { morningLabel, quietLabel, snoozeUntil } from "@/lib/quiet-api";
 
 const NOW = new Date(2026, 10, 4, 15, 30);
 const since = "2026-11-04T15:00:00Z";
@@ -11,10 +11,27 @@ describe("snoozeUntil", () => {
   it("gives 1 h, 4 h and the next 08:00 in local time", () => {
     expect(snoozeUntil("1h", NOW).getTime()).toBe(NOW.getTime() + 3600_000);
     expect(snoozeUntil("4h", NOW).getTime()).toBe(NOW.getTime() + 4 * 3600_000);
-    expect(snoozeUntil("morning", NOW)).toEqual(new Date(2026, 10, 5, 8, 0));
-    expect(snoozeUntil("morning", new Date(2026, 10, 5, 1, 0))).toEqual(
-      new Date(2026, 10, 6, 8, 0),
-    );
+  });
+
+  it("makes morning the next 08:00: this morning in the small hours, else tomorrow's", () => {
+    const night = new Date(2026, 10, 5, 1, 0);
+    const day = new Date(2026, 10, 5, 9, 0);
+    expect(snoozeUntil("morning", night)).toEqual(new Date(2026, 10, 5, 8, 0));
+    expect(snoozeUntil("morning", day)).toEqual(new Date(2026, 10, 6, 8, 0));
+    expect(morningLabel(night)).toBe("Until 8:00");
+    expect(morningLabel(day)).toBe("Until tomorrow 8:00");
+    const pill = (now: Date) =>
+      quietLabel(
+        {
+          scope: "service",
+          mode: "snooze",
+          until: snoozeUntil("morning", now).toISOString(),
+          since,
+        },
+        now,
+      );
+    expect(pill(night)).toBe("Snoozed until 8:00");
+    expect(pill(day)).toBe("Snoozed until tomorrow 8:00");
   });
 });
 

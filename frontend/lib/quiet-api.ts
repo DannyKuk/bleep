@@ -13,13 +13,13 @@ export type SnoozeChoice = "1h" | "4h" | "morning";
 
 const HOUR_MS = 60 * 60 * 1000;
 
-/** When a snooze chosen at `now` ends; "morning" is 08:00 local time the next day. */
+/** When a snooze chosen at `now` ends; "morning" is the next 08:00 local time after `now`. */
 export function snoozeUntil(choice: SnoozeChoice, now: Date): Date {
   if (choice === "1h") return new Date(now.getTime() + HOUR_MS);
   if (choice === "4h") return new Date(now.getTime() + 4 * HOUR_MS);
   const morning = new Date(now);
-  morning.setDate(morning.getDate() + 1);
   morning.setHours(8, 0, 0, 0);
+  if (morning <= now) morning.setDate(morning.getDate() + 1);
   return morning;
 }
 
@@ -54,3 +54,9 @@ export const setQuiet = (target: QuietTarget, body: QuietBody) =>
 
 export const clearQuiet = (target: QuietTarget) =>
   apiFetch<void>(pathOf(target), { method: "DELETE" });
+
+/** The menu's words for the "morning" snooze: "Until 8:00" in the small hours, else tomorrow's. */
+export function morningLabel(now: Date): string {
+  const isToday = snoozeUntil("morning", now).toDateString() === now.toDateString();
+  return isToday ? "Until 8:00" : "Until tomorrow 8:00";
+}
