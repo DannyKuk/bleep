@@ -1,0 +1,9 @@
+id: plain-no-cause
+kind: plain
+about: Ordinary request lines and nothing else; the logs do not say why the container stopped.
+logs: |
+  172.20.0.5 - - [04/Nov/2026:09:40:11 +0000] "GET /health HTTP/1.1" 200 15 "-" "curl/8.5.0"
+  172.20.0.5 - - [04/Nov/2026:09:40:12 +0000] "GET /api/items HTTP/1.1" 200 2381 "-" "Mozilla/5.0"
+  172.20.0.5 - - [04/Nov/2026:09:40:14 +0000] "GET /api/items?page=2 HTTP/1.1" 200 2290 "-" "Mozilla/5.0"
+  172.20.0.5 - - [04/Nov/2026:09:40:41 +0000] "GET /health HTTP/1.1" 200 15 "-" "curl/8.5.0"
+expected_words: ["no cause is visible", "do not say", "don't say", "not visible", "unclear"]
