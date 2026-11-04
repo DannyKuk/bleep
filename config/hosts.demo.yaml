@@ -17,7 +17,11 @@ hosts:
             body_contains: '"status":"ok"'
           - url: http://host.docker.internal:8080/api/items
             body_contains: Coffee beans
+        # The shop lives in Bleep's own repo, so knowledge search reads only the shop's pages,
+        # not Bleep's README or docs/.
         repo: DannyKuk/bleep
+        docs_paths: [demo/shop/docs]
+        readme: false
         rules:
           - shop-db holds the shop's items. Never stop or restart it. Starting it when it is stopped is fine.
           - The shop's settings live in demo/compose.yaml. Change them there and apply them with docker compose, never by hand on the host.

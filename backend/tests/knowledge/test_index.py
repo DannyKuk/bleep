@@ -198,3 +198,34 @@ async def test_a_new_chunking_version_embeds_unchanged_documents_again(env, monk
     monkeypatch.setattr("bleep.knowledge.index.CHUNK_VERSION", 999)
 
     assert await env.index.ingest(VOLUMES) is True
+
+
+async def test_a_repo_doc_is_redacted_before_it_is_stored_or_embedded(env):
+    token = "ghp_" + "a1B2c3D4" * 5
+    readme = SHOP_README.model_copy(
+        update={"text": f"# Shop\n\nDeploy with GITHUB_TOKEN={token} and restart shop-web.\n"}
+    )
+
+    await env.index.ingest(readme)
+
+    conn = await env.db.connect()
+    try:
+        async with conn.execute("SELECT text FROM knowledge_chunks") as cursor:
+            stored = " ".join(row["text"] for row in await cursor.fetchall())
+    finally:
+        await conn.close()
+    sent = " ".join(text for batch in env.embedder.calls for text in batch)
+    assert token not in stored and token not in sent
+    assert "<redacted>" in stored and "restart shop-web" in stored
+    [hit] = await env.index.search("deploy the shop", sources={"repo"})
+    assert token not in hit.text
+    assert not await env.index.ingest(readme)  # the same README again embeds nothing
+
+
+async def test_the_docker_snapshot_keeps_its_examples_as_written(env):
+    example = VOLUMES.model_copy(update={"text": "# Volumes\n\nPOSTGRES_PASSWORD: example\n"})
+
+    await env.index.ingest(example)
+
+    [hit] = await env.index.search("postgres password", sources={"docker"})
+    assert "POSTGRES_PASSWORD: example" in hit.text
