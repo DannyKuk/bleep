@@ -1,5 +1,6 @@
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 from bleep.guard.sanitize import INVISIBLE_CHARS, sanitize, strip_control
@@ -91,3 +92,18 @@ def test_the_dashboard_shows_exactly_the_characters_the_guard_treats_as_invisibl
 
 def test_the_braille_blank_is_stripped():
     assert strip_control("a\u2800b") == "ab"
+
+
+def test_the_invisible_set_covers_every_format_character_of_the_running_python():
+    missing = [
+        c
+        for c in range(0x110000)
+        if unicodedata.category(chr(c)) == "Cf" and not re.fullmatch(INVISIBLE_CHARS, chr(c))
+    ]
+
+    assert not missing, (
+        f"Unicode {unicodedata.unidata_version} has format (Cf) characters "
+        f"INVISIBLE_CHARS lacks: "
+        f"{', '.join(f'U+{c:04X}' for c in missing)}. Add them to INVISIBLE_CHARS in "
+        "guard/sanitize.py, then update frontend/lib/invisible-ranges.json to match."
+    )
