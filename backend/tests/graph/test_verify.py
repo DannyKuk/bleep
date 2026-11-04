@@ -6,7 +6,7 @@ import pytest
 from bleep.graph.deps import StaticSettings
 from bleep.graph.nodes import verify
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
-from bleep.hosts.ssh import SshUnavailable
+from bleep.hosts.ssh import CommandResult, SshUnavailable
 from bleep.schemas.graph import (
     GatherContext,
     PlanStep,
@@ -1000,16 +1000,62 @@ async def test_a_disk_incident_is_judged_by_the_fullest_disk(tmp_path):
     assert host.detail == "95 % used on the fullest disk, needs under 90 %"
 
 
+LOADAVG = ("cat", "/proc/loadavg")
+CALM = "1.00 3.00 6.00 1/486 3583973\n"  # 2 CPUs: 0.5 per CPU over the last minute, 3 over 15
+BUSY = "5.00 5.00 6.00 1/486 3583973\n"  # 2.5 per CPU over the last minute
+
+
 async def test_load_is_judged_over_the_last_minute_since_the_15_minute_average_lags(tmp_path):
     env, state = await host_incident(tmp_path, "load")
-    env.shell.replies[("cat", "/proc/loadavg")] = "1.00 3.00 6.00 1/486 3583973\n"  # 2 CPUs
+    env.shell.replies[LOADAVG] = CALM
 
     update, _ = await run(env, state)
 
     host = next(c for c in update["verification"].checks if c.kind == "host")
     assert (host.target, host.ok) == ("load", True)
-    assert host.detail == "0.50 per CPU over the last minute, needs at most 2"
+    assert (
+        host.detail == "0.50 per CPU over the last minute, needs at most 2 on two checks in a row"
+    )
     assert update["outcome"] == "resolved"
+
+
+@pytest.mark.parametrize(
+    ("replies", "attempt", "resolved"),
+    [
+        ([CALM, CALM], 2, True),  # never on the first check alone
+        ([CALM, BUSY, CALM], 3, False),  # one dip, then a dip again: never two in a row
+        ([BUSY, CALM, CALM], 3, True),
+        ([CALM, SshUnavailable("a", "connection lost"), CALM], 3, False),  # a gap breaks the run
+    ],
+)
+async def test_load_passes_only_within_its_threshold_on_two_checks_in_a_row(
+    tmp_path, replies, attempt, resolved
+):
+    env, state = await host_incident(tmp_path, "load", loops=2)
+    env.shell.replies[LOADAVG] = CALM
+
+    def next_reading(waits: int) -> None:
+        reply = replies[min(waits - 1, len(replies) - 1)]  # wait 1 is before the first check
+        env.shell.replies.pop(("uname", "-s"), None)
+        if isinstance(reply, Exception):
+            env.shell.replies[("uname", "-s")] = reply
+        else:
+            env.shell.replies[LOADAVG] = reply
+
+    env.deps.sleep = Sleeps(next_reading)
+
+    update, _ = await run(env, state)
+
+    assert update["verification"].attempt == attempt
+    assert (update["outcome"] == "resolved") is resolved
+
+
+async def test_disk_and_memory_pass_on_one_reading(tmp_path):
+    env, state = await host_incident(tmp_path, "disk", "memory")
+
+    update, _ = await run(env, state)
+
+    assert update["outcome"] == "resolved" and update["verification"].attempt == 1
 
 
 async def test_every_reading_of_the_incident_is_checked_from_one_read(tmp_path):
@@ -1023,15 +1069,20 @@ async def test_every_reading_of_the_incident_is_checked_from_one_read(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("reply", "detail"),
+    ("key", "reply", "detail"),
     [
-        (SshUnavailable("a", "connection lost"), "host not reachable"),
-        ("Mem: nothing here\n", "could not be read"),
+        (("uname", "-s"), SshUnavailable("a", "connection lost"), "host not reachable"),
+        (("free", "-b"), "Mem: nothing here\n", "could not be read"),
+        # A failed uname must fail the reading, not stop the run on an error.
+        (
+            ("uname", "-s"),
+            CommandResult(exit_code=126, stdout="", stderr="denied"),
+            "could not be read",
+        ),
     ],
 )
-async def test_a_reading_that_cannot_be_taken_fails(tmp_path, reply, detail):
+async def test_a_reading_that_cannot_be_taken_fails(tmp_path, key, reply, detail):
     env, state = await host_incident(tmp_path, "memory", loops=2)
-    key = ("uname", "-s") if isinstance(reply, Exception) else ("free", "-b")
     env.shell.replies[key] = reply
 
     update, _ = await run(env, state)

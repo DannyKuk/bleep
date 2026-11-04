@@ -11,11 +11,11 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Literal
 
+from bleep.hosts.readings import readings
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import HostBasics
-from bleep.schemas.incidents import Signal, SignalKind, Subject
+from bleep.schemas.incidents import Signal, Subject
 
 log = logging.getLogger(__name__)
 
@@ -67,19 +67,3 @@ class HostProbe:
             Signal(subject=subject, kind=kind, at=at, detail=detail)
             for kind, detail in readings(basics).items()
         ]
-
-
-def readings(basics: HostBasics, *, load_minutes: Literal[1, 15] = 15) -> dict[SignalKind, dict]:
-    """The disk, memory and load details of one reading, keyed by signal kind, as the detector
-    reads them (`detector.past_threshold`); a kind the host did not report is left out. Disk is
-    the fullest mount, load is per CPU over the last `load_minutes`."""
-    found: dict[SignalKind, dict] = {}
-    if basics.disks:
-        worst = max(basics.disks, key=lambda d: d.used_percent)
-        found["disk"] = {"percent": worst.used_percent, "mount": worst.mount}
-    if basics.mem_total and basics.mem_available is not None:
-        found["memory"] = {"available_percent": basics.mem_available / basics.mem_total * 100}
-    load = basics.load1 if load_minutes == 1 else basics.load15
-    if load is not None and basics.cpus:
-        found["load"] = {"load_per_cpu": load / basics.cpus}
-    return found
