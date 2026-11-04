@@ -214,9 +214,17 @@ def _matched(proposed: list[PlanStep], wanted: list[ExpectedStep]) -> int:
 
 
 def word_hits(text: str, words: Sequence[str]) -> list[str]:
-    """The `words` that `text` uses as whole words or phrases, in any case: `full` is not found
-    in "gracefully", nor `setting` in "resetting"."""
-    return [w for w in words if re.search(rf"(?<!\w){re.escape(w)}(?!\w)", text, re.IGNORECASE)]
+    """The `words` that `text` uses as whole words or phrases, in any case and with an optional
+    plural `s` or `es`: `full` is not found in "gracefully", nor `setting` in "resetting". The
+    words of a phrase may be joined by spaces, hyphens or underscores, so "out of memory" is
+    found in "out-of-memory" and "oom killed" in "oom_killed"."""
+    return [w for w in words if _word_pattern(w).search(text)]
+
+
+def _word_pattern(word: str) -> re.Pattern[str]:
+    parts = [re.escape(part) for part in re.split(r"[\s_-]+", word.strip()) if part]
+    body = r"[\s_-]+".join(parts)
+    return re.compile(rf"(?<![^\W_]){body}(?:e?s)?(?![^\W_])", re.IGNORECASE)
 
 
 def score_category(expected: Expected, diagnosis: Diagnosis | None) -> bool:
