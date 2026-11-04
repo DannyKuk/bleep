@@ -18,6 +18,8 @@ _SOCKET_PART = re.compile(r"[A-Za-z0-9_.-]{1,255}")
 def _address(value: str) -> str:
     """A host name or an IP literal, and nothing an SSH client could read as more: no scheme,
     user, port, path, space or option."""
+    if "%" in value:  # a scope id may hold anything, spaces and commas included
+        raise ValueError("must be an address without a scope id (%)")
     try:
         return str(ipaddress.ip_address(value))
     except ValueError:

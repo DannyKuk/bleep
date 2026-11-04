@@ -10,7 +10,7 @@ from bleep.hosts.config import HostConfig, ServiceOverrides
 from bleep.hosts.discovery import AmbiguousOverride, group_services
 from bleep.hosts.engine import Engine, EngineUnavailable, connect_engine
 from bleep.hosts.shell import HostShell, engine_basics, host_basics
-from bleep.hosts.ssh import KeysFor, SshSession
+from bleep.hosts.ssh import KeysFor, Resolve, SshSession
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.services import HostState, Service
 
@@ -23,13 +23,13 @@ Connector = Callable[[HostConfig], Awaitable[tuple[SshSession | None, Engine]]]
 
 
 async def connect_host(
-    host: HostConfig, keys: KeysFor | None = None
+    host: HostConfig, keys: KeysFor | None = None, resolve: Resolve | None = None
 ) -> tuple[SshSession | None, Engine]:
     """The real connector: open the ssh session first (ssh hosts), then build the engine.
-    `keys` reads a dashboard host's keys from the secret file."""
+    `keys` reads a dashboard host's keys from the secret file; `resolve` looks up its address."""
     session = None
     if host.kind == "ssh":
-        session = SshSession(host, keys=keys)
+        session = SshSession(host, keys=keys, resolve=resolve)
         await session.open()
     try:
         return session, connect_engine(host, session)

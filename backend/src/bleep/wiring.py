@@ -168,8 +168,9 @@ def build_parts(
     `registry` replaces the one read from the hosts file (tests pass an empty or fake one),
     `embedder` the one the settings name (tests pass `FakeEmbedder`), `tracer` the one
     `TRACING` names, `plugins` the plugins Bleep has (`PLUGINS`), and `resolver` the name lookup
-    a dashboard-set plugin address is checked with (tests pass one; never the network), and `scan`
-    the fetch of a host key offered for a host added on the dashboard (tests pass a fake). The
+    a dashboard-set plugin address or a dashboard host's address is checked with (tests pass
+    one; never the network), and `scan` the fetch of a host key offered for a host added on
+    the dashboard (tests pass a fake). The
     GitHub client reads with the token `github_token_source` picks (no hosts file is read when a
     registry is passed).
     The secret store reads `data_dir/secrets.json`; a change there reloads only the part that
@@ -186,10 +187,12 @@ def build_parts(
     github_config = None
     if registry is None:
         hosts_file = load_hosts_file(settings.hosts_file)
-        connect = functools.partial(connect_host, keys=dashboard_keys(secrets))
+        connect = functools.partial(connect_host, keys=dashboard_keys(secrets), resolve=resolver)
         registry = Registry(hosts_file.hosts, connect)
         github_config = hosts_file.github
-    dashboard_hosts = DashboardHosts(db, secrets, [h.config.id for h in registry.hosts()])
+    dashboard_hosts = DashboardHosts(
+        db, secrets, [h.config.id for h in registry.hosts()], resolve=resolver
+    )
     if scan is not None:
         dashboard_hosts.scan = scan
     github = GithubClient(github_token_source(github_config, secrets))

@@ -10,6 +10,7 @@ Reconnecting is not done here on its own: the watcher calls `ensure_open()` and 
 
 import asyncio
 import contextlib
+import ipaddress
 import logging
 import os
 import shlex
@@ -32,6 +33,7 @@ log = logging.getLogger(__name__)
 KEEPALIVE_INTERVAL_S = 15
 KEEPALIVE_COUNT_MAX = 3  # a silent drop is noticed after about 45 s
 CONNECT_TIMEOUT_S = 15
+FETCH_TIMEOUT_S = 5  # fetching a host key for a person waiting on the page
 CONNECT_GRACE_S = 5  # the outer bound on a connect sits this far above asyncssh's own
 OUTPUT_CAP = 1_000_000  # bytes kept of each of stdout and stderr
 READ_CHUNK = 65_536
@@ -44,6 +46,7 @@ _LIVE_DIRS: set[Path] = set()
 
 Connect = Callable[..., Awaitable[Any]]
 Scan = Callable[..., Awaitable[Any]]
+Resolve = Callable[[str, int], Awaitable[list[str]]]
 
 
 @dataclass(frozen=True)
@@ -138,14 +141,20 @@ class SshSession:
     """
 
     def __init__(
-        self, host: HostConfig, connect: Connect = asyncssh.connect, keys: KeysFor | None = None
+        self,
+        host: HostConfig,
+        connect: Connect = asyncssh.connect,
+        keys: KeysFor | None = None,
+        resolve: Resolve | None = None,
     ) -> None:
-        """`keys` reads a dashboard host's keys from the secret file at every connect."""
+        """`keys` reads a dashboard host's keys from the secret file at every connect, and
+        `resolve` looks up its address (`resolve_host` by default) before it is pinned."""
         if host.kind != "ssh":
             raise ValueError(f"host {host.id} is a {host.kind} host, not an ssh host")
         self.host = host
         self._connect = connect
         self._keys = keys
+        self._resolve = resolve
         self._conn: Any = None
         self._listener: Any = None
         self._dir: Path | None = None
@@ -258,7 +267,17 @@ class SshSession:
 
     async def _rebuild(self) -> None:
         await self._teardown()
-        options = self._dashboard_auth() if self.host.source == "dashboard" else self._file_auth()
+        address = (self.host.address or "").lower()
+        if self.host.source == "dashboard":
+            options = self._dashboard_auth()
+            try:
+                # The address checked now is the one connected to, so a name that resolves
+                # elsewhere since it was saved (DNS rebinding) cannot reach a refused address.
+                address = await vetted_address(address, self.host.port, self._resolve)
+            except AddressRefused as refused:
+                raise SshUnavailable(self.host.id, str(refused)) from None
+        else:
+            options = self._file_auth()
         try:
             # asyncssh's own connect_timeout does not cover every stage of a handshake with a host
             # that vanished without a FIN, so an outer bound makes sure open() always returns.
@@ -266,7 +285,7 @@ class SshSession:
                 conn = await self._connect(
                     # OpenSSH lowercases the name before the known_hosts lookup; asyncssh does not,
                     # so "MacBook-Pro-M1.local" would miss the "macbook-pro-m1.local" entry.
-                    (self.host.address or "").lower(),
+                    address,
                     port=self.host.port,
                     username=self.host.user,
                     # [] rather than asyncssh's default (), which loads ~/.ssh/config: only the
@@ -324,12 +343,17 @@ class SshSession:
                 self.host.id, "the SSH key set on the dashboard cannot be read"
             ) from None
         try:
-            known_hosts = asyncssh.import_known_hosts(keys.known_hosts.get_secret_value())
+            known = asyncssh.import_known_hosts(keys.known_hosts.get_secret_value())
+            trusted = known.match((self.host.address or "").lower(), "", self.host.port)[0]
         except ValueError:
+            trusted = []
+        if not trusted:
             raise SshUnavailable(
                 self.host.id, "the host key confirmed on the dashboard is invalid"
             ) from None
-        return {"client_keys": [key], "known_hosts": known_hosts}
+        # The keys themselves, not a lookup by name: the connection goes to the pinned address,
+        # and only the key confirmed for this host's address and port is trusted there.
+        return {"client_keys": [key], "known_hosts": (trusted, [], [])}
 
     async def _teardown(self) -> None:
         conn, listener, directory = self._conn, self._listener, self._dir
@@ -345,14 +369,79 @@ class SshSession:
             shutil.rmtree(directory, ignore_errors=True)
 
 
-async def fetch_host_key(address: str, port: int, scan: Scan = asyncssh.get_server_host_key) -> Any:
-    """The host key the SSH server at `address`:`port` offers, without logging in: the first half
-    of trust on first use, which a person confirms by its fingerprint before it is stored. Raises
-    `SshUnavailable` when no server answers."""
-    host = address.lower()
+class AddressRefused(ValueError):
+    """The address does not resolve, or resolves to an address Bleep never connects a dashboard
+    host to; the text names neither the name nor the address."""
+
+
+async def resolve_host(host: str, port: int) -> list[str]:
+    """Every address `host` resolves to, for a TCP connection to `port`."""
+    infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    return list(dict.fromkeys(str(info[4][0]) for info in infos))
+
+
+def _never(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return (
+        ip.is_loopback
+        or ip.is_link_local
+        or ip.is_unspecified
+        or ip.is_multicast
+        or (ip.version == 4 and ip in ipaddress.ip_network("0.0.0.0/8"))
+    )
+
+
+def _embedded(ip: ipaddress.IPv6Address) -> list[ipaddress.IPv4Address]:
+    """The IPv4 addresses an IPv6 address carries: mapped, compatible, 6to4, Teredo, NAT64."""
+    found = [ip.ipv4_mapped, ip.sixtofour, *(ip.teredo or ())]
+    if ip in ipaddress.ip_network("64:ff9b::/96") or ip.packed[:12] == bytes(12):
+        found.append(ipaddress.IPv4Address(ip.packed[12:]))
+    return [v4 for v4 in found if v4 is not None]
+
+
+def is_refused(address: str) -> bool:
+    """Whether a dashboard host may never be reached at `address`: loopback, link-local (cloud
+    metadata among it), unspecified, multicast, or an IPv6 form carrying one of those. Private
+    networks are allowed: that is where SSH hosts live."""
+    ip = ipaddress.ip_address(address.split("%", 1)[0])
+    candidates = [ip, *_embedded(ip)] if ip.version == 6 else [ip]
+    return any(_never(candidate) for candidate in candidates)
+
+
+async def vetted_address(host: str, port: int, resolve: Resolve | None = None) -> str:
+    """The address to connect to for `host`: it is resolved once, every answer is checked, and
+    the first is returned, so the connection goes where the check looked. Raises
+    `AddressRefused`."""
     try:
-        async with asyncio.timeout(CONNECT_TIMEOUT_S + CONNECT_GRACE_S):
-            key = await scan(host, port, config=[])
+        addresses = [str(ipaddress.ip_address(host))]
+    except ValueError:
+        try:
+            addresses = await (resolve or resolve_host)(host, port)
+        except OSError, UnicodeError:
+            raise AddressRefused("the address does not resolve") from None
+    if not addresses:
+        raise AddressRefused("the address does not resolve")
+    if any(is_refused(address) for address in addresses):
+        raise AddressRefused(
+            "the address is loopback, link-local, unspecified or multicast, which a host added "
+            "on the dashboard may not be"
+        )
+    return addresses[0]
+
+
+async def fetch_host_key(
+    address: str,
+    port: int,
+    scan: Scan = asyncssh.get_server_host_key,
+    resolve: Resolve | None = None,
+) -> Any:
+    """The host key the SSH server at `address`:`port` offers, without logging in: the first half
+    of trust on first use, which a person confirms by its fingerprint before it is stored. The
+    address is vetted and pinned first. Raises `AddressRefused` or `SshUnavailable`."""
+    host = address.lower()
+    pinned = await vetted_address(host, port, resolve)
+    try:
+        async with asyncio.timeout(FETCH_TIMEOUT_S):
+            key = await scan(pinned, port, config=[])
     except (asyncssh.Error, OSError, TimeoutError) as exc:
         raise SshUnavailable(host, exc) from exc
     if key is None:

@@ -1,6 +1,7 @@
 """The hosts added on the dashboard, below the API (#194): what is written where and in which
 order, what the listeners hear, and what a restart reads back."""
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -15,6 +16,8 @@ from bleep.hosts.dashboard import (
     DashboardHosts,
     HostChange,
     HostConflict,
+    HostKeyBusy,
+    HostRefused,
     HostStale,
 )
 from bleep.schemas.dashboard_hosts import DashboardHostEdit, HostKeyConfirmation, NewDashboardHost
@@ -38,6 +41,10 @@ async def scan(host, port, **kwargs):
     return SERVER_KEY
 
 
+async def lan(host, port):
+    return ["192.168.1.10"]
+
+
 @pytest.fixture
 async def db(tmp_path) -> Database:
     database = Database(tmp_path / "bleep.db")
@@ -50,7 +57,7 @@ def secret_store(tmp_path) -> SecretStore:
 
 
 def hosts(db, tmp_path, file_ids=("a",), clock=None) -> DashboardHosts:
-    return DashboardHosts(db, secret_store(tmp_path), file_ids, scan, clock or Clock())
+    return DashboardHosts(db, secret_store(tmp_path), file_ids, scan, clock or Clock(), lan)
 
 
 async def new(store: DashboardHosts, host_id: str = "c", **fields) -> NewDashboardHost:
@@ -142,7 +149,7 @@ async def test_a_host_the_hosts_file_names_now_wins_and_its_entry_can_only_be_re
 async def test_keys_left_for_a_host_that_no_longer_exists_are_removed_at_load(db, tmp_path):
     secrets = secret_store(tmp_path)
     await secrets.replace({"SSH_KEY:gone": PEM, "KNOWN_HOSTS:gone": "gone ssh-ed25519 AAAA"})
-    store = DashboardHosts(db, secrets, (), scan, Clock())
+    store = DashboardHosts(db, secrets, (), scan, Clock(), lan)
     await store.load()
     assert secrets.stored(SSH_KEYS) == [] and secrets.stored(HOST_KEYS) == []
 
@@ -219,3 +226,80 @@ async def test_nothing_about_a_key_is_logged(db, tmp_path, caplog):
     assert body not in caplog.text
     assert SERVER_KEY.export_public_key().decode().split()[1] not in caplog.text
     assert "connects elsewhere now" in caplog.text
+
+
+async def test_a_change_says_whether_the_login_moved(db, tmp_path):
+    store = hosts(db, tmp_path)
+    heard: list[HostChange] = []
+
+    async def listener(change: HostChange) -> None:
+        heard.append(change)
+
+    store.subscribe(listener)
+    await store.add(await new(store))
+    await store.change("c", edit(ssh_key=SecretStr(PEM)), version=store.version("c"))
+    await store.change("c", edit(port=2200), version=store.version("c"))
+    assert [(c.kind, c.moved) for c in heard] == [
+        ("added", False),
+        ("connection", False),
+        ("connection", True),
+    ]
+
+
+async def test_an_offer_survives_a_save_that_failed(db, tmp_path):
+    store = hosts(db, tmp_path)
+    body = await new(store)
+    fail = {"on": True}
+
+    async def refuse(changed):
+        if fail["on"]:
+            raise RuntimeError("disk full")
+
+    store._secrets.subscribe(refuse, before_write=True)
+    with pytest.raises(SecretNotSaved):
+        await store.add(body)
+    fail["on"] = False
+    await store.add(body)  # the same confirmation, without fetching the host key again
+    assert store.connection("c").host_key.set
+
+
+@pytest.mark.parametrize("answer", ["127.0.0.1", "169.254.169.254", "::1"])
+async def test_a_host_whose_name_resolves_to_loopback_by_the_time_it_is_saved_is_refused(
+    db, tmp_path, answer
+):
+    store = hosts(db, tmp_path)
+    body = await new(store)
+
+    async def rebound(host, port):
+        return [answer]
+
+    store.resolve = rebound
+    with pytest.raises(HostRefused):
+        await store.add(body)
+    assert await hosts(db, tmp_path).load() == []
+
+
+async def test_moving_a_host_to_a_refused_address_changes_nothing(db, tmp_path):
+    store = hosts(db, tmp_path)
+    await store.add(await new(store))
+    version = store.version("c")
+    with pytest.raises(HostRefused):
+        await store.change("c", edit(address="127.0.0.1"), version=version)
+    assert store.version("c") == version and store.connection("c").ssh_key.set
+
+
+async def test_a_second_fetch_while_one_runs_is_refused(db, tmp_path):
+    store = hosts(db, tmp_path)
+    release = asyncio.Event()
+
+    async def slow(host, port, **kwargs):
+        await release.wait()
+        return SERVER_KEY
+
+    store.scan = slow
+    first = asyncio.create_task(store.offer_host_key("box.lan", 22))
+    await asyncio.sleep(0)
+    with pytest.raises(HostKeyBusy):
+        await store.offer_host_key("box.lan", 22)
+    release.set()
+    assert (await first).fingerprint == SERVER_KEY.get_fingerprint("sha256")

@@ -127,6 +127,8 @@ def check_size(body: Any) -> None:
         size = len(json.dumps(body, ensure_ascii=False))
     except RecursionError:
         raise HTTPException(422, "the body is nested too deeply") from None
+    except TypeError:  # not JSON (a form or text/plain body arrives as bytes)
+        raise HTTPException(422, "send the body as JSON") from None
     if size > MAX_BODY_CHARS:
         raise HTTPException(413, f"the body is over {MAX_BODY_CHARS:,} characters")
 

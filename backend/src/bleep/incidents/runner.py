@@ -16,12 +16,19 @@ from langgraph.types import Command
 
 from bleep import prompts
 from bleep.graph.build import NODE_STATUS
-from bleep.graph.deps import Approvals, Notifier, SettingsSource, StaticSettings, Tracer
+from bleep.graph.deps import (
+    Approvals,
+    IncidentFinished,
+    Notifier,
+    SettingsSource,
+    StaticSettings,
+    Tracer,
+)
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.llm.guard import ModelUnavailable
 from bleep.schemas.graph import Decision
-from bleep.schemas.incidents import Incident, IncidentStatus, Signal
+from bleep.schemas.incidents import TERMINAL_STATUSES, Incident, IncidentStatus, Signal
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +72,7 @@ class IncidentRunner:
         self._pauses: dict[str, int] = {}  # consecutive pauses of a run, for the backoff
         self._since: dict[str, datetime] = {}  # when a run first paused
         self._warned_long: set[str] = set()
+        self._ended: set[str] = set()  # closed from outside their run (`end`)
 
     @staticmethod
     def config(incident_id: str) -> RunnableConfig:
@@ -143,17 +151,32 @@ class IncidentRunner:
         await asyncio.gather(*runs, return_exceptions=True)
 
     async def end(self, incident_id: str, text: str) -> None:
-        """Close an incident from outside its run (its host was removed): cancel the run, which
-        is never started again since the incident is closed, then say why on its timeline and to
-        the channels. A pending approval can no longer be decided (`ApprovalStore.resolve`)."""
+        """Close an incident from outside its run (its host was removed) and say why, on its
+        timeline and to the channels; one that is finished already is left as it is.
+
+        It is marked ended before the first await, so no run of it is driven from here on; then
+        it is closed, which shuts `ApprovalStore.resolve` for it on every channel; then whatever
+        run is in flight is cancelled. A decision that won just before is resumed into nothing:
+        `_resume` and `_drive` refuse an ended or finished incident, and so does Execute."""
+        self._ended.add(incident_id)
+        before = await self.repo.close_unfinished(incident_id)
         run = self._runs.get(incident_id)
         if run is not None:
             run.cancel()
             await asyncio.gather(run, return_exceptions=True)
         self._forget_pauses(incident_id)
-        await self.repo.set_status(incident_id, "closed")
+        if before is None:
+            return
+        if before in ("executing", "verifying"):
+            text += " A step of the approved plan may already have run; see the actions above."
         await self.bus.publish(incident_id, "notice", {"text": text})
         await self._tell(incident_id, text)
+
+    def _finished(self, incident_id: str, status: IncidentStatus | None) -> bool:
+        if incident_id in self._ended or status is None or status in TERMINAL_STATUSES:
+            log.info("incident %s: finished, so its run is not driven", incident_id)
+            return True
+        return False
 
     def _schedule(self, incident_id: str, run: Callable[[], Awaitable[None]]) -> asyncio.Task[None]:
         before = self._runs.get(incident_id)
@@ -224,6 +247,8 @@ class IncidentRunner:
         return record.decision if record is not None else None
 
     async def _resume(self, incident_id: str, decision: Decision, approval_id: str) -> None:
+        if incident_id in self._ended:
+            return
         waiting = await self.waiting_for(incident_id)
         if waiting is None:
             log.warning("incident %s: a decision arrived but the run is not waiting", incident_id)
@@ -243,6 +268,8 @@ class IncidentRunner:
         was_paused = False
         try:
             current = await self.repo.get(incident_id)
+            if self._finished(incident_id, current.status if current is not None else None):
+                return
             was_paused = current is not None and current.status == "paused"
             await self.repo.set_status(incident_id, await self._status_on(incident_id, payload))
             config = await self._traced(incident_id)
@@ -251,6 +278,9 @@ class IncidentRunner:
             await self.graph.ainvoke(payload, config)
         except ModelUnavailable as unavailable:
             await self._pause(incident_id, unavailable, announce=not was_paused)
+            return
+        except IncidentFinished:
+            log.info("incident %s: closed while its run went on; stopped", incident_id)
             return
         except Exception as error:  # a broken run must not take the runner down
             log.exception("incident %s: graph run failed", incident_id)

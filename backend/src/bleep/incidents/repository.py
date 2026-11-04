@@ -141,14 +141,37 @@ class IncidentRepo:
         return incident_id
 
     async def set_status(self, incident_id: str, status: IncidentStatus) -> None:
+        """Set the status of an unfinished incident; a finished one keeps its status, so a run
+        racing `close_unfinished` can never open a closed incident again."""
         closed_at = self.clock().isoformat() if status in TERMINAL_STATUSES else None
         conn = await self.db.connect()
         try:
             await conn.execute(
-                "UPDATE incidents SET status = ?, closed_at = COALESCE(?, closed_at) WHERE id = ?",
+                "UPDATE incidents SET status = ?, closed_at = COALESCE(?, closed_at)"
+                f" WHERE id = ? AND {_OPEN}",
                 (status, closed_at, incident_id),
             )
             await conn.commit()
+        finally:
+            await conn.close()
+
+    async def close_unfinished(self, incident_id: str) -> IncidentStatus | None:
+        """Close the incident if it is unfinished; the status it had, or None when it was
+        finished already (and is left as it was)."""
+        conn = await self.db.connect()
+        try:
+            await conn.execute("BEGIN IMMEDIATE")
+            async with conn.execute(
+                f"SELECT status FROM incidents WHERE id = ? AND {_OPEN}", (incident_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+            if row is not None:
+                await conn.execute(
+                    "UPDATE incidents SET status = 'closed', closed_at = ? WHERE id = ?",
+                    (self.clock().isoformat(), incident_id),
+                )
+            await conn.commit()
+            return row["status"] if row is not None else None
         finally:
             await conn.close()
 

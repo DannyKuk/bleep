@@ -14,10 +14,17 @@ from pydantic import BaseModel, ValidationError
 
 from bleep.api.deps import get_parts
 from bleep.api.settings import check_size, stale_response, version_of
-from bleep.hosts.dashboard import HostConflict, HostRefused, HostStale, UnknownHost
-from bleep.hosts.ssh import SshUnavailable
+from bleep.hosts.dashboard import (
+    HostConflict,
+    HostKeyBusy,
+    HostKeyUnavailable,
+    HostRefused,
+    HostStale,
+    UnknownHost,
+)
 from bleep.schemas.dashboard_hosts import (
     DashboardHostEdit,
+    HostKeyConfirmation,
     HostKeyOffer,
     HostKeyRequest,
     NewDashboardHost,
@@ -34,12 +41,15 @@ Parts = Annotated[AppParts, Depends(get_parts)]
 @router.post("/host-key")
 async def fetch_host_key(body: Annotated[Any, Body()], parts: Parts) -> HostKeyOffer:
     """The host key the SSH server at the address offers, to confirm by its fingerprint before
-    the host is saved. Nothing is stored; 502 when no SSH server answers there."""
+    the host is saved. Nothing is stored. One sentence for every failure (502), whatever the
+    cause, and one fetch at a time (429)."""
     request = _parsed(body, HostKeyRequest)
     try:
         return await parts.dashboard_hosts.offer_host_key(request.address, request.port)
-    except SshUnavailable as unavailable:
-        raise HTTPException(502, f"no host key: {_cause(unavailable)}") from None
+    except HostKeyUnavailable as unavailable:
+        raise HTTPException(502, str(unavailable)) from None
+    except HostKeyBusy as busy:
+        raise HTTPException(429, str(busy)) from None
 
 
 @router.post("", status_code=201)
@@ -78,14 +88,35 @@ async def remove_host(
     return Response(status_code=204)
 
 
+# Every field name of the host bodies: a 422 names these and nothing else the client sent.
+FIELDS = frozenset(
+    name
+    for model in (HostKeyRequest, NewDashboardHost, DashboardHostEdit, HostKeyConfirmation)
+    for name in model.model_fields
+)
+
+
 def _parsed[T: BaseModel](body: Any, model: type[T]) -> T:
-    """The body as `model`, or 422 with where and why but never a value sent: a key is one."""
+    """The body as `model`, or 422 with where and why but never a value sent, nor a key of the
+    client's own: a field Bleep does not know is named `<unknown field>`, since a pasted key could
+    arrive as a JSON key."""
     check_size(body)
     try:
         return model.model_validate(body)
     except ValidationError as error:
-        detail = error.errors(include_input=False, include_url=False, include_context=False)
+        detail = [
+            {
+                "type": problem["type"],
+                "loc": [_where(part) for part in problem["loc"]],
+                "msg": problem["msg"],
+            }
+            for problem in error.errors(include_input=False, include_url=False)
+        ]
         raise HTTPException(422, detail) from None
+
+
+def _where(part: int | str) -> int | str:
+    return part if isinstance(part, int) or part in FIELDS else "<unknown field>"
 
 
 def _required(if_match: str | None) -> str:
@@ -109,10 +140,3 @@ async def _change(change: Any) -> None:
 
 def _view(parts: AppParts, host_id: str) -> HostSettingsView:
     return next(view for view in parts.settings_store.host_views() if view.id == host_id)
-
-
-def _cause(unavailable: SshUnavailable) -> str:
-    cause = unavailable.cause
-    if isinstance(cause, BaseException):
-        return str(cause) or type(cause).__name__
-    return cause

@@ -2,6 +2,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import httpx
+import pytest
 from langchain_core.messages import AIMessage
 
 from bleep.hosts.config import HostConfig, ServiceOverrides, UrlCheckConfig
@@ -558,4 +559,83 @@ async def test_a_new_name_keeps_the_watch_running(tmp_path):
     await r.manager.host_changed(HostChange("c", "renamed", renamed))
     assert r.manager._tasks["c"] == tasks and not any(t.done() for t in tasks)
     assert [h.config.name for h in r.registry.hosts() if h.config.id == "c"] == ["Box"]
+    await r.manager.stop()
+
+
+async def test_a_death_pending_on_the_old_machine_opens_nothing_on_the_new_one(tmp_path):
+    """The review's probe (#194): blog-web-1 dies on box.lan, then the address moves to
+    other.lan, where there is no blog. Past the grace window nothing may open."""
+    r, machines = await dashboard_rig(tmp_path)
+    await r.manager.stop()  # ticks by hand from here
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))
+    await r.manager.hosts["c"].watcher.tick()
+    old = machines.machines["box.lan"]
+    old.history.append(die("blog-web-1", r.clock.now + timedelta(seconds=2)))
+    old.container_list[0] = box("blog-web-1", "blog", state="exited", restart_policy="always")
+    r.clock.advance(15)
+    await r.manager.hosts["c"].watcher.tick()
+    assert ("c", "blog-web-1") in r.detector._pending
+
+    moved = dashboard_host("other.lan")
+    await r.manager.host_changed(HostChange("c", "connection", moved, moved=True))
+    assert not any(key[0] == "c" for key in r.detector._pending)
+    for _ in range(8):  # two minutes, well past the 60 s grace
+        r.clock.advance(15)
+        await r.manager.hosts["c"].watcher.tick()
+    assert await r.incidents() == []
+
+
+async def test_a_moved_host_forgets_its_held_url_failures_and_its_incidents_hear_of_it(tmp_path):
+    r, machines = await dashboard_rig(tmp_path)
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))
+    subject = Subject(kind="service", host_id="c", service_id="c/compose:blog")
+    incident, _ = await r.repo.open_or_attach(
+        subject, [Signal(subject=subject, kind="unhealthy", at=T0, container="blog-web-1")]
+    )
+    r.manager._held["c"] = {"c/compose:blog": []}
+    r.manager._announced["c"] = (incident.id, {"https://blog.example/"})
+
+    moved = dashboard_host("other.lan")
+    await r.manager.host_changed(HostChange("c", "connection", moved, moved=True))
+    assert "c" not in r.manager._held and "c" not in r.manager._announced
+    notices = [e for e in await r.bus.history(incident.id) if e.kind == "notice"]
+    assert [e.payload["text"] for e in notices] == [manager_module.MOVED_NOTICE]
+    assert (await r.repo.get(incident.id)).status == "open"  # moved, not removed
+    await r.manager.stop()
+
+
+async def test_a_new_key_for_the_same_machine_keeps_what_is_pending(tmp_path):
+    r, machines = await dashboard_rig(tmp_path)
+    await r.manager.stop()
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))
+    r.detector.feed(
+        Signal(
+            subject=Subject(kind="service", host_id="c", service_id="c/compose:blog"),
+            kind="container_died",
+            at=r.clock.now,
+            container="blog-web-1",
+            detail={"exit_code": 1, "restart_policy": "always"},
+        )
+    )
+    await r.manager.host_changed(HostChange("c", "connection", dashboard_host(), moved=False))
+    assert ("c", "blog-web-1") in r.detector._pending
+
+
+async def test_a_removal_that_fails_halfway_still_drops_the_host(tmp_path):
+    r, machines = await dashboard_rig(tmp_path)
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))
+    subject = Subject(kind="service", host_id="c", service_id="c/compose:blog")
+    await r.repo.open_or_attach(
+        subject, [Signal(subject=subject, kind="unhealthy", at=T0, container="blog-web-1")]
+    )
+
+    async def broken(incident_id, text):
+        raise RuntimeError("the database is locked")
+
+    r.runner.end = broken
+    with pytest.raises(RuntimeError):
+        await r.manager.host_changed(HostChange("c", "removed", None))
+    assert [h.config.id for h in r.registry.hosts()] == ["h"]
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))  # can come back
+    assert "c" in [h.config.id for h in r.registry.hosts()]
     await r.manager.stop()

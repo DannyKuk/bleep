@@ -174,3 +174,22 @@ async def test_get_many_reads_the_incidents_named_and_skips_unknown_ids(repo):
         db.id: db.title,
     }
     assert await repo.get_many([]) == {}
+
+
+async def test_a_finished_incident_keeps_its_status_whatever_a_late_run_writes(repo):
+    incident, _ = await repo.open_or_attach(svc(), [sig(svc())])
+    assert await repo.close_unfinished(incident.id) == "open"
+    for late in ("executing", "investigating", "resolved", "failed"):
+        await repo.set_status(incident.id, late)
+    assert (await repo.get(incident.id)).status == "closed"
+    assert await repo.close_unfinished(incident.id) is None
+
+
+async def test_open_on_host_lists_the_hosts_unfinished_incidents_its_services_included(repo):
+    on_host, _ = await repo.open_or_attach(host("c"), [sig(host("c"), "disk")])
+    on_service, _ = await repo.open_or_attach(svc("c/blog", "c"), [sig(svc("c/blog", "c"))])
+    elsewhere, _ = await repo.open_or_attach(svc(), [sig(svc())])
+    done, _ = await repo.open_or_attach(svc("c/wiki", "c"), [sig(svc("c/wiki", "c"))])
+    await repo.set_status(done.id, "resolved")
+    assert {i.id for i in await repo.open_on_host("c")} == {on_host.id, on_service.id}
+    assert elsewhere.id not in {i.id for i in await repo.open_on_host("c")}

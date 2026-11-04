@@ -29,7 +29,6 @@ from bleep.store.secrets import (
     SecretNotSaved,
     SecretRefused,
     SecretStore,
-    UnknownSecret,
 )
 from bleep.wiring import AppParts
 
@@ -161,10 +160,10 @@ def _same_address(old: str, new: str) -> bool:
 
 
 def _entry(store: SecretStore, name: str) -> SecretName:
-    try:
-        return store.entry(name)
-    except UnknownSecret:
-        raise HTTPException(404, "no such secret can be set from the dashboard") from None
+    """A name `GET /api/secrets` lists; a host's key (a family name) is set only with its host."""
+    if name not in {entry.name for entry in store.names()}:
+        raise HTTPException(404, "no such secret can be set from the dashboard")
+    return store.entry(name)
 
 
 async def _change(change: Awaitable[set[str]]) -> None:

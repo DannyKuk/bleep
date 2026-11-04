@@ -86,7 +86,7 @@ Bleep keeps the host's address in its database and the private key and the host 
    curl -sb bleep.cookies -H 'Content-Type: application/json' \
      -d '{"address": "your-host", "port": 22}' http://localhost:3000/api/settings/hosts/host-key
    ```
-   It answers an `offer` and a `fingerprint` (`SHA256:...`). On the host, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` (or the key of the answer's `key_type`) must print the same fingerprint; if it does not, stop.
+   It answers an `offer` and a `fingerprint` (`SHA256:...`). On the host, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` (or the key of the answer's `key_type`) must print the same fingerprint; if it does not, stop. Any failure answers "Could not get an SSH host key from that address." (the backend log names the kind of error). The address may be on your LAN, but never loopback or link-local: a host on the machine Bleep runs on is added through the hosts file.
 3. Save the host with that offer, the fingerprint you checked and the private key, within ten minutes:
    ```bash
    jq -n --rawfile key ~/.ssh/bleep_deploy_key --arg offer OFFER --arg fp 'SHA256:...' \

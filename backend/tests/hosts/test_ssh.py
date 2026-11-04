@@ -295,6 +295,13 @@ CLIENT_KEY = asyncssh.generate_private_key("ssh-ed25519")
 CLIENT_PEM = CLIENT_KEY.export_private_key().decode()
 
 
+M1_IP = "192.168.1.10"
+
+
+async def lan(host, port):
+    return [M1_IP]
+
+
 def dashboard_host(**overrides):
     return ssh_host(source="dashboard", key_file=None, known_hosts_file=None, **overrides)
 
@@ -318,21 +325,22 @@ async def test_a_dashboard_host_connects_with_its_key_and_only_its_confirmed_hos
     monkeypatch.setattr(Path, "home", lambda: tmp_path)  # a ~/.ssh/known_hosts must not matter
     (tmp_path / ".ssh").mkdir()
     (tmp_path / ".ssh" / "known_hosts").write_text("m1.local ssh-ed25519 AAAAother\n")
-    sess = SshSession(dashboard_host(), connect=connect, keys=keys())
+    sess = SshSession(dashboard_host(), connect=connect, keys=keys(), resolve=lan)
     await sess.open()
 
-    ((_, kwargs),) = connect.calls
+    ((args, kwargs),) = connect.calls
+    assert args == (M1_IP,)  # the vetted address, pinned
     (key,) = kwargs["client_keys"]
     assert key.public_data == CLIENT_KEY.public_data
-    trusted = kwargs["known_hosts"].match("m1.local", "", 2222)[0]
-    assert [k.public_data for k in trusted] == [SERVER_KEY.public_data]
+    trusted, cas, revoked = kwargs["known_hosts"]
+    assert [k.public_data for k in trusted] == [SERVER_KEY.public_data] and cas == revoked == []
     assert kwargs["config"] == [] and kwargs["agent_path"] is None
     await sess.close()
 
 
 async def test_a_dashboard_host_key_rotated_since_it_was_confirmed_is_refused(connect):
     connect.error = asyncssh.HostKeyNotVerifiable("Host key is not trusted for host m1.local")
-    sess = SshSession(dashboard_host(), connect=connect, keys=keys())
+    sess = SshSession(dashboard_host(), connect=connect, keys=keys(), resolve=lan)
     with pytest.raises(SshUnavailable, match="not trusted"):
         await sess.open()
 
@@ -347,7 +355,9 @@ async def test_a_dashboard_host_key_rotated_since_it_was_confirmed_is_refused(co
 async def test_a_dashboard_host_without_its_key_or_host_key_never_connects(
     connect, private_key, known_hosts, why
 ):
-    sess = SshSession(dashboard_host(), connect=connect, keys=keys(private_key, known_hosts))
+    sess = SshSession(
+        dashboard_host(), connect=connect, keys=keys(private_key, known_hosts), resolve=lan
+    )
     with pytest.raises(SshUnavailable, match=why):
         await sess.open()
     assert connect.calls == []
@@ -362,7 +372,7 @@ async def test_a_dashboard_host_with_no_key_reader_never_falls_back_to_a_file(co
 
 async def test_an_unreadable_dashboard_key_is_refused_without_quoting_it(connect):
     garbage = "-----BEGIN OPENSSH PRIVATE KEY-----\nsk-or-v1-NOT-A-KEY-0123456789\n-----END"
-    sess = SshSession(dashboard_host(), connect=connect, keys=keys(garbage))
+    sess = SshSession(dashboard_host(), connect=connect, keys=keys(garbage), resolve=lan)
     with pytest.raises(SshUnavailable) as refused:
         await sess.open()
     assert "cannot be read" in str(refused.value)
@@ -378,7 +388,7 @@ async def test_the_dashboard_key_is_read_again_at_every_connect(connect):
     def read(_host_id):
         return ssh_module.DashboardKeys(SecretStr(current["pem"]), SecretStr(line))
 
-    sess = SshSession(dashboard_host(), connect=connect, keys=read)
+    sess = SshSession(dashboard_host(), connect=connect, keys=read, resolve=lan)
     await sess.open()
     other = asyncssh.generate_private_key("ssh-ed25519")
     current["pem"] = other.export_private_key().decode()
@@ -404,9 +414,16 @@ async def test_fetching_a_host_key_asks_the_lowercased_address_without_the_users
         asked.append((host, port, kwargs))
         return SERVER_KEY
 
-    key = await ssh_module.fetch_host_key("Box.Local", 2222, scan)
+    looked_up = []
+
+    async def resolve(host, port):
+        looked_up.append(host)
+        return [M1_IP]
+
+    key = await ssh_module.fetch_host_key("Box.Local", 2222, scan, resolve)
     assert key is SERVER_KEY
-    assert asked == [("box.local", 2222, {"config": []})]
+    assert looked_up == ["box.local"]
+    assert asked == [(M1_IP, 2222, {"config": []})]
 
 
 @pytest.mark.parametrize(
@@ -419,15 +436,80 @@ async def test_fetching_a_host_key_from_no_server_is_ssh_unavailable(outcome):
         return None
 
     with pytest.raises(SshUnavailable):
-        await ssh_module.fetch_host_key("box.local", 22, scan)
+        await ssh_module.fetch_host_key("box.local", 22, scan, lan)
 
 
 async def test_fetching_a_host_key_from_a_server_that_hangs_times_out(monkeypatch):
-    monkeypatch.setattr(ssh_module, "CONNECT_TIMEOUT_S", 0.01)
-    monkeypatch.setattr(ssh_module, "CONNECT_GRACE_S", 0)
+    monkeypatch.setattr(ssh_module, "FETCH_TIMEOUT_S", 0.01)
 
     async def scan(host, port, **kwargs):
         await asyncio.Event().wait()
 
     with pytest.raises(SshUnavailable):
-        await ssh_module.fetch_host_key("box.local", 22, scan)
+        await ssh_module.fetch_host_key("box.local", 22, scan, lan)
+
+
+@pytest.mark.parametrize(
+    "answers",
+    [["127.0.0.1"], ["::1"], ["169.254.169.254"], [M1_IP, "127.0.0.1"], ["::ffff:7f00:1"]],
+    ids=str,
+)
+async def test_a_dashboard_host_whose_name_now_resolves_to_loopback_is_never_connected(
+    connect, answers
+):
+    async def rebound(host, port):
+        return answers
+
+    sess = SshSession(dashboard_host(), connect=connect, keys=keys(), resolve=rebound)
+    with pytest.raises(SshUnavailable, match="loopback, link-local"):
+        await sess.open()
+    assert connect.calls == []
+
+
+async def test_a_dashboard_host_is_resolved_again_at_every_connect(connect):
+    answers = [[M1_IP], ["10.0.0.9"]]
+
+    async def moving(host, port):
+        return answers.pop(0)
+
+    sess = SshSession(dashboard_host(), connect=connect, keys=keys(), resolve=moving)
+    await sess.open()
+    connect.connections[-1].lose()
+    await sess.ensure_open()
+    assert [args for args, _ in connect.calls] == [(M1_IP,), ("10.0.0.9",)]
+    await sess.close()
+
+
+async def test_a_hosts_file_host_is_neither_resolved_nor_pinned(connect):
+    async def never(host, port):
+        raise AssertionError("a hosts file host is connected by its name, as before")
+
+    sess = SshSession(ssh_host(), connect=connect, resolve=never)
+    await sess.open()
+    assert connect.calls[0][0] == ("m1.local",)
+    await sess.close()
+
+
+@pytest.mark.parametrize(
+    ("address", "refused"),
+    [
+        ("127.0.0.53", True),
+        ("0.1.2.3", True),
+        ("169.254.169.254", True),
+        ("fe80::1%eth0", True),
+        ("ff02::1", True),
+        ("::", True),
+        ("::ffff:127.0.0.1", True),
+        ("::127.0.0.1", True),
+        ("2001:0:4136:e378:8000:63bf:80ff:fffe", True),  # Teredo carrying 127.0.0.1
+        ("10.1.2.3", False),
+        ("172.20.0.4", False),
+        ("192.168.0.2", False),
+        ("100.100.1.1", False),
+        ("fd12::1", False),
+        ("93.184.216.34", False),
+        ("2606:4700::1111", False),
+    ],
+)
+def test_which_addresses_a_dashboard_host_may_never_have(address, refused):
+    assert ssh_module.is_refused(address) is refused

@@ -60,6 +60,10 @@ NO_EXPLANATION = "No explanation could be generated for this restart."
 CAP_SPENT_EXPLANATION = "No explanation: the daily cost cap is spent."
 RECOVERY_USAGE = "recoveries"  # the usage ledger's key for recovery lines, which have no incident
 REMOVED_NOTICE = "Closed: the host was removed from Bleep on the dashboard, so it is not watched."
+MOVED_NOTICE = (
+    "The host's address, port or user was changed on the dashboard: what Bleep reads from here on "
+    "comes from the new connection, which may be another machine."
+)
 
 
 class _HostTasks:
@@ -157,20 +161,27 @@ class WatcherManager:
     async def host_changed(self, change: HostChange) -> None:
         """Put a host added, changed or removed on the dashboard in force. A new connection (or
         key) starts the host's loops again from nothing, so a listing of another machine is never
-        diffed against the old one's; a removed host's open incidents are closed with a notice."""
+        diffed against the old one's; a new address, port or user also drops the detector's state
+        for the host and puts a notice on its open incidents; a removed host's open incidents are
+        closed with a notice."""
         host_id = change.host_id
         if change.kind == "renamed" and change.config is not None:
             await self.registry.replace(change.config, reconnect=False)
             return
         await self._stop_host(host_id)
         if change.config is None:
-            for incident in await self.repo.open_on_host(host_id):
-                await self.runner.end(incident.id, REMOVED_NOTICE)
-            await self.registry.remove(host_id)
-            self.detector.forget_host(host_id)
-            self._held.pop(host_id, None)
-            self._announced.pop(host_id, None)
+            try:
+                for incident in await self.repo.open_on_host(host_id):
+                    await self.runner.end(incident.id, REMOVED_NOTICE)
+            finally:  # the host goes whatever happened above, so it can be added again
+                await self.registry.remove(host_id)
+                self._forget(host_id)
             return
+        if change.moved:
+            # Possibly another machine: nothing pending on the old one may open an incident here.
+            self._forget(host_id)
+            for incident in await self.repo.open_on_host(host_id):
+                await self.bus.publish(incident.id, "notice", {"text": MOVED_NOTICE})
         if change.kind == "added":
             self.registry.add(change.config)
         else:
@@ -178,6 +189,11 @@ class WatcherManager:
         self.hosts[host_id] = self._host_tasks(host_id)
         if self._started:
             self._run(host_id)
+
+    def _forget(self, host_id: str) -> None:
+        self.detector.forget_host(host_id)
+        self._held.pop(host_id, None)
+        self._announced.pop(host_id, None)
 
     async def _stop_host(self, host_id: str) -> None:
         self.hosts.pop(host_id, None)

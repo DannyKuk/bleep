@@ -27,7 +27,17 @@ import asyncssh
 from pydantic import BaseModel, SecretStr
 
 from bleep.hosts.config import HostConfig
-from bleep.hosts.ssh import DashboardKeys, KeysFor, Scan, fetch_host_key, known_hosts_line
+from bleep.hosts.ssh import (
+    AddressRefused,
+    DashboardKeys,
+    KeysFor,
+    Resolve,
+    Scan,
+    SshUnavailable,
+    fetch_host_key,
+    known_hosts_line,
+    vetted_address,
+)
 from bleep.schemas.dashboard_hosts import (
     DashboardHostEdit,
     HostKeyConfirmation,
@@ -57,6 +67,18 @@ class HostConflict(Exception):
     host key confirmed is not the one offered."""
 
 
+class HostKeyUnavailable(Exception):
+    """No host key could be fetched (502). Every cause gets this one sentence, so the answer does
+    not tell a closed port from an open one or a silent one; the cause is logged by type."""
+
+    def __init__(self) -> None:
+        super().__init__("Could not get an SSH host key from that address.")
+
+
+class HostKeyBusy(Exception):
+    """Another host key is being fetched (429): one at a time."""
+
+
 class HostStale(Exception):
     """The host changed since the version the change was built from (409)."""
 
@@ -77,6 +99,7 @@ class HostChange:
     host_id: str
     kind: ChangeKind
     config: HostConfig | None
+    moved: bool = False  # a new address, port or user: possibly another machine
 
 
 Listener = Callable[[HostChange], Awaitable[None]]
@@ -129,7 +152,7 @@ def dashboard_keys(store: SecretStore) -> KeysFor:
 
 class DashboardHosts:
     """`file_ids` are the hosts file's hosts, which win. `scan` fetches a host key (asyncssh's
-    `get_server_host_key`; tests pass a fake)."""
+    `get_server_host_key`) and `resolve` looks up an address; tests pass fakes of both."""
 
     def __init__(
         self,
@@ -138,12 +161,15 @@ class DashboardHosts:
         file_ids: Iterable[str],
         scan: Scan = asyncssh.get_server_host_key,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        resolve: Resolve | None = None,
     ) -> None:
         self._db = db
         self._secrets = secrets
         self._file_ids = frozenset(file_ids)
         self.scan = scan
+        self.resolve = resolve
         self._clock = clock
+        self._fetching = asyncio.Lock()
         self._rows: dict[str, _Row] = {}
         self._offers: dict[str, _Offer] = {}
         self._listeners: list[Listener] = []
@@ -206,8 +232,17 @@ class DashboardHosts:
 
     async def offer_host_key(self, address: str, port: int) -> HostKeyOffer:
         """Fetch the host key the server at `address`:`port` offers and keep it for ten minutes,
-        to be confirmed by its fingerprint. Nothing is stored. Raises `SshUnavailable`."""
-        key = await fetch_host_key(address, port, self.scan)
+        to be confirmed by its fingerprint. Nothing is stored. One fetch runs at a time
+        (`HostKeyBusy`), and every failure is the same `HostKeyUnavailable`."""
+        if self._fetching.locked():
+            raise HostKeyBusy("another host key is being fetched; try again in a few seconds")
+        async with self._fetching:
+            try:
+                key = await fetch_host_key(address, port, self.scan, self.resolve)
+            except (AddressRefused, SshUnavailable) as failure:
+                cause = failure.cause if isinstance(failure, SshUnavailable) else failure
+                log.info("hosts: no host key fetched (%s)", type(cause).__name__)
+                raise HostKeyUnavailable() from None
         now = self._clock()
         offer = _Offer(
             address=address.lower(),
@@ -238,6 +273,7 @@ class DashboardHosts:
                 raise HostConflict(f"host {new.id} exists already")
             key = _private_key(new.ssh_key)
             line = self._confirmed(new.host_key, new.address, new.port)
+            await self._vet(new.address, new.port)
             row = _Row(**new.model_dump(include=set(_Row.model_fields)))
             await self._write(row, created=True)
             try:
@@ -245,6 +281,7 @@ class DashboardHosts:
             except BaseException:
                 await self._delete(row.id)
                 raise
+            self._offers.pop(new.host_key.offer, None)
             self._rows[row.id] = row
             log.info("hosts: %s added on the dashboard", row.id)
             await self._tell(HostChange(row.id, "added", row.config()))
@@ -256,7 +293,7 @@ class DashboardHosts:
         leaves the old connection with keys that its host key check refuses or none at all."""
         async with self._lock:
             old = self._editable(host_id)
-            if not hmac.compare_digest(version, self.version(host_id)):
+            if not _same(version, self.version(host_id)):
                 raise HostStale(self.version(host_id))
             row = _Row(
                 **edit.model_dump(include=set(_Row.model_fields) - {"revision"}),
@@ -272,9 +309,13 @@ class DashboardHosts:
             if edit.host_key is not None:
                 line = self._confirmed(edit.host_key, row.address, row.port)
                 keys[HOST_KEYS.prefix + host_id] = line
+            if (row.address, row.port) != (old.address, old.port):
+                await self._vet(row.address, row.port)
             if keys:
                 await self._secrets.replace(keys)
             await self._write(row)
+            if edit.host_key is not None:
+                self._offers.pop(edit.host_key.offer, None)
             self._rows[host_id] = row
             if moved:
                 log.info("hosts: %s connects elsewhere now; its old keys were cleared", host_id)
@@ -283,7 +324,7 @@ class DashboardHosts:
                 if moved or row.docker_socket != old.docker_socket or keys
                 else "renamed"
             )
-            await self._tell(HostChange(host_id, kind, row.config()))
+            await self._tell(HostChange(host_id, kind, row.config(), moved=moved))
             return row.config()
 
     async def remove(self, host_id: str, *, version: str) -> None:
@@ -292,7 +333,7 @@ class DashboardHosts:
             if host_id in self._file_ids and host_id not in self._rows:
                 raise HostConflict(f"the hosts file names host {host_id}; change it there")
             self._row(host_id)
-            if not hmac.compare_digest(version, self.version(host_id)):
+            if not _same(version, self.version(host_id)):
                 raise HostStale(self.version(host_id))
             await self._secrets.replace(_keys(host_id, None, None))
             await self._delete(host_id)
@@ -322,10 +363,16 @@ class DashboardHosts:
             raise HostConflict("the host key offer is unknown or expired; fetch the host key again")
         if (offer.address, offer.port) != (address.lower(), port):
             raise HostRefused("the host key was fetched for another address or port")
-        if not hmac.compare_digest(offer.fingerprint, confirmation.fingerprint):
+        if not _same(offer.fingerprint, confirmation.fingerprint):
             raise HostConflict("the fingerprint confirmed is not the one Bleep was offered")
-        del self._offers[confirmation.offer]
-        return offer.line
+        return offer.line  # the offer is used up once the host is saved
+
+    async def _vet(self, address: str, port: int) -> None:
+        """Refuse an address a dashboard host may never be reached at, as the fetch did."""
+        try:
+            await vetted_address(address.lower(), port, self.resolve)
+        except AddressRefused as refused:
+            raise HostRefused(str(refused)) from None
 
     async def _tell(self, change: HostChange) -> None:
         for listener in self._listeners:
@@ -370,15 +417,22 @@ def _keys(host_id: str, key: str | None, line: str | None) -> dict[str, str | No
     return {SSH_KEYS.prefix + host_id: key, HOST_KEYS.prefix + host_id: line}
 
 
+def _same(sent: str, current: str) -> bool:
+    """A constant-time comparison that takes any text: `compare_digest` refuses non-ASCII str."""
+    return hmac.compare_digest(sent.encode(), current.encode())
+
+
 def _private_key(key: SecretStr) -> str:
-    """The key as sent when it is an unencrypted private key; refused in Bleep's words only, since
-    a parser's message could quote what it read."""
+    """The key in OpenSSH form, exported again by Bleep, so whatever was pasted around it is never
+    stored; one key only. Refused in Bleep's words only, since a parser's message could quote
+    what it read."""
     text = key.get_secret_value()
+    if text.count("-----BEGIN") > 1:
+        raise HostRefused("ssh_key must hold one private key, not several")
     try:
-        asyncssh.import_private_key(text)
-    except asyncssh.KeyImportError, ValueError:
+        return asyncssh.import_private_key(text).export_private_key().decode()
+    except asyncssh.KeyImportError, asyncssh.KeyExportError, ValueError:
         raise HostRefused(
             "ssh_key must be an unencrypted private key (OpenSSH or PEM); Bleep has no agent "
             "to ask for a passphrase"
         ) from None
-    return text

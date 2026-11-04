@@ -3,6 +3,8 @@ key bound to its connection, keys never coming back out, the hosts file winning,
 in force without a restart. No network, SSH server or Docker engine: a fake host-key scan and a
 connector that hands out fake engines, reading the keys the way the real one does."""
 
+import asyncio
+import concurrent.futures
 import logging
 import time
 
@@ -25,7 +27,8 @@ SERVER_KEY = asyncssh.generate_private_key("ssh-ed25519")
 OTHER_SERVER_KEY = asyncssh.generate_private_key("ssh-ed25519")
 CLIENT_KEY = asyncssh.generate_private_key("ssh-ed25519")
 PEM = CLIENT_KEY.export_private_key().decode()
-NEW_PEM = asyncssh.generate_private_key("ssh-ed25519").export_private_key().decode()
+NEW_CLIENT_KEY = asyncssh.generate_private_key("ssh-ed25519")
+NEW_PEM = NEW_CLIENT_KEY.export_private_key().decode()
 # Fragments that must never come back: the private keys' bodies and the host key's base64.
 KEY_BODY = PEM.splitlines()[2]
 NEW_KEY_BODY = NEW_PEM.splitlines()[2]
@@ -42,11 +45,27 @@ def box(name: str, project: str, labels: dict[str, str] | None = None) -> Contai
     )
 
 
-class Scan:
-    """Stands in for asyncssh.get_server_host_key: the key each address offers."""
+BOX_IP, OTHER_IP = "192.168.1.10", "10.0.0.6"
+
+
+class Resolver:
+    """Name lookups without the network; a name not listed does not resolve."""
 
     def __init__(self) -> None:
-        self.keys = {("box.lan", 22): SERVER_KEY, ("box.lan", 2222): SERVER_KEY}
+        self.answers = {"box.lan": [BOX_IP], "other.lan": [OTHER_IP]}
+
+    async def __call__(self, host: str, port: int) -> list[str]:
+        if host not in self.answers:
+            raise OSError("no such name")
+        return self.answers[host]
+
+
+class Scan:
+    """Stands in for asyncssh.get_server_host_key: the key each address offers, by the IP it is
+    asked at (the name is resolved and pinned before)."""
+
+    def __init__(self) -> None:
+        self.keys = {(BOX_IP, 22): SERVER_KEY, (BOX_IP, 2222): SERVER_KEY}
         self.asked: list[tuple[str, int]] = []
 
     async def __call__(self, host: str, port: int, **kwargs):
@@ -100,12 +119,17 @@ def connector() -> Connector:
     return Connector()
 
 
-def start(settings, scan, connector):
+def start(settings, scan, connector, resolver=None):
     host = socket_host(
         id="a", services={"compose:shop": ServiceOverrides(protected_containers=["shop-web-1"])}
     )
     parts = build_parts(
-        settings, Registry([host], connector), FakeEmbedder(), plugins=[], scan=scan
+        settings,
+        Registry([host], connector),
+        FakeEmbedder(),
+        plugins=[],
+        scan=scan,
+        resolver=resolver or Resolver(),
     )
     connector.secrets = parts.secrets
     parts.notify.start = lambda runner: None  # type: ignore[method-assign]  # never polls
@@ -180,6 +204,12 @@ def watched(client, host_id: str = "c", timeout: float = 5.0) -> dict:
     raise AssertionError(f"host {host_id} was never reached")
 
 
+def public(private_pem: str | None) -> bytes | None:
+    """The public half of a stored key: Bleep stores its own export of what was pasted, whose
+    check bytes differ at each export."""
+    return asyncssh.import_private_key(private_pem).public_data if private_pem else None
+
+
 def stored_keys(client, host_id: str = "c") -> tuple[str | None, str | None]:
     keys = dashboard_keys(client.parts.secrets)(host_id)
     return (
@@ -203,7 +233,7 @@ def test_fetching_a_host_key_shows_its_fingerprint_and_saves_nothing(app, scan):
     offered = offer(app, "Box.LAN")
     assert offered["fingerprint"] == SERVER_KEY.get_fingerprint("sha256")
     assert offered["key_type"] == "ssh-ed25519" and offered["address"] == "box.lan"
-    assert scan.asked == [("box.lan", 22)]
+    assert scan.asked == [(BOX_IP, 22)]
     assert host_view(app) is None
     assert app.parts.secrets.path.exists() is False
 
@@ -221,7 +251,7 @@ def test_a_host_is_saved_only_with_the_fingerprint_bleep_was_offered(app):
     assert connection["source"] == "dashboard" and connection["kind"] == "ssh"
     assert connection["ssh_key"]["set"] and connection["host_key"]["set"]
     key, line = stored_keys(app)
-    assert key == PEM.strip()
+    assert public(key) == CLIENT_KEY.public_data
     assert line == f"box.lan {SERVER_KEY.export_public_key().decode().strip()}"
 
 
@@ -263,7 +293,8 @@ def test_an_added_host_is_watched_at_once_with_its_key_and_bleeps_own_containers
     assert host["name"] == "Box" and host["kind"] == "ssh"
     services = app.get("/api/services").json()
     assert [s["name"] for s in services if s["host_id"] == "c"] == ["blog"]
-    assert connector.used[-1][:3] == ("box.lan", "deploy", PEM.strip())
+    assert connector.used[-1][:2] == ("box.lan", "deploy")
+    assert public(connector.used[-1][2]) == CLIENT_KEY.public_data
 
 
 def test_a_dashboard_hosts_services_take_rules_and_protected_containers(app):
@@ -323,7 +354,7 @@ def test_dashboard_hosts_and_their_keys_come_back_after_a_restart(settings, scan
         view = host_view(client)
         assert view["connection"]["source"] == "dashboard" and view["connection"]["ssh_key"]["set"]
         watched(client)
-        assert connector.used[0][2] == PEM.strip()
+        assert public(connector.used[0][2]) == CLIENT_KEY.public_data
 
 
 # -- a key is bound to its connection -------------------------------------------------------
@@ -351,17 +382,18 @@ def test_a_new_address_with_its_own_key_and_confirmed_host_key_connects_with_tho
     app, scan, connector
 ):
     assert add(app).status_code == 201
-    scan.keys[("other.lan", 22)] = OTHER_SERVER_KEY
+    scan.keys[(OTHER_IP, 22)] = OTHER_SERVER_KEY
     offered = offer(app, "other.lan")
     host_key = {"offer": offered["offer"], "fingerprint": offered["fingerprint"]}
     response = edit(app, address="other.lan", ssh_key=NEW_PEM, host_key=host_key)
     assert response.status_code == 200, response.text
-    assert stored_keys(app)[0] == NEW_PEM.strip()
+    assert public(stored_keys(app)[0]) == NEW_CLIENT_KEY.public_data
     assert OTHER_SERVER_KEY.export_public_key().decode().split()[1] in stored_keys(app)[1]
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline and connector.used[-1][0] != "other.lan":
         time.sleep(0.02)
-    assert connector.used[-1][:3] == ("other.lan", "deploy", NEW_PEM.strip())
+    assert connector.used[-1][:2] == ("other.lan", "deploy")
+    assert public(connector.used[-1][2]) == NEW_CLIENT_KEY.public_data
 
 
 def test_a_key_sent_for_an_older_version_of_the_host_is_not_stored(app):
@@ -384,20 +416,20 @@ def test_a_new_name_or_key_alone_keeps_the_connection_and_the_other_key(app):
     assert add(app).status_code == 201
     _, line = stored_keys(app)
     assert edit(app, name="Box two").status_code == 200
-    assert stored_keys(app) == (PEM.strip(), line)
+    assert (public(stored_keys(app)[0]), stored_keys(app)[1]) == (CLIENT_KEY.public_data, line)
     assert edit(app, ssh_key=NEW_PEM).status_code == 200
-    assert stored_keys(app) == (NEW_PEM.strip(), line)
+    assert (public(stored_keys(app)[0]), stored_keys(app)[1]) == (NEW_CLIENT_KEY.public_data, line)
     assert host_view(app)["name"] == "Box two"
 
 
 def test_a_host_key_rotated_on_the_server_is_confirmed_again_without_touching_the_key(app, scan):
     assert add(app).status_code == 201
-    scan.keys[("box.lan", 22)] = OTHER_SERVER_KEY
+    scan.keys[(BOX_IP, 22)] = OTHER_SERVER_KEY
     offered = offer(app)
     host_key = {"offer": offered["offer"], "fingerprint": offered["fingerprint"]}
     assert edit(app, host_key=host_key).status_code == 200
     key, line = stored_keys(app)
-    assert key == PEM.strip()
+    assert public(key) == CLIENT_KEY.public_data
     assert OTHER_SERVER_KEY.export_public_key().decode().split()[1] in line
 
 
@@ -451,6 +483,7 @@ def test_no_key_or_host_key_ever_comes_back_from_an_api_a_log_or_the_database(
         assert add(app).status_code == 201
         watched(app)
         assert edit(app, ssh_key=NEW_PEM).status_code == 200
+        stored_body = stored_keys(app)[0].splitlines()[2]  # Bleep's own export of the key
         bad = edit(app, ssh_key=PEM.replace(KEY_BODY, KEY_BODY[::-1]))
         assert bad.status_code == 422
         answers = [bad.text]
@@ -465,7 +498,7 @@ def test_no_key_or_host_key_ever_comes_back_from_an_api_a_log_or_the_database(
         answers.append(remove(app).text)
 
     database = b"".join(read_if_there(path) for path in settings.data_dir.iterdir())
-    for secret in (KEY_BODY, NEW_KEY_BODY, KEY_BODY[::-1], HOST_KEY_B64):
+    for secret in (KEY_BODY, NEW_KEY_BODY, KEY_BODY[::-1], HOST_KEY_B64, stored_body):
         assert all(secret not in answer for answer in answers)
         assert secret not in caplog.text
         assert secret.encode() not in database
@@ -503,3 +536,194 @@ def test_the_routes_need_a_session(settings, scan, connector):
         )
         assert client.post("/api/settings/hosts", json={}).status_code == 401
         assert client.delete("/api/settings/hosts/c").status_code == 401
+
+
+# -- fix round 1 ------------------------------------------------------------------------------
+
+
+def test_only_the_key_itself_is_stored_whatever_was_pasted_around_it(app):
+    pasted = "hello, here is the key\n" + PEM + "\nand a note after it\n"
+    assert add(app, ssh_key=pasted).status_code == 201
+    key, _ = stored_keys(app)
+    assert key.startswith("-----BEGIN OPENSSH PRIVATE KEY-----")
+    assert key.rstrip().endswith("-----END OPENSSH PRIVATE KEY-----")
+    assert "hello" not in key and "note" not in key
+    assert public(key) == CLIENT_KEY.public_data
+
+
+def test_a_paste_holding_two_keys_is_refused(app):
+    response = add(app, ssh_key=PEM + NEW_PEM)
+    assert response.status_code == 422 and "one private key" in response.json()["detail"]
+    assert host_view(app) is None
+
+
+def test_an_unknown_field_is_never_named_in_a_422(app):
+    body = new_host(app) | {PEM: "x"}
+    response = app.post("/api/settings/hosts", json=body)
+    assert response.status_code == 422
+    assert KEY_BODY not in response.text and "BEGIN" not in response.text
+    assert response.json()["detail"][0]["loc"] == ["<unknown field>"]
+
+
+def test_a_non_ascii_version_is_stale_not_a_crash(app):
+    assert add(app).status_code == 201
+    view = host_view(app)
+    body = {"name": "Box", "address": "box.lan", "user": "deploy"}
+    response = app.put("/api/settings/hosts/c", json=body, headers={"If-Match": "versión".encode()})
+    assert response.status_code == 409
+    assert (
+        app.delete("/api/settings/hosts/c", headers={"If-Match": "versión".encode()}).status_code
+        == 409
+    )
+    assert host_view(app) == view
+
+
+def test_a_form_body_is_a_422_not_a_crash(app):
+    response = app.post(
+        "/api/settings/hosts", content=b"id=c", headers={"Content-Type": "text/plain"}
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("name", ["SSH_KEY:c", "KNOWN_HOSTS:c"])
+def test_a_hosts_keys_cannot_be_set_or_cleared_through_the_secrets_routes(app, name):
+    assert add(app).status_code == 201
+    before = stored_keys(app)
+    assert app.put(f"/api/secrets/{name}", json={"value": "x"}).status_code == 404
+    assert app.delete(f"/api/secrets/{name}").status_code == 404
+    assert stored_keys(app) == before
+
+
+@pytest.mark.parametrize(
+    "address", ["fe80::1%x ssh-ed25519 AAAA", "fe80::1%x,*", "fe80::1%eth0"], ids=repr
+)
+def test_an_ipv6_scope_id_is_refused(app, scan, address):
+    response = app.post("/api/settings/hosts/host-key", json={"address": address})
+    assert response.status_code == 422 and scan.asked == []
+
+
+# -- the host-key fetch is not a scanner (O1) -------------------------------------------------
+
+GENERIC = "Could not get an SSH host key from that address."
+
+
+@pytest.mark.parametrize(
+    ("address", "answers"),
+    [
+        ("127.0.0.1", None),
+        ("::1", None),
+        ("169.254.169.254", None),
+        ("::ffff:127.0.0.1", None),
+        ("0.0.0.0", None),
+        ("fe80::1", None),
+        ("224.0.0.1", None),
+        ("localhost", ["127.0.0.1"]),
+        ("metadata.lan", ["169.254.169.254"]),
+        ("mixed.lan", ["192.168.1.10", "127.0.0.1"]),
+        ("mapped.lan", ["::ffff:169.254.169.254"]),
+        ("nat64.lan", ["64:ff9b::7f00:1"]),
+        ("6to4.lan", ["2002:7f00:1::1"]),
+    ],
+)
+def test_no_host_key_is_fetched_from_loopback_link_local_or_their_ipv6_forms(
+    settings, scan, connector, address, answers
+):
+    resolver = Resolver()
+    if answers is not None:
+        resolver.answers[address] = answers
+    with TestClient(create_app(settings, start(settings, scan, connector, resolver))) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        response = client.post("/api/settings/hosts/host-key", json={"address": address})
+        assert response.status_code == 502 and response.json()["detail"] == GENERIC
+    assert scan.asked == []
+
+
+@pytest.mark.parametrize(
+    "address", ["10.0.0.5", "172.16.4.2", "192.168.1.10", "100.64.0.7", "fd00::5"]
+)
+def test_a_host_on_a_private_network_is_allowed(app, scan, address):
+    scan.keys[(address, 22)] = SERVER_KEY
+    assert offer(app, address)["fingerprint"] == SERVER_KEY.get_fingerprint("sha256")
+    assert scan.asked == [(address, 22)]
+
+
+def test_the_name_is_resolved_once_and_the_checked_address_is_the_one_asked(
+    settings, scan, connector
+):
+    class Rebinding(Resolver):
+        """Public the first time, loopback after: the fetch must use the first answer only."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        async def __call__(self, host, port):
+            self.calls += 1
+            return [BOX_IP] if self.calls == 1 else ["127.0.0.1"]
+
+    resolver = Rebinding()
+    with TestClient(create_app(settings, start(settings, scan, connector, resolver))) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        client.parts = client.app.state.parts  # type: ignore[attr-defined]
+        offered = offer(client, "flip.lan")
+        assert scan.asked == [(BOX_IP, 22)]
+        # Saving checks the name again: it now resolves to loopback, so nothing is saved.
+        body = {
+            "id": "c",
+            "name": "Box",
+            "address": "flip.lan",
+            "user": "deploy",
+            "ssh_key": PEM,
+            "host_key": {"offer": offered["offer"], "fingerprint": offered["fingerprint"]},
+        }
+        response = client.post("/api/settings/hosts", json=body)
+        assert response.status_code == 422
+        assert host_view(client) is None
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OSError("[Errno 61] Connect call failed ('192.168.1.10', 22)"),
+        asyncssh.ProtocolNotSupported("Unsupported SSH version"),
+        ConnectionResetError("Connection lost"),
+        TimeoutError(),
+        None,
+    ],
+    ids=["closed", "not ssh", "reset", "silent", "no key"],
+)
+def test_every_failure_to_fetch_says_the_same_sentence(app, scan, failure, caplog):
+    async def failing(host, port, **kwargs):
+        if failure is not None:
+            raise failure
+        return None
+
+    app.parts.dashboard_hosts.scan = failing
+    response = app.post("/api/settings/hosts/host-key", json={"address": "box.lan"})
+    assert response.status_code == 502
+    assert response.json() == {"detail": GENERIC}
+    assert "Connect call failed" not in caplog.text and "192.168.1.10" not in caplog.text
+
+
+def test_a_name_that_does_not_resolve_says_the_same_sentence(app):
+    response = app.post("/api/settings/hosts/host-key", json={"address": "nowhere.lan"})
+    assert response.status_code == 502 and response.json() == {"detail": GENERIC}
+
+
+def test_one_fetch_at_a_time_and_a_second_is_a_429(app, scan):
+    release = app.portal.call(asyncio.Event)
+    entered = app.portal.call(asyncio.Event)
+
+    async def slow(host, port, **kwargs):
+        entered.set()
+        await release.wait()
+        return SERVER_KEY
+
+    app.parts.dashboard_hosts.scan = slow
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        first = pool.submit(app.post, "/api/settings/hosts/host-key", json={"address": "box.lan"})
+        app.portal.call(entered.wait)
+        second = app.post("/api/settings/hosts/host-key", json={"address": "box.lan"})
+        assert second.status_code == 429
+        app.portal.call(release.set)
+        assert first.result(timeout=5).status_code == 200
