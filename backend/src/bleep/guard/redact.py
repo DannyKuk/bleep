@@ -528,22 +528,37 @@ def redact_text(text: str) -> str:
     return redact_with_count(text)[0]
 
 
+# Words that make a key name a place, not a secret (`AUTH0_DOMAIN`, `TOKEN_ISSUER`): its value is
+# shown to the person approving, value-level redaction aside, so a planted host stays visible.
+_LOCATION_WORDS = frozenset(
+    {
+        "host", "domain", "server", "issuer", "proxy", "origin", "callback", "redirect",
+        "url", "uri", "endpoint", "addr", "address",
+    }
+)  # fmt: skip
+
+
+def _hides_whole_value(key: str) -> bool:
+    """Whether an approval shows `<redacted>` for the whole value under `key`: it names a secret
+    and no place. Fails safe by showing: a value that is shown still goes through redaction."""
+    words = {w.lower() for w in WORDS.findall(key)}
+    return _is_secret_key(key) and not (words & _LOCATION_WORDS)
+
+
 def redacted_step(step: PlanStep) -> PlanStep:
     """The step as a person approving it sees it: every param redacted, nothing hidden.
 
-    A `coolify.set_env` value under a key that names a secret (`STRIPE_KEY`, `DB_PASSWORD`) is
-    `<redacted>` whole, spaces, quotes and line breaks included; any other is redacted as
-    `KEY=value`, so a password inside a URL value is cut out while the host and the rest stay
-    visible. Danny's decision (#38): an explicit yes must see what it approves, since planted
-    text could steer the model to a value such as an attacker's host."""
+    A `coolify.set_env` value under a key that names a secret (`STRIPE_KEY`, `DB_PASSWORD`) and
+    no place (`_LOCATION_WORDS`: `AUTH0_DOMAIN` is shown) is `<redacted>` whole, spaces, quotes
+    and line breaks included; any other is redacted by its own patterns, so a password inside a
+    URL value is cut out while the host and the rest stay visible. Danny's decision (#38): an
+    explicit yes must see what it approves, since planted text could steer the model to a value
+    such as an attacker's host."""
     params = {k: redact_text(v) for k, v in step.params.items()}
     if step.action == "coolify.set_env" and {"key", "value"} <= step.params.keys():
         key = step.params["key"]
-        if _is_secret_key(key):
-            params["value"] = REDACTED
-        else:
-            pair = redact_text(f"{key}={step.params['value']}")
-            params["value"] = pair.removeprefix(f"{key}=") if pair.startswith(f"{key}=") else pair
+        # A shown value is redacted on its own, so the key cannot hide it (`SECRET_HOST`).
+        params["value"] = REDACTED if _hides_whole_value(key) else params["value"]
     return step.model_copy(update={"params": params})
 
 

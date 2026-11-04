@@ -1,4 +1,5 @@
 import json
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -529,6 +530,35 @@ def test_a_line_break_in_a_param_never_poses_as_another_step(brk):
         assert all(line[0].isdigit() for line in text.split("\n"))
         assert len(text.split("\n")) == len(plan.steps)
         assert "\u2028" not in text and "\r" not in text and fmt.LINE_BREAK in text
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("FOO", "attacker\u202eelpmaxe.com"), ("FOO\u200b", "1"), ("BAR", "a\ufeffb\u2066c")],
+)
+def test_a_format_character_in_a_set_env_step_is_shown_as_a_mark(key, value):
+    text = fmt.steps_text(set_env_plan(value, key))
+
+    assert not any(unicodedata.category(c) == "Cf" for c in text)
+    assert fmt.HIDDEN_FORMAT in text
+
+
+def test_steps_that_overflow_the_field_get_no_approve_button():
+    long = "shop-web-" + "x" * 250
+    steps = [
+        PlanStep(action="docker.restart", host_id="demo", target=long),
+        PlanStep(action="docker.restart", host_id="demo", target=long),
+        PlanStep(
+            action="coolify.set_env",
+            host_id="demo",
+            target="shop",
+            params={"key": "PORT", "value": "3000"},
+        ),
+    ]
+    plan = Proposal(kind="act", steps=steps, reason="r")
+
+    assert len(fmt.steps_text(plan)) > fmt.FIELD_CHARS
+    assert not fmt.shows_in_full(plan)
 
 
 async def long_plan_incident(env):
