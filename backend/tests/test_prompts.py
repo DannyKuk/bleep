@@ -134,6 +134,7 @@ UNTRUSTED_RULES = {
     "graph/propose": "untrusted/propose",
     "watcher/recovery_line": "untrusted/recovery_line",
 }
+# Fixed parts filled into a placeholder besides `{untrusted_rule}`.
 FIXED_PARTS = {"graph/diagnose": {"planted_in_rule": "untrusted/diagnose_planted_in"}}
 
 
@@ -180,9 +181,7 @@ def test_the_planted_in_instruction_is_a_fixed_part_an_override_must_keep_a_plac
     assert rule not in prompts.overridable_names()
     with pytest.raises(PromptError):
         prompts.check_override(rule, prompts.file_text(rule))
-    text = prompts.file_text("graph/diagnose")
-    assert "planted_in" not in text.replace("{planted_in_rule}", "")
-    without = text.replace("{planted_in_rule}", "")
+    without = prompts.file_text("graph/diagnose").replace("{planted_in_rule}", "")
     with pytest.raises(PromptError, match="missing: {planted_in_rule}"):
         prompts.check_override("graph/diagnose", without)
 
@@ -206,10 +205,10 @@ FIXTURES = Path(__file__).parent / "fixtures" / "prompts"
 
 
 @pytest.mark.parametrize(("name", "rule"), UNTRUSTED_RULES.items())
-def test_the_four_prompts_render_as_they_did_before_their_rule_moved_out(name, rule):
-    """The fixtures were rendered from the files at c0afd0f, before #147 moved each rule into
-    `untrusted/`, with every placeholder filled as `<name>`; `{mcp}` came later (#118) and is
-    filled as it is with the MCP plugin off."""
+def test_the_prompts_with_a_fixed_part_render_as_they_did_before_it_moved_out(name, rule):
+    """The fixtures were rendered from the files at c0afd0f, before #147 moved each rule (and
+    #165 Diagnose's `planted_in` bullet) into `untrusted/`, with every placeholder filled as
+    `<name>`; `{mcp}` came later (#118) and is filled as it is with the MCP plugin off."""
     extra = {field: load(rule).strip() for field, rule in FIXED_PARTS.get(name, {}).items()}
     fields = placeholders(prompts.file_text(name)) - {"untrusted_rule"} - set(extra)
     values = {field: f"<{field}>" for field in fields}

@@ -247,6 +247,25 @@ async def test_a_stored_override_of_a_prompt_no_longer_overridable_is_deleted_an
         await save(store, name, text)
 
 
+async def test_a_stored_diagnose_override_without_planted_in_rule_is_left_out_and_kept(db, caplog):
+    """Saved after #147 but before #165: it has `{untrusted_rule}` and lacks `{planted_in_rule}`."""
+    conn = await db.connect()
+    old = "{untrusted_rule} {subject} {signals} {context} {investigation}"
+    await conn.execute(
+        "INSERT INTO prompt_overrides VALUES (?, ?, ?)", ("graph/diagnose", old, T0.isoformat())
+    )
+    await conn.commit()
+    await conn.close()
+    store = new_store(db)
+
+    with caplog.at_level(logging.WARNING):
+        await store.load()
+
+    assert store.overrides() == {}
+    assert await stored(db) == {"graph/diagnose": old}
+    assert "left out" in caplog.text and "planted_in_rule" in caplog.text
+
+
 async def test_reset_deletes_a_stored_override_that_was_left_out_and_records_it(db, caplog):
     """An override of graph/diagnose saved before it had `{untrusted_rule}` (#147)."""
     conn = await db.connect()
