@@ -5,6 +5,9 @@ check where everything passes. A check passes only when every planned container 
 healthy (or running with no healthcheck) and every planned URL passes `check_url`. The plan is
 the proposal's verification plan; when that is empty it falls back to the affected service's
 containers (protected ones too) and URLs, and then to the containers the plan's steps acted on.
+Whatever the plan names, the incident's own symptoms are checked too: every container its signals
+name and every URL they report failing, so a plan that checks something else cannot pass while
+the failure that opened the incident goes on.
 A Coolify application the plan redeployed is checked as a whole, read from the engine each time:
 the redeploy replaced its containers under new names, so they are left out of the name checks.
 The redeploy step ends only once Coolify reports its deployment over (`plugins/coolify`), so the
@@ -19,6 +22,9 @@ Each check publishes a `verification` event; the notifier hears the round's fina
 """
 
 import logging
+import re
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -27,12 +33,13 @@ from langchain_core.messages import HumanMessage
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
-from bleep.graph.state import IncidentState, Node
-from bleep.guard.plan_check import coolify_members, host_urls
+from bleep.graph.state import IncidentState, Node, plan_results
+from bleep.guard.plan_check import COOLIFY_UUID, coolify_members, host_urls
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
+from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import Check, Proposal, StepResult, VerificationResult
-from bleep.schemas.incidents import Subject
+from bleep.schemas.incidents import Signal
 from bleep.watcher.http_checks import check_url
 
 log = logging.getLogger(__name__)
@@ -49,32 +56,142 @@ def _redeployed(proposal: Proposal | None) -> list[str]:
     return list(dict.fromkeys(s.target for s in steps if s.action == "coolify.redeploy"))
 
 
-def _plan(
-    deps: GraphDeps, subject: Subject, proposal: Proposal | None
-) -> tuple[list[str], list[UrlCheckConfig]]:
-    """The containers and URLs to check, from the plan or else from what it acted on.
+UNPROVEN = "stopped as approved; nothing shows the service works (no URL or running container)"
 
-    A planned URL keeps its expected status and body text from the hosts file, whichever of the
-    host's services it belongs to (the plan check allows any of them). The fallback checks every
+
+@dataclass(frozen=True)
+class _Plan:
+    """What to check: containers that must run, URLs that must answer, and signalled containers
+    the plan stopped, which must stay down. `unproven` says the incident's own symptom is only
+    covered by those stop checks: a container already dead passes one, so it proves nothing.
+    Only the incident's own evidence counts against that: a URL its signals saw fail or of its
+    own service, a signalled container that must run, or a signalled container a redeploy
+    replaced (its application's check). Another service's URL or an unrelated redeploy does
+    not."""
+
+    containers: list[str]
+    urls: list[UrlCheckConfig]
+    stopped: list[str]
+    unproven: bool = False
+
+    def empty(self) -> bool:
+        return not (self.containers or self.urls or self.stopped)
+
+
+def _plan(deps: GraphDeps, state: IncidentState) -> _Plan:
+    """The containers and URLs to check: the plan's, or else what it acted on, and always the
+    incident's own symptoms (`_symptoms`). A signalled container the plan stopped (its last
+    Docker step is a stop) is checked to be down, unless it is among the containers that must
+    run (the fallback can put it there; that check then fails, the safe side). When those stop
+    checks are all there is about the symptom (no URL of the incident's, no signalled container
+    that must run, none a redeploy replaced), the plan is `unproven` and cannot pass.
+
+    A URL keeps its expected status and body text from the hosts file, whichever of the host's
+    services it belongs to (the plan check allows any of them). The fallback checks every
     container of the service, protected ones too: reading one is harmless, and leaving out a
     database that is still down would let a check of the web container alone pass.
     """
+    subject, proposal = state["subject"], state.get("proposal")
     planned = proposal.verification if proposal is not None else None
     service = deps.registry.service(subject.service_id) if subject.service_id else None
     known = host_urls(deps.registry, subject.host_id)
     if service is not None:
         known |= {cfg.url: cfg for cfg in service.urls}
+    replaced = _replaced(deps, state)
     containers = list(planned.containers) if planned is not None else []
-    urls = [known.get(u) or UrlCheckConfig(url=u) for u in (planned.urls if planned else [])]
-    if containers or urls:
-        return containers, urls
-    if service is not None:
-        # A redeployed application's containers are replaced; its own check covers them.
-        apps = _redeployed(proposal)
-        replaced = {c.name for app in apps for c in coolify_members(service.containers, app)}
-        return [c.name for c in service.containers if c.name not in replaced], list(service.urls)
-    acted = proposal.steps if proposal is not None else []
-    return [s.target for s in acted if s.action.startswith("docker.")], []
+    urls = list(planned.urls) if planned is not None else []
+    if not containers and not urls:
+        if service is not None:
+            containers = [c.name for c in service.containers]
+            urls = [cfg.url for cfg in service.urls]
+        else:
+            acted = proposal.steps if proposal is not None else []
+            containers = [s.target for s in acted if s.action.startswith("docker.")]
+    signalled, failing_urls = _symptoms(state.get("signals", []))
+    # The URLs that say something about this incident: those its signals saw fail and its own
+    # service's. Another service's URL the plan names says nothing about this one.
+    own_urls = {*failing_urls, *(cfg.url for cfg in service.urls)} if service else set(failing_urls)
+    stopped = _stopped(proposal)
+    left_out = [c for c in signalled if c in stopped or replaced(c)]
+    if left_out and service is not None:
+        # The plan meant that container gone or down; only the service's URLs can say whether
+        # that fixed anything.
+        failing_urls += [cfg.url for cfg in service.urls]
+    named = [*containers, *(c for c in signalled if c not in left_out)]
+    containers = [c for c in dict.fromkeys(named) if not replaced(c)]
+    urls = list(dict.fromkeys([*urls, *failing_urls]))
+    down = [c for c in left_out if c in stopped and c not in containers]
+    covered = (
+        bool(own_urls & set(urls))
+        or bool(set(signalled) & set(containers))
+        or any(replaced(c) for c in signalled)
+    )
+    checks = [known.get(u) or UrlCheckConfig(url=u) for u in urls]
+    return _Plan(containers, checks, down, unproven=bool(down) and not covered)
+
+
+def _stopped(proposal: Proposal | None) -> set[str]:
+    """The containers whose last Docker step in the plan is a stop: a stop then a start of the
+    same container means it should run."""
+    last: dict[str, str] = {}
+    for step in proposal.steps if proposal is not None else []:
+        if step.action.startswith("docker."):
+            last[step.target] = step.action
+    return {target for target, action in last.items() if action == "docker.stop"}
+
+
+def _replaced(deps: GraphDeps, state: IncidentState) -> Callable[[str], bool]:
+    """Whether a container name is one a redeploy of this plan replaced; the application's own
+    check covers those.
+
+    Each redeployed target is first resolved to its one application uuid, from the registry as
+    it is now (the new containers carry the same labels); only when the registry shows no
+    application by that name is Gather's listing read. A target that names several uuids
+    replaces nothing, so its containers are still checked by name. By
+    Verify the registry may list only the new containers, so a container counts as replaced when
+    Gather's listing (taken before the plan ran) shows it as one of that uuid's, or when its
+    name is Coolify's for it: `<uuid>-<timestamp>` or `<service>-<uuid>-<timestamp>`. A preview
+    container (`coolify.pullRequestId` set) is never replaced: a redeploy of the main application
+    leaves the previews as they are."""
+    apps = _redeployed(state.get("proposal"))
+    if not apps:
+        return lambda _name: False
+    context = state.get("context")
+    gathered = list(context.containers) if context is not None else []
+    now = deps.registry.snapshot(state["subject"].host_id) or []
+    uuids: set[str] = set()
+    for app in apps:
+        found = _app_uuids(now, app) or _app_uuids(gathered, app)
+        uuids |= found if len(found) == 1 else set()
+    members = {
+        c.name
+        for c in [*gathered, *now]
+        if c.labels.get(COOLIFY_UUID) in uuids and _not_preview(c.labels)
+    }
+    named = [re.compile(rf"(?:^|-){re.escape(u)}-\d+$") for u in uuids]
+    return lambda name: name in members or any(p.search(name) for p in named)
+
+
+def _app_uuids(containers: list[ContainerSummary], target: str) -> set[str]:
+    """The application uuids `target` names among `containers`, as `coolify_app_uuid` reads
+    them; one is an answer, several an ambiguity."""
+    found = {c.labels.get(COOLIFY_UUID, "") for c in coolify_members(containers, target)}
+    return found - {""}
+
+
+def _not_preview(labels: dict[str, str]) -> bool:
+    return labels.get("coolify.pullRequestId", "0") in ("", "0")
+
+
+def _symptoms(signals: list[Signal]) -> tuple[list[str], list[str]]:
+    """The containers the incident's signals name and the URLs they report failing."""
+    containers = [s.container for s in signals if s.container]
+    urls = [
+        str(s.detail["url"])
+        for s in signals
+        if s.kind == "url_failed" and not s.detail.get("ok") and s.detail.get("url")
+    ]
+    return list(dict.fromkeys(containers)), urls
 
 
 async def _check_container(deps: GraphDeps, host_id: str, name: str) -> Check:
@@ -101,13 +218,11 @@ def _deploy_starts(
 ) -> dict[str, datetime]:
     """When each application this plan redeployed had its redeploy step start, on Bleep's clock.
 
-    Only this plan's results count: `step_results` keeps earlier plans' too, and Execute appends
-    one result per step of the plan it ran, so this plan's are the last of them. A redeploy that
-    never started (skipped, or refused at run time) has no start and its app no entry."""
+    Only this plan's results count (`plan_results`). A redeploy that never started (skipped, or
+    refused at run time) has no start and its app no entry."""
     steps = proposal.steps if proposal is not None else []
-    current = (results or [])[-len(steps) :] if steps else []
     starts: dict[str, datetime] = {}
-    for r in current:
+    for r in plan_results(proposal, results):
         if not 0 <= r.step_index < len(steps):
             continue
         step = steps[r.step_index]
@@ -141,7 +256,7 @@ async def _check_application(
         c
         for c in coolify_members(listed, app)
         if c.state == "running"
-        and c.labels.get("coolify.pullRequestId", "0") in ("", "0")
+        and _not_preview(c.labels)
         and c.created_at is not None
         and c.created_at >= floor
     ]
@@ -164,6 +279,20 @@ async def _check_url(client: httpx.AsyncClient, cfg: UrlCheckConfig) -> Check:
     return Check(kind="url", target=cfg.url, ok=False, detail=result.error or "failed")
 
 
+async def _check_stopped(deps: GraphDeps, host_id: str, name: str) -> Check:
+    """A signalled container the plan stopped: it passes only while it is down."""
+    target = f"{name} (stopped by the plan)"
+    try:
+        summary = (await deps.registry.engine(host_id).inspect(name)).summary
+    except ContainerNotFound:
+        return Check(kind="container", target=target, ok=False, detail="not found")
+    except EngineUnavailable, KeyError:
+        return Check(kind="container", target=target, ok=False, detail="host not reachable")
+    if summary.state == "running":
+        return Check(kind="container", target=target, ok=False, detail="is running again")
+    return Check(kind="container", target=target, ok=True, detail=f"is {summary.state}")
+
+
 def _describe(result: VerificationResult) -> str:
     return "\n".join(f"- {c.kind} {c.target}: {c.detail}" for c in result.checks if not c.ok)
 
@@ -171,8 +300,7 @@ def _describe(result: VerificationResult) -> str:
 def make(deps: GraphDeps) -> Node:
     async def one_check(
         host_id: str,
-        containers: list[str],
-        urls: list[UrlCheckConfig],
+        plan: _Plan,
         apps: list[str],
         starts: dict[str, datetime],
         attempt: int,
@@ -181,8 +309,14 @@ def make(deps: GraphDeps) -> Node:
         client = deps.http or httpx.AsyncClient()
         try:
             checks = [await _check_application(deps, host_id, app, starts.get(app)) for app in apps]
-            checks += [await _check_container(deps, host_id, name) for name in containers]
-            checks += [await _check_url(client, cfg) for cfg in urls]
+            checks += [await _check_container(deps, host_id, name) for name in plan.containers]
+            checks += [await _check_stopped(deps, host_id, name) for name in plan.stopped]
+            if plan.unproven:
+                checks += [
+                    Check(kind="symptom", target=name, ok=False, detail=UNPROVEN)
+                    for name in plan.stopped
+                ]
+            checks += [await _check_url(client, cfg) for cfg in plan.urls]
         finally:
             if owned:
                 await client.aclose()
@@ -192,18 +326,18 @@ def make(deps: GraphDeps) -> Node:
         incident_id = state["incident_id"]
         subject = state["subject"]
         proposal = state.get("proposal")
-        containers, urls = _plan(deps, subject, proposal)
+        plan = _plan(deps, state)
         apps = _redeployed(proposal)
         starts = _deploy_starts(proposal, state.get("step_results"))
 
         result = VerificationResult(ok=False)
-        if not containers and not urls and not apps:
+        if plan.empty() and not apps:
             # Nothing to look at is not a pass, and another look at nothing would not help either.
             await deps.bus.publish(incident_id, "verification", _payload(result))
         else:
             await deps.sleep(SETTLE_S)
             for attempt in range(1, CHECKS + 1):
-                result = await one_check(subject.host_id, containers, urls, apps, starts, attempt)
+                result = await one_check(subject.host_id, plan, apps, starts, attempt)
                 await deps.bus.publish(incident_id, "verification", _payload(result))
                 if result.ok or attempt == CHECKS:
                     break

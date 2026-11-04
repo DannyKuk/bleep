@@ -2,11 +2,12 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Literal, Protocol, runtime_checkable
 
 from langchain_core.tools import BaseTool
 
 from bleep.guard.log import GuardLogger
+from bleep.guard.plan_check import Violation
 from bleep.hosts.registry import Registry
 from bleep.schemas.graph import ApprovalGrant, ApprovalRecord, PlanStep, StepResult
 
@@ -67,6 +68,15 @@ class ActHandler(Protocol):
         plan: ApprovalRecord,
         step_index: int,
     ) -> StepResult: ...
+
+
+@runtime_checkable
+class PlanRules(Protocol):
+    """An act handler with rules of its own for its action's steps, which Propose hands the plan
+    check (`check_plan`'s `step_rules`) so a step that breaks them is refused before a human is
+    asked: the MCP plugin's `McpCall` and its act tools."""
+
+    def plan_violations(self, number: int, step: PlanStep) -> list[Violation]: ...
 
 
 class ToolRegistry:

@@ -437,8 +437,45 @@ def test_a_target_too_long_for_its_params_is_shown_whole():
     step = PlanStep(
         action="mcp.call", host_id="demo", target=target, params={"tool": "pause_monitor"}
     )
-    text = fmt.steps_text(Proposal(kind="act", steps=[step], reason="r"))
-    assert text == f"1. mcp.call {target} on demo (…)"
+    proposal = Proposal(kind="act", steps=[step], reason="r")
+    assert fmt.steps_text(proposal) == f"1. mcp.call {target} on demo (…) {fmt.PARAMS_TOO_LONG}"
+    assert not fmt.shows_in_full(proposal)
+
+
+NOTE = "routine cache flush, reviewed and approved by the on-call lead last week " * 3
+
+
+def mcp_plan(params: dict[str, str]) -> Proposal:
+    step = PlanStep(action="mcp.call", host_id="demo", target="shop-web-1", params=params)
+    return Proposal(kind="act", steps=[step], reason="the cache is stale")
+
+
+# The M5 review's two probes: the name of what runs, or the end of its arguments, cut from view.
+PROBES = [
+    {"arguments": json.dumps({"note": NOTE}), "tool": "drop_database"},
+    {"tool": "flush_cache", "arguments": json.dumps({"note": NOTE, "then": "drop_database"})},
+]
+
+
+@pytest.mark.parametrize("params", PROBES)
+def test_an_mcp_step_cut_to_fit_shows_its_tool_first_and_cannot_be_approved_in_telegram(params):
+    plan = mcp_plan(params)
+
+    line = fmt.steps_text(plan)
+
+    assert len(line) <= fmt.STEP_CHARS
+    assert line.startswith(f"1. mcp.call shop-web-1 on demo (tool={params['tool']}, arguments=")
+    assert line.endswith(f"…) {fmt.PARAMS_TOO_LONG}")
+    assert not fmt.shows_in_full(plan)
+
+
+def test_an_mcp_step_that_fits_shows_its_tool_first_and_can_be_approved():
+    plan = mcp_plan({"arguments": '{"name": "shop"}', "tool": "pause_monitor"})
+
+    assert fmt.steps_text(plan) == (
+        '1. mcp.call shop-web-1 on demo (tool=pause_monitor, arguments={"name": "shop"})'
+    )
+    assert fmt.shows_in_full(plan)
 
 
 def test_a_secret_in_a_steps_params_is_redacted():
@@ -448,8 +485,10 @@ def test_a_secret_in_a_steps_params_is_redacted():
         target="shop-web-1",
         params={"tool": "set_key", "arguments": '{"api_key": "sk-abcdef1234567890abcdef12"}'},
     )
-    text = fmt.steps_text(Proposal(kind="act", steps=[step], reason="r"))
-    assert "sk-abcdef1234567890abcdef12" not in text
+    proposal = Proposal(kind="act", steps=[step], reason="r")
+    text = fmt.steps_text(proposal)
+    assert "sk-abcdef1234567890abcdef12" not in text and "<redacted>" in text
+    assert fmt.shows_in_full(proposal)  # a redacted secret is not a cut: the rest is visible
 
 
 def set_env_plan(value: str, key: str = "DATABASE_URL") -> Proposal:
@@ -561,18 +600,23 @@ def test_steps_that_overflow_the_field_get_no_approve_button():
     assert not fmt.shows_in_full(plan)
 
 
-async def long_plan_incident(env):
-    """A second incident whose pending plan sets a value too long for one Telegram line."""
+# Plans Telegram cannot show whole: a set_env value and an MCP step's params cut to fit.
+LONG_PLANS = [set_env_plan(LONG_VALUE, "WEBHOOK"), *(mcp_plan(p) for p in PROBES)]
+
+
+async def long_plan_incident(env, plan: Proposal | None = None):
+    """A second incident whose pending plan is too long for one Telegram line."""
     subject = Subject(kind="service", host_id="demo", service_id="demo/blog")
     incident, _ = await IncidentRepo(env.db).open_or_attach(
         subject, [Signal(subject=subject, kind="container_died", at=T0)]
     )
-    plan = set_env_plan(LONG_VALUE, "WEBHOOK")
+    plan = plan or LONG_PLANS[0]
     return incident, plan, await env.approvals.request(incident.id, plan, [])
 
 
-async def test_a_plan_too_long_to_show_gets_no_approve_button(env):
-    incident, plan, request = await long_plan_incident(env)
+@pytest.mark.parametrize("long_plan", LONG_PLANS)
+async def test_a_plan_too_long_to_show_gets_no_approve_button(env, long_plan):
+    incident, plan, request = await long_plan_incident(env, long_plan)
 
     await env.notifier.proposal(incident, None, plan, request)
     await env.notifier.reminder(incident, request)
@@ -583,8 +627,9 @@ async def test_a_plan_too_long_to_show_gets_no_approve_button(env):
         assert "approve on the dashboard" in sent["text"]
 
 
-async def test_an_approve_press_for_a_plan_too_long_to_show_is_refused(env):
-    incident, plan, request = await long_plan_incident(env)
+@pytest.mark.parametrize("long_plan", LONG_PLANS)
+async def test_an_approve_press_for_a_plan_too_long_to_show_is_refused(env, long_plan):
+    incident, plan, request = await long_plan_incident(env, long_plan)
     await env.notifier.proposal(incident, None, plan, request)
     env.api.updates.append(fixture("callback_approve", APPROVAL_ID=request.id))
 

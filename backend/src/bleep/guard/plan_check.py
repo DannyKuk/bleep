@@ -5,12 +5,13 @@
 See docs/design/guard.md.
 """
 
+import json
 import re
 import typing
 import unicodedata
-from collections.abc import Collection
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.discovery import is_self
@@ -28,9 +29,11 @@ COOLIFY_APP_LABELS = (COOLIFY_UUID, COOLIFY_NAME)
 ACTION_PARAMS: dict[str, frozenset[str]] = {
     "coolify.redeploy": frozenset(),
     "coolify.set_env": frozenset({"key", "value"}),
+    "mcp.call": frozenset({"tool", "arguments"}),
 }
 ENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")  # one line, no "=", at most 128
 MAX_ENV_VALUE = 10_000
+MAX_ARGUMENTS = 10_000  # an mcp.call's arguments, as JSON text
 
 Rule = Literal[
     "plan_shape",
@@ -59,6 +62,13 @@ class Violation:
     step: int | None = None
 
 
+# An action's own rules for a step, from the code that runs the action (the MCP plugin's act tools
+# are its settings); given the 1-based step number and the step.
+StepRule = Callable[[int, PlanStep], list[Violation]]
+# Actions that cannot be judged without their act handler's rule; with none given they are refused.
+RULED_ACTIONS: frozenset[str] = frozenset({"mcp.call"})
+
+
 def check_plan(
     proposal: Proposal,
     registry: Registry,
@@ -66,6 +76,7 @@ def check_plan(
     host_id: str,
     *,
     incident_containers: Collection[str],
+    step_rules: Mapping[str, StepRule] | None = None,
 ) -> list[Violation]:
     """Every reason to refuse `proposal` for an incident on `host_id`; empty means it may go on.
 
@@ -76,7 +87,10 @@ def check_plan(
     container that works (running and healthy, or running with no health check) unless it is one
     of the incident's own (`incident_containers`, by name; Propose says which), a verification
     URL that is not one of the host's health checks in the hosts file, and a verification
-    container that is not on the host.
+    container that is not on the host. A plugin step must take exactly its params, and an
+    `mcp.call` must pass its action's `step_rules` (the tool is one of the plugin's act tools;
+    with no rule given it is refused) and name no protected container or Bleep's own in its
+    arguments (`check_arguments`).
     """
     violations: list[Violation] = []
     if proposal.kind == "no_action" and proposal.steps:
@@ -92,7 +106,8 @@ def check_plan(
         )
     named = set(incident_containers)
     for number, step in enumerate(proposal.steps, start=1):
-        found = _check_step(number, step, registry, enabled_actions, host_id)
+        rule = (step_rules or {}).get(step.action)
+        found = _check_step(number, step, registry, enabled_actions, host_id, rule)
         violations.extend(found or _check_working(number, step, registry, named))
     violations.extend(_check_set_env_redeploy(proposal))
     if proposal.kind == "act":
@@ -191,7 +206,12 @@ def _check_working(
 
 
 def _check_step(
-    number: int, step: PlanStep, registry: Registry, enabled: set[str], host_id: str
+    number: int,
+    step: PlanStep,
+    registry: Registry,
+    enabled: set[str],
+    host_id: str,
+    rule: StepRule | None,
 ) -> list[Violation]:
     what = f"step {number} ({step.action} {step.target} on {step.host_id})"
     if step.action not in KNOWN_ACTIONS:
@@ -201,12 +221,21 @@ def _check_step(
     if step.host_id != host_id:
         why = f"targets another host; this incident is on {host_id}"
         return [Violation("other_host", f"{what}: {why}", number)]
-    return check_params(number, step) or check_target(number, step, registry)
+    if rule is None and step.action in RULED_ACTIONS:
+        why = "Bleep has no act handler for it now, so its plugin's rules cannot be checked"
+        return [Violation("disabled_action", f"{what}: {why}", number)]
+    return (
+        check_params(number, step)
+        or (rule(number, step) if rule is not None else [])
+        or check_target(number, step, registry)
+        or check_arguments(number, step, registry)
+    )
 
 
 def check_params(number: int, step: PlanStep) -> list[Violation]:
-    """A Coolify step takes exactly its params: none for a redeploy, `key` and `value` for a
-    set_env, with a key Coolify accepts. The text never quotes a value."""
+    """A plugin step takes exactly its params: none for a Coolify redeploy, `key` and `value` for
+    a set_env, with a key Coolify accepts, and `tool` and `arguments` for an `mcp.call`, its
+    arguments a JSON object. The text never quotes a value."""
     wanted = ACTION_PARAMS.get(step.action)
     if wanted is None:
         return []
@@ -214,6 +243,13 @@ def check_params(number: int, step: PlanStep) -> list[Violation]:
     if set(step.params) != wanted:
         takes = ", ".join(sorted(wanted)) or "no params"
         return [Violation("bad_params", f"{what}: takes {takes}", number)]
+    if step.action == "mcp.call":
+        if len(step.params["arguments"]) > MAX_ARGUMENTS:
+            why = f"arguments are longer than {MAX_ARGUMENTS} characters"
+            return [Violation("bad_params", f"{what}: {why}", number)]
+        if mcp_arguments(step) is None:
+            return [Violation("bad_params", f"{what}: arguments must be a JSON object", number)]
+        return []
     if "key" in wanted and not ENV_KEY.fullmatch(step.params["key"]):
         why = "key must be letters, digits and _, not starting with a digit"
         return [Violation("bad_params", f"{what}: {why}", number)]
@@ -286,6 +322,66 @@ def check_target(number: int, step: PlanStep, registry: Registry) -> list[Violat
         elif c.name in protected:
             found += refuse("protected", f"{c.name} is protected in the hosts file")
     return found
+
+
+def mcp_arguments(step: PlanStep) -> dict[str, Any] | None:
+    """An `mcp.call` step's arguments decoded, or None when they are not a JSON object."""
+    try:
+        arguments = json.loads(step.params.get("arguments", ""))
+    except json.JSONDecodeError:
+        return None
+    return arguments if isinstance(arguments, dict) else None
+
+
+def check_arguments(number: int, step: PlanStep, registry: Registry) -> list[Violation]:
+    """An `mcp.call` whose arguments name a protected container or one of Bleep's own on the
+    step's host is refused (`named_off_limits`). The plan check runs it before a human is asked,
+    and the MCP plugin's act tool again right before its call."""
+    if step.action != "mcp.call":
+        return []
+    found = named_off_limits(mcp_arguments(step) or {}, registry, step.host_id)
+    if found is None:
+        return []
+    rule, named = found
+    what = f"step {number} ({step.action} {step.target} on {step.host_id})"
+    return [Violation(rule, f"{what}: its arguments name {named}", number)]
+
+
+def _strings(value: Any) -> list[str]:
+    """Every string in decoded JSON, keys included, walked with a stack."""
+    found: list[str] = []
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            found.append(item)
+        elif isinstance(item, dict):
+            found += [str(k) for k in item]
+            stack += list(item.values())
+        elif isinstance(item, list):
+            stack += item
+    return found
+
+
+def named_off_limits(
+    arguments: Any, registry: Registry, host_id: str, *, protected: bool = True
+) -> tuple[Rule, str] | None:
+    """Which off-limits container decoded JSON `arguments` name, and the rule it breaks: one of
+    Bleep's own containers on `host_id` (by name, id or short id) or, with `protected`, one
+    protected there. A mention anywhere counts, in any case; a container on another host, or one
+    named some other way, is not recognised."""
+    text = "\n".join(_strings(arguments)).lower()
+    for c in registry.snapshot(host_id) or []:
+        refs = {c.name, c.id, c.id[:12]} - {""}
+        if is_self(c.labels) and any(ref.lower() in text for ref in refs):
+            return "self", f"{c.name}, one of Bleep's own containers"
+    host = next((h for h in registry.hosts() if h.config.id == host_id), None)
+    if not protected or host is None:
+        return None
+    for name in sorted(protected_names(host)):
+        if name.lower() in text:
+            return "protected", f"{name}, a container protected in the hosts file"
+    return None
 
 
 def coolify_members(containers: list[ContainerSummary], target: str) -> list[ContainerSummary]:

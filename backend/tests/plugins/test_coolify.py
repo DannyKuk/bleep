@@ -430,6 +430,30 @@ async def test_a_coolify_failure_is_a_result_for_the_model_not_a_crash(env):
     assert out == "Coolify could not be read: Coolify refused the token (401); check COOLIFY_TOKEN."
 
 
+@pytest.mark.parametrize(
+    "labels",
+    [
+        {"bleep.self": "true"},  # by its uuid label
+        {"bleep.self": "true", "coolify.applicationUuid": ""},  # by its resource name alone
+    ],
+)
+async def test_bleeps_own_application_is_never_shown_or_read(tmp_path, labels):
+    own = app_box("bleep-backend-" + BLOG, uuid=BLOG, resource="blog", labels=labels)
+    env = await make_env(tmp_path, engine(own))
+
+    listed = await env.read("coolify_applications")
+    reads = [
+        await env.read(tool, app=ref)
+        for tool in ("coolify_env_keys", "coolify_deployments")
+        for ref in (BLOG, "blog")
+    ]
+
+    assert "blog" not in listed and BLOG not in listed
+    assert f"shop uuid={SHOP}" in listed
+    assert all("Coolify has no application" in out for out in reads)
+    assert [r.url.path for r in env.coolify.requests if BLOG in r.url.path] == []
+
+
 async def test_the_tools_are_offered_only_on_a_host_running_coolify_applications(tmp_path):
     with_apps = await make_env(tmp_path / "1")
     without = await make_env(tmp_path / "2", FakeEngine("a", [box("db-1", "db")]))
@@ -744,6 +768,11 @@ def test_a_url_the_token_must_not_travel_to_is_refused(url):
         check_url(url)
 
     assert url not in str(refused.value)
+
+
+def test_a_public_http_url_is_refused_with_where_to_go_instead():
+    with pytest.raises(CoolifyUrlRefused, match="use Coolify's https domain"):
+        check_url("http://coolify.example.com")
 
 
 async def test_a_public_http_url_keeps_the_plugin_off_and_is_never_called():

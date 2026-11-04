@@ -61,8 +61,10 @@ def answer(name: str, **values: str) -> str:
     return prompts.load(f"notify/{name}", **values).strip()
 
 
-# Said after a set_env value cut to fit the line; that proposal gets no Approve button.
+# Said after a set_env value, or a plugin step's params, cut to fit the line; that proposal gets
+# no Approve button.
 TOO_LONG = "(value too long to show here: approve on the dashboard)"
+PARAMS_TOO_LONG = "(too long to show here: approve on the dashboard)"
 LINE_BREAK = "⏎"  # shown in place of a line break or control character inside a step
 HIDDEN_FORMAT = "�"  # shown in place of an invisible format character (bidi, zero-width)
 _BREAKS = re.compile(r"\r\n|[\x00-\x1f\x7f-\x9f\u2028\u2029]")
@@ -71,23 +73,23 @@ _BREAKS = re.compile(r"\r\n|[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 def steps_text(proposal: Proposal) -> Redacted:
     """One line per step: `1. docker.restart shop-web-1 on demo`.
 
-    A plugin step's params follow it (an MCP tool and its arguments), since the human approves
-    those too; they are redacted and cut so that each line stays within `STEP_CHARS` unless its
-    head alone is longer (a plan that then overflows the field gets no Approve button, see
-    `shows_in_full`). A Docker step's params are never shown: its action ignores them, so they
-    could only be model text in the approval. A line break or control character inside a step
-    reads `⏎` and a format character `�`, so text in a param can never pose as another step or
-    reorder what is shown. A `coolify.set_env` step shows `KEY=value`, redacted
-    (`redacted_step`); a value too long for the line keeps its start and end around "…" and is
-    followed by `TOO_LONG`."""
+    A plugin step's params follow it (an MCP `tool` first, then its arguments), since the human
+    approves those too; they are redacted, and when they do not fit the line within `STEP_CHARS`
+    they are cut and followed by `PARAMS_TOO_LONG`, also when a long head leaves them no room
+    (`(…)`). A Docker step's params are never shown: its action ignores them, so they could only
+    be model text in the approval. A line break or control character inside a step reads `⏎` and
+    a format character `�`, so text in a param can never pose as another step or reorder what is
+    shown. A `coolify.set_env` step shows `KEY=value`, redacted (`redacted_step`); a value too
+    long for the line keeps its start and end around "…" and is followed by `TOO_LONG`. A plan
+    with any cut gets no Approve button (`shows_in_full`)."""
     return Redacted("\n".join(_step_line(n, step)[0] for n, step in enumerate(proposal.steps, 1)))
 
 
 def shows_in_full(proposal: Proposal) -> bool:
-    """Whether the message shows every step whole: no set_env value was cut, and the steps fit
-    the field `render` caps them at (long heads can overflow it and lose a later step). When
-    not, the proposal is approved on the dashboard only (Danny's decision, #38: never approve
-    blind)."""
+    """Whether the message shows every step whole: no set_env value or plugin param was cut, and
+    the steps fit the field `render` caps them at (long heads can overflow it and lose a later
+    step). When not, the proposal is approved on the dashboard only (Danny's decision, #38: never
+    approve blind)."""
     if any(_step_line(n, step)[1] for n, step in enumerate(proposal.steps, 1)):
         return False
     return len(steps_text(proposal).strip()) <= FIELD_CHARS
@@ -101,7 +103,7 @@ def _one_line(text: str) -> str:
 
 
 def _step_line(number: int, step: PlanStep) -> tuple[str, bool]:
-    """The step's line, and whether a set_env value in it had to be cut."""
+    """The step's line, and whether its params had to be cut to fit it."""
     head = _one_line(redact_text(f"{number}. {step.action} {step.target} on {step.host_id}"))
     if not step.params or step.action.startswith("docker."):
         return head, False
@@ -115,10 +117,14 @@ def _step_line(number: int, step: PlanStep) -> tuple[str, bool]:
             return f"{head} ({key}={value})", False
         cut = _env_pair(key, value, max(room - len(TOO_LONG) - 1, 1))
         return f"{head} ({cut}) {TOO_LONG}", True
-    shown = _one_line(redact_text(", ".join(f"{k}={v}" for k, v in step.params.items())))
-    if len(shown) > room:
-        shown = shown[: room - 1] + "…"
-    return f"{head} ({shown})", False
+    # The tool goes first: planted text could otherwise put long arguments before it and push
+    # the name of what runs past the cut.
+    params = sorted(step.params.items(), key=lambda item: item[0] != "tool")
+    shown = _one_line(redact_text(", ".join(f"{k}={v}" for k, v in params)))
+    if len(shown) <= room:
+        return f"{head} ({shown})", False
+    keep = max(room - len(PARAMS_TOO_LONG) - 1, 1)
+    return f"{head} ({shown[: keep - 1]}…) {PARAMS_TOO_LONG}", True
 
 
 def _env_pair(key: str, value: str, room: int) -> str:

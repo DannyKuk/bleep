@@ -54,6 +54,19 @@ STALE = "The plan did not run, the state changed since approval: {changes}."
 REFUSED = "The plan did not run, Bleep's checks refused it: {reasons}."
 NOT_APPROVED = "The plan did not run, it is not the plan the human approved."
 DONE_WORD = {"docker.restart": "restarted", "docker.stop": "stopped", "docker.start": "started"}
+_COOLIFY_STEP = (
+    "not confirmed after a restart (Bleep cannot read back a Coolify step; check the application"
+    " in Coolify, a deployment may be queued); not run again"
+)
+CONFIRM_PLUGIN = {
+    "coolify.redeploy": _COOLIFY_STEP,
+    "coolify.set_env": _COOLIFY_STEP,
+    "mcp.call": (
+        "not confirmed after a restart (Bleep cannot read back an MCP call; check what the tool"
+        " does on the MCP server, it may have run); not run again"
+    ),
+}
+CONFIRM_OTHER = "not confirmed after a restart (Bleep cannot read this step back); not run again"
 
 
 def _what(index: int, step: PlanStep) -> str:
@@ -221,11 +234,8 @@ def make(deps: GraphDeps) -> Node:
         since = row.result.started_at
         snapshot = _snapshot(plan, step)
         if not step.action.startswith("docker."):
-            # A Coolify step has no container to read back; whether it ran is Coolify's to say.
-            detail = (
-                "not confirmed after a restart (Bleep cannot read back a Coolify step; check the"
-                " application in Coolify, a deployment may be queued); not run again"
-            )
+            # A plugin step has no container to read back; whether it ran is the plugin's to say.
+            detail = CONFIRM_PLUGIN.get(step.action, CONFIRM_OTHER)
             result = StepResult(
                 step_index=index,
                 action=step.action,

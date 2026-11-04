@@ -5,8 +5,15 @@ import pytest
 
 from bleep.graph.nodes import verify
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
-from bleep.schemas.graph import PlanStep, Proposal, StepResult, VerificationPlan, VerificationResult
-from bleep.schemas.incidents import Subject
+from bleep.schemas.graph import (
+    GatherContext,
+    PlanStep,
+    Proposal,
+    StepResult,
+    VerificationPlan,
+    VerificationResult,
+)
+from bleep.schemas.incidents import Signal, Subject
 from fakes import FakeEngine
 from graph_env import box, graph_env, shop_host
 
@@ -226,6 +233,244 @@ async def test_with_nothing_to_check_it_is_unverified_at_once(tmp_path):
     assert update["outcome"] == "unverified" and route == "report"
     assert update["verification"].detail == "Nothing could be checked."
     assert sleeps.waits == []
+
+
+T0 = datetime(2026, 11, 4, 9, 0, tzinfo=UTC)
+
+
+def symptoms(subject: Subject, url: str = URL, container: str = "shop-web-1") -> list[Signal]:
+    """The signals of an incident whose URL answers 503 and whose container crashed."""
+    return [
+        Signal(subject=subject, kind="url_failed", at=T0, detail={"ok": False, "url": url}),
+        Signal(subject=subject, kind="url_failed", at=T0, detail={"ok": True, "url": "x"}),
+        Signal(subject=subject, kind="container_died", at=T0, container=container),
+    ]
+
+
+async def test_the_incidents_failing_url_is_checked_whatever_the_plan_names(tmp_path):
+    """An mcp.call on a healthy container whose plan checks only that container must not end
+    "Fixed and verified" while the URL that opened the incident still answers 503."""
+    engine = FakeEngine(
+        "a",
+        [
+            box("shop-web-1", "shop", health="healthy"),
+            box("shop-cache-1", "shop", health="healthy"),
+        ],
+    )
+    plan = VerificationPlan(containers=["shop-cache-1"])
+    env, state = await setup(tmp_path, Replies(503), plan=plan, engine=engine)
+    step = PlanStep(
+        action="mcp.call",
+        host_id="a",
+        target="shop-cache-1",
+        params={"tool": "flush_cache", "arguments": "{}"},
+    )
+    proposal = state["proposal"].model_copy(update={"steps": [step]})
+    ran = StepResult(step_index=0, action="mcp.call", target="shop-cache-1", ok=True, detail="ran")
+    state |= {
+        "proposal": proposal,
+        "signals": symptoms(state["subject"]),
+        "step_results": [ran],
+        "verify_loops": 2,
+    }
+
+    update, route = await run(env, state)
+
+    checks = [(c.kind, c.target, c.ok) for c in update["verification"].checks]
+    assert checks == [
+        ("container", "shop-cache-1", True),
+        ("container", "shop-web-1", True),
+        ("url", URL, False),
+    ]
+    assert update["outcome"] == "unverified" and route == "report"
+
+
+async def test_the_incidents_symptoms_are_checked_once_and_a_stopped_target_is_left_out(tmp_path):
+    env, state = await setup(tmp_path, Replies(200))
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-db-1")
+    proposal = state["proposal"].model_copy(update={"steps": [stop]})
+    subject = state["subject"]
+    signals = [*symptoms(subject), *symptoms(subject, container="shop-db-1")]
+    state |= {"proposal": proposal, "signals": signals}
+
+    update, _ = await run(env, state)
+
+    targets = [(c.kind, c.target) for c in update["verification"].checks]
+    assert targets == [
+        ("container", "shop-web-1"),
+        ("container", "shop-db-1 (stopped by the plan)"),
+        ("url", URL),
+    ]
+
+
+async def test_stopping_the_signalled_container_is_judged_by_the_services_urls(tmp_path):
+    """The plan stops the crashed container and checks only the database; the shop still
+    answers 503, so this is no fix, though no signal reported the URL."""
+    stopped = FakeEngine("a", [box("shop-web-1", "shop", state="exited"), box("shop-db-1", "shop")])
+    plan = VerificationPlan(containers=["shop-db-1"])
+    env, state = await setup(tmp_path, Replies(503), plan=plan, engine=stopped)
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-web-1")
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
+    state |= {
+        "proposal": state["proposal"].model_copy(update={"steps": [stop]}),
+        "signals": [died],
+        "verify_loops": 2,
+    }
+
+    update, _ = await run(env, state)
+
+    checks = [(c.kind, c.target, c.ok) for c in update["verification"].checks]
+    assert checks == [
+        ("container", "shop-db-1", True),
+        ("container", "shop-web-1 (stopped by the plan)", True),
+        ("url", URL, False),
+    ]
+    assert update["outcome"] == "unverified"
+
+
+@pytest.mark.parametrize(("state_now", "ok"), [("exited", True), ("running", False)])
+@pytest.mark.parametrize("loops", [0, 2])
+async def test_with_no_url_a_stop_is_never_called_fixed(tmp_path, state_now, ok, loops):
+    """No URL to tell, and the stopped container was already dead: its stop check proves
+    nothing, so the run is never resolved, and the loop-back and the human are told why."""
+    engine = FakeEngine("a", [box("shop-web-1", "shop", state=state_now), box("shop-db-1", "shop")])
+    plan = VerificationPlan(containers=["shop-db-1"])
+    env, state = await setup(tmp_path, Replies(200), plan=plan, engine=engine, urls=False)
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-web-1")
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
+    state |= {
+        "proposal": state["proposal"].model_copy(update={"steps": [stop]}),
+        "signals": [died],
+        "verify_loops": loops,
+    }
+
+    update, route = await run(env, state)
+
+    checks = {c.target: (c.ok, c.detail) for c in update["verification"].checks}
+    assert checks["shop-web-1 (stopped by the plan)"][0] is ok
+    assert checks["shop-web-1"] == (False, verify.UNPROVEN)
+    symptom = [c for c in update["verification"].checks if c.kind == "symptom"]
+    assert [c.target for c in symptom] == ["shop-web-1"]
+    assert update.get("outcome") != "resolved"
+    if loops == 2:
+        assert update["outcome"] == "unverified" and route == "report"
+    else:
+        assert route == "investigate" and verify.UNPROVEN in update["messages"][0].text
+
+
+BLOG_URL = "https://blog.example/health"
+
+
+async def test_another_services_url_says_nothing_about_a_stop(tmp_path):
+    """shop has no URL, blog has one: a plan that stops the crashed shop-web-1 and checks the
+    blog's URL is not verified by that URL answering."""
+    host = shop_host(
+        services={
+            "shop": ServiceOverrides(),
+            "blog": ServiceOverrides(urls=[UrlCheckConfig(url=BLOG_URL)]),
+        }
+    )
+    engine = FakeEngine(
+        "a",
+        [
+            box("shop-web-1", "shop", state="exited"),
+            box("shop-db-1", "shop"),
+            box("blog-1", "blog"),
+        ],
+    )
+    plan = VerificationPlan(urls=[BLOG_URL])
+    env, state = await setup(tmp_path, Replies(200), plan=plan, engine=engine, host=host)
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-web-1")
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
+    state |= {
+        "proposal": state["proposal"].model_copy(update={"steps": [stop]}),
+        "signals": [died],
+        "verify_loops": 2,
+    }
+
+    update, _ = await run(env, state)
+
+    checks = {(c.kind, c.target): c.ok for c in update["verification"].checks}
+    assert checks[("url", BLOG_URL)] is True
+    assert checks[("symptom", "shop-web-1")] is False
+    assert update["outcome"] == "unverified"
+
+
+async def test_an_unrelated_redeploy_says_nothing_about_a_stop(tmp_path):
+    engine = FakeEngine(
+        "a",
+        [
+            box("shop-web-1", "shop", state="exited"),
+            box("shop-db-1", "shop"),
+            web(health="healthy"),
+        ],
+    )
+    env, state = await setup(tmp_path, Replies(200), engine=engine, urls=False)
+    steps = (
+        PlanStep(action="docker.stop", host_id="a", target="shop-web-1"),
+        PlanStep(action="coolify.redeploy", host_id="a", target="web"),
+    )
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
+    state = redeployed(state, *steps, results=[ok_stop(), deploy_result(1)])
+    state |= {"signals": [died], "verify_loops": 2}
+    state["proposal"] = state["proposal"].model_copy(
+        update={"verification": VerificationPlan(containers=["shop-db-1"])}
+    )
+
+    update, _ = await run(env, state)
+
+    checks = {(c.kind, c.target): c.ok for c in update["verification"].checks}
+    assert checks[("container", "web (Coolify application)")] is True
+    assert checks[("symptom", "shop-web-1")] is False
+    assert update["outcome"] == "unverified"
+
+
+async def test_a_stop_verified_by_its_own_services_url_resolves(tmp_path):
+    engine = FakeEngine("a", [box("shop-web-1", "shop", state="exited"), box("shop-db-1", "shop")])
+    plan = VerificationPlan(containers=["shop-db-1"])
+    env, state = await setup(tmp_path, Replies(200), plan=plan, engine=engine)
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-web-1")
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
+    state |= {"proposal": state["proposal"].model_copy(update={"steps": [stop]}), "signals": [died]}
+
+    update, _ = await run(env, state)
+
+    assert [c.kind for c in update["verification"].checks] == ["container", "container", "url"]
+    assert update["outcome"] == "resolved"
+
+
+async def test_a_stop_then_a_start_of_the_same_container_must_run(tmp_path):
+    """The last step starts it again, so it is checked as running, not as stopped."""
+    env, state = await setup(tmp_path, Replies(200), plan=VerificationPlan(urls=[URL]))
+    steps = [
+        PlanStep(action="docker.stop", host_id="a", target="shop-web-1"),
+        PlanStep(action="docker.start", host_id="a", target="shop-web-1"),
+    ]
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
+    state |= {"proposal": state["proposal"].model_copy(update={"steps": steps}), "signals": [died]}
+
+    update, _ = await run(env, state)
+
+    targets = [(c.target, c.ok) for c in update["verification"].checks]
+    assert targets == [("shop-web-1", True), (URL, True)]
+    assert update["outcome"] == "resolved"
+
+
+async def test_a_stop_with_an_empty_plan_checks_the_stopped_container_as_one_that_must_run(
+    tmp_path,
+):
+    """The fallback puts the stopped container among those that must run: it fails, the safe
+    side, and is not checked twice."""
+    engine = FakeEngine("a", [box("shop-web-1", "shop", state="exited"), box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), plan=VerificationPlan(), engine=engine)
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-web-1")
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
+    state |= {"proposal": state["proposal"].model_copy(update={"steps": [stop]}), "signals": [died]}
+
+    update, _ = await run(env, state)
+
+    checks = [(c.target, c.ok, c.detail) for c in update["verification"].checks if c.kind != "url"]
+    assert checks == [("shop-web-1", False, "is exited"), ("shop-db-1", True, "running")]
 
 
 async def test_a_plan_url_unknown_to_the_service_is_checked_too(tmp_path):
@@ -458,3 +703,96 @@ async def test_only_this_plans_redeploy_counts(tmp_path):
     update, _ = await run(env, redeployed(state, results=[earlier, refused]))
 
     assert update["verification"].checks[0].detail == "not redeployed"
+
+
+@pytest.mark.parametrize("gathered", [True, False])
+async def test_a_redeploy_passes_when_a_signal_named_a_container_it_replaced(tmp_path, gathered):
+    """By Verify the poller lists only the redeploy's new container; the signal still names the
+    old one, which is the application's own check's to judge, not a "not found"."""
+    engine = FakeEngine("a", [web(health="healthy"), box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+    old = web("web0uuid-1", created=DEPLOYED_AT - timedelta(days=1))
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="web0uuid-1")
+    state = redeployed(state, containers=["shop-db-1"]) | {"signals": [died]}
+    if gathered:  # Gather listed the old container, with its labels, before the plan ran
+        state["context"] = GatherContext(at=T0, containers=[old])
+
+    update, _ = await run(env, state)
+
+    targets = [c.target for c in update["verification"].checks]
+    assert "web0uuid-1" not in targets and URL in targets
+    assert update["outcome"] == "resolved"
+
+
+PREVIEW = WEB_APP | {"coolify.pullRequestId": "7"}
+
+
+async def test_a_redeploy_of_the_main_app_does_not_count_a_preview_as_replaced(tmp_path):
+    """The incident is on the preview web0uuid-pr-7; redeploying the main app leaves it down."""
+    preview = web("web0uuid-pr-7", labels=PREVIEW, state="exited", created=DEPLOYED_AT)
+    engine = FakeEngine("a", [web(health="healthy"), preview, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="web0uuid-pr-7")
+    step = PlanStep(action="coolify.redeploy", host_id="a", target="web0uuid")
+    state = redeployed(state, step) | {
+        "signals": [died],
+        "context": GatherContext(at=T0, containers=[preview]),
+        "verify_loops": 2,
+    }
+
+    update, _ = await run(env, state)
+
+    checks = {c.target: c.ok for c in update["verification"].checks}
+    assert checks["web0uuid-pr-7"] is False
+    assert update["outcome"] == "unverified"
+
+
+async def test_a_stale_listing_of_another_app_by_the_same_name_replaces_nothing_of_it(tmp_path):
+    """Gather saw an older app named web (since deleted); the redeploy of today's web does not
+    make that app's container count as replaced."""
+    gone = box("old0uuid-1", labels={**WEB_APP, "coolify.applicationUuid": "old0uuid"})
+    engine = FakeEngine("a", [web(health="healthy"), box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="old0uuid-1")
+    state = redeployed(state) | {
+        "signals": [died],
+        "context": GatherContext(at=T0, containers=[gone]),
+        "verify_loops": 2,
+    }
+
+    update, _ = await run(env, state)
+
+    checks = {c.target: (c.ok, c.detail) for c in update["verification"].checks}
+    assert checks["old0uuid-1"] == (False, "not found")
+    assert update["outcome"] == "unverified"
+
+
+async def test_a_name_the_registry_gives_two_uuids_now_replaces_nothing(tmp_path):
+    """Two applications named web on the host now: Gather's single one is not read instead."""
+    other = web("other0uuid-1", labels={**WEB_APP, "coolify.applicationUuid": "other0uuid"})
+    engine = FakeEngine("a", [web(health="healthy"), other, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+    old = web("web0uuid-1", created=DEPLOYED_AT - timedelta(days=1))
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="web0uuid-1")
+    state = redeployed(state) | {
+        "signals": [died],
+        "context": GatherContext(at=T0, containers=[old]),
+        "verify_loops": 2,
+    }
+
+    update, _ = await run(env, state)
+
+    checks = {c.target: (c.ok, c.detail) for c in update["verification"].checks}
+    assert checks["web0uuid-1"] == (False, "not found")
+    assert update["outcome"] == "unverified"
+
+
+def ok_stop() -> StepResult:
+    return StepResult(
+        step_index=0,
+        action="docker.stop",
+        target="shop-web-1",
+        ok=True,
+        detail="stopped",
+        started_at=DEPLOYED_AT,
+    )
