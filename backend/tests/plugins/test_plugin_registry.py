@@ -132,7 +132,9 @@ async def test_the_view_shows_settings_and_whether_secrets_are_set_never_their_v
     dumped = view.model_dump_json()
     assert COOLIFY_TOKEN not in dumped  # the health check echoed it
     assert view.enabled and view.health is not None and view.health.ok
-    assert [s.model_dump() for s in view.secrets] == [{"env": "COOLIFY_TOKEN", "set": True}]
+    assert [s.model_dump() for s in view.secrets] == [
+        {"env": "COOLIFY_TOKEN", "set": True, "required": True}
+    ]
     assert view.settings == {"url": "https://coolify.example.test", "team": "main"}
 
 
