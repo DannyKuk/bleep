@@ -27,8 +27,13 @@ def escape(text: str) -> str:
     return _SPECIAL.sub(r"\\\1", text)
 
 
+class Redacted(str):
+    """Text already redacted for display, such as `steps_text`: `render` shows it as it is,
+    since redacting `KEY=value` again would hide a value the approver must see."""
+
+
 def _cap(text: str) -> str:
-    text = redact_text(text.strip())
+    text = text.strip() if isinstance(text, Redacted) else redact_text(text.strip())
     return text if len(text) <= FIELD_CHARS else text[: FIELD_CHARS - 1] + "…"
 
 
@@ -63,7 +68,7 @@ HIDDEN_FORMAT = "�"  # shown in place of an invisible format character (bidi, 
 _BREAKS = re.compile(r"\r\n|[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 
 
-def steps_text(proposal: Proposal) -> str:
+def steps_text(proposal: Proposal) -> Redacted:
     """One line per step: `1. docker.restart shop-web-1 on demo`.
 
     A plugin step's params follow it (an MCP tool and its arguments), since the human approves
@@ -75,7 +80,7 @@ def steps_text(proposal: Proposal) -> str:
     reorder what is shown. A `coolify.set_env` step shows `KEY=value`, redacted
     (`redacted_step`); a value too long for the line keeps its start and end around "…" and is
     followed by `TOO_LONG`."""
-    return "\n".join(_step_line(n, step)[0] for n, step in enumerate(proposal.steps, 1))
+    return Redacted("\n".join(_step_line(n, step)[0] for n, step in enumerate(proposal.steps, 1)))
 
 
 def shows_in_full(proposal: Proposal) -> bool:
@@ -85,7 +90,7 @@ def shows_in_full(proposal: Proposal) -> bool:
     blind)."""
     if any(_step_line(n, step)[1] for n, step in enumerate(proposal.steps, 1)):
         return False
-    return len(redact_text(steps_text(proposal).strip())) <= FIELD_CHARS
+    return len(steps_text(proposal).strip()) <= FIELD_CHARS
 
 
 def _one_line(text: str) -> str:
@@ -97,7 +102,7 @@ def _one_line(text: str) -> str:
 
 def _step_line(number: int, step: PlanStep) -> tuple[str, bool]:
     """The step's line, and whether a set_env value in it had to be cut."""
-    head = _one_line(f"{number}. {step.action} {step.target} on {step.host_id}")
+    head = _one_line(redact_text(f"{number}. {step.action} {step.target} on {step.host_id}"))
     if not step.params or step.action.startswith("docker."):
         return head, False
     # The head is never cut: a person approves this exact action, target and host. Only the

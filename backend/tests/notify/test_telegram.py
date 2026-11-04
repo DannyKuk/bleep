@@ -782,3 +782,39 @@ async def test_status_with_a_bot_shows_the_last_poll_and_never_the_token_or_the_
     assert status.configured and status.token.set and status.last_poll == T0
     dumped = status.model_dump_json()
     assert TOKEN not in dumped and "123456789" not in dumped
+
+
+def _proposal_message(proposal: Proposal) -> str:
+    return fmt.render(
+        "proposal",
+        id="inc_1",
+        title="t",
+        category="c",
+        confidence="90%",
+        root_cause="r",
+        steps=fmt.steps_text(proposal),
+        reason="r",
+    )
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("AUTH0_DOMAIN", "evil.auth0.com"),
+        ("DB_PASS_HOST", "attacker.example"),
+        ("TOKEN_ISSUER", "https://evil.example/"),
+    ],
+)
+def test_a_place_behind_a_secret_sounding_key_reaches_the_telegram_message(key, value):
+    proposal = set_env_plan(value, key=key)
+    message = _proposal_message(proposal)
+
+    assert fmt.escape(f"({key}={value})") in message
+    assert fmt.shows_in_full(proposal)
+
+
+def test_a_secret_value_stays_hidden_in_the_telegram_message():
+    message = _proposal_message(set_env_plan("hunter2 correct horse", key="PASSWORD"))
+
+    assert "hunter2" not in message and "horse" not in message
+    assert fmt.escape("(PASSWORD=<redacted>)") in message
