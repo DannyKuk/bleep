@@ -124,6 +124,11 @@
   * {
     @apply border-border;
   }
+  /* Tailwind v4's preflight gives buttons the default arrow; a click target should show the hand. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
   html {
     color-scheme: light;
   }
