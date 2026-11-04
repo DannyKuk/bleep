@@ -844,3 +844,15 @@ async def test_a_snooze_that_ended_while_bleep_was_down_is_ended_on_the_first_ti
     await r.quiet.expire()
     [incident] = await r.incidents()
     assert incident.subject.service_id == SHOP
+
+
+async def test_ending_a_hosts_quiet_while_it_is_reachable_rechecks_its_services(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("host", "h", "leave_alone", None)
+    await r.pulse(urls=False)
+    await r.kill("shop")
+    assert await r.incidents() == []
+    await r.quiet.clear("host", "h")
+    [incident] = await r.incidents()
+    assert incident.subject.service_id == SHOP
+    assert [i.id for i in r.runner.started] == [incident.id]
