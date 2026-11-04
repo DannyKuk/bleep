@@ -11,10 +11,6 @@ const STATUS_WORD: Record<ApprovalView["status"], string> = {
   instructed: "answered with an instruction",
 };
 
-// The reason Propose gives when its own checks refused a plan twice
-// (`REFUSED` in backend/src/bleep/graph/nodes/propose.py).
-const REFUSED_REASON = "Bleep's own checks refused the proposed plan twice, so nothing will run.";
-
 function samePlan(a: Proposal, b: Proposal): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -57,7 +53,7 @@ function Plan({ proposal }: { proposal: Proposal }) {
       )}
       {proposal.human_instructions && (
         <Advice
-          title={proposal.reason === REFUSED_REASON ? "Why nothing will run" : "What to do"}
+          title={proposal.refused ? "Why nothing will run" : "What to do"}
           text={proposal.human_instructions}
         />
       )}

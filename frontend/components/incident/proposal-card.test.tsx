@@ -105,6 +105,7 @@ describe("ProposalCard", () => {
           kind: "no_action",
           steps: [],
           reason,
+          refused: true,
           human_instructions: `${reason}\nWhy:\n- step 1: shop-db-1 is protected`,
         })}
         approval={null}

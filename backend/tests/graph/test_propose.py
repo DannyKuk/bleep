@@ -613,17 +613,38 @@ async def test_a_host_incident_not_about_memory_does_not_exempt_the_top_memory_u
 
 
 async def test_a_refused_working_container_points_the_human_at_a_remedy_that_exists(tmp_path):
-    """No `instruct` step follows a refusal, so the text must not offer one; it says to act by
-    hand instead."""
+    """The refusal marks the plan `refused` and tells the human they can instruct Bleep (#113)."""
     env, state = await setup(
         tmp_path, acting(restart("shop-proxy-1")), acting(restart("shop-proxy-1"))
     )
 
     update = await propose.make(env.deps)(state)
 
+    assert update["proposal"].refused
     told = update["proposal"].human_instructions
-    assert "instruction" not in told.lower()
+    assert propose.INSTRUCT in told
     assert "act on it by hand" in told
+    assert "instructions" not in update  # only the human's Decision.text reaches the state
+
+
+async def test_a_refusal_with_no_replan_left_does_not_offer_an_instruction(tmp_path):
+    env, state = await setup(
+        tmp_path, acting(restart("shop-proxy-1")), acting(restart("shop-proxy-1"))
+    )
+
+    update = await propose.make(env.deps)(state | {"replans": 3})
+
+    assert update["proposal"].refused
+    assert propose.INSTRUCT not in update["proposal"].human_instructions
+
+
+async def test_other_no_action_reasons_are_not_refused(tmp_path):
+    env, state = await setup(tmp_path, reply(kind="no_action", steps=[], reason="env var"))
+
+    update = await propose.make(env.deps)(state)
+
+    assert not update["proposal"].refused
+    assert propose.route(update) == "report"
 
 
 WEB_APP = {

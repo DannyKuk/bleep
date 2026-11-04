@@ -44,6 +44,7 @@ export function proposal(overrides: Partial<Proposal> = {}): Proposal {
     reason: "Starting it brings the shop back; nothing in the logs says it will fail again",
     verification: { containers: ["shop-web-1"], urls: ["http://localhost:8080/"] },
     human_instructions: null,
+    refused: false,
     ...overrides,
   };
 }

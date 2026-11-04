@@ -1,9 +1,9 @@
 """Going back to Propose from Approval or Execute, at most `Budgets.replans` times in one run.
 
-An instruction, a target Approval cannot read and a plan Execute finds stale each send the run
-back to Propose for a new plan. Each counts as one re-plan; one more than the budget ends the run
-with the outcome `replan_limit` instead, so no loop between a plan and the world (or the human)
-can go on forever. See docs/design/graph.md.
+An instruction (also one after a refused plan), a target Approval cannot read and a plan Execute
+finds stale each send the run back to Propose for a new plan. Each counts as one re-plan; one
+more than the budget ends the run with the outcome `replan_limit` instead, so no loop between a
+plan and the world (or the human) can go on forever. See docs/design/graph.md.
 """
 
 from bleep.graph.deps import GraphDeps
@@ -11,6 +11,11 @@ from bleep.graph.state import IncidentState
 
 PLANNING_AGAIN = "Planning again."
 STOPPED = "Bleep stopped after {limit} new plans in this incident; nothing more will run."
+
+
+def replans_left(deps: GraphDeps, state: IncidentState) -> bool:
+    """Whether one more trip back to Propose is still inside the budget."""
+    return state.get("replans", 0) + 1 <= deps.settings_store.budgets().replans
 
 
 async def replan(deps: GraphDeps, state: IncidentState, notice: str | None = None) -> dict:

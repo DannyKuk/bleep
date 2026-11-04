@@ -18,7 +18,8 @@ function decidedText(decision: Decision): string {
 }
 
 /**
- * Approve, reject or instruct one approval. The request names the approval it answers, so a stale
+ * Approve, reject or instruct one approval. A plan Bleep's own checks refused has no Approve and
+ * Reject reads "Let it go". The request names the approval it answers, so a stale
  * page cannot approve a plan it never showed. After any answer, or a 409 saying another channel
  * answered first, the buttons lock and the outcome stays on screen. Render it with
  * `key={approval.id}` so a new plan gets fresh buttons.
@@ -41,6 +42,7 @@ export function DecisionBar({
   const [text, setText] = useState("");
   const textId = useId();
 
+  const refused = approval.proposal.refused;
   const decision = approval.decision ?? mine;
   const locked = decision !== null || conflict !== null || sending !== null;
 
@@ -76,13 +78,15 @@ export function DecisionBar({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" disabled={locked} onClick={() => void decide("approve")}>
-          {spinner("approve") ?? <Check aria-hidden />}
-          Approve
-        </Button>
+        {!refused && (
+          <Button size="sm" disabled={locked} onClick={() => void decide("approve")}>
+            {spinner("approve") ?? <Check aria-hidden />}
+            Approve
+          </Button>
+        )}
         <Button size="sm" variant="outline" disabled={locked} onClick={() => void decide("reject")}>
           {spinner("reject") ?? <X aria-hidden />}
-          Reject
+          {refused ? "Let it go" : "Reject"}
         </Button>
         <Button
           size="sm"

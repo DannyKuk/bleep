@@ -164,6 +164,9 @@ class Proposal(BaseModel):
     reason: str
     verification: VerificationPlan = Field(default_factory=VerificationPlan)
     human_instructions: str | None = None
+    # A `no_action` made by the plan check refusing the model's plan twice (#113): the human is
+    # asked to instruct or let it go, and no approval can ever make it run.
+    refused: bool = False
 
 
 class Decision(BaseModel):

@@ -105,7 +105,7 @@ def outcome(state: IncidentState) -> Outcome:
         return "unverified"  # a later plan was rejected or empty, but an earlier one ran
     decision = state.get("decision")
     proposal = state.get("proposal")
-    if decision is not None and decision.kind == "reject":
+    if decision is not None and decision.kind == "reject" and not (proposal and proposal.refused):
         return "rejected"
     if proposal is None or proposal.kind == "no_action":
         return "no_action"

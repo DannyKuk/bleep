@@ -131,6 +131,9 @@ async def decide(
     if incident.status in TERMINAL_STATUSES:
         return _conflict(f"The incident is {incident.status}")
 
+    if body.kind == "approve" and record.proposal.refused:
+        return _conflict("Bleep's checks refused this plan; tell Bleep what to do instead")
+
     decision = Decision(kind=body.kind, text=body.text, via="dashboard", at=utcnow())
     won = await parts.approvals.resolve(incident_id, decision, body.approval_id)
     if won is None:  # another channel answered between the read above and this write

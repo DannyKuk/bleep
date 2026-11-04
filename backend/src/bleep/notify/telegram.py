@@ -229,12 +229,19 @@ class TelegramBot:
             return
         kind: Literal["approve", "reject"] = "approve" if verb == "approve" else "reject"
         incident_id = known[0]
+        if kind == "approve" and await self._refused_plan(incident_id, approval_id):
+            await self.client.answer_callback(callback_id, answer("answer_refused_plan"))
+            return
         if kind == "approve" and not await self._shown_in_full(incident_id, approval_id):
             # No Approve button was sent for it; a press that arrives anyway is refused.
             await self.client.answer_callback(callback_id, answer("answer_dashboard_only"))
             return
         decision = Decision(kind=kind, via="telegram", at=self.clock())
         await self._decide(callback_id, message_id, incident_id, approval_id, decision)
+
+    async def _refused_plan(self, incident_id: str, approval_id: str) -> bool:
+        current = await self.approvals.current(incident_id)
+        return current is not None and current.id == approval_id and current.proposal.refused
 
     async def _shown_in_full(self, incident_id: str, approval_id: str) -> bool:
         current = await self.approvals.current(incident_id)

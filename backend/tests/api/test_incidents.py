@@ -273,6 +273,35 @@ def test_a_dashboard_decision_wins_the_approval_and_resumes_the_run(app_client, 
     assert resumes.approval_ids == [approval_id]  # bound to the plan the dashboard showed
 
 
+def ask_refused(client: TestClient, parts, incident_id: str) -> str:
+    plan = Proposal(kind="no_action", refused=True, reason="refused")
+    return call(client, parts.approvals.request, incident_id, plan, []).id
+
+
+def test_an_approve_on_a_refused_plan_is_409_and_nothing_resumes(app_client, parts, resumes):
+    incident = open_incident(app_client, parts)
+    approval_id = ask_refused(app_client, parts, incident.id)
+
+    response = post_decision(app_client, incident.id, approval_id, "approve")
+
+    assert response.status_code == 409
+    assert "instead" in response.json()["detail"]
+    assert resumes.calls == []
+    assert call(app_client, parts.approvals.current, incident.id).decision is None
+
+
+def test_a_refused_plan_can_be_instructed_or_let_go(app_client, parts, resumes):
+    incident = open_incident(app_client, parts)
+    approval_id = ask_refused(app_client, parts, incident.id)
+    response = post_decision(app_client, incident.id, approval_id, "instruct", "restart it")
+    assert response.status_code == 200
+    assert resumes.calls[0][1].text == "restart it"
+
+    other = open_incident(app_client, parts, "a/blog")
+    other_id = ask_refused(app_client, parts, other.id)
+    assert post_decision(app_client, other.id, other_id, "reject").status_code == 200
+
+
 def test_an_instruction_keeps_its_text_trimmed(app_client, parts, resumes):
     incident = open_incident(app_client, parts)
     approval_id = ask(app_client, parts, incident.id)
