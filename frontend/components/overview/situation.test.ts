@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { diagnosis, incident } from "@/components/incident/fixtures";
 import { host, service } from "@/components/overview/fixtures";
-import { heroSituation, reachLine } from "@/components/overview/situation";
+import { heroSituation, isHurting, reachLine } from "@/components/overview/situation";
 import type { IncidentDetail } from "@/lib/api-types";
 
 const NOW = Date.parse("2026-11-02T19:00:00Z");
@@ -111,6 +111,53 @@ describe("heroSituation", () => {
     expect(heroSituation({ incidents: done, hosts: [], details: {}, now: NOW })).toEqual({
       kind: "no_hosts",
     });
+  });
+});
+
+describe("quiet subjects", () => {
+  const SERVICE_ID = "demo/compose:shop";
+  const leftAlone = { scope: "service", mode: "leave_alone", until: null, since: "x" } as const;
+
+  it("leaves a failed incident of a quiet service out of the hero", () => {
+    const situation = heroSituation({
+      incidents: [incident({ status: "failed", closed_at: "2026-11-02T18:30:00Z" })],
+      hosts: [host({ quiet_service_ids: [SERVICE_ID] })],
+      details: {},
+      now: NOW,
+    });
+    expect(situation).toEqual({ kind: "quiet" });
+  });
+
+  it("does not make an unreachable quiet host the headline", () => {
+    const quiet = { ...leftAlone, scope: "host" } as const;
+    const situation = heroSituation({
+      incidents: [],
+      hosts: [host({ reachable: false, health: "down", quiet })],
+      details: {},
+      now: NOW,
+    });
+    expect(situation).toEqual({ kind: "quiet" });
+  });
+
+  it("is not hurting when its only hurting service is quiet, and the reach line says fine", () => {
+    const services = [service({ health: "down", quiet: leftAlone })];
+    expect(isHurting(host({ health: "down" }), services)).toBe(false);
+    expect(reachLine([host({ health: "down" })], services)).toBe("It is fine.");
+  });
+
+  it("still counts a service that is not quiet next to a quiet one", () => {
+    const services = [
+      service({ health: "down", quiet: leftAlone }),
+      service({ id: "demo/compose:blog", name: "blog", health: "down" }),
+    ];
+    const line = reachLine([host({ health: "down" })], services);
+    expect(line).toBe("Demo stack is hurting: 1 of its 2 services.");
+  });
+
+  it("a quiet host is not hurting", () => {
+    const quiet = { ...leftAlone, scope: "host" } as const;
+    const down = host({ reachable: false, health: "down", quiet });
+    expect(isHurting(down, [])).toBe(false);
   });
 });
 

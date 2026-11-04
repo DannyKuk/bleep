@@ -1,4 +1,4 @@
-import type { HostView, Incident, IncidentStatus, Outcome } from "@/lib/api-types";
+import type { HostView, Incident, IncidentStatus, Outcome, Subject } from "@/lib/api-types";
 
 /** Bleep's moods, in the order that decides when several apply (first wins), plus resting. */
 export const MOODS = ["needs_you", "not_sure", "working", "all_good", "resting"] as const;
@@ -43,29 +43,45 @@ export function failedRecently(incident: Incident, now: number): boolean {
   return now - ended < FAILED_NEEDS_YOU_MS;
 }
 
+type QuietHost = Pick<HostView, "id" | "reachable" | "quiet" | "quiet_service_ids">;
+
+/** Whether the subject's service, or its whole host, is quiet: Bleep leaves it alone. */
+export function isQuietSubject(
+  subject: Subject,
+  hosts: readonly Pick<HostView, "id" | "quiet" | "quiet_service_ids">[],
+): boolean {
+  const host = hosts.find((candidate) => candidate.id === subject.host_id);
+  if (!host) return false;
+  if (host.quiet) return true;
+  return subject.kind === "service" && host.quiet_service_ids.includes(subject.service_id ?? "");
+}
+
 /**
  * The overview's mood from the incidents and the hosts. `unsureIds` holds the waiting incidents
  * whose diagnosis is unsure (read from their detail); without it every waiting plan needs you.
+ * A quiet subject's failed run and a quiet host's unreachability do not count.
  */
 export function overallMood(
   incidents: readonly Incident[],
-  hosts: readonly Pick<HostView, "reachable">[],
+  hosts: readonly QuietHost[],
   unsureIds: ReadonlySet<string> = new Set(),
   now: number = Date.now(),
 ): Mood {
   const waiting = incidents.filter((incident) => incident.status === "awaiting_approval");
-  if (incidents.some((incident) => failedRecently(incident, now))) return "needs_you";
+  const failedForYou = (incident: Incident) =>
+    failedRecently(incident, now) && !isQuietSubject(incident.subject, hosts);
+  if (incidents.some(failedForYou)) return "needs_you";
   if (waiting.some((incident) => !unsureIds.has(incident.id))) return "needs_you";
   if (waiting.length > 0) return "not_sure";
   if (incidents.some((incident) => WORKING.has(incident.status))) return "working";
-  if (hosts.some((host) => !host.reachable)) return "working";
+  if (hosts.some((host) => !host.reachable && !host.quiet)) return "working";
   return "all_good";
 }
 
 /** The header's three-colour state; it has no Not sure, since a waiting plan is red either way. */
 export function overallState(
   incidents: readonly Incident[],
-  hosts: readonly Pick<HostView, "reachable">[],
+  hosts: readonly QuietHost[],
   now: number = Date.now(),
 ): OverallState {
   const mood = overallMood(incidents, hosts, new Set(), now);

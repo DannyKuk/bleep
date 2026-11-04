@@ -4,6 +4,7 @@ import type { Incident, IncidentStatus, Outcome } from "@/lib/api-types";
 import {
   FAILED_NEEDS_YOU_MS,
   incidentMood,
+  isQuietSubject,
   overallMood,
   overallState,
   reportMood,
@@ -33,8 +34,21 @@ function incident(
   };
 }
 
-const reachable = [{ reachable: true }];
-const unreachable = [{ reachable: true }, { reachable: false }];
+const SNOOZED = {
+  scope: "host",
+  mode: "leave_alone",
+  until: null,
+  since: "2026-11-04T10:00:00Z",
+} as const;
+const hostOf = (overrides: Partial<Parameters<typeof overallMood>[1][number]> = {}) => ({
+  id: "demo",
+  reachable: true,
+  quiet: null,
+  quiet_service_ids: [],
+  ...overrides,
+});
+const reachable = [hostOf()];
+const unreachable = [hostOf(), hostOf({ id: "other", reachable: false })];
 const justNow = new Date(NOW - 60_000).toISOString();
 const longAgo = new Date(NOW - FAILED_NEEDS_YOU_MS - 1).toISOString();
 
@@ -153,6 +167,42 @@ describe("overallMood", () => {
       const state = overallState(incidents, reachable, NOW);
       expect(overallMood(incidents, reachable, new Set(), NOW)).toBe(stateMood(state));
     }
+  });
+});
+
+describe("quiet subjects", () => {
+  const failed = incident("failed", "f", justNow);
+
+  it("a failed incident of a quiet service does not make the mood needs_you", () => {
+    const hosts = [hostOf({ quiet_service_ids: ["shop"] })];
+    expect(overallMood([failed], hosts, new Set(), NOW)).toBe("all_good");
+    expect(overallState([failed], hosts, NOW)).toBe("green");
+  });
+
+  it("a failed incident of a service quiet through its host does not either", () => {
+    const hosts = [hostOf({ quiet: { ...SNOOZED } })];
+    expect(overallMood([failed], hosts, new Set(), NOW)).toBe("all_good");
+  });
+
+  it("a failed incident of another service on the same host still does", () => {
+    const hosts = [hostOf({ quiet_service_ids: ["blog"] })];
+    expect(overallMood([failed], hosts, new Set(), NOW)).toBe("needs_you");
+  });
+
+  it("an unreachable quiet host does not make the mood working", () => {
+    const hosts = [hostOf({ reachable: false, quiet: { ...SNOOZED } })];
+    expect(overallMood([], hosts, new Set(), NOW)).toBe("all_good");
+    expect(overallState([], hosts, NOW)).toBe("green");
+  });
+
+  it("knows a quiet subject by its service or its host", () => {
+    const service = { kind: "service", host_id: "demo", service_id: "shop" } as const;
+    const host = { kind: "host", host_id: "demo", service_id: null } as const;
+    const quietService = [hostOf({ quiet_service_ids: ["shop"] })];
+    expect(isQuietSubject(service, quietService)).toBe(true);
+    expect(isQuietSubject(host, quietService)).toBe(false);
+    expect(isQuietSubject(host, [hostOf({ quiet: { ...SNOOZED } })])).toBe(true);
+    expect(isQuietSubject(service, [])).toBe(false);
   });
 });
 

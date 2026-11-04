@@ -16,10 +16,11 @@ import {
   matchesFilter,
   matchesSearch,
 } from "@/components/incident/incident-groups";
+import { useOverall } from "@/components/overall-state";
 import { Input } from "@/components/ui/input";
 import { usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
-import type { Incident } from "@/lib/api-types";
+import type { HostView, Incident } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -32,8 +33,18 @@ export function subjectText({ subject }: Incident): string {
     : (subject.service_id ?? subject.host_id);
 }
 
-function Row({ incident, now }: { incident: Incident; now: number }) {
-  const waiting = groupOf(incident, now) === "needs_you";
+type QuietHost = Pick<HostView, "id" | "quiet" | "quiet_service_ids">;
+
+function Row({
+  incident,
+  now,
+  hosts,
+}: {
+  incident: Incident;
+  now: number;
+  hosts: readonly QuietHost[];
+}) {
+  const waiting = groupOf(incident, now, hosts) === "needs_you";
   const duration = formatDuration(incident.opened_at, incident.closed_at);
   return (
     <li>
@@ -57,7 +68,16 @@ function Row({ incident, now }: { incident: Incident; now: number }) {
 }
 
 /** `now` is when the incidents were read: a failed run needs the human for a day after it ended. */
-export function IncidentListView({ incidents, now }: { incidents: Incident[]; now: number }) {
+export function IncidentListView({
+  incidents,
+  now,
+  hosts = [],
+}: {
+  incidents: Incident[];
+  now: number;
+  /** The hosts, for which incidents are about a quiet service or host. */
+  hosts?: readonly QuietHost[];
+}) {
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
 
@@ -73,11 +93,11 @@ export function IncidentListView({ incidents, now }: { incidents: Incident[]; no
   }
 
   const shown = incidents.filter(
-    (i) => matchesFilter(i, filter, now) && matchesSearch(i, subjectText(i), query),
+    (i) => matchesFilter(i, filter, now, hosts) && matchesSearch(i, subjectText(i), query),
   );
   return (
     <div className="flex flex-col gap-5">
-      <h2 className="text-xl font-extrabold">{headline(incidents, now)}</h2>
+      <h2 className="text-xl font-extrabold">{headline(incidents, now, hosts)}</h2>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <Input
           type="search"
@@ -111,14 +131,14 @@ export function IncidentListView({ incidents, now }: { incidents: Incident[]; no
           No incident matches.
         </p>
       ) : (
-        groupIncidents(shown, now).map(({ group, incidents: rows }) => (
+        groupIncidents(shown, now, hosts).map(({ group, incidents: rows }) => (
           <section key={group} aria-labelledby={`group-${group}`} className="flex flex-col gap-2">
             <h3 id={`group-${group}`} className="text-sm font-extrabold text-ink-2">
               {GROUP_TITLE[group]} ({rows.length})
             </h3>
             <ul aria-label={GROUP_TITLE[group]} className="flex flex-col gap-2">
               {rows.map((incident) => (
-                <Row key={incident.id} incident={incident} now={now} />
+                <Row key={incident.id} incident={incident} now={now} hosts={hosts} />
               ))}
             </ul>
           </section>
@@ -136,6 +156,7 @@ async function fetchIncidents(signal: AbortSignal) {
 /** The newest incidents first, refreshed every 10 s. */
 export function IncidentList() {
   const { data, error } = usePoll(fetchIncidents, POLL_MS);
+  const { hosts } = useOverall();
   if (!data) {
     return error ? (
       <p role="alert" className="flex items-center gap-2 text-sm text-down">
@@ -157,7 +178,7 @@ export function IncidentList() {
           Refresh failed, showing the last data: {error.message}
         </p>
       )}
-      <IncidentListView incidents={data.incidents} now={data.readAt} />
+      <IncidentListView incidents={data.incidents} now={data.readAt} hosts={hosts} />
     </div>
   );
 }

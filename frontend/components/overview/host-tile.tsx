@@ -1,8 +1,11 @@
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Moon } from "lucide-react";
 import Link from "next/link";
 
 import { HealthBadge } from "@/components/overview/health-badge";
 import { isHurting } from "@/components/overview/situation";
+import { QuietMenu } from "@/components/quiet/quiet-menu";
+import { QuietPill } from "@/components/quiet/quiet-pill";
+import { Button } from "@/components/ui/button";
 import type { HostView, ServiceView } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
 import { serviceHref } from "@/lib/routes";
@@ -29,9 +32,14 @@ export function basicsLine(host: HostView): string | null {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
-function ServicePill({ service }: { service: ServiceView }) {
+// Fine pointers see the moon on hover or focus (it stays reachable by keyboard); touch screens
+// have no hover, so it is always there.
+const MOON_REVEAL =
+  "pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:focus-visible:opacity-100 pointer-fine:data-popup-open:opacity-100";
+
+function ServicePill({ service, onChanged }: { service: ServiceView; onChanged: () => void }) {
   return (
-    <li className="flex min-h-11 items-center gap-2 rounded-field bg-surface pr-1.5 pl-1">
+    <li className="group flex min-h-11 items-center gap-2 rounded-field bg-surface pr-1.5 pl-1">
       <Link
         href={serviceHref(service.id)}
         className={cn(
@@ -54,16 +62,44 @@ function ServicePill({ service }: { service: ServiceView }) {
           <ArrowUpRight aria-hidden className="size-3.5" />
         </Link>
       )}
-      <HealthBadge health={service.health} className="shrink-0" />
+      <QuietMenu
+        target={{ scope: "service", id: service.id, name: service.name }}
+        quiet={service.quiet}
+        onChanged={onChanged}
+        trigger={
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={`Quiet ${service.name}`}
+            className={cn("shrink-0", MOON_REVEAL)}
+          >
+            <Moon aria-hidden />
+          </Button>
+        }
+      />
+      {service.quiet ? (
+        <QuietPill quiet={service.quiet} />
+      ) : (
+        <HealthBadge health={service.health} className="shrink-0" />
+      )}
     </li>
   );
 }
 
 /** One host: its name and kind, its health, its services as rows, and its basics in mono. A host
  * with a problem is tinted, so the eye lands on it first. */
-export function HostTile({ host, services }: { host: HostView; services: ServiceView[] }) {
+export function HostTile({
+  host,
+  services,
+  onChanged = () => undefined,
+}: {
+  host: HostView;
+  services: ServiceView[];
+  /** Called after a quiet state was set or cleared on the host or one of its services. */
+  onChanged?: () => void;
+}) {
   const titleId = `host-${host.id}`;
-  const hurting = isHurting(host);
+  const hurting = isHurting(host, services);
   const basics = basicsLine(host);
   return (
     <section
@@ -81,16 +117,23 @@ export function HostTile({ host, services }: { host: HostView; services: Service
           {host.name}
         </h3>
         <span className="text-xs font-bold text-ink-2">{host.kind}</span>
-        <HealthBadge
-          health={host.health}
-          label={host.reachable ? undefined : "Unreachable"}
-          className="ml-auto"
-        />
+        <span className="ml-auto flex items-center gap-1">
+          {host.quiet ? (
+            <QuietPill quiet={host.quiet} />
+          ) : (
+            <HealthBadge health={host.health} label={host.reachable ? undefined : "Unreachable"} />
+          )}
+          <QuietMenu
+            target={{ scope: "host", id: host.id, name: host.name }}
+            quiet={host.quiet}
+            onChanged={onChanged}
+          />
+        </span>
       </header>
       {services.length > 0 ? (
         <ul aria-label={`Services on ${host.name}`} className="flex flex-col gap-1">
           {services.map((service) => (
-            <ServicePill key={service.id} service={service} />
+            <ServicePill key={service.id} service={service} onChanged={onChanged} />
           ))}
         </ul>
       ) : (
