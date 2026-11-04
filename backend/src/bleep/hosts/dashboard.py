@@ -28,6 +28,7 @@ from pydantic import BaseModel, SecretStr
 
 from bleep.hosts.config import HostConfig
 from bleep.hosts.ssh import (
+    FETCH_TIMEOUT_S,
     AddressRefused,
     DashboardKeys,
     KeysFor,
@@ -239,7 +240,7 @@ class DashboardHosts:
         async with self._fetching:
             try:
                 key = await fetch_host_key(address, port, self.scan, self.resolve)
-            except (AddressRefused, SshUnavailable) as failure:
+            except Exception as failure:  # whatever went wrong, the answer is the same sentence
                 cause = failure.cause if isinstance(failure, SshUnavailable) else failure
                 log.info("hosts: no host key fetched (%s)", type(cause).__name__)
                 raise HostKeyUnavailable() from None
@@ -370,9 +371,12 @@ class DashboardHosts:
     async def _vet(self, address: str, port: int) -> None:
         """Refuse an address a dashboard host may never be reached at, as the fetch did."""
         try:
-            await vetted_address(address.lower(), port, self.resolve)
+            async with asyncio.timeout(FETCH_TIMEOUT_S):
+                await vetted_address(address.lower(), port, self.resolve)
         except AddressRefused as refused:
             raise HostRefused(str(refused)) from None
+        except TimeoutError:
+            raise HostRefused("the address does not resolve") from None
 
     async def _tell(self, change: HostChange) -> None:
         for listener in self._listeners:

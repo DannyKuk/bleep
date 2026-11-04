@@ -513,3 +513,64 @@ async def test_a_hosts_file_host_is_neither_resolved_nor_pinned(connect):
 )
 def test_which_addresses_a_dashboard_host_may_never_have(address, refused):
     assert ssh_module.is_refused(address) is refused
+
+
+# -- fix round 2: the name lookup is bounded, and more addresses are refused ---------------------
+
+
+async def hung(host, port):
+    await asyncio.Event().wait()
+
+
+async def test_a_hung_name_lookup_ends_the_host_key_fetch_at_its_timeout(monkeypatch):
+    monkeypatch.setattr(ssh_module, "FETCH_TIMEOUT_S", 0.01)
+
+    async def scan(host, port, **kwargs):
+        raise AssertionError("never asked: the name never resolved")
+
+    with pytest.raises(SshUnavailable):
+        await ssh_module.fetch_host_key("box.lan", 22, scan, hung)
+
+
+async def test_a_hung_name_lookup_ends_a_connect_at_its_outer_bound(connect, monkeypatch):
+    monkeypatch.setattr(ssh_module, "CONNECT_TIMEOUT_S", 0.01)
+    monkeypatch.setattr(ssh_module, "CONNECT_GRACE_S", 0)
+    sess = SshSession(dashboard_host(), connect=connect, keys=keys(), resolve=hung)
+    with pytest.raises(SshUnavailable):
+        await sess.open()
+    assert connect.calls == []
+    await sess.close()  # the session lock was released
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [ValueError("bad answer"), ["not-an-ip"], [object()]],
+    ids=["raises", "not an ip", "not text"],
+)
+async def test_a_resolver_that_misbehaves_counts_as_no_answer(connect, answer):
+    async def odd(host, port):
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    with pytest.raises(ssh_module.AddressRefused):
+        await ssh_module.vetted_address("box.lan", 22, odd)
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "100.100.100.200",  # Alibaba Cloud metadata, inside CGNAT
+        "fd00:ec2::254",  # AWS's IPv6 metadata, inside ULA
+        "64:ff9b:1::a00:5",  # local-use NAT64 (RFC 8215)
+        "::ffff:0:7f00:1",  # SIIT
+        "::ffff:0:a00:5",
+    ],
+)
+def test_the_other_cloud_metadata_and_translation_addresses_are_refused(address):
+    assert ssh_module.is_refused(address)
+
+
+@pytest.mark.parametrize("address", ["100.100.100.199", "100.64.0.1", "fd00:ec2::253"])
+def test_their_neighbours_on_the_private_networks_stay_allowed(address):
+    assert not ssh_module.is_refused(address)

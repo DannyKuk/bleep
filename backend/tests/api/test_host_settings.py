@@ -727,3 +727,54 @@ def test_one_fetch_at_a_time_and_a_second_is_a_429(app, scan):
         assert second.status_code == 429
         app.portal.call(release.set)
         assert first.result(timeout=5).status_code == 200
+
+
+# -- fix round 2 ------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [ValueError("x"), EOFError(), RuntimeError("y"), asyncio.IncompleteReadError(b"", 4)],
+    ids=["ValueError", "EOFError", "RuntimeError", "IncompleteReadError"],
+)
+def test_an_unexpected_failure_of_the_scan_says_the_same_sentence_and_frees_the_fetch(app, failure):
+    async def failing(host, port, **kwargs):
+        raise failure
+
+    app.parts.dashboard_hosts.scan = failing
+    response = app.post("/api/settings/hosts/host-key", json={"address": "box.lan"})
+    assert response.status_code == 502 and response.json() == {"detail": GENERIC}
+    app.parts.dashboard_hosts.scan = Scan()
+    assert app.post("/api/settings/hosts/host-key", json={"address": "box.lan"}).status_code == 200
+
+
+@pytest.mark.parametrize("answer", [ValueError("x"), ["not-an-ip"]], ids=["raises", "not an ip"])
+def test_a_resolver_that_misbehaves_says_the_same_sentence(settings, scan, connector, answer):
+    class Odd(Resolver):
+        async def __call__(self, host, port):
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+    with TestClient(create_app(settings, start(settings, scan, connector, Odd()))) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        response = client.post("/api/settings/hosts/host-key", json={"address": "box.lan"})
+        assert response.status_code == 502 and response.json() == {"detail": GENERIC}
+    assert scan.asked == []
+
+
+def test_a_hung_name_lookup_ends_the_fetch_and_frees_it(settings, scan, connector, monkeypatch):
+    monkeypatch.setattr("bleep.hosts.ssh.FETCH_TIMEOUT_S", 0.05)
+
+    class Hung(Resolver):
+        async def __call__(self, host, port):
+            if host == "slow.lan":
+                await asyncio.Event().wait()
+            return await super().__call__(host, port)
+
+    with TestClient(create_app(settings, start(settings, scan, connector, Hung()))) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        response = client.post("/api/settings/hosts/host-key", json={"address": "slow.lan"})
+        assert response.status_code == 502 and response.json() == {"detail": GENERIC}
+        follow = client.post("/api/settings/hosts/host-key", json={"address": "box.lan"})
+        assert follow.status_code == 200  # not a 429: the hung lookup let go of the lock

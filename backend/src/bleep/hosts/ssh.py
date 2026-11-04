@@ -268,20 +268,17 @@ class SshSession:
     async def _rebuild(self) -> None:
         await self._teardown()
         address = (self.host.address or "").lower()
-        if self.host.source == "dashboard":
-            options = self._dashboard_auth()
-            try:
-                # The address checked now is the one connected to, so a name that resolves
-                # elsewhere since it was saved (DNS rebinding) cannot reach a refused address.
-                address = await vetted_address(address, self.host.port, self._resolve)
-            except AddressRefused as refused:
-                raise SshUnavailable(self.host.id, str(refused)) from None
-        else:
-            options = self._file_auth()
+        dashboard = self.host.source == "dashboard"
+        options = self._dashboard_auth() if dashboard else self._file_auth()
         try:
             # asyncssh's own connect_timeout does not cover every stage of a handshake with a host
-            # that vanished without a FIN, so an outer bound makes sure open() always returns.
+            # that vanished without a FIN, so an outer bound makes sure open() always returns; it
+            # covers the name lookup too, which a hung resolver could otherwise stretch.
             async with asyncio.timeout(CONNECT_TIMEOUT_S + CONNECT_GRACE_S):
+                if dashboard:
+                    # The address checked now is the one connected to, so a name that resolves
+                    # elsewhere since it was saved (DNS rebinding) cannot reach a refused address.
+                    address = await vetted_address(address, self.host.port, self._resolve)
                 conn = await self._connect(
                     # OpenSSH lowercases the name before the known_hosts lookup; asyncssh does not,
                     # so "MacBook-Pro-M1.local" would miss the "macbook-pro-m1.local" entry.
@@ -297,6 +294,8 @@ class SshSession:
                     keepalive_count_max=KEEPALIVE_COUNT_MAX,
                     connect_timeout=CONNECT_TIMEOUT_S,
                 )
+        except AddressRefused as refused:
+            raise SshUnavailable(self.host.id, str(refused)) from None
         except (asyncssh.Error, OSError, TimeoutError) as exc:
             raise SshUnavailable(self.host.id, exc) from exc
         directory = Path(tempfile.mkdtemp(prefix=FORWARD_DIR_PREFIX))
@@ -380,13 +379,29 @@ async def resolve_host(host: str, port: int) -> list[str]:
     return list(dict.fromkeys(str(info[4][0]) for info in infos))
 
 
+# Refused besides loopback, link-local, unspecified and multicast: 0/8 (this host), the cloud
+# metadata addresses outside link-local (Alibaba's in CGNAT, AWS's IPv6 one in ULA), and the
+# IPv6 translation ranges whose embedded IPv4 sits where `_embedded` does not look (RFC 8215
+# local-use NAT64, SIIT).
+_NEVER = [
+    ipaddress.ip_network(net)
+    for net in (
+        "0.0.0.0/8",
+        "100.100.100.200/32",
+        "fd00:ec2::254/128",
+        "64:ff9b:1::/48",
+        "::ffff:0:0:0/96",
+    )
+]
+
+
 def _never(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return (
         ip.is_loopback
         or ip.is_link_local
         or ip.is_unspecified
         or ip.is_multicast
-        or (ip.version == 4 and ip in ipaddress.ip_network("0.0.0.0/8"))
+        or any(ip.version == net.version and ip in net for net in _NEVER)
     )
 
 
@@ -400,9 +415,13 @@ def _embedded(ip: ipaddress.IPv6Address) -> list[ipaddress.IPv4Address]:
 
 def is_refused(address: str) -> bool:
     """Whether a dashboard host may never be reached at `address`: loopback, link-local (cloud
-    metadata among it), unspecified, multicast, or an IPv6 form carrying one of those. Private
-    networks are allowed: that is where SSH hosts live."""
-    ip = ipaddress.ip_address(address.split("%", 1)[0])
+    metadata among it), unspecified, multicast, the other cloud metadata addresses, or an IPv6
+    form carrying one of those. Private networks are allowed: that is where SSH hosts live.
+    Something that is not an IP address is refused."""
+    try:
+        ip = ipaddress.ip_address(str(address).split("%", 1)[0])
+    except ValueError:
+        return True
     candidates = [ip, *_embedded(ip)] if ip.version == 6 else [ip]
     return any(_never(candidate) for candidate in candidates)
 
@@ -416,7 +435,7 @@ async def vetted_address(host: str, port: int, resolve: Resolve | None = None) -
     except ValueError:
         try:
             addresses = await (resolve or resolve_host)(host, port)
-        except OSError, UnicodeError:
+        except Exception:  # any failure to look the name up means it does not resolve
             raise AddressRefused("the address does not resolve") from None
     if not addresses:
         raise AddressRefused("the address does not resolve")
@@ -438,9 +457,9 @@ async def fetch_host_key(
     of trust on first use, which a person confirms by its fingerprint before it is stored. The
     address is vetted and pinned first. Raises `AddressRefused` or `SshUnavailable`."""
     host = address.lower()
-    pinned = await vetted_address(host, port, resolve)
     try:
-        async with asyncio.timeout(FETCH_TIMEOUT_S):
+        async with asyncio.timeout(FETCH_TIMEOUT_S):  # the name lookup included
+            pinned = await vetted_address(host, port, resolve)
             key = await scan(pinned, port, config=[])
     except (asyncssh.Error, OSError, TimeoutError) as exc:
         raise SshUnavailable(host, exc) from exc

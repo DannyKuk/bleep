@@ -303,3 +303,18 @@ async def test_a_second_fetch_while_one_runs_is_refused(db, tmp_path):
         await store.offer_host_key("box.lan", 22)
     release.set()
     assert (await first).fingerprint == SERVER_KEY.get_fingerprint("sha256")
+
+
+async def test_a_hung_name_lookup_when_saving_is_refused_at_the_timeout(db, tmp_path, monkeypatch):
+    store = hosts(db, tmp_path)
+    body = await new(store)
+    monkeypatch.setattr(dashboard_module, "FETCH_TIMEOUT_S", 0.01)
+
+    async def hung(host, port):
+        await asyncio.Event().wait()
+
+    store.resolve = hung
+    with pytest.raises(HostRefused, match="does not resolve"):
+        await store.add(body)
+    store.resolve = lan
+    await store.add(body)  # nothing was held: the next save goes through
