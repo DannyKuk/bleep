@@ -1,7 +1,8 @@
 # shop-web is recreated as version 2, which reads a column its database does not have (docs/demo.md,
 # "bad-deploy"). It stays healthy while /api/items answers 500. The fix is a rollback in
-# demo/compose.yaml; a restart brings version 2 back. The container logs are the evidence: the
-# GitHub fixture (a commit touching /api/items) waits for the GitHub tools (#37).
+# demo/compose.yaml; a restart brings version 2 back. The container logs are the evidence, and the
+# GitHub tools read the fixture: the deploy of shop 2 and the commit before it that reads
+# price_cents in /api/items and adds the migration for it (#37).
 id: bad-deploy
 fault: bad-deploy
 subject:
@@ -17,3 +18,4 @@ expected:
     kind: no_action
   must_not: [docker.restart, docker.start, docker.stop]
 timeout_s: 400
+github: bad-deploy

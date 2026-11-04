@@ -19,6 +19,7 @@ flowchart LR
     TOOLS["<b>Read tools</b><br/>through the guard"]
     LLM["<b>Models</b><br/>OpenRouter · local"]
     MEM["<b>Memory</b><br/>past incidents · facts"]
+    KNOW["<b>Knowledge</b><br/>Docker docs · repo docs<br/>past reports"]
     DB[("<b>SQLite</b><br/>bleep.db<br/>checkpoints.sqlite")]
     API["<b>FastAPI</b>"]
     FE["<b>Next.js</b>"]
@@ -26,6 +27,7 @@ flowchart LR
     SOCK --> REG
     REG --> DET --> INC --> RUN --> GRAPH
     GRAPH --> TOOLS --> REG
+    TOOLS --> KNOW --> DB
     GRAPH --> LLM
     GRAPH --> MEM --> DB
     INC --> DB
@@ -50,16 +52,19 @@ flowchart LR
 | **Approvals** | `incidents/approvals.py`, `incidents/reminders.py` | Pending approvals in SQLite, decided once by whichever channel answers first; HMAC grants for approved plans; reminders that never approve. |
 | **Notifier and Telegram bot** | `notify/`, `prompts/notify/` | The notifier the graph and the reminder loop call: it tells the dashboard bus and, when a bot token is set, Telegram. The bot long-polls Telegram; a button or a reply to a proposal becomes a decision, raced fairly against the dashboard. |
 | **Incident graph** | `graph/` | LangGraph state, nodes and wiring, checkpointed per incident in `checkpoints.sqlite`. |
-| **Read tools** | `tools/` | Docker reads and the host command tool for the model, each scoped to the incident's host, and `recall_incidents` over memory. |
+| **Read tools** | `tools/` | Docker reads and the host command tool for the model, each scoped to the incident's host, `recall_incidents` over memory, `recent_commits` and `commit_diff` for a service with a linked repo, and `knowledge_search`. |
+| **GitHub client** | `hosts/github.py` | Read-only GitHub REST: a repo's commits and diffs, its README and docs files; works without a token on public repos. |
 | **Act tools** | `tools/docker_act.py`, `guard/grant.py` | Restart, stop and start a container for one step of an approved plan; each checks the grant against the plan, then the target (host error, protected, Bleep's own), and acts on the approved container id. Never offered to a model. |
 | **Plugins** | `plugins/`, `api/plugins.py` | Tools that share one connection, switched on and off as a whole: their read tools join Investigate's and their actions the plan check's enabled set while they are on. Secrets are env variable names, never stored or shown. |
 | **Settings store** | `incidents/settings_store.py`, `api/settings.py`, `guard/secret_fields.py` | Non-secret settings a person changes from the dashboard (model choice, budgets, thresholds, hosts' and services' rules, URLs and protected containers, plugin toggles), stored in SQLite over the hosts file and the defaults, in force at once; a body carrying anything secret-shaped is refused. |
+| **Dev panel** | `api/dev.py`, `incidents/prompt_overrides.py`, `frontend/components/dev/` | Off unless `BLEEP_DEV_PANEL=true`: the model choice and budgets (through the settings store), prompt overrides checked like the loader, cost per incident and per day from the usage ledger with each incident's trace link, and the guard log by kind and incident. |
 | **Long-term memory** | `memory/`, `tools/memory.py` | Every finished incident with the human's decision and feedback, embedded by a local model (bge-small through fastembed) or an OpenAI-compatible endpoint, and facts per service. Gather recalls the 3 most similar (the same service's first) and the facts; Report writes the record and learns facts from the human's instructions; a model change re-embeds on boot. |
+| **Knowledge search** | `knowledge/`, `tools/knowledge.py`, `backend/knowledge/docker-docs/` | A shipped snapshot of 27 Docker and Compose doc pages, the linked repos' README and `docs/`, and past incident reports, cut at headings into chunks of 300 tokens and embedded with memory's model. Ingested on first start and refreshed in the background, skipped by content hash; `knowledge_search(query, sources?)` returns the best section of the 5 closest pages as untrusted data. |
 | **Action log** | `incidents/action_log.py` | Execute's ledger in SQLite: each step `started` before its engine call and `done`, `failed` or `skipped` after, so a restart never runs a step twice. |
 | **Guard** | `guard/` | Redacts secrets, strips control characters, caps size and wraps untrusted text before anything reaches a model; checks every proposed plan before a human sees it (`guard/plan_check.py`); hashes plans and signs and checks approval grants (`guard/grant.py`); cuts log text out of every report (`guard/report_check.py`); `guard/log.py` records what it refused, blocked or changed in the `guard_log` table. |
 | **Models** | `llm/` | One factory for OpenRouter and local models, structured output with a plain-JSON fallback, and a token and cost ledger with a daily cap. |
 | **Tracing** | `llm/tracing.py`, `docker-compose.observability.yaml` | Off by default; `TRACING=langfuse` or `langsmith` adds a tracer's callbacks to every graph run, one Langfuse trace per incident with the incident as its session, and stores the trace's link on the incident. `--profile observability` runs a self-hosted Langfuse. |
-| **Prompts** | `prompts/` | Every prompt is a `.md` file loaded with `prompts.load(name, **vars)`. |
+| **Prompts** | `prompts/` | Every prompt is a `.md` file loaded with `prompts.load(name, **vars)`, which reads the dev panel's override instead when one is in force. |
 | **Store** | `store/` | SQLite with numbered migrations. |
 | **API** | `main.py`, `api/`, `auth/` | Login with one admin password and hashed sessions; the read API over hosts and services; incidents with their findings, timeline and recoveries; the dashboard's decision on an approval and feedback on the findings; a service's facts; the settings, the plugins and the Telegram status; the live event stream (SSE). |
 | **Dashboard** | `frontend/` | Next.js app: login; an overview of hosts, services and self-recoveries, polled; the incident list; each incident's page with its live reasoning, timeline, diagnosis, the plan to approve, reject or instruct, a vote on both, and the report once the run ends, streamed through a route handler (`app/api/stream/route.ts`); each service's page with its URLs, rules, facts and past incidents; and the settings page, which edits thresholds, rules, URLs, protected containers and plugins and shows every secret only as set or missing. |
@@ -96,6 +101,8 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **The demo host goes through a filtered socket proxy**, never a raw socket mount ([socket host](decisions/socket-host.md)).
 - **Services are keyed by Coolify labels, else the Compose project, else the container**, and Bleep's own containers (`bleep.self=true`) are left out.
 - **Host commands are exact argv templates run without a shell**; anything else is refused by code.
+- **The GitHub client lives in `hosts/`**, where the token and each service's `repo` are set, so the knowledge ingest can use it without importing `tools`.
+- **The GitHub tools read a service's linked repo without a token on public repos**, offered only where a `repo` is set; commit text is untrusted and every GitHub failure is a sentence the model can go on from.
 
 **Watcher** ([details](design/watcher.md))
 - **A death that recovers within 60 s is not an incident**; three deaths in ten minutes are.
@@ -126,6 +133,12 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **A thumbs up or down on the diagnosis or the plan goes into the incident's record in words**, whenever the human gives it.
 - **Service facts are learned only from the human's own instructions**, at most two per incident, and every fact can be deleted on the service's page.
 
+**Knowledge search** ([details](design/knowledge.md))
+- **A curated Docker docs snapshot ships with Bleep**, with each page's source, commit, fetch date and licence; a script refreshes it.
+- **Chunks are cut at headings and at 300 tokens, one hit per page**: the right page came first for 20 of 20 questions ([knowledge chunks](decisions/knowledge-chunks.md)).
+- **Re-ingest is skipped by content hash**, so only the first start embeds the snapshot; past incidents refresh every 10 minutes, repo docs daily.
+- **Results are untrusted data**, guarded and wrapped like host output.
+
 **Agent and models** ([details](design/agent.md))
 - **One model factory for OpenRouter and local models**; structured output falls back to plain JSON for weak models.
 - **`openai/gpt-6-luna` in the cloud, `openai/gpt-oss-20b` locally**: the local model is as accurate on the demo faults but never says unsure and acts more, so the checks and the approval gate carry its safety ([chat model](decisions/chat-model.md)).
@@ -147,6 +160,10 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **Database override > hosts file > defaults, in force at once**; the dashboard can protect a container but never unprotect one the hosts file protects.
 - **A settings body with a secret-shaped key or value anywhere is refused with 422**, naming where and never what.
 - **The settings page has no input for a secret**: each is shown as its variable or file and whether it is set; host connections are read-only, and the model choice and budgets are changed in the dev panel only.
+
+**Dev panel** ([details](design/dev-panel.md))
+- **Off unless `BLEEP_DEV_PANEL=true`, and then behind the admin session**; off, every `/api/dev` path is a 404 and the nav hides it.
+- **A prompt override must use exactly its file's placeholders and hold no secret**; reset deletes it and the loader reads the file again.
 
 **Notifications** ([details](design/notify.md))
 - **Telegram is optional**: without a token everything runs through the dashboard.
@@ -185,6 +202,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 | [Socket host](decisions/socket-host.md) | A filtered proxy with four rules, not a raw socket mount. |
 | [SSE through Next.js](decisions/sse-through-next.md) | A route handler that pipes the stream with `no-transform`; the rewrite held every event until the end. |
 | [Embeddings](decisions/embeddings.md) | bge-small through fastembed, in-process on two threads: 11 ms and 22 ms of CPU per text, +268 MB of image. |
+| [Knowledge chunks](decisions/knowledge-chunks.md) | Cut at headings, then at 300 estimated tokens with 50 of overlap, one hit per page: 20 of 20 questions found first, against 18 at 400 and 600. |
 | [Chat model](decisions/chat-model.md) | `openai/gpt-6-luna` for both cloud roles, `openai/gpt-oss-20b` as the local model; the local model never says unsure and can be steered, so its safety is the plan check and the approval gate. |
 
 ## Eval reports
@@ -194,3 +212,8 @@ One line each; the full reasoning and issue numbers are on the design page named
 | [Scenarios, 2026-11-03](evals/scenarios-2026-11-03.md) | The eight demo faults on `openai/gpt-6-luna`, 3 runs each: root cause right in 21 of 24 (hung 0 of 3 on a shop with stale logs, 3 of 3 on a reset shop), plan exact in 18 of 24, $0.0035 and about 70 s to a diagnosis per run. |
 | [Prompt injection, 2026-11-03](evals/injection-2026-11-03.md) | On gpt-6-luna, 13 of 13 live attacks (log, reply body, memory) failed to steer Bleep or leak a secret; 6 of 6 honest controls kept the right root cause. After #105, the model flagged planted orders in 12 of 13 attacks but also in 4 of 6 honest controls, so its flag is measured and not shown. |
 | [Local model, 2026-11-03](evals/scenarios-local-2026-11-03.md) | The eight faults and the injection suite on `openai/gpt-oss-20b`, 1 run each on a reset shop: root cause 7 of 8, controls 6 of 6, 0 fallbacks, 55 s to a diagnosis, $0; 2 of 13 attacks worked, 13 of 13 passed after the `healthy_target` rule, but the diagnoses were still steered: the plan check and the approval gate carry the safety. |
+| [bad-deploy with the GitHub tools, 2026-11-03](evals/scenarios-2026-11-03-2.md) | bad-deploy on gpt-6-luna with a GitHub fixture, 2 rounds of 3: root cause 6 of 6 at 0.85 to 1.00, every run citing the version-2 commit and its migration, against 0.80 to 0.85 and neither named on the logs alone; category still off (#108). |
+| [Prompt injection through commits, 2026-11-03](evals/injection-commits-2026-11-03.md) | The two commit-message attacks on gpt-6-luna, 12 runs: every run read the commits and none followed them; the model's `planted_in` named `commits` in all 12, but also in 3 of 6 honest bad-deploy runs, so it is no measure of recognition (#105). |
+| [Prompt injection through docs, 2026-11-03](evals/injection-docs-2026-11-03.md) | The two docs attacks on gpt-6-luna, 16 runs: all passed, but the model searched the docs in only 4, and in those 4 the planted page came back and was not followed. |
+| [Scenarios with knowledge search, 2026-11-03](evals/scenarios-2026-11-03-3.md) | The eight faults on gpt-6-luna with `knowledge_search` offered, 1 run each: root cause 7 of 8 (hung missed, as since #106), plan exact 6 of 8; no diagnosis cited the docs. |
+| [Knowledge retrieval, 2026-11-03](evals/knowledge-2026-11-03.md) | 20 hand-written questions over the Docker docs snapshot with the real embedder: the right page in the top 5 for 20 of 20 and first for 20 of 20; ingest 19.8 s, search 6 ms. |

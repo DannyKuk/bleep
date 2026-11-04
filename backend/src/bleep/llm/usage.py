@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from langchain_core.callbacks import AsyncCallbackHandler
@@ -40,6 +40,25 @@ class IncidentTotal:
     @property
     def tokens(self) -> int:
         return self.tokens_in + self.tokens_out
+
+
+@dataclass(frozen=True)
+class UsageSum:
+    """The ledger's rows for one incident or one day, summed. `usd` sums the calls whose cost is
+    known and is None when none is; `unpriced` counts the calls without a cost."""
+
+    key: str
+    calls: int
+    tokens_in: int
+    tokens_out: int
+    usd: float | None
+    unpriced: int
+
+
+_SUMS = (
+    "COUNT(*) AS calls, SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out,"
+    " SUM(usd) AS usd, COUNT(*) - COUNT(usd) AS unpriced"
+)
 
 
 class CostLedger:
@@ -99,6 +118,35 @@ class CostLedger:
         finally:
             await conn.close()
         return float(row["usd"])
+
+    async def by_incident(self, limit: int = 100) -> list[UsageSum]:
+        """Each incident's sums, the one with the latest model call first."""
+        return await self._sums(
+            f"SELECT incident_id AS key, {_SUMS} FROM usage"
+            " GROUP BY incident_id ORDER BY MAX(id) DESC LIMIT ?",
+            (limit,),
+        )
+
+    async def by_day(self, days: int = 30) -> list[UsageSum]:
+        """Each local day's sums over the last `days` days, today first; days without a model
+        call are left out."""
+        first = self.clock().date() - timedelta(days=days - 1)
+        return await self._sums(
+            f"SELECT day AS key, {_SUMS} FROM usage WHERE day >= ? GROUP BY day ORDER BY day DESC",
+            (first.isoformat(),),
+        )
+
+    async def _sums(self, query: str, args: tuple[object, ...]) -> list[UsageSum]:
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(query, args) as cursor:
+                rows = await cursor.fetchall()
+        finally:
+            await conn.close()
+        return [
+            UsageSum(r["key"], r["calls"], r["tokens_in"], r["tokens_out"], r["usd"], r["unpriced"])
+            for r in rows
+        ]
 
 
 def _cost(model: str, metadata: dict[str, Any], tokens_in: int, tokens_out: int) -> float | None:

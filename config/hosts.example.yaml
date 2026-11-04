@@ -2,7 +2,8 @@
 # Secrets never go in this file: a secret is a reference, {env: NAME} or {file: PATH}.
 # Unknown keys are rejected, so a typo fails at startup instead of being ignored.
 
-# Optional default GitHub token, used to read the repo of a service.
+# Optional GitHub token, used to read every service's repo (recent commits and diffs). Without
+# it, or when the variable is unset or empty, Bleep reads public repos only (60 requests an hour).
 github:
   token: {env: GITHUB_TOKEN}
 
@@ -35,7 +36,7 @@ hosts:
             expect_status: 200   # default 200
             body_contains: ok    # optional text the body must contain
         repo: example/shop       # GitHub repo, owner/name
-        docs_paths: [README.md, docs/runbook.md]   # repo files the agent may read
+        docs_paths: [docs/runbook.md, ops]          # markdown files or folders for knowledge search (default docs)
         protected_containers: [shop-db]            # never a target of an action
         rules:
           - Roll back before restarting when the last deploy is under an hour old.

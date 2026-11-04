@@ -10,6 +10,8 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
 RUN uv sync --frozen --no-dev
+# The curated Docker docs knowledge search ingests on first start (docs/design/knowledge.md).
+COPY knowledge ./knowledge
 
 # The local embedding model for long-term memory, fetched once at build time, so recall works
 # offline and the first incident does not wait for a download (docs/decisions/embeddings.md).

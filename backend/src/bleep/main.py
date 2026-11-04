@@ -5,7 +5,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import APIRouter, Depends, FastAPI
 
-from bleep.api import auth, hosts, incidents, memory, plugins, stream, telegram
+from bleep.api import auth, dev, hosts, incidents, memory, plugins, stream, telegram
 from bleep.api import settings as settings_api
 from bleep.api.deps import require_session
 from bleep.config import Settings, check_settings
@@ -51,6 +51,9 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
             # and a normal stop runs them in reverse: stop what sends, then close what it sends on.
             stack.push_async_callback(parts.notify.close)  # last: runs and reminders still send
             await parts.db.migrate()
+            if settings.dev_panel:  # with the panel off, every prompt is read from its file
+                await parts.prompt_overrides.load()
+                stack.callback(parts.prompt_overrides.close)
             await parts.settings_store.load()  # before the registry starts, so overrides hold
             await _reembed(parts)
             await parts.registry.start()
@@ -91,6 +94,8 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
             await manager.start()
             app.state.reminder_task = asyncio.create_task(reminders.run(), name="reminders")
             stack.push_async_callback(_cancel, app.state.reminder_task)
+            knowledge = asyncio.create_task(parts.knowledge_refresher.run(), name="knowledge")
+            stack.push_async_callback(_cancel, knowledge)
             stack.push_async_callback(parts.notify.stop)
             parts.notify.start(runner)  # polls Telegram only when a token is configured
             yield
@@ -115,6 +120,8 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
     protected.include_router(settings_api.router)
     protected.include_router(plugins.router)
     protected.include_router(telegram.router)
+    if settings.dev_panel:  # left out, every /api/dev path is a 404, signed in or not
+        protected.include_router(dev.router)
     api.include_router(protected)
     app.include_router(api)
     return app

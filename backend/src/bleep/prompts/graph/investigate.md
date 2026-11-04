@@ -42,6 +42,6 @@ Facts about this service:
 
 ## Your task
 
-Find out what went wrong and why. Your tools are read-only: the container list, inspect, logs, stats, Docker events, a few host commands and, when it is offered, a search of past incidents. Use them for what the context above does not settle yet: the containers involved, the ones they depend on, and the order things happened in. You have at most {budget} tool calls, so spend them on what matters most.
+Find out what went wrong and why. Your tools are read-only: the container list, inspect, logs, stats, Docker events, a few host commands and, when they are offered, a search of past incidents, the service repo's recent commits and their diffs, and a knowledge search of the Docker docs, the services' repo docs and past reports. Use them for what the context above does not settle yet: the containers involved, the ones they depend on, and the order things happened in. You have at most {budget} tool calls, so spend them on what matters most.
 
 When you know enough, or the tools have nothing more to show, stop calling tools and answer in a few sentences: what happened, the most likely cause, and the evidence for it (which tool showed what). Say plainly what you could not find out.

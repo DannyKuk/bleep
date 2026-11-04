@@ -245,3 +245,43 @@ def test_tracing_to_langfuse_without_its_keys_refuses_to_start(settings, monkeyp
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
     with pytest.raises(SettingsError, match="LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY"):
         build_parts(settings, Registry([]))
+
+
+def test_the_github_client_reads_with_the_hosts_file_token(settings, tmp_path, monkeypatch):
+    hosts = tmp_path / "hosts.yaml"
+    hosts.write_text(
+        "github:\n  token: {env: BLEEP_TEST_GITHUB_TOKEN}\n"
+        "hosts:\n  - {id: demo, name: Demo, kind: socket, endpoint: 'tcp://127.0.0.1:1'}\n",
+        encoding="utf-8",
+    )
+    with_file = settings.model_copy(update={"hosts_file": hosts})
+    monkeypatch.setenv("BLEEP_TEST_GITHUB_TOKEN", "ghp_test")
+    assert build_parts(with_file).github.authenticated
+    monkeypatch.delenv("BLEEP_TEST_GITHUB_TOKEN")
+    parts = build_parts(with_file)
+    assert not parts.github.authenticated
+    names = {s.name for s in parts.graph_deps.tools.specs()}
+    assert {"recent_commits", "commit_diff"} <= names
+
+
+def test_the_app_ingests_the_docker_docs_and_offers_knowledge_search(settings, parts):
+    ingested = asyncio.Event()
+    run = parts.knowledge_refresher.refresh_docker
+
+    async def refresh_docker():
+        result = await run()
+        ingested.set()
+        return result
+
+    parts.knowledge_refresher.refresh_docker = refresh_docker  # type: ignore[method-assign]
+    assert parts.knowledge_refresher.reports is parts.memory
+    assert parts.knowledge_refresher.repos.client is parts.github  # type: ignore[union-attr]
+    assert parts.knowledge_refresher.repos.registry is parts.registry  # type: ignore[union-attr]
+    assert parts.knowledge.embedder is parts.memory.embedder  # one model for both
+    assert "knowledge_search" in {s.name for s in parts.graph_deps.tools.specs()}
+    with TestClient(create_app(settings, parts)) as client:
+        client.portal.call(ingested.wait)
+        hits = client.portal.call(parts.knowledge.search, "restart policy unless-stopped")
+        pages = client.portal.call(parts.knowledge.document_ids, "docker:")
+    assert hits and hits[0].source == "docker"
+    assert len(pages) >= 20

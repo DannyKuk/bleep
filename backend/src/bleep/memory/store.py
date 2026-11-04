@@ -29,6 +29,7 @@ from bleep.schemas.graph import (
     Decision,
     Feedback,
     FeedbackTarget,
+    IncidentRecord,
     PastIncident,
     Proposal,
     Report,
@@ -206,6 +207,19 @@ class MemoryStore:
             )
             for row, score in found[:k]
         ]
+
+    async def all_records(self) -> list[IncidentRecord]:
+        """Every remembered incident, oldest first (knowledge search indexes them)."""
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                "SELECT incident_id, host_id, service_id, date, title, cause, action, outcome,"
+                " human_decision, feedback FROM memory_incidents ORDER BY date, incident_id"
+            ) as cursor:
+                rows = await cursor.fetchall()
+        finally:
+            await conn.close()
+        return [IncidentRecord.model_validate(dict(row)) for row in rows]
 
     async def reembed(self) -> int:
         """Embed again every record from another model; how many were. Nothing is embedded (and

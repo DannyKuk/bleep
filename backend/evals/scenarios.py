@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from bleep.schemas.graph import Action, Diagnosis, Proposal
 from bleep.schemas.incidents import Subject
+from evals.github import GithubFixtureError, load_github_fixture
 
 SCENARIOS_DIR = Path(__file__).parent / "scenarios"
 CATEGORIES: tuple[str, ...] = typing.get_args(Diagnosis.model_fields["category"].annotation)
@@ -83,6 +84,8 @@ class Scenario(_Strict):
     subject: Subject  # the incident the fault must open
     expected: Expected
     timeout_s: int = Field(600, gt=0)  # from the fault on to the end of Propose
+    # A fixture in evals/fixtures/github/ that the GitHub tools read; without one they are absent.
+    github: str | None = None
 
 
 def load_scenario(path: Path) -> Scenario:
@@ -93,6 +96,11 @@ def load_scenario(path: Path) -> Scenario:
         raise ScenarioError(f"scenario {path}: {error}") from error
     if scenario.id != path.stem:
         raise ScenarioError(f"scenario {path}: its id {scenario.id!r} must be its file name")
+    if scenario.github is not None:
+        try:
+            load_github_fixture(scenario.github)
+        except GithubFixtureError as error:
+            raise ScenarioError(f"scenario {path}: {error}") from error
     return scenario
 
 

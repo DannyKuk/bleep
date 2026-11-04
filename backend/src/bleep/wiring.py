@@ -8,12 +8,17 @@ from bleep.config import Settings
 from bleep.graph.deps import GraphDeps, Notifier, SettingsSource, Tracer, model_factory
 from bleep.guard.log import GuardLog
 from bleep.hosts.config import load_hosts_file
+from bleep.hosts.github import GithubClient, github_token
 from bleep.hosts.registry import Registry
 from bleep.incidents.action_log import ActionLog
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
+from bleep.incidents.prompt_overrides import PromptOverrideStore
 from bleep.incidents.repository import IncidentRepo
 from bleep.incidents.settings_store import SettingsStore
+from bleep.knowledge.index import KnowledgeIndex
+from bleep.knowledge.ingest import KnowledgeRefresher
+from bleep.knowledge.repos import GithubRepoDocs
 from bleep.llm.tracing import TracingSettings, build_tracer
 from bleep.llm.usage import CostLedger
 from bleep.memory.embeddings import (
@@ -50,6 +55,10 @@ class AppParts:
     tracer: Tracer
     plugins: PluginRegistry
     settings_store: SettingsStore
+    github: GithubClient
+    knowledge: KnowledgeIndex
+    knowledge_refresher: KnowledgeRefresher
+    prompt_overrides: PromptOverrideStore
 
 
 # Every plugin Bleep has; each is off until a person switches it on.
@@ -81,15 +90,22 @@ def build_parts(
 
     `registry` replaces the one read from the hosts file (tests pass an empty or fake one),
     `embedder` the one the settings name (tests pass `FakeEmbedder`), `tracer` the one
-    `TRACING` names, and `plugins` the plugins Bleep has (`PLUGINS`).
+    `TRACING` names, and `plugins` the plugins Bleep has (`PLUGINS`). The GitHub client reads
+    with the hosts file's token, or without one when a registry is passed or no token is set.
     """
     db = Database(settings.data_dir / "bleep.db")
+    github_config = None
     if registry is None:
-        registry = Registry(load_hosts_file(settings.hosts_file).hosts)
+        hosts_file = load_hosts_file(settings.hosts_file)
+        registry = Registry(hosts_file.hosts)
+        github_config = hosts_file.github
+    github = GithubClient(github_token(github_config))
     bus, incidents = EventBus(db), IncidentRepo(db)
     approvals, guard_log = ApprovalStore(db, settings.secret), GuardLog(db)
     notify = setup_notify(settings, db, bus, approvals, guard_log)
-    memory = MemoryStore(db, embedder or build_embedder(settings))
+    embedder = embedder or build_embedder(settings)  # one model, loaded once, for both
+    memory = MemoryStore(db, embedder)
+    knowledge = KnowledgeIndex(db, embedder)
     plugin_registry = PluginRegistry(
         [cls() for cls in PLUGINS] if plugins is None else plugins,
         settings.secret,
@@ -112,6 +128,8 @@ def build_parts(
             memory,
             store,
             plugin_registry,
+            github,
+            knowledge,
         ),
         incidents=incidents,
         approvals=approvals,
@@ -123,6 +141,12 @@ def build_parts(
         tracer=tracer or build_tracer(TracingSettings()),
         plugins=plugin_registry,
         settings_store=store,
+        github=github,
+        knowledge=knowledge,
+        knowledge_refresher=KnowledgeRefresher(
+            knowledge, reports=memory, repos=GithubRepoDocs(github, registry)
+        ),
+        prompt_overrides=PromptOverrideStore(db),
     )
 
 
@@ -138,6 +162,8 @@ def graph_deps(
     memory: MemoryStore,
     settings_store: SettingsSource,
     plugins: PluginRegistry,
+    github: GithubClient | None = None,
+    knowledge: KnowledgeIndex | None = None,
 ) -> GraphDeps:
     """What the incident graph runs on. Models are built when a node asks, so no key is needed.
 
@@ -146,10 +172,12 @@ def graph_deps(
     `BLEEP_SECRET` it signs them with. `memory` is read by Gather and the `recall_incidents`
     tool and written by Report. The switched-on `plugins` add their read tools and act handlers,
     read at each use, and `settings_store` their actions to the plan check's enabled set.
+    With `github`, a service with a `repo` gets the GitHub tools; `knowledge` is searched by the
+    `knowledge_search` tool.
     """
     return GraphDeps(
         registry=registry,
-        tools=default_registry(memory, plugins),
+        tools=default_registry(memory, plugins, github, knowledge),
         act_tools=plugins.act_tools(docker_act_tools(secret, guard_log)),
         models=model_factory(settings_store),
         bus=bus,

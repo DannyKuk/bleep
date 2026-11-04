@@ -336,3 +336,27 @@ def test_a_huge_raw_result_is_cut_and_wrapped_once():
 
     assert text.count("<untrusted ") == 1 and text.endswith('">')
     assert len(text) < 2 * MAX_CHARS and "the end" in text and marked
+
+
+async def test_tools_see_the_incidents_service(tmp_path):
+    """The GitHub tools are offered by the service's repo, so the tools' context names it."""
+    seen = []
+
+    async def which() -> str:
+        return "ok"
+
+    def build(ctx) -> StructuredTool:
+        seen.append(ctx.service_id)
+        return StructuredTool.from_function(coroutine=which, name="which", description="A test.")
+
+    script = [asks(call("which", 1)), DONE]
+    env, state = await setup(tmp_path, script)
+    env.deps.tools = ToolRegistry()
+    env.deps.tools.register(
+        ToolSpec("which", "read", "test", build, lambda ctx: ctx.service_id is not None)
+    )
+
+    update = await run(env, state)
+
+    assert seen == [env.service_id("shop")]
+    assert tool_messages(update)[0].content.split("\n")[1] == "ok"

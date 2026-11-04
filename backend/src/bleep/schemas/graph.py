@@ -15,7 +15,9 @@ from bleep.schemas.docker import ContainerSummary, HostBasics
 Outcome = Literal["resolved", "rejected", "no_action", "unverified", "budget", "replan_limit"]
 # Where host text gave orders or posed as Bleep (#105): a closed list, so the diagnosis can say
 # where without carrying any of that text.
-PlantedSource = Literal["logs", "events", "inspect", "http_body", "memory", "other"]
+PlantedSource = Literal[
+    "logs", "events", "inspect", "http_body", "memory", "commits", "docs", "other"
+]
 Action = Literal[
     "docker.restart", "docker.stop", "docker.start", "coolify.redeploy", "coolify.set_env"
 ]
@@ -28,6 +30,21 @@ class ContainerMemory(BaseModel):
     mem_usage: int  # bytes
     mem_limit: int  # bytes; 0 when the engine reports none
     mem_percent: float
+
+
+class IncidentRecord(BaseModel):
+    """A finished incident as long-term memory keeps it."""
+
+    incident_id: str
+    host_id: str
+    service_id: str | None = None
+    date: datetime
+    title: str
+    cause: str
+    action: str
+    outcome: str
+    human_decision: str | None = None
+    feedback: str | None = None
 
 
 class PastIncident(BaseModel):

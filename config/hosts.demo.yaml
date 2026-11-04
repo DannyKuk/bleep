@@ -1,5 +1,8 @@
 # Hosts file for the demo profile: this machine's engine, reached through the socket proxy, with
 # the demo shop on it (demo/compose.yaml, docs/demo.md). Field reference: config/hosts.example.yaml.
+# The GitHub tools read the shop's repo with this token; unset or empty, they read public repos only.
+github:
+  token: {env: GITHUB_TOKEN}
 hosts:
   - id: demo
     name: Demo stack

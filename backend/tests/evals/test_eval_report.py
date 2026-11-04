@@ -283,6 +283,12 @@ def test_the_setup_says_whether_the_shop_was_reset_before_each_run():
     assert "recreated before every run" not in render(INFO, RESULTS)  # older batches were not
 
 
+def test_the_setup_says_whether_knowledge_search_was_offered():
+    offered = INFO.model_copy(update={"knowledge": True})
+    assert "Knowledge search was offered" in render(offered, RESULTS)
+    assert "Knowledge search was offered" not in render(INFO, RESULTS)
+
+
 def test_a_grade_for_a_run_a_judge_model_scored_is_refused(tmp_path):
     """Grading by hand is for a `manual` batch: a judge's score must not be overwritten."""
     grade = {"run_id": "db-down/1", "root_cause_pass": True, "root_cause_score": 1.0, "note": ""}

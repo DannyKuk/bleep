@@ -99,7 +99,10 @@ def make(deps: GraphDeps) -> Node:
         incident_id = state["incident_id"]
         limit = deps.settings_store.budgets().investigate_tool_calls
         rounds = state.get("investigate_rounds", 0) + 1
-        ctx = ToolContext(incident_id, state["subject"].host_id, deps.registry, deps.guard_log)
+        subject = state["subject"]
+        ctx = ToolContext(
+            incident_id, subject.host_id, deps.registry, deps.guard_log, subject.service_id
+        )
         tools = {t.name: t for t in deps.tools.read_tools(ctx)}
         act_tools = {s.name for s in deps.tools.specs() if s.kind == "act"}
 
