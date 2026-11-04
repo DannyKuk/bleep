@@ -1,13 +1,13 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { report } from "@/components/incident/fixtures";
+import { incident, report } from "@/components/incident/fixtures";
 import { ReportView } from "@/components/incident/report-view";
 
 describe("ReportView", () => {
   it("shows the outcome, summary, cause, action, decision and follow-ups", () => {
     render(<ReportView report={report()} outcome="resolved" />);
-    expect(screen.getByText("Fixed and verified")).toHaveClass("text-health-ok");
+    expect(screen.getByText("Fixed and verified")).toHaveClass("text-ok");
     expect(screen.getByText(/Bleep started it again/)).toBeInTheDocument();
     expect(screen.getByText(/restart policy is no/)).toBeInTheDocument();
     expect(screen.getByText("docker.start shop-web-1 on demo: done")).toBeInTheDocument();
@@ -45,9 +45,7 @@ describe("ReportView", () => {
         outcome="no_action"
       />,
     );
-    expect(screen.getByText("No action proposed, nothing was done")).toHaveClass(
-      "text-muted-foreground",
-    );
+    expect(screen.getByText("No action proposed, nothing was done")).toHaveClass("text-stop");
     expect(screen.getByText("Nothing ran.")).toBeInTheDocument();
     expect(screen.getByText("You were not asked.")).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Follow-ups" })).toBeNull();
@@ -61,6 +59,59 @@ describe("ReportView", () => {
         outcome="unverified"
       />,
     );
-    expect(screen.getByText("Action taken, not verified")).toHaveClass("text-health-degraded");
+    expect(screen.getByText("Action taken, not verified")).toHaveClass("text-warn");
+  });
+
+  it("labels the sections in document order and shows the text as written", () => {
+    render(<ReportView report={report()} outcome="resolved" />);
+    const labels = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+    expect(labels).toEqual([
+      "In short",
+      "Why it happened",
+      "What I did",
+      "Your decision",
+      "Timeline",
+      "Follow-ups",
+    ]);
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("shop-web-1 died");
+  });
+
+  it("shows the subject, times and cost when the incident is given", () => {
+    render(
+      <ReportView
+        report={report()}
+        outcome="resolved"
+        incident={incident({ cost_usd: 0.0421, closed_at: "2026-11-02T18:05:00Z" })}
+      />,
+    );
+    expect(screen.getByText("$0.042")).toBeInTheDocument();
+  });
+
+  it("puts the follow-ups of a no-action report under What you can do", () => {
+    render(
+      <ReportView
+        report={report({ action_taken: null, follow_ups: ["Set restart: unless-stopped."] })}
+        outcome="no_action"
+      />,
+    );
+    const list = within(screen.getByRole("list", { name: "What you can do" }));
+    expect(list.getByText("Set restart: unless-stopped.")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Follow-ups" })).toBeNull();
+  });
+
+  it("never gives an unfixed outcome the green of a resolved one", () => {
+    for (const outcome of [
+      "rejected",
+      "no_action",
+      "unverified",
+      "budget",
+      "replan_limit",
+    ] as const) {
+      const { unmount } = render(
+        <ReportView report={report({ outcome: "x" })} outcome={outcome} />,
+      );
+      expect(screen.getByText("x")).not.toHaveClass("text-ok");
+      unmount();
+    }
   });
 });

@@ -1,68 +1,156 @@
-import type { Outcome, Report } from "@/lib/api-types";
-import { formatTime } from "@/lib/format";
+import { Check, Minus, TriangleAlert, X } from "lucide-react";
+
+import { Bleep } from "@/components/bleep/bleep";
+import { subjectText } from "@/components/incident/incident-list";
+import type { Incident, Outcome, Report } from "@/lib/api-types";
+import { formatDateTime, formatTime } from "@/lib/format";
+import { reportMood } from "@/lib/mood";
 import { cn } from "@/lib/utils";
 
 // Only a verified fix is shown as good news; an action nobody confirmed is a warning.
 const OUTCOME_TONE: Partial<Record<Outcome, string>> = {
-  resolved: "text-health-ok",
-  unverified: "text-health-degraded",
-  budget: "text-health-degraded",
+  resolved: "bg-ok-bg text-ok",
+  unverified: "bg-warn-bg text-warn",
+  budget: "bg-warn-bg text-warn",
 };
+const NEUTRAL_TONE = "bg-stop-bg text-stop";
 
-function Fact({ label, children }: { label: string; children: React.ReactNode }) {
+// A printed page is white whatever the theme: pin the tokens the card uses to their light values.
+const PRINT_TOKENS =
+  "print:[--surface:#ffffff] print:[--soft:#eeedf8] print:[--line:#cfcde0] print:[--ink:#1c1b33] print:[--ink-2:#46445c] print:[--ok:#1c7448] print:[--ok-bg:#e2f4ea] print:[--warn:#835400] print:[--warn-bg:#fbefd6] print:[--stop:#566075] print:[--stop-bg:#eceef3] print:border-line print:shadow-none";
+
+function OutcomeIcon({ outcome }: { outcome: Outcome | null }) {
+  if (outcome === "resolved") return <Check aria-hidden className="size-4" />;
+  if (outcome === "unverified" || outcome === "budget") {
+    return <TriangleAlert aria-hidden className="size-4" />;
+  }
+  return <Minus aria-hidden className="size-4" />;
+}
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-3">
-      <dt className="shrink-0 text-xs font-medium text-muted-foreground sm:w-20 sm:pt-0.5">
-        {label}
-      </dt>
-      <dd className="min-w-0">{children}</dd>
-    </div>
+    <section className="flex break-inside-avoid flex-col gap-1.5">
+      <h3 className="text-[13px] font-extrabold tracking-[0.06em] text-ink-2 uppercase">{label}</h3>
+      {children}
+    </section>
   );
 }
 
-/** The incident's written report: how it ended, why, what ran, who decided, and what is next. */
-export function ReportView({ report, outcome }: { report: Report; outcome: Outcome | null }) {
+/** The mark before the action: a check when it ran, a cross when it failed, a dash for nothing. */
+function ActionMark({ action }: { action: string | null }) {
+  if (action === null) return <Minus aria-hidden className="mt-1 size-4 shrink-0 text-ink-2" />;
+  if (/: failed$/.test(action)) return <X aria-hidden className="mt-1 size-4 shrink-0 text-down" />;
+  return <Check aria-hidden className="mt-1 size-4 shrink-0 text-ok" />;
+}
+
+/**
+ * The incident's written report as a short document: how it ended, why, what ran, who decided and
+ * what is next. The text is the backend's; this adds only the labels. `incident` adds the subject,
+ * times and cost under the title.
+ */
+export function ReportView({
+  report,
+  outcome,
+  incident,
+}: {
+  report: Report;
+  outcome: Outcome | null;
+  incident?: Incident;
+}) {
+  const noAction = outcome === "no_action";
   return (
-    <div className="flex flex-col gap-3 text-sm">
-      <p
-        className={cn(
-          "font-semibold",
-          (outcome && OUTCOME_TONE[outcome]) ?? "text-muted-foreground",
-        )}
-      >
-        {report.outcome}
-      </p>
-      <p>{report.summary}</p>
-      <dl className="flex flex-col gap-1.5">
-        <Fact label="Cause">{report.cause}</Fact>
-        <Fact label="Action">{report.action_taken ?? "Nothing ran."}</Fact>
-        <Fact label="Decision">{report.human_decision ?? "You were not asked."}</Fact>
-      </dl>
-      {report.follow_ups.length > 0 && (
-        <div className="flex flex-col gap-1">
-          <h3 className="text-xs font-medium text-muted-foreground">Next</h3>
-          <ul aria-label="Follow-ups" className="flex list-disc flex-col gap-1 pl-5">
+    <article
+      aria-label="Report"
+      className={cn(
+        "flex flex-col gap-5 rounded-card border border-line bg-surface p-5 text-[15px] text-ink sm:p-7",
+        PRINT_TOKENS,
+      )}
+    >
+      <header className="flex items-start gap-4">
+        <Bleep
+          mood={outcome ? reportMood(outcome) : "resting"}
+          size={72}
+          className="shrink-0 print:hidden"
+        />
+        <div className="flex min-w-0 flex-col gap-2">
+          <p
+            className={cn(
+              "inline-flex w-fit items-center gap-1.5 rounded-full px-3 py-1 text-sm font-extrabold",
+              (outcome && OUTCOME_TONE[outcome]) ?? NEUTRAL_TONE,
+            )}
+          >
+            <OutcomeIcon outcome={outcome} />
+            {report.outcome}
+          </p>
+          <h2 className="text-xl font-extrabold">{report.title}</h2>
+          {incident && (
+            <p className="flex flex-wrap gap-x-3 gap-y-1 font-mono text-xs text-ink-2">
+              <span>{subjectText(incident)}</span>
+              <span>
+                <time dateTime={incident.opened_at}>{formatDateTime(incident.opened_at)}</time>
+                {incident.closed_at && (
+                  <>
+                    {" to "}
+                    <time dateTime={incident.closed_at}>{formatTime(incident.closed_at)}</time>
+                  </>
+                )}
+              </span>
+              {incident.cost_usd != null && <span>${incident.cost_usd.toFixed(3)}</span>}
+            </p>
+          )}
+        </div>
+      </header>
+
+      <Section label="In short">
+        <p>{report.summary}</p>
+      </Section>
+      <Section label="Why it happened">
+        <p>{report.cause}</p>
+      </Section>
+      <Section label="What I did">
+        <p className="flex items-start gap-2">
+          <ActionMark action={report.action_taken} />
+          <span className="min-w-0">{report.action_taken ?? "Nothing ran."}</span>
+        </p>
+      </Section>
+      {noAction && report.follow_ups.length > 0 && (
+        <Section label="What you can do">
+          <ul
+            aria-label="What you can do"
+            className="flex list-disc flex-col gap-1 rounded-row bg-soft py-3 pr-4 pl-8"
+          >
             {report.follow_ups.map((item, index) => (
               <li key={index}>{item}</li>
             ))}
           </ul>
-        </div>
+        </Section>
       )}
+      <Section label="Your decision">
+        <p>{report.human_decision ?? "You were not asked."}</p>
+      </Section>
       {report.timeline.length > 0 && (
-        <div className="flex flex-col gap-1">
-          <h3 className="text-xs font-medium text-muted-foreground">Timeline</h3>
+        <Section label="Timeline">
           <ol aria-label="Report timeline" className="flex flex-col gap-1">
             {report.timeline.map(({ at, text }, index) => (
               <li key={index} className="flex items-baseline gap-3">
-                <time dateTime={at} className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                <time dateTime={at} className="shrink-0 font-mono text-xs text-ink-2 tabular-nums">
                   {formatTime(at)}
                 </time>
                 <span className="min-w-0">{text}</span>
               </li>
             ))}
           </ol>
-        </div>
+        </Section>
       )}
-    </div>
+      {!noAction && report.follow_ups.length > 0 && (
+        <Section label="Follow-ups">
+          <ul aria-label="Follow-ups" className="flex list-disc flex-col gap-1 pl-5">
+            {report.follow_ups.map((item, index) => (
+              <li key={index}>{item}</li>
+            ))}
+          </ul>
+        </Section>
+      )}
+    </article>
   );
 }
