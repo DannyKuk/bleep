@@ -38,10 +38,10 @@ def make() -> tuple[Detector, Clock]:
     return Detector(Thresholds(), clock), clock
 
 
-def died(clock: Clock, container="web-1", **detail) -> Signal:
+def died(clock: Clock, container="web-1", subject: Subject = SVC, **detail) -> Signal:
     detail = {"exit_code": 1, "restart_policy": "always", **detail}
     return Signal(
-        subject=SVC, kind="container_died", at=clock.now, detail=detail, container=container
+        subject=subject, kind="container_died", at=clock.now, detail=detail, container=container
     )
 
 
@@ -61,22 +61,22 @@ def test_death_then_healthy_within_grace_is_recovery():
     det, clock = make()
     s = died(clock)
     assert det.feed(s) == []
-    out = det.tick(clock.at(20), states(box(health="healthy")))
+    out = det.tick(clock.at(20), states(box(health="healthy")), host_id="h1")
     assert out == [Recovered("web-1", [s])]
-    assert det.tick(clock.at(100), states(box(health="healthy"))) == []
+    assert det.tick(clock.at(100), states(box(health="healthy")), host_id="h1") == []
 
 
 def test_running_without_healthcheck_counts_as_recovered():
     det, clock = make()
     det.feed(died(clock))
-    assert isinstance(det.tick(clock.at(5), states(box(health="none")))[0], Recovered)
+    assert isinstance(det.tick(clock.at(5), states(box(health="none")), host_id="h1")[0], Recovered)
 
 
 def test_still_starting_is_not_recovered_until_grace_ends_then_opens():
     det, clock = make()
     det.feed(died(clock))
-    assert det.tick(clock.at(30), states(box(health="starting"))) == []
-    out = det.tick(clock.at(61), states(box(health="starting")))
+    assert det.tick(clock.at(30), states(box(health="starting")), host_id="h1") == []
+    out = det.tick(clock.at(61), states(box(health="starting")), host_id="h1")
     assert isinstance(out[0], OpenIncident)
     assert out[0].signals[-1].kind == "down_past_grace"
 
@@ -84,8 +84,8 @@ def test_still_starting_is_not_recovered_until_grace_ends_then_opens():
 def test_down_past_grace_opens():
     det, clock = make()
     det.feed(died(clock))
-    assert det.tick(clock.at(59), states(box(state="exited"))) == []
-    out = det.tick(clock.at(61), states(box(state="exited")))
+    assert det.tick(clock.at(59), states(box(state="exited")), host_id="h1") == []
+    out = det.tick(clock.at(61), states(box(state="exited")), host_id="h1")
     assert isinstance(out[0], OpenIncident)
     assert out[0].subject == SVC
     assert [x.kind for x in out[0].signals] == ["container_died", "down_past_grace"]
@@ -103,7 +103,7 @@ def test_a_tick_for_one_host_leaves_another_hosts_deaths_pending():
 def test_container_missing_from_states_is_down_past_grace():
     det, clock = make()
     det.feed(died(clock))
-    assert isinstance(det.tick(clock.at(61), states())[0], OpenIncident)
+    assert isinstance(det.tick(clock.at(61), states(), host_id="h1")[0], OpenIncident)
 
 
 def test_three_deaths_in_ten_minutes_opens_even_if_recovered():
@@ -111,7 +111,7 @@ def test_three_deaths_in_ten_minutes_opens_even_if_recovered():
     for minute in (0, 4):
         clock.at(minute * 60)
         assert det.feed(died(clock)) == []
-        det.tick(clock.at(minute * 60 + 10), states(box()))
+        det.tick(clock.at(minute * 60 + 10), states(box()), host_id="h1")
     clock.at(9 * 60)
     out = det.feed(died(clock))
     assert isinstance(out[0], OpenIncident)
@@ -122,7 +122,7 @@ def test_three_deaths_in_ten_minutes_opens_even_if_recovered():
 def test_two_deaths_in_ten_minutes_do_not_open():
     det, clock = make()
     assert det.feed(died(clock)) == []
-    det.tick(clock.at(10), states(box()))
+    det.tick(clock.at(10), states(box()), host_id="h1")
     clock.at(9 * 60)
     assert det.feed(died(clock)) == []
 
@@ -132,7 +132,7 @@ def test_deaths_outside_the_window_do_not_add_up():
     for minute in (0, 6, 12):
         clock.at(minute * 60)
         assert det.feed(died(clock)) == []
-        det.tick(clock.at(minute * 60 + 5), states(box()))
+        det.tick(clock.at(minute * 60 + 5), states(box()), host_id="h1")
 
 
 def test_deaths_are_counted_per_container():
@@ -144,17 +144,10 @@ def test_deaths_are_counted_per_container():
 H2_SVC = Subject(kind="service", host_id="h2", service_id="web")
 
 
-def died_on(subject: Subject, clock: Clock, container="web-1") -> Signal:
-    detail = {"exit_code": 1, "restart_policy": "always"}
-    return Signal(
-        subject=subject, kind="container_died", at=clock.now, detail=detail, container=container
-    )
-
-
 def test_same_named_deaths_on_two_hosts_are_tracked_separately():
     det, clock = make()
-    det.feed(died_on(SVC, clock))
-    det.feed(died_on(H2_SVC, clock))  # not dropped as "already pending"
+    det.feed(died(clock))
+    det.feed(died(clock, subject=H2_SVC))  # not dropped as "already pending"
     out = det.tick(clock.at(20), states(box(health="healthy")), host_id="h1")
     assert [type(o) for o in out] == [Recovered]
     out = det.tick(clock.at(90), states(box(state="exited")), host_id="h2")
@@ -164,29 +157,39 @@ def test_same_named_deaths_on_two_hosts_are_tracked_separately():
 
 def test_a_recovery_on_one_host_leaves_the_other_hosts_death_pending():
     det, clock = make()
-    det.feed(died_on(SVC, clock))
-    det.feed(died_on(H2_SVC, clock))
-    det.tick(clock.at(20), states(box(health="healthy")), host_id="h2")
-    out = det.tick(clock.at(90), states(box(state="exited")), host_id="h1")
+    det.feed(died(clock))
+    det.feed(died(clock, subject=H2_SVC))
+    det.tick(clock.at(20), states(box(health="healthy")), host_id="h1")
+    out = det.tick(clock.at(90), states(box(state="exited")), host_id="h2")
     assert isinstance(out[0], OpenIncident)
-    assert out[0].subject == SVC
+    assert out[0].subject == H2_SVC
+
+
+def test_a_signal_for_one_hosts_container_does_not_take_the_others_pending_death():
+    det, clock = make()
+    death = died(clock)
+    det.feed(death)
+    out = det.feed(sig(H2_SVC, "unhealthy", clock, container="web-1"))
+    assert [x.kind for x in out[0].signals] == ["unhealthy"]
+    out = det.tick(clock.at(90), states(box(state="exited")), host_id="h1")
+    assert out[0].signals[0] == death
 
 
 def test_deaths_on_different_hosts_never_add_up_to_a_restart_loop():
     det, clock = make()
     for minute, subject in enumerate((SVC, H2_SVC, SVC, H2_SVC)):
         clock.at(minute * 60)
-        assert det.feed(died_on(subject, clock)) == []
+        assert det.feed(died(clock, subject=subject)) == []
 
 
 def test_three_deaths_on_one_host_still_loop_while_the_other_host_has_one():
     det, clock = make()
-    det.feed(died_on(H2_SVC, clock))
+    det.feed(died(clock, subject=H2_SVC))
     for minute in (0, 1):
         clock.at(minute * 60)
-        det.feed(died_on(SVC, clock))
+        det.feed(died(clock))
     clock.at(150)
-    out = det.feed(died_on(SVC, clock))
+    out = det.feed(died(clock))
     assert isinstance(out[0], OpenIncident)
     assert out[0].subject == SVC
 
@@ -196,13 +199,15 @@ def test_one_shot_exit_zero_without_restart_policy_ignored():
     for policy in ("no", ""):
         out = det.feed(died(clock, exit_code=0, restart_policy=policy))
         assert out[0] == Ignored("one-shot exit 0")
-    assert det.tick(clock.at(100), states(box(state="exited"))) == []
+    assert det.tick(clock.at(100), states(box(state="exited")), host_id="h1") == []
 
 
 def test_exit_zero_under_a_restart_policy_is_a_normal_death():
     det, clock = make()
     assert det.feed(died(clock, exit_code=0, restart_policy="always")) == []
-    assert isinstance(det.tick(clock.at(61), states(box(state="exited")))[0], OpenIncident)
+    assert isinstance(
+        det.tick(clock.at(61), states(box(state="exited")), host_id="h1")[0], OpenIncident
+    )
 
 
 def test_one_url_failure_does_not_open_two_do():
@@ -281,18 +286,20 @@ def test_debounce_also_covers_tick_opens():
     det, clock = make()
     det.feed(sig(SVC, "unhealthy", clock, container="web-1"))
     det.feed(died(clock, container="web-2"))
-    out = det.tick(clock.at(61), states(box(state="exited", name="web-2")))
+    out = det.tick(clock.at(61), states(box(state="exited", name="web-2")), host_id="h1")
     assert [type(o) for o in out] == [OpenIncident]  # window over at 61 s
     det.feed(died(clock, container="web-3"))
-    out = det.tick(clock.at(122), states(box(state="exited", name="web-3")))
+    out = det.tick(clock.at(122), states(box(state="exited", name="web-3")), host_id="h1")
     assert isinstance(out[0], OpenIncident)
 
 
 def test_pending_death_is_not_reported_twice():
     det, clock = make()
     det.feed(died(clock))
-    assert isinstance(det.tick(clock.at(61), states(box(state="exited")))[0], OpenIncident)
-    assert det.tick(clock.at(100), states(box(state="exited"))) == []
+    assert isinstance(
+        det.tick(clock.at(61), states(box(state="exited")), host_id="h1")[0], OpenIncident
+    )
+    assert det.tick(clock.at(100), states(box(state="exited")), host_id="h1") == []
 
 
 async def test_explain_recovery_wraps_logs_as_untrusted_and_returns_one_sentence():
@@ -327,14 +334,14 @@ def test_late_tick_still_sees_a_container_that_was_healthy_in_time():
     s = died(clock)
     det.feed(s)
     up = box(health="healthy").model_copy(update={"started_at": T0 + timedelta(seconds=20)})
-    assert det.tick(clock.at(62), states(up)) == [Recovered("web-1", [s])]
+    assert det.tick(clock.at(62), states(up), host_id="h1") == [Recovered("web-1", [s])]
 
 
 def test_late_tick_with_a_container_started_after_grace_opens():
     det, clock = make()
     det.feed(died(clock))
     up = box(health="healthy").model_copy(update={"started_at": T0 + timedelta(seconds=61)})
-    assert isinstance(det.tick(clock.at(62), states(up))[0], OpenIncident)
+    assert isinstance(det.tick(clock.at(62), states(up), host_id="h1")[0], OpenIncident)
 
 
 def test_unhealthy_during_grace_does_not_open_a_second_incident():
@@ -344,15 +351,15 @@ def test_unhealthy_during_grace_does_not_open_a_second_incident():
     out = det.feed(sig(SVC, "unhealthy", clock, container="web-1"))
     assert [type(o) for o in out] == [OpenIncident]
     assert [x.kind for x in out[0].signals] == ["container_died", "unhealthy"]
-    assert det.tick(clock.at(61), states(box(state="exited"))) == []
+    assert det.tick(clock.at(61), states(box(state="exited")), host_id="h1") == []
 
 
 def test_state_empties_after_the_windows_pass():
     det, clock = make()
     det.feed(died(clock))
     det.feed(sig(HOST, "disk", clock, percent=95))
-    det.tick(clock.at(10), states(box()))
-    det.tick(clock.at(700), states(box()))
+    det.tick(clock.at(10), states(box()), host_id="h1")
+    det.tick(clock.at(700), states(box()), host_id="h1")
     assert not det._deaths and not det._window_start and not det._pending
 
 
@@ -380,8 +387,8 @@ def test_a_start_older_than_the_death_never_counts_as_a_recovery():
     clock.at(100)
     d.feed(died(clock))
     old = box("running").model_copy(update={"started_at": T0 + timedelta(seconds=10)})
-    assert d.tick(clock.at(105), {"web": [old]}) == []
-    out = d.tick(clock.at(170), {"web": [old]})
+    assert d.tick(clock.at(105), {"web": [old]}, host_id="h1") == []
+    out = d.tick(clock.at(170), {"web": [old]}, host_id="h1")
     assert [type(o) for o in out] == [OpenIncident]
 
 
@@ -390,7 +397,7 @@ def test_a_start_after_the_death_inside_grace_is_a_recovery():
     clock.at(100)
     d.feed(died(clock))
     new = box("running").model_copy(update={"started_at": T0 + timedelta(seconds=103)})
-    [out] = d.tick(clock.at(105), {"web": [new]})
+    [out] = d.tick(clock.at(105), {"web": [new]}, host_id="h1")
     assert isinstance(out, Recovered)
 
 

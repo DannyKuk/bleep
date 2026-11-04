@@ -48,15 +48,12 @@ class Feed:
     def __init__(self, detector: Detector, clock) -> None:
         self.detector = detector
         self._clock = clock
-        self._states: dict[str, dict[str, list[ContainerSummary]]] = {}
 
     async def sink(self, signal: Signal) -> None:
         self._record(self.detector.feed(signal))
 
     async def snapshot(self, host_id, states) -> None:
-        self._states[host_id] = states
-        merged = {sid: cs for host in self._states.values() for sid, cs in host.items()}
-        self._record(self.detector.tick(self._clock(), merged))
+        self._record(self.detector.tick(self._clock(), states, host_id))
 
     def _record(self, outcomes: list[Outcome]) -> None:
         pass

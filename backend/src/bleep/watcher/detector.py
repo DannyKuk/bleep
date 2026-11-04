@@ -125,13 +125,13 @@ class Detector:
         self,
         now: datetime,
         states: dict[str, list[ContainerSummary]],
-        host_id: str | None = None,
+        host_id: str,
     ) -> list[Outcome]:
         """Resolve pending deaths against current container states (keyed by service id).
 
-        With `host_id`, `states` is that host's fresh listing and only that host's deaths are
-        judged; another host's deaths wait for its own listing, so a host that stopped answering
-        is never judged by its last, stale one. Without it every pending death is judged.
+        `states` is `host_id`'s fresh listing and only that host's deaths are judged; another
+        host's deaths wait for its own listing, so a host that stopped answering is never judged
+        by its last, stale one.
 
         A container running with health healthy or none whose `started_at` is within the grace
         window of the death (and not before it) is recovered whenever it is first seen, even on a
@@ -151,8 +151,8 @@ class Detector:
         for key in [k for k, at in self._window_start.items() if now - at >= debounce]:
             del self._window_start[key]
         for key, death in list(self._pending.items()):
-            container = key[1]
-            if host_id is not None and death.subject.host_id != host_id:
+            _, container = key
+            if death.subject.host_id != host_id:
                 continue
             elapsed = now - death.at
             current = by_name.get(container)
