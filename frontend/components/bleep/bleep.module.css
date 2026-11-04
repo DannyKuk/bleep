@@ -1,0 +1,227 @@
+/* Bleep's motion (the Appendix of the redesign spec). Every animated group turns around a point
+   given in viewBox units, so transform-box is the view box, not the group's own bounding box. */
+
+.bleep {
+  overflow: visible;
+}
+
+.bleep g,
+.bleep circle {
+  transform-box: view-box;
+}
+
+.breathe {
+  animation: bob 2.8s ease-in-out infinite;
+}
+.hop {
+  animation: bob 0.55s ease-in-out infinite;
+}
+
+.head {
+  transform-origin: 60px 72px;
+}
+.tilt {
+  animation: tilt 2.6s ease-in-out infinite;
+}
+
+.eyes {
+  transform-origin: 60px 46px;
+}
+.headEyes {
+  transform-origin: 60px 58px;
+}
+.blink {
+  animation: blink 4.2s infinite;
+}
+.wander {
+  animation: wander 5s ease-in-out infinite;
+}
+/* A new mood opens the eyes on the new expression, so the change reads as the same bot reacting. */
+.react {
+  transform-origin: 60px 46px;
+  animation: react 0.35s ease-out;
+}
+.eyeColour {
+  transition: stroke 0.4s ease;
+}
+
+.handLeft {
+  transform-origin: 40px 82px;
+}
+.handRight {
+  transform-origin: 80px 82px;
+}
+/* The hand's place moves, rather than jumps, when the mood changes. */
+.place {
+  transition: transform 0.45s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+.float {
+  animation: float 2.2s ease-in-out infinite;
+}
+.float2 {
+  animation: float 2.2s ease-in-out 0.7s infinite;
+}
+.wave {
+  transform-origin: 100px 98px;
+  animation: wave 3.6s ease-in-out infinite;
+}
+.flailL {
+  animation: flailL 0.55s ease-in-out infinite;
+}
+.flailR {
+  animation: flailR 0.55s ease-in-out infinite;
+}
+.scratch {
+  transform-origin: 40px 80px;
+  animation: scratch 0.4s ease-in-out infinite;
+}
+
+.light {
+  transition: fill 0.4s ease;
+}
+.pulse {
+  animation: pulse 1s infinite;
+}
+.slowpulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+.question {
+  animation: question 1.6s ease-in-out infinite;
+}
+
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2.5px);
+  }
+}
+@keyframes blink {
+  0%,
+  90%,
+  100% {
+    transform: scaleY(1);
+  }
+  94% {
+    transform: scaleY(0.1);
+  }
+}
+@keyframes wander {
+  0%,
+  18% {
+    transform: translate(0, 0);
+  }
+  25%,
+  43% {
+    transform: translate(-5px, -2px);
+  }
+  50%,
+  68% {
+    transform: translate(5px, 1px);
+  }
+  75%,
+  93% {
+    transform: translate(2px, -3px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+@keyframes wave {
+  0%,
+  45%,
+  100% {
+    transform: rotate(0);
+  }
+  10%,
+  30% {
+    transform: rotate(16deg);
+  }
+  20%,
+  40% {
+    transform: rotate(-5deg);
+  }
+}
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+@keyframes flailL {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  50% {
+    transform: rotate(18deg);
+  }
+}
+@keyframes flailR {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  50% {
+    transform: rotate(-18deg);
+  }
+}
+@keyframes scratch {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  50% {
+    transform: rotate(-9deg);
+  }
+}
+@keyframes tilt {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  50% {
+    transform: rotate(-6deg);
+  }
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+@keyframes question {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  50% {
+    transform: translateY(-3px);
+    opacity: 0.55;
+  }
+}
+@keyframes react {
+  from {
+    transform: scaleY(0.1);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bleep,
+  .bleep * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
