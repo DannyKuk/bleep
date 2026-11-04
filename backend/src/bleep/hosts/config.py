@@ -3,6 +3,7 @@
 Secrets never appear in the file. A secret is a reference, {env: NAME} or {file: PATH}.
 """
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -19,9 +20,12 @@ from pydantic import (
     model_validator,
 )
 
+from bleep.hosts.coolify_names import coolify_slug
+
 # A GitHub repo, owner/name; `.` and `..` are no names, since they would change a request's path.
 REPO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/(?!\.\.?$)[A-Za-z0-9._-]{1,100}")
 MAX_DOCS_PATH = 300
+log = logging.getLogger(__name__)
 
 
 class HostsFileError(Exception):
@@ -182,9 +186,25 @@ def load_hosts_file(path: Path) -> HostsFile:
     except (OSError, yaml.YAMLError) as error:
         raise HostsFileError(f"cannot read hosts file {path}: {error}") from error
     try:
-        return HostsFile.model_validate(data)
+        hosts_file = HostsFile.model_validate(data)
     except ValidationError as error:
         raise HostsFileError(f"invalid hosts file {path}:\n{error}") from error
+    _warn_empty_slugs(hosts_file)
+    return hosts_file
+
+
+def _warn_empty_slugs(hosts_file: HostsFile) -> None:
+    for host in hosts_file.hosts:
+        for overrides in host.services.values():
+            for name in overrides.protected_containers:
+                if not coolify_slug(name):
+                    log.warning(
+                        "host %s: protected entry %r has no letters or digits for Coolify's slug,"
+                        " so it protects nothing by a Coolify name; protect the application by"
+                        " its uuid",
+                        host.id,
+                        name,
+                    )
 
 
 def resolve_secret(ref: SecretRef) -> SecretStr:

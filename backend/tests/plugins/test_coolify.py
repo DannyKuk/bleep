@@ -445,6 +445,8 @@ async def test_a_coolify_failure_is_a_result_for_the_model_not_a_crash(env):
     [
         {"bleep.self": "true"},  # by its uuid label
         {"bleep.self": "true", "coolify.applicationUuid": ""},  # by its resource name alone
+        # an older Coolify's label that is not in slug form
+        {"bleep.self": "true", "coolify.applicationUuid": "", "coolify.resourceName": "Blog"},
     ],
 )
 async def test_bleeps_own_application_is_never_shown_or_read(tmp_path, labels):

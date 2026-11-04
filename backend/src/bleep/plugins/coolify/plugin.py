@@ -45,8 +45,8 @@ from bleep.guard.plan_check import (
     check_params,
     check_target,
     coolify_app_uuid,
-    coolify_slug,
 )
+from bleep.hosts.coolify_names import name_matches
 from bleep.hosts.discovery import is_self
 from bleep.hosts.registry import Registry
 from bleep.plugins import urls
@@ -137,9 +137,7 @@ def _not_own(apps: list[CoolifyApplication], registry: Registry) -> list[Coolify
     own = [c for c in own if is_self(c.labels)]
     uuids = {c.labels[_UUID_LABEL] for c in own if c.labels.get(_UUID_LABEL)}
     names = {c.labels[COOLIFY_NAME] for c in own if c.labels.get(COOLIFY_NAME)}
-    return [
-        a for a in apps if a.uuid not in uuids and not (a.name and coolify_slug(a.name) in names)
-    ]
+    return [a for a in apps if a.uuid not in uuids and not (a.name and name_matches(a.name, names))]
 
 
 def _no_userinfo(text: str) -> str:

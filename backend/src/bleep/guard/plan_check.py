@@ -8,12 +8,12 @@ See docs/design/guard.md.
 import json
 import re
 import typing
-import unicodedata
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from bleep.hosts.config import UrlCheckConfig
+from bleep.hosts.coolify_names import name_matches
 from bleep.hosts.discovery import is_self
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
@@ -303,11 +303,9 @@ def check_target(number: int, step: PlanStep, registry: Registry) -> list[Violat
         # Coolify names an app's containers anew at every deploy, so its uuid and its name
         # protect it too, not only a container name that lasts until the next deploy. The name
         # label is Coolify's slug of the app's name, so a protected name is compared slugged, and
-        # also exactly, for a label an older Coolify wrote that is not in slug form.
+        # also exactly and in any case, for a label an older Coolify wrote that is not a slug.
         names = {n for c in members if (n := c.labels.get(COOLIFY_NAME))}
-        held = sorted(uuids & protected) + sorted(
-            p for p in protected if p in names or coolify_slug(p) in names
-        )
+        held = sorted(uuids & protected) + sorted(p for p in protected if name_matches(p, names))
         if held:
             return refuse(
                 "protected", f"the Coolify application {held[0]} is protected in the hosts file"
@@ -404,19 +402,6 @@ def coolify_app_uuid(registry: Registry, step: PlanStep) -> str:
     if len(uuids) != 1:
         raise NoCoolifyApp(step.target)
     return uuids.pop()
-
-
-def coolify_slug(name: str) -> str:
-    """`name` as Coolify writes it into `coolify.resourceName`: Laravel's `Str::slug`
-    (`defaultLabels` in Coolify's bootstrap/helpers/docker.php). Lower-case ASCII, `_` and runs
-    of spaces or `-` become one `-`, `@` reads `at`, anything else that is not a letter or a
-    digit is dropped, and `-` is trimmed: `Shop API` is `shop-api`, `static:main` `staticmain`.
-    Laravel transliterates with a table; NFKD with the marks dropped stands in for it, so a
-    name with `ß`, `Ł` or a non-Latin script slugs differently (docs/design/guard.md, Limits)."""
-    text = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
-    text = re.sub(r"_+", "-", text).replace("@", "-at-")
-    text = re.sub(r"[^-a-z0-9\s]+", "", text.lower())
-    return re.sub(r"[-\s]+", "-", text).strip("-")
 
 
 def protected_names(host) -> set[str]:
