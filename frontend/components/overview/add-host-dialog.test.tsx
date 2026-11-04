@@ -42,6 +42,8 @@ describe("Adding a host from the overview", () => {
 
     await userEvent.click(plus());
     expect(dialog()).toHaveTextContent("Only SSH hosts can be added here.");
+    expect(dialog()).toHaveTextContent("We recommend a new key just for Bleep");
+    expect(within(dialog()!).getByText(/^ssh-keygen -t ed25519/)).toBeInTheDocument();
     expect(within(dialog()!).getByLabelText("SSH private key")).toHaveValue("");
     await userEvent.click(within(dialog()!).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(dialog()).toBeNull());
