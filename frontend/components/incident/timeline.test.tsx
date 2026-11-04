@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { event } from "@/components/incident/fixtures";
+import { event, incident } from "@/components/incident/fixtures";
 import { Timeline } from "@/components/incident/timeline";
 
 describe("Timeline", () => {
@@ -60,5 +60,101 @@ describe("Timeline", () => {
       expect.stringContaining("Check 1 failed"),
       expect.stringContaining("Check 2 passed"),
     ]);
+  });
+
+  it("colours each line's dot by what it means", () => {
+    render(
+      <Timeline
+        events={[
+          event("node_started", { node: "gather" }),
+          event("node_finished", { node: "gather" }),
+          event("node_started", { node: "investigate" }),
+          event("decision", { kind: "approve", text: null, via: "dashboard" }),
+          event("action", { action: "docker.start", target: "shop-web-1", status: "failed" }),
+          event("verification", { ok: true, attempt: 1, checks: [] }),
+          event("node_started", { node: "approval" }),
+        ]}
+      />,
+    );
+    const dots = within(screen.getByRole("list", { name: "Timeline" }))
+      .getAllByRole("listitem")
+      .map((item) => item.querySelector("span[aria-hidden]")!.className);
+    expect(dots[0]).toContain("bg-line");
+    expect(dots[1]).toContain("bg-warn");
+    expect(dots[2]).toContain("bg-accent");
+    expect(dots[3]).toContain("bg-down");
+    expect(dots[4]).toContain("bg-ok");
+    expect(dots[5]).toContain("bg-down");
+  });
+
+  it("starts with what opened the incident and ends with how it ended", () => {
+    render(
+      <Timeline
+        events={[
+          event("node_started", { node: "report" }),
+          event("node_finished", { node: "report" }),
+        ]}
+        incident={incident({ status: "resolved", closed_at: "2026-11-02T18:06:00Z" })}
+      />,
+    );
+    const items = within(screen.getByRole("list", { name: "Timeline" })).getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual([
+      expect.stringContaining("shop-web-1 died"),
+      expect.stringContaining("Wrote the report"),
+      expect.stringContaining("Resolved"),
+    ]);
+    expect(items[0].querySelector("span[aria-hidden]")).toHaveClass("bg-down");
+    expect(items[2].querySelector("span[aria-hidden]")).toHaveClass("bg-ok");
+  });
+
+  it("stops showing the wait as running once the plan was answered and the node resumed", () => {
+    render(
+      <Timeline
+        events={[
+          event("node_started", { node: "approval" }),
+          event("decision", { kind: "approve", text: null, via: "telegram" }),
+          event("node_started", { node: "approval" }),
+          event("node_finished", { node: "approval" }),
+        ]}
+      />,
+    );
+    const [waited, , answered] = within(
+      screen.getByRole("list", { name: "Timeline" }),
+    ).getAllByRole("listitem");
+    expect(waited).toHaveTextContent("Waiting for your answer");
+    expect(waited.querySelector("span[aria-hidden]")).toHaveClass("bg-line");
+    expect(answered).toHaveTextContent("Answered");
+  });
+
+  it("shows nothing as running once the incident ended, and where a failed run stopped", () => {
+    render(
+      <Timeline
+        events={[event("node_started", { node: "investigate" })]}
+        incident={incident({ status: "failed", closed_at: "2026-11-02T18:06:00Z" })}
+      />,
+    );
+    const items = within(screen.getByRole("list", { name: "Timeline" })).getAllByRole("listitem");
+    expect(items[1]).toHaveTextContent("Investigating");
+    expect(items[1].querySelector("span[aria-hidden]")).toHaveClass("bg-down");
+    expect(items[1].querySelector("span[aria-hidden]")).not.toHaveClass(
+      "motion-safe:animate-pulse",
+    );
+    expect(items[2]).toHaveTextContent("Failed");
+  });
+
+  it("ends the wait as soon as the answer arrives", () => {
+    render(
+      <Timeline
+        events={[
+          event("node_started", { node: "approval" }),
+          event("decision", { kind: "reject", text: null, via: "telegram" }),
+        ]}
+      />,
+    );
+    const [waited] = within(screen.getByRole("list", { name: "Timeline" })).getAllByRole(
+      "listitem",
+    );
+    expect(waited.querySelector("span[aria-hidden]")).toHaveClass("bg-line");
+    expect(waited.querySelector("span[aria-hidden]")).not.toHaveClass("motion-safe:animate-pulse");
   });
 });

@@ -31,8 +31,8 @@ const decided = (kind: string, via: string, text: string | null = null) => ({
 
 function buttons() {
   return [
-    screen.getByRole("button", { name: "Approve" }),
-    screen.getByRole("button", { name: "Reject" }),
+    screen.getByRole("button", { name: "Yes, go ahead" }),
+    screen.getByRole("button", { name: "No, leave it" }),
     screen.getByRole("button", { name: "Tell Bleep something" }),
   ];
 }
@@ -43,12 +43,12 @@ const refusedApproval = () =>
   });
 
 describe("DecisionBar", () => {
-  it("offers a refused plan an instruction and Let it go, never Approve", async () => {
+  it("offers a refused plan an instruction and Let it go, never Yes, go ahead", async () => {
     const fetchMock = reply(200, decided("instruct", "dashboard", "restart shop-proxy-1"));
     render(<DecisionBar incidentId="inc-1" approval={refusedApproval()} onDecided={vi.fn()} />);
 
-    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Yes, go ahead" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "No, leave it" })).toBeNull();
     expect(screen.getByRole("button", { name: "Let it go" })).toBeEnabled();
 
     await userEvent.click(screen.getByRole("button", { name: "Tell Bleep something" }));
@@ -60,6 +60,16 @@ describe("DecisionBar", () => {
       kind: "instruct",
       text: "restart shop-proxy-1",
     });
+  });
+
+  it("offers no yes for a refused plan stored before the refused flag", () => {
+    const reason = "Bleep's own checks refused the proposed plan twice, so nothing will run.";
+    const legacy = approval({
+      proposal: proposal({ kind: "no_action", steps: [], refused: undefined, reason }),
+    });
+    render(<DecisionBar incidentId="inc-1" approval={legacy} onDecided={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Yes, go ahead" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Let it go" })).toBeEnabled();
   });
 
   it("says a refused plan was let go, not rejected", async () => {
@@ -87,7 +97,7 @@ describe("DecisionBar", () => {
     const onDecided = vi.fn();
     render(<DecisionBar incidentId="inc-1" approval={approval()} onDecided={onDecided} />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await userEvent.click(screen.getByRole("button", { name: "Yes, go ahead" }));
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/incidents/inc-1/decision",
@@ -106,7 +116,7 @@ describe("DecisionBar", () => {
     const onDecided = vi.fn();
     render(<DecisionBar incidentId="inc-1" approval={approval()} onDecided={onDecided} />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Reject" }));
+    await userEvent.click(screen.getByRole("button", { name: "No, leave it" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Already decided on Telegram");
     for (const button of buttons()) expect(button).toBeDisabled();
@@ -117,7 +127,7 @@ describe("DecisionBar", () => {
     reply(500, { detail: "Internal Server Error" });
     render(<DecisionBar incidentId="inc-1" approval={approval()} onDecided={vi.fn()} />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await userEvent.click(screen.getByRole("button", { name: "Yes, go ahead" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/Internal Server Error/);
     for (const button of buttons()) expect(button).toBeEnabled();
@@ -139,6 +149,12 @@ describe("DecisionBar", () => {
       text: "Check the database first",
     });
     expect(await screen.findByRole("status")).toHaveTextContent(/Check the database first/);
+  });
+
+  it("caps an instruction at 2,000 characters", async () => {
+    render(<DecisionBar incidentId="inc-1" approval={approval()} onDecided={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Tell Bleep something" }));
+    expect(screen.getByRole("textbox")).toHaveAttribute("maxlength", "2000");
   });
 
   it("shows a decision made elsewhere with the buttons locked", () => {

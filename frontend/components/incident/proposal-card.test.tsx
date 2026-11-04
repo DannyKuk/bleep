@@ -1,8 +1,9 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { approval, proposal } from "@/components/incident/fixtures";
-import { ProposalCard } from "@/components/incident/proposal-card";
+import { approval, detail, event, incident, proposal } from "@/components/incident/fixtures";
+import { planRun } from "@/components/incident/plan-run";
+import { planTitle, ProposalCard } from "@/components/incident/proposal-card";
 
 describe("ProposalCard", () => {
   it("shows the plan put to the human, with the decision bar while it waits", () => {
@@ -19,7 +20,7 @@ describe("ProposalCard", () => {
     const steps = within(screen.getByRole("list", { name: "Steps" }));
     expect(steps.getByText("docker.start")).toBeInTheDocument();
     expect(steps.getByText("shop-web-1")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Yes, go ahead" })).toBeEnabled();
   });
 
   it("shows a character that draws nothing in a step's params as a mark", () => {
@@ -156,6 +157,95 @@ describe("ProposalCard", () => {
     );
     expect(screen.getByText("the new plan")).toBeInTheDocument();
     expect(screen.getByText(/Earlier plan/)).toHaveTextContent(/Telegram/);
-    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Yes, go ahead" })).toBeNull();
+  });
+
+  it("shows each step's progress while the plan runs: a spinner, then a check", () => {
+    const twoSteps = proposal({
+      steps: [
+        { action: "docker.start", host_id: "demo", target: "shop-db-1", params: {} },
+        { action: "docker.restart", host_id: "demo", target: "shop-api-1", params: {} },
+      ],
+    });
+    const run = planRun([
+      event("proposal", {}),
+      event("action", { action: "docker.start", target: "shop-db-1", status: "started" }),
+      event("action", { action: "docker.start", target: "shop-db-1", status: "done" }),
+      event("action", { action: "docker.restart", target: "shop-api-1", status: "started" }),
+    ]);
+    render(
+      <ProposalCard
+        incidentId="inc-1"
+        proposal={twoSteps}
+        approval={null}
+        onDecided={vi.fn()}
+        run={run}
+        status="executing"
+      />,
+    );
+    const [first, second] = within(screen.getByRole("list", { name: "Steps" })).getAllByRole(
+      "listitem",
+    );
+    expect(first).toHaveTextContent("Step 1, done:");
+    expect(second).toHaveTextContent("Step 2, running:");
+    expect(screen.queryByRole("list", { name: "Checks" })).toBeNull();
+  });
+
+  it("shows the planned checks as pending pills while it verifies, then their results", () => {
+    const props = {
+      incidentId: "inc-1",
+      proposal: proposal(),
+      approval: null,
+      onDecided: vi.fn(),
+    };
+    const { rerender } = render(<ProposalCard {...props} run={planRun([])} status="verifying" />);
+    let pills = within(screen.getByRole("list", { name: "Checks" })).getAllByRole("listitem");
+    expect(pills.map((pill) => pill.textContent)).toEqual([
+      "Checking:shop-web-1",
+      "Checking:http://localhost:8080/",
+    ]);
+
+    const checked = planRun([
+      event("verification", {
+        ok: false,
+        attempt: 1,
+        checks: [
+          { kind: "container", target: "shop-web-1", ok: true, detail: "running" },
+          { kind: "url", target: "http://localhost:8080/", ok: false, detail: "HTTP 502" },
+        ],
+      }),
+    ]);
+    rerender(<ProposalCard {...props} run={checked} status="verifying" />);
+    pills = within(screen.getByRole("list", { name: "Checks" })).getAllByRole("listitem");
+    expect(pills.map((pill) => pill.textContent)).toEqual([
+      "Passed:shop-web-1running",
+      "Failed:http://localhost:8080/HTTP 502",
+    ]);
+    expect(screen.getByText("Check 1: failed")).toBeInTheDocument();
+  });
+
+  it("names the plan card for where the run is", () => {
+    expect(planTitle(detail())).toBe("Here is my plan");
+    const approved = approval({ status: "approved" });
+    expect(
+      planTitle(detail({ incident: incident({ status: "executing" }), approval: approved })),
+    ).toBe("Doing it now");
+    expect(
+      planTitle(detail({ incident: incident({ status: "resolved" }), approval: approved })),
+    ).toBe("What I did");
+    expect(
+      planTitle(
+        detail({
+          incident: incident({ status: "closed" }),
+          approval: approval({ status: "rejected" }),
+          outcome: "rejected",
+        }),
+      ),
+    ).toBe("The plan you said no to");
+    expect(planTitle(detail({ proposal: null, approval: null }))).toBe("My plan");
+    const refused = proposal({ kind: "no_action", steps: [], refused: true });
+    expect(planTitle(detail({ approval: approval({ proposal: refused }) }))).toBe(
+      "No plan I may run",
+    );
   });
 });

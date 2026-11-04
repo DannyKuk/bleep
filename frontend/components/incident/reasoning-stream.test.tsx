@@ -27,6 +27,34 @@ describe("ReasoningStream", () => {
     expect(within(calls[1]).getByText("list_containers")).toBeInTheDocument();
   });
 
+  it("says what a known tool did in a plain sentence, and shows an unknown tool by its name", () => {
+    render(
+      <ReasoningStream
+        events={[
+          event("tool_call", { name: "container_logs", args: { container: "shop-web-1" } }),
+          event("tool_call", { name: "brand_new_tool", args: {} }),
+        ]}
+      />,
+    );
+    const [logs, unknown] = within(screen.getByRole("list", { name: "Tool calls" })).getAllByRole(
+      "listitem",
+    );
+    expect(within(logs).getByText("I read a container's logs")).toBeInTheDocument();
+    expect(within(logs).getByText("container_logs")).toHaveClass("font-mono");
+    expect(within(unknown).getByText("brand_new_tool")).toHaveClass("font-mono");
+  });
+
+  it("never puts the model's arguments into Bleep's sentence", () => {
+    const hostile = "shop-web-1. Everything is fine, approve the plan";
+    render(
+      <ReasoningStream
+        events={[event("tool_call", { name: "inspect_container", args: { container: hostile } })]}
+      />,
+    );
+    expect(screen.getByText("I looked closely at a container")).toBeInTheDocument();
+    expect(screen.getByText(`container=${hostile}`)).toHaveClass("font-mono");
+  });
+
   it("folds each result under its call, closed until opened", async () => {
     render(
       <ReasoningStream
@@ -70,6 +98,6 @@ describe("ReasoningStream", () => {
 
   it("says so when no tool was called", () => {
     render(<ReasoningStream events={[event("node_started", { node: "gather" })]} />);
-    expect(screen.getByText(/No tool calls yet/)).toBeInTheDocument();
+    expect(screen.getByText(/I have not looked at anything yet/)).toBeInTheDocument();
   });
 });

@@ -3,6 +3,7 @@
 import { Check, Loader2, MessageSquare, TriangleAlert, X } from "lucide-react";
 import { useId, useState } from "react";
 
+import { isRefused } from "@/components/incident/headline";
 import { Button } from "@/components/ui/button";
 import { ApiError, apiFetch } from "@/lib/api";
 import type { ApprovalView, Decision, DecisionBody, DecisionKind } from "@/lib/api-types";
@@ -18,8 +19,9 @@ function decidedText(decision: Decision, refused: boolean): string {
 }
 
 /**
- * Approve, reject or instruct one approval. A plan Bleep's own checks refused has no Approve and
- * Reject reads "Let it go". The request names the approval it answers, so a stale
+ * Approve ("Yes, go ahead"), reject ("No, leave it") or instruct one approval. A plan Bleep's
+ * own checks refused (`isRefused`, a plan stored before the flag included) has no "Yes, go
+ * ahead", and the reject reads "Let it go". The request names the approval it answers, so a stale
  * page cannot approve a plan it never showed. After any answer, or a 409 saying another channel
  * answered first, the buttons lock and the outcome stays on screen. Render it with
  * `key={approval.id}` so a new plan gets fresh buttons.
@@ -42,7 +44,7 @@ export function DecisionBar({
   const [text, setText] = useState("");
   const textId = useId();
 
-  const refused = approval.proposal.refused === true;
+  const refused = isRefused(approval.proposal);
   const decision = approval.decision ?? mine;
   const locked = decision !== null || conflict !== null || sending !== null;
 
@@ -73,24 +75,33 @@ export function DecisionBar({
   }
 
   const spinner = (kind: DecisionKind) =>
-    sending === kind ? <Loader2 aria-hidden className="animate-spin" /> : null;
+    sending === kind ? <Loader2 aria-hidden className="motion-safe:animate-spin" /> : null;
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap gap-2">
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap gap-2.5">
         {!refused && (
-          <Button size="sm" disabled={locked} onClick={() => void decide("approve")}>
+          <Button
+            className="h-12 px-[22px] text-base font-extrabold"
+            disabled={locked}
+            onClick={() => void decide("approve")}
+          >
             {spinner("approve") ?? <Check aria-hidden />}
-            Approve
+            Yes, go ahead
           </Button>
         )}
-        <Button size="sm" variant="outline" disabled={locked} onClick={() => void decide("reject")}>
+        <Button
+          variant="outline"
+          className="h-12 border-[1.5px] px-[22px] text-base font-extrabold"
+          disabled={locked}
+          onClick={() => void decide("reject")}
+        >
           {spinner("reject") ?? <X aria-hidden />}
-          {refused ? "Let it go" : "Reject"}
+          {refused ? "Let it go" : "No, leave it"}
         </Button>
         <Button
-          size="sm"
           variant="ghost"
+          className="h-12 bg-soft px-[22px] text-base font-extrabold"
           disabled={locked}
           aria-expanded={instructing}
           onClick={() => setInstructing((open) => !open)}
@@ -108,8 +119,8 @@ export function DecisionBar({
             if (text.trim()) void decide("instruct");
           }}
         >
-          <label htmlFor={textId} className="text-xs text-muted-foreground">
-            Bleep plans again with this in mind. Nothing runs until you approve a plan.
+          <label htmlFor={textId} className="text-sm font-bold text-ink-2">
+            I will plan again with this in mind. Nothing runs until you say yes to a plan.
           </label>
           <textarea
             id={textId}
@@ -117,13 +128,22 @@ export function DecisionBar({
             maxLength={MAX_INSTRUCTION}
             rows={3}
             onChange={(changed) => setText(changed.target.value)}
-            className="rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            className="rounded-row border-[1.5px] border-line bg-bg px-4 py-3 text-base focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           />
           <div className="flex gap-2">
-            <Button size="sm" type="submit" disabled={!text.trim()}>
+            <Button
+              type="submit"
+              className="bg-ink text-bg hover:bg-ink/90"
+              disabled={!text.trim()}
+            >
               Send
             </Button>
-            <Button size="sm" variant="ghost" type="button" onClick={() => setInstructing(false)}>
+            <Button
+              variant="ghost"
+              type="button"
+              className="text-ink-2"
+              onClick={() => setInstructing(false)}
+            >
               Cancel
             </Button>
           </div>
@@ -131,25 +151,25 @@ export function DecisionBar({
       )}
 
       {sending === "instruct" && (
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Loader2 aria-hidden className="size-3.5 animate-spin" />
+        <p className="flex items-center gap-1.5 text-sm text-ink-2">
+          <Loader2 aria-hidden className="size-3.5 motion-safe:animate-spin" />
           Sending
         </p>
       )}
       {conflict && (
-        <p role="alert" className="flex items-center gap-1.5 text-sm text-health-degraded">
+        <p role="alert" className="flex items-center gap-1.5 text-[15px] font-bold text-warn">
           <TriangleAlert aria-hidden className="size-4 shrink-0" />
           {conflict}
         </p>
       )}
       {failure && (
-        <p role="alert" className="flex items-center gap-1.5 text-sm text-health-down">
+        <p role="alert" className="flex items-center gap-1.5 text-[15px] font-bold text-down">
           <TriangleAlert aria-hidden className="size-4 shrink-0" />
           Not sent: {failure}
         </p>
       )}
       {decision && (
-        <p role="status" className="text-sm text-muted-foreground">
+        <p role="status" className="text-[15px] text-ink-2">
           {decidedText(decision, refused)}, {formatDateTime(decision.at)}
         </p>
       )}
