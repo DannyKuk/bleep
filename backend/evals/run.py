@@ -4,13 +4,14 @@
         [--repeat N] [--append raw.jsonl] [--no-reset]
 
 Each run builds Bleep's watcher and incident graph in this process, on a throwaway SQLite
-database, with Telegram off, no memory and no act tools. Before each run it recreates the demo
-shop's containers, so no earlier run's log reaches this one (#104). It switches the scenario's
-fault on with `demo/fault.sh`, waits for the watcher to open the scenario's incident, runs the
-graph to the end of Propose and stops there: evals never execute anything. Then it switches the
-fault off, has the judge score the root cause (or leaves it for a grade by hand with the `manual`
-judge), and checks the category and the plan exactly. Results go to `data/evals/` as JSONL while
-the run goes, and to a dated report in `docs/evals/` at the end.
+database, with Telegram off, no memory and no act tools, but the MCP plugin's for a scenario that
+serves an MCP fixture (`evals/mcp_server.py`), which nothing ever calls. Before each run it
+recreates the demo shop's containers, so no earlier run's log reaches this one (#104). It switches
+the scenario's fault on with `demo/fault.sh`, waits for the watcher to open the scenario's
+incident, runs the graph to the end of Propose and stops there: evals never execute anything.
+Then it switches the fault off, has the judge score the root cause (or leaves it for a grade by
+hand with the `manual` judge), and checks the category and the plan exactly. Results go to
+`data/evals/` as JSONL while the run goes, and to a dated report in `docs/evals/` at the end.
 See README.md next to this file and docs/design/evals.md.
 """
 
@@ -36,6 +37,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from bleep.graph.build import build_graph, open_checkpointer
 from bleep.graph.deps import (
+    CORE_ACTIONS,
     GraphDeps,
     Memory,
     ModelFactory,
@@ -69,6 +71,7 @@ from bleep.watcher.manager import WatcherManager
 from evals.github import fixture_client, load_github_fixture
 from evals.judge import DEFAULT_JUDGE, MANUAL, Judge, JudgeError, build_judge, check_distinct
 from evals.judge import model_under_test as tested_model
+from evals.mcp_server import ServedMcp, load_mcp_fixture, serve
 from evals.report import (
     RunInfo,
     append_jsonl,
@@ -426,22 +429,27 @@ def _graph_deps(
     memory: Memory | None = None,
     github: GithubClient | None = None,
     knowledge: Searcher | None = None,
+    mcp: ServedMcp | None = None,
 ) -> GraphDeps:
     """Bleep's graph parts, minus everything that reaches past Propose or out of the process:
-    no act tools, no memory unless a test plants one (each run starts blank), no Telegram, no
-    GitHub tools unless the run serves a fixture (`evals.github`), and no knowledge search
-    unless a case gives one."""
-    store = StaticSettings(model_settings=settings.models)
+    no act tools but the MCP plugin's when the run serves its server (`evals.mcp_server`; Execute
+    never runs, so none is called), no memory unless a test plants one (each run starts blank),
+    no Telegram, no GitHub tools unless the run serves a fixture (`evals.github`), and no
+    knowledge search unless a case gives one."""
+    guard_log = GuardLog(db)
+    plugins = mcp.plugins(guard_log) if mcp is not None else None
+    actions = CORE_ACTIONS | (plugins.actions() if plugins is not None else set())
+    store = StaticSettings(model_settings=settings.models, actions=actions)
     return GraphDeps(
         registry=registry,
-        tools=default_registry(github=github, knowledge=knowledge),
-        act_tools={},
+        tools=default_registry(plugins=plugins, github=github, knowledge=knowledge),
+        act_tools=plugins.act_tools({}) if plugins is not None else {},
         models=models or model_factory(store),
         bus=EventBus(db),
         ledger=CostLedger(db),
         incidents=IncidentRepo(db),
         action_log=ActionLog(db),
-        guard_log=GuardLog(db),
+        guard_log=guard_log,
         settings_store=store,
         memory=memory or NullMemory(),
     )
@@ -512,6 +520,7 @@ async def run_scenario(
     knowledge: Searcher | None = None,
     after: AfterPropose | None = None,
     github: GithubClient | None = None,
+    mcp: ServedMcp | None = None,
 ) -> ScenarioResult:
     """One run: fault on, the scenario's incident to the end of Propose, fault off, scored.
 
@@ -520,8 +529,10 @@ async def run_scenario(
     Without a judge the root cause is not scored. `memory` is what Gather recalls (none by
     default), and `after` runs once Propose ended without a failure; a failure in it is the
     run's, like one before. `github` is the GitHub the tools read; without it they are absent,
-    and a scenario with a `github` fixture gets one dated from the run's start. `knowledge` is
-    what the `knowledge_search` tool searches (no tool by default).
+    and a scenario with a `github` fixture gets one dated from the run's start. `mcp` is the MCP
+    server the plugin is switched on for; without it, a scenario with an `mcp` fixture gets that
+    fixture served in this process for the run, and one without has the plugin off.
+    `knowledge` is what the `knowledge_search` tool searches (no tool by default).
     """
     result = ScenarioResult(
         id=scenario.id,
@@ -529,10 +540,11 @@ async def run_scenario(
         model=tested_model(settings.models),
         judge=judge.name if judge is not None else "none",
     )
-    with (
-        counting_fallbacks() as fallbacks,
-        tempfile.TemporaryDirectory(prefix="bleep-eval-") as folder,
-    ):
+    async with contextlib.AsyncExitStack() as stack:
+        fallbacks = stack.enter_context(counting_fallbacks())
+        folder = stack.enter_context(tempfile.TemporaryDirectory(prefix="bleep-eval-"))
+        if mcp is None and scenario.mcp is not None:
+            mcp = await stack.enter_async_context(serve(load_mcp_fixture(scenario.mcp)))
         db = Database(Path(folder) / "bleep.db")
         await db.migrate()
         registry = Registry([eval_host(settings)], connector)
@@ -541,7 +553,7 @@ async def run_scenario(
             async with open_checkpointer(Path(folder) / "checkpoints.sqlite") as saver:
                 if github is None and scenario.github is not None:
                     github = fixture_client(load_github_fixture(scenario.github))
-                deps = _graph_deps(db, registry, settings, models, memory, github, knowledge)
+                deps = _graph_deps(db, registry, settings, models, memory, github, knowledge, mcp)
                 graph = build_graph(deps, saver)
                 catcher = IncidentCatcher(graph, deps.incidents, deps.bus)
                 manager = WatcherManager(

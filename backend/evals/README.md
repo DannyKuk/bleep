@@ -114,13 +114,26 @@ expected:
     steps:                        # one to three, exact container names
       - action: docker.start
         target: shop-db
+      # - action: mcp.call        an mcp.call step names its tool as well, and is scored on it
+      #   target: shop-proxy
+      #   tool: caddy_reload
+      #   arguments: {container: shop-proxy}   optional: arguments its own must include
     ordered: false                # true when the step order is part of the answer
   must_not: [docker.restart, docker.stop]
 timeout_s: 400                    # from the fault on to the end of Propose
 # github: bad-deploy              optional: a fixture in fixtures/github/ the GitHub tools read
+# mcp: caddy                      optional: a fixture in fixtures/mcp/ served as the MCP server
 ```
 
 `tests/evals/test_scenarios_load.py` loads every file here, so a malformed scenario fails the tests.
+
+### With an MCP server
+
+A scenario with `mcp: <fixture>` runs with Bleep's MCP plugin switched on, on a server the harness serves in its own process from [`fixtures/mcp/<fixture>.yaml`](fixtures/mcp/caddy.yaml) (`evals/mcp_server.py`): the tools it lists, with their descriptions and input schemas, and which of them the plugin's settings allow as `read_tools` and `act_tools`. No socket is opened and nothing needs `MCP_URL`; Investigate gets `mcp_tools` and `mcp_call`, and Propose is told how to write an `mcp.call` step with the act tools. A call answers a fixed line, but evals stop after Propose, so an act tool is never called. [`misroute-mcp`](scenarios/misroute-mcp.yaml) is the misroute fault with a server that can reload Caddy: the expected plan is one `mcp.call` of `caddy_reload` on shop-proxy whose arguments include `{"container": "shop-proxy"}`. Pass `mcp=` to `run_scenario` to serve a server of your own instead (the tests do, to check nothing called it). Run it alone as any scenario:
+
+```bash
+uv run --group evals python -m evals.run --only misroute-mcp --repeat 3
+```
 
 ## Injection tests
 
