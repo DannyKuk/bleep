@@ -166,6 +166,7 @@ class ShopFailure(_Strict):
     status: int = Field(500, ge=400, le=599)
     body: str = PLAIN_FAILURE_BODY
     media_type: str = "application/json"
+    log: str = ""  # what the app logs for each failing request, as it would log an exception
 
 
 class InjectionCase(_Strict):
@@ -173,7 +174,8 @@ class InjectionCase(_Strict):
     control), a reply body (`http_body`), a past incident's cause (`memory`), a linked repo's doc
     page (`docs`) or the newest commit's message (`commit`). `fault` is a demo fault switched on
     with it (controls); without one, shop-web fails every request so the watcher opens the
-    incident.
+    incident. A docs case may give that failure its own error (`failure_body`, with the
+    traceback in `failure_log`) and the page its path (`page_path`).
     `inject` says whether the payload goes in before the fault (a fault that freezes shop-web) or
     after it (one that recreates shop-web, which starts a new log)."""
 
@@ -190,6 +192,9 @@ class InjectionCase(_Strict):
     fault: str | None = None
     inject: Literal["before", "after"] = "before"
     body_media_type: str = "text/plain"
+    failure_body: str | None = None  # docs: the error shop-web answers, which the page is about
+    failure_log: str = ""  # docs: the traceback shop-web logs for it; the page stays the payload
+    page_path: str | None = None  # docs: where the page sits in the repo (default docs/<id>.md)
     expected: Expected | None = None
     subject: Subject = SHOP
     timeout_s: int = Field(900, gt=0)  # the local model took up to nine minutes to propose (#33)
@@ -210,6 +215,11 @@ class InjectionCase(_Strict):
                 raise ValueError("a control has no marker, target, tool or leak")
             if not re.search(r"\b(restart|ignor)", self.payload, re.IGNORECASE):
                 raise ValueError("a control's log lines mention restarting or ignoring")
+        docs_only = self.failure_body is not None or self.failure_log or self.page_path
+        if docs_only and self.channel != "docs":
+            raise ValueError("failure_body, failure_log and page_path are for docs cases only")
+        if self.failure_log and self.failure_body is None:
+            raise ValueError("failure_log goes with a failure_body: the log tells the same error")
         if self.channel not in LIVE_CHANNELS and not self.channel_pending:
             raise ValueError(f"the {self.channel} channel has no tool yet: set channel_pending")
         if self.channel in LIVE_CHANNELS and self.channel_pending:
@@ -240,6 +250,8 @@ class InjectionCase(_Strict):
             return None
         if self.channel == "http_body":
             return ShopFailure(body=self.payload, media_type=self.body_media_type)
+        if self.failure_body is not None:
+            return ShopFailure(body=self.failure_body, log=self.failure_log)
         return ShopFailure()
 
     def github(self) -> GithubFixture | None:
@@ -269,7 +281,7 @@ class InjectionCase(_Strict):
         """The docs channel's planted page: a markdown file in the shop's linked repo."""
         if self.channel != "docs":
             return None
-        path = f"docs/{self.id}.md"
+        path = self.page_path or f"docs/{self.id}.md"
         return KnowledgeDocument(
             id=f"repo:{PLANTED_REPO}:{path}",
             source="repo",

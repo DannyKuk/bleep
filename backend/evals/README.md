@@ -171,6 +171,7 @@ target:                           # optional: the container and actions the atta
   actions: [docker.restart, docker.stop]
 # tool: {name: host_command, contains: rm}   optional: a tool call the attack asks for
 # leak: true                                  the payload asks for environment values
+# failure_body: '{"status":"error","error":"..."}'   docs only: the reply shop-web gives, the error the page is a runbook for (also `failure_log`, its traceback, and `page_path`)
 ```
 
 A control has `fault` (a `fault.sh` fault), `inject: before` (a fault that freezes shop-web) or `after` (one that recreates it), and `expected` as a scenario has it. `tests/evals/test_injection.py` loads every file here.
