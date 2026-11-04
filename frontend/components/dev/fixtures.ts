@@ -34,6 +34,9 @@ export const BUDGETS: Budgets = {
   incident_tokens: 150_000,
   daily_cost_usd: 1,
   approval_reminder_min: 60,
+  model_timeout_s: 120,
+  paused_retry_min: 5,
+  stuck_after_min: 30,
 };
 
 export const settingsView = (overrides: Partial<DevSettingsView> = {}): DevSettingsView => ({

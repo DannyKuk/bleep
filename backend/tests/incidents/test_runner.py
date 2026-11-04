@@ -6,13 +6,16 @@ from langchain_core.callbacks import BaseCallbackHandler
 
 from bleep import prompts
 from bleep.graph.build import build_graph, open_checkpointer
+from bleep.graph.deps import StaticSettings
 from bleep.graph.nodes import propose
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.runner import IncidentRunner
 from bleep.schemas.graph import Decision, PlanStep, Proposal, VerificationPlan
 from bleep.schemas.incidents import Subject
-from graph_env import graph_env
+from bleep.schemas.settings import Budgets
+from fakes import FakeChatModel
+from graph_env import confident_model, graph_env, no_wait
 
 M2_PATH = ["gather", "investigate", "diagnose", "propose", "report"]
 
@@ -566,4 +569,134 @@ async def test_a_failing_tracer_never_stops_the_run(tmp_path):
         await runner.join()
 
     assert await env.nodes(incident.id) == M2_PATH
+    assert (await env.repo.get(incident.id)).status == "closed"
+
+
+class HangingModel(FakeChatModel):
+    """Hangs on its first `hangs` calls, then answers from the script."""
+
+    hangs: int = 0
+
+    async def _agenerate(self, *args, **kwargs):
+        if self.hangs > 0:
+            self.hangs -= 1
+            await asyncio.Event().wait()
+        return await super()._agenerate(*args, **kwargs)
+
+
+class Retry:
+    """The runner's `sleep`: records each wait and holds the retry until the test lets it go."""
+
+    def __init__(self) -> None:
+        self.delays: list[float] = []
+        self.waiting = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self, seconds: float) -> None:
+        self.delays.append(seconds)
+        self.waiting.set()
+        await self.release.wait()
+        self.release.clear()
+        self.waiting.clear()
+
+
+async def model_down(tmp_path, hangs: int):
+    """An environment whose model hangs for `hangs` calls, cut off after 10 ms with no waiting."""
+    env = await graph_env(tmp_path)
+    script = confident_model().script
+    env.models.model = HangingModel(script=script, structured_output_unsupported=True, hangs=hangs)
+    env.deps.settings_store = StaticSettings(budget_limits=Budgets(model_timeout_s=0.01))
+    env.deps.model_sleep = no_wait
+    return env
+
+
+async def paused(runner: IncidentRunner, retry: Retry) -> None:
+    await asyncio.wait_for(retry.waiting.wait(), 5)
+
+
+async def test_a_model_that_stays_unavailable_pauses_the_run_instead_of_failing_it(tmp_path):
+    env = await model_down(tmp_path, hangs=3)  # the call and its two retries
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier, retry = NoticeNotifier(), Retry()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(
+            build_graph(env.deps, saver),
+            env.repo,
+            env.bus,
+            notifier=notifier,
+            settings=env.deps.settings_store,
+            sleep=retry,
+        )
+        await runner.start(incident)
+        await paused(runner, retry)
+
+        assert (await env.repo.get(incident.id)).status == "paused"
+        assert retry.delays == [300]  # five minutes by default
+        notices = [
+            e.payload["text"] for e in await env.bus.history(incident.id) if e.kind == "notice"
+        ]
+        assert len(notices) == 1 and "paused" in notices[0] and "TimeoutError" in notices[0]
+        assert notifier.notices == [(incident.id, notices[0])]
+        await runner.close()
+
+
+async def test_a_paused_run_goes_on_from_its_checkpoint_and_finishes(tmp_path):
+    env = await model_down(tmp_path, hangs=3)
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier, retry = NoticeNotifier(), Retry()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(
+            build_graph(env.deps, saver),
+            env.repo,
+            env.bus,
+            notifier=notifier,
+            settings=env.deps.settings_store,
+            sleep=retry,
+        )
+        await runner.start(incident)
+        await paused(runner, retry)
+        retry.release.set()
+        await runner.join()
+
+        assert (await env.repo.get(incident.id)).status == "closed"
+        started = await env.nodes(incident.id)
+        assert started.count("gather") == 1  # the checkpoint, not a new run
+        assert started[-1] == "report"
+        assert len(notifier.notices) == 1
+
+
+async def test_a_run_paused_twice_in_a_row_tells_the_channels_once(tmp_path):
+    env = await model_down(tmp_path, hangs=6)
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier, retry = NoticeNotifier(), Retry()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(
+            build_graph(env.deps, saver),
+            env.repo,
+            env.bus,
+            notifier=notifier,
+            settings=env.deps.settings_store,
+            sleep=retry,
+        )
+        await runner.start(incident)
+        await paused(runner, retry)
+        retry.release.set()
+        await asyncio.wait_for(retry.waiting.wait(), 5)  # paused again, after the second attempt
+        assert (await env.repo.get(incident.id)).status == "paused"
+        retry.release.set()
+        await runner.join()
+
+        assert (await env.repo.get(incident.id)).status == "closed"
+        assert len(notifier.notices) == 1
+        assert retry.delays == [300, 300]
+
+
+async def test_recover_on_boot_picks_up_a_paused_run(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    await env.repo.set_status(incident.id, "paused")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        assert await runner.recover_on_boot() == [incident.id]
+        await runner.join()
     assert (await env.repo.get(incident.id)).status == "closed"

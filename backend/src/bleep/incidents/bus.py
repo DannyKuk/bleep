@@ -118,6 +118,21 @@ class EventBus:
             self._subscribers.remove(entry)
             await stream.aclose()
 
+    async def last_activity(self, incident_id: str) -> datetime | None:
+        """When the incident's run last did something: the time of its newest event that is not a
+        notice (a notice only reports on the run). None if it has no such event."""
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                "SELECT MAX(at) AS at FROM incident_events"
+                " WHERE incident_id = ? AND kind != 'notice'",
+                (incident_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+        finally:
+            await conn.close()
+        return datetime.fromisoformat(row["at"]) if row and row["at"] else None
+
     async def history(self, incident_id: str, after_seq: int = 0) -> list[IncidentEvent]:
         conn = await self.db.connect()
         try:

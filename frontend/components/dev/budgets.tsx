@@ -32,6 +32,9 @@ export const FIELDS: { key: Key; label: string; min: number; max: number; step: 
     max: 1_440,
     step: 1,
   },
+  { key: "model_timeout_s", label: "Model call timeout (seconds)", min: 10, max: 600, step: 1 },
+  { key: "paused_retry_min", label: "Paused run retry (minutes)", min: 1, max: 240, step: 1 },
+  { key: "stuck_after_min", label: "Stuck incident notice (minutes)", min: 5, max: 1_440, step: 1 },
 ];
 
 const asText = (budgets: Budgets) =>

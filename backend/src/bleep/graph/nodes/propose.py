@@ -177,7 +177,9 @@ def _incident_containers(deps: GraphDeps, state: IncidentState) -> set[str]:
 async def _ask(deps: GraphDeps, incident_id: str, messages: list[BaseMessage]) -> Proposal:
     await check_budget(deps.ledger, incident_id, deps.settings_store.budgets())
     tracker = UsageTracker(incident_id, deps.ledger)
-    return await invoke_structured(deps.models("main"), Proposal, messages, config=tracked(tracker))
+    return await invoke_structured(
+        deps.models("main"), Proposal, messages, config=tracked(tracker), guard=deps.guard()
+    )
 
 
 def _record(deps: GraphDeps, incident_id: str, violations: list[Violation]) -> None:

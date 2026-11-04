@@ -23,6 +23,7 @@ IncidentStatus = Literal[
     "awaiting_approval",
     "executing",
     "verifying",
+    "paused",
     "resolved",
     "closed",
     "failed",

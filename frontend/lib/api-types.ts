@@ -75,6 +75,7 @@ export type IncidentStatus =
   | "awaiting_approval"
   | "executing"
   | "verifying"
+  | "paused"
   | "resolved"
   | "closed"
   | "failed";
@@ -290,6 +291,9 @@ export interface Budgets {
   incident_tokens: number;
   daily_cost_usd: number;
   approval_reminder_min: number;
+  model_timeout_s: number;
+  paused_retry_min: number;
+  stuck_after_min: number;
 }
 
 /** The part of `GET /api/settings` the dev panel reads: values in force and the overrides. */

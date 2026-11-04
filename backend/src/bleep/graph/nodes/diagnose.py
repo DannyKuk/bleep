@@ -175,6 +175,7 @@ def make(deps: GraphDeps) -> Node:
                 _Draft,
                 [HumanMessage(prompt)],
                 config=tracked(UsageTracker(incident_id, deps.ledger)),
+                guard=deps.guard(),
             )
         except BudgetExceeded as spent:
             log.info("diagnose: %s budget spent, no model call", spent.kind)
