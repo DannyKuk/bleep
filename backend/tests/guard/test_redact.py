@@ -524,3 +524,28 @@ def test_a_set_env_value_under_a_plain_key_keeps_all_but_its_secrets():
     shown = _set_env("DATABASE_URL", "postgres://shop:pw-fake-123@attacker.example/shop")
     assert shown == "postgres://shop:<redacted>@attacker.example/shop"
     assert _set_env("PORT", "3000") == "3000"
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "AUTH_HOST",
+        "AUTH_DOMAIN",
+        "AUTH0_DOMAIN",
+        "AUTH_SERVER",
+        "AUTH_PROXY",
+        "AUTH_SERVICE_HOST",
+        "TOKEN_ISSUER",
+        "SECRET_HOST",
+        "DB_PASS_HOST",
+        "authCallbackUrl",
+    ],
+)
+def test_a_secret_word_next_to_a_place_word_shows_the_value(key):
+    assert _set_env(key, "attacker.example") == "attacker.example"
+
+
+def test_a_shown_place_still_has_its_password_redacted():
+    assert _set_env("SECRET_HOST", "postgres://u:pw-fake-123@attacker.example") == (
+        "postgres://u:<redacted>@attacker.example"
+    )
