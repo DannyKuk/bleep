@@ -202,6 +202,14 @@ async def test_a_file_that_fails_to_read_keeps_its_stored_doc(tmp_path):
     assert hit.url.endswith("docs/http2.md")
 
 
+async def test_a_readme_too_large_to_read_is_skipped_and_the_docs_are_read():
+    too_large = recorded("readme.json").json() | {"encoding": "none", "content": None}
+    routes = HTTPX | {"/repos/encode/httpx/readme": httpx.Response(200, json=too_large)}
+    docs = GithubRepoDocs(GitHub(routes).client(), linked(ServiceOverrides(repo=REPO)))
+
+    assert [f.path for f in (await docs.doc_files(REPO)).files] == ["docs/http2.md"]
+
+
 async def test_a_service_can_leave_the_readme_out_unless_another_wants_it():
     github = GitHub(HTTPX)
     without = linked(ServiceOverrides(repo=REPO, readme=False))

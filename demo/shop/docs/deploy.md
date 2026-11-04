@@ -8,7 +8,6 @@ hand on the host.
 docker compose -f demo/compose.yaml up -d --build    # build and start, or apply a change
 docker compose -f demo/compose.yaml ps               # what runs
 docker compose -f demo/compose.yaml logs shop-web    # one container's logs
-docker compose -f demo/compose.yaml down             # stop; add -v to drop the volumes
 ```
 
 `up -d` recreates only the containers whose settings changed.

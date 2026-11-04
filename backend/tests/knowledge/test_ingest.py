@@ -102,6 +102,41 @@ class FlakyEmbedder(FakeEmbedder):
         return super().embed(texts)
 
 
+class BrokenEmbedder(FakeEmbedder):
+    """An embedder that never works."""
+
+    def embed(self, texts: list[str]):
+        raise ConnectionError("the embedder is down")
+
+
+DAY = 86_400.0
+
+
+def run_for(now: list[float], seconds: float):
+    """A sleep that moves the clock `now` and stops the loop once `seconds` have passed."""
+
+    async def sleep(nap: float) -> None:
+        now[0] += nap
+        if now[0] >= seconds:
+            raise asyncio.CancelledError
+
+    return sleep
+
+
+async def run_days(index, repos, now, days: float, snapshot_dir=None) -> None:
+    refresher = KnowledgeRefresher(
+        index,
+        repos=repos,
+        snapshot_dir=snapshot_dir,
+        incidents_every_s=600,
+        repos_every_s=DAY,
+        sleep=run_for(now, days * DAY),
+        monotonic=lambda: now[0],
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await refresher.run()
+
+
 def stop_after(naps: list[float], now: list[float], count: int):
     """A sleep that moves the clock `now` and stops the loop after `count` naps."""
 
@@ -417,3 +452,64 @@ async def test_a_refresh_that_read_no_repo_is_retried_on_the_incidents_cadence(i
 
     assert repos.asked == ["acme/shop", "acme/shop"]  # at start, then 600 s later; then a day
     assert await index.document_ids("repo:") == {"repo:acme/shop:README.md"}
+
+
+async def broken_index(tmp_path) -> KnowledgeIndex:
+    db = Database(tmp_path / "bleep.db")
+    await db.migrate()
+    return KnowledgeIndex(db, BrokenEmbedder())
+
+
+async def test_a_broken_embedder_with_no_snapshot_synced_reads_the_repos_once(tmp_path):
+    repos = Repos({"acme/api": [readme("acme/api")], "acme/shop": [readme("acme/shop")]})
+    now = [0.0]
+
+    await run_days(
+        await broken_index(tmp_path), repos, now, 3, snapshot(tmp_path, {"volumes.md": PAGE})
+    )
+
+    assert repos.asked == ["acme/api"]  # its sync failed; nothing more until the snapshot syncs
+
+
+async def test_a_broken_embedder_after_the_snapshot_reads_the_repos_once_a_day(tmp_path):
+    repos = Repos({"acme/shop": [readme("acme/shop")]})
+    now = [0.0]
+
+    await run_days(await broken_index(tmp_path), repos, now, 3)  # no snapshot: nothing to prove
+
+    assert repos.asked == ["acme/shop"] * 3
+
+
+async def test_repo_docs_are_read_again_once_the_snapshot_shows_the_embedder_works(tmp_path):
+    db = Database(tmp_path / "bleep.db")
+    await db.migrate()
+    index = KnowledgeIndex(db, FlakyEmbedder(failures=2))  # the snapshot, then the README
+    repos = Repos({"acme/shop": [readme("acme/shop")]})
+    now = [0.0]
+
+    await run_days(index, repos, now, 0.5, snapshot(tmp_path, {"volumes.md": PAGE}))
+
+    assert repos.asked == ["acme/shop", "acme/shop"]  # at start, then with the snapshot at 600 s
+    assert await index.document_ids("repo:") == {"repo:acme/shop:README.md"}
+
+
+async def test_github_failing_for_days_is_retried_with_a_capped_backoff_and_logged_once(
+    index, caplog
+):
+    repos = Repos({"acme/shop": [readme("acme/shop")]}, failing={"acme/shop"})
+    now = [0.0]
+    tried: list[float] = []
+    real = repos.doc_files
+
+    async def doc_files(repo: str):
+        tried.append(now[0])
+        return await real(repo)
+
+    repos.doc_files = doc_files  # type: ignore[method-assign]
+    with caplog.at_level("WARNING", logger="bleep.knowledge.ingest"):
+        await run_days(index, repos, now, 3)
+
+    gaps = [later - earlier for earlier, later in zip(tried, tried[1:], strict=False)]
+    assert gaps == [600, 1200, 2400, 4800, 9600, 19200, 38400, 76800, DAY]
+    warned = [r for r in caplog.records if "could not read the docs of acme/shop" in r.message]
+    assert len(warned) == 1

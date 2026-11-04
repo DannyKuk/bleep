@@ -3,9 +3,10 @@
 Three sources: the Docker docs snapshot shipped with Bleep (`backend/knowledge/docker-docs/`), the
 README and `docs/` of each service's linked GitHub repo, and the incidents in long-term memory.
 `KnowledgeRefresher.run` syncs the snapshot at start, past incidents every 10 minutes and repo
-docs once a day; a snapshot sync that fails, and a repo refresh that read no repo, are tried again
-on the incidents' 10 minutes. Re-ingest is skipped by content hash, so a boot with nothing new
-embeds nothing. A source that fails is logged and keeps what it had; Bleep runs on without it.
+docs once a day; a snapshot sync that fails is tried again every 10 minutes, and a repo refresh
+that read no repo after 10 minutes, doubling up to a day. Re-ingest is skipped by content hash,
+so a boot with nothing new embeds nothing. A source that fails is logged and keeps what it had;
+Bleep runs on without it.
 """
 
 import asyncio
@@ -177,6 +178,7 @@ class KnowledgeRefresher:
         self.repos_every_s = repos_every_s
         self.sleep = sleep
         self.monotonic = monotonic
+        self._failing: dict[str, str] = {}
 
     async def refresh_docker(self) -> SyncResult:
         if self.snapshot_dir is None:
@@ -203,11 +205,13 @@ class KnowledgeRefresher:
             try:
                 docs = await self.repos.doc_files(repo)
             except RateLimited as error:
-                log.warning("knowledge: GitHub rate limit reached at %s (%s)", repo, error)
+                self._failed(repo, f"GitHub rate limit reached at {repo} ({error})")
                 break
             except Exception as error:  # the next refresh tries again
-                log.warning("knowledge: could not read the docs of %s (%s)", repo, error)
+                self._failed(repo, f"could not read the docs of {repo} ({error})")
                 continue
+            if self._failing.pop(repo, None) is not None:
+                log.info("knowledge: read the docs of %s again", repo)
             read.append(repo)
             prefix = repo_prefix(repo)
             kept = {f"{prefix}{path}" for path in docs.unread}
@@ -221,6 +225,20 @@ class KnowledgeRefresher:
         if read or not linked:
             await self.index.mark_refresh(REPOS_REFRESH, _scope(read))
         return RepoRefresh(embedded=embedded, read=len(read), linked=len(linked))
+
+    def _failed(self, repo: str, why: str) -> None:
+        """Log why `repo` could not be read, once until the reason changes: a bad token or an
+        outage would otherwise repeat the same warning at every retry."""
+        if self._failing.get(repo) == why:
+            log.debug("knowledge: %s, again", why)
+            return
+        self._failing[repo] = why
+        log.warning("knowledge: %s", why)
+
+    def _backoff(self, failures: int) -> float:
+        """The wait after `failures` repo refreshes in a row that read no repo: the incidents'
+        interval, doubled each time, at most a day."""
+        return min(self.incidents_every_s * 2 ** (failures - 1), self.repos_every_s)
 
     async def _safely[T](self, name: str, refresh: Callable[[], Awaitable[T]]) -> T | None:
         """`refresh()`'s result, or None when it failed."""
@@ -250,25 +268,39 @@ class KnowledgeRefresher:
         return self.repos_every_s - since if 0 <= since < self.repos_every_s else 0.0
 
     async def run(self) -> None:
-        """Sync the snapshot, then keep incidents and repo docs fresh until cancelled. A snapshot
-        sync that failed (the embedder was down, say) is tried again with every incidents refresh
-        until it succeeds, and so is a repo refresh that read no repo: GitHub unreachable at start
-        should not leave search without them for a day."""
+        """Sync the snapshot, then keep incidents and repo docs fresh until cancelled.
+
+        A snapshot sync that failed (the embedder was down, say) is tried again with every
+        incidents refresh until it succeeds. A repo refresh that read no repo (GitHub unreachable,
+        a refused token) is tried again after 10 minutes, then 20, 40 and so on up to a day, so a
+        short outage at start does not leave search without repo docs for a day and a lasting one
+        costs a few requests a day. A repo refresh that failed after reading GitHub (the embedder
+        again) waits for the snapshot sync to succeed when it has not yet, else a day: each try
+        reads every repo again, about 40 requests of GitHub's 60 an hour without a token."""
         start = self.monotonic()
         due_docker: float | None = start
         due_incidents = start
-        due_repos = start + await self._repos_wait()
+        due_repos: float | None = start + await self._repos_wait()
+        empty_refreshes = 0
         while True:
             now = self.monotonic()
             if due_docker is not None and now >= due_docker:
                 synced = await self._safely("docker docs", self.refresh_docker)
                 due_docker = None if synced is not None else now + self.incidents_every_s
+                if synced is not None and due_repos is None:
+                    due_repos = now
             if now >= due_incidents:
                 await self._safely("past incidents", self.refresh_incidents)
                 due_incidents = now + self.incidents_every_s
-            if now >= due_repos:
+            if due_repos is not None and now >= due_repos:
                 repos = await self._safely("repo docs", self.refresh_repos)
-                empty = repos is None or repos.linked > 0 and repos.read == 0
-                due_repos = now + (self.incidents_every_s if empty else self.repos_every_s)
+                if repos is None and due_docker is not None:
+                    due_repos = None  # due again once the snapshot shows the embedder works
+                elif repos is not None and repos.linked and not repos.read:
+                    empty_refreshes += 1
+                    due_repos = now + self._backoff(empty_refreshes)
+                else:
+                    empty_refreshes = 0
+                    due_repos = now + self.repos_every_s
             due = [d for d in (due_docker, due_incidents, due_repos) if d is not None]
             await self.sleep(max(0.0, min(due) - self.monotonic()))

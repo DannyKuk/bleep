@@ -6,7 +6,7 @@ containers and two volumes.
 
 | Container | Image | What it does | Port |
 |---|---|---|---|
-| `shop-proxy` | Caddy, built from `demo/proxy` | The public entry: forwards every request to `shop-web`. | 8080, published on the host |
+| `shop-proxy` | Caddy, built from `demo/proxy` | The public entry: forwards requests to `shop-web`. | 8080, published on the host |
 | `shop-web` | Python 3.14 with FastAPI, built from `demo/shop` | The shop's API. | 8000, inside the network only |
 | `shop-db` | `postgres:17-alpine` | Holds the `items` table. | 5432, inside the network only |
 | `shop-worker` | Python 3.14, built from `demo/worker` | Processes the uploads in batches. | none |

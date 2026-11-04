@@ -109,7 +109,7 @@ class GithubRepoDocs:
         link = self._links().get(repo, _Link(list(DEFAULT_DOCS), readme=True))
         files: list[RepoFile] = []
         if link.readme:
-            with contextlib.suppress(NotFound):
+            with contextlib.suppress(NotFound, TooLarge):
                 files.append(await self.client.readme(repo))
         wanted: list[str] = []
         for path in link.paths:
