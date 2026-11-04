@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { Bleep } from "@/components/bleep/bleep";
+import { isRefused } from "@/components/incident/headline";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import { HealthBadge } from "@/components/overview/health-badge";
 import { joinNames, type Situation } from "@/components/overview/situation";
@@ -93,7 +94,7 @@ function waitingWords(incident: Incident, detail: IncidentDetail | undefined, tr
   const unsure = detail?.diagnosis?.unsure === true;
   let reason = "I need you.";
   let body: ReactNode = incident.title;
-  if (plan?.refused) {
+  if (plan && isRefused(plan)) {
     reason = "My own checks stopped my plan, so I need you.";
   } else if (plan?.kind === "no_action") {
     reason = unsure

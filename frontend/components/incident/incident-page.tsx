@@ -125,10 +125,9 @@ export function IncidentPage({ id }: { id: string }) {
       Refresh failed, showing the last data: {error.message}
     </p>
   );
+  // The report is its own document card, so it sits on the page without a panel around it.
   const reportPanel = report && (
-    <Panel title="Report">
-      <ReportView report={report} outcome={data.outcome} />
-    </Panel>
+    <ReportView report={report} outcome={data.outcome} incident={incident} />
   );
   const planPanel = (
     <Panel title={planTitle(data)} awaitingYou={approval?.status === "pending"}>

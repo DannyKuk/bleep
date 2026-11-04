@@ -11,6 +11,7 @@ import {
   report,
 } from "@/components/incident/fixtures";
 import { DETAIL_POLL_MS, IncidentPage } from "@/components/incident/incident-page";
+import { subjectText } from "@/components/incident/incident-list";
 import { PHONE_QUERY } from "@/components/incident/use-phone";
 import type { IncidentDetail } from "@/lib/api-types";
 
@@ -129,9 +130,11 @@ describe("IncidentPage", () => {
       }),
     );
     render(<IncidentPage id="inc-1" />);
-    const panel = await screen.findByRole("region", { name: "Report" });
-    expect(panel).toHaveTextContent("Fixed and verified");
-    expect(panel).toHaveTextContent("Set restart: unless-stopped on shop-web.");
+    const card = await screen.findByRole("article", { name: "Report" });
+    expect(card).toHaveTextContent("Fixed and verified");
+    expect(card).toHaveTextContent("Set restart: unless-stopped on shop-web.");
+    expect(card).toHaveTextContent(subjectText(incident({ status: "resolved" })));
+    expect(screen.queryByRole("region", { name: "Report" })).not.toBeInTheDocument();
   });
 
   it("reads the incident again when a step event arrives, not on tool events", async () => {
