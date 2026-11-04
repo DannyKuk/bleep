@@ -58,6 +58,26 @@ describe("ServiceRow", () => {
     expect(screen.getByText(/200 · 12 ms · checked /)).toBeInTheDocument();
   });
 
+  it("shows a failing URL with the time of its check", () => {
+    render(
+      <ServiceRow
+        service={service({
+          urls: [
+            {
+              url: "http://bad.test/",
+              status: "failing",
+              last_checked: "2026-11-02T10:00:00Z",
+              status_code: 500,
+              latency_ms: 30,
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText("Failing")).toBeInTheDocument();
+    expect(screen.getByText(/500 · 30 ms · checked /)).toBeInTheDocument();
+  });
+
   it("links the open incident", () => {
     render(<ServiceRow service={service({ health: "down", open_incident_id: "inc_42" })} />);
     expect(screen.getByRole("link", { name: /open incident/i })).toHaveAttribute(

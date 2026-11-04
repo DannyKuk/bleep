@@ -1,4 +1,3 @@
-import asyncio
 import json
 import time
 from datetime import UTC, datetime, timedelta
@@ -118,11 +117,7 @@ def test_host_health(reachable, last_seen, services, expected):
 
 
 @pytest.fixture
-def stocked(settings, parts, monkeypatch):
-    async def never_answers(*args, **kwargs):
-        await asyncio.Event().wait()  # the running watcher must not record a check of its own
-
-    monkeypatch.setattr("bleep.watcher.http_checks.check_url", never_answers)
+def stocked(settings, parts):
     hosts = [
         ssh_host(
             id="a",
@@ -274,6 +269,34 @@ def test_a_failing_check_makes_the_service_down(stocked, parts):
     assert shop["health"] == "down"
     detail = stocked.get("/api/services/a/compose:shop").json()
     assert detail["service"]["urls"][0]["status"] == "failing"
+
+
+def test_a_check_is_fresh_inside_the_limit_and_unknown_past_it(stocked, parts):
+    record_check(
+        stocked, parts, UrlCheck(url="http://a/", ok=True, status=200, latency_ms=5), age_s=80
+    )
+    assert shop_view(stocked)["urls"][0]["status"] == "ok"
+    record_check(
+        stocked, parts, UrlCheck(url="http://a/", ok=True, status=200, latency_ms=5), age_s=100
+    )
+    assert shop_view(stocked)["urls"][0]["status"] == "unknown"
+
+
+def test_two_services_with_the_same_url_each_keep_their_result(stocked, parts):
+    other = "a/compose:other"
+    record_check(stocked, parts, UrlCheck(url="http://a/", ok=True, status=200, latency_ms=5))
+    record_check(
+        stocked,
+        parts,
+        UrlCheck(url="http://a/", ok=False, status=500, latency_ms=9),
+        service=other,
+    )
+    rows = stocked.portal.call(parts.url_checks.latest, "a")
+    assert sorted((sid, check.ok) for sid, check, _ in rows) == [
+        (other, False),
+        ("a/compose:shop", True),
+    ]
+    assert shop_view(stocked)["urls"][0]["status"] == "ok"
 
 
 def test_a_stale_check_is_unknown_but_keeps_its_time(stocked, parts):
