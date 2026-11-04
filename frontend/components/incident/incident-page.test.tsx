@@ -1,4 +1,5 @@
 import { act, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -10,6 +11,7 @@ import {
   report,
 } from "@/components/incident/fixtures";
 import { DETAIL_POLL_MS, IncidentPage } from "@/components/incident/incident-page";
+import { PHONE_QUERY } from "@/components/incident/use-phone";
 import type { IncidentDetail } from "@/lib/api-types";
 
 class StubEventSource {
@@ -151,7 +153,7 @@ describe("IncidentPage", () => {
 
     await act(async () => send("decision", { kind: "approve", text: null, via: "telegram" }));
     expect(detailReads(fetchMock)).toBe(2);
-    expect(await screen.findByText(/Approved on Telegram,/)).toBeInTheDocument();
+    expect(await screen.findByText(/You said yes on Telegram,/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Yes, go ahead" })).toBeDisabled();
   });
 
@@ -177,5 +179,136 @@ describe("IncidentPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "There is no incident with this id.",
     );
+  });
+
+  describe("on a phone", () => {
+    beforeEach(() =>
+      vi.stubGlobal(
+        "matchMedia",
+        vi.fn((query: string) => ({
+          matches: query === PHONE_QUERY,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+        })),
+      ),
+    );
+
+    it("is one column: small header, Bleep at 76 px, what I found, the plan, the rest folded", async () => {
+      stubBackend(detail());
+      const { container } = render(<IncidentPage id="inc-1" />);
+      const headline = await screen.findByRole("heading", {
+        level: 1,
+        name: "shop is in trouble. Can I fix it?",
+      });
+      expect(screen.getByRole("link", { name: "Back to incidents" })).toHaveAttribute(
+        "href",
+        "/incidents",
+      );
+      expect(container.querySelector("svg[data-mood]")).toHaveAttribute("width", "76");
+      expect(screen.getByRole("button", { name: /^Theme:/ })).toBeInTheDocument();
+      expect(screen.queryByRole("list", { name: "Progress" })).toBeNull();
+
+      const found = screen.getByRole("region", { name: "What I found" });
+      const plan = screen.getByRole("region", { name: "Here is my plan" });
+      const following = (a: Element, b: Element) =>
+        a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING;
+      expect(following(headline, found)).toBeTruthy();
+      expect(following(found, plan)).toBeTruthy();
+
+      const folded = [...container.querySelectorAll("details")].filter((fold) =>
+        /^(How I got there|Timeline)/.test(fold.querySelector("summary")?.textContent ?? ""),
+      );
+      expect(folded).toHaveLength(2);
+      for (const fold of folded) expect(fold).not.toHaveAttribute("open");
+    });
+
+    it("pins the decision bar to the bottom with the same rules as on a desktop", async () => {
+      const fetchMock = stubBackend(detail());
+      const { container } = render(<IncidentPage id="inc-1" />);
+      await screen.findByRole("button", { name: "Yes, go ahead" });
+      const bar = container.querySelector("[data-pinned]") as HTMLElement;
+      expect(bar).toHaveClass("fixed", "bottom-0");
+      expect(within(bar).getByRole("button", { name: "Yes, go ahead" })).toHaveClass("h-14");
+      expect(within(bar).getByRole("button", { name: "Tell Bleep something" })).toBeEnabled();
+
+      fetchMock.mockImplementationOnce(async () =>
+        json({ detail: "Already decided on Telegram", decided_via: "telegram" }, 409),
+      );
+      await userEvent.click(within(bar).getByRole("button", { name: "No, leave it" }));
+      expect(await within(bar).findByRole("alert")).toHaveTextContent(
+        "Already decided on Telegram",
+      );
+      expect(within(bar).queryAllByRole("button")).toHaveLength(0);
+    });
+  });
+
+  describe("across the desktop breakpoint", () => {
+    let phone = false;
+    const listeners = new Set<() => void>();
+    beforeEach(() => {
+      phone = false;
+      listeners.clear();
+      vi.stubGlobal(
+        "matchMedia",
+        vi.fn((query: string) => ({
+          get matches() {
+            return query === PHONE_QUERY && phone;
+          },
+          addEventListener: (_: string, listener: () => void) => listeners.add(listener),
+          removeEventListener: (_: string, listener: () => void) => listeners.delete(listener),
+        })),
+      );
+    });
+    const turn = async (toPhone: boolean) => {
+      phone = toPhone;
+      await act(async () => listeners.forEach((listener) => listener()));
+    };
+
+    it("keeps an answer in flight locked when the screen turns mid-answer", async () => {
+      const answers: ((reply: Response) => void)[] = [];
+      const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+        if (String(input).includes("/events")) return json([]);
+        if (init?.method === "POST") return new Promise<Response>((done) => answers.push(done));
+        return json(detail());
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const { container } = render(<IncidentPage id="inc-1" />);
+      await userEvent.click(await screen.findByRole("button", { name: "Yes, go ahead" }));
+      expect(screen.getByRole("button", { name: "Yes, go ahead" })).toBeDisabled();
+
+      await turn(true);
+      const bar = container.querySelector("[data-pinned]") as HTMLElement;
+      expect(container.querySelectorAll("[data-pinned]")).toHaveLength(1);
+      for (const button of within(bar).getAllByRole("button")) expect(button).toBeDisabled();
+
+      await act(async () =>
+        answers[0](
+          json({ kind: "approve", text: null, via: "dashboard", at: "2026-11-02T18:05:00Z" }),
+        ),
+      );
+      expect(await within(bar).findByRole("status")).toHaveTextContent(
+        /You said yes on the dashboard/,
+      );
+      expect(within(bar).queryAllByRole("button")).toHaveLength(0);
+      await turn(false);
+      expect(screen.getByRole("status")).toHaveTextContent(/You said yes on the dashboard/);
+      expect(screen.getByRole("button", { name: "Yes, go ahead" })).toBeDisabled();
+      const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+      expect(posts).toHaveLength(1);
+    });
+
+    it("keeps a typed instruction when the screen turns", async () => {
+      stubBackend(detail());
+      const { container } = render(<IncidentPage id="inc-1" />);
+      await userEvent.click(await screen.findByRole("button", { name: "Tell Bleep something" }));
+      await userEvent.type(screen.getByRole("textbox"), "Restart only shop-api");
+
+      await turn(true);
+      const bar = container.querySelector("[data-pinned]") as HTMLElement;
+      expect(within(bar).getByRole("textbox")).toHaveValue("Restart only shop-api");
+      await turn(false);
+      expect(screen.getByRole("textbox")).toHaveValue("Restart only shop-api");
+      expect(container.querySelector("[data-pinned]")).toBeNull();
+    });
   });
 });
