@@ -347,7 +347,8 @@ async def _check_host(
     average the watcher opens on lags far behind a fix, past Verify's last check. One dip of a
     one-minute average is weak evidence, so load passes only when it was within its threshold
     at the previous check of this round too. `calm` holds the kinds that were within their
-    threshold at the previous check; it is updated to this one's."""
+    threshold at the previous check; it is updated to this one's. A host whose OS Bleep cannot
+    read basics on (neither Linux nor macOS) reports no readings, so each "could not be read"."""
     before = set(calm)
     calm.clear()
     shell = deps.registry.shell(host_id)
