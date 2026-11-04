@@ -3,7 +3,7 @@
 # /etc/caddy/Caddyfile --adapter caddyfile` in shop-proxy); caddy_purge_cache fixes nothing here.
 # Both are act tools, so Propose may name one only as an mcp.call step; evals never execute one.
 # caddy_config is the read tool (#166): the config Caddy has loaded live next to the Caddyfile on
-# disk, which is what makes a reload worth proposing; the answer is the misroute's state.
+# disk, which is what makes a reload worth proposing; it prints both and draws no conclusion.
 act_tools: [caddy_reload, caddy_purge_cache]
 read_tools: [caddy_config]
 tools:
@@ -21,18 +21,16 @@ tools:
       required: [container]
     result: |-
       container: shop-proxy
-      loaded config (live, from the admin API; differs from the file on disk):
+      loaded config (live, from the admin API):
         :8080
           /freeze*  respond 404
           /inject*  respond 404
           reverse_proxy upstream: shop-web:8001
-      Caddyfile on disk (/etc/caddy/Caddyfile, loaded at start or by the last reload from it):
+      Caddyfile on disk (/etc/caddy/Caddyfile):
         :8080
           /freeze*  respond 404
           /inject*  respond 404
           reverse_proxy upstream: shop-web:8000
-      difference: the loaded config was set live and its reverse_proxy upstream is shop-web:8001,
-      the file's is shop-web:8000; a reload from the file replaces the loaded config with it.
   - name: caddy_reload
     description: >-
       Reload a running Caddy container's configuration from a Caddyfile inside that container,

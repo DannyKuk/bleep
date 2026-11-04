@@ -77,5 +77,6 @@ async def test_caddy_config_is_a_read_tool_that_shows_the_loaded_upstream_beside
     assert "caddy_config (read, mcp_call runs it)" in listing
     assert "shop-web:8001" in answer and "shop-web:8000" in answer
     assert "loaded config" in answer and "on disk" in answer
+    assert "differ" not in answer and "difference" not in answer  # both configs, no conclusion
     assert served.calls == [("caddy_config", {"container": "shop-proxy"})]  # the reload never ran
     assert "caddy_reload" in refused
