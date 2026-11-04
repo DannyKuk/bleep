@@ -15,13 +15,33 @@ For something to watch, start the demo shop with `docker compose -f demo/compose
 
 Without the `demo` profile only the backend and the dashboard start, and the hosts file has to name a host you reach some other way.
 
-The data (the SQLite database) lives in the `bleep-data` volume. `docker compose down` keeps it; `docker compose down -v` deletes it.
+The data (the SQLite database, and the secret file below) lives in the `bleep-data` volume. `docker compose down` keeps it; `docker compose down -v` deletes it.
+
+### Keys and tokens: from the dashboard or `.env`
+
+Only `BLEEP_ADMIN_PASSWORD` and `BLEEP_SECRET` must be in `.env`: the dashboard is behind them. Every other key, token and plugin address can be set in either of two ways.
+
+1. **From the dashboard.** Bleep keeps it in `secrets.json` on the `bleep-data` volume, readable only by the backend's user, never in the database, and uses it from the next call without a restart. The settings page has no inputs for these yet, so for now the dashboard's API does it, with your login (type the value at the prompt, so it stays out of your shell history):
+   ```bash
+   curl -sc bleep.cookies -H 'Content-Type: application/json' \
+     -d '{"password": "<your admin password>"}' http://localhost:3000/api/auth/login
+   read -rs VALUE && printf '{"value": "%s"}' "$VALUE" | curl -sb bleep.cookies -X PUT \
+     -H 'Content-Type: application/json' --data-binary @- \
+     http://localhost:3000/api/secrets/OPENROUTER_API_KEY >/dev/null; unset VALUE
+   curl -sb bleep.cookies http://localhost:3000/api/secrets      # each name: set or not, and from where
+   curl -sb bleep.cookies -X DELETE http://localhost:3000/api/secrets/OPENROUTER_API_KEY   # clear it
+   rm bleep.cookies
+   ```
+   The names are the variables in `.env.example`. A value is never shown again, only whether it is set.
+2. **In `.env`**, then restart the backend (`docker compose up -d backend`). A value in `.env` wins over the dashboard's and cannot be changed or cleared from it, which suits Compose files and CI.
+
+**Back up the volume like `.env`:** a copy of `bleep-data` holds these secrets in clear. Details: [Settings](design/settings.md#secrets-from-the-dashboard-135).
 
 ### A first incident, end to end
 
 This runs the whole path from a dead container to the approval question, on the dashboard and in Telegram. It needs a model key and, for the Telegram half, a bot. Tests never do this; it is the manual check.
 
-1. In `.env`, besides the two `BLEEP_` values: `OPENROUTER_API_KEY` (or `LLM_PROVIDER=local` with `LOCAL_BASE_URL` and `LOCAL_MODEL`), and for Telegram `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (send the bot a message first, then read the chat id from `https://api.telegram.org/bot<token>/getUpdates`).
+1. On the dashboard or in `.env` ([above](#keys-and-tokens-from-the-dashboard-or-env)): `OPENROUTER_API_KEY` (or, in `.env`, `LLM_PROVIDER=local` with `LOCAL_BASE_URL` and `LOCAL_MODEL`), and for Telegram `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (send the bot a message first, then read the chat id from `https://api.telegram.org/bot<token>/getUpdates`).
 2. Start Bleep and a throwaway container for it to watch, with no restart policy:
    ```bash
    docker compose --profile demo up -d --build
@@ -97,9 +117,9 @@ The session cookie is not `Secure` by default, because the dashboard is plain ht
 
 Without it everything works from the dashboard. To also get incidents and approve from your phone:
 
-1. Create a bot with BotFather and put its token in `.env` as `TELEGRAM_BOT_TOKEN`.
-2. Send the bot any message, then read your chat id from `https://api.telegram.org/bot<token>/getUpdates` (`result[0].message.chat.id`) and set `TELEGRAM_CHAT_ID` in `.env`.
-3. Restart Bleep. A proposal arrives with Approve and Reject buttons; reply to the message to give an instruction instead.
+1. Create a bot with BotFather and set its token as `TELEGRAM_BOT_TOKEN`, on the dashboard or in `.env` ([how](#keys-and-tokens-from-the-dashboard-or-env)).
+2. Send the bot any message, then read your chat id from `https://api.telegram.org/bot<token>/getUpdates` (`result[0].message.chat.id`) and set it as `TELEGRAM_CHAT_ID` the same way.
+3. Set on the dashboard, the bot starts polling at once; in `.env`, restart Bleep. A proposal arrives with Approve and Reject buttons; reply to the message to give an instruction instead.
 
 Only that chat is answered. Messages and button taps from any other chat are ignored and recorded in the guard log. The first answer wins, from Telegram or the dashboard; the other is told who won. Details: [Notifications](design/notify.md).
 
@@ -109,17 +129,18 @@ Bleep reads each service's repo (the `repo` of a service in the hosts file): its
 
 1. Create a **fine-grained** personal access token on GitHub (Settings, Developer settings, Personal access tokens, Fine-grained tokens), limited to the repos the hosts file names.
 2. Give it two repository permissions, both **read-only**: **Contents** (commits, diffs and files) and **Metadata** (GitHub adds it to every token). Nothing else: Bleep never writes to GitHub.
-3. Put it in `.env` as `GITHUB_TOKEN` and restart. The hosts file points at it with `github: token: {env: GITHUB_TOKEN}` (as in `config/hosts.example.yaml`); an unset or empty variable means public repos only.
+3. Set it as `GITHUB_TOKEN` on the dashboard (used from the next request) or in `.env` (then restart). The hosts file points at it with `github: token: {env: GITHUB_TOKEN}` (as in `config/hosts.example.yaml`), or has no `github` section; a hosts file that names another variable or a file is read at start instead. Unset, Bleep reads public repos only.
 
 ## Plugins (optional)
 
-A plugin adds the tools of one more system, such as a Coolify instance. Each one is off until you switch it on, and its address and token come from `.env`, never from the dashboard. For each:
+A plugin adds the tools of one more system, such as a Coolify instance. Each one is off until you switch it on. For each:
 
-1. Set its variables in `.env` (below).
-2. Restart the backend (`docker compose up -d backend`), since Bleep reads the environment when it starts.
-3. In the dashboard, open Settings, find the plugin under Plugins and press **Switch on**. Its secrets show only as set or missing; a refusal names the variable that is missing or the setting that is wrong, and why.
+1. Set its address, then its token, on the dashboard ([how](#keys-and-tokens-from-the-dashboard-or-env)); or set both in `.env` and restart the backend. An address and its token come together from one place: when `.env` sets either, both are read from `.env`.
+2. In the dashboard, open Settings, find the plugin under Plugins and press **Switch on**. Its secrets show only as set or missing; a refusal names the variable that is missing or the setting that is wrong, and why.
 
-A plugin switched on whose variable is later unset shows **On, waiting for** that variable after the next restart: it keeps your choice and runs again once the variable is back and Bleep restarts, and **Switch off** turns it off for good. Details: [Plugins](design/plugins.md).
+**A new address clears the token.** Setting or clearing a plugin's address on the dashboard deletes the token stored for it and switches the plugin off, so a token is never sent anywhere it was not entered for: enter the token again and switch the plugin on. A new token for the same address is used at once.
+
+A plugin switched on whose token is later unset shows **On, waiting for** that variable: it keeps your choice and runs again once the variable is back (at once from the dashboard, after a restart from `.env`), and **Switch off** turns it off for good. Details: [Plugins](design/plugins.md).
 
 ### Coolify
 
@@ -137,7 +158,7 @@ In its settings, list the server's tools Bleep may run: `read_tools` without app
 
 ## Memory embeddings (optional)
 
-Bleep remembers every finished incident and recalls similar ones. By default it embeds them with a small local model that ships inside the backend image (bge-small, about 11 ms per incident on a laptop, no key and no network). To use an OpenAI-compatible endpoint instead (OpenAI, LM Studio, Ollama), set in `.env`:
+Bleep remembers every finished incident and recalls similar ones. By default it embeds them with a small local model that ships inside the backend image (bge-small, about 11 ms per incident on a laptop, no key and no network). To use an OpenAI-compatible endpoint instead (OpenAI, LM Studio, Ollama), set in `.env` (the key can be set on the dashboard instead; the endpoint stays in `.env`, since the key is sent there):
 
 ```bash
 EMBEDDINGS_PROVIDER=openai
@@ -156,7 +177,7 @@ Every incident run can become one trace, with the incident as its session. For a
 docker compose -f docker-compose.yaml -f docker-compose.observability.yaml --profile observability up -d --build
 ```
 
-Langfuse creates its project, keys and login from `.env` on first start; the UI is at http://localhost:3001, and each incident carries a link to its trace (`trace_url`). The links use `LANGFUSE_UI_URL` from `.env` (default `http://localhost:3001`); set it when the browser reaches Langfuse at another address. An unreachable Langfuse does not hold up incidents; the backend logs a warning for each batch of spans it could not send. For Langfuse elsewhere or LangSmith, set `TRACING` and the variables listed in `.env.example` instead. Pass `docker-compose.observability.yaml` only with the profile: it turns the backend's tracing on, and without the profile no Langfuse runs. Bleep refuses to start when `TRACING` names a tracer whose keys are missing. Details: [Observability](design/observability.md).
+Langfuse creates its project, keys and login from `.env` on first start; the UI is at http://localhost:3001, and each incident carries a link to its trace (`trace_url`). The links use `LANGFUSE_UI_URL` from `.env` (default `http://localhost:3001`); set it when the browser reaches Langfuse at another address. An unreachable Langfuse does not hold up incidents; the backend logs a warning for each batch of spans it could not send. For Langfuse elsewhere or LangSmith, set `TRACING` and the variables listed in `.env.example` instead; the keys (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGSMITH_API_KEY`) can be set on the dashboard first, then `TRACING` in `.env` and a restart. Pass `docker-compose.observability.yaml` only with the profile: it turns the backend's tracing on, and without the profile no Langfuse runs. Bleep refuses to start when `TRACING` names a tracer whose keys are missing. Details: [Observability](design/observability.md).
 
 ## Later
 

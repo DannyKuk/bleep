@@ -45,7 +45,7 @@ def test_without_telegram_the_status_says_so(settings):
         "configured": False,
         "chat_id": None,
         "last_poll": None,
-        "token": {"env": "TELEGRAM_BOT_TOKEN", "file": None, "set": False},
+        "token": {"env": "TELEGRAM_BOT_TOKEN", "file": None, "set": False, "source": None},
     }
 
 
@@ -60,7 +60,12 @@ def test_with_telegram_the_status_masks_the_chat_and_shows_the_last_poll(telegra
     assert body["configured"] is True
     assert body["chat_id"] == "••••90"
     assert body["last_poll"] == "2026-11-03T10:00:00Z"
-    assert body["token"] == {"env": "TELEGRAM_BOT_TOKEN", "file": None, "set": True}
+    assert body["token"] == {
+        "env": "TELEGRAM_BOT_TOKEN",
+        "file": None,
+        "set": True,
+        "source": "env",
+    }
     assert TOKEN not in response.text and CHAT not in response.text
 
 

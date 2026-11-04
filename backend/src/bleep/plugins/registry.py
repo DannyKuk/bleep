@@ -53,7 +53,8 @@ class _Active:
 class PluginRegistry:
     """`plugins` are every plugin Bleep has; none is switched on until `enable` says so.
 
-    `env` is where the secrets are read from (the process environment by default), and
+    `env` is where the secrets are read from (the process environment by default; Bleep passes
+    `SecretStore.environ()`, the environment over the dashboard's secret file), and
     `grant_secret` the `BLEEP_SECRET` act handlers check approval grants with.
     """
 
@@ -184,7 +185,8 @@ class PluginRegistry:
         missing = [env for env in plugin.secrets if not self._env.get(env)]
         if missing:
             raise PluginError(
-                f"plugin {plugin.name} needs {', '.join(missing)} set in the environment first"
+                f"plugin {plugin.name} needs {', '.join(missing)} set first, on the dashboard "
+                "or in the environment"
             )
         ctx = PluginContext(
             settings=settings,
@@ -267,6 +269,11 @@ def _check_plugin(plugin: Plugin) -> None:
             f"plugin name {plugin.name!r} must be lower-case letters and digits and not "
             f"{', '.join(sorted(_RESERVED_NAMES))}"
         )
+    if plugin.connection is not None and not set(plugin.connection) <= {
+        *plugin.secrets,
+        *plugin.optional_secrets,
+    }:
+        raise ValueError(f"plugin {plugin.name!r}: its connection must name two of its secrets")
     model = plugin.settings_model
     if model.model_config.get("extra") != "forbid":
         raise ValueError(f"plugin {plugin.name!r}: settings_model must forbid extra fields")

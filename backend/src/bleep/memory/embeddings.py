@@ -10,6 +10,7 @@ it in a worker thread. See docs/decisions/embeddings.md.
 import hashlib
 import re
 import threading
+from collections.abc import Callable
 from typing import Any, Protocol
 
 import httpx
@@ -91,12 +92,14 @@ class OpenAICompatEmbedder:
         self,
         base_url: str,
         model: str,
-        api_key: SecretStr | str | None = None,
+        api_key: SecretStr | str | Callable[[], SecretStr | None] | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
-        self._api_key = SecretStr(api_key) if isinstance(api_key, str) else api_key
+        key = SecretStr(api_key) if isinstance(api_key, str) else api_key
+        # A callable is read at every call, so a key changed on the dashboard is used next.
+        self._api_key = key if callable(key) else lambda: key
         self._transport = transport
 
     @property
@@ -107,8 +110,8 @@ class OpenAICompatEmbedder:
         if not texts:
             return np.zeros((0, 0), dtype=np.float32)
         headers = {}
-        if self._api_key is not None:
-            headers["Authorization"] = f"Bearer {self._api_key.get_secret_value()}"
+        if (key := self._api_key()) is not None:
+            headers["Authorization"] = f"Bearer {key.get_secret_value()}"
         try:
             with httpx.Client(transport=self._transport, timeout=HTTP_TIMEOUT_S) as client:
                 reply = client.post(

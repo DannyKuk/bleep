@@ -23,6 +23,9 @@ def _env(name: str, field: str) -> AliasChoices:
     return AliasChoices(name, field)
 
 
+MODEL_KEY_ENV = "OPENROUTER_API_KEY"  # `ModelSettings.openrouter_api_key`
+
+
 class ModelSettings(BaseSettings):
     """Model choice, read from the unprefixed env names in `.env.example` (`LLM_MODEL`, ...)."""
 
@@ -194,6 +197,8 @@ class SecretStatus(BaseModel):
     env: str | None = None
     file: str | None = None
     set: bool
+    # Where a value that can be set from the dashboard comes from (`GET /api/secrets` has more).
+    source: Literal["env", "dashboard"] | None = None
 
 
 class HostConnectionView(BaseModel):

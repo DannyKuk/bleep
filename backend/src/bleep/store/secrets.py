@@ -1,0 +1,269 @@
+"""The secrets and plugin addresses set from the dashboard, in one file apart from the database.
+
+The file is JSON on the data volume, `secrets.json` next to `bleep.db`, mode 0600, and every write
+replaces it whole through a temporary file created 0600 and renamed over it, so it is never
+readable by anyone but the backend's user, not even halfway through a write. Values never leave
+this module except through `get` (and `environ`, the same values as a mapping): states, errors,
+logs and listeners carry names only. The environment wins over the file, and an address and the
+token sent to it come whole from one place. See docs/design/settings.md.
+"""
+
+import asyncio
+import contextlib
+import json
+import logging
+import os
+import tempfile
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+from pydantic import SecretStr
+
+log = logging.getLogger(__name__)
+
+FILE_MODE = 0o600
+MAX_VALUE_CHARS = 16_384
+FORMAT_VERSION = 1
+
+Kind = Literal["secret", "address", "id"]
+Source = Literal["env", "dashboard"]
+Listener = Callable[[frozenset[str]], Awaitable[None]]
+
+
+class SecretFileError(Exception):
+    """The secret file cannot be read; the text names the file, never what is in it."""
+
+
+class UnknownSecret(KeyError):
+    """No secret by that name can be set from the dashboard."""
+
+
+class SecretRefused(ValueError):
+    """The value cannot be stored; the text says why and never quotes it."""
+
+
+class SecretFromEnv(SecretRefused):
+    """The environment decides this one, so the dashboard can neither set nor clear it."""
+
+
+@dataclass(frozen=True)
+class SecretName:
+    """One value the dashboard may set: a `secret`, an `address` a token is sent to (`carries`
+    names that token), or an `id` that is not secret but lives with the secrets (a chat id).
+    `required` says why it cannot be cleared from the dashboard, when something in force needs
+    it (the tracer `TRACING` names)."""
+
+    name: str
+    kind: Kind = "secret"
+    carries: str | None = None
+    required: str | None = None
+
+
+@dataclass(frozen=True)
+class SecretState:
+    """Whether a value is set and where it comes from; `env_owned` when the environment decides
+    it, set or not. Never the value."""
+
+    set: bool
+    source: Source | None
+    env_owned: bool
+
+
+class SecretStore:
+    """`names` are the values the dashboard may set; `env` is read first (the process
+    environment by default). The file is read once, here; `set` and `clear` write it."""
+
+    def __init__(
+        self, path: Path, names: Iterable[SecretName], *, env: Mapping[str, str] | None = None
+    ) -> None:
+        self.path = path
+        self._names = {entry.name: entry for entry in names}
+        self._env = env if env is not None else os.environ
+        # An address and the token it carries form one group; every other name is its own.
+        self._group: dict[str, frozenset[str]] = {}
+        for entry in self._names.values():
+            if entry.carries is not None:
+                pair = frozenset({entry.name, entry.carries})
+                self._group[entry.name] = self._group[entry.carries] = pair
+        self._values: dict[str, SecretStr] = self._load()
+        self._listeners: list[Listener] = []
+        self._lock = asyncio.Lock()
+
+    def __repr__(self) -> str:
+        return f"SecretStore({self.path}, {len(self._values)} value(s) set)"
+
+    def names(self) -> list[SecretName]:
+        return list(self._names.values())
+
+    def entry(self, name: str) -> SecretName:
+        if name not in self._names:
+            raise UnknownSecret(name)
+        return self._names[name]
+
+    def get(self, name: str) -> SecretStr | None:
+        """The value in force: the environment's when it decides `name`, else the file's."""
+        if self._env_owned(name):
+            value = self._env.get(name)
+            return SecretStr(value) if value else None
+        return self._values.get(name)
+
+    def state(self, name: str) -> SecretState:
+        self.entry(name)
+        owned = self._env_owned(name)
+        is_set = self.get(name) is not None
+        source: Source | None = ("env" if owned else "dashboard") if is_set else None
+        return SecretState(set=is_set, source=source, env_owned=owned)
+
+    def environ(self) -> Mapping[str, str]:
+        """The values in force as a live mapping, for code that reads the environment: a known
+        name as `get` has it, any other from the environment."""
+        return _Environ(self)
+
+    def subscribe(self, listener: Listener) -> None:
+        """`listener` is awaited with the names that changed after each write that changed any."""
+        self._listeners.append(listener)
+
+    async def set(self, name: str, value: str) -> set[str]:
+        """Store `value` for `name`; returns the names that changed. A new address clears the
+        token it carries, so a token is never sent to an address it was not entered for."""
+        entry = self.entry(name)
+        value = _checked(name, value)
+        async with self._lock:
+            self._refuse_env(name)
+            for address, token in self._addresses():
+                if token == name and address not in self._values:
+                    raise SecretRefused(f"set {address} first: {name} is sent only there")
+            current = self._values.get(name)
+            if current is not None and current.get_secret_value() == value:
+                return set()
+            values = dict(self._values)
+            values[name] = SecretStr(value)
+            if entry.carries is not None:
+                values.pop(entry.carries, None)
+            return await self._commit(values)
+
+    async def clear(self, name: str) -> set[str]:
+        """Remove `name` (and the token an address carries); returns the names that changed."""
+        entry = self.entry(name)
+        async with self._lock:
+            self._refuse_env(name)
+            if entry.required is not None and name in self._values:
+                raise SecretRefused(f"{name} cannot be cleared: {entry.required}")
+            values = dict(self._values)
+            values.pop(name, None)
+            if entry.carries is not None:
+                values.pop(entry.carries, None)
+            return await self._commit(values)
+
+    def _env_owned(self, name: str) -> bool:
+        return any(self._env.get(n) for n in self._group.get(name, frozenset({name})))
+
+    def _refuse_env(self, name: str) -> None:
+        if self._env_owned(name):
+            together = " and ".join(sorted(self._group.get(name, {name})))
+            raise SecretFromEnv(
+                f"{together} come from the environment, which wins; change them there"
+                if name in self._group
+                else f"{name} is set in the environment, which wins; change it there"
+            )
+
+    def _addresses(self) -> Iterator[tuple[str, str]]:
+        for entry in self._names.values():
+            if entry.carries is not None:
+                yield entry.name, entry.carries
+
+    async def _commit(self, values: dict[str, SecretStr]) -> set[str]:
+        changed = {
+            name
+            for name in set(values) | set(self._values)
+            if (values.get(name) or SecretStr("")).get_secret_value()
+            != (self._values.get(name) or SecretStr("")).get_secret_value()
+        }
+        if not changed:
+            return set()
+        await asyncio.to_thread(self._write, values)
+        self._values = values
+        for name in sorted(changed):
+            log.info(
+                "secrets: %s %s from the dashboard", name, "set" if name in values else "cleared"
+            )
+        await self._tell(frozenset(changed))
+        return changed
+
+    async def _tell(self, changed: frozenset[str]) -> None:
+        for listener in self._listeners:
+            try:
+                await listener(changed)
+            except Exception as error:  # the type only: a message could quote a value
+                log.warning("secrets: reloading after a change failed (%s)", type(error).__name__)
+
+    def _write(self, values: dict[str, SecretStr]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        content = {
+            "version": FORMAT_VERSION,
+            "values": {name: value.get_secret_value() for name, value in sorted(values.items())},
+        }
+        # mkstemp creates the file 0600 whatever the umask; fchmod says so explicitly.
+        fd, temporary = tempfile.mkstemp(dir=self.path.parent, prefix=".secrets-", suffix=".tmp")
+        try:
+            os.fchmod(fd, FILE_MODE)
+            with os.fdopen(fd, "w", encoding="utf-8") as file:
+                json.dump(content, file)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary, self.path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(temporary)
+            raise
+
+    def _load(self) -> dict[str, SecretStr]:
+        if not self.path.exists():
+            return {}
+        try:
+            if self.path.stat().st_mode & 0o077:
+                log.warning("secrets: %s was readable by others; made it 0600", self.path)
+                self.path.chmod(FILE_MODE)
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except OSError, ValueError:
+            raise SecretFileError(
+                f"the secret file {self.path} cannot be read; fix or delete it"
+            ) from None
+        values = raw.get("values") if isinstance(raw, dict) else None
+        if not isinstance(values, dict) or not all(isinstance(v, str) for v in values.values()):
+            raise SecretFileError(f"the secret file {self.path} is not in Bleep's format")
+        for name in sorted(set(values) - set(self._names)):
+            log.warning("secrets: %s in the secret file is not one Bleep knows; left out", name)
+        return {name: SecretStr(v) for name, v in values.items() if name in self._names and v}
+
+
+def _checked(name: str, value: str) -> str:
+    value = value.strip()
+    if not value:
+        raise SecretRefused(f"{name} is empty; clear it instead")
+    if len(value) > MAX_VALUE_CHARS:
+        raise SecretRefused(f"{name} is over {MAX_VALUE_CHARS:,} characters")
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise SecretRefused(f"{name} holds a line break or a control character")
+    return value
+
+
+class _Environ(Mapping[str, str]):
+    def __init__(self, store: SecretStore) -> None:
+        self._store = store
+
+    def __getitem__(self, name: str) -> str:
+        if name in self._store._names:
+            value = self._store.get(name)
+            if value is None:
+                raise KeyError(name)
+            return value.get_secret_value()
+        return self._store._env[name]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter({*self._store._env, *(n for n in self._store._names if self._store.get(n))})
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)

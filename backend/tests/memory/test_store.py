@@ -367,6 +367,26 @@ def test_the_openai_compatible_embedder_posts_and_normalises():
     assert json.loads(seen[0].content) == {"model": "nomic-embed", "input": ["a", "b"]}
 
 
+def test_the_openai_compatible_embedder_reads_a_key_source_at_every_call():
+    """A key set or cleared on the dashboard is used from the next call (#135)."""
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0, 0.0]}]})
+
+    keys: dict[str, SecretStr] = {}
+    embedder = OpenAICompatEmbedder(
+        "http://llm.local/v1", "m", lambda: keys.get("k"), httpx.MockTransport(answer)
+    )
+    embedder.embed(["a"])
+    keys["k"] = SecretStr("sk-dashboard")
+    embedder.embed(["a"])
+
+    assert "authorization" not in seen[0].headers
+    assert seen[1].headers["authorization"] == "Bearer sk-dashboard"
+
+
 def test_the_openai_compatible_embedder_fails_with_its_own_words():
     def refuse(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, text="bad key sk-test")
