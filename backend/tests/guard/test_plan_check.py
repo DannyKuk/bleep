@@ -1,7 +1,12 @@
 import pytest
 
 from bleep.graph.deps import CORE_ACTIONS
-from bleep.guard.plan_check import NoCoolifyApp, check_plan, coolify_app_uuid
+from bleep.guard.plan_check import (
+    NoCoolifyApp,
+    check_plan,
+    coolify_app_uuid,
+    named_off_limits,
+)
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.coolify_names import coolify_slug
 from bleep.schemas.graph import PlanStep, Proposal, VerificationPlan
@@ -519,3 +524,50 @@ async def test_an_empty_resource_name_label_protects_nothing(tmp_path):
     )
 
     assert found == []
+
+
+async def off_limits(tmp_path, arguments):
+    env = await graph_env(tmp_path, engine=guarded_engine(), host=guarded_host())
+    return named_off_limits(arguments, env.registry, "a")
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "shop-db-1",
+        "SHOP-DB-1",
+        "shop\u200b-db-1",  # zero-width space
+        "sh\u00adop-db\u2060-1",  # soft hyphen, word joiner
+        "\u202eshop-db-1",  # bidi override
+        "ｓｈｏｐ－ｄｂ－１",  # fullwidth
+        "shop%2Ddb-1",
+        "shop%2ddb%2D1",
+        "shop%252Ddb-1",  # encoded twice
+        "shop%E2%80%8B-db-1",  # an encoded zero-width space
+        "%EF%BD%93hop-db-1",  # an encoded fullwidth s
+        "shop\x00-db-1",  # a control byte
+    ],
+)
+async def test_a_protected_name_is_found_however_it_is_spelled(tmp_path, spelling):
+    for arguments in ({"c": spelling}, {spelling: 1}, {"a": [{"b": f"run {spelling} now"}]}):
+        found = await off_limits(tmp_path, arguments)
+
+        assert found is not None and found[0] == "protected"
+
+
+@pytest.mark.parametrize(
+    "spelling", ["bleep\u200d-backend-1", "ＢＬＥＥＰ-backend-1", "bleep%2Dbackend-1"]
+)
+async def test_one_of_bleeps_own_containers_is_found_however_it_is_spelled(tmp_path, spelling):
+    found = await off_limits(tmp_path, {"c": spelling})
+
+    assert found is not None and found[0] == "self"
+
+
+async def test_decoding_stops_after_a_few_rounds_and_other_names_pass(tmp_path):
+    deep = "shop%2Ddb-1"
+    for _ in range(8):
+        deep = deep.replace("%", "%25")
+
+    assert await off_limits(tmp_path, {"c": deep}) is None
+    assert await off_limits(tmp_path, {"c": "shop-web-1 and shop\u200b-api"}) is None
