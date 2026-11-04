@@ -17,12 +17,13 @@ _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")  # all but \n and \t
 # Every Unicode "format" (Cf) character: soft hyphen, zero-width, bidi marks and overrides, the
 # byte-order mark, U+180E, the tag block; plus variation selectors. They hide text from a human
 # reader and can split a secret or a tag so a pattern misses it.
-_INVISIBLE = re.compile(
+INVISIBLE_CHARS = (
     "[­؀-؅؜۝܏࢐࢑࣢᠋-᠏​-‏"
     "‪-‮⁠-⁤⁦-⁯︀-️﻿￹-￻"
     "\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3\U0001d173-\U0001d17a"
     "\U000e0000-\U000e007f\U000e0100-\U000e01ef]"
 )
+_INVISIBLE = re.compile(INVISIBLE_CHARS)
 
 
 def normalise_newlines(text: str | bytes) -> str:

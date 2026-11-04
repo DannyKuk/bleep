@@ -42,7 +42,7 @@ from bleep.guard.log import GuardLogger
 from bleep.guard.pipeline import guard_text
 from bleep.guard.plan_check import check_target, protected_names
 from bleep.guard.redact import REDACTED
-from bleep.guard.sanitize import strip_control
+from bleep.guard.sanitize import INVISIBLE_CHARS, strip_control
 from bleep.hosts.discovery import is_self
 from bleep.hosts.registry import Registry
 from bleep.plugins.base import Plugin, PluginContext
@@ -248,20 +248,28 @@ class _Server:
         return await self._session(run, CALL_TIMEOUT_S)
 
     @cached_property
-    def _echo(self) -> re.Pattern[str] | None:
+    def _echoes(self) -> tuple[re.Pattern[str], re.Pattern[str]] | None:
         value = self.token.get_secret_value() if self.token is not None else ""
-        # Once control and invisible characters are stripped, only whitespace (a space, a line
-        # break) can still split an echo. `\s*` cannot match a token character, so a failed
-        # match gives up within one gap and the pass stays linear on any input.
-        return re.compile(r"\s*".join(re.escape(c) for c in value)) if value else None
+        # Whitespace in the token itself is left out: a gap pattern that could match a token
+        # character lets one failed match retry inside every gap, quadratic again.
+        chars = [re.escape(c) for c in value if not c.isspace()]
+        if not chars:
+            return None
+        # Each gap matches only characters a token never holds, so a failed match gives up
+        # within one gap and both passes stay linear on any input. The raw pass catches an
+        # escape whose stripping would also take a token character with it (ESC + letter); the
+        # stripped pass catches a split by a longer escape sequence.
+        raw_gap = rf"(?:[\s\x00-\x1f\x7f-\x9f]|{INVISIBLE_CHARS})*"
+        return re.compile(raw_gap.join(chars)), re.compile(r"\s*".join(chars))
 
     def scrub(self, text: str) -> str:
         """The token out of server text, also where escape codes, control or invisible characters
         or whitespace split it. A transformed echo (base64, reversed, in pieces far apart) is not
         caught."""
-        if self._echo is None:
+        if self._echoes is None:
             return text
-        return self._echo.sub(REDACTED, strip_control(text))
+        raw, stripped = self._echoes
+        return stripped.sub(REDACTED, strip_control(raw.sub(REDACTED, text)))
 
 
 def _listing(server: _Server, tools: list[BaseTool]) -> str:

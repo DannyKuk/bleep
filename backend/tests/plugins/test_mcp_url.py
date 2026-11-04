@@ -214,6 +214,34 @@ def test_an_echoed_token_split_by_invisible_characters_is_scrubbed_too(sep):
     assert "<redacted>" in out and "(keep it safe)" in out
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"{TOKEN[:4]}\x1b{TOKEN[4:]}",  # strip_control would take the character after the ESC
+        f"\x1b{TOKEN}",
+        f"\x1b[{TOKEN}",
+    ],
+)
+def test_an_escape_next_to_a_token_character_leaks_none_of_it(text):
+    from bleep.plugins.mcp_url import _guarded, _Server
+
+    out, _ = _guarded(_Server(URL, McpSettings(), SecretStr(TOKEN)), f"key: {text} ok")
+
+    assert TOKEN[5:] not in out and TOKEN[:4] + TOKEN[5:] not in out
+    assert "cp-test" not in out
+
+
+def test_scrubbing_stays_fast_for_a_token_with_spaces_in_it():
+    from bleep.plugins.mcp_url import _Server
+
+    server = _Server(URL, McpSettings(), SecretStr("a  b"))
+    started = time.perf_counter()
+    out = server.scrub("a" + " " * 40_000 + "x a b")
+
+    assert time.perf_counter() - started < 2.0
+    assert out.endswith("x <redacted>")
+
+
 def test_scrubbing_hostile_server_output_stays_fast():
     from bleep.plugins.mcp_url import _Server
 
