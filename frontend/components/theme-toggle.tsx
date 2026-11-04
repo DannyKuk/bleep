@@ -1,9 +1,9 @@
 "use client";
 
 import { Monitor, Moon, Sun } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
-import { applyTheme, readTheme, storeTheme, THEMES, type Theme } from "@/lib/theme";
+import { readTheme, setTheme, subscribeTheme, THEMES, type Theme } from "@/lib/theme";
 
 const ICONS = { system: Monitor, light: Sun, dark: Moon } as const;
 const NAMES = { system: "System", light: "Light", dark: "Dark" } as const;
@@ -12,30 +12,14 @@ export function nextTheme(theme: Theme): Theme {
   return THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
 }
 
-/** One round button that steps through system, light and dark. The pick is kept in localStorage;
- * the inline script in the root layout applies it before first paint. */
+/** One round button that steps through system, light and dark. The pick is kept in localStorage
+ * and shared by every toggle on the page; the inline script in the root layout applies it before
+ * first paint. */
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>("system");
-
-  useEffect(() => {
-    // localStorage is only readable in the browser, after hydration
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setTheme(readTheme());
-  }, []);
-
-  useEffect(() => {
-    if (theme !== "system") return;
-    const query = matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => applyTheme("system");
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
-  }, [theme]);
+  const theme = useSyncExternalStore(subscribeTheme, readTheme, () => "system" as Theme);
 
   function step() {
-    const next = nextTheme(theme);
-    setTheme(next);
-    storeTheme(next);
-    applyTheme(next);
+    setTheme(nextTheme(theme));
   }
 
   const Icon = ICONS[theme];

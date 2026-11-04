@@ -36,3 +36,35 @@ export function storeTheme(theme: Theme) {
     // private mode: the pick lasts until reload
   }
 }
+
+const listeners = new Set<() => void>();
+let unwatchSystem: (() => void) | null = null;
+
+function watchSystem() {
+  const query = matchMedia("(prefers-color-scheme: dark)");
+  const onChange = () => {
+    if (readTheme() === "system") applyTheme("system");
+  };
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+/** For useSyncExternalStore: every toggle subscribes here, and one OS-setting listener serves all
+ * of them, so a toggle that is not on screen can never apply a stale pick. */
+export function subscribeTheme(listener: () => void) {
+  if (listeners.size === 0) unwatchSystem = watchSystem();
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) {
+      unwatchSystem?.();
+      unwatchSystem = null;
+    }
+  };
+}
+
+export function setTheme(theme: Theme) {
+  storeTheme(theme);
+  applyTheme(theme);
+  listeners.forEach((listener) => listener());
+}
