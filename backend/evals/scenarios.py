@@ -13,9 +13,10 @@ from typing import Literal, Self
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from bleep.schemas.graph import Action, Diagnosis, Proposal
+from bleep.schemas.graph import Action, Diagnosis, PlanStep, Proposal
 from bleep.schemas.incidents import Subject
 from evals.github import GithubFixtureError, load_github_fixture
+from evals.mcp_server import McpFixtureError, load_mcp_fixture
 
 SCENARIOS_DIR = Path(__file__).parent / "scenarios"
 CATEGORIES: tuple[str, ...] = typing.get_args(Diagnosis.model_fields["category"].annotation)
@@ -35,6 +36,23 @@ class _Strict(BaseModel):
 class ExpectedStep(_Strict):
     action: Action
     target: str  # the container name, exactly as the plan must name it
+    tool: str | None = None  # an mcp.call's tool, which it must name; no other action has one
+
+    @model_validator(mode="after")
+    def _tool_only_for_mcp_call(self) -> Self:
+        if (self.action == "mcp.call") != (self.tool is not None):
+            raise ValueError("an mcp.call step names its tool, and no other step has one")
+        return self
+
+    @property
+    def key(self) -> tuple[str, str, str | None]:
+        return (self.action, self.target, self.tool)
+
+
+def step_key(step: PlanStep) -> tuple[str, str, str | None]:
+    """What a plan's step is scored on: its action and target, and an mcp.call's tool."""
+    tool = step.params.get("tool") if step.action == "mcp.call" else None
+    return (step.action, step.target, tool)
 
 
 class ExpectedAction(_Strict):
@@ -53,8 +71,8 @@ class ExpectedAction(_Strict):
         return self
 
     @property
-    def pairs(self) -> list[tuple[str, str]]:
-        return [(s.action, s.target) for s in self.steps]
+    def keys(self) -> list[tuple[str, str, str | None]]:
+        return [s.key for s in self.steps]
 
 
 class Expected(_Strict):
@@ -72,7 +90,7 @@ class Expected(_Strict):
 
     @model_validator(mode="after")
     def _must_not_excludes_the_answer(self) -> Self:
-        clash = sorted({a for a, _ in self.action.pairs} & set(self.must_not))
+        clash = sorted({a for a, _, _ in self.action.keys} & set(self.must_not))
         if clash:
             raise ValueError(f"must_not forbids the expected action {', '.join(clash)}")
         return self
@@ -86,6 +104,9 @@ class Scenario(_Strict):
     timeout_s: int = Field(600, gt=0)  # from the fault on to the end of Propose
     # A fixture in evals/fixtures/github/ that the GitHub tools read; without one they are absent.
     github: str | None = None
+    # A fixture in evals/fixtures/mcp/ served as the MCP plugin's server, the plugin switched on
+    # with its settings; without one the plugin is off.
+    mcp: str | None = None
 
 
 def load_scenario(path: Path) -> Scenario:
@@ -100,6 +121,11 @@ def load_scenario(path: Path) -> Scenario:
         try:
             load_github_fixture(scenario.github)
         except GithubFixtureError as error:
+            raise ScenarioError(f"scenario {path}: {error}") from error
+    if scenario.mcp is not None:
+        try:
+            load_mcp_fixture(scenario.mcp)
+        except McpFixtureError as error:
             raise ScenarioError(f"scenario {path}: {error}") from error
     return scenario
 
@@ -127,16 +153,17 @@ class ActionScore(BaseModel):
 
 
 def score_action(expected: Expected, proposal: Proposal | None) -> ActionScore:
-    """Exact match on kind, action and target; the order counts only when `ordered` is set.
+    """Exact match on kind, action and target, and an `mcp.call`'s tool; the order counts only
+    when `ordered` is set.
 
     No proposal (the run failed or timed out) is neither correct nor unnecessary.
     """
     if proposal is None:
         return ActionScore(action_correct=False, unnecessary_action=False)
-    proposed = [(s.action, s.target) for s in proposal.steps] if proposal.kind == "act" else []
-    wanted = expected.action.pairs
+    proposed = [step_key(s) for s in proposal.steps] if proposal.kind == "act" else []
+    wanted = expected.action.keys
     same = proposed == wanted if expected.action.ordered else Counter(proposed) == Counter(wanted)
-    forbidden = [f"{action} {target}" for action, target in proposed if action in expected.must_not]
+    forbidden = [f"{a} {target}" for a, target, _ in proposed if a in expected.must_not]
     beyond = Counter(proposed) - Counter(wanted)
     return ActionScore(
         action_correct=proposal.kind == expected.action.kind and same,

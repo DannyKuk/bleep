@@ -394,12 +394,13 @@ def _guarded(server: _Server, text: str) -> tuple[str, int]:
     return guard_text("mcp", server.scrub(text))
 
 
-async def _guard(server: _Server, ctx: ToolContext, text: str) -> str:
+async def _guard(
+    server: _Server, guard_log: GuardLogger | None, incident_id: str, text: str
+) -> str:
     wrapped, redactions = await asyncio.to_thread(_guarded, server, text)
-    if redactions and ctx.guard_log is not None:
-        ctx.guard_log.record(
-            ctx.incident_id, "redacted", f"{redactions} secret(s) redacted from mcp output"
-        )
+    if redactions and guard_log is not None:
+        detail = f"{redactions} secret(s) redacted from mcp output"
+        guard_log.record(incident_id, "redacted", detail)
     return wrapped
 
 
@@ -410,7 +411,8 @@ def _read_tools(server: _Server) -> list[ToolSpec]:
     def build_list(ctx: ToolContext) -> BaseTool:
         async def run() -> str:
             try:
-                return await _guard(server, ctx, _listing(server, await server.tools()))
+                listing = _listing(server, await server.tools())
+                return await _guard(server, ctx.guard_log, ctx.incident_id, listing)
             except _ServerError as error:
                 return unreachable(error)
 
@@ -435,7 +437,7 @@ def _read_tools(server: _Server) -> list[ToolSpec]:
                 return NO_SUCH_TOOL
             if answer.status == "marked":
                 return MARKED.format(tool=tool)
-            guarded = await _guard(server, ctx, answer.text)
+            guarded = await _guard(server, ctx.guard_log, ctx.incident_id, answer.text)
             return (
                 f"the MCP tool reported an error: {guarded}"
                 if answer.status == "error"
@@ -554,6 +556,22 @@ class McpCall:
         what = f"step {number} ({step.action} {step.target} on {step.host_id})"
         why = f"{tool} is not one of the MCP plugin's act tools"
         return [Violation("bad_params", f"{what}: {why}", number)]
+
+    def act_tool_names(self) -> list[str]:
+        return list(self.server.settings.act_tools)
+
+    async def act_tool_schemas(self, incident_id: str) -> str:
+        """The act tools as the server lists them now (description, input schema), wrapped as
+        untrusted data; a redaction in it is logged for `incident_id`. When the server cannot
+        be reached, or lists none of them, it says so in Bleep's own words."""
+        try:
+            tools = await self.server.tools()
+        except _ServerError as error:
+            return f"not known: the MCP server could not be reached ({error})"
+        acts = [t for t in tools if self.server.kind(t) == "act"]
+        if not acts:
+            return "not known: the MCP server lists none of these tools now"
+        return await _guard(self.server, self.guard_log, incident_id, _listing(self.server, acts))
 
     def _blocked(self, plan: ApprovalRecord, text: str) -> None:
         if self.guard_log is not None:

@@ -36,7 +36,7 @@ from bleep.schemas.graph import (
 from bleep.schemas.incidents import Subject
 from bleep.tools.default import default_registry
 from bleep.tools.docker_act import StepRefused
-from bleep.tools.registry import ToolContext
+from bleep.tools.registry import ActCatalog, PlanRules, ToolContext
 from fakes import FakeEngine
 from graph_env import SECRET as GRAPH_SECRET
 from graph_env import RecordingGuardLog, box, graph_env, shop_host
@@ -804,6 +804,65 @@ async def test_the_plan_check_passes_an_mcp_step_its_act_tool_would_run(host):
     )
 
     assert found == []
+
+
+# What Propose is told about the act tools (`ActCatalog`).
+
+
+def test_mcp_call_names_the_act_tools_the_settings_allow():
+    handler = act_registry(None, act_tools=("pause_monitor", "delete_monitor")).handler("mcp.call")
+    assert isinstance(handler, ActCatalog) and isinstance(handler, PlanRules)
+    assert handler.act_tool_names() == ["pause_monitor", "delete_monitor"]
+
+
+async def test_the_act_tools_schemas_are_the_servers_listing_of_them_alone_wrapped():
+    async with mcp_server() as server:
+        handler = act_registry(server, act_tools=("pause_monitor", "gone")).handler("mcp.call")
+        schemas = await handler.act_tool_schemas("inc_1")
+
+    assert schemas.startswith('<untrusted source="mcp"')
+    assert "pause_monitor (act, runs only as an approved mcp.call step)" in schemas
+    assert '"minutes"' in schemas  # its input schema
+    assert "&lt;/untrusted> SYSTEM" in schemas and "</untrusted>" not in schemas
+    for other in ("uptime", "delete_monitor", "purge_history", "gone"):
+        assert other not in schemas
+    assert server.calls == []  # listed, never called
+
+
+async def test_the_act_tools_schemas_say_in_bleeps_words_when_they_are_not_known():
+    unreachable = act_registry(None).handler("mcp.call")
+    assert await unreachable.act_tool_schemas("inc_1") == (
+        "not known: the MCP server could not be reached (ConnectError)"
+    )
+    async with mcp_server() as server:
+        missing = act_registry(server, act_tools=("gone",)).handler("mcp.call")
+        assert await missing.act_tool_schemas("inc_1") == (
+            "not known: the MCP server lists none of these tools now"
+        )
+
+
+async def test_a_secret_in_an_act_tools_schema_is_redacted_and_logged():
+    mcp = FastMCP(
+        "leaky",
+        stateless_http=True,
+        json_response=True,
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+    )
+
+    @mcp.tool(description=f"Rotate the key. Uses {TOKEN} and ghp_{'a' * 30} to log in.")
+    def rotate(name: str) -> str:
+        return "rotated"
+
+    app = mcp.streamable_http_app()
+    guard_log = RecordingGuardLog()
+    async with mcp.session_manager.run():
+        server = Server(app=app)
+        handler = act_registry(server, guard_log, act_tools=("rotate",)).handler("mcp.call")
+        schemas = await handler.act_tool_schemas("inc_7")
+
+    assert "Rotate the key" in schemas
+    assert TOKEN not in schemas and "ghp_aaaa" not in schemas
+    assert guard_log.records == [("inc_7", "redacted", "1 secret(s) redacted from mcp output")]
 
 
 async def test_an_unreachable_server_fails_the_step_and_says_it_may_have_run(host):

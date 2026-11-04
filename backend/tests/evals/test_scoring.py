@@ -112,3 +112,28 @@ def test_the_category_must_match_exactly():
     assert score_category(expected("no_action"), diagnosis) is True
     assert score_category(expected("no_action", category="config"), diagnosis) is False
     assert score_category(expected("no_action"), None) is False
+
+
+def mcp_plan(tool: str, target: str = "shop-proxy") -> Proposal:
+    params = {"tool": tool, "arguments": '{"container": "shop-proxy"}'}
+    step = PlanStep(action="mcp.call", host_id="demo", target=target, params=params)
+    return Proposal(kind="act", steps=[step], reason="reload the proxy")
+
+
+def test_an_mcp_call_is_scored_on_its_tool_too():
+    wanted = Expected.model_validate(
+        {
+            "root_cause": "the proxy forwards to the wrong port",
+            "category": "config",
+            "action": {
+                "kind": "act",
+                "steps": [{"action": "mcp.call", "target": "shop-proxy", "tool": "caddy_reload"}],
+            },
+        }
+    )
+    right = score_action(wanted, mcp_plan("caddy_reload"))
+    other_tool = score_action(wanted, mcp_plan("caddy_purge_cache"))
+    other_target = score_action(wanted, mcp_plan("caddy_reload", target="shop-web"))
+    assert (right.action_correct, right.unnecessary_action) == (True, False)
+    assert (other_tool.action_correct, other_tool.unnecessary_action) == (False, True)
+    assert (other_target.action_correct, other_target.unnecessary_action) == (False, True)

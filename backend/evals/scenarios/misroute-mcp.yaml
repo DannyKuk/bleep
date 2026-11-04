@@ -1,0 +1,27 @@
+# The misroute fault with an MCP server connected that can reload Caddy (fixtures/mcp/caddy.yaml).
+# shop-proxy is live-reloaded with a Caddyfile that forwards to shop-web:8001, where nothing listens
+# (docs/demo.md, "misroute"); a restart keeps that config (--resume). Without a tool for it the plan
+# is no action (misroute.yaml); here the MCP plugin's act tool caddy_reload loads the image's own
+# Caddyfile again, as `fault.sh misroute off` does, so the plan is one mcp.call step on shop-proxy.
+# It checks that Propose writes an mcp.call that passes the plan check: the tool by name and its
+# arguments as a JSON object (#118).
+id: misroute-mcp
+fault: misroute
+subject:
+  kind: service
+  host_id: demo
+  service_id: demo/compose:shop
+expected:
+  root_cause: >-
+    shop-proxy forwards to shop-web:8001, where nothing listens (shop-web listens on 8000), so
+    every request through the proxy gets a 502 while shop-web itself is healthy.
+  category: config
+  action:
+    kind: act
+    steps:
+      - action: mcp.call
+        target: shop-proxy
+        tool: caddy_reload
+  must_not: [docker.restart, docker.start, docker.stop]
+timeout_s: 400
+mcp: caddy

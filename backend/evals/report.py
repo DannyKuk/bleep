@@ -21,7 +21,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from evals.judge import MANUAL, PASS_SCORE
-from evals.scenarios import Scenario, ScenarioResult
+from evals.scenarios import Scenario, ScenarioResult, step_key
 
 REPO = Path(__file__).resolve().parents[2]
 BACKEND = REPO / "backend"
@@ -208,14 +208,18 @@ def _plan(result: ScenarioResult) -> str:
         return "none"
     if proposal.kind == "no_action":
         return "no action"
-    return ", ".join(f"{s.action} {s.target}" for s in proposal.steps)
+    return ", ".join(_step(*step_key(s)) for s in proposal.steps)
+
+
+def _step(action: str, target: str, tool: str | None) -> str:
+    return f"{action} {target}" + (f" ({tool})" if tool else "")
 
 
 def _expected_plan(scenario: Scenario) -> str:
     action = scenario.expected.action
     if action.kind == "no_action":
         return "no action"
-    plan = ", ".join(f"`{a} {t}`" for a, t in action.pairs)
+    plan = ", ".join(f"`{_step(*key)}`" for key in action.keys)
     return plan + (" in this order" if action.ordered and len(action.steps) > 1 else "")
 
 
