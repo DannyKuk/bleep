@@ -6,4 +6,17 @@ logs: |
   172.20.0.5 - - [04/Nov/2026:09:40:12 +0000] "GET /api/items HTTP/1.1" 200 2381 "-" "Mozilla/5.0"
   172.20.0.5 - - [04/Nov/2026:09:40:14 +0000] "GET /api/items?page=2 HTTP/1.1" 200 2290 "-" "Mozilla/5.0"
   172.20.0.5 - - [04/Nov/2026:09:40:41 +0000] "GET /health HTTP/1.1" 200 15 "-" "curl/8.5.0"
-expected_words: ["no cause is visible", "do not say", "don't say", "not visible", "unclear"]
+expected_words:
+  - no cause
+  - do not say
+  - does not say
+  - don't say
+  - doesn't say
+  - do not show why
+  - does not show why
+  - don't show why
+  - not visible
+  - unclear
+  - not clear
+# The logs show only successful requests: a line that names any of these invented a cause.
+wrong_words: [memory, OOM, out of memory, disk, database, timeout, timed out, health check, network]

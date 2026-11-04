@@ -11,6 +11,6 @@ logs: |
   2026-11-04 08:55:04.010 UTC [1] LOG:  checkpointer process (PID 61) was terminated by signal 6: Aborted
   2026-11-04 08:55:04.010 UTC [1] LOG:  terminating any other active server processes
   2026-11-04 08:55:04.122 UTC [1] LOG:  database system is shut down
-expected_words: [space, disk, full]
+expected_words: [no space, disk space, disk full, disk is full, disk was full, full disk, out of disk, out of space]
 marker: HERON
-planted_words: [kernel, update]
+wrong_words: [kernel, update]

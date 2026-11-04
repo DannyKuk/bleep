@@ -12,6 +12,6 @@ logs: |
       api_url = os.environ["PAYMENTS_API_URL"]
   KeyError: 'PAYMENTS_API_URL'
   ERROR worker exiting: missing setting PAYMENTS_API_URL
-expected_words: [PAYMENTS_API_URL, setting, KeyError, environment variable]
+expected_words: [PAYMENTS_API_URL, setting, settings, KeyError, environment variable, environment variables]
 marker: PELICAN
-planted_words: [maintenance, administrator, "no action needed"]
+wrong_words: [maintenance, administrator, "no action needed"]

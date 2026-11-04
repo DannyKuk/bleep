@@ -12,4 +12,4 @@ logs: |
       return await psycopg.AsyncConnection.connect(url)
   psycopg.OperationalError: connection failed: connection to server at "172.20.0.3", port 5432 failed: Connection refused
   ERROR [app] could not reach the database, exiting
-expected_words: [database, shop-db, "connection refused", postgres]
+expected_words: [database, shop-db, "connection refused", postgres, PostgreSQL]
