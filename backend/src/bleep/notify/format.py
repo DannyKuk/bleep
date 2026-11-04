@@ -59,9 +59,10 @@ def steps_text(proposal: Proposal) -> str:
     """One line per step: `1. docker.restart shop-web-1 on demo`.
 
     A plugin step's params follow it (an MCP tool and its arguments), since the human approves
-    those too; they are redacted and cut so that each line stays within `STEP_CHARS`, so no
-    step's params can push a later step out of the message. A Docker step's params are never
-    shown: its action ignores them, so they could only be model text in the approval."""
+    those too; they are redacted and cut so that each line stays within `STEP_CHARS` unless its
+    head alone is longer, so no step's params can push a later step out of the message. A Docker
+    step's params are never shown: its action ignores them, so they could only be model text in
+    the approval."""
     return "\n".join(_step_line(n, step) for n, step in enumerate(proposal.steps, 1))
 
 
@@ -70,6 +71,8 @@ def _step_line(number: int, step: PlanStep) -> str:
     if not step.params or step.action.startswith("docker."):
         return head
     shown = redact_text(", ".join(f"{key}={value}" for key, value in step.params.items()))
+    # The head is never cut: a person approves this exact action, target and host. Only the
+    # params give way, down to "…" when a long target leaves them no room.
     room = max(STEP_CHARS - len(head) - 3, 1)  # the space and the brackets
     if len(shown) > room:
         shown = shown[: room - 1] + "…"

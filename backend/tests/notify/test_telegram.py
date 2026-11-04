@@ -414,6 +414,15 @@ def test_long_params_never_push_a_later_step_out_of_the_message():
     assert all(len(line) <= fmt.STEP_CHARS for line in fmt.steps_text(proposal).splitlines())
 
 
+def test_a_target_too_long_for_its_params_is_shown_whole():
+    target = "shop-web-" + "x" * 300
+    step = PlanStep(
+        action="mcp.call", host_id="demo", target=target, params={"tool": "pause_monitor"}
+    )
+    text = fmt.steps_text(Proposal(kind="act", steps=[step], reason="r"))
+    assert text == f"1. mcp.call {target} on demo (…)"
+
+
 def test_a_secret_in_a_steps_params_is_redacted():
     step = PlanStep(
         action="mcp.call",

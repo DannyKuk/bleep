@@ -65,13 +65,6 @@ CALL_TIMEOUT_S = 30.0  # one tool call, after the listing
 SCHEMA_CHARS = 600  # a tool's input schema in the listing, at most
 
 _URL = TypeAdapter(AnyHttpUrl)
-# What can sit inside an echoed token without a reader noticing: ANSI sequences, control and
-# invisible characters, whitespace (a CR or a newline that splits it).
-_JUNK = (
-    r"(?:\x1b\[[0-?]*[ -/]*[@-~]|[\s\x00-\x1f\x7f­​-‏ -‮"
-    r"⁠-⁤﻿])*"
-)
-
 ToolName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_.\-/]{1,128}$")]
 Kind = Literal["read", "act", "marked", "not allowed"]
 
@@ -257,15 +250,18 @@ class _Server:
     @cached_property
     def _echo(self) -> re.Pattern[str] | None:
         value = self.token.get_secret_value() if self.token is not None else ""
-        return re.compile(_JUNK.join(re.escape(c) for c in value)) if value else None
+        # Once control and invisible characters are stripped, only whitespace (a space, a line
+        # break) can still split an echo. `\s*` cannot match a token character, so a failed
+        # match gives up within one gap and the pass stays linear on any input.
+        return re.compile(r"\s*".join(re.escape(c) for c in value)) if value else None
 
     def scrub(self, text: str) -> str:
-        """The token out of server text, also where control or invisible characters split it:
-        before and after they are stripped. A transformed echo (base64, reversed) is not caught."""
+        """The token out of server text, also where escape codes, control or invisible characters
+        or whitespace split it. A transformed echo (base64, reversed, in pieces far apart) is not
+        caught."""
         if self._echo is None:
             return text
-        cleaned = strip_control(self._echo.sub(REDACTED, text))
-        return self._echo.sub(REDACTED, cleaned)
+        return self._echo.sub(REDACTED, strip_control(text))
 
 
 def _listing(server: _Server, tools: list[BaseTool]) -> str:

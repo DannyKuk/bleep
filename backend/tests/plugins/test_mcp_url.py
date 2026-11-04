@@ -1,3 +1,4 @@
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -211,6 +212,22 @@ def test_an_echoed_token_split_by_invisible_characters_is_scrubbed_too(sep):
     assert TOKEN not in out
     assert TOKEN[:10] not in out and TOKEN[10:] not in out
     assert "<redacted>" in out and "(keep it safe)" in out
+
+
+def test_scrubbing_hostile_server_output_stays_fast():
+    from bleep.plugins.mcp_url import _Server
+
+    server = _Server(URL, McpSettings(), SecretStr(TOKEN))
+    hostile = [
+        f"{TOKEN[0]}\x1b[ " * 250_000,  # escape codes whose final byte is the token's first
+        (TOKEN[:-1] + " " * 50) * 20_000,  # the token all but its last character, again and again
+        TOKEN[0] + " " * 1_000_000,
+    ]
+    started = time.perf_counter()
+    for text in hostile:
+        server.scrub(text)
+
+    assert time.perf_counter() - started < 2.0
 
 
 @pytest.mark.parametrize(
