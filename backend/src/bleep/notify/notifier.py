@@ -72,12 +72,12 @@ class Notifier:
         text = fmt.render(
             "proposal",
             id=incident.id,
-            title=incident.title,
+            title=fmt.prose_line(incident.title),
             category=category,
             confidence=confidence,
-            root_cause=cause,
+            root_cause=fmt.prose_line(cause),
             steps=fmt.steps_text(proposal),
-            reason=proposal.reason,
+            reason=fmt.prose_line(proposal.reason),
         )
         await self._ask(incident, approval, text, approvable=fmt.shows_in_full(proposal))
 
@@ -89,7 +89,10 @@ class Notifier:
         if current is None or current.id != approval.id:
             return  # no plan to show
         text = fmt.render(
-            "reminder", id=incident.id, title=incident.title, steps=fmt.steps_text(current.proposal)
+            "reminder",
+            id=incident.id,
+            title=fmt.prose_line(incident.title),
+            steps=fmt.steps_text(current.proposal),
         )
         approvable = fmt.shows_in_full(current.proposal)
         await self._safely(self._ask(incident, approval, text, approvable=approvable))

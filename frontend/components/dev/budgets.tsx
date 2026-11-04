@@ -37,10 +37,14 @@ export const FIELDS: { key: Key; label: string; min: number; max: number; step: 
 const asText = (budgets: Budgets) =>
   Object.fromEntries(FIELDS.map(({ key }) => [key, String(budgets[key])])) as Record<Key, string>;
 
+/** A field's number; empty text is not one, so it never equals a value. */
+const numeric = (text: string) => (text.trim() === "" ? NaN : Number(text));
+const sameNumber = (a: unknown, b: unknown) => numeric(String(a)) === numeric(String(b));
+
 /** The limits that keep an incident and a day from running away; in force from the next node. */
 export function BudgetsForm(props: SectionFormProps) {
   const { view } = props;
-  const [values, setValues] = useDraft(asText(view.budgets));
+  const [values, setValues] = useDraft(asText(view.budgets), sameNumber);
   const {
     saving,
     busy,
@@ -50,7 +54,7 @@ export function BudgetsForm(props: SectionFormProps) {
   } = useSectionSave("budgets", props, "budgets");
   const id = useId();
   const overridden = Object.keys(view.overrides.budgets ?? {}).length > 0;
-  const changed = FIELDS.filter(({ key }) => Number(values[key]) !== view.budgets[key]);
+  const changed = FIELDS.filter(({ key }) => numeric(values[key]) !== view.budgets[key]);
 
   const save = (body: Partial<Budgets>) => put(body, (saved) => setValues(asText(saved.budgets)));
 

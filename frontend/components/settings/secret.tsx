@@ -1,23 +1,33 @@
-import { CheckCircle2, XCircle } from "lucide-react";
+import { CheckCircle2, MinusCircle, XCircle } from "lucide-react";
 
 import type { SecretStatus } from "@/lib/settings-types";
 import { cn } from "@/lib/utils";
 
 /** Where a secret comes from and whether it is there; never its value, which no API returns. */
-export function SecretBadge({ secret }: { secret: SecretStatus }) {
+export function SecretBadge({
+  secret,
+  optional = false,
+}: {
+  secret: SecretStatus;
+  /** Unset is then fine, not broken: shown neutrally. */
+  optional?: boolean;
+}) {
   const source = secret.env ? `env ${secret.env}` : `file ${secret.file ?? ""}`;
-  const Icon = secret.set ? CheckCircle2 : XCircle;
+  const neutral = optional && !secret.set;
+  const Icon = secret.set ? CheckCircle2 : neutral ? MinusCircle : XCircle;
   return (
     <span
       data-set={secret.set}
       className={cn(
         "inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium",
-        secret.set ? "bg-health-ok/12 text-health-ok" : "bg-health-down/12 text-health-down",
+        secret.set && "bg-health-ok/12 text-health-ok",
+        neutral && "bg-muted text-muted-foreground",
+        !secret.set && !neutral && "bg-health-down/12 text-health-down",
       )}
     >
       <Icon aria-hidden className="size-3.5 shrink-0" />
       <span className="min-w-0 break-all">
-        {secret.set ? "Set via " : "Missing: "}
+        {secret.set ? "Set via " : neutral ? "Not set, optional: " : "Missing: "}
         <code className="font-mono">{source}</code>
       </span>
     </span>
