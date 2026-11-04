@@ -162,7 +162,7 @@ export function ServicePage({ id }: { id: string }) {
           Past incidents
         </h2>
         {incidents.data ? (
-          <IncidentListView flat incidents={incidents.data} />
+          <IncidentListView incidents={incidents.data} />
         ) : incidents.error ? (
           <Failed>Could not load the incidents: {incidents.error.message}</Failed>
         ) : (

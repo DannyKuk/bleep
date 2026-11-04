@@ -56,14 +56,7 @@ function Row({ incident }: { incident: Incident }) {
   );
 }
 
-/** `flat` is the plain list a service's page embeds: no headline, filters or groups. */
-export function IncidentListView({
-  incidents,
-  flat = false,
-}: {
-  incidents: Incident[];
-  flat?: boolean;
-}) {
+export function IncidentListView({ incidents }: { incidents: Incident[] }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
 
@@ -75,16 +68,6 @@ export function IncidentListView({
           No incidents yet. When a service breaks, it shows here.
         </p>
       </div>
-    );
-  }
-
-  if (flat) {
-    return (
-      <ul aria-label="Incidents" className="flex flex-col gap-2">
-        {incidents.map((incident) => (
-          <Row key={incident.id} incident={incident} />
-        ))}
-      </ul>
     );
   }
 
