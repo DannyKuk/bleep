@@ -50,8 +50,9 @@ describe("PluginList", () => {
     const onSave = vi.fn(async () => undefined);
     const on = plugin({
       enabled: true,
+      switched_on: true,
       settings: { url: "https://coolify.lan", team: "main" },
-      secrets: [{ env: "COOLIFY_TOKEN", set: true }],
+      secrets: [{ env: "COOLIFY_TOKEN", set: true, required: true }],
       health: { ok: true, detail: "3 applications" },
     });
     render(<PluginList plugins={[on]} onSave={onSave} />);
@@ -61,6 +62,34 @@ describe("PluginList", () => {
     expect(screen.queryByRole("button", { name: "Save settings" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Switch off" }));
     expect(onSave).toHaveBeenCalledWith("coolify", { enabled: false }, "p1");
+  });
+
+  it("shows a plugin switched on but waiting for its secret, and switches it off", async () => {
+    const onSave = vi.fn(async () => undefined);
+    const waiting = plugin({
+      switched_on: true,
+      settings: { url: "https://coolify.lan", team: "main" },
+      secrets: [
+        { env: "COOLIFY_TOKEN", set: false, required: true },
+        { env: "COOLIFY_CA", set: false, required: false },
+      ],
+    });
+    render(<PluginList plugins={[waiting]} onSave={onSave} />);
+    expect(screen.getByText("On, waiting for COOLIFY_TOKEN")).toBeInTheDocument();
+    expect(screen.getByText(/does not run until COOLIFY_TOKEN is set/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Switch on" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Switch off" }));
+    expect(onSave).toHaveBeenCalledWith("coolify", { enabled: false }, "p1");
+  });
+
+  it("says a plugin switched on with every secret set is not running", () => {
+    const broken = plugin({
+      switched_on: true,
+      secrets: [{ env: "COOLIFY_TOKEN", set: true, required: true }],
+    });
+    render(<PluginList plugins={[broken]} onSave={vi.fn()} />);
+    expect(screen.getByText("On, not running")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Switch off" })).toBeInTheDocument();
   });
 
   it("keeps a boolean's default of true when the person leaves it untouched", async () => {

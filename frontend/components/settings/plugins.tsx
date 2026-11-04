@@ -123,6 +123,25 @@ function Field({
   );
 }
 
+const missingSecrets = (plugin: PluginView) =>
+  plugin.secrets.filter((s) => s.required && !s.set).map((s) => s.env);
+
+/** "On", "Off", or, for a plugin switched on that does not run, what it is waiting for. */
+export function state(plugin: PluginView): string {
+  if (plugin.enabled) return "On";
+  if (!plugin.switched_on) return "Off";
+  const missing = missingSecrets(plugin);
+  return missing.length > 0 ? `On, waiting for ${missing.join(", ")}` : "On, not running";
+}
+
+function waitingNote(plugin: PluginView): string | null {
+  if (plugin.enabled || !plugin.switched_on) return null;
+  const missing = missingSecrets(plugin);
+  return missing.length > 0
+    ? `Switched on, but it does not run until ${missing.join(", ")} is set in Bleep's environment and Bleep is restarted.`
+    : "Switched on, but it could not be started; switch it off and on again to see why.";
+}
+
 /**
  * One plugin: switch it on or off, change its settings (a form from its JSON schema), see its
  * health and whether each secret it needs is set. Secrets have no input: they stay in the env.
@@ -149,6 +168,7 @@ export function PluginSettings({
       }),
     );
   const [draft, setDraft] = useState<Record<string, string>>(initial);
+  const on = plugin.enabled || plugin.switched_on;
   const { saving, busy, problems, run } = useSaving();
   const settings = settingsFrom(draft, fields, plugin.settings);
   const dirty =
@@ -158,7 +178,7 @@ export function PluginSettings({
     <section aria-label={`Plugin ${plugin.title}`} className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-medium">{plugin.title}</h3>
-        <Badge>{plugin.enabled ? "On" : "Off"}</Badge>
+        <Badge>{state(plugin)}</Badge>
         {plugin.health && (
           <HealthBadge
             health={plugin.health.ok ? "ok" : "down"}
@@ -171,12 +191,15 @@ export function PluginSettings({
           variant="outline"
           className="ml-auto"
           disabled={busy}
-          onClick={() => void run(() => onSave({ enabled: !plugin.enabled }))}
+          onClick={() => void run(() => onSave({ enabled: !on }))}
         >
-          {plugin.enabled ? <PowerOff aria-hidden /> : <Power aria-hidden />}
-          {plugin.enabled ? "Switch off" : "Switch on"}
+          {on ? <PowerOff aria-hidden /> : <Power aria-hidden />}
+          {on ? "Switch off" : "Switch on"}
         </Button>
       </div>
+      {waitingNote(plugin) && (
+        <p className="text-xs text-muted-foreground">{waitingNote(plugin)}</p>
+      )}
       {plugin.health?.detail && (
         <p className="text-xs text-muted-foreground">{plugin.health.detail}</p>
       )}

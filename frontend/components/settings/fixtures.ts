@@ -80,6 +80,7 @@ export function plugin(overrides: Partial<PluginView> = {}): PluginView {
     name: "coolify",
     title: "Coolify",
     enabled: false,
+    switched_on: false,
     settings: {},
     settings_schema: {
       properties: {
@@ -88,7 +89,7 @@ export function plugin(overrides: Partial<PluginView> = {}): PluginView {
       },
       required: ["url"],
     },
-    secrets: [{ env: "COOLIFY_TOKEN", set: false }],
+    secrets: [{ env: "COOLIFY_TOKEN", set: false, required: true }],
     health: null,
     version: "p1",
     ...overrides,

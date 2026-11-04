@@ -151,15 +151,17 @@ class PluginRegistry:
             (a.handlers[action] for a in self._active.values() if action in a.handlers), None
         )
 
-    async def view(self, name: str, *, version: str) -> PluginView:
+    async def view(self, name: str, *, version: str, switched_on: bool | None = None) -> PluginView:
         """What the API shows: settings and which secrets are set, never a secret's value.
-        `version` is the settings store's for this plugin, read before the settings are."""
+        `version` is the settings store's for this plugin, read before the settings are, and
+        `switched_on` the stored toggle (by default, whether the plugin is on)."""
         plugin = self.get(name)
         active = self._active.get(name)
         return PluginView(
             name=name,
             title=plugin.title,
             enabled=active is not None,
+            switched_on=switched_on if switched_on is not None else active is not None,
             settings=self._shown_settings(name),
             settings_schema=plugin.settings_model.model_json_schema(),
             secrets=[
@@ -208,10 +210,8 @@ class PluginRegistry:
         try:
             return plugin.settings_model.model_validate(dict(values))
         except ValidationError as error:
-            where = {".".join(str(p) for p in e["loc"]) or "settings" for e in error.errors()}
-            fields = sorted(where)
             raise PluginError(
-                f"plugin {plugin.name}: invalid settings ({', '.join(fields)})"
+                f"plugin {plugin.name}: invalid settings ({_reasons(error)})"
             ) from None
 
     async def _health(self, plugin: Plugin, ctx: PluginContext) -> PluginHealth:
@@ -228,6 +228,16 @@ class PluginRegistry:
             if secret := value.get_secret_value():
                 detail = detail.replace(secret, REDACTED)
         return PluginHealth(ok=health.ok, detail=detail)
+
+
+def _reasons(error: ValidationError) -> str:
+    """Each field with pydantic's reason, without the input it was given: the message names
+    what was expected, the input could be anything the person typed."""
+    reasons: dict[str, list[str]] = {}
+    for e in error.errors(include_input=False, include_url=False, include_context=False):
+        where = ".".join(str(p) for p in e["loc"]) or "settings"
+        reasons.setdefault(where, []).append(e["msg"])
+    return "; ".join(f"{where}: {', '.join(msgs)}" for where, msgs in sorted(reasons.items()))
 
 
 class _ActTools(Mapping[str, ActHandler]):

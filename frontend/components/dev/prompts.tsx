@@ -3,28 +3,43 @@
 import { FileText, Loader2, RotateCcw, Save } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 
+import { useDraft } from "@/components/dev/models";
 import { Failed, Loading, why } from "@/components/dev/status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
 import type { PromptOverrideBody, PromptView } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
+import { isStale } from "@/lib/settings-api";
 
 const MAX_PROMPT = 20_000; // the API's limit (PROMPT_CHARS)
+
+const NOT_SAVED = "Not saved: this prompt changed elsewhere since this page read it.";
+export const PROMPT_READ_AGAIN = `${NOT_SAVED} It has been read again and your edit kept on top of it; check it and save again if your change is still needed.`;
+export const promptRereadFailed = (error: unknown) =>
+  `${NOT_SAVED} Reading it again failed (${why(error)}); reload the page before you change anything else.`;
 
 const promptPath = (name: string) =>
   `/api/dev/prompts/${name.split("/").map(encodeURIComponent).join("/")}`;
 
-/** One prompt's text, edited as an override; the file stays as it is. */
+/**
+ * One prompt's text, edited as an override; the file stays as it is. A save or reset sends the
+ * prompt's `version`; after a 409 it reads the prompts again (`onStale`) and says so, keeps the
+ * person's edit (an untouched text takes the new one) and is never retried.
+ */
 export function PromptEditor({
   prompt,
   onSaved,
+  onStale,
 }: {
   prompt: PromptView;
   onSaved: (prompt: PromptView) => void;
+  /** Read the prompts again; throws when that read fails. */
+  onStale: () => Promise<void>;
 }) {
   const inForce = prompt.override ?? prompt.file_text;
-  const [text, setText] = useState(inForce);
+  const [draft, setDraft] = useDraft({ text: inForce });
+  const text = draft.text;
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const id = useId();
@@ -33,11 +48,23 @@ export function PromptEditor({
     setBusy(true);
     setFailure(null);
     try {
-      const saved = await apiFetch<PromptView>(promptPath(prompt.name), init);
-      setText(saved.override ?? saved.file_text);
+      const saved = await apiFetch<PromptView>(promptPath(prompt.name), {
+        ...init,
+        headers: { "if-match": `"${prompt.version}"` },
+      });
+      setDraft({ text: saved.override ?? saved.file_text });
       onSaved(saved);
     } catch (error) {
-      setFailure(`${failed}: ${why(error)}`);
+      if (isStale(error)) {
+        try {
+          await onStale();
+          setFailure(PROMPT_READ_AGAIN);
+        } catch (failed) {
+          setFailure(promptRereadFailed(failed));
+        }
+      } else {
+        setFailure(`${failed}: ${why(error)}`);
+      }
     } finally {
       setBusy(false);
     }
@@ -81,7 +108,7 @@ export function PromptEditor({
         maxLength={MAX_PROMPT}
         rows={14}
         spellCheck={false}
-        onChange={(changed) => setText(changed.target.value)}
+        onChange={(changed) => setDraft({ text: changed.target.value })}
         className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs leading-relaxed focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
       />
       <p className="text-xs text-muted-foreground">
@@ -126,6 +153,10 @@ export function PromptsPanel() {
     return () => controller.abort();
   }, []);
 
+  async function readAgain() {
+    setPrompts(await apiFetch<PromptView[]>("/api/dev/prompts"));
+  }
+
   if (failure) return <Failed>{failure}</Failed>;
   if (!prompts) return <Loading>Loading the prompts</Loading>;
   const selected = chosen ?? prompts[0]?.name ?? "";
@@ -159,6 +190,7 @@ export function PromptsPanel() {
           onSaved={(saved) =>
             setPrompts((known) => (known ?? []).map((p) => (p.name === saved.name ? saved : p)))
           }
+          onStale={readAgain}
         />
       )}
     </div>

@@ -102,6 +102,38 @@ Without it everything works from the dashboard. To also get incidents and approv
 
 Only that chat is answered. Messages and button taps from any other chat are ignored and recorded in the guard log. The first answer wins, from Telegram or the dashboard; the other is told who won. Details: [Notifications](design/notify.md).
 
+## GitHub token (optional)
+
+Bleep reads each service's repo (the `repo` of a service in the hosts file): its recent commits and their diffs while it investigates, and the docs it names (`docs_paths`, or `docs` and the README) for knowledge search. Without a token it reads public repos only, at 60 requests an hour.
+
+1. Create a **fine-grained** personal access token on GitHub (Settings, Developer settings, Personal access tokens, Fine-grained tokens), limited to the repos the hosts file names.
+2. Give it two repository permissions, both **read-only**: **Contents** (commits, diffs and files) and **Metadata** (GitHub adds it to every token). Nothing else: Bleep never writes to GitHub.
+3. Put it in `.env` as `GITHUB_TOKEN` and restart. The hosts file points at it with `github: token: {env: GITHUB_TOKEN}` (as in `config/hosts.example.yaml`); an unset or empty variable means public repos only.
+
+## Plugins (optional)
+
+A plugin adds the tools of one more system, such as a Coolify instance. Each one is off until you switch it on, and its address and token come from `.env`, never from the dashboard. For each:
+
+1. Set its variables in `.env` (below).
+2. Restart the backend (`docker compose up -d backend`), since Bleep reads the environment when it starts.
+3. In the dashboard, open Settings, find the plugin under Plugins and press **Switch on**. Its secrets show only as set or missing; a refusal names the variable that is missing or the setting that is wrong, and why.
+
+A plugin switched on whose variable is later unset shows **On, waiting for** that variable after the next restart: it keeps your choice and runs again once the variable is back and Bleep restarts, and **Switch off** turns it off for good. Details: [Plugins](design/plugins.md).
+
+### Coolify
+
+- `COOLIFY_URL`: where Coolify answers, such as `https://coolify.example.com`. It must be https unless it is a loopback or private address (`127.x`, `10.x`, `172.16.x` to `172.31.x`, `192.168.x`, Tailscale's `100.64.x`, IPv6 `::1` and `fc00::/7`) or a single-label name such as a Docker service, since the token travels with every request.
+- `COOLIFY_TOKEN`: an API token from **Keys & Tokens > API tokens** with the `read`, `deploy` and `write` permissions only. Never `root` and never `read:sensitive`: without `read:sensitive` Coolify leaves env values, deployment logs and other secrets out of what it answers.
+
+Its one setting, `deploy_timeout_s`, is how long a redeploy may take (default 900 s).
+
+### MCP server by URL
+
+- `MCP_URL`: the server's Streamable HTTP endpoint, required.
+- `MCP_TOKEN`: its bearer token, used when set. Give it the fewest rights the server offers: on a server that scopes its tokens, as Coolify's does, a read-only token keeps it read-only whatever Bleep's settings allow.
+
+In its settings, list the server's tools Bleep may run: `read_tools` without approval, `act_tools` only in a plan you approve. Any other tool is not run. An example with Coolify's own MCP server: [Plugins](design/plugins.md#mcp-server-by-url).
+
 ## Memory embeddings (optional)
 
 Bleep remembers every finished incident and recalls similar ones. By default it embeds them with a small local model that ships inside the backend image (bge-small, about 11 ms per incident on a laptop, no key and no network). To use an OpenAI-compatible endpoint instead (OpenAI, LM Studio, Ollama), set in `.env`:
@@ -113,7 +145,7 @@ EMBEDDINGS_MODEL=text-embedding-nomic-embed-text-v1.5     # a model that server 
 EMBEDDINGS_API_KEY=                                        # only if the server wants one
 ```
 
-Bleep refuses to start with the provider set and the URL or the model missing. After a model change, the next start embeds the stored incidents again; until that is done they are left out of recall. Details: [Memory](design/memory.md), [Embeddings](decisions/embeddings.md).
+Bleep refuses to start with the provider set and the URL or the model missing. After a model change, the next start embeds the stored incidents again; until that is done they are left out of recall. The same embedder indexes the docs for knowledge search. Embedding calls are not in the usage ledger: the dev panel's cost and the daily cap count only the chat models, so a paid embeddings endpoint is billed outside them. Details: [Memory](design/memory.md), [Embeddings](decisions/embeddings.md).
 
 ## Tracing (optional)
 
@@ -123,7 +155,7 @@ Every incident run can become one trace, with the incident as its session. For a
 docker compose -f docker-compose.yaml -f docker-compose.observability.yaml --profile observability up -d --build
 ```
 
-Langfuse creates its project, keys and login from `.env` on first start; the UI is at http://localhost:3001, and each incident carries a link to its trace (`trace_url`). For Langfuse elsewhere or LangSmith, set `TRACING` and the variables listed in `.env.example` instead. Pass `docker-compose.observability.yaml` only with the profile: it turns the backend's tracing on, and without the profile no Langfuse runs. Bleep refuses to start when `TRACING` names a tracer whose keys are missing. Details: [Observability](design/observability.md).
+Langfuse creates its project, keys and login from `.env` on first start; the UI is at http://localhost:3001, and each incident carries a link to its trace (`trace_url`). The links use `LANGFUSE_UI_URL` from `.env` (default `http://localhost:3001`); set it when the browser reaches Langfuse at another address. An unreachable Langfuse does not hold up incidents; the backend logs a warning for each batch of spans it could not send. For Langfuse elsewhere or LangSmith, set `TRACING` and the variables listed in `.env.example` instead. Pass `docker-compose.observability.yaml` only with the profile: it turns the backend's tracing on, and without the profile no Langfuse runs. Bleep refuses to start when `TRACING` names a tracer whose keys are missing. Details: [Observability](design/observability.md).
 
 ## Later
 

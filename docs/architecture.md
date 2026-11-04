@@ -67,7 +67,7 @@ flowchart LR
 | **Prompts** | `prompts/` | Every prompt is a `.md` file loaded with `prompts.load(name, **vars)`, which reads the dev panel's override instead when one is in force. |
 | **Store** | `store/` | SQLite with numbered migrations. |
 | **API** | `main.py`, `api/`, `auth/` | Login with one admin password and hashed sessions; the read API over hosts and services; incidents with their findings, timeline and recoveries; the dashboard's decision on an approval and feedback on the findings; a service's facts; the settings, the plugins and the Telegram status; the live event stream (SSE). |
-| **Dashboard** | `frontend/` | Next.js app: login; an overview of hosts, services and self-recoveries, polled; the incident list; each incident's page with its live reasoning, timeline, diagnosis, the plan to approve, reject or instruct, a vote on both, and the report once the run ends, streamed through a route handler (`app/api/stream/route.ts`); each service's page with its URLs, rules, facts and past incidents; and the settings page, which edits thresholds, rules, URLs, protected containers and plugins and shows every secret only as set or missing. |
+| **Dashboard** | `frontend/` | Next.js app: login; an overview of hosts, services and self-recoveries, polled; the incident list; each incident's page with its live reasoning, timeline, diagnosis, the plan to approve, reject or instruct, a vote on both, and the report once the run ends, streamed through a route handler (`app/api/stream/route.ts`); each service's page with its URLs, rules, facts and past incidents; the settings page, which edits thresholds, rules, URLs, protected containers and plugins and shows every secret only as set or missing; and, with the dev panel on, `/dev` for the models, budgets, prompt overrides, cost and the guard log. |
 | **Compose** | `docker-compose.yaml`, `config/socket-proxy.cfg.template` | Runs Bleep; `--profile demo` adds the socket proxy so Bleep can watch this machine. |
 | **Demo shop** | `demo/`, `config/hosts.demo.yaml` | A proxy, a web app, its database and a worker for Bleep to watch, as their own Compose project `shop`, and `demo/fault.sh`, which switches eight faults on and off ([demo](demo.md)). |
 | **Eval harness** | `backend/evals/` | `python -m evals.run`: switches a demo fault on, runs Bleep's watcher and graph in-process to the end of Propose with a real model, switches it off, and scores the root cause (a judge model through DeepEval, or by hand with `python -m evals.report --grades`), the category and the plan (exact); writes JSONL and a dated report ([how to run it](../backend/evals/README.md)). |
@@ -160,7 +160,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **The MCP plugin runs only the server tools a person allowed** (`read_tools` without approval, `act_tools` only as an approved `mcp.call` step), through Bleep's own `mcp_tools` and `mcp_call`, so the server's descriptions arrive wrapped as untrusted data; its endpoint and token come from the env.
 
 **Settings** ([details](design/settings.md))
-- **Database override > hosts file > defaults, in force at once**; the dashboard can protect a container but never unprotect one the hosts file protects.
+- **Database override > hosts file > defaults, in force at once**; the dashboard can protect a container (or a Coolify application by its name as written) but never unprotect one the hosts file protects.
 - **A settings body with a secret-shaped key or value anywhere is refused with 422**, naming where and never what.
 - **A settings or plugin change must send the version it was read at (`If-Match`)**; a stale one is a 409 and changes nothing, so no page silently reverts another's change.
 - **The settings page has no input for a secret**: each is shown as its variable or file and whether it is set; host connections are read-only, and the model choice and budgets are changed in the dev panel only.
@@ -168,6 +168,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 **Dev panel** ([details](design/dev-panel.md))
 - **Off unless `BLEEP_DEV_PANEL=true`, and then behind the admin session**; off, every `/api/dev` path is a 404 and the nav hides it.
 - **A prompt override must use exactly its file's placeholders and hold no secret**; reset deletes it and the loader reads the file again.
+- **The Telegram texts and `graph/system` cannot be overridden; a save or reset sends the prompt's version (`If-Match`) and is recorded in the guard log by name, never with its text.**
 
 **Notifications** ([details](design/notify.md))
 - **Telegram is optional**: without a token everything runs through the dashboard.

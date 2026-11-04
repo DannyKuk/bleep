@@ -304,6 +304,8 @@ export interface PromptView {
   file_text: string;
   override: string | null;
   overridden_at: string | null;
+  /** Sent back with a save or reset, which is refused (409) when the prompt changed since. */
+  version: string;
 }
 
 export interface PromptOverrideBody {
@@ -347,7 +349,8 @@ export type GuardKind =
   | "blocked_action"
   | "injection_marker"
   | "budget"
-  | "foreign_chat";
+  | "foreign_chat"
+  | "prompt_override";
 
 export interface GuardEntry {
   id: number;

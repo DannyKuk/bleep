@@ -17,6 +17,7 @@ export const KINDS: Record<GuardKind, string> = {
   injection_marker: "Injection marker",
   budget: "Budget",
   foreign_chat: "Foreign chat",
+  prompt_override: "Prompt override",
 };
 
 export function guardLogPath(kind: GuardKind | "", incident: string): string {

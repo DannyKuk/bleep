@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 from datetime import UTC, datetime
 
@@ -166,6 +167,25 @@ async def test_the_dashboard_can_add_protected_containers_but_never_unprotect_on
     assert protected_names(registry.hosts()[0]) == {"shop-db-1"}
 
 
+async def test_a_coolify_application_can_be_protected_by_the_name_as_written(db):
+    registry = hosts_file_registry()
+    store, _ = make_store(db, registry)
+    services = {"compose:shop": {"protected_containers": ["Shop API", "name:main", " Café Shop "]}}
+    await save(store, {"hosts": {"a": {"services": services}}})
+    expected = {"shop-db-1", "Shop API", "name:main", "Café Shop"}
+    assert protected_names(registry.hosts()[0]) == expected
+
+
+@pytest.mark.parametrize("name", ["shop\nweb", "shop\tweb", "shop\x1b[2Jweb", "shop\u2028web", " "])
+async def test_a_protected_entry_with_a_control_character_or_only_spaces_is_refused(db, name):
+    store, _ = make_store(db, hosts_file_registry())
+    with pytest.raises(ValidationError):
+        SettingsUpdate.model_validate(
+            {"hosts": {"a": {"services": {"compose:shop": {"protected_containers": [name]}}}}}
+        )
+    assert store.overrides().hosts == {}
+
+
 async def test_a_host_not_in_the_hosts_file_is_refused_and_nothing_changes(db):
     registry = hosts_file_registry()
     store, _ = make_store(db, registry)
@@ -248,6 +268,33 @@ async def test_a_plugin_whose_secret_is_gone_at_boot_starts_off_and_bleep_starts
     await again.load()
     assert not plugins.is_enabled("coolify")
     assert plugins.settings("coolify").url == "https://c.example.test"
+
+
+async def test_a_plugin_waiting_for_its_secret_shows_switched_on_and_the_log_says_so(db, caplog):
+    await _store_raw(db, "plugin:coolify", {"enabled": True, "settings": {"url": "https://c.test"}})
+    store, plugins = make_store(db, hosts_file_registry(), env={})
+    with caplog.at_level(logging.WARNING):
+        await store.load()
+    view = await store.plugin_view("coolify")
+    assert (view.enabled, view.switched_on) == (False, True)
+    assert [s.env for s in view.secrets if s.required and not s.set] == ["COOLIFY_TOKEN"]
+    assert "left out" not in caplog.text
+    assert "plugin coolify stays switched on but does not run" in caplog.text
+    assert "COOLIFY_TOKEN" in caplog.text
+
+
+async def test_a_plugin_waiting_for_its_secret_can_be_switched_off_for_the_next_boot(db):
+    await _store_raw(db, "plugin:coolify", {"enabled": True, "settings": {"url": "https://c.test"}})
+    store, _ = make_store(db, hosts_file_registry(), env={})
+    await store.load()
+    await switch(store, "coolify", PluginUpdate(enabled=False))
+    view = await store.plugin_view("coolify")
+    assert (view.enabled, view.switched_on) == (False, False)
+
+    again, plugins = make_store(db, hosts_file_registry())  # the secret is set now
+    await again.load()
+    assert not plugins.is_enabled("coolify")
+    assert plugins.settings("coolify").url == "https://c.test"
 
 
 async def test_a_plugin_change_that_cannot_be_saved_leaves_the_plugin_as_it_was(db, monkeypatch):

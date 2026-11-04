@@ -148,7 +148,7 @@ def build_parts(
         knowledge_refresher=KnowledgeRefresher(
             knowledge, reports=memory, repos=GithubRepoDocs(github, registry)
         ),
-        prompt_overrides=PromptOverrideStore(db),
+        prompt_overrides=PromptOverrideStore(db, guard_log),
     )
 
 
