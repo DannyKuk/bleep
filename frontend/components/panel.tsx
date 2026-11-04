@@ -5,21 +5,28 @@ export function Panel({
   title,
   children,
   className,
+  awaitingYou = false,
 }: {
   title: string;
   children: React.ReactNode;
   className?: string;
+  /** The card that waits for the human's decision gets a 2 px accent border. */
+  awaitingYou?: boolean;
 }) {
   const id = `panel-${title.toLowerCase().replaceAll(" ", "-")}`;
   return (
     <section
       aria-labelledby={id}
-      className={cn("min-w-0 rounded-lg border border-border bg-card", className)}
+      className={cn(
+        "min-w-0 rounded-card-sm bg-surface p-4 md:rounded-card md:p-6",
+        awaitingYou ? "border-2 border-accent" : "border border-line",
+        className,
+      )}
     >
-      <h2 id={id} className="px-4 py-3 text-sm font-semibold">
+      <h2 id={id} className="mb-3 text-xl font-extrabold">
         {title}
       </h2>
-      <div className="border-t border-border px-4 py-3">{children}</div>
+      {children}
     </section>
   );
 }

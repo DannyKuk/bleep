@@ -9,6 +9,12 @@ describe("IncidentStatusBadge", () => {
     ["executing", "Executing"],
     ["verifying", "Verifying"],
     ["paused", "Paused"],
+    ["awaiting_approval", "Needs your yes"],
+    ["open", "Open"],
+    ["investigating", "Investigating"],
+    ["resolved", "Resolved"],
+    ["closed", "Closed"],
+    ["failed", "Failed"],
   ])("labels %s as %s", (status, label) => {
     render(<IncidentStatusBadge status={status} />);
     expect(screen.getByText(label)).toBeInTheDocument();

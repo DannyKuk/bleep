@@ -13,22 +13,22 @@ import { cn } from "@/lib/utils";
 // Colour is never the only signal: every health has its own icon and word too. The full class
 // names are written out so Tailwind sees them.
 const HEALTH: Record<Health, { label: string; icon: LucideIcon; className: string }> = {
-  ok: { label: "OK", icon: CheckCircle2, className: "bg-health-ok/12 text-health-ok" },
+  ok: { label: "OK", icon: CheckCircle2, className: "bg-health-ok-bg text-health-ok" },
   degraded: {
     label: "Degraded",
     icon: AlertTriangle,
-    className: "bg-health-degraded/12 text-health-degraded",
+    className: "bg-health-degraded-bg text-health-degraded",
   },
-  down: { label: "Down", icon: XCircle, className: "bg-health-down/12 text-health-down" },
+  down: { label: "Down", icon: XCircle, className: "bg-health-down-bg text-health-down" },
   stopped: {
     label: "Stopped",
     icon: PauseCircle,
-    className: "bg-health-stopped/12 text-health-stopped",
+    className: "bg-health-stopped-bg text-health-stopped",
   },
   unknown: {
     label: "Unknown",
     icon: HelpCircle,
-    className: "bg-health-unknown/12 text-health-unknown",
+    className: "bg-health-unknown-bg text-health-unknown",
   },
 };
 
@@ -47,7 +47,7 @@ export function HealthBadge({
     <span
       data-health={health}
       className={cn(
-        "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium",
+        "inline-flex items-center gap-1 rounded-full px-3 py-1 text-[13px] font-bold",
         tone,
         className,
       )}
