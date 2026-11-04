@@ -30,7 +30,7 @@ WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")  # SECRET_KEY, secret
 _SECRET_WORDS = {
     "password", "passwd", "pass", "pwd", "passphrase", "secret", "secrets", "token", "credential",
     "credentials", "auth", "apikey", "pw", "secretkey", "privatekey", "accesskey", "accesstoken",
-    "authkey", "salt", "jwt", "hmac", "pat", "pgpass", "dsn",
+    "authkey", "salt", "jwt", "hmac", "pat", "pgpass",
 }  # fmt: skip
 _SECRET_SUFFIXES = ("password", "passwd", "apikey", "secret", "authkey")  # PGPASSWORD, TS_AUTHKEY
 # Words that keep their meaning with a trailing "s" (PASSWORDS, API_KEYS, access_tokens).
@@ -62,7 +62,7 @@ _ENV_KEY = re.compile(r"KEY|[A-Z0-9_]+_(?:KEYS?|SK)")
 _LOCATION_WORDS = frozenset(
     {
         "host", "domain", "server", "issuer", "proxy", "origin", "callback", "redirect",
-        "url", "uri", "endpoint", "addr", "address",
+        "url", "uri", "endpoint", "addr", "address", "dsn",
     }
 )  # fmt: skip
 # A word AFTER the last secret word that marks a setting about the secret: token_count,
@@ -140,6 +140,8 @@ def _is_plain(value: str) -> bool:
 
 def _redact_pair(match: re.Match[str], nested: bool = False) -> str:
     key, separator, value = match.group(1), match.group(2), match.group(3)
+    if _is_dsn_key(key):
+        return f"{key}{separator}{_hide_dsn_user(value)}"
     if not _is_secret_key(key) or _BLOCK_HEADER.fullmatch(value):
         return match.group(0)
     quote = value[0] if value[0] in "\"'" else ""
@@ -164,6 +166,27 @@ def _redact_pair(match: re.Match[str], nested: bool = False) -> str:
     if quote:
         return f"{key}{separator}{quote}{REDACTED}{quote if closed else ''}"
     return f"{key}{separator}{REDACTED}"
+
+
+# A DSN's user with no password is its key (Sentry: `https://<key>@o0.ingest.sentry.io/1`). Only
+# under a DSN key: elsewhere a bare user (`ssh://git@github.com`) is no secret.
+_DSN_USER = re.compile(
+    r"((?<![a-z0-9+.-])[a-z][a-z0-9+.-]{0,31}://)(?!<redacted>@)[^\s:/@\"']{1,128}@"
+    r"(?=[A-Za-z0-9._\[\]:-]+(?:[/?#\s\"']|$))",
+    _FLAGS,
+)
+
+
+@lru_cache(maxsize=1024)
+def _is_dsn_key(key: str) -> bool:
+    words = WORDS.findall(key)
+    return bool(words) and words[-1].lower() == "dsn"
+
+
+def _hide_dsn_user(value: str) -> str:
+    """The userinfo of a DSN with no password hidden, its host kept; a `user:password@` is left to
+    the URL pattern, which keeps the user."""
+    return _DSN_USER.sub(rf"\1{REDACTED}@", value)
 
 
 def _redact_nested(match: re.Match[str]) -> str:
@@ -554,14 +577,19 @@ def redacted_step(step: PlanStep) -> PlanStep:
     A `coolify.set_env` value under a key that names a secret (`STRIPE_KEY`, `DB_PASSWORD`) and
     no place (`_LOCATION_WORDS`: `AUTH0_DOMAIN` is shown) is `<redacted>` whole, spaces, quotes
     and line breaks included; any other is redacted by its own patterns, so a password inside a
-    URL value is cut out while the host and the rest stay visible. Danny's decision (#38): an
+    URL value is cut out while the host and the rest stay visible. A DSN is a place: under a key
+    ending in `DSN` its userinfo is hidden too (`https://<redacted>@o0.ingest.sentry.io/1`), the
+    host shown. Danny's decision (#38): an
     explicit yes must see what it approves, since planted text could steer the model to a value
     such as an attacker's host."""
     params = {k: redact_text(v) for k, v in step.params.items()}
     if step.action == "coolify.set_env" and {"key", "value"} <= step.params.keys():
         key = step.params["key"]
         # A shown value is redacted on its own, so the key cannot hide it (`SECRET_HOST`).
-        params["value"] = REDACTED if _hides_whole_value(key) else params["value"]
+        if _hides_whole_value(key):
+            params["value"] = REDACTED
+        elif _is_dsn_key(key):
+            params["value"] = _hide_dsn_user(params["value"])
     return step.model_copy(update={"params": params})
 
 

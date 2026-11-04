@@ -552,7 +552,7 @@ def test_a_shown_place_still_has_its_password_redacted():
 
 
 SECRET_NAMED = [
-    "KEY", "STRIPE_SK", "SALT", "SIGNING_SALT", "JWT", "HMAC", "GITHUB_PAT", "PGPASS", "SENTRY_DSN",
+    "KEY", "STRIPE_SK", "SALT", "SIGNING_SALT", "JWT", "HMAC", "GITHUB_PAT", "PGPASS",
 ]  # fmt: skip
 
 
@@ -584,4 +584,30 @@ def test_a_place_named_after_a_new_secret_word_stays_visible(key):
     ],
 )
 def test_new_secret_words_leave_plain_settings_alone(text):
+    assert redact_text(text) == text
+
+
+DSNS = [
+    ("https://abc123@o0.ingest.sentry.io/1", "https://<redacted>@o0.ingest.sentry.io/1"),
+    ("postgres://u:pw-fake-123@db:5432/x", "postgres://u:<redacted>@db:5432/x"),
+    ("https://attacker.example/1", "https://attacker.example/1"),
+]
+
+
+@pytest.mark.parametrize(("value", "shown"), DSNS)
+@pytest.mark.parametrize("key", ["SENTRY_DSN", "DATABASE_DSN", "sentryDsn", "DSN"])
+def test_a_dsn_is_a_place_whose_userinfo_is_hidden_in_an_approval(key, value, shown):
+    assert _set_env(key, value) == shown
+
+
+@pytest.mark.parametrize(("value", "shown"), DSNS)
+@pytest.mark.parametrize("template", ["SENTRY_DSN={} ok", 'sentry_sdk.init(dsn="{}")', "dsn: {}"])
+def test_a_dsn_in_free_text_keeps_its_host_and_hides_its_userinfo(template, value, shown):
+    out = redact_text(template.format(value))
+    assert out == template.format(shown)
+    assert redact_text(out) == out
+
+
+def test_a_bare_user_outside_a_dsn_stays_readable():
+    text = "clone ssh://git@github.com/acme/shop.git and APP_URL=https://bob@shop.example/"
     assert redact_text(text) == text

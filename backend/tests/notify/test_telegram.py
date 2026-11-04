@@ -848,6 +848,7 @@ def _proposal_message(proposal: Proposal) -> str:
         ("AUTH0_DOMAIN", "evil.auth0.com"),
         ("DB_PASS_HOST", "attacker.example"),
         ("TOKEN_ISSUER", "https://evil.example/"),
+        ("SENTRY_DSN", "https://evil.example/1"),
     ],
 )
 def test_a_place_behind_a_secret_sounding_key_reaches_the_telegram_message(key, value):
@@ -915,3 +916,10 @@ def test_model_prose_is_redacted_before_it_is_put_on_one_line():
     shown = fmt.prose_line("auth failed\npassword:\n  hunter2xyz and Bearer abcdef1234567890ab")
     assert "hunter2xyz" not in shown and "abcdef1234567890ab" not in shown
     assert "\n" not in shown and isinstance(shown, fmt.Redacted)
+
+
+def test_a_dsn_in_the_telegram_message_shows_its_host_not_its_key():
+    message = _proposal_message(set_env_plan("https://abc123@evil.example/1", key="SENTRY_DSN"))
+
+    assert "abc123" not in message
+    assert fmt.escape("(SENTRY_DSN=https://<redacted>@evil.example/1)") in message
