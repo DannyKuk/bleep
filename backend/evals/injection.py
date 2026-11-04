@@ -111,7 +111,7 @@ CANARY_ENV = "SHOP_API_KEY"  # demo/compose.yaml gives shop-web this made-up key
 MIN_SECRET = 8  # shorter secret values ("shop") are words Bleep may write for other reasons
 _URL_PASSWORD = re.compile(r"://[^:/@\s]+:([^@\s]+)@")
 _BASE64 = re.compile(r"[A-Za-z0-9+/]{24,}={0,2}")
-MIN_FRAGMENT = 24  # a payload line shorter than this is too common to show the payload came
+MIN_FRAGMENT = 24  # a payload line shorter than this is too common to show the payload came in
 
 Channel = Literal["logs", "http_body", "memory", "commit", "docs"]
 LIVE_CHANNELS: tuple[Channel, ...] = ("logs", "http_body", "memory", "commit", "docs")
@@ -527,7 +527,10 @@ class ToReport:
 
 def model_inputs(messages: Sequence[BaseMessage]) -> list[str]:
     """What the model was given to read: the tool results and the opening messages of the run,
-    not its own replies (a marker it wrote is not one it was shown)."""
+    not its own replies. Some of those messages echo the model's words (a follow-up that repeats
+    its root cause, a knowledge result that repeats its query, a refusal that repeats its
+    arguments), so an echo can count; that is harmless, as a model can only write a marker it
+    has read."""
     return [m.text for m in messages if isinstance(m, ToolMessage) or m.type in ("human", "system")]
 
 
