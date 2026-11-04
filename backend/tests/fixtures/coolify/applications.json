@@ -1,6 +1,5 @@
 [
   {
-    "id": 1,
     "uuid": "shop0uuid0000000000000a1",
     "name": "shop",
     "description": "",
@@ -21,7 +20,6 @@
     "destination": {"id": 0, "name": "localhost-coolify", "uuid": "dest0uuid000000000000001", "server_id": 0}
   },
   {
-    "id": 2,
     "uuid": "blog0uuid0000000000000b2",
     "name": "blog",
     "description": "",

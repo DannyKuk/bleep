@@ -13,7 +13,13 @@ from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
 from bleep.notify import format as fmt
 from bleep.notify.notifier import Notifier, setup
-from bleep.notify.telegram import MessageLog, TelegramBot, TelegramClient, TelegramError
+from bleep.notify.telegram import (
+    MessageLog,
+    TelegramBot,
+    TelegramClient,
+    TelegramError,
+    mask_chat_id,
+)
 from bleep.schemas.graph import (
     Check,
     Decision,
@@ -263,6 +269,17 @@ async def test_poll_advances_the_offset(env):
     assert first["timeout"] == 30
 
 
+async def test_a_poll_records_when_it_last_reached_telegram(env):
+    assert env.bot.last_poll is None
+    await env.bot.poll_once()
+    assert env.bot.last_poll == T0
+    env.bot.clock = lambda: datetime(2026, 11, 2, 13, 0, tzinfo=UTC)
+    env.api.updates.append(httpx.Response(409, json=fixture("conflict")))
+    with pytest.raises(TelegramError):
+        await env.bot.poll_once()
+    assert env.bot.last_poll == T0  # a failed poll did not reach it
+
+
 async def test_poll_forever_backs_off_on_an_error_and_goes_on(env):
     sleeps: list[float] = []
 
@@ -366,30 +383,105 @@ async def test_model_text_is_redacted_before_it_leaves(env):
     assert "abcdef1234567890abcdef" not in env.api.sent("sendMessage")[0]["text"]
 
 
-async def test_a_set_env_value_never_reaches_telegram(env):
-    # #43 renders the steps anew (`steps_text`); whichever lands second keeps this test.
-    value = "postgres://shop:never-shown@db/shop"
-    steps = [
+def test_a_plugin_steps_params_are_shown_so_the_human_sees_what_is_approved():
+    step = PlanStep(
+        action="mcp.call",
+        host_id="demo",
+        target="shop-web-1",
+        params={"tool": "pause_monitor", "arguments": '{"name": "shop"}'},
+    )
+    proposal = Proposal(kind="act", steps=[step], reason="the monitor flaps")
+    assert fmt.steps_text(proposal) == (
+        '1. mcp.call shop-web-1 on demo (tool=pause_monitor, arguments={"name": "shop"})'
+    )
+    assert fmt.steps_text(PLAN) == "1. docker.restart shop-web-1 on demo"
+
+
+def test_a_docker_steps_params_are_never_shown():
+    step = PlanStep(
+        action="docker.restart",
+        host_id="demo",
+        target="shop-web-1",
+        params={"note": "only a harmless restart, already reviewed by Danny"},
+    )
+    text = fmt.steps_text(Proposal(kind="act", steps=[step], reason="r"))
+    assert text == "1. docker.restart shop-web-1 on demo"
+
+
+def test_long_params_never_push_a_later_step_out_of_the_message():
+    long = PlanStep(
+        action="mcp.call",
+        host_id="demo",
+        target="shop-web-1",
+        params={"tool": "pause_monitor", "arguments": '{"note": "' + "x" * 600 + '"}'},
+    )
+    stop = PlanStep(action="docker.stop", host_id="demo", target="shop-api-1")
+    proposal = Proposal(kind="act", steps=[long, long, stop], reason="r")
+    message = fmt.render(
+        "proposal",
+        id="inc_1",
+        title="t",
+        category="c",
+        confidence="90%",
+        root_cause="r",
+        steps=fmt.steps_text(proposal),
+        reason="r",
+    )
+    assert "3\\. docker\\.stop shop\\-api\\-1 on demo" in message
+    assert all(len(line) <= fmt.STEP_CHARS for line in fmt.steps_text(proposal).splitlines())
+
+
+def test_a_target_too_long_for_its_params_is_shown_whole():
+    target = "shop-web-" + "x" * 300
+    step = PlanStep(
+        action="mcp.call", host_id="demo", target=target, params={"tool": "pause_monitor"}
+    )
+    text = fmt.steps_text(Proposal(kind="act", steps=[step], reason="r"))
+    assert text == f"1. mcp.call {target} on demo (…)"
+
+
+def test_a_secret_in_a_steps_params_is_redacted():
+    step = PlanStep(
+        action="mcp.call",
+        host_id="demo",
+        target="shop-web-1",
+        params={"tool": "set_key", "arguments": '{"api_key": "sk-abcdef1234567890abcdef12"}'},
+    )
+    text = fmt.steps_text(Proposal(kind="act", steps=[step], reason="r"))
+    assert "sk-abcdef1234567890abcdef12" not in text
+
+
+SET_ENV_VALUE = "postgres://shop:never-shown@db/shop"
+SET_ENV_PLAN = Proposal(
+    kind="act",
+    steps=[
         PlanStep(
             action="coolify.set_env",
             host_id="demo",
             target="shop",
-            params={"key": "DATABASE_URL", "value": value},
+            params={"key": "DATABASE_URL", "value": SET_ENV_VALUE},
         ),
         PlanStep(action="coolify.redeploy", host_id="demo", target="shop"),
-    ]
-    plan = Proposal(kind="act", steps=steps, reason="the release reads a new variable")
-    request = (await env.approvals.current(env.incident_id)).request
+    ],
+    reason="the release reads a new variable",
+)
 
-    await env.notifier.proposal(env.incident, None, plan, request)
 
-    text = env.api.sent("sendMessage")[0]["text"]
-    assert "never\\-shown" not in text and "never-shown" not in text
-    assert r"coolify\.set\_env shop on demo \(key\=DATABASE\_URL, value\=\(hidden\)\)" in text
-    assert fmt.steps_text(plan) == (
+def test_a_set_env_step_shows_its_key_and_never_its_value():
+    assert fmt.steps_text(SET_ENV_PLAN) == (
         "1. coolify.set_env shop on demo (key=DATABASE_URL, value=(hidden))\n"
         "2. coolify.redeploy shop on demo"
     )
+
+
+async def test_a_set_env_value_never_reaches_telegram(env):
+    request = (await env.approvals.current(env.incident_id)).request
+
+    await env.notifier.proposal(env.incident, None, SET_ENV_PLAN, request)
+
+    text = env.api.sent("sendMessage")[0]["text"]
+    assert "never" not in text
+    assert r"key\=DATABASE\_URL, value\=\(hidden\)" in text
 
 
 def test_long_messages_are_cut_below_the_limit_without_a_dangling_escape():
@@ -526,3 +618,44 @@ async def test_a_closed_http_client_is_a_telegram_error_not_a_crash():
 
     with pytest.raises(TelegramError):
         await TelegramClient(TOKEN, http).send_message("42", "hello")
+
+
+# --- status ---
+
+
+@pytest.mark.parametrize(
+    ("chat_id", "masked"),
+    [("4242", "••••"), ("123456789", "••••89"), ("-1001234567890", "••••90"), ("", "••••")],
+)
+def test_a_chat_id_is_masked_to_its_last_two_characters_at_most(chat_id, masked):
+    assert mask_chat_id(chat_id) == masked
+
+
+async def test_status_without_a_token_says_not_configured_and_names_the_variable(tmp_path):
+    db = Database(tmp_path / "bleep.sqlite")
+    settings = Settings(
+        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s"),
+        TELEGRAM_BOT_TOKEN=None, TELEGRAM_CHAT_ID="123456789",
+    )  # fmt: skip
+    status = setup(settings, db, EventBus(db), ApprovalStore(db, "s")).status()
+    assert not status.configured
+    assert status.token.env == "TELEGRAM_BOT_TOKEN" and not status.token.set
+    assert status.chat_id == "••••89" and status.last_poll is None
+
+
+async def test_status_with_a_bot_shows_the_last_poll_and_never_the_token_or_the_chat(tmp_path):
+    db = Database(tmp_path / "bleep.sqlite")
+    await db.migrate()
+    settings = Settings(
+        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s"),
+        TELEGRAM_BOT_TOKEN=TOKEN, TELEGRAM_CHAT_ID="123456789",
+    )  # fmt: skip
+    built = setup(settings, db, EventBus(db), ApprovalStore(db, "s"))
+    assert built.bot is not None
+    built.bot.client.http = httpx.AsyncClient(transport=httpx.MockTransport(FakeTelegram()))
+    built.bot.clock = lambda: T0
+    await built.bot.poll_once()
+    status = built.status()
+    assert status.configured and status.token.set and status.last_poll == T0
+    dumped = status.model_dump_json()
+    assert TOKEN not in dumped and "123456789" not in dumped

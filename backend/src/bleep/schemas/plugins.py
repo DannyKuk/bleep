@@ -11,10 +11,11 @@ class PluginHealth(BaseModel):
 
 
 class PluginSecret(BaseModel):
-    """A secret the plugin needs: the environment variable's name and whether it is set."""
+    """A secret the plugin uses: the environment variable's name and whether it is set."""
 
     env: str
     set: bool
+    required: bool = True  # an optional one is used when set (the MCP plugin's MCP_TOKEN)
 
 
 class PluginView(BaseModel):
@@ -25,6 +26,7 @@ class PluginView(BaseModel):
     settings_schema: dict[str, Any]  # JSON schema of the plugin's settings, for the form
     secrets: list[PluginSecret]
     health: PluginHealth | None = None  # only for an enabled plugin
+    version: str  # of the plugin's stored row; `PUT /api/plugins/{name}` sends it in `If-Match`
 
 
 class PluginUpdate(BaseModel):

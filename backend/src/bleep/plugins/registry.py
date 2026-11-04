@@ -151,8 +151,9 @@ class PluginRegistry:
             (a.handlers[action] for a in self._active.values() if action in a.handlers), None
         )
 
-    async def view(self, name: str) -> PluginView:
-        """What the API shows: settings and which secrets are set, never a secret's value."""
+    async def view(self, name: str, *, version: str) -> PluginView:
+        """What the API shows: settings and which secrets are set, never a secret's value.
+        `version` is the settings store's for this plugin, read before the settings are."""
         plugin = self.get(name)
         active = self._active.get(name)
         return PluginView(
@@ -161,8 +162,13 @@ class PluginRegistry:
             enabled=active is not None,
             settings=self._shown_settings(name),
             settings_schema=plugin.settings_model.model_json_schema(),
-            secrets=[PluginSecret(env=env, set=bool(self._env.get(env))) for env in plugin.secrets],
+            secrets=[
+                PluginSecret(env=env, set=bool(self._env.get(env)), required=required)
+                for envs, required in ((plugin.secrets, True), (plugin.optional_secrets, False))
+                for env in envs
+            ],
             health=await self._health(plugin, active.ctx) if active is not None else None,
+            version=version,
         )
 
     def _shown_settings(self, name: str) -> dict[str, Any]:
@@ -179,7 +185,11 @@ class PluginRegistry:
             )
         ctx = PluginContext(
             settings=settings,
-            secrets={env: SecretStr(self._env[env]) for env in plugin.secrets},
+            secrets={
+                env: SecretStr(self._env[env])
+                for env in (*plugin.secrets, *plugin.optional_secrets)
+                if self._env.get(env)
+            },
             grant_secret=self._grant_secret,
             guard_log=self._guard_log,
         )
@@ -249,12 +259,34 @@ def _check_plugin(plugin: Plugin) -> None:
     model = plugin.settings_model
     if model.model_config.get("extra") != "forbid":
         raise ValueError(f"plugin {plugin.name!r}: settings_model must forbid extra fields")
-    secretish = [name for name in model.model_fields if is_secret_field(name)]
+    schema = model.model_json_schema()
+    secretish = [
+        name
+        for name, field in schema.get("properties", {}).items()
+        if is_secret_field(name) or _holds_secret_type(field, schema.get("$defs", {}), set())
+    ]
     if secretish:
         raise ValueError(
             f"plugin {plugin.name!r}: settings field(s) {', '.join(secretish)} look like secrets;"
             " name the environment variable in `secrets` instead"
         )
+
+
+def _holds_secret_type(node: Any, defs: dict[str, Any], seen: set[str]) -> bool:
+    """Whether a JSON schema holds a `SecretStr` or `SecretBytes` (`writeOnly`, `format:
+    password`) at any depth, through `$ref`s into `defs`."""
+    if isinstance(node, list):
+        return any(_holds_secret_type(item, defs, seen) for item in node)
+    if not isinstance(node, dict):
+        return False
+    if node.get("writeOnly") is True or node.get("format") == "password":
+        return True
+    ref = node.get("$ref")
+    if isinstance(ref, str) and ref not in seen:
+        seen.add(ref)
+        if _holds_secret_type(defs.get(ref.rpartition("/")[2]), defs, seen):
+            return True
+    return any(_holds_secret_type(value, defs, seen) for value in node.values())
 
 
 def _check_built(plugin: Plugin, tools: list[ToolSpec], handlers: dict[str, ActHandler]) -> None:

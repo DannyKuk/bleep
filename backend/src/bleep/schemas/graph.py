@@ -19,7 +19,12 @@ PlantedSource = Literal[
     "logs", "events", "inspect", "http_body", "memory", "commits", "docs", "other"
 ]
 Action = Literal[
-    "docker.restart", "docker.stop", "docker.start", "coolify.redeploy", "coolify.set_env"
+    "docker.restart",
+    "docker.stop",
+    "docker.start",
+    "coolify.redeploy",
+    "coolify.set_env",
+    "mcp.call",
 ]
 
 
@@ -143,7 +148,7 @@ HIDDEN = "(hidden)"
 class PlanStep(BaseModel):
     action: Action
     host_id: str
-    target: str  # container name, or the Coolify application for coolify.* actions
+    target: str  # container name (for mcp.call too), or the Coolify application for coolify.*
     params: dict[str, str] = Field(default_factory=dict)
 
     def shown(self) -> PlanStep:

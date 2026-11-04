@@ -9,13 +9,15 @@ import { ModelsForm } from "@/components/dev/models";
 import { PromptsPanel } from "@/components/dev/prompts";
 import { Failed, Loading, why } from "@/components/dev/status";
 import { Panel } from "@/components/panel";
+import { SaveLockProvider } from "@/components/save-lock";
 import { ApiError, apiFetch } from "@/lib/api";
 import type { DevSettingsView } from "@/lib/api-types";
 
 type State =
   { kind: "loading" } | { kind: "off" } | { kind: "failed"; why: string } | { kind: "on" };
 
-/** The model choice and the budgets, both read from one `GET /api/settings`. */
+/** The model choice and the budgets, both read from one `GET /api/settings`, saved one at a
+ * time, each from the view the other's save returned. */
 function SettingsPanels() {
   const [view, setView] = useState<DevSettingsView | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -30,21 +32,25 @@ function SettingsPanels() {
     return () => controller.abort();
   }, []);
 
+  async function readAgain() {
+    setView(await apiFetch<DevSettingsView>("/api/settings"));
+  }
+
   const body = (form: (view: DevSettingsView) => React.ReactNode) =>
     view ? form(view) : failure ? <Failed>{failure}</Failed> : <Loading>Loading</Loading>;
   return (
-    <>
+    <SaveLockProvider>
       <Panel title="Models">
         {body((v) => (
-          <ModelsForm view={v} onSaved={setView} />
+          <ModelsForm view={v} onSaved={setView} onStale={readAgain} />
         ))}
       </Panel>
       <Panel title="Budgets">
         {body((v) => (
-          <BudgetsForm view={v} onSaved={setView} />
+          <BudgetsForm view={v} onSaved={setView} onStale={readAgain} />
         ))}
       </Panel>
-    </>
+    </SaveLockProvider>
   );
 }
 

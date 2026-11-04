@@ -137,7 +137,8 @@ export type Action =
   | "docker.stop"
   | "docker.start"
   | "coolify.redeploy"
-  | "coolify.set_env";
+  | "coolify.set_env"
+  | "mcp.call";
 
 export interface PlanStep {
   action: Action;
@@ -291,6 +292,8 @@ export interface DevSettingsView {
   models: ModelChoice;
   budgets: Budgets;
   overrides: { models?: Partial<ModelChoice>; budgets?: Partial<Budgets> };
+  /** Sent back with a save, which is refused (409) when the settings changed since. */
+  version: string;
 }
 
 export interface PromptView {
