@@ -82,6 +82,18 @@ describe("PluginList", () => {
     expect(onSave).toHaveBeenCalledWith("coolify", { enabled: false }, "p1");
   });
 
+  it("shows an unset optional secret neutrally and a required one as missing", () => {
+    const p = plugin({
+      secrets: [
+        { env: "MCP_URL", set: false, required: true },
+        { env: "MCP_TOKEN", set: false, required: false },
+      ],
+    });
+    render(<PluginList plugins={[p]} onSave={vi.fn()} />);
+    expect(screen.getAllByText("Missing:")).toHaveLength(1);
+    expect(screen.getByText("Not set, optional:")).toBeInTheDocument();
+  });
+
   it("says a plugin switched on with every secret set is not running", () => {
     const broken = plugin({
       switched_on: true,

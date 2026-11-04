@@ -45,7 +45,7 @@ Only these actions exist, and only the ones listed as enabled below may be used:
 - `docker.start`: start one stopped container.
 - `coolify.redeploy`: redeploy a Coolify application (the target is the application's name). Only with the Coolify plugin.
 - `coolify.set_env`: set one environment variable of a Coolify application; `params` holds `key` and `value`. Only with the Coolify plugin.
-
+{mcp}
 Enabled now on host `{host_id}`: {actions}
 
 Bleep cannot edit files, change environment variables or recreate containers on its own, except through the Coolify actions when they are enabled. Nothing else can be run.

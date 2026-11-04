@@ -30,12 +30,13 @@ from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.memory.text import describe_fact, describe_past
 from bleep.schemas.graph import Diagnosis, GatherContext, PlanStep, Proposal
 from bleep.schemas.incidents import Subject
-from bleep.tools.registry import PlanRules
+from bleep.tools.registry import ActCatalog, PlanRules
 
 NO_DIAGNOSIS = "Bleep has no diagnosis to act on, so it proposes no action."
 NO_PLAN = "The model gave no usable plan, so Bleep proposes no action."
 BUDGET = "The incident's token budget or the day's cost cap is spent, so Bleep proposes no action."
 REFUSED = "Bleep's own checks refused the proposed plan twice, so nothing will run."
+MCP_CALL = "mcp.call"
 # After a refusal the run goes to the report, so no instruction can follow: the human's way on is
 # to act by hand (#112).
 BY_HAND = (
@@ -83,7 +84,8 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
             plan, deps.registry, enabled, host_id, incident_containers=named, step_rules=rules
         )
 
-    messages: list[BaseMessage] = [HumanMessage(_prompt(deps, state, diagnosis, enabled))]
+    mcp = await _mcp_section(deps, incident_id, enabled)
+    messages: list[BaseMessage] = [HumanMessage(_prompt(deps, state, diagnosis, enabled, mcp))]
     proposal = _without_replaced(await _ask(deps, incident_id, messages), deps.registry)
     violations = check(proposal)
     if not violations:
@@ -108,6 +110,20 @@ def _step_rules(deps: GraphDeps) -> dict[str, StepRule]:
         for action, handler in deps.act_tools.items()
         if isinstance(handler, PlanRules)
     }
+
+
+async def _mcp_section(deps: GraphDeps, incident_id: str, enabled: set[str]) -> str:
+    """How to write an `mcp.call` step, with the act tools and what their server says about
+    them; empty unless the action is enabled and its act handler can name them, so the prompt
+    is exactly as before while the MCP plugin is off or has no act tools."""
+    handler = deps.act_tools.get(MCP_CALL)
+    if MCP_CALL not in enabled or not isinstance(handler, ActCatalog):
+        return ""
+    return prompts.load(
+        "graph/propose_mcp",
+        tools=", ".join(f"`{name}`" for name in handler.act_tool_names()),
+        schemas=await handler.act_tool_schemas(incident_id),
+    )
 
 
 def _without_replaced(proposal: Proposal, registry: Registry) -> Proposal:
@@ -198,7 +214,9 @@ def _step(step: PlanStep) -> str:
 # Memory is Bleep's own too; `describe_past` and `describe_fact` wrap any quote in it as untrusted.
 
 
-def _prompt(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis, enabled: set[str]) -> str:
+def _prompt(
+    deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis, enabled: set[str], mcp: str
+) -> str:
     subject = state["subject"]
     context = state.get("context")
     rules = [*context.host_rules, *context.service_rules] if context else []
@@ -215,6 +233,7 @@ def _prompt(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis, enabled
         urls="\n".join(f"- {u}" for u in _urls(deps, subject)) or "none",
         host_id=subject.host_id,
         actions=", ".join(f"`{a}`" for a in sorted(enabled)) or "none",
+        mcp=mcp,
         instructions="\n".join(f"{n}. {t}" for n, t in enumerate(instructions, 1)) or "none",
         previous=_previous(state.get("proposal")),
         unsure=prompts.load("graph/propose_unsure") if diagnosis.unsure else "",

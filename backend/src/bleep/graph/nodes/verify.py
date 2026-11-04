@@ -8,6 +8,10 @@ containers (protected ones too) and URLs, and then to the containers the plan's 
 Whatever the plan names, the incident's own symptoms are checked too: every container its signals
 name and every URL they report failing, so a plan that checks something else cannot pass while
 the failure that opened the incident goes on.
+A host incident's disk, memory or load is read again on the host and judged against the same
+thresholds that opened it (`hosts/readings.past_threshold`, load over the last minute); a host
+incident about anything else has nothing to read again, so it ends `unverified` without a
+loop-back.
 A Coolify application the plan redeployed is checked as a whole, read from the engine each time:
 the redeploy replaced its containers under new names, so they are left out of the name checks.
 The redeploy step ends only once Coolify reports its deployment over (`plugins/coolify`), so the
@@ -15,16 +19,17 @@ wait here starts after the new containers are up.
 
 Passing sets the outcome `resolved`. A failure with fewer than `verify_loops` (2) loop-backs so
 far hands the failed checks to Investigate as the next round's instruction (an appended message,
-as Diagnose's loop-back does); otherwise the outcome is `unverified`, and so it is at once when
-there was nothing to check. Nothing here says "fixed": that word needs a passing check. The
-clock that waits is `deps.sleep`, so tests never sleep.
+as Diagnose's loop-back does; when the only failure is the missing evidence after an approved
+stop, it asks for that evidence, not for a new fix); otherwise the outcome is `unverified`, and
+so it is at once when there was nothing to check. Nothing here says "fixed": that word needs a
+passing check. The clock that waits is `deps.sleep`, so tests never sleep.
 Each check publishes a `verification` event; the notifier hears the round's final result once.
 """
 
 import logging
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -37,9 +42,13 @@ from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.plan_check import COOLIFY_UUID, coolify_members, host_urls
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
+from bleep.hosts.readings import past_threshold, readings
+from bleep.hosts.shell import HostUnreadable, host_basics
+from bleep.hosts.ssh import SshUnavailable
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import Check, Proposal, StepResult, VerificationResult
 from bleep.schemas.incidents import Signal
+from bleep.schemas.settings import Thresholds
 from bleep.watcher.http_checks import check_url
 
 log = logging.getLogger(__name__)
@@ -56,35 +65,43 @@ def _redeployed(proposal: Proposal | None) -> list[str]:
     return list(dict.fromkeys(s.target for s in steps if s.action == "coolify.redeploy"))
 
 
-UNPROVEN = "stopped as approved; nothing shows the service works (no URL or running container)"
+UNPROVEN = "stopped as approved; nothing shows the service works (none of its URLs was checked)"
+NOT_REREAD = (
+    "only disk, memory and load can be read again; nothing shows this host's problem is over"
+)
+HOST_READINGS = ("disk", "memory", "load")
 
 
 @dataclass(frozen=True)
 class _Plan:
-    """What to check: containers that must run, URLs that must answer, and signalled containers
-    the plan stopped, which must stay down. `unproven` says the incident's own symptom is only
-    covered by those stop checks: a container already dead passes one, so it proves nothing.
-    Only the incident's own evidence counts against that: a URL its signals saw fail or of its
-    own service, a signalled container that must run, or a signalled container a redeploy
-    replaced (its application's check). Another service's URL or an unrelated redeploy does
-    not."""
+    """What to check: containers that must run, URLs that must answer, signalled containers the
+    plan stopped, which must stay down, and the host readings (disk, memory, load) the incident's
+    signals named. `unproven` says those stop checks are all there is about a stopped
+    container: one already dead passes, so it proves nothing. Each stopped container needs its
+    own evidence: a URL the incident's signals saw fail or one of its own service's. Another
+    signalled container that runs, another service's URL or an unrelated redeploy is not that;
+    a stopped container a redeploy of the plan replaced is left to its application's check.
+    `blind` says the incident is about a host and none of its signals can be read again."""
 
     containers: list[str]
     urls: list[UrlCheckConfig]
     stopped: list[str]
     unproven: bool = False
+    readings: list[str] = field(default_factory=list)
+    blind: bool = False
 
     def empty(self) -> bool:
-        return not (self.containers or self.urls or self.stopped)
+        return not (self.containers or self.urls or self.stopped or self.readings)
 
 
 def _plan(deps: GraphDeps, state: IncidentState) -> _Plan:
     """The containers and URLs to check: the plan's, or else what it acted on, and always the
     incident's own symptoms (`_symptoms`). A signalled container the plan stopped (its last
-    Docker step is a stop) is checked to be down, unless it is among the containers that must
-    run (the fallback can put it there; that check then fails, the safe side). When those stop
-    checks are all there is about the symptom (no URL of the incident's, no signalled container
-    that must run, none a redeploy replaced), the plan is `unproven` and cannot pass.
+    Docker step is a stop) is checked to be down, unless a redeploy of the plan replaced it or
+    it is among the containers that must run (the fallback can put it there; that check then
+    fails, the safe side). When no URL of the incident's is checked, those stop checks are all
+    there is about the stopped containers, and the plan is `unproven` and cannot pass. URLs are
+    compared and deduplicated by `_url_key`.
 
     A URL keeps its expected status and body text from the hosts file, whichever of the host's
     services it belongs to (the plan check allows any of them). The fallback checks every
@@ -107,7 +124,8 @@ def _plan(deps: GraphDeps, state: IncidentState) -> _Plan:
         else:
             acted = proposal.steps if proposal is not None else []
             containers = [s.target for s in acted if s.action.startswith("docker.")]
-    signalled, failing_urls = _symptoms(state.get("signals", []))
+    signals = state.get("signals", [])
+    signalled, failing_urls = _symptoms(signals)
     # The URLs that say something about this incident: those its signals saw fail and its own
     # service's. Another service's URL the plan names says nothing about this one.
     own_urls = {*failing_urls, *(cfg.url for cfg in service.urls)} if service else set(failing_urls)
@@ -119,15 +137,43 @@ def _plan(deps: GraphDeps, state: IncidentState) -> _Plan:
         failing_urls += [cfg.url for cfg in service.urls]
     named = [*containers, *(c for c in signalled if c not in left_out)]
     containers = [c for c in dict.fromkeys(named) if not replaced(c)]
-    urls = list(dict.fromkeys([*urls, *failing_urls]))
-    down = [c for c in left_out if c in stopped and c not in containers]
-    covered = (
-        bool(own_urls & set(urls))
-        or bool(set(signalled) & set(containers))
-        or any(replaced(c) for c in signalled)
+    urls = _unique_urls([*urls, *failing_urls])
+    down = [c for c in left_out if c in stopped and not replaced(c) and c not in containers]
+    own_url_checked = bool({_url_key(u) for u in own_urls} & {_url_key(u) for u in urls})
+    by_key = {_url_key(u): cfg for u, cfg in known.items()}
+    checks = [by_key.get(_url_key(u)) or UrlCheckConfig(url=u) for u in urls]
+    host_readings = list(dict.fromkeys(s.kind for s in signals if s.kind in HOST_READINGS))
+    return _Plan(
+        containers,
+        checks,
+        down,
+        unproven=bool(down) and not own_url_checked,
+        readings=host_readings,
+        blind=subject.kind == "host" and not host_readings,
     )
-    checks = [known.get(u) or UrlCheckConfig(url=u) for u in urls]
-    return _Plan(containers, checks, down, unproven=bool(down) and not covered)
+
+
+def _unique_urls(urls: list[str]) -> list[str]:
+    """Each URL once by `_url_key`, in the spelling seen first."""
+    seen: dict[str, str] = {}
+    for url in urls:
+        seen.setdefault(_url_key(url), url)
+    return list(seen.values())
+
+
+def _url_key(url: str) -> str:
+    """A URL as Verify compares it: scheme and host in lower case, without the default port, a
+    trailing slash or a fragment. Text that does not parse is compared as it is."""
+    try:
+        parsed = httpx.URL(url.strip())
+    except httpx.InvalidURL, ValueError:
+        return url
+    if not parsed.host:
+        return url
+    default = {"http": 80, "https": 443}.get(parsed.scheme)
+    port = f":{parsed.port}" if parsed.port not in (None, default) else ""
+    query = f"?{parsed.query.decode()}" if parsed.query else ""
+    return f"{parsed.scheme}://{parsed.host}{port}{parsed.path.rstrip('/')}{query}"
 
 
 def _stopped(proposal: Proposal | None) -> set[str]:
@@ -293,6 +339,71 @@ async def _check_stopped(deps: GraphDeps, host_id: str, name: str) -> Check:
     return Check(kind="container", target=target, ok=True, detail=f"is {summary.state}")
 
 
+async def _check_host(
+    deps: GraphDeps, host_id: str, kinds: list[str], calm: set[str]
+) -> list[Check]:
+    """The incident's disk, memory or load, read again on the host now (one read for all) and
+    judged against the thresholds as they are now. Load is the last minute's: the 15-minute
+    average the watcher opens on lags far behind a fix, past Verify's last check. One dip of a
+    one-minute average is weak evidence, so load passes only when it was within its threshold
+    at the previous check of this round too. `calm` holds the kinds that were within their
+    threshold at the previous check; it is updated to this one's. A host whose OS Bleep cannot
+    read basics on (neither Linux nor macOS) reports no readings, so each "could not be read"."""
+    before = set(calm)
+    calm.clear()
+    shell = deps.registry.shell(host_id)
+    try:
+        found = readings(await host_basics(shell), load_minutes=1) if shell is not None else {}
+    except SshUnavailable, OSError:
+        return [Check(kind="host", target=k, ok=False, detail="host not reachable") for k in kinds]
+    except HostUnreadable:
+        return [Check(kind="host", target=k, ok=False, detail="could not be read") for k in kinds]
+    thresholds = deps.settings_store.thresholds()
+    checks = []
+    for kind in kinds:
+        detail = found.get(kind)
+        if detail is None:
+            checks.append(Check(kind="host", target=kind, ok=False, detail="could not be read"))
+            continue
+        within = not past_threshold(kind, detail, thresholds)
+        if within:
+            calm.add(kind)
+        ok = within and (kind != "load" or kind in before)
+        checks.append(
+            Check(kind="host", target=kind, ok=ok, detail=_reading(kind, detail, thresholds))
+        )
+    return checks
+
+
+def _reading(kind: str, detail: dict, t: Thresholds) -> str:
+    """A reading against its threshold, in Bleep's words: the mount name is host text, left out."""
+    match kind:
+        case "disk":
+            return (
+                f"{detail['percent']:g} % used on the fullest disk, "
+                f"needs under {t.disk_percent:g} %"
+            )
+        case "memory":
+            return (
+                f"{detail['available_percent']:.1f} % available, "
+                f"needs at least {t.memory_available_percent_min:g} %"
+            )
+        case _:
+            return (
+                f"{detail['load_per_cpu']:.2f} per CPU over the last minute, "
+                f"needs at most {t.load_per_cpu:g} on two checks in a row"
+            )
+
+
+def _loop_back_prompt(result: VerificationResult) -> str:
+    """`verify_unproven` when every failed check is only the missing evidence after an approved
+    stop, so Investigate looks for that evidence instead of a fault; else `verify_failed`."""
+    failed = [c for c in result.checks if not c.ok]
+    if failed and all(c.kind == "symptom" and c.detail == UNPROVEN for c in failed):
+        return "graph/verify_unproven"
+    return "graph/verify_failed"
+
+
 def _describe(result: VerificationResult) -> str:
     return "\n".join(f"- {c.kind} {c.target}: {c.detail}" for c in result.checks if not c.ok)
 
@@ -304,6 +415,7 @@ def make(deps: GraphDeps) -> Node:
         apps: list[str],
         starts: dict[str, datetime],
         attempt: int,
+        calm: set[str],
     ) -> VerificationResult:
         owned = deps.http is None
         client = deps.http or httpx.AsyncClient()
@@ -317,6 +429,10 @@ def make(deps: GraphDeps) -> Node:
                     for name in plan.stopped
                 ]
             checks += [await _check_url(client, cfg) for cfg in plan.urls]
+            if plan.readings:
+                checks += await _check_host(deps, host_id, plan.readings, calm)
+            if plan.blind:
+                checks.append(Check(kind="symptom", target=host_id, ok=False, detail=NOT_REREAD))
         finally:
             if owned:
                 await client.aclose()
@@ -336,8 +452,9 @@ def make(deps: GraphDeps) -> Node:
             await deps.bus.publish(incident_id, "verification", _payload(result))
         else:
             await deps.sleep(SETTLE_S)
+            calm: set[str] = set()
             for attempt in range(1, CHECKS + 1):
-                result = await one_check(subject.host_id, plan, apps, starts, attempt)
+                result = await one_check(subject.host_id, plan, apps, starts, attempt, calm)
                 await deps.bus.publish(incident_id, "verification", _payload(result))
                 if result.ok or attempt == CHECKS:
                     break
@@ -354,12 +471,16 @@ def make(deps: GraphDeps) -> Node:
         update: dict = {"verification": result, "verify_loops": loops}
         if result.ok:
             update["outcome"] = "resolved"
-        elif result.checks and loops < deps.settings_store.budgets().verify_loops:
+        elif (
+            result.checks
+            and not plan.blind  # no plan can make that symptom readable
+            and loops < deps.settings_store.budgets().verify_loops
+        ):
             update["verify_loops"] = loops + 1
             update["messages"] = [
                 HumanMessage(
                     prompts.load(
-                        "graph/verify_failed",
+                        _loop_back_prompt(result),
                         checks=_describe(result),
                         budget=str(deps.settings_store.budgets().investigate_tool_calls),
                     )

@@ -18,17 +18,41 @@ class GrantInvalid(Exception):
     """The step is not covered by a grant for this exact plan; nothing was run."""
 
 
-def plan_hash(proposal: Proposal, snapshots: list[TargetSnapshot]) -> str:
-    """sha256 of the steps as canonical JSON, each with the container id its target resolved to.
+def binds_app(step: PlanStep) -> bool:
+    """Whether `step`'s target is a Coolify application; every other target is a container."""
+    return step.action.startswith("coolify.")
 
-    A recreated container keeps its name but not its id, so the same words make another plan.
-    Steps whose target is not a container (Coolify applications) carry `null`.
+
+def step_snapshot(snapshots: list[TargetSnapshot], step: PlanStep) -> TargetSnapshot | None:
+    """The approval's snapshot of `step`'s target: its application for a Coolify step, else its
+    container. A container and an application of the same name are told apart."""
+    app = binds_app(step)
+    return next(
+        (
+            s
+            for s in snapshots
+            if (s.host_id, s.target) == (step.host_id, step.target)
+            and (s.app_uuid is not None) == app
+        ),
+        None,
+    )
+
+
+def plan_hash(proposal: Proposal, snapshots: list[TargetSnapshot]) -> str:
+    """sha256 of the steps as canonical JSON, each with what its target resolved to: the container
+    id, or for a Coolify step the application uuid (#139).
+
+    A recreated container keeps its name but not its id, and a recreated Coolify application its
+    name but not its uuid, so the same words make another plan.
     """
-    resolved = {(s.host_id, s.target): s.container_id for s in snapshots}
-    steps = [
-        step.model_dump(mode="json") | {"container_id": resolved.get((step.host_id, step.target))}
-        for step in proposal.steps
-    ]
+    steps = []
+    for step in proposal.steps:
+        snapshot = step_snapshot(snapshots, step)
+        if binds_app(step):
+            bound = {"container_id": None, "app_uuid": snapshot and snapshot.app_uuid}
+        else:
+            bound = {"container_id": snapshot and snapshot.container_id}
+        steps.append(step.model_dump(mode="json") | bound)
     canonical = json.dumps(steps, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
 
