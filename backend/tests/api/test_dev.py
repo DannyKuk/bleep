@@ -206,6 +206,11 @@ def test_an_override_with_a_token_wrapped_across_lines_is_a_422_and_not_stored(d
     assert prompts.load(RECOVERY, logs="x") == recovery_file().format(logs="x")
 
 
+def test_an_override_body_over_the_size_cap_is_a_413(dev_client):
+    response = put_prompt(dev_client, RECOVERY, {"text": "{logs}\n" + "word " * 30_000})
+    assert response.status_code == 413
+
+
 @pytest.mark.parametrize("body", [{"text": ""}, {"text": "x" * 20_001}, {}, {"txt": "{logs}"}])
 def test_an_invalid_body_is_a_422(dev_client, body):
     assert put_prompt(dev_client, RECOVERY, body).status_code == 422

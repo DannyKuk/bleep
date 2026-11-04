@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 
 from bleep import prompts
 from bleep.api.deps import get_parts
-from bleep.api.settings import parse_body, stale_response, version_of
+from bleep.api.settings import check_size, parse_body, stale_response, version_of
 from bleep.guard.log import GuardKind
 from bleep.guard.redact import redact_text
 from bleep.incidents.prompt_overrides import (
@@ -96,6 +96,7 @@ async def set_prompt(
     if name not in prompts.overridable_names():
         raise HTTPException(404, "no such prompt")
     version = _version(if_match)
+    check_size(body)
     if isinstance(body, dict) and isinstance(body.get("text"), str):
         try:
             check_lines(body["text"])  # before the body's secret check reads it as a secret
