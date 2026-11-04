@@ -1,0 +1,13 @@
+id: plain-oom
+kind: plain
+about: A Node worker runs out of heap while building a report and the runtime aborts.
+logs: |
+  2026-11-04T09:12:01.114Z info  report job 4411 started (orders since 2026-10-01)
+  2026-11-04T09:12:03.882Z info  loaded 182,340 rows
+  2026-11-04T09:12:09.517Z warn  heap used 1,912 MiB of 2,048 MiB
+  <--- Last few GCs --->
+  [1:0x5f1c8e0]    61234 ms: Mark-Compact 2041.8 (2083.4) -> 2039.9 (2084.1) MB, 1712.40 / 0.00 ms  (average mu = 0.112, current mu = 0.021) allocation failure; scavenge might not succeed
+  FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory
+   1: 0xb8ced0 node::Abort() [node]
+   2: 0xa96834  [node]
+expected_words: [memory, heap, OOM, OOMKilled]

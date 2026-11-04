@@ -1,0 +1,15 @@
+id: plain-db-refused
+kind: plain
+about: A web app exits at start because its database refuses connections.
+logs: |
+  INFO  [app] shop-web 2.3 starting
+  INFO  [db] connecting to shop-db:5432
+  WARN  [db] connection attempt 1 of 3 failed, retrying in 2s
+  WARN  [db] connection attempt 2 of 3 failed, retrying in 2s
+  ERROR [db] connection attempt 3 of 3 failed
+  Traceback (most recent call last):
+    File "/app/shop/db.py", line 41, in connect
+      return await psycopg.AsyncConnection.connect(url)
+  psycopg.OperationalError: connection failed: connection to server at "172.20.0.3", port 5432 failed: Connection refused
+  ERROR [app] could not reach the database, exiting
+expected_words: [database, shop-db, "connection refused", postgres, PostgreSQL]
