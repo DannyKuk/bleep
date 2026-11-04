@@ -17,12 +17,11 @@ _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")  # all but \n and \t
 # Every Unicode "format" (Cf) character of Unicode 16.0 (`unicodedata.unidata_version` of the
 # Python Bleep runs on; a test fails when a newer Python has Cf characters missing here): soft
 # hyphen, zero-width, bidi marks and overrides, the byte-order mark, U+180E, the tag block; plus
-# variation selectors, and the characters that are
-# not Cf but draw nothing: the combining grapheme joiner U+034F, the Khmer inherent vowels
-# U+17B4 and U+17B5, the Braille blank U+2800, and the Hangul and halfwidth Hangul fillers
-# U+115F, U+1160, U+3164 and U+FFA0. They hide text from a human reader and can split a secret
-# or a tag so a pattern misses it. The dashboard marks the same set
-# (frontend/lib/invisible-ranges.json, pinned to this by a test).
+# variation selectors, and the characters that are not Cf but draw nothing: the combining
+# grapheme joiner U+034F, the Khmer inherent vowels U+17B4 and U+17B5, the Braille blank U+2800,
+# and the Hangul and halfwidth Hangul fillers U+115F, U+1160, U+3164 and U+FFA0. They hide text
+# from a human reader and can split a secret or a tag so a pattern misses it. The dashboard marks
+# the same set (frontend/lib/invisible-ranges.json, pinned to this by a test).
 INVISIBLE_CHARS = (
     "[­؀-؅؜۝܏࢐࢑࣢᠋-᠏​-‏"
     "‪-‮⁠-⁤⁦-⁯︀-️﻿￹-￻"
