@@ -84,6 +84,9 @@ Resolver = Callable[[str, int], Awaitable[list[str]]]
 # Ranges `is_global` counts as global that still lead somewhere else: NAT64 prefixes, which embed
 # an IPv4 address of any kind.
 _EMBEDDING = tuple(ipaddress.ip_network(net) for net in ("64:ff9b::/96", "64:ff9b:1::/48"))
+# IPv6 global unicast: everything outside it (IPv4-compatible `::a.b.c.d`, SIIT `::ffff:0:...`,
+# site-local `fec0::/10`) is refused, whatever `is_global` says of it.
+_GLOBAL_UNICAST = ipaddress.ip_network("2000::/3")
 
 
 class AddressRefused(httpx.ConnectError):
@@ -95,8 +98,9 @@ class AddressRefused(httpx.ConnectError):
 def is_public(raw: str) -> bool:
     """Whether a connection to `raw` leaves for the public internet: a global unicast address
     that does not embed another one (IPv4-mapped, 6to4, Teredo and NAT64 forms are judged by
-    what they embed, or refused). Private, loopback, link-local (cloud metadata), CGNAT,
-    unique-local, unspecified, reserved and multicast addresses are not."""
+    what they embed, or refused; an IPv6 address must be in 2000::/3). Private, loopback,
+    link-local (cloud metadata), CGNAT, unique-local, site-local, unspecified, reserved and
+    multicast addresses are not."""
     try:
         ip = ipaddress.ip_address(raw.split("%", 1)[0])
     except ValueError:
@@ -106,7 +110,7 @@ def is_public(raw: str) -> bool:
             return is_public(str(ip.ipv4_mapped))
         if ip.sixtofour is not None or ip.teredo is not None:
             return False
-        if any(ip in net for net in _EMBEDDING):
+        if ip not in _GLOBAL_UNICAST or any(ip in net for net in _EMBEDDING):
             return False
     return ip.is_global and not ip.is_multicast
 

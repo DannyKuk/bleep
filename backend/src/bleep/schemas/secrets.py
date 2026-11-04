@@ -21,6 +21,9 @@ class SecretView(BaseModel):
     carries: str | None = None  # an address: the token sent to it, cleared when it changes
     value: str | None = None
     version: str | None = None
+    # A dashboard address in the file that Bleep would not accept now (the file was edited by
+    # hand): set, but shown as invalid with no part of it, and the plugin is not switched on.
+    invalid: bool = False
 
 
 class SecretValue(BaseModel):

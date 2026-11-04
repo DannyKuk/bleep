@@ -89,6 +89,7 @@ def secret_views(store: SecretStore) -> list[SecretView]:
                 carries=entry.carries,
                 value=_shown(store, entry.name, entry.kind),
                 version=store.address_version(entry.name),
+                invalid=_invalid(store, entry.name, entry.kind),
             )
         )
     return views
@@ -103,9 +104,14 @@ def _shown(store: SecretStore, name: str, kind: Kind) -> str | None:
         return None
     if kind == "id":
         return mask_chat_id(value.get_secret_value())
-    if store.state(name).env_owned:
+    if store.state(name).env_owned or _invalid(store, name, kind):
         return None
-    url = httpx.URL(value.get_secret_value())
+    try:
+        url = httpx.URL(value.get_secret_value())
+    except httpx.InvalidURL:  # a file edited by hand: set, but not shown, and never quoted
+        return None
+    if not url.scheme or not url.host:
+        return None
     host = f"[{url.host}]" if ":" in url.host else url.host
     return f"{url.scheme}://{host}" + (f":{url.port}" if url.port is not None else "")
 
@@ -131,10 +137,26 @@ async def _dashboard_address(parts: AppParts, name: str, value: str) -> str:
     return value
 
 
+def _invalid(store: SecretStore, name: str, kind: Kind) -> bool:
+    """A dashboard address that the API would refuse now, as `PUT` checks it before resolving."""
+    value = store.get(name)
+    if kind != "address" or value is None or store.state(name).env_owned:
+        return False
+    try:
+        check_dashboard_url(value.get_secret_value(), name)
+    except UrlRefused:
+        return True
+    return False
+
+
 def _same_address(old: str, new: str) -> bool:
     """Whether two accepted addresses name the same endpoint: httpx already folds the case of
-    the scheme and host and drops a default port; an empty path is `/`."""
-    a, b = httpx.URL(old), httpx.URL(new)
+    the scheme and host and drops a default port; an empty path is `/`. A stored address that
+    does not parse (a file edited by hand) is never the same."""
+    try:
+        a, b = httpx.URL(old), httpx.URL(new)
+    except httpx.InvalidURL:
+        return False
     return (a.scheme, a.host, a.port, a.raw_path) == (b.scheme, b.host, b.port, b.raw_path)
 
 

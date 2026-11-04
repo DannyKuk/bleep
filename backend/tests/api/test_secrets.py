@@ -133,6 +133,7 @@ def test_the_list_names_every_secret_and_never_the_login_or_the_session_secret(a
         "carries": None,
         "value": None,
         "version": None,
+        "invalid": False,
     }
 
 
@@ -510,3 +511,34 @@ def test_a_failure_to_store_the_plugin_off_saves_nothing(app, plugin, monkeypatc
     assert app.parts.secrets.get("FAKE_URL").get_secret_value() == URL
     assert app.parts.secrets.get("FAKE_TOKEN") is not None
     assert plugin_view(app)["enabled"] and plugin.sent_to() == (URL, TOKEN)
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        "https://[::1/sk-hand-edited-secret",  # does not parse
+        "http://socket-proxy:2375/sk-hand-edited-secret",  # parses, but not https
+        "not a url sk-hand-edited-secret",
+    ],
+)
+def test_a_hand_edited_address_is_shown_as_invalid_never_quoted(settings, stored, monkeypatch):
+    import json
+
+    monkeypatch.delenv("FAKE_URL", raising=False)
+    monkeypatch.delenv("FAKE_TOKEN", raising=False)
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    (settings.data_dir / "secrets.json").write_text(
+        json.dumps({"version": 1, "values": {"FAKE_URL": stored}})
+    )
+    parts = build_parts(
+        settings, Registry([]), FakeEmbedder(), plugins=[FakeUrlPlugin()], resolver=FakeResolver()
+    )
+    with TestClient(create_app(settings, parts)) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        response = client.get("/api/secrets")
+        switched = switch_on(client)
+    assert response.status_code == 200
+    view = {v["name"]: v for v in response.json()}["FAKE_URL"]
+    assert view["set"] and view["invalid"] and view["value"] is None
+    assert "sk-hand-edited" not in response.text and "socket-proxy" not in response.text
+    assert switched.status_code == 422 and "sk-hand-edited" not in switched.text

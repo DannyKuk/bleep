@@ -41,6 +41,10 @@ TOKEN = "coolify-dashboard-token-0123456789"
         ("64:ff9b::a00:1", False),  # NAT64 of 10.0.0.1
         ("2002:a00:1::1", False),  # 6to4
         ("2001:0:a00:1::1", False),  # Teredo
+        ("::7f00:1", False),  # IPv4-compatible 127.0.0.1
+        ("::a00:5", False),  # IPv4-compatible 10.0.0.5
+        ("::ffff:0:a00:5", False),  # SIIT 10.0.0.5
+        ("fec0::1", False),  # site-local
         ("not an address", False),
     ],
 )
