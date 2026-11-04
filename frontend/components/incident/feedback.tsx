@@ -6,12 +6,13 @@ import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
 import type { Feedback, FeedbackBody, FeedbackTarget, Vote } from "@/lib/api-types";
+import { cn } from "@/lib/utils";
 
 const MAX_NOTE = 200; // the API's limit (NOTE_CHARS)
 const FINDING: Record<FeedbackTarget, string> = { diagnosis: "diagnosis", proposal: "plan" };
-const VOTES: { vote: Vote; label: string; Icon: typeof ThumbsUp }[] = [
-  { vote: "up", label: "Right", Icon: ThumbsUp },
-  { vote: "down", label: "Wrong", Icon: ThumbsDown },
+const VOTES: { vote: Vote; label: string; Icon: typeof ThumbsUp; pressed: string }[] = [
+  { vote: "up", label: "Right", Icon: ThumbsUp, pressed: "border-ok bg-ok-bg text-ok" },
+  { vote: "down", label: "Wrong", Icon: ThumbsDown, pressed: "border-down bg-down-bg text-down" },
 ];
 
 /**
@@ -64,14 +65,15 @@ export function FeedbackBar({
   }
 
   return (
-    <div className="flex flex-col gap-2 border-t border-border pt-3">
+    <div className="flex flex-col gap-2 border-t border-line pt-3 print:hidden">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-muted-foreground">Was this {finding} right?</span>
-        {VOTES.map(({ vote, label, Icon }) => (
+        <span className="text-sm font-bold text-ink-2">Was this {finding} right?</span>
+        {VOTES.map(({ vote, label, Icon, pressed }) => (
           <Button
             key={vote}
             size="sm"
-            variant={saved?.vote === vote ? "default" : "outline"}
+            variant="outline"
+            className={cn(saved?.vote === vote && pressed)}
             aria-pressed={saved?.vote === vote}
             disabled={sending !== null}
             onClick={() => void send(vote)}
@@ -105,7 +107,7 @@ export function FeedbackBar({
             maxLength={MAX_NOTE}
             rows={2}
             onChange={(changed) => setNote(changed.target.value)}
-            className="rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            className="rounded-field border border-line bg-surface px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           />
         </div>
       )}
@@ -117,7 +119,7 @@ export function FeedbackBar({
         </p>
       )}
       {failure && (
-        <p role="alert" className="flex items-center gap-2 text-xs text-health-down">
+        <p role="alert" className="flex items-center gap-2 text-xs text-down">
           <TriangleAlert aria-hidden className="size-3.5" />
           Could not save the vote: {failure}
         </p>

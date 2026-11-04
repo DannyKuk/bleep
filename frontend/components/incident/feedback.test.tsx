@@ -70,6 +70,14 @@ describe("FeedbackBar", () => {
 
     expect(screen.getByRole("button", { name: "Right" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("status")).toHaveTextContent("Marked right.");
+    expect(screen.getByRole("button", { name: "Right" })).toHaveClass("bg-ok-bg");
+    expect(screen.getByRole("button", { name: "Wrong" })).not.toHaveClass("bg-down-bg");
+  });
+
+  it("tints a pressed Wrong red", () => {
+    render(<FeedbackBar incidentId="inc-1" target="diagnosis" current={stored("down") as never} />);
+
+    expect(screen.getByRole("button", { name: "Wrong" })).toHaveClass("bg-down-bg");
   });
 
   it("says when the vote could not be saved and lets the human try again", async () => {
