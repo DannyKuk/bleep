@@ -37,14 +37,16 @@ class Plugin(ABC):
 
     `settings_model` must forbid unknown fields and may not have a field that looks like a secret;
     `secrets` names the environment variables the plugin needs, every one of which must be set
-    before it can be switched on. Tool names start with `<name>_` and act actions with `<name>.`,
-    so a plugin can neither shadow a core tool nor add a Docker action.
+    before it can be switched on, and `optional_secrets` those it uses when they are set. Tool
+    names start with `<name>_` and act actions with `<name>.`, so a plugin can neither shadow a
+    core tool nor add a Docker action.
     """
 
     name: ClassVar[str]
     title: ClassVar[str]
     settings_model: ClassVar[type[BaseModel]]
     secrets: ClassVar[tuple[str, ...]] = ()
+    optional_secrets: ClassVar[tuple[str, ...]] = ()
 
     @abstractmethod
     def tools(self, ctx: PluginContext) -> list[ToolSpec]:

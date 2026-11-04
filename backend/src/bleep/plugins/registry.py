@@ -161,7 +161,11 @@ class PluginRegistry:
             enabled=active is not None,
             settings=self._shown_settings(name),
             settings_schema=plugin.settings_model.model_json_schema(),
-            secrets=[PluginSecret(env=env, set=bool(self._env.get(env))) for env in plugin.secrets],
+            secrets=[
+                PluginSecret(env=env, set=bool(self._env.get(env)), required=required)
+                for envs, required in ((plugin.secrets, True), (plugin.optional_secrets, False))
+                for env in envs
+            ],
             health=await self._health(plugin, active.ctx) if active is not None else None,
         )
 
@@ -179,7 +183,11 @@ class PluginRegistry:
             )
         ctx = PluginContext(
             settings=settings,
-            secrets={env: SecretStr(self._env[env]) for env in plugin.secrets},
+            secrets={
+                env: SecretStr(self._env[env])
+                for env in (*plugin.secrets, *plugin.optional_secrets)
+                if self._env.get(env)
+            },
             grant_secret=self._grant_secret,
             guard_log=self._guard_log,
         )

@@ -145,7 +145,7 @@ def test_plugins_list_settings_and_whether_secrets_are_set_never_the_value(app):
     assert COOLIFY_TOKEN not in response.text
     (plugin,) = listed.json()
     assert plugin["enabled"] is True
-    assert plugin["secrets"] == [{"env": "COOLIFY_TOKEN", "set": True}]
+    assert plugin["secrets"] == [{"env": "COOLIFY_TOKEN", "set": True, "required": True}]
     assert plugin["settings"] == {"url": "https://coolify.example.test", "team": "main"}
     assert plugin["health"]["ok"] is True
 
