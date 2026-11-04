@@ -63,9 +63,13 @@ describe("ServicePage", () => {
     render(<ServicePage id="demo/compose:shop" />);
 
     expect(await screen.findByRole("heading", { name: "shop" })).toBeInTheDocument();
+    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(crumbs).getByRole("link", { name: "Home" })).toHaveAttribute("href", "/");
+    expect(within(crumbs).getByText("demo")).toBeInTheDocument();
+    expect(within(crumbs).getByText("shop")).toHaveAttribute("aria-current", "page");
     const urls = screen.getByRole("list", { name: "URLs" });
     expect(urls).toHaveTextContent("http://localhost:8080/");
-    const rules = screen.getByRole("region", { name: "Rules" });
+    const rules = screen.getByRole("region", { name: "Rules I follow" });
     expect(within(rules).getByRole("list", { name: "Rules: This service" })).toHaveTextContent(
       "The shop db is shared with billing.",
     );
@@ -73,7 +77,7 @@ describe("ServicePage", () => {
       "Never restart postgres without asking.",
     );
     expect(await screen.findByText(/No facts yet/)).toBeInTheDocument();
-    const past = await screen.findByRole("list", { name: "Earlier" });
+    const past = await screen.findByRole("list", { name: "Incidents" });
     expect(past).toHaveTextContent("shop-web-1 died");
 
     const urlsRead = fetchMock.mock.calls.map(([input]) => String(input));
@@ -86,8 +90,8 @@ describe("ServicePage", () => {
     render(<ServicePage id="demo/compose:gone" />);
 
     expect(await screen.findByText(/does not see this service/)).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Memory" })).toBeInTheDocument();
-    expect(await screen.findByRole("list", { name: "Earlier" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Rules" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "What I know about gone" })).toBeInTheDocument();
+    expect(await screen.findByRole("list", { name: "Incidents" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Rules I follow" })).not.toBeInTheDocument();
   });
 });

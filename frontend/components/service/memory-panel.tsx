@@ -28,7 +28,7 @@ function FactOrigin({ fact }: { fact: ServiceFact }) {
       {fact.incident_id ? (
         <Link
           href={`/incidents/${fact.incident_id}`}
-          className="underline underline-offset-2 hover:text-foreground"
+          className="underline underline-offset-2 hover:text-ink"
         >
           an incident&apos;s report
         </Link>
@@ -53,19 +53,19 @@ export function FactList({
 }) {
   if (facts.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
+      <p className="text-sm text-ink-2">
         No facts yet. Add one here, or tell Bleep during an incident, such as &ldquo;always redeploy
         rather than restart&rdquo;.
       </p>
     );
   }
   return (
-    <ul aria-label="Facts" className="flex flex-col divide-y divide-border">
+    <ul aria-label="Facts" className="flex flex-col divide-y divide-line">
       {facts.map((fact) => (
-        <li key={fact.id} className="flex items-start gap-3 py-2 first:pt-0 last:pb-0">
+        <li key={fact.id} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="text-sm break-words">{fact.text}</span>
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-ink-2">
               <FactOrigin fact={fact} />
             </span>
           </div>
@@ -144,12 +144,12 @@ export function MemoryPanel({ serviceId }: { serviceId: string }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="flex items-center gap-2 text-xs text-muted-foreground">
+      <p className="flex items-center gap-2 text-xs text-ink-2">
         <Brain aria-hidden className="size-3.5" />
         Bleep reads these on every incident of this service.
       </p>
       {facts === null && !failure ? (
-        <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+        <p role="status" className="flex items-center gap-2 text-sm text-ink-2">
           <Loader2 aria-hidden className="size-4 animate-spin" />
           Loading the facts
         </p>
@@ -163,7 +163,7 @@ export function MemoryPanel({ serviceId }: { serviceId: string }) {
           if (text.trim()) void add();
         }}
       >
-        <label htmlFor={inputId} className="text-xs text-muted-foreground">
+        <label htmlFor={inputId} className="text-xs text-ink-2">
           Something Bleep should always know about this service
         </label>
         <div className="flex gap-2">
@@ -180,7 +180,7 @@ export function MemoryPanel({ serviceId }: { serviceId: string }) {
         </div>
       </form>
       {failure && (
-        <p role="alert" className="flex items-center gap-2 text-xs text-health-down">
+        <p role="alert" className="flex items-center gap-2 text-xs text-down">
           <TriangleAlert aria-hidden className="size-3.5" />
           {failure}
         </p>
