@@ -196,7 +196,7 @@ async def _invoke(
     try:
         out = await tool.ainvoke(args)
     except CommandNotAllowed as refusal:
-        record("refused_command", str(args.get("command", args))[:200])
+        record("refused_command", str(args.get("command", args)))
         return str(refusal)
     except Exception as error:
         log.warning("investigate: tool %s failed: %s", name, type(error).__name__)

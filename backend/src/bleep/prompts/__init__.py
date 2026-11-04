@@ -18,9 +18,12 @@ NAME = re.compile(r"^[a-z0-9_]+(?:/[a-z0-9_]+)*$")
 # untrusted-data rule with no placeholder to check an override against.
 NOT_OVERRIDABLE_AREAS = ("evals/", "notify/")
 NOT_OVERRIDABLE = frozenset({"graph/system"})
-# C0 and C1 controls but tab and line breaks, and the bidi overrides and isolates, which reorder
-# what a reader of the panel sees without changing what the model reads.
-_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+# C0 and C1 controls but tab and line breaks; the bidi overrides, isolates and marks (U+200E,
+# U+200F, U+061C), which reorder what a reader of the panel sees without changing what the model
+# reads; and the zero-width space and the byte-order mark, which hide where text is split.
+_CONTROL = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u061c\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]"
+)
 
 _overrides: dict[str, str] = {}
 
@@ -73,7 +76,7 @@ def check_override(name: str, text: str) -> None:
     if name not in overridable_names():
         raise PromptError(f"no prompt named {name!r} can be overridden")
     if _CONTROL.search(text):
-        raise PromptError("control characters and bidi overrides are not allowed")
+        raise PromptError("control characters, bidi marks and invisible characters are not allowed")
     needed, given = placeholders(file_text(name)), placeholders(text)
     if needed != given:
         missing = ", ".join(f"{{{p}}}" for p in sorted(needed - given)) or "none"

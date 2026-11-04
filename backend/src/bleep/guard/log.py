@@ -1,8 +1,9 @@
 """The guard log: what the guard refused, blocked or changed, per incident, for the dev panel.
 
 `GuardLogger` is the Protocol tools, Gather, Investigate and the watcher record to; `GuardLog`
-keeps the records in the `guard_log` table. `record` stays synchronous so any code can call it;
-the write runs as a task on the event loop, and `flush()` waits for the writes in flight.
+keeps the records in the `guard_log` table, each detail redacted. `record` stays synchronous so
+any code can call it; the write runs as a task on the event loop, and `flush()` waits for the
+writes in flight.
 """
 
 import asyncio
@@ -14,6 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, Protocol
 
+from bleep.guard.redact import redact_text
 from bleep.store.db import Database
 
 log = logging.getLogger(__name__)
@@ -60,7 +62,10 @@ class GuardLog:
         self._writer: asyncio.Task[None] | None = None
 
     def record(self, incident_id: str, kind: GuardKind, detail: str) -> None:
-        row = (incident_id, kind, detail[:DETAIL_CHARS], self.clock().isoformat())
+        """`detail` is redacted, then cut: a refused command is the model's text and can hold a
+        secret, which must never reach the table, whole or as the head of a cut token."""
+        detail = redact_text(detail)[:DETAIL_CHARS]
+        row = (incident_id, kind, detail, self.clock().isoformat())
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:  # no event loop to block: write at once

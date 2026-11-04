@@ -14,7 +14,7 @@ from bleep.schemas.incidents import Incident, Signal, Subject
 from bleep.schemas.settings import Budgets, Thresholds
 from bleep.store.db import Database
 from bleep.watcher import manager as manager_module
-from bleep.watcher.detector import Detector
+from bleep.watcher.detector import NO_LOGS_LINE, Detector
 from bleep.watcher.http_checks import UrlCheckStore
 from bleep.watcher.manager import (
     CAP_SPENT_EXPLANATION,
@@ -338,6 +338,17 @@ async def test_with_the_daily_cap_spent_the_recovery_is_logged_without_a_model_c
     assert recovery.explanation == CAP_SPENT_EXPLANATION
     assert model.seen == []
     assert [row.key for row in await r.ledger.by_incident()] == ["inc-1"]
+
+
+async def test_with_the_cap_spent_and_no_logs_the_line_says_there_were_no_logs(tmp_path):
+    model = FakeChatModel(script=[])
+    r = await Rig(tmp_path, model, Budgets(daily_cost_usd=0.5)).boot()
+    r.engine.log_text = {}
+    await r.ledger.add("inc-1", "openai/gpt-6-luna", 1000, 100, 0.5)
+    await recover_shop(r)
+    [recovery] = await r.repo.recoveries()
+    assert recovery.explanation == NO_LOGS_LINE
+    assert model.seen == []
 
 
 async def test_a_recovery_is_logged_even_when_the_model_fails(tmp_path):

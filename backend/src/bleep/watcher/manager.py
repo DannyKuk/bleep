@@ -275,7 +275,8 @@ class WatcherManager:
         like an incident's calls."""
         config = None
         if self._ledger is not None:
-            if self._budgets is not None:
+            # Without logs `explain_recovery` answers without the model, so the cap is not asked.
+            if self._budgets is not None and logs.strip():
                 await check_daily_cap(self._ledger, self._budgets())
             config = {"callbacks": [UsageTracker(RECOVERY_USAGE, self._ledger)]}
         return await explain_recovery(model, logs, self._guard_log, "", config)

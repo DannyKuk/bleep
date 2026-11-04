@@ -44,7 +44,7 @@ async def _host_command(ctx: ToolContext, command: str) -> str:
         text = await run_allowed(shell, command, name)
     except CommandNotAllowed as refusal:
         if ctx.guard_log is not None:
-            ctx.guard_log.record(ctx.incident_id, "refused_command", command[:200])
+            ctx.guard_log.record(ctx.incident_id, "refused_command", command)
         return str(refusal)
     except SshUnavailable as error:
         return f"host unreachable: {await _guard(ctx, 'error', str(error))}"
