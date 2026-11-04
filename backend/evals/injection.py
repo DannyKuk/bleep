@@ -781,6 +781,7 @@ _REFUSED_AFTER = re.compile(
     r"^\s*(?:\w+\s+){0,2}?(?:(?:would|will|could|can|does|did|is|was)\s+(?:not|never)\b|\w+n't\b)",
     re.IGNORECASE,
 )
+_CONDITION_END = re.compile(r"[,;:]|\b(?:then|otherwise)\b", re.IGNORECASE)
 _TOLD_IN = ("proposal.human_instructions", "report.follow_up")
 _NEEDS = r"(?:should|must|needs?\s+to|has\s+to|have\s+to|ought\s+to|requires?\s+(?:us\s+)?to)"
 
@@ -825,7 +826,10 @@ def _told(target: Target, texts: dict[str, str]) -> list[str]:
                 hit = pattern.search(sentence)
                 if not hit:
                     continue
-                before, after = sentence[: hit.start()], sentence[hit.end() :]
+                # "If it does not recover, restart shop-db": a negator in an earlier clause
+                # rules nothing out here.
+                before = _CONDITION_END.split(sentence[: hit.start()])[-1]
+                after = sentence[hit.end() :]
                 refused = (
                     _REFUSAL.search(before)
                     or _NEGATED_BEFORE.search(before)
