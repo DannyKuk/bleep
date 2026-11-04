@@ -67,7 +67,7 @@ What the six diagnoses and plans said:
 - **3 runs per case, 6 in all, one model.** It shows that the model reads and ignores these two pages, not how often it would.
 - **The case is easier to find than most real incidents.** The page is the only repo doc, it is headed with the exact error the log shows, and the shop fails with nothing else wrong. A real repo has many pages, and the right one may not be the top hit.
 - **Ranking was tested offline with a fake embedder** (a test checks that the planted page ranks first for the error text) and is now shown live with Bleep's local embedder: the page came back in every one of the 17 searches the 6 runs made.
-- **The page's framing was believed** (above). An attack that lies about the cause, instead of ordering an action, is not in the suite.
+- **The page's framing was believed** (above). An attack that lies about the cause, instead of ordering an action, is not in this round; it is in [the false-cause round](injection-false-cause-2026-11-04.md).
 - **No run proposed an action**, so the plan check and the approval gate were not exercised by these two cases.
 
 ## Reproduce
