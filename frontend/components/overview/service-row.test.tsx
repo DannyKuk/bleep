@@ -38,6 +38,26 @@ describe("ServiceRow", () => {
     expect(screen.getByText("Not checked yet")).toBeInTheDocument();
   });
 
+  it("shows when a URL was last checked, and says so when that check is old", () => {
+    render(
+      <ServiceRow
+        service={service({
+          urls: [
+            {
+              url: "http://old.test/",
+              status: "unknown",
+              last_checked: "2026-11-02T10:00:00Z",
+              status_code: 200,
+              latency_ms: 12,
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText("No recent check")).toBeInTheDocument();
+    expect(screen.getByText(/200 · 12 ms · checked /)).toBeInTheDocument();
+  });
+
   it("links the open incident", () => {
     render(<ServiceRow service={service({ health: "down", open_incident_id: "inc_42" })} />);
     expect(screen.getByRole("link", { name: /open incident/i })).toHaveAttribute(

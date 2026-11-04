@@ -37,6 +37,7 @@ from bleep.plugins.registry import PluginRegistry
 from bleep.store.db import Database
 from bleep.tools.default import default_registry
 from bleep.tools.docker_act import docker_act_tools
+from bleep.watcher.http_checks import UrlCheckStore
 
 
 @dataclass
@@ -61,6 +62,7 @@ class AppParts:
     knowledge: KnowledgeIndex
     knowledge_refresher: KnowledgeRefresher
     prompt_overrides: PromptOverrideStore
+    url_checks: UrlCheckStore
 
 
 # Every plugin Bleep has; each is off until a person switches it on.
@@ -149,6 +151,7 @@ def build_parts(
             knowledge, reports=memory, repos=GithubRepoDocs(github, registry)
         ),
         prompt_overrides=PromptOverrideStore(db, guard_log),
+        url_checks=UrlCheckStore(db),
     )
 
 

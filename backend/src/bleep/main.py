@@ -15,7 +15,6 @@ from bleep.incidents.reminders import ReminderLoop
 from bleep.incidents.repository import utcnow
 from bleep.incidents.runner import IncidentRunner
 from bleep.watcher.detector import Detector
-from bleep.watcher.http_checks import UrlCheckStore
 from bleep.watcher.manager import WatcherManager
 from bleep.wiring import AppParts, build_parts
 
@@ -83,7 +82,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 guard_log=parts.graph_deps.guard_log,
                 ledger=parts.graph_deps.ledger,
                 budgets=parts.settings_store.budgets,
-                store=UrlCheckStore(parts.db),
+                store=parts.url_checks,
                 watch_interval_s=settings.watch_interval_s,
             )
             reminders = ReminderLoop(

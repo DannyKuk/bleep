@@ -4,6 +4,7 @@ import Link from "next/link";
 import { HealthBadge } from "@/components/overview/health-badge";
 import { Badge } from "@/components/ui/badge";
 import type { ContainerView, Health, ServiceView, UrlStatus } from "@/lib/api-types";
+import { formatTime } from "@/lib/format";
 import { serviceHref } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -46,14 +47,20 @@ const URL_HEALTH: Record<UrlStatus["status"], { label: string; health: Health }>
 };
 
 export function UrlItem({ url }: { url: UrlStatus }) {
-  const { label, health } = URL_HEALTH[url.status];
+  const { label: statusLabel, health } = URL_HEALTH[url.status];
+  const label =
+    url.status === "unknown" && url.last_checked != null ? "No recent check" : statusLabel;
   return (
     <li className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
       <span className="font-mono break-all">{url.url}</span>
       <HealthBadge health={health} label={label} />
-      {(url.status_code != null || url.latency_ms != null) && (
+      {(url.status_code != null || url.latency_ms != null || url.last_checked != null) && (
         <span className="text-muted-foreground">
-          {[url.status_code, url.latency_ms != null ? `${url.latency_ms} ms` : null]
+          {[
+            url.status_code,
+            url.latency_ms != null ? `${url.latency_ms} ms` : null,
+            url.last_checked != null ? `checked ${formatTime(url.last_checked)}` : null,
+          ]
             .filter((part) => part != null)
             .join(" · ")}
         </span>

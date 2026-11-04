@@ -1,6 +1,7 @@
+import asyncio
 import json
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,6 +13,7 @@ from bleep.incidents.repository import IncidentRepo
 from bleep.main import create_app
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
+from bleep.watcher.http_checks import UrlCheck
 from fakes import FakeEngine, ssh_host
 
 T0 = datetime(2026, 11, 2, 10, 0, tzinfo=UTC)
@@ -116,7 +118,11 @@ def test_host_health(reachable, last_seen, services, expected):
 
 
 @pytest.fixture
-def stocked(settings, parts):
+def stocked(settings, parts, monkeypatch):
+    async def never_answers(*args, **kwargs):
+        await asyncio.Event().wait()  # the running watcher must not record a check of its own
+
+    monkeypatch.setattr("bleep.watcher.http_checks.check_url", never_answers)
     hosts = [
         ssh_host(
             id="a",
@@ -233,6 +239,59 @@ def test_services_shape(stocked):
         ],
         "open_incident_id": None,
     }
+
+
+def record_check(
+    client, parts, check: UrlCheck, age_s: float = 0, host="a", service="a/compose:shop"
+):
+    at = datetime.now(UTC) - timedelta(seconds=age_s)
+    client.portal.call(parts.url_checks.record, host, service, check, at)
+    return at
+
+
+def shop_view(client):
+    [shop] = client.get("/api/services", params={"host_id": "a"}).json()
+    return shop
+
+
+def test_a_stored_passing_check_shows_its_result_and_time(stocked, parts):
+    at = record_check(stocked, parts, UrlCheck(url="http://a/", ok=True, status=200, latency_ms=42))
+    [url] = shop_view(stocked)["urls"]
+    assert (url["status"], url["status_code"], url["latency_ms"]) == ("ok", 200, 42)
+    assert datetime.fromisoformat(url["last_checked"]) == at
+
+
+def test_a_failing_check_makes_the_service_down(stocked, parts):
+    record_check(
+        stocked,
+        parts,
+        UrlCheck(
+            url="http://a/", ok=False, status=500, latency_ms=9, error="expected 200, got 500"
+        ),
+    )
+    shop = shop_view(stocked)
+    assert shop["urls"][0]["status"] == "failing"
+    assert shop["health"] == "down"
+    detail = stocked.get("/api/services/a/compose:shop").json()
+    assert detail["service"]["urls"][0]["status"] == "failing"
+
+
+def test_a_stale_check_is_unknown_but_keeps_its_time(stocked, parts):
+    record_check(
+        stocked, parts, UrlCheck(url="http://a/", ok=True, status=200, latency_ms=5), age_s=600
+    )
+    [url] = shop_view(stocked)["urls"]
+    assert url["status"] == "unknown"
+    assert url["last_checked"] is not None and url["status_code"] == 200
+
+
+def test_checks_of_other_urls_or_hosts_are_ignored(stocked, parts):
+    record_check(stocked, parts, UrlCheck(url="http://gone/", ok=False, latency_ms=1))
+    record_check(
+        stocked, parts, UrlCheck(url="http://a/", ok=False, latency_ms=1), host="b", service="b/x"
+    )
+    [url] = shop_view(stocked)["urls"]
+    assert (url["status"], url["last_checked"]) == ("unknown", None)
 
 
 def test_services_without_filter_lists_all_hosts(stocked):
