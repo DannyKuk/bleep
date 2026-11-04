@@ -5,12 +5,14 @@ import { useEffect, useState } from "react";
 
 import { Panel } from "@/components/panel";
 import { SaveLockProvider } from "@/components/save-lock";
+import { HostForm } from "@/components/settings/host-form";
 import { HostSettings, type KnownService } from "@/components/settings/hosts";
 import { ModelSettings } from "@/components/settings/models";
 import { PluginList } from "@/components/settings/plugins";
 import { TelegramSettings } from "@/components/settings/telegram";
 import { SecretFields } from "@/components/settings/secret-field";
 import { ThresholdsForm } from "@/components/settings/thresholds";
+import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
 import type { ServiceView } from "@/lib/api-types";
 import {
@@ -110,9 +112,32 @@ function servicesByHost(services: ServiceView[] | undefined): Map<string, KnownS
   return byHost;
 }
 
+function AddHost({ onChanged }: { onChanged: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Panel title="Add a host">
+      <div className="flex flex-col gap-3">
+        <p className="text-sm text-muted-foreground">
+          Only SSH hosts can be added here. A host with a Docker socket, and a host on the machine
+          Bleep itself runs on (loopback), go in config/hosts.yaml.
+        </p>
+        {open ? (
+          <HostForm onChanged={onChanged} onClose={() => setOpen(false)} />
+        ) : (
+          <div>
+            <Button type="button" size="sm" onClick={() => setOpen(true)}>
+              Add an SSH host
+            </Button>
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 /**
  * Everything a person may change from the dashboard, and the state of what they may not: the
- * hosts' connections stay in the hosts file. Secrets are set and cleared here or in the
+ * connections of the hosts file's hosts stay in the file. Secrets are set and cleared here or in the
  * environment, and shown only as set or missing.
  */
 export function SettingsPage() {
@@ -155,6 +180,10 @@ function Settings() {
       async () => settings.set(await putSettings<SettingsView>(update, version)),
       async () => settings.set(await apiFetch<SettingsView>("/api/settings")),
     );
+
+  const readSettings = async () => {
+    settings.set(await apiFetch<SettingsView>("/api/settings"));
+  };
 
   const savePlugin = (name: string, update: PluginUpdate, version: string) =>
     saving(
@@ -215,8 +244,8 @@ function Settings() {
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <KeyRound aria-hidden className="size-4 shrink-0" />
           Keys, tokens and plugin addresses are set below or in .env; this page shows whether each
-          one is set, never its value. Hosts connect as the hosts file says. Every change here takes
-          effect at once.
+          one is set, never its value. Hosts from config/hosts.yaml connect as the file says; hosts
+          added here are kept by Bleep. Every change here takes effect at once.
         </p>
       </header>
 
@@ -240,8 +269,10 @@ function Settings() {
                 save={(overrides) =>
                   saveSettings({ hosts: { [host.id]: overrides } }, view.version)
                 }
+                onHostChanged={readSettings}
               />
             ))}
+            <AddHost onChanged={readSettings} />
             <Panel title="Thresholds">
               <ThresholdsForm
                 key={JSON.stringify(view.thresholds)}

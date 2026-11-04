@@ -29,6 +29,7 @@ export function sshHost(overrides: Partial<HostSettingsView> = {}): HostSettings
     id: "m1",
     name: "M1",
     connection: {
+      source: "file",
       kind: "ssh",
       address: "m1.local",
       user: "danny",
@@ -37,6 +38,9 @@ export function sshHost(overrides: Partial<HostSettingsView> = {}): HostSettings
       endpoint: null,
       key_file: { env: null, file: "/keys/id_ed25519", set: false },
       known_hosts_file: "/keys/known_hosts",
+      ssh_key: null,
+      host_key: null,
+      version: null,
     },
     rules: ["Ask before touching anything at night."],
     services: {

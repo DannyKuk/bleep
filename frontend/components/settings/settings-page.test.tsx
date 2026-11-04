@@ -9,6 +9,7 @@ import {
   secretViews,
   sentBody,
   settingsView,
+  sshHost,
   stubBackend,
   telegram,
 } from "@/components/settings/fixtures";
@@ -49,7 +50,7 @@ describe("SettingsPage", () => {
     render(<SettingsPage />);
 
     const host = await screen.findByRole("region", { name: "Host M1" });
-    expect(within(host).getByText("From the hosts file; change it there")).toBeInTheDocument();
+    expect(within(host).getByText("From config/hosts.yaml; change it there")).toBeInTheDocument();
     expect(within(host).getByText("danny@m1.local:22")).toBeInTheDocument();
     expect(within(host).getByText("Missing:")).toBeInTheDocument();
     expect(within(host).getByText("file /keys/id_ed25519")).toBeInTheDocument();
@@ -354,5 +355,53 @@ describe("SettingsPage", () => {
       "Could not load the settings: boom",
     );
     expect(await screen.findByText("This Bleep has no plugins.")).toBeInTheDocument();
+  });
+});
+
+describe("SettingsPage: hosts", () => {
+  it("says socket and loopback hosts go in the hosts file, and offers no edit for a file host", async () => {
+    backend();
+    render(<SettingsPage />);
+    const host = await screen.findByRole("region", { name: "Host M1" });
+    expect(within(host).queryByRole("button", { name: "Edit connection" })).toBeNull();
+    expect(within(host).queryByRole("button", { name: "Remove" })).toBeNull();
+    const add = screen.getByRole("region", { name: "Add a host" });
+    expect(add).toHaveTextContent("config/hosts.yaml");
+    expect(add).toHaveTextContent("loopback");
+  });
+
+  it("shows a dashboard host's key as set or missing and reads the settings again after a removal", async () => {
+    const base = sshHost({ id: "box", name: "Box", services: {} });
+    const dashboard = {
+      ...base,
+      connection: {
+        ...base.connection,
+        source: "dashboard" as const,
+        key_file: null,
+        ssh_key: { env: null, file: null, set: true },
+        host_key: { env: null, file: null, set: false },
+        version: "v-box",
+      },
+    };
+    const fetchMock = stubBackend({
+      "GET /api/settings": [
+        json(settingsView({ hosts: [dashboard], overrides: {} })),
+        json(settingsView({ hosts: [], overrides: {} })),
+      ],
+      "GET /api/services": json([]),
+      "GET /api/plugins": json([plugin()]),
+      "GET /api/telegram/status": json(telegram()),
+      "GET /api/secrets": json(secretViews()),
+      "DELETE /api/settings/hosts/box": new Response(null, { status: 204 }),
+    });
+    render(<SettingsPage />);
+    const host = await screen.findByRole("region", { name: "Host Box" });
+    expect(within(host).getByText("Key: set")).toBeInTheDocument();
+    expect(within(host).getByText("Host key: missing")).toBeInTheDocument();
+
+    await userEvent.click(within(host).getByRole("button", { name: "Remove" }));
+    await userEvent.click(within(host).getByRole("button", { name: "Yes, remove this host" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Host Box" })).toBeNull());
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/settings")).toHaveLength(2);
   });
 });

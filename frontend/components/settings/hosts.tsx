@@ -1,12 +1,15 @@
 "use client";
 
-import { Lock } from "lucide-react";
+import { CheckCircle2, Lock, XCircle } from "lucide-react";
+import { useState } from "react";
 
 import { Panel } from "@/components/panel";
+import { HostForm, RemoveHost } from "@/components/settings/host-form";
 import { ListEditor } from "@/components/settings/rules";
 import { Fact, SecretBadge } from "@/components/settings/secret";
 import { UrlEditor } from "@/components/settings/urls";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import type {
   HostConnection,
   HostOverrides,
@@ -14,6 +17,7 @@ import type {
   ServiceOverrides,
   ServiceSettingsView,
 } from "@/lib/settings-types";
+import { cn } from "@/lib/utils";
 
 const RULE_LABELS = { rules: "Rule" };
 const CONTAINER_LABELS = { protected_containers: "Container" };
@@ -56,6 +60,25 @@ export function withHostRules(host: HostOverrides | undefined, rules?: string[])
   return next;
 }
 
+function KeyState({ what, set }: { what: string; set: boolean }) {
+  return (
+    <span
+      data-set={set}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium",
+        set ? "bg-health-ok/12 text-health-ok" : "bg-health-down/12 text-health-down",
+      )}
+    >
+      {set ? (
+        <CheckCircle2 aria-hidden className="size-3.5" />
+      ) : (
+        <XCircle aria-hidden className="size-3.5" />
+      )}
+      {what}: {set ? "set" : "missing"}
+    </span>
+  );
+}
+
 function Connection({ connection }: { connection: HostConnection }) {
   if (connection.kind === "socket") {
     return (
@@ -81,6 +104,16 @@ function Connection({ connection }: { connection: HostConnection }) {
       {connection.key_file && (
         <Fact label="SSH key">
           <SecretBadge secret={connection.key_file} />
+        </Fact>
+      )}
+      {connection.ssh_key && (
+        <Fact label="SSH key">
+          <KeyState what="Key" set={connection.ssh_key.set} />
+        </Fact>
+      )}
+      {connection.host_key && (
+        <Fact label="Host key">
+          <KeyState what="Host key" set={connection.host_key.set} />
         </Fact>
       )}
       {connection.known_hosts_file && (
@@ -187,13 +220,18 @@ export function HostSettings({
   overrides,
   services,
   save,
+  onHostChanged,
 }: {
   host: HostSettingsView;
   overrides: HostOverrides | undefined;
   /** Services Bleep sees on the host now; those with settings but not seen are shown too. */
   services: KnownService[];
   save: (host: HostOverrides) => Promise<unknown>;
+  /** Reads the settings again after the host was edited or removed on the dashboard. */
+  onHostChanged?: () => Promise<void>;
 }) {
+  const [editing, setEditing] = useState(false);
+  const fromDashboard = host.connection.source === "dashboard" && onHostChanged !== undefined;
   const names = new Map(services.map((service) => [service.key, service.name]));
   const keys = [...new Set([...names.keys(), ...Object.keys(host.services)])].sort();
   return (
@@ -203,10 +241,33 @@ export function HostSettings({
           <h3 className="flex flex-wrap items-center gap-2 text-xs font-medium">
             Connection
             <span className="font-normal text-muted-foreground">
-              From the hosts file; change it there
+              {fromDashboard ? "Added on the dashboard" : "From config/hosts.yaml; change it there"}
             </span>
           </h3>
           <Connection connection={host.connection} />
+          {fromDashboard &&
+            (editing ? (
+              <HostForm
+                key={host.connection.version}
+                host={host}
+                onChanged={onHostChanged}
+                onClose={() => setEditing(false)}
+              />
+            ) : (
+              <div className="flex flex-col gap-2 pt-1">
+                <div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setEditing(true)}
+                  >
+                    Edit connection
+                  </Button>
+                </div>
+                <RemoveHost host={host} onChanged={onHostChanged} />
+              </div>
+            ))}
         </div>
         <div className="flex flex-col gap-1.5">
           <h3 className="text-xs font-medium">Rules for every service on {host.name}</h3>
