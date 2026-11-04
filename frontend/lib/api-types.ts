@@ -265,3 +265,91 @@ export interface ServiceDetail {
   rules: string[];
   host_rules: string[];
 }
+
+// Dev panel (#42: schemas/dev.py, and the model choice and budgets of schemas/settings.py, which
+// the panel edits through `PUT /api/settings`). Interfaces, so a second copy of one merges.
+
+export interface ModelChoice {
+  provider: "openrouter" | "local";
+  model: string;
+  cheap_model: string;
+  local_model: string;
+}
+
+export interface Budgets {
+  investigate_tool_calls: number;
+  low_confidence: number;
+  verify_loops: number;
+  replans: number;
+  incident_tokens: number;
+  daily_cost_usd: number;
+  approval_reminder_min: number;
+}
+
+/** The part of `GET /api/settings` the dev panel reads: values in force and the overrides. */
+export interface DevSettingsView {
+  models: ModelChoice;
+  budgets: Budgets;
+  overrides: { models?: Partial<ModelChoice>; budgets?: Partial<Budgets> };
+}
+
+export interface PromptView {
+  /** `area/name`, the file `prompts/<name>.md`. */
+  name: string;
+  /** The file's placeholders, which an override must use exactly. */
+  placeholders: string[];
+  file_text: string;
+  override: string | null;
+  overridden_at: string | null;
+}
+
+export interface PromptOverrideBody {
+  text: string;
+}
+
+/** Sums of the usage ledger. `usd` covers the priced calls (null when none is); `unpriced` counts
+ * the calls without a known cost. */
+export interface Usage {
+  calls: number;
+  tokens_in: number;
+  tokens_out: number;
+  usd: number | null;
+  unpriced: number;
+}
+
+export interface IncidentCost extends Usage {
+  incident_id: string;
+  title: string | null;
+  status: IncidentStatus | null;
+  opened_at: string | null;
+  trace_url: string | null;
+}
+
+export interface DayCost extends Usage {
+  /** The backend's local day, as the daily cap counts it. */
+  day: string;
+}
+
+export interface CostView {
+  incidents: IncidentCost[];
+  days: DayCost[];
+  daily_cap_usd: number;
+  spent_today_usd: number;
+}
+
+/** What the guard refused, blocked or changed (`guard/log.py` `GuardKind`). */
+export type GuardKind =
+  | "refused_command"
+  | "redacted"
+  | "blocked_action"
+  | "injection_marker"
+  | "budget"
+  | "foreign_chat";
+
+export interface GuardEntry {
+  id: number;
+  incident_id: string;
+  kind: GuardKind;
+  detail: string;
+  at: string;
+}

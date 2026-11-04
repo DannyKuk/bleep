@@ -36,6 +36,7 @@ class GuardEntry:
     kind: GuardKind
     detail: str
     at: datetime
+    id: int
 
 
 _INSERT = "INSERT INTO guard_log (incident_id, kind, detail, at) VALUES (?, ?, ?, ?)"
@@ -95,7 +96,30 @@ class GuardLog:
                 rows = await cursor.fetchall()
         finally:
             await conn.close()
-        return [
-            GuardEntry(r["incident_id"], r["kind"], r["detail"], datetime.fromisoformat(r["at"]))
-            for r in rows
-        ]
+        return [_entry(r) for r in rows]
+
+    async def recent(
+        self, incident_id: str | None = None, kind: GuardKind | None = None, limit: int = 200
+    ) -> list[GuardEntry]:
+        """Newest first, optionally only one incident's or only one kind's (the dev panel)."""
+        await self.flush()
+        filters = {"incident_id": incident_id, "kind": kind}
+        given = {column: value for column, value in filters.items() if value is not None}
+        where = " AND ".join(f"{column} = ?" for column in given)
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                f"SELECT * FROM guard_log {'WHERE ' + where if where else ''}"
+                " ORDER BY id DESC LIMIT ?",
+                (*given.values(), limit),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        finally:
+            await conn.close()
+        return [_entry(r) for r in rows]
+
+
+def _entry(row: sqlite3.Row) -> GuardEntry:
+    return GuardEntry(
+        row["incident_id"], row["kind"], row["detail"], datetime.fromisoformat(row["at"]), row["id"]
+    )

@@ -49,3 +49,26 @@ def test_record_outside_an_event_loop_writes_at_once(tmp_path):
     log.record("inc-1", "blocked_action", "docker_restart while investigating")
 
     assert [e.kind for e in asyncio.run(log.entries("inc-1"))] == ["blocked_action"]
+
+
+async def test_recent_is_newest_first_and_filters_by_kind_and_incident(tmp_path):
+    log = await guard_log(tmp_path)
+    log.record("inc-1", "refused_command", "rm -rf /")
+    log.record("inc-2", "redacted", "1 secret(s) redacted from logs output")
+    log.record("inc-1", "redacted", "2 secret(s) redacted from inspect output")
+    log.record("inc-1", "budget", "daily cost cap spent")
+
+    assert [e.detail for e in await log.recent(limit=2)] == [
+        "daily cost cap spent",
+        "2 secret(s) redacted from inspect output",
+    ]
+    assert [e.incident_id for e in await log.recent(kind="redacted")] == ["inc-1", "inc-2"]
+    assert [e.kind for e in await log.recent(incident_id="inc-1")] == [
+        "budget",
+        "redacted",
+        "refused_command",
+    ]
+    [entry] = await log.recent(incident_id="inc-2", kind="redacted")
+    assert entry.detail.startswith("1 secret")
+    assert entry.id == 2
+    assert await log.recent(incident_id="inc-2", kind="budget") == []

@@ -1,5 +1,6 @@
 import pytest
 
+from bleep import prompts
 from bleep.prompts import PromptError, all_prompt_files, load, placeholders
 
 
@@ -34,3 +35,55 @@ def test_placeholders_lists_names_and_skips_escaped_braces():
 def test_every_prompt_file_parses():
     for path in all_prompt_files():
         assert placeholders(path.read_text(encoding="utf-8")) is not None, path
+
+
+def test_an_override_stands_in_for_the_file_until_it_is_cleared(tmp_prompts):
+    prompts.use_overrides({"demo/hello": "Hello {name}, from the dev panel"})
+    assert load("demo/hello", name="Bleep") == "Hello Bleep, from the dev panel"
+    prompts.use_overrides({})
+    assert load("demo/hello", name="Bleep") == "Hi Bleep {x}"
+
+
+def test_an_override_is_filled_with_the_same_checks_as_a_file(tmp_prompts):
+    prompts.use_overrides({"demo/hello": "Hello {name}"})
+    with pytest.raises(PromptError):
+        load("demo/hello")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Hello",  # the file's {name} is missing
+        "Hello {name} {other}",  # a placeholder the callers never fill
+        "Hello {name} {",  # a stray brace
+        "Hello {name} }",
+        "Hello {name!r}",
+        "Hello {name}\x00",  # a control byte
+    ],
+)
+def test_check_override_refuses_what_the_loader_would(tmp_prompts, text):
+    with pytest.raises(PromptError):
+        prompts.check_override("demo/hello", text)
+
+
+def test_check_override_accepts_the_files_placeholders_and_literal_braces(tmp_prompts):
+    prompts.check_override("demo/hello", "Hey {name}, {{json}} is literal\n\tok")
+
+
+def test_check_override_refuses_an_unknown_prompt_and_the_eval_prompts(tmp_prompts):
+    (tmp_prompts / "evals").mkdir()
+    (tmp_prompts / "evals" / "judge.md").write_text("Judge", encoding="utf-8")
+    with pytest.raises(PromptError):
+        prompts.check_override("demo/nope", "Hi")
+    with pytest.raises(PromptError):
+        prompts.check_override("evals/judge", "Judge")
+    assert prompts.overridable_names() == ["demo/hello"]
+
+
+@pytest.mark.parametrize(
+    "name", ["../secrets", "demo/../demo/hello", "/etc/passwd", "demo\\hello", "readme"]
+)
+def test_a_name_outside_the_prompt_files_is_unknown(tmp_prompts, name):
+    (tmp_prompts / "README.md").write_text("How prompts work", encoding="utf-8")
+    with pytest.raises(PromptError):
+        prompts.file_text(name)
