@@ -104,7 +104,8 @@ class CoolifyUrlRefused(urls.UrlRefused):
 
 def check_url(raw: str) -> str:
     """`raw` as the client's base URL, or `CoolifyUrlRefused` (`plugins/urls.check_url`)."""
-    return urls.check_url(raw, URL_ENV, CoolifyUrlRefused).rstrip("/")
+    hint = "; use Coolify's https domain"
+    return urls.check_url(raw, URL_ENV, CoolifyUrlRefused, https_hint=hint).rstrip("/")
 
 
 class AppArgs(BaseModel):

@@ -52,8 +52,11 @@ def _inet_aton(host: str) -> bool:
     return True
 
 
-def check_url(raw: str, env: str, refused: type[UrlRefused] = UrlRefused) -> str:
-    """`raw`, read from the variable `env`, as a URL Bleep may send a token to, or `refused`."""
+def check_url(
+    raw: str, env: str, refused: type[UrlRefused] = UrlRefused, *, https_hint: str = ""
+) -> str:
+    """`raw`, read from the variable `env`, as a URL Bleep may send a token to, or `refused`.
+    `https_hint` follows the plain-http refusal and says where the https address is."""
     try:
         url = httpx.URL(raw.strip())
     except httpx.InvalidURL:
@@ -64,7 +67,7 @@ def check_url(raw: str, env: str, refused: type[UrlRefused] = UrlRefused) -> str
         raise refused(f"{env} must have no query or fragment")
     if url.scheme == "http" and not _nearby(url.host):
         raise refused(
-            f"{env} must use https unless it is a private address or a Docker service name,"
-            " since the token travels with every request"
+            f"{env} must use https unless it is a private address or a Docker service name"
+            f"{https_hint}, since the token travels with every request"
         )
     return str(url)

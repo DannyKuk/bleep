@@ -5,7 +5,14 @@ import pytest
 
 from bleep.graph.nodes import verify
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
-from bleep.schemas.graph import PlanStep, Proposal, StepResult, VerificationPlan, VerificationResult
+from bleep.schemas.graph import (
+    GatherContext,
+    PlanStep,
+    Proposal,
+    StepResult,
+    VerificationPlan,
+    VerificationResult,
+)
 from bleep.schemas.incidents import Signal, Subject
 from fakes import FakeEngine
 from graph_env import box, graph_env, shop_host
@@ -292,6 +299,27 @@ async def test_the_incidents_symptoms_are_checked_once_and_a_stopped_target_is_l
     assert targets == [("container", "shop-web-1"), ("url", URL)]
 
 
+async def test_stopping_the_signalled_container_is_judged_by_the_services_urls(tmp_path):
+    """The plan stops the crashed container and checks only the database; the shop still
+    answers 503, so this is no fix, though no signal reported the URL."""
+    env, state = await setup(
+        tmp_path, Replies(503), plan=VerificationPlan(containers=["shop-db-1"])
+    )
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-web-1")
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
+    state |= {
+        "proposal": state["proposal"].model_copy(update={"steps": [stop]}),
+        "signals": [died],
+        "verify_loops": 2,
+    }
+
+    update, _ = await run(env, state)
+
+    checks = [(c.kind, c.target, c.ok) for c in update["verification"].checks]
+    assert checks == [("container", "shop-db-1", True), ("url", URL, False)]
+    assert update["outcome"] == "unverified"
+
+
 async def test_a_plan_url_unknown_to_the_service_is_checked_too(tmp_path):
     replies = Replies(200)
     plan = VerificationPlan(urls=["https://other.example/up"])
@@ -522,3 +550,22 @@ async def test_only_this_plans_redeploy_counts(tmp_path):
     update, _ = await run(env, redeployed(state, results=[earlier, refused]))
 
     assert update["verification"].checks[0].detail == "not redeployed"
+
+
+@pytest.mark.parametrize("gathered", [True, False])
+async def test_a_redeploy_passes_when_a_signal_named_a_container_it_replaced(tmp_path, gathered):
+    """By Verify the poller lists only the redeploy's new container; the signal still names the
+    old one, which is the application's own check's to judge, not a "not found"."""
+    engine = FakeEngine("a", [web(health="healthy"), box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+    old = web("web0uuid-1", created=DEPLOYED_AT - timedelta(days=1))
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="web0uuid-1")
+    state = redeployed(state, containers=["shop-db-1"]) | {"signals": [died]}
+    if gathered:  # Gather listed the old container, with its labels, before the plan ran
+        state["context"] = GatherContext(at=T0, containers=[old])
+
+    update, _ = await run(env, state)
+
+    targets = [c.target for c in update["verification"].checks]
+    assert "web0uuid-1" not in targets and URL in targets
+    assert update["outcome"] == "resolved"

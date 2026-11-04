@@ -22,6 +22,7 @@ Each check publishes a `verification` event; the notifier hears the round's fina
 """
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -31,11 +32,11 @@ from langchain_core.messages import HumanMessage
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.state import IncidentState, Node, plan_results
-from bleep.guard.plan_check import coolify_members, host_urls
+from bleep.guard.plan_check import COOLIFY_UUID, coolify_members, host_urls
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.graph import Check, Proposal, StepResult, VerificationResult
-from bleep.schemas.incidents import Signal, Subject
+from bleep.schemas.incidents import Signal
 from bleep.watcher.http_checks import check_url
 
 log = logging.getLogger(__name__)
@@ -52,9 +53,7 @@ def _redeployed(proposal: Proposal | None) -> list[str]:
     return list(dict.fromkeys(s.target for s in steps if s.action == "coolify.redeploy"))
 
 
-def _plan(
-    deps: GraphDeps, subject: Subject, proposal: Proposal | None, signals: list[Signal]
-) -> tuple[list[str], list[UrlCheckConfig]]:
+def _plan(deps: GraphDeps, state: IncidentState) -> tuple[list[str], list[UrlCheckConfig]]:
     """The containers and URLs to check: the plan's, or else what it acted on, and always the
     incident's own symptoms (`_symptoms`).
 
@@ -63,17 +62,13 @@ def _plan(
     container of the service, protected ones too: reading one is harmless, and leaving out a
     database that is still down would let a check of the web container alone pass.
     """
+    subject, proposal = state["subject"], state.get("proposal")
     planned = proposal.verification if proposal is not None else None
     service = deps.registry.service(subject.service_id) if subject.service_id else None
     known = host_urls(deps.registry, subject.host_id)
     if service is not None:
         known |= {cfg.url: cfg for cfg in service.urls}
-    # A redeployed application's containers are replaced; its own check covers them.
-    replaced = {
-        c.name
-        for app in _redeployed(proposal)
-        for c in coolify_members(deps.registry.snapshot(subject.host_id) or [], app)
-    }
+    replaced = _replaced(deps, state)
     containers = list(planned.containers) if planned is not None else []
     urls = list(planned.urls) if planned is not None else []
     if not containers and not urls:
@@ -83,24 +78,48 @@ def _plan(
         else:
             acted = proposal.steps if proposal is not None else []
             containers = [s.target for s in acted if s.action.startswith("docker.")]
-    failing, failing_urls = _symptoms(proposal, signals)
-    containers = [c for c in dict.fromkeys([*containers, *failing]) if c not in replaced]
+    signalled, failing_urls = _symptoms(state.get("signals", []))
+    stopped = {s.target for s in (proposal.steps if proposal else []) if s.action == "docker.stop"}
+    left_out = [c for c in signalled if c in stopped or replaced(c)]
+    if left_out and service is not None:
+        # The plan meant that container gone or down; only the service's URLs can say whether
+        # that fixed anything.
+        failing_urls += [cfg.url for cfg in service.urls]
+    named = [*containers, *(c for c in signalled if c not in left_out)]
+    containers = [c for c in dict.fromkeys(named) if not replaced(c)]
     urls = list(dict.fromkeys([*urls, *failing_urls]))
     return containers, [known.get(u) or UrlCheckConfig(url=u) for u in urls]
 
 
-def _symptoms(proposal: Proposal | None, signals: list[Signal]) -> tuple[list[str], list[str]]:
-    """The containers the incident's signals name and the URLs they report failing. A container
-    the plan stops is left out: the plan means it to stay down, and its service's URLs say
-    whether that was a fix."""
-    stopped = {s.target for s in (proposal.steps if proposal else []) if s.action == "docker.stop"}
-    containers = [s.container for s in signals if s.container and s.container not in stopped]
+def _replaced(deps: GraphDeps, state: IncidentState) -> Callable[[str], bool]:
+    """Whether a container name is one a redeploy of this plan replaced; the application's own
+    check covers those. By Verify the registry may list only the new containers, so membership
+    is read from Gather's listing too (taken before the plan ran), and a name that holds the
+    application's uuid counts as well: Coolify names its containers `<uuid>-<timestamp>` or
+    `<service>-<uuid>-<timestamp>`."""
+    apps = _redeployed(state.get("proposal"))
+    if not apps:
+        return lambda _name: False
+    context = state.get("context")
+    seen = [
+        *(context.containers if context is not None else []),
+        *(deps.registry.snapshot(state["subject"].host_id) or []),
+    ]
+    members = [c for app in apps for c in coolify_members(seen, app)]
+    names = {c.name for c in members}
+    uuids = {c.labels[COOLIFY_UUID] for c in members if c.labels.get(COOLIFY_UUID)}
+    return lambda name: name in names or any(uuid in name for uuid in uuids)
+
+
+def _symptoms(signals: list[Signal]) -> tuple[list[str], list[str]]:
+    """The containers the incident's signals name and the URLs they report failing."""
+    containers = [s.container for s in signals if s.container]
     urls = [
         str(s.detail["url"])
         for s in signals
         if s.kind == "url_failed" and not s.detail.get("ok") and s.detail.get("url")
     ]
-    return containers, urls
+    return list(dict.fromkeys(containers)), urls
 
 
 async def _check_container(deps: GraphDeps, host_id: str, name: str) -> Check:
@@ -216,7 +235,7 @@ def make(deps: GraphDeps) -> Node:
         incident_id = state["incident_id"]
         subject = state["subject"]
         proposal = state.get("proposal")
-        containers, urls = _plan(deps, subject, proposal, state.get("signals", []))
+        containers, urls = _plan(deps, state)
         apps = _redeployed(proposal)
         starts = _deploy_starts(proposal, state.get("step_results"))
 

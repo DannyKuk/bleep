@@ -770,6 +770,11 @@ def test_a_url_the_token_must_not_travel_to_is_refused(url):
     assert url not in str(refused.value)
 
 
+def test_a_public_http_url_is_refused_with_where_to_go_instead():
+    with pytest.raises(CoolifyUrlRefused, match="use Coolify's https domain"):
+        check_url("http://coolify.example.com")
+
+
 async def test_a_public_http_url_keeps_the_plugin_off_and_is_never_called():
     coolify = Coolify()
     plugins = registry(coolify, env=ENV | {"COOLIFY_URL": "http://1.1.1.1:8000"})

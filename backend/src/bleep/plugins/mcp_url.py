@@ -155,6 +155,11 @@ class AnswerTooLarge(httpx.TransportError):
     """An answer ran past `MAX_BYTES` of raw bytes; Bleep stopped reading it."""
 
 
+class UnreadableAnswer(httpx.TransportError):
+    """The transport under the cap gave an answer it cannot stream; a wiring fault, not the
+    server's."""
+
+
 class _CappedStream(httpx.AsyncByteStream):
     def __init__(self, inner: httpx.AsyncByteStream, limit: int) -> None:
         self._inner, self._limit = inner, limit
@@ -190,7 +195,10 @@ class _CappedTransport(httpx.AsyncBaseTransport):
         if encoding not in ("", "identity"):
             await response.aclose()
             raise CompressedAnswer("the MCP server sent a compressed answer", request=request)
-        assert isinstance(response.stream, httpx.AsyncByteStream)
+        if not isinstance(response.stream, httpx.AsyncByteStream):
+            if isinstance(response.stream, httpx.SyncByteStream):
+                response.stream.close()
+            raise UnreadableAnswer("the transport gave an answer that cannot be read async")
         stream = _CappedStream(response.stream, self._limit)
         if request.method != "POST":
             return httpx.Response(
@@ -608,7 +616,12 @@ class McpUrlPlugin(Plugin):
         if not isinstance(settings, McpSettings):
             raise TypeError("the MCP plugin was given another plugin's settings")
         try:
-            url = urls.check_url(ctx.secrets[URL_ENV].get_secret_value(), URL_ENV, McpUrlRefused)
+            url = urls.check_url(
+                ctx.secrets[URL_ENV].get_secret_value(),
+                URL_ENV,
+                McpUrlRefused,
+                https_hint="; use the MCP server's https endpoint",
+            )
         except McpUrlRefused as refusal:
             log.warning("mcp: %s", refusal)
             raise

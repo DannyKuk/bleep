@@ -65,6 +65,8 @@ class Violation:
 # An action's own rules for a step, from the code that runs the action (the MCP plugin's act tools
 # are its settings); given the 1-based step number and the step.
 StepRule = Callable[[int, PlanStep], list[Violation]]
+# Actions that cannot be judged without their act handler's rule; with none given they are refused.
+RULED_ACTIONS: frozenset[str] = frozenset({"mcp.call"})
 
 
 def check_plan(
@@ -86,8 +88,9 @@ def check_plan(
     of the incident's own (`incident_containers`, by name; Propose says which), a verification
     URL that is not one of the host's health checks in the hosts file, and a verification
     container that is not on the host. A plugin step must take exactly its params, and an
-    `mcp.call` must pass its action's `step_rules` (the tool is one of the plugin's act tools)
-    and name no protected container or Bleep's own in its arguments (`check_arguments`).
+    `mcp.call` must pass its action's `step_rules` (the tool is one of the plugin's act tools;
+    with no rule given it is refused) and name no protected container or Bleep's own in its
+    arguments (`check_arguments`).
     """
     violations: list[Violation] = []
     if proposal.kind == "no_action" and proposal.steps:
@@ -218,6 +221,9 @@ def _check_step(
     if step.host_id != host_id:
         why = f"targets another host; this incident is on {host_id}"
         return [Violation("other_host", f"{what}: {why}", number)]
+    if rule is None and step.action in RULED_ACTIONS:
+        why = "Bleep has no act handler for it now, so its plugin's rules cannot be checked"
+        return [Violation("disabled_action", f"{what}: {why}", number)]
     return (
         check_params(number, step)
         or (rule(number, step) if rule is not None else [])

@@ -22,6 +22,7 @@ from bleep.guard.secret_fields import find_secrets
 from bleep.hosts.config import ServiceOverrides
 from bleep.hosts.registry import Registry
 from bleep.plugins import mcp_url
+from bleep.plugins.base import PluginContext
 from bleep.plugins.mcp_url import McpSettings, McpUrlPlugin
 from bleep.plugins.registry import PluginError, PluginRegistry
 from bleep.schemas.graph import (
@@ -379,6 +380,40 @@ def test_an_https_or_nearby_mcp_url_switches_the_plugin_on(url):
     assert registry.is_enabled("mcp")
 
 
+def test_a_refused_mcp_url_says_to_use_the_servers_https_endpoint():
+    from bleep.plugins.mcp_url import McpUrlRefused
+
+    plugin = McpUrlPlugin(_unreachable)
+    ctx = PluginContext(
+        settings=McpSettings(),
+        secrets={"MCP_URL": SecretStr("http://mcp.example.com/mcp")},
+        grant_secret=SECRET,
+    )
+    with pytest.raises(McpUrlRefused) as refused:
+        plugin.tools(ctx)
+
+    assert "use the MCP server's https endpoint" in str(refused.value)
+    assert "Coolify" not in str(refused.value) and "mcp.example.com" not in str(refused.value)
+
+
+class SyncOnly(httpx.SyncByteStream):
+    def __iter__(self):
+        yield b"{}"
+
+
+async def test_an_answer_the_transport_cannot_stream_fails_the_call_in_bleeps_words():
+    class Answers(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, stream=SyncOnly())
+
+    registry = PluginRegistry([McpUrlPlugin(Answers())], SECRET, env=ENV)
+    registry.set("mcp", {"read_tools": READ}, True)
+
+    out = await read_tools(registry)["mcp_tools"].ainvoke({})
+
+    assert out == "the MCP server could not be reached (UnreadableAnswer)"
+
+
 class Proxy(httpx.AsyncBaseTransport):
     """Sits in front of the server: records the encoding Bleep asked for and can gzip every answer,
     as a proxy may whatever the request said."""
@@ -680,17 +715,35 @@ async def test_an_act_tool_the_server_no_longer_lists_is_a_failed_step(host):
 
 async def test_the_plan_check_holds_an_mcp_step_to_the_same_target_rules(host):
     enabled = {"docker.restart", "mcp.call"}
+    handler = act_registry(None).act_tools({})["mcp.call"]
 
     def rules(target: str) -> list[str]:
         step = mcp_step().model_copy(update={"target": target})
         proposal = Proposal(kind="act", steps=[step], reason="the monitor flaps")
-        found = check_plan(proposal, host, enabled, "a", incident_containers=["shop-web-1"])
+        found = check_plan(
+            proposal,
+            host,
+            enabled,
+            "a",
+            incident_containers=["shop-web-1"],
+            step_rules={"mcp.call": handler.plan_violations},
+        )
         return [v.rule for v in found]
 
     assert rules("shop-web-1") == []
     assert rules("bleep-backend-1") == ["self"]
     assert rules("shop-db-1") == ["protected"]
     assert rules("nowhere-1") == ["not_found"]
+
+
+async def test_an_mcp_step_with_no_act_handler_to_judge_it_is_refused(host):
+    """Enabled, but its rule is missing (no handler wired): refused, never let through."""
+    proposal = Proposal(kind="act", steps=[mcp_step()], reason="the monitor flaps")
+
+    found = check_plan(proposal, host, {"mcp.call"}, "a", incident_containers=["shop-web-1"])
+
+    assert [v.rule for v in found] == ["disabled_action"]
+    assert "no act handler" in found[0].text
 
 
 @pytest.mark.parametrize(

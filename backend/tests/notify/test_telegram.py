@@ -485,8 +485,10 @@ def test_a_secret_in_a_steps_params_is_redacted():
         target="shop-web-1",
         params={"tool": "set_key", "arguments": '{"api_key": "sk-abcdef1234567890abcdef12"}'},
     )
-    text = fmt.steps_text(Proposal(kind="act", steps=[step], reason="r"))
-    assert "sk-abcdef1234567890abcdef12" not in text
+    proposal = Proposal(kind="act", steps=[step], reason="r")
+    text = fmt.steps_text(proposal)
+    assert "sk-abcdef1234567890abcdef12" not in text and "<redacted>" in text
+    assert fmt.shows_in_full(proposal)  # a redacted secret is not a cut: the rest is visible
 
 
 def set_env_plan(value: str, key: str = "DATABASE_URL") -> Proposal:
