@@ -8,9 +8,10 @@ timer; it never touches Docker, the database or the network (the only I/O is the
 import asyncio
 import re
 from collections import defaultdict, deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
@@ -99,16 +100,14 @@ class Detector:
             case "url_failed":
                 return self._url(signal, now)
             case "disk":
-                if _num(signal, "percent") >= self.t.disk_percent:
+                if past_threshold("disk", signal.detail, self.t):
                     return self._emit(signal.subject, [signal], now)
                 return []
             case "memory":
-                breach = (
-                    _num(signal, "available_percent", 100) < self.t.memory_available_percent_min
-                )
+                breach = past_threshold("memory", signal.detail, self.t)
                 return self._streak(signal, breach, self.t.memory_polls, now)
             case "load":
-                breach = _num(signal, "load_per_cpu") > self.t.load_per_cpu
+                breach = past_threshold("load", signal.detail, self.t)
                 return self._streak(signal, breach, self.t.load_polls, now)
             case "host_unreachable":
                 return self._unreachable(signal, now)
@@ -268,8 +267,25 @@ class Detector:
         return [OpenIncident(subject, signals)]
 
 
+def past_threshold(kind: str, detail: Mapping[str, Any], t: Thresholds) -> bool:
+    """Whether one disk, memory or load reading (`host_probe.readings`) is past its threshold.
+    One reading only: memory and load open an incident after several in a row (`feed`)."""
+    match kind:
+        case "disk":
+            return _value(detail, "percent") >= t.disk_percent
+        case "memory":
+            return _value(detail, "available_percent", 100) < t.memory_available_percent_min
+        case "load":
+            return _value(detail, "load_per_cpu") > t.load_per_cpu
+    raise ValueError(f"not a host reading: {kind}")
+
+
 def _num(signal: Signal, key: str, default: float = 0) -> float:
-    value = signal.detail.get(key, default)
+    return _value(signal.detail, key, default)
+
+
+def _value(detail: Mapping[str, Any], key: str, default: float = 0) -> float:
+    value = detail.get(key, default)
     return value if isinstance(value, int | float) else default
 
 

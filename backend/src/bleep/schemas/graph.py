@@ -265,11 +265,12 @@ class LoggedStep(BaseModel):
 
 
 class Check(BaseModel):
-    """One thing Verify looked at: a container's state or a URL's answer, or a `symptom` it
-    could not see answered (a stopped container nothing shows the service works without)."""
+    """One thing Verify looked at: a container's state, a URL's answer, a `host` reading (disk,
+    memory or load) against its threshold, or a `symptom` it could not see answered (a stopped
+    container nothing shows the service works without, a host problem nothing can read again)."""
 
-    kind: Literal["container", "url", "symptom"]
-    target: str  # the container name, or the URL
+    kind: Literal["container", "url", "host", "symptom"]
+    target: str  # the container name, the URL, the reading, or the host for a host symptom
     ok: bool
     detail: str = ""  # one short line from Bleep's own checks, never host or reply text
 

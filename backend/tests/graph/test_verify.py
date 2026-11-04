@@ -3,8 +3,10 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 
+from bleep.graph.deps import StaticSettings
 from bleep.graph.nodes import verify
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
+from bleep.hosts.ssh import SshUnavailable
 from bleep.schemas.graph import (
     GatherContext,
     PlanStep,
@@ -14,6 +16,7 @@ from bleep.schemas.graph import (
     VerificationResult,
 )
 from bleep.schemas.incidents import Signal, Subject
+from bleep.schemas.settings import Thresholds
 from fakes import FakeEngine
 from graph_env import box, graph_env, shop_host
 
@@ -796,3 +799,266 @@ def ok_stop() -> StepResult:
         detail="stopped",
         started_at=DEPLOYED_AT,
     )
+
+
+async def test_a_stopped_container_is_not_covered_by_another_signalled_container(tmp_path):
+    """web and worker crashed; the plan stops web and worker runs again. worker running says
+    nothing about web, and with no URL nothing shows the service works."""
+    engine = FakeEngine(
+        "a", [box("shop-web-1", "shop", state="exited"), box("shop-worker-1", "shop")]
+    )
+    env, state = await setup(
+        tmp_path, Replies(200), plan=VerificationPlan(), engine=engine, urls=False
+    )
+    subject = state["subject"]
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-web-1")
+    state |= {
+        "proposal": state["proposal"].model_copy(
+            update={"steps": [stop], "verification": VerificationPlan(containers=["shop-worker-1"])}
+        ),
+        "signals": [
+            Signal(subject=subject, kind="container_died", at=T0, container="shop-web-1"),
+            Signal(subject=subject, kind="container_died", at=T0, container="shop-worker-1"),
+        ],
+        "verify_loops": 2,
+    }
+
+    update, _ = await run(env, state)
+
+    checks = {(c.kind, c.target): (c.ok, c.detail) for c in update["verification"].checks}
+    assert checks[("container", "shop-worker-1")][0] is True
+    assert checks[("symptom", "shop-web-1")] == (False, verify.UNPROVEN)
+    assert update["outcome"] == "unverified"
+
+
+async def test_a_stop_then_a_redeploy_of_the_same_app_is_judged_by_the_app(tmp_path):
+    """The plan stops the crashed web0uuid-1, then redeploys web, which removes it: the app's
+    check judges it, not a "not found" on the old name."""
+    engine = FakeEngine("a", [web(health="healthy"), box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine, urls=False)
+    old = web("web0uuid-1", created=DEPLOYED_AT - timedelta(days=1))
+    steps = (
+        PlanStep(action="docker.stop", host_id="a", target="web0uuid-1"),
+        PlanStep(action="coolify.redeploy", host_id="a", target="web"),
+    )
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="web0uuid-1")
+    stopped = ok_stop().model_copy(update={"target": "web0uuid-1"})
+    state = redeployed(state, *steps, containers=["shop-db-1"], results=[stopped, deploy_result(1)])
+    state |= {"signals": [died], "context": GatherContext(at=T0, containers=[old])}
+    state["proposal"] = state["proposal"].model_copy(
+        update={"verification": VerificationPlan(containers=["shop-db-1"])}
+    )
+
+    update, _ = await run(env, state)
+
+    checks = [(c.kind, c.target, c.ok) for c in update["verification"].checks]
+    assert checks == [
+        ("container", "web (Coolify application)", True),
+        ("container", "shop-db-1", True),
+    ]
+    assert update["outcome"] == "resolved"
+
+
+@pytest.mark.parametrize(
+    ("planned", "signalled"),
+    [
+        (f"{URL}/", URL),
+        ("HTTPS://Shop.Example:443/health", URL),
+        (URL, f"{URL}/"),
+    ],
+)
+async def test_urls_are_compared_normalised(tmp_path, planned, signalled):
+    """A trailing slash, a capital or the default port does not make a stop unproven, and the
+    URL is checked once."""
+    host = shop_host(services={"shop": ServiceOverrides()})
+    engine = FakeEngine("a", [box("shop-web-1", "shop", state="exited"), box("shop-db-1", "shop")])
+    env, state = await setup(
+        tmp_path, Replies(200), plan=VerificationPlan(urls=[planned]), engine=engine, host=host
+    )
+    subject = state["subject"]
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-web-1")
+    state |= {
+        "proposal": state["proposal"].model_copy(update={"steps": [stop]}),
+        "signals": [
+            Signal(subject=subject, kind="container_died", at=T0, container="shop-web-1"),
+            Signal(
+                subject=subject, kind="url_failed", at=T0, detail={"ok": False, "url": signalled}
+            ),
+        ],
+    }
+
+    update, _ = await run(env, state)
+
+    kinds = [c.kind for c in update["verification"].checks]
+    assert kinds == ["container", "url"]
+    assert update["outcome"] == "resolved"
+
+
+async def test_a_plan_url_with_a_trailing_slash_keeps_the_services_expected_status(tmp_path):
+    host = shop_host(
+        services={"shop": ServiceOverrides(urls=[UrlCheckConfig(url=URL, expect_status=204)])}
+    )
+    env, state = await setup(
+        tmp_path, Replies(200), plan=VerificationPlan(urls=[f"{URL}/"]), host=host
+    )
+
+    update, _ = await run(env, state)
+
+    urls = [c for c in update["verification"].checks if c.kind == "url"]
+    assert len(urls) == 1 and not urls[0].ok
+
+
+def free(available_percent: float) -> str:
+    total = 4_000_000_000
+    available = int(total * available_percent / 100)
+    return (
+        "               total        used        free      shared  buff/cache   available\n"
+        f"Mem:      {total}  1712041984   377999360   138706944  2363150336  {available}\n"
+        "Swap:     2147479552   495321088  1652158464\n"
+    )
+
+
+def df(percent: int) -> str:
+    return (
+        "Filesystem     1024-blocks     Used Available Capacity Mounted on\n"
+        f"/dev/sda1         39037036 17989176  19403140      {percent}% /\n"
+    )
+
+
+async def host_incident(tmp_path, *kinds: str, loops: int = 0):
+    """A host incident with signals of `kinds`, after an approved stop of the biggest container,
+    verified by another container that runs."""
+    env, state = await setup(
+        tmp_path, Replies(200), plan=VerificationPlan(containers=["shop-db-1"])
+    )
+    subject = Subject(kind="host", host_id="a")
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-web-1")
+    state |= {
+        "subject": subject,
+        "proposal": state["proposal"].model_copy(update={"steps": [stop]}),
+        "signals": [Signal(subject=subject, kind=kind, at=T0) for kind in kinds],
+        "verify_loops": loops,
+    }
+    return env, state
+
+
+async def test_a_memory_incident_is_not_resolved_while_memory_is_still_low(tmp_path):
+    env, state = await host_incident(tmp_path, "memory", loops=2)
+    env.shell.replies[("free", "-b")] = free(3)
+
+    update, route = await run(env, state)
+
+    checks = {(c.kind, c.target): (c.ok, c.detail) for c in update["verification"].checks}
+    assert checks[("container", "shop-db-1")][0] is True
+    assert checks[("host", "memory")] == (False, "3.0 % available, needs at least 5 %")
+    assert update["outcome"] == "unverified" and route == "report"
+
+
+async def test_a_memory_incident_resolves_once_memory_is_back_above_its_minimum(tmp_path):
+    env, state = await host_incident(tmp_path, "memory")
+    env.shell.replies[("free", "-b")] = free(3)
+
+    def freed(waits: int) -> None:
+        if waits == 2:  # after the first check
+            env.shell.replies[("free", "-b")] = free(40)
+
+    env.deps.sleep = Sleeps(freed)
+
+    update, _ = await run(env, state)
+
+    assert update["outcome"] == "resolved" and update["verification"].attempt == 2
+    host = next(c for c in update["verification"].checks if c.kind == "host")
+    assert (host.target, host.ok, host.detail) == (
+        "memory",
+        True,
+        "40.0 % available, needs at least 5 %",
+    )
+
+
+async def test_the_reading_is_judged_by_the_thresholds_in_the_settings(tmp_path):
+    env, state = await host_incident(tmp_path, "memory", loops=2)
+    env.shell.replies[("free", "-b")] = free(40)
+    env.deps.settings_store = StaticSettings(
+        threshold_limits=Thresholds(memory_available_percent_min=50)
+    )
+
+    update, _ = await run(env, state)
+
+    host = next(c for c in update["verification"].checks if c.kind == "host")
+    assert not host.ok and host.detail == "40.0 % available, needs at least 50 %"
+    assert update["outcome"] == "unverified"
+
+
+async def test_a_disk_incident_is_judged_by_the_fullest_disk(tmp_path):
+    env, state = await host_incident(tmp_path, "disk", loops=2)
+    env.shell.replies[("df", "-P")] = df(95)
+
+    update, _ = await run(env, state)
+
+    host = next(c for c in update["verification"].checks if c.kind == "host")
+    assert (host.target, host.ok) == ("disk", False)
+    assert host.detail == "95 % used on the fullest disk, needs under 90 %"
+
+
+async def test_load_is_judged_over_the_last_minute_since_the_15_minute_average_lags(tmp_path):
+    env, state = await host_incident(tmp_path, "load")
+    env.shell.replies[("cat", "/proc/loadavg")] = "1.00 3.00 6.00 1/486 3583973\n"  # 2 CPUs
+
+    update, _ = await run(env, state)
+
+    host = next(c for c in update["verification"].checks if c.kind == "host")
+    assert (host.target, host.ok) == ("load", True)
+    assert host.detail == "0.50 per CPU over the last minute, needs at most 2"
+    assert update["outcome"] == "resolved"
+
+
+async def test_every_reading_of_the_incident_is_checked_from_one_read(tmp_path):
+    env, state = await host_incident(tmp_path, "memory", "disk", "memory")
+
+    update, _ = await run(env, state)
+
+    hosts = [(c.target, c.ok) for c in update["verification"].checks if c.kind == "host"]
+    assert hosts == [("memory", True), ("disk", True)]
+    assert env.shell.calls.count(["uname", "-s"]) == 1 + 1  # the registry's read, then Verify's
+
+
+@pytest.mark.parametrize(
+    ("reply", "detail"),
+    [
+        (SshUnavailable("a", "connection lost"), "host not reachable"),
+        ("Mem: nothing here\n", "could not be read"),
+    ],
+)
+async def test_a_reading_that_cannot_be_taken_fails(tmp_path, reply, detail):
+    env, state = await host_incident(tmp_path, "memory", loops=2)
+    key = ("uname", "-s") if isinstance(reply, Exception) else ("free", "-b")
+    env.shell.replies[key] = reply
+
+    update, _ = await run(env, state)
+
+    host = next(c for c in update["verification"].checks if c.kind == "host")
+    assert (host.ok, host.detail) == (False, detail)
+    assert update["outcome"] == "unverified"
+
+
+async def test_a_host_without_a_shell_cannot_be_read_again(tmp_path, monkeypatch):
+    env, state = await host_incident(tmp_path, "disk", loops=2)
+    monkeypatch.setattr(env.registry, "shell", lambda _host_id: None)
+
+    update, _ = await run(env, state)
+
+    host = next(c for c in update["verification"].checks if c.kind == "host")
+    assert (host.ok, host.detail) == (False, "could not be read")
+
+
+async def test_a_host_incident_with_nothing_to_read_again_ends_unverified_at_once(tmp_path):
+    """Only disk, memory and load can be read again; a host incident about anything else is
+    never resolved, and a loop-back could not change that."""
+    env, state = await host_incident(tmp_path, "host_unreachable")
+
+    update, route = await run(env, state)
+
+    checks = {(c.kind, c.target): (c.ok, c.detail) for c in update["verification"].checks}
+    assert checks[("symptom", "a")] == (False, verify.NOT_REREAD)
+    assert update["outcome"] == "unverified" and route == "report"
+    assert "messages" not in update
