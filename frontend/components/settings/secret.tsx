@@ -3,16 +3,28 @@ import { CheckCircle2, MinusCircle, XCircle } from "lucide-react";
 import type { SecretStatus } from "@/lib/settings-types";
 import { cn } from "@/lib/utils";
 
-/** Where a secret comes from and whether it is there; never its value, which no API returns. */
+/**
+ * Where a secret comes from and whether it is there; never its value, which no API returns.
+ * `source` is where `GET /api/secrets` says a variable's value is kept; without it only the
+ * variable is named, so the badge does not claim a place.
+ */
 export function SecretBadge({
   secret,
+  source,
   optional = false,
 }: {
   secret: SecretStatus;
+  source?: "env" | "dashboard" | null;
   /** Unset is then fine, not broken: shown neutrally. */
   optional?: boolean;
 }) {
-  const source = secret.env ? `env ${secret.env}` : `file ${secret.file ?? ""}`;
+  const named = secret.env ? `env ${secret.env}` : `file ${secret.file ?? ""}`;
+  const where =
+    source === "env"
+      ? "Set in .env: "
+      : source === "dashboard"
+        ? "Set on the dashboard: "
+        : "Set: ";
   const neutral = optional && !secret.set;
   const Icon = secret.set ? CheckCircle2 : neutral ? MinusCircle : XCircle;
   return (
@@ -27,8 +39,8 @@ export function SecretBadge({
     >
       <Icon aria-hidden className="size-3.5 shrink-0" />
       <span className="min-w-0 break-all">
-        {secret.set ? "Set via " : neutral ? "Not set, optional: " : "Missing: "}
-        <code className="font-mono">{source}</code>
+        {secret.set ? where : neutral ? "Not set, optional: " : "Missing: "}
+        <code className="font-mono">{named}</code>
       </span>
     </span>
   );

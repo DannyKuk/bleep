@@ -3,8 +3,15 @@ import { Badge } from "@/components/ui/badge";
 import { formatDateTime } from "@/lib/format";
 import type { TelegramStatus } from "@/lib/settings-types";
 
-/** Whether Telegram is set up and polling. Its token and chat id stay in `.env`. */
-export function TelegramSettings({ status }: { status: TelegramStatus }) {
+/** Whether Telegram is set up and polling. Its token and chat id are set under Secrets, or in `.env`. */
+export function TelegramSettings({
+  status,
+  tokenSource,
+}: {
+  status: TelegramStatus;
+  /** Where the token is kept, from `GET /api/secrets`. */
+  tokenSource?: "env" | "dashboard" | null;
+}) {
   return (
     <div className="flex flex-col gap-3">
       <dl className="flex flex-col gap-1.5">
@@ -12,7 +19,7 @@ export function TelegramSettings({ status }: { status: TelegramStatus }) {
           <Badge>{status.configured ? "Configured" : "Not configured"}</Badge>
         </Fact>
         <Fact label="Bot token">
-          <SecretBadge secret={status.token} />
+          <SecretBadge secret={status.token} source={tokenSource} />
         </Fact>
         <Fact label="Chat">
           {status.chat_id ? (
@@ -37,9 +44,9 @@ export function TelegramSettings({ status }: { status: TelegramStatus }) {
         <p className="text-xs text-muted-foreground">
           Without Telegram every approval happens here. Set{" "}
           <code className="font-mono">TELEGRAM_BOT_TOKEN</code> and{" "}
-          <code className="font-mono">TELEGRAM_CHAT_ID</code> in{" "}
-          <code className="font-mono">.env</code> and restart Bleep to get messages and approve from
-          the chat.
+          <code className="font-mono">TELEGRAM_CHAT_ID</code> under Secrets below, or in{" "}
+          <code className="font-mono">.env</code> and restart Bleep, to get messages and approve
+          from the chat.
         </p>
       )}
     </div>

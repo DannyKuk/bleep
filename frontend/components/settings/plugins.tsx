@@ -6,9 +6,11 @@ import { useId, useState } from "react";
 import { HealthBadge } from "@/components/overview/health-badge";
 import { SaveError, useSaving } from "@/components/settings/save-error";
 import { SecretBadge } from "@/components/settings/secret";
+import { SecretFields } from "@/components/settings/secret-field";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import type { SecretActions, SecretView } from "@/lib/secrets-api";
 import type { JsonSchemaProperty, PluginUpdate, PluginView } from "@/lib/settings-types";
 
 type Kind = "string" | "integer" | "number" | "boolean" | "list" | "other";
@@ -138,21 +140,26 @@ function waitingNote(plugin: PluginView): string | null {
   if (plugin.enabled || !plugin.switched_on) return null;
   const missing = missingSecrets(plugin);
   return missing.length > 0
-    ? `Switched on, but it does not run until ${missing.join(", ")} is set in Bleep's environment and Bleep is restarted.`
+    ? `Switched on, but it does not run until ${missing.join(", ")} is set, here or in .env (a value in .env needs a restart of Bleep).`
     : "Switched on, but it could not be started; switch it off and on again to see why.";
 }
 
 /**
  * One plugin: switch it on or off, change its settings (a form from its JSON schema), see its
- * health and whether each secret it needs is set. Secrets have no input: they stay in the env.
+ * health and whether each secret it needs is set. Its address and token are set and cleared in
+ * `SecretFields` when `secrets` has them; the settings form never has an input for either.
  */
 export function PluginSettings({
   plugin,
   onSave,
+  secrets,
 }: {
   plugin: PluginView;
   onSave: (update: PluginUpdate) => Promise<unknown>;
+  secrets?: { views: SecretView[]; actions: SecretActions };
 }) {
+  const own = plugin.secrets.map((secret) => secret.env);
+  const views = (secrets?.views ?? []).filter((view) => own.includes(view.name));
   const fields = Object.entries(plugin.settings_schema.properties ?? {}).filter(
     ([, property]) => !isSecret(property),
   );
@@ -203,17 +210,21 @@ export function PluginSettings({
       {plugin.health?.detail && (
         <p className="text-xs text-muted-foreground">{plugin.health.detail}</p>
       )}
-      {plugin.secrets.length > 0 && (
-        <ul aria-label={`Secrets for ${plugin.title}`} className="flex flex-wrap gap-1.5">
-          {plugin.secrets.map((secret) => (
-            <li key={secret.env}>
-              <SecretBadge
-                secret={{ env: secret.env, file: null, set: secret.set }}
-                optional={!secret.required}
-              />
-            </li>
-          ))}
-        </ul>
+      {secrets && views.length > 0 ? (
+        <SecretFields views={views} actions={secrets.actions} />
+      ) : (
+        plugin.secrets.length > 0 && (
+          <ul aria-label={`Secrets for ${plugin.title}`} className="flex flex-wrap gap-1.5">
+            {plugin.secrets.map((secret) => (
+              <li key={secret.env}>
+                <SecretBadge
+                  secret={{ env: secret.env, file: null, set: secret.set }}
+                  optional={!secret.required}
+                />
+              </li>
+            ))}
+          </ul>
+        )
       )}
       {fields.length > 0 && (
         <form
@@ -260,10 +271,13 @@ export function PluginSettings({
 export function PluginList({
   plugins,
   onSave,
+  secrets,
 }: {
   plugins: PluginView[];
   /** `version` is that of the plugin's view the update was built from. */
   onSave: (name: string, update: PluginUpdate, version: string) => Promise<unknown>;
+  /** What `GET /api/secrets` lists, and how to set and clear one. */
+  secrets?: { views: SecretView[]; actions: SecretActions };
 }) {
   if (plugins.length === 0) {
     return <p className="text-sm text-muted-foreground">This Bleep has no plugins.</p>;
@@ -275,6 +289,7 @@ export function PluginList({
           key={`${plugin.name}:${JSON.stringify(plugin.settings)}`}
           plugin={plugin}
           onSave={(update) => onSave(plugin.name, update, plugin.version)}
+          secrets={secrets}
         />
       ))}
     </div>

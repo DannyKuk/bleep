@@ -6,6 +6,7 @@ import {
   invalid,
   json,
   plugin,
+  secretViews,
   sentBody,
   settingsView,
   stubBackend,
@@ -33,6 +34,7 @@ function backend(put: Response[] = [], view = settingsView()) {
     "GET /api/services": json([SHOP, WORKER]),
     "GET /api/plugins": json([plugin()]),
     "GET /api/telegram/status": json(telegram()),
+    "GET /api/secrets": json(secretViews()),
     "PUT /api/settings": put,
   });
 }
@@ -42,7 +44,7 @@ async function shopSection() {
 }
 
 describe("SettingsPage", () => {
-  it("shows the host's connection read-only and every secret as set or missing, with no input for one", async () => {
+  it("shows the host's connection read-only, and a key set in .env as set there", async () => {
     backend();
     render(<SettingsPage />);
 
@@ -53,13 +55,11 @@ describe("SettingsPage", () => {
     expect(within(host).getByText("file /keys/id_ed25519")).toBeInTheDocument();
     expect(within(host).queryByDisplayValue("m1.local")).not.toBeInTheDocument();
 
-    expect(await screen.findByText("env OPENROUTER_API_KEY")).toBeInTheDocument();
-    expect(screen.getByText("env TELEGRAM_BOT_TOKEN")).toBeInTheDocument();
-    expect(screen.getByText("env COOLIFY_TOKEN")).toBeInTheDocument();
-    for (const input of screen.getAllByRole("textbox")) {
-      expect(input).not.toHaveAccessibleName(/token|key|password|secret/i);
-    }
-    expect(document.querySelector('input[type="password"]')).toBeNull();
+    expect(await screen.findByText("Set in .env:")).toBeInTheDocument();
+    expect(screen.getByText("env OPENROUTER_API_KEY")).toBeInTheDocument();
+    expect(screen.getByText("env TELEGRAM_BOT_TOKEN").closest("span")).toHaveTextContent(
+      "Set: env TELEGRAM_BOT_TOKEN",
+    );
   });
 
   it("lists a service Bleep sees but has no settings for", async () => {
@@ -285,7 +285,7 @@ describe("SettingsPage", () => {
 
   it("sends a plugin's own version, and after a 409 reads the plugins again without retrying", async () => {
     // Elsewhere the plugin was pointed at another instance after this page loaded.
-    const moved = plugin({ settings: { url: "https://other.lan", team: "main" }, version: "p2" });
+    const moved = plugin({ settings: { deploy_timeout_s: 1800 }, version: "p2" });
     const fetchMock = stubBackend({
       "GET /api/settings": json(settingsView()),
       "GET /api/services": json([SHOP]),
@@ -295,11 +295,14 @@ describe("SettingsPage", () => {
     });
     render(<SettingsPage />);
     const coolify = await screen.findByRole("region", { name: "Plugin Coolify" });
-    await userEvent.type(within(coolify).getByRole("textbox", { name: "Url" }), "https://c.lan");
+    await userEvent.type(
+      within(coolify).getByRole("textbox", { name: "Deploy Timeout S" }),
+      "1200",
+    );
     await userEvent.click(within(coolify).getByRole("button", { name: "Save settings" }));
 
     expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(SETTINGS_CHANGED);
-    expect(await screen.findByDisplayValue("https://other.lan")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("1800")).toBeInTheDocument();
     const puts = fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT");
     expect(puts).toHaveLength(1);
     expect(puts[0][1]?.headers).toMatchObject({ "if-match": '"p1"' });
@@ -329,6 +332,7 @@ describe("SettingsPage", () => {
       "GET /api/services": json({ detail: "the registry is down" }, 503),
       "GET /api/plugins": json([]),
       "GET /api/telegram/status": json(telegram()),
+      "GET /api/secrets": json(secretViews()),
     });
     render(<SettingsPage />);
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -343,6 +347,7 @@ describe("SettingsPage", () => {
       "GET /api/services": json([]),
       "GET /api/plugins": json([]),
       "GET /api/telegram/status": json(telegram()),
+      "GET /api/secrets": json(secretViews()),
     });
     render(<SettingsPage />);
     expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(

@@ -10,28 +10,21 @@ describe("PluginList", () => {
   it("builds the settings form from the schema and shows secrets only as set or missing", () => {
     render(<PluginList plugins={[plugin()]} onSave={vi.fn()} />);
     const coolify = screen.getByRole("region", { name: "Plugin Coolify" });
-    expect(within(coolify).getByRole("textbox", { name: "Url" })).toHaveValue("");
-    expect(within(coolify).getByRole("textbox", { name: "Team" })).toHaveAttribute(
+    expect(within(coolify).getByRole("textbox", { name: "Deploy Timeout S" })).toHaveAttribute(
       "placeholder",
-      "main",
+      "900",
     );
-    expect(within(coolify).getAllByRole("textbox")).toHaveLength(2); // no input for the token
+    expect(within(coolify).getAllByRole("textbox")).toHaveLength(1); // no input for the token
     expect(within(coolify).getByText("env COOLIFY_TOKEN")).toBeInTheDocument();
-    expect(within(coolify).getByText("Missing:")).toBeInTheDocument();
+    expect(within(coolify).getAllByText("Missing:")).toHaveLength(2);
   });
 
   it("saves the settings, leaving an empty optional field to its default", async () => {
     const onSave = vi.fn(async () => undefined);
     render(<PluginList plugins={[plugin()]} onSave={onSave} />);
-    await userEvent.type(screen.getByRole("textbox", { name: "Url" }), "https://coolify.lan");
+    await userEvent.type(screen.getByRole("textbox", { name: "Deploy Timeout S" }), "1200");
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    expect(onSave).toHaveBeenCalledWith(
-      "coolify",
-      {
-        settings: { url: "https://coolify.lan" },
-      },
-      "p1",
-    );
+    expect(onSave).toHaveBeenCalledWith("coolify", { settings: { deploy_timeout_s: 1200 } }, "p1");
   });
 
   it("shows why it cannot be switched on", async () => {
@@ -51,14 +44,14 @@ describe("PluginList", () => {
     const on = plugin({
       enabled: true,
       switched_on: true,
-      settings: { url: "https://coolify.lan", team: "main" },
+      settings: { deploy_timeout_s: 900 },
       secrets: [{ env: "COOLIFY_TOKEN", set: true, required: true }],
       health: { ok: true, detail: "3 applications" },
     });
     render(<PluginList plugins={[on]} onSave={onSave} />);
     expect(screen.getByText("Healthy")).toBeInTheDocument();
     expect(screen.getByText("3 applications")).toBeInTheDocument();
-    expect(screen.getByText("Set via")).toBeInTheDocument();
+    expect(screen.getByText("Set:")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save settings" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Switch off" }));
     expect(onSave).toHaveBeenCalledWith("coolify", { enabled: false }, "p1");
@@ -68,7 +61,7 @@ describe("PluginList", () => {
     const onSave = vi.fn(async () => undefined);
     const waiting = plugin({
       switched_on: true,
-      settings: { url: "https://coolify.lan", team: "main" },
+      settings: { deploy_timeout_s: 900 },
       secrets: [
         { env: "COOLIFY_TOKEN", set: false, required: true },
         { env: "COOLIFY_CA", set: false, required: false },

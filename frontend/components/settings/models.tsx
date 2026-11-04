@@ -9,7 +9,16 @@ const PROVIDERS: Record<ModelChoice["provider"], string> = {
 };
 
 /** The models in force, read-only: the model choice and the budgets are changed in the dev panel. */
-export function ModelSettings({ models, apiKey }: { models: ModelChoice; apiKey: SecretStatus }) {
+export function ModelSettings({
+  models,
+  apiKey,
+  keySource,
+}: {
+  models: ModelChoice;
+  apiKey: SecretStatus;
+  /** Where the key is kept, from `GET /api/secrets`. */
+  keySource?: "env" | "dashboard" | null;
+}) {
   const local = models.provider === "local";
   return (
     <div className="flex flex-col gap-3">
@@ -30,7 +39,7 @@ export function ModelSettings({ models, apiKey }: { models: ModelChoice; apiKey:
           </>
         )}
         <Fact label="API key">
-          <SecretBadge secret={apiKey} />
+          <SecretBadge secret={apiKey} source={keySource} />
           {local && (
             <span className="ml-2 text-xs text-muted-foreground">(not needed locally)</span>
           )}

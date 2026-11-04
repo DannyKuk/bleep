@@ -1,5 +1,6 @@
 import { vi } from "vitest";
 
+import type { SecretView } from "@/lib/secrets-api";
 import type {
   HostSettingsView,
   PluginView,
@@ -84,16 +85,42 @@ export function plugin(overrides: Partial<PluginView> = {}): PluginView {
     settings: {},
     settings_schema: {
       properties: {
-        url: { type: "string", title: "Url" },
-        team: { type: "string", title: "Team", default: "main" },
+        deploy_timeout_s: { type: "integer", title: "Deploy Timeout S", default: 900 },
       },
-      required: ["url"],
     },
-    secrets: [{ env: "COOLIFY_TOKEN", set: false, required: true }],
+    secrets: [
+      { env: "COOLIFY_URL", set: false, required: true },
+      { env: "COOLIFY_TOKEN", set: false, required: true },
+    ],
     health: null,
     version: "p1",
     ...overrides,
   };
+}
+
+export function secretView(name: string, overrides: Partial<SecretView> = {}): SecretView {
+  return {
+    name,
+    kind: "secret",
+    set: false,
+    source: null,
+    env_owned: false,
+    carries: null,
+    value: null,
+    version: null,
+    invalid: false,
+    ...overrides,
+  };
+}
+
+/** `GET /api/secrets` for a Bleep with nothing set. */
+export function secretViews(): SecretView[] {
+  return [
+    secretView("OPENROUTER_API_KEY", { set: true, source: "env", env_owned: true }),
+    secretView("TELEGRAM_BOT_TOKEN"),
+    secretView("COOLIFY_URL", { kind: "address", carries: "COOLIFY_TOKEN" }),
+    secretView("COOLIFY_TOKEN"),
+  ];
 }
 
 export function telegram(overrides: Partial<TelegramStatus> = {}): TelegramStatus {
