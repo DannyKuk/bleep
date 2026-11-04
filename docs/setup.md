@@ -69,6 +69,41 @@ If the page stays on Connecting, or the reasoning only appears when the run ends
 
 ## Real hosts
 
+An SSH host can be added in either of two ways. A socket host (`unix://` or `tcp://`) is set in the hosts file only: it needs no key, so the dashboard cannot prove the person adding it may use that engine ([why](design/hosts.md#hosts-from-the-dashboard-194)).
+
+### From the dashboard
+
+Bleep keeps the host's address in its database and the private key and the host key you confirm in `secrets.json` on the `bleep-data` volume, never in the database, and starts watching the host at once, without a restart. The settings page has no host form yet, so for now the dashboard's API does it, with your login (`jq` 1.6 or later builds the JSON, so the key never sits in your shell history):
+
+1. Log in, typing the admin password at the prompt:
+   ```bash
+   jq -n --arg password "$(read -rs p; echo "$p")" '{password: $password}' \
+     | curl -sc bleep.cookies -H 'Content-Type: application/json' --data-binary @- \
+         http://localhost:3000/api/auth/login
+   ```
+2. Fetch the host key the server offers. Nothing is saved yet:
+   ```bash
+   curl -sb bleep.cookies -H 'Content-Type: application/json' \
+     -d '{"address": "your-host", "port": 22}' http://localhost:3000/api/settings/hosts/host-key
+   ```
+   It answers an `offer` and a `fingerprint` (`SHA256:...`). On the host, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` (or the key of the answer's `key_type`) must print the same fingerprint; if it does not, stop.
+3. Save the host with that offer, the fingerprint you checked and the private key, within ten minutes:
+   ```bash
+   jq -n --rawfile key ~/.ssh/bleep_deploy_key --arg offer OFFER --arg fp 'SHA256:...' \
+     '{id: "box", name: "Box", address: "your-host", port: 22, user: "deploy",
+       docker_socket: "/var/run/docker.sock", ssh_key: $key,
+       host_key: {offer: $offer, fingerprint: $fp}}' \
+     | curl -sb bleep.cookies -H 'Content-Type: application/json' --data-binary @- \
+         http://localhost:3000/api/settings/hosts
+   ```
+   The host appears on the overview within a few seconds. Its key and host key are shown only as set or not, never sent back.
+
+To change a host, `PUT /api/settings/hosts/<id>` with the same fields and the `version` from its `connection` in `GET /api/settings` as `If-Match`. **A new address, port or user clears the key and the host key**: send a new `ssh_key` and a newly fetched `host_key` with it, or the host waits for them. When the server's host key changes, Bleep refuses to connect; fetch it again, check it, and send it as `host_key` alone. `DELETE /api/settings/hosts/<id>` (with `If-Match`) stops watching the host, deletes its keys, and closes its open incidents with a notice.
+
+### In the hosts file
+
+A host the hosts file names is shown on the dashboard as set in the hosts file and cannot be changed or removed there; the file wins.
+
 1. Copy the example and edit it: `cp config/hosts.example.yaml config/hosts.yaml`. The file is gitignored. Every field is documented in the example.
 2. Put the SSH private key and a `known_hosts` file in `./secrets` (also gitignored), and point the hosts file at them as `/run/secrets/...`:
    ```bash
@@ -87,7 +122,7 @@ Secrets inside the hosts file are references, `{env: NAME}` or `{file: PATH}`, n
 
 ### What Bleep requires of an SSH host
 
-- **Host keys are always verified, and it fails closed.** Bleep checks the `known_hosts_file` of the host if set, else `~/.ssh/known_hosts` inside the container. With neither, or with a key that doesn't match, it does not connect. There is no setting that turns checking off ([design](design/hosts.md)).
+- **Host keys are always verified, and it fails closed.** A host added on the dashboard is checked against the one host key you confirmed there and nothing else. For a hosts file host, Bleep checks the `known_hosts_file` of the host if set, else `~/.ssh/known_hosts` inside the container. With neither, or with a key that doesn't match, it does not connect. There is no setting that turns checking off ([design](design/hosts.md)).
 - **Encrypted private keys are not supported**, since there is no ssh-agent in the container. Use a dedicated, unencrypted deploy key for Bleep, give it to Bleep only, and revoke it by removing it from `authorized_keys`.
 - **The SSH user needs access to the Docker socket, which is root-equivalent.** On Linux that means the user is in the `docker` group, or is root. Anyone who can use that key can take over the host. Treat the key like a root password: a dedicated key, a dashboard on a trusted network only, and nothing else sharing the secrets directory.
 - **Docker Desktop on macOS** keeps its socket in the user's home, so the host needs `docker_socket: /Users/<user>/.docker/run/docker.sock`. The remote login also has to be on (System Settings, Sharing, Remote Login). How the socket is forwarded: [Docker over SSH](decisions/docker-over-ssh.md).
