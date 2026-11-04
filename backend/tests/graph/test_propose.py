@@ -2,13 +2,17 @@ import json
 import logging
 from typing import Any
 
+import httpx
 import pytest
 from langchain_core.messages import AIMessage
+from pydantic import SecretStr
 
 from bleep.graph.deps import CORE_ACTIONS, StaticSettings
 from bleep.graph.nodes import gather, propose
 from bleep.guard.plan_check import check_plan
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
+from bleep.plugins.mcp_url import McpUrlPlugin
+from bleep.plugins.registry import PluginRegistry
 from bleep.schemas.graph import (
     ContainerMemory,
     Diagnosis,
@@ -666,3 +670,37 @@ async def test_a_set_env_value_is_kept_for_execute_shown_redacted_and_never_logg
     assert "coolify.set_env web on a (key=DATABASE_URL, value=" in prompt(env, 1)
     assert "pw-fake-123" not in caplog.text
     assert all("pw-fake-123" not in str(r) for r in env.guard_log.records)
+
+
+def mcp_call(tool: str, arguments: str = '{"name": "shop"}') -> dict:
+    return {
+        "action": "mcp.call",
+        "host_id": "a",
+        "target": "shop-web-1",
+        "params": {"tool": tool, "arguments": arguments},
+    }
+
+
+async def test_an_mcp_step_the_plugin_would_refuse_never_reaches_the_human(tmp_path):
+    """The plan check runs the MCP plugin's own rule: only one of its act tools may be called."""
+    answer = reply(
+        kind="act",
+        steps=[mcp_call("drop_database")],
+        reason="flush the cache",
+        verification={"containers": ["shop-web-1"], "urls": [HEALTH]},
+    )
+    env, state = await setup(tmp_path, answer, answer)
+    plugins = PluginRegistry(
+        [McpUrlPlugin(httpx.MockTransport(lambda r: httpx.Response(500)))],
+        SecretStr("s"),
+        env={"MCP_URL": "https://mcp.example.com/mcp"},
+    )
+    plugins.set("mcp", {"act_tools": ["flush_cache"]}, True)
+    env.deps.act_tools = plugins.act_tools(env.deps.act_tools)
+    env.deps.settings_store = StaticSettings(actions=CORE_ACTIONS | {"mcp.call"})
+
+    proposal = (await propose.make(env.deps)(state))["proposal"]
+
+    assert proposal.kind == "no_action" and proposal.reason == propose.REFUSED
+    refused = "step 1 (mcp.call shop-web-1 on a): drop_database is not one of the MCP plugin's"
+    assert blocked(env) == [f"{refused} act tools"] * 2

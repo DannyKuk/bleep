@@ -48,6 +48,14 @@ class IncidentState(TypedDict, total=False):
     report: Report | None
 
 
+def plan_results(proposal: Proposal | None, results: list[StepResult] | None) -> list[StepResult]:
+    """The step results of `proposal`'s run: `step_results` keeps earlier plans' too, and Execute
+    appends exactly one result per step of the plan it ran, so this plan's are the last of them.
+    Empty for a plan with no steps."""
+    steps = proposal.steps if proposal is not None else []
+    return (results or [])[-len(steps) :] if steps else []
+
+
 # A node takes the state and returns the keys it changes.
 Node = Callable[[IncidentState], Awaitable[dict[str, Any]]]
 

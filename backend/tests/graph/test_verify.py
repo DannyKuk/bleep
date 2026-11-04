@@ -6,7 +6,7 @@ import pytest
 from bleep.graph.nodes import verify
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.schemas.graph import PlanStep, Proposal, StepResult, VerificationPlan, VerificationResult
-from bleep.schemas.incidents import Subject
+from bleep.schemas.incidents import Signal, Subject
 from fakes import FakeEngine
 from graph_env import box, graph_env, shop_host
 
@@ -226,6 +226,70 @@ async def test_with_nothing_to_check_it_is_unverified_at_once(tmp_path):
     assert update["outcome"] == "unverified" and route == "report"
     assert update["verification"].detail == "Nothing could be checked."
     assert sleeps.waits == []
+
+
+T0 = datetime(2026, 11, 4, 9, 0, tzinfo=UTC)
+
+
+def symptoms(subject: Subject, url: str = URL, container: str = "shop-web-1") -> list[Signal]:
+    """The signals of an incident whose URL answers 503 and whose container crashed."""
+    return [
+        Signal(subject=subject, kind="url_failed", at=T0, detail={"ok": False, "url": url}),
+        Signal(subject=subject, kind="url_failed", at=T0, detail={"ok": True, "url": "x"}),
+        Signal(subject=subject, kind="container_died", at=T0, container=container),
+    ]
+
+
+async def test_the_incidents_failing_url_is_checked_whatever_the_plan_names(tmp_path):
+    """An mcp.call on a healthy container whose plan checks only that container must not end
+    "Fixed and verified" while the URL that opened the incident still answers 503."""
+    engine = FakeEngine(
+        "a",
+        [
+            box("shop-web-1", "shop", health="healthy"),
+            box("shop-cache-1", "shop", health="healthy"),
+        ],
+    )
+    plan = VerificationPlan(containers=["shop-cache-1"])
+    env, state = await setup(tmp_path, Replies(503), plan=plan, engine=engine)
+    step = PlanStep(
+        action="mcp.call",
+        host_id="a",
+        target="shop-cache-1",
+        params={"tool": "flush_cache", "arguments": "{}"},
+    )
+    proposal = state["proposal"].model_copy(update={"steps": [step]})
+    ran = StepResult(step_index=0, action="mcp.call", target="shop-cache-1", ok=True, detail="ran")
+    state |= {
+        "proposal": proposal,
+        "signals": symptoms(state["subject"]),
+        "step_results": [ran],
+        "verify_loops": 2,
+    }
+
+    update, route = await run(env, state)
+
+    checks = [(c.kind, c.target, c.ok) for c in update["verification"].checks]
+    assert checks == [
+        ("container", "shop-cache-1", True),
+        ("container", "shop-web-1", True),
+        ("url", URL, False),
+    ]
+    assert update["outcome"] == "unverified" and route == "report"
+
+
+async def test_the_incidents_symptoms_are_checked_once_and_a_stopped_target_is_left_out(tmp_path):
+    env, state = await setup(tmp_path, Replies(200))
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-db-1")
+    proposal = state["proposal"].model_copy(update={"steps": [stop]})
+    subject = state["subject"]
+    signals = [*symptoms(subject), *symptoms(subject, container="shop-db-1")]
+    state |= {"proposal": proposal, "signals": signals}
+
+    update, _ = await run(env, state)
+
+    targets = [(c.kind, c.target) for c in update["verification"].checks]
+    assert targets == [("container", "shop-web-1"), ("url", URL)]
 
 
 async def test_a_plan_url_unknown_to_the_service_is_checked_too(tmp_path):

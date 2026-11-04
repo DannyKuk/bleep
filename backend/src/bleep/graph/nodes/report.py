@@ -26,6 +26,7 @@ name, never a diagnosis or a log, so nothing a host wrote can become a fact Blee
 
 import logging
 import re
+from typing import Literal
 
 from langchain_core.messages import HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
@@ -33,7 +34,7 @@ from pydantic import BaseModel, Field
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.nodes.investigate import ESCAPED_TAG
-from bleep.graph.state import IncidentState, Node
+from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.log import GuardKind
 from bleep.guard.report_check import check_report
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
@@ -111,11 +112,15 @@ def outcome(state: IncidentState) -> Outcome:
     return "unverified"  # approved, but nothing ran or was checked: never claim "fixed"
 
 
-def outcome_text(result: Outcome, results: list[StepResult] | None) -> str:
+def outcome_text(
+    result: Outcome, results: list[StepResult] | None, proposal: Proposal | None
+) -> str:
     """The outcome's fixed text, told apart where the outcome alone would mislead: a pass with no
-    step that succeeded, and an early stop after an action Verify could not confirm."""
+    step of this plan that succeeded (`plan_results`: an earlier plan's success is not this
+    plan's), and an early stop after any action, of this plan or an earlier one, that Verify
+    could not confirm."""
     results = results or []
-    if result == "resolved" and not any(r.ok for r in results):
+    if result == "resolved" and not any(r.ok for r in plan_results(proposal, results)):
         return HEALTHY_ANYWAY
     if result in ("budget", "replan_limit") and any(r.reached_engine for r in results):
         return f"{OUTCOME_TEXT[result]}; {NOT_VERIFIED}"
@@ -236,8 +241,10 @@ def _raw_logs(state: IncidentState) -> list[str]:
     return logs
 
 
-# Where planted orders were found, in the human's words; the order is the closed list's.
-PLANTED_WHERE: dict[PlantedSource, str] = {
+# Where planted orders were found, in the human's words; the order is the closed list's, which
+# the plugins' places extend (Diagnose's `planted_in` keeps to `PlantedSource`).
+PlantedPlace = PlantedSource | Literal["mcp", "coolify"]
+PLANTED_WHERE: dict[PlantedPlace, str] = {
     "logs": "container logs",
     "events": "Docker events",
     "inspect": "container settings",
@@ -245,12 +252,14 @@ PLANTED_WHERE: dict[PlantedSource, str] = {
     "memory": "past incidents Bleep remembers",
     "commits": "commit messages and diffs of the service's repo",
     "docs": "documents Bleep searched",
+    "mcp": "answers of the MCP server",
+    "coolify": "answers from Coolify",
     "other": "other host output",
 }
 PLANTED_START = "Bleep found text "  # the injection eval reads it
 PLANTED_END = "that tried to give it orders and ignored it; check who can write there."
-# A tool's output by its source on the closed list; any other tool is `other`.
-_TOOL_SOURCE: dict[str, PlantedSource] = {
+# A tool's output by its place on the closed list; any other tool is `other`.
+_TOOL_SOURCE: dict[str, PlantedPlace] = {
     "container_logs": "logs",
     "recent_events": "events",
     "inspect_container": "inspect",
@@ -258,6 +267,11 @@ _TOOL_SOURCE: dict[str, PlantedSource] = {
     "recent_commits": "commits",
     "commit_diff": "commits",
     "knowledge_search": "docs",
+    "mcp_tools": "mcp",
+    "mcp_call": "mcp",
+    "coolify_applications": "coolify",
+    "coolify_deployments": "coolify",
+    "coolify_env_keys": "coolify",
 }
 
 
@@ -268,7 +282,7 @@ def planted_follow_up(state: IncidentState) -> str | None:
     controls (#112), so it is kept for the evals but never shown. No text of the model's or the
     host's goes in, so the report and memory carry nothing new from the host."""
     context = state.get("context")
-    found: set[PlantedSource] = set()
+    found: set[PlantedPlace] = set()
     if context is not None and any(ESCAPED_TAG.search(t) for t in context.logs.values()):
         found.add("logs")
     for m in state.get("messages", []):
@@ -378,11 +392,11 @@ def make(deps: GraphDeps) -> Node:
         incident_id = state["incident_id"]
         result = outcome(state)
         results = state.get("step_results")
-        said = outcome_text(result, results)
+        diagnosis, proposal = state.get("diagnosis"), state.get("proposal")
+        said = outcome_text(result, results, proposal)
         fixed = said == OUTCOME_TEXT["resolved"]  # only then may the report say "fixed"
         incident = await deps.incidents.get(incident_id)
         title = incident.title if incident is not None else state["subject"].key
-        diagnosis, proposal = state.get("diagnosis"), state.get("proposal")
         decision: Decision | None = state.get("decision")
         human = decision_text(decision.kind, decision.via, decision.text) if decision else None
         taken = action_taken(results, proposal, state["subject"].host_id)

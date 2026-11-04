@@ -1,3 +1,4 @@
+import gzip
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -16,10 +17,11 @@ from pydantic import SecretStr
 
 from bleep.graph.nodes import execute
 from bleep.guard.grant import GrantInvalid, grant_token, plan_hash
-from bleep.guard.plan_check import check_plan
+from bleep.guard.plan_check import MAX_ARGUMENTS, check_plan
 from bleep.guard.secret_fields import find_secrets
 from bleep.hosts.config import ServiceOverrides
 from bleep.hosts.registry import Registry
+from bleep.plugins import mcp_url
 from bleep.plugins.mcp_url import McpSettings, McpUrlPlugin
 from bleep.plugins.registry import PluginError, PluginRegistry
 from bleep.schemas.graph import (
@@ -38,7 +40,7 @@ from fakes import FakeEngine
 from graph_env import SECRET as GRAPH_SECRET
 from graph_env import RecordingGuardLog, box, graph_env, shop_host
 
-URL = "http://mcp.test/mcp"
+URL = "https://mcp.test/mcp"
 TOKEN = "mcp-test-token-4b1d0c9e7a"
 ENV = {"MCP_URL": URL, "MCP_TOKEN": TOKEN}
 SECRET = SecretStr("grant-secret")
@@ -54,9 +56,9 @@ class Server:
     calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     headers: list[str | None] = field(default_factory=list)
 
-    def factory(self, headers=None, timeout=None, auth=None) -> httpx.AsyncClient:
-        transport = httpx.ASGITransport(app=self.app)
-        return httpx.AsyncClient(transport=transport, headers=headers, timeout=timeout, auth=auth)
+    @property
+    def transport(self) -> httpx.AsyncBaseTransport:
+        return httpx.ASGITransport(app=self.app)
 
 
 @asynccontextmanager
@@ -108,23 +110,23 @@ async def mcp_server() -> AsyncIterator[Server]:
         yield server
 
 
-def _unreachable(headers=None, timeout=None, auth=None) -> httpx.AsyncClient:
-    def refuse(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("connection refused", request=request)
+def _refuse(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("connection refused", request=request)
 
-    return httpx.AsyncClient(transport=httpx.MockTransport(refuse), headers=headers)
+
+_unreachable = httpx.MockTransport(_refuse)
 
 
 def plugins(server: Server | None, env: dict[str, str] | None = None, **settings: Any):
-    plugin = McpUrlPlugin(http_client_factory=server.factory if server else _unreachable)
+    plugin = McpUrlPlugin(server.transport if server else _unreachable)
     registry = PluginRegistry([plugin], SECRET, env=ENV if env is None else env)
     registry.configure("mcp", {"read_tools": READ, **settings})
     registry.enable("mcp", True)
     return registry
 
 
-def read_tools(registry: PluginRegistry) -> dict[str, Any]:
-    ctx = ToolContext(incident_id="inc_1", host_id="a", registry=Registry([]))
+def read_tools(registry: PluginRegistry, host: Registry | None = None) -> dict[str, Any]:
+    ctx = ToolContext(incident_id="inc_1", host_id="a", registry=host or Registry([]))
     return {t.name: t for t in default_registry(plugins=registry).read_tools(ctx)}
 
 
@@ -343,6 +345,111 @@ def test_an_mcp_url_that_is_not_http_cannot_be_switched_on():
         registry.enable("mcp", True)
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://mcp.example.com/mcp",  # a public name in clear
+        "http://1.1.1.1:8000/mcp",
+        "https://user:pw@mcp.example.com/mcp",
+        "https://mcp.example.com/mcp?token=x",
+        "https://mcp.example.com/mcp#x",
+    ],
+)
+async def test_an_mcp_url_the_token_must_not_travel_to_keeps_the_plugin_off(url):
+    proxy = Proxy(_unreachable)
+    registry = PluginRegistry(
+        [McpUrlPlugin(proxy)], SECRET, env={"MCP_URL": url, "MCP_TOKEN": TOKEN}
+    )
+
+    with pytest.raises(PluginError, match="McpUrlRefused"):
+        registry.set("mcp", {"read_tools": READ}, True)
+
+    assert not registry.is_enabled("mcp")
+    assert proxy.asked == []
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["https://coolify.example.com/mcp", "http://kuma:3001/mcp", "http://10.0.0.5:3001/mcp"],
+)
+def test_an_https_or_nearby_mcp_url_switches_the_plugin_on(url):
+    registry = PluginRegistry([McpUrlPlugin(_unreachable)], SECRET, env={"MCP_URL": url})
+    registry.set("mcp", {"read_tools": READ}, True)
+
+    assert registry.is_enabled("mcp")
+
+
+class Proxy(httpx.AsyncBaseTransport):
+    """Sits in front of the server: records the encoding Bleep asked for and can gzip every answer,
+    as a proxy may whatever the request said."""
+
+    def __init__(self, inner: httpx.AsyncBaseTransport, compress: bool = False) -> None:
+        self.inner, self.compress = inner, compress
+        self.asked: list[str | None] = []
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.asked.append(request.headers.get("accept-encoding"))
+        response = await self.inner.handle_async_request(request)
+        if not self.compress:
+            return response
+        body = b"".join([chunk async for chunk in response.aiter_raw()])
+        headers = [(k, v) for k, v in response.headers.items() if k.lower() != "content-length"]
+        return httpx.Response(
+            response.status_code,
+            headers=[*headers, ("content-encoding", "gzip")],
+            content=gzip.compress(body),
+            request=request,
+        )
+
+
+async def test_bleep_asks_the_server_for_plain_answers():
+    async with mcp_server() as server:
+        proxy = Proxy(server.transport)
+        registry = PluginRegistry([McpUrlPlugin(proxy)], SECRET, env=ENV)
+        registry.set("mcp", {"read_tools": READ}, True)
+        out = await read_tools(registry)["mcp_call"].ainvoke(
+            {"tool": "uptime", "arguments": {"service": "shop"}}
+        )
+
+    assert "shop: up 3 days" in out
+    assert proxy.asked and set(proxy.asked) == {"identity"}
+
+
+async def test_a_compressed_answer_is_refused_before_it_is_inflated():
+    async with mcp_server() as server:
+        registry = PluginRegistry([McpUrlPlugin(Proxy(server.transport, True))], SECRET, env=ENV)
+        registry.set("mcp", {"read_tools": READ}, True)
+        out = await read_tools(registry)["mcp_tools"].ainvoke({})
+
+    assert out == "the MCP server could not be reached (CompressedAnswer)"
+
+
+async def test_an_answer_over_the_byte_cap_is_dropped_unread(monkeypatch):
+    monkeypatch.setattr(mcp_url, "MAX_BYTES", 300)  # the tool listing is longer than that
+    async with mcp_server() as server:
+        out = await read_tools(plugins(server))["mcp_tools"].ainvoke({})
+
+    assert out == "the MCP server could not be reached (AnswerTooLarge)"
+
+
+async def test_mcp_call_never_asks_about_bleeps_own_containers(host):
+    own = host.container("a", "bleep-backend-1")
+    assert own is not None
+    async with mcp_server() as server:
+        tools = read_tools(plugins(server), host)
+        refused = [
+            await tools["mcp_call"].ainvoke({"tool": "uptime", "arguments": {"service": ref}})
+            for ref in ("bleep-backend-1", own.id[:12], "BLEEP-BACKEND-1 logs")
+        ]
+        allowed = await tools["mcp_call"].ainvoke(
+            {"tool": "uptime", "arguments": {"service": "shop-db-1"}}
+        )
+
+    assert all("Bleep does not call MCP tools about itself" in out for out in refused)
+    assert "shop-db-1: up 3 days" in allowed  # reading a protected one is harmless
+    assert server.calls == [("uptime", {"service": "shop-db-1"})]
+
+
 def test_a_tool_cannot_be_both_read_and_act():
     registry = PluginRegistry([McpUrlPlugin()], SECRET, env=ENV)
     with pytest.raises(PluginError, match="invalid settings"):
@@ -439,7 +546,7 @@ def act_registry(
     guard_log: RecordingGuardLog | None = None,
     act_tools: tuple[str, ...] = ("pause_monitor",),
 ) -> PluginRegistry:
-    plugin = McpUrlPlugin(http_client_factory=server.factory if server else _unreachable)
+    plugin = McpUrlPlugin(server.transport if server else _unreachable)
     registry = PluginRegistry([plugin], SECRET, env=ENV, guard_log=guard_log)
     registry.configure("mcp", {"act_tools": list(act_tools)})
     registry.enable("mcp", True)
@@ -507,7 +614,7 @@ async def test_a_grant_for_other_arguments_runs_nothing(host):
         (mcp_step(tool="uptime"), "is not one of the MCP plugin's act tools"),
         (mcp_step(arguments="[1, 2]"), "arguments must be a JSON object"),
         (mcp_step(arguments="{not json"), "arguments must be a JSON object"),
-        (mcp_step(extra="x"), "params may hold only tool and arguments"),
+        (mcp_step(extra="x"), "takes arguments, tool"),
         (mcp_step(arguments='{"name": "bleep-backend-1"}'), "one of Bleep's own containers"),
         (mcp_step(arguments='{"name": "id-bleep-backend-1"}'), "one of Bleep's own containers"),
         (mcp_step(arguments='{"name": ["x", "shop-db-1"]}'), "protected in the hosts file"),
@@ -586,6 +693,66 @@ async def test_the_plan_check_holds_an_mcp_step_to_the_same_target_rules(host):
     assert rules("nowhere-1") == ["not_found"]
 
 
+@pytest.mark.parametrize(
+    ("params", "rule", "said"),
+    [
+        ({"tool": "delete_monitor", "arguments": "{}"}, "bad_params", "not one of the MCP plugin"),
+        ({"tool": "pause_monitor"}, "bad_params", "takes arguments, tool"),
+        ({"tool": "pause_monitor", "arguments": "{}", "x": "1"}, "bad_params", "takes arguments"),
+        ({"tool": "pause_monitor", "arguments": "[1, 2]"}, "bad_params", "a JSON object"),
+        ({"tool": "pause_monitor", "arguments": "{not json"}, "bad_params", "a JSON object"),
+        (
+            {"tool": "pause_monitor", "arguments": '{"n": "' + "x" * MAX_ARGUMENTS + '"}'},
+            "bad_params",
+            "longer than",
+        ),
+        (
+            {"tool": "pause_monitor", "arguments": '{"name": "bleep-backend-1"}'},
+            "self",
+            "one of Bleep's own containers",
+        ),
+        (
+            {"tool": "pause_monitor", "arguments": '{"names": ["x", "Shop-DB-1"]}'},
+            "protected",
+            "protected in the hosts file",
+        ),
+    ],
+)
+async def test_the_plan_check_refuses_an_mcp_step_its_act_tool_would(host, params, rule, said):
+    handler = act_registry(None).act_tools({})["mcp.call"]
+    step = PlanStep(action="mcp.call", host_id="a", target="shop-web-1", params=params)
+    proposal = Proposal(kind="act", steps=[step], reason="the monitor flaps")
+
+    found = check_plan(
+        proposal,
+        host,
+        {"mcp.call"},
+        "a",
+        incident_containers=["shop-web-1"],
+        step_rules={"mcp.call": handler.plan_violations},
+    )
+
+    assert [v.rule for v in found] == [rule]
+    assert said in found[0].text
+    assert "bleep-backend-1" not in params.get("tool", "")
+
+
+async def test_the_plan_check_passes_an_mcp_step_its_act_tool_would_run(host):
+    handler = act_registry(None).act_tools({})["mcp.call"]
+    proposal = Proposal(kind="act", steps=[mcp_step()], reason="the monitor flaps")
+
+    found = check_plan(
+        proposal,
+        host,
+        {"mcp.call"},
+        "a",
+        incident_containers=["shop-web-1"],
+        step_rules={"mcp.call": handler.plan_violations},
+    )
+
+    assert found == []
+
+
 async def test_an_unreachable_server_fails_the_step_and_says_it_may_have_run(host):
     record = approved()
 
@@ -601,7 +768,7 @@ async def test_an_unreachable_server_fails_the_step_and_says_it_may_have_run(hos
 class Graph:
     def __init__(self, env, server: Server | None) -> None:
         self.env, self.deps = env, env.deps
-        plugin = McpUrlPlugin(http_client_factory=server.factory if server else _unreachable)
+        plugin = McpUrlPlugin(server.transport if server else _unreachable)
         registry = PluginRegistry(
             [plugin], SecretStr(GRAPH_SECRET), env=ENV, guard_log=env.guard_log
         )
@@ -694,5 +861,7 @@ async def test_an_mcp_step_left_started_by_a_crash_is_never_called_again(graph_h
 
     assert server.calls == []
     assert await graph.logged(state["incident_id"]) == [(0, "failed")]
-    assert "not run again" in update["step_results"][0].detail
+    detail = update["step_results"][0].detail
+    assert "cannot read back an MCP call" in detail and "not run again" in detail
+    assert "Coolify" not in detail
     assert route == "verify"

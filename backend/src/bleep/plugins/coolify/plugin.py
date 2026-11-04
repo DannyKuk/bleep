@@ -7,9 +7,10 @@ never from a setting a person can change: the token goes to that address with ev
 single-label Docker service name (`check_url`).
 
 The read tools are offered on a host that runs Coolify applications (containers with Coolify's
-application labels). What they return was set in Coolify or by a commit, so it is redacted,
-cleaned and wrapped as untrusted like every other tool output, and an env var's value is never
-read at all. Every Coolify failure comes back as a sentence the model can go on from.
+application labels), and never show or read Bleep's own application (`_not_own`). What they
+return was set in Coolify or by a commit, so it is redacted, cleaned and wrapped as untrusted like
+every other tool output, and an env var's value is never read at all. Every Coolify failure comes
+back as a sentence the model can go on from.
 
 An action runs the Docker act tools' checks first (`tools/docker_act.py`): the step is the
 approved plan's and the grant is for that plan, the target passes the plan check's target rules
@@ -22,10 +23,8 @@ not into a result, a log line or the guard log. See docs/design/plugins.md.
 """
 
 import asyncio
-import ipaddress
 import logging
 import re
-import socket
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -37,8 +36,17 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from bleep.guard.grant import GrantInvalid, verify_step
 from bleep.guard.log import GuardLogger
 from bleep.guard.pipeline import guard_text
-from bleep.guard.plan_check import NoCoolifyApp, check_params, check_target, coolify_app_uuid
+from bleep.guard.plan_check import (
+    COOLIFY_NAME,
+    NoCoolifyApp,
+    check_params,
+    check_target,
+    coolify_app_uuid,
+    coolify_slug,
+)
+from bleep.hosts.discovery import is_self
 from bleep.hosts.registry import Registry
+from bleep.plugins import urls
 from bleep.plugins.base import Plugin, PluginContext
 from bleep.plugins.coolify.client import CoolifyClient, CoolifyError, CoolifyUnavailable
 from bleep.schemas.coolify import CoolifyApplication, CoolifyDeployment, CoolifyEnvKey
@@ -58,21 +66,6 @@ DONE = {"finished"}
 ENDED = {"finished", "failed", "cancelled-by-user"}
 _VERSION = re.compile(r"v?\d+(\.\d+){1,3}[\w.-]{0,20}")
 _UUID_LABEL, _ID_LABEL = "coolify.applicationUuid", "coolify.applicationId"
-# The addresses Bleep sends the token to over plain http: loopback, private and CGNAT (Tailscale).
-NEARBY = tuple(
-    ipaddress.ip_network(net)
-    for net in (
-        "127.0.0.0/8",
-        "::1/128",
-        "10.0.0.0/8",
-        "172.16.0.0/12",
-        "192.168.0.0/16",
-        "100.64.0.0/10",
-        "fc00::/7",
-    )
-)
-# A single-label name, such as a Docker service; one starting with a digit could be an address.
-_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,62}")
 _ITEM = re.compile(r"[^,]+")  # an item of a comma list; a space does not end it
 APPLICATIONS = (
     "List the Coolify applications: name, uuid, status (running:healthy, exited:unhealthy, ...),"
@@ -105,47 +98,13 @@ class CoolifySettings(BaseModel):
     )
 
 
-class CoolifyUrlRefused(ValueError):
+class CoolifyUrlRefused(urls.UrlRefused):
     """`COOLIFY_URL` is not one Bleep sends the token to; the text never quotes it."""
 
 
-def _nearby(host: str) -> bool:
-    """A host whose traffic stays on this machine or its network: an address in `NEARBY`, or a
-    single-label name such as a Docker service. No DNS lookup is made: where a name resolves
-    (Docker's DNS, else the host's search domains) is the operator's to set up."""
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return bool(_NAME.fullmatch(host)) and not _inet_aton(host)
-    return any(ip in net for net in NEARBY if net.version == ip.version)
-
-
-def _inet_aton(host: str) -> bool:
-    """Whether the C library would read `host` as an IPv4 address (`134744072`, `0x8080808`)."""
-    try:
-        socket.inet_aton(host)
-    except OSError:
-        return False
-    return True
-
-
 def check_url(raw: str) -> str:
-    """`raw` as the client's base URL, or `CoolifyUrlRefused`: http(s) with a host and no user or
-    password, and https unless the host is `_nearby`."""
-    try:
-        url = httpx.URL(raw.strip())
-    except httpx.InvalidURL:
-        raise CoolifyUrlRefused(f"{URL_ENV} is not a URL") from None
-    if url.scheme not in ("http", "https") or not url.host or url.userinfo:
-        raise CoolifyUrlRefused(f"{URL_ENV} must be an http(s) URL with a host and no password")
-    if url.query or url.fragment or "?" in raw or "#" in raw:
-        raise CoolifyUrlRefused(f"{URL_ENV} must have no query or fragment")
-    if url.scheme == "http" and not _nearby(url.host):
-        raise CoolifyUrlRefused(
-            f"{URL_ENV} must use https unless it is a private address or a Docker service name;"
-            " use Coolify's https domain, since the token travels with every request"
-        )
-    return str(url).rstrip("/")
+    """`raw` as the client's base URL, or `CoolifyUrlRefused` (`plugins/urls.check_url`)."""
+    return urls.check_url(raw, URL_ENV, CoolifyUrlRefused).rstrip("/")
 
 
 class AppArgs(BaseModel):
@@ -165,6 +124,18 @@ def _host_apps(registry: Registry, host_id: str) -> set[str]:
         for value in (c.labels.get(_UUID_LABEL), c.labels.get(_ID_LABEL))
         if value
     }
+
+
+def _not_own(apps: list[CoolifyApplication], registry: Registry) -> list[CoolifyApplication]:
+    """`apps` without Bleep's own: one with a `bleep.self=true` container on any host, matched by
+    the uuid on its labels or, for a container that carries none, by its resource name."""
+    own = [c for h in registry.hosts() for c in registry.snapshot(h.config.id) or []]
+    own = [c for c in own if is_self(c.labels)]
+    uuids = {c.labels[_UUID_LABEL] for c in own if c.labels.get(_UUID_LABEL)}
+    names = {c.labels[COOLIFY_NAME] for c in own if c.labels.get(COOLIFY_NAME)}
+    return [
+        a for a in apps if a.uuid not in uuids and not (a.name and coolify_slug(a.name) in names)
+    ]
 
 
 def _no_userinfo(text: str) -> str:
@@ -282,9 +253,8 @@ def _tool(
 def read_specs(client: CoolifyClient) -> list[ToolSpec]:
     def applications_tool(ctx: ToolContext) -> BaseTool:
         async def run() -> str:
-            text = describe_applications(
-                await client.applications(), _host_apps(ctx.registry, ctx.host_id)
-            )
+            apps = _not_own(await client.applications(), ctx.registry)
+            text = describe_applications(apps, _host_apps(ctx.registry, ctx.host_id))
             return await _guard(ctx, text)
 
         return _tool("coolify_applications", APPLICATIONS, NoArgs, run)
@@ -294,7 +264,7 @@ def read_specs(client: CoolifyClient) -> list[ToolSpec]:
     ) -> Callable[[ToolContext], BaseTool]:
         def build(ctx: ToolContext) -> BaseTool:
             async def run(app: str) -> str:
-                picked = _pick(await client.applications(), app.strip())
+                picked = _pick(_not_own(await client.applications(), ctx.registry), app.strip())
                 if isinstance(picked, str):
                     return await _guard(ctx, picked)
                 return await _guard(ctx, await read(picked))

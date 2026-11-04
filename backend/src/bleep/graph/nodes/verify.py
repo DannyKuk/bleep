@@ -5,6 +5,9 @@ check where everything passes. A check passes only when every planned container 
 healthy (or running with no healthcheck) and every planned URL passes `check_url`. The plan is
 the proposal's verification plan; when that is empty it falls back to the affected service's
 containers (protected ones too) and URLs, and then to the containers the plan's steps acted on.
+Whatever the plan names, the incident's own symptoms are checked too: every container its signals
+name and every URL they report failing, so a plan that checks something else cannot pass while
+the failure that opened the incident goes on.
 A Coolify application the plan redeployed is checked as a whole, read from the engine each time:
 the redeploy replaced its containers under new names, so they are left out of the name checks.
 The redeploy step ends only once Coolify reports its deployment over (`plugins/coolify`), so the
@@ -27,12 +30,12 @@ from langchain_core.messages import HumanMessage
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
-from bleep.graph.state import IncidentState, Node
+from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.plan_check import coolify_members, host_urls
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.graph import Check, Proposal, StepResult, VerificationResult
-from bleep.schemas.incidents import Subject
+from bleep.schemas.incidents import Signal, Subject
 from bleep.watcher.http_checks import check_url
 
 log = logging.getLogger(__name__)
@@ -50,12 +53,13 @@ def _redeployed(proposal: Proposal | None) -> list[str]:
 
 
 def _plan(
-    deps: GraphDeps, subject: Subject, proposal: Proposal | None
+    deps: GraphDeps, subject: Subject, proposal: Proposal | None, signals: list[Signal]
 ) -> tuple[list[str], list[UrlCheckConfig]]:
-    """The containers and URLs to check, from the plan or else from what it acted on.
+    """The containers and URLs to check: the plan's, or else what it acted on, and always the
+    incident's own symptoms (`_symptoms`).
 
-    A planned URL keeps its expected status and body text from the hosts file, whichever of the
-    host's services it belongs to (the plan check allows any of them). The fallback checks every
+    A URL keeps its expected status and body text from the hosts file, whichever of the host's
+    services it belongs to (the plan check allows any of them). The fallback checks every
     container of the service, protected ones too: reading one is harmless, and leaving out a
     database that is still down would let a check of the web container alone pass.
     """
@@ -64,17 +68,39 @@ def _plan(
     known = host_urls(deps.registry, subject.host_id)
     if service is not None:
         known |= {cfg.url: cfg for cfg in service.urls}
+    # A redeployed application's containers are replaced; its own check covers them.
+    replaced = {
+        c.name
+        for app in _redeployed(proposal)
+        for c in coolify_members(deps.registry.snapshot(subject.host_id) or [], app)
+    }
     containers = list(planned.containers) if planned is not None else []
-    urls = [known.get(u) or UrlCheckConfig(url=u) for u in (planned.urls if planned else [])]
-    if containers or urls:
-        return containers, urls
-    if service is not None:
-        # A redeployed application's containers are replaced; its own check covers them.
-        apps = _redeployed(proposal)
-        replaced = {c.name for app in apps for c in coolify_members(service.containers, app)}
-        return [c.name for c in service.containers if c.name not in replaced], list(service.urls)
-    acted = proposal.steps if proposal is not None else []
-    return [s.target for s in acted if s.action.startswith("docker.")], []
+    urls = list(planned.urls) if planned is not None else []
+    if not containers and not urls:
+        if service is not None:
+            containers = [c.name for c in service.containers]
+            urls = [cfg.url for cfg in service.urls]
+        else:
+            acted = proposal.steps if proposal is not None else []
+            containers = [s.target for s in acted if s.action.startswith("docker.")]
+    failing, failing_urls = _symptoms(proposal, signals)
+    containers = [c for c in dict.fromkeys([*containers, *failing]) if c not in replaced]
+    urls = list(dict.fromkeys([*urls, *failing_urls]))
+    return containers, [known.get(u) or UrlCheckConfig(url=u) for u in urls]
+
+
+def _symptoms(proposal: Proposal | None, signals: list[Signal]) -> tuple[list[str], list[str]]:
+    """The containers the incident's signals name and the URLs they report failing. A container
+    the plan stops is left out: the plan means it to stay down, and its service's URLs say
+    whether that was a fix."""
+    stopped = {s.target for s in (proposal.steps if proposal else []) if s.action == "docker.stop"}
+    containers = [s.container for s in signals if s.container and s.container not in stopped]
+    urls = [
+        str(s.detail["url"])
+        for s in signals
+        if s.kind == "url_failed" and not s.detail.get("ok") and s.detail.get("url")
+    ]
+    return containers, urls
 
 
 async def _check_container(deps: GraphDeps, host_id: str, name: str) -> Check:
@@ -101,13 +127,11 @@ def _deploy_starts(
 ) -> dict[str, datetime]:
     """When each application this plan redeployed had its redeploy step start, on Bleep's clock.
 
-    Only this plan's results count: `step_results` keeps earlier plans' too, and Execute appends
-    one result per step of the plan it ran, so this plan's are the last of them. A redeploy that
-    never started (skipped, or refused at run time) has no start and its app no entry."""
+    Only this plan's results count (`plan_results`). A redeploy that never started (skipped, or
+    refused at run time) has no start and its app no entry."""
     steps = proposal.steps if proposal is not None else []
-    current = (results or [])[-len(steps) :] if steps else []
     starts: dict[str, datetime] = {}
-    for r in current:
+    for r in plan_results(proposal, results):
         if not 0 <= r.step_index < len(steps):
             continue
         step = steps[r.step_index]
@@ -192,7 +216,7 @@ def make(deps: GraphDeps) -> Node:
         incident_id = state["incident_id"]
         subject = state["subject"]
         proposal = state.get("proposal")
-        containers, urls = _plan(deps, subject, proposal)
+        containers, urls = _plan(deps, subject, proposal, state.get("signals", []))
         apps = _redeployed(proposal)
         starts = _deploy_starts(proposal, state.get("step_results"))
 

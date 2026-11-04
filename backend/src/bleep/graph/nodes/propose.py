@@ -15,7 +15,13 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.state import IncidentState, Node
-from bleep.guard.plan_check import Violation, check_plan, coolify_members, protected_names
+from bleep.guard.plan_check import (
+    StepRule,
+    Violation,
+    check_plan,
+    coolify_members,
+    protected_names,
+)
 from bleep.guard.redact import redacted_proposal, redacted_step
 from bleep.hosts.discovery import is_self
 from bleep.hosts.registry import Registry
@@ -24,6 +30,7 @@ from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.memory.text import describe_fact, describe_past
 from bleep.schemas.graph import Diagnosis, GatherContext, PlanStep, Proposal
 from bleep.schemas.incidents import Subject
+from bleep.tools.registry import PlanRules
 
 NO_DIAGNOSIS = "Bleep has no diagnosis to act on, so it proposes no action."
 NO_PLAN = "The model gave no usable plan, so Bleep proposes no action."
@@ -69,9 +76,16 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
     incident_id, host_id = state["incident_id"], state["subject"].host_id
     enabled = deps.settings_store.enabled_actions()
     named = _incident_containers(deps, state)
+    rules = _step_rules(deps)
+
+    def check(plan: Proposal) -> list[Violation]:
+        return check_plan(
+            plan, deps.registry, enabled, host_id, incident_containers=named, step_rules=rules
+        )
+
     messages: list[BaseMessage] = [HumanMessage(_prompt(deps, state, diagnosis, enabled))]
     proposal = _without_replaced(await _ask(deps, incident_id, messages), deps.registry)
-    violations = check_plan(proposal, deps.registry, enabled, host_id, incident_containers=named)
+    violations = check(proposal)
     if not violations:
         return proposal
     _record(deps, incident_id, violations)
@@ -80,11 +94,20 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
         HumanMessage(prompts.load("graph/propose_retry", violations=_bullets(violations))),
     ]
     retry = _without_replaced(await _ask(deps, incident_id, messages), deps.registry)
-    again = check_plan(retry, deps.registry, enabled, host_id, incident_containers=named)
+    again = check(retry)
     if not again:
         return retry
     _record(deps, incident_id, again)
     return _refused(retry, again)
+
+
+def _step_rules(deps: GraphDeps) -> dict[str, StepRule]:
+    """The rules the act handlers keep for their own actions' steps (`PlanRules`)."""
+    return {
+        action: handler.plan_violations
+        for action, handler in deps.act_tools.items()
+        if isinstance(handler, PlanRules)
+    }
 
 
 def _without_replaced(proposal: Proposal, registry: Registry) -> Proposal:
