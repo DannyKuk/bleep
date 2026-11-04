@@ -10,7 +10,7 @@ from bleep.hosts.config import HostConfig, ServiceOverrides
 from bleep.hosts.discovery import AmbiguousOverride, group_services
 from bleep.hosts.engine import Engine, EngineUnavailable, connect_engine
 from bleep.hosts.shell import HostShell, engine_basics, host_basics
-from bleep.hosts.ssh import SshSession
+from bleep.hosts.ssh import KeysFor, Resolve, SshSession
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.services import HostState, Service
 
@@ -22,11 +22,14 @@ BASICS_RETRY_S = 10  # after a failed read
 Connector = Callable[[HostConfig], Awaitable[tuple[SshSession | None, Engine]]]
 
 
-async def connect_host(host: HostConfig) -> tuple[SshSession | None, Engine]:
-    """The real connector: open the ssh session first (ssh hosts), then build the engine."""
+async def connect_host(
+    host: HostConfig, keys: KeysFor | None = None, resolve: Resolve | None = None
+) -> tuple[SshSession | None, Engine]:
+    """The real connector: open the ssh session first (ssh hosts), then build the engine.
+    `keys` reads a dashboard host's keys from the secret file; `resolve` looks up its address."""
     session = None
     if host.kind == "ssh":
-        session = SshSession(host)
+        session = SshSession(host, keys=keys, resolve=resolve)
         await session.open()
     try:
         return session, connect_engine(host, session)
@@ -69,27 +72,68 @@ class Registry:
 
     async def close(self) -> None:
         self._closed = True
-        for entry in self._entries.values():
+        for entry in list(self._entries.values()):
             async with entry.lock:  # waits for an in-flight reconnect, which closes what it opened
-                if entry.engine is not None:
-                    await entry.engine.close()
-                if entry.session is not None:
-                    await entry.session.close()
+                await _close(entry)
+
+    def add(self, config: HostConfig) -> None:
+        """Watch a host added on the dashboard: unreachable until the watcher's first tick
+        connects it."""
+        if config.id in self._entries:
+            raise ValueError(f"host {config.id} is already in the registry")
+        self._entries[config.id] = _Entry(HostState(config=config, reachable=False, last_seen=None))
+
+    async def remove(self, host_id: str) -> None:
+        """Close the host's connection and forget it; a host not here is a no-op."""
+        entry = self._entries.get(host_id)
+        if entry is None:
+            return
+        async with entry.lock:
+            self._entries.pop(host_id, None)
+            await _close(entry)
+
+    async def replace(self, config: HostConfig, *, reconnect: bool) -> None:
+        """Put a dashboard host's changed connection or name in force, keeping its rules and
+        services. With `reconnect` the old connection is closed and the last listing dropped (the
+        address may name another machine now); the watcher's next tick connects again."""
+        entry = self._entries.get(config.id)
+        if entry is None:
+            return
+        async with entry.lock:
+            current = entry.state.config
+            config = config.model_copy(
+                update={"rules": current.rules, "services": current.services}
+            )
+            if not reconnect:
+                self._mark(entry, config=config)
+                return
+            await _close(entry)
+            entry.session = entry.engine = None
+            entry.containers = entry.services = None
+            entry.basics_at = None
+            entry.state = HostState(
+                config=config, reachable=False, last_seen=None, error="the connection changed"
+            )
 
     async def refresh(self, host_id: str) -> None:
         """List the host's containers. On a lost connection keep the last snapshot."""
-        entry = self._entries[host_id]
+        entry = self._entries.get(host_id)
+        if entry is None:  # removed on the dashboard meanwhile
+            return
         async with entry.lock:
-            await self._refresh(host_id, entry)
+            if self._entries.get(host_id) is entry:
+                await self._refresh(host_id, entry)
 
     async def reconnect(self, host_id: str) -> bool:
         """Re-open the ssh session, then the engine, then refresh. Never raises.
 
         Returns whether the host is reachable afterwards; a failure is recorded on its state.
         """
-        entry = self._entries[host_id]
+        entry = self._entries.get(host_id)
+        if entry is None:
+            return False
         async with entry.lock:
-            if self._closed:
+            if self._closed or self._entries.get(host_id) is not entry:
                 return False
             try:
                 if entry.engine is None:
@@ -122,13 +166,16 @@ class Registry:
             except Exception:  # one host must not stop the others or the loop
                 log.exception("refresh of host %s failed", host_id)
 
-        await asyncio.gather(*(one(i, e) for i, e in self._entries.items()))
+        await asyncio.gather(*(one(i, e) for i, e in list(self._entries.items())))
 
     def hosts(self) -> list[HostState]:
         return [e.state for e in self._entries.values()]
 
     def services(self, host_id: str | None = None) -> list[Service]:
-        entries = [self._entries[host_id]] if host_id else list(self._entries.values())
+        if host_id is None:
+            entries = list(self._entries.values())
+        else:
+            entries = [self._entries[host_id]] if host_id in self._entries else []
         return [s for e in entries for s in (e.services or [])]
 
     def service(self, service_id: str) -> Service | None:
@@ -162,7 +209,9 @@ class Registry:
         """Put the host's rules and service overrides in force, the hosts file's merged with the
         settings store's; the connection stays as it is. The services are regrouped from the last
         listing at once, so the URL checks, the plan check and Gather all read the new values."""
-        entry = self._entries[host_id]
+        entry = self._entries.get(host_id)
+        if entry is None:
+            return
         config = entry.state.config.model_copy(update={"rules": rules, "services": services})
         self._mark(entry, config=config)
         if entry.containers is not None:
@@ -176,7 +225,9 @@ class Registry:
         return entry.session if entry is not None else None
 
     def engine(self, host_id: str) -> Engine:
-        entry = self._entries[host_id]
+        entry = self._entries.get(host_id)
+        if entry is None:
+            raise EngineUnavailable(host_id, "no such host")
         if entry.engine is None:
             raise EngineUnavailable(host_id, entry.state.error or "not connected")
         return entry.engine
@@ -236,6 +287,13 @@ class Registry:
 
     def _mark(self, entry: _Entry, **changes: object) -> None:
         entry.state = replace(entry.state, **changes)
+
+
+async def _close(entry: _Entry) -> None:
+    if entry.engine is not None:
+        await entry.engine.close()
+    if entry.session is not None:
+        await entry.session.close()
 
 
 def _describe(error: Exception) -> str:

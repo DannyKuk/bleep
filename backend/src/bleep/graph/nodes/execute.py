@@ -32,7 +32,7 @@ See docs/design/graph.md.
 import logging
 from typing import Literal
 
-from bleep.graph.deps import GraphDeps
+from bleep.graph.deps import GraphDeps, IncidentFinished
 from bleep.graph.replan import replan
 from bleep.graph.state import IncidentState, Node
 from bleep.graph.targets import read_app_uuid
@@ -48,6 +48,7 @@ from bleep.schemas.graph import (
     StepStatus,
     TargetSnapshot,
 )
+from bleep.schemas.incidents import TERMINAL_STATUSES
 from bleep.tools.docker_act import StepRefused
 
 log = logging.getLogger(__name__)
@@ -211,10 +212,18 @@ def make(deps: GraphDeps) -> Node:
                 reasons.append(str(refusal))
         return reasons
 
+    async def still_open(incident_id: str) -> None:
+        """Raise `IncidentFinished` once the incident was closed from outside the run (its host
+        was removed): nothing is run for it, whatever was approved."""
+        incident = await deps.incidents.get(incident_id)
+        if incident is None or incident.status in TERMINAL_STATUSES:
+            raise IncidentFinished(incident_id)
+
     async def run_step(
         state: IncidentState, plan: ApprovalRecord, index: int, step: PlanStep
     ) -> StepResult:
         incident_id = state["incident_id"]
+        await still_open(incident_id)
         started = await deps.action_log.start(incident_id, _plan_key(plan), index, step)
         if started is None:  # an earlier attempt wrote the step after all: never run it again
             row = next(
@@ -314,6 +323,7 @@ def make(deps: GraphDeps) -> Node:
 
     async def execute(state: IncidentState) -> dict:
         incident_id = state["incident_id"]
+        await still_open(incident_id)
         proposal, consumed = state.get("proposal"), state.get("approval")
         plan = await deps.approvals.current(incident_id)
         if (

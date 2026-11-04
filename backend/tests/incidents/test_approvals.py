@@ -320,3 +320,15 @@ async def test_the_in_memory_approvals_refuse_an_approve_on_a_refused_plan_too()
 
     assert await store.resolve("inc", decide("approve")) is None
     assert await store.resolve("inc", decide("reject")) is not None
+
+
+async def test_a_closed_incidents_pending_approval_cannot_be_decided_from_any_channel(db):
+    incident_id = await open_incident(db)
+    store = ApprovalStore(db, SECRET, Clock())
+    request = await store.request(incident_id, restart(), [snap()])
+    await IncidentRepo(db).set_status(incident_id, "closed")  # its host was removed
+
+    for via in ("dashboard", "telegram"):
+        assert await store.resolve(incident_id, decide(via=via), request.id) is None
+    assert await store.grant(incident_id) is None
+    assert await store.pending() == []

@@ -8,6 +8,7 @@ import stat
 import pytest
 
 from bleep.store.secrets import (
+    SecretFamily,
     SecretFileError,
     SecretFromEnv,
     SecretName,
@@ -369,3 +370,113 @@ async def test_an_address_version_is_opaque_and_changes_with_the_address(tmp_pat
     await store.set("COOLIFY_URL", "https://other.example.com")
     assert first and "path-secret" not in first and first != store.address_version("COOLIFY_URL")
     assert store.address_version("GITHUB_TOKEN") is None
+
+
+# -- per-host values: a multi-line kind and families (#194) ------------------------------------
+
+KEYS = SecretFamily("SSH_KEY:", kind="multiline")
+KNOWN = SecretFamily("KNOWN_HOSTS:")
+PEM = (
+    "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n"
+    "-----END OPENSSH PRIVATE KEY-----"
+)
+
+
+def host_store(tmp_path, env=None) -> SecretStore:
+    return SecretStore(
+        tmp_path / "data" / "secrets.json", NAMES, families=(KEYS, KNOWN), env=env or {}
+    )
+
+
+async def test_a_multiline_value_keeps_its_line_feeds_and_a_pasted_crlf_becomes_lf(tmp_path):
+    store = host_store(tmp_path)
+    await store.replace({"SSH_KEY:m1": "\r\n" + PEM.replace("\n", "\r\n") + "\r\n"})
+
+    for reading in (store, host_store(tmp_path)):
+        assert reading.get("SSH_KEY:m1").get_secret_value() == PEM
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["\r", "\t", "\x00", "\x1b[2J", "\x85", " ", "​", "﻿"],
+    ids=repr,
+)
+async def test_a_multiline_value_refuses_every_control_but_the_line_feed(tmp_path, bad):
+    store = host_store(tmp_path)
+    with pytest.raises(SecretRefused) as refused:
+        await store.replace({"SSH_KEY:m1": PEM.replace("\n", "\n" + bad, 1)})
+    assert "b3Blbn" not in str(refused.value)
+    assert store.get("SSH_KEY:m1") is None
+
+
+async def test_a_single_line_value_still_refuses_a_line_feed(tmp_path):
+    store = host_store(tmp_path)
+    with pytest.raises(SecretRefused):
+        await store.replace({"KNOWN_HOSTS:m1": "m1 ssh-ed25519 AAAA\nevil ssh-ed25519 BBBB"})
+    with pytest.raises(SecretRefused):
+        await store.set("GITHUB_TOKEN", "ghp_one\nghp_two")
+
+
+async def test_replace_writes_a_host_key_and_its_known_hosts_entry_together_or_neither(tmp_path):
+    store = host_store(tmp_path)
+    with pytest.raises(SecretRefused):
+        await store.replace({"SSH_KEY:m1": PEM, "KNOWN_HOSTS:m1": "bad\x00line"})
+    assert store.stored(KEYS) == [] and store.stored(KNOWN) == []
+
+    changed = await store.replace({"SSH_KEY:m1": PEM, "KNOWN_HOSTS:m1": "m1 ssh-ed25519 AAAA"})
+    assert changed == {"SSH_KEY:m1", "KNOWN_HOSTS:m1"}
+    assert await store.replace({"SSH_KEY:m1": None, "KNOWN_HOSTS:m1": None}) == {
+        "SSH_KEY:m1",
+        "KNOWN_HOSTS:m1",
+    }
+    assert store.get("SSH_KEY:m1") is None
+    assert json.loads((tmp_path / "data" / "secrets.json").read_text())["values"] == {}
+
+
+async def test_a_family_value_is_never_in_the_list_the_environ_or_read_from_the_env(tmp_path):
+    store = host_store(tmp_path, env={"SSH_KEY:m1": "from the env"})
+    await store.replace({"SSH_KEY:m1": PEM})
+
+    assert store.get("SSH_KEY:m1").get_secret_value() == PEM  # the env never decides it
+    assert all(not entry.name.startswith("SSH_KEY") for entry in store.names())
+    assert store.environ().get("SSH_KEY:m1") == "from the env"  # the process env, not the file
+
+    no_env = host_store(tmp_path)
+    assert "SSH_KEY:m1" not in set(no_env.environ())
+    assert no_env.environ().get("SSH_KEY:m1") is None
+
+
+async def test_a_family_value_is_set_only_with_replace_and_a_bad_id_is_unknown(tmp_path):
+    store = host_store(tmp_path)
+    with pytest.raises(UnknownSecret):
+        await store.set("SSH_KEY:m1", PEM)
+    with pytest.raises(UnknownSecret):
+        await store.clear("SSH_KEY:m1")
+    for name in ("SSH_KEY:", "SSH_KEY:M1", "SSH_KEY:a/b", "SSH_KEY:-x", "GITHUB_TOKEN"):
+        with pytest.raises(UnknownSecret):
+            await store.replace({name: "x"})
+
+
+async def test_family_values_in_the_file_are_loaded_and_a_bad_name_is_left_out(tmp_path, caplog):
+    path = tmp_path / "data" / "secrets.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"version": 1, "values": {"SSH_KEY:m1": PEM, "SSH_KEY:../x": PEM}}))
+    path.chmod(0o600)
+
+    store = host_store(tmp_path)
+    assert store.stored(KEYS) == ["SSH_KEY:m1"]
+    assert "left out" in caplog.text and "b3Blbn" not in caplog.text
+
+
+async def test_a_change_to_a_family_value_tells_the_listeners_its_name_only(tmp_path, caplog):
+    store = host_store(tmp_path)
+    heard: list[frozenset[str]] = []
+
+    async def listener(changed: frozenset[str]) -> None:
+        heard.append(changed)
+
+    store.subscribe(listener)
+    with caplog.at_level("DEBUG"):
+        await store.replace({"SSH_KEY:m1": PEM})
+    assert heard == [frozenset({"SSH_KEY:m1"})]
+    assert "b3Blbn" not in caplog.text and "SSH_KEY:m1 set" in caplog.text

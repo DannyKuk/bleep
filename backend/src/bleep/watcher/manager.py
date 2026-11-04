@@ -10,6 +10,10 @@ probe (disk, memory, load) and the URL checks. Every signal goes through the one
   tick so a slow model never delays the next pull. The call is in the usage ledger under
   `RECOVERY_USAGE` and is skipped once the day's cost cap is spent.
 
+A host added, changed or removed on the dashboard is put in force by `host_changed`, without a
+restart: its loops start, start again on the new connection, or stop and its open incidents
+are closed with a notice.
+
 See docs/design/watcher.md.
 """
 
@@ -23,6 +27,7 @@ from langchain_core.language_models import BaseChatModel
 
 from bleep.graph.deps import ModelFactory
 from bleep.guard.log import GuardLogger
+from bleep.hosts.dashboard import HostChange
 from bleep.hosts.registry import Registry
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
@@ -54,6 +59,11 @@ LOG_TAIL_LINES = 50
 NO_EXPLANATION = "No explanation could be generated for this restart."
 CAP_SPENT_EXPLANATION = "No explanation: the daily cost cap is spent."
 RECOVERY_USAGE = "recoveries"  # the usage ledger's key for recovery lines, which have no incident
+REMOVED_NOTICE = "Closed: the host was removed from Bleep on the dashboard, so it is not watched."
+MOVED_NOTICE = (
+    "The host's address, port or user was changed on the dashboard: what Bleep reads from here on "
+    "comes from the new connection, which may be another machine."
+)
 
 
 class _HostTasks:
@@ -100,48 +110,97 @@ class WatcherManager:
         self._held: dict[str, dict[str, list[Signal]]] = {}  # host -> service id -> URL failures
         self._announced: dict[str, tuple[str, set[str]]] = {}  # host -> (incident, URLs named)
         self._background: set[asyncio.Task[None]] = set()
-        self._tasks: list[asyncio.Task[None]] = []
+        self._intervals = (watch_interval_s, probe_interval_s, url_interval_s, store)
+        self._tasks: dict[str, list[asyncio.Task[None]]] = {}
+        self._started = False
         self.hosts: dict[str, _HostTasks] = {
-            state.config.id: _HostTasks(
-                HostWatcher(
-                    state.config.id,
-                    registry,
-                    self.sink,
-                    clock,
-                    watch_interval_s,
-                    on_snapshot=self.snapshot,
-                ),
-                HostProbe(state.config.id, registry, self.sink, clock, probe_interval_s),
-                UrlWatcher(
-                    state.config.id, registry, self._http, self.sink, clock, store, url_interval_s
-                ),
-            )
-            for state in registry.hosts()
+            state.config.id: self._host_tasks(state.config.id) for state in registry.hosts()
         }
+
+    def _host_tasks(self, host_id: str) -> _HostTasks:
+        watch_s, probe_s, url_s, store = self._intervals
+        return _HostTasks(
+            HostWatcher(
+                host_id, self.registry, self.sink, self._clock, watch_s, on_snapshot=self.snapshot
+            ),
+            HostProbe(host_id, self.registry, self.sink, self._clock, probe_s),
+            UrlWatcher(host_id, self.registry, self._http, self.sink, self._clock, store, url_s),
+        )
 
     async def start(self) -> None:
         """Restart unfinished runs, then watch every host. Idempotent while running."""
-        if self._tasks:
+        if self._started:
             return
+        self._started = True
         await self.runner.recover_on_boot()
-        for host_id, parts in self.hosts.items():
-            for part, run in (
-                ("watcher", parts.watcher.run),
-                ("probe", parts.probe.run),
-                ("urls", parts.urls.run),
-            ):
-                name = f"{part}-{host_id}"
-                self._tasks.append(asyncio.create_task(self._supervised(name, run), name=name))
+        for host_id in self.hosts:
+            self._run(host_id)
+
+    def _run(self, host_id: str) -> None:
+        parts = self.hosts[host_id]
+        tasks = self._tasks.setdefault(host_id, [])
+        for part, run in (
+            ("watcher", parts.watcher.run),
+            ("probe", parts.probe.run),
+            ("urls", parts.urls.run),
+        ):
+            name = f"{part}-{host_id}"
+            tasks.append(asyncio.create_task(self._supervised(name, run), name=name))
 
     async def stop(self) -> None:
         """Cancel the watching; runs in flight stay with the runner."""
-        tasks = [*self._tasks, *self._background]
-        self._tasks = []
+        tasks = [task for host in self._tasks.values() for task in host] + [*self._background]
+        self._tasks = {}
+        self._started = False
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         if self._owns_http:
             await self._http.aclose()
+
+    async def host_changed(self, change: HostChange) -> None:
+        """Put a host added, changed or removed on the dashboard in force. A new connection (or
+        key) starts the host's loops again from nothing, so a listing of another machine is never
+        diffed against the old one's; a new address, port or user also drops the detector's state
+        for the host and puts a notice on its open incidents; a removed host's open incidents are
+        closed with a notice."""
+        host_id = change.host_id
+        if change.kind == "renamed" and change.config is not None:
+            await self.registry.replace(change.config, reconnect=False)
+            return
+        await self._stop_host(host_id)
+        if change.config is None:
+            try:
+                for incident in await self.repo.open_on_host(host_id):
+                    await self.runner.end(incident.id, REMOVED_NOTICE)
+            finally:  # the host goes whatever happened above, so it can be added again
+                await self.registry.remove(host_id)
+                self._forget(host_id)
+            return
+        if change.moved:
+            # Possibly another machine: nothing pending on the old one may open an incident here.
+            self._forget(host_id)
+            for incident in await self.repo.open_on_host(host_id):
+                await self.bus.publish(incident.id, "notice", {"text": MOVED_NOTICE})
+        if change.kind == "added":
+            self.registry.add(change.config)
+        else:
+            await self.registry.replace(change.config, reconnect=True)
+        self.hosts[host_id] = self._host_tasks(host_id)
+        if self._started:
+            self._run(host_id)
+
+    def _forget(self, host_id: str) -> None:
+        self.detector.forget_host(host_id)
+        self._held.pop(host_id, None)
+        self._announced.pop(host_id, None)
+
+    async def _stop_host(self, host_id: str) -> None:
+        self.hosts.pop(host_id, None)
+        tasks = self._tasks.pop(host_id, [])
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def drain(self) -> None:
         """Wait for the recovery explanations in flight (tests, and a clean shutdown)."""
@@ -188,7 +247,7 @@ class WatcherManager:
         await self._handle(self.detector.tick(self._clock(), states, host_id))
 
     def _reachable(self, host_id: str) -> bool:
-        return next(h for h in self.registry.hosts() if h.config.id == host_id).reachable
+        return any(h.reachable for h in self.registry.hosts() if h.config.id == host_id)
 
     # -- URL failures on an unreachable host --------------------------------------------------
 

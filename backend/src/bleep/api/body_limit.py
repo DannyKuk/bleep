@@ -3,7 +3,7 @@
 FastAPI buffers and parses a whole body before a route runs, so a check on the parsed JSON
 (`check_size`) cannot stop a client from making the backend hold a huge one. This middleware looks
 at `Content-Length` and, for a chunked body, stops reading at the cap. It covers only the settings,
-plugin, secret and prompt-override writes, the routes that read free-form JSON.
+host, plugin, secret and prompt-override writes, the routes that read free-form JSON.
 """
 
 import json
@@ -17,7 +17,7 @@ from bleep.api.settings import MAX_BODY_CHARS
 # body larger than that and it is refused. `check_size` applies the exact character limit.
 MAX_BODY_BYTES = MAX_BODY_CHARS * 4
 
-LIMITED_PREFIXES = ("/api/plugins/", "/api/secrets/", "/api/dev/prompts/")
+LIMITED_PREFIXES = ("/api/plugins/", "/api/secrets/", "/api/dev/prompts/", "/api/settings/")
 DISCONNECTED = object()  # the client left mid-body: there is nobody to answer
 LIMITED_METHODS = frozenset({"PUT", "POST", "PATCH"})
 

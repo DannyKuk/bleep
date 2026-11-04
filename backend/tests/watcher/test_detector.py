@@ -450,3 +450,18 @@ async def test_an_unreachable_model_is_retried_then_logged_by_type_only(caplog):
     assert model.calls == 2
     assert "ConnectError" in caplog.text
     assert "secret-host" not in caplog.text
+
+
+def test_forgetting_a_removed_host_drops_its_deaths_streaks_and_timers_only():
+    det, clock = make()
+    det.feed(died(clock))
+    det.feed(died(clock, subject=H2_SVC))
+    det.feed(sig(HOST, "host_unreachable", clock, ok=False))
+    det.feed(sig(SVC, "url_failed", clock, ok=False, latency_ms=10, url="https://x"))
+
+    det.forget_host("h1")
+    clock.at(400)
+    assert det.feed(sig(HOST, "host_unreachable", clock, ok=False)) == []  # its timer is new
+    assert det.tick(clock.now, states(box(state="exited")), host_id="h1") == []
+    out = det.tick(clock.now, states(box(state="exited")), host_id="h2")
+    assert [o.subject for o in out] == [H2_SVC]  # the other host's death is still judged

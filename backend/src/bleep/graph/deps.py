@@ -48,6 +48,11 @@ CORE_ACTIONS: frozenset[str] = frozenset({"docker.restart", "docker.stop", "dock
 ModelFactory = Callable[[Role], BaseChatModel]
 
 
+class IncidentFinished(Exception):
+    """The incident was closed from outside its run (its host was removed): the run stops here
+    and acts on nothing."""
+
+
 class Memory(Protocol):
     """Long-term memory: Gather and the `recall_incidents` tool read it, Report writes to it
     (the record and the facts the human's instructions taught).

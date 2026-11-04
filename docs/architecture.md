@@ -43,6 +43,7 @@ flowchart LR
 | **SSH session and engine** | `hosts/ssh.py`, `hosts/engine.py` | One asyncssh connection per SSH host forwards the remote Docker socket; the `docker` SDK talks to it. A socket host talks to a local endpoint, in the demo a filtered proxy. |
 | **Host shell** | `hosts/shell.py` | The read-only command allowlist (exact argv templates) and host basics (disk, memory, load) for Linux and macOS. |
 | **Registry** | `hosts/registry.py`, `hosts/discovery.py` | Each host's connection, reachability, containers grouped into services, and basics. |
+| **Dashboard hosts** | `hosts/dashboard.py`, `api/host_settings.py` | SSH hosts added, changed and removed on the dashboard: the connection in SQLite, the key and the confirmed host key in the secret file; trust on first use by fingerprint, a key bound to its connection, applied without a restart. |
 | **Pull watcher** | `watcher/poller.py`, `watcher/events.py` | One tick per host every 15 s: reads Docker events from a cursor and the container list, and turns them into signals. A dropped host is a failed tick, not a death. |
 | **URL checks and host probe** | `watcher/http_checks.py`, `watcher/host_probe.py` | Outside-in GET of each service's URLs every 30 s (status, latency, body text); disk, memory and load signals from each host reading. |
 | **Detector** | `watcher/detector.py` | Pure decision logic: a signal becomes an incident, a self-recovery or nothing (grace window, repeated deaths, debounce, host thresholds). |
@@ -102,6 +103,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **The demo host goes through a filtered socket proxy**, never a raw socket mount ([socket host](decisions/socket-host.md)).
 - **Services are keyed by Coolify labels, else the Compose project, else the container**, and Bleep's own containers (`bleep.self=true`) are left out.
 - **Host commands are exact argv templates run without a shell**; anything else is refused by code.
+- **An ssh host can be added on the dashboard, a socket host only in the hosts file**, which wins for the hosts it names; its key and host key go to the secret file, the host key is trusted only once a person confirms its fingerprint, and a new address, port or user clears both.
 - **The GitHub client lives in `hosts/`**, where the token and each service's `repo` are set, so the knowledge ingest can use it without importing `tools`.
 - **The GitHub tools read a service's linked repo without a token on public repos**, offered only where a `repo` is set; commit text is untrusted and every GitHub failure is a sentence the model can go on from.
 
@@ -166,7 +168,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **Database override > hosts file > defaults, in force at once**; the dashboard can protect a container (or a Coolify application by its name as written) but never unprotect one the hosts file protects.
 - **A settings body with a secret-shaped key or value anywhere is refused with 422**, naming where and never what.
 - **A settings or plugin change must send the version it was read at (`If-Match`)**; a stale one is a 409 and changes nothing, so no page silently reverts another's change.
-- **The settings page has no input for a secret yet**: each is shown as its variable or file and whether it is set; host connections are read-only, and the model choice and budgets are changed in the dev panel only.
+- **The settings page has no input for a secret yet**: each is shown as its variable or file and whether it is set; a hosts file host's connection is read-only, and the model choice and budgets are changed in the dev panel only.
 - **Secrets set from the dashboard go to `secrets.json` on the data volume, never the database**: mode 0600, replaced atomically, write-only over `/api/secrets`, the env wins; a backup of the volume holds them in clear. A plugin's new address clears its token and switches it off, and from the dashboard must be https to public addresses, checked at every connection; `BLEEP_ADMIN_PASSWORD` and `BLEEP_SECRET` stay env-only.
 
 **Dev panel** ([details](design/dev-panel.md))

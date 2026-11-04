@@ -202,8 +202,11 @@ class SecretStatus(BaseModel):
 
 
 class HostConnectionView(BaseModel):
-    """How Bleep reaches a host, as the hosts file says; the dashboard never changes it."""
+    """How Bleep reaches a host. `source` says who decides it: the hosts file (read-only on the
+    dashboard) or the dashboard, whose hosts carry their key and confirmed host key as set or
+    not (never their content) and the `version` a change sends in `If-Match`."""
 
+    source: Literal["file", "dashboard"] = "file"
     kind: Literal["ssh", "socket"]
     address: str | None = None
     user: str | None = None
@@ -212,6 +215,9 @@ class HostConnectionView(BaseModel):
     endpoint: str | None = None  # a socket host's unix:// or tcp:// endpoint
     key_file: SecretStatus | None = None
     known_hosts_file: str | None = None
+    ssh_key: SecretStatus | None = None  # a dashboard host's private key
+    host_key: SecretStatus | None = None  # a dashboard host's confirmed host key
+    version: str | None = None
 
 
 class ServiceSettingsView(BaseModel):

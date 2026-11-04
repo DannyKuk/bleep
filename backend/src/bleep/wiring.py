@@ -1,3 +1,4 @@
+import functools
 import os
 from collections import ChainMap
 from collections.abc import Callable, Mapping, Sequence
@@ -10,8 +11,10 @@ from bleep.config import Settings
 from bleep.graph.deps import GraphDeps, Notifier, SettingsSource, Tracer, model_factory
 from bleep.guard.log import GuardLog
 from bleep.hosts.config import GithubConfig, load_hosts_file
+from bleep.hosts.dashboard import HOST_KEYS, SSH_KEYS, DashboardHosts, dashboard_keys
 from bleep.hosts.github import GithubClient, github_token
-from bleep.hosts.registry import Registry
+from bleep.hosts.registry import Registry, connect_host
+from bleep.hosts.ssh import Scan
 from bleep.incidents.action_log import ActionLog
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
@@ -70,6 +73,7 @@ class AppParts:
     prompt_overrides: PromptOverrideStore
     url_checks: UrlCheckStore
     secrets: SecretStore
+    dashboard_hosts: DashboardHosts
 
 
 # Every plugin Bleep has; each is off until a person switches it on.
@@ -156,6 +160,7 @@ def build_parts(
     tracer: Tracer | None = None,
     plugins: Sequence[Plugin] | None = None,
     resolver: Resolver | None = None,
+    scan: Scan | None = None,
 ) -> AppParts:
     """Build the parts; the lifespan migrates the database, loads the stored settings and starts
     the registry.
@@ -163,7 +168,9 @@ def build_parts(
     `registry` replaces the one read from the hosts file (tests pass an empty or fake one),
     `embedder` the one the settings name (tests pass `FakeEmbedder`), `tracer` the one
     `TRACING` names, `plugins` the plugins Bleep has (`PLUGINS`), and `resolver` the name lookup
-    a dashboard-set plugin address is checked with (tests pass one; never the network). The
+    a dashboard-set plugin address or a dashboard host's address is checked with (tests pass
+    one; never the network), and `scan` the fetch of a host key offered for a host added on
+    the dashboard (tests pass a fake). The
     GitHub client reads with the token `github_token_source` picks (no hosts file is read when a
     registry is passed).
     The secret store reads `data_dir/secrets.json`; a change there reloads only the part that
@@ -174,13 +181,20 @@ def build_parts(
     secrets = SecretStore(
         settings.data_dir / SECRET_FILE,
         secret_names(plugins, TracingSettings().tracing),
+        families=(SSH_KEYS, HOST_KEYS),
         env=secret_env(settings),
     )
     github_config = None
     if registry is None:
         hosts_file = load_hosts_file(settings.hosts_file)
-        registry = Registry(hosts_file.hosts)
+        connect = functools.partial(connect_host, keys=dashboard_keys(secrets), resolve=resolver)
+        registry = Registry(hosts_file.hosts, connect)
         github_config = hosts_file.github
+    dashboard_hosts = DashboardHosts(
+        db, secrets, [h.config.id for h in registry.hosts()], resolve=resolver
+    )
+    if scan is not None:
+        dashboard_hosts.scan = scan
     github = GithubClient(github_token_source(github_config, secrets))
     bus, incidents = EventBus(db), IncidentRepo(db)
     approvals, guard_log = ApprovalStore(db, settings.secret), GuardLog(db)
@@ -196,7 +210,7 @@ def build_parts(
         from_dashboard=lambda name: secrets.state(name).source == "dashboard",
         resolver=resolver,
     )
-    store = SettingsStore(db, registry, plugin_registry, secrets=secrets)
+    store = SettingsStore(db, registry, plugin_registry, secrets=secrets, dashboard=dashboard_hosts)
     tracer = tracer or ReloadingTracer(secrets.get)
     subscribe_reloads(secrets, notify, store, tracer)
     return AppParts(
@@ -236,6 +250,7 @@ def build_parts(
         prompt_overrides=PromptOverrideStore(db, guard_log),
         url_checks=UrlCheckStore(db),
         secrets=secrets,
+        dashboard_hosts=dashboard_hosts,
     )
 
 

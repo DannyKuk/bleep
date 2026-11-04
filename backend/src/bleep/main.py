@@ -5,12 +5,24 @@ from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import APIRouter, Depends, FastAPI
 
-from bleep.api import auth, dev, hosts, incidents, memory, plugins, secrets, stream, telegram
+from bleep.api import (
+    auth,
+    dev,
+    host_settings,
+    hosts,
+    incidents,
+    memory,
+    plugins,
+    secrets,
+    stream,
+    telegram,
+)
 from bleep.api import settings as settings_api
 from bleep.api.body_limit import BodyLimitMiddleware
 from bleep.api.deps import require_session
 from bleep.config import Settings, check_settings
 from bleep.graph.build import build_graph, open_checkpointer
+from bleep.hosts.dashboard import HostChange
 from bleep.incidents.reminders import ReminderLoop
 from bleep.incidents.repository import utcnow
 from bleep.incidents.runner import IncidentRunner
@@ -55,6 +67,9 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
             if settings.dev_panel:  # with the panel off, every prompt is read from its file
                 await parts.prompt_overrides.load()
                 stack.callback(parts.prompt_overrides.close)
+            for config in await parts.dashboard_hosts.load():
+                parts.registry.add(config)
+                await parts.settings_store.host_changed(HostChange(config.id, "added", config))
             await parts.settings_store.load()  # before the registry starts, so overrides hold
             await _reembed(parts)
             await parts.registry.start()
@@ -101,6 +116,9 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 skip=runner.retrying,
             )
             app.state.runner, app.state.reminders = runner, reminders
+            # The manager first: a removed host stops being watched before its settings go.
+            parts.dashboard_hosts.subscribe(manager.host_changed)
+            parts.dashboard_hosts.subscribe(parts.settings_store.host_changed)
             stack.push_async_callback(manager.stop)
             await manager.start()
             app.state.reminder_task = asyncio.create_task(reminders.run(), name="reminders")
@@ -132,6 +150,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
     protected.include_router(incidents.router)
     protected.include_router(stream.router)
     protected.include_router(settings_api.router)
+    protected.include_router(host_settings.router)
     protected.include_router(plugins.router)
     protected.include_router(secrets.router)
     protected.include_router(telegram.router)

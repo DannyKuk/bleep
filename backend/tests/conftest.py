@@ -51,6 +51,7 @@ def no_name_lookups(monkeypatch):
         raise OSError("tests do not resolve names; pass a resolver")
 
     monkeypatch.setattr("bleep.plugins.urls.resolve", refuse)
+    monkeypatch.setattr("bleep.hosts.ssh.resolve_host", refuse)
 
 
 @pytest.fixture(autouse=True)

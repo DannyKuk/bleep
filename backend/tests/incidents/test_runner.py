@@ -855,3 +855,139 @@ async def test_a_restart_before_report_shows_verifying_only_after_a_passed_verif
     assert statuses[0] == shown
     if ok:
         assert "investigating" not in statuses and statuses[-1] == "resolved"
+
+
+async def test_end_cancels_a_run_in_flight_closes_the_incident_and_says_why(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier = NoticeNotifier()
+    env.deps.bus = BlockingBus(env.db, "diagnose")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+        await runner.start(incident)
+        await asyncio.wait_for(env.deps.bus.reached.wait(), 5)
+        await runner.end(incident.id, "Closed: the host was removed.")
+        await runner.join()
+
+        assert (await env.repo.get(incident.id)).status == "closed"
+        assert await runner.recover_on_boot() == []  # a closed incident is never run again
+    events = await env.bus.history(incident.id)
+    assert events[-1].kind == "notice" and events[-1].payload["text"].endswith("removed.")
+    assert notifier.notices == [(incident.id, "Closed: the host was removed.")]
+
+
+async def test_an_approve_landing_while_end_closes_the_incident_never_runs_execute(
+    tmp_path, acting
+):
+    """The review's interleaving (#194): a Telegram yes is resolved and resumed while `end`
+    awaits its write. It may win the approval row, but nothing is driven: Execute never runs."""
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        approvals = env.deps.approvals
+        runner = IncidentRunner(
+            build_graph(env.deps, saver), env.repo, env.bus, approvals=approvals
+        )
+        await runner.start(incident)
+        await runner.join()
+        approval_id = await runner.waiting_for(incident.id)
+        real = env.repo.close_unfinished
+        landed: list[bool] = []
+
+        async def close_unfinished(incident_id):
+            won = await approvals.resolve(incident_id, decide("approve"), approval_id)
+            landed.append(won is not None)
+            if won is not None:
+                await runner.resume(incident_id, won, approval_id)
+            await asyncio.wait_for(runner.join(), 5)  # let the resumed run go as far as it can
+            return await real(incident_id)
+
+        env.repo.close_unfinished = close_unfinished
+        await runner.end(incident.id, "Closed: the host was removed.")
+        await runner.join()
+
+    assert landed == [True]
+    assert (await env.repo.get(incident.id)).status == "closed"
+    assert "execute" not in await env.nodes(incident.id)
+
+
+async def test_a_resume_that_arrives_after_end_is_not_driven(tmp_path, acting):
+    """A decision won before `end`, whose resume is scheduled only after `end` returned (a
+    Telegram handler between its two awaits), and a runner that does not know of the `end` (a
+    restart): the closed status alone keeps Execute from running."""
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        approvals = env.deps.approvals
+        runner = IncidentRunner(
+            build_graph(env.deps, saver), env.repo, env.bus, approvals=approvals
+        )
+        await runner.start(incident)
+        await runner.join()
+        approval_id = await runner.waiting_for(incident.id)
+        won = await approvals.resolve(incident.id, decide("approve"), approval_id)
+        await runner.end(incident.id, "Closed: the host was removed.")
+        await runner.resume(incident.id, won, approval_id)
+        await runner.join()
+
+        fresh = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, approvals=approvals)
+        await fresh.resume(incident.id, won, approval_id)
+        await fresh.join()
+        assert await fresh.recover_on_boot() == []
+
+    assert (await env.repo.get(incident.id)).status == "closed"
+    assert "execute" not in await env.nodes(incident.id)
+
+
+async def test_execute_refuses_to_run_for_an_incident_closed_meanwhile(tmp_path, acting):
+    """Execute's own check, the last layer: the run was driven before the close."""
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        approvals = env.deps.approvals
+        runner = IncidentRunner(
+            build_graph(env.deps, saver), env.repo, env.bus, approvals=approvals
+        )
+        await runner.start(incident)
+        await runner.join()
+        approval_id = await runner.waiting_for(incident.id)
+        won = await approvals.resolve(incident.id, decide("approve"), approval_id)
+        real_get = env.repo.get
+
+        async def closed_once_driven(incident_id):
+            found = await real_get(incident_id)
+            if found is not None and found.status == "executing":
+                await env.repo.close_unfinished(incident_id)  # the host is removed right now
+            return found
+
+        env.repo.get = closed_once_driven
+        await runner.resume(incident.id, won, approval_id)
+        await runner.join()
+
+    assert (await env.repo.get(incident.id)).status == "closed"
+    assert "execute" not in await env.nodes(incident.id, "node_finished")
+    assert await env.deps.action_log.steps(incident.id) == []
+
+
+async def test_end_leaves_a_finished_incident_as_it_is_and_says_nothing(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier = NoticeNotifier()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+        await env.repo.set_status(incident.id, "resolved")
+        await runner.end(incident.id, "Closed: the host was removed.")
+    assert (await env.repo.get(incident.id)).status == "resolved"
+    assert notifier.notices == []
+
+
+async def test_end_says_when_a_step_may_already_have_run(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier = NoticeNotifier()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+        await env.repo.set_status(incident.id, "executing")
+        await runner.end(incident.id, "Closed: the host was removed.")
+    ((_, text),) = notifier.notices
+    assert "may already have run" in text

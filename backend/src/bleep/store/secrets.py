@@ -15,6 +15,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import stat
 import tempfile
 import unicodedata
@@ -30,8 +31,10 @@ log = logging.getLogger(__name__)
 FILE_MODE = 0o600
 MAX_VALUE_CHARS = 16_384
 FORMAT_VERSION = 1
+FAMILY_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 
-Kind = Literal["secret", "address", "id"]
+# `multiline`: a secret that keeps its line breaks, such as an SSH private key.
+Kind = Literal["secret", "address", "id", "multiline"]
 Source = Literal["env", "dashboard"]
 Listener = Callable[[frozenset[str]], Awaitable[None]]
 
@@ -81,6 +84,19 @@ class SecretName:
 
 
 @dataclass(frozen=True)
+class SecretFamily:
+    """Values named `prefix` + an id, one per thing the dashboard adds (an SSH host's key).
+    They are never read from the environment, never in `names()` or `environ()`, and are set and
+    cleared only together through `replace`."""
+
+    prefix: str
+    kind: Kind = "secret"
+
+    def owns(self, name: str) -> bool:
+        return name.startswith(self.prefix) and bool(FAMILY_ID.fullmatch(name[len(self.prefix) :]))
+
+
+@dataclass(frozen=True)
 class SecretState:
     """Whether a value is set and where it comes from; `env_owned` when the environment decides
     it, set or not. Never the value."""
@@ -95,10 +111,16 @@ class SecretStore:
     environment by default). The file is read once, here; `set` and `clear` write it."""
 
     def __init__(
-        self, path: Path, names: Iterable[SecretName], *, env: Mapping[str, str] | None = None
+        self,
+        path: Path,
+        names: Iterable[SecretName],
+        *,
+        families: Iterable[SecretFamily] = (),
+        env: Mapping[str, str] | None = None,
     ) -> None:
         self.path = path
         self._names = {entry.name: entry for entry in names}
+        self._families = tuple(families)
         self._env = env if env is not None else os.environ
         # An address and the token it carries form one group; every other name is its own.
         self._group: dict[str, frozenset[str]] = {}
@@ -121,9 +143,16 @@ class SecretStore:
         return list(self._names.values())
 
     def entry(self, name: str) -> SecretName:
-        if name not in self._names:
+        if name in self._names:
+            return self._names[name]
+        family = self._family(name)
+        if family is None:
             raise UnknownSecret(name)
-        return self._names[name]
+        return SecretName(name, kind=family.kind)
+
+    def stored(self, family: SecretFamily) -> list[str]:
+        """The names of `family` the file holds."""
+        return sorted(name for name in self._values if family.owns(name))
 
     def get(self, name: str) -> SecretStr | None:
         """The value in force: the environment's when it decides `name`, else the file's."""
@@ -166,7 +195,9 @@ class SecretStore:
         token it carries, and a token is stored only with `address_version`, the version of the
         address it was typed for, so a token is never sent to an address it was not entered for."""
         entry = self.entry(name)
-        value = _checked(name, value)
+        if self._family(name) is not None:
+            raise UnknownSecret(name)  # set only with the rest of its family, through `replace`
+        value = _checked(name, value, entry.kind)
         async with self._lock:
             self._refuse_env(name)
             for address, token in self._addresses():
@@ -193,9 +224,30 @@ class SecretStore:
                 values.pop(entry.carries, None)
             return await self._commit(values)
 
+    async def replace(self, changes: Mapping[str, str | None]) -> set[str]:
+        """Set (a value) or clear (None) several names of a family in one write, so a key and the
+        host key that goes with it are never stored apart; returns the names that changed. Every
+        value is checked before anything is written."""
+        checked: dict[str, SecretStr | None] = {}
+        for name, value in changes.items():
+            family = self._family(name)
+            if family is None:
+                raise UnknownSecret(name)
+            checked[name] = None if value is None else SecretStr(_checked(name, value, family.kind))
+        async with self._lock:
+            values = dict(self._values)
+            for name, value in checked.items():
+                if value is None:
+                    values.pop(name, None)
+                else:
+                    values[name] = value
+            return await self._commit(values)
+
     async def clear(self, name: str) -> set[str]:
         """Remove `name` (and the token an address carries); returns the names that changed."""
         entry = self.entry(name)
+        if self._family(name) is not None:
+            raise UnknownSecret(name)
         async with self._lock:
             self._refuse_env(name)
             if entry.required is not None and name in self._values:
@@ -206,7 +258,12 @@ class SecretStore:
                 values.pop(entry.carries, None)
             return await self._commit(values)
 
+    def _family(self, name: str) -> SecretFamily | None:
+        return next((family for family in self._families if family.owns(name)), None)
+
     def _env_owned(self, name: str) -> bool:
+        if self._family(name) is not None:
+            return False
         return any(self._env.get(n) for n in self._group.get(name, frozenset({name})))
 
     def _refuse_env(self, name: str) -> None:
@@ -305,9 +362,10 @@ class SecretStore:
         values = raw.get("values") if isinstance(raw, dict) else None
         if not isinstance(values, dict) or not all(isinstance(v, str) for v in values.values()):
             raise SecretFileError(f"the secret file {self.path} is not in Bleep's format")
-        for name in sorted(set(values) - set(self._names)):
+        known = {name for name in values if name in self._names or self._family(name) is not None}
+        for name in sorted(set(values) - known):
             log.warning("secrets: %s in the secret file is not one Bleep knows; left out", name)
-        return {name: SecretStr(v) for name, v in values.items() if name in self._names and v}
+        return {name: SecretStr(v) for name, v in values.items() if name in known and v}
 
     def _sweep(self) -> None:
         """Delete temporary files a write left when the process was killed before its rename:
@@ -330,15 +388,24 @@ def _sync_directory(directory: Path) -> None:
             os.close(fd)
 
 
-def _checked(name: str, value: str) -> str:
+def _checked(name: str, value: str, kind: Kind = "secret") -> str:
+    """`value` trimmed, or `SecretRefused`. A `multiline` value keeps its line feeds (a pasted
+    CRLF becomes LF) and nothing else that is a control; every other kind keeps none."""
+    breaks = {"\n"} if kind == "multiline" else set()
+    if kind == "multiline":
+        value = value.replace("\r\n", "\n")
     value = value.strip()
     if not value:
         raise SecretRefused(f"{name} is empty; clear it instead")
     if len(value) > MAX_VALUE_CHARS:
         raise SecretRefused(f"{name} is over {MAX_VALUE_CHARS:,} characters")
     # Cc: C0, DEL and C1 controls; Cf: invisible format characters; Zl and Zp: U+2028, U+2029.
-    if any(unicodedata.category(char) in {"Cc", "Cf", "Zl", "Zp"} for char in value):
-        raise SecretRefused(f"{name} holds a line break, a control or an invisible character")
+    if any(
+        unicodedata.category(char) in {"Cc", "Cf", "Zl", "Zp"} and char not in breaks
+        for char in value
+    ):
+        what = "a control" if breaks else "a line break, a control"
+        raise SecretRefused(f"{name} holds {what} or an invisible character")
     return value
 
 

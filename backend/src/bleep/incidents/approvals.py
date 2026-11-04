@@ -84,17 +84,22 @@ class ApprovalStore:
 
         With `approval_id` it wins only that approval, so a decision made for a plan that has
         since been replaced cannot decide the new one. A refused plan (#113) can be instructed or
-        rejected but never approved: nothing can run from it."""
+        rejected but never approved: nothing can run from it. An incident that is finished (closed
+        because its host was removed, say) cannot be decided from any channel."""
+        finished = ", ".join("?" for _ in TERMINAL_STATUSES)
         sql = (
             "UPDATE approvals SET status = ?, decision = ?"
             " WHERE incident_id = ? AND status = 'pending'"
             " AND NOT (? = 'approve' AND json_extract(proposal, '$.refused') IS 1)"
+            f" AND NOT EXISTS (SELECT 1 FROM incidents i WHERE i.id = approvals.incident_id"
+            f" AND i.status IN ({finished}))"
         )
         args: tuple = (
             _STATUS[decision.kind],
             decision.model_dump_json(),
             incident_id,
             decision.kind,
+            *TERMINAL_STATUSES,
         )
         if approval_id is not None:
             sql += " AND id = ?"

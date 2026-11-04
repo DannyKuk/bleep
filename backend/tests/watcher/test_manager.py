@@ -2,9 +2,11 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import httpx
+import pytest
 from langchain_core.messages import AIMessage
 
-from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
+from bleep.hosts.config import HostConfig, ServiceOverrides, UrlCheckConfig
+from bleep.hosts.dashboard import HostChange
 from bleep.hosts.registry import Registry
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
@@ -20,6 +22,7 @@ from bleep.watcher.manager import (
     CAP_SPENT_EXPLANATION,
     NO_EXPLANATION,
     RECOVERY_USAGE,
+    REMOVED_NOTICE,
     WatcherManager,
 )
 from fakes import FakeChatModel, FakeEngine, socket_host
@@ -44,6 +47,7 @@ class FakeRunner:
     def __init__(self) -> None:
         self.started: list[Incident] = []
         self.recovered = 0
+        self.ended: list[tuple[str, str]] = []
 
     async def start(self, incident: Incident) -> None:
         self.started.append(incident)
@@ -51,6 +55,9 @@ class FakeRunner:
     async def recover_on_boot(self) -> list[str]:
         self.recovered += 1
         return []
+
+    async def end(self, incident_id: str, text: str) -> None:
+        self.ended.append((incident_id, text))
 
     async def close(self) -> None:
         return None
@@ -370,10 +377,10 @@ async def test_start_recovers_unfinished_runs_then_watches_each_host_and_stop_en
     r = await Rig(tmp_path).boot()
     await r.manager.start()
     assert r.runner.recovered == 1
-    assert sorted(t.get_name() for t in r.manager._tasks) == ["probe-h", "urls-h", "watcher-h"]
+    tasks = r.manager._tasks["h"]
+    assert sorted(t.get_name() for t in tasks) == ["probe-h", "urls-h", "watcher-h"]
     await asyncio.sleep(0.05)  # the first ticks run
     assert r.registry.hosts()[0].reachable
-    tasks = list(r.manager._tasks)
     await r.manager.stop()
     assert all(t.done() for t in tasks)
 
@@ -449,3 +456,186 @@ async def test_a_death_on_an_unreachable_host_is_not_judged_by_another_hosts_tic
     [incident] = await repo.list()
     assert incident.subject.service_id == "a/compose:shop"
     assert [i.id for i in runner.started] == [incident.id]
+
+
+# -- hosts added, changed and removed on the dashboard (#194) -----------------------------------
+
+
+def dashboard_host(address: str = "box.lan") -> HostConfig:
+    return HostConfig(
+        id="c", name="C", kind="ssh", source="dashboard", address=address, user="deploy"
+    )
+
+
+class TwoMachines:
+    """The connector a dashboard host gets: each address is another machine."""
+
+    def __init__(self, rig: Rig) -> None:
+        self.rig = rig
+        self.machines = {
+            "box.lan": FakeEngine("c", [box("blog-web-1", "blog")], clock=rig.clock),
+            "other.lan": FakeEngine("c", [box("wiki-web-1", "wiki")], clock=rig.clock),
+        }
+        self.reached: list[str] = []
+
+    async def __call__(self, host):
+        if host.id == "h":
+            return None, self.rig.engine
+        self.reached.append(host.address)
+        return None, self.machines[host.address]
+
+
+async def dashboard_rig(tmp_path) -> tuple[Rig, TwoMachines]:
+    r = Rig(tmp_path)
+    machines = TwoMachines(r)
+    r.registry._connector = machines
+    await r.boot()
+    await r.manager.start()
+    return r, machines
+
+
+async def test_an_added_host_is_watched_at_once(tmp_path):
+    r, machines = await dashboard_rig(tmp_path)
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))
+
+    assert sorted(t.get_name() for t in r.manager._tasks["c"]) == [
+        "probe-c",
+        "urls-c",
+        "watcher-c",
+    ]
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if r.registry.services("c"):
+            break
+    assert [s.name for s in r.registry.services("c")] == ["blog"]
+    await r.manager.stop()
+
+
+async def test_a_new_connection_starts_the_watch_again_without_reading_old_containers_as_dead(
+    tmp_path,
+):
+    r, machines = await dashboard_rig(tmp_path)
+    await r.manager.stop()  # ticks by hand from here
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))
+    await r.manager.hosts["c"].watcher.tick()
+    old_watcher = r.manager.hosts["c"].watcher
+
+    await r.manager.host_changed(HostChange("c", "connection", dashboard_host("other.lan")))
+    assert r.manager.hosts["c"].watcher is not old_watcher
+    r.clock.advance(15)
+    assert await r.manager.hosts["c"].watcher.tick()
+    assert machines.reached == ["box.lan", "other.lan"]
+    assert [s.name for s in r.registry.services("c")] == ["wiki"]
+    assert await r.incidents() == []  # blog-web-1 is not on this machine, and not dead
+
+
+async def test_a_removed_host_stops_being_watched_and_its_open_incidents_are_ended(tmp_path):
+    r, machines = await dashboard_rig(tmp_path)
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))
+    tasks = list(r.manager._tasks["c"])
+    subject = Subject(kind="service", host_id="c", service_id="c/compose:blog")
+    incident, _ = await r.repo.open_or_attach(
+        subject, [Signal(subject=subject, kind="unhealthy", at=T0, container="blog-web-1")]
+    )
+    other, _ = await r.repo.open_or_attach(
+        HOST, [Signal(subject=HOST, kind="disk", at=T0, detail={"percent": 95})]
+    )
+
+    await r.manager.host_changed(HostChange("c", "removed", None))
+    assert all(t.done() for t in tasks)
+    assert "c" not in r.manager.hosts and "c" not in r.manager._tasks
+    assert [h.config.id for h in r.registry.hosts()] == ["h"]
+    assert machines.machines["box.lan"].closed
+    assert r.runner.ended == [(incident.id, REMOVED_NOTICE)]  # host h's incident stays
+    assert other.id not in [i for i, _ in r.runner.ended]
+    await r.manager.stop()
+
+
+async def test_a_new_name_keeps_the_watch_running(tmp_path):
+    r, machines = await dashboard_rig(tmp_path)
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))
+    tasks = list(r.manager._tasks["c"])
+    renamed = dashboard_host().model_copy(update={"name": "Box"})
+    await r.manager.host_changed(HostChange("c", "renamed", renamed))
+    assert r.manager._tasks["c"] == tasks and not any(t.done() for t in tasks)
+    assert [h.config.name for h in r.registry.hosts() if h.config.id == "c"] == ["Box"]
+    await r.manager.stop()
+
+
+async def test_a_death_pending_on_the_old_machine_opens_nothing_on_the_new_one(tmp_path):
+    """The review's probe (#194): blog-web-1 dies on box.lan, then the address moves to
+    other.lan, where there is no blog. Past the grace window nothing may open."""
+    r, machines = await dashboard_rig(tmp_path)
+    await r.manager.stop()  # ticks by hand from here
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))
+    await r.manager.hosts["c"].watcher.tick()
+    old = machines.machines["box.lan"]
+    old.history.append(die("blog-web-1", r.clock.now + timedelta(seconds=2)))
+    old.container_list[0] = box("blog-web-1", "blog", state="exited", restart_policy="always")
+    r.clock.advance(15)
+    await r.manager.hosts["c"].watcher.tick()
+    assert ("c", "blog-web-1") in r.detector._pending
+
+    moved = dashboard_host("other.lan")
+    await r.manager.host_changed(HostChange("c", "connection", moved, moved=True))
+    assert not any(key[0] == "c" for key in r.detector._pending)
+    for _ in range(8):  # two minutes, well past the 60 s grace
+        r.clock.advance(15)
+        await r.manager.hosts["c"].watcher.tick()
+    assert await r.incidents() == []
+
+
+async def test_a_moved_host_forgets_its_held_url_failures_and_its_incidents_hear_of_it(tmp_path):
+    r, machines = await dashboard_rig(tmp_path)
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))
+    subject = Subject(kind="service", host_id="c", service_id="c/compose:blog")
+    incident, _ = await r.repo.open_or_attach(
+        subject, [Signal(subject=subject, kind="unhealthy", at=T0, container="blog-web-1")]
+    )
+    r.manager._held["c"] = {"c/compose:blog": []}
+    r.manager._announced["c"] = (incident.id, {"https://blog.example/"})
+
+    moved = dashboard_host("other.lan")
+    await r.manager.host_changed(HostChange("c", "connection", moved, moved=True))
+    assert "c" not in r.manager._held and "c" not in r.manager._announced
+    notices = [e for e in await r.bus.history(incident.id) if e.kind == "notice"]
+    assert [e.payload["text"] for e in notices] == [manager_module.MOVED_NOTICE]
+    assert (await r.repo.get(incident.id)).status == "open"  # moved, not removed
+    await r.manager.stop()
+
+
+async def test_a_new_key_for_the_same_machine_keeps_what_is_pending(tmp_path):
+    r, machines = await dashboard_rig(tmp_path)
+    await r.manager.stop()
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))
+    r.detector.feed(
+        Signal(
+            subject=Subject(kind="service", host_id="c", service_id="c/compose:blog"),
+            kind="container_died",
+            at=r.clock.now,
+            container="blog-web-1",
+            detail={"exit_code": 1, "restart_policy": "always"},
+        )
+    )
+    await r.manager.host_changed(HostChange("c", "connection", dashboard_host(), moved=False))
+    assert ("c", "blog-web-1") in r.detector._pending
+
+
+async def test_a_removal_that_fails_halfway_still_drops_the_host(tmp_path):
+    r, machines = await dashboard_rig(tmp_path)
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))
+    subject = Subject(kind="service", host_id="c", service_id="c/compose:blog")
+    await r.repo.open_or_attach(
+        subject, [Signal(subject=subject, kind="unhealthy", at=T0, container="blog-web-1")]
+    )
+
+    async def broken(incident_id, text):
+        raise RuntimeError("the database is locked")
+
+    r.runner.end = broken
+    with pytest.raises(RuntimeError):
+        await r.manager.host_changed(HostChange("c", "removed", None))
+    assert [h.config.id for h in r.registry.hosts()] == ["h"]
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))  # can come back
+    assert "c" in [h.config.id for h in r.registry.hosts()]
+    await r.manager.stop()
