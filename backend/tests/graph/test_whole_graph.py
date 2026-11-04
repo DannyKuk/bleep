@@ -107,3 +107,96 @@ async def test_an_unsure_killed_container_reaches_the_approval_with_a_start(tmp_
         state = (await runner.graph.aget_state(runner.config(incident.id))).values
         assert state["diagnosis"].unsure
         assert [s.action for s in state["proposal"].steps] == ["docker.start"]
+
+
+def record_statuses(env) -> list[str]:
+    """Every status the incident is given, in order, repeats collapsed."""
+    seen: list[str] = []
+    set_status = env.repo.set_status
+
+    async def recording(incident_id: str, status: str) -> None:
+        if not seen or seen[-1] != status:
+            seen.append(status)
+        await set_status(incident_id, status)
+
+    env.repo.set_status = recording  # type: ignore[method-assign]
+    return seen
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        (
+            "approve",
+            ["investigating", "awaiting_approval", "executing", "verifying", "resolved"],
+        ),
+        (
+            "instruct",
+            ["investigating", "awaiting_approval", "investigating", "awaiting_approval"],
+        ),
+        ("reject", ["investigating", "awaiting_approval", "investigating", "closed"]),
+    ],
+)
+async def test_the_status_follows_what_the_run_is_doing(tmp_path, kind, expected):
+    env = await graph_env(tmp_path)
+    script = [
+        AIMessage("nothing more to read"),
+        AIMessage(json.dumps(DIAGNOSIS)),
+        plan("shop-web-1"),
+    ]
+    if kind == "instruct":
+        script.append(plan("shop-db-1"))
+    env.models.model = FakeChatModel(script=script, structured_output_unsupported=True)
+    store = ApprovalStore(env.db, "test-secret")
+    env.deps.approvals = store
+    statuses = record_statuses(env)
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, store)
+        subject = Subject(kind="service", host_id="a", service_id=env.service_id("shop"))
+        incident = await env.open(subject, container="shop-web-1")
+        await runner.start(incident)
+        await runner.join()
+        record = await store.current(incident.id)
+        text = "The db instead: restart shop-db-1." if kind == "instruct" else None
+        decision = Decision(kind=kind, text=text, via="dashboard", at=AT)
+        await store.resolve(incident.id, decision)
+        await runner.resume(incident.id, decision, record.id)
+        await runner.join()
+
+    assert statuses == expected
+
+
+async def test_the_status_is_set_before_the_node_started_event_reaches_the_dashboard(tmp_path):
+    env = await graph_env(tmp_path)
+    env.models.model = FakeChatModel(
+        script=[
+            AIMessage("nothing more to read"),
+            AIMessage(json.dumps(DIAGNOSIS)),
+            plan("shop-web-1"),
+        ],
+        structured_output_unsupported=True,
+    )
+    store = ApprovalStore(env.db, "test-secret")
+    env.deps.approvals = store
+    seen: dict[str, str] = {}
+    publish = env.bus.publish
+
+    async def spying(incident_id, kind, payload=None):
+        if kind == "node_started":
+            seen[payload["node"]] = (await env.repo.get(incident_id)).status
+        return await publish(incident_id, kind, payload)
+
+    env.bus.publish = spying  # type: ignore[method-assign]
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, store)
+        subject = Subject(kind="service", host_id="a", service_id=env.service_id("shop"))
+        incident = await env.open(subject, container="shop-web-1")
+        await runner.start(incident)
+        await runner.join()
+        record = await store.current(incident.id)
+        decision = Decision(kind="approve", via="dashboard", at=AT)
+        await store.resolve(incident.id, decision)
+        await runner.resume(incident.id, decision, record.id)
+        await runner.join()
+
+    assert seen["execute"] == "executing" and seen["verify"] == "verifying"

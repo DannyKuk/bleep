@@ -16,6 +16,14 @@ How signals become incidents and how an incident's progress reaches the dashboar
 - **Clocks are injected, timestamps are UTC.** Stored as ISO strings. Reason: tests control time and ordering without sleeping (#11).
 - **The app shares one `ApprovalStore` and one `GuardLog`.** `build_parts` passes them to the graph, the runner, the API and the reminder loop; the lifespan starts the reminders with the watcher, stops them first, and flushes the guard log after the runs and the watcher stop. Reason: a decision recorded by the API or Telegram must be the one the run and the boot recovery read, and a guard record made while shutting down must not be lost (#21).
 
+## Statuses
+
+An incident's status says what Bleep is doing, in this order for a fix that is approved: `open` (just opened) → `investigating` (Gather, Investigate, Diagnose, Propose) → `awaiting_approval` (stopped at the interrupt) → `executing` (a yes was delivered; Execute runs) → `verifying` (Verify runs) → `resolved` or `closed`. `failed` is the end of a run that raised an error.
+
+- **The graph sets the status for the node it is about to run, before it publishes `node_started`.** `graph/build.py` maps gather, investigate, diagnose and propose to `investigating`, execute to `executing` and verify to `verifying`; approval and report set nothing. Reason: the dashboard reads the incident again on every event, so the status must already be written when `node_started` reaches it; the runner could only react to the event afterwards, and the graph already holds the incident repository in its deps, so this adds no new dependency (#101).
+- **The runner sets the status when it starts driving a run.** A yes sets `executing` at once; a new run, a restart from a checkpoint, a no and an instruction set `investigating`, and the next node corrects it. Reason: an approval must never flash back to `investigating`, and a loop back from Execute, Approval or Verify to Propose or Investigate shows as `investigating` again because those nodes set it (#101).
+- **`awaiting_approval`, `resolved`, `closed` and `failed` are the runner's.** Reason: only the runner knows the run stopped at the interrupt or finished after its last checkpoint (#16, #28).
+
 ## Action log
 
 `incidents/action_log.py` (`ActionLog`), table `action_log` (migrations 0009 and 0012). Execute's ledger, so a crash or restart mid-Execute never runs a step twice (Review Focus 1).
