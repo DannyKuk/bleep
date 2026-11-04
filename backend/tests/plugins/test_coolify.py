@@ -371,7 +371,7 @@ async def test_health_names_the_version_and_never_the_token():
     plugins = registry(Coolify())
     plugins.set("coolify", {}, True)
 
-    health = (await plugins.view("coolify")).health
+    health = (await plugins.view("coolify", version="v1")).health
 
     assert health is not None and health.ok
     assert health.detail == "Coolify 4.6.0 answers with the token"
@@ -383,7 +383,7 @@ async def test_a_refused_token_is_unhealthy_in_bleeps_words():
     plugins = registry(coolify)
     plugins.set("coolify", {}, True)
 
-    health = (await plugins.view("coolify")).health
+    health = (await plugins.view("coolify", version="v1")).health
 
     assert health is not None and not health.ok
     assert health.detail == "Coolify refused the token (401); check COOLIFY_TOKEN"
@@ -396,6 +396,6 @@ async def test_a_version_answer_that_is_not_a_version_is_not_repeated():
     plugins = registry(coolify)
     plugins.set("coolify", {}, True)
 
-    health = (await plugins.view("coolify")).health
+    health = (await plugins.view("coolify", version="v1")).health
 
     assert health is not None and health.detail == "Coolify answers with the token"

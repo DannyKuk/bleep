@@ -26,6 +26,7 @@ class PluginView(BaseModel):
     settings_schema: dict[str, Any]  # JSON schema of the plugin's settings, for the form
     secrets: list[PluginSecret]
     health: PluginHealth | None = None  # only for an enabled plugin
+    version: str  # of the plugin's stored row; `PUT /api/plugins/{name}` sends it in `If-Match`
 
 
 class PluginUpdate(BaseModel):
