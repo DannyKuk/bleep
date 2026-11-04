@@ -291,7 +291,11 @@ async def explain_recovery(
     )
     if redactions and guard_log is not None:
         guard_log.record(incident_id, "redacted", f"{redactions} secret(s) redacted from logs")
-    prompt = prompts.load("watcher/recovery_line", logs=logs)
+    prompt = prompts.load(
+        "watcher/recovery_line",
+        logs=logs,
+        untrusted_rule=prompts.load("untrusted/recovery_line").strip(),
+    )
     reply = await model.ainvoke([HumanMessage(prompt)], config)
     sentence = SENTENCE_END.split(" ".join(reply.text.split()), maxsplit=1)[0]
     if len(sentence) > RECOVERY_LINE_CHARS:

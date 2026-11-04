@@ -45,6 +45,20 @@ describe("GuardLogPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("never links a record that belongs to no incident", async () => {
+    stubBackend(
+      json([
+        entry({ id: 3, incident_id: "dev-panel", kind: "prompt_override", detail: "saved" }),
+        entry({ id: 2, incident_id: "telegram", kind: "foreign_chat", detail: "chat 42" }),
+      ]),
+    );
+    render(<GuardLogPanel />);
+
+    const list = await screen.findByRole("list", { name: "Guard log" });
+    expect(within(list).queryAllByRole("link")).toHaveLength(0);
+    expect(within(list).getByRole("button", { name: "dev-panel" })).toBeInTheDocument();
+  });
+
   it("filters by an entry's incident when its id is clicked, and clears it again", async () => {
     const fetchMock = stubBackend(json([entry()]), json([entry()]), json([entry()]));
     render(<GuardLogPanel />);

@@ -80,4 +80,5 @@ def tmp_prompts(tmp_path, monkeypatch):
     (root / "demo").mkdir(parents=True)
     (root / "demo" / "hello.md").write_text("Hi {name} {{x}}", encoding="utf-8")
     monkeypatch.setattr(prompts, "PROMPTS_DIR", root)
+    monkeypatch.setattr(prompts, "OVERRIDABLE", frozenset({"demo/hello"}))
     return root

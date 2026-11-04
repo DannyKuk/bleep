@@ -13,10 +13,31 @@ from pathlib import Path
 
 PROMPTS_DIR = Path(__file__).parent
 NAME = re.compile(r"^[a-z0-9_]+(?:/[a-z0-9_]+)*$")
-# The eval prompts are loaded by the eval runner, a process of its own that never reads overrides.
-# The Telegram texts are what the approver reads before saying yes, and `graph/system` holds the
+# The prompts the dev panel may override, by name: a new prompt file is not one until it is named
+# here, and `tests/test_prompts.py` fails until every file is named here or below.
+OVERRIDABLE = frozenset(
+    {
+        "graph/diagnose",
+        "graph/diagnose_missing",
+        "graph/investigate",
+        "graph/investigate_again",
+        "graph/propose",
+        "graph/propose_retry",
+        "graph/propose_unsure",
+        "graph/report",
+        "graph/report_facts",
+        "graph/verify_failed",
+        "llm/json_fallback",
+        "llm/json_retry",
+        "watcher/recovery_line",
+    }
+)
+# Never overridable. The eval prompts are loaded by the eval runner, a process of its own that never
+# reads overrides. The Telegram texts are what the approver reads before saying yes. `untrusted/`
+# holds the untrusted-data rule of each prompt that has one, which the code fills into that
+# prompt's `{untrusted_rule}`, so an override changes only the rest. `graph/system` holds the
 # untrusted-data rule with no placeholder to check an override against.
-NOT_OVERRIDABLE_AREAS = ("evals/", "notify/")
+NOT_OVERRIDABLE_AREAS = ("evals/", "notify/", "untrusted/")
 NOT_OVERRIDABLE = frozenset({"graph/system"})
 # C0 and C1 controls but tab and line breaks, and the bidi overrides and isolates, which reorder
 # what a reader of the panel sees without changing what the model reads.
@@ -52,11 +73,7 @@ def all_prompt_files() -> list[Path]:
 def overridable_names() -> list[str]:
     """Every prompt the dev panel may override, as `area/name`."""
     names = (p.relative_to(PROMPTS_DIR).with_suffix("").as_posix() for p in all_prompt_files())
-    return [
-        name
-        for name in names
-        if not name.startswith(NOT_OVERRIDABLE_AREAS) and name not in NOT_OVERRIDABLE
-    ]
+    return [name for name in names if name in OVERRIDABLE]
 
 
 def file_text(name: str) -> str:

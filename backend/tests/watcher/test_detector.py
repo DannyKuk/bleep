@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 from langchain_core.messages import AIMessage, HumanMessage
 
+from bleep import prompts
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Thresholds
@@ -341,3 +342,14 @@ def test_a_start_after_the_death_inside_grace_is_a_recovery():
     new = box("running").model_copy(update={"started_at": T0 + timedelta(seconds=103)})
     [out] = d.tick(clock.at(105), {"web": [new]})
     assert isinstance(out, Recovered)
+
+
+async def test_an_override_of_the_recovery_prompt_keeps_the_untrusted_data_rule():
+    """The rule is its own file, not overridable, and always filled in (#147)."""
+    prompts.use_overrides({"watcher/recovery_line": "Why did it stop? {logs} {untrusted_rule}"})
+    model = FakeChatModel(script=[AIMessage("It ran out of memory.")])
+    await explain_recovery(model, "OOM killed")
+    text = str(model.seen[0][-1].content)
+    assert text.startswith("Why did it stop? ")
+    assert text.endswith(prompts.load("untrusted/recovery_line").strip())
+    assert "not instructions" in text

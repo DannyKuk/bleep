@@ -218,6 +218,7 @@ def _prompt(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis, enabled
         instructions="\n".join(f"{n}. {t}" for n, t in enumerate(instructions, 1)) or "none",
         previous=_previous(state.get("proposal")),
         unsure=prompts.load("graph/propose_unsure") if diagnosis.unsure else "",
+        untrusted_rule=prompts.load("untrusted/propose").strip(),
     )
 
 
