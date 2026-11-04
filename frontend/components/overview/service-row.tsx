@@ -1,11 +1,6 @@
-import { ArrowUpRight } from "lucide-react";
-import Link from "next/link";
-
 import { HealthBadge } from "@/components/overview/health-badge";
-import { Badge } from "@/components/ui/badge";
-import type { ContainerView, Health, ServiceView, UrlStatus } from "@/lib/api-types";
+import type { ContainerView, Health, UrlStatus } from "@/lib/api-types";
 import { formatTime } from "@/lib/format";
-import { serviceHref } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 const CONTAINER_TONE: Record<ContainerView["health"], string> = {
@@ -66,45 +61,5 @@ export function UrlItem({ url }: { url: UrlStatus }) {
         </span>
       )}
     </li>
-  );
-}
-
-export function ServiceRow({ service }: { service: ServiceView }) {
-  return (
-    <div className="flex flex-col gap-2 py-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Link
-          href={serviceHref(service.id)}
-          className="font-medium underline-offset-2 hover:underline"
-        >
-          {service.name}
-        </Link>
-        <Badge>{service.source}</Badge>
-        <HealthBadge health={service.health} />
-        {service.open_incident_id && (
-          <Link
-            href={`/incidents/${service.open_incident_id}`}
-            className="inline-flex items-center gap-0.5 text-xs font-medium text-health-down underline-offset-2 hover:underline"
-          >
-            Open incident
-            <ArrowUpRight aria-hidden className="size-3.5" />
-          </Link>
-        )}
-      </div>
-      {service.containers.length > 0 && (
-        <ul className="flex flex-wrap gap-1.5" aria-label="Containers">
-          {service.containers.map((container) => (
-            <ContainerChip key={container.id} container={container} />
-          ))}
-        </ul>
-      )}
-      {service.urls.length > 0 && (
-        <ul className="flex flex-col gap-1" aria-label="URLs">
-          {service.urls.map((url) => (
-            <UrlItem key={url.url} url={url} />
-          ))}
-        </ul>
-      )}
-    </div>
   );
 }
