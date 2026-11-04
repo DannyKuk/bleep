@@ -49,6 +49,7 @@ from bleep.watcher.detector import (
     Recovered,
     explain_recovery,
 )
+from bleep.watcher.health import container_health, service_health, url_status
 from bleep.watcher.host_probe import HostProbe
 from bleep.watcher.http_checks import UrlCheckStore, UrlWatcher
 from bleep.watcher.poller import HostWatcher
@@ -125,6 +126,7 @@ class WatcherManager:
         self._held: dict[str, dict[str, list[Signal]]] = {}  # host -> service id -> URL failures
         self._announced: dict[str, tuple[str, set[str]]] = {}  # host -> (incident, URLs named)
         self._background: set[asyncio.Task[None]] = set()
+        self._store = store
         self._intervals = (watch_interval_s, probe_interval_s, url_interval_s, store)
         self._tasks: dict[str, list[asyncio.Task[None]]] = {}
         self._started = False
@@ -266,15 +268,83 @@ class WatcherManager:
 
     async def quiet_changed(self, change: QuietChange) -> None:
         """A service or host was snoozed or left alone: close its unfinished incidents with a
-        notice. Starting again on a quiet that is already in force finds nothing left to close."""
-        if change.kind != "started":
-            return
+        notice. Starting again on a quiet that is already in force finds nothing left to close.
+        When a quiet ends, the subject is judged as it is now."""
         state = change.state
+        if change.kind == "ended":
+            subject = self._subject_of(state)
+            if subject is not None:
+                await self.recheck(subject)
+            return
         self._drop_held(state)
         for incident in await self._incidents_of(state):
             await self.runner.end(
                 incident.id, quiet_notice(self._quiet_name(state), state), spare=RUNNING_STATUSES
             )
+
+    def _subject_of(self, state: QuietState) -> Subject | None:
+        if state.scope == "host":
+            return Subject(kind="host", host_id=state.target_id)
+        service = self.registry.service(state.target_id)
+        if service is None:
+            return None
+        return Subject(kind="service", host_id=service.host_id, service_id=service.id)
+
+    async def recheck(self, subject: Subject) -> None:
+        """Judge a subject whose quiet just ended by what is true now, not by what happened while
+        it was quiet: only a `down` service or an unreachable host opens an incident. Whatever is
+        still quiet (a service quiet on its own under a host whose quiet ended) is left alone."""
+        if await self._quiet_now(subject):
+            return
+        if subject.kind == "host":
+            await self._recheck_host(subject)
+            return
+        signals = await self._down_signals(subject)
+        if signals:
+            await self._open(subject, signals)
+
+    async def _recheck_host(self, subject: Subject) -> None:
+        state = next((h for h in self.registry.hosts() if h.config.id == subject.host_id), None)
+        if state is None:
+            return
+        if not state.reachable:
+            signal = Signal(
+                kind="host_unreachable", subject=subject, at=self._clock(), detail={"ok": False}
+            )
+            await self._open(subject, [signal])
+            return  # failing URLs are symptoms of the host: they are not judged on their own
+        for service in self.registry.services(subject.host_id):
+            await self.recheck(
+                Subject(kind="service", host_id=service.host_id, service_id=service.id)
+            )
+
+    async def _down_signals(self, subject: Subject) -> list[Signal]:
+        service = self.registry.service(subject.service_id or "")
+        if service is None:
+            return []
+        now = self._clock()
+        latest = await self._store.latest(service.host_id) if self._store else []
+        stored = {(sid, check.url): (check, at) for sid, check, at in latest}
+        urls = [url_status(u.url, stored.get((service.id, u.url)), now) for u in service.urls]
+        if service_health(service.containers, (u.status for u in urls)) != "down":
+            return []
+        signals = [
+            Signal(
+                kind="down_past_grace",
+                subject=subject,
+                at=now,
+                container=c.name,
+                detail={"state": c.state, "exit_code": c.exit_code},
+            )
+            for c in service.containers
+            if container_health(c) == "down"
+        ]
+        signals += [
+            Signal(kind="url_failed", subject=subject, at=now, detail={"url": u.url})
+            for u in urls
+            if u.status == "failing"
+        ]
+        return signals
 
     def _drop_held(self, state: QuietState) -> None:
         if state.scope == "host":

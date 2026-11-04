@@ -779,3 +779,68 @@ def test_the_notice_names_the_subject_and_the_mode():
     assert quiet_notice("shop", state) == (
         "Closed: you snoozed shop; I look at it again when the snooze ends."
     )
+
+
+async def test_a_service_still_down_when_its_snooze_ends_opens_one_incident(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("service", SHOP, "snooze", T0 + timedelta(hours=1))
+    await r.pulse(urls=False)
+    await r.kill("shop")
+    assert await r.incidents() == []
+    r.clock.advance(3600)
+    [ended] = await r.quiet.expire()
+    assert ended.target_id == SHOP
+    [incident] = await r.incidents()
+    assert incident.subject.service_id == SHOP
+    signals = await r.repo.signals(incident.id)
+    assert [s.kind for s in signals] == ["down_past_grace"]
+    assert signals[0].container == "shop-web-1"
+    assert len(r.runner.started) == 1
+    await r.quiet.expire()
+    assert len(await r.incidents()) == 1
+
+
+async def test_watch_again_on_a_healthy_service_opens_nothing(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("service", SHOP, "leave_alone", None)
+    await r.pulse()
+    await r.quiet.clear("service", SHOP)
+    assert await r.incidents() == []
+    assert r.runner.started == []
+
+
+async def test_ending_a_hosts_quiet_leaves_a_service_quiet_on_its_own(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("host", "h", "leave_alone", None)
+    await r.quiet.set("service", SHOP, "leave_alone", None)
+    await r.pulse(urls=False)
+    await r.kill("shop")
+    await r.quiet.clear("host", "h")
+    assert await r.incidents() == []
+
+
+async def test_ending_a_hosts_quiet_while_it_is_unreachable_opens_the_host_incident(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("host", "h", "snooze", T0 + timedelta(hours=2))
+    await r.pulse()
+    await r.lose_host()
+    for _ in range(3):
+        await r.pulse()
+    assert not r.registry.hosts()[0].reachable
+    await r.quiet.clear("host", "h")
+    [incident] = await r.incidents()
+    assert incident.subject == HOST
+    signals = await r.repo.signals(incident.id)
+    assert [s.kind for s in signals] == ["host_unreachable"]
+
+
+async def test_a_snooze_that_ended_while_bleep_was_down_is_ended_on_the_first_tick(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("service", SHOP, "snooze", T0 + timedelta(hours=1))
+    await r.pulse(urls=False)
+    await r.kill("shop")
+    r.clock.advance(2 * 3600)
+    assert await r.incidents() == []
+    await r.quiet.expire()
+    [incident] = await r.incidents()
+    assert incident.subject.service_id == SHOP
