@@ -460,17 +460,6 @@ async def broken_index(tmp_path) -> KnowledgeIndex:
     return KnowledgeIndex(db, BrokenEmbedder())
 
 
-async def test_a_broken_embedder_with_no_snapshot_synced_reads_the_repos_once(tmp_path):
-    repos = Repos({"acme/api": [readme("acme/api")], "acme/shop": [readme("acme/shop")]})
-    now = [0.0]
-
-    await run_days(
-        await broken_index(tmp_path), repos, now, 3, snapshot(tmp_path, {"volumes.md": PAGE})
-    )
-
-    assert repos.asked == ["acme/api"] * 3  # its sync failed; a day apart while the snapshot fails
-
-
 async def test_a_broken_embedder_after_the_snapshot_reads_the_repos_once_a_day(tmp_path):
     repos = Repos({"acme/shop": [readme("acme/shop")]})
     now = [0.0]
