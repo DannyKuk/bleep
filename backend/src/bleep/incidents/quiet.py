@@ -1,4 +1,4 @@
-"""Services and hosts a person snoozed or left alone (docs/design/quiet-services.md)."""
+"""Services and hosts a person snoozed or left alone (docs/design/incidents.md)."""
 
 import asyncio
 import logging

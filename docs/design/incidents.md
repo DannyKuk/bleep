@@ -36,6 +36,14 @@ An incident's status says what Bleep is doing, in this order for a fix that is a
 - **Each incident is checked on its own,** so one that fails to publish does not skip the rest (#86).
 - **What the watchdog already noticed is kept in memory.** Reason: a restart notices a still-stuck incident once more, which is cheaper than a column and harmless (#86).
 
+## Quiet services and hosts (#220)
+
+- **Quiet states are rows in `quiet` (scope, target id, mode, until, since), one per target.** `QuietStore` in `incidents/quiet.py` sets, clears, lists the active ones and tells its listeners (the watcher) when a quiet started or ended; a snooze whose time has passed is not active even before the loop deletes it. Reason: it is state a person sets, not a secret, and it must survive a restart (#220).
+- **The graph stops a run once its service or host is quiet, before Gather, Investigate, Diagnose, Propose or Approval start** (`QUIET_STOPS` in `graph/build.py`; the node raises `IncidentQuiet`). The incident is closed with the quiet notice, once; a failed check after the quiet started closes the incident instead of proposing again, and a passing check still resolves it as fixed. Reason: a new plan and a new approval request is exactly what quiet rules out (#220).
+- **A quiet that starts after a yes but before the plan's first step stops the run at Approval, since no step has run.** A plan already executing or verifying finishes its step and its check. Reason: nothing was changed on the host yet, so stopping is safe, while a half-run plan is not (#220).
+- **The notice says "Closed: you told me to leave {name} alone." or "Closed: you snoozed {name}; I look at it again when the snooze ends."** The server text has no time. Reason: the server does not know the browser's time zone, so "until 18:00" is shown by the dashboard pill instead; this deviates from the design's text (#220).
+- **API: `PUT` and `DELETE /api/quiet/services/{service_id:path}` and `/api/quiet/hosts/{host_id}`.** A snooze needs a zone-aware `until` in the future and at most 7 days ahead, leave alone takes none (422 naming `until` or `mode`); an unknown service or host is 404; a delete is 204 also when nothing was set. Reason: the browser sends an absolute time and the server judges "quiet now" against its own clock (#220).
+
 ## Action log
 
 `incidents/action_log.py` (`ActionLog`), table `action_log` (migrations 0009 and 0012). Execute's ledger, so a crash or restart mid-Execute never runs a step twice (Review Focus 1).

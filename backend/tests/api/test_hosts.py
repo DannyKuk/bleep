@@ -177,6 +177,8 @@ def test_hosts(stocked):
             "basics": None,
             "service_count": 1,
             "health": "degraded",
+            "quiet": None,
+            "quiet_service_ids": [],
         },
         {
             "id": "b",
@@ -188,6 +190,8 @@ def test_hosts(stocked):
             "basics": None,
             "service_count": 1,
             "health": "ok",
+            "quiet": None,
+            "quiet_service_ids": [],
         },
     ]
 
@@ -233,6 +237,7 @@ def test_services_shape(stocked):
             }
         ],
         "open_incident_id": None,
+        "quiet": None,
     }
 
 

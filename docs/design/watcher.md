@@ -57,6 +57,15 @@ One `HostWatcher` per host ticks every 15 s (`BLEEP_WATCH_INTERVAL_S`). A tick i
 - **An `unhealthy` signal for a container with a pending death** folds that death into its incident and clears it, so grace expiry does not open a second one. A second death while one is pending keeps the first death's grace window (#14).
 - **Bounded state.** `tick` drops death history older than the repeat window and debounce windows older than `debounce_s` (#14).
 
+## Quiet services and hosts (#220)
+
+- **A quiet service or host is still read, not acted on.** The detector, URL checks and host probe keep running, so health stays true. `WatcherManager` drops an `OpenIncident` or `AttachSignals` for a quiet subject with a debug log line, and a service's URL failures that would be held for a host incident are dropped too. Reason: the person decided to be left alone, but Bleep must know the real state the moment the quiet ends (#220).
+- **The host's state wins.** A service is quiet when it is quiet itself or its host is, and a quiet host also silences its own host incidents (unreachable, disk, memory). Reason: "my laptop is asleep" must not page about the laptop either (#220).
+- **A quiet starting closes the subject's unfinished incidents through `IncidentRunner.end`**, except one that is `executing` or `verifying`. Setting a quiet again replaces the first and adds no second round of notices. Reason: half-cancelling an approved plan can leave the service worse than either state, and the run stops at its own next step instead (#220).
+- **A quiet ending looks at the target again.** Expiry runs in a loop every 30 s (`QUIET_TICK_S`) and once at start, so a snooze that passed while the backend was down ends at once. Only a `down` service opens an incident; `degraded`, `stopped`, `ok` and `unknown` open nothing. Reason: whatever happened during the quiet must not arrive as a burst, only the state at the end counts (#220).
+- **When a host's quiet ends while it is unreachable, only its host incident opens and its services are not judged.** Reason: their state is stale while the host cannot be reached, and the host incident already absorbs their signals (#220).
+- **A service still quiet on its own when its host's quiet ends stays quiet and is not judged again** (#220).
+
 ## Signal contract for the watcher and manager
 
 | Signal kind | Detail keys | Notes |

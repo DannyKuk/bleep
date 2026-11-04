@@ -12,11 +12,13 @@ from bleep.schemas.api import (
     ContainerView,
     DiskView,
     HostView,
+    QuietView,
     ServiceDetail,
     ServiceView,
 )
 from bleep.schemas.docker import HostBasics
 from bleep.schemas.incidents import Subject
+from bleep.schemas.quiet import QuietState
 from bleep.schemas.services import Service
 from bleep.watcher.health import (
     container_health,  # noqa: F401  (tests import it from here)
@@ -38,8 +40,29 @@ async def _stored_checks(parts: AppParts, host_id: str) -> Checks:
     }
 
 
+def quiet_view(state: QuietState | None) -> QuietView | None:
+    if state is None:
+        return None
+    return QuietView(scope=state.scope, mode=state.mode, until=state.until, since=state.since)
+
+
+def _quiet_of(service: Service, active: list[QuietState]) -> QuietState | None:
+    """The service's host's state if it has one (the host wins), else its own."""
+    own = None
+    for state in active:
+        if state.scope == "host" and state.target_id == service.host_id:
+            return state
+        if state.scope == "service" and state.target_id == service.id:
+            own = state
+    return own
+
+
 def _view(
-    service: Service, open_incident_id: str | None, checks: Checks, now: datetime
+    service: Service,
+    open_incident_id: str | None,
+    checks: Checks,
+    now: datetime,
+    quiet: QuietState | None,
 ) -> ServiceView:
     urls = [url_status(u.url, checks.get((service.id, u.url)), now) for u in service.urls]
     return ServiceView(
@@ -63,10 +86,13 @@ def _view(
         ],
         urls=urls,
         open_incident_id=open_incident_id,
+        quiet=quiet_view(quiet),
     )
 
 
-async def _service_views(parts: AppParts, host_id: str | None) -> list[ServiceView]:
+async def _service_views(
+    parts: AppParts, host_id: str | None, active: list[QuietState]
+) -> list[ServiceView]:
     if host_id is not None and host_id not in {h.config.id for h in parts.registry.hosts()}:
         return []
     now = utcnow()
@@ -77,7 +103,9 @@ async def _service_views(parts: AppParts, host_id: str | None) -> list[ServiceVi
             checks[service.host_id] = await _stored_checks(parts, service.host_id)
         subject = Subject(kind="service", host_id=service.host_id, service_id=service.id)
         open_id = await parts.incidents.open_incident_id(subject)
-        views.append(_view(service, open_id, checks[service.host_id], now))
+        views.append(
+            _view(service, open_id, checks[service.host_id], now, _quiet_of(service, active))
+        )
     return views
 
 
@@ -93,8 +121,13 @@ def _basics(basics: HostBasics | None) -> BasicsView | None:
 @router.get("/hosts")
 async def list_hosts(parts: Annotated[AppParts, Depends(get_parts)]) -> list[HostView]:
     result = []
+    active = await parts.quiet.active()
     for state in parts.registry.hosts():
-        views = await _service_views(parts, state.config.id)
+        views = await _service_views(parts, state.config.id, active)
+        host_quiet = next(
+            (q for q in active if q.scope == "host" and q.target_id == state.config.id), None
+        )
+        judged = [v.health for v in views if host_quiet is not None or v.quiet is None]
         result.append(
             HostView(
                 id=state.config.id,
@@ -105,7 +138,9 @@ async def list_hosts(parts: Annotated[AppParts, Depends(get_parts)]) -> list[Hos
                 error=state.error,
                 basics=_basics(state.basics),
                 service_count=len(views),
-                health=host_health(state.reachable, state.last_seen, (v.health for v in views)),
+                health=host_health(state.reachable, state.last_seen, judged),
+                quiet=quiet_view(host_quiet),
+                quiet_service_ids=[v.id for v in views if v.quiet is not None],
             )
         )
     return result
@@ -115,7 +150,7 @@ async def list_hosts(parts: Annotated[AppParts, Depends(get_parts)]) -> list[Hos
 async def list_services(
     parts: Annotated[AppParts, Depends(get_parts)], host_id: str | None = None
 ) -> list[ServiceView]:
-    return await _service_views(parts, host_id)
+    return await _service_views(parts, host_id, await parts.quiet.active())
 
 
 @router.get("/services/{service_id:path}")
@@ -142,6 +177,7 @@ async def get_service(
             await parts.incidents.open_incident_id(subject),
             await _stored_checks(parts, service.host_id),
             utcnow(),
+            _quiet_of(service, await parts.quiet.active()),
         ),
         rules=list(service.rules),
         host_rules=list(host.config.rules),

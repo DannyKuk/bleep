@@ -18,6 +18,7 @@ from bleep.schemas.graph import (
     Vote,
 )
 from bleep.schemas.incidents import Incident
+from bleep.schemas.quiet import QuietMode, QuietScope
 
 Health = Literal["ok", "degraded", "down", "stopped", "unknown"]
 
@@ -42,6 +43,15 @@ class BasicsView(BaseModel):
     disks: list[DiskView]
 
 
+class QuietView(BaseModel):
+    """A snooze or a leave-alone; on a service, scope `host` means quiet through its host."""
+
+    scope: QuietScope
+    mode: QuietMode
+    until: datetime | None
+    since: datetime
+
+
 class HostView(BaseModel):
     id: str
     name: str
@@ -52,6 +62,8 @@ class HostView(BaseModel):
     basics: BasicsView | None
     service_count: int
     health: Health
+    quiet: QuietView | None = None
+    quiet_service_ids: list[str] = []
 
 
 class ContainerView(BaseModel):
@@ -82,6 +94,7 @@ class ServiceView(BaseModel):
     containers: list[ContainerView]
     urls: list[UrlStatus]
     open_incident_id: str | None
+    quiet: QuietView | None = None
 
 
 class ApprovalView(BaseModel):
