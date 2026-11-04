@@ -447,7 +447,8 @@ class CoolifyPlugin(Plugin):
         except CoolifyUrlRefused as refusal:
             log.warning("coolify: %s", refusal)
             raise
-        return CoolifyClient(url, ctx.secrets[TOKEN_ENV], transport=self._transport)
+        transport = urls.guarded(self._transport, ctx.public_only)
+        return CoolifyClient(url, ctx.secrets[TOKEN_ENV], transport=transport)
 
     def tools(self, ctx: PluginContext) -> list[ToolSpec]:
         return read_specs(self.client(ctx))

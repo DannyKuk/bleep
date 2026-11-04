@@ -37,6 +37,7 @@ from bleep.plugins.base import Plugin
 from bleep.plugins.coolify.plugin import CoolifyPlugin
 from bleep.plugins.mcp_url import McpUrlPlugin
 from bleep.plugins.registry import PluginRegistry
+from bleep.plugins.urls import Resolver
 from bleep.schemas.settings import MODEL_KEY_ENV
 from bleep.store.db import Database
 from bleep.store.secrets import SecretName, SecretStore
@@ -154,14 +155,17 @@ def build_parts(
     embedder: Embedder | None = None,
     tracer: Tracer | None = None,
     plugins: Sequence[Plugin] | None = None,
+    resolver: Resolver | None = None,
 ) -> AppParts:
     """Build the parts; the lifespan migrates the database, loads the stored settings and starts
     the registry.
 
     `registry` replaces the one read from the hosts file (tests pass an empty or fake one),
     `embedder` the one the settings name (tests pass `FakeEmbedder`), `tracer` the one
-    `TRACING` names, and `plugins` the plugins Bleep has (`PLUGINS`). The GitHub client reads
-    with the token `github_token_source` picks (no hosts file is read when a registry is passed).
+    `TRACING` names, `plugins` the plugins Bleep has (`PLUGINS`), and `resolver` the name lookup
+    a dashboard-set plugin address is checked with (tests pass one; never the network). The
+    GitHub client reads with the token `github_token_source` picks (no hosts file is read when a
+    registry is passed).
     The secret store reads `data_dir/secrets.json`; a change there reloads only the part that
     holds the value (`subscribe_reloads`).
     """
@@ -185,7 +189,12 @@ def build_parts(
     memory = MemoryStore(db, embedder)
     knowledge = KnowledgeIndex(db, embedder)
     plugin_registry = PluginRegistry(
-        plugins, settings.secret, guard_log=guard_log, env=secrets.environ()
+        plugins,
+        settings.secret,
+        guard_log=guard_log,
+        env=secrets.environ(),
+        from_dashboard=lambda name: secrets.state(name).source == "dashboard",
+        resolver=resolver,
     )
     store = SettingsStore(db, registry, plugin_registry, secrets=secrets)
     tracer = tracer or ReloadingTracer(secrets.get)
@@ -247,6 +256,7 @@ def subscribe_reloads(
         if changed & tracing and isinstance(tracer, ReloadingTracer):
             await tracer.reload()
 
+    secrets.subscribe(store.secrets_changing, before_write=True)
     for listener in (reload_telegram, reload_tracer, store.secrets_changed):
         secrets.subscribe(listener)
 

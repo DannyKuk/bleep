@@ -25,14 +25,14 @@ Only `BLEEP_ADMIN_PASSWORD` and `BLEEP_SECRET` must be in `.env`: the dashboard 
    ```bash
    curl -sc bleep.cookies -H 'Content-Type: application/json' \
      -d '{"password": "<your admin password>"}' http://localhost:3000/api/auth/login
-   read -rs VALUE && printf '{"value": "%s"}' "$VALUE" | curl -sb bleep.cookies -X PUT \
-     -H 'Content-Type: application/json' --data-binary @- \
+   read -rs VALUE && export VALUE && python3 -c 'import json, os; print(json.dumps({"value": os.environ["VALUE"]}))' \
+     | curl -sb bleep.cookies -X PUT -H 'Content-Type: application/json' --data-binary @- \
      http://localhost:3000/api/secrets/OPENROUTER_API_KEY >/dev/null; unset VALUE
    curl -sb bleep.cookies http://localhost:3000/api/secrets      # each name: set or not, and from where
    curl -sb bleep.cookies -X DELETE http://localhost:3000/api/secrets/OPENROUTER_API_KEY   # clear it
    rm bleep.cookies
    ```
-   The names are the variables in `.env.example`. A value is never shown again, only whether it is set.
+   The names are the variables in `.env.example`. A value is never shown again, only whether it is set (of a plugin address, only its `https://host`). A plugin's token also needs the `version` of its address as `GET /api/secrets` lists it, sent as `"address_version"` next to `"value"`, so a token is never stored with an address changed after you read it.
 2. **In `.env`**, then restart the backend (`docker compose up -d backend`). A value in `.env` wins over the dashboard's and cannot be changed or cleared from it, which suits Compose files and CI.
 
 **Back up the volume like `.env`:** a copy of `bleep-data` holds these secrets in clear. Details: [Settings](design/settings.md#secrets-from-the-dashboard-135).
@@ -135,7 +135,7 @@ Bleep reads each service's repo (the `repo` of a service in the hosts file): its
 
 A plugin adds the tools of one more system, such as a Coolify instance. Each one is off until you switch it on. For each:
 
-1. Set its address, then its token, on the dashboard ([how](#keys-and-tokens-from-the-dashboard-or-env)); or set both in `.env` and restart the backend. An address and its token come together from one place: when `.env` sets either, both are read from `.env`.
+1. Set its address, then its token, on the dashboard ([how](#keys-and-tokens-from-the-dashboard-or-env)); or set both in `.env` and restart the backend. An address set on the dashboard must be https and reach public addresses only; a plugin on your own network or over plain http (such as `http://coolify:8000`) is set in `.env`. An address and its token come together from one place: when `.env` sets either, both are read from `.env`.
 2. In the dashboard, open Settings, find the plugin under Plugins and press **Switch on**. Its secrets show only as set or missing; a refusal names the variable that is missing or the setting that is wrong, and why.
 
 **A new address clears the token.** Setting or clearing a plugin's address on the dashboard deletes the token stored for it and switches the plugin off, so a token is never sent anywhere it was not entered for: enter the token again and switch the plugin on. A new token for the same address is used at once.

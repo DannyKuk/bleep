@@ -21,6 +21,19 @@ NEW_TOKEN = "fk_second-token-0123456789abcdef"
 MODEL_KEY = "sk-or-v1-dashboard-key-0123456789"
 BOT_TOKEN = "7001:AAH-dashboard_bot-token-value"
 URL = "https://fake.example.test"
+PUBLIC_IP = "93.184.216.34"
+
+
+class FakeResolver:
+    """Name lookups without the network: every name is public unless a test says otherwise."""
+
+    def __init__(self) -> None:
+        self.answers: dict[str, list[str]] = {}
+        self.asked: list[str] = []
+
+    async def __call__(self, host: str, port: int) -> list[str]:
+        self.asked.append(host)
+        return self.answers.get(host, [PUBLIC_IP])
 
 
 class NoSettings(BaseModel):
@@ -59,12 +72,17 @@ def plugin() -> FakeUrlPlugin:
 
 
 @pytest.fixture
-def app(settings, plugin, monkeypatch):
+def resolver() -> FakeResolver:
+    return FakeResolver()
+
+
+@pytest.fixture
+def app(settings, plugin, resolver, monkeypatch):
     for name in ("FAKE_URL", "FAKE_TOKEN", "OPENROUTER_API_KEY", "TELEGRAM_BOT_TOKEN"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-    parts = build_parts(settings, Registry([]), FakeEmbedder(), plugins=[plugin])
+    parts = build_parts(settings, Registry([]), FakeEmbedder(), plugins=[plugin], resolver=resolver)
     parts.notify.start = lambda runner: None  # type: ignore[method-assign]  # never polls
     with TestClient(create_app(settings, parts)) as client:
         assert client.post("/api/auth/login", json={"password": "test-password"}).status_code == 204
@@ -74,6 +92,12 @@ def app(settings, plugin, monkeypatch):
 
 def put(client, name: str, value):
     return client.put(f"/api/secrets/{name}", json={"value": value})
+
+
+def put_token(client, value: str, name: str = "FAKE_TOKEN", address: str = "FAKE_URL"):
+    """The token typed for the address as the page last read it."""
+    version = listed(client)[address]["version"]
+    return client.put(f"/api/secrets/{name}", json={"value": value, "address_version": version})
 
 
 def listed(client) -> dict[str, dict]:
@@ -108,6 +132,7 @@ def test_the_list_names_every_secret_and_never_the_login_or_the_session_secret(a
         "env_owned": False,
         "carries": None,
         "value": None,
+        "version": None,
     }
 
 
@@ -210,31 +235,115 @@ def test_an_address_is_held_to_the_url_rule_and_never_quoted(app, url):
     assert url not in response.text and "FAKE_URL" in response.json()["detail"]
 
 
-def test_an_address_is_shown_and_a_private_http_one_is_allowed(app):
-    response = put(app, "FAKE_URL", "http://192.168.1.20:8000")
-    assert response.status_code == 200
-    assert listed(app)["FAKE_URL"]["value"] == "http://192.168.1.20:8000"
+@pytest.mark.parametrize("url", ["http://192.168.1.20:8000", "http://shop-coolify:8000"])
+def test_plain_http_is_for_env_only_even_to_a_private_address(app, url):
+    response = put(app, "FAKE_URL", url)
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "must be https" in detail and ".env" in detail and url not in response.text
+
+
+@pytest.mark.parametrize(
+    "addresses",
+    [
+        ["10.0.0.5"],
+        ["127.0.0.1"],
+        ["169.254.169.254"],
+        ["100.64.0.7"],
+        ["::1"],
+        ["fd00::5"],
+        ["::ffff:10.0.0.1"],
+        ["fe80::1%eth0"],
+        ["0.0.0.0"],
+        ["224.0.0.1"],
+        ["64:ff9b::a00:1"],
+        [PUBLIC_IP, "10.0.0.5"],  # one private answer among public ones is enough
+        [],
+    ],
+)
+def test_a_dashboard_address_must_resolve_to_public_addresses_only(app, resolver, addresses):
+    resolver.answers["fake.example.test"] = addresses
+    response = put(app, "FAKE_URL", URL)
+    assert response.status_code == 422
+    assert ".env" in response.json()["detail"]
+    assert not any(a and a in response.text for a in addresses)
+    assert not listed(app)["FAKE_URL"]["set"]
+
+
+@pytest.mark.parametrize("literal", ["https://10.0.0.5", "https://[::1]:8443", "https://127.0.0.1"])
+def test_a_private_address_literal_is_refused_too(app, literal):
+    assert put(app, "FAKE_URL", literal).status_code == 422
+
+
+def test_an_address_shows_only_its_origin_never_its_path(app):
+    secret_path = "https://fake.example.test:8443/api/mcp/s/sk-path-secret-0123456789/mcp"
+    assert put(app, "FAKE_URL", secret_path).status_code == 200
+
+    response = app.get("/api/secrets")
+    view = listed(app)["FAKE_URL"]
+    assert view["value"] == "https://fake.example.test:8443" and view["version"]
+    assert "sk-path-secret" not in response.text
+
+
+def test_an_address_from_the_env_is_not_shown_at_all(settings, monkeypatch):
+    secret_path = "http://10.0.0.5:8000/api/mcp/s/sk-path-secret-0123456789/mcp"
+    monkeypatch.setenv("FAKE_URL", secret_path)
+    parts = build_parts(settings, Registry([]), FakeEmbedder(), plugins=[FakeUrlPlugin()])
+    with TestClient(create_app(settings, parts)) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        response = client.get("/api/secrets")
+    view = {v["name"]: v for v in response.json()}["FAKE_URL"]
+    assert view["set"] and view["source"] == "env"
+    assert view["value"] is None and view["version"] is None
+    assert "sk-path-secret" not in response.text and "10.0.0.5" not in response.text
+
+
+def test_a_token_typed_for_an_address_changed_since_is_not_stored(app, plugin):
+    """Another tab changed the address after this one read it: the token is refused."""
+    put(app, "FAKE_URL", URL)
+    seen = listed(app)["FAKE_URL"]["version"]
+    put(app, "FAKE_URL", "https://elsewhere.example.test")
+
+    stale = app.put("/api/secrets/FAKE_TOKEN", json={"value": TOKEN, "address_version": seen})
+    missing = app.put("/api/secrets/FAKE_TOKEN", json={"value": TOKEN})
+
+    assert stale.status_code == 409 and "read it again" in stale.json()["detail"]
+    assert missing.status_code == 428
+    assert TOKEN not in stale.text + missing.text
+    assert not listed(app)["FAKE_TOKEN"]["set"]
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    ["https://FAKE.example.test", "https://fake.example.test/", "https://fake.example.test:443"],
+)
+def test_the_same_address_spelled_differently_keeps_the_token(app, spelling):
+    put(app, "FAKE_URL", URL)
+    put_token(app, TOKEN)
+    assert put(app, "FAKE_URL", spelling).status_code == 200
+    assert listed(app)["FAKE_TOKEN"]["set"]
 
 
 def test_a_token_needs_its_address_first(app):
-    response = put(app, "FAKE_TOKEN", TOKEN)
+    response = put_token(app, TOKEN)
     assert response.status_code == 422
     assert "FAKE_URL first" in response.json()["detail"] and TOKEN not in response.text
 
 
-def test_a_plugin_runs_with_the_address_and_token_set_on_the_dashboard(app, plugin):
+def test_a_plugin_runs_with_the_address_and_token_set_on_the_dashboard(app, plugin, resolver):
     put(app, "FAKE_URL", URL)
-    put(app, "FAKE_TOKEN", TOKEN)
+    put_token(app, TOKEN)
     response = switch_on(app)
 
     assert response.status_code == 200 and response.json()["enabled"]
     assert plugin.sent_to() == (URL, TOKEN)
+    assert plugin.contexts[-1].public_only is resolver  # it must send through the guard
     assert TOKEN not in app.get("/api/plugins").text  # the health check echoes it
 
 
 def test_changing_a_plugins_address_clears_its_token_and_switches_it_off(app, plugin):
     put(app, "FAKE_URL", URL)
-    put(app, "FAKE_TOKEN", TOKEN)
+    put_token(app, TOKEN)
     switch_on(app)
 
     response = put(app, "FAKE_URL", "https://elsewhere.example.test")
@@ -248,14 +357,14 @@ def test_changing_a_plugins_address_clears_its_token_and_switches_it_off(app, pl
     # Switching it on again is refused until a token is entered for the new address.
     refused = switch_on(app)
     assert refused.status_code == 422 and "FAKE_TOKEN" in refused.json()["detail"]
-    put(app, "FAKE_TOKEN", NEW_TOKEN)
+    put_token(app, NEW_TOKEN)
     assert switch_on(app).status_code == 200
     assert plugin.sent_to() == ("https://elsewhere.example.test", NEW_TOKEN)
 
 
 def test_clearing_a_plugins_address_clears_its_token_and_switches_it_off(app, plugin):
     put(app, "FAKE_URL", URL)
-    put(app, "FAKE_TOKEN", TOKEN)
+    put_token(app, TOKEN)
     switch_on(app)
 
     app.delete("/api/secrets/FAKE_URL")
@@ -268,10 +377,10 @@ def test_a_plugin_switched_off_by_an_address_change_stays_off_after_a_restart(
     app, settings, plugin
 ):
     put(app, "FAKE_URL", URL)
-    put(app, "FAKE_TOKEN", TOKEN)
+    put_token(app, TOKEN)
     switch_on(app)
     put(app, "FAKE_URL", "https://elsewhere.example.test")
-    put(app, "FAKE_TOKEN", NEW_TOKEN)
+    put_token(app, NEW_TOKEN)
 
     again = FakeUrlPlugin()
     parts = build_parts(settings, Registry([]), FakeEmbedder(), plugins=[again])
@@ -281,10 +390,10 @@ def test_a_plugin_switched_off_by_an_address_change_stays_off_after_a_restart(
 
 def test_a_new_token_for_the_same_address_is_used_by_the_running_plugin(app, plugin):
     put(app, "FAKE_URL", URL)
-    put(app, "FAKE_TOKEN", TOKEN)
+    put_token(app, TOKEN)
     switch_on(app)
 
-    put(app, "FAKE_TOKEN", NEW_TOKEN)
+    put_token(app, NEW_TOKEN)
 
     assert app.parts.plugins.is_enabled("fake")
     assert plugin.sent_to() == (URL, NEW_TOKEN)
@@ -292,14 +401,14 @@ def test_a_new_token_for_the_same_address_is_used_by_the_running_plugin(app, plu
 
 def test_a_cleared_token_stops_the_plugin_which_waits_for_it(app, plugin):
     put(app, "FAKE_URL", URL)
-    put(app, "FAKE_TOKEN", TOKEN)
+    put_token(app, TOKEN)
     switch_on(app)
 
     app.delete("/api/secrets/FAKE_TOKEN")
 
     view = plugin_view(app)
     assert not view["enabled"] and view["switched_on"]  # "On, waiting for FAKE_TOKEN"
-    put(app, "FAKE_TOKEN", NEW_TOKEN)
+    put_token(app, NEW_TOKEN)
     assert plugin_view(app)["enabled"] and plugin.sent_to() == (URL, NEW_TOKEN)
 
 
@@ -310,7 +419,9 @@ def test_an_env_token_is_never_sent_to_an_address_set_on_the_dashboard(
     the dashboard chose."""
     monkeypatch.setenv("FAKE_TOKEN", TOKEN)
     monkeypatch.delenv("FAKE_URL", raising=False)
-    parts = build_parts(settings, Registry([]), FakeEmbedder(), plugins=[plugin])
+    parts = build_parts(
+        settings, Registry([]), FakeEmbedder(), plugins=[plugin], resolver=FakeResolver()
+    )
     with TestClient(create_app(settings, parts)) as client:
         client.post("/api/auth/login", json={"password": "test-password"})
         response = put(client, "FAKE_URL", URL)
@@ -326,11 +437,14 @@ def test_an_env_address_takes_the_dashboard_token_out_of_use(settings, plugin, m
     so the dashboard's token is not sent to the env's address either."""
     monkeypatch.delenv("FAKE_URL", raising=False)
     monkeypatch.delenv("FAKE_TOKEN", raising=False)
-    parts = build_parts(settings, Registry([]), FakeEmbedder(), plugins=[plugin])
+    parts = build_parts(
+        settings, Registry([]), FakeEmbedder(), plugins=[plugin], resolver=FakeResolver()
+    )
     with TestClient(create_app(settings, parts)) as client:
         client.post("/api/auth/login", json={"password": "test-password"})
-        put(client, "FAKE_URL", URL)
-        put(client, "FAKE_TOKEN", TOKEN)
+        assert put(client, "FAKE_URL", URL).status_code == 200
+        assert put_token(client, TOKEN).status_code == 200
+    assert parts.secrets.get("FAKE_TOKEN") is not None
 
     monkeypatch.setenv("FAKE_URL", "https://env.example.test")
     parts = build_parts(settings, Registry([]), FakeEmbedder(), plugins=[FakeUrlPlugin()])
@@ -356,3 +470,43 @@ def test_telegram_set_on_the_dashboard_starts_the_bot_without_a_restart(app):
     app.delete("/api/secrets/TELEGRAM_BOT_TOKEN")
     assert not app.get("/api/telegram/status").json()["configured"]
     assert notifier.telegram is None
+
+
+def test_a_plugin_is_stored_off_before_its_new_address_is_written(app, plugin, monkeypatch):
+    """The process dies or the write fails after the plugin row and before the file: the plugin
+    is already stored off, so it never starts at the new address by itself."""
+    import os
+
+    put(app, "FAKE_URL", URL)
+    put_token(app, TOKEN)
+    switch_on(app)
+
+    def fail(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", fail)
+    response = put(app, "FAKE_URL", "https://elsewhere.example.test")
+    monkeypatch.undo()
+
+    assert response.status_code == 500 and "elsewhere" not in response.text
+    assert app.parts.secrets.get("FAKE_URL").get_secret_value() == URL  # the file is as it was
+    view = plugin_view(app)
+    assert not view["enabled"] and not view["switched_on"]
+
+
+def test_a_failure_to_store_the_plugin_off_saves_nothing(app, plugin, monkeypatch):
+    put(app, "FAKE_URL", URL)
+    put_token(app, TOKEN)
+    switch_on(app)
+
+    async def fail(sections):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(app.parts.settings_store, "_write", fail)
+    response = put(app, "FAKE_URL", "https://elsewhere.example.test")
+    monkeypatch.undo()
+
+    assert response.status_code == 500
+    assert app.parts.secrets.get("FAKE_URL").get_secret_value() == URL
+    assert app.parts.secrets.get("FAKE_TOKEN") is not None
+    assert plugin_view(app)["enabled"] and plugin.sent_to() == (URL, TOKEN)

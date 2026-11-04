@@ -11,7 +11,7 @@ import asyncio
 import logging
 import os
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,7 +21,9 @@ from bleep.guard.log import GuardLogger
 from bleep.guard.plan_check import KNOWN_ACTIONS
 from bleep.guard.redact import REDACTED, redact_text
 from bleep.guard.secret_fields import is_secret_field
+from bleep.plugins import urls
 from bleep.plugins.base import Plugin, PluginContext
+from bleep.plugins.urls import Resolver, UrlRefused, check_dashboard_url
 from bleep.schemas.plugins import PluginHealth, PluginSecret, PluginView
 from bleep.tools.registry import ActHandler, ToolSpec, check_kind
 
@@ -54,7 +56,9 @@ class PluginRegistry:
     """`plugins` are every plugin Bleep has; none is switched on until `enable` says so.
 
     `env` is where the secrets are read from (the process environment by default; Bleep passes
-    `SecretStore.environ()`, the environment over the dashboard's secret file), and
+    `SecretStore.environ()`, the environment over the dashboard's secret file). A plugin whose
+    address `from_dashboard` says was set on the dashboard needs it https and reaches only public
+    addresses, by `resolver` (the system's by default). And
     `grant_secret` the `BLEEP_SECRET` act handlers check approval grants with.
     """
 
@@ -65,6 +69,8 @@ class PluginRegistry:
         *,
         guard_log: GuardLogger | None = None,
         env: Mapping[str, str] | None = None,
+        from_dashboard: Callable[[str], bool] | None = None,
+        resolver: Resolver | None = None,
     ) -> None:
         self._plugins: dict[str, Plugin] = {}
         for plugin in plugins:
@@ -75,6 +81,8 @@ class PluginRegistry:
         self._grant_secret = grant_secret
         self._guard_log = guard_log
         self._env = env if env is not None else os.environ
+        self._from_dashboard = from_dashboard or (lambda name: False)
+        self.resolver = resolver if resolver is not None else urls.resolve
         self._settings: dict[str, BaseModel] = {}
         self._active: dict[str, _Active] = {}
 
@@ -188,6 +196,14 @@ class PluginRegistry:
                 f"plugin {plugin.name} needs {', '.join(missing)} set first, on the dashboard "
                 "or in the environment"
             )
+        public_only = None
+        if plugin.connection is not None and self._from_dashboard(plugin.connection[0]):
+            address = plugin.connection[0]
+            try:
+                check_dashboard_url(self._env[address], address)
+            except UrlRefused as refused:  # a file edited by hand: never trusted more than the API
+                raise PluginError(f"plugin {plugin.name}: {refused}") from None
+            public_only = self.resolver
         ctx = PluginContext(
             settings=settings,
             secrets={
@@ -197,6 +213,7 @@ class PluginRegistry:
             },
             grant_secret=self._grant_secret,
             guard_log=self._guard_log,
+            public_only=public_only,
         )
         try:
             tools = plugin.tools(ctx)

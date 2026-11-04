@@ -181,3 +181,27 @@ def test_a_reloading_tracer_still_refuses_to_start_without_its_keys(no_tracing_e
     monkeypatch.setenv("TRACING", "langfuse")
     with pytest.raises(SettingsError, match="LANGFUSE_PUBLIC_KEY"):
         ReloadingTracer(lambda name: None)
+
+
+async def test_a_tracer_that_fails_to_build_on_reload_stops_tracing_with_the_old_key(
+    no_tracing_env, monkeypatch
+):
+    from bleep.llm import tracing
+
+    monkeypatch.setenv("TRACING", "langsmith")
+    keys = {"LANGSMITH_API_KEY": SecretStr("lsv2_first")}
+    tracer = ReloadingTracer(keys.get)
+    closed = []
+
+    async def close() -> None:
+        closed.append(True)
+
+    tracer._tracer.close = close  # type: ignore[method-assign]
+
+    def broken(settings):
+        raise RuntimeError("client constructor failed")
+
+    monkeypatch.setattr(tracing, "build_tracer", broken)
+    keys["LANGSMITH_API_KEY"] = SecretStr("lsv2_second")
+    await tracer.reload()
+    assert tracer.run_config(incident()) == {} and closed == [True]

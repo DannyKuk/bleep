@@ -196,6 +196,11 @@ class ReloadingTracer:
         except SettingsError as missing:
             log.warning("tracing: %s; tracing is off until they are set", missing)
             self._tracer = NoTracing()
+        except Exception as error:  # never trace on with a key that was replaced or cleared
+            log.warning(
+                "tracing: the tracer could not be built (%s); tracing is off", type(error).__name__
+            )
+            self._tracer = NoTracing()
         await old.close()
 
     async def close(self) -> None:

@@ -681,7 +681,8 @@ class McpUrlPlugin(Plugin):
         except McpUrlRefused as refusal:
             log.warning("mcp: %s", refusal)
             raise
-        return _Server(url, settings, ctx.secrets.get(TOKEN_ENV), self._transport)
+        transport = urls.guarded(self._transport, ctx.public_only)
+        return _Server(url, settings, ctx.secrets.get(TOKEN_ENV), transport)
 
     def tools(self, ctx: PluginContext) -> list[ToolSpec]:
         return _read_tools(self._server(ctx))

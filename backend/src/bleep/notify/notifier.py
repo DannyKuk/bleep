@@ -208,12 +208,17 @@ class NotifySetup:
         """Build the bot again from the token and the chat id in force now, and poll with it: a
         change on the dashboard takes effect without a restart. The notifier object stays, since
         the graph, the runner and the reminders hold it; a message being sent while the old
-        client closes fails as a `TelegramError`, as in an outage."""
+        client closes fails as a `TelegramError`, as in an outage. The same bot goes on from the
+        last update it confirmed, so a change of the chat id alone gets nothing delivered twice;
+        an update being handled when the poller stops is cut off, as on a restart."""
         if self._rebuild is None:
             return
+        old_bot = self.bot
         await self.stop()
         await self.close()
         fresh = self._rebuild()
+        if fresh.bot is not None and old_bot is not None:
+            fresh.bot.continue_from(old_bot)
         old, new = self.notifier, fresh.notifier
         old.telegram, old.chat_id, old.messages = new.telegram, new.chat_id, new.messages
         old.approvals = new.approvals

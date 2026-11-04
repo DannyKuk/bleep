@@ -1083,3 +1083,14 @@ async def test_a_token_changed_on_the_dashboard_restarts_polling_with_it(tmp_pat
     assert paths[-1].startswith("/bot7002:") and paths[-1].endswith("/sendMessage")
     await built.stop()
     await built.close()
+
+
+def test_the_same_bot_rebuilt_goes_on_from_the_last_confirmed_update():
+    http = httpx.AsyncClient()
+    old = TelegramBot(TOKEN, CHAT, None, FakeRunner(), http, messages=None)  # type: ignore[arg-type]
+    old._offset = 42
+    same = TelegramBot(TOKEN, "999", None, FakeRunner(), http, messages=None)  # type: ignore[arg-type]
+    other = TelegramBot("7002:AAH-other", CHAT, None, FakeRunner(), http, messages=None)  # type: ignore[arg-type]
+    same.continue_from(old)
+    other.continue_from(old)
+    assert same._offset == 42 and other._offset is None

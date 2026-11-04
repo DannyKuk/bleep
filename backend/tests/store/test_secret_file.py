@@ -11,6 +11,7 @@ from bleep.store.secrets import (
     SecretFileError,
     SecretFromEnv,
     SecretName,
+    SecretNotSaved,
     SecretRefused,
     SecretStore,
     UnknownSecret,
@@ -27,6 +28,13 @@ NAMES = (
 
 def store_at(tmp_path, env=None) -> SecretStore:
     return SecretStore(tmp_path / "data" / "secrets.json", NAMES, env=env or {})
+
+
+async def set_token(store: SecretStore, value: str) -> set[str]:
+    """The token typed for the address as it is now."""
+    return await store.set(
+        "COOLIFY_TOKEN", value, address_version=store.address_version("COOLIFY_URL")
+    )
 
 
 def mode(path) -> int:
@@ -161,7 +169,7 @@ async def test_an_unknown_name_is_refused(tmp_path):
 async def test_changing_an_address_clears_the_token_bound_to_it(tmp_path):
     store = store_at(tmp_path)
     await store.set("COOLIFY_URL", "https://coolify.example.com")
-    await store.set("COOLIFY_TOKEN", TOKEN)
+    await set_token(store, TOKEN)
 
     changed = await store.set("COOLIFY_URL", "https://elsewhere.example.com")
 
@@ -174,7 +182,7 @@ async def test_changing_an_address_clears_the_token_bound_to_it(tmp_path):
 async def test_the_same_address_again_keeps_the_token(tmp_path):
     store = store_at(tmp_path)
     await store.set("COOLIFY_URL", "https://coolify.example.com")
-    await store.set("COOLIFY_TOKEN", TOKEN)
+    await set_token(store, TOKEN)
     assert await store.set("COOLIFY_URL", "https://coolify.example.com ") == set()
     assert store.get("COOLIFY_TOKEN") is not None
 
@@ -182,7 +190,7 @@ async def test_the_same_address_again_keeps_the_token(tmp_path):
 async def test_clearing_an_address_clears_its_token(tmp_path):
     store = store_at(tmp_path)
     await store.set("COOLIFY_URL", "https://coolify.example.com")
-    await store.set("COOLIFY_TOKEN", TOKEN)
+    await set_token(store, TOKEN)
     assert await store.clear("COOLIFY_URL") == {"COOLIFY_URL", "COOLIFY_TOKEN"}
     assert store.get("COOLIFY_TOKEN") is None
 
@@ -190,7 +198,7 @@ async def test_clearing_an_address_clears_its_token(tmp_path):
 async def test_a_token_needs_its_address_first(tmp_path):
     store = store_at(tmp_path)
     with pytest.raises(SecretRefused, match="COOLIFY_URL first"):
-        await store.set("COOLIFY_TOKEN", TOKEN)
+        await set_token(store, TOKEN)
 
 
 @pytest.mark.parametrize(
@@ -220,7 +228,7 @@ async def test_environ_reads_the_values_in_force_and_the_env_for_other_names(tmp
     view = store.environ()
     assert view["COOLIFY_URL"] == "https://coolify.example.com"
     assert view.get("COOLIFY_TOKEN") is None and view["OTHER"] == "1"
-    await store.set("COOLIFY_TOKEN", TOKEN)
+    await set_token(store, TOKEN)
     assert view["COOLIFY_TOKEN"] == TOKEN  # live, not a copy
 
 
@@ -233,8 +241,8 @@ async def test_listeners_hear_which_names_changed_and_never_the_values(tmp_path)
 
     store.subscribe(listen)
     await store.set("COOLIFY_URL", "https://coolify.example.com")
-    await store.set("COOLIFY_TOKEN", TOKEN)
-    await store.set("COOLIFY_TOKEN", TOKEN)  # unchanged: nobody is told
+    await set_token(store, TOKEN)
+    await set_token(store, TOKEN)  # unchanged: nobody is told
     await store.clear("COOLIFY_URL")
     assert heard == [{"COOLIFY_URL"}, {"COOLIFY_TOKEN"}, {"COOLIFY_URL", "COOLIFY_TOKEN"}]
 
@@ -259,7 +267,7 @@ async def test_a_failing_listener_does_not_undo_the_change_or_stop_the_others(tm
 async def test_nothing_shows_a_value(tmp_path):
     store = store_at(tmp_path)
     await store.set("COOLIFY_URL", "https://coolify.example.com")
-    await store.set("COOLIFY_TOKEN", TOKEN)
+    await set_token(store, TOKEN)
     assert TOKEN not in repr(store) and TOKEN not in str(store.state("COOLIFY_TOKEN"))
     assert TOKEN not in repr(store.get("COOLIFY_TOKEN"))
 
@@ -285,3 +293,79 @@ def test_the_tracing_keys_tracing_needs_are_marked_required_and_the_login_is_not
     assert names["COOLIFY_URL"].carries == "COOLIFY_TOKEN"
     assert names["MCP_URL"].carries == "MCP_TOKEN" and names["MCP_TOKEN"].kind == "secret"
     assert not {"BLEEP_ADMIN_PASSWORD", "BLEEP_SECRET", "LOCAL_BASE_URL"} & set(names)
+
+
+def test_a_link_at_the_file_is_refused_and_its_target_left_alone(tmp_path):
+    victim = tmp_path / "victim.txt"
+    victim.write_text("{}")
+    victim.chmod(0o644)
+    path = tmp_path / "data" / "secrets.json"
+    path.parent.mkdir()
+    path.symlink_to(victim)
+
+    with pytest.raises(SecretFileError, match="link"):
+        store_at(tmp_path)
+    assert mode(victim) == 0o644
+
+
+def test_a_directory_at_the_file_is_refused(tmp_path):
+    (tmp_path / "data" / "secrets.json").mkdir(parents=True)
+    with pytest.raises(SecretFileError):
+        store_at(tmp_path)
+
+
+def test_a_temporary_file_left_by_a_killed_write_is_removed_at_load(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    leftover = data / ".secrets-abc123.tmp"
+    leftover.write_text(json.dumps({"version": 1, "values": {"GITHUB_TOKEN": TOKEN}}))
+    store_at(tmp_path)
+    assert not leftover.exists()
+
+
+@pytest.mark.parametrize("char", ["\x85", "\x9f", " ", " ", "​", "﻿"])
+async def test_c1_controls_line_separators_and_invisible_characters_are_refused(tmp_path, char):
+    with pytest.raises(SecretRefused):
+        await store_at(tmp_path).set("GITHUB_TOKEN", f"abc{char}def")
+
+
+async def test_a_failure_before_the_write_writes_nothing_and_tells_no_one(tmp_path):
+    store = store_at(tmp_path)
+    heard = []
+
+    async def prepare(changed):
+        raise RuntimeError(f"echoes {TOKEN}")
+
+    async def listen(changed):
+        heard.append(changed)
+
+    store.subscribe(prepare, before_write=True)
+    store.subscribe(listen)
+    with pytest.raises(SecretNotSaved) as not_saved:
+        await store.set("GITHUB_TOKEN", TOKEN)
+    assert TOKEN not in str(not_saved.value)
+    assert store.get("GITHUB_TOKEN") is None and heard == []
+    assert not (tmp_path / "data" / "secrets.json").exists()
+
+
+async def test_a_listener_before_the_write_runs_before_the_file_changes(tmp_path):
+    store = store_at(tmp_path)
+    seen_on_disk = []
+
+    async def prepare(changed):
+        path = tmp_path / "data" / "secrets.json"
+        seen_on_disk.append(path.read_text() if path.exists() else None)
+
+    store.subscribe(prepare, before_write=True)
+    await store.set("COOLIFY_URL", "https://coolify.example.com")
+    assert seen_on_disk == [None]
+
+
+async def test_an_address_version_is_opaque_and_changes_with_the_address(tmp_path):
+    store = store_at(tmp_path)
+    assert store.address_version("COOLIFY_URL") is None
+    await store.set("COOLIFY_URL", "https://coolify.example.com/path-secret")
+    first = store.address_version("COOLIFY_URL")
+    await store.set("COOLIFY_URL", "https://other.example.com")
+    assert first and "path-secret" not in first and first != store.address_version("COOLIFY_URL")
+    assert store.address_version("GITHUB_TOKEN") is None

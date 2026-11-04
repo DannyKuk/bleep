@@ -1,12 +1,17 @@
 """Where a plugin may send its token: the rule `COOLIFY_URL` and `MCP_URL` both follow.
 
 A URL is accepted when it is http(s) with a host and no user, password, query or fragment, and
-https unless its host is `_nearby`. See docs/design/plugins.md.
+https unless its host is `_nearby`. An address set from the dashboard is held to more: https,
+and every address its name resolves to public, checked again at every connection, which is then
+made to the address checked (`PublicOnlyTransport`). See docs/design/plugins.md and
+docs/design/settings.md.
 """
 
+import asyncio
 import ipaddress
 import re
 import socket
+from collections.abc import Awaitable, Callable
 
 import httpx
 
@@ -71,3 +76,145 @@ def check_url(
             f"{https_hint}, since the token travels with every request"
         )
     return str(url)
+
+
+# A host's addresses: `(host, port)` to the IP addresses a connection could go to.
+Resolver = Callable[[str, int], Awaitable[list[str]]]
+
+# Ranges `is_global` counts as global that still lead somewhere else: NAT64 prefixes, which embed
+# an IPv4 address of any kind.
+_EMBEDDING = tuple(ipaddress.ip_network(net) for net in ("64:ff9b::/96", "64:ff9b:1::/48"))
+
+
+class AddressRefused(httpx.ConnectError):
+    """A dashboard address is not https, cannot be resolved, or resolves to an address that is
+    not public; the call fails as if the server could not be reached. The text never names the
+    URL or the address."""
+
+
+def is_public(raw: str) -> bool:
+    """Whether a connection to `raw` leaves for the public internet: a global unicast address
+    that does not embed another one (IPv4-mapped, 6to4, Teredo and NAT64 forms are judged by
+    what they embed, or refused). Private, loopback, link-local (cloud metadata), CGNAT,
+    unique-local, unspecified, reserved and multicast addresses are not."""
+    try:
+        ip = ipaddress.ip_address(raw.split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return is_public(str(ip.ipv4_mapped))
+        if ip.sixtofour is not None or ip.teredo is not None:
+            return False
+        if any(ip in net for net in _EMBEDDING):
+            return False
+    return ip.is_global and not ip.is_multicast
+
+
+async def resolve(host: str, port: int) -> list[str]:
+    """Every address the system resolver gives for `host` (an address resolves to itself)."""
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        return list(dict.fromkeys(str(info[4][0]) for info in infos))
+    return [host]
+
+
+def check_dashboard_url(raw: str, env: str, refused: type[UrlRefused] = UrlRefused) -> str:
+    """`check_url`, and https: plain http, which the rule allows to private addresses, is for an
+    address set in the environment only."""
+    url = check_url(raw, env, refused)
+    if httpx.URL(url).scheme != "https":
+        raise refused(
+            f"{env} set on the dashboard must be https; an address on a private network or over "
+            "plain http can be set in .env"
+        )
+    return url
+
+
+async def check_public(host: str, port: int, resolver: Resolver) -> list[str]:
+    """The addresses `host` resolves to, when there is at least one and every one is public;
+    else `ValueError` in Bleep's words, never naming the host or an address."""
+    try:
+        ipaddress.ip_address(host)
+        addresses = [host]  # an address is never looked up
+    except ValueError:
+        addresses = None
+    try:
+        addresses = addresses if addresses is not None else await resolver(host, port)
+    except OSError:
+        raise ValueError("its name could not be resolved") from None
+    if not addresses:
+        raise ValueError("its name could not be resolved")
+    if not all(is_public(address) for address in addresses):
+        raise ValueError("it resolves to an address that is not public")
+    return addresses
+
+
+class PublicOnlyTransport(httpx.AsyncBaseTransport):
+    """Sends a request only to a public address its host resolves to now, and to exactly that
+    address: the name is resolved and checked at every request (so a name that resolves
+    elsewhere later, DNS rebinding, or a redirect to another host is checked again), the request
+    goes to the first checked address, and the name stays in the Host header and in TLS (SNI and
+    the certificate check). Without `inner`, each request gets a transport of its own, closed
+    with its answer, so one client closing never cuts off another's request on the same plugin."""
+
+    def __init__(self, inner: httpx.AsyncBaseTransport | None, resolver: Resolver) -> None:
+        self._inner = inner
+        self._resolver = resolver
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        url = request.url
+        if url.scheme != "https":
+            raise AddressRefused("the address is not https", request=request)
+        try:
+            addresses = await check_public(url.host, url.port or 443, self._resolver)
+        except ValueError as refusal:
+            raise AddressRefused(f"the address is refused: {refusal}", request=request) from None
+        request.url = url.copy_with(host=addresses[0])
+        request.extensions = {**request.extensions, "sni_hostname": url.host}
+        if self._inner is not None:
+            return await self._inner.handle_async_request(request)
+        own = httpx.AsyncHTTPTransport()
+        try:
+            response = await own.handle_async_request(request)
+        except BaseException:
+            await own.aclose()
+            raise
+        response.stream = _Closing(response.stream, own)
+        return response
+
+    async def aclose(self) -> None:
+        if self._inner is not None:
+            await self._inner.aclose()
+
+
+class _Closing(httpx.AsyncByteStream):
+    """An answer's body that closes its own transport when it is closed."""
+
+    def __init__(self, stream: httpx.SyncByteStream | httpx.AsyncByteStream, own) -> None:
+        self._stream = stream
+        self._own = own
+
+    async def __aiter__(self):
+        assert isinstance(self._stream, httpx.AsyncByteStream)
+        async for chunk in self._stream:
+            yield chunk
+
+    async def aclose(self) -> None:
+        try:
+            if isinstance(self._stream, httpx.AsyncByteStream):
+                await self._stream.aclose()
+        finally:
+            await self._own.aclose()
+
+
+def guarded(
+    transport: httpx.AsyncBaseTransport | None, resolver: Resolver | None
+) -> httpx.AsyncBaseTransport | None:
+    """`transport` as a plugin sends through it: as it is for an address from the environment
+    (`resolver` None), under `PublicOnlyTransport` for one set on the dashboard."""
+    if resolver is None:
+        return transport
+    return PublicOnlyTransport(transport, resolver)

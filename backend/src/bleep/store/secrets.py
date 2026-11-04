@@ -10,10 +10,14 @@ token sent to it come whole from one place. See docs/design/settings.md.
 
 import asyncio
 import contextlib
+import hashlib
+import hmac
 import json
 import logging
 import os
+import stat
 import tempfile
+import unicodedata
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +50,21 @@ class SecretRefused(ValueError):
 
 class SecretFromEnv(SecretRefused):
     """The environment decides this one, so the dashboard can neither set nor clear it."""
+
+
+class AddressStale(SecretRefused):
+    """A token was sent without the version of its address, or with one that is no longer the
+    address in force: it was typed for another address, so it is not stored. `missing` says
+    which."""
+
+    def __init__(self, message: str, *, missing: bool) -> None:
+        super().__init__(message)
+        self.missing = missing
+
+
+class SecretNotSaved(Exception):
+    """The change could not be made safe before writing (a listener that must run first
+    failed), so nothing was written."""
 
 
 @dataclass(frozen=True)
@@ -89,7 +108,11 @@ class SecretStore:
                 self._group[entry.name] = self._group[entry.carries] = pair
         self._values: dict[str, SecretStr] = self._load()
         self._listeners: list[Listener] = []
+        self._before: list[Listener] = []
         self._lock = asyncio.Lock()
+        # Keys the address versions, so a version says nothing about the address it stands for
+        # (a path can hold a credential); a new one each start makes old pages re-read.
+        self._version_key = os.urandom(32)
 
     def __repr__(self) -> str:
         return f"SecretStore({self.path}, {len(self._values)} value(s) set)"
@@ -121,20 +144,46 @@ class SecretStore:
         name as `get` has it, any other from the environment."""
         return _Environ(self)
 
-    def subscribe(self, listener: Listener) -> None:
-        """`listener` is awaited with the names that changed after each write that changed any."""
-        self._listeners.append(listener)
+    def subscribe(self, listener: Listener, *, before_write: bool = False) -> None:
+        """`listener` is awaited with the names that changed after each write that changed any.
+        With `before_write` it is awaited before the file is written instead, and when it fails
+        nothing is written (`SecretNotSaved`): for what must hold even if the write or the
+        process stops halfway, such as a plugin switched off before its address changes."""
+        (self._before if before_write else self._listeners).append(listener)
 
-    async def set(self, name: str, value: str) -> set[str]:
+    def address_version(self, name: str) -> str | None:
+        """An opaque version of the address `name` as the dashboard set it, or None when it is
+        unset or the env decides it. A token is stored only with the version of the address it
+        was typed for."""
+        value = self._values.get(name) if not self._env_owned(name) else None
+        if value is None or self.entry(name).kind != "address":
+            return None
+        digest = hmac.new(self._version_key, value.get_secret_value().encode(), hashlib.sha256)
+        return digest.hexdigest()[:16]
+
+    async def set(self, name: str, value: str, *, address_version: str | None = None) -> set[str]:
         """Store `value` for `name`; returns the names that changed. A new address clears the
-        token it carries, so a token is never sent to an address it was not entered for."""
+        token it carries, and a token is stored only with `address_version`, the version of the
+        address it was typed for, so a token is never sent to an address it was not entered for."""
         entry = self.entry(name)
         value = _checked(name, value)
         async with self._lock:
             self._refuse_env(name)
             for address, token in self._addresses():
-                if token == name and address not in self._values:
+                if token != name:
+                    continue
+                if address not in self._values:
                     raise SecretRefused(f"set {address} first: {name} is sent only there")
+                if address_version is None:
+                    raise AddressStale(
+                        f"send the version of {address} the token was typed for", missing=True
+                    )
+                if not hmac.compare_digest(address_version, self.address_version(address) or ""):
+                    raise AddressStale(
+                        f"{address} changed since it was read; read it again and enter "
+                        f"{name} for the address now set",
+                        missing=False,
+                    )
             current = self._values.get(name)
             if current is not None and current.get_secret_value() == value:
                 return set()
@@ -183,6 +232,14 @@ class SecretStore:
         }
         if not changed:
             return set()
+        for listener in self._before:
+            try:
+                await listener(frozenset(changed))
+            except Exception as error:  # the type only: a message could quote a value
+                log.warning("secrets: not saved, preparing failed (%s)", type(error).__name__)
+                raise SecretNotSaved(
+                    "the change could not be prepared; nothing was saved"
+                ) from None
         await asyncio.to_thread(self._write, values)
         self._values = values
         for name in sorted(changed):
@@ -218,15 +275,29 @@ class SecretStore:
             with contextlib.suppress(OSError):
                 os.unlink(temporary)
             raise
+        _sync_directory(self.path.parent)  # so the rename itself survives a power loss
 
     def _load(self) -> dict[str, SecretStr]:
-        if not self.path.exists():
-            return {}
+        self._sweep()
         try:
-            if self.path.stat().st_mode & 0o077:
-                log.warning("secrets: %s was readable by others; made it 0600", self.path)
-                self.path.chmod(FILE_MODE)
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            # O_NOFOLLOW: a link planted at the path is refused, never read or chmodded through.
+            fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            return {}
+        except OSError:
+            raise SecretFileError(
+                f"the secret file {self.path} cannot be read (a link, or no permission); "
+                "fix or delete it"
+            ) from None
+        try:
+            with os.fdopen(fd, "r", encoding="utf-8") as file:
+                mode = os.fstat(file.fileno()).st_mode
+                if not stat.S_ISREG(mode):
+                    raise SecretFileError(f"the secret file {self.path} is not a regular file")
+                if mode & 0o077:
+                    log.warning("secrets: %s was readable by others; made it 0600", self.path)
+                    os.fchmod(file.fileno(), FILE_MODE)
+                raw = json.loads(file.read())
         except OSError, ValueError:
             raise SecretFileError(
                 f"the secret file {self.path} cannot be read; fix or delete it"
@@ -238,6 +309,26 @@ class SecretStore:
             log.warning("secrets: %s in the secret file is not one Bleep knows; left out", name)
         return {name: SecretStr(v) for name, v in values.items() if name in self._names and v}
 
+    def _sweep(self) -> None:
+        """Delete temporary files a write left when the process was killed before its rename:
+        they hold secrets too."""
+        if not self.path.parent.is_dir():
+            return
+        for leftover in self.path.parent.glob(".secrets-*.tmp"):
+            with contextlib.suppress(OSError):
+                if leftover.is_file() and not leftover.is_symlink():
+                    leftover.unlink()
+                    log.warning("secrets: removed %s, left by an interrupted write", leftover.name)
+
+
+def _sync_directory(directory: Path) -> None:
+    with contextlib.suppress(OSError):  # not every file system lets a directory be opened
+        fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
 
 def _checked(name: str, value: str) -> str:
     value = value.strip()
@@ -245,8 +336,9 @@ def _checked(name: str, value: str) -> str:
         raise SecretRefused(f"{name} is empty; clear it instead")
     if len(value) > MAX_VALUE_CHARS:
         raise SecretRefused(f"{name} is over {MAX_VALUE_CHARS:,} characters")
-    if any(ord(char) < 32 or ord(char) == 127 for char in value):
-        raise SecretRefused(f"{name} holds a line break or a control character")
+    # Cc: C0, DEL and C1 controls; Cf: invisible format characters; Zl and Zp: U+2028, U+2029.
+    if any(unicodedata.category(char) in {"Cc", "Cf", "Zl", "Zp"} for char in value):
+        raise SecretRefused(f"{name} holds a line break, a control or an invisible character")
     return value
 
 

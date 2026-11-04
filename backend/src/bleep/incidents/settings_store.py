@@ -280,10 +280,28 @@ class SettingsStore:
                 raise
             self._plugin_rows[name] = row
 
+    async def secrets_changing(self, changed: frozenset[str]) -> None:
+        """Before the secret file is written: store off, then switch off, every plugin whose
+        address is about to change, so that no failure after this (the file write, a crash) can
+        leave a plugin stored on that would start at the new address by itself. A failed write
+        here raises, and the secret file is not written."""
+        async with self._lock:
+            for name in self._plugins.names():
+                plugin = self._plugins.get(name)
+                if plugin.connection is None or plugin.connection[0] not in changed:
+                    continue
+                row = self._plugin_rows.get(name, _PluginRow())
+                if row.enabled:
+                    off = row.model_copy(update={"enabled": False})
+                    await self._write({f"{PLUGIN_PREFIX}{name}": off})
+                    self._plugin_rows[name] = off
+                self._plugins.enable(name, False)
+
     async def secrets_changed(self, changed: frozenset[str]) -> None:
         """Put the secrets and addresses changed on the dashboard in force for the plugins that use
-        them. A plugin whose address changed is switched off and stored off: its token was cleared
-        with it, and it runs again only when a person switches it on. Any other plugin switched
+        them. A plugin whose address changed is switched off and stored off (again, in case it was
+        switched on since `secrets_changing`): its token was cleared with it, and it runs again
+        only when a person switches it on. Any other plugin switched
         on is built again with the values in force now, or waits for a required one now unset."""
         async with self._lock:
             for name in self._plugins.names():

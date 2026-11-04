@@ -167,7 +167,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **A settings body with a secret-shaped key or value anywhere is refused with 422**, naming where and never what.
 - **A settings or plugin change must send the version it was read at (`If-Match`)**; a stale one is a 409 and changes nothing, so no page silently reverts another's change.
 - **The settings page has no input for a secret yet**: each is shown as its variable or file and whether it is set; host connections are read-only, and the model choice and budgets are changed in the dev panel only.
-- **Secrets set from the dashboard go to `secrets.json` on the data volume, never the database**: mode 0600, replaced atomically, write-only over `/api/secrets`, the env wins; a backup of the volume holds them in clear. A plugin's new address clears its token and switches it off; `BLEEP_ADMIN_PASSWORD` and `BLEEP_SECRET` stay env-only.
+- **Secrets set from the dashboard go to `secrets.json` on the data volume, never the database**: mode 0600, replaced atomically, write-only over `/api/secrets`, the env wins; a backup of the volume holds them in clear. A plugin's new address clears its token and switches it off, and from the dashboard must be https to public addresses, checked at every connection; `BLEEP_ADMIN_PASSWORD` and `BLEEP_SECRET` stay env-only.
 
 **Dev panel** ([details](design/dev-panel.md))
 - **Off unless `BLEEP_DEV_PANEL=true`, and then behind the admin session**; off, every `/api/dev` path is a 404 and Settings shows no link to it.

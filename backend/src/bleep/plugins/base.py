@@ -14,6 +14,7 @@ from typing import ClassVar
 from pydantic import BaseModel, SecretStr
 
 from bleep.guard.log import GuardLogger
+from bleep.plugins.urls import Resolver
 from bleep.schemas.plugins import PluginHealth
 from bleep.tools.registry import ActHandler, ToolSpec
 
@@ -23,13 +24,16 @@ class PluginContext:
     """What a switched-on plugin builds its tools and act handlers from.
 
     `grant_secret` is `BLEEP_SECRET`: an act handler checks approval grants with it, exactly as
-    the Docker act tools do (`tools/docker_act.py`).
+    the Docker act tools do (`tools/docker_act.py`). `public_only` is set when the plugin's
+    address was set on the dashboard: the plugin must then send through
+    `plugins.urls.guarded(transport, ctx.public_only)`, which reaches public addresses only.
     """
 
     settings: BaseModel
     secrets: Mapping[str, SecretStr] = field(repr=False)
     grant_secret: SecretStr = field(repr=False)
     guard_log: GuardLogger | None = None
+    public_only: Resolver | None = None
 
 
 class Plugin(ABC):
