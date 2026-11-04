@@ -2,17 +2,22 @@
 
 `create_app` includes this router only when `BLEEP_DEV_PANEL=true`, behind the session like the
 rest of `/api`; otherwise every path here is a 404. See docs/design/dev-panel.md.
+
+A prompt's read carries its `version` (in the body and, for one prompt, as the `ETag`), and a save
+or reset sends it back in `If-Match`, as `PUT /api/settings` does: 428 without it, 409 with the
+version now when the prompt has changed since.
 """
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response
+from fastapi.responses import JSONResponse
 
 from bleep import prompts
 from bleep.api.deps import get_parts
-from bleep.api.settings import parse_body
+from bleep.api.settings import parse_body, stale_response, version_of
 from bleep.guard.log import GuardKind
-from bleep.incidents.prompt_overrides import PromptRefused, UnknownPrompt
+from bleep.incidents.prompt_overrides import PromptRefused, PromptStale, UnknownPrompt
 from bleep.llm.usage import UsageSum
 from bleep.schemas.dev import (
     CostView,
@@ -45,7 +50,24 @@ def _prompt(parts: AppParts, name: str) -> PromptView:
         file_text=text,
         override=override.text if override else None,
         overridden_at=override.updated_at if override else None,
+        version=parts.prompt_overrides.version(name),
     )
+
+
+def _version(if_match: str | None) -> str:
+    if if_match is None or not if_match.strip():
+        raise HTTPException(428, "send the prompt's version you read in If-Match")
+    return version_of(if_match)
+
+
+def _stale(stale: PromptStale) -> JSONResponse:
+    return stale_response(stale.current, "the prompt changed since this version was read")
+
+
+def _answer(parts: AppParts, name: str, response: Response) -> PromptView:
+    view = _prompt(parts, name)
+    response.headers["ETag"] = f'"{view.version}"'
+    return view
 
 
 @router.get("/prompts")
@@ -54,27 +76,49 @@ async def list_prompts(parts: Parts) -> list[PromptView]:
     return [_prompt(parts, name) for name in prompts.overridable_names()]
 
 
-@router.put("/prompts/{name:path}")
-async def set_prompt(name: str, body: Annotated[Any, Body()], parts: Parts) -> PromptView:
-    """Save an override; 422 unless it passes the loader's checks and holds no secret."""
+@router.put("/prompts/{name:path}", response_model=PromptView)
+async def set_prompt(
+    name: str,
+    body: Annotated[Any, Body()],
+    parts: Parts,
+    response: Response,
+    if_match: Annotated[str | None, Header()] = None,
+) -> PromptView | JSONResponse:
+    """Save an override; 422 unless it passes the loader's checks and holds no secret.
+    `If-Match` holds the prompt's `version` the text was written from."""
+    if name not in prompts.overridable_names():
+        raise HTTPException(404, "no such prompt")
+    version = _version(if_match)
     override = parse_body(body, PromptOverrideBody)
     try:
-        await parts.prompt_overrides.set(name, override.text)
+        await parts.prompt_overrides.set(name, override.text, version=version)
+    except PromptStale as stale:
+        return _stale(stale)
     except UnknownPrompt:
         raise HTTPException(404, "no such prompt") from None
     except PromptRefused as refusal:
         raise HTTPException(422, str(refusal)) from None
-    return _prompt(parts, name)
+    return _answer(parts, name, response)
 
 
-@router.delete("/prompts/{name:path}")
-async def reset_prompt(name: str, parts: Parts) -> PromptView:
-    """Delete the override, so the prompt is read from its file again."""
+@router.delete("/prompts/{name:path}", response_model=PromptView)
+async def reset_prompt(
+    name: str,
+    parts: Parts,
+    response: Response,
+    if_match: Annotated[str | None, Header()] = None,
+) -> PromptView | JSONResponse:
+    """Delete the override, so the prompt is read from its file again. `If-Match` holds the
+    prompt's `version` the reset was asked from."""
+    if name not in prompts.overridable_names():
+        raise HTTPException(404, "no such prompt")
     try:
-        await parts.prompt_overrides.reset(name)
+        await parts.prompt_overrides.reset(name, version=_version(if_match))
+    except PromptStale as stale:
+        return _stale(stale)
     except UnknownPrompt:
         raise HTTPException(404, "no such prompt") from None
-    return _prompt(parts, name)
+    return _answer(parts, name, response)
 
 
 def _usage(row: UsageSum) -> dict[str, Any]:

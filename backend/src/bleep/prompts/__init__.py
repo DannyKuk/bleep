@@ -12,7 +12,10 @@ from pathlib import Path
 PROMPTS_DIR = Path(__file__).parent
 NAME = re.compile(r"^[a-z0-9_]+(?:/[a-z0-9_]+)*$")
 # The eval prompts are loaded by the eval runner, a process of its own that never reads overrides.
-NOT_OVERRIDABLE = ("evals/",)
+# The Telegram texts are what the approver reads before saying yes, and `graph/system` holds the
+# untrusted-data rule with no placeholder to check an override against.
+NOT_OVERRIDABLE_AREAS = ("evals/", "notify/")
+NOT_OVERRIDABLE = frozenset({"graph/system"})
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 _overrides: dict[str, str] = {}
@@ -45,7 +48,11 @@ def all_prompt_files() -> list[Path]:
 def overridable_names() -> list[str]:
     """Every prompt the dev panel may override, as `area/name`."""
     names = (p.relative_to(PROMPTS_DIR).with_suffix("").as_posix() for p in all_prompt_files())
-    return [name for name in names if not name.startswith(NOT_OVERRIDABLE)]
+    return [
+        name
+        for name in names
+        if not name.startswith(NOT_OVERRIDABLE_AREAS) and name not in NOT_OVERRIDABLE
+    ]
 
 
 def file_text(name: str) -> str:

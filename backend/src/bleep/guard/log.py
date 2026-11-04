@@ -19,7 +19,13 @@ from bleep.store.db import Database
 log = logging.getLogger(__name__)
 
 GuardKind = Literal[
-    "refused_command", "redacted", "blocked_action", "injection_marker", "budget", "foreign_chat"
+    "refused_command",
+    "redacted",
+    "blocked_action",
+    "injection_marker",
+    "budget",
+    "foreign_chat",
+    "prompt_override",
 ]
 DETAIL_CHARS = 500
 

@@ -50,5 +50,6 @@ export const prompt = (overrides: Partial<PromptView> = {}): PromptView => ({
   file_text: "Why did it stop?\n\n{logs}",
   override: null,
   overridden_at: null,
+  version: "p1",
   ...overrides,
 });

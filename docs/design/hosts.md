@@ -8,6 +8,7 @@ How Bleep is told which Docker hosts to watch.
 - **Two host kinds.** `ssh` (address, user, key file) for real servers and `socket` (a `unix://` or `tcp://` endpoint) for the demo stack and the machine Bleep runs on. Reason: the combination is validated so a half-filled host fails early (#3).
 - **Key and known_hosts are mounted file paths.** The YAML holds the path, never the key. Reason: the key stays a mounted secret and the file is safe to share (#3).
 - **Numbered SQL migrations in the package.** `store/migrations/NNNN_*.sql` run once each, recorded in `schema_version`. Reason: later tasks add their own tables without a migration framework (#3).
+- **Migration 0013 is unused and must never be used; a new migration takes the number after the highest.** Each file runs once in number order among those not yet applied, so a 0013 added now would run after 0014 to 0016 on a database that has them and before them on a fresh one, and the same files would build two schemas (#141).
 
 ## Engine connections
 

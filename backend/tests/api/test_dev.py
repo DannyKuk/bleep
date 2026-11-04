@@ -31,6 +31,24 @@ def dev_client(settings, parts):
         yield client
 
 
+def put_prompt(client: TestClient, name: str, body: object, version: str | None = None):
+    """`PUT /api/dev/prompts/{name}` built from the prompt as read just before, unless given."""
+    if version is None:
+        version = prompt_version(client, name)
+    return client.put(f"/api/dev/prompts/{name}", json=body, headers={"If-Match": f'"{version}"'})
+
+
+def reset_prompt(client: TestClient, name: str, version: str | None = None):
+    if version is None:
+        version = prompt_version(client, name)
+    return client.delete(f"/api/dev/prompts/{name}", headers={"If-Match": f'"{version}"'})
+
+
+def prompt_version(client: TestClient, name: str) -> str:
+    listed = {p["name"]: p for p in client.get("/api/dev/prompts").json()}
+    return listed[name]["version"] if name in listed else "none"
+
+
 def call(client: TestClient, fn, *args):
     """Run one of the app's async parts on the app's own event loop."""
     return client.portal.call(fn, *args)
@@ -65,7 +83,7 @@ def test_with_the_panel_off_a_stored_override_is_not_used(settings, parts):
     with TestClient(create_app(settings, parts)) as client:
         client.post("/api/auth/login", json={"password": "test-password"})
         text = "Overridden: {logs}"
-        assert client.put(f"/api/dev/prompts/{RECOVERY}", json={"text": text}).status_code == 200
+        assert put_prompt(client, RECOVERY, {"text": text}).status_code == 200
     settings.dev_panel = False
     with TestClient(create_app(settings, parts)):
         assert prompts.load(RECOVERY, logs="x") == recovery_file().format(logs="x")
@@ -94,10 +112,9 @@ def test_the_prompt_list_has_every_app_prompt_with_its_file_and_placeholders(dev
 
 
 def test_a_saved_override_is_what_the_loader_returns_and_reset_restores_the_file(dev_client):
-    path = f"/api/dev/prompts/{RECOVERY}"
     text = "Why did it come back? {logs}"
 
-    saved = dev_client.put(path, json={"text": text})
+    saved = put_prompt(dev_client, RECOVERY, {"text": text})
     assert saved.status_code == 200
     assert saved.json()["override"] == text
     assert saved.json()["overridden_at"] is not None
@@ -105,7 +122,7 @@ def test_a_saved_override_is_what_the_loader_returns_and_reset_restores_the_file
     listed = next(p for p in dev_client.get("/api/dev/prompts").json() if p["name"] == RECOVERY)
     assert listed["override"] == text
 
-    reset = dev_client.delete(path)
+    reset = reset_prompt(dev_client, RECOVERY)
     assert reset.status_code == 200
     assert reset.json()["override"] is None
     assert reset.json()["file_text"] == recovery_file()
@@ -113,7 +130,7 @@ def test_a_saved_override_is_what_the_loader_returns_and_reset_restores_the_file
 
 
 def test_an_override_stays_in_force_after_a_restart(settings, parts, dev_client):
-    dev_client.put(f"/api/dev/prompts/{RECOVERY}", json={"text": "Kept: {logs}"})
+    put_prompt(dev_client, RECOVERY, {"text": "Kept: {logs}"})
     prompts.use_overrides({})
     with TestClient(create_app(settings, parts)):
         assert prompts.load(RECOVERY, logs="x") == "Kept: x"
@@ -130,7 +147,7 @@ def test_an_override_stays_in_force_after_a_restart(settings, parts, dev_client)
     ],
 )
 def test_an_override_the_loader_would_refuse_is_a_422_and_not_saved(dev_client, text, why):
-    response = dev_client.put(f"/api/dev/prompts/{RECOVERY}", json={"text": text})
+    response = put_prompt(dev_client, RECOVERY, {"text": text})
     assert response.status_code == 422
     assert why in response.json()["detail"]
     assert prompts.load(RECOVERY, logs="x") == recovery_file().format(logs="x")
@@ -144,7 +161,7 @@ def test_an_override_the_loader_would_refuse_is_a_422_and_not_saved(dev_client, 
     ],
 )
 def test_an_override_holding_a_secret_is_a_422_that_does_not_echo_it(dev_client, body):
-    response = dev_client.put(f"/api/dev/prompts/{RECOVERY}", json=body)
+    response = put_prompt(dev_client, RECOVERY, body)
     assert response.status_code == 422
     assert "ghp_" not in response.text and "abc-secret-value" not in response.text
     assert dev_client.get("/api/dev/prompts").json()[0]["override"] is None
@@ -152,13 +169,87 @@ def test_an_override_holding_a_secret_is_a_422_that_does_not_echo_it(dev_client,
 
 @pytest.mark.parametrize("body", [{"text": ""}, {"text": "x" * 20_001}, {}, {"txt": "{logs}"}])
 def test_an_invalid_body_is_a_422(dev_client, body):
-    assert dev_client.put(f"/api/dev/prompts/{RECOVERY}", json=body).status_code == 422
+    assert put_prompt(dev_client, RECOVERY, body).status_code == 422
 
 
-@pytest.mark.parametrize("name", ["graph/nope", "evals/judge_system", "../config", "README"])
-def test_an_unknown_prompt_is_a_404(dev_client, name):
-    assert dev_client.put(f"/api/dev/prompts/{name}", json={"text": "hi"}).status_code == 404
-    assert dev_client.delete(f"/api/dev/prompts/{name}").status_code == 404
+@pytest.mark.parametrize(
+    "name",
+    ["graph/nope", "evals/judge_system", "../config", "README", "graph/system", "notify/proposal"],
+)
+def test_an_unknown_or_fixed_prompt_is_a_404(dev_client, name):
+    assert put_prompt(dev_client, name, {"text": "hi"}).status_code == 404
+    assert reset_prompt(dev_client, name).status_code == 404
+    assert name not in [p["name"] for p in dev_client.get("/api/dev/prompts").json()]
+
+
+@pytest.mark.parametrize("method", ["put", "delete"])
+@pytest.mark.parametrize("header", [None, "", "  "])
+def test_a_prompt_change_without_the_version_is_a_428_and_nothing_changes(
+    dev_client, method, header
+):
+    headers = {} if header is None else {"If-Match": header}
+    path = f"/api/dev/prompts/{RECOVERY}"
+    if method == "put":
+        response = dev_client.put(path, json={"text": "New: {logs}"}, headers=headers)
+    else:
+        put_prompt(dev_client, RECOVERY, {"text": "Kept: {logs}"})
+        response = dev_client.delete(path, headers=headers)
+    assert response.status_code == 428
+    expected = None if method == "put" else "Kept: {logs}"
+    assert (
+        next(
+            p["override"]
+            for p in dev_client.get("/api/dev/prompts").json()
+            if p["name"] == RECOVERY
+        )
+        == expected
+    )
+
+
+def test_a_prompt_save_from_a_stale_page_is_a_409_with_the_version_now(dev_client):
+    read = prompt_version(dev_client, RECOVERY)
+    assert put_prompt(dev_client, RECOVERY, {"text": "First: {logs}"}, read).status_code == 200
+
+    stale = put_prompt(dev_client, RECOVERY, {"text": "Second: {logs}"}, read)
+    assert stale.status_code == 409
+    now = prompt_version(dev_client, RECOVERY)
+    assert stale.json()["version"] == now != read
+    assert stale.headers["etag"] == f'"{now}"'
+    assert prompts.load(RECOVERY, logs="x") == "First: x"
+
+    assert reset_prompt(dev_client, RECOVERY, read).status_code == 409
+    assert prompts.load(RECOVERY, logs="x") == "First: x"
+
+
+def test_a_prompt_version_is_taken_bare_or_as_an_etag_and_answered_in_one(dev_client):
+    version = prompt_version(dev_client, RECOVERY)
+    saved = dev_client.put(
+        f"/api/dev/prompts/{RECOVERY}",
+        json={"text": "Bare: {logs}"},
+        headers={"If-Match": version},
+    )
+    assert saved.status_code == 200
+    assert saved.headers["etag"] == f'"{saved.json()["version"]}"'
+    reset = dev_client.delete(
+        f"/api/dev/prompts/{RECOVERY}", headers={"If-Match": f'W/"{saved.json()["version"]}"'}
+    )
+    assert reset.status_code == 200
+    assert reset.json()["version"] == version  # no override again: the version it started at
+
+
+def test_a_save_and_a_reset_are_in_the_guard_log_by_name_never_with_the_text(dev_client):
+    text = "A text only the prompt holds: {logs}"
+    put_prompt(dev_client, RECOVERY, {"text": text})
+    reset_prompt(dev_client, RECOVERY)
+    reset_prompt(dev_client, RECOVERY)  # nothing to reset: nothing changed, nothing recorded
+
+    entries = dev_client.get("/api/dev/guard-log", params={"kind": "prompt_override"}).json()
+    assert [e["detail"] for e in entries] == [
+        f"override of {RECOVERY} reset",
+        f"override of {RECOVERY} saved",
+    ]
+    assert {e["incident_id"] for e in entries} == {"dev-panel"}
+    assert "only the prompt holds" not in dev_client.get("/api/dev/guard-log").text
 
 
 # --- costs ---

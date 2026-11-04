@@ -1,18 +1,22 @@
 """Settings and plugins over HTTP: precedence, and no secret in either direction (#36)."""
 
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import BaseModel, ConfigDict
 
 from bleep.guard.plan_check import check_plan
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.registry import Registry
 from bleep.main import create_app
 from bleep.memory.embeddings import FakeEmbedder
+from bleep.plugins.base import Plugin, PluginContext
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import PlanStep, Proposal
-from bleep.tools.registry import ToolContext
+from bleep.schemas.plugins import PluginHealth
+from bleep.tools.registry import ToolContext, ToolSpec
 from bleep.wiring import build_parts
 from fakes import COOLIFY_TOKEN, FakeCoolifyPlugin, FakeEngine, socket_host
 
@@ -20,6 +24,12 @@ T0 = datetime(2026, 11, 3, 10, 0, tzinfo=UTC)
 FILE_URL = "https://shop.example.test/health"
 DB_URL = "https://shop.example.test/ready"
 OPENROUTER_KEY = "sk-or-v1-env-key-0123456789"
+
+
+class NoSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
 SHOP_URLS = {"hosts": {"a": {"services": {"compose:shop": {"urls": [{"url": DB_URL}]}}}}}
 
 
@@ -220,6 +230,70 @@ def test_switching_on_without_the_secret_is_refused(app, monkeypatch):
     assert "COOLIFY_TOKEN" in response.json()["detail"]
 
 
+def test_a_plugin_setting_refused_says_why_for_each_field(app):
+    response = put_plugin(app, "coolify", json={"settings": {"team": 7}})
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "url: Field required" in detail
+    assert "team: Input should be a valid string" in detail
+
+
+def test_a_plugin_switched_on_without_its_secret_after_a_restart_shows_it_and_switches_off(
+    settings, monkeypatch
+):
+    monkeypatch.setenv("COOLIFY_TOKEN", COOLIFY_TOKEN)
+    parts = build_parts(settings, Registry([]), FakeEmbedder(), plugins=[FakeCoolifyPlugin()])
+    with TestClient(create_app(settings, parts)) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        on = {"enabled": True, "settings": {"url": "https://c.test"}}
+        assert put_plugin(client, "coolify", json=on).status_code == 200
+
+    monkeypatch.delenv("COOLIFY_TOKEN")
+    parts = build_parts(settings, Registry([]), FakeEmbedder(), plugins=[FakeCoolifyPlugin()])
+    with TestClient(create_app(settings, parts)) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        (plugin,) = client.get("/api/plugins").json()
+        assert (plugin["enabled"], plugin["switched_on"]) == (False, True)
+        assert plugin["secrets"] == [{"env": "COOLIFY_TOKEN", "set": False, "required": True}]
+
+        off = put_plugin(client, "coolify", json={"enabled": False})
+        assert off.status_code == 200
+        assert (off.json()["enabled"], off.json()["switched_on"]) == (False, False)
+
+
+def test_plugin_health_checks_run_together(settings):
+    """Each check waits until every other one has started: one after another, the first would
+    time out."""
+    started: list[str] = []
+    everyone = asyncio.Event()
+
+    class Waiting(Plugin):
+        title = "Waiting"
+        settings_model = NoSettings
+
+        def tools(self, ctx: PluginContext) -> list[ToolSpec]:
+            return []
+
+        async def health(self, ctx: PluginContext) -> PluginHealth:
+            started.append(self.name)
+            if len(started) == 3:
+                everyone.set()
+            await asyncio.wait_for(everyone.wait(), 2)
+            return PluginHealth(ok=True, detail="up")
+
+    waiting = [type(name, (Waiting,), {"name": name})() for name in ("one", "two", "three")]
+    parts = build_parts(settings, Registry([]), FakeEmbedder(), plugins=waiting)
+    with TestClient(create_app(settings, parts)) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        for plugin in waiting:
+            assert put_plugin(client, plugin.name, json={"enabled": True}).status_code == 200
+        started.clear()
+        everyone.clear()
+        listed = client.get("/api/plugins").json()
+    assert [p["name"] for p in listed] == ["one", "two", "three"]
+    assert [p["health"] for p in listed] == [{"ok": True, "detail": "up"}] * 3
+
+
 def test_unknown_plugin(app):
     assert put_plugin(app, "nope", json={"enabled": True}).status_code == 404
 
@@ -260,6 +334,31 @@ def test_a_bad_url_is_refused_without_echoing_it(app):
     response = put_settings(app, body)
     assert response.status_code == 422
     assert "hunter2xyz" not in response.text
+
+
+def protect(name: str) -> dict:
+    return {"hosts": {"a": {"services": {"compose:shop": {"protected_containers": [name]}}}}}
+
+
+@pytest.mark.parametrize("name", ["Shop API", "name:main"])
+def test_a_protected_entry_with_spaces_or_a_colon_is_accepted(app, name):
+    response = put_settings(app, protect(name))
+    assert response.status_code == 200
+    (host,) = response.json()["hosts"]
+    assert name in host["services"]["compose:shop"]["protected_containers"]
+
+
+def test_a_protected_entry_with_a_control_character_is_refused(app):
+    response = put_settings(app, protect("shop\x1b[2Japi"))
+    assert response.status_code == 422
+    assert "control characters" in response.text
+    assert "2Japi" not in response.text
+
+
+def test_a_protected_entry_shaped_like_a_secret_is_refused(app):
+    response = put_settings(app, protect("api_key=sk-live-0123456789abcdef"))
+    assert response.status_code == 422
+    assert "sk-live" not in response.text
 
 
 def test_a_deeply_nested_body_is_refused_not_a_crash(app):

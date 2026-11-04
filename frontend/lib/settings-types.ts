@@ -127,10 +127,15 @@ export interface PluginSettingsSchema {
 export interface PluginView {
   name: string;
   title: string;
+  /** On and running: its tools and actions are in use. */
   enabled: boolean;
+  /** The person's toggle as stored. On while `enabled` is off, the plugin is waiting: for a
+   * required secret the env does not set, or for its code, which failed to build. */
+  switched_on: boolean;
   settings: Record<string, unknown>;
   settings_schema: PluginSettingsSchema;
-  secrets: { env: string; set: boolean }[];
+  /** `required: false` for one the plugin uses only when it is set (the MCP plugin's token). */
+  secrets: { env: string; set: boolean; required: boolean }[];
   health: { ok: boolean; detail: string } | null;
   /** The plugin's own; a `PUT /api/plugins/{name}` built from this view sends it back. */
   version: string;
