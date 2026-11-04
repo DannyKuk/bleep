@@ -6,11 +6,17 @@ uuid or key may be null, so one odd record reads as unknowns. Text fields are se
 by a commit, so they are untrusted wherever they go next.
 """
 
-from pydantic import BaseModel
+import re
+
+from pydantic import BaseModel, Field
+
+# What Bleep accepts as a Coolify uuid; it goes into request paths. Coolify's are 24 [a-z0-9].
+UUID = re.compile(r"[A-Za-z0-9-]{1,64}")
+_UUID_FIELD = rf"^{UUID.pattern}$"
 
 
 class CoolifyApplication(BaseModel):
-    uuid: str  # the API never shows an application's numeric id
+    uuid: str = Field(pattern=_UUID_FIELD)  # the API never shows an application's numeric id
     name: str | None = None
     status: str | None = None  # "running:healthy", "exited:unhealthy", ...
     fqdn: str | None = None  # the application's domains, comma separated
@@ -22,7 +28,7 @@ class CoolifyApplication(BaseModel):
 
 
 class CoolifyDeployment(BaseModel):
-    deployment_uuid: str
+    deployment_uuid: str = Field(pattern=_UUID_FIELD)
     status: str | None = None  # queued, in_progress, finished, failed, cancelled-by-user
     commit: str | None = None
     commit_message: str | None = None

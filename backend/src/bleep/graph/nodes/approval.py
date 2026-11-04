@@ -22,6 +22,7 @@ from langgraph.types import interrupt
 from bleep.graph.deps import GraphDeps
 from bleep.graph.replan import replan
 from bleep.graph.state import IncidentState, Node
+from bleep.guard.redact import redacted_proposal
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.graph import ApprovalRecord, Decision, Proposal, TargetSnapshot
 
@@ -114,7 +115,7 @@ def make(deps: GraphDeps) -> Node:
 
         decision = record.decision  # set when it was decided while the run was not waiting
         if decision is None:
-            shown = proposal.shown().model_dump(mode="json")
+            shown = redacted_proposal(proposal).model_dump(mode="json")
             question = {"approval_id": record.id, "proposal": shown}
             resumed = Decision.model_validate(interrupt(question))
             decision = await deps.approvals.resolve(incident_id, resumed, record.id)

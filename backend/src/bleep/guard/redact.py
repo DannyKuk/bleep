@@ -10,6 +10,7 @@ from collections.abc import Callable
 from functools import lru_cache
 
 from bleep.guard.sanitize import MAX_LINE, VALUE_END, cut_points, join_cut, normalise_newlines
+from bleep.schemas.graph import PlanStep, Proposal
 
 REDACTED = "<redacted>"
 
@@ -525,3 +526,24 @@ def redact_with_count(text: str) -> tuple[str, int]:
 def redact_text(text: str) -> str:
     """`redact_with_count` without the count."""
     return redact_with_count(text)[0]
+
+
+def redacted_step(step: PlanStep) -> PlanStep:
+    """The step as a person approving it sees it: every param redacted, nothing hidden.
+
+    A `coolify.set_env` value is redacted as `KEY=value`, so a key that names a secret
+    (`STRIPE_KEY`) hides the whole value, and a password inside a URL value is cut out while the
+    host and the rest stay visible. Danny's decision (#38): an explicit yes must see what it
+    approves, since planted text could steer the model to a value such as an attacker's host."""
+    params = {k: redact_text(v) for k, v in step.params.items()}
+    if step.action == "coolify.set_env" and {"key", "value"} <= step.params.keys():
+        key = step.params["key"]
+        pair = redact_text(f"{key}={step.params['value']}")
+        params["value"] = pair.removeprefix(f"{key}=") if pair.startswith(f"{key}=") else pair
+    return step.model_copy(update={"params": params})
+
+
+def redacted_proposal(proposal: Proposal) -> Proposal:
+    """The plan as the dashboard, the event stream and a chat show it (`redacted_step`); Execute
+    alone reads the real one."""
+    return proposal.model_copy(update={"steps": [redacted_step(s) for s in proposal.steps]})

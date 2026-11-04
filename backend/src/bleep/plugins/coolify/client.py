@@ -16,7 +16,7 @@ from typing import Any, Literal
 import httpx
 from pydantic import BaseModel, SecretStr, ValidationError
 
-from bleep.schemas.coolify import CoolifyApplication, CoolifyDeployment, CoolifyEnvKey
+from bleep.schemas.coolify import UUID, CoolifyApplication, CoolifyDeployment, CoolifyEnvKey
 
 TIMEOUT_S = 10.0  # connecting, and between two reads of the answer
 DEADLINE_S = 20.0  # one whole request, however the answer trickles in
@@ -68,6 +68,7 @@ class CoolifyClient:
 
     async def deployments(self, app_uuid: str, take: int = DEPLOYMENTS) -> list[CoolifyDeployment]:
         """The application's newest deployments, newest first."""
+        _check_uuid(app_uuid)
         body = await self._get(
             f"/deployments/applications/{app_uuid}", "application", params={"take": str(take)}
         )
@@ -77,6 +78,7 @@ class CoolifyClient:
         return _parse_list(CoolifyDeployment, listed)
 
     async def deployment(self, deployment_uuid: str) -> CoolifyDeployment:
+        _check_uuid(deployment_uuid)
         data = _json(await self._get(f"/deployments/{deployment_uuid}", "deployment"))
         try:
             return CoolifyDeployment.model_validate(data)
@@ -85,17 +87,19 @@ class CoolifyClient:
 
     async def env_keys(self, app_uuid: str) -> list[CoolifyEnvKey]:
         """The application's env vars, keys and flags only: the values are never parsed."""
+        _check_uuid(app_uuid)
         body = await self._get(f"/applications/{app_uuid}/envs", "application")
         return _parse_list(CoolifyEnvKey, _json(body))
 
     async def deploy(self, app_uuid: str) -> str:
         """Queue a deployment of the application; its deployment uuid."""
+        _check_uuid(app_uuid)
         params = {"uuid": app_uuid, "force": "false"}
         data = _json(await self._call("POST", "/deploy", "application", params=params))
         queued = data.get("deployments") if isinstance(data, dict) else None
         found = [d.get("deployment_uuid") for d in queued or [] if isinstance(d, dict)]
-        if not found or not isinstance(found[0], str):
-            raise CoolifyError("Coolify queued no deployment")
+        if not found or not isinstance(found[0], str) or not UUID.fullmatch(found[0]):
+            raise CoolifyError("Coolify queued no deployment Bleep can follow")
         return found[0]
 
     async def set_env(
@@ -103,6 +107,7 @@ class CoolifyClient:
     ) -> Literal["updated", "created"]:
         """Set one env var: update it when the application has it, else create it. Coolify's
         answer holds the value, so it is read for its status only."""
+        _check_uuid(app_uuid)
         body = {"key": key, "value": value.get_secret_value()}
         path = f"/applications/{app_uuid}/envs"
         try:
@@ -162,6 +167,8 @@ class CoolifyClient:
         headers = {
             "Authorization": f"Bearer {self._token.get_secret_value()}",
             "Accept": "application/json",
+            # A compressed answer would be inflated before the size cap could count it.
+            "Accept-Encoding": "identity",
             "User-Agent": "bleep",
         }
         async with (
@@ -174,14 +181,23 @@ class CoolifyClient:
             ) as http,
             http.stream(method, path, params=params, json=payload) as response,
         ):
+            encoding = response.headers.get("content-encoding", "identity").strip().lower()
+            if encoding not in ("", "identity"):
+                raise CoolifyError("Coolify sent a compressed answer; Bleep reads only plain ones")
             body = bytearray()
-            async for chunk in response.aiter_bytes():
+            async for chunk in response.aiter_raw():
                 body += chunk
                 if len(body) > self._max_bytes:
                     raise CoolifyError(
                         f"Coolify's answer is over {self._max_bytes // 1_000_000} MB; Bleep stopped"
                     )
             return response.status_code, bytes(body)
+
+
+def _check_uuid(uuid: str) -> None:
+    """A uuid goes into a request path, so it must be one: letters, digits and `-`."""
+    if not UUID.fullmatch(uuid):
+        raise CoolifyError("that is not a Coolify uuid")
 
 
 def _json(body: bytes) -> Any:

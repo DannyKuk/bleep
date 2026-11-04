@@ -156,7 +156,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **A plugin is read from the registry at every use**, so switching it off takes its tools out of the next round, fails its actions in the plan check and leaves Execute no handler for them.
 - **A plugin's secrets are env variable names**, shown only as set or not; its settings model may not hold a secret-named or secret-typed field.
 - **The Coolify plugin reads applications, deployments and env keys, never an env value**: its answers are parsed to the fields Bleep names, so webhook secrets and build logs never leave the client; its address and token come from the env, and the address must be https unless it is private.
-- **Coolify's actions run the Docker act tools' checks, a redeploy waits for its deployment to end, and a `set_env` value is never shown, logged or prompted.**
+- **Coolify's actions run the Docker act tools' checks, a redeploy waits for its deployment to end, and a `set_env` value is never logged; the person approving sees it, redacted.**
 - **The MCP plugin runs only the server tools a person allowed** (`read_tools` without approval, `act_tools` only as an approved `mcp.call` step), through Bleep's own `mcp_tools` and `mcp_call`, so the server's descriptions arrive wrapped as untrusted data; its endpoint and token come from the env.
 
 **Settings** ([details](design/settings.md))

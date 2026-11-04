@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Any
 
 import pytest
@@ -624,8 +625,11 @@ WEB_APP = {
 WEB_BOX = "web0uuid-074501234567"  # Coolify names an app's containers anew at every deploy
 
 
-async def test_a_set_env_value_is_kept_for_execute_and_hidden_everywhere_else(tmp_path):
-    value = "postgres://web:never-shown@db/web"
+async def test_a_set_env_value_is_kept_for_execute_shown_redacted_and_never_logged(
+    tmp_path, caplog
+):
+    caplog.set_level(logging.DEBUG)
+    value = "postgres://web:pw-fake-123@db.internal/web"
     set_env = {
         "action": "coolify.set_env",
         "host_id": "a",
@@ -656,6 +660,9 @@ async def test_a_set_env_value_is_kept_for_execute_and_hidden_everywhere_else(tm
     events = [
         e.payload for e in await env.bus.history(state["incident_id"]) if e.kind == "proposal"
     ]
-    assert len(events) == 2 and value not in json.dumps(events)
-    assert value not in prompt(env, 1)
-    assert "coolify.set_env web on a (key=DATABASE_URL, value=(hidden))" in prompt(env, 1)
+    assert len(events) == 2 and "pw-fake-123" not in json.dumps(events)
+    assert events[0]["steps"][0]["params"]["value"] == "postgres://web:<redacted>@db.internal/web"
+    # The model wrote the value, so the next round's prompt may carry it.
+    assert "coolify.set_env web on a (key=DATABASE_URL, value=" in prompt(env, 1)
+    assert "pw-fake-123" not in caplog.text
+    assert all("pw-fake-123" not in str(r) for r in env.guard_log.records)
