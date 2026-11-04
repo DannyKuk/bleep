@@ -73,32 +73,15 @@ An SSH host can be added in either of two ways. A socket host (`unix://` or `tcp
 
 ### From the dashboard
 
-Bleep keeps the host's address in its database and the private key and the host key you confirm in `secrets.json` on the `bleep-data` volume, never in the database, and starts watching the host at once, without a restart. The settings page has no host form yet, so for now the dashboard's API does it, with your login (`jq` 1.6 or later builds the JSON, so the key never sits in your shell history):
+Bleep keeps the host's address in its database and the private key and the host key you confirm in `secrets.json` on the `bleep-data` volume, never in the database, and starts watching the host at once, without a restart.
 
-1. Log in, typing the admin password at the prompt:
-   ```bash
-   jq -n --arg password "$(read -rs p; echo "$p")" '{password: $password}' \
-     | curl -sc bleep.cookies -H 'Content-Type: application/json' --data-binary @- \
-         http://localhost:3000/api/auth/login
-   ```
-2. Fetch the host key the server offers. Nothing is saved yet:
-   ```bash
-   curl -sb bleep.cookies -H 'Content-Type: application/json' \
-     -d '{"address": "your-host", "port": 22}' http://localhost:3000/api/settings/hosts/host-key
-   ```
-   It answers an `offer` and a `fingerprint` (`SHA256:...`). On the host, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` (or the key of the answer's `key_type`) must print the same fingerprint; if it does not, stop. Any failure answers "Could not get an SSH host key from that address." (the backend log names the kind of error). The address may be on your LAN, but never loopback or link-local: a host on the machine Bleep runs on is added through the hosts file.
-3. Save the host with that offer, the fingerprint you checked and the private key, within ten minutes:
-   ```bash
-   jq -n --rawfile key ~/.ssh/bleep_deploy_key --arg offer OFFER --arg fp 'SHA256:...' \
-     '{id: "box", name: "Box", address: "your-host", port: 22, user: "deploy",
-       docker_socket: "/var/run/docker.sock", ssh_key: $key,
-       host_key: {offer: $offer, fingerprint: $fp}}' \
-     | curl -sb bleep.cookies -H 'Content-Type: application/json' --data-binary @- \
-         http://localhost:3000/api/settings/hosts
-   ```
-   The host appears on the overview within a few seconds. Its key and host key are shown only as set or not, never sent back.
+1. Open Settings, then "Add a host" and "Add an SSH host". Fill in a name, the address (a host name or IP, never loopback or link-local), the port, the user and the Docker socket path. Paste the private key into the key box. Bleep never shows it again and empties the box once the host is saved.
+2. Press "Check the host key". Bleep fetches the host key the server offers and shows its fingerprint (`SHA256:...`). Nothing is saved yet. On the server, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` (or the key file of the type shown) must print the same fingerprint; if it does not, stop. Tick that it matches. Any failure of the check says "Could not get an SSH host key from that address." (the backend log names the kind of error), and only one check runs at a time.
+3. Press "Add host" within ten minutes of the check. After ten minutes, or after the address or port changes, the page asks you to check again.
 
-To change a host, `PUT /api/settings/hosts/<id>` with the same fields and the `version` from its `connection` in `GET /api/settings` as `If-Match`. **A new address, port or user clears the key and the host key**: send a new `ssh_key` and a newly fetched `host_key` with it, or the host waits for them. When the server's host key changes, Bleep refuses to connect; fetch it again, check it, and send it as `host_key` alone. `DELETE /api/settings/hosts/<id>` (with `If-Match`) stops watching the host, deletes its keys, and closes its open incidents with a notice.
+The host appears on the overview within a few seconds. The settings page shows its key and host key only as "set" or "missing". Hosts on the machine Bleep runs on (loopback) and socket hosts cannot be added there; they go in the hosts file.
+
+To change a host, use "Edit connection". **A new address, port or user clears the key and the host key**, and the page says so: check the host key and enter the key again; Save stays disabled until both are done. When the server's host key changes, Bleep refuses to connect; check the new key's fingerprint and save it from the same form. If the host was changed elsewhere since the page read it, the save is refused with "This host changed since this page read it; reload the page." "Remove" asks a second time ("Yes, remove this host"), stops watching the host, deletes its keys, and closes its open incidents with a notice.
 
 ### In the hosts file
 

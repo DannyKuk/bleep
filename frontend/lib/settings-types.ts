@@ -26,8 +26,12 @@ export interface ServiceSettingsView {
   hosts_file_protected_containers: string[];
 }
 
-/** How Bleep reaches a host, from the hosts file; the dashboard never changes it. */
+/**
+ * How Bleep reaches a host. `source` says who decides it: the hosts file (read-only here) or the
+ * dashboard. A dashboard host's key and confirmed host key are only set or not, never content.
+ */
 export interface HostConnection {
+  source: "file" | "dashboard";
   kind: HostKind;
   address: string | null;
   user: string | null;
@@ -36,6 +40,12 @@ export interface HostConnection {
   endpoint: string | null;
   key_file: SecretStatus | null;
   known_hosts_file: string | null;
+  /** A dashboard host's private key. */
+  ssh_key: SecretStatus | null;
+  /** A dashboard host's confirmed host key. */
+  host_key: SecretStatus | null;
+  /** Of a dashboard host; sent back in `If-Match` by a change or a removal. */
+  version: string | null;
 }
 
 export interface HostSettingsView {

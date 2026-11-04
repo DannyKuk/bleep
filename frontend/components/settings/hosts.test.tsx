@@ -44,6 +44,7 @@ describe("HostSettings", () => {
   it("shows a socket host's endpoint and no ssh fields", () => {
     const host = sshHost({
       connection: {
+        source: "file",
         kind: "socket",
         address: null,
         user: null,
@@ -52,6 +53,9 @@ describe("HostSettings", () => {
         endpoint: "tcp://socket-proxy:2375",
         key_file: null,
         known_hosts_file: null,
+        ssh_key: null,
+        host_key: null,
+        version: null,
       },
       services: {},
     });
