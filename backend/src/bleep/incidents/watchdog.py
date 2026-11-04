@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from bleep.graph.deps import Notifier, SettingsSource
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
+from bleep.schemas.incidents import Incident
 
 log = logging.getLogger(__name__)
 
@@ -52,24 +53,31 @@ class Watchdog:
             if incident.status in EXEMPT:
                 self._noticed.pop(incident.id, None)
                 continue
-            moved = await self.bus.last_activity(incident.id) or incident.opened_at
-            if now - moved < limit or self._noticed.get(incident.id) == moved:
-                continue
-            self._noticed[incident.id] = moved
-            minutes = int((now - moved).total_seconds() // 60)
-            text = (
-                f"This incident has not moved for {minutes} minutes (status {incident.status}). "
-                "Check the run; it may be waiting on a slow model or host."
-            )
-            await self.bus.publish(incident.id, "notice", {"text": text})
             try:
-                await self.notifier.notice(incident.id, text)
-            except Exception:  # a channel outage must not stop the other notices
-                log.exception("watchdog notice for incident %s failed", incident.id)
+                moved = await self.bus.last_activity(incident.id) or incident.opened_at
+                if now - moved < limit or self._noticed.get(incident.id) == moved:
+                    continue
+                await self._notice(incident, moved, now)
+            except Exception:  # one incident's failure must not skip the others
+                log.exception("watchdog could not check incident %s", incident.id)
+                continue
             noticed.append(incident.id)
         for gone in set(self._noticed) - open_ids:
             del self._noticed[gone]
         return noticed
+
+    async def _notice(self, incident: Incident, moved: datetime, now: datetime) -> None:
+        self._noticed[incident.id] = moved
+        minutes = int((now - moved).total_seconds() // 60)
+        text = (
+            f"This incident has not moved for {minutes} minutes (status {incident.status}). "
+            "Check the run; it may be waiting on a slow model or host."
+        )
+        await self.bus.publish(incident.id, "notice", {"text": text})
+        try:
+            await self.notifier.notice(incident.id, text)
+        except Exception:  # a channel outage must not hide the dashboard notice
+            log.exception("watchdog notice for incident %s failed", incident.id)
 
     async def run(self) -> None:
         """Tick every `TICK_S` seconds until cancelled."""

@@ -11,7 +11,13 @@ from bleep.graph.nodes import propose
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.runner import IncidentRunner
-from bleep.schemas.graph import Decision, PlanStep, Proposal, VerificationPlan
+from bleep.schemas.graph import (
+    Decision,
+    PlanStep,
+    Proposal,
+    VerificationPlan,
+    VerificationResult,
+)
 from bleep.schemas.incidents import Subject
 from bleep.schemas.settings import Budgets
 from fakes import FakeChatModel
@@ -605,7 +611,11 @@ async def model_down(tmp_path, hangs: int):
     env = await graph_env(tmp_path)
     script = confident_model().script
     env.models.model = HangingModel(script=script, structured_output_unsupported=True, hangs=hangs)
-    env.deps.settings_store = StaticSettings(budget_limits=Budgets(model_timeout_s=0.01))
+    env.deps.settings_store = StaticSettings(
+        budget_limits=Budgets.model_construct(
+            **(Budgets().model_dump() | {"model_timeout_s": 0.01})
+        )
+    )
     env.deps.model_sleep = no_wait
     return env
 
@@ -688,7 +698,7 @@ async def test_a_run_paused_twice_in_a_row_tells_the_channels_once(tmp_path):
 
         assert (await env.repo.get(incident.id)).status == "closed"
         assert len(notifier.notices) == 1
-        assert retry.delays == [300, 300]
+        assert retry.delays == [300, 600]
 
 
 async def test_recover_on_boot_picks_up_a_paused_run(tmp_path):
@@ -700,3 +710,67 @@ async def test_recover_on_boot_picks_up_a_paused_run(tmp_path):
         assert await runner.recover_on_boot() == [incident.id]
         await runner.join()
     assert (await env.repo.get(incident.id)).status == "closed"
+
+
+async def test_paused_retries_back_off_to_an_hour_and_the_channels_hear_once_more_at_an_hour(
+    tmp_path,
+):
+    env = await model_down(tmp_path, hangs=3 * 7)  # seven pauses
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier, retry = NoticeNotifier(), Retry()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(
+            build_graph(env.deps, saver),
+            env.repo,
+            env.bus,
+            notifier=notifier,
+            settings=env.deps.settings_store,
+            sleep=retry,
+        )
+        await runner.start(incident)
+        for _ in range(6):
+            await paused(runner, retry)
+            retry.release.set()
+            await asyncio.sleep(0.05)
+        await paused(runner, retry)
+        assert retry.delays == [300, 600, 1200, 2400, 3600, 3600, 3600]
+        assert len(notifier.notices) == 2  # when it paused, and at an hour (after 5+10+20+40 min)
+        assert "an hour" in notifier.notices[1][1]
+        notices = [e for e in await env.bus.history(incident.id) if e.kind == "notice"]
+        assert len(notices) == 2
+        started = await env.nodes(incident.id)
+        assert started.count("investigate") == 1  # retries do not repeat it on the timeline
+        await runner.close()
+
+
+async def test_a_verified_fix_never_shows_investigating_again_when_the_run_is_restarted(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    statuses: list[str] = []
+    set_status = env.repo.set_status
+
+    async def recording(incident_id: str, status: str) -> None:
+        statuses.append(status)
+        await set_status(incident_id, status)
+
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        graph = build_graph(env.deps, saver)
+        await graph.aupdate_state(
+            IncidentRunner.config(incident.id),
+            {
+                "incident_id": incident.id,
+                "subject": incident.subject,
+                "signals": [],
+                "verification": VerificationResult(ok=True, checks=[]),
+                "outcome": "resolved",
+            },
+            as_node="verify",
+        )
+        await env.repo.set_status(incident.id, "paused")
+        env.repo.set_status = recording  # type: ignore[method-assign]
+        runner = IncidentRunner(graph, env.repo, env.bus)
+        await runner.start(incident)
+        await runner.join()
+
+    assert "investigating" not in statuses
+    assert statuses[0] == "verifying" and statuses[-1] == "resolved"

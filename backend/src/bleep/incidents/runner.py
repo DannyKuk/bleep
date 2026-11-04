@@ -14,6 +14,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
 from bleep import prompts
+from bleep.graph.build import NODE_STATUS
 from bleep.graph.deps import Approvals, Notifier, SettingsSource, StaticSettings, Tracer
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
@@ -22,6 +23,10 @@ from bleep.schemas.graph import Decision
 from bleep.schemas.incidents import Incident, IncidentStatus, Signal
 
 log = logging.getLogger(__name__)
+
+AFTER_PAUSE = "after_pause"  # config flag: this run goes on from a pause
+MAX_PAUSE_MIN = 60  # the longest wait between two retries of a paused run
+LONG_PAUSE_S = 3600  # a run paused this long in all gets one more notice
 
 
 class IncidentRunner:
@@ -54,6 +59,9 @@ class IncidentRunner:
         self.settings = settings if settings is not None else StaticSettings()
         self.sleep = sleep
         self._runs: dict[str, asyncio.Task[None]] = {}
+        self._pauses: dict[str, int] = {}  # consecutive pauses of a run, for the backoff
+        self._waited: dict[str, float] = {}  # seconds a run has been paused in all
+        self._warned_long: set[str] = set()
 
     @staticmethod
     def config(incident_id: str) -> RunnableConfig:
@@ -220,8 +228,11 @@ class IncidentRunner:
         try:
             current = await self.repo.get(incident_id)
             was_paused = current is not None and current.status == "paused"
-            await self.repo.set_status(incident_id, _status_on(payload))
-            await self.graph.ainvoke(payload, await self._traced(incident_id))
+            await self.repo.set_status(incident_id, await self._status_on(incident_id, payload))
+            config = await self._traced(incident_id)
+            if was_paused:  # the graph keeps a retried node off the timeline
+                config = {**config, "configurable": {**config["configurable"], AFTER_PAUSE: True}}
+            await self.graph.ainvoke(payload, config)
         except ModelUnavailable as unavailable:
             await self._pause(incident_id, unavailable, announce=not was_paused)
             return
@@ -235,6 +246,7 @@ class IncidentRunner:
                 log.exception("incident %s: recording the failure failed", incident_id)
             await self._tell(incident_id, text)
             return
+        self._forget_pauses(incident_id)
         snapshot = await self.graph.aget_state(config)
         if snapshot.interrupts:
             await self.repo.set_status(incident_id, "awaiting_approval")
@@ -245,28 +257,64 @@ class IncidentRunner:
         self, incident_id: str, unavailable: ModelUnavailable, *, announce: bool
     ) -> None:
         """Park a run whose model is unavailable and try it again later, from its checkpoint.
-        The notice goes out once, when the run first pauses, not at every retry."""
+
+        The first retry comes `paused_retry_min` minutes later, then twice as late each time up
+        to an hour. The channels hear of it once when the run pauses and once more when it has
+        been paused for an hour in all."""
         log.warning("incident %s: paused, %s", incident_id, unavailable)
-        minutes = self.settings.budgets().paused_retry_min
-        text = (
-            f"The model is not answering ({unavailable.reason}). The run is paused and tries "
-            f"again in {minutes} minutes, from where it stopped."
-        )
+        base = self.settings.budgets().paused_retry_min
+        seconds = min(base * 2 ** self._pauses.get(incident_id, 0), MAX_PAUSE_MIN) * 60
+        self._pauses[incident_id] = self._pauses.get(incident_id, 0) + 1
+        waited = self._waited.get(incident_id, 0) + seconds
+        self._waited[incident_id] = waited
+        text = None
+        if announce:
+            text = (
+                f"The model is not answering ({unavailable.reason}). The run is paused and tries "
+                f"again from where it stopped, first in {base} minutes, then less often."
+            )
+        elif waited >= LONG_PAUSE_S and incident_id not in self._warned_long:
+            self._warned_long.add(incident_id)
+            text = "The run has been paused for an hour: the model is still not answering."
         try:
             await self.repo.set_status(incident_id, "paused")
-            if announce:
+            if text is not None:
                 await self.bus.publish(incident_id, "notice", {"text": text})
         except Exception:
             log.exception("incident %s: recording the pause failed", incident_id)
-        if announce:
+        if text is not None:
             await self._tell(incident_id, text)
-        self._schedule(incident_id, lambda: self._retry_after(incident_id, minutes * 60))
+        self._schedule(incident_id, lambda: self._retry_after(incident_id, seconds))
+
+    def _forget_pauses(self, incident_id: str) -> None:
+        for book in (self._pauses, self._waited):
+            book.pop(incident_id, None)
+        self._warned_long.discard(incident_id)
 
     async def _retry_after(self, incident_id: str, seconds: float) -> None:
         await self.sleep(seconds)
         incident = await self.repo.get(incident_id)
         if incident is not None and incident.status == "paused":  # not moved on by someone else
             await self._advance(incident)
+
+    async def _status_on(self, incident_id: str, payload: Any) -> IncidentStatus:
+        """The status as a run is driven. A yes goes straight to Execute; a restart or a retry
+        takes the status of the node it goes on at, so a verified fix never shows
+        `investigating` again while Report runs; a new run, a no and an instruction are
+        investigating, and the next node corrects it."""
+        if isinstance(payload, Command):
+            return (
+                "executing"
+                if getattr(payload.resume, "kind", None) == "approve"
+                else "investigating"
+            )
+        if payload is not None:
+            return "investigating"
+        snapshot = await self.graph.aget_state(self.config(incident_id))
+        node = snapshot.next[0] if snapshot.next else ""
+        if node == "report" and snapshot.values.get("verification") is not None:
+            return "verifying"
+        return NODE_STATUS.get(node, "investigating")
 
     async def _traced(self, incident_id: str) -> RunnableConfig:
         """The run's config, after storing the link to its trace on the incident. Tracing is
@@ -295,14 +343,6 @@ class IncidentRunner:
         it leaves the incident open and `recover_on_boot` finishes the run."""
         outcome = snapshot.values.get("outcome")
         await self.repo.set_status(incident_id, "resolved" if outcome == "resolved" else "closed")
-
-
-def _status_on(payload: Any) -> IncidentStatus:
-    """The status as a run is driven: a yes goes straight to Execute, which the graph then
-    confirms; everything else (a new run, a restart, a no, an instruction) is investigating."""
-    if isinstance(payload, Command) and getattr(payload.resume, "kind", None) == "approve":
-        return "executing"
-    return "investigating"
 
 
 def _initial(incident: Incident, signals: list[Signal]) -> dict[str, Any]:

@@ -4,6 +4,7 @@ import httpx
 import openai
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
+from openrouter import errors as openrouter_errors
 from pydantic import BaseModel
 
 from bleep.llm.guard import ModelGuard, ModelUnavailable
@@ -116,3 +117,53 @@ async def test_a_hanging_model_is_cut_off_by_invoke_structured_and_a_later_call_
     assert model.hangs == 0 and sleep.delays == [2.0, 4.0]
 
     assert await invoke_structured(model, Verdict, ask, guard=guard(sleep)) == Verdict(cause="oom")
+
+
+def openrouter_error(cls, status: int, body: str = "", content_type: str = "text/html"):
+    response = httpx.Response(
+        status,
+        text=body,
+        headers={"content-type": content_type},
+        request=httpx.Request("POST", "http://x"),
+    )
+    return cls("bad gateway", response, body)
+
+
+@pytest.mark.parametrize("status", [502, 504, 408, 429])
+async def test_an_html_error_page_from_a_proxy_is_retried(status):
+    sleep, errors = (
+        Recorder(),
+        [
+            openrouter_error(
+                openrouter_errors.OpenRouterDefaultError, status, "<html>bad gateway</html>"
+            )
+        ],
+    )
+
+    async def attempt():
+        if errors:
+            raise errors.pop()
+        return "answer"
+
+    assert await guard(sleep).call(attempt) == "answer"
+
+
+@pytest.mark.parametrize("status", [400, 401, 404])
+async def test_an_openrouter_client_error_is_not_retried(status):
+    error = openrouter_error(openrouter_errors.OpenRouterDefaultError, status, "<html>no</html>")
+    with pytest.raises(type(error)):
+        await guard(Recorder()).call(lambda: _raise(error))
+
+
+@pytest.mark.parametrize(
+    "error", [httpx.UnsupportedProtocol("no scheme"), httpx.LocalProtocolError("bad")]
+)
+async def test_a_config_or_protocol_error_is_not_retried(error):
+    sleep = Recorder()
+    with pytest.raises(type(error)):
+        await guard(sleep).call(lambda: _raise(error))
+    assert sleep.delays == []
+
+
+async def _raise(error: Exception):
+    raise error

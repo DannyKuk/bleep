@@ -37,7 +37,6 @@ from bleep.graph.nodes.investigate import ESCAPED_TAG
 from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.log import GuardKind
 from bleep.guard.report_check import check_report
-from bleep.llm.guard import ModelUnavailable
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.schemas.graph import (
@@ -333,8 +332,6 @@ async def _write(deps: GraphDeps, incident_id: str, prompt: str) -> _Draft:
     """The model's draft; an empty one when the budget is spent or the model fails."""
     try:
         return await _ask(deps, incident_id, _Draft, prompt)
-    except ModelUnavailable:
-        raise  # the run pauses and writes the report when the model is back
     except (BudgetExceeded, StructuredOutputFailed) as error:  # expected: the type says it all
         log.warning("report: writing from the record only (%s)", type(error).__name__)
     except Exception as error:  # the run must end with a report whatever the model does

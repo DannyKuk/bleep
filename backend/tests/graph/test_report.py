@@ -10,7 +10,6 @@ from bleep.graph.deps import StaticSettings
 from bleep.graph.nodes import report
 from bleep.guard.pipeline import guard_text
 from bleep.guard.report_check import MARKER
-from bleep.llm.guard import ModelUnavailable
 from bleep.schemas.graph import (
     Decision,
     Diagnosis,
@@ -338,14 +337,15 @@ class TimingOutModel(FakeChatModel):
         raise httpx.ReadTimeout("no answer")
 
 
-async def test_an_unavailable_model_pauses_the_run_instead_of_writing_a_thin_report(tmp_path):
+async def test_an_unavailable_model_still_ends_with_a_record_only_report(tmp_path):
     env, state, _ = await setup(tmp_path)
     state |= {"proposal": ACT, "decision": decide("reject")}
-
     env.models.model = TimingOutModel(script=[], structured_output_unsupported=True)
     env.deps.model_sleep = no_wait
-    with pytest.raises(ModelUnavailable):
-        await run(env, state)
+
+    update = await run(env, state)
+
+    assert update["report"].summary == f"{TITLE}: rejected, nothing was done."
 
 
 async def test_the_prompt_carries_no_log_text(tmp_path):

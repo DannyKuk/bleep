@@ -118,6 +118,20 @@ class EventBus:
             self._subscribers.remove(entry)
             await stream.aclose()
 
+    async def last_event(self, incident_id: str) -> IncidentEvent | None:
+        """The incident's newest event that is not a notice, or None."""
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                "SELECT * FROM incident_events WHERE incident_id = ? AND kind != 'notice'"
+                " ORDER BY seq DESC LIMIT 1",
+                (incident_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+        finally:
+            await conn.close()
+        return _event(row) if row else None
+
     async def last_activity(self, incident_id: str) -> datetime | None:
         """When the incident's run last did something: the time of its newest event that is not a
         notice (a notice only reports on the run). None if it has no such event."""

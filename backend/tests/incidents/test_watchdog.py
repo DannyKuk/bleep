@@ -103,3 +103,21 @@ async def test_a_channel_outage_does_not_hide_the_notice_from_the_dashboard(worl
     channel.notice = down  # type: ignore[method-assign]
     assert await dog.tick(clock.after(31)) == [incident.id]
     assert len(await dashboard_notices(bus, incident.id)) == 1
+
+
+async def test_one_incident_failing_does_not_skip_the_others(world):
+    incident, repo, bus, channel, clock, dog = world
+    other = Subject(kind="service", host_id="a", service_id="a/db")
+    second, _ = await repo.open_or_attach(
+        other, [Signal(subject=other, kind="container_died", at=T0)]
+    )
+    publish = bus.publish
+
+    async def flaky(incident_id, kind, payload=None):
+        if incident_id == incident.id:
+            raise RuntimeError("database is locked")
+        return await publish(incident_id, kind, payload)
+
+    bus.publish = flaky  # type: ignore[method-assign]
+
+    assert await dog.tick(clock.after(31)) == [second.id]

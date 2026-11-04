@@ -18,24 +18,33 @@ from openrouter import errors as openrouter_errors
 
 log = logging.getLogger(__name__)
 
-# Timeouts, connection failures, rate limits and 5xx answers, from the layers a model call can
-# fail in: asyncio's own timeout, httpx, the openai SDK (ChatOpenAI) and the openrouter SDK
-# (ChatOpenRouter, which raises its own types).
+# Failures of the network or the provider's capacity, from the layers a model call can fail in:
+# asyncio's own timeout, httpx, the openai SDK (ChatOpenAI) and the openrouter SDK
+# (ChatOpenRouter, which raises its own types). A config error (an unsupported URL scheme, a
+# protocol misuse) is not here and fails the run; a connection refused by a wrong local URL cannot
+# be told from an outage and is retried like one.
 TRANSIENT = (
     TimeoutError,
-    httpx.TransportError,
+    httpx.TimeoutException,
+    httpx.NetworkError,
+    httpx.RemoteProtocolError,
     openai.APIConnectionError,  # includes APITimeoutError
     openai.RateLimitError,
     openai.InternalServerError,
     openrouter_errors.NoResponseError,
-    openrouter_errors.RequestTimeoutResponseError,
-    openrouter_errors.EdgeNetworkTimeoutResponseError,
-    openrouter_errors.TooManyRequestsResponseError,
-    openrouter_errors.InternalServerResponseError,
-    openrouter_errors.BadGatewayResponseError,
-    openrouter_errors.ServiceUnavailableResponseError,
-    openrouter_errors.ProviderOverloadedResponseError,
 )
+RETRIABLE_STATUS = {408, 429}
+
+
+def is_transient(error: Exception) -> bool:
+    """Whether trying the same call again can work: a transient type above, or any HTTP error
+    answer of 5xx, 408 or 429. The openrouter SDK raises typed errors for JSON bodies only; an
+    HTML 502 from a proxy arrives as a plain `OpenRouterError` with the status."""
+    if isinstance(error, TRANSIENT):
+        return True
+    if isinstance(error, openrouter_errors.OpenRouterError | openai.APIStatusError):
+        return error.status_code >= 500 or error.status_code in RETRIABLE_STATUS
+    return False
 
 
 class ModelUnavailable(Exception):
@@ -63,7 +72,9 @@ class ModelGuard:
             try:
                 async with asyncio.timeout(self.timeout_s):
                     return await attempt()
-            except TRANSIENT as error:
+            except Exception as error:
+                if not is_transient(error):
+                    raise
                 name = type(error).__name__
                 if tries == self.retries:
                     raise ModelUnavailable(name) from error

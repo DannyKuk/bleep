@@ -60,7 +60,7 @@ class Budgets(BaseModel):
     incident_tokens: int = 150_000
     daily_cost_usd: float = 1.0
     approval_reminder_min: int = 60  # a pending approval is re-sent this often, never approved
-    model_timeout_s: float = 120  # one model call is cut off after this, then retried
+    model_timeout_s: int = 120  # one model call is cut off after this, then retried
     paused_retry_min: int = 5  # a run paused on an unavailable model is tried again this often
     stuck_after_min: int = 30  # an incident that has not moved this long gets one notice
 
@@ -126,7 +126,7 @@ class BudgetOverrides(_Overrides):
     incident_tokens: int | None = Field(None, ge=1_000, le=2_000_000)
     daily_cost_usd: float | None = Field(None, ge=0, le=100)
     approval_reminder_min: int | None = Field(None, ge=5, le=1_440)
-    model_timeout_s: float | None = Field(None, ge=10, le=600)
+    model_timeout_s: int | None = Field(None, ge=10, le=600)
     paused_retry_min: int | None = Field(None, ge=1, le=240)
     stuck_after_min: int | None = Field(None, ge=5, le=1_440)
 
