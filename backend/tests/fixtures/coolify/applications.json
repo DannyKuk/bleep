@@ -1,0 +1,42 @@
+[
+  {
+    "uuid": "shop0uuid0000000000000a1",
+    "name": "shop",
+    "description": "",
+    "status": "exited:unhealthy",
+    "fqdn": "https://shop.example.com",
+    "git_repository": "example/shop",
+    "git_branch": "main",
+    "git_commit_sha": "4b1d3c0ffee0123456789abcdef0123456789abc",
+    "git_full_url": null,
+    "build_pack": "dockerfile",
+    "last_online_at": "2026-11-04 07:58:10",
+    "updated_at": "2026-11-04T07:58:10.000000Z",
+    "manual_webhook_secret_github": "whsec-fake-github-0001",
+    "manual_webhook_secret_gitlab": "whsec-fake-gitlab-0001",
+    "http_basic_auth_password": null,
+    "custom_labels": "dHJhZWZpay5lbmFibGU9dHJ1ZQ==",
+    "docker_compose_raw": null,
+    "destination": {"id": 0, "name": "localhost-coolify", "uuid": "dest0uuid000000000000001", "server_id": 0}
+  },
+  {
+    "uuid": "blog0uuid0000000000000b2",
+    "name": "blog",
+    "description": "",
+    "status": "running:healthy",
+    "fqdn": "https://blog.example.com",
+    "git_repository": "example/blog",
+    "git_branch": "main",
+    "git_commit_sha": "HEAD",
+    "git_full_url": null,
+    "build_pack": "nixpacks",
+    "last_online_at": "2026-11-04 07:58:10",
+    "updated_at": "2026-11-01T10:00:00.000000Z",
+    "manual_webhook_secret_github": "whsec-fake-github-0002",
+    "manual_webhook_secret_gitlab": "whsec-fake-gitlab-0002",
+    "http_basic_auth_password": "basic-fake-password-0002",
+    "custom_labels": "",
+    "docker_compose_raw": null,
+    "destination": {"id": 0, "name": "localhost-coolify", "uuid": "dest0uuid000000000000001", "server_id": 0}
+  }
+]

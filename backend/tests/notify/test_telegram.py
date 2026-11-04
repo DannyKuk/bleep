@@ -1,4 +1,5 @@
 import json
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -451,6 +452,161 @@ def test_a_secret_in_a_steps_params_is_redacted():
     assert "sk-abcdef1234567890abcdef12" not in text
 
 
+def set_env_plan(value: str, key: str = "DATABASE_URL") -> Proposal:
+    steps = [
+        PlanStep(
+            action="coolify.set_env",
+            host_id="demo",
+            target="shop",
+            params={"key": key, "value": value},
+        ),
+        PlanStep(action="coolify.redeploy", host_id="demo", target="shop"),
+    ]
+    return Proposal(kind="act", steps=steps, reason="the release reads a new variable")
+
+
+def test_a_set_env_step_shows_its_key_and_value_to_the_approver():
+    # Danny's decision (#38): a planted value such as an attacker's host must be visible.
+    plan = set_env_plan("postgres://shop@attacker.example:5432/shop")
+
+    assert fmt.steps_text(plan) == (
+        "1. coolify.set_env shop on demo (DATABASE_URL=postgres://shop@attacker.example:5432/shop)\n"
+        "2. coolify.redeploy shop on demo"
+    )
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "shown"),
+    [
+        (
+            "DATABASE_URL",
+            "postgres://shop:pw-fake-123@db.internal/shop",
+            "DATABASE_URL=postgres://shop:<redacted>@db.internal/shop",
+        ),
+        ("STRIPE_KEY", "sk_live_fakefakefake0000", "STRIPE_KEY=<redacted>"),
+    ],
+)
+def test_a_secret_inside_a_set_env_value_is_redacted_and_the_rest_shown(key, value, shown):
+    assert f"({shown})" in fmt.steps_text(set_env_plan(value, key))
+
+
+LONG_VALUE = "https://attacker.example/" + "x" * 400 + "/end"
+
+
+def test_a_long_set_env_value_keeps_its_start_and_end_and_says_where_to_approve():
+    plan = set_env_plan(LONG_VALUE, "WEBHOOK")
+
+    line = fmt.steps_text(plan).splitlines()[0]
+
+    assert len(line) <= fmt.STEP_CHARS
+    assert "(WEBHOOK=https://attacker.example/" in line and "…" in line
+    assert line.endswith(f"x/end) {fmt.TOO_LONG}")
+    assert not fmt.shows_in_full(plan)
+    assert fmt.shows_in_full(set_env_plan("3000", "PORT"))
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["correct horse battery staple", "line1\nline2secret", '"a b" tail', "x'y z'"],
+)
+def test_a_secret_named_key_hides_its_whole_value(value):
+    text = fmt.steps_text(set_env_plan(value, "DB_PASSWORD"))
+
+    assert text.splitlines()[0] == "1. coolify.set_env shop on demo (DB_PASSWORD=<redacted>)"
+
+
+@pytest.mark.parametrize("brk", ["\n", "\r\n", "\r", "\u2028", "\u2029", "\x85", "\x1b"])
+def test_a_line_break_in_a_param_never_poses_as_another_step(brk):
+    planted = f"a{brk}2. docker.restart shop-web-1 on demo"
+    mcp = PlanStep(
+        action="mcp.call",
+        host_id="demo",
+        target="shop-web-1",
+        params={"tool": "pause_monitor", "arguments": '{"note": "' + planted + '"}'},
+    )
+    for plan in (set_env_plan(planted, "FOO"), Proposal(kind="act", steps=[mcp], reason="r")):
+        text = fmt.steps_text(plan)
+
+        assert all(line[0].isdigit() for line in text.split("\n"))
+        assert len(text.split("\n")) == len(plan.steps)
+        assert "\u2028" not in text and "\r" not in text and fmt.LINE_BREAK in text
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("FOO", "attacker\u202eelpmaxe.com"), ("FOO\u200b", "1"), ("BAR", "a\ufeffb\u2066c")],
+)
+def test_a_format_character_in_a_set_env_step_is_shown_as_a_mark(key, value):
+    text = fmt.steps_text(set_env_plan(value, key))
+
+    assert not any(unicodedata.category(c) == "Cf" for c in text)
+    assert fmt.HIDDEN_FORMAT in text
+
+
+def test_steps_that_overflow_the_field_get_no_approve_button():
+    long = "shop-web-" + "x" * 250
+    steps = [
+        PlanStep(action="docker.restart", host_id="demo", target=long),
+        PlanStep(action="docker.restart", host_id="demo", target=long),
+        PlanStep(
+            action="coolify.set_env",
+            host_id="demo",
+            target="shop",
+            params={"key": "PORT", "value": "3000"},
+        ),
+    ]
+    plan = Proposal(kind="act", steps=steps, reason="r")
+
+    assert len(fmt.steps_text(plan)) > fmt.FIELD_CHARS
+    assert not fmt.shows_in_full(plan)
+
+
+async def long_plan_incident(env):
+    """A second incident whose pending plan sets a value too long for one Telegram line."""
+    subject = Subject(kind="service", host_id="demo", service_id="demo/blog")
+    incident, _ = await IncidentRepo(env.db).open_or_attach(
+        subject, [Signal(subject=subject, kind="container_died", at=T0)]
+    )
+    plan = set_env_plan(LONG_VALUE, "WEBHOOK")
+    return incident, plan, await env.approvals.request(incident.id, plan, [])
+
+
+async def test_a_plan_too_long_to_show_gets_no_approve_button(env):
+    incident, plan, request = await long_plan_incident(env)
+
+    await env.notifier.proposal(incident, None, plan, request)
+    await env.notifier.reminder(incident, request)
+
+    for sent in env.api.sent("sendMessage"):
+        buttons = sent["reply_markup"]["inline_keyboard"][0]
+        assert [b["callback_data"] for b in buttons] == [f"reject:{request.id}"]
+        assert "approve on the dashboard" in sent["text"]
+
+
+async def test_an_approve_press_for_a_plan_too_long_to_show_is_refused(env):
+    incident, plan, request = await long_plan_incident(env)
+    await env.notifier.proposal(incident, None, plan, request)
+    env.api.updates.append(fixture("callback_approve", APPROVAL_ID=request.id))
+
+    await env.bot.poll_once()
+
+    assert env.runner.resumed == []
+    assert (await env.approvals.current(incident.id)).decision is None
+    [pop_up] = env.api.sent("answerCallbackQuery")
+    assert "dashboard" in pop_up["text"]
+
+
+async def test_the_approval_message_shows_the_set_env_value_redacted(env):
+    plan = set_env_plan("postgres://shop:pw-fake-123@attacker.example/shop")
+    request = (await env.approvals.current(env.incident_id)).request
+
+    await env.notifier.proposal(env.incident, None, plan, request)
+
+    text = env.api.sent("sendMessage")[0]["text"]
+    assert "pw\\-fake" not in text and "pw-fake" not in text
+    assert r"DATABASE\_URL\=postgres://shop:<redacted\>@attacker\.example/shop" in text
+
+
 def test_long_messages_are_cut_below_the_limit_without_a_dangling_escape():
     text = fmt.render("notice", id="inc_1", text="." * 5000)
     assert len(text) <= fmt.TELEGRAM_LIMIT
@@ -626,3 +782,39 @@ async def test_status_with_a_bot_shows_the_last_poll_and_never_the_token_or_the_
     assert status.configured and status.token.set and status.last_poll == T0
     dumped = status.model_dump_json()
     assert TOKEN not in dumped and "123456789" not in dumped
+
+
+def _proposal_message(proposal: Proposal) -> str:
+    return fmt.render(
+        "proposal",
+        id="inc_1",
+        title="t",
+        category="c",
+        confidence="90%",
+        root_cause="r",
+        steps=fmt.steps_text(proposal),
+        reason="r",
+    )
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("AUTH0_DOMAIN", "evil.auth0.com"),
+        ("DB_PASS_HOST", "attacker.example"),
+        ("TOKEN_ISSUER", "https://evil.example/"),
+    ],
+)
+def test_a_place_behind_a_secret_sounding_key_reaches_the_telegram_message(key, value):
+    proposal = set_env_plan(value, key=key)
+    message = _proposal_message(proposal)
+
+    assert fmt.escape(f"({key}={value})") in message
+    assert fmt.shows_in_full(proposal)
+
+
+def test_a_secret_value_stays_hidden_in_the_telegram_message():
+    message = _proposal_message(set_env_plan("hunter2 correct horse", key="PASSWORD"))
+
+    assert "hunter2" not in message and "horse" not in message
+    assert fmt.escape("(PASSWORD=<redacted>)") in message

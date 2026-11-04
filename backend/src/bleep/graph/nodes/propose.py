@@ -16,6 +16,7 @@ from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.state import IncidentState, Node
 from bleep.guard.plan_check import Violation, check_plan, protected_names
+from bleep.guard.redact import redacted_proposal, redacted_step
 from bleep.hosts.discovery import is_self
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
@@ -49,7 +50,8 @@ def make(deps: GraphDeps) -> Node:
                 update["outcome"] = "budget"
             except StructuredOutputFailed:
                 proposal = Proposal(kind="no_action", reason=NO_PLAN)
-        await deps.bus.publish(state["incident_id"], "proposal", proposal.model_dump(mode="json"))
+        shown = redacted_proposal(proposal).model_dump(mode="json")
+        await deps.bus.publish(state["incident_id"], "proposal", shown)
         return update | {"proposal": proposal}
 
     return propose
@@ -128,7 +130,7 @@ def _record(deps: GraphDeps, incident_id: str, violations: list[Violation]) -> N
 
 def _refused(proposal: Proposal, violations: list[Violation]) -> Proposal:
     """`no_action` that tells the human what was refused and why."""
-    steps = [f"{n}. {_step(s)}" for n, s in enumerate(proposal.steps, start=1)]
+    steps = [f"{n}. {_step(redacted_step(s))}" for n, s in enumerate(proposal.steps, start=1)]
     lines = [REFUSED, "Why:", _bullets(violations), "The refused plan:", *(steps or ["no steps"])]
     lines.append(f"The model's reason: {proposal.reason}")
     if any(v.rule == "healthy_target" for v in violations):
