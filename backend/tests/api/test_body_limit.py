@@ -1,7 +1,5 @@
 """Oversized write bodies are refused by size before they are read (#167)."""
 
-import json
-
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -98,13 +96,34 @@ def test_check_size_refuses_a_body_nested_too_deeply_to_measure():
     assert refusal.value.status_code == 422
 
 
-def test_a_deeply_nested_request_is_refused_not_a_500(dev_client):
+def test_a_deeply_nested_request_reaches_check_size_and_is_a_422(dev_client):
     version = dev_client.get("/api/settings").json()["version"]
-    deep = b"[" * 50_000 + b"]" * 50_000
+    deep = b'{"a":' * 50_000 + b"1" + b"}" * 50_000
     response = dev_client.put(
         "/api/settings",
         content=deep,
         headers={"If-Match": f'"{version}"', "content-type": "application/json"},
     )
-    assert response.status_code in (413, 422)
-    assert "detail" in json.loads(response.content)
+    assert response.status_code == 422
+    assert response.json()["detail"] == "the body is nested too deeply"
+
+
+async def test_a_disconnect_mid_body_does_not_call_the_app():
+    messages = iter(
+        [
+            {"type": "http.request", "body": b"{", "more_body": True},
+            {"type": "http.disconnect"},
+        ]
+    )
+
+    async def receive():
+        return next(messages)
+
+    async def send(message):
+        raise AssertionError("nothing to answer")
+
+    async def app(scope, receive, send):
+        raise AssertionError("the app ran on a truncated body")
+
+    scope = {"type": "http", "method": "PUT", "path": "/api/settings", "headers": []}
+    await BodyLimitMiddleware(app)(scope, receive, send)

@@ -12,11 +12,13 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from bleep.api.settings import MAX_BODY_CHARS
 
-# A character is at most 4 bytes in UTF-8, so a body within the character limit is within this.
-# `check_size` still applies the exact character limit to what is parsed.
+# A character is at most 4 bytes in UTF-8, so a compact JSON body (what `JSON.stringify` sends)
+# within the character limit is never refused here. Whitespace or \\uXXXX escapes can make the raw
+# body larger than that and it is refused. `check_size` applies the exact character limit.
 MAX_BODY_BYTES = MAX_BODY_CHARS * 4
 
 LIMITED_PREFIXES = ("/api/plugins/", "/api/dev/prompts/")
+DISCONNECTED = object()  # the client left mid-body: there is nobody to answer
 LIMITED_METHODS = frozenset({"PUT", "POST", "PATCH"})
 
 
@@ -41,9 +43,12 @@ class BodyLimitMiddleware:
             await self._refuse(send)
             return
         body = await self._read_capped(receive)
+        if body is DISCONNECTED:
+            return
         if body is None:
             await self._refuse(send)
             return
+        assert isinstance(body, bytes)
         sent = False
 
         async def replay() -> Message:
@@ -55,13 +60,13 @@ class BodyLimitMiddleware:
 
         await self.app(scope, replay, send)
 
-    async def _read_capped(self, receive: Receive) -> bytes | None:
+    async def _read_capped(self, receive: Receive) -> bytes | None | object:
         chunks: list[bytes] = []
         size = 0
         while True:
             message = await receive()
             if message["type"] != "http.request":
-                return b"".join(chunks)
+                return DISCONNECTED
             size += len(message.get("body", b""))
             if size > self.max_bytes:
                 return None
@@ -71,7 +76,7 @@ class BodyLimitMiddleware:
 
     async def _refuse(self, send: Send) -> None:
         payload = json.dumps(
-            {"detail": f"the body is over {self.max_bytes:,} bytes; nothing was read"}
+            {"detail": f"the body is over {self.max_bytes:,} bytes; the body is not accepted"}
         ).encode()
         await send(
             {
