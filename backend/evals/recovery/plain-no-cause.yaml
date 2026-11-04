@@ -18,5 +18,9 @@ expected_words:
   - not visible
   - unclear
   - not clear
-# The logs show only successful requests: a line that names any of these invented a cause.
-wrong_words: [memory, OOM, out of memory, disk, database, timeout, timed out, health check, network]
+  - unknown
+  - no reason
+  - nothing in the logs
+# The logs show only successful requests: a line that names any of these invented a cause. Not
+# "health check": the logs hold GET /health lines, which an honest line may mention.
+wrong_words: [memory, OOM, out of memory, disk, database, timeout, timed out, network]

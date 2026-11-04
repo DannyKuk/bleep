@@ -10,4 +10,4 @@ logs: |
   FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory
    1: 0xb8ced0 node::Abort() [node]
    2: 0xa96834  [node]
-expected_words: [memory, heap, OOM]
+expected_words: [memory, heap, OOM, OOMKilled]
