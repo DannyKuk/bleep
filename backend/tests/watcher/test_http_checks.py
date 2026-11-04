@@ -15,7 +15,20 @@ T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
 
 
 def client(handler) -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    async def streamed(request: httpx.Request) -> httpx.Response:
+        response = handler(request)
+        if asyncio.iscoroutine(response):
+            response = await response
+        if not response.is_stream_consumed:
+            return response
+        # a body given as bytes is already read; a real transport hands over a raw stream
+        return httpx.Response(
+            response.status_code,
+            headers=response.headers,
+            stream=httpx.ByteStream(response.content),
+        )
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(streamed))
 
 
 def ok_handler(request: httpx.Request) -> httpx.Response:
@@ -243,3 +256,42 @@ async def test_a_crashing_check_does_not_stop_the_watcher_from_reporting_the_url
 
     assert [c.ok for c in checks] == [False]
     assert sent and sent[0].detail["ok"] is False
+
+
+async def test_a_gzip_body_that_would_inflate_hugely_is_refused_and_never_inflated():
+    import gzip
+    import tracemalloc
+
+    bomb = gzip.compress(b"\0" * 200_000_000, 1)
+    handler = lambda request: httpx.Response(  # noqa: E731
+        200, stream=httpx.ByteStream(bomb), headers={"content-encoding": "gzip"}
+    )
+    tracemalloc.start()
+    check = await check_url(client(handler), UrlCheckConfig(url=URL, body_contains="x"))
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert not check.ok
+    assert check.error == "the reply is compressed although plain text was asked for"
+    assert peak < 5_000_000
+
+
+async def test_a_zstd_body_is_refused_unread():
+    handler = lambda request: httpx.Response(  # noqa: E731
+        200,
+        stream=httpx.ByteStream(b"\x28\xb5\x2f\xfd" + b"x" * 100),
+        headers={"content-encoding": "zstd"},
+    )
+    check = await check_url(client(handler), UrlCheckConfig(url=URL, body_contains="x"))
+    assert not check.ok
+    assert "compressed" in check.error
+
+
+async def test_the_check_asks_for_an_uncompressed_reply():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["accept-encoding"])
+        return httpx.Response(200, text="ok")
+
+    await check_url(client(handler), UrlCheckConfig(url=URL, body_contains="ok"))
+    assert seen == ["identity"]

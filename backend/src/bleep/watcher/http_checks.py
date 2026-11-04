@@ -58,12 +58,19 @@ async def check_url(
     try:
         async with asyncio.timeout(timeout_s):  # the whole reply, so a slow drip cannot hang
             async with client.stream(
-                "GET", cfg.url, follow_redirects=True, timeout=timeout_s
+                "GET",
+                cfg.url,
+                headers={"Accept-Encoding": "identity"},  # the cap counts raw bytes
+                follow_redirects=True,
+                timeout=timeout_s,
             ) as response:
                 status = response.status_code
                 if cfg.body_contains is not None and status == cfg.expect_status:
-                    body = await _read_capped(response)
-                    matched = cfg.body_contains in body
+                    encoding = response.headers.get("content-encoding", "identity")
+                    if encoding.strip().lower() not in ("", "identity"):
+                        error = "the reply is compressed although plain text was asked for"
+                    else:
+                        matched = cfg.body_contains in await _read_capped(response)
     except TimeoutError:
         error = f"no complete reply within {timeout_s:g} s"
     except httpx.TimeoutException:
@@ -91,7 +98,7 @@ async def check_url(
 async def _read_capped(response: httpx.Response) -> str:
     chunks: list[bytes] = []
     size = 0
-    async for chunk in response.aiter_bytes():
+    async for chunk in response.aiter_raw():  # aiter_bytes would inflate first
         chunks.append(chunk)
         size += len(chunk)
         if size >= MAX_BODY_BYTES:
