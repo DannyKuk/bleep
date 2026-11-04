@@ -16,10 +16,13 @@ An action runs the Docker act tools' checks first (`tools/docker_act.py`): the s
 approved plan's and the grant is for that plan, the target passes the plan check's target rules
 (a Coolify application none of whose containers is protected or Bleep's own) and its params.
 The application is named by its containers' labels as the registry sees them, so a plan cannot
-reach an application this host does not run. A redeploy waits until Coolify reports the
-deployment finished, failed or cancelled (at most `deploy_timeout_s`), so Verify checks the
-service only after the new containers are up. A set_env value goes to Coolify and nowhere else:
-not into a result, a log line or the guard log. See docs/design/plugins.md.
+reach an application this host does not run. The approval bound the target to the application
+uuid it resolved to then; Coolify is called with that uuid, and only while the target still
+names it, so an application deleted and recreated under the same name is not acted on (#139).
+A redeploy waits until Coolify reports the deployment finished, failed or cancelled (at most
+`deploy_timeout_s`), so Verify checks the service only after the new containers are up. A
+set_env value goes to Coolify and nowhere else: not into a result, a log line or the guard log.
+See docs/design/plugins.md.
 """
 
 import asyncio
@@ -33,7 +36,7 @@ import httpx
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from bleep.guard.grant import GrantInvalid, verify_step
+from bleep.guard.grant import GrantInvalid, step_snapshot, verify_step
 from bleep.guard.log import GuardLogger
 from bleep.guard.pipeline import guard_text
 from bleep.guard.plan_check import (
@@ -316,8 +319,9 @@ class CoolifyAction:
         plan: ApprovalRecord,
         step_index: int,
     ) -> str:
-        """Every check `run` makes before it calls Coolify: the application's uuid. Raises
-        `GrantInvalid` or `StepRefused`, recorded as `blocked_action`."""
+        """Every check `run` makes before it calls Coolify: the uuid the approval bound the
+        application to, while the target still names it. Raises `GrantInvalid` or
+        `StepRefused`, recorded as `blocked_action`."""
         what = f"step {step_index + 1} ({step.action} {step.target} on {step.host_id})"
         try:
             if step.action != self.name:
@@ -329,11 +333,22 @@ class CoolifyAction:
             if violations:
                 raise StepRefused("; ".join(v.text for v in violations))
             try:
-                return coolify_app_uuid(registry, step)
+                current = coolify_app_uuid(registry, step)
             except NoCoolifyApp:
                 raise StepRefused(
                     f"{what}: names no single Coolify application on this host"
                 ) from None
+            snapshot = step_snapshot(plan.snapshots, step)
+            if snapshot is None or snapshot.app_uuid is None:
+                raise StepRefused(
+                    f"{what}: the approved plan holds no snapshot of this application"
+                )
+            if current != snapshot.app_uuid:
+                raise StepRefused(
+                    f"{what}: names the Coolify application {current} now, not {snapshot.app_uuid}"
+                    " as approved; it was recreated or replaced since the approval"
+                )
+            return snapshot.app_uuid
         except GrantInvalid as refusal:
             self._blocked(plan, f"{what}: refused, {refusal}")
             raise

@@ -207,7 +207,10 @@ export function PluginSettings({
         <ul aria-label={`Secrets for ${plugin.title}`} className="flex flex-wrap gap-1.5">
           {plugin.secrets.map((secret) => (
             <li key={secret.env}>
-              <SecretBadge secret={{ env: secret.env, file: null, set: secret.set }} />
+              <SecretBadge
+                secret={{ env: secret.env, file: null, set: secret.set }}
+                optional={!secret.required}
+              />
             </li>
           ))}
         </ul>

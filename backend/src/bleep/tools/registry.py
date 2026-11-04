@@ -79,6 +79,20 @@ class PlanRules(Protocol):
     def plan_violations(self, number: int, step: PlanStep) -> list[Violation]: ...
 
 
+@runtime_checkable
+class ActCatalog(Protocol):
+    """An act handler whose action runs one of several tools a step names in its params, which
+    Propose describes to the model: the MCP plugin's `McpCall` and its act tools.
+
+    `act_tool_names` are the names a person allowed, Bleep's own data. `act_tool_schemas` is what
+    the tools' server says about them (descriptions, input schemas), wrapped as untrusted data, or
+    in Bleep's own words why it is not known."""
+
+    def act_tool_names(self) -> list[str]: ...
+
+    async def act_tool_schemas(self, incident_id: str) -> str: ...
+
+
 class ToolRegistry:
     """The core tools, plus those of `plugins` as they are each time the catalogue is read, so a
     plugin switched off is gone from the next Investigate round."""

@@ -50,7 +50,8 @@ from bleep.guard.plan_check import (
     named_off_limits,
 )
 from bleep.guard.redact import REDACTED
-from bleep.guard.sanitize import INVISIBLE_CHARS, strip_control
+from bleep.guard.sanitize import INVISIBLE_CHARS, MAX_CHARS, strip_control
+from bleep.guard.untrusted import escape_untrusted
 from bleep.hosts.registry import Registry
 from bleep.plugins import urls
 from bleep.plugins.base import Plugin, PluginContext
@@ -71,6 +72,12 @@ HTTP_TIMEOUT_S = 5.0  # each HTTP request; an endpoint that is not MCP fails wit
 LIST_TIMEOUT_S = 10.0  # opening the session and listing the tools
 CALL_TIMEOUT_S = 30.0  # one tool call, after the listing
 SCHEMA_CHARS = 600  # a tool's input schema in the listing, at most
+DESCRIPTION_CHARS = 400  # a tool's description in the listing, at most
+NAME_CHARS = 120  # a tool's name in the listing, at most; the server's tools may have any name
+REQUIRED_CHARS = 200  # the names of a tool's required arguments, at most
+# The whole listing, measured as the guard will escape it, so `guard_text` (which keeps the tail
+# past MAX_CHARS) never cuts into it; the margin covers what redaction can add.
+LISTING_CHARS = MAX_CHARS - 1000
 MAX_BYTES = 2_000_000  # of one HTTP answer, counted before any decompression
 
 ToolName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_.\-/]{1,128}$")]
@@ -376,17 +383,47 @@ class _Server:
         return stripped.sub(REDACTED, strip_control(raw.sub(REDACTED, text)))
 
 
+def _cut(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _entry(server: _Server, tool: BaseTool) -> str:
+    """One tool of the listing: its name and label first, then its description, its input
+    schema's properties and its required arguments, each cut to its own cap."""
+    schema = tool.args_schema if isinstance(tool.args_schema, dict) else {}
+    shown = json.dumps(schema.get("properties", {}), separators=(",", ":"))[:SCHEMA_CHARS]
+    required = schema.get("required")
+    if required is None or isinstance(required, list):
+        names = _cut(", ".join(str(r) for r in required or []), REQUIRED_CHARS) or "none"
+    else:
+        names = "(not a list)"
+    return (
+        f"{_cut(tool.name, NAME_CHARS)} ({_LABEL[server.kind(tool)]})\n"
+        f"  {_cut(' '.join((tool.description or '-').split()), DESCRIPTION_CHARS)}\n"
+        f"  arguments: {shown}\n"
+        f"  required: {names}"
+    )
+
+
 def _listing(server: _Server, tools: list[BaseTool]) -> str:
+    """Whole entries only, up to `LISTING_CHARS`, so no schema is left without its tool's
+    name; an entry that does not fit is skipped, a later smaller one may still go in, and the
+    tools left out are counted at the end."""
     if not tools:
         return "(the server lists no tools)"
-    entries = []
+    entries: list[str] = []
+    used = 0
     for tool in tools:
-        schema = tool.args_schema if isinstance(tool.args_schema, dict) else {}
-        shown = json.dumps(schema.get("properties", {}), separators=(",", ":"))[:SCHEMA_CHARS]
-        entries.append(
-            f"{tool.name} ({_LABEL[server.kind(tool)]})\n  {tool.description or '-'}\n"
-            f"  arguments: {shown}"
-        )
+        entry = _entry(server, tool)
+        size = len(escape_untrusted(entry)) + 1
+        if used + size > LISTING_CHARS:
+            continue
+        entries.append(entry)
+        used += size
+    left = len(tools) - len(entries)
+    if left:
+        tools_word = "tool" if left == 1 else "tools"
+        entries.append(f"({left} more {tools_word} not shown: the listing is full)")
     return "\n".join(entries)
 
 
@@ -394,12 +431,13 @@ def _guarded(server: _Server, text: str) -> tuple[str, int]:
     return guard_text("mcp", server.scrub(text))
 
 
-async def _guard(server: _Server, ctx: ToolContext, text: str) -> str:
+async def _guard(
+    server: _Server, guard_log: GuardLogger | None, incident_id: str, text: str
+) -> str:
     wrapped, redactions = await asyncio.to_thread(_guarded, server, text)
-    if redactions and ctx.guard_log is not None:
-        ctx.guard_log.record(
-            ctx.incident_id, "redacted", f"{redactions} secret(s) redacted from mcp output"
-        )
+    if redactions and guard_log is not None:
+        detail = f"{redactions} secret(s) redacted from mcp output"
+        guard_log.record(incident_id, "redacted", detail)
     return wrapped
 
 
@@ -410,7 +448,8 @@ def _read_tools(server: _Server) -> list[ToolSpec]:
     def build_list(ctx: ToolContext) -> BaseTool:
         async def run() -> str:
             try:
-                return await _guard(server, ctx, _listing(server, await server.tools()))
+                listing = _listing(server, await server.tools())
+                return await _guard(server, ctx.guard_log, ctx.incident_id, listing)
             except _ServerError as error:
                 return unreachable(error)
 
@@ -435,7 +474,7 @@ def _read_tools(server: _Server) -> list[ToolSpec]:
                 return NO_SUCH_TOOL
             if answer.status == "marked":
                 return MARKED.format(tool=tool)
-            guarded = await _guard(server, ctx, answer.text)
+            guarded = await _guard(server, ctx.guard_log, ctx.incident_id, answer.text)
             return (
                 f"the MCP tool reported an error: {guarded}"
                 if answer.status == "error"
@@ -554,6 +593,22 @@ class McpCall:
         what = f"step {number} ({step.action} {step.target} on {step.host_id})"
         why = f"{tool} is not one of the MCP plugin's act tools"
         return [Violation("bad_params", f"{what}: {why}", number)]
+
+    def act_tool_names(self) -> list[str]:
+        return list(self.server.settings.act_tools)
+
+    async def act_tool_schemas(self, incident_id: str) -> str:
+        """The act tools as the server lists them now (description, input schema), wrapped as
+        untrusted data; a redaction in it is logged for `incident_id`. When the server cannot
+        be reached, or lists none of them, it says so in Bleep's own words."""
+        try:
+            tools = await self.server.tools()
+        except _ServerError as error:
+            return f"not known: the MCP server could not be reached ({error})"
+        acts = [t for t in tools if self.server.kind(t) == "act"]
+        if not acts:
+            return "not known: the MCP server lists none of these tools now"
+        return await _guard(self.server, self.guard_log, incident_id, _listing(self.server, acts))
 
     def _blocked(self, plan: ApprovalRecord, text: str) -> None:
         if self.guard_log is not None:
