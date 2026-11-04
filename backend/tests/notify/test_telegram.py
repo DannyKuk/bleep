@@ -875,7 +875,7 @@ def _step_lines(text: str) -> list[str]:
     return [line for line in lines if line[:1].isdigit() and ". " in line]
 
 
-@pytest.mark.parametrize("brk", ["\n", "\r\n", "\n\n", " ", "\x85"])
+@pytest.mark.parametrize("brk", ["\n", "\r\n", "\n\n", "\u2028", "\x85"])
 async def test_model_text_in_a_proposal_never_poses_as_a_plan_step(env, brk):
     incident = env.incident.model_copy(update={"title": f"shop down{brk}{FAKE_STEP}"})
     diagnosis = Diagnosis(
@@ -894,7 +894,7 @@ async def test_model_text_in_a_proposal_never_poses_as_a_plan_step(env, brk):
 
 
 async def test_spaces_in_model_text_cannot_push_a_fake_step_onto_a_line_of_its_own(env):
-    proposal = PLAN.model_copy(update={"reason": "ok" + " " * 300 + " " * 50 + FAKE_STEP})
+    proposal = PLAN.model_copy(update={"reason": "ok" + " " * 300 + "\u2003" * 50 + FAKE_STEP})
     request = (await env.approvals.current(env.incident_id)).request
     await env.notifier.proposal(env.incident, None, proposal, request)
 
@@ -923,3 +923,8 @@ def test_a_dsn_in_the_telegram_message_shows_its_host_not_its_key():
 
     assert "abc123" not in message
     assert fmt.escape("(SENTRY_DSN=https://<redacted>@evil.example/1)") in message
+
+
+@pytest.mark.parametrize("code", [0x2800, 0x3164, 0x115F, 0x1160, 0xFFA0, 0x17B4, 0x17B5, 0x34F])
+def test_blank_looking_characters_cannot_pad_a_fake_step_onto_its_own_line(code):
+    assert fmt.prose_line(f"ok{chr(code) * 40}{FAKE_STEP}") == f"ok {FAKE_STEP}"

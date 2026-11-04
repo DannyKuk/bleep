@@ -611,3 +611,51 @@ def test_a_dsn_in_free_text_keeps_its_host_and_hides_its_userinfo(template, valu
 def test_a_bare_user_outside_a_dsn_stays_readable():
     text = "clone ssh://git@github.com/acme/shop.git and APP_URL=https://bob@shop.example/"
     assert redact_text(text) == text
+
+
+@pytest.mark.parametrize(
+    ("text", "secret"),
+    [
+        ("DATABASE_DSN=postgres://h/x?password=hunter2", "hunter2"),
+        ("dsn=postgres://h/x?password=hunter2", "hunter2"),
+        ("SENTRY_DSN=https://h/1?sentry_key=abcdef123456&sentry_secret=zzz", "abcdef123456"),
+        ("JWT_ISSUER=https://idp/?client_secret=abc123", "abc123"),
+        ("AUTH_CALLBACK=https://app/cb?token=abcdef123456", "abcdef123456"),
+        ("TOKEN_REDIRECT=https://app/cb?access_token=abc123456", "abc123456"),
+        ("AUTH_PROXY=http://p:3128?password=x1", "x1"),
+        ("PASSWORD_HOST=hunter2", "hunter2"),
+        ("DB_PASSWORD_SERVER=hunter2", "hunter2"),
+        ("SECRET_DSN=s3cr3t", "s3cr3t"),
+        ("PASSWORD_DSN=hunter2", "hunter2"),
+        ("TOKEN_URL=https://api.x/cb?token=abcdef123456", "abcdef123456"),
+        ("A_URL=https://x/?B_URL=https://y/?token=deep123456", "deep123456"),
+        ("SENTRY_DSN=https://k:@h/1", "k:"),
+    ],
+)
+def test_a_secret_inside_a_kept_value_or_under_a_place_after_a_secret_word_is_redacted(
+    text, secret
+):
+    out = redact_text(text)
+    assert secret not in out
+    assert redact_text(out) == out
+
+
+def test_pairs_nested_without_end_stay_bounded_and_redacted():
+    text = "path=" * 800 + "token=abcdef123456"
+    started = time.perf_counter()
+    out = redact_text(text)
+    assert time.perf_counter() - started < 1
+    assert "abcdef123456" not in out
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("AUTH0_DOMAIN", "evil.auth0.com"), ("JWT_ISSUER_URL", "https://evil.example/")],
+)
+def test_an_approval_still_shows_a_place_after_a_secret_word(key, value):
+    assert _set_env(key, value) == value
+
+
+@pytest.mark.parametrize("key", ["SENTRY_DSN_SECRET", "DSN_PASSWORD"])
+def test_dsn_is_a_place_only_as_the_last_word_of_a_key(key):
+    assert _set_env(key, "s3cr3t-value") == "<redacted>"

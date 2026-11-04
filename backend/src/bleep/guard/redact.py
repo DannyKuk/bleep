@@ -56,19 +56,19 @@ _TOKEN_COUNTS = {
 }  # fmt: skip
 # KEY, APP_KEY, STRIPE_KEY, PUSHER_APP_KEY, STRIPE_SK; not cache_key, not a Dynamo `sk` in a log
 _ENV_KEY = re.compile(r"KEY|[A-Z0-9_]+_(?:KEYS?|SK)")
-# Words that make a key name a place, not a secret (`AUTH0_DOMAIN`, `TOKEN_ISSUER`): its value is
-# shown to the person approving, value-level redaction aside, so a planted host stays visible.
-# After the last secret word they also keep the value in a log (`_NOT_A_SECRET`).
-_LOCATION_WORDS = frozenset(
-    {
-        "host", "domain", "server", "issuer", "proxy", "origin", "callback", "redirect",
-        "url", "uri", "endpoint", "addr", "address", "dsn",
-    }
-)  # fmt: skip
+# Two lists of place words, on purpose. In a log, which goes to the model, only these keep a value
+# after a secret word (`token_url`), since `PASSWORD_HOST=hunter2` is a password as often as a
+# host. In a set_env approval the person must see where a value points, so any of
+# `_APPROVAL_PLACES` shows it (`AUTH0_DOMAIN`), value-level redaction aside.
+_LOG_PLACES = frozenset({"url", "uri", "endpoint"})
+_APPROVAL_PLACES = _LOG_PLACES | {
+    "host", "domain", "server", "issuer", "proxy", "origin", "callback", "redirect", "addr",
+    "address",
+}  # fmt: skip
 # A word AFTER the last secret word that marks a setting about the secret: token_count,
-# password_reset, auth_method, and a place: auth_host. A word before it changes nothing
-# (reset_password_token is a token).
-_NOT_A_SECRET = _LOCATION_WORDS | {
+# password_reset, auth_method, token_url. A word before it changes nothing (reset_password_token
+# is a token).
+_NOT_A_SECRET = _LOG_PLACES | {
     "count", "reset", "type", "name", "file", "path", "length", "expires", "expiry", "expiration",
     "ttl", "header", "prefix", "limit", "max", "min", "mode", "size", "bytes", "format",
     "algorithm", "alg", "kind", "provider", "status", "required", "enabled", "disabled", "policy",
@@ -138,11 +138,12 @@ def _is_plain(value: str) -> bool:
     return value in _PLAIN_VALUES or _SMALL_INT.fullmatch(value) is not None
 
 
-def _redact_pair(match: re.Match[str], nested: bool = False) -> str:
+def _redact_pair(match: re.Match[str], depth: int = 0) -> str:
     key, separator, value = match.group(1), match.group(2), match.group(3)
-    if _is_dsn_key(key):
-        return f"{key}{separator}{_hide_dsn_user(value)}"
-    if not _is_secret_key(key) or _BLOCK_HEADER.fullmatch(value):
+    if not _is_secret_key(key):
+        kept = _redact_inside(value, depth)
+        return f"{key}{separator}{_hide_dsn_user(kept) if _is_dsn_key(key) else kept}"
+    if _BLOCK_HEADER.fullmatch(value):
         return match.group(0)
     quote = value[0] if value[0] in "\"'" else ""
     closed = bool(quote) and len(value) > 1 and value.endswith(quote)
@@ -154,7 +155,7 @@ def _redact_pair(match: re.Match[str], nested: bool = False) -> str:
     ):
         return match.group(0)  # an empty password is evidence, "not set" and `true` are not secrets
     if (
-        not nested
+        not depth
         and not quote
         and key.lower() in ("credentials", "auth")
         and _LOOKS_LIKE_PAIR.match(value)
@@ -162,16 +163,29 @@ def _redact_pair(match: re.Match[str], nested: bool = False) -> str:
     ):
         # `invalid credentials: user=bob retries=3` is a message; its own pairs are still
         # judged, so `auth: token=x user=bob` hides x
-        return f"{key}{separator}{_KEY_VALUE.sub(_redact_nested, value)}"
+        return f"{key}{separator}{_redact_inside(value, depth)}"
     if quote:
         return f"{key}{separator}{quote}{REDACTED}{quote if closed else ''}"
     return f"{key}{separator}{REDACTED}"
 
 
-# A DSN's user with no password is its key (Sentry: `https://<key>@o0.ingest.sentry.io/1`). Only
-# under a DSN key: elsewhere a bare user (`ssh://git@github.com`) is no secret.
+MAX_NESTING = 3
+
+
+def _redact_inside(value: str, depth: int) -> str:
+    """The pairs inside a value that is kept (`TOKEN_URL=https://x/cb?token=abc`): one pass of
+    `_KEY_VALUE` takes the whole value and never looks inside it. Past `MAX_NESTING` levels a value
+    still holding a pair is hidden whole, which bounds the work."""
+    if depth >= MAX_NESTING:
+        return REDACTED if _KEY_VALUE.search(value) else value
+    return _KEY_VALUE.sub(lambda inner: _redact_pair(inner, depth + 1), value)
+
+
+# A DSN's user with no password is its key (Sentry: `https://<key>@o0.ingest.sentry.io/1`, also
+# with an empty password, `<key>:@`). Only under a DSN key: elsewhere a bare user
+# (`ssh://git@github.com`) is no secret.
 _DSN_USER = re.compile(
-    r"((?<![a-z0-9+.-])[a-z][a-z0-9+.-]{0,31}://)(?!<redacted>@)[^\s:/@\"']{1,128}@"
+    r"((?<![a-z0-9+.-])[a-z][a-z0-9+.-]{0,31}://)(?!<redacted>@)[^\s:/@\"']{1,128}:?@"
     r"(?=[A-Za-z0-9._\[\]:-]+(?:[/?#\s\"']|$))",
     _FLAGS,
 )
@@ -187,10 +201,6 @@ def _hide_dsn_user(value: str) -> str:
     """The userinfo of a DSN with no password hidden, its host kept; a `user:password@` is left to
     the URL pattern, which keeps the user."""
     return _DSN_USER.sub(rf"\1{REDACTED}@", value)
-
-
-def _redact_nested(match: re.Match[str]) -> str:
-    return _redact_pair(match, nested=True)
 
 
 def _redact_flag(match: re.Match[str]) -> str:
@@ -566,16 +576,18 @@ def redact_text(text: str) -> str:
 
 def _hides_whole_value(key: str) -> bool:
     """Whether an approval shows `<redacted>` for the whole value under `key`: it names a secret
-    and no place. Fails safe by showing: a value that is shown still goes through redaction."""
+    and no place (`_APPROVAL_PLACES`, or `dsn` as its last word: `SECRET_DSN` is shown,
+    `DSN_PASSWORD` hidden). Fails safe by showing: a value that is shown still goes through
+    redaction."""
     words = {w.lower() for w in WORDS.findall(key)}
-    return _is_secret_key(key) and not (words & _LOCATION_WORDS)
+    return _is_secret_key(key) and not (words & _APPROVAL_PLACES or _is_dsn_key(key))
 
 
 def redacted_step(step: PlanStep) -> PlanStep:
     """The step as a person approving it sees it: every param redacted, nothing hidden.
 
     A `coolify.set_env` value under a key that names a secret (`STRIPE_KEY`, `DB_PASSWORD`) and
-    no place (`_LOCATION_WORDS`: `AUTH0_DOMAIN` is shown) is `<redacted>` whole, spaces, quotes
+    no place (`_hides_whole_value`: `AUTH0_DOMAIN` is shown) is `<redacted>` whole, spaces, quotes
     and line breaks included; any other is redacted by its own patterns, so a password inside a
     URL value is cut out while the host and the rest stay visible. A DSN is a place: under a key
     ending in `DSN` its userinfo is hidden too (`https://<redacted>@o0.ingest.sentry.io/1`), the

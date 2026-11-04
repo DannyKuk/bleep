@@ -95,12 +95,14 @@ def shows_in_full(proposal: Proposal) -> bool:
     return len(steps_text(proposal).strip()) <= FIELD_CHARS
 
 
-_SPACES = re.compile(r"\s+")
+# Whitespace, and letters and marks that render blank (Braille blank, the Hangul fillers, the
+# Khmer inherent vowels, the combining grapheme joiner): a run of either could pad a line.
+_SPACES = re.compile(r"[\s\u034f\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0]+")
 
 
 def prose_line(text: str) -> Redacted:
     """Model or event text that sits next to the plan (a title, the root cause, the reason) as one
-    redacted line: breaks read `⏎`, format characters `�`, and a run of spaces is one space. So
+    redacted line: breaks read `⏎`, format characters `�`, and a run of blanks is one space. So
     it can never start a line of its own that reads like a plan step, not even by padding with
     spaces until the chat wraps it there."""
     return Redacted(_SPACES.sub(" ", _one_line(redact_text(text.strip()))))
