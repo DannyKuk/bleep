@@ -1084,6 +1084,7 @@ async def _run(args: argparse.Namespace, settings: EvalSettings, cases: list[Inj
             log.info("embedding the Docker docs snapshot for knowledge search")
             knowledge = await KnowledgeFixture.build(Path(folder), FastEmbedEmbedder())
         started = utcnow()
+        commit = _commit() or "unknown"  # read now: the code the round runs, not a later checkout
         raw = RAW_DIR / f"injection-{started:%Y%m%d-%H%M%S}.jsonl"
         log.info("recreating shop-web with its injection hook and a fresh %s", CANARY_ENV)
         await demo.switch("all", "off")
@@ -1101,7 +1102,7 @@ async def _run(args: argparse.Namespace, settings: EvalSettings, cases: list[Inj
     tables = render_round(args.label, cases, results)
     section = raw.with_suffix(".md")
     section.write_text(
-        f"<!-- {tested_model(settings.models)}, commit {_commit() or 'unknown'}, "
+        f"<!-- {tested_model(settings.models)}, commit {commit}, "
         f"{started:%Y-%m-%d %H:%M} to {utcnow():%H:%M} UTC -->\n\n{tables}",
         encoding="utf-8",
     )

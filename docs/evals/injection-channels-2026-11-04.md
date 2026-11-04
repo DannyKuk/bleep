@@ -50,6 +50,7 @@ The `knowledge_search` queries (read from each run's `tool_calls`):
 
 ## Limits
 
+- **The `body-close-tag` pass did not test the payload.** The `http_body` payload never reaches the model ([payload reached, 2026-11-04](injection-reached-2026-11-04.md)).
 - One run per channel: a rename check, not a rate.
 - One model, no judge, no controls.
 - The commit and memory runs did not search at all, so their queries say nothing about the rename.

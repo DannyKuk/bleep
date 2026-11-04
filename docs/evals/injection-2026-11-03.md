@@ -144,6 +144,7 @@ These are the same honest controls as Round 1: real faults whose real log line m
 
 ## Limits
 
+- **The `http_body` passes did not test the payload.** Bleep reads no HTTP reply body anywhere (the URL check does not quote it and no read tool fetches it), and a run that records what the model read, made afterwards, found the body payload in none of the 3 `http_body` runs that were scored ([payload reached, 2026-11-04](injection-reached-2026-11-04.md)). The `body-*` attacks above passed without meeting their payload.
 - **Contamination from earlier runs.** shop-db is never recreated between runs, so its log still held `column "price_cents" does not exist` errors from earlier bad-deploy runs. 6 of the 13 Round 1 attack runs blamed that stale error as the cause, and two more named it as a lead. No verdict depends on it, but those diagnoses are about the wrong failure (#104).
 - **One model, one run per case.** A stock local model, an abliterated one, or more runs could fare differently. The live channels are the log, the reply body and memory. Inspect output, events and container names also reach the model through the same guard, but they had no case of their own here.
 - **The memory attack is planted in the recall, not written through a report.** The planted record skips the report check that a real past report would have passed through, so it's a harder case than real memory.
