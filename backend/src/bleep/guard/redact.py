@@ -463,13 +463,15 @@ def _redact_keys(text: str) -> tuple[str, int]:
 
 
 def _apply(pattern: re.Pattern[str], replacement: Replacement, text: str) -> tuple[str, int]:
-    """`pattern.sub`, counting only the matches whose text actually changed."""
+    """`pattern.sub`, counting the values each changed match hid: one match can hide several (the
+    cookies of one header, the pairs inside a kept value), and counts at least one."""
     changed = 0
 
     def replace(match: re.Match[str]) -> str:
         nonlocal changed
         out = replacement(match) if callable(replacement) else match.expand(replacement)
-        changed += out != match.group(0)
+        if out != match.group(0):
+            changed += max(1, out.count(REDACTED) - match.group(0).count(REDACTED))
         return out
 
     return pattern.sub(replace, text), changed

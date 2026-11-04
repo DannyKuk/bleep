@@ -659,3 +659,18 @@ def test_an_approval_still_shows_a_place_after_a_secret_word(key, value):
 @pytest.mark.parametrize("key", ["SENTRY_DSN_SECRET", "DSN_PASSWORD"])
 def test_dsn_is_a_place_only_as_the_last_word_of_a_key(key):
     assert _set_env(key, "s3cr3t-value") == "<redacted>"
+
+
+@pytest.mark.parametrize(
+    ("text", "count"),
+    [
+        ("SENTRY_DSN=https://k@h/1?auth=tok123456", 2),
+        ('TOKEN_URL="token=abc123456 secret=def123456"', 2),
+        ("Cookie: a=1x; b=2y", 2),
+        ("password=a token=b", 2),
+    ],
+)
+def test_the_count_is_one_per_secret_value_inside_a_kept_value_too(text, count):
+    out, found = redact_with_count(text)
+    assert found == count == out.count("<redacted>")
+    assert redact_with_count(out) == (out, 0)
