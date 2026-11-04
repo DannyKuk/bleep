@@ -1,8 +1,8 @@
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
-from bleep.guard.grant import GrantInvalid, grant_token, verify_grant
-from bleep.schemas.graph import ApprovalGrant
+from bleep.guard.grant import GrantInvalid, grant_token, plan_hash, step_snapshot, verify_grant
+from bleep.schemas.graph import ApprovalGrant, PlanStep, Proposal, TargetSnapshot
 
 SECRET = "test-secret"
 
@@ -43,3 +43,42 @@ def test_a_grant_whose_fields_were_changed_to_match_is_still_refused():
 def test_a_grant_keyed_with_another_secret_is_refused():
     with pytest.raises(GrantInvalid, match="token does not match"):
         verify_grant(grant(), "inc_1", "h1", "other-secret")
+
+
+def test_a_container_and_an_application_of_the_same_name_are_told_apart():
+    container = TargetSnapshot(host_id="a", target="shop", container_id="c1")
+    app = TargetSnapshot(host_id="a", target="shop", app_uuid="u1")
+    restart = PlanStep(action="docker.restart", host_id="a", target="shop")
+    redeploy = PlanStep(action="coolify.redeploy", host_id="a", target="shop")
+    call = PlanStep(action="mcp.call", host_id="a", target="shop")
+
+    assert step_snapshot([app, container], restart) == container
+    assert step_snapshot([container, app], redeploy) == app
+    assert step_snapshot([app, container], call) == container
+    assert step_snapshot([container], redeploy) is None
+
+
+def test_a_coolify_step_hashes_its_application_uuid_and_a_docker_step_only_its_container():
+    redeploy = Proposal(
+        kind="act",
+        steps=[PlanStep(action="coolify.redeploy", host_id="a", target="shop")],
+        reason="r",
+    )
+    bound = plan_hash(redeploy, [TargetSnapshot(host_id="a", target="shop", app_uuid="u1")])
+    assert bound != plan_hash(redeploy, [TargetSnapshot(host_id="a", target="shop", app_uuid="u2")])
+    assert bound != plan_hash(redeploy, [])
+
+    restart = Proposal(
+        kind="act",
+        steps=[PlanStep(action="docker.restart", host_id="a", target="shop")],
+        reason="r",
+    )
+    container = TargetSnapshot(host_id="a", target="shop", container_id="c1")
+    app = TargetSnapshot(host_id="a", target="shop", app_uuid="u1")
+    assert plan_hash(restart, [container, app]) == plan_hash(restart, [container])
+
+
+@pytest.mark.parametrize("ids", [{}, {"container_id": "c1", "app_uuid": "u1"}])
+def test_a_snapshot_holds_one_resolved_id(ids):
+    with pytest.raises(ValidationError):
+        TargetSnapshot(host_id="a", target="shop", **ids)

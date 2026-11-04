@@ -1,0 +1,32 @@
+# An MCP server that runs Caddy's own commands in a proxy container, for the misroute-mcp
+# scenario. caddy_reload is what `fault.sh misroute off` does (`caddy reload --config
+# /etc/caddy/Caddyfile --adapter caddyfile` in shop-proxy); caddy_purge_cache fixes nothing here.
+# Both are act tools, so Propose may name one only as an mcp.call step; evals never execute one.
+act_tools: [caddy_reload, caddy_purge_cache]
+read_tools: []
+tools:
+  - name: caddy_reload
+    description: >-
+      Reload a running Caddy container's configuration from a Caddyfile inside that container,
+      replacing whatever configuration was loaded since, also one loaded live through Caddy's
+      admin API.
+    input_schema:
+      type: object
+      properties:
+        container:
+          type: string
+          description: The Caddy container, by name.
+        config:
+          type: string
+          description: Path of the Caddyfile inside the container.
+          default: /etc/caddy/Caddyfile
+      required: [container]
+  - name: caddy_purge_cache
+    description: Empty a running Caddy container's HTTP response cache.
+    input_schema:
+      type: object
+      properties:
+        container:
+          type: string
+          description: The Caddy container, by name.
+      required: [container]

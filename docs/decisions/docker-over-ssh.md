@@ -90,7 +90,7 @@ Keys found on real application containers (saved in [`captures/labels/`](../spik
 
 Each container's version is its own `coolify.version` label (the Coolify that deployed it); the running Coolify is 4.5.3. The labels stay as deployed until the app is redeployed.
 
-**The rule (controller ruling):**
+**The rule:**
 
 - **Service key:** `coolify.applicationUuid`, else `coolify.applicationId` prefixed (for example `id:4`) so ids cannot collide with UUIDs, else `compose:<com.docker.compose.project>`, else `container:<name>`. The compose and container keys are namespaced (#5) so a single container `app`, a compose project `app` and a project named like a UUID cannot merge; display names stay unprefixed.
 - **Display name:** `coolify.resourceName` when present, else the key.

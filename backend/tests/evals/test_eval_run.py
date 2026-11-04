@@ -21,6 +21,7 @@ from bleep.schemas.graph import Diagnosis
 from bleep.schemas.incidents import Incident, Subject
 from bleep.schemas.settings import ModelSettings
 from evals.judge import JudgeError, Judgement, ManualJudge
+from evals.mcp_server import load_mcp_fixture, serve
 from evals.report import RunInfo, append_jsonl, write_info
 from evals.run import (
     REPO,
@@ -45,7 +46,7 @@ from evals.run import (
     suite_scenarios,
     summary,
 )
-from evals.scenarios import Scenario, ScenarioResult
+from evals.scenarios import ExpectedAction, ExpectedStep, Scenario, ScenarioResult
 from fakes import FakeChatModel, FakeEngine
 from graph_env import box
 
@@ -820,3 +821,68 @@ def test_the_reproduce_command_keeps_the_knowledge_switch():
 
     assert "--no-knowledge" in _command(_parser().parse_args(["--no-knowledge"]))
     assert "--no-knowledge" not in _command(_parser().parse_args([]))
+
+
+async def test_a_scenario_with_an_mcp_fixture_serves_it_and_proposes_with_its_act_tool(tmp_path):
+    """The MCP plugin on the fixture's server: Investigate gets its tools, Propose is told how to
+    write an mcp.call, and the plan passes the plan check; nothing is called or executed."""
+    fake = engine()
+    served = SCENARIO.model_copy(
+        update={
+            "mcp": "caddy",
+            "expected": SCENARIO.expected.model_copy(
+                update={
+                    "action": ExpectedAction(
+                        kind="act",
+                        steps=[
+                            ExpectedStep(
+                                action="mcp.call",
+                                target="shop-web",
+                                tool="caddy_reload",
+                                arguments={"container": "shop-web"},
+                            )
+                        ],
+                    ),
+                }
+            ),
+        }
+    )
+    turns = script()
+    step = {
+        "action": "mcp.call",
+        "host_id": "demo",
+        "target": "shop-web",
+        "params": {"tool": "caddy_reload", "arguments": '{"container": "shop-web"}'},
+    }
+    plan = {"kind": "act", "steps": [step], "reason": "reload it", "verification": {}}
+    turns[-1] = reply(json.dumps(plan), tokens_in=2800)
+    model = FakeChatModel(script=turns, structured_output_unsupported=True)
+
+    async with serve(load_mcp_fixture("caddy")) as server:
+        result = await run_scenario(
+            served, settings(tmp_path), faults=FakeFaults(fake), judge=FakeJudge(),
+            connector=connector(fake), models=Models(model), mcp=server,
+        )  # fmt: skip
+
+    assert result.error is None and fake.acts == [] and server.calls == []
+    assert result.action_correct and not result.unnecessary_action
+    assert {"mcp_tools", "mcp_call"} <= {t.name for t in model.bound_tools}
+    propose_prompt = "\n".join(m.text for m in model.seen[-1])
+    assert "- `mcp.call`: run one act tool" in propose_prompt
+    assert "The MCP plugin's act tools: `caddy_reload`, `caddy_purge_cache`" in propose_prompt
+    assert "  required: container" in propose_prompt
+    assert '<untrusted source="mcp"' in propose_prompt
+
+
+async def test_without_an_mcp_fixture_the_plugin_stays_off(tmp_path):
+    fake = engine()
+    model = FakeChatModel(script=script(), structured_output_unsupported=True)
+
+    result = await run_scenario(
+        SCENARIO, settings(tmp_path), faults=FakeFaults(fake), judge=FakeJudge(),
+        connector=connector(fake), models=Models(model),
+    )  # fmt: skip
+
+    assert result.error is None
+    assert not {"mcp_tools", "mcp_call"} & {t.name for t in model.bound_tools}
+    assert "- `mcp.call`" not in "\n".join(m.text for m in model.seen[-1])

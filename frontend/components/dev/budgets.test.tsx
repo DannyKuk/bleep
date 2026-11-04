@@ -71,4 +71,24 @@ describe("BudgetsForm", () => {
     await userEvent.click(screen.getByRole("button", { name: "Use the defaults" }));
     expect(sentBody(fetchMock, 0)).toEqual({ budgets: {} });
   });
+
+  it("treats 5 retyped as 5.0 as no edit, so another writer's change is not put back", async () => {
+    const view = settingsView({ budgets: { ...BUDGETS, verify_loops: 5 } });
+    const onStale = vi.fn(async () => undefined);
+    const { rerender } = render(<BudgetsForm view={view} onSaved={vi.fn()} onStale={onStale} />);
+    const loops = screen.getByLabelText("Verify loops back to Investigate");
+    await userEvent.clear(loops);
+    await userEvent.type(loops, "5.0");
+    expect(screen.getByRole("button", { name: "Save the budgets" })).toBeDisabled();
+
+    rerender(
+      <BudgetsForm
+        view={settingsView({ budgets: { ...BUDGETS, verify_loops: 4 }, version: "v2" })}
+        onSaved={vi.fn()}
+        onStale={onStale}
+      />,
+    );
+
+    expect(screen.getByLabelText("Verify loops back to Investigate")).toHaveValue(4);
+  });
 });

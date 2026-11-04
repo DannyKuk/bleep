@@ -549,3 +549,128 @@ def test_a_shown_place_still_has_its_password_redacted():
     assert _set_env("SECRET_HOST", "postgres://u:pw-fake-123@attacker.example") == (
         "postgres://u:<redacted>@attacker.example"
     )
+
+
+SECRET_NAMED = [
+    "KEY", "STRIPE_SK", "SALT", "SIGNING_SALT", "JWT", "HMAC", "GITHUB_PAT", "PGPASS",
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("key", SECRET_NAMED)
+def test_more_secret_key_names_are_recognised(key):
+    from bleep.guard.redact import _is_secret_key
+
+    assert _is_secret_key(key)
+    assert _set_env(key, "s3cr3t-value-xyz") == "<redacted>"
+    assert redact_text(f"{key}=s3cr3t-value-xyz ok") == f"{key}=<redacted> ok"
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["SENTRY_HOST", "JWT_ISSUER", "HMAC_ENDPOINT", "SALT_SERVER", "GITHUB_PAT_URL", "KEY_DOMAIN"],
+)
+def test_a_place_named_after_a_new_secret_word_stays_visible(key):
+    assert _set_env(key, "attacker.example") == "attacker.example"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "cache miss key=user:42",
+        "path=/var/lib/app pattern=*.log",
+        "task=backup disk=sda1",
+        "PGPASSFILE=/root/.pgpass",
+        "SALT_ROUNDS=12 JWT_ALGORITHM=HS256 JWT_EXPIRES_IN=1h",
+    ],
+)
+def test_new_secret_words_leave_plain_settings_alone(text):
+    assert redact_text(text) == text
+
+
+DSNS = [
+    ("https://abc123@o0.ingest.sentry.io/1", "https://<redacted>@o0.ingest.sentry.io/1"),
+    ("postgres://u:pw-fake-123@db:5432/x", "postgres://u:<redacted>@db:5432/x"),
+    ("https://attacker.example/1", "https://attacker.example/1"),
+]
+
+
+@pytest.mark.parametrize(("value", "shown"), DSNS)
+@pytest.mark.parametrize("key", ["SENTRY_DSN", "DATABASE_DSN", "sentryDsn", "DSN"])
+def test_a_dsn_is_a_place_whose_userinfo_is_hidden_in_an_approval(key, value, shown):
+    assert _set_env(key, value) == shown
+
+
+@pytest.mark.parametrize(("value", "shown"), DSNS)
+@pytest.mark.parametrize("template", ["SENTRY_DSN={} ok", 'sentry_sdk.init(dsn="{}")', "dsn: {}"])
+def test_a_dsn_in_free_text_keeps_its_host_and_hides_its_userinfo(template, value, shown):
+    out = redact_text(template.format(value))
+    assert out == template.format(shown)
+    assert redact_text(out) == out
+
+
+def test_a_bare_user_outside_a_dsn_stays_readable():
+    text = "clone ssh://git@github.com/acme/shop.git and APP_URL=https://bob@shop.example/"
+    assert redact_text(text) == text
+
+
+@pytest.mark.parametrize(
+    ("text", "secret"),
+    [
+        ("DATABASE_DSN=postgres://h/x?password=hunter2", "hunter2"),
+        ("dsn=postgres://h/x?password=hunter2", "hunter2"),
+        ("SENTRY_DSN=https://h/1?sentry_key=abcdef123456&sentry_secret=zzz", "abcdef123456"),
+        ("JWT_ISSUER=https://idp/?client_secret=abc123", "abc123"),
+        ("AUTH_CALLBACK=https://app/cb?token=abcdef123456", "abcdef123456"),
+        ("TOKEN_REDIRECT=https://app/cb?access_token=abc123456", "abc123456"),
+        ("AUTH_PROXY=http://p:3128?password=x1", "x1"),
+        ("PASSWORD_HOST=hunter2", "hunter2"),
+        ("DB_PASSWORD_SERVER=hunter2", "hunter2"),
+        ("SECRET_DSN=s3cr3t", "s3cr3t"),
+        ("PASSWORD_DSN=hunter2", "hunter2"),
+        ("TOKEN_URL=https://api.x/cb?token=abcdef123456", "abcdef123456"),
+        ("A_URL=https://x/?B_URL=https://y/?token=deep123456", "deep123456"),
+        ("SENTRY_DSN=https://k:@h/1", "k:"),
+    ],
+)
+def test_a_secret_inside_a_kept_value_or_under_a_place_after_a_secret_word_is_redacted(
+    text, secret
+):
+    out = redact_text(text)
+    assert secret not in out
+    assert redact_text(out) == out
+
+
+def test_pairs_nested_without_end_stay_bounded_and_redacted():
+    text = "path=" * 800 + "token=abcdef123456"
+    started = time.perf_counter()
+    out = redact_text(text)
+    assert time.perf_counter() - started < 1
+    assert "abcdef123456" not in out
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("AUTH0_DOMAIN", "evil.auth0.com"), ("JWT_ISSUER_URL", "https://evil.example/")],
+)
+def test_an_approval_still_shows_a_place_after_a_secret_word(key, value):
+    assert _set_env(key, value) == value
+
+
+@pytest.mark.parametrize("key", ["SENTRY_DSN_SECRET", "DSN_PASSWORD"])
+def test_dsn_is_a_place_only_as_the_last_word_of_a_key(key):
+    assert _set_env(key, "s3cr3t-value") == "<redacted>"
+
+
+@pytest.mark.parametrize(
+    ("text", "count"),
+    [
+        ("SENTRY_DSN=https://k@h/1?auth=tok123456", 2),
+        ('TOKEN_URL="token=abc123456 secret=def123456"', 2),
+        ("Cookie: a=1x; b=2y", 2),
+        ("password=a token=b", 2),
+    ],
+)
+def test_the_count_is_one_per_secret_value_inside_a_kept_value_too(text, count):
+    out, found = redact_with_count(text)
+    assert found == count == out.count("<redacted>")
+    assert redact_with_count(out) == (out, 0)

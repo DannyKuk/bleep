@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from evals.mcp_server import load_mcp_fixture
 from evals.scenarios import SCENARIOS_DIR, ScenarioError, load_scenario, load_scenarios
 
 GOOD = {
@@ -66,6 +67,11 @@ def test_the_id_must_be_the_file_name(tmp_path):
         (changed(must_not=["docker.start"]), "docker.start"),
         (changed(root_cause=""), "root_cause"),
         (GOOD | {"timeout_s": 0}, "timeout_s"),
+        (changed(action={"kind": "act", "steps": [{"action": "mcp.call", "target": "x"}]}),
+         "names its tool"),
+        (changed(action={"kind": "act", "steps": [{"action": "docker.start", "target": "x",
+                                                   "tool": "t"}]}), "names its tool"),
+        (GOOD | {"mcp": "no-such-fixture"}, "no-such-fixture"),
     ],
 )  # fmt: skip
 def test_a_malformed_scenario_is_refused(tmp_path, body, why):
@@ -117,4 +123,13 @@ def test_every_shipped_scenario_fits_the_demo_shop():
     for scenario in load_scenarios():
         assert scenario.fault in _demo_faults(), scenario.id
         assert services.get(scenario.subject.service_id) == scenario.subject.host_id, scenario.id
-        assert {t for _, t in scenario.expected.action.pairs} <= containers, scenario.id
+        assert {t for _, t, _ in scenario.expected.action.keys} <= containers, scenario.id
+
+
+def test_a_scenario_with_an_mcp_fixture_expects_the_tool_its_server_offers():
+    scenario = load_scenario(SCENARIOS_DIR / "misroute-mcp.yaml")
+    assert scenario.mcp == "caddy"
+    assert scenario.expected.action.keys == [("mcp.call", "shop-proxy", "caddy_reload")]
+    assert scenario.expected.action.steps[0].arguments == {"container": "shop-proxy"}
+    fixture = load_mcp_fixture(scenario.mcp)
+    assert "caddy_reload" in fixture.act_tools

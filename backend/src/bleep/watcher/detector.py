@@ -19,6 +19,7 @@ from langchain_core.runnables import RunnableConfig
 from bleep import prompts
 from bleep.guard.log import GuardLogger
 from bleep.guard.pipeline import guard_text
+from bleep.hosts.readings import past_threshold
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Thresholds
@@ -100,16 +101,14 @@ class Detector:
             case "url_failed":
                 return self._url(signal, now)
             case "disk":
-                if _num(signal, "percent") >= self.t.disk_percent:
+                if past_threshold("disk", signal.detail, self.t):
                     return self._emit(signal.subject, [signal], now)
                 return []
             case "memory":
-                breach = (
-                    _num(signal, "available_percent", 100) < self.t.memory_available_percent_min
-                )
+                breach = past_threshold("memory", signal.detail, self.t)
                 return self._streak(signal, breach, self.t.memory_polls, now)
             case "load":
-                breach = _num(signal, "load_per_cpu") > self.t.load_per_cpu
+                breach = past_threshold("load", signal.detail, self.t)
                 return self._streak(signal, breach, self.t.load_polls, now)
             case "host_unreachable":
                 return self._unreachable(signal, now)
