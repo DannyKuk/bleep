@@ -150,16 +150,27 @@ class IncidentRunner:
             task.cancel()
         await asyncio.gather(*runs, return_exceptions=True)
 
-    async def end(self, incident_id: str, text: str) -> None:
+    async def end(
+        self, incident_id: str, text: str, *, spare: tuple[IncidentStatus, ...] = ()
+    ) -> None:
         """Close an incident from outside its run (its host was removed) and say why, on its
         timeline and to the channels; one that is finished already is left as it is.
 
         It is marked ended before the first await, so no run of it is driven from here on; then
         it is closed, which shuts `ApprovalStore.resolve` for it on every channel; then whatever
         run is in flight is cancelled. A decision that won just before is resumed into nothing:
-        `_resume` and `_drive` refuse an ended or finished incident, and so does Execute."""
-        self._ended.add(incident_id)
-        before = await self.repo.close_unfinished(incident_id)
+        `_resume` and `_drive` refuse an ended or finished incident, and so does Execute.
+
+        With `spare`, an incident in one of those statuses is left entirely alone (its run
+        goes on): it is closed first, and only a close that happened ends the run."""
+        if spare:
+            before = await self.repo.close_unfinished(incident_id, spare)
+            if before is None:
+                return
+            self._ended.add(incident_id)
+        else:
+            self._ended.add(incident_id)
+            before = await self.repo.close_unfinished(incident_id)
         run = self._runs.get(incident_id)
         if run is not None:
             run.cancel()

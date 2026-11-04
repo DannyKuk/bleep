@@ -36,7 +36,7 @@ from bleep.incidents.runner import IncidentRunner
 from bleep.llm.guard import ModelGuard
 from bleep.llm.usage import BudgetExceeded, CostLedger, UsageTracker, check_daily_cap
 from bleep.schemas.docker import ContainerSummary
-from bleep.schemas.incidents import Incident, RecoveryEvent, Signal, Subject
+from bleep.schemas.incidents import Incident, IncidentStatus, RecoveryEvent, Signal, Subject
 from bleep.schemas.quiet import QuietChange, QuietState
 from bleep.schemas.settings import Budgets
 from bleep.watcher import host_probe, http_checks, poller
@@ -68,7 +68,10 @@ MOVED_NOTICE = (
 )
 LEFT_ALONE_NOTICE = "Closed: you told me to leave {name} alone."
 SNOOZED_NOTICE = "Closed: you snoozed {name}; I look at it again when the snooze ends."
-RUNNING_STATUSES = ("executing", "verifying")  # a run mid-step is left to finish
+RUNNING_STATUSES: tuple[IncidentStatus, ...] = (
+    "executing",
+    "verifying",
+)  # a run mid-step is left to finish
 
 
 def quiet_notice(name: str, state: QuietState) -> str:
@@ -267,9 +270,19 @@ class WatcherManager:
         if change.kind != "started":
             return
         state = change.state
+        self._drop_held(state)
         for incident in await self._incidents_of(state):
-            if incident.status not in RUNNING_STATUSES:
-                await self.runner.end(incident.id, quiet_notice(self._quiet_name(state), state))
+            await self.runner.end(
+                incident.id, quiet_notice(self._quiet_name(state), state), spare=RUNNING_STATUSES
+            )
+
+    def _drop_held(self, state: QuietState) -> None:
+        if state.scope == "host":
+            self._held.pop(state.target_id, None)
+            return
+        held = self._held.get(state.target_id.split("/", 1)[0])
+        if held is not None:
+            held.pop(state.target_id, None)
 
     async def _incidents_of(self, state: QuietState) -> list[Incident]:
         if state.scope == "host":
@@ -321,6 +334,7 @@ class WatcherManager:
         held = self._held.pop(host_id, None)
         if not held:
             return
+        held = {sid: f for sid, f in held.items() if not await self._quiet_now(f[0].subject)}
         for failures in held.values():
             incident, created = await self.repo.open_or_attach(failures[0].subject, failures)
             if created:  # the host incident closed between the checks: this one is new

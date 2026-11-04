@@ -876,6 +876,26 @@ async def test_end_cancels_a_run_in_flight_closes_the_incident_and_says_why(tmp_
     assert notifier.notices == [(incident.id, "Closed: the host was removed.")]
 
 
+async def test_end_with_spare_leaves_an_executing_incident_and_its_run_alone(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier = NoticeNotifier()
+    env.deps.bus = BlockingBus(env.db, "diagnose")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+        await runner.start(incident)
+        await asyncio.wait_for(env.deps.bus.reached.wait(), 5)
+        await env.repo.set_status(incident.id, "executing")
+        await runner.end(incident.id, "Closed: quiet.", spare=("executing", "verifying"))
+        assert incident.id not in runner._ended
+        assert not runner._runs[incident.id].cancelled()
+        assert (await env.repo.get(incident.id)).status == "executing"
+        await runner.close()
+    texts = [e.payload.get("text") for e in await env.bus.history(incident.id)]
+    assert "Closed: quiet." not in texts
+    assert notifier.notices == []
+
+
 async def test_an_approve_landing_while_end_closes_the_incident_never_runs_execute(
     tmp_path, acting
 ):

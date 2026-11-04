@@ -60,10 +60,10 @@ class FakeRunner:
         self.recovered += 1
         return []
 
-    async def end(self, incident_id: str, text: str) -> None:
+    async def end(self, incident_id: str, text: str, *, spare: tuple[str, ...] = ()) -> None:
+        if self.repo is not None and await self.repo.close_unfinished(incident_id, spare) is None:
+            return
         self.ended.append((incident_id, text))
-        if self.repo is not None:
-            await self.repo.close_unfinished(incident_id)
 
     async def close(self) -> None:
         return None
@@ -707,6 +707,25 @@ async def test_a_quiet_services_url_failures_are_not_held_for_the_host_incident(
     assert not any(SHOP in held for held in r.manager._held.values())
 
 
+async def test_a_service_quieted_while_its_failures_are_held_is_not_attached_or_named(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    await r.lose_host()
+    for _ in range(4):  # URL failures are held, the host incident has not opened yet
+        await r.pulse()
+    assert await r.incidents() == []
+    await r.quiet.set("service", SHOP, "leave_alone", None)
+    for _ in range(25):
+        await r.pulse()
+    [incident] = await r.incidents()
+    assert incident.subject == HOST
+    signals = await r.repo.signals(incident.id)
+    assert SHOP not in {s.subject.service_id for s in signals if s.kind == "url_failed"}
+    notices = [e.payload["text"] for e in await r.bus.history(incident.id) if e.kind == "notice"]
+    assert not any("shop.example" in text for text in notices)
+    assert any("blog.example" in text for text in notices)
+
+
 async def open_shop_incident(r: Rig) -> Incident:
     await r.pulse(urls=False)
     await r.kill("shop")
@@ -728,7 +747,7 @@ async def test_snoozing_a_host_closes_every_open_incident_on_it_with_its_name(tm
     await r.quiet.set("host", "h", "snooze", T0 + timedelta(hours=1))
     [(ended_id, text)] = r.runner.ended
     assert ended_id == incident.id
-    assert text.startswith("Closed: you snoozed ") and "I look at it again" in text
+    assert text == "Closed: you snoozed A; I look at it again when the snooze ends."
 
 
 async def test_quieting_leaves_an_executing_incident_to_finish(tmp_path):
