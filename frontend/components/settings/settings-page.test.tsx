@@ -285,7 +285,7 @@ describe("SettingsPage", () => {
 
   it("sends a plugin's own version, and after a 409 reads the plugins again without retrying", async () => {
     // Elsewhere the plugin was pointed at another instance after this page loaded.
-    const moved = plugin({ settings: { url: "https://other.lan", team: "main" }, version: "p2" });
+    const moved = plugin({ settings: { deploy_timeout_s: 1800 }, version: "p2" });
     const fetchMock = stubBackend({
       "GET /api/settings": json(settingsView()),
       "GET /api/services": json([SHOP]),
@@ -295,11 +295,14 @@ describe("SettingsPage", () => {
     });
     render(<SettingsPage />);
     const coolify = await screen.findByRole("region", { name: "Plugin Coolify" });
-    await userEvent.type(within(coolify).getByRole("textbox", { name: "Url" }), "https://c.lan");
+    await userEvent.type(
+      within(coolify).getByRole("textbox", { name: "Deploy Timeout S" }),
+      "1200",
+    );
     await userEvent.click(within(coolify).getByRole("button", { name: "Save settings" }));
 
     expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(SETTINGS_CHANGED);
-    expect(await screen.findByDisplayValue("https://other.lan")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("1800")).toBeInTheDocument();
     const puts = fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT");
     expect(puts).toHaveLength(1);
     expect(puts[0][1]?.headers).toMatchObject({ "if-match": '"p1"' });

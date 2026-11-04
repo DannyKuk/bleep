@@ -12,7 +12,7 @@ import type { SecretActions, SecretView } from "@/lib/secrets-api";
 function Where({ view }: { view: SecretView }) {
   if (!view.set) return <Badge>Missing</Badge>;
   if (view.invalid) return <Badge>Set, but not valid: enter it again</Badge>;
-  return <Badge>{view.source === "env" ? "Set in .env" : "Set from the dashboard"}</Badge>;
+  return <Badge>{view.source === "env" ? "Set in .env" : "Set on the dashboard"}</Badge>;
 }
 
 /**

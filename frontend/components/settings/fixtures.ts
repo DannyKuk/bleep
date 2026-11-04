@@ -85,10 +85,8 @@ export function plugin(overrides: Partial<PluginView> = {}): PluginView {
     settings: {},
     settings_schema: {
       properties: {
-        url: { type: "string", title: "Url" },
-        team: { type: "string", title: "Team", default: "main" },
+        deploy_timeout_s: { type: "integer", title: "Deploy Timeout S", default: 900 },
       },
-      required: ["url"],
     },
     secrets: [
       { env: "COOLIFY_URL", set: false, required: true },

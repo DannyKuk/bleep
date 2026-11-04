@@ -15,7 +15,7 @@ import {
 } from "@/components/settings/fixtures";
 import { SecretField } from "@/components/settings/secret-field";
 import { SettingsPage } from "@/components/settings/settings-page";
-import { ADDRESS_CHANGED, type SecretView } from "@/lib/secrets-api";
+import { ADDRESS_CHANGED, ADDRESS_NOT_CHECKED, type SecretView } from "@/lib/secrets-api";
 
 const TOKEN = "tok-9f8e7d6c5b4a";
 
@@ -61,7 +61,7 @@ describe("SecretField", () => {
     const a = actions();
     const set = secretView("GITHUB_TOKEN", { set: true, source: "dashboard" });
     render(<SecretField view={set} actions={a} />);
-    expect(screen.getByText("Set from the dashboard")).toBeInTheDocument();
+    expect(screen.getByText("Set on the dashboard")).toBeInTheDocument();
     expect(screen.getByLabelText("New value for GITHUB_TOKEN")).toHaveValue("");
     await userEvent.click(screen.getByRole("button", { name: "Clear" }));
     expect(a.clear).toHaveBeenCalledWith("GITHUB_TOKEN");
@@ -183,7 +183,7 @@ describe("secrets on the settings page", () => {
     );
     expect(sentBody(fetchMock, "PUT")).toEqual({ value: TOKEN });
     const bot = screen.getByRole("group", { name: "TELEGRAM_BOT_TOKEN" });
-    expect(await within(bot).findByText("Set from the dashboard")).toBeInTheDocument();
+    expect(await within(bot).findByText("Set on the dashboard")).toBeInTheDocument();
     expect(within(bot).getByLabelText("New value for TELEGRAM_BOT_TOKEN")).toHaveValue("");
     expect(document.body.innerHTML).not.toContain(TOKEN);
   });
@@ -257,6 +257,24 @@ describe("secrets on the settings page", () => {
     const group = screen.getByRole("group", { name: "COOLIFY_TOKEN" });
     expect(await within(group).findByRole("alert")).toHaveTextContent(ADDRESS_CHANGED);
     expect(within(group).getByLabelText("Value for COOLIFY_TOKEN")).toHaveValue("");
+  });
+
+  it("does not claim the address changed when it could not read the secrets again", async () => {
+    backend([withAddress("a1"), secretView("COOLIFY_TOKEN")], {
+      "PUT /api/secrets/COOLIFY_TOKEN": json({ detail: "the address changed" }, 409),
+    });
+    render(<SettingsPage />);
+    const input = await screen.findByLabelText("Value for COOLIFY_TOKEN");
+    stubBackend({
+      "GET /api/secrets": json({ detail: "Bad Gateway" }, 502),
+      "PUT /api/secrets/COOLIFY_TOKEN": json({ detail: "the address changed" }, 409),
+    });
+    await userEvent.type(input, TOKEN);
+    const group = screen.getByRole("group", { name: "COOLIFY_TOKEN" });
+    await userEvent.click(within(group).getByRole("button", { name: "Save" }));
+    const alert = await within(group).findByRole("alert");
+    expect(alert).toHaveTextContent(ADDRESS_NOT_CHECKED);
+    expect(alert).not.toHaveTextContent("has been read again");
   });
 
   it("shows the API's refusal of a private address under the field", async () => {

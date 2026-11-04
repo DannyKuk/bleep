@@ -15,6 +15,7 @@ import { apiFetch } from "@/lib/api";
 import type { ServiceView } from "@/lib/api-types";
 import {
   ADDRESS_CHANGED,
+  ADDRESS_NOT_CHECKED,
   deleteSecret,
   isAddressChanged,
   putSecret,
@@ -192,7 +193,7 @@ function Settings() {
         try {
           secrets.set(await apiFetch<SecretView[]>("/api/secrets"));
         } catch {
-          // the message below tells the person to reload
+          throw new Error(ADDRESS_NOT_CHECKED);
         }
         throw new Error(ADDRESS_CHANGED);
       }
