@@ -130,7 +130,7 @@ export function IncidentPage({ id }: { id: string }) {
     <ReportView report={report} outcome={data.outcome} incident={incident} />
   );
   const planPanel = (
-    <Panel title={planTitle(data)} awaitingYou={approval?.status === "pending"}>
+    <Panel key="plan" title={planTitle(data)} awaitingYou={approval?.status === "pending"}>
       {proposal || approval ? (
         <div className="flex flex-col gap-4">
           <ProposalCard
@@ -158,7 +158,7 @@ export function IncidentPage({ id }: { id: string }) {
     </Panel>
   );
   const foundPanel = (
-    <Panel title="What I found">
+    <Panel key="found" title="What I found">
       {diagnosis ? (
         <div className="flex flex-col gap-4">
           <DiagnosisCard diagnosis={diagnosis} short={phone} />
@@ -175,9 +175,10 @@ export function IncidentPage({ id }: { id: string }) {
     </Panel>
   );
 
-  // One tree for both layouts, with the plan card at the same place in it: crossing the
-  // breakpoint (a tablet turned) moves the decision bar instead of mounting a new one, so an
-  // answer in flight, the lock after it and a typed instruction all survive.
+  // One tree for both layouts: crossing the breakpoint (a tablet turned) moves the decision bar
+  // and the feedback drafts instead of mounting new ones, so an answer in flight, the lock after
+  // it, a typed instruction and a typed note all survive. The two panels swap places as keyed
+  // siblings, which React moves rather than remounts.
   const looks = toolSteps(events).length;
   return (
     <div
@@ -200,9 +201,7 @@ export function IncidentPage({ id }: { id: string }) {
       >
         <div className={cn("flex min-w-0 flex-col", phone ? "gap-3.5" : "gap-5")}>
           {reportPanel}
-          {phone && foundPanel}
-          {planPanel}
-          {!phone && foundPanel}
+          {phone ? [foundPanel, planPanel] : [planPanel, foundPanel]}
           {phone ? (
             <Folded title="How I got there" note={looks === 1 ? "1 look" : `${looks} looks`}>
               <ReasoningStream events={events} />
