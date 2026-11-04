@@ -30,15 +30,15 @@ One pure function per level (`api/hosts.py`), table-tested for every state.
 
 What the dashboard reads about incidents and how it answers an approval (`api/incidents.py`, `api/stream.py`). Every route is under `/api` and needs a session, like the rest.
 
-| Route | Returns |
-|---|---|
-| `GET /api/incidents?status=&service_id=&limit=&offset=` | `Incident[]`, newest first; `limit` 1 to 200 (default 50); `service_id` keeps one service's |
-| `GET /api/incidents/{id}` | `IncidentDetail`: the incident, `diagnosis`, `proposal`, `approval` (the latest, pending or decided), `outcome`, `report`, each null until the run has it, and `feedback`, the human's votes |
-| `GET /api/incidents/{id}/events?after=` | `IncidentEvent[]` with `seq > after`, in seq order |
-| `POST /api/incidents/{id}/decision` | body `{approval_id, kind, text?}`; 200 with the recorded `Decision`, or 409 `{detail, decided_via}` |
-| `POST /api/incidents/{id}/feedback` | body `{target: "diagnosis" \| "proposal", vote: "up" \| "down", note?}`; 200 with the stored `Feedback`, 409 when the run has no such finding yet |
-| `GET /api/recoveries?limit=` | `RecoveryEvent[]`, newest first; `limit` 1 to 200 (default 50) |
-| `GET /api/stream?incident_id=&after=` | `text/event-stream` of `IncidentEvent` JSON |
+| Route                                                   | Returns                                                                                                                                                                                      |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/incidents?status=&service_id=&limit=&offset=` | `Incident[]`, newest first; `limit` 1 to 200 (default 50); `service_id` keeps one service's                                                                                                  |
+| `GET /api/incidents/{id}`                               | `IncidentDetail`: the incident, `diagnosis`, `proposal`, `approval` (the latest, pending or decided), `outcome`, `report`, each null until the run has it, and `feedback`, the human's votes |
+| `GET /api/incidents/{id}/events?after=`                 | `IncidentEvent[]` with `seq > after`, in seq order                                                                                                                                           |
+| `POST /api/incidents/{id}/decision`                     | body `{approval_id, kind, text?}`; 200 with the recorded `Decision`, or 409 `{detail, decided_via}`                                                                                          |
+| `POST /api/incidents/{id}/feedback`                     | body `{target: "diagnosis" \| "proposal", vote: "up" \| "down", note?}`; 200 with the stored `Feedback`, 409 when the run has no such finding yet                                            |
+| `GET /api/recoveries?limit=`                            | `RecoveryEvent[]`, newest first; `limit` 1 to 200 (default 50)                                                                                                                               |
+| `GET /api/stream?incident_id=&after=`                   | `text/event-stream` of `IncidentEvent` JSON                                                                                                                                                  |
 
 - **The detail reads the run's findings from its checkpoint.** `diagnosis`, `proposal`, `outcome` and `report` come from the graph state (`IncidentRunner.state`), the approval from `ApprovalStore.current`. Reason: the checkpoint is the one place the run keeps them, so the dashboard cannot show a diagnosis the run no longer holds (#21).
 - **The approval is shown with its status and decision, never its snapshots.** `status` is `pending`, `approved`, `rejected` or `instructed`, and `decision` says who answered and when. Reason: the dashboard must show "approved on Telegram" after the fact, and the container snapshots are only for Execute (#21).
@@ -53,12 +53,12 @@ What the dashboard reads about incidents and how it answers an approval (`api/in
 
 The service page's reads and a service's facts (`api/hosts.py`, `api/memory.py`).
 
-| Route | Returns |
-|---|---|
-| `GET /api/services/{id}` | `ServiceDetail`: the `ServiceView` the overview shows, its `rules` and its host's `host_rules`; 404 for a service the registry does not know, or whose host is gone |
-| `GET /api/services/{id}/facts` | `ServiceFact[]`, oldest first: `{id, text, source: "human" \| "report", created_at, incident_id}` |
-| `POST /api/services/{id}/facts` | body `{text}`; 200 with the new `ServiceFact` (`source: "human"`); 404 for an unknown service |
-| `DELETE /api/services/{id}/facts/{fact_id}` | 204; 404 when the service has no such fact |
+| Route                                       | Returns                                                                                                                                                             |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/services/{id}`                    | `ServiceDetail`: the `ServiceView` the overview shows, its `rules` and its host's `host_rules`; 404 for a service the registry does not know, or whose host is gone |
+| `GET /api/services/{id}/facts`              | `ServiceFact[]`, oldest first: `{id, text, source: "human" \| "report", created_at, incident_id}`                                                                   |
+| `POST /api/services/{id}/facts`             | body `{text}`; 200 with the new `ServiceFact` (`source: "human"`); 404 for an unknown service                                                                       |
+| `DELETE /api/services/{id}/facts/{fact_id}` | 204; 404 when the service has no such fact                                                                                                                          |
 
 - **A service id is a path: `demo/compose:shop`.** The routes take it with `{service_id:path}`, and the facts router is registered before the hosts router, because `GET /services/{id:path}` would also match `.../facts`. The dashboard encodes the id (`demo%2Fcompose%3Ashop`); the backend sees it decoded either way. Reason: the id is the registry's own key, and a second, URL-safe id would have to be kept in step with it (#30).
 - **The service page reuses the overview's view and the incident list.** `ServiceDetail` wraps the same `ServiceView` (containers, URLs, health, open incident) and adds only the rules; past incidents are `GET /api/incidents?service_id=`. Reason: one shape per thing, so the page and the overview cannot disagree (#30).
@@ -143,3 +143,10 @@ The settings page (`/settings`, `components/settings/`). What it may change and 
 - **One panel per host, then thresholds, plugins, Telegram and models**, in the existing look (`Panel`, `Badge`, `Button`, `Input`, the health colours for "set" and "missing"). Reason: the dashboard is being restyled separately, so this page adds no style of its own (#41).
 - **Every list is edited as a draft and saved as a whole, with Save and Cancel shown only once something changed.** Each editor is keyed by the values it was built from, so a save that returns new values starts a fresh draft. Reason: one save per list matches one override per list, and a form that always shows Save invites saving nothing (#41).
 - **A plugin's form is built from its `settings_schema`**: a text input for a string, a decimal input for a number, a checkbox for a boolean, a box with one entry per line for a list of strings; any other type is shown read-only. An empty field is left out, so the plugin's default holds and shows as the placeholder; a checkbox shows its default until the plugin has settings, and an untouched one sends that default, never `false`. A field typed as a secret gets no input at all. Switching on and saving the settings are separate requests, each showing the API's refusal ("needs COOLIFY_TOKEN set in the environment first"). Reason: a plugin author adds settings without touching the dashboard (#41).
+
+### Incident list (#93)
+
+- **The list is grouped "Needs you" (`awaiting_approval`), "I am on it" (`open`, `investigating`, `paused`, `executing`, `verifying`) and "Earlier" (`resolved`, `closed`, `failed`).** A `failed` incident is over and has nothing for the human to answer, so it reads under Earlier with its red pill. The mapping is a `Record` over every status, so a new status fails the type check until it is placed, and a test puts each status in exactly one group. Reason: the first group should be only what is blocked on a yes (#93).
+- **Filter chips and the search box work on the incidents already loaded.** All, Needs you (the first group), Open (the second group), Resolved, and Closed or failed; the search matches the title and the subject text, ignoring case. Reason: the list holds at most 50 incidents, so a server query adds a request for nothing (#93).
+- **A row shows the status pill, title, subject in mono, opened time and, once closed, the duration.** A running incident shows no duration rather than one that goes stale between polls. A row waiting for the human has a 2 px `down` border. There is no one-line outcome because `Incident` has no summary (#93).
+- **A service's page embeds the same rows as a flat list** (`IncidentListView flat`), without the headline, chips or groups. Reason: a panel of one service's past incidents is a history, not a triage view (#93).
