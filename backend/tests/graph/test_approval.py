@@ -8,7 +8,8 @@ from bleep.incidents.approvals import ApprovalStore, grant_token
 from bleep.incidents.runner import IncidentRunner
 from bleep.schemas.graph import Decision, PlanStep, Proposal, VerificationPlan
 from bleep.schemas.incidents import Subject
-from graph_env import GraphEnv, graph_env
+from fakes import FakeEngine
+from graph_env import GraphEnv, box, graph_env
 
 SECRET = "test-secret"
 AT = datetime(2026, 11, 2, 12, 30, tzinfo=UTC)
@@ -306,3 +307,66 @@ def test_route():
         "outcome": "replan_limit",
     }
     assert approval.route(out_of_replans) == "report"
+
+
+# What a plan's targets resolve to when the human is asked (#139).
+
+
+def coolify_box(name: str, uuid: str, resource: str = "shop"):
+    labels = {"coolify.applicationUuid": uuid, "coolify.resourceName": resource}
+    return box(name, "shop", labels=labels)
+
+
+async def test_a_coolify_target_is_bound_to_its_application_uuid_and_an_mcp_one_to_its_container(
+    tmp_path,
+):
+    engine = FakeEngine("a", [coolify_box("shop0uuid-1", "shop0uuid"), box("shop-db-1", "shop")])
+    env = await graph_env(tmp_path, engine=engine)
+    proposal = Proposal(
+        kind="act",
+        steps=[
+            PlanStep(action="coolify.set_env", host_id="a", target="shop", params={"key": "A"}),
+            PlanStep(action="coolify.redeploy", host_id="a", target="shop"),
+            PlanStep(action="mcp.call", host_id="a", target="shop-db-1"),
+        ],
+        reason="a bad release",
+    )
+
+    snapshots, unread = await approval._snapshots(env.deps, proposal)
+
+    assert unread == []
+    assert [(s.target, s.app_uuid, s.container_id) for s in snapshots] == [
+        ("shop", "shop0uuid", None),
+        ("shop-db-1", None, "id-shop-db-1"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "containers",
+    [[], [coolify_box("shop-a-1", "uuid-a"), coolify_box("shop-b-1", "uuid-b")]],
+)
+async def test_a_coolify_target_naming_no_single_application_is_not_put_to_the_human(
+    tmp_path, containers
+):
+    env = await graph_env(tmp_path, engine=FakeEngine("a", containers))
+    redeploy = PlanStep(action="coolify.redeploy", host_id="a", target="shop")
+
+    snapshots, unread = await approval._snapshots(
+        env.deps, Proposal(kind="act", steps=[redeploy], reason="r")
+    )
+
+    assert snapshots == []
+    assert unread == ["shop on a: names no single Coolify application"]
+
+
+async def test_a_coolify_target_on_an_unreachable_host_is_not_put_to_the_human(tmp_path):
+    engine = FakeEngine("a", [coolify_box("shop0uuid-1", "shop0uuid")])
+    env = await graph_env(tmp_path, engine=engine)
+    engine.unavailable = True
+    redeploy = PlanStep(action="coolify.redeploy", host_id="a", target="shop")
+
+    _, unread = await approval._snapshots(
+        env.deps, Proposal(kind="act", steps=[redeploy], reason="r")
+    )
+
+    assert unread == ["shop on a: cannot be read, the host is unreachable"]
