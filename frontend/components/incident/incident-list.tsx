@@ -32,8 +32,8 @@ export function subjectText({ subject }: Incident): string {
     : (subject.service_id ?? subject.host_id);
 }
 
-function Row({ incident }: { incident: Incident }) {
-  const waiting = groupOf(incident.status) === "needs_you";
+function Row({ incident, now }: { incident: Incident; now: number }) {
+  const waiting = groupOf(incident, now) === "needs_you";
   const duration = formatDuration(incident.opened_at, incident.closed_at);
   return (
     <li>
@@ -56,7 +56,8 @@ function Row({ incident }: { incident: Incident }) {
   );
 }
 
-export function IncidentListView({ incidents }: { incidents: Incident[] }) {
+/** `now` is when the incidents were read: a failed run needs the human for a day after it ended. */
+export function IncidentListView({ incidents, now }: { incidents: Incident[]; now: number }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
 
@@ -72,11 +73,11 @@ export function IncidentListView({ incidents }: { incidents: Incident[] }) {
   }
 
   const shown = incidents.filter(
-    (i) => matchesFilter(i.status, filter) && matchesSearch(i, subjectText(i), query),
+    (i) => matchesFilter(i, filter, now) && matchesSearch(i, subjectText(i), query),
   );
   return (
     <div className="flex flex-col gap-5">
-      <h2 className="text-xl font-extrabold">{headline(incidents)}</h2>
+      <h2 className="text-xl font-extrabold">{headline(incidents, now)}</h2>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <Input
           type="search"
@@ -110,14 +111,14 @@ export function IncidentListView({ incidents }: { incidents: Incident[] }) {
           No incident matches.
         </p>
       ) : (
-        groupIncidents(shown).map(({ group, incidents: rows }) => (
+        groupIncidents(shown, now).map(({ group, incidents: rows }) => (
           <section key={group} aria-labelledby={`group-${group}`} className="flex flex-col gap-2">
             <h3 id={`group-${group}`} className="text-sm font-extrabold text-ink-2">
               {GROUP_TITLE[group]} ({rows.length})
             </h3>
             <ul aria-label={GROUP_TITLE[group]} className="flex flex-col gap-2">
               {rows.map((incident) => (
-                <Row key={incident.id} incident={incident} />
+                <Row key={incident.id} incident={incident} now={now} />
               ))}
             </ul>
           </section>
@@ -127,8 +128,10 @@ export function IncidentListView({ incidents }: { incidents: Incident[] }) {
   );
 }
 
-const fetchIncidents = (signal: AbortSignal) =>
-  apiFetch<Incident[]>(`/api/incidents?limit=${LIMIT}`, { signal });
+async function fetchIncidents(signal: AbortSignal) {
+  const incidents = await apiFetch<Incident[]>(`/api/incidents?limit=${LIMIT}`, { signal });
+  return { incidents, readAt: Date.now() };
+}
 
 /** The newest incidents first, refreshed every 10 s. */
 export function IncidentList() {
@@ -154,7 +157,7 @@ export function IncidentList() {
           Refresh failed, showing the last data: {error.message}
         </p>
       )}
-      <IncidentListView incidents={data} />
+      <IncidentListView incidents={data.incidents} now={data.readAt} />
     </div>
   );
 }

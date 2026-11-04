@@ -36,7 +36,8 @@ export function reportMood(outcome: Outcome): Mood {
   return "resting";
 }
 
-function failedRecently(incident: Incident, now: number): boolean {
+/** A failed run that ended within `FAILED_NEEDS_YOU_MS`: it still needs the human. */
+export function failedRecently(incident: Incident, now: number): boolean {
   if (incident.status !== "failed") return false;
   const ended = Date.parse(incident.closed_at ?? incident.opened_at);
   return now - ended < FAILED_NEEDS_YOU_MS;

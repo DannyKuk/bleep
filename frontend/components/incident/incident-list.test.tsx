@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 import { incident } from "@/components/incident/fixtures";
 import { IncidentListView } from "@/components/incident/incident-list";
 
+// Two days after the fixtures' incidents opened, so their failed run is long over.
+const NOW = Date.parse("2026-11-04T18:00:00Z");
+
 describe("IncidentListView", () => {
   it("links each incident to its page with its status and subject", () => {
     render(
@@ -17,6 +20,7 @@ describe("IncidentListView", () => {
             subject: { kind: "host", host_id: "spare", service_id: null },
           }),
         ]}
+        now={NOW}
       />,
     );
     expect(screen.getByRole("link", { name: /shop-web-1 died/ })).toHaveAttribute(
@@ -30,7 +34,7 @@ describe("IncidentListView", () => {
   });
 
   it("shows the empty state", () => {
-    render(<IncidentListView incidents={[]} />);
+    render(<IncidentListView incidents={[]} now={NOW} />);
     expect(screen.getByText(/No incidents yet/)).toBeInTheDocument();
   });
 
@@ -47,7 +51,7 @@ describe("IncidentListView", () => {
   ];
 
   it("groups the rows and marks the one waiting for the human", () => {
-    render(<IncidentListView incidents={mixed()} />);
+    render(<IncidentListView incidents={mixed()} now={NOW} />);
     expect(screen.getByRole("heading", { name: "1 needs you, I am on 1." })).toBeInTheDocument();
     const needs = screen.getByRole("list", { name: "Needs you" });
     expect(within(needs).getByRole("link", { name: /shop-web-1 died/ })).toHaveClass("border-down");
@@ -57,8 +61,27 @@ describe("IncidentListView", () => {
     expect(screen.getByRole("list", { name: "I am on it" })).toBeInTheDocument();
   });
 
+  it("puts a run that failed within a day under Needs you and counts it", () => {
+    const failed = incident({
+      id: "inc-5",
+      title: "Restart did not help",
+      status: "failed",
+      closed_at: "2026-11-04T16:00:00Z",
+    });
+    render(<IncidentListView incidents={[failed, ...mixed()]} now={NOW} />);
+    expect(screen.getByRole("heading", { name: "2 need you, I am on 1." })).toBeInTheDocument();
+    const needs = screen.getByRole("list", { name: "Needs you" });
+    expect(within(needs).getByRole("link", { name: /Restart did not help/ })).toHaveClass(
+      "border-down",
+    );
+    expect(within(screen.getByRole("list", { name: "Earlier" })).getByText("Worker crashed"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Closed or failed" }));
+    expect(screen.getByText("Restart did not help")).toBeInTheDocument();
+  });
+
   it("filters by chip and by search over title and subject", () => {
-    render(<IncidentListView incidents={mixed()} />);
+    render(<IncidentListView incidents={mixed()} now={NOW} />);
     fireEvent.click(screen.getByRole("button", { name: "Closed or failed" }));
     expect(screen.getAllByRole("link")).toHaveLength(1);
     expect(screen.getByText("Worker crashed")).toBeInTheDocument();

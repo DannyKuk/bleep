@@ -1,4 +1,5 @@
 import type { Incident, IncidentStatus } from "@/lib/api-types";
+import { failedRecently } from "@/lib/mood";
 
 export type Group = "needs_you" | "on_it" | "earlier";
 export type Filter = "all" | "needs_you" | "open" | "resolved" | "closed_or_failed";
@@ -17,8 +18,8 @@ export const FILTERS: { id: Filter; label: string }[] = [
   { id: "closed_or_failed", label: "Closed or failed" },
 ];
 
-// A Record over every status, so a new status fails the type check until it is placed.
-// Only a pending decision needs the human; a failed incident is over and reads under Earlier.
+// A Record over every status, so a new status fails the type check until it is placed. A failed
+// run is placed by `groupOf`: it needs the human for a day, as Bleep's mood says, then it is over.
 const GROUP_OF: Record<IncidentStatus, Group> = {
   awaiting_approval: "needs_you",
   open: "on_it",
@@ -31,14 +32,18 @@ const GROUP_OF: Record<IncidentStatus, Group> = {
   failed: "earlier",
 };
 
-export const groupOf = (status: IncidentStatus): Group => GROUP_OF[status];
+/** The incident's group at `now` (ms since the epoch). */
+export function groupOf(incident: Incident, now: number): Group {
+  return failedRecently(incident, now) ? "needs_you" : GROUP_OF[incident.status];
+}
 
-export function matchesFilter(status: IncidentStatus, filter: Filter): boolean {
+export function matchesFilter(incident: Incident, filter: Filter, now: number): boolean {
+  const { status } = incident;
   switch (filter) {
     case "all":
       return true;
     case "needs_you":
-      return GROUP_OF[status] === "needs_you";
+      return groupOf(incident, now) === "needs_you";
     case "open":
       return GROUP_OF[status] === "on_it";
     case "resolved":
@@ -55,10 +60,13 @@ export function matchesSearch(incident: Incident, subject: string, query: string
 }
 
 /** Non-empty groups in display order; each keeps the order of the incidents given. */
-export function groupIncidents(incidents: Incident[]): { group: Group; incidents: Incident[] }[] {
+export function groupIncidents(
+  incidents: Incident[],
+  now: number,
+): { group: Group; incidents: Incident[] }[] {
   const order: Group[] = ["needs_you", "on_it", "earlier"];
   return order
-    .map((group) => ({ group, incidents: incidents.filter((i) => groupOf(i.status) === group) }))
+    .map((group) => ({ group, incidents: incidents.filter((i) => groupOf(i, now) === group) }))
     .filter((g) => g.incidents.length > 0);
 }
 
@@ -75,10 +83,10 @@ export function formatDuration(openedAt: string, closedAt: string | null): strin
   return `${Math.floor(hours / 24)} d`;
 }
 
-export function headline(incidents: Incident[]): string {
+export function headline(incidents: Incident[], now: number): string {
   if (incidents.length === 0) return "No incidents yet.";
-  const needs = incidents.filter((i) => groupOf(i.status) === "needs_you").length;
-  const onIt = incidents.filter((i) => groupOf(i.status) === "on_it").length;
+  const needs = incidents.filter((i) => groupOf(i, now) === "needs_you").length;
+  const onIt = incidents.filter((i) => groupOf(i, now) === "on_it").length;
   if (needs === 0 && onIt === 0) return "Nothing needs you right now.";
   const parts = [];
   if (needs > 0) parts.push(`${needs} ${needs === 1 ? "needs" : "need"} you`);
