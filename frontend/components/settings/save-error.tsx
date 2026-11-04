@@ -3,6 +3,7 @@
 import { TriangleAlert } from "lucide-react";
 import { useState } from "react";
 
+import { useSaveLock } from "@/components/save-lock";
 import { ApiError } from "@/lib/api";
 
 interface PydanticError {
@@ -46,24 +47,32 @@ export function SaveError({ problems }: { problems: string[] }) {
   );
 }
 
-/** A save in flight and the problems of the last one. `run` resolves true when it went through. */
+/**
+ * This form's save and the problems of its last one. `busy` is any save on the page in flight
+ * (the page's `SaveLockProvider`), when this form's buttons wait. `run` resolves true when the
+ * save went through, false when it failed or another save held the lock.
+ */
 export function useSaving(labels?: Record<string, string>) {
+  const lock = useSaveLock();
   const [saving, setSaving] = useState(false);
   const [problems, setProblems] = useState<string[]>([]);
 
   async function run(save: () => Promise<unknown>): Promise<boolean> {
-    setSaving(true);
-    setProblems([]);
-    try {
-      await save();
-      return true;
-    } catch (error) {
-      setProblems(problemsOf(error, labels));
-      return false;
-    } finally {
-      setSaving(false);
-    }
+    let saved = false;
+    await lock.run(async () => {
+      setSaving(true);
+      setProblems([]);
+      try {
+        await save();
+        saved = true;
+      } catch (error) {
+        setProblems(problemsOf(error, labels));
+      } finally {
+        setSaving(false);
+      }
+    });
+    return saved;
   }
 
-  return { saving, problems, run };
+  return { saving, busy: lock.busy, problems, run };
 }

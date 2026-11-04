@@ -170,7 +170,6 @@ function ServiceSettings({
           items={added}
           addLabel="Container name, such as shop-db-1"
           emptyText={fixed.length > 0 ? "None added here." : "None."}
-          maxLength={255}
           mono
           labels={CONTAINER_LABELS}
           onSave={(containers) =>

@@ -3,11 +3,11 @@
 import { Loader2, RotateCcw, Save } from "lucide-react";
 import { useId, useState } from "react";
 
-import { putSection } from "@/components/dev/models";
-import { Failed, why } from "@/components/dev/status";
+import { type SectionFormProps, useSectionSave } from "@/components/dev/models";
+import { Failed } from "@/components/dev/status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { Budgets, DevSettingsView } from "@/lib/api-types";
+import type { Budgets } from "@/lib/api-types";
 
 type Key = keyof Budgets;
 
@@ -38,33 +38,21 @@ const asText = (budgets: Budgets) =>
   Object.fromEntries(FIELDS.map(({ key }) => [key, String(budgets[key])])) as Record<Key, string>;
 
 /** The limits that keep an incident and a day from running away; in force from the next node. */
-export function BudgetsForm({
-  view,
-  onSaved,
-}: {
-  view: DevSettingsView;
-  onSaved: (view: DevSettingsView) => void;
-}) {
+export function BudgetsForm(props: SectionFormProps) {
+  const { view } = props;
   const [values, setValues] = useState(() => asText(view.budgets));
-  const [saving, setSaving] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  const {
+    saving,
+    busy,
+    failure,
+    setFailure,
+    save: put,
+  } = useSectionSave("budgets", props, "budgets");
   const id = useId();
   const overridden = Object.keys(view.overrides.budgets ?? {}).length > 0;
   const changed = FIELDS.filter(({ key }) => Number(values[key]) !== view.budgets[key]);
 
-  async function save(body: Partial<Budgets>) {
-    setSaving(true);
-    setFailure(null);
-    try {
-      const saved = await putSection("budgets", body);
-      setValues(asText(saved.budgets));
-      onSaved(saved);
-    } catch (error) {
-      setFailure(`Could not save the budgets: ${why(error)}`);
-    } finally {
-      setSaving(false);
-    }
-  }
+  const save = (body: Partial<Budgets>) => put(body, (saved) => setValues(asText(saved.budgets)));
 
   function submit() {
     const bad = changed.find(
@@ -76,7 +64,7 @@ export function BudgetsForm({
       return;
     }
     const edits = Object.fromEntries(changed.map(({ key }) => [key, Number(values[key])]));
-    void save({ ...view.overrides.budgets, ...edits });
+    save({ ...view.overrides.budgets, ...edits });
   }
 
   return (
@@ -108,12 +96,12 @@ export function BudgetsForm({
         ))}
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" variant="outline" disabled={saving || changed.length === 0}>
+        <Button type="submit" variant="outline" disabled={busy || changed.length === 0}>
           {saving ? <Loader2 aria-hidden className="animate-spin" /> : <Save aria-hidden />}
           Save the budgets
         </Button>
         {overridden && (
-          <Button type="button" variant="ghost" disabled={saving} onClick={() => void save({})}>
+          <Button type="button" variant="ghost" disabled={busy} onClick={() => save({})}>
             <RotateCcw aria-hidden />
             Use the defaults
           </Button>

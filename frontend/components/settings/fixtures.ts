@@ -70,6 +70,7 @@ export function settingsView(overrides: Partial<SettingsView> = {}): SettingsVie
         m1: { services: { "compose:shop": { protected_containers: ["shop-cache-1"] } } },
       },
     },
+    version: "v1",
     ...overrides,
   };
 }

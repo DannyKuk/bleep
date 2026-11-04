@@ -24,6 +24,13 @@ export function kindOf(property: JsonSchemaProperty): Kind {
   return "other";
 }
 
+/** A `SecretStr` field: Bleep refuses such a plugin, and the form never gives one an input. */
+export function isSecret(property: JsonSchemaProperty): boolean {
+  return [property, ...(property.anyOf ?? [])].some(
+    (p) => p.writeOnly === true || p.format === "password",
+  );
+}
+
 function asText(value: unknown, kind: Kind): string {
   if (value === undefined || value === null) return "";
   if (kind === "list" && Array.isArray(value)) return value.join("\n");
@@ -31,8 +38,8 @@ function asText(value: unknown, kind: Kind): string {
   return String(value);
 }
 
-/** The draft as the API takes it. An empty optional field is left out, so its default holds;
- * a number that does not parse goes as typed, for the API to refuse. */
+/** The draft as the API takes it. An empty field is left out, so its default holds; a number
+ * that does not parse goes as typed, for the API to refuse. */
 function settingsFrom(
   draft: Record<string, string>,
   fields: [string, JsonSchemaProperty][],
@@ -45,7 +52,7 @@ function settingsFrom(
     if (kind === "other") {
       if (name in current) settings[name] = current[name];
     } else if (kind === "boolean") {
-      settings[name] = text === "true";
+      if (text !== "") settings[name] = text === "true";
     } else if (kind === "list") {
       settings[name] = text
         .split("\n")
@@ -127,13 +134,22 @@ export function PluginSettings({
   plugin: PluginView;
   onSave: (update: PluginUpdate) => Promise<unknown>;
 }) {
-  const fields = Object.entries(plugin.settings_schema.properties ?? {});
+  const fields = Object.entries(plugin.settings_schema.properties ?? {}).filter(
+    ([, property]) => !isSecret(property),
+  );
+  // A checkbox shows the default until the plugin has settings; a text field shows it as the
+  // placeholder, so an untouched one is left out and its default holds.
   const initial = () =>
     Object.fromEntries(
-      fields.map(([name, property]) => [name, asText(plugin.settings[name], kindOf(property))]),
+      fields.map(([name, property]) => {
+        const kind = kindOf(property);
+        const value =
+          kind === "boolean" ? (plugin.settings[name] ?? property.default) : plugin.settings[name];
+        return [name, asText(value, kind)];
+      }),
     );
   const [draft, setDraft] = useState<Record<string, string>>(initial);
-  const { saving, problems, run } = useSaving();
+  const { saving, busy, problems, run } = useSaving();
   const settings = settingsFrom(draft, fields, plugin.settings);
   const dirty =
     JSON.stringify(settings) !== JSON.stringify(settingsFrom(initial(), fields, plugin.settings));
@@ -154,7 +170,7 @@ export function PluginSettings({
           size="sm"
           variant="outline"
           className="ml-auto"
-          disabled={saving}
+          disabled={busy}
           onClick={() => void run(() => onSave({ enabled: !plugin.enabled }))}
         >
           {plugin.enabled ? <PowerOff aria-hidden /> : <Power aria-hidden />}
@@ -192,7 +208,7 @@ export function PluginSettings({
           ))}
           {dirty && (
             <div className="flex gap-2">
-              <Button type="submit" size="sm" disabled={saving}>
+              <Button type="submit" size="sm" disabled={busy}>
                 {saving && <Loader2 aria-hidden className="animate-spin" />}
                 Save settings
               </Button>

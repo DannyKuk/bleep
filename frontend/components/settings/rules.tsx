@@ -8,8 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-const MAX_RULE = 500; // the API's limit (RuleText)
-
 /** Where the values in force come from, and the way back to the hosts file's. */
 export function SourceNote({
   overridden,
@@ -47,7 +45,6 @@ export function ListEditor({
   onSave,
   addLabel,
   emptyText,
-  maxLength = MAX_RULE,
   mono = false,
   labels,
   overridden,
@@ -59,7 +56,6 @@ export function ListEditor({
   onSave: (items: string[]) => Promise<unknown>;
   addLabel: string;
   emptyText: string;
-  maxLength?: number;
   mono?: boolean;
   /** Field names in the API's errors to the words shown (`{ rules: "Rule" }`). */
   labels?: Record<string, string>;
@@ -69,7 +65,7 @@ export function ListEditor({
 }) {
   const [draft, setDraft] = useState(items);
   const [adding, setAdding] = useState("");
-  const { saving, problems, run } = useSaving(labels);
+  const { saving, busy, problems, run } = useSaving(labels);
   const addId = useId();
   const cleaned = draft.map((item) => item.trim()).filter(Boolean);
   const dirty = JSON.stringify(cleaned) !== JSON.stringify(items);
@@ -83,7 +79,7 @@ export function ListEditor({
   return (
     <div className="flex flex-col gap-2">
       {overridden !== undefined && onReset && (
-        <SourceNote overridden={overridden} disabled={saving} onReset={() => void run(onReset)} />
+        <SourceNote overridden={overridden} disabled={busy} onReset={() => void run(onReset)} />
       )}
       {draft.length === 0 ? (
         <p className="text-sm text-muted-foreground">{emptyText}</p>
@@ -94,7 +90,6 @@ export function ListEditor({
               <Input
                 aria-label={`${label}: entry ${index + 1}`}
                 value={item}
-                maxLength={maxLength}
                 className={cn(mono && "font-mono")}
                 onChange={(changed) =>
                   setDraft(draft.map((old, at) => (at === index ? changed.target.value : old)))
@@ -121,7 +116,6 @@ export function ListEditor({
           id={addId}
           placeholder={addLabel}
           value={adding}
-          maxLength={maxLength}
           className={cn(mono && "font-mono")}
           onChange={(changed) => setAdding(changed.target.value)}
           onKeyDown={(pressed) => {
@@ -141,7 +135,7 @@ export function ListEditor({
           <Button
             type="button"
             size="sm"
-            disabled={saving}
+            disabled={busy}
             onClick={() => void run(() => onSave(cleaned))}
           >
             {saving && <Loader2 aria-hidden className="animate-spin" />}

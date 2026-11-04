@@ -54,17 +54,25 @@ export function UrlEditor({
   onReset: () => Promise<unknown>;
 }) {
   const [rows, setRows] = useState(() => urls.map(toRow));
-  const { saving, problems, run } = useSaving(URL_LABELS);
-  const checks = rows.filter((row) => row.url.trim()).map(toCheck);
+  const { saving, busy, problems, run } = useSaving(URL_LABELS);
+  const checks = rows.map(toCheck);
+  const [blank, setBlank] = useState<number[]>([]);
   const dirty = JSON.stringify(checks) !== JSON.stringify(urls.map((u) => toCheck(toRow(u))));
 
   function change(index: number, field: keyof Row, value: string) {
     setRows(rows.map((row, at) => (at === index ? { ...row, [field]: value } : row)));
   }
 
+  /** A row without a URL is shown as invalid, never dropped from the list on its own. */
+  function save() {
+    const empty = rows.flatMap((row, at) => (row.url.trim() ? [] : [at]));
+    setBlank(empty);
+    if (empty.length === 0) void run(() => onSave(checks));
+  }
+
   return (
     <div className="flex flex-col gap-2">
-      <SourceNote overridden={overridden} disabled={saving} onReset={() => void run(onReset)} />
+      <SourceNote overridden={overridden} disabled={busy} onReset={() => void run(onReset)} />
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">No URLs are checked.</p>
       ) : (
@@ -75,7 +83,8 @@ export function UrlEditor({
                 aria-label={`URL ${index + 1}`}
                 placeholder="https://shop.example.com/health"
                 value={row.url}
-                className="min-w-0 basis-full font-mono sm:basis-auto"
+                aria-invalid={blank.includes(index) || undefined}
+                className="min-w-0 basis-full font-mono aria-invalid:border-health-down sm:basis-auto"
                 onChange={(changed) => change(index, "url", changed.target.value)}
               />
               <Input
@@ -97,7 +106,10 @@ export function UrlEditor({
                 size="icon"
                 variant="ghost"
                 aria-label={`Remove ${row.url || `URL ${index + 1}`}`}
-                onClick={() => setRows(rows.filter((_, at) => at !== index))}
+                onClick={() => {
+                  setRows(rows.filter((_, at) => at !== index));
+                  setBlank([]);
+                }}
               >
                 <Trash2 aria-hidden />
               </Button>
@@ -117,12 +129,7 @@ export function UrlEditor({
         </Button>
         {dirty && (
           <>
-            <Button
-              type="button"
-              size="sm"
-              disabled={saving}
-              onClick={() => void run(() => onSave(checks))}
-            >
+            <Button type="button" size="sm" disabled={busy} onClick={save}>
               {saving && <Loader2 aria-hidden className="animate-spin" />}
               Save
             </Button>
@@ -131,14 +138,23 @@ export function UrlEditor({
               size="sm"
               variant="ghost"
               disabled={saving}
-              onClick={() => setRows(urls.map(toRow))}
+              onClick={() => {
+                setRows(urls.map(toRow));
+                setBlank([]);
+              }}
             >
               Cancel
             </Button>
           </>
         )}
       </div>
-      <SaveError problems={problems} />
+      <SaveError
+        problems={
+          blank.length > 0
+            ? blank.map((at) => `URL ${at + 1}: enter an address, or remove the row`)
+            : problems
+        }
+      />
     </div>
   );
 }

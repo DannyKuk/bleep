@@ -96,6 +96,8 @@ export interface SettingsView {
   hosts: HostSettingsView[];
   plugins: Record<string, boolean>;
   overrides: SettingsOverrides;
+  /** Of `overrides`; a `PUT /api/settings` built from this view sends it back (`putSettings`). */
+  version: string;
 }
 
 /** The sections of `PUT /api/settings` this page writes. Each one given replaces its overrides. */
@@ -110,6 +112,9 @@ export interface JsonSchemaProperty {
   title?: string;
   description?: string;
   default?: unknown;
+  /** Set on a `SecretStr`, which never gets an input. */
+  writeOnly?: boolean;
+  format?: string;
   anyOf?: JsonSchemaProperty[];
   items?: JsonSchemaProperty;
 }

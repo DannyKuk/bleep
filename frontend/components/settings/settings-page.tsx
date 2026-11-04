@@ -4,6 +4,7 @@ import { KeyRound, Loader2, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Panel } from "@/components/panel";
+import { SaveLockProvider } from "@/components/save-lock";
 import { HostSettings, type KnownService } from "@/components/settings/hosts";
 import { ModelSettings } from "@/components/settings/models";
 import { PluginList } from "@/components/settings/plugins";
@@ -11,6 +12,7 @@ import { TelegramSettings } from "@/components/settings/telegram";
 import { ThresholdsForm } from "@/components/settings/thresholds";
 import { apiFetch } from "@/lib/api";
 import type { ServiceView } from "@/lib/api-types";
+import { isStale, putSettings, SETTINGS_CHANGED, SettingsChanged } from "@/lib/settings-api";
 import type {
   PluginUpdate,
   PluginView,
@@ -24,7 +26,7 @@ interface Loaded<T> {
   error?: Error;
 }
 
-/** One GET, read on mount; `set` replaces the data with what a save returned. */
+/** One GET, read on mount; `set` replaces the data with what a save returned, or updates it. */
 function useLoaded<T>(path: string) {
   const [state, setState] = useState<Loaded<T>>({});
   useEffect(() => {
@@ -37,7 +39,20 @@ function useLoaded<T>(path: string) {
       });
     return () => controller.abort();
   }, [path]);
-  return { ...state, set: (data: T) => setState({ data }) };
+  const set = (next: T | ((data: T | undefined) => T)) =>
+    setState((now) => ({
+      data: typeof next === "function" ? (next as (data: T | undefined) => T)(now.data) : next,
+    }));
+  return { ...state, set };
+}
+
+function Alert({ children }: { children: React.ReactNode }) {
+  return (
+    <p role="alert" className="flex items-center gap-2 text-sm text-health-down">
+      <TriangleAlert aria-hidden className="size-4 shrink-0" />
+      <span>{children}</span>
+    </p>
+  );
 }
 
 function Status<T>({
@@ -52,10 +67,9 @@ function Status<T>({
   if (loaded.data !== undefined) return children(loaded.data);
   if (loaded.error) {
     return (
-      <p role="alert" className="flex items-center gap-2 text-sm text-health-down">
-        <TriangleAlert aria-hidden className="size-4" />
+      <Alert>
         Could not load {what}: {loaded.error.message}
-      </p>
+      </Alert>
     );
   }
   return (
@@ -84,19 +98,33 @@ function servicesByHost(services: ServiceView[] | undefined): Map<string, KnownS
  * hosts' connections and every secret stay in the hosts file and the environment.
  */
 export function SettingsPage() {
+  return (
+    <SaveLockProvider>
+      <Settings />
+    </SaveLockProvider>
+  );
+}
+
+function Settings() {
   const settings = useLoaded<SettingsView>("/api/settings");
   const services = useLoaded<ServiceView[]>("/api/services");
   const plugins = useLoaded<PluginView[]>("/api/plugins");
   const telegram = useLoaded<TelegramStatus>("/api/telegram/status");
+  const [changedElsewhere, setChangedElsewhere] = useState(false);
   const known = servicesByHost(services.data);
 
-  async function saveSettings(update: SettingsUpdate) {
-    settings.set(
-      await apiFetch<SettingsView>("/api/settings", {
-        method: "PUT",
-        body: JSON.stringify(update),
-      }),
-    );
+  /** `update` was built from the view at `version`; a stale one is never retried, since its
+   * body would put back what changed elsewhere. */
+  async function saveSettings(update: SettingsUpdate, version: string) {
+    try {
+      settings.set(await putSettings<SettingsView>(update, version));
+      setChangedElsewhere(false);
+    } catch (error) {
+      if (!isStale(error)) throw error;
+      setChangedElsewhere(true);
+      settings.set(await apiFetch<SettingsView>("/api/settings"));
+      throw new SettingsChanged();
+    }
   }
 
   async function savePlugin(name: string, update: PluginUpdate) {
@@ -104,7 +132,7 @@ export function SettingsPage() {
       method: "PUT",
       body: JSON.stringify(update),
     });
-    plugins.set((plugins.data ?? []).map((plugin) => (plugin.name === name ? saved : plugin)));
+    plugins.set((list) => (list ?? []).map((plugin) => (plugin.name === name ? saved : plugin)));
   }
 
   return (
@@ -118,6 +146,14 @@ export function SettingsPage() {
         </p>
       </header>
 
+      {changedElsewhere && <Alert>{SETTINGS_CHANGED}</Alert>}
+      {services.error && (
+        <Alert>
+          Could not load the services Bleep sees: {services.error.message}. Only services with
+          settings of their own are listed.
+        </Alert>
+      )}
+
       <Status loaded={settings} what="the settings">
         {(view) => (
           <>
@@ -127,7 +163,9 @@ export function SettingsPage() {
                 host={host}
                 overrides={view.overrides.hosts?.[host.id]}
                 services={known.get(host.id) ?? []}
-                save={(overrides) => saveSettings({ hosts: { [host.id]: overrides } })}
+                save={(overrides) =>
+                  saveSettings({ hosts: { [host.id]: overrides } }, view.version)
+                }
               />
             ))}
             <Panel title="Thresholds">
@@ -135,7 +173,7 @@ export function SettingsPage() {
                 key={JSON.stringify(view.thresholds)}
                 values={view.thresholds}
                 overrides={view.overrides.thresholds ?? {}}
-                onSave={(thresholds) => saveSettings({ thresholds })}
+                onSave={(thresholds) => saveSettings({ thresholds }, view.version)}
               />
             </Panel>
           </>

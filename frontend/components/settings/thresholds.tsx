@@ -54,7 +54,7 @@ export function ThresholdsForm({
   onSave: (thresholds: Partial<Thresholds>) => Promise<unknown>;
 }) {
   const [draft, setDraft] = useState(() => asDraft(values));
-  const { saving, problems, run } = useSaving(LABELS);
+  const { saving, busy, problems, run } = useSaving(LABELS);
   const changed = THRESHOLDS.filter(({ name }) => draft[name].trim() !== String(values[name]));
   const overridden = Object.keys(overrides).length > 0;
 
@@ -95,7 +95,7 @@ export function ThresholdsForm({
         ))}
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" size="sm" disabled={saving || changed.length === 0}>
+        <Button type="submit" size="sm" disabled={busy || changed.length === 0}>
           {saving && <Loader2 aria-hidden className="animate-spin" />}
           Save thresholds
         </Button>
@@ -115,7 +115,7 @@ export function ThresholdsForm({
             type="button"
             size="sm"
             variant="outline"
-            disabled={saving}
+            disabled={busy}
             onClick={() => void run(() => onSave({}))}
           >
             Back to the defaults

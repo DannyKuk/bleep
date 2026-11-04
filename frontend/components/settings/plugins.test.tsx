@@ -59,6 +59,67 @@ describe("PluginList", () => {
     expect(onSave).toHaveBeenCalledWith("coolify", { enabled: false });
   });
 
+  it("keeps a boolean's default of true when the person leaves it untouched", async () => {
+    const onSave = vi.fn(async () => undefined);
+    const p = plugin({
+      settings_schema: {
+        properties: {
+          url: { type: "string", title: "Url" },
+          verify_tls: { type: "boolean", title: "Verify TLS", default: true },
+          optional_flag: { anyOf: [{ type: "boolean" }, { type: "null" }], title: "Flag" },
+        },
+        required: ["url"],
+      },
+    });
+    render(<PluginList plugins={[p]} onSave={onSave} />);
+    expect(screen.getByRole("checkbox", { name: "Verify TLS" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Flag" })).not.toBeChecked();
+
+    await userEvent.type(screen.getByRole("textbox", { name: "Url" }), "https://c.lan");
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(onSave).toHaveBeenCalledWith("coolify", {
+      settings: { url: "https://c.lan", verify_tls: true },
+    });
+  });
+
+  it("sends a boolean the person switched off as false", async () => {
+    const onSave = vi.fn(async () => undefined);
+    const p = plugin({
+      settings: { url: "https://c.lan", verify_tls: true },
+      settings_schema: {
+        properties: {
+          url: { type: "string", title: "Url" },
+          verify_tls: { type: "boolean", title: "Verify TLS", default: true },
+        },
+      },
+    });
+    render(<PluginList plugins={[p]} onSave={onSave} />);
+    await userEvent.click(screen.getByRole("checkbox", { name: "Verify TLS" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(onSave).toHaveBeenCalledWith("coolify", {
+      settings: { url: "https://c.lan", verify_tls: false },
+    });
+  });
+
+  it("never renders a SecretStr field, whatever its name", () => {
+    const p = plugin({
+      settings_schema: {
+        properties: {
+          url: { type: "string", title: "Url" },
+          auth: { type: "string", format: "password", writeOnly: true, title: "Auth" },
+          other: {
+            anyOf: [{ type: "string", format: "password", writeOnly: true }, { type: "null" }],
+            title: "Other",
+          },
+        },
+      },
+    });
+    render(<PluginList plugins={[p]} onSave={vi.fn()} />);
+    expect(screen.getAllByRole("textbox")).toHaveLength(1);
+    expect(screen.queryByText("Auth")).toBeNull();
+    expect(screen.queryByText("Other")).toBeNull();
+  });
+
   it("says when Bleep has no plugins", () => {
     render(<PluginList plugins={[]} onSave={vi.fn()} />);
     expect(screen.getByText("This Bleep has no plugins.")).toBeInTheDocument();
