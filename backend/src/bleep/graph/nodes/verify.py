@@ -56,14 +56,19 @@ def _redeployed(proposal: Proposal | None) -> list[str]:
     return list(dict.fromkeys(s.target for s in steps if s.action == "coolify.redeploy"))
 
 
+UNPROVEN = "stopped as approved; nothing shows the service works (no URL or running container)"
+
+
 @dataclass(frozen=True)
 class _Plan:
     """What to check: containers that must run, URLs that must answer, and signalled containers
-    the plan stopped, which must stay down."""
+    the plan stopped, which must stay down. `unproven` says the incident's own symptom is only
+    covered by those stop checks: a container already dead passes one, so it proves nothing."""
 
     containers: list[str]
     urls: list[UrlCheckConfig]
     stopped: list[str]
+    unproven: bool = False
 
     def empty(self) -> bool:
         return not (self.containers or self.urls or self.stopped)
@@ -71,9 +76,11 @@ class _Plan:
 
 def _plan(deps: GraphDeps, state: IncidentState) -> _Plan:
     """The containers and URLs to check: the plan's, or else what it acted on, and always the
-    incident's own symptoms (`_symptoms`). A signalled container the plan stopped is checked to
-    be down, unless it is among the containers that must run (the fallback can put it there;
-    that check then fails, the safe side).
+    incident's own symptoms (`_symptoms`). A signalled container the plan stopped (its last
+    Docker step is a stop) is checked to be down, unless it is among the containers that must
+    run (the fallback can put it there; that check then fails, the safe side). When those stop
+    checks are all there is about the symptom (no URL, no signalled container that must run, no
+    redeploy), the plan is `unproven` and cannot pass.
 
     A URL keeps its expected status and body text from the hosts file, whichever of the host's
     services it belongs to (the plan check allows any of them). The fallback checks every
@@ -97,7 +104,7 @@ def _plan(deps: GraphDeps, state: IncidentState) -> _Plan:
             acted = proposal.steps if proposal is not None else []
             containers = [s.target for s in acted if s.action.startswith("docker.")]
     signalled, failing_urls = _symptoms(state.get("signals", []))
-    stopped = {s.target for s in (proposal.steps if proposal else []) if s.action == "docker.stop"}
+    stopped = _stopped(proposal)
     left_out = [c for c in signalled if c in stopped or replaced(c)]
     if left_out and service is not None:
         # The plan meant that container gone or down; only the service's URLs can say whether
@@ -107,7 +114,19 @@ def _plan(deps: GraphDeps, state: IncidentState) -> _Plan:
     containers = [c for c in dict.fromkeys(named) if not replaced(c)]
     urls = list(dict.fromkeys([*urls, *failing_urls]))
     down = [c for c in left_out if c in stopped and c not in containers]
-    return _Plan(containers, [known.get(u) or UrlCheckConfig(url=u) for u in urls], down)
+    covered = bool(urls) or bool(set(signalled) & set(containers)) or bool(_redeployed(proposal))
+    checks = [known.get(u) or UrlCheckConfig(url=u) for u in urls]
+    return _Plan(containers, checks, down, unproven=bool(down) and not covered)
+
+
+def _stopped(proposal: Proposal | None) -> set[str]:
+    """The containers whose last Docker step in the plan is a stop: a stop then a start of the
+    same container means it should run."""
+    last: dict[str, str] = {}
+    for step in proposal.steps if proposal is not None else []:
+        if step.action.startswith("docker."):
+            last[step.target] = step.action
+    return {target for target, action in last.items() if action == "docker.stop"}
 
 
 def _replaced(deps: GraphDeps, state: IncidentState) -> Callable[[str], bool]:
@@ -115,8 +134,9 @@ def _replaced(deps: GraphDeps, state: IncidentState) -> Callable[[str], bool]:
     check covers those.
 
     Each redeployed target is first resolved to its one application uuid, from the registry as
-    it is now (the new containers carry the same labels) or else from Gather's listing; a target
-    that names no single uuid replaces nothing, so its containers are still checked by name. By
+    it is now (the new containers carry the same labels); only when the registry shows no
+    application by that name is Gather's listing read. A target that names several uuids
+    replaces nothing, so its containers are still checked by name. By
     Verify the registry may list only the new containers, so a container counts as replaced when
     Gather's listing (taken before the plan ran) shows it as one of that uuid's, or when its
     name is Coolify's for it: `<uuid>-<timestamp>` or `<service>-<uuid>-<timestamp>`. A preview
@@ -128,7 +148,10 @@ def _replaced(deps: GraphDeps, state: IncidentState) -> Callable[[str], bool]:
     context = state.get("context")
     gathered = list(context.containers) if context is not None else []
     now = deps.registry.snapshot(state["subject"].host_id) or []
-    uuids = {u for app in apps if (u := _app_uuid(now, app) or _app_uuid(gathered, app))}
+    uuids: set[str] = set()
+    for app in apps:
+        found = _app_uuids(now, app) or _app_uuids(gathered, app)
+        uuids |= found if len(found) == 1 else set()
     members = {
         c.name
         for c in [*gathered, *now]
@@ -138,12 +161,11 @@ def _replaced(deps: GraphDeps, state: IncidentState) -> Callable[[str], bool]:
     return lambda name: name in members or any(p.search(name) for p in named)
 
 
-def _app_uuid(containers: list[ContainerSummary], target: str) -> str | None:
-    """The one application uuid `target` names among `containers`, as `coolify_app_uuid` reads
-    it; None for none or several."""
-    found = {c.labels[COOLIFY_UUID] for c in coolify_members(containers, target)}
-    found.discard("")
-    return found.pop() if len(found) == 1 else None
+def _app_uuids(containers: list[ContainerSummary], target: str) -> set[str]:
+    """The application uuids `target` names among `containers`, as `coolify_app_uuid` reads
+    them; one is an answer, several an ambiguity."""
+    found = {c.labels.get(COOLIFY_UUID, "") for c in coolify_members(containers, target)}
+    return found - {""}
 
 
 def _not_preview(labels: dict[str, str]) -> bool:
@@ -278,6 +300,9 @@ def make(deps: GraphDeps) -> Node:
             checks = [await _check_application(deps, host_id, app, starts.get(app)) for app in apps]
             checks += [await _check_container(deps, host_id, name) for name in plan.containers]
             checks += [await _check_stopped(deps, host_id, name) for name in plan.stopped]
+            if plan.unproven:
+                target = f"{', '.join(plan.stopped)} (the incident's symptom)"
+                checks.append(Check(kind="container", target=target, ok=False, detail=UNPROVEN))
             checks += [await _check_url(client, cfg) for cfg in plan.urls]
         finally:
             if owned:

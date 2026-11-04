@@ -329,10 +329,10 @@ async def test_stopping_the_signalled_container_is_judged_by_the_services_urls(t
 
 
 @pytest.mark.parametrize(("state_now", "ok"), [("exited", True), ("running", False)])
-async def test_with_no_url_a_stop_is_judged_by_the_stopped_container_itself(
-    tmp_path, state_now, ok
-):
-    """No service URL to tell: checking the database alone would say nothing about the stop."""
+@pytest.mark.parametrize("loops", [0, 2])
+async def test_with_no_url_a_stop_is_never_called_fixed(tmp_path, state_now, ok, loops):
+    """No URL to tell, and the stopped container was already dead: its stop check proves
+    nothing, so the run is never resolved, and the loop-back and the human are told why."""
     engine = FakeEngine("a", [box("shop-web-1", "shop", state=state_now), box("shop-db-1", "shop")])
     plan = VerificationPlan(containers=["shop-db-1"])
     env, state = await setup(tmp_path, Replies(200), plan=plan, engine=engine, urls=False)
@@ -341,14 +341,36 @@ async def test_with_no_url_a_stop_is_judged_by_the_stopped_container_itself(
     state |= {
         "proposal": state["proposal"].model_copy(update={"steps": [stop]}),
         "signals": [died],
-        "verify_loops": 2,
+        "verify_loops": loops,
     }
 
-    update, _ = await run(env, state)
+    update, route = await run(env, state)
 
     checks = {c.target: (c.ok, c.detail) for c in update["verification"].checks}
     assert checks["shop-web-1 (stopped by the plan)"][0] is ok
-    assert update["outcome"] == ("resolved" if ok else "unverified")
+    assert checks["shop-web-1 (the incident's symptom)"] == (False, verify.UNPROVEN)
+    assert update.get("outcome") != "resolved"
+    if loops == 2:
+        assert update["outcome"] == "unverified" and route == "report"
+    else:
+        assert route == "investigate" and verify.UNPROVEN in update["messages"][0].text
+
+
+async def test_a_stop_then_a_start_of_the_same_container_must_run(tmp_path):
+    """The last step starts it again, so it is checked as running, not as stopped."""
+    env, state = await setup(tmp_path, Replies(200), plan=VerificationPlan(urls=[URL]))
+    steps = [
+        PlanStep(action="docker.stop", host_id="a", target="shop-web-1"),
+        PlanStep(action="docker.start", host_id="a", target="shop-web-1"),
+    ]
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
+    state |= {"proposal": state["proposal"].model_copy(update={"steps": steps}), "signals": [died]}
+
+    update, _ = await run(env, state)
+
+    targets = [(c.target, c.ok) for c in update["verification"].checks]
+    assert targets == [("shop-web-1", True), (URL, True)]
+    assert update["outcome"] == "resolved"
 
 
 async def test_a_stop_with_an_empty_plan_checks_the_stopped_container_as_one_that_must_run(
@@ -659,4 +681,24 @@ async def test_a_stale_listing_of_another_app_by_the_same_name_replaces_nothing_
 
     checks = {c.target: (c.ok, c.detail) for c in update["verification"].checks}
     assert checks["old0uuid-1"] == (False, "not found")
+    assert update["outcome"] == "unverified"
+
+
+async def test_a_name_the_registry_gives_two_uuids_now_replaces_nothing(tmp_path):
+    """Two applications named web on the host now: Gather's single one is not read instead."""
+    other = web("other0uuid-1", labels={**WEB_APP, "coolify.applicationUuid": "other0uuid"})
+    engine = FakeEngine("a", [web(health="healthy"), other, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+    old = web("web0uuid-1", created=DEPLOYED_AT - timedelta(days=1))
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="web0uuid-1")
+    state = redeployed(state) | {
+        "signals": [died],
+        "context": GatherContext(at=T0, containers=[old]),
+        "verify_loops": 2,
+    }
+
+    update, _ = await run(env, state)
+
+    checks = {c.target: (c.ok, c.detail) for c in update["verification"].checks}
+    assert checks["web0uuid-1"] == (False, "not found")
     assert update["outcome"] == "unverified"
