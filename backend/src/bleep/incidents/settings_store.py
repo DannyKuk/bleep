@@ -26,6 +26,7 @@ from bleep.graph.deps import CORE_ACTIONS
 from bleep.guard.redact import REDACTED
 from bleep.guard.secret_fields import find_secrets
 from bleep.hosts.config import HostConfig, ServiceOverrides, UrlCheckConfig
+from bleep.hosts.dashboard import DashboardHosts, HostChange
 from bleep.hosts.registry import Registry
 from bleep.incidents.repository import utcnow
 from bleep.plugins.registry import PluginError, PluginRegistry, UnknownPlugin
@@ -105,16 +106,19 @@ class SettingsStore:
         *,
         models: ModelSettings | None = None,
         secrets: SecretStore | None = None,
+        dashboard: DashboardHosts | None = None,
         clock: Callable[[], datetime] = utcnow,
     ) -> None:
         self._db = db
+        self._dashboard = dashboard
         self._registry = registry
         self._plugins = plugins
         self._env_models = models if models is not None else ModelSettings()
         self._secrets = secrets
         self._clock = clock
-        # The hosts file as read at boot: the layer under every host override.
-        self._hosts_file: dict[str, HostConfig] = {h.config.id: h.config for h in registry.hosts()}
+        # The layer under every host override: the hosts file as read at boot, and the hosts
+        # added on the dashboard, which come and go (`host_changed`).
+        self._base: dict[str, HostConfig] = {h.config.id: h.config for h in registry.hosts()}
         self._overrides = SettingsUpdate(hosts={})
         self._plugin_rows: dict[str, _PluginRow] = {}
         self._lock = asyncio.Lock()
@@ -179,9 +183,10 @@ class SettingsStore:
         return ModelChoice(**{name: getattr(models, name) for name in ModelChoice.model_fields})
 
     def host_views(self) -> list[HostSettingsView]:
-        """Every host's rules and service settings in force, in hosts file order."""
+        """Every host's rules and service settings in force: the hosts file's in its order, then
+        the dashboard's in the order they were added."""
         views = []
-        for host_id, base in self._hosts_file.items():
+        for host_id, base in self._base.items():
             config = self._effective(base)
             services = {
                 key: ServiceSettingsView(
@@ -198,7 +203,7 @@ class SettingsStore:
                 HostSettingsView(
                     id=host_id,
                     name=base.name,
-                    connection=_connection(base),
+                    connection=self._connection(base),
                     rules=config.rules,
                     services=services,
                 )
@@ -238,9 +243,9 @@ class SettingsStore:
                     setattr(merged, section, given)
                     writes[section] = given
             for host_id, host in (update.hosts or {}).items():
-                base = self._hosts_file.get(host_id)
+                base = self._base.get(host_id)
                 if base is None:
-                    raise SettingsRefused(f"no host {host_id!r} in the hosts file")
+                    raise SettingsRefused(f"no host {host_id!r} in the hosts file or the dashboard")
                 _merged_host(base, host)  # raises on what the hosts file itself would refuse
                 hosts = merged.hosts if merged.hosts is not None else {}
                 if host.model_dump(exclude_none=True, exclude_defaults=True):
@@ -323,6 +328,25 @@ class SettingsStore:
                         self._plugins.enable(name, False)  # never keep running on the old value
                         log.warning("settings: plugin %s does not run now: %s", name, waiting)
 
+    async def host_changed(self, change: HostChange) -> None:
+        """A host added, changed or removed on the dashboard becomes, or stops being, a layer under
+        the overrides. A removed host's overrides are deleted with it, so a host added later under
+        the same id starts with none."""
+        async with self._lock:
+            if change.config is None:
+                self._base.pop(change.host_id, None)
+                if self._host_overrides().pop(change.host_id, None) is not None:
+                    await self._write({f"{HOST_PREFIX}{change.host_id}": HostSettings()})
+                return
+            self._base[change.host_id] = change.config
+            config = self._effective(change.config)
+            self._registry.override(change.host_id, config.rules, config.services)
+
+    def _connection(self, host: HostConfig) -> HostConnectionView:
+        if host.source == "dashboard" and self._dashboard is not None:
+            return self._dashboard.connection(host.id)
+        return _connection(host)
+
     def _load_row(self, key: str, value: dict[str, Any]) -> None:
         if find_secrets(value, settings_field_names()):
             raise ValueError("it holds something shaped like a secret")
@@ -334,10 +358,10 @@ class SettingsStore:
             self._overrides.thresholds = ThresholdOverrides.model_validate(value)
         elif key.startswith(HOST_PREFIX):
             host_id = key.removeprefix(HOST_PREFIX)
-            if host_id not in self._hosts_file:
-                raise ValueError("the host is not in the hosts file")
+            if host_id not in self._base:
+                raise ValueError("the host is not in the hosts file or added on the dashboard")
             host = HostSettings.model_validate(value)
-            _merged_host(self._hosts_file[host_id], host)
+            _merged_host(self._base[host_id], host)
             self._host_overrides()[host_id] = host
         elif key.startswith(PLUGIN_PREFIX):
             name = key.removeprefix(PLUGIN_PREFIX)
@@ -362,7 +386,7 @@ class SettingsStore:
         return self._overrides.hosts
 
     def _apply_hosts(self) -> None:
-        for base in self._hosts_file.values():
+        for base in self._base.values():
             config = self._effective(base)
             self._registry.override(base.id, config.rules, config.services)
 

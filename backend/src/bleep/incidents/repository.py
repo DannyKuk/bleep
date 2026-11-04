@@ -237,6 +237,18 @@ class IncidentRepo:
         finally:
             await conn.close()
 
+    async def open_on_host(self, host_id: str) -> list[Incident]:
+        """Every unfinished incident on the host, its services' included, oldest first."""
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                f"SELECT * FROM incidents WHERE host_id = ? AND {_OPEN} ORDER BY opened_at, id",
+                (host_id,),
+            ) as cursor:
+                return [_incident(row) for row in await cursor.fetchall()]
+        finally:
+            await conn.close()
+
     async def open_incident_id(self, subject: Subject) -> str | None:
         """The id of the subject's open incident, if it has one."""
         conn = await self.db.connect()

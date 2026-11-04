@@ -402,3 +402,84 @@ async def test_override_on_an_unreachable_host_keeps_its_connection_error():
     state = registry.hosts()[0]
     assert state.config.rules == ["db rule"]
     assert not state.reachable and state.error == "connection refused"
+
+
+# -- hosts added, changed and removed on the dashboard (#194) -----------------------------------
+
+
+def dashboard_host(**overrides):
+    fields = {"id": "c", "name": "C", "source": "dashboard", "key_file": None}
+    return ssh_host(**(fields | {"known_hosts_file": None} | overrides))
+
+
+async def test_an_added_host_is_unreachable_until_reconnect_then_lists_its_services():
+    reg, engines, connector = make()
+    await reg.start()
+    engines["c"] = FakeEngine("c", [box("blog-web-1", "blog")])
+    reg.add(dashboard_host())
+
+    (state,) = [h for h in reg.hosts() if h.config.id == "c"]
+    assert not state.reachable and reg.services("c") == []
+    assert await reg.reconnect("c")
+    assert [s.name for s in reg.services("c")] == ["blog"]
+    with pytest.raises(ValueError):
+        reg.add(dashboard_host())
+
+
+async def test_a_removed_host_is_closed_and_every_call_for_it_is_harmless():
+    reg, engines, _ = make()
+    await reg.start()
+    await reg.remove("b")
+
+    assert engines["b"].closed
+    assert [h.config.id for h in reg.hosts()] == ["a"]
+    assert reg.services("b") == [] and reg.snapshot("b") is None and reg.shell("b") is None
+    await reg.refresh("b")
+    assert not await reg.reconnect("b")
+    with pytest.raises(EngineUnavailable):
+        reg.engine("b")
+    reg.override("b", ["a rule"], {})
+    await reg.remove("b")  # twice is a no-op
+
+
+async def test_a_reconnect_in_flight_when_the_host_is_removed_leaves_nothing_open():
+    engine = FakeEngine("c", [box("blog")])
+    release = asyncio.Event()
+
+    async def slow(host):
+        await release.wait()
+        return None, engine
+
+    reg = Registry([], slow, clock=Clock())
+    reg.add(dashboard_host())
+    reconnecting = asyncio.create_task(reg.reconnect("c"))
+    await asyncio.sleep(0)
+    removing = asyncio.create_task(reg.remove("c"))
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(reconnecting, removing)
+
+    assert engine.closed  # remove waited for the connect, then closed what it opened
+    assert reg.hosts() == []
+
+
+async def test_a_new_connection_closes_the_old_one_and_drops_the_old_listing():
+    reg, engines, _ = make()
+    await reg.start()
+    reg.override("b", ["be gentle"], {"redis": ServiceOverrides(protected_containers=["redis"])})
+
+    await reg.replace(ssh_host(id="b", name="B", address="new.local"), reconnect=True)
+    (state,) = [h for h in reg.hosts() if h.config.id == "b"]
+    assert engines["b"].closed
+    assert not state.reachable and state.config.address == "new.local"
+    assert reg.snapshot("b") is None and reg.services("b") == []
+    assert state.config.rules == ["be gentle"]  # the dashboard's rules stay with the host
+    assert state.config.services["redis"].protected_containers == ["redis"]
+
+
+async def test_a_new_name_alone_keeps_the_connection():
+    reg, engines, _ = make()
+    await reg.start()
+    await reg.replace(ssh_host(id="b", name="Bee"), reconnect=False)
+    (state,) = [h for h in reg.hosts() if h.config.id == "b"]
+    assert state.config.name == "Bee" and state.reachable and not engines["b"].closed

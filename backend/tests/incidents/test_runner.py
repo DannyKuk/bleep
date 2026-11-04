@@ -855,3 +855,22 @@ async def test_a_restart_before_report_shows_verifying_only_after_a_passed_verif
     assert statuses[0] == shown
     if ok:
         assert "investigating" not in statuses and statuses[-1] == "resolved"
+
+
+async def test_end_cancels_a_run_in_flight_closes_the_incident_and_says_why(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier = NoticeNotifier()
+    env.deps.bus = BlockingBus(env.db, "diagnose")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
+        await runner.start(incident)
+        await asyncio.wait_for(env.deps.bus.reached.wait(), 5)
+        await runner.end(incident.id, "Closed: the host was removed.")
+        await runner.join()
+
+        assert (await env.repo.get(incident.id)).status == "closed"
+        assert await runner.recover_on_boot() == []  # a closed incident is never run again
+    events = await env.bus.history(incident.id)
+    assert events[-1].kind == "notice" and events[-1].payload["text"].endswith("removed.")
+    assert notifier.notices == [(incident.id, "Closed: the host was removed.")]

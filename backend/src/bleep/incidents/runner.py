@@ -142,6 +142,19 @@ class IncidentRunner:
             task.cancel()
         await asyncio.gather(*runs, return_exceptions=True)
 
+    async def end(self, incident_id: str, text: str) -> None:
+        """Close an incident from outside its run (its host was removed): cancel the run, which
+        is never started again since the incident is closed, then say why on its timeline and to
+        the channels. A pending approval can no longer be decided (`ApprovalStore.resolve`)."""
+        run = self._runs.get(incident_id)
+        if run is not None:
+            run.cancel()
+            await asyncio.gather(run, return_exceptions=True)
+        self._forget_pauses(incident_id)
+        await self.repo.set_status(incident_id, "closed")
+        await self.bus.publish(incident_id, "notice", {"text": text})
+        await self._tell(incident_id, text)
+
     def _schedule(self, incident_id: str, run: Callable[[], Awaitable[None]]) -> asyncio.Task[None]:
         before = self._runs.get(incident_id)
 

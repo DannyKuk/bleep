@@ -123,6 +123,8 @@ class HostConfig(Strict):
     id: str
     name: str
     kind: Literal["ssh", "socket"]
+    # A dashboard host's key and host key live in the secret file, never in a field here.
+    source: Literal["file", "dashboard"] = "file"
     address: str | None = None
     user: str | None = None
     port: int = 22
@@ -145,8 +147,16 @@ class HostConfig(Strict):
 
     @model_validator(mode="after")
     def _kind_fields(self) -> Self:
+        if self.source == "dashboard":
+            if self.kind != "ssh":
+                raise ValueError("a host added on the dashboard is an ssh host")
+            if self.key_file is not None or self.known_hosts_file is not None:
+                raise ValueError("a dashboard host's keys are in the secret file, not in files")
         if self.kind == "ssh":
-            missing = [f for f in ("address", "user", "key_file") if getattr(self, f) is None]
+            needed = (
+                ("address", "user", "key_file") if self.source == "file" else ("address", "user")
+            )
+            missing = [f for f in needed if getattr(self, f) is None]
             if missing:
                 raise ValueError(f"an ssh host needs {', '.join(missing)}")
             if self.endpoint is not None:
@@ -174,6 +184,10 @@ class HostsFile(Strict):
     def _unique_ids(self) -> Self:
         seen: set[str] = set()
         for host in self.hosts:
+            if host.source != "file":
+                raise ValueError(
+                    f"host {host.id!r}: source is Bleep's to set, not the hosts file's"
+                )
             if host.id in seen:
                 raise ValueError(f"duplicate host id {host.id!r}")
             seen.add(host.id)

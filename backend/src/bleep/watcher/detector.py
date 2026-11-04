@@ -87,6 +87,23 @@ class Detector:
     def t(self) -> Thresholds:
         return self._thresholds() if callable(self._thresholds) else self._thresholds
 
+    def forget_host(self, host_id: str) -> None:
+        """Drop everything pending for a host that was removed: it takes no more listings, so its
+        deaths would wait for ever."""
+
+        def on_host(subject_key: str) -> bool:
+            return subject_key.partition(":")[2].startswith(f"{host_id}:")
+
+        for key in [k for k in self._pending if k[0] == host_id]:
+            del self._pending[key]
+        for key in [k for k in self._deaths if k[0] == host_id]:
+            del self._deaths[key]
+        for key in [k for k in self._streaks if on_host(k[0])]:
+            del self._streaks[key]
+        for timers in (self._down_since, self._window_start):
+            for key in [k for k in timers if on_host(k)]:
+                del timers[key]
+
     def feed(self, signal: Signal) -> list[Outcome]:
         """Take one signal. Contract with the watcher (details in docs/design/watcher.md):
 

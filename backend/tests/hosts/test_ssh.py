@@ -10,6 +10,7 @@ from pathlib import Path
 
 import asyncssh
 import pytest
+from pydantic import SecretStr
 
 from bleep.hosts import ssh as ssh_module
 from bleep.hosts.config import HostConfig
@@ -285,3 +286,148 @@ async def test_a_hung_connect_times_out_so_open_and_close_cannot_block(monkeypat
     with pytest.raises(SshUnavailable, match="TimeoutError"):
         await asyncio.wait_for(sess.open(), 2)
     await asyncio.wait_for(sess.close(), 2)  # the lock was released
+
+
+# -- a host added on the dashboard: keys from the secret file (#194) ----------------------------
+
+SERVER_KEY = asyncssh.generate_private_key("ssh-ed25519")
+CLIENT_KEY = asyncssh.generate_private_key("ssh-ed25519")
+CLIENT_PEM = CLIENT_KEY.export_private_key().decode()
+
+
+def dashboard_host(**overrides):
+    return ssh_host(source="dashboard", key_file=None, known_hosts_file=None, **overrides)
+
+
+def keys(private_key: str | None = CLIENT_PEM, known_hosts: str | None = None):
+    line = known_hosts or ssh_module.known_hosts_line("m1.local", 2222, SERVER_KEY)
+
+    def read(host_id: str) -> ssh_module.DashboardKeys:
+        assert host_id == "m1"
+        return ssh_module.DashboardKeys(
+            private_key=SecretStr(private_key) if private_key else None,
+            known_hosts=SecretStr(line) if known_hosts != "" else None,
+        )
+
+    return read
+
+
+async def test_a_dashboard_host_connects_with_its_key_and_only_its_confirmed_host_key(
+    connect, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)  # a ~/.ssh/known_hosts must not matter
+    (tmp_path / ".ssh").mkdir()
+    (tmp_path / ".ssh" / "known_hosts").write_text("m1.local ssh-ed25519 AAAAother\n")
+    sess = SshSession(dashboard_host(), connect=connect, keys=keys())
+    await sess.open()
+
+    ((_, kwargs),) = connect.calls
+    (key,) = kwargs["client_keys"]
+    assert key.public_data == CLIENT_KEY.public_data
+    trusted = kwargs["known_hosts"].match("m1.local", "", 2222)[0]
+    assert [k.public_data for k in trusted] == [SERVER_KEY.public_data]
+    assert kwargs["config"] == [] and kwargs["agent_path"] is None
+    await sess.close()
+
+
+async def test_a_dashboard_host_key_rotated_since_it_was_confirmed_is_refused(connect):
+    connect.error = asyncssh.HostKeyNotVerifiable("Host key is not trusted for host m1.local")
+    sess = SshSession(dashboard_host(), connect=connect, keys=keys())
+    with pytest.raises(SshUnavailable, match="not trusted"):
+        await sess.open()
+
+
+@pytest.mark.parametrize(
+    ("private_key", "known_hosts", "why"),
+    [
+        (None, None, "no SSH key is set"),
+        (CLIENT_PEM, "", "no host key is confirmed"),
+    ],
+)
+async def test_a_dashboard_host_without_its_key_or_host_key_never_connects(
+    connect, private_key, known_hosts, why
+):
+    sess = SshSession(dashboard_host(), connect=connect, keys=keys(private_key, known_hosts))
+    with pytest.raises(SshUnavailable, match=why):
+        await sess.open()
+    assert connect.calls == []
+
+
+async def test_a_dashboard_host_with_no_key_reader_never_falls_back_to_a_file(connect):
+    sess = SshSession(dashboard_host(), connect=connect)
+    with pytest.raises(SshUnavailable, match="no SSH key"):
+        await sess.open()
+    assert connect.calls == []
+
+
+async def test_an_unreadable_dashboard_key_is_refused_without_quoting_it(connect):
+    garbage = "-----BEGIN OPENSSH PRIVATE KEY-----\nsk-or-v1-NOT-A-KEY-0123456789\n-----END"
+    sess = SshSession(dashboard_host(), connect=connect, keys=keys(garbage))
+    with pytest.raises(SshUnavailable) as refused:
+        await sess.open()
+    assert "cannot be read" in str(refused.value)
+    assert "NOT-A-KEY" not in str(refused.value)
+    assert refused.value.__cause__ is None and refused.value.__suppress_context__
+    assert connect.calls == []
+
+
+async def test_the_dashboard_key_is_read_again_at_every_connect(connect):
+    current = {"pem": CLIENT_PEM}
+    line = ssh_module.known_hosts_line("m1.local", 2222, SERVER_KEY)
+
+    def read(_host_id):
+        return ssh_module.DashboardKeys(SecretStr(current["pem"]), SecretStr(line))
+
+    sess = SshSession(dashboard_host(), connect=connect, keys=read)
+    await sess.open()
+    other = asyncssh.generate_private_key("ssh-ed25519")
+    current["pem"] = other.export_private_key().decode()
+    connect.connections[-1].lose()
+    await sess.ensure_open()
+    assert connect.calls[1][1]["client_keys"][0].public_data == other.public_data
+    await sess.close()
+
+
+def test_the_known_hosts_line_names_the_port_unless_it_is_22():
+    plain = ssh_module.known_hosts_line("Box.Local", 22, SERVER_KEY)
+    assert plain.startswith("box.local ssh-ed25519 ")
+    odd = ssh_module.known_hosts_line("box.local", 2222, SERVER_KEY)
+    assert odd.startswith("[box.local]:2222 ssh-ed25519 ")
+    assert asyncssh.import_known_hosts(odd).match("box.local", "", 2222)[0]
+    assert not asyncssh.import_known_hosts(odd).match("box.local", "", 22)[0]
+
+
+async def test_fetching_a_host_key_asks_the_lowercased_address_without_the_users_config():
+    asked = []
+
+    async def scan(host, port, **kwargs):
+        asked.append((host, port, kwargs))
+        return SERVER_KEY
+
+    key = await ssh_module.fetch_host_key("Box.Local", 2222, scan)
+    assert key is SERVER_KEY
+    assert asked == [("box.local", 2222, {"config": []})]
+
+
+@pytest.mark.parametrize(
+    "outcome", [OSError("Connect call failed"), asyncssh.DisconnectError(2, "bye"), None]
+)
+async def test_fetching_a_host_key_from_no_server_is_ssh_unavailable(outcome):
+    async def scan(host, port, **kwargs):
+        if outcome is not None:
+            raise outcome
+        return None
+
+    with pytest.raises(SshUnavailable):
+        await ssh_module.fetch_host_key("box.local", 22, scan)
+
+
+async def test_fetching_a_host_key_from_a_server_that_hangs_times_out(monkeypatch):
+    monkeypatch.setattr(ssh_module, "CONNECT_TIMEOUT_S", 0.01)
+    monkeypatch.setattr(ssh_module, "CONNECT_GRACE_S", 0)
+
+    async def scan(host, port, **kwargs):
+        await asyncio.Event().wait()
+
+    with pytest.raises(SshUnavailable):
+        await ssh_module.fetch_host_key("box.local", 22, scan)
