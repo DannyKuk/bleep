@@ -327,6 +327,9 @@ async def test_coolify_steps_take_exactly_their_params(tmp_path):
         "no value": act(set_env("api", key="PORT")),
         "extra": act(set_env("api", key="PORT", value=secret, scope="all")),
         "bad key": act(set_env("api", key="PORT NUMBER", value=secret)),
+        "key with a line break": act(set_env("api", key="FOO\n2. docker.restart", value="1")),
+        "key with =": act(set_env("api", key="A=B", value=secret)),
+        "key over 128": act(set_env("api", key="K" * 129, value=secret)),
         "redeploy with params": act(
             PlanStep(action="coolify.redeploy", host_id="a", target="api", params={"force": "1"})
         ),
@@ -337,6 +340,24 @@ async def test_coolify_steps_take_exactly_their_params(tmp_path):
     }
 
     assert found["ok"] == []
-    for name in ("no value", "extra", "bad key", "redeploy with params"):
+    assert (
+        check_plan(
+            act(set_env("api", key="K" * 128, value="1")),
+            env.registry,
+            WITH_COOLIFY,
+            "a",
+            incident_containers=SHOP_WEB,
+        )
+        == []
+    )
+    refused = (
+        "no value",
+        "extra",
+        "bad key",
+        "key with a line break",
+        "key with =",
+        "key over 128",
+    )
+    for name in (*refused, "redeploy with params"):
         assert [(v.rule, v.step) for v in found[name]] == [("bad_params", 1)], name
     assert all(secret not in v.text for vs in found.values() for v in vs)

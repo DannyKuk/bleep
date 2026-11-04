@@ -371,6 +371,7 @@ async def test_a_token_in_a_repo_url_or_domain_is_never_shown(env):
             "https://x.example.com, https://y.example.com",
         ),
         ("example/blog", "example/blog"),
+        ("ssh://u:p\t@host/repo", "ssh://host/repo"),
     ],
 )
 def test_everything_up_to_the_last_at_sign_is_cut(raw, shown):

@@ -26,7 +26,7 @@ ACTION_PARAMS: dict[str, frozenset[str]] = {
     "coolify.redeploy": frozenset(),
     "coolify.set_env": frozenset({"key", "value"}),
 }
-ENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,254}")
+ENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")  # one line, no "=", at most 128
 MAX_ENV_VALUE = 10_000
 
 Rule = Literal[
