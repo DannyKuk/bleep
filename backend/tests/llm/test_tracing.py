@@ -4,12 +4,14 @@ import pytest
 from langchain_core.tracers.langchain import LangChainTracer
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
+from pydantic import SecretStr
 
 from bleep.config import SettingsError
 from bleep.llm.tracing import (
     LangfuseTracing,
     LangSmithTracing,
     NoTracing,
+    ReloadingTracer,
     TracingSettings,
     build_tracer,
 )
@@ -145,3 +147,61 @@ def test_no_key_appears_in_what_the_run_carries(langfuse):
     carried = json.dumps({k: v for k, v in config.items() if k != "callbacks"})
     assert PUBLIC not in carried and SECRET not in carried
     assert SECRET not in repr(settings(LANGFUSE_SECRET_KEY=SECRET))
+
+
+async def test_a_reloading_tracer_takes_a_key_changed_on_the_dashboard(no_tracing_env, monkeypatch):
+    monkeypatch.setenv("TRACING", "langsmith")
+    keys = {"LANGSMITH_API_KEY": SecretStr("lsv2_first")}
+    tracer = ReloadingTracer(keys.get)
+    first = tracer._tracer
+    closed = []
+
+    async def close() -> None:
+        closed.append(True)
+
+    first.close = close  # type: ignore[method-assign]
+    keys["LANGSMITH_API_KEY"] = SecretStr("lsv2_second")
+    await tracer.reload()
+
+    assert closed == [True] and tracer._tracer is not first
+    (callback,) = tracer.run_config(incident())["callbacks"]
+    assert callback.client.api_key == "lsv2_second"
+
+
+async def test_a_reloading_tracer_without_its_key_now_stops_tracing(no_tracing_env, monkeypatch):
+    monkeypatch.setenv("TRACING", "langsmith")
+    keys = {"LANGSMITH_API_KEY": SecretStr("lsv2_first")}
+    tracer = ReloadingTracer(keys.get)
+    keys.clear()
+    await tracer.reload()
+    assert tracer.run_config(incident()) == {}
+
+
+def test_a_reloading_tracer_still_refuses_to_start_without_its_keys(no_tracing_env, monkeypatch):
+    monkeypatch.setenv("TRACING", "langfuse")
+    with pytest.raises(SettingsError, match="LANGFUSE_PUBLIC_KEY"):
+        ReloadingTracer(lambda name: None)
+
+
+async def test_a_tracer_that_fails_to_build_on_reload_stops_tracing_with_the_old_key(
+    no_tracing_env, monkeypatch
+):
+    from bleep.llm import tracing
+
+    monkeypatch.setenv("TRACING", "langsmith")
+    keys = {"LANGSMITH_API_KEY": SecretStr("lsv2_first")}
+    tracer = ReloadingTracer(keys.get)
+    closed = []
+
+    async def close() -> None:
+        closed.append(True)
+
+    tracer._tracer.close = close  # type: ignore[method-assign]
+
+    def broken(settings):
+        raise RuntimeError("client constructor failed")
+
+    monkeypatch.setattr(tracing, "build_tracer", broken)
+    keys["LANGSMITH_API_KEY"] = SecretStr("lsv2_second")
+    await tracer.reload()
+    assert tracer.run_config(incident()) == {} and closed == [True]

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import unicodedata
 from datetime import UTC, datetime
@@ -1022,3 +1023,74 @@ async def test_letting_a_refused_plan_go_answers_that_it_was_let_go(env):
 
     [pop_up] = env.api.sent("answerCallbackQuery")
     assert "Let go" in pop_up["text"] and "Rejected" not in pop_up["text"]
+
+
+# --- set from the dashboard ---
+
+
+async def test_a_token_changed_on_the_dashboard_restarts_polling_with_it(tmp_path, monkeypatch):
+    from bleep.notify import notifier as notifier_module
+    from bleep.notify.telegram import TelegramBot
+    from bleep.store.secrets import SecretName, SecretStore
+
+    db = Database(tmp_path / "bleep.sqlite")
+    await db.migrate()
+    api, paths, polled = FakeTelegram(), [], []
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return api(request)
+
+    async def poll_forever(bot: TelegramBot) -> None:  # one poll, then waits to be cancelled
+        await bot.poll_once()
+        polled.append(bot)
+        await asyncio.Event().wait()
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        notifier_module.httpx,
+        "AsyncClient",
+        lambda: real_client(transport=httpx.MockTransport(transport)),
+    )
+    monkeypatch.setattr(TelegramBot, "poll_forever", poll_forever)
+    names = [SecretName("TELEGRAM_BOT_TOKEN"), SecretName("TELEGRAM_CHAT_ID", kind="id")]
+    secrets = SecretStore(tmp_path / "secrets.json", names, env={})
+    settings = Settings(
+        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s"),
+        TELEGRAM_BOT_TOKEN=None, TELEGRAM_CHAT_ID=None,
+    )  # fmt: skip
+    built = setup(settings, db, EventBus(db), ApprovalStore(db, "s"), secrets=secrets)
+    notifier = built.notifier
+    built.start(FakeRunner())
+    assert built.bot is None and notifier.telegram is None
+
+    await secrets.set("TELEGRAM_BOT_TOKEN", TOKEN)
+    await secrets.set("TELEGRAM_CHAT_ID", CHAT)
+    await built.reload()
+    first_task = built._task
+    assert built.bot is not None and notifier.telegram is built.bot.client
+    assert notifier.chat_id == CHAT and built.status().token.source == "dashboard"
+
+    await secrets.set("TELEGRAM_BOT_TOKEN", "7002:AAH-second_token-value")
+    await built.reload()
+    assert first_task is not None and first_task.done()
+    for _ in range(100):
+        if len(polled) == 2:
+            break
+        await asyncio.sleep(0.01)
+    assert [p.split("/")[1][:7] for p in paths] == ["bot7001", "bot7002"]
+    await notifier.notice("inc_1", "hello")
+    assert paths[-1].startswith("/bot7002:") and paths[-1].endswith("/sendMessage")
+    await built.stop()
+    await built.close()
+
+
+def test_the_same_bot_rebuilt_goes_on_from_the_last_confirmed_update():
+    http = httpx.AsyncClient()
+    old = TelegramBot(TOKEN, CHAT, None, FakeRunner(), http, messages=None)  # type: ignore[arg-type]
+    old._offset = 42
+    same = TelegramBot(TOKEN, "999", None, FakeRunner(), http, messages=None)  # type: ignore[arg-type]
+    other = TelegramBot("7002:AAH-other", CHAT, None, FakeRunner(), http, messages=None)  # type: ignore[arg-type]
+    same.continue_from(old)
+    other.continue_from(old)
+    assert same._offset == 42 and other._offset is None

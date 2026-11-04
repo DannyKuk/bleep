@@ -1,15 +1,15 @@
 """The MCP server by URL plugin: one MCP server's tools, through LangChain's MCP adapters.
 
-The server's endpoint and token come from the environment (`MCP_URL`, `MCP_TOKEN`), never from
-the stored settings, which only say which of its tools Bleep may run: `read_tools` without
-approval, `act_tools` only as the `mcp.call` step of a plan a human approved. Any other tool is
-not allowed. The model gets two of Bleep's own tools rather than the server's: `mcp_tools` lists
-what the server offers (its names, descriptions and input schemas, wrapped as untrusted data) and
-`mcp_call` runs a read tool. Each call opens one session, lists the tools with the adapters and
-calls the tool on that same session directly, so no LangChain runnable of the adapters runs under
-Bleep's trace. `MCP_URL` follows the same rule as `COOLIFY_URL` (`plugins/urls.check_url`), and
-every answer is read uncompressed and capped on its raw bytes (`_CappedTransport`). See
-docs/design/plugins.md.
+The server's endpoint and token (`MCP_URL`, `MCP_TOKEN`) come from the environment or the
+dashboard's secret file, never from the stored settings, which only say which of its tools Bleep may
+run: `read_tools` without approval, `act_tools` only as the `mcp.call` step of a plan a human
+approved. Any other tool is not allowed. The model gets two of Bleep's own tools rather than the
+server's: `mcp_tools` lists what the server offers (its names, descriptions and input schemas,
+wrapped as untrusted data) and `mcp_call` runs a read tool. Each call opens one session, lists the
+tools with the adapters and calls the tool on that same session directly, so no LangChain runnable
+of the adapters runs under Bleep's trace. `MCP_URL` follows the same rule as `COOLIFY_URL`
+(`plugins/urls.check_url`), and every answer is read uncompressed and capped on its raw bytes
+(`_CappedTransport`). See docs/design/plugins.md.
 """
 
 import asyncio
@@ -660,6 +660,7 @@ class McpUrlPlugin(Plugin):
     settings_model = McpSettings
     secrets = (URL_ENV,)
     optional_secrets = (TOKEN_ENV,)
+    connection = (URL_ENV, TOKEN_ENV)
 
     def __init__(self, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._transport = transport
@@ -680,7 +681,8 @@ class McpUrlPlugin(Plugin):
         except McpUrlRefused as refusal:
             log.warning("mcp: %s", refusal)
             raise
-        return _Server(url, settings, ctx.secrets.get(TOKEN_ENV), self._transport)
+        transport = urls.guarded(self._transport, ctx.public_only)
+        return _Server(url, settings, ctx.secrets.get(TOKEN_ENV), transport)
 
     def tools(self, ctx: PluginContext) -> list[ToolSpec]:
         return _read_tools(self._server(ctx))

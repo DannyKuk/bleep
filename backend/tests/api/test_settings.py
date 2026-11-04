@@ -209,6 +209,7 @@ def test_settings_say_whether_the_model_key_is_set_by_its_variable(app):
         "env": "OPENROUTER_API_KEY",
         "file": None,
         "set": True,
+        "source": "env",
     }
 
 

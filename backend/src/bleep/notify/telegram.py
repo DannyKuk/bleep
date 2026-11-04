@@ -10,6 +10,7 @@ carries a URL or an httpx message.
 """
 
 import asyncio
+import hmac
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -59,6 +60,9 @@ class TelegramClient:
     def __init__(self, token: str, http: httpx.AsyncClient) -> None:
         self._base = f"{API}/bot{token}"
         self.http = http
+
+    def same_bot(self, other: TelegramClient) -> bool:
+        return hmac.compare_digest(self._base, other._base)
 
     async def call(self, method: str, *, wait_s: float = REQUEST_TIMEOUT_S, **params: Any) -> Any:
         """One Bot API call; `params` are the method's own (getUpdates has a `timeout` too)."""
@@ -170,6 +174,12 @@ class TelegramBot:
         self._sleep = sleep
         self._offset: int | None = None
         self.last_poll: datetime | None = None  # the last getUpdates that Telegram answered
+
+    def continue_from(self, other: TelegramBot) -> None:
+        """Go on from where `other` stopped when it is the same bot (the same token): Telegram
+        would otherwise send again what `other` handled but had not yet confirmed."""
+        if other.client.same_bot(self.client):
+            self._offset = other._offset
 
     async def poll_forever(self) -> None:
         """Long-poll until cancelled; an outage or any other error backs off from 1 s to 60 s and

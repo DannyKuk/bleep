@@ -5,7 +5,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import APIRouter, Depends, FastAPI
 
-from bleep.api import auth, dev, hosts, incidents, memory, plugins, stream, telegram
+from bleep.api import auth, dev, hosts, incidents, memory, plugins, secrets, stream, telegram
 from bleep.api import settings as settings_api
 from bleep.api.body_limit import BodyLimitMiddleware
 from bleep.api.deps import require_session
@@ -133,6 +133,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
     protected.include_router(stream.router)
     protected.include_router(settings_api.router)
     protected.include_router(plugins.router)
+    protected.include_router(secrets.router)
     protected.include_router(telegram.router)
     if settings.dev_panel:  # left out, every /api/dev path is a 404, signed in or not
         protected.include_router(dev.router)

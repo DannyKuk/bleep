@@ -3,10 +3,13 @@ docs/design/observability.md.
 
 The tracer's callbacks go into the config of each graph run, not onto the chat models, so one
 trace holds the whole run: every node, tool call and model call under it. The keys are read from
-the environment and stay in the tracing client; nothing here puts them in the run's metadata.
+the environment or the dashboard's secret file and stay in the tracing client; nothing here puts
+them in the run's metadata.
 """
 
 import asyncio
+import logging
+from collections.abc import Callable
 from typing import Literal
 
 from langchain_core.runnables import RunnableConfig
@@ -17,6 +20,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from bleep.config import SettingsError
 from bleep.schemas.incidents import Incident
+
+log = logging.getLogger(__name__)
 
 
 def _env(name: str) -> AliasChoices:
@@ -156,6 +161,52 @@ class LangSmithTracing:
         await asyncio.to_thread(self._client.flush)
 
 
+# The keys a tracer needs, by `TRACING`: they can be set from the dashboard, never cleared there
+# while the tracer that needs them is on.
+TRACING_KEYS: dict[str, tuple[str, ...]] = {
+    "langfuse": ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"),
+    "langsmith": ("LANGSMITH_API_KEY",),
+}
+
+
+class ReloadingTracer:
+    """The tracer `TRACING` names, built with the keys `key` reads (the env, else the
+    dashboard) and built again by `reload` after one of them changed on the dashboard."""
+
+    def __init__(self, key: Callable[[str], SecretStr | None]) -> None:
+        self._key = key
+        self._tracer = build_tracer(self._settings())
+
+    def _settings(self) -> TracingSettings:
+        keys = {name.lower(): self._key(name) for names in TRACING_KEYS.values() for name in names}
+        return TracingSettings(**keys)
+
+    def run_config(self, incident: Incident) -> RunnableConfig:
+        return self._tracer.run_config(incident)
+
+    def trace_url(self, incident: Incident) -> str | None:
+        return self._tracer.trace_url(incident)
+
+    async def reload(self) -> None:
+        """Build the tracer with the keys in force now, then close the old one, which sends what
+        it still holds. A run already going keeps the callbacks it was given."""
+        old = self._tracer
+        try:
+            self._tracer = build_tracer(self._settings())
+        except SettingsError as missing:
+            log.warning("tracing: %s; tracing is off until they are set", missing)
+            self._tracer = NoTracing()
+        except Exception as error:  # never trace on with a key that was replaced or cleared
+            log.warning(
+                "tracing: the tracer could not be built (%s); tracing is off", type(error).__name__
+            )
+            self._tracer = NoTracing()
+        await old.close()
+
+    async def close(self) -> None:
+        await self._tracer.close()
+
+
 def build_tracer(settings: TracingSettings) -> NoTracing | LangfuseTracing | LangSmithTracing:
     """The tracer `TRACING` names; refuses to start with its keys missing."""
     if settings.tracing == "langfuse":
@@ -168,10 +219,14 @@ def build_tracer(settings: TracingSettings) -> NoTracing | LangfuseTracing | Lan
             if value is None
         ]
         if missing:
-            raise SettingsError(f"TRACING=langfuse needs {' and '.join(missing)} in .env")
+            raise SettingsError(
+                f"TRACING=langfuse needs {' and '.join(missing)} set, in .env or on the dashboard"
+            )
         return LangfuseTracing(settings)
     if settings.tracing == "langsmith":
         if settings.langsmith_api_key is None:
-            raise SettingsError("TRACING=langsmith needs LANGSMITH_API_KEY in .env")
+            raise SettingsError(
+                "TRACING=langsmith needs LANGSMITH_API_KEY set, in .env or on the dashboard"
+            )
         return LangSmithTracing(settings)
     return NoTracing()

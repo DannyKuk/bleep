@@ -21,14 +21,13 @@ from bleep.api.deps import get_settings as app_settings
 from bleep.config import Settings
 from bleep.hosts.coolify_names import coolify_slug
 from bleep.incidents.settings_store import SettingsRefused, SettingsStale, check_body
-from bleep.schemas.settings import SecretStatus, SettingsUpdate, SettingsView
+from bleep.schemas.settings import MODEL_KEY_ENV, SecretStatus, SettingsUpdate, SettingsView
 from bleep.wiring import AppParts
 
 router = APIRouter(tags=["settings"])
 
 Parts = Annotated[AppParts, Depends(get_parts)]
 
-MODEL_KEY_ENV = "OPENROUTER_API_KEY"  # `ModelSettings.openrouter_api_key`
 # A settings, plugin or prompt body is a few thousand characters (a prompt override at most
 # 20,000); the cap keeps the secret check, which reads the whole body, a small cost.
 MAX_BODY_CHARS = 100_000
@@ -39,7 +38,9 @@ def settings_view(parts: AppParts) -> SettingsView:
     return SettingsView(
         models=store.model_choice(),
         model_key=SecretStatus(
-            env=MODEL_KEY_ENV, set=store.models().openrouter_api_key is not None
+            env=MODEL_KEY_ENV,
+            set=store.models().openrouter_api_key is not None,
+            source=parts.secrets.state(MODEL_KEY_ENV).source,
         ),
         budgets=store.budgets(),
         thresholds=store.thresholds(),

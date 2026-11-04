@@ -44,6 +44,16 @@ def no_real_embedding_model(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_name_lookups(monkeypatch):
+    """Tests never resolve a name: a dashboard address checked without a fake resolver fails."""
+
+    async def refuse(host: str, port: int) -> list[str]:
+        raise OSError("tests do not resolve names; pass a resolver")
+
+    monkeypatch.setattr("bleep.plugins.urls.resolve", refuse)
+
+
+@pytest.fixture(autouse=True)
 def no_prompt_overrides():
     """An override a test puts in force (the dev panel's) must not leak into the next test."""
     prompts.use_overrides({})

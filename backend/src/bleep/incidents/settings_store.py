@@ -31,6 +31,7 @@ from bleep.incidents.repository import utcnow
 from bleep.plugins.registry import PluginError, PluginRegistry, UnknownPlugin
 from bleep.schemas.plugins import PluginUpdate, PluginView
 from bleep.schemas.settings import (
+    MODEL_KEY_ENV,
     BudgetOverrides,
     Budgets,
     HostConnectionView,
@@ -47,6 +48,7 @@ from bleep.schemas.settings import (
     Thresholds,
 )
 from bleep.store.db import Database
+from bleep.store.secrets import SecretStore
 
 log = logging.getLogger(__name__)
 
@@ -91,7 +93,8 @@ class SettingsStore:
     """Non-secret overrides in the `settings` table, applied to the registry and the plugins.
 
     `models` is the model choice from the env (`ModelSettings()` by default); the store only
-    changes the fields a person may change and keeps the env's key.
+    changes the fields a person may change. The model key is the env's, or with `secrets` the one
+    in force there (the env's, else the dashboard's), read at every call.
     """
 
     def __init__(
@@ -101,12 +104,14 @@ class SettingsStore:
         plugins: PluginRegistry,
         *,
         models: ModelSettings | None = None,
+        secrets: SecretStore | None = None,
         clock: Callable[[], datetime] = utcnow,
     ) -> None:
         self._db = db
         self._registry = registry
         self._plugins = plugins
         self._env_models = models if models is not None else ModelSettings()
+        self._secrets = secrets
         self._clock = clock
         # The hosts file as read at boot: the layer under every host override.
         self._hosts_file: dict[str, HostConfig] = {h.config.id: h.config for h in registry.hosts()}
@@ -121,7 +126,10 @@ class SettingsStore:
         return _layer(Thresholds(), self._overrides.thresholds)
 
     def models(self) -> ModelSettings:
-        return _layer(self._env_models, self._overrides.models)
+        models = _layer(self._env_models, self._overrides.models)
+        if self._secrets is None:
+            return models
+        return models.model_copy(update={"openrouter_api_key": self._secrets.get(MODEL_KEY_ENV)})
 
     def enabled_actions(self) -> set[str]:
         """The core Docker actions and those of every plugin switched on."""
@@ -271,6 +279,49 @@ class SettingsStore:
                 self._plugins.restore(name, before)
                 raise
             self._plugin_rows[name] = row
+
+    async def secrets_changing(self, changed: frozenset[str]) -> None:
+        """Before the secret file is written: store off, then switch off, every plugin whose
+        address is about to change, so that no failure after this (the file write, a crash) can
+        leave a plugin stored on that would start at the new address by itself. A failed write
+        here raises, and the secret file is not written."""
+        async with self._lock:
+            for name in self._plugins.names():
+                plugin = self._plugins.get(name)
+                if plugin.connection is None or plugin.connection[0] not in changed:
+                    continue
+                row = self._plugin_rows.get(name, _PluginRow())
+                if row.enabled:
+                    off = row.model_copy(update={"enabled": False})
+                    await self._write({f"{PLUGIN_PREFIX}{name}": off})
+                    self._plugin_rows[name] = off
+                self._plugins.enable(name, False)
+
+    async def secrets_changed(self, changed: frozenset[str]) -> None:
+        """Put the secrets and addresses changed on the dashboard in force for the plugins that use
+        them. A plugin whose address changed is switched off and stored off (again, in case it was
+        switched on since `secrets_changing`): its token was cleared with it, and it runs again
+        only when a person switches it on. Any other plugin switched
+        on is built again with the values in force now, or waits for a required one now unset."""
+        async with self._lock:
+            for name in self._plugins.names():
+                plugin = self._plugins.get(name)
+                if not changed & {*plugin.secrets, *plugin.optional_secrets}:
+                    continue
+                row = self._plugin_rows.get(name, _PluginRow())
+                if plugin.connection is not None and plugin.connection[0] in changed:
+                    self._plugins.enable(name, False)
+                    if row.enabled:
+                        off = row.model_copy(update={"enabled": False})
+                        await self._write({f"{PLUGIN_PREFIX}{name}": off})
+                        self._plugin_rows[name] = off
+                    log.info("settings: plugin %s switched off: its address changed", name)
+                elif row.enabled or self._plugins.is_enabled(name):
+                    try:
+                        self._plugins.enable(name, True)
+                    except PluginError as waiting:
+                        self._plugins.enable(name, False)  # never keep running on the old value
+                        log.warning("settings: plugin %s does not run now: %s", name, waiting)
 
     def _load_row(self, key: str, value: dict[str, Any]) -> None:
         if find_secrets(value, settings_field_names()):

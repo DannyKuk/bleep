@@ -1,8 +1,9 @@
 """The Coolify plugin: read an instance's applications, their deployments and env keys, and for
 an approved plan redeploy an application or set one of its env vars.
 
-Where Coolify answers and the token come from the environment (`COOLIFY_URL`, `COOLIFY_TOKEN`),
-never from a setting a person can change: the token goes to that address with every request.
+Where Coolify answers and the token (`COOLIFY_URL`, `COOLIFY_TOKEN`) come from the environment
+or the dashboard's secret file, never from the stored settings, and a new address set from the
+dashboard clears the token: it goes to that address with every request.
 `COOLIFY_URL` must be https unless its host is a loopback, private or CGNAT address or a
 single-label Docker service name (`check_url`).
 
@@ -426,6 +427,7 @@ class CoolifyPlugin(Plugin):
     title = "Coolify"
     settings_model = CoolifySettings
     secrets = (URL_ENV, TOKEN_ENV)
+    connection = (URL_ENV, TOKEN_ENV)
 
     def __init__(
         self,
@@ -445,7 +447,8 @@ class CoolifyPlugin(Plugin):
         except CoolifyUrlRefused as refusal:
             log.warning("coolify: %s", refusal)
             raise
-        return CoolifyClient(url, ctx.secrets[TOKEN_ENV], transport=self._transport)
+        transport = urls.guarded(self._transport, ctx.public_only)
+        return CoolifyClient(url, ctx.secrets[TOKEN_ENV], transport=transport)
 
     def tools(self, ctx: PluginContext) -> list[ToolSpec]:
         return read_specs(self.client(ctx))

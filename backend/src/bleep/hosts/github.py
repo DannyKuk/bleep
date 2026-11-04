@@ -12,6 +12,7 @@ import base64
 import binascii
 import logging
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import quote
@@ -194,20 +195,25 @@ def _decode(raw: _RawFile) -> str:
 class GithubClient:
     def __init__(
         self,
-        token: SecretStr | None = None,
+        token: SecretStr | Callable[[], SecretStr | None] | None = None,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         base_url: str = API,
         timeout_s: float = TIMEOUT_S,
     ) -> None:
-        self._token = token if token is not None and token.get_secret_value() else None
+        # A callable is read at every request, so a token changed on the dashboard is used next.
+        self._token_source = token if callable(token) else lambda: token
         self._transport = transport
         self._base_url = base_url
         self._timeout_s = timeout_s
 
     @property
     def authenticated(self) -> bool:
-        return self._token is not None
+        return self._token() is not None
+
+    def _token(self) -> SecretStr | None:
+        token = self._token_source()
+        return token if token is not None and token.get_secret_value() else None
 
     async def commits(
         self, repo: str, since: datetime, path: str | None = None, limit: int = 20
@@ -322,8 +328,8 @@ class GithubClient:
             "X-GitHub-Api-Version": API_VERSION,
             "User-Agent": "bleep",
         }
-        if self._token is not None:
-            headers["Authorization"] = f"Bearer {self._token.get_secret_value()}"
+        if (token := self._token()) is not None:
+            headers["Authorization"] = f"Bearer {token.get_secret_value()}"
         async with httpx.AsyncClient(
             base_url=self._base_url,
             transport=self._transport,

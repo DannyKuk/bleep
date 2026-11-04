@@ -10,6 +10,7 @@ Approval node tells the dashboard when a plan could not be sent.
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import httpx
@@ -33,10 +34,12 @@ from bleep.schemas.incidents import Incident
 from bleep.schemas.settings import SecretStatus
 from bleep.schemas.telegram import TelegramStatus
 from bleep.store.db import Database
+from bleep.store.secrets import SecretStore, Source
 
 log = logging.getLogger(__name__)
 
 TOKEN_ENV = "TELEGRAM_BOT_TOKEN"  # `Settings.telegram_bot_token`
+CHAT_ID_ENV = "TELEGRAM_CHAT_ID"  # `Settings.telegram_chat_id`
 
 
 class Notifier:
@@ -188,6 +191,9 @@ class NotifySetup:
     _task: asyncio.Task[None] | None = field(default=None, repr=False)
     chat_id: str | None = None
     token_set: bool = False
+    token_source: Source | None = None
+    _rebuild: Callable[[], NotifySetup] | None = field(default=None, repr=False)
+    _runner: Resumer | None = field(default=None, repr=False)
 
     def status(self) -> TelegramStatus:
         """What the settings page shows: set up or not, the chat masked, when it last polled."""
@@ -195,11 +201,35 @@ class NotifySetup:
             configured=self.bot is not None,
             chat_id=mask_chat_id(self.chat_id) if self.chat_id is not None else None,
             last_poll=self.bot.last_poll if self.bot is not None else None,
-            token=SecretStatus(env=TOKEN_ENV, set=self.token_set),
+            token=SecretStatus(env=TOKEN_ENV, set=self.token_set, source=self.token_source),
         )
+
+    async def reload(self) -> None:
+        """Build the bot again from the token and the chat id in force now, and poll with it: a
+        change on the dashboard takes effect without a restart. The notifier object stays, since
+        the graph, the runner and the reminders hold it; a message being sent while the old
+        client closes fails as a `TelegramError`, as in an outage. The same bot goes on from the
+        last update it confirmed, so a change of the chat id alone gets nothing delivered twice;
+        an update being handled when the poller stops is cut off, as on a restart."""
+        if self._rebuild is None:
+            return
+        old_bot = self.bot
+        await self.stop()
+        await self.close()
+        fresh = self._rebuild()
+        if fresh.bot is not None and old_bot is not None:
+            fresh.bot.continue_from(old_bot)
+        old, new = self.notifier, fresh.notifier
+        old.telegram, old.chat_id, old.messages = new.telegram, new.chat_id, new.messages
+        old.approvals = new.approvals
+        self.bot, self._http, self.chat_id = fresh.bot, fresh._http, fresh.chat_id
+        self.token_set, self.token_source = fresh.token_set, fresh.token_source
+        if self._runner is not None:
+            self.start(self._runner)
 
     def start(self, runner: Resumer) -> None:
         """Start polling. Does nothing without a token."""
+        self._runner = runner
         if self.bot is not None and self._task is None:
             self.bot.runner = runner
             self._task = asyncio.create_task(self.bot.poll_forever(), name="telegram poller")
@@ -215,6 +245,7 @@ class NotifySetup:
         """Close the Telegram client, after everything that sends has stopped."""
         if self._http is not None:
             await self._http.aclose()
+            self._http = None
 
 
 def setup(
@@ -223,24 +254,38 @@ def setup(
     bus: EventBus,
     approvals: Approvals,
     guard_log: GuardLogger | None = None,
+    *,
+    secrets: SecretStore | None = None,
 ) -> NotifySetup:
-    """Build the notifier, and the bot too when a token and a chat id are configured.
+    """Build the notifier, and the bot too when a token and a chat id are configured: from
+    `secrets` when given (the env, else the dashboard), else from `settings`.
 
     The runner does not exist yet when the graph's dependencies are built, so `start(runner)`
-    gives it to the bot later.
+    gives it to the bot later; `reload()` builds the bot again after a change on the dashboard.
     """
-    token = settings.telegram_bot_token
-    if token is None or settings.telegram_chat_id is None:
+    token, chat_id, source = settings.telegram_bot_token, settings.telegram_chat_id, None
+    if secrets is not None:
+        token, source = secrets.get(TOKEN_ENV), secrets.state(TOKEN_ENV).source
+        chat = secrets.get(CHAT_ID_ENV)
+        chat_id = chat.get_secret_value() if chat is not None else None
+
+    def rebuild() -> NotifySetup:
+        return setup(settings, db, bus, approvals, guard_log, secrets=secrets)
+
+    if token is None or chat_id is None:
         if token is not None:
             log.warning("telegram: a bot token is set but TELEGRAM_CHAT_ID is not; Telegram is off")
         return NotifySetup(
-            Notifier(bus), chat_id=settings.telegram_chat_id, token_set=token is not None
+            Notifier(bus),
+            chat_id=chat_id,
+            token_set=token is not None,
+            token_source=source,
+            _rebuild=rebuild,
         )
     # httpx logs every request URL at INFO, and the Bot API puts the token in the URL.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     http = httpx.AsyncClient()
     messages = MessageLog(db)
-    chat_id = settings.telegram_chat_id
     bot = TelegramBot(
         token.get_secret_value(),
         chat_id,
@@ -251,7 +296,15 @@ def setup(
         guard_log=guard_log,
     )
     notifier = Notifier(bus, bot.client, chat_id, messages, approvals)
-    return NotifySetup(notifier, bot, http, chat_id=chat_id, token_set=True)
+    return NotifySetup(
+        notifier,
+        bot,
+        http,
+        chat_id=chat_id,
+        token_set=True,
+        token_source=source,
+        _rebuild=rebuild,
+    )
 
 
 class _NoRunner:
