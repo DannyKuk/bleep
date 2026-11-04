@@ -222,6 +222,7 @@ async def test_a_run_stops_after_propose_and_is_measured_and_scored(tmp_path):
     assert result.proposal is not None and result.proposal.kind == "act"
     assert result.action_correct and not result.unnecessary_action and result.category_correct
     assert result.steps == 1
+    assert [(c.name, c.args) for c in result.tool_calls] == [("list_containers", "")]
     assert result.tokens == 1200 + 2500 + 3000 + 2800 + 4 * 50
     assert result.peak_prompt_tokens == 3000
     assert result.usd == 0.0  # local: free

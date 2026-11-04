@@ -212,6 +212,14 @@ def _plan(result: ScenarioResult) -> str:
     return ", ".join(_step(*step_key(s)) for s in proposal.steps)
 
 
+def _tools(result: ScenarioResult) -> str:
+    if not result.tool_calls:
+        return "n/a"
+    return ", ".join(
+        f"`{c.name}({c.args})`" if c.args else f"`{c.name}`" for c in result.tool_calls
+    )
+
+
 def _step(action: str, target: str, tool: str | None) -> str:
     return f"{action} {target}" + (f" ({tool})" if tool else "")
 
@@ -272,15 +280,16 @@ def _scenario_section(scenario: Scenario, results: list[ScenarioResult]) -> list
         f"- Expected category `{expected.category}`, plan {_expected_plan(scenario)}"
         + (f", never {never}" if never else ""),
         "",
-        "| Run | Root cause | Category | Plan | Exact | Unnecessary | Steps | Tokens "
+        "| Run | Root cause | Category | Plan | Exact | Unnecessary | Steps | Tools | Tokens "
         "| Peak prompt | Cost | To incident | To diagnosis |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in results:
         category = r.diagnosis.category if r.diagnosis else "n/a"
         lines.append(
             f"| {r.run} | {_score(r)} | {category} | {_cell(_plan(r))} | {_yes(r.action_correct)} "
-            f"| {_yes(r.unnecessary_action)} | {r.steps} | {r.tokens:,} | {r.peak_prompt_tokens:,} "
+            f"| {_yes(r.unnecessary_action)} | {r.steps} "
+            f"| {_cell(_tools(r))} | {r.tokens:,} | {r.peak_prompt_tokens:,} "
             f"| {_usd(r.usd)} | {_seconds(r.seconds_to_incident)} "
             f"| {_seconds(r.seconds_to_diagnosis)} |"
         )
@@ -420,7 +429,9 @@ def render(info: RunInfo, results: list[ScenarioResult], regrade: str | None = N
         "",
         "Each run switches the fault on, lets Bleep's watcher open the incident and runs the graph "
         "to the end of Propose, then switches the fault off. Nothing is executed. Times count from "
-        "the fault going on; steps are the model's tool calls; peak prompt is the largest single "
+        "the fault going on; steps are the model's tool calls, and tools lists them in order with "
+        "their arguments cut short (n/a for a run recorded before they were kept); peak prompt is "
+        "the largest single "
         "prompt of the run; fallbacks are model calls that gave no structured output through "
         "tools, so Bleep asked for JSON in the reply instead."
         + (
