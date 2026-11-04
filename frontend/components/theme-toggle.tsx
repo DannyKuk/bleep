@@ -12,8 +12,9 @@ export function nextTheme(theme: Theme): Theme {
   return THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
 }
 
-/** One round button that steps through system, light and dark. The pick is kept in localStorage and shared by every toggle on the page;
- * the inline script in the root layout applies it before first paint. */
+/** One round button that steps through system, light and dark. The pick is kept in localStorage
+ * and shared by every toggle on the page; the inline script in the root layout applies it before
+ * first paint. */
 export function ThemeToggle() {
   const theme = useSyncExternalStore(subscribeTheme, readTheme, () => "system" as Theme);
 
