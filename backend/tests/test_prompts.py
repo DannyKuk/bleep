@@ -97,7 +97,15 @@ def test_check_override_refuses_an_unknown_prompt_and_the_eval_prompts(tmp_promp
 
 
 @pytest.mark.parametrize(
-    "name", ["graph/system", "notify/proposal", "notify/reminder", "notify/answer_approved"]
+    "name",
+    [
+        "graph/system",
+        "graph/propose_mcp",
+        "graph/verify_unproven",
+        "notify/proposal",
+        "notify/reminder",
+        "notify/answer_approved",
+    ],
 )
 def test_the_untrusted_data_rule_and_the_texts_an_approver_reads_cannot_be_overridden(name):
     assert name not in prompts.overridable_names()
@@ -187,11 +195,15 @@ FIXTURES = Path(__file__).parent / "fixtures" / "prompts"
 @pytest.mark.parametrize(("name", "rule"), UNTRUSTED_RULES.items())
 def test_the_four_prompts_render_as_they_did_before_their_rule_moved_out(name, rule):
     """The fixtures were rendered from the files at c0afd0f, before #147 moved each rule into
-    `untrusted/`, with every placeholder filled as `<name>`."""
+    `untrusted/`, with every placeholder filled as `<name>`; `{mcp}` came later (#118) and is
+    filled as it is with the MCP plugin off."""
     fields = placeholders(prompts.file_text(name)) - {"untrusted_rule"}
+    values = {field: f"<{field}>" for field in fields}
+    if "mcp" in values:
+        values["mcp"] = ""  # the MCP plugin off (#118): the fixture predates `{mcp}`
     rendered = load(
         name,
-        **{field: f"<{field}>" for field in fields},
+        **values,
         untrusted_rule=load(rule).strip(),  # as the code that builds the prompt fills it
     )
     expected = (FIXTURES / f"{name.replace('/', '-')}.txt").read_text(encoding="utf-8")
