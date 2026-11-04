@@ -70,7 +70,8 @@ def _step_line(number: int, step: PlanStep) -> str:
     head = f"{number}. {step.action} {step.target} on {step.host_id}"
     if not step.params or step.action.startswith("docker."):
         return head
-    shown = redact_text(", ".join(f"{key}={value}" for key, value in step.params.items()))
+    params = step.shown().params  # a set_env value reads "(hidden)"
+    shown = redact_text(", ".join(f"{key}={value}" for key, value in params.items()))
     # The head is never cut: a person approves this exact action, target and host. Only the
     # params give way, down to "…" when a long target leaves them no room.
     room = max(STEP_CHARS - len(head) - 3, 1)  # the space and the brackets

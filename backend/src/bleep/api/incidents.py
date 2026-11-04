@@ -51,7 +51,7 @@ def _approval(record: ApprovalRecord | None) -> ApprovalView | None:
         id=record.id,
         status=_STATUS[record.decision.kind] if record.decision else "pending",
         plan_hash=record.plan_hash,
-        proposal=record.proposal,
+        proposal=record.proposal.shown(),
         requested_at=record.requested_at,
         reminders=record.reminders,
         decision=record.decision,
@@ -90,7 +90,7 @@ async def get_incident(
     return IncidentDetail(
         incident=incident,
         diagnosis=state.get("diagnosis"),
-        proposal=state.get("proposal"),
+        proposal=proposal.shown() if (proposal := state.get("proposal")) else None,
         approval=_approval(await parts.approvals.current(incident_id)),
         outcome=state.get("outcome"),
         report=state.get("report"),

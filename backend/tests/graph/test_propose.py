@@ -1,9 +1,10 @@
+import json
 from typing import Any
 
 import pytest
 from langchain_core.messages import AIMessage
 
-from bleep.graph.deps import StaticSettings
+from bleep.graph.deps import CORE_ACTIONS, StaticSettings
 from bleep.graph.nodes import gather, propose
 from bleep.guard.plan_check import check_plan
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
@@ -613,3 +614,33 @@ async def test_a_refused_working_container_points_the_human_at_a_remedy_that_exi
     told = update["proposal"].human_instructions
     assert "instruction" not in told.lower()
     assert "act on it by hand" in told
+
+
+async def test_a_set_env_value_is_kept_for_execute_and_hidden_everywhere_else(tmp_path):
+    value = "postgres://web:never-shown@db/web"
+    set_env = {
+        "action": "coolify.set_env",
+        "host_id": "a",
+        "target": "web",
+        "params": {"key": "DATABASE_URL", "value": value},
+    }
+    plan = reply(kind="act", steps=[set_env], reason="web reads a new variable", verification={})
+    engine = bad_env_engine()
+    web = {"coolify.type": "application", "coolify.applicationUuid": "u-web"}
+    engine.container_list.append(
+        box("u-web-074501234567", labels=web | {"coolify.resourceName": "web"})
+    )
+    env, state = await setup(tmp_path, plan, plan, engine=engine)
+    env.deps.settings_store = StaticSettings(actions=CORE_ACTIONS | {"coolify.set_env"})
+    node = propose.make(env.deps)
+
+    first = (await node(state))["proposal"]
+    await node(state | {"proposal": first})
+
+    assert first.kind == "act" and first.steps[0].params["value"] == value
+    events = [
+        e.payload for e in await env.bus.history(state["incident_id"]) if e.kind == "proposal"
+    ]
+    assert len(events) == 2 and value not in json.dumps(events)
+    assert value not in prompt(env, 1)
+    assert "coolify.set_env web on a (key=DATABASE_URL, value=(hidden))" in prompt(env, 1)

@@ -49,7 +49,8 @@ def make(deps: GraphDeps) -> Node:
                 update["outcome"] = "budget"
             except StructuredOutputFailed:
                 proposal = Proposal(kind="no_action", reason=NO_PLAN)
-        await deps.bus.publish(state["incident_id"], "proposal", proposal.model_dump(mode="json"))
+        shown = proposal.shown().model_dump(mode="json")
+        await deps.bus.publish(state["incident_id"], "proposal", shown)
         return update | {"proposal": proposal}
 
     return propose
@@ -146,7 +147,7 @@ def _bullets(violations: list[Violation]) -> str:
 
 
 def _step(step: PlanStep) -> str:
-    params = ", ".join(f"{k}={v}" for k, v in sorted(step.params.items()))
+    params = ", ".join(f"{k}={v}" for k, v in sorted(step.shown().params.items()))
     return f"{step.action} {step.target} on {step.host_id}" + (f" ({params})" if params else "")
 
 

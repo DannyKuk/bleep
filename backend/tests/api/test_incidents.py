@@ -191,6 +191,36 @@ def test_detail_carries_diagnosis_proposal_pending_approval_and_report(
     assert "snapshots" not in approval
 
 
+def test_detail_never_shows_a_set_env_value(app_client, parts, monkeypatch):
+    value = "postgres://shop:never-shown@db/shop"
+    set_env = Proposal(
+        kind="act",
+        steps=[
+            PlanStep(
+                action="coolify.set_env",
+                host_id="a",
+                target="shop",
+                params={"key": "DATABASE_URL", "value": value},
+            )
+        ],
+        reason="the release reads a new variable",
+    )
+    incident = open_incident(app_client, parts)
+    call(app_client, parts.approvals.request, incident.id, set_env, [])
+
+    async def fake_state(incident_id: str) -> dict:
+        return {"proposal": set_env}
+
+    monkeypatch.setattr(app_client.app.state.runner, "state", fake_state)
+    response = app_client.get(f"/api/incidents/{incident.id}")
+
+    assert value not in response.text
+    body = response.json()
+    for proposal in (body["proposal"], body["approval"]["proposal"]):
+        assert proposal["steps"][0]["params"] == {"key": "DATABASE_URL", "value": "(hidden)"}
+    assert body["proposal"] == body["approval"]["proposal"]  # the dashboard pairs them by value
+
+
 def test_detail_shows_who_decided_the_latest_approval(app_client, parts):
     incident = open_incident(app_client, parts)
     ask(app_client, parts, incident.id)

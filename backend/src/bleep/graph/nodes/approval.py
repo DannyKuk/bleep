@@ -114,7 +114,8 @@ def make(deps: GraphDeps) -> Node:
 
         decision = record.decision  # set when it was decided while the run was not waiting
         if decision is None:
-            question = {"approval_id": record.id, "proposal": proposal.model_dump(mode="json")}
+            shown = proposal.shown().model_dump(mode="json")
+            question = {"approval_id": record.id, "proposal": shown}
             resumed = Decision.model_validate(interrupt(question))
             decision = await deps.approvals.resolve(incident_id, resumed, record.id)
             if decision is None:  # another channel won first; its decision stands

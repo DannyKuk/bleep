@@ -434,6 +434,39 @@ def test_a_secret_in_a_steps_params_is_redacted():
     assert "sk-abcdef1234567890abcdef12" not in text
 
 
+SET_ENV_VALUE = "postgres://shop:never-shown@db/shop"
+SET_ENV_PLAN = Proposal(
+    kind="act",
+    steps=[
+        PlanStep(
+            action="coolify.set_env",
+            host_id="demo",
+            target="shop",
+            params={"key": "DATABASE_URL", "value": SET_ENV_VALUE},
+        ),
+        PlanStep(action="coolify.redeploy", host_id="demo", target="shop"),
+    ],
+    reason="the release reads a new variable",
+)
+
+
+def test_a_set_env_step_shows_its_key_and_never_its_value():
+    assert fmt.steps_text(SET_ENV_PLAN) == (
+        "1. coolify.set_env shop on demo (key=DATABASE_URL, value=(hidden))\n"
+        "2. coolify.redeploy shop on demo"
+    )
+
+
+async def test_a_set_env_value_never_reaches_telegram(env):
+    request = (await env.approvals.current(env.incident_id)).request
+
+    await env.notifier.proposal(env.incident, None, SET_ENV_PLAN, request)
+
+    text = env.api.sent("sendMessage")[0]["text"]
+    assert "never" not in text
+    assert r"key\=DATABASE\_URL, value\=\(hidden\)" in text
+
+
 def test_long_messages_are_cut_below_the_limit_without_a_dangling_escape():
     text = fmt.render("notice", id="inc_1", text="." * 5000)
     assert len(text) <= fmt.TELEGRAM_LIMIT
