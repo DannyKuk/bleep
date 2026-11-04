@@ -2,15 +2,17 @@
 
 Three sources: the Docker docs snapshot shipped with Bleep (`backend/knowledge/docker-docs/`), the
 README and `docs/` of each service's linked GitHub repo, and the incidents in long-term memory.
-`KnowledgeRefresher.run` syncs the snapshot once at start, past incidents every 10 minutes and
-repo docs once a day. Re-ingest is skipped by content hash, so a boot with nothing new embeds
-nothing. A source that fails is logged and keeps what it had; Bleep runs on without it.
+`KnowledgeRefresher.run` syncs the snapshot at start, past incidents every 10 minutes and repo
+docs once a day; a snapshot sync that fails, and a repo refresh that read no repo, are tried again
+on the incidents' 10 minutes. Re-ingest is skipped by content hash, so a boot with nothing new
+embeds nothing. A source that fails is logged and keeps what it had; Bleep runs on without it.
 """
 
 import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -43,6 +45,22 @@ class IncidentReports(Protocol):
     async def all_records(self) -> list[IncidentRecord]: ...
 
 
+@dataclass(frozen=True)
+class RepoDocFiles:
+    """What one read of a repo's docs gave: the files it read, and the paths of the files it
+    found but could not read this time, which keep the docs they had."""
+
+    files: list[RepoFile]
+    unread: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RepoRefresh:
+    embedded: int
+    read: int
+    linked: int
+
+
 class RepoDocs(Protocol):
     """The linked repos and their README and `docs/**/*.md`, read through the GitHub client."""
 
@@ -50,7 +68,7 @@ class RepoDocs(Protocol):
         """`owner/name` of every repo a service links."""
         ...
 
-    async def doc_files(self, repo: str) -> list[RepoFile]:
+    async def doc_files(self, repo: str) -> RepoDocFiles:
         """The repo's README first, then its markdown under `docs/`."""
         ...
 
@@ -171,45 +189,48 @@ class KnowledgeRefresher:
         records = await self.reports.all_records()
         return await self.index.sync("incident", [incident_document(r) for r in records])
 
-    async def refresh_repos(self) -> int:
-        """Sync every linked repo's docs; how many documents were embedded. A repo that cannot be
-        read keeps the docs it had; a repo no longer linked loses them. A rate limit stops the
-        refresh there: without a token GitHub allows 60 requests an hour, and the rest would fail
-        too. The refresh is marked done, with the repos it covered, only when it read at least one
-        repo (or there was none to read), so a restart after GitHub was unreachable tries again."""
+    async def refresh_repos(self) -> RepoRefresh:
+        """Sync every linked repo's docs. A repo that cannot be read keeps the docs it had, and so
+        does a file that could not be read; a repo no longer linked loses them. A rate limit stops
+        the refresh there: without a token GitHub allows 60 requests an hour, and the rest would
+        fail too. The refresh is marked done with the repos it read, so a restart reads the others
+        again; it is not marked when it read none of them."""
         if self.repos is None:
-            return 0
+            return RepoRefresh(embedded=0, read=0, linked=0)
         linked = await self.repos.linked_repos()
-        embedded, read = 0, 0
+        embedded, read = 0, []
         for repo in linked:
             try:
-                files = await self.repos.doc_files(repo)
+                docs = await self.repos.doc_files(repo)
             except RateLimited as error:
                 log.warning("knowledge: GitHub rate limit reached at %s (%s)", repo, error)
                 break
-            except Exception as error:  # the next daily refresh tries again
+            except Exception as error:  # the next refresh tries again
                 log.warning("knowledge: could not read the docs of %s (%s)", repo, error)
                 continue
-            read += 1
+            read.append(repo)
             prefix = repo_prefix(repo)
+            kept = {f"{prefix}{path}" for path in docs.unread}
             embedded += (
-                await self.index.sync("repo", repo_documents(repo, files), prefix)
+                await self.index.sync("repo", repo_documents(repo, docs.files), prefix, kept)
             ).embedded
-        kept = tuple(repo_prefix(repo) for repo in linked)
+        still_linked = tuple(repo_prefix(repo) for repo in linked)
         await self.index.remove(
-            i for i in await self.index.document_ids("repo:") if not i.startswith(kept)
+            i for i in await self.index.document_ids("repo:") if not i.startswith(still_linked)
         )
         if read or not linked:
-            await self.index.mark_refresh(REPOS_REFRESH, _scope(linked))
-        return embedded
+            await self.index.mark_refresh(REPOS_REFRESH, _scope(read))
+        return RepoRefresh(embedded=embedded, read=len(read), linked=len(linked))
 
-    async def _safely(self, name: str, refresh: Callable[[], Awaitable[object]]) -> None:
+    async def _safely[T](self, name: str, refresh: Callable[[], Awaitable[T]]) -> T | None:
+        """`refresh()`'s result, or None when it failed."""
         try:
             result = await refresh()
         except Exception as error:  # a source that fails never stops Bleep
             log.warning("knowledge: refreshing %s failed (%s)", name, error)
-            return
+            return None
         log.info("knowledge: refreshed %s: %s", name, result)
+        return result
 
     async def _repos_wait(self) -> float:
         """Seconds until repo docs are due: what is left of the day since the last refresh when
@@ -229,16 +250,25 @@ class KnowledgeRefresher:
         return self.repos_every_s - since if 0 <= since < self.repos_every_s else 0.0
 
     async def run(self) -> None:
-        """Sync the snapshot, then keep incidents and repo docs fresh until cancelled."""
-        await self._safely("docker docs", self.refresh_docker)
-        due_incidents = self.monotonic()
-        due_repos = due_incidents + await self._repos_wait()
+        """Sync the snapshot, then keep incidents and repo docs fresh until cancelled. A snapshot
+        sync that failed (the embedder was down, say) is tried again with every incidents refresh
+        until it succeeds, and so is a repo refresh that read no repo: GitHub unreachable at start
+        should not leave search without them for a day."""
+        start = self.monotonic()
+        due_docker: float | None = start
+        due_incidents = start
+        due_repos = start + await self._repos_wait()
         while True:
             now = self.monotonic()
+            if due_docker is not None and now >= due_docker:
+                synced = await self._safely("docker docs", self.refresh_docker)
+                due_docker = None if synced is not None else now + self.incidents_every_s
             if now >= due_incidents:
                 await self._safely("past incidents", self.refresh_incidents)
                 due_incidents = now + self.incidents_every_s
             if now >= due_repos:
-                await self._safely("repo docs", self.refresh_repos)
-                due_repos = now + self.repos_every_s
-            await self.sleep(max(0.0, min(due_incidents, due_repos) - self.monotonic()))
+                repos = await self._safely("repo docs", self.refresh_repos)
+                empty = repos is None or repos.linked > 0 and repos.read == 0
+                due_repos = now + (self.incidents_every_s if empty else self.repos_every_s)
+            due = [d for d in (due_docker, due_incidents, due_repos) if d is not None]
+            await self.sleep(max(0.0, min(due) - self.monotonic()))
