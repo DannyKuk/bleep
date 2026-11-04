@@ -348,12 +348,95 @@ async def test_with_no_url_a_stop_is_never_called_fixed(tmp_path, state_now, ok,
 
     checks = {c.target: (c.ok, c.detail) for c in update["verification"].checks}
     assert checks["shop-web-1 (stopped by the plan)"][0] is ok
-    assert checks["shop-web-1 (the incident's symptom)"] == (False, verify.UNPROVEN)
+    assert checks["shop-web-1"] == (False, verify.UNPROVEN)
+    symptom = [c for c in update["verification"].checks if c.kind == "symptom"]
+    assert [c.target for c in symptom] == ["shop-web-1"]
     assert update.get("outcome") != "resolved"
     if loops == 2:
         assert update["outcome"] == "unverified" and route == "report"
     else:
         assert route == "investigate" and verify.UNPROVEN in update["messages"][0].text
+
+
+BLOG_URL = "https://blog.example/health"
+
+
+async def test_another_services_url_says_nothing_about_a_stop(tmp_path):
+    """shop has no URL, blog has one: a plan that stops the crashed shop-web-1 and checks the
+    blog's URL is not verified by that URL answering."""
+    host = shop_host(
+        services={
+            "shop": ServiceOverrides(),
+            "blog": ServiceOverrides(urls=[UrlCheckConfig(url=BLOG_URL)]),
+        }
+    )
+    engine = FakeEngine(
+        "a",
+        [
+            box("shop-web-1", "shop", state="exited"),
+            box("shop-db-1", "shop"),
+            box("blog-1", "blog"),
+        ],
+    )
+    plan = VerificationPlan(urls=[BLOG_URL])
+    env, state = await setup(tmp_path, Replies(200), plan=plan, engine=engine, host=host)
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-web-1")
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
+    state |= {
+        "proposal": state["proposal"].model_copy(update={"steps": [stop]}),
+        "signals": [died],
+        "verify_loops": 2,
+    }
+
+    update, _ = await run(env, state)
+
+    checks = {(c.kind, c.target): c.ok for c in update["verification"].checks}
+    assert checks[("url", BLOG_URL)] is True
+    assert checks[("symptom", "shop-web-1")] is False
+    assert update["outcome"] == "unverified"
+
+
+async def test_an_unrelated_redeploy_says_nothing_about_a_stop(tmp_path):
+    engine = FakeEngine(
+        "a",
+        [
+            box("shop-web-1", "shop", state="exited"),
+            box("shop-db-1", "shop"),
+            web(health="healthy"),
+        ],
+    )
+    env, state = await setup(tmp_path, Replies(200), engine=engine, urls=False)
+    steps = (
+        PlanStep(action="docker.stop", host_id="a", target="shop-web-1"),
+        PlanStep(action="coolify.redeploy", host_id="a", target="web"),
+    )
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
+    state = redeployed(state, *steps, results=[ok_stop(), deploy_result(1)])
+    state |= {"signals": [died], "verify_loops": 2}
+    state["proposal"] = state["proposal"].model_copy(
+        update={"verification": VerificationPlan(containers=["shop-db-1"])}
+    )
+
+    update, _ = await run(env, state)
+
+    checks = {(c.kind, c.target): c.ok for c in update["verification"].checks}
+    assert checks[("container", "web (Coolify application)")] is True
+    assert checks[("symptom", "shop-web-1")] is False
+    assert update["outcome"] == "unverified"
+
+
+async def test_a_stop_verified_by_its_own_services_url_resolves(tmp_path):
+    engine = FakeEngine("a", [box("shop-web-1", "shop", state="exited"), box("shop-db-1", "shop")])
+    plan = VerificationPlan(containers=["shop-db-1"])
+    env, state = await setup(tmp_path, Replies(200), plan=plan, engine=engine)
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-web-1")
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
+    state |= {"proposal": state["proposal"].model_copy(update={"steps": [stop]}), "signals": [died]}
+
+    update, _ = await run(env, state)
+
+    assert [c.kind for c in update["verification"].checks] == ["container", "container", "url"]
+    assert update["outcome"] == "resolved"
 
 
 async def test_a_stop_then_a_start_of_the_same_container_must_run(tmp_path):
@@ -702,3 +785,14 @@ async def test_a_name_the_registry_gives_two_uuids_now_replaces_nothing(tmp_path
     checks = {c.target: (c.ok, c.detail) for c in update["verification"].checks}
     assert checks["web0uuid-1"] == (False, "not found")
     assert update["outcome"] == "unverified"
+
+
+def ok_stop() -> StepResult:
+    return StepResult(
+        step_index=0,
+        action="docker.stop",
+        target="shop-web-1",
+        ok=True,
+        detail="stopped",
+        started_at=DEPLOYED_AT,
+    )

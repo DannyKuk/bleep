@@ -63,7 +63,11 @@ UNPROVEN = "stopped as approved; nothing shows the service works (no URL or runn
 class _Plan:
     """What to check: containers that must run, URLs that must answer, and signalled containers
     the plan stopped, which must stay down. `unproven` says the incident's own symptom is only
-    covered by those stop checks: a container already dead passes one, so it proves nothing."""
+    covered by those stop checks: a container already dead passes one, so it proves nothing.
+    Only the incident's own evidence counts against that: a URL its signals saw fail or of its
+    own service, a signalled container that must run, or a signalled container a redeploy
+    replaced (its application's check). Another service's URL or an unrelated redeploy does
+    not."""
 
     containers: list[str]
     urls: list[UrlCheckConfig]
@@ -79,8 +83,8 @@ def _plan(deps: GraphDeps, state: IncidentState) -> _Plan:
     incident's own symptoms (`_symptoms`). A signalled container the plan stopped (its last
     Docker step is a stop) is checked to be down, unless it is among the containers that must
     run (the fallback can put it there; that check then fails, the safe side). When those stop
-    checks are all there is about the symptom (no URL, no signalled container that must run, no
-    redeploy), the plan is `unproven` and cannot pass.
+    checks are all there is about the symptom (no URL of the incident's, no signalled container
+    that must run, none a redeploy replaced), the plan is `unproven` and cannot pass.
 
     A URL keeps its expected status and body text from the hosts file, whichever of the host's
     services it belongs to (the plan check allows any of them). The fallback checks every
@@ -104,6 +108,9 @@ def _plan(deps: GraphDeps, state: IncidentState) -> _Plan:
             acted = proposal.steps if proposal is not None else []
             containers = [s.target for s in acted if s.action.startswith("docker.")]
     signalled, failing_urls = _symptoms(state.get("signals", []))
+    # The URLs that say something about this incident: those its signals saw fail and its own
+    # service's. Another service's URL the plan names says nothing about this one.
+    own_urls = {*failing_urls, *(cfg.url for cfg in service.urls)} if service else set(failing_urls)
     stopped = _stopped(proposal)
     left_out = [c for c in signalled if c in stopped or replaced(c)]
     if left_out and service is not None:
@@ -114,7 +121,11 @@ def _plan(deps: GraphDeps, state: IncidentState) -> _Plan:
     containers = [c for c in dict.fromkeys(named) if not replaced(c)]
     urls = list(dict.fromkeys([*urls, *failing_urls]))
     down = [c for c in left_out if c in stopped and c not in containers]
-    covered = bool(urls) or bool(set(signalled) & set(containers)) or bool(_redeployed(proposal))
+    covered = (
+        bool(own_urls & set(urls))
+        or bool(set(signalled) & set(containers))
+        or any(replaced(c) for c in signalled)
+    )
     checks = [known.get(u) or UrlCheckConfig(url=u) for u in urls]
     return _Plan(containers, checks, down, unproven=bool(down) and not covered)
 
@@ -301,8 +312,10 @@ def make(deps: GraphDeps) -> Node:
             checks += [await _check_container(deps, host_id, name) for name in plan.containers]
             checks += [await _check_stopped(deps, host_id, name) for name in plan.stopped]
             if plan.unproven:
-                target = f"{', '.join(plan.stopped)} (the incident's symptom)"
-                checks.append(Check(kind="container", target=target, ok=False, detail=UNPROVEN))
+                checks += [
+                    Check(kind="symptom", target=name, ok=False, detail=UNPROVEN)
+                    for name in plan.stopped
+                ]
             checks += [await _check_url(client, cfg) for cfg in plan.urls]
         finally:
             if owned:
