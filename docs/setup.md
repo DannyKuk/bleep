@@ -81,7 +81,7 @@ Bleep keeps the host's address in its database and the private key and the host 
 
 The host appears on the overview within a few seconds. The settings page shows its key and host key only as "set" or "missing". Hosts on the machine Bleep runs on (loopback) and socket hosts cannot be added there; they go in the hosts file.
 
-To change a host, use "Edit connection". **A new address, port or user clears the key and the host key**, and the page says so: check the host key and enter the key again, or the host waits for them. When the server's host key changes, Bleep refuses to connect; check the new key's fingerprint and save it from the same form. If the host was changed elsewhere since the page read it, the save is refused with "This host changed since this page read it; reload the page." "Remove" asks a second time ("Yes, remove this host"), stops watching the host, deletes its keys, and closes its open incidents with a notice.
+To change a host, use "Edit connection". **A new address, port or user clears the key and the host key**, and the page says so: check the host key and enter the key again; Save stays disabled until both are done. When the server's host key changes, Bleep refuses to connect; check the new key's fingerprint and save it from the same form. If the host was changed elsewhere since the page read it, the save is refused with "This host changed since this page read it; reload the page." "Remove" asks a second time ("Yes, remove this host"), stops watching the host, deletes its keys, and closes its open incidents with a notice.
 
 ### In the hosts file
 

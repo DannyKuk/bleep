@@ -224,17 +224,14 @@ export function HostForm({
     confirmation !== null ||
     name.trim() !== host?.name ||
     socket !== connection?.docker_socket;
-  const ready = adding
-    ? name.trim() !== "" &&
-      hostId !== "" &&
-      address.trim() !== "" &&
-      user.trim() !== "" &&
-      key.trim() !== "" &&
-      confirmation !== null
-    : changed && name.trim() !== "" && address.trim() !== "" && user.trim() !== "";
+  const fieldsFilled = name.trim() !== "" && address.trim() !== "" && user.trim() !== "";
+  const needsKeys = adding || moved;
+  const ready = needsKeys
+    ? fieldsFilled && (!adding || hostId !== "") && key.trim() !== "" && confirmation !== null
+    : changed && fieldsFilled;
 
   async function save() {
-    if (!portValid || (adding && !confirmation)) return;
+    if (!portValid || !ready) return;
     const fields = {
       name: name.trim(),
       address: address.trim(),
@@ -361,7 +358,7 @@ export function HostForm({
       {moved && (
         <p role="note" className="text-xs text-health-degraded">
           A new address, port or user clears this host&apos;s stored SSH key and host key. Check the
-          host key and enter the key again below, or the host waits for them.
+          host key and enter the key again below; Save waits for both.
         </p>
       )}
       <Field
@@ -401,9 +398,9 @@ export function HostForm({
             Cancel
           </Button>
         )}
-        {adding && !confirmation && (
+        {needsKeys && !ready && (
           <span className="text-xs text-muted-foreground">
-            Adding needs the key and a confirmed host key.
+            Needs the key and a confirmed host key.
           </span>
         )}
       </div>

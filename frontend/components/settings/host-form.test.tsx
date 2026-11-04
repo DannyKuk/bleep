@@ -150,24 +150,51 @@ describe("HostForm: adding", () => {
 });
 
 describe("HostForm: editing", () => {
-  it("warns that a new address clears the key, and sends the version in If-Match", async () => {
-    const fetchMock = stubBackend({ "PUT /api/settings/hosts/box": json({}) });
-    const onChanged = vi.fn(async () => undefined);
-    render(<HostForm host={dashboardHost()} onChanged={onChanged} />);
+  it("warns that a new address clears the key", async () => {
+    stubBackend({});
+    render(<HostForm host={dashboardHost()} onChanged={vi.fn()} />);
     expect(screen.queryByRole("note")).toBeNull();
-    expect(screen.getByLabelText("SSH private key", { exact: false })).toHaveValue("");
-
+    expect(screen.getByLabelText("New SSH private key")).toHaveValue("");
     await userEvent.type(screen.getByLabelText("Address"), "2");
     expect(screen.getByRole("note")).toHaveTextContent("clears this host's stored SSH key");
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  });
 
-    await waitFor(() => expect(onChanged).toHaveBeenCalled());
-    const [, init] = fetchMock.mock.calls[0];
-    expect(init?.headers).toMatchObject({ "if-match": '"v-box"' });
+  it("cannot save a moved address without a key and a ticked host key, then sends both", async () => {
+    const fetchMock = stubBackend({
+      "POST /api/settings/hosts/host-key": json({ ...OFFER, address: "box.lan2" }),
+      "PUT /api/settings/hosts/box": json({}),
+    });
+    render(<HostForm host={dashboardHost()} onChanged={vi.fn(async () => undefined)} />);
+    const saveEdit = () => screen.getByRole("button", { name: "Save" });
+    await userEvent.type(screen.getByLabelText("Address"), "2");
+    expect(saveEdit()).toBeDisabled();
+
+    await userEvent.click(screen.getByLabelText("New SSH private key"));
+    await userEvent.paste(PRIVATE_KEY);
+    expect(saveEdit()).toBeDisabled();
+
+    await userEvent.click(check());
+    await userEvent.click(await screen.findByLabelText(/matches the one on the server/));
+    expect(saveEdit()).toBeEnabled();
+    await userEvent.click(saveEdit());
+
+    await waitFor(() => expect(screen.getByLabelText("New SSH private key")).toHaveValue(""));
+    const puts = fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT");
+    expect(puts).toHaveLength(1);
+    expect(puts[0][1]?.headers).toMatchObject({ "if-match": '"v-box"' });
     const body = sentBody(fetchMock, "PUT");
-    expect(body.address).toBe("box.lan2");
-    expect(body).not.toHaveProperty("ssh_key");
-    expect(body).not.toHaveProperty("host_key");
+    expect(body.ssh_key).toBe(PRIVATE_KEY);
+    expect(body.host_key).toEqual({ offer: "offer-1", fingerprint: "SHA256:abcDEF123" });
+  });
+
+  it("saves a key-only change with no host-key check", async () => {
+    const fetchMock = stubBackend({ "PUT /api/settings/hosts/box": json({}) });
+    render(<HostForm host={dashboardHost()} onChanged={vi.fn(async () => undefined)} />);
+    await userEvent.click(screen.getByLabelText("New SSH private key"));
+    await userEvent.paste(PRIVATE_KEY);
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(sentBody(fetchMock, "PUT")).not.toHaveProperty("host_key");
   });
 
   it("tells a stale page to reload, and reads the settings again", async () => {
