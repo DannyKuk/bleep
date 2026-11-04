@@ -96,6 +96,12 @@ def test_with_the_panel_on_the_routes_need_the_session(settings, parts, path):
         assert client.get(path).status_code == 401
 
 
+def test_the_dev_routes_are_left_out_of_the_openapi_schema(dev_client):
+    paths = dev_client.get("/openapi.json").json()["paths"]
+    assert "/api/settings" in paths
+    assert not [path for path in paths if path.startswith("/api/dev")]
+
+
 # --- prompts ---
 
 
@@ -165,6 +171,44 @@ def test_an_override_holding_a_secret_is_a_422_that_does_not_echo_it(dev_client,
     assert response.status_code == 422
     assert "ghp_" not in response.text and "abc-secret-value" not in response.text
     assert dev_client.get("/api/dev/prompts").json()[0]["override"] is None
+
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        ("Why did it come back?\r\n{logs}", "plain newlines"),
+        ("Why did it come back?\u2028{logs}", "plain newlines"),
+        ("Why did it come back? {logs} " + "x" * 4_000, "4,000 characters"),
+        ("Why did it come back? {logs} \x85", "control characters"),
+        ("Why did it come back? {logs} \u202e", "bidi"),
+    ],
+)
+def test_an_override_refused_for_its_shape_says_why_not_secret(dev_client, text, reason):
+    response = put_prompt(dev_client, RECOVERY, {"text": text})
+    assert response.status_code == 422
+    assert reason in response.json()["detail"]
+    assert "secret" not in response.json()["detail"]
+
+
+def test_a_long_override_in_short_lines_is_saved(dev_client):
+    text = "\n".join(["Say why the container came back, in one plain sentence."] * 100)
+    text += "\n{logs}"
+    response = put_prompt(dev_client, RECOVERY, {"text": text})
+    assert response.status_code == 200
+    assert response.json()["override"] == text
+
+
+def test_an_override_with_a_token_wrapped_across_lines_is_a_422_and_not_stored(dev_client):
+    wrapped = f"{GITHUB_TOKEN[:20]}\n{GITHUB_TOKEN[20:]}"
+    response = put_prompt(dev_client, RECOVERY, {"text": f"{recovery_file()}\n{wrapped}"})
+    assert response.status_code == 422
+    assert GITHUB_TOKEN[:20] not in response.text
+    assert prompts.load(RECOVERY, logs="x") == recovery_file().format(logs="x")
+
+
+def test_an_override_body_over_the_size_cap_is_a_413(dev_client):
+    response = put_prompt(dev_client, RECOVERY, {"text": "{logs}\n" + "word " * 30_000})
+    assert response.status_code == 413
 
 
 @pytest.mark.parametrize("body", [{"text": ""}, {"text": "x" * 20_001}, {}, {"txt": "{logs}"}])
@@ -288,6 +332,48 @@ def test_costs_match_the_ledger_per_incident_and_per_day(dev_client, parts):
     assert body["daily_cap_usd"] == 1.0
 
 
+def test_costs_say_how_many_of_todays_calls_have_no_price(dev_client, parts):
+    ledger = parts.graph_deps.ledger
+    call(dev_client, ledger.add, "inc-1", "openai/gpt-6-luna", 1000, 100, 0.25)
+    call(dev_client, ledger.add, "inc-1", "mystery/m", 400, 40, None)
+    call(dev_client, ledger.add, "inc-2", "mystery/m", 400, 40, None)
+    body = dev_client.get("/api/dev/costs").json()
+    assert body["spent_today_usd"] == pytest.approx(0.25)
+    assert body["unpriced_today"] == 2
+
+
+def test_costs_read_every_incident_in_one_query(dev_client, parts, monkeypatch):
+    ids = [open_incident(dev_client, parts, f"a/svc{n}") for n in range(3)]
+    for incident_id in ids:
+        call(dev_client, parts.graph_deps.ledger.add, incident_id, "m", 1, 1, 0.0)
+
+    async def one_by_one(_incident_id):
+        raise AssertionError("costs must not read the incidents one by one")
+
+    monkeypatch.setattr(parts.incidents, "get", one_by_one)
+    rows = dev_client.get("/api/dev/costs").json()["incidents"]
+    assert {row["incident_id"]: row["title"] for row in rows} == {
+        incident_id: f"container died on a/svc{n}" for n, incident_id in enumerate(ids)
+    }
+
+
+def test_costs_and_the_incident_show_the_overrides_its_run_started_with(dev_client, parts):
+    shop = open_incident(dev_client, parts, "a/shop")
+    worker = open_incident(dev_client, parts, "a/worker")
+    version = prompts.text_version("Kept: {logs}")
+    call(dev_client, parts.incidents.record_prompt_overrides, shop, {RECOVERY: version})
+    for incident_id in (shop, worker):
+        call(dev_client, parts.graph_deps.ledger.add, incident_id, "m", 1, 1, 0.0)
+
+    rows = {r["incident_id"]: r for r in dev_client.get("/api/dev/costs").json()["incidents"]}
+    assert rows[shop]["prompt_overrides"] == {RECOVERY: version}
+    assert rows[worker]["prompt_overrides"] is None
+    assert dev_client.get(f"/api/incidents/{shop}").json()["incident"]["prompt_overrides"] == {
+        RECOVERY: version
+    }
+    assert "Kept" not in dev_client.get("/api/dev/costs").text
+
+
 def test_a_ledger_row_without_an_incident_is_listed_without_one(dev_client, parts):
     call(dev_client, parts.graph_deps.ledger.add, "not-an-incident", "m", 1, 1, 0.0)
     [row] = dev_client.get("/api/dev/costs").json()["incidents"]
@@ -328,6 +414,16 @@ def test_the_guard_log_is_newest_first_and_filters_by_kind_and_incident(dev_clie
         "/api/dev/guard-log", params={"incident_id": "inc-2", "kind": "refused_command"}
     ).json()
     assert both == []
+
+
+def test_a_secret_in_a_guard_log_detail_is_redacted_before_it_is_returned(dev_client, parts):
+    parts.guard_log.record(
+        "inc-1", "refused_command", f"git push https://bleep:{GITHUB_TOKEN}@github.com/a/b"
+    )
+    response = dev_client.get("/api/dev/guard-log")
+    assert GITHUB_TOKEN not in response.text
+    [entry] = response.json()
+    assert entry["detail"] == "git push https://bleep:<redacted>@github.com/a/b"
 
 
 def test_an_unknown_guard_kind_is_a_422(dev_client):

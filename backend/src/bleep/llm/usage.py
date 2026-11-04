@@ -187,10 +187,15 @@ class UsageTracker(AsyncCallbackHandler):
                 await self.ledger.add(self.incident_id, model, tokens_in, tokens_out, usd)
 
 
-async def check_budget(ledger: CostLedger, incident_id: str, budgets: Budgets) -> None:
-    """Call before each model call; raises when the day's cap or the incident's tokens are spent."""
+async def check_daily_cap(ledger: CostLedger, budgets: Budgets) -> None:
+    """Raises when the day's cap is spent; for a model call that belongs to no incident."""
     if await ledger.spent_today() >= budgets.daily_cost_usd:
         raise BudgetExceeded("daily_cost")
+
+
+async def check_budget(ledger: CostLedger, incident_id: str, budgets: Budgets) -> None:
+    """Call before each model call; raises when the day's cap or the incident's tokens are spent."""
+    await check_daily_cap(ledger, budgets)
     if (await ledger.incident_total(incident_id)).tokens >= budgets.incident_tokens:
         raise BudgetExceeded("incident_tokens")
 

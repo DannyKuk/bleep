@@ -8,10 +8,11 @@ a rule, a password in a URL). Only `allowed` names, the settings models' own fie
 """
 
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Iterator
 from typing import Any
 
 from bleep.guard.redact import WORDS, redact_text
+from bleep.guard.sanitize import MAX_LINE, SNAP
 from bleep.guard.untrusted import fold
 
 # Matched against the name in lower case with everything but letters and digits removed, so case,
@@ -69,9 +70,45 @@ def _secret_name(name: str) -> bool:
 def _holds_secret(text: str) -> bool:
     """Redaction would change it, as written or folded, or it is a URL with a secret-named
     query parameter (`?key=...`)."""
-    folded = fold(text)
-    return (
-        redact_text(text) != text
-        or redact_text(folded) != folded
-        or any(_secret_name(m) for m in _QUERY_NAME.findall(folded))
+    if redact_text(text) != text:
+        return True
+    return any(
+        redact_text(piece) != piece or any(_secret_name(m) for m in _QUERY_NAME.findall(piece))
+        for piece in _folded_pieces(text)
     )
+
+
+def _folded_pieces(text: str) -> Iterator[str]:
+    """What the folded checks read. `fold` drops newlines, so a secret split by one
+    (`pass\nword=x`, a wrapped token) is joined again. A folded text of up to 4,000 characters
+    is read whole. A longer one would be cut by redaction, which reads as a secret, so it is read
+    in windows of 4,000 characters that overlap by half, each starting and ending at a space when
+    one is near: a secret of up to about 1,500 characters lies whole in one of them, wherever the
+    newline split it, and the work stays twice that of redacting the text once."""
+    folded = fold(text)
+    if len(folded) <= MAX_LINE:
+        yield folded
+        return
+    start = 0
+    while True:
+        end = min(start + MAX_LINE, len(folded))
+        if end == len(folded):
+            yield folded[_after_space(folded, start) :]
+            return
+        yield folded[_after_space(folded, start) : _before_space(folded, end)]
+        start += MAX_LINE // 2
+
+
+def _after_space(text: str, start: int) -> int:
+    """`start`, moved just past the next space within `SNAP` characters, so a window does not
+    begin inside a word."""
+    if start == 0:
+        return 0
+    space = text.find(" ", start, start + SNAP)
+    return start if space == -1 else space + 1
+
+
+def _before_space(text: str, end: int) -> int:
+    """`end`, moved back to the last space within `SNAP` characters."""
+    space = text.rfind(" ", end - SNAP, end)
+    return end if space == -1 else space

@@ -59,11 +59,25 @@ def test_an_override_is_filled_with_the_same_checks_as_a_file(tmp_prompts):
         "Hello {name} }",
         "Hello {name!r}",
         "Hello {name}\x00",  # a control byte
+        "Hello {name}\x85",  # a C1 control (NEL)
+        "Hello {name}\x9b31m",  # a C1 CSI
+        "Hello {name} ‮deliver‬",  # a bidi override
+        "Hello {name} ⁦isolated⁩",  # a bidi isolate
+        "Hello {name} \u200eleft",  # a left-to-right mark
+        "Hello {name} \u200fright",  # a right-to-left mark
+        "Hello {name} \u061carabic",  # an Arabic letter mark
+        "Hello\u200b {name}",  # a zero-width space
+        "\ufeffHello {name}",  # a byte-order mark
     ],
 )
 def test_check_override_refuses_what_the_loader_would(tmp_prompts, text):
     with pytest.raises(PromptError):
         prompts.check_override("demo/hello", text)
+
+
+def test_no_prompt_file_holds_a_character_an_override_may_not():
+    for path in all_prompt_files():
+        assert prompts._CONTROL.search(path.read_text(encoding="utf-8")) is None, path
 
 
 def test_check_override_accepts_the_files_placeholders_and_literal_braces(tmp_prompts):

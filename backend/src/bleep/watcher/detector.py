@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
+from langchain_core.runnables import RunnableConfig
 
 from bleep import prompts
 from bleep.guard.log import GuardLogger
@@ -277,8 +278,10 @@ async def explain_recovery(
     logs_tail: str,
     guard_log: GuardLogger | None = None,
     incident_id: str = "",
+    config: RunnableConfig | None = None,
 ) -> str:
-    """One plain sentence on why a self-recovered container stopped, from its last logs."""
+    """One plain sentence on why a self-recovered container stopped, from its last logs. `config`
+    goes to the model call (the caller's usage tracker)."""
     if not logs_tail.strip():
         return NO_LOGS_LINE
     # Redact the whole text, then keep the tail: cutting first could leave half a secret.
@@ -288,7 +291,7 @@ async def explain_recovery(
     if redactions and guard_log is not None:
         guard_log.record(incident_id, "redacted", f"{redactions} secret(s) redacted from logs")
     prompt = prompts.load("watcher/recovery_line", logs=logs)
-    reply = await model.ainvoke([HumanMessage(prompt)])
+    reply = await model.ainvoke([HumanMessage(prompt)], config)
     sentence = SENTENCE_END.split(" ".join(reply.text.split()), maxsplit=1)[0]
     if len(sentence) > RECOVERY_LINE_CHARS:
         sentence = sentence[: RECOVERY_LINE_CHARS - 1].rstrip() + "…"

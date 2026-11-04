@@ -72,3 +72,33 @@ async def test_recent_is_newest_first_and_filters_by_kind_and_incident(tmp_path)
     assert entry.detail.startswith("1 secret")
     assert entry.id == 2
     assert await log.recent(incident_id="inc-2", kind="budget") == []
+
+
+GITHUB_TOKEN = "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"
+
+
+async def test_a_detail_is_redacted_before_it_is_cut_and_written(tmp_path):
+    log = await guard_log(tmp_path)
+    straddling = "git push " + "x" * (DETAIL_CHARS - 20) + f" https://{GITHUB_TOKEN}@github.com"
+    log.record("inc-1", "refused_command", straddling)
+    log.record("inc-1", "refused_command", f"curl -H 'Authorization: Bearer {GITHUB_TOKEN}' x")
+    await log.flush()
+
+    conn = await log.db.connect()
+    try:
+        async with conn.execute("SELECT detail FROM guard_log") as cursor:
+            stored = [row["detail"] for row in await cursor.fetchall()]
+    finally:
+        await conn.close()
+    assert len(stored) == 2
+    assert not [detail for detail in stored if "ghp_" in detail]
+    assert all(len(detail) <= DETAIL_CHARS for detail in stored)
+
+
+def test_a_detail_written_outside_an_event_loop_is_redacted_too(tmp_path):
+    import asyncio
+
+    log = asyncio.run(guard_log(tmp_path))
+    log.record("inc-1", "refused_command", f"echo {GITHUB_TOKEN}")
+    [entry] = asyncio.run(log.entries("inc-1"))
+    assert GITHUB_TOKEN not in entry.detail and "<redacted>" in entry.detail

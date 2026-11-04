@@ -76,6 +76,9 @@ class Incident(BaseModel):
     cost_usd: float | None = None
     tokens: int = 0
     trace_url: str | None = None  # set when tracing is on (docs/design/observability.md)
+    # The prompt overrides in force when its run started, name to a hash of the text
+    # (`prompts.text_version`); None before the run started (docs/design/dev-panel.md).
+    prompt_overrides: dict[str, str] | None = None
 
 
 class IncidentEvent(BaseModel):

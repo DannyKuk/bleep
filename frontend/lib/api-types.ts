@@ -94,6 +94,11 @@ export interface Incident {
   title: string;
   cost_usd: number | null;
   tokens: number;
+  /** The link to the incident's trace, when tracing stored one. */
+  trace_url: string | null;
+  /** The prompt overrides in force when its run started: name to a hash of the text. `null` before
+   * the run started, or for a run started before the record existed. */
+  prompt_overrides: Record<string, string> | null;
 }
 
 /** One entry of an incident's timeline. `kind` is free-form on the wire; `payload` depends on it. */
@@ -328,6 +333,9 @@ export interface IncidentCost extends Usage {
   status: IncidentStatus | null;
   opened_at: string | null;
   trace_url: string | null;
+  /** The prompt overrides in force when the incident's run started: name to a hash of the text.
+   * `null` when none was recorded (no incident, or a run that started before the record). */
+  prompt_overrides: Record<string, string> | null;
 }
 
 export interface DayCost extends Usage {
@@ -339,7 +347,10 @@ export interface CostView {
   incidents: IncidentCost[];
   days: DayCost[];
   daily_cap_usd: number;
+  /** The priced calls only, as the daily cap counts them. */
   spent_today_usd: number;
+  /** Today's calls without a known price, left out of `spent_today_usd`. */
+  unpriced_today: number;
 }
 
 /** What the guard refused, blocked or changed (`guard/log.py` `GuardKind`). */

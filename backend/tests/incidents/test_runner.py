@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import pytest
 from langchain_core.callbacks import BaseCallbackHandler
 
+from bleep import prompts
 from bleep.graph.build import build_graph, open_checkpointer
 from bleep.graph.nodes import propose
 from bleep.incidents.approvals import ApprovalStore
@@ -145,6 +146,34 @@ async def test_waits_for_approval_and_resumes_on_a_decision_after_a_restart(tmp_
     assert state["outcome"] == "rejected"
     assert (await env.repo.get(incident.id)).status == "closed"
     assert (await env.nodes(incident.id, "node_finished"))[-2:] == ["approval", "report"]
+
+
+async def test_a_run_records_the_overrides_it_started_with_and_a_resume_keeps_them(
+    tmp_path, acting
+):
+    env = await graph_env(tmp_path)
+    incident = await env.open(service(env), container="shop-web-1")
+    plain = await env.open(Subject(kind="host", host_id="a"), kind="disk")
+    checkpoints = tmp_path / "checkpoints.sqlite"
+    assert (await env.repo.get(incident.id)).prompt_overrides is None
+    async with open_checkpointer(checkpoints) as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await runner.start(plain)
+        await runner.join()
+        prompts.use_overrides({"watcher/recovery_line": "First: {logs}"})
+        await runner.start(incident)
+        await runner.join()
+    started = {"watcher/recovery_line": prompts.text_version("First: {logs}")}
+    assert (await env.repo.get(incident.id)).prompt_overrides == started
+    assert (await env.repo.get(plain.id)).prompt_overrides == {}
+
+    prompts.use_overrides({"watcher/recovery_line": "Second: {logs}", "graph/propose_unsure": "x"})
+    async with open_checkpointer(checkpoints) as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await runner.resume(incident.id, decide("reject"), await runner.waiting_for(incident.id))
+        await runner.join()
+    assert (await env.repo.get(incident.id)).status == "closed"
+    assert (await env.repo.get(incident.id)).prompt_overrides == started
 
 
 async def test_a_decision_for_another_approval_does_not_resume_the_run(tmp_path, acting):

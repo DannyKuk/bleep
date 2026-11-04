@@ -1,14 +1,15 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { CostTables, costText } from "@/components/dev/costs";
-import type { CostView } from "@/lib/api-types";
+import { CostTables, costText, UNPRICED_NOTE } from "@/components/dev/costs";
+import type { CostView, IncidentCost } from "@/lib/api-types";
 
 const usage = { calls: 2, tokens_in: 1500, tokens_out: 150, usd: 0.375, unpriced: 0 };
 
 const COSTS: CostView = {
   daily_cap_usd: 1,
   spent_today_usd: 0.375,
+  unpriced_today: 1,
   days: [{ day: "2026-11-03", ...usage, calls: 3, tokens_in: 1900, unpriced: 1 }],
   incidents: [
     {
@@ -17,6 +18,7 @@ const COSTS: CostView = {
       status: "open",
       opened_at: "2026-11-03T10:00:00Z",
       trace_url: "http://localhost:3001/project/bleep/traces/abc",
+      prompt_overrides: { "graph/propose": "0123456789abcdef" },
       ...usage,
     },
     {
@@ -25,6 +27,7 @@ const COSTS: CostView = {
       status: "resolved",
       opened_at: "2026-11-03T10:00:00Z",
       trace_url: null,
+      prompt_overrides: {},
       ...usage,
       usd: null,
       unpriced: 1,
@@ -36,6 +39,7 @@ const COSTS: CostView = {
       status: null,
       opened_at: null,
       trace_url: "javascript:alert(1)",
+      prompt_overrides: null,
       ...usage,
       usd: 0,
     },
@@ -45,7 +49,9 @@ const COSTS: CostView = {
 describe("CostTables", () => {
   it("shows today's spend against the cap and the cost per day", () => {
     render(<CostTables costs={COSTS} />);
-    expect(screen.getByText("Today: $0.38 of the $1.00 daily cap")).toBeInTheDocument();
+    expect(screen.getByText(/^Today: \$0\.38 of the \$1\.00 daily cap\./)).toHaveTextContent(
+      "Today: $0.38 of the $1.00 daily cap. 1 call today has no known price and is not in that sum.",
+    );
     const [, row] = within(screen.getByRole("table", { name: "Cost per day" })).getAllByRole("row");
     expect(row).toHaveTextContent("2026-11-033");
     expect(row).toHaveTextContent("1,900");
@@ -70,6 +76,41 @@ describe("CostTables", () => {
 
     expect(other).toHaveTextContent("not-an-incident");
     expect(within(other).queryByRole("link")).not.toBeInTheDocument();
+    expect(within(other).getByText("javascript:alert(1)")).toBeInTheDocument();
+  });
+
+  it("says plainly that dollars leave out the unpriced calls", () => {
+    render(<CostTables costs={{ ...COSTS, unpriced_today: 0 }} />);
+    expect(screen.getByText("Today: $0.38 of the $1.00 daily cap.")).toBeInTheDocument();
+    expect(screen.getByText(UNPRICED_NOTE)).toBeInTheDocument();
+  });
+
+  it("leaves the note out when every call has a price", () => {
+    const priced = (row: IncidentCost) => ({ ...row, usd: 0, unpriced: 0 });
+    render(
+      <CostTables
+        costs={{
+          ...COSTS,
+          unpriced_today: 0,
+          days: [{ day: "2026-11-03", ...usage }],
+          incidents: COSTS.incidents.map(priced),
+        }}
+      />,
+    );
+    expect(screen.queryByText(UNPRICED_NOTE)).not.toBeInTheDocument();
+  });
+
+  it("shows the prompt overrides each incident's run started with", () => {
+    render(<CostTables costs={COSTS} />);
+    const table = screen.getByRole("table", { name: "Cost per incident" });
+    const [, shop, worker, other] = within(table).getAllByRole("row");
+    expect(within(shop).getByText("graph/propose")).toHaveAttribute(
+      "title",
+      "override version 0123456789abcdef",
+    );
+    expect(shop).toHaveTextContent("graph/propose 01234567");
+    expect(worker).toHaveTextContent("none");
+    expect(other).toHaveTextContent("not recorded");
   });
 
   it("says so when nothing has called a model", () => {
