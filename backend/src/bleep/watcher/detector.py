@@ -59,6 +59,8 @@ class Ignored:
     reason: str
 
 
+ContainerKey = tuple[str, str]
+
 Outcome = OpenIncident | AttachSignals | Recovered | Ignored
 
 
@@ -69,8 +71,9 @@ class Detector:
         # A callable is read on every signal, so a threshold changed in the settings holds at once.
         self._thresholds = thresholds
         self._clock = clock
-        self._pending: dict[str, Signal] = {}  # container -> first death not yet resolved
-        self._deaths: dict[str, deque[Signal]] = defaultdict(deque)
+        # Keyed by (host id, container name): hosts often run same-named containers.
+        self._pending: dict[ContainerKey, Signal] = {}  # first death not yet resolved
+        self._deaths: dict[ContainerKey, deque[Signal]] = defaultdict(deque)
         self._streaks: dict[tuple[str, ...], list[Signal]] = {}
         self._down_since: dict[str, datetime] = {}  # host key -> first failed probe
         self._window_start: dict[str, datetime] = {}  # subject key -> when its incident opened
@@ -114,7 +117,7 @@ class Detector:
                 return self._unreachable(signal, now)
             case _:
                 signals = [signal]
-                if (death := self._pending.pop(signal.container or "", None)) is not None:
+                if (death := self._pending.pop(_key(signal), None)) is not None:
                     signals.insert(0, death)  # this incident already covers that death
                 return self._emit(signal.subject, signals, now)
 
@@ -142,12 +145,13 @@ class Detector:
         grace = timedelta(seconds=self.t.container_grace_s)
         out: list[Outcome] = []
         window = timedelta(seconds=self.t.repeated_window_s)
-        for container in [c for c, d in self._deaths.items() if not d or now - d[-1].at > window]:
-            del self._deaths[container]
+        for key in [k for k, d in self._deaths.items() if not d or now - d[-1].at > window]:
+            del self._deaths[key]
         debounce = timedelta(seconds=self.t.debounce_s)
         for key in [k for k, at in self._window_start.items() if now - at >= debounce]:
             del self._window_start[key]
-        for container, death in list(self._pending.items()):
+        for key, death in list(self._pending.items()):
+            container = key[1]
             if host_id is not None and death.subject.host_id != host_id:
                 continue
             elapsed = now - death.at
@@ -167,10 +171,10 @@ class Detector:
             fresh = started is None or started >= death.at
             in_time = started <= death.at + grace if started else elapsed <= grace
             if back and fresh and in_time:
-                del self._pending[container]
+                del self._pending[key]
                 out.append(Recovered(container, [death]))
             elif elapsed > grace:
-                del self._pending[container]
+                del self._pending[key]
                 late = Signal(
                     subject=death.subject,
                     kind="down_past_grace",
@@ -187,14 +191,14 @@ class Detector:
     # -- containers -------------------------------------------------------------------------
 
     def _death(self, signal: Signal, now: datetime) -> list[Outcome]:
-        container = signal.container or ""
+        key = _key(signal)
         if (
             signal.kind == "container_died"
             and signal.detail.get("exit_code") == 0
             and signal.detail.get("restart_policy", "") in ("", "no")
         ):
             return [Ignored("one-shot exit 0")]
-        deaths = self._deaths[container]
+        deaths = self._deaths[key]
         deaths.append(signal)
         cutoff = signal.at - timedelta(seconds=self.t.repeated_window_s)
         while deaths and deaths[0].at < cutoff:
@@ -209,9 +213,9 @@ class Detector:
             )
             signals = [*deaths, loop]
             deaths.clear()
-            self._pending.pop(container, None)
+            self._pending.pop(key, None)
             return self._emit(signal.subject, signals, now)
-        self._pending.setdefault(container, signal)
+        self._pending.setdefault(key, signal)
         return []
 
     # -- checks and host probes ---------------------------------------------------------------
@@ -266,6 +270,10 @@ class Detector:
             return [AttachSignals(subject, signals)]
         self._window_start[subject.key] = now
         return [OpenIncident(subject, signals)]
+
+
+def _key(signal: Signal) -> ContainerKey:
+    return (signal.subject.host_id, signal.container or "")
 
 
 def _num(signal: Signal, key: str, default: float = 0) -> float:

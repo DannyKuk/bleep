@@ -141,6 +141,56 @@ def test_deaths_are_counted_per_container():
         assert det.feed(died(clock, container=name)) == []
 
 
+H2_SVC = Subject(kind="service", host_id="h2", service_id="web")
+
+
+def died_on(subject: Subject, clock: Clock, container="web-1") -> Signal:
+    detail = {"exit_code": 1, "restart_policy": "always"}
+    return Signal(
+        subject=subject, kind="container_died", at=clock.now, detail=detail, container=container
+    )
+
+
+def test_same_named_deaths_on_two_hosts_are_tracked_separately():
+    det, clock = make()
+    det.feed(died_on(SVC, clock))
+    det.feed(died_on(H2_SVC, clock))  # not dropped as "already pending"
+    out = det.tick(clock.at(20), states(box(health="healthy")), host_id="h1")
+    assert [type(o) for o in out] == [Recovered]
+    out = det.tick(clock.at(90), states(box(state="exited")), host_id="h2")
+    assert isinstance(out[0], OpenIncident)
+    assert out[0].subject == H2_SVC
+
+
+def test_a_recovery_on_one_host_leaves_the_other_hosts_death_pending():
+    det, clock = make()
+    det.feed(died_on(SVC, clock))
+    det.feed(died_on(H2_SVC, clock))
+    det.tick(clock.at(20), states(box(health="healthy")), host_id="h2")
+    out = det.tick(clock.at(90), states(box(state="exited")), host_id="h1")
+    assert isinstance(out[0], OpenIncident)
+    assert out[0].subject == SVC
+
+
+def test_deaths_on_different_hosts_never_add_up_to_a_restart_loop():
+    det, clock = make()
+    for minute, subject in enumerate((SVC, H2_SVC, SVC, H2_SVC)):
+        clock.at(minute * 60)
+        assert det.feed(died_on(subject, clock)) == []
+
+
+def test_three_deaths_on_one_host_still_loop_while_the_other_host_has_one():
+    det, clock = make()
+    det.feed(died_on(H2_SVC, clock))
+    for minute in (0, 1):
+        clock.at(minute * 60)
+        det.feed(died_on(SVC, clock))
+    clock.at(150)
+    out = det.feed(died_on(SVC, clock))
+    assert isinstance(out[0], OpenIncident)
+    assert out[0].subject == SVC
+
+
 def test_one_shot_exit_zero_without_restart_policy_ignored():
     det, clock = make()
     for policy in ("no", ""):
