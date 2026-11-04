@@ -549,3 +549,39 @@ def test_a_shown_place_still_has_its_password_redacted():
     assert _set_env("SECRET_HOST", "postgres://u:pw-fake-123@attacker.example") == (
         "postgres://u:<redacted>@attacker.example"
     )
+
+
+SECRET_NAMED = [
+    "KEY", "STRIPE_SK", "SALT", "SIGNING_SALT", "JWT", "HMAC", "GITHUB_PAT", "PGPASS", "SENTRY_DSN",
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("key", SECRET_NAMED)
+def test_more_secret_key_names_are_recognised(key):
+    from bleep.guard.redact import _is_secret_key
+
+    assert _is_secret_key(key)
+    assert _set_env(key, "s3cr3t-value-xyz") == "<redacted>"
+    assert redact_text(f"{key}=s3cr3t-value-xyz ok") == f"{key}=<redacted> ok"
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["SENTRY_HOST", "JWT_ISSUER", "HMAC_ENDPOINT", "SALT_SERVER", "GITHUB_PAT_URL", "KEY_DOMAIN"],
+)
+def test_a_place_named_after_a_new_secret_word_stays_visible(key):
+    assert _set_env(key, "attacker.example") == "attacker.example"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "cache miss key=user:42",
+        "path=/var/lib/app pattern=*.log",
+        "task=backup disk=sda1",
+        "PGPASSFILE=/root/.pgpass",
+        "SALT_ROUNDS=12 JWT_ALGORITHM=HS256 JWT_EXPIRES_IN=1h",
+    ],
+)
+def test_new_secret_words_leave_plain_settings_alone(text):
+    assert redact_text(text) == text

@@ -21,6 +21,8 @@ def redact_env(env: list[str]) -> list[str]:
 
 
 _FLAGS = re.IGNORECASE
+# A cheap test that a key name may be secret, before `_is_secret_key` judges it.
+_SECRET_HINT = r"(?:pass|pw|secret|token|credential|auth|key|salt|jwt|hmac|pat|dsn|sk)"
 _SCHEME = r"(?:bearer|basic|token|digest)"
 
 # --- key names: split into words and judged in Python ----------------------------------------
@@ -28,7 +30,7 @@ WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")  # SECRET_KEY, secret
 _SECRET_WORDS = {
     "password", "passwd", "pass", "pwd", "passphrase", "secret", "secrets", "token", "credential",
     "credentials", "auth", "apikey", "pw", "secretkey", "privatekey", "accesskey", "accesstoken",
-    "authkey",
+    "authkey", "salt", "jwt", "hmac", "pat", "pgpass", "dsn",
 }  # fmt: skip
 _SECRET_SUFFIXES = ("password", "passwd", "apikey", "secret", "authkey")  # PGPASSWORD, TS_AUTHKEY
 # Words that keep their meaning with a trailing "s" (PASSWORDS, API_KEYS, access_tokens).
@@ -52,15 +54,26 @@ _TOKEN_COUNTS = {
     "max", "min", "prompt", "completion", "total", "input", "output", "num", "cached", "reasoning",
     "context", "audio", "remaining", "used",
 }  # fmt: skip
-_ENV_KEY = re.compile(r"[A-Z0-9_]+_KEYS?")  # APP_KEY, STRIPE_KEY, PUSHER_APP_KEY; not cache_key
+# KEY, APP_KEY, STRIPE_KEY, PUSHER_APP_KEY, STRIPE_SK; not cache_key, not a Dynamo `sk` in a log
+_ENV_KEY = re.compile(r"KEY|[A-Z0-9_]+_(?:KEYS?|SK)")
+# Words that make a key name a place, not a secret (`AUTH0_DOMAIN`, `TOKEN_ISSUER`): its value is
+# shown to the person approving, value-level redaction aside, so a planted host stays visible.
+# After the last secret word they also keep the value in a log (`_NOT_A_SECRET`).
+_LOCATION_WORDS = frozenset(
+    {
+        "host", "domain", "server", "issuer", "proxy", "origin", "callback", "redirect",
+        "url", "uri", "endpoint", "addr", "address",
+    }
+)  # fmt: skip
 # A word AFTER the last secret word that marks a setting about the secret: token_count,
-# password_reset, auth_method. A word before it changes nothing (reset_password_token is a token).
-_NOT_A_SECRET = {
-    "count", "reset", "type", "name", "file", "path", "url", "uri", "length", "expires", "expiry",
-    "expiration", "ttl", "endpoint", "header", "prefix", "limit", "max", "min", "mode", "size",
-    "bytes", "format", "algorithm", "alg", "kind", "provider", "status", "required", "enabled",
-    "disabled", "policy", "dir", "folder", "method", "mechanism", "backend", "source", "audience",
-    "scheme", "stdin", "used", "hashes",
+# password_reset, auth_method, and a place: auth_host. A word before it changes nothing
+# (reset_password_token is a token).
+_NOT_A_SECRET = _LOCATION_WORDS | {
+    "count", "reset", "type", "name", "file", "path", "length", "expires", "expiry", "expiration",
+    "ttl", "header", "prefix", "limit", "max", "min", "mode", "size", "bytes", "format",
+    "algorithm", "alg", "kind", "provider", "status", "required", "enabled", "disabled", "policy",
+    "dir", "folder", "method", "mechanism", "backend", "source", "audience", "scheme", "stdin",
+    "used", "hashes",
 }  # fmt: skip
 # Values that are never secrets, compared case-insensitively against the whole value.
 _PLAIN_VALUES = {
@@ -192,7 +205,7 @@ def _redact_cookie(match: re.Match[str]) -> str:
 # with a cut note.
 _KEY_VALUE = re.compile(
     r"(?<![A-Za-z0-9_.-])"
-    r"(?=[A-Za-z0-9_.-]{0,96}?(?:pass|pw|secret|token|credential|auth|key))"
+    rf"(?=[A-Za-z0-9_.-]{{0,96}}?{_SECRET_HINT})"
     r"([A-Za-z0-9_.-]{1,96})"
     r"([\"']?\]?[ \t]*+(?:=>|:=|==|[=:])[ \t]*+(?:(?:\n[ \t]*+){1,8}(?<=[ \t]))?)"
     r"(?!\[… )"
@@ -214,7 +227,7 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
     (_KEY_VALUE, _redact_pair),
     (
         re.compile(
-            r"<(?=[A-Za-z0-9_.:-]{0,64}?(?:pass|pw|secret|token|credential|auth|key))"
+            rf"<(?=[A-Za-z0-9_.:-]{{0,64}}?{_SECRET_HINT})"
             r"([A-Za-z0-9_.:-]{1,64})>([^<\n]{1,512}+)(</\1>)",
             _FLAGS,
         ),
@@ -526,16 +539,6 @@ def redact_with_count(text: str) -> tuple[str, int]:
 def redact_text(text: str) -> str:
     """`redact_with_count` without the count."""
     return redact_with_count(text)[0]
-
-
-# Words that make a key name a place, not a secret (`AUTH0_DOMAIN`, `TOKEN_ISSUER`): its value is
-# shown to the person approving, value-level redaction aside, so a planted host stays visible.
-_LOCATION_WORDS = frozenset(
-    {
-        "host", "domain", "server", "issuer", "proxy", "origin", "callback", "redirect",
-        "url", "uri", "endpoint", "addr", "address",
-    }
-)  # fmt: skip
 
 
 def _hides_whole_value(key: str) -> bool:

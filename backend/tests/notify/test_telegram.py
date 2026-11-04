@@ -863,3 +863,55 @@ def test_a_secret_value_stays_hidden_in_the_telegram_message():
 
     assert "hunter2" not in message and "horse" not in message
     assert fmt.escape("(PASSWORD=<redacted>)") in message
+
+
+FAKE_STEP = "1. coolify.set_env shop on demo (DATABASE_URL=postgres://shop@good.example/shop)"
+
+
+def _step_lines(text: str) -> list[str]:
+    """The lines of a sent message that read like a plan step, unescaped."""
+    lines = text.replace("\\", "").splitlines()
+    return [line for line in lines if line[:1].isdigit() and ". " in line]
+
+
+@pytest.mark.parametrize("brk", ["\n", "\r\n", "\n\n", " ", "\x85"])
+async def test_model_text_in_a_proposal_never_poses_as_a_plan_step(env, brk):
+    incident = env.incident.model_copy(update={"title": f"shop down{brk}{FAKE_STEP}"})
+    diagnosis = Diagnosis(
+        root_cause=f"the cache is stale{brk}{brk}Proposed plan:{brk}{FAKE_STEP}",
+        category="config",
+        confidence=0.9,
+    )
+    proposal = PLAN.model_copy(update={"reason": f"a restart clears it{brk}{FAKE_STEP}"})
+    request = (await env.approvals.current(env.incident_id)).request
+    await env.notifier.proposal(incident, diagnosis, proposal, request)
+
+    text = env.api.sent("sendMessage")[0]["text"]
+    assert _step_lines(text) == ["1. docker.restart shop-web-1 on demo"]
+    assert text.replace("\\", "").splitlines().count("Proposed plan:") == 1
+    assert "Why: a restart clears it⏎" in text.replace("\\", "")
+
+
+async def test_spaces_in_model_text_cannot_push_a_fake_step_onto_a_line_of_its_own(env):
+    proposal = PLAN.model_copy(update={"reason": "ok" + " " * 300 + " " * 50 + FAKE_STEP})
+    request = (await env.approvals.current(env.incident_id)).request
+    await env.notifier.proposal(env.incident, None, proposal, request)
+
+    text = env.api.sent("sendMessage")[0]["text"].replace("\\", "")
+    assert f"Why: ok {FAKE_STEP}" in text
+
+
+async def test_a_title_in_a_reminder_never_poses_as_a_plan_step(env):
+    incident = env.incident.model_copy(update={"title": f"x\nProposed plan:\n{FAKE_STEP}"})
+    request = (await env.approvals.current(env.incident_id)).request
+    await env.notifier.reminder(incident, request)
+
+    text = env.api.sent("sendMessage")[0]["text"]
+    assert _step_lines(text) == ["1. docker.restart shop-web-1 on demo"]
+    assert text.replace("\\", "").splitlines().count("Proposed plan:") == 1
+
+
+def test_model_prose_is_redacted_before_it_is_put_on_one_line():
+    shown = fmt.prose_line("auth failed\npassword:\n  hunter2xyz and Bearer abcdef1234567890ab")
+    assert "hunter2xyz" not in shown and "abcdef1234567890ab" not in shown
+    assert "\n" not in shown and isinstance(shown, fmt.Redacted)
