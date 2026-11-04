@@ -19,6 +19,7 @@ from bleep.incidents.action_log import ActionLog
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.prompt_overrides import PromptOverrideStore
+from bleep.incidents.quiet import QuietStore
 from bleep.incidents.repository import IncidentRepo
 from bleep.incidents.settings_store import SettingsStore
 from bleep.knowledge.index import KnowledgeIndex
@@ -58,6 +59,7 @@ class AppParts:
     bus: EventBus
     graph_deps: GraphDeps
     incidents: IncidentRepo
+    quiet: QuietStore
     approvals: ApprovalStore
     guard_log: GuardLog
     sessions: SessionStore
@@ -196,7 +198,7 @@ def build_parts(
     if scan is not None:
         dashboard_hosts.scan = scan
     github = GithubClient(github_token_source(github_config, secrets))
-    bus, incidents = EventBus(db), IncidentRepo(db)
+    bus, incidents, quiet = EventBus(db), IncidentRepo(db), QuietStore(db)
     approvals, guard_log = ApprovalStore(db, settings.secret), GuardLog(db)
     notify = setup_notify(settings, db, bus, approvals, guard_log, secrets=secrets)
     embedder = embedder or build_embedder(settings, secrets)  # one model, loaded once, for both
@@ -233,6 +235,7 @@ def build_parts(
             knowledge,
         ),
         incidents=incidents,
+        quiet=quiet,
         approvals=approvals,
         guard_log=guard_log,
         sessions=SessionStore(db),
