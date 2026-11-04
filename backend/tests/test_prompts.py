@@ -81,6 +81,21 @@ def test_check_override_refuses_an_unknown_prompt_and_the_eval_prompts(tmp_promp
 
 
 @pytest.mark.parametrize(
+    "name", ["graph/system", "notify/proposal", "notify/reminder", "notify/answer_approved"]
+)
+def test_the_untrusted_data_rule_and_the_texts_an_approver_reads_cannot_be_overridden(name):
+    assert name not in prompts.overridable_names()
+    with pytest.raises(PromptError):
+        prompts.check_override(name, prompts.file_text(name))
+
+
+def test_no_telegram_text_is_overridable_and_the_graph_prompts_still_are():
+    names = prompts.overridable_names()
+    assert not [name for name in names if name.startswith(("notify/", "evals/"))]
+    assert {"graph/investigate", "graph/propose", "watcher/recovery_line"} <= set(names)
+
+
+@pytest.mark.parametrize(
     "name", ["../secrets", "demo/../demo/hello", "/etc/passwd", "demo\\hello", "readme"]
 )
 def test_a_name_outside_the_prompt_files_is_unknown(tmp_prompts, name):

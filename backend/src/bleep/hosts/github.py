@@ -59,6 +59,10 @@ class GithubUnavailable(GithubError):
     """GitHub could not be reached, timed out or answered with a server error."""
 
 
+class TooLarge(GithubError):
+    """The file is over the 1 MB the contents API serves, so it comes without its text."""
+
+
 class _Person(BaseModel):
     name: str = ""
     date: datetime
@@ -174,9 +178,13 @@ def _rate_limited(response: httpx.Response) -> bool:
     )
 
 
+def _wanted(entry: _RawEntry, suffixes: tuple[str, ...]) -> bool:
+    return not suffixes or entry.path.lower().endswith(tuple(s.lower() for s in suffixes))
+
+
 def _decode(raw: _RawFile) -> str:
     if raw.encoding != "base64" or raw.content is None:
-        raise GithubError(f"{raw.path} is too large to read through the API")
+        raise TooLarge(f"{raw.path} is too large to read through the API")
     try:
         return base64.b64decode(raw.content).decode("utf-8", errors="replace")
     except binascii.Error as error:
@@ -248,11 +256,16 @@ class GithubClient:
         return _file(_parse(_RawFile, data))
 
     async def list_files(
-        self, repo: str, path: str = "docs", max_files: int = 200
+        self,
+        repo: str,
+        path: str = "docs",
+        max_files: int = 200,
+        suffixes: tuple[str, ...] = (),
     ) -> list[RepoEntry]:
         """Every file under the folder `path`, sub-folders included, at most `max_files` and
-        `MAX_FOLDERS` folders. `NotFound` when `path` is not there; a sub-folder that vanished
-        while it was listed is skipped."""
+        `MAX_FOLDERS` folders; with `suffixes`, only the files whose name ends with one of them
+        (any case), and only those count toward `max_files`. `NotFound` when `path` is not there;
+        a sub-folder that vanished while it was listed is skipped."""
         check_repo(repo)
         check_path(path)
         found: list[RepoEntry] = []
@@ -274,7 +287,7 @@ class GithubClient:
             for entry in _parse(list[_RawEntry], data):
                 if entry.type == "dir":
                     folders.append(entry.path)
-                elif entry.type == "file" and len(found) < max_files:
+                elif entry.type == "file" and len(found) < max_files and _wanted(entry, suffixes):
                     found.append(
                         RepoEntry(path=entry.path, type="file", size=entry.size, url=entry.html_url)
                     )

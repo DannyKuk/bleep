@@ -221,6 +221,20 @@ async def test_list_files_stops_at_max_files():
     assert len(await github.list_files(REPO, "docs", max_files=3)) == 3
 
 
+async def test_with_suffixes_only_matching_files_are_listed_and_counted():
+    images = [{"path": f"docs/img/{n}.png", "type": "file", "size": 1} for n in range(50)]
+    pages = [{"path": f"docs/{n}.MD", "type": "file", "size": 1} for n in range(3)]
+    github, _ = client(
+        {"/repos/encode/httpx/contents/docs": httpx.Response(200, json=images + pages)}
+    )
+
+    files = await github.list_files(REPO, "docs", max_files=3, suffixes=(".md", ".markdown"))
+
+    assert [f.path for f in files] == ["docs/0.MD", "docs/1.MD", "docs/2.MD"]
+    unfiltered = await github.list_files(REPO, "docs", max_files=3)
+    assert [f.path for f in unfiltered] == ["docs/img/0.png", "docs/img/1.png", "docs/img/2.png"]
+
+
 async def test_a_missing_docs_folder_is_not_found():
     github, _ = client({})
     with pytest.raises(NotFound):

@@ -151,7 +151,11 @@ class SettingsStore:
     async def plugin_view(self, name: str) -> PluginView:
         """The plugin as the API shows it, with its version read first: a change while the
         health check runs makes the version older than the view, never newer."""
-        return await self._plugins.view(name, version=self.plugin_version(name))
+        version = self.plugin_version(name)
+        stored = self._plugin_rows.get(name, _PluginRow()).enabled
+        return await self._plugins.view(
+            name, version=version, switched_on=stored or self._plugins.is_enabled(name)
+        )
 
     def plugin_toggles(self) -> dict[str, bool]:
         return {name: self._plugins.is_enabled(name) for name in self._plugins.names()}
@@ -189,9 +193,9 @@ class SettingsStore:
 
     async def load(self) -> None:
         """Read the stored overrides and put them in force. A row that no longer fits (a host
-        gone from the hosts file or a plugin from Bleep, a field renamed, a plugin's secret unset)
-        is logged and left
-        out, never fatal: Bleep starts on the layers below it."""
+        gone from the hosts file or a plugin from Bleep, a field renamed) is logged and left out,
+        never fatal: Bleep starts on the layers below it. A plugin switched on that cannot run
+        now (its secret is unset) keeps its row and is logged as waiting."""
         rows = await self._rows()
         async with self._lock:
             for key, value in rows.items():
@@ -286,7 +290,12 @@ class SettingsStore:
             self._plugins.configure(name, row.settings)
             self._plugin_rows[name] = row
             if row.enabled:
-                self._plugins.enable(name, True)
+                try:
+                    self._plugins.enable(name, True)
+                except PluginError as waiting:
+                    log.warning(
+                        "settings: plugin %s stays switched on but does not run: %s", name, waiting
+                    )
         else:
             raise ValueError("unknown section")
 

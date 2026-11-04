@@ -2,8 +2,10 @@
 # Secrets never go in this file: a secret is a reference, {env: NAME} or {file: PATH}.
 # Unknown keys are rejected, so a typo fails at startup instead of being ignored.
 
-# Optional GitHub token, used to read every service's repo (recent commits and diffs). Without
-# it, or when the variable is unset or empty, Bleep reads public repos only (60 requests an hour).
+# Optional GitHub token, used to read every service's repo: recent commits and diffs, and the docs
+# (docs_paths) for knowledge search. A fine-grained token with Contents and Metadata read-only
+# (docs/setup.md). Without it, or when the variable is unset or empty, Bleep reads public repos
+# only (60 requests an hour).
 github:
   token: {env: GITHUB_TOKEN}
 
@@ -37,6 +39,7 @@ hosts:
             body_contains: ok    # optional text the body must contain
         repo: example/shop       # GitHub repo, owner/name
         docs_paths: [docs/runbook.md, ops]          # markdown files or folders for knowledge search (default docs)
+        readme: true                               # read the repo's README too (default true); another service linking the same repo with the default turns it back on
         protected_containers: [shop-db]            # never a target of an action
         rules:
           - Roll back before restarting when the last deploy is under an hour old.

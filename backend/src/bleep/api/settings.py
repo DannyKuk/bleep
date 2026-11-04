@@ -65,7 +65,7 @@ async def put_settings(
     try:
         await parts.settings_store.update(update, version=version_of(if_match))
     except SettingsStale as stale:
-        return stale_response(stale, "the settings changed since this version was read")
+        return stale_response(stale.current, "the settings changed since this version was read")
     except SettingsRefused as refusal:
         raise HTTPException(422, str(refusal)) from None
     view = settings_view(parts)
@@ -78,12 +78,12 @@ def version_of(if_match: str) -> str:
     return if_match.strip().removeprefix("W/").strip('"')
 
 
-def stale_response(stale: SettingsStale, what: str) -> JSONResponse:
-    """409: nothing was saved; the body and the `ETag` carry the version now."""
+def stale_response(current: str, what: str) -> JSONResponse:
+    """409: nothing was saved; the body and the `ETag` carry the version now, `current`."""
     return JSONResponse(
-        {"detail": f"{what}; nothing was saved", "version": stale.current},
+        {"detail": f"{what}; nothing was saved", "version": current},
         status_code=409,
-        headers={"ETag": f'"{stale.current}"'},
+        headers={"ETag": f'"{current}"'},
     )
 
 

@@ -102,6 +102,25 @@ def test_switching_on_needs_valid_settings():
         plugins().enable("coolify", True)
 
 
+def test_invalid_settings_say_why_for_each_field_without_the_value_given():
+    with pytest.raises(PluginError) as refusal:
+        plugins().configure("coolify", {"team": ["not-a-team-name"], "surprise": "typed-value"})
+    message = str(refusal.value)
+    assert "url: Field required" in message
+    assert "team: Input should be a valid string" in message
+    assert "surprise: Extra inputs are not permitted" in message
+    assert "not-a-team-name" not in message and "typed-value" not in message
+
+
+async def test_the_view_says_whether_the_plugin_is_switched_on_apart_from_running():
+    registry = plugins(env={})
+    registry.configure("coolify", {"url": "https://coolify.example.test"})
+    waiting = await registry.view("coolify", version="v1", switched_on=True)
+    assert (waiting.enabled, waiting.switched_on) == (False, True)
+    assert (await registry.view("coolify", version="v1")).switched_on is False
+    assert (await on(plugins()).view("coolify", version="v1")).switched_on is True
+
+
 def test_the_plugin_gets_its_settings_and_secrets_by_env_name():
     plugin = FakeCoolifyPlugin()
     on(plugins(plugin=plugin))

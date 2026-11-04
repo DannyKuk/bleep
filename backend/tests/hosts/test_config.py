@@ -131,3 +131,49 @@ def test_a_bad_service_url_is_a_config_error_naming_the_host_and_the_url(tmp_pat
     with pytest.raises(HostsFileError) as error:
         load_hosts_file(write(tmp_path, f"hosts: [{host}]\n"))
     assert "host 'a'" in str(error.value) and url in str(error.value)
+
+
+def with_docs_paths(tmp_path, paths: str) -> Path:
+    service = f"{{shop: {{repo: acme/shop, docs_paths: {paths}}}}}"
+    return write(tmp_path, f"hosts: [{SSH[:-1]}, services: {service}}}]\n")
+
+
+@pytest.mark.parametrize(
+    ("given", "normal"),
+    [
+        ("[docs/]", ["docs"]),
+        ("[./docs]", ["docs"]),
+        ("['./docs/runbook.md']", ["docs/runbook.md"]),
+        ("['docs//ops/./', ' ops ']", ["docs/ops", "ops"]),
+        ("[docs, ./docs/, ops]", ["docs", "ops"]),
+    ],
+)
+def test_docs_paths_are_normalised_when_the_hosts_file_loads(tmp_path, given, normal):
+    (host,) = load_hosts_file(with_docs_paths(tmp_path, given)).hosts
+
+    assert host.services["shop"].docs_paths == normal
+
+
+@pytest.mark.parametrize(
+    ("given", "why"),
+    [
+        ("['../secrets']", "inside the repo"),
+        ("['docs/../../etc']", "inside the repo"),
+        ("['/etc/passwd']", "relative to the repo"),
+        ("['']", "names no folder or file"),
+        ("['./']", "names no folder or file"),
+        ("['docs\\\\ops']", "not a file path"),
+    ],
+)
+def test_a_docs_path_outside_the_repo_or_empty_is_refused_with_its_reason(tmp_path, given, why):
+    with pytest.raises(HostsFileError, match=why) as refused:
+        load_hosts_file(with_docs_paths(tmp_path, given))
+
+    assert "shop" in str(refused.value) and "docs_paths" in str(refused.value)
+
+
+def test_the_readme_is_read_unless_the_service_says_not():
+    services = load_hosts_file(EXAMPLE).hosts[1].services
+    assert services["shop"].readme is True
+    shop = load_hosts_file(DEMO).hosts[0].services["shop"]
+    assert (shop.docs_paths, shop.readme) == (["demo/shop/docs"], False)

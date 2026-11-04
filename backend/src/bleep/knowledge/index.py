@@ -3,8 +3,10 @@ cosine with numpy (brute force, as memory does; a few thousand chunks take a few
 
 `ingest` embeds a document only when its content hash or the embedder changed, so refreshing a
 source on every boot costs nothing for pages already in. `sync` makes one source (or one prefix
-of its ids, such as one repo) hold exactly the documents given. `search` returns the best chunk of
-each of the `k` closest documents, so one long page cannot fill every slot.
+of its ids, such as one repo) hold exactly the documents given. A repo's docs are redacted before
+they are stored or embedded, as memory is: whoever can push to the repo wrote them, and the
+embedder may be a remote endpoint. `search` returns the best chunk of each of the `k` closest
+documents, so one long page cannot fill every slot.
 See docs/design/knowledge.md.
 """
 
@@ -17,6 +19,7 @@ from datetime import UTC, datetime
 
 import numpy as np
 
+from bleep.guard.redact import redact_text
 from bleep.knowledge.chunking import CHUNK_VERSION, MAX_TOKENS, OVERLAP, Chunk, chunk_markdown
 from bleep.memory.embeddings import Embedder
 from bleep.schemas.knowledge import KnowledgeDocument, KnowledgeHit, KnowledgeSource
@@ -24,6 +27,9 @@ from bleep.store.db import Database
 
 HEADING_SEPARATOR = " > "
 EMBED_BATCH = 32
+# Only a repo's docs: the Docker snapshot is reviewed in Bleep's repo, and an incident page comes
+# from memory, which redacted the record when it stored it.
+REDACTED_SOURCES = {"repo"}
 
 
 @dataclass(frozen=True)
@@ -38,6 +44,13 @@ def content_hash(doc: KnowledgeDocument, max_tokens: int, overlap: int) -> str:
     version included."""
     payload = json.dumps([doc.title, doc.url, doc.text, max_tokens, overlap, CHUNK_VERSION])
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def redacted(doc: KnowledgeDocument) -> KnowledgeDocument:
+    """`doc` without the secrets its title and text hold, when it comes from a source that may."""
+    if doc.source not in REDACTED_SOURCES:
+        return doc
+    return doc.model_copy(update={"title": redact_text(doc.title), "text": redact_text(doc.text)})
 
 
 def embedded_text(title: str, heading: str, text: str) -> str:
@@ -84,6 +97,7 @@ class KnowledgeIndex:
     async def ingest(self, doc: KnowledgeDocument) -> bool:
         """Index `doc`, replacing an earlier version of it; False when it was already in, unchanged
         and from the current embedder, so nothing was embedded."""
+        doc = redacted(doc)
         digest = content_hash(doc, self.max_tokens, self.overlap)
         if await self._stored(doc.id) == (digest, self.embedder.name):
             return False
@@ -194,9 +208,11 @@ class KnowledgeIndex:
         source: KnowledgeSource,
         docs: Iterable[KnowledgeDocument],
         prefix: str | None = None,
+        keep: Iterable[str] = (),
     ) -> SyncResult:
         """Make the documents under `prefix` (default: the whole source) exactly `docs`: new and
-        changed ones are embedded, unchanged ones kept, the others removed."""
+        changed ones are embedded, unchanged ones kept, the others removed, except those with an
+        id in `keep`, which stay as they were."""
         docs = list(docs)
         prefix = prefix if prefix is not None else f"{source}:"
         strays = [d.id for d in docs if d.source != source or not d.id.startswith(prefix)]
@@ -205,7 +221,7 @@ class KnowledgeIndex:
         embedded = 0
         for doc in docs:
             embedded += await self.ingest(doc)
-        gone = await self.document_ids(prefix) - {d.id for d in docs}
+        gone = await self.document_ids(prefix) - {d.id for d in docs} - set(keep)
         removed = await self.remove(gone)
         return SyncResult(embedded=embedded, unchanged=len(docs) - embedded, removed=removed)
 

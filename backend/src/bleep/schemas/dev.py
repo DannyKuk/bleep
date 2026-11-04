@@ -22,6 +22,7 @@ class PromptView(BaseModel):
     file_text: str
     override: str | None = None
     overridden_at: datetime | None = None
+    version: str  # of the override; a save or reset sends it back in `If-Match`
 
 
 class PromptOverrideBody(BaseModel):

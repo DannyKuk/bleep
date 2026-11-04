@@ -21,6 +21,7 @@ from pydantic import (
 
 # A GitHub repo, owner/name; `.` and `..` are no names, since they would change a request's path.
 REPO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/(?!\.\.?$)[A-Za-z0-9._-]{1,100}")
+MAX_DOCS_PATH = 300
 
 
 class HostsFileError(Exception):
@@ -76,10 +77,28 @@ def check_url_syntax(url: str) -> str | None:
     return None
 
 
+def normalise_docs_path(path: str) -> str:
+    """`path` as the repo-relative path GitHub is asked for: `./docs`, `docs/` and `docs//ops`
+    become `docs` and `docs/ops`. Raises ValueError for a path that leaves the repo or names
+    nothing: absolute, with a `..` part, empty, or with a backslash or control character."""
+    if path.strip().startswith("/"):
+        raise ValueError(f"docs path {path!r} must be relative to the repo, such as docs")
+    parts = [part for part in path.strip().split("/") if part not in ("", ".")]
+    if ".." in parts:
+        raise ValueError(f"docs path {path!r} must stay inside the repo: no .. part")
+    if not parts:
+        raise ValueError(f"docs path {path!r} names no folder or file, such as docs")
+    normal = "/".join(parts)
+    if len(normal) > MAX_DOCS_PATH or re.search(r"[\\\x00-\x1f\x7f]", normal):
+        raise ValueError(f"docs path {path[:80]!r} is not a file path inside the repo")
+    return normal
+
+
 class ServiceOverrides(Strict):
     urls: list[UrlCheckConfig] = []
     repo: str | None = None
     docs_paths: list[str] = []
+    readme: bool = True
     protected_containers: list[str] = []
     rules: list[str] = []
 
@@ -89,6 +108,11 @@ class ServiceOverrides(Strict):
         if value is not None and not REPO_NAME.fullmatch(value):
             raise ValueError(f"repo {value!r} must be a GitHub repo name, owner/name")
         return value
+
+    @field_validator("docs_paths")
+    @classmethod
+    def _docs_paths(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(normalise_docs_path(path) for path in value))
 
 
 class HostConfig(Strict):

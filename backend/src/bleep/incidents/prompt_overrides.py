@@ -2,21 +2,28 @@
 
 An override must pass exactly the loader's checks (`prompts.check_override`) and holds no secret,
 checked when it is saved and again when it is loaded. Reset deletes it, and the loader falls back
-to the file. See docs/design/dev-panel.md.
+to the file. A save or reset names the prompt's `version` it was built from and is refused when
+the prompt has changed since; each one that changes something is recorded in the guard log by
+name, never with its text. See docs/design/dev-panel.md.
 """
 
 import asyncio
+import hashlib
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
 from bleep import prompts
+from bleep.guard.log import GuardLogger
 from bleep.guard.secret_fields import find_secrets
 from bleep.incidents.repository import utcnow
 from bleep.store.db import Database
 
 log = logging.getLogger(__name__)
+
+GUARD_INCIDENT = "dev-panel"  # guard_log rows for overrides belong to no incident
 
 
 class UnknownPrompt(LookupError):
@@ -30,6 +37,15 @@ class PromptRefused(ValueError):
     """The override is not saved; the text says why and never quotes the override."""
 
 
+class PromptStale(Exception):
+    """The change was built from a version of the prompt that has changed since; nothing is
+    applied. `current` is the version now."""
+
+    def __init__(self, current: str) -> None:
+        super().__init__("the prompt changed since this version was read")
+        self.current = current
+
+
 @dataclass(frozen=True)
 class PromptOverride:
     text: str
@@ -37,14 +53,24 @@ class PromptOverride:
 
 
 class PromptOverrideStore:
-    def __init__(self, db: Database, clock: Callable[[], datetime] = utcnow) -> None:
+    def __init__(
+        self, db: Database, guard_log: GuardLogger, clock: Callable[[], datetime] = utcnow
+    ) -> None:
         self._db = db
+        self._guard_log = guard_log
         self._clock = clock
         self._overrides: dict[str, PromptOverride] = {}
         self._lock = asyncio.Lock()
 
     def overrides(self) -> dict[str, PromptOverride]:
         return dict(self._overrides)
+
+    def version(self, name: str) -> str:
+        """A hash of the override in force for `name` (or of none), from its content, so it holds
+        across a restart."""
+        override = self._overrides.get(name)
+        text = override.text if override is not None else None
+        return hashlib.sha256(json.dumps({"text": text}).encode()).hexdigest()[:16]
 
     async def load(self) -> None:
         """Read the stored overrides and put them in force. One that no longer fits (its file
@@ -68,12 +94,14 @@ class PromptOverrideStore:
                 self._overrides[row["name"]] = PromptOverride(row["text"], updated_at)
             self._apply()
 
-    async def set(self, name: str, text: str) -> PromptOverride:
-        """Store `text` as the prompt `name` and put it in force. Raises `UnknownPrompt` or
-        `PromptRefused` with nothing changed."""
+    async def set(self, name: str, text: str, *, version: str) -> PromptOverride:
+        """Store `text` as the prompt `name` and put it in force; `text` was written from the
+        prompt at `version`. Raises `UnknownPrompt`, `PromptRefused` or `PromptStale` with nothing
+        changed."""
         _check(name, text)
         override = PromptOverride(text, self._clock())
         async with self._lock:
+            self._refuse_stale(name, version)
             conn = await self._db.connect()
             try:
                 await conn.execute(
@@ -87,13 +115,18 @@ class PromptOverrideStore:
                 await conn.close()
             self._overrides[name] = override
             self._apply()
+        self._guard_log.record(GUARD_INCIDENT, "prompt_override", f"override of {name} saved")
         return override
 
-    async def reset(self, name: str) -> None:
-        """Delete the override, so `name` is read from its file again."""
+    async def reset(self, name: str, *, version: str) -> None:
+        """Delete the override, so `name` is read from its file again; the reset was asked from
+        the prompt at `version`. Raises `UnknownPrompt` or `PromptStale` with nothing changed."""
         if name not in prompts.overridable_names():
             raise UnknownPrompt(name)
         async with self._lock:
+            self._refuse_stale(name, version)
+            if name not in self._overrides:
+                return
             conn = await self._db.connect()
             try:
                 await conn.execute("DELETE FROM prompt_overrides WHERE name = ?", (name,))
@@ -102,10 +135,15 @@ class PromptOverrideStore:
                 await conn.close()
             self._overrides.pop(name, None)
             self._apply()
+        self._guard_log.record(GUARD_INCIDENT, "prompt_override", f"override of {name} reset")
 
     def close(self) -> None:
         """Put every file back in the loader; the stored overrides stay for the next start."""
         prompts.use_overrides({})
+
+    def _refuse_stale(self, name: str, version: str) -> None:
+        if version != self.version(name):
+            raise PromptStale(self.version(name))
 
     def _apply(self) -> None:
         prompts.use_overrides({name: o.text for name, o in self._overrides.items()})

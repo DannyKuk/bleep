@@ -3,12 +3,14 @@
 # Taken from Langfuse's own docker-compose.yml (v4.74.0), trimmed to what tracing needs; see
 # docs/design/observability.md. The project, its keys and the login are created on first start
 # from the LANGFUSE_INIT_* values in .env, so no clicks in the UI are needed. The UI is at
-# http://localhost:3001 (3000 is Bleep's dashboard); nothing else is published.
+# http://localhost:3001 (3000 is Bleep's dashboard); nothing else is published. The trace links on
+# the incidents and Langfuse's own login use LANGFUSE_UI_URL from .env, default
+# http://localhost:3001.
 # Pass this file only with --profile observability: it switches the backend's tracing on, and
 # without the profile no Langfuse runs to take the traces, so they are dropped.
 
 x-langfuse-env: &langfuse-env
-  NEXTAUTH_URL: http://localhost:3001
+  NEXTAUTH_URL: ${LANGFUSE_UI_URL:-http://localhost:3001}  # the same address the links use
   DATABASE_URL: postgresql://postgres:${LANGFUSE_POSTGRES_PASSWORD:-postgres}@langfuse-postgres:5432/postgres
   SALT: ${LANGFUSE_SALT:?set LANGFUSE_SALT in .env}
   ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?set LANGFUSE_ENCRYPTION_KEY in .env (openssl rand -hex 32)}
@@ -54,7 +56,7 @@ services:
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:?set LANGFUSE_INIT_PROJECT_PUBLIC_KEY in .env}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:?set LANGFUSE_INIT_PROJECT_SECRET_KEY in .env}
       LANGFUSE_BASE_URL: http://langfuse-web:3000
-      LANGFUSE_UI_URL: http://localhost:3001
+      LANGFUSE_UI_URL: ${LANGFUSE_UI_URL:-http://localhost:3001}  # what a browser opens
       LANGFUSE_PROJECT_ID: bleep  # LANGFUSE_INIT_PROJECT_ID below; the trace links name it
 
   langfuse-worker:

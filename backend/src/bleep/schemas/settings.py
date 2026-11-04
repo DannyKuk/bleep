@@ -1,9 +1,11 @@
 """Settings the agent reads (which models to call, how much it may spend, when a signal is an
 incident) and the overrides a person may set from the dashboard."""
 
+import re
 from typing import Annotated, Any, Literal
 
 from pydantic import (
+    AfterValidator,
     AliasChoices,
     BaseModel,
     ConfigDict,
@@ -81,8 +83,21 @@ class Thresholds(BaseModel):
 # the hosts file, else the defaults above. Bounds keep a typo from switching a guard off.
 ModelName = Annotated[str, StringConstraints(min_length=1, max_length=200, pattern=r"^[\w./:@-]+$")]
 RuleText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+
+
+def _one_plain_line(name: str) -> str:
+    if _CONTROL.search(name):
+        raise ValueError("must be one line without control characters")
+    return name
+
+
+# A container's name, or a Coolify application's as written in Coolify (`Shop API`, `static:main`),
+# which the plan check slugs.
 ContainerName = Annotated[
-    str, StringConstraints(min_length=1, max_length=255, pattern=r"^[A-Za-z0-9][\w.-]*$")
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
+    AfterValidator(_one_plain_line),
 ]
 ServiceKey = Annotated[str, StringConstraints(min_length=1, max_length=255)]
 

@@ -1,5 +1,6 @@
 """The plugins: listed with their settings and which secrets are set, configured, switched."""
 
+import asyncio
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException
@@ -19,8 +20,10 @@ Parts = Annotated[AppParts, Depends(get_parts)]
 
 @router.get("/plugins")
 async def list_plugins(parts: Parts) -> list[PluginView]:
-    """Every plugin, with health for those switched on; a secret is only ever "set" or not."""
-    return [await parts.settings_store.plugin_view(name) for name in parts.plugins.names()]
+    """Every plugin, with health for those switched on; a secret is only ever "set" or not. The
+    health checks run together, each bounded by its own timeout."""
+    views = (parts.settings_store.plugin_view(name) for name in parts.plugins.names())
+    return list(await asyncio.gather(*views))
 
 
 @router.put("/plugins/{name}", response_model=PluginView)
@@ -40,7 +43,7 @@ async def put_plugin(
     try:
         await parts.settings_store.set_plugin(name, update, version=version_of(if_match))
     except SettingsStale as stale:
-        return stale_response(stale, "the plugin changed since this version was read")
+        return stale_response(stale.current, "the plugin changed since this version was read")
     except UnknownPlugin:
         raise HTTPException(404, "no such plugin") from None
     except (PluginError, SettingsRefused) as refusal:
