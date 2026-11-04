@@ -1,0 +1,84 @@
+import { describe, expect, it } from "vitest";
+
+import { event } from "@/components/incident/fixtures";
+import { progressSteps } from "@/components/incident/progress";
+import type { IncidentEvent, IncidentStatus } from "@/lib/api-types";
+
+/** `node_started` and `node_finished` for each node, in order. */
+function ran(...nodes: string[]): IncidentEvent[] {
+  return nodes.flatMap((node) => [
+    event("node_started", { node }),
+    event("node_finished", { node }),
+  ]);
+}
+
+const started = (node: string) => event("node_started", { node });
+
+function states(events: IncidentEvent[], status: IncidentStatus) {
+  return Object.fromEntries(
+    progressSteps(events, status).map(({ label, state }) => [label, state]),
+  );
+}
+
+describe("progressSteps", () => {
+  it("marks the finished steps done and the running one current", () => {
+    expect(states([...ran("gather"), started("investigate")], "investigating")).toEqual({
+      Gather: "done",
+      Investigate: "current",
+      Diagnose: "todo",
+      Plan: "todo",
+      "Your yes": "todo",
+      Fix: "todo",
+      Check: "todo",
+      Report: "todo",
+    });
+  });
+
+  it("waits on Your yes while the plan waits", () => {
+    const events = [...ran("gather", "investigate", "diagnose", "propose"), started("approval")];
+    const steps = states(events, "awaiting_approval");
+    expect(steps["Plan"]).toBe("done");
+    expect(steps["Your yes"]).toBe("current");
+  });
+
+  it("shows Your yes as current from the status while the history is still loading", () => {
+    expect(states([], "awaiting_approval")["Your yes"]).toBe("current");
+  });
+
+  it("leaves Fix and Check grey when nothing ran, and the report done", () => {
+    const events = ran("gather", "investigate", "diagnose", "propose", "approval", "report");
+    const steps = states(events, "closed");
+    expect(steps["Fix"]).toBe("todo");
+    expect(steps["Check"]).toBe("todo");
+    expect(steps["Report"]).toBe("done");
+    expect(Object.values(steps)).not.toContain("current");
+  });
+
+  it("shows a closed incident's report done even without its node events", () => {
+    expect(states([], "closed")["Report"]).toBe("done");
+  });
+
+  it("marks every step done once a fix was checked", () => {
+    const all = ["gather", "investigate", "diagnose", "propose", "approval", "execute", "verify"];
+    const steps = states(ran(...all, "report"), "resolved");
+    expect(Object.values(steps).every((state) => state === "done")).toBe(true);
+  });
+
+  it("marks the step a failed run stopped at", () => {
+    const events = [...ran("gather"), started("investigate")];
+    const steps = states(events, "failed");
+    expect(steps["Gather"]).toBe("done");
+    expect(steps["Investigate"]).toBe("stopped");
+    expect(Object.values(steps)).not.toContain("current");
+  });
+
+  it("clears the later steps when a failed check sends the run back to investigate", () => {
+    const first = ["gather", "investigate", "diagnose", "propose", "approval", "execute", "verify"];
+    const steps = states([...ran(...first), started("investigate")], "investigating");
+    expect(steps["Gather"]).toBe("done");
+    expect(steps["Investigate"]).toBe("current");
+    for (const label of ["Diagnose", "Plan", "Your yes", "Fix", "Check"]) {
+      expect(steps[label], label).toBe("todo");
+    }
+  });
+});

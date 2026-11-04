@@ -1,7 +1,14 @@
 import { act, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { approval, detail, event, incident, report } from "@/components/incident/fixtures";
+import {
+  approval,
+  detail,
+  diagnosis,
+  event,
+  incident,
+  report,
+} from "@/components/incident/fixtures";
 import { DETAIL_POLL_MS, IncidentPage } from "@/components/incident/incident-page";
 import type { IncidentDetail } from "@/lib/api-types";
 
@@ -49,10 +56,36 @@ describe("IncidentPage", () => {
   it("shows the incident with its diagnosis and the plan waiting for a decision", async () => {
     stubBackend(detail());
     render(<IncidentPage id="inc-1" />);
-    expect(await screen.findByRole("heading", { name: "shop-web-1 died" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "shop is in trouble. Can I fix it?" }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("shop-web-1 died")[0]).toBeInTheDocument();
     expect(screen.getByText("Needs your yes")).toBeInTheDocument();
     expect(screen.getByText(/restart policy is no/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Yes, go ahead" })).toBeEnabled();
+  });
+
+  it("tells the story from the top: Bleep's mood, the progress, the plan waiting for you", async () => {
+    stubBackend(detail());
+    const { container } = render(<IncidentPage id="inc-1" />);
+    const plan = await screen.findByRole("region", { name: "Here is my plan" });
+    expect(container.querySelector("svg[data-mood]")).toHaveAttribute("data-mood", "needs_you");
+    expect(container.querySelector("svg[data-mood]")).toHaveAttribute("width", "112");
+    const progress = within(screen.getByRole("list", { name: "Progress" }));
+    expect(progress.getByText("Your yes").closest("li")).toHaveAttribute("aria-current", "step");
+    expect(plan).toHaveClass("border-accent");
+    expect(screen.getByRole("region", { name: "What I found" })).toHaveClass("border-line");
+    expect(screen.getByRole("region", { name: "How I got there" })).toBeInTheDocument();
+    const timeline = within(screen.getByRole("list", { name: "Timeline" }));
+    expect(timeline.getAllByRole("listitem")[0]).toHaveTextContent("shop-web-1 died");
+  });
+
+  it("shows the not-sure Bleep while an unsure diagnosis waits", async () => {
+    stubBackend(detail({ diagnosis: diagnosis({ unsure: true }) }));
+    const { container } = render(<IncidentPage id="inc-1" />);
+    await screen.findByRole("region", { name: "Here is my plan" });
+    expect(container.querySelector("svg[data-mood]")).toHaveAttribute("data-mood", "not_sure");
+    expect(screen.getByRole("note")).toHaveTextContent("I am not sure");
   });
 
   it("asks for a vote on the diagnosis and the plan, showing the one already given", async () => {
@@ -62,8 +95,8 @@ describe("IncidentPage", () => {
       }),
     );
     render(<IncidentPage id="inc-1" />);
-    const diagnosisPanel = await screen.findByRole("region", { name: "Diagnosis" });
-    const proposalPanel = screen.getByRole("region", { name: "Proposal" });
+    const diagnosisPanel = await screen.findByRole("region", { name: "What I found" });
+    const proposalPanel = screen.getByRole("region", { name: "Here is my plan" });
     expect(diagnosisPanel).toHaveTextContent("Was this diagnosis right?");
     expect(proposalPanel).toHaveTextContent("Was this plan right?");
     expect(within(diagnosisPanel).getByRole("button", { name: "Wrong" })).toHaveAttribute(
@@ -79,7 +112,7 @@ describe("IncidentPage", () => {
   it("asks for no vote before there is a diagnosis or a plan", async () => {
     stubBackend(detail({ diagnosis: null, proposal: null, approval: null }));
     render(<IncidentPage id="inc-1" />);
-    await screen.findByRole("heading", { name: "shop-web-1 died" });
+    await screen.findByRole("heading", { name: "shop is in trouble. Can I fix it?" });
     expect(screen.queryByText(/Was this .* right\?/)).not.toBeInTheDocument();
   });
 
@@ -106,7 +139,7 @@ describe("IncidentPage", () => {
     });
     const fetchMock = stubBackend(detail(), decidedOnTelegram);
     render(<IncidentPage id="inc-1" />);
-    await screen.findByRole("button", { name: "Approve" });
+    await screen.findByRole("button", { name: "Yes, go ahead" });
     expect(detailReads(fetchMock)).toBe(1);
 
     const send = (kind: string, payload: Record<string, unknown>) =>
@@ -117,7 +150,7 @@ describe("IncidentPage", () => {
     await act(async () => send("decision", { kind: "approve", text: null, via: "telegram" }));
     expect(detailReads(fetchMock)).toBe(2);
     expect(await screen.findByText(/Approved on Telegram,/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Yes, go ahead" })).toBeDisabled();
   });
 
   it("reads the incident again on an interval, for status changes that publish no event", async () => {
@@ -129,6 +162,7 @@ describe("IncidentPage", () => {
     render(<IncidentPage id="inc-1" />);
     await act(async () => {});
     expect(screen.getByText("Investigating")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("I am looking into it.");
 
     await act(async () => void vi.advanceTimersByTime(DETAIL_POLL_MS));
     expect(detailReads(fetchMock)).toBe(2);

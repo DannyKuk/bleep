@@ -1,5 +1,6 @@
-import { ChevronRight, Loader2, Wrench } from "lucide-react";
+import { ChevronRight, Loader2 } from "lucide-react";
 
+import { toolSentence } from "@/components/incident/tool-sentences";
 import type { IncidentEvent } from "@/lib/api-types";
 import { formatTime } from "@/lib/format";
 
@@ -49,36 +50,54 @@ function argText(value: unknown): string {
 
 function Step({ step }: { step: ToolStep }) {
   const args = Object.entries(step.args);
+  const sentence = toolSentence(step.name);
+  const time = (
+    <time dateTime={step.at} className="font-mono text-xs text-ink-2">
+      {formatTime(step.at)}
+    </time>
+  );
   return (
-    <li className="flex flex-col gap-1.5 py-2.5">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
-        <Wrench aria-hidden className="size-3.5 shrink-0 self-center text-muted-foreground" />
-        <code className="font-mono font-medium">{step.name}</code>
-        {args.map(([key, value]) => (
-          <code key={key} className="font-mono text-xs break-all text-muted-foreground">
-            {key}={argText(value)}
-          </code>
-        ))}
-        <time dateTime={step.at} className="ml-auto text-xs text-muted-foreground">
-          {formatTime(step.at)}
-        </time>
+    <li className="flex flex-col gap-1.5 rounded-row bg-soft px-4 py-3">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        {sentence ? (
+          <>
+            <span className="text-[15px] font-bold">{sentence}</span>
+            <span className="ml-auto text-xs text-ink-2">
+              <code className="font-mono">{step.name}</code> · {time}
+            </span>
+          </>
+        ) : (
+          <>
+            <code className="font-mono text-sm">{step.name}</code>
+            <span className="ml-auto">{time}</span>
+          </>
+        )}
       </div>
+      {args.length > 0 && (
+        <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+          {args.map(([key, value]) => (
+            <code key={key} className="font-mono text-xs break-all text-ink-2">
+              {key}={argText(value)}
+            </code>
+          ))}
+        </div>
+      )}
       {step.result ? (
-        <details className="group ml-5.5 text-xs">
-          <summary className="flex cursor-pointer list-none items-center gap-1 text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <details className="group text-xs">
+          <summary className="-mx-1 flex w-fit cursor-pointer list-none items-center gap-1 rounded-full px-1 py-1 text-ink-2 hover:text-ink focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-coarse:min-h-11 [&::-webkit-details-marker]:hidden">
             <ChevronRight
               aria-hidden
-              className="size-3.5 transition-transform group-open:rotate-90"
+              className="size-3.5 transition-transform group-open:rotate-90 motion-reduce:transition-none"
             />
             Result, {step.result.chars.toLocaleString("en-US")} characters
           </summary>
-          <p className="mt-1 rounded-md bg-muted px-2 py-1.5 font-mono break-all whitespace-pre-wrap">
+          <p className="mt-1 rounded-field bg-surface px-3 py-2 font-mono break-all whitespace-pre-wrap">
             {step.result.firstLine || "(empty)"}
           </p>
         </details>
       ) : (
-        <p className="ml-5.5 flex items-center gap-1 text-xs text-muted-foreground">
-          <Loader2 aria-hidden className="size-3.5 animate-spin" />
+        <p className="flex items-center gap-1 text-xs text-ink-2">
+          <Loader2 aria-hidden className="size-3.5 motion-safe:animate-spin" />
           Running
         </p>
       )}
@@ -87,17 +106,17 @@ function Step({ step }: { step: ToolStep }) {
 }
 
 /**
- * What the model looked at while investigating: each tool call with its arguments, and the
- * result folded under it. Only the result's size and first line reach the dashboard; the full
- * output stays with the run.
+ * How Bleep got to its diagnosis: each tool call as a plain sentence, with the tool's name, its
+ * arguments and the time in mono, and the result folded under it. Only the result's size and
+ * first line reach the dashboard; the full output stays with the run.
  */
 export function ReasoningStream({ events }: { events: IncidentEvent[] }) {
   const steps = toolSteps(events);
   if (steps.length === 0) {
-    return <p className="text-sm text-muted-foreground">No tool calls yet.</p>;
+    return <p className="text-sm text-ink-2">I have not looked at anything yet.</p>;
   }
   return (
-    <ol aria-label="Tool calls" className="divide-y divide-border">
+    <ol aria-label="Tool calls" className="flex flex-col gap-2">
       {steps.map((step) => (
         <Step key={step.seq} step={step} />
       ))}
