@@ -27,6 +27,7 @@ from bleep.hosts.registry import Registry
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.incidents.runner import IncidentRunner
+from bleep.llm.guard import ModelGuard
 from bleep.llm.usage import BudgetExceeded, CostLedger, UsageTracker, check_daily_cap
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import RecoveryEvent, Signal, Subject
@@ -76,6 +77,7 @@ class WatcherManager:
         guard_log: GuardLogger | None = None,
         ledger: CostLedger | None = None,
         budgets: Callable[[], Budgets] | None = None,
+        model_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         http: httpx.AsyncClient | None = None,
         store: UrlCheckStore | None = None,
         watch_interval_s: float = poller.INTERVAL_S,
@@ -92,6 +94,7 @@ class WatcherManager:
         self._guard_log = guard_log
         self._ledger = ledger
         self._budgets = budgets
+        self._model_sleep = model_sleep
         self._http = http or httpx.AsyncClient()
         self._owns_http = http is None
         self._held: dict[str, dict[str, list[Signal]]] = {}  # host -> service id -> URL failures
@@ -279,7 +282,9 @@ class WatcherManager:
             if self._budgets is not None and logs.strip():
                 await check_daily_cap(self._ledger, self._budgets())
             config = {"callbacks": [UsageTracker(RECOVERY_USAGE, self._ledger)]}
-        return await explain_recovery(model, logs, self._guard_log, "", config)
+        timeout_s = (self._budgets or Budgets)().model_timeout_s
+        guard = ModelGuard(timeout_s, sleep=self._model_sleep)
+        return await explain_recovery(model, logs, self._guard_log, "", config, guard)
 
     async def _log_recovery(self, recovered: Recovered) -> None:
         death = recovered.signals[0]
