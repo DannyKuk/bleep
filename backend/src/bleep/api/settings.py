@@ -102,8 +102,13 @@ def stale_response(current: str, what: str) -> JSONResponse:
 
 
 def check_size(body: Any) -> None:
-    """413 for a body over `MAX_BODY_CHARS` as JSON, before the secret check reads all of it."""
-    if len(json.dumps(body, ensure_ascii=False)) > MAX_BODY_CHARS:
+    """413 for a body over `MAX_BODY_CHARS` as JSON, before the secret check reads all of it; 422
+    for one nested too deeply to measure. `BodyLimitMiddleware` caps the raw bytes earlier."""
+    try:
+        size = len(json.dumps(body, ensure_ascii=False))
+    except RecursionError:
+        raise HTTPException(422, "the body is nested too deeply") from None
+    if size > MAX_BODY_CHARS:
         raise HTTPException(413, f"the body is over {MAX_BODY_CHARS:,} characters")
 
 

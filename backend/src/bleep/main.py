@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, FastAPI
 
 from bleep.api import auth, dev, hosts, incidents, memory, plugins, stream, telegram
 from bleep.api import settings as settings_api
+from bleep.api.body_limit import BodyLimitMiddleware
 from bleep.api.deps import require_session
 from bleep.config import Settings, check_settings
 from bleep.graph.build import build_graph, open_checkpointer
@@ -103,6 +104,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
             yield
 
     app = FastAPI(title="Bleep", lifespan=lifespan)
+    app.add_middleware(BodyLimitMiddleware)
     app.state.settings = settings
     app.state.parts = parts
 
