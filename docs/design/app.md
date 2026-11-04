@@ -18,7 +18,7 @@ How the dashboard signs in and what it reads (`auth/`, `api/`).
 
 ### Health rules
 
-One pure function per level (`api/hosts.py`), table-tested for every state.
+One pure function per level (`watcher/health.py`, shared by the API and the watcher's recheck after a quiet), table-tested for every state.
 
 - **Container.** Running with health `healthy` or `none` is `ok`. Running and `starting`, or state `restarting`, is `degraded`. Running and `unhealthy`, `dead`, `created`, `paused`, or `exited` with a crash exit code (anything but 0 and 143, or none known), is `down`. `exited` with 0 or 143 (SIGTERM, what `docker stop` leaves) is `stopped`. Any other state is `unknown`. Reason: degraded means "may fix itself", down means "needs someone"; a paused container serves nothing; a clean exit is somebody's choice, not a fault. 137 stays a crash because the OOM killer leaves it too (#8, #13).
 - **Service.** The worst of its containers and its URLs, where a `failing` URL counts as `down`. With no data it is `unknown`. A finished one-shot (exited 0, restart policy `no` or empty, e.g. Molecula's `fetch` init job) is left out while another container is there. When everything has exited cleanly the service is `stopped`, whatever its URLs say, because a failing URL is expected when it was shut down. One container stopped on purpose among running ones makes the service `degraded`. Crashes stay `down`. Reason: one dead dependency makes the service unusable, but a finished job or a deliberate stop is not an outage (#8, #13).

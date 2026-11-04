@@ -20,12 +20,7 @@ from bleep.schemas.docker import HostBasics
 from bleep.schemas.incidents import Subject
 from bleep.schemas.quiet import QuietState
 from bleep.schemas.services import Service
-from bleep.watcher.health import (
-    container_health,  # noqa: F401  (tests import it from here)
-    host_health,
-    service_health,
-    url_status,
-)
+from bleep.watcher.health import host_health, service_health, url_status
 from bleep.watcher.http_checks import UrlCheck
 from bleep.wiring import AppParts
 

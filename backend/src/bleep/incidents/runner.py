@@ -159,13 +159,15 @@ class IncidentRunner:
         """Close an incident from outside its run (its host was removed) and say why, on its
         timeline and to the channels; one that is finished already is left as it is.
 
-        It is marked ended before the first await, so no run of it is driven from here on; then
-        it is closed, which shuts `ApprovalStore.resolve` for it on every channel; then whatever
-        run is in flight is cancelled. A decision that won just before is resumed into nothing:
-        `_resume` and `_drive` refuse an ended or finished incident, and so does Execute.
+        Without `spare` it is marked ended before the first await, so no run of it is driven
+        from here on; then it is closed, which shuts `ApprovalStore.resolve` for it on every
+        channel; then whatever run is in flight is cancelled. A decision that won just before is
+        resumed into nothing: `_resume` and `_drive` refuse an ended or finished incident, and so
+        does Execute.
 
-        With `spare`, an incident in one of those statuses is left entirely alone (its run
-        goes on): it is closed first, and only a close that happened ends the run."""
+        With `spare`, an incident in one of those statuses is left entirely alone (its run goes
+        on). So it is closed first and marked ended only once that close happened, after an
+        await; in that gap `_drive` already refuses it by its closed status."""
         if spare:
             before = await self.repo.close_unfinished(incident_id, spare)
             if before is None:

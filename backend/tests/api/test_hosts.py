@@ -5,13 +5,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from bleep.api.hosts import container_health, host_health, service_health
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.registry import Registry
 from bleep.incidents.repository import IncidentRepo
 from bleep.main import create_app
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
+from bleep.watcher.health import container_health, host_health, service_health
 from bleep.watcher.http_checks import UrlCheck
 from fakes import FakeEngine, ssh_host
 
