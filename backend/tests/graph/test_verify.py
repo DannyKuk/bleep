@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 
+from bleep import prompts
 from bleep.graph.deps import StaticSettings
 from bleep.graph.nodes import verify
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
@@ -16,7 +17,7 @@ from bleep.schemas.graph import (
     VerificationResult,
 )
 from bleep.schemas.incidents import Signal, Subject
-from bleep.schemas.settings import Thresholds
+from bleep.schemas.settings import Budgets, Thresholds
 from fakes import FakeEngine
 from graph_env import box, graph_env, shop_host
 
@@ -1113,3 +1114,45 @@ async def test_a_host_incident_with_nothing_to_read_again_ends_unverified_at_onc
     assert checks[("symptom", "a")] == (False, verify.NOT_REREAD)
     assert update["outcome"] == "unverified" and route == "report"
     assert "messages" not in update
+
+
+async def stop_without_a_url(tmp_path, state_now: str):
+    """A plan that only stops the crashed shop-web-1, on a service with no URL."""
+    engine = FakeEngine("a", [box("shop-web-1", "shop", state=state_now), box("shop-db-1", "shop")])
+    plan = VerificationPlan(containers=["shop-db-1"])
+    env, state = await setup(tmp_path, Replies(200), plan=plan, engine=engine, urls=False)
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-web-1")
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
+    state |= {"proposal": state["proposal"].model_copy(update={"steps": [stop]}), "signals": [died]}
+    return env, state
+
+
+async def test_a_loop_back_that_only_lacks_evidence_asks_for_evidence_not_a_fix(tmp_path):
+    env, state = await stop_without_a_url(tmp_path, "exited")
+
+    update, route = await run(env, state)
+
+    assert route == "investigate"
+    assert update["messages"][0].text == prompts.load(
+        "graph/verify_unproven",
+        checks=f"- symptom shop-web-1: {verify.UNPROVEN}",
+        budget=str(Budgets().investigate_tool_calls),
+    )
+
+
+async def test_a_loop_back_with_another_failed_check_asks_why_the_service_is_unhealthy(tmp_path):
+    """The stopped container runs again: that is a failure of its own, not only missing
+    evidence."""
+    env, state = await stop_without_a_url(tmp_path, "running")
+
+    update, route = await run(env, state)
+
+    assert route == "investigate"
+    assert update["messages"][0].text == prompts.load(
+        "graph/verify_failed",
+        checks=(
+            "- container shop-web-1 (stopped by the plan): is running again\n"
+            f"- symptom shop-web-1: {verify.UNPROVEN}"
+        ),
+        budget=str(Budgets().investigate_tool_calls),
+    )
