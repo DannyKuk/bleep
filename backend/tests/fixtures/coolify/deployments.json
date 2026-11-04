@@ -1,0 +1,49 @@
+{
+  "count": 14,
+  "deployments": [
+    {
+      "id": 140,
+      "application_id": "1",
+      "application_name": "shop",
+      "deployment_uuid": "dep0uuid00000000000000140",
+      "deployment_url": "/project/proj0uuid/environment/env0uuid/application/shop0uuid0000000000000a1/deployment/dep0uuid00000000000000140",
+      "status": "finished",
+      "commit": "4b1d3c0ffee0123456789abcdef0123456789abc",
+      "commit_message": "Read PORT from the environment\n\nThe old default is gone.",
+      "created_at": "2026-11-04T07:50:02.000000Z",
+      "updated_at": "2026-11-04T07:52:40.000000Z",
+      "finished_at": "2026-11-04T07:52:40.000000Z",
+      "force_rebuild": false,
+      "is_webhook": true,
+      "is_api": false,
+      "restart_only": false,
+      "rollback": false,
+      "pull_request_id": 0,
+      "server_id": 0,
+      "server_name": "localhost",
+      "logs": "[{\"output\":\"DATABASE_URL=postgres://shop:fake-db-password@db/shop\"}]"
+    },
+    {
+      "id": 139,
+      "application_id": "1",
+      "application_name": "shop",
+      "deployment_uuid": "dep0uuid00000000000000139",
+      "deployment_url": "/project/proj0uuid/environment/env0uuid/application/shop0uuid0000000000000a1/deployment/dep0uuid00000000000000139",
+      "status": "failed",
+      "commit": "0ddba11cafe0123456789abcdef0123456789abc",
+      "commit_message": "Bump the base image",
+      "created_at": "2026-11-03T18:10:00.000000Z",
+      "updated_at": "2026-11-03T18:12:00.000000Z",
+      "finished_at": null,
+      "force_rebuild": false,
+      "is_webhook": false,
+      "is_api": true,
+      "restart_only": false,
+      "rollback": false,
+      "pull_request_id": 0,
+      "server_id": 0,
+      "server_name": "localhost",
+      "logs": "[]"
+    }
+  ]
+}

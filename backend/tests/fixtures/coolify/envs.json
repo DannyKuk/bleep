@@ -1,0 +1,38 @@
+[
+  {
+    "id": 11,
+    "uuid": "env0uuid00000000000000011",
+    "key": "DATABASE_URL",
+    "value": "postgres://shop:fake-db-password@db/shop",
+    "real_value": "postgres://shop:fake-db-password@db/shop",
+    "is_buildtime": false,
+    "is_runtime": true,
+    "is_preview": false,
+    "is_literal": false,
+    "is_shown_once": false
+  },
+  {
+    "id": 12,
+    "uuid": "env0uuid00000000000000012",
+    "key": "STRIPE_KEY",
+    "value": "sk_live_fakefakefake0000",
+    "real_value": "sk_live_fakefakefake0000",
+    "is_buildtime": true,
+    "is_runtime": true,
+    "is_preview": false,
+    "is_literal": true,
+    "is_shown_once": false
+  },
+  {
+    "id": 13,
+    "uuid": "env0uuid00000000000000013",
+    "key": "STRIPE_KEY",
+    "value": "sk_test_fakefakefake0000",
+    "real_value": "sk_test_fakefakefake0000",
+    "is_buildtime": true,
+    "is_runtime": true,
+    "is_preview": true,
+    "is_literal": true,
+    "is_shown_once": false
+  }
+]

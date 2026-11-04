@@ -155,6 +155,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 **Plugins** ([details](design/plugins.md))
 - **A plugin is read from the registry at every use**, so switching it off takes its tools out of the next round, fails its actions in the plan check and leaves Execute no handler for them.
 - **A plugin's secrets are env variable names**, shown only as set or not; its settings model may not hold a secret-named field.
+- **The Coolify plugin reads applications, deployments and env keys, never an env value**: its answers are parsed to the fields Bleep names, so webhook secrets and build logs never leave the client.
 
 **Settings** ([details](design/settings.md))
 - **Database override > hosts file > defaults, in force at once**; the dashboard can protect a container but never unprotect one the hosts file protects.
