@@ -168,7 +168,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **The settings page has no input for a secret**: each is shown as its variable or file and whether it is set; host connections are read-only, and the model choice and budgets are changed in the dev panel only.
 
 **Dev panel** ([details](design/dev-panel.md))
-- **Off unless `BLEEP_DEV_PANEL=true`, and then behind the admin session**; off, every `/api/dev` path is a 404 and the nav hides it.
+- **Off unless `BLEEP_DEV_PANEL=true`, and then behind the admin session**; off, every `/api/dev` path is a 404 and Settings shows no link to it.
 - **A prompt override must use exactly its file's placeholders and hold no secret**; reset deletes it and the loader reads the file again.
 - **Only the prompts listed in `prompts.OVERRIDABLE` can be overridden, never the Telegram texts, `graph/system` or the untrusted-data rules the code adds to four prompts or Diagnose's `planted_in` instruction; a save or reset sends the prompt's version (`If-Match`) and is recorded in the guard log by name, never with its text.**
 - **Each incident records the overrides its run started with, by name and hash**; with the panel off, `PUT /api/settings` refuses the models and the budgets.

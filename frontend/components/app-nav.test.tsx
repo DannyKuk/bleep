@@ -2,22 +2,26 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AppNav } from "@/components/app-nav";
-import { json, stubBackend } from "@/components/dev/fixtures";
 
-vi.mock("next/navigation", () => ({ usePathname: () => "/" }));
+const pathname = vi.hoisted(() => ({ current: "/" }));
+vi.mock("next/navigation", () => ({ usePathname: () => pathname.current }));
 
 describe("AppNav", () => {
-  it("hides Dev while the backend has the dev panel off", async () => {
-    const fetchMock = stubBackend(json({ detail: "Not Found" }, 404));
+  it("links Home, Incidents and Settings, and not the developer panel", () => {
     render(<AppNav />);
-    expect(await screen.findByRole("link", { name: "Settings" })).toBeInTheDocument();
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/dev", expect.anything()));
-    expect(screen.queryByRole("link", { name: "Dev" })).not.toBeInTheDocument();
+    const links = screen.getAllByRole("link");
+    expect(links.map((link) => link.textContent)).toEqual(["Home", "Incidents", "Settings"]);
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/",
+      "/incidents",
+      "/settings",
+    ]);
   });
 
-  it("shows Dev when the dev panel is on", async () => {
-    stubBackend(json({ enabled: true }));
+  it("marks the page you are on, Incidents for an incident's own page too", () => {
+    pathname.current = "/incidents/abc";
     render(<AppNav />);
-    expect(await screen.findByRole("link", { name: "Dev" })).toHaveAttribute("href", "/dev");
+    expect(screen.getByRole("link", { name: "Incidents" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Home" })).not.toHaveAttribute("aria-current");
   });
 });

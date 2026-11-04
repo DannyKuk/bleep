@@ -1,0 +1,167 @@
+import { describe, expect, it } from "vitest";
+
+import type { Incident, IncidentStatus, Outcome } from "@/lib/api-types";
+import {
+  FAILED_NEEDS_YOU_MS,
+  incidentMood,
+  overallMood,
+  overallState,
+  reportMood,
+  stateMood,
+  type Mood,
+  type OverallState,
+} from "@/lib/mood";
+
+const NOW = Date.parse("2026-11-04T12:00:00Z");
+
+function incident(
+  status: IncidentStatus,
+  id: string = status,
+  closedAt: string | null = null,
+): Incident {
+  return {
+    id,
+    subject: { kind: "service", host_id: "demo", service_id: "shop" },
+    status,
+    opened_at: "2026-11-04T11:00:00Z",
+    closed_at: closedAt,
+    title: "shop is down",
+    cost_usd: null,
+    tokens: 0,
+    trace_url: null,
+    prompt_overrides: null,
+  };
+}
+
+const reachable = [{ reachable: true }];
+const unreachable = [{ reachable: true }, { reachable: false }];
+const justNow = new Date(NOW - 60_000).toISOString();
+const longAgo = new Date(NOW - FAILED_NEEDS_YOU_MS - 1).toISOString();
+
+describe("incidentMood", () => {
+  const cases: [IncidentStatus, boolean, Mood][] = [
+    ["open", false, "working"],
+    ["investigating", false, "working"],
+    ["awaiting_approval", false, "needs_you"],
+    ["awaiting_approval", true, "not_sure"],
+    ["executing", false, "working"],
+    ["verifying", false, "working"],
+    ["paused", false, "working"],
+    ["resolved", false, "all_good"],
+    ["closed", false, "resting"],
+    ["failed", false, "needs_you"],
+    // unsure only changes the mood of a plan that waits for the human
+    ["investigating", true, "working"],
+    ["resolved", true, "all_good"],
+    ["failed", true, "needs_you"],
+  ];
+  it.each(cases)("%s (unsure %s) is %s", (status, unsure, mood) => {
+    expect(incidentMood(status, unsure)).toBe(mood);
+  });
+
+  it("is sure unless told otherwise", () => {
+    expect(incidentMood("awaiting_approval")).toBe("needs_you");
+  });
+});
+
+describe("reportMood", () => {
+  const cases: [Outcome, Mood][] = [
+    ["resolved", "all_good"],
+    ["unverified", "needs_you"],
+    ["budget", "needs_you"],
+    ["rejected", "resting"],
+    ["no_action", "resting"],
+    ["replan_limit", "resting"],
+  ];
+  it.each(cases)("%s is %s", (outcome, mood) => {
+    expect(reportMood(outcome)).toBe(mood);
+  });
+});
+
+describe("overallState", () => {
+  const single: [IncidentStatus, OverallState][] = [
+    ["open", "amber"],
+    ["investigating", "amber"],
+    ["awaiting_approval", "red"],
+    ["executing", "amber"],
+    ["verifying", "amber"],
+    ["paused", "amber"],
+    ["resolved", "green"],
+    ["closed", "green"],
+  ];
+  it.each(single)("one %s incident makes it %s", (status, state) => {
+    expect(overallState([incident(status)], reachable, NOW)).toBe(state);
+  });
+
+  it("is green with nothing at all", () => {
+    expect(overallState([], [], NOW)).toBe("green");
+  });
+
+  it("is red for a run that failed in the last day, green once that day is over", () => {
+    expect(overallState([incident("failed", "f", justNow)], reachable, NOW)).toBe("red");
+    expect(overallState([incident("failed", "f", longAgo)], reachable, NOW)).toBe("green");
+  });
+
+  it("is amber when a host cannot be reached, even with no incident", () => {
+    expect(overallState([], unreachable, NOW)).toBe("amber");
+  });
+
+  it("takes the worst of several: red over amber over green", () => {
+    const mixed = [incident("resolved"), incident("investigating"), incident("awaiting_approval")];
+    expect(overallState(mixed, unreachable, NOW)).toBe("red");
+    expect(overallState([incident("closed"), incident("verifying")], reachable, NOW)).toBe("amber");
+  });
+});
+
+describe("overallMood", () => {
+  it("is all good when nothing is open and every host answers", () => {
+    expect(overallMood([incident("resolved")], reachable, new Set(), NOW)).toBe("all_good");
+  });
+
+  it("is working while Bleep is on an incident or a host is unreachable", () => {
+    expect(overallMood([incident("executing")], reachable, new Set(), NOW)).toBe("working");
+    expect(overallMood([], unreachable, new Set(), NOW)).toBe("working");
+  });
+
+  it("is not sure when the only plan waiting for the human rests on an unsure diagnosis", () => {
+    const waiting = incident("awaiting_approval", "a");
+    expect(overallMood([waiting], reachable, new Set(["a"]), NOW)).toBe("not_sure");
+  });
+
+  it("needs you over not sure, and not sure over working", () => {
+    const sure = incident("awaiting_approval", "sure");
+    const unsure = incident("awaiting_approval", "unsure");
+    const working = incident("investigating", "w");
+    expect(overallMood([unsure, sure], reachable, new Set(["unsure"]), NOW)).toBe("needs_you");
+    expect(overallMood([working, unsure], unreachable, new Set(["unsure"]), NOW)).toBe("not_sure");
+  });
+
+  it("needs you for a recent failure, whatever else is unsure", () => {
+    const failed = incident("failed", "f", justNow);
+    const unsure = incident("awaiting_approval", "u");
+    expect(overallMood([failed, unsure], reachable, new Set(["u"]), NOW)).toBe("needs_you");
+  });
+
+  it("agrees with overallState when no diagnosis is known", () => {
+    const sets: Incident[][] = [
+      [],
+      [incident("open")],
+      [incident("awaiting_approval")],
+      [incident("failed", "f", justNow)],
+    ];
+    for (const incidents of sets) {
+      const state = overallState(incidents, reachable, NOW);
+      expect(overallMood(incidents, reachable, new Set(), NOW)).toBe(stateMood(state));
+    }
+  });
+});
+
+describe("stateMood", () => {
+  it.each([
+    ["red", "needs_you"],
+    ["amber", "working"],
+    ["green", "all_good"],
+  ] as const)("%s is %s", (state, mood) => {
+    expect(stateMood(state)).toBe(mood);
+  });
+});
