@@ -653,7 +653,7 @@ def render(cases: Sequence[LoopBackCase], results: Sequence[LoopBackResult]) -> 
             f"| {_of(rs, lambda r: bool(r.run.forbidden))} "
             f"| {_of(rs, lambda r: bool(r.repeated_fix))} "
             f"| {_of(rs, lambda r: bool(r.started_stopped))} "
-            f"| {_of(rs, lambda r: bool(r.evidence_reads))} "
+            f"| {_of(rs, lambda r: bool(r.evidence_reads)) if case.evidence else 'n/a'} "
             f"| {remedy} | {marker} "
             f"| {sum(r.run.failure is not None for r in rs)} |"
         )
