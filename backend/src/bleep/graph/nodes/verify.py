@@ -265,7 +265,8 @@ def _deploy_starts(
     """When each application this plan redeployed had its redeploy step start, on Bleep's clock.
 
     Only this plan's results count (`plan_results`). A redeploy that never started (skipped, or
-    refused at run time) has no start and its app no entry."""
+    refused at run time) has no start and its app no entry. When a plan redeploys an application
+    twice, the last start wins: the later redeploy is the one whose containers must be newer."""
     steps = proposal.steps if proposal is not None else []
     starts: dict[str, datetime] = {}
     for r in plan_results(proposal, results):
