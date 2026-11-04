@@ -393,6 +393,15 @@ def test_a_protected_entry_with_spaces_or_a_colon_is_accepted(app, name):
     assert name in host["services"]["compose:shop"]["protected_containers"]
 
 
+@pytest.mark.parametrize("name", ["🚀", "---", "::"])
+def test_a_protected_name_that_slugs_to_nothing_is_refused_with_the_uuid_hint(app, name):
+    response = put_settings(app, protect(name))
+    assert response.status_code == 422
+    assert "protect the application by its uuid" in response.json()["detail"]
+    (host,) = app.get("/api/settings").json()["hosts"]
+    assert host["services"].get("compose:shop", {}).get("protected_containers", []) == []
+
+
 def test_a_protected_entry_with_a_control_character_is_refused(app):
     response = put_settings(app, protect("shop\x1b[2Japi"))
     assert response.status_code == 422

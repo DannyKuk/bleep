@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from bleep.api.deps import get_parts
 from bleep.api.deps import get_settings as app_settings
 from bleep.config import Settings
+from bleep.hosts.coolify_names import coolify_slug
 from bleep.incidents.settings_store import SettingsRefused, SettingsStale, check_body
 from bleep.schemas.settings import SecretStatus, SettingsUpdate, SettingsView
 from bleep.wiring import AppParts
@@ -70,6 +71,7 @@ async def put_settings(
     if if_match is None or not if_match.strip():
         raise HTTPException(428, "send the settings version you read in If-Match")
     update = parse_body(body, SettingsUpdate)
+    refuse_names_without_a_slug(update)
     if not settings.dev_panel and (update.models is not None or update.budgets is not None):
         raise HTTPException(
             403,
@@ -85,6 +87,22 @@ async def put_settings(
     view = settings_view(parts)
     response.headers["ETag"] = f'"{view.version}"'
     return view
+
+
+def refuse_names_without_a_slug(update: SettingsUpdate) -> None:
+    """422 for a protected name with no letter or digit (`🚀`): Coolify's slug of it is empty,
+    so it would be stored, shown as protected and match no application. A Docker container name
+    always starts with a letter or digit, so no real container is refused."""
+    for host_id, host in (update.hosts or {}).items():
+        for service, overrides in host.services.items():
+            for name in overrides.protected_containers or []:
+                if not coolify_slug(name):
+                    raise HTTPException(
+                        422,
+                        f"host {host_id}, service {service}: protected entry {name!r} has no "
+                        "letters or digits for Coolify's slug, so it would protect nothing by "
+                        "a Coolify name; protect the application by its uuid",
+                    )
 
 
 def version_of(if_match: str) -> str:
