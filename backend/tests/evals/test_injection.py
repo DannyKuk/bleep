@@ -446,7 +446,7 @@ async def test_the_injector_posts_on_stdin_to_the_engine_the_harness_watches():
     assert "a </untrusted> line" not in " ".join(argv)  # never on a command line
     assert body == {
         "lines": ["a </untrusted> line"],
-        "fail": {"status": 500, "body": "x", "media_type": "application/json"},
+        "fail": {"status": 500, "body": "x", "media_type": "application/json", "log": ""},
     }
     assert host == "unix:///fake.sock" and len(docker.calls) == 3
 
@@ -980,33 +980,81 @@ async def test_a_docs_attack_is_searched_from_a_planted_repo_page_and_counted(tm
 RUNBOOK_CASES = ["docs-close-tag", "docs-fenced-order"]
 
 
+def runbook_error(case: InjectionCase) -> str:
+    failure = case.failure()
+    assert failure is not None
+    return json.loads(failure.body)["error"]
+
+
 def test_the_old_docs_cases_keep_the_plain_failure_and_the_runbook_ones_name_their_error():
     cases = {c.id: c for c in load_cases() if c.channel == "docs"}
     for old in ("docs-restart-db", "docs-print-env"):
         assert cases[old].failure() == ShopFailure()
+        assert cases[old].page().id == f"repo:demo/shop:docs/{old}.md"  # type: ignore[union-attr]
     for name in RUNBOOK_CASES:
         failure = cases[name].failure()
         assert failure is not None and failure.status == 500
-        error = failure.body.split('"error":"')[1].split(":")[0]
-        assert f"Runbook: {error}" in cases[name].payload
+        error_name = runbook_error(cases[name]).split(":")[0]
+        assert f"Runbook: {error_name}" in cases[name].payload
 
 
-def test_a_failure_body_is_only_for_docs_cases():
-    with pytest.raises(ValueError, match="failure_body is for docs cases"):
-        attack(channel="logs", failure_body="x")
+def test_a_runbook_case_logs_the_error_and_not_the_payload_and_sits_on_a_neutral_path():
+    for name in RUNBOOK_CASES:
+        case = next(c for c in load_cases() if c.id == name)
+        failure = case.failure()
+        assert failure is not None
+        error = runbook_error(case)
+        assert failure.log.splitlines()[-1].endswith(error.split(": ", 1)[1])
+        assert error.split(":")[0] in failure.log
+        assert case.marker not in failure.log
+        assert case.lines() == []  # the planted lines are the logs channel's
+        page = case.page()
+        assert page is not None and "/runbooks/" in page.id and name not in page.id
+
+
+def test_the_other_channels_log_no_failure_text():
+    for case in load_cases():
+        if case.id not in RUNBOOK_CASES:
+            failure = case.failure()
+            assert failure is None or failure.log == "", case.id
+
+
+@pytest.mark.parametrize("field", ["failure_body", "failure_log", "page_path"])
+def test_the_runbook_fields_are_only_for_docs_cases(field):
+    with pytest.raises(ValueError, match="for docs cases only"):
+        attack(channel="logs", **{field: "x"})
+
+
+def test_a_failure_log_needs_the_failure_body_it_tells():
+    with pytest.raises(ValueError, match="goes with a failure_body"):
+        attack(channel="docs", failure_log="x")
 
 
 @pytest.mark.parametrize("name", RUNBOOK_CASES)
 async def test_a_search_for_the_failures_error_ranks_the_planted_page_first(tmp_path, name):
     case = next(c for c in load_cases() if c.id == name)
-    failure = case.failure()
-    assert failure is not None
-    error = failure.body.split('"error":"')[1].rstrip('"}')
     folder = tmp_path / "knowledge"
     folder.mkdir()
     knowledge = await KnowledgeFixture.build(folder, FakeEmbedder())
     await knowledge.plant(case.page())
 
-    hits = await knowledge.search(error)
+    hits = await knowledge.search(runbook_error(case))
 
     assert hits[0].url == knowledge.planted_url
+
+
+def test_the_hook_logs_the_failures_traceback_for_every_failing_request(capsys):
+    client = TestClient(shop_hook())
+    fail = {"status": 500, "body": "{}", "log": "Traceback (most recent call last):\nBoomError: x"}
+    client.post("/inject", json={"lines": [], "fail": fail})
+    capsys.readouterr()
+
+    client.get("/health")
+    client.get("/health")
+
+    out = capsys.readouterr().out
+    assert out.count("BoomError: x") == 2
+    assert "ERROR shop: GET /health failed" in out
+    client.post("/inject/clear")
+    client.get("/health")
+    assert "BoomError" not in capsys.readouterr().out

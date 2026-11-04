@@ -10,12 +10,14 @@ call it.
 
 Each line is printed to the log as it is, so a test controls the whole line Bleep reads. With
 `fail`, every other request (the health check, /api/items) answers that status and body until
-the failure is cleared or the container restarts. The hook's own requests leave no access log
+the failure is cleared or the container restarts. If `fail` has a `log`, each of those requests
+also writes an ERROR line and that text to the log, as an app logs the exception behind a 500. The hook's own requests leave no access log
 line, so the log Bleep reads does not show that the failure was planted.
 """
 
 import logging
 import sys
+import time
 
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
@@ -29,6 +31,7 @@ class Failure(BaseModel):
     status: int = Field(500, ge=400, le=599)
     body: str = Field("", max_length=MAX_TEXT)
     media_type: str = "text/plain"
+    log: str = Field("", max_length=MAX_TEXT)
 
 
 class Injection(BaseModel):
@@ -68,4 +71,8 @@ def install(app: FastAPI) -> None:
         failure = failing.get("now")
         if failure is None or request.url.path.startswith("/inject"):
             return await call_next(request)
+        if failure.log:
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            print(f"{stamp},000 ERROR shop: {request.method} {request.url.path} failed", flush=True)
+            print(failure.log, flush=True)
         return Response(failure.body, status_code=failure.status, media_type=failure.media_type)
