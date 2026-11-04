@@ -1,12 +1,13 @@
 """Read routes for the overview and a service's page: hosts and the services on them."""
 
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from bleep.api.deps import get_parts
+from bleep.incidents.repository import utcnow
 from bleep.schemas.api import (
     BasicsView,
     ContainerView,
@@ -20,6 +21,7 @@ from bleep.schemas.api import (
 from bleep.schemas.docker import ContainerSummary, HostBasics
 from bleep.schemas.incidents import Subject
 from bleep.schemas.services import Service
+from bleep.watcher.http_checks import INTERVAL_S, UrlCheck
 from bleep.wiring import AppParts
 
 router = APIRouter(tags=["hosts"])
@@ -96,12 +98,41 @@ def host_health(reachable: bool, last_seen: datetime | None, services: Iterable[
     return _worst(healths) if healths else "ok"
 
 
-def _view(service: Service, open_incident_id: str | None) -> ServiceView:
-    # URL checks arrive with the watcher; until it records one, a configured URL is unknown.
-    urls = [
-        UrlStatus(url=u.url, status="unknown", last_checked=None, status_code=None, latency_ms=None)
-        for u in service.urls
-    ]
+# A stored result older than this (three check intervals: the host's watcher has stopped, or the
+# host is down) no longer says how the URL is now, so it is shown as unknown.
+STALE_AFTER = timedelta(seconds=3 * INTERVAL_S)
+
+Checks = dict[tuple[str, str], tuple[UrlCheck, datetime]]
+
+
+async def _stored_checks(parts: AppParts, host_id: str) -> Checks:
+    return {
+        (sid, check.url): (check, at) for sid, check, at in await parts.url_checks.latest(host_id)
+    }
+
+
+def _url_status(url: str, stored: tuple[UrlCheck, datetime] | None, now: datetime) -> UrlStatus:
+    """A configured URL's last stored check; unknown with none, or with one gone stale (the time,
+    status code and latency of that last check stay on it)."""
+    if stored is None:
+        return UrlStatus(
+            url=url, status="unknown", last_checked=None, status_code=None, latency_ms=None
+        )
+    check, at = stored
+    fresh = now - at <= STALE_AFTER
+    return UrlStatus(
+        url=url,
+        status=("ok" if check.ok else "failing") if fresh else "unknown",
+        last_checked=at,
+        status_code=check.status,
+        latency_ms=check.latency_ms,
+    )
+
+
+def _view(
+    service: Service, open_incident_id: str | None, checks: Checks, now: datetime
+) -> ServiceView:
+    urls = [_url_status(u.url, checks.get((service.id, u.url)), now) for u in service.urls]
     return ServiceView(
         id=service.id,
         host_id=service.host_id,
@@ -129,10 +160,15 @@ def _view(service: Service, open_incident_id: str | None) -> ServiceView:
 async def _service_views(parts: AppParts, host_id: str | None) -> list[ServiceView]:
     if host_id is not None and host_id not in {h.config.id for h in parts.registry.hosts()}:
         return []
+    now = utcnow()
+    checks: dict[str, Checks] = {}
     views = []
     for service in parts.registry.services(host_id):
+        if service.host_id not in checks:
+            checks[service.host_id] = await _stored_checks(parts, service.host_id)
         subject = Subject(kind="service", host_id=service.host_id, service_id=service.id)
-        views.append(_view(service, await parts.incidents.open_incident_id(subject)))
+        open_id = await parts.incidents.open_incident_id(subject)
+        views.append(_view(service, open_id, checks[service.host_id], now))
     return views
 
 
@@ -192,7 +228,12 @@ async def get_service(
         raise HTTPException(404, "no such service")
     subject = Subject(kind="service", host_id=service.host_id, service_id=service.id)
     return ServiceDetail(
-        service=_view(service, await parts.incidents.open_incident_id(subject)),
+        service=_view(
+            service,
+            await parts.incidents.open_incident_id(subject),
+            await _stored_checks(parts, service.host_id),
+            utcnow(),
+        ),
         rules=list(service.rules),
         host_rules=list(host.config.rules),
     )
