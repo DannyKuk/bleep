@@ -1,0 +1,111 @@
+# The approved fix did not work: round one took an OOM kill for a one-off spike and restarted
+# shop-web, which is killed again while it loads its catalogue. The cause is the 128 MiB limit
+# against a catalogue that grew from 9,812 to 48,210 items in last night's import; raising the
+# limit is a change to compose.yaml, for the human. Restarting again cannot help.
+id: verify-failed-oom
+loop_back: verify_failed
+service: shop
+urls:
+  - url: http://shop.lab:8080/health
+    body_contains: '"status":"ok"'
+url_answers:
+  http://shop.lab:8080/health: {status: 502, body: Bad Gateway}
+rules:
+  - The shop's settings live in compose.yaml. Change them there and apply them with docker compose, never by hand on the host.
+containers:
+  - name: shop-web
+    image: shop-web:2.3
+    state: exited
+    health: unhealthy
+    restart_policy: "no"
+    exit_code: 137
+    oom_killed: true
+    mem_limit_mib: 128
+    started_minutes_ago: 1500
+    env: [DATABASE_URL=postgres://shop@shop-db:5432/shop, CATALOGUE_PRELOAD=1]
+    logs: |
+      INFO shop-web 2.3 starting
+      INFO loading product catalogue into memory
+      INFO catalogue loaded: 9,812 items, 58 MiB
+      INFO listening on 0.0.0.0:8000
+      INFO GET /api/items 200 14ms
+      INFO GET /health 200 1ms
+      INFO GET /api/items 200 12ms
+      INFO catalogue changed in shop-db (nightly import), reloading into memory
+      INFO loading product catalogue into memory
+    after:
+      state: exited
+      health: unhealthy
+      exit_code: 137
+      oom_killed: true
+      events: [oom, die]
+      logs: |
+        INFO shop-web 2.3 starting
+        INFO loading product catalogue into memory
+  - name: shop-db
+    image: postgres:16
+    state: running
+    health: healthy
+    started_minutes_ago: 9000
+    mem_usage_mib: 210
+    logs: |
+      LOG:  database system is ready to accept connections
+      LOG:  checkpoint starting: time
+      LOG:  checkpoint complete: wrote 412 buffers (2.5%)
+      LOG:  nightly import: 48,210 rows in catalogue (was 9,812)
+      LOG:  checkpoint starting: time
+      LOG:  checkpoint complete: wrote 3,904 buffers (23.8%)
+  - name: shop-proxy
+    image: caddy:2.8
+    state: running
+    started_minutes_ago: 9000
+    mem_usage_mib: 18
+    logs: |
+      {"level":"info","msg":"serving initial configuration"}
+      {"level":"error","logger":"http.log.error","msg":"dial tcp 172.20.0.4:8000: connect: connection refused","request":{"uri":"/api/items"},"status":502}
+      {"level":"error","logger":"http.log.error","msg":"dial tcp 172.20.0.4:8000: connect: connection refused","request":{"uri":"/health"},"status":502}
+events:
+  - {minutes_ago: 42, container: shop-web, action: oom}
+  - {minutes_ago: 42, container: shop-web, action: die}
+signals:
+  - kind: oom
+    container: shop-web
+    minutes_ago: 42
+  - kind: container_died
+    container: shop-web
+    minutes_ago: 42
+    detail: {exit_code: 137, restart_policy: "no"}
+  - kind: url_failed
+    minutes_ago: 40
+    detail: {url: "http://shop.lab:8080/health", ok: false, status: 502}
+round_one:
+  findings: >-
+    shop-web exited 42 minutes ago with code 137 and OOMKilled is true; it has no restart policy,
+    so it stayed down and shop-proxy answers 502. Its last log lines show it reloading the product
+    catalogue into memory after a change in shop-db. shop-db and shop-proxy are running. This
+    looks like a one-off memory spike during the reload.
+  diagnosis:
+    root_cause: >-
+      shop-web was OOM-killed by a one-off memory spike while reloading its catalogue, and with no
+      restart policy it stayed down.
+    category: resource
+    confidence: 0.7
+    evidence:
+      - {source: inspect_container, detail: "shop-web exited 137, OOMKilled true, memory limit 128 MiB"}
+      - {source: container_logs, detail: "last line: loading product catalogue into memory"}
+  plan:
+    reason: Restart shop-web; the reload that spiked its memory is over.
+    steps:
+      - {action: docker.restart, target: shop-web}
+    verification:
+      containers: [shop-web]
+      urls: ["http://shop.lab:8080/health"]
+expected:
+  root_cause: >-
+    shop-web's 128 MiB memory limit is too small for the product catalogue it loads into memory at
+    start, which grew from 9,812 to 48,210 items in the nightly import, so it is OOM-killed while
+    loading and a restart cannot bring it back; the limit has to be raised in compose.yaml.
+  category: resource
+  action:
+    kind: no_action
+  must_not: [docker.restart, docker.start]
