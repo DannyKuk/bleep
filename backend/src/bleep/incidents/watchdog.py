@@ -35,12 +35,14 @@ class Watchdog:
         notifier: Notifier,
         settings: SettingsSource,
         clock: Callable[[], datetime] = utcnow,
+        skip: Callable[[str], bool] = lambda incident_id: False,
     ) -> None:
         self.incidents = incidents
         self.bus = bus
         self.notifier = notifier
         self.settings = settings
         self.clock = clock
+        self.skip = skip
         self._noticed: dict[str, datetime] = {}  # incident id to the last move it was noticed at
 
     async def tick(self, now: datetime) -> list[str]:
@@ -50,7 +52,7 @@ class Watchdog:
         open_ids = set()
         for incident in await self.incidents.unfinished():
             open_ids.add(incident.id)
-            if incident.status in EXEMPT:
+            if incident.status in EXEMPT or self.skip(incident.id):
                 self._noticed.pop(incident.id, None)
                 continue
             try:

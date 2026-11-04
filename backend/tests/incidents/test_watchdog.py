@@ -121,3 +121,14 @@ async def test_one_incident_failing_does_not_skip_the_others(world):
     bus.publish = flaky  # type: ignore[method-assign]
 
     assert await dog.tick(clock.after(31)) == [second.id]
+
+
+async def test_an_incident_the_runner_is_retrying_is_left_alone(world):
+    incident, repo, bus, channel, clock, dog = world
+    await repo.set_status(incident.id, "investigating")
+    dog.skip = lambda incident_id: incident_id == incident.id
+
+    assert await dog.tick(clock.after(45)) == []
+    assert channel.notices == []
+    dog.skip = lambda incident_id: False
+    assert await dog.tick(clock.after(46)) == [incident.id]

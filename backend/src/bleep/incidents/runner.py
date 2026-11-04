@@ -7,6 +7,7 @@ wait days for a human and outlive a restart of Bleep. See docs/design/graph.md.
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -17,7 +18,7 @@ from bleep import prompts
 from bleep.graph.build import NODE_STATUS
 from bleep.graph.deps import Approvals, Notifier, SettingsSource, StaticSettings, Tracer
 from bleep.incidents.bus import EventBus
-from bleep.incidents.repository import IncidentRepo
+from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.llm.guard import ModelUnavailable
 from bleep.schemas.graph import Decision
 from bleep.schemas.incidents import Incident, IncidentStatus, Signal
@@ -49,6 +50,7 @@ class IncidentRunner:
         tracer: Tracer | None = None,
         settings: SettingsSource | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        clock: Callable[[], datetime] = utcnow,
     ) -> None:
         self.graph = graph
         self.repo = repo
@@ -58,9 +60,10 @@ class IncidentRunner:
         self.tracer = tracer
         self.settings = settings if settings is not None else StaticSettings()
         self.sleep = sleep
+        self.clock = clock
         self._runs: dict[str, asyncio.Task[None]] = {}
         self._pauses: dict[str, int] = {}  # consecutive pauses of a run, for the backoff
-        self._waited: dict[str, float] = {}  # seconds a run has been paused in all
+        self._since: dict[str, datetime] = {}  # when a run first paused
         self._warned_long: set[str] = set()
 
     @staticmethod
@@ -238,6 +241,7 @@ class IncidentRunner:
             return
         except Exception as error:  # a broken run must not take the runner down
             log.exception("incident %s: graph run failed", incident_id)
+            self._forget_pauses(incident_id)
             text = f"The run stopped on an error ({type(error).__name__}); see the backend log."
             try:
                 await self.repo.set_status(incident_id, "failed")
@@ -263,17 +267,18 @@ class IncidentRunner:
         been paused for an hour in all."""
         log.warning("incident %s: paused, %s", incident_id, unavailable)
         base = self.settings.budgets().paused_retry_min
-        seconds = min(base * 2 ** self._pauses.get(incident_id, 0), MAX_PAUSE_MIN) * 60
+        ceiling = max(base, MAX_PAUSE_MIN)
+        seconds = min(base * 2 ** self._pauses.get(incident_id, 0), ceiling) * 60
         self._pauses[incident_id] = self._pauses.get(incident_id, 0) + 1
-        waited = self._waited.get(incident_id, 0) + seconds
-        self._waited[incident_id] = waited
+        now = self.clock()
+        paused_for = (now - self._since.setdefault(incident_id, now)).total_seconds()
         text = None
         if announce:
             text = (
                 f"The model is not answering ({unavailable.reason}). The run is paused and tries "
                 f"again from where it stopped, first in {base} minutes, then less often."
             )
-        elif waited >= LONG_PAUSE_S and incident_id not in self._warned_long:
+        elif paused_for >= LONG_PAUSE_S and incident_id not in self._warned_long:
             self._warned_long.add(incident_id)
             text = "The run has been paused for an hour: the model is still not answering."
         try:
@@ -287,8 +292,8 @@ class IncidentRunner:
         self._schedule(incident_id, lambda: self._retry_after(incident_id, seconds))
 
     def _forget_pauses(self, incident_id: str) -> None:
-        for book in (self._pauses, self._waited):
-            book.pop(incident_id, None)
+        self._pauses.pop(incident_id, None)
+        self._since.pop(incident_id, None)
         self._warned_long.discard(incident_id)
 
     async def _retry_after(self, incident_id: str, seconds: float) -> None:
@@ -296,6 +301,13 @@ class IncidentRunner:
         incident = await self.repo.get(incident_id)
         if incident is not None and incident.status == "paused":  # not moved on by someone else
             await self._advance(incident)
+        else:
+            self._forget_pauses(incident_id)
+
+    def retrying(self, incident_id: str) -> bool:
+        """Whether the run has paused on an unavailable model and is waiting for, or making, a
+        retry. The watchdog leaves such an incident alone: the runner already reports on it."""
+        return incident_id in self._pauses
 
     async def _status_on(self, incident_id: str, payload: Any) -> IncidentStatus:
         """The status as a run is driven. A yes goes straight to Execute; a restart or a retry
@@ -312,7 +324,7 @@ class IncidentRunner:
             return "investigating"
         snapshot = await self.graph.aget_state(self.config(incident_id))
         node = snapshot.next[0] if snapshot.next else ""
-        if node == "report" and snapshot.values.get("verification") is not None:
+        if node == "report" and _verified(snapshot.values):
             return "verifying"
         return NODE_STATUS.get(node, "investigating")
 
@@ -343,6 +355,12 @@ class IncidentRunner:
         it leaves the incident open and `recover_on_boot` finishes the run."""
         outcome = snapshot.values.get("outcome")
         await self.repo.set_status(incident_id, "resolved" if outcome == "resolved" else "closed")
+
+
+def _verified(values: dict[str, Any]) -> bool:
+    """Whether the run's last Verify passed (a failed one loops back and leaves it not ok)."""
+    verification = values.get("verification")
+    return verification is not None and verification.ok
 
 
 def _initial(incident: Incident, signals: list[Signal]) -> dict[str, Any]:

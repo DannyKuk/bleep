@@ -1,5 +1,5 @@
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from langchain_core.callbacks import BaseCallbackHandler
@@ -11,6 +11,7 @@ from bleep.graph.nodes import propose
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.runner import IncidentRunner
+from bleep.incidents.watchdog import Watchdog
 from bleep.schemas.graph import (
     Decision,
     PlanStep,
@@ -590,10 +591,20 @@ class HangingModel(FakeChatModel):
         return await super()._agenerate(*args, **kwargs)
 
 
-class Retry:
-    """The runner's `sleep`: records each wait and holds the retry until the test lets it go."""
-
+class WallClock:
     def __init__(self) -> None:
+        self.now = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+class Retry:
+    """The runner's `sleep`: records each wait, moves `clock` on by it, and holds the retry until
+    the test lets it go."""
+
+    def __init__(self, clock: WallClock | None = None) -> None:
+        self.clock = clock or WallClock()
         self.delays: list[float] = []
         self.waiting = asyncio.Event()
         self.release = asyncio.Event()
@@ -602,6 +613,7 @@ class Retry:
         self.delays.append(seconds)
         self.waiting.set()
         await self.release.wait()
+        self.clock.now += timedelta(seconds=seconds)
         self.release.clear()
         self.waiting.clear()
 
@@ -712,7 +724,7 @@ async def test_recover_on_boot_picks_up_a_paused_run(tmp_path):
     assert (await env.repo.get(incident.id)).status == "closed"
 
 
-async def test_paused_retries_back_off_to_an_hour_and_the_channels_hear_once_more_at_an_hour(
+async def test_a_long_outage_gives_the_pause_notice_and_one_at_an_hour_and_the_watchdog_none(
     tmp_path,
 ):
     env = await model_down(tmp_path, hangs=3 * 7)  # seven pauses
@@ -726,15 +738,24 @@ async def test_paused_retries_back_off_to_an_hour_and_the_channels_hear_once_mor
             notifier=notifier,
             settings=env.deps.settings_store,
             sleep=retry,
+            clock=retry.clock,
+        )
+        dog = Watchdog(
+            env.repo, env.bus, notifier, env.deps.settings_store, retry.clock, skip=runner.retrying
         )
         await runner.start(incident)
         for _ in range(6):
             await paused(runner, retry)
+            assert await dog.tick(retry.clock.now + timedelta(hours=3)) == []
+            await env.repo.set_status(incident.id, "investigating")  # a retry in progress
+            assert await dog.tick(retry.clock.now + timedelta(hours=3)) == []
+            await env.repo.set_status(incident.id, "paused")
             retry.release.set()
             await asyncio.sleep(0.05)
         await paused(runner, retry)
         assert retry.delays == [300, 600, 1200, 2400, 3600, 3600, 3600]
-        assert len(notifier.notices) == 2  # when it paused, and at an hour (after 5+10+20+40 min)
+        # The pause notice, and one at the first pause after an hour (5+10+20+40 min is 75).
+        assert len(notifier.notices) == 2
         assert "an hour" in notifier.notices[1][1]
         notices = [e for e in await env.bus.history(incident.id) if e.kind == "notice"]
         assert len(notices) == 2
@@ -743,7 +764,66 @@ async def test_paused_retries_back_off_to_an_hour_and_the_channels_hear_once_mor
         await runner.close()
 
 
-async def test_a_verified_fix_never_shows_investigating_again_when_the_run_is_restarted(tmp_path):
+async def test_the_retry_ceiling_is_never_below_the_configured_first_wait(tmp_path):
+    env = await model_down(tmp_path, hangs=6)
+    env.deps.settings_store = StaticSettings(
+        budget_limits=Budgets.model_construct(
+            **(Budgets().model_dump() | {"model_timeout_s": 0.01, "paused_retry_min": 240})
+        )
+    )
+    incident = await env.open(service(env), container="shop-web-1")
+    retry = Retry()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(
+            build_graph(env.deps, saver),
+            env.repo,
+            env.bus,
+            settings=env.deps.settings_store,
+            sleep=retry,
+            clock=retry.clock,
+        )
+        await runner.start(incident)
+        await paused(runner, retry)
+        retry.release.set()
+        await asyncio.sleep(0.05)
+        await paused(runner, retry)
+        assert retry.delays == [240 * 60, 240 * 60]
+        await runner.close()
+
+
+async def test_a_failed_run_forgets_its_pauses(tmp_path):
+    env = await model_down(tmp_path, hangs=3)
+    incident = await env.open(service(env), container="shop-web-1")
+    retry = Retry()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(
+            build_graph(env.deps, saver),
+            env.repo,
+            env.bus,
+            settings=env.deps.settings_store,
+            sleep=retry,
+        )
+        await runner.start(incident)
+        await paused(runner, retry)
+        assert runner.retrying(incident.id)
+
+        # The retry's first status write fails, which is a bug and not an outage.
+        async def broken(incident_id: str, status: str) -> None:
+            raise RuntimeError("disk full")
+
+        env.repo.set_status = broken  # type: ignore[method-assign]
+        retry.release.set()
+        await runner.join()
+        assert not runner.retrying(incident.id)
+
+
+@pytest.mark.parametrize(
+    ("ok", "outcome", "shown"),
+    [(True, "resolved", "verifying"), (False, "no_action", "investigating")],
+)
+async def test_a_restart_before_report_shows_verifying_only_after_a_passed_verify(
+    tmp_path, ok, outcome, shown
+):
     env = await graph_env(tmp_path)
     incident = await env.open(service(env), container="shop-web-1")
     statuses: list[str] = []
@@ -761,8 +841,8 @@ async def test_a_verified_fix_never_shows_investigating_again_when_the_run_is_re
                 "incident_id": incident.id,
                 "subject": incident.subject,
                 "signals": [],
-                "verification": VerificationResult(ok=True, checks=[]),
-                "outcome": "resolved",
+                "verification": VerificationResult(ok=ok, checks=[]),
+                "outcome": outcome,
             },
             as_node="verify",
         )
@@ -772,5 +852,6 @@ async def test_a_verified_fix_never_shows_investigating_again_when_the_run_is_re
         await runner.start(incident)
         await runner.join()
 
-    assert "investigating" not in statuses
-    assert statuses[0] == "verifying" and statuses[-1] == "resolved"
+    assert statuses[0] == shown
+    if ok:
+        assert "investigating" not in statuses and statuses[-1] == "resolved"
