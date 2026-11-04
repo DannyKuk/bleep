@@ -43,6 +43,14 @@ def no_real_embedding_model(monkeypatch):
     monkeypatch.setattr(FastEmbedEmbedder, "_load", refuse)
 
 
+@pytest.fixture(autouse=True)
+def no_prompt_overrides():
+    """An override a test puts in force (the dev panel's) must not leak into the next test."""
+    prompts.use_overrides({})
+    yield
+    prompts.use_overrides({})
+
+
 @pytest.fixture
 def settings(tmp_path) -> Settings:
     return Settings(
