@@ -5,6 +5,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from bleep.hosts.registry import Registry
+from bleep.tools.default import default_registry
+from bleep.tools.registry import ToolContext
 from evals.mcp_server import FIXTURES_DIR, McpFixtureError, load_mcp_fixture, serve
 from graph_env import RecordingGuardLog
 
@@ -51,7 +54,28 @@ async def test_the_plugin_reads_the_fixtures_tools_and_their_schemas_from_the_se
 
     assert plugins.actions() == {"mcp.call"}
     assert handler.act_tool_names() == ["caddy_reload", "caddy_purge_cache"]
+    assert load_mcp_fixture("caddy").read_tools == ["caddy_config"]
     assert schemas.startswith('<untrusted source="mcp"')
     assert "caddy_reload (act" in schemas and '"config"' in schemas
-    assert "may run 0 as read and 2 as act" in health.health.detail
+    assert "may run 1 as read and 2 as act" in health.health.detail
     assert served.calls == []  # listed, never called
+
+
+async def test_caddy_config_is_a_read_tool_that_shows_the_loaded_upstream_beside_the_file_s():
+    async with serve(load_mcp_fixture("caddy")) as served:
+        plugins = served.plugins(RecordingGuardLog())
+        ctx = ToolContext(incident_id="inc_1", host_id="demo", registry=Registry([]))
+        tools = {t.name: t for t in default_registry(plugins=plugins).read_tools(ctx)}
+        listing = await tools["mcp_tools"].ainvoke({})
+        answer = await tools["mcp_call"].ainvoke(
+            {"tool": "caddy_config", "arguments": {"container": "shop-proxy"}}
+        )
+        refused = await tools["mcp_call"].ainvoke(
+            {"tool": "caddy_reload", "arguments": {"container": "shop-proxy"}}
+        )
+
+    assert "caddy_config (read, mcp_call runs it)" in listing
+    assert "shop-web:8001" in answer and "shop-web:8000" in answer
+    assert "loaded config" in answer and "on disk" in answer
+    assert served.calls == [("caddy_config", {"container": "shop-proxy"})]  # the reload never ran
+    assert "caddy_reload" in refused

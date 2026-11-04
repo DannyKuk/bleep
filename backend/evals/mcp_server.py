@@ -4,8 +4,9 @@ plugin, so its tools and `mcp.call` run unchanged and nothing leaves the machine
 A fixture is a YAML file in `evals/fixtures/mcp/`: the tools the server lists (name, description,
 input schema) and which of them the plugin's settings allow as read or act tools. The server is
 the `mcp` package's own low-level server over Streamable HTTP, reached through an
-`httpx.ASGITransport` as in the plugin's tests, so no socket is opened. A call answers a fixed
-line and is recorded; evals stop after Propose, so an act tool is never called.
+`httpx.ASGITransport` as in the plugin's tests, so no socket is opened. A call answers the tool's
+fixed `result` (or "<name>: done") and is recorded; evals stop after Propose, so an act tool is
+never called.
 """
 
 from collections.abc import AsyncIterator
@@ -44,6 +45,7 @@ class FixtureTool(_Strict):
     name: str = Field(pattern=r"^[A-Za-z0-9_.\-/]{1,128}$")
     description: str
     input_schema: dict[str, Any] = Field(default_factory=lambda: {"type": "object"})
+    result: str | None = None  # what a call answers; "<name>: done" when absent
 
 
 class McpFixture(_Strict):
@@ -94,6 +96,7 @@ async def serve(fixture: McpFixture) -> AsyncIterator[ServedMcp]:
         types.Tool(name=t.name, description=t.description, inputSchema=t.input_schema)
         for t in fixture.tools
     ]
+    results = {t.name: t.result for t in fixture.tools}
     manager = StreamableHTTPSessionManager(
         app=server,
         json_response=True,
@@ -113,7 +116,7 @@ async def serve(fixture: McpFixture) -> AsyncIterator[ServedMcp]:
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
         served.calls.append((name, arguments))
-        return [types.TextContent(type="text", text=f"{name}: done")]
+        return [types.TextContent(type="text", text=results.get(name) or f"{name}: done")]
 
     async with manager.run():
         yield served
