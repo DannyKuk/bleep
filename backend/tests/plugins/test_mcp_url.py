@@ -301,7 +301,7 @@ async def test_an_unreachable_server_is_said_in_bleeps_own_words():
     assert listing == "the MCP server could not be reached (ConnectError)"
     call = await tools["mcp_call"].ainvoke({"tool": "uptime", "arguments": {"service": "s"}})
     assert call == "the MCP server could not be reached (ConnectError)"
-    view = await registry.view("mcp")
+    view = await registry.view("mcp", version="v1")
     assert view.health is not None and not view.health.ok
 
 
@@ -319,7 +319,7 @@ async def test_no_adapter_runnable_reports_raw_server_output_to_a_tracer():
 async def test_health_counts_what_may_run_and_names_what_is_missing_or_marked():
     async with mcp_server() as server:
         registry = plugins(server, act_tools=["pause_monitor", "reboot_all"])
-        view = await registry.view("mcp")
+        view = await registry.view("mcp", version="v1")
 
     assert view.health is not None and view.health.ok
     assert view.health.detail == (
@@ -358,8 +358,8 @@ def test_the_settings_pass_the_secret_check_a_put_body_gets():
 
 async def test_the_view_shows_both_variables_by_name_never_their_values():
     async with mcp_server() as server:
-        view = await plugins(server).view("mcp")
-        without = await plugins(server, env={"MCP_URL": URL}).view("mcp")
+        view = await plugins(server).view("mcp", version="v1")
+        without = await plugins(server, env={"MCP_URL": URL}).view("mcp", version="v1")
 
     assert [(s.env, s.set, s.required) for s in view.secrets] == [
         ("MCP_URL", True, True),

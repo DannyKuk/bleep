@@ -204,7 +204,12 @@ def test_a_ledger_row_without_an_incident_is_listed_without_one(dev_client, part
 
 
 def test_a_budget_saved_through_the_settings_is_the_cap_the_costs_show(dev_client):
-    response = dev_client.put("/api/settings", json={"budgets": {"daily_cost_usd": 2.5}})
+    version = dev_client.get("/api/settings").json()["version"]
+    response = dev_client.put(
+        "/api/settings",
+        json={"budgets": {"daily_cost_usd": 2.5}},
+        headers={"If-Match": f'"{version}"'},
+    )
     assert response.status_code == 200
     assert dev_client.get("/api/dev/costs").json()["daily_cap_usd"] == 2.5
 

@@ -20,6 +20,7 @@ describe("BudgetsForm", () => {
           budgets: { ...BUDGETS, verify_loops: 1 },
         })}
         onSaved={onSaved}
+        onStale={vi.fn(async () => undefined)}
       />,
     );
     expect(screen.getByLabelText("Tool calls per Investigate round")).toHaveValue(8);
@@ -36,7 +37,13 @@ describe("BudgetsForm", () => {
 
   it("refuses an empty or out-of-bounds value before sending it", async () => {
     const fetchMock = stubBackend();
-    render(<BudgetsForm view={settingsView()} onSaved={vi.fn()} />);
+    render(
+      <BudgetsForm
+        view={settingsView()}
+        onSaved={vi.fn()}
+        onStale={vi.fn(async () => undefined)}
+      />,
+    );
 
     const calls = screen.getByLabelText("Tool calls per Investigate round");
     await userEvent.clear(calls);
@@ -58,6 +65,7 @@ describe("BudgetsForm", () => {
       <BudgetsForm
         view={settingsView({ overrides: { budgets: { replans: 1 } } })}
         onSaved={vi.fn()}
+        onStale={vi.fn(async () => undefined)}
       />,
     );
     await userEvent.click(screen.getByRole("button", { name: "Use the defaults" }));

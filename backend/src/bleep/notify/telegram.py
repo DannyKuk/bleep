@@ -37,6 +37,12 @@ GUARD_INCIDENT = "telegram"  # guard_log rows that belong to no incident
 _CHANNEL_NAMES = {"dashboard": "the dashboard", "telegram": "Telegram"}
 
 
+def mask_chat_id(chat_id: str) -> str:
+    """The chat id as the dashboard shows it: a fixed mask and, for an id long enough that they
+    say little, its last two characters."""
+    return "••••" + (chat_id[-2:] if len(chat_id) > 4 else "")
+
+
 class TelegramError(Exception):
     """A Bot API call failed. The message never holds the URL, so never the token."""
 
@@ -163,6 +169,7 @@ class TelegramBot:
         self.clock = clock
         self._sleep = sleep
         self._offset: int | None = None
+        self.last_poll: datetime | None = None  # the last getUpdates that Telegram answered
 
     async def poll_forever(self) -> None:
         """Long-poll until cancelled; an outage or any other error backs off from 1 s to 60 s and
@@ -183,7 +190,9 @@ class TelegramBot:
 
     async def poll_once(self) -> None:
         """One `getUpdates` call and the handling of what it returned."""
-        for update in await self.client.get_updates(self._offset):
+        updates = await self.client.get_updates(self._offset)
+        self.last_poll = self.clock()
+        for update in updates:
             self._offset = update["update_id"] + 1  # confirmed even if handling fails below
             try:
                 await self.handle(update)

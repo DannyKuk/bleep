@@ -40,6 +40,7 @@ export const settingsView = (overrides: Partial<DevSettingsView> = {}): DevSetti
   models: MODELS,
   budgets: BUDGETS,
   overrides: {},
+  version: "v1",
   ...overrides,
 });
 

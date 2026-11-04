@@ -26,12 +26,17 @@ from bleep.notify.telegram import (
     TelegramBot,
     TelegramClient,
     TelegramError,
+    mask_chat_id,
 )
 from bleep.schemas.graph import ApprovalRequest, Diagnosis, Proposal, Report, VerificationResult
 from bleep.schemas.incidents import Incident
+from bleep.schemas.settings import SecretStatus
+from bleep.schemas.telegram import TelegramStatus
 from bleep.store.db import Database
 
 log = logging.getLogger(__name__)
+
+TOKEN_ENV = "TELEGRAM_BOT_TOKEN"  # `Settings.telegram_bot_token`
 
 
 class Notifier:
@@ -138,6 +143,17 @@ class NotifySetup:
     bot: TelegramBot | None = None
     _http: httpx.AsyncClient | None = None
     _task: asyncio.Task[None] | None = field(default=None, repr=False)
+    chat_id: str | None = None
+    token_set: bool = False
+
+    def status(self) -> TelegramStatus:
+        """What the settings page shows: set up or not, the chat masked, when it last polled."""
+        return TelegramStatus(
+            configured=self.bot is not None,
+            chat_id=mask_chat_id(self.chat_id) if self.chat_id is not None else None,
+            last_poll=self.bot.last_poll if self.bot is not None else None,
+            token=SecretStatus(env=TOKEN_ENV, set=self.token_set),
+        )
 
     def start(self, runner: Resumer) -> None:
         """Start polling. Does nothing without a token."""
@@ -174,7 +190,9 @@ def setup(
     if token is None or settings.telegram_chat_id is None:
         if token is not None:
             log.warning("telegram: a bot token is set but TELEGRAM_CHAT_ID is not; Telegram is off")
-        return NotifySetup(Notifier(bus))
+        return NotifySetup(
+            Notifier(bus), chat_id=settings.telegram_chat_id, token_set=token is not None
+        )
     # httpx logs every request URL at INFO, and the Bot API puts the token in the URL.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     http = httpx.AsyncClient()
@@ -190,7 +208,7 @@ def setup(
         guard_log=guard_log,
     )
     notifier = Notifier(bus, bot.client, chat_id, messages, approvals)
-    return NotifySetup(notifier, bot, http)
+    return NotifySetup(notifier, bot, http, chat_id=chat_id, token_set=True)
 
 
 class _NoRunner:

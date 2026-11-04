@@ -13,7 +13,13 @@ from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
 from bleep.notify import format as fmt
 from bleep.notify.notifier import Notifier, setup
-from bleep.notify.telegram import MessageLog, TelegramBot, TelegramClient, TelegramError
+from bleep.notify.telegram import (
+    MessageLog,
+    TelegramBot,
+    TelegramClient,
+    TelegramError,
+    mask_chat_id,
+)
 from bleep.schemas.graph import (
     Check,
     Decision,
@@ -261,6 +267,17 @@ async def test_poll_advances_the_offset(env):
     first, second = env.api.sent("getUpdates")
     assert "offset" not in first and second["offset"] == 700005
     assert first["timeout"] == 30
+
+
+async def test_a_poll_records_when_it_last_reached_telegram(env):
+    assert env.bot.last_poll is None
+    await env.bot.poll_once()
+    assert env.bot.last_poll == T0
+    env.bot.clock = lambda: datetime(2026, 11, 2, 13, 0, tzinfo=UTC)
+    env.api.updates.append(httpx.Response(409, json=fixture("conflict")))
+    with pytest.raises(TelegramError):
+        await env.bot.poll_once()
+    assert env.bot.last_poll == T0  # a failed poll did not reach it
 
 
 async def test_poll_forever_backs_off_on_an_error_and_goes_on(env):
@@ -568,3 +585,44 @@ async def test_a_closed_http_client_is_a_telegram_error_not_a_crash():
 
     with pytest.raises(TelegramError):
         await TelegramClient(TOKEN, http).send_message("42", "hello")
+
+
+# --- status ---
+
+
+@pytest.mark.parametrize(
+    ("chat_id", "masked"),
+    [("4242", "••••"), ("123456789", "••••89"), ("-1001234567890", "••••90"), ("", "••••")],
+)
+def test_a_chat_id_is_masked_to_its_last_two_characters_at_most(chat_id, masked):
+    assert mask_chat_id(chat_id) == masked
+
+
+async def test_status_without_a_token_says_not_configured_and_names_the_variable(tmp_path):
+    db = Database(tmp_path / "bleep.sqlite")
+    settings = Settings(
+        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s"),
+        TELEGRAM_BOT_TOKEN=None, TELEGRAM_CHAT_ID="123456789",
+    )  # fmt: skip
+    status = setup(settings, db, EventBus(db), ApprovalStore(db, "s")).status()
+    assert not status.configured
+    assert status.token.env == "TELEGRAM_BOT_TOKEN" and not status.token.set
+    assert status.chat_id == "••••89" and status.last_poll is None
+
+
+async def test_status_with_a_bot_shows_the_last_poll_and_never_the_token_or_the_chat(tmp_path):
+    db = Database(tmp_path / "bleep.sqlite")
+    await db.migrate()
+    settings = Settings(
+        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s"),
+        TELEGRAM_BOT_TOKEN=TOKEN, TELEGRAM_CHAT_ID="123456789",
+    )  # fmt: skip
+    built = setup(settings, db, EventBus(db), ApprovalStore(db, "s"))
+    assert built.bot is not None
+    built.bot.client.http = httpx.AsyncClient(transport=httpx.MockTransport(FakeTelegram()))
+    built.bot.clock = lambda: T0
+    await built.bot.poll_once()
+    status = built.status()
+    assert status.configured and status.token.set and status.last_poll == T0
+    dumped = status.model_dump_json()
+    assert TOKEN not in dumped and "123456789" not in dumped

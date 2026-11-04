@@ -23,6 +23,21 @@ OPENROUTER_KEY = "sk-or-v1-env-key-0123456789"
 SHOP_URLS = {"hosts": {"a": {"services": {"compose:shop": {"urls": [{"url": DB_URL}]}}}}}
 
 
+def put_settings(client: TestClient, body: object, version: str | None = None):
+    """`PUT /api/settings` built from the version read just before, unless one is given."""
+    if version is None:
+        version = client.get("/api/settings").json()["version"]
+    return client.put("/api/settings", json=body, headers={"If-Match": f'"{version}"'})
+
+
+def put_plugin(client: TestClient, name: str, json: object, version: str | None = None):
+    """`PUT /api/plugins/{name}` built from the plugin as read just before, unless given."""
+    if version is None:
+        listed = {p["name"]: p for p in client.get("/api/plugins").json()}
+        version = listed[name]["version"] if name in listed else "none"
+    return client.put(f"/api/plugins/{name}", json=json, headers={"If-Match": f'"{version}"'})
+
+
 @pytest.fixture
 def app(settings, monkeypatch):
     """A logged-in client over host `a` (the `shop` service with a URL in the hosts file) with
@@ -62,7 +77,7 @@ def test_get_shows_the_values_in_force_with_no_override(app):
 
 
 def test_a_database_url_wins_over_the_hosts_file(app):
-    response = app.put("/api/settings", json=SHOP_URLS)
+    response = put_settings(app, SHOP_URLS)
     assert response.status_code == 200
     assert response.json()["hosts"][0]["services"]["compose:shop"]["urls"][0]["url"] == DB_URL
     services = app.get("/api/services").json()
@@ -70,8 +85,8 @@ def test_a_database_url_wins_over_the_hosts_file(app):
 
 
 def test_a_section_left_out_is_kept(app):
-    app.put("/api/settings", json={"budgets": {"daily_cost_usd": 0.5}})
-    app.put("/api/settings", json={"thresholds": {"disk_percent": 80}})
+    put_settings(app, {"budgets": {"daily_cost_usd": 0.5}})
+    put_settings(app, {"thresholds": {"disk_percent": 80}})
     body = app.get("/api/settings").json()
     assert body["budgets"]["daily_cost_usd"] == 0.5
     assert body["thresholds"]["disk_percent"] == 80
@@ -106,7 +121,7 @@ SECRET_BODIES = [
 
 @pytest.mark.parametrize("body", SECRET_BODIES)
 def test_a_settings_put_carrying_a_secret_is_refused_without_echoing_it(app, body):
-    response = app.put("/api/settings", json=body)
+    response = put_settings(app, body)
     assert response.status_code == 422
     for word in ("abc", "ghp_", "hunter2", "GITHUB_TOKEN"):
         assert word not in str(response.json()["detail"])
@@ -114,29 +129,53 @@ def test_a_settings_put_carrying_a_secret_is_refused_without_echoing_it(app, bod
 
 
 def test_an_invalid_body_is_refused_with_reasons_and_without_its_values(app):
-    response = app.put("/api/settings", json={"budgets": {"daily_cost_usd": "lots-and-lots"}})
+    response = put_settings(app, {"budgets": {"daily_cost_usd": "lots-and-lots"}})
     assert response.status_code == 422
     assert "lots-and-lots" not in response.text
     assert response.json()["detail"][0]["loc"] == ["budgets", "daily_cost_usd"]
 
 
 def test_an_unknown_host_is_refused(app):
-    response = app.put("/api/settings", json={"hosts": {"ghost": {"rules": ["x"]}}})
+    response = put_settings(app, {"hosts": {"ghost": {"rules": ["x"]}}})
     assert response.status_code == 422
     assert "ghost" in response.json()["detail"]
 
 
 def test_settings_never_show_a_model_key(app):
-    app.put("/api/settings", json={"models": {"model": "openai/other"}})
+    put_settings(app, {"models": {"model": "openai/other"}})
     response = app.get("/api/settings")
     assert response.json()["models"]["model"] == "openai/other"
     assert OPENROUTER_KEY not in response.text
     assert "api_key" not in response.text
 
 
+def test_settings_say_whether_the_model_key_is_set_by_its_variable(app):
+    assert app.get("/api/settings").json()["model_key"] == {
+        "env": "OPENROUTER_API_KEY",
+        "file": None,
+        "set": True,
+    }
+
+
+def test_settings_say_when_the_model_key_is_missing(settings, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    parts = build_parts(settings, Registry([]), FakeEmbedder())
+    with TestClient(create_app(settings, parts)) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        assert client.get("/api/settings").json()["model_key"]["set"] is False
+
+
+def test_settings_show_the_hosts_connection_and_which_protection_is_fixed(app):
+    host = app.get("/api/settings").json()["hosts"][0]
+    assert host["connection"]["kind"] == "socket"
+    assert host["connection"]["endpoint"] == "unix:///var/run/docker.sock"
+    assert host["services"]["compose:shop"]["hosts_file_protected_containers"] == []
+
+
 def test_plugins_list_settings_and_whether_secrets_are_set_never_the_value(app):
-    response = app.put(
-        "/api/plugins/coolify",
+    response = put_plugin(
+        app,
+        "coolify",
         json={"enabled": True, "settings": {"url": "https://coolify.example.test"}},
     )
     assert response.status_code == 200
@@ -161,28 +200,28 @@ def test_plugins_list_settings_and_whether_secrets_are_set_never_the_value(app):
     ],
 )
 def test_a_plugin_put_carrying_a_secret_is_refused(app, body):
-    response = app.put("/api/plugins/coolify", json=body)
+    response = put_plugin(app, "coolify", json=body)
     assert response.status_code == 422
     assert "abc" not in response.text
     assert app.get("/api/plugins").json()[0]["enabled"] is False
 
 
 def test_a_plugin_put_with_unknown_settings_is_refused(app):
-    response = app.put("/api/plugins/coolify", json={"settings": {"url": "x", "surprise": 1}})
+    response = put_plugin(app, "coolify", json={"settings": {"url": "x", "surprise": 1}})
     assert response.status_code == 422
 
 
 def test_switching_on_without_the_secret_is_refused(app, monkeypatch):
     monkeypatch.delenv("COOLIFY_TOKEN")
-    response = app.put(
-        "/api/plugins/coolify", json={"enabled": True, "settings": {"url": "https://c.test"}}
+    response = put_plugin(
+        app, "coolify", json={"enabled": True, "settings": {"url": "https://c.test"}}
     )
     assert response.status_code == 422
     assert "COOLIFY_TOKEN" in response.json()["detail"]
 
 
 def test_unknown_plugin(app):
-    assert app.put("/api/plugins/nope", json={"enabled": True}).status_code == 404
+    assert put_plugin(app, "nope", json={"enabled": True}).status_code == 404
 
 
 def test_switching_a_plugin_off_reaches_the_next_incident(app):
@@ -199,26 +238,26 @@ def test_switching_a_plugin_off_reaches_the_next_incident(app):
             v.rule for v in check_plan(plan, deps.registry, enabled, "a", incident_containers=[])
         }
 
-    app.put("/api/plugins/coolify", json={"enabled": True, "settings": {"url": "https://c.test"}})
+    put_plugin(app, "coolify", json={"enabled": True, "settings": {"url": "https://c.test"}})
     assert "coolify_applications" in {t.name for t in deps.tools.read_tools(ctx)}
     assert "disabled_action" not in rules()
     assert deps.act_tools.get("coolify.redeploy") is not None
 
-    app.put("/api/plugins/coolify", json={"enabled": False})
+    put_plugin(app, "coolify", json={"enabled": False})
     assert "coolify_applications" not in {t.name for t in deps.tools.read_tools(ctx)}
     assert "disabled_action" in rules()
     assert deps.act_tools.get("coolify.redeploy") is None
 
 
 def test_settings_reach_the_graph(app):
-    app.put("/api/settings", json={"budgets": {"investigate_tool_calls": 3}})
+    put_settings(app, {"budgets": {"investigate_tool_calls": 3}})
     assert app.parts.graph_deps.settings_store.budgets().investigate_tool_calls == 3
 
 
 def test_a_bad_url_is_refused_without_echoing_it(app):
     url = "https://shop.example.test:hunter2xyz/health"
     body = {"hosts": {"a": {"services": {"compose:shop": {"urls": [{"url": url}]}}}}}
-    response = app.put("/api/settings", json=body)
+    response = put_settings(app, body)
     assert response.status_code == 422
     assert "hunter2xyz" not in response.text
 
@@ -227,7 +266,7 @@ def test_a_deeply_nested_body_is_refused_not_a_crash(app):
     body: dict = {"x": 1}
     for _ in range(1_000):
         body = {"hosts": body}
-    assert app.put("/api/settings", json=body).status_code == 422
+    assert put_settings(app, body).status_code == 422
     assert app.get("/api/settings").status_code == 200
 
 
@@ -238,8 +277,110 @@ def test_a_plugin_that_fails_to_build_is_a_422(app, monkeypatch):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(plugin, "tools", explode)
-    response = app.put(
-        "/api/plugins/coolify", json={"enabled": True, "settings": {"url": "https://c.test"}}
+    response = put_plugin(
+        app, "coolify", json={"enabled": True, "settings": {"url": "https://c.test"}}
     )
     assert response.status_code == 422
     assert app.get("/api/plugins").json()[0]["enabled"] is False
+
+
+def test_a_read_carries_the_version_in_the_body_and_the_etag(app):
+    response = app.get("/api/settings")
+    assert response.headers["etag"] == f'"{response.json()["version"]}"'
+
+
+def test_a_put_without_the_version_is_refused_and_nothing_changes(app):
+    before = app.get("/api/settings").json()
+    response = app.put("/api/settings", json={"thresholds": {"disk_percent": 80}})
+    assert response.status_code == 428
+    assert "If-Match" in response.json()["detail"]
+    assert app.get("/api/settings").json() == before
+
+
+def test_a_put_from_a_stale_page_is_a_409_with_the_current_version_and_nothing_changes(app):
+    """A tab read before a container was protected elsewhere would unprotect it."""
+    stale = app.get("/api/settings").json()["version"]
+    protect = {"hosts": {"a": {"services": {"compose:shop": {"protected_containers": ["db-1"]}}}}}
+    protected = put_settings(app, protect)
+    assert protected.status_code == 200
+    current = protected.json()["version"]
+    assert current != stale
+    assert protected.headers["etag"] == f'"{current}"'
+
+    response = put_settings(app, {"hosts": {"a": {"rules": ["from the stale tab"]}}}, stale)
+    assert response.status_code == 409
+    assert response.json()["version"] == current
+    assert "nothing was saved" in response.json()["detail"]
+    body = app.get("/api/settings").json()
+    assert body["version"] == current
+    assert body["overrides"]["hosts"] == protect["hosts"]
+
+
+def test_a_put_takes_the_version_bare_or_as_an_etag(app):
+    version = app.get("/api/settings").json()["version"]
+    bare = app.put(
+        "/api/settings", json={"thresholds": {"disk_percent": 80}}, headers={"If-Match": version}
+    )
+    assert bare.status_code == 200
+    weak = app.put(
+        "/api/settings",
+        json={"thresholds": {"disk_percent": 81}},
+        headers={"If-Match": f'W/"{bare.json()["version"]}"'},
+    )
+    assert weak.status_code == 200
+    assert (
+        app.put("/api/settings", json={"thresholds": {}}, headers={"If-Match": "*"}).status_code
+        == 409
+    )
+
+
+def test_of_two_saves_from_one_page_the_second_is_refused(app):
+    """The dev panel's budgets and the settings page's thresholds, both read at once."""
+    version = app.get("/api/settings").json()["version"]
+    assert put_settings(app, {"budgets": {"daily_cost_usd": 0.5}}, version).status_code == 200
+    second = put_settings(app, {"thresholds": {"disk_percent": 80}}, version)
+    assert second.status_code == 409
+    body = app.get("/api/settings").json()
+    assert body["budgets"]["daily_cost_usd"] == 0.5
+    assert body["thresholds"]["disk_percent"] == 90
+
+
+def test_a_plugin_save_leaves_the_settings_version_alone(app):
+    version = app.get("/api/settings").json()["version"]
+    put_plugin(app, "coolify", json={"settings": {"url": "https://c.test"}})
+    assert app.get("/api/settings").json()["version"] == version
+
+
+def test_a_plugin_read_carries_its_version(app):
+    (plugin,) = app.get("/api/plugins").json()
+    assert isinstance(plugin["version"], str) and plugin["version"]
+
+
+def test_a_plugin_put_without_the_version_is_refused_and_nothing_changes(app):
+    response = app.put("/api/plugins/coolify", json={"settings": {"url": "https://c.test"}})
+    assert response.status_code == 428
+    assert "If-Match" in response.json()["detail"]
+    assert app.get("/api/plugins").json()[0]["settings"] == {}
+
+
+def test_a_plugin_put_from_a_stale_page_is_a_409_and_nothing_changes(app):
+    """A tab read before a setting was changed elsewhere would put the old one back."""
+    stale = app.get("/api/plugins").json()[0]["version"]
+    saved = put_plugin(app, "coolify", json={"settings": {"url": "https://new.test"}})
+    assert saved.status_code == 200
+    current = saved.json()["version"]
+    assert current != stale
+
+    response = put_plugin(
+        app, "coolify", json={"settings": {"url": "https://old.test"}}, version=stale
+    )
+    assert response.status_code == 409
+    assert response.json()["version"] == current
+    assert "nothing was saved" in response.json()["detail"]
+    assert app.get("/api/plugins").json()[0]["settings"]["url"] == "https://new.test"
+
+
+def test_a_settings_save_leaves_a_plugin_version_alone(app):
+    version = app.get("/api/plugins").json()[0]["version"]
+    put_settings(app, {"thresholds": {"disk_percent": 80}})
+    assert app.get("/api/plugins").json()[0]["version"] == version
