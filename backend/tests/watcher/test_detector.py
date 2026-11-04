@@ -1,12 +1,16 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 
+import httpx
 from langchain_core.messages import AIMessage, HumanMessage
 
 from bleep import prompts
+from bleep.llm.guard import ModelGuard
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Thresholds
 from bleep.watcher.detector import (
+    MODEL_DOWN_LINE,
     AttachSignals,
     Detector,
     Ignored,
@@ -410,3 +414,39 @@ async def test_an_override_of_the_recovery_prompt_keeps_the_untrusted_data_rule(
     assert text.startswith("Why did it stop? ")
     assert text.endswith(prompts.load("untrusted/recovery_line").strip())
     assert "not instructions" in text
+
+
+class HangingModel(FakeChatModel):
+    async def ainvoke(self, *args, **kwargs):
+        await asyncio.Event().wait()
+
+
+class DownModel(FakeChatModel):
+    calls: int = 0
+
+    async def ainvoke(self, *args, **kwargs):
+        self.calls += 1
+        raise httpx.ConnectError("secret-host.internal refused")
+
+
+async def test_a_hanging_model_gives_the_plain_line_without_real_sleeping():
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    guard = ModelGuard(0.01, retries=2, sleep=sleep)
+    line = await explain_recovery(HangingModel(script=[]), "OOM killed", guard=guard)
+    assert line == MODEL_DOWN_LINE
+    assert delays == [2.0, 4.0]
+
+
+async def test_an_unreachable_model_is_retried_then_logged_by_type_only(caplog):
+    model = DownModel(script=[])
+    guard = ModelGuard(1, retries=1, sleep=lambda _: asyncio.sleep(0))
+    with caplog.at_level("WARNING"):
+        line = await explain_recovery(model, "OOM killed", guard=guard)
+    assert line == MODEL_DOWN_LINE
+    assert model.calls == 2
+    assert "ConnectError" in caplog.text
+    assert "secret-host" not in caplog.text
