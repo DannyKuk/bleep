@@ -35,7 +35,8 @@ OVERRIDABLE = frozenset(
 # Never overridable. The eval prompts are loaded by the eval runner, a process of its own that never
 # reads overrides. The Telegram texts are what the approver reads before saying yes. `untrusted/`
 # holds the untrusted-data rule of each prompt that has one, which the code fills into that
-# prompt's `{untrusted_rule}`, so an override changes only the rest. `graph/system` holds the
+# prompt's `{untrusted_rule}`, so an override changes only the rest; Diagnose's `planted_in` field
+# is there too, filled into `{planted_in_rule}`. `graph/system` holds the
 # untrusted-data rule with no placeholder to check an override against. `graph/propose_mcp` tells
 # the model how to write an `mcp.call` step around the server's wrapped tool schemas, and
 # `graph/verify_unproven` tells it not to start again a container a human approved stopping.

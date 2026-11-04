@@ -134,6 +134,7 @@ UNTRUSTED_RULES = {
     "graph/propose": "untrusted/propose",
     "watcher/recovery_line": "untrusted/recovery_line",
 }
+FIXED_PARTS = {"graph/diagnose": {"planted_in_rule": "untrusted/diagnose_planted_in"}}
 
 
 def prompt_names() -> list[str]:
@@ -174,6 +175,18 @@ def test_the_untrusted_data_rules_are_their_own_files_and_cannot_be_overridden(n
         prompts.check_override(name, without)
 
 
+def test_the_planted_in_instruction_is_a_fixed_part_an_override_must_keep_a_place_for():
+    rule = "untrusted/diagnose_planted_in"
+    assert rule not in prompts.overridable_names()
+    with pytest.raises(PromptError):
+        prompts.check_override(rule, prompts.file_text(rule))
+    text = prompts.file_text("graph/diagnose")
+    assert "planted_in" not in text.replace("{planted_in_rule}", "")
+    without = text.replace("{planted_in_rule}", "")
+    with pytest.raises(PromptError, match="missing: {planted_in_rule}"):
+        prompts.check_override("graph/diagnose", without)
+
+
 def test_no_telegram_text_is_overridable_and_the_graph_prompts_still_are():
     names = prompts.overridable_names()
     assert not [name for name in names if name.startswith(("notify/", "evals/"))]
@@ -197,13 +210,15 @@ def test_the_four_prompts_render_as_they_did_before_their_rule_moved_out(name, r
     """The fixtures were rendered from the files at c0afd0f, before #147 moved each rule into
     `untrusted/`, with every placeholder filled as `<name>`; `{mcp}` came later (#118) and is
     filled as it is with the MCP plugin off."""
-    fields = placeholders(prompts.file_text(name)) - {"untrusted_rule"}
+    extra = {field: load(rule).strip() for field, rule in FIXED_PARTS.get(name, {}).items()}
+    fields = placeholders(prompts.file_text(name)) - {"untrusted_rule"} - set(extra)
     values = {field: f"<{field}>" for field in fields}
     if "mcp" in values:
         values["mcp"] = ""  # the MCP plugin off (#118): the fixture predates `{mcp}`
     rendered = load(
         name,
         **values,
+        **extra,
         untrusted_rule=load(rule).strip(),  # as the code that builds the prompt fills it
     )
     expected = (FIXTURES / f"{name.replace('/', '-')}.txt").read_text(encoding="utf-8")

@@ -166,6 +166,7 @@ def make(deps: GraphDeps) -> Node:
             context=_describe_context(context),
             investigation=_describe_investigation(state.get("messages", [])),
             untrusted_rule=prompts.load("untrusted/diagnose").strip(),
+            planted_in_rule=prompts.load("untrusted/diagnose_planted_in").strip(),
         )
         try:
             await check_budget(deps.ledger, incident_id, budgets)
