@@ -9,7 +9,7 @@ Whatever the plan names, the incident's own symptoms are checked too: every cont
 name and every URL they report failing, so a plan that checks something else cannot pass while
 the failure that opened the incident goes on.
 A host incident's disk, memory or load is read again on the host and judged against the same
-thresholds that opened it (`watcher/detector.past_threshold`, load over the last minute); a host
+thresholds that opened it (`hosts/readings.past_threshold`, load over the last minute); a host
 incident about anything else has nothing to read again, so it ends `unverified` without a
 loop-back.
 A Coolify application the plan redeployed is checked as a whole, read from the engine each time:
@@ -42,14 +42,13 @@ from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.plan_check import COOLIFY_UUID, coolify_members, host_urls
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
-from bleep.hosts.shell import host_basics
+from bleep.hosts.readings import past_threshold, readings
+from bleep.hosts.shell import HostUnreadable, host_basics
 from bleep.hosts.ssh import SshUnavailable
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import Check, Proposal, StepResult, VerificationResult
 from bleep.schemas.incidents import Signal
 from bleep.schemas.settings import Thresholds
-from bleep.watcher.detector import past_threshold
-from bleep.watcher.host_probe import readings
 from bleep.watcher.http_checks import check_url
 
 log = logging.getLogger(__name__)
@@ -340,15 +339,24 @@ async def _check_stopped(deps: GraphDeps, host_id: str, name: str) -> Check:
     return Check(kind="container", target=target, ok=True, detail=f"is {summary.state}")
 
 
-async def _check_host(deps: GraphDeps, host_id: str, kinds: list[str]) -> list[Check]:
+async def _check_host(
+    deps: GraphDeps, host_id: str, kinds: list[str], calm: set[str]
+) -> list[Check]:
     """The incident's disk, memory or load, read again on the host now (one read for all) and
     judged against the thresholds as they are now. Load is the last minute's: the 15-minute
-    average the watcher opens on lags far behind a fix, past Verify's last check."""
+    average the watcher opens on lags far behind a fix, past Verify's last check. One dip of a
+    one-minute average is weak evidence, so load passes only when it was within its threshold
+    at the previous check of this round too. `calm` holds the kinds that were within their
+    threshold at the previous check; it is updated to this one's."""
+    before = set(calm)
+    calm.clear()
     shell = deps.registry.shell(host_id)
     try:
         found = readings(await host_basics(shell), load_minutes=1) if shell is not None else {}
     except SshUnavailable, OSError:
         return [Check(kind="host", target=k, ok=False, detail="host not reachable") for k in kinds]
+    except HostUnreadable:
+        return [Check(kind="host", target=k, ok=False, detail="could not be read") for k in kinds]
     thresholds = deps.settings_store.thresholds()
     checks = []
     for kind in kinds:
@@ -356,7 +364,10 @@ async def _check_host(deps: GraphDeps, host_id: str, kinds: list[str]) -> list[C
         if detail is None:
             checks.append(Check(kind="host", target=kind, ok=False, detail="could not be read"))
             continue
-        ok = not past_threshold(kind, detail, thresholds)
+        within = not past_threshold(kind, detail, thresholds)
+        if within:
+            calm.add(kind)
+        ok = within and (kind != "load" or kind in before)
         checks.append(
             Check(kind="host", target=kind, ok=ok, detail=_reading(kind, detail, thresholds))
         )
@@ -379,7 +390,7 @@ def _reading(kind: str, detail: dict, t: Thresholds) -> str:
         case _:
             return (
                 f"{detail['load_per_cpu']:.2f} per CPU over the last minute, "
-                f"needs at most {t.load_per_cpu:g}"
+                f"needs at most {t.load_per_cpu:g} on two checks in a row"
             )
 
 
@@ -403,6 +414,7 @@ def make(deps: GraphDeps) -> Node:
         apps: list[str],
         starts: dict[str, datetime],
         attempt: int,
+        calm: set[str],
     ) -> VerificationResult:
         owned = deps.http is None
         client = deps.http or httpx.AsyncClient()
@@ -417,7 +429,7 @@ def make(deps: GraphDeps) -> Node:
                 ]
             checks += [await _check_url(client, cfg) for cfg in plan.urls]
             if plan.readings:
-                checks += await _check_host(deps, host_id, plan.readings)
+                checks += await _check_host(deps, host_id, plan.readings, calm)
             if plan.blind:
                 checks.append(Check(kind="symptom", target=host_id, ok=False, detail=NOT_REREAD))
         finally:
@@ -439,8 +451,9 @@ def make(deps: GraphDeps) -> Node:
             await deps.bus.publish(incident_id, "verification", _payload(result))
         else:
             await deps.sleep(SETTLE_S)
+            calm: set[str] = set()
             for attempt in range(1, CHECKS + 1):
-                result = await one_check(subject.host_id, plan, apps, starts, attempt)
+                result = await one_check(subject.host_id, plan, apps, starts, attempt, calm)
                 await deps.bus.publish(incident_id, "verification", _payload(result))
                 if result.ok or attempt == CHECKS:
                     break

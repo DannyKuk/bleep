@@ -8,10 +8,9 @@ timer; it never touches Docker, the database or the network (the only I/O is the
 import asyncio
 import re
 from collections import defaultdict, deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
@@ -19,6 +18,7 @@ from langchain_core.messages import HumanMessage
 from bleep import prompts
 from bleep.guard.log import GuardLogger
 from bleep.guard.pipeline import guard_text
+from bleep.hosts.readings import past_threshold
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Thresholds
@@ -267,25 +267,8 @@ class Detector:
         return [OpenIncident(subject, signals)]
 
 
-def past_threshold(kind: str, detail: Mapping[str, Any], t: Thresholds) -> bool:
-    """Whether one disk, memory or load reading (`host_probe.readings`) is past its threshold.
-    One reading only: memory and load open an incident after several in a row (`feed`)."""
-    match kind:
-        case "disk":
-            return _value(detail, "percent") >= t.disk_percent
-        case "memory":
-            return _value(detail, "available_percent", 100) < t.memory_available_percent_min
-        case "load":
-            return _value(detail, "load_per_cpu") > t.load_per_cpu
-    raise ValueError(f"not a host reading: {kind}")
-
-
 def _num(signal: Signal, key: str, default: float = 0) -> float:
-    return _value(signal.detail, key, default)
-
-
-def _value(detail: Mapping[str, Any], key: str, default: float = 0) -> float:
-    value = detail.get(key, default)
+    value = signal.detail.get(key, default)
     return value if isinstance(value, int | float) else default
 
 
