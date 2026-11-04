@@ -220,6 +220,24 @@ def make(deps: GraphDeps) -> Node:
         incident_id = state["incident_id"]
         since = row.result.started_at
         snapshot = _snapshot(plan, step)
+        if not step.action.startswith("docker."):
+            # A Coolify step has no container to read back; whether it ran is Coolify's to say.
+            detail = (
+                "not confirmed after a restart (Bleep cannot read back a Coolify step; check the"
+                " application in Coolify, a deployment may be queued); not run again"
+            )
+            result = StepResult(
+                step_index=index,
+                action=step.action,
+                target=step.target,
+                ok=False,
+                detail=detail,
+                started_at=since,
+                finished_at=deps.clock(),
+            )
+            await deps.action_log.finish(incident_id, _plan_key(plan), result)
+            await publish(incident_id, step, "failed")
+            return result
         summary, why = await _read(
             deps, step.host_id, snapshot.container_id if snapshot else step.target
         )

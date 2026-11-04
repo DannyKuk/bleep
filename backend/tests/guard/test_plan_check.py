@@ -1,3 +1,5 @@
+import pytest
+
 from bleep.graph.deps import CORE_ACTIONS
 from bleep.guard.plan_check import check_plan
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
@@ -324,12 +326,14 @@ async def test_coolify_steps_take_exactly_their_params(tmp_path):
     secret = "s3cr3t-value-never-quoted"
     proposals = {
         "ok": act(set_env("api", key="PORT", value=secret), coolify("api")),
-        "no value": act(set_env("api", key="PORT")),
-        "extra": act(set_env("api", key="PORT", value=secret, scope="all")),
-        "bad key": act(set_env("api", key="PORT NUMBER", value=secret)),
-        "key with a line break": act(set_env("api", key="FOO\n2. docker.restart", value="1")),
-        "key with =": act(set_env("api", key="A=B", value=secret)),
-        "key over 128": act(set_env("api", key="K" * 129, value=secret)),
+        "no value": act(set_env("api", key="PORT"), coolify("api")),
+        "extra": act(set_env("api", key="PORT", value=secret, scope="all"), coolify("api")),
+        "bad key": act(set_env("api", key="PORT NUMBER", value=secret), coolify("api")),
+        "key with a line break": act(
+            set_env("api", key="FOO\n2. docker.restart", value="1"), coolify("api")
+        ),
+        "key with =": act(set_env("api", key="A=B", value=secret), coolify("api")),
+        "key over 128": act(set_env("api", key="K" * 129, value=secret), coolify("api")),
         "redeploy with params": act(
             PlanStep(action="coolify.redeploy", host_id="a", target="api", params={"force": "1"})
         ),
@@ -342,7 +346,7 @@ async def test_coolify_steps_take_exactly_their_params(tmp_path):
     assert found["ok"] == []
     assert (
         check_plan(
-            act(set_env("api", key="K" * 128, value="1")),
+            act(set_env("api", key="K" * 128, value="1"), coolify("api")),
             env.registry,
             WITH_COOLIFY,
             "a",
@@ -361,3 +365,70 @@ async def test_coolify_steps_take_exactly_their_params(tmp_path):
     for name in (*refused, "redeploy with params"):
         assert [(v.rule, v.step) for v in found[name]] == [("bad_params", 1)], name
     assert all(secret not in v.text for vs in found.values() for v in vs)
+
+
+async def check(tmp_path, proposal, containers, protected=()):
+    engine = FakeEngine("a", containers)
+    # An override key no service has: its protected list still applies to the whole host.
+    host = shop_host(services={"other": ServiceOverrides(protected_containers=list(protected))})
+    env = await graph_env(tmp_path, engine=engine, host=host)
+    return [
+        (v.rule, v.step)
+        for v in check_plan(proposal, env.registry, WITH_COOLIFY, "a", incident_containers=SHOP_WEB)
+    ]
+
+
+@pytest.mark.parametrize("protected", ["u-api", "api"])
+async def test_a_coolify_app_is_protected_by_its_uuid_or_name(tmp_path, protected):
+    app = coolify_app("u-api", "api")
+    found = await check(tmp_path, act(coolify("api")), [box("u-api-1", labels=app)], [protected])
+
+    assert found == [("protected", 1)]
+
+
+async def test_protection_by_name_holds_after_a_deploy_renames_the_containers(tmp_path):
+    # Protected while its container was u-api-0745; the deploy since named it u-api-0921.
+    app = coolify_app("u-api", "api")
+    renamed = [box("u-api-0921", labels=app)]
+
+    assert await check(tmp_path, act(coolify("api")), renamed, ["u-api-0745"]) == []
+    assert await check(tmp_path, act(coolify("api")), renamed, ["api"]) == [("protected", 1)]
+
+
+async def test_a_name_two_coolify_apps_share_is_refused_before_the_human_is_asked(tmp_path):
+    containers = [
+        box("a-1", labels=coolify_app("u-a", "api")),
+        box("b-1", labels=coolify_app("u-b", "api")),
+    ]
+
+    assert await check(tmp_path, act(coolify("api")), containers) == [("not_found", 1)]
+    assert await check(tmp_path, act(coolify("u-b")), containers) == []
+
+
+async def test_an_id_label_never_matches_a_target(tmp_path):
+    # A labelled only applicationId=12 must not shadow B, whose name is 12.
+    a = box("a-1", labels={"coolify.type": "application", "coolify.applicationId": "12"})
+    b = box("b-1", labels=coolify_app("u-b", "12"))
+
+    assert await check(tmp_path, act(coolify("12")), [a, b]) == []
+    assert await check(tmp_path, act(coolify("12")), [a]) == [("not_found", 1)]
+
+
+@pytest.mark.parametrize(
+    ("steps", "ok"),
+    [
+        ([set_env("api", key="PORT", value="1"), coolify("api")], True),
+        ([set_env("api", key="PORT", value="1")], False),
+        ([coolify("api"), set_env("api", key="PORT", value="1")], False),
+        ([set_env("api", key="PORT", value="1"), coolify("web")], False),
+    ],
+)
+async def test_a_set_env_needs_a_redeploy_of_the_same_app_after_it(tmp_path, steps, ok):
+    containers = [
+        box("api-1", labels=coolify_app("u-api", "api")),
+        box("web-1", labels=coolify_app("u-web", "web")),
+    ]
+    found = await check(tmp_path, act(*steps), containers)
+
+    assert (not found) is ok
+    assert all(rule == "set_env_without_redeploy" for rule, _ in found)

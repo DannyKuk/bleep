@@ -4,7 +4,7 @@ import inspect
 import json
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -109,11 +109,20 @@ class Coolify:
 
 
 class Sleeps:
+    """A sleep that does not wait and moves `now` on by what it was asked to wait, plus `lag`
+    seconds per call for a Coolify that answers slowly."""
+
     def __init__(self) -> None:
         self.waits: list[float] = []
+        self.now = T0
+        self.lag = 0.0
 
     async def __call__(self, seconds: float) -> None:
         self.waits.append(seconds)
+        self.now += timedelta(seconds=seconds + self.lag)
+
+    def clock(self) -> datetime:
+        return self.now
 
 
 def context(guard_log=None, **settings) -> PluginContext:
@@ -148,7 +157,7 @@ class Env:
         self.coolify = coolify
         self.guard_log = guard_log
         self.sleeps = Sleeps()
-        plugin = CoolifyPlugin(transport=Raw(coolify), sleep=self.sleeps)
+        plugin = CoolifyPlugin(transport=Raw(coolify), sleep=self.sleeps, clock=self.sleeps.clock)
         ctx = context(guard_log, deploy_timeout_s=120)
         self.tools = {spec.name: spec for spec in plugin.tools(ctx)}
         self.handlers = plugin.act_handlers(ctx)
@@ -540,6 +549,46 @@ async def test_a_deployment_that_never_ends_fails_the_step_at_the_timeout(env):
     assert sum(env.sleeps.waits) == 120
 
 
+async def test_the_deploy_wait_is_bounded_by_wall_time_when_coolify_answers_slowly(env):
+    env.coolify.statuses = ["in_progress"]
+    env.sleeps.lag = 50  # each answer takes 50 s on top of the 10 s wait
+    record = plan()
+
+    result = await env.act(record, grant_for(record))
+
+    assert not result.ok and "had not finished after 120 s" in result.detail
+    assert len(env.coolify.sent("GET", f"/deployments/{DEPLOYMENT}")) == 2
+
+
+async def test_a_deploy_request_that_times_out_says_one_may_be_queued(env):
+    env.coolify.routes[("POST", "/api/v1/deploy")] = httpx.Response(504)
+    record = plan()
+
+    result = await env.act(record, grant_for(record))
+
+    assert not result.ok and "a deployment of shop may already be queued" in result.detail
+
+
+async def test_a_coolify_error_while_polling_says_the_deployment_may_still_run(env):
+    env.coolify.statuses = ["in_progress"]
+    record = plan()
+    original = env.coolify.__call__
+
+    def broken(request):
+        if request.url.path.startswith("/api/v1/deployments/"):
+            env.coolify.requests.append(request)
+            return httpx.Response(401)
+        return original(request)
+
+    env.handlers = CoolifyPlugin(
+        transport=Raw(broken), sleep=env.sleeps, clock=env.sleeps.clock
+    ).act_handlers(context(env.guard_log))
+
+    result = await env.act(record, grant_for(record))
+
+    assert not result.ok and f"deployment {DEPLOYMENT} of shop was queued and may" in result.detail
+
+
 async def test_coolify_busy_while_deploying_is_asked_again(env):
     env.coolify.busy = 2
     env.coolify.statuses = ["finished"]
@@ -560,12 +609,12 @@ async def test_a_coolify_failure_while_acting_is_a_failed_result(env):
 
 
 async def test_an_application_labelled_by_id_only_is_refused(tmp_path):
-    # Coolify's API never shows an application's id, so Bleep cannot tell which one it is.
+    # Coolify's API never shows an application's id, so a target is never matched on it.
     old = box("old-app", labels={"coolify.type": "application", "coolify.applicationId": "2"})
     env = await make_env(tmp_path, FakeEngine("a", [old]))
     record = plan(step(target="2"))
 
-    with pytest.raises(StepRefused, match="no Coolify application uuid"):
+    with pytest.raises(StepRefused, match="no Coolify application by that name or uuid"):
         await env.act(record, grant_for(record))
 
     assert env.coolify.requests == []

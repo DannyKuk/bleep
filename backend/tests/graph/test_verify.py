@@ -1,9 +1,11 @@
+from datetime import UTC, datetime, timedelta
+
 import httpx
 import pytest
 
 from bleep.graph.nodes import verify
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
-from bleep.schemas.graph import PlanStep, Proposal, VerificationPlan, VerificationResult
+from bleep.schemas.graph import PlanStep, Proposal, StepResult, VerificationPlan, VerificationResult
 from bleep.schemas.incidents import Subject
 from fakes import FakeEngine
 from graph_env import box, graph_env, shop_host
@@ -379,3 +381,40 @@ async def test_a_redeployed_application_with_nothing_healthy_running_fails(
     first = update["verification"].checks[0]
     assert (first.ok, first.detail) == (False, detail)
     assert "outcome" not in update or update["outcome"] != "resolved"
+
+
+DEPLOYED_AT = datetime(2026, 11, 4, 9, 0, tzinfo=UTC)
+
+
+def with_deploy(state: dict) -> dict:
+    result = StepResult(
+        step_index=0,
+        action="coolify.redeploy",
+        target="web",
+        ok=True,
+        detail="redeploy of web finished",
+        started_at=DEPLOYED_AT,
+    )
+    return redeployed(state) | {"step_results": [result]}
+
+
+@pytest.mark.parametrize(
+    ("started", "ok"),
+    [
+        (DEPLOYED_AT + timedelta(minutes=3), True),
+        (DEPLOYED_AT - timedelta(seconds=60), True),  # within the clock slack
+        (DEPLOYED_AT - timedelta(hours=2), False),  # the old release, still up
+        (None, False),
+    ],
+)
+async def test_after_a_redeploy_only_a_container_started_since_counts(tmp_path, started, ok):
+    web = box("web0uuid-2", labels=WEB_APP, health="healthy", started_at=started)
+    engine = FakeEngine("a", [web, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, with_deploy(state))
+
+    first = update["verification"].checks[0]
+    assert first.ok is ok
+    if not ok:
+        assert first.detail == "no container started since the redeploy"

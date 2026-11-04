@@ -19,6 +19,7 @@ Each check publishes a `verification` event; the notifier hears the round's fina
 """
 
 import logging
+from datetime import datetime, timedelta
 from typing import Literal
 
 import httpx
@@ -30,7 +31,7 @@ from bleep.graph.state import IncidentState, Node
 from bleep.guard.plan_check import coolify_members, host_urls
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
-from bleep.schemas.graph import Check, Proposal, VerificationResult
+from bleep.schemas.graph import Check, Proposal, StepResult, VerificationResult
 from bleep.schemas.incidents import Subject
 from bleep.watcher.http_checks import check_url
 
@@ -39,6 +40,7 @@ log = logging.getLogger(__name__)
 SETTLE_S = 20  # before the first check, for the service to come up
 RECHECK_S = 10  # between checks
 CHECKS = 3  # at most, per round
+CLOCK_SLACK_S = 120  # between Bleep's clock and a host's, for a redeployed app's start times
 
 
 def _redeployed(proposal: Proposal | None) -> list[str]:
@@ -94,21 +96,42 @@ async def _check_container(deps: GraphDeps, host_id: str, name: str) -> Check:
     )
 
 
-async def _check_application(deps: GraphDeps, host_id: str, app: str) -> Check:
+def _deploy_starts(results: list[StepResult] | None) -> dict[str, datetime]:
+    """When each redeployed application's redeploy step started, on Bleep's clock."""
+    starts: dict[str, datetime] = {}
+    for r in results or []:
+        if r.action == "coolify.redeploy" and r.started_at is not None:
+            starts[r.target] = r.started_at
+    return starts
+
+
+async def _check_application(
+    deps: GraphDeps, host_id: str, app: str, since: datetime | None
+) -> Check:
     """A redeployed Coolify application, read from the engine now: at least one container of
-    it (previews aside) running, and none unhealthy or still starting."""
+    it (previews aside) running that started after its redeploy began, and none of those
+    unhealthy or still starting.
+
+    The start time is the host's and `since` is Bleep's, so `CLOCK_SLACK_S` of skew is allowed: a
+    host clock further behind makes new containers look old and the check fail, the safe side; a
+    container restarted within that slack before the deploy counts. A container with no start
+    time does not count. Without `since` (no redeploy step started) any running one counts."""
     target = f"{app} (Coolify application)"
     try:
         listed = await deps.registry.engine(host_id).containers()
     except EngineUnavailable, KeyError:
         return Check(kind="container", target=target, ok=False, detail="host not reachable")
+    floor = since - timedelta(seconds=CLOCK_SLACK_S) if since is not None else None
     running = [
         c
         for c in coolify_members(listed, app)
-        if c.state == "running" and c.labels.get("coolify.pullRequestId", "0") in ("", "0")
+        if c.state == "running"
+        and c.labels.get("coolify.pullRequestId", "0") in ("", "0")
+        and (floor is None or (c.started_at is not None and c.started_at >= floor))
     ]
     if not running:
-        return Check(kind="container", target=target, ok=False, detail="no container running")
+        why = "no container running" if floor is None else "no container started since the redeploy"
+        return Check(kind="container", target=target, ok=False, detail=why)
     bad = next((c for c in running if c.health in ("unhealthy", "starting")), None)
     if bad is not None:
         return Check(
@@ -134,12 +157,13 @@ def make(deps: GraphDeps) -> Node:
         containers: list[str],
         urls: list[UrlCheckConfig],
         apps: list[str],
+        starts: dict[str, datetime],
         attempt: int,
     ) -> VerificationResult:
         owned = deps.http is None
         client = deps.http or httpx.AsyncClient()
         try:
-            checks = [await _check_application(deps, host_id, app) for app in apps]
+            checks = [await _check_application(deps, host_id, app, starts.get(app)) for app in apps]
             checks += [await _check_container(deps, host_id, name) for name in containers]
             checks += [await _check_url(client, cfg) for cfg in urls]
         finally:
@@ -153,6 +177,7 @@ def make(deps: GraphDeps) -> Node:
         proposal = state.get("proposal")
         containers, urls = _plan(deps, subject, proposal)
         apps = _redeployed(proposal)
+        starts = _deploy_starts(state.get("step_results"))
 
         result = VerificationResult(ok=False)
         if not containers and not urls and not apps:
@@ -161,7 +186,7 @@ def make(deps: GraphDeps) -> Node:
         else:
             await deps.sleep(SETTLE_S)
             for attempt in range(1, CHECKS + 1):
-                result = await one_check(subject.host_id, containers, urls, apps, attempt)
+                result = await one_check(subject.host_id, containers, urls, apps, starts, attempt)
                 await deps.bus.publish(incident_id, "verification", _payload(result))
                 if result.ok or attempt == CHECKS:
                     break

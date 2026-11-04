@@ -28,7 +28,7 @@ import re
 import socket
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from langchain_core.tools import BaseTool, StructuredTool
@@ -37,7 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from bleep.guard.grant import GrantInvalid, verify_step
 from bleep.guard.log import GuardLogger
 from bleep.guard.pipeline import guard_text
-from bleep.guard.plan_check import check_params, check_target, coolify_members
+from bleep.guard.plan_check import check_params, check_target, coolify_app_uuid
 from bleep.hosts.registry import Registry
 from bleep.plugins.base import Plugin, PluginContext
 from bleep.plugins.coolify.client import CoolifyClient, CoolifyError, CoolifyUnavailable
@@ -357,7 +357,7 @@ class CoolifyAction:
             )
             if violations:
                 raise StepRefused("; ".join(v.text for v in violations))
-            return _app_ref(registry, step, what)
+            return coolify_app_uuid(registry, step)
         except GrantInvalid as refusal:
             self._blocked(plan, f"{what}: refused, {refusal}")
             raise
@@ -398,22 +398,30 @@ class CoolifyAction:
         )
 
     async def _redeploy(self, uuid: str, target: str) -> tuple[bool, str]:
-        """Queue a deployment and wait until it ends; whether it finished, and how it went."""
-        deployment = await self.client.deploy(uuid)
-        waited = 0.0
-        while waited < self.deploy_timeout_s:
+        """Queue a deployment and wait until it ends, for at most `deploy_timeout_s` of wall time
+        (by `clock`, so slow answers count too); whether it finished, and how it went."""
+        try:
+            deployment = await self.client.deploy(uuid)
+        except CoolifyUnavailable as error:  # the request may have reached Coolify all the same
+            return False, f"Coolify: {error}; a deployment of {target} may already be queued"
+        deadline = self.clock() + timedelta(seconds=self.deploy_timeout_s)
+        while self.clock() < deadline:
             await self.sleep(POLL_S)
-            waited += POLL_S
             try:
                 status = (await self.client.deployment(deployment)).status
-            except CoolifyUnavailable:  # Coolify busy with the deploy; ask again
+            except CoolifyUnavailable:  # timeouts, refused connections, 429 and 5xx: ask again
                 continue
+            except CoolifyError as error:
+                return False, (
+                    f"Coolify: {error}; deployment {deployment} of {target} was queued and may"
+                    " still run, Bleep stopped following it"
+                )
             if status in ENDED:
                 ok = status in DONE
                 return ok, f"redeploy of {target} {status} (deployment {deployment})"
         return False, (
             f"redeploy of {target} had not finished after {self.deploy_timeout_s} s "
-            f"(deployment {deployment}); Bleep stopped waiting"
+            f"(deployment {deployment}); Bleep stopped waiting, it may still run in Coolify"
         )
 
     def _blocked(self, plan: ApprovalRecord, text: str) -> None:
@@ -421,22 +429,9 @@ class CoolifyAction:
             self.guard_log.record(plan.incident_id, "blocked_action", text)
 
 
-def _app_ref(registry: Registry, step: PlanStep, what: str) -> str:
-    """The one application the step's target names on its host, from its containers' labels."""
-    members = coolify_members(registry.snapshot(step.host_id) or [], step.target)
-    uuids = {c.labels[_UUID_LABEL] for c in members if c.labels.get(_UUID_LABEL)}
-    if len(uuids) == 1:
-        return uuids.pop()
-    if uuids:
-        raise StepRefused(f"{what}: names more than one Coolify application; use its uuid")
-    # Coolify's API never shows an application's numeric id, so it cannot name one by it.
-    raise StepRefused(
-        f"{what}: its containers carry no Coolify application uuid; redeploy it from Coolify once"
-    )
-
-
 class CoolifyPlugin(Plugin):
-    """`transport` and `sleep` are for tests: a mock transport and a clock that does not wait."""
+    """`transport`, `sleep` and `clock` are for tests: a mock transport, and a sleep that does not
+    wait with the clock that measures a redeploy's deadline."""
 
     name = "coolify"
     title = "Coolify"
@@ -447,9 +442,11 @@ class CoolifyPlugin(Plugin):
         self,
         transport: httpx.AsyncBaseTransport | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        clock: Callable[[], datetime] = _utcnow,
     ) -> None:
         self._transport = transport
         self._sleep = sleep
+        self._clock = clock
 
     def client(self, ctx: PluginContext) -> CoolifyClient:
         """Raises `CoolifyUrlRefused` for a `COOLIFY_URL` Bleep must not send the token to; the
@@ -474,6 +471,7 @@ class CoolifyPlugin(Plugin):
                 deploy_timeout_s=timeout,
                 guard_log=ctx.guard_log,
                 sleep=self._sleep,
+                clock=self._clock,
             )
             for action in ("coolify.redeploy", "coolify.set_env")
         }
