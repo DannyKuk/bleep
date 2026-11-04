@@ -71,6 +71,8 @@ describe("IncidentPage", () => {
     const plan = await screen.findByRole("region", { name: "Here is my plan" });
     expect(container.querySelector("svg[data-mood]")).toHaveAttribute("data-mood", "needs_you");
     expect(container.querySelector("svg[data-mood]")).toHaveAttribute("width", "112");
+    const headline = screen.getByRole("heading", { level: 1 });
+    expect(within(headline).getByText("shop")).toHaveClass("font-mono");
     const progress = within(screen.getByRole("list", { name: "Progress" }));
     expect(progress.getByText("Your yes").closest("li")).toHaveAttribute("aria-current", "step");
     expect(plan).toHaveClass("border-accent");

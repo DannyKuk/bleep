@@ -62,6 +62,16 @@ describe("DecisionBar", () => {
     });
   });
 
+  it("offers no yes for a refused plan stored before the refused flag", () => {
+    const reason = "Bleep's own checks refused the proposed plan twice, so nothing will run.";
+    const legacy = approval({
+      proposal: proposal({ kind: "no_action", steps: [], refused: undefined, reason }),
+    });
+    render(<DecisionBar incidentId="inc-1" approval={legacy} onDecided={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Yes, go ahead" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Let it go" })).toBeEnabled();
+  });
+
   it("says a refused plan was let go, not rejected", async () => {
     reply(200, decided("reject", "dashboard"));
     render(<DecisionBar incidentId="inc-1" approval={refusedApproval()} onDecided={vi.fn()} />);

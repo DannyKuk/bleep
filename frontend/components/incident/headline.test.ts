@@ -1,43 +1,69 @@
 import { describe, expect, it } from "vitest";
 
 import { approval, detail, diagnosis, incident, proposal } from "@/components/incident/fixtures";
-import { headline, subjectName } from "@/components/incident/headline";
+import { headline, headlineText, subjectName } from "@/components/incident/headline";
 import type { IncidentStatus, Outcome } from "@/lib/api-types";
 
 const at = (status: IncidentStatus, outcome: Outcome | null = null) =>
-  headline(detail({ incident: incident({ status }), outcome }));
+  headlineText(headline(detail({ incident: incident({ status }), outcome })));
 
 describe("subjectName", () => {
   it("names a Compose project or a container by its own name", () => {
-    expect(subjectName(incident().subject)).toBe("shop");
+    expect(subjectName(incident().subject)).toEqual({ lead: "", name: "shop" });
     expect(
       subjectName({ kind: "service", host_id: "demo", service_id: "demo/container:shop-web-1" }),
-    ).toBe("shop-web-1");
+    ).toEqual({ lead: "", name: "shop-web-1" });
   });
 
   it("names a host as a host, and an id it cannot read as this service", () => {
-    expect(subjectName({ kind: "host", host_id: "demo", service_id: null })).toBe("Host demo");
-    expect(subjectName({ kind: "service", host_id: "demo", service_id: "demo/id:4f1c" })).toBe(
-      "This service",
-    );
+    expect(subjectName({ kind: "host", host_id: "demo", service_id: null })).toEqual({
+      lead: "Host ",
+      name: "demo",
+    });
+    expect(subjectName({ kind: "service", host_id: "demo", service_id: "demo/id:4f1c" })).toEqual({
+      lead: "This service",
+      name: "",
+    });
+  });
+
+  it("marks characters that draw nothing in a name from the host, and cuts a long one", () => {
+    const hidden = "shop\u200b\u202e";
+    expect(
+      subjectName({ kind: "service", host_id: "demo", service_id: `demo/compose:${hidden}` }).name,
+    ).toBe("shop\uFFFD\uFFFD");
+    const long = "x".repeat(80);
+    const { name } = subjectName({
+      kind: "service",
+      host_id: "demo",
+      service_id: `demo/compose:${long}`,
+    });
+    expect(name).toHaveLength(40);
+    expect(name.endsWith("…")).toBe(true);
   });
 });
 
 describe("headline", () => {
-  it("asks for a yes while a plan waits", () => {
+  it("asks for a yes while a plan waits, with the subject's name apart as data", () => {
     expect(at("awaiting_approval")).toBe("shop is in trouble. Can I fix it?");
+    expect(headline(detail())).toEqual({
+      lead: "",
+      name: "shop",
+      text: " is in trouble. Can I fix it?",
+    });
   });
 
   it("says Bleep is not sure when the diagnosis is unsure", () => {
     const unsure = detail({ diagnosis: diagnosis({ unsure: true }) });
-    expect(headline(unsure)).toBe("shop is in trouble. I have a plan, but I am not sure.");
+    expect(headlineText(headline(unsure))).toBe(
+      "shop is in trouble. I have a plan, but I am not sure.",
+    );
   });
 
   it("does not ask to fix anything when the waiting plan was refused", () => {
     const refused = detail({
       approval: approval({ proposal: proposal({ kind: "no_action", steps: [], refused: true }) }),
     });
-    expect(headline(refused)).toBe("I found no plan I may run. What now?");
+    expect(headlineText(headline(refused))).toBe("I found no plan I may run. What now?");
   });
 
   it("follows the run", () => {

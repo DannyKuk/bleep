@@ -74,7 +74,7 @@ export function IncidentHero({ detail, stream }: { detail: IncidentDetail; strea
           id="incident-headline"
           className="text-[32px] leading-tight font-extrabold text-balance md:text-4xl"
         >
-          {headline(detail)}
+          <HeadlineWords detail={detail} />
         </h1>
         <p className="text-[17px] text-ink-2">{incident.title}</p>
       </div>
@@ -84,5 +84,17 @@ export function IncidentHero({ detail, stream }: { detail: IncidentDetail; strea
         <StreamBadge status={stream} />
       </div>
     </section>
+  );
+}
+
+/** The headline, with the subject's name in mono: it is data from the host, not Bleep's words. */
+function HeadlineWords({ detail }: { detail: IncidentDetail }) {
+  const { lead, name, text } = headline(detail);
+  return (
+    <>
+      {lead}
+      {name && <code className="font-mono font-medium">{name}</code>}
+      {text}
+    </>
   );
 }

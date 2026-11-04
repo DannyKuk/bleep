@@ -3,6 +3,7 @@
 import { Check, Loader2, MessageSquare, TriangleAlert, X } from "lucide-react";
 import { useId, useState } from "react";
 
+import { isRefused } from "@/components/incident/headline";
 import { Button } from "@/components/ui/button";
 import { ApiError, apiFetch } from "@/lib/api";
 import type { ApprovalView, Decision, DecisionBody, DecisionKind } from "@/lib/api-types";
@@ -19,7 +20,8 @@ function decidedText(decision: Decision, refused: boolean): string {
 
 /**
  * Approve ("Yes, go ahead"), reject ("No, leave it") or instruct one approval. A plan Bleep's
- * own checks refused has no "Yes, go ahead", and the reject reads "Let it go". The request names the approval it answers, so a stale
+ * own checks refused (`isRefused`, a plan stored before the flag included) has no "Yes, go
+ * ahead", and the reject reads "Let it go". The request names the approval it answers, so a stale
  * page cannot approve a plan it never showed. After any answer, or a 409 saying another channel
  * answered first, the buttons lock and the outcome stays on screen. Render it with
  * `key={approval.id}` so a new plan gets fresh buttons.
@@ -42,7 +44,7 @@ export function DecisionBar({
   const [text, setText] = useState("");
   const textId = useId();
 
-  const refused = approval.proposal.refused === true;
+  const refused = isRefused(approval.proposal);
   const decision = approval.decision ?? mine;
   const locked = decision !== null || conflict !== null || sending !== null;
 

@@ -98,7 +98,11 @@ export function timelineEntries(events: IncidentEvent[]): Entry[] {
       case "approval_requested":
         entries.push({ seq, at, dot: "line", text: "Asked for approval" });
         break;
-      case "decision":
+      case "decision": {
+        // The wait ends with the answer, before Approval resumes and finishes.
+        const waiting = open.get("approval");
+        if (waiting) Object.assign(waiting, { dot: "line", running: false });
+        open.delete("approval");
         entries.push({
           seq,
           at,
@@ -106,6 +110,7 @@ export function timelineEntries(events: IncidentEvent[]): Entry[] {
           text: decisionText(payload),
         });
         break;
+      }
       case "action": // Execute, one per step status change
         entries.push({
           seq,

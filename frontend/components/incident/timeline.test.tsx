@@ -69,10 +69,10 @@ describe("Timeline", () => {
           event("node_started", { node: "gather" }),
           event("node_finished", { node: "gather" }),
           event("node_started", { node: "investigate" }),
-          event("node_started", { node: "approval" }),
           event("decision", { kind: "approve", text: null, via: "dashboard" }),
           event("action", { action: "docker.start", target: "shop-web-1", status: "failed" }),
           event("verification", { ok: true, attempt: 1, checks: [] }),
+          event("node_started", { node: "approval" }),
         ]}
       />,
     );
@@ -81,10 +81,10 @@ describe("Timeline", () => {
       .map((item) => item.querySelector("span[aria-hidden]")!.className);
     expect(dots[0]).toContain("bg-line");
     expect(dots[1]).toContain("bg-warn");
-    expect(dots[2]).toContain("bg-down");
-    expect(dots[3]).toContain("bg-accent");
-    expect(dots[4]).toContain("bg-down");
-    expect(dots[5]).toContain("bg-ok");
+    expect(dots[2]).toContain("bg-accent");
+    expect(dots[3]).toContain("bg-down");
+    expect(dots[4]).toContain("bg-ok");
+    expect(dots[5]).toContain("bg-down");
   });
 
   it("starts with what opened the incident and ends with how it ended", () => {
@@ -140,5 +140,21 @@ describe("Timeline", () => {
       "motion-safe:animate-pulse",
     );
     expect(items[2]).toHaveTextContent("Failed");
+  });
+
+  it("ends the wait as soon as the answer arrives", () => {
+    render(
+      <Timeline
+        events={[
+          event("node_started", { node: "approval" }),
+          event("decision", { kind: "reject", text: null, via: "telegram" }),
+        ]}
+      />,
+    );
+    const [waited] = within(screen.getByRole("list", { name: "Timeline" })).getAllByRole(
+      "listitem",
+    );
+    expect(waited.querySelector("span[aria-hidden]")).toHaveClass("bg-line");
+    expect(waited.querySelector("span[aria-hidden]")).not.toHaveClass("motion-safe:animate-pulse");
   });
 });
