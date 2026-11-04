@@ -79,6 +79,11 @@ async def save(store: SettingsStore, update: SettingsUpdate | dict) -> None:
     await store.update(update, version=store.version())
 
 
+async def switch(store: SettingsStore, name: str, update: PluginUpdate) -> None:
+    """A plugin change built from the plugin as it is now."""
+    await store.set_plugin(name, update, version=store.plugin_version(name))
+
+
 def url_override(urls: list[str]) -> SettingsUpdate:
     services = {"compose:shop": {"urls": [{"url": u} for u in urls]}}
     return SettingsUpdate.model_validate({"hosts": {"a": {"services": services}}})
@@ -215,18 +220,18 @@ async def test_thresholds_reach_a_running_detector_at_once(db):
 async def test_plugin_actions_join_the_enabled_set_only_while_switched_on(db):
     store, _ = make_store(db, hosts_file_registry())
     assert store.enabled_actions() == set(CORE_ACTIONS)
-    await store.set_plugin(
-        "coolify", PluginUpdate(enabled=True, settings={"url": "https://c.example.test"})
+    await switch(
+        store, "coolify", PluginUpdate(enabled=True, settings={"url": "https://c.example.test"})
     )
     assert "coolify.redeploy" in store.enabled_actions()
-    await store.set_plugin("coolify", PluginUpdate(enabled=False))
+    await switch(store, "coolify", PluginUpdate(enabled=False))
     assert store.enabled_actions() == set(CORE_ACTIONS)
 
 
 async def test_a_plugin_toggle_and_its_settings_survive_a_restart(db):
     store, _ = make_store(db, hosts_file_registry())
-    await store.set_plugin(
-        "coolify", PluginUpdate(enabled=True, settings={"url": "https://c.example.test"})
+    await switch(
+        store, "coolify", PluginUpdate(enabled=True, settings={"url": "https://c.example.test"})
     )
     again, plugins = make_store(db, hosts_file_registry())
     await again.load()
@@ -236,8 +241,8 @@ async def test_a_plugin_toggle_and_its_settings_survive_a_restart(db):
 
 async def test_a_plugin_whose_secret_is_gone_at_boot_starts_off_and_bleep_starts(db):
     store, _ = make_store(db, hosts_file_registry())
-    await store.set_plugin(
-        "coolify", PluginUpdate(enabled=True, settings={"url": "https://c.example.test"})
+    await switch(
+        store, "coolify", PluginUpdate(enabled=True, settings={"url": "https://c.example.test"})
     )
     again, plugins = make_store(db, hosts_file_registry(), env={})
     await again.load()
@@ -253,8 +258,8 @@ async def test_a_plugin_change_that_cannot_be_saved_leaves_the_plugin_as_it_was(
 
     monkeypatch.setattr(store, "_write", broken)
     with pytest.raises(OSError):
-        await store.set_plugin(
-            "coolify", PluginUpdate(enabled=True, settings={"url": "https://c.example.test"})
+        await switch(
+            store, "coolify", PluginUpdate(enabled=True, settings={"url": "https://c.example.test"})
         )
     assert not plugins.is_enabled("coolify")
     assert store.enabled_actions() == set(CORE_ACTIONS)
@@ -263,8 +268,8 @@ async def test_a_plugin_change_that_cannot_be_saved_leaves_the_plugin_as_it_was(
 async def test_switching_on_without_the_secret_is_refused(db):
     store, plugins = make_store(db, hosts_file_registry(), env={})
     with pytest.raises(PluginError, match="COOLIFY_TOKEN"):
-        await store.set_plugin(
-            "coolify", PluginUpdate(enabled=True, settings={"url": "https://c.example.test"})
+        await switch(
+            store, "coolify", PluginUpdate(enabled=True, settings={"url": "https://c.example.test"})
         )
     assert not plugins.is_enabled("coolify")
 
@@ -324,7 +329,7 @@ async def test_a_settings_change_alone_keeps_the_stored_toggle_of_a_plugin_off_f
     await _store_raw(db, "plugin:coolify", {"enabled": True, "settings": {"url": "https://c.test"}})
     store, plugins = make_store(db, hosts_file_registry(), env={})
     await store.load()
-    await store.set_plugin("coolify", PluginUpdate(settings={"url": "https://c2.test"}))
+    await switch(store, "coolify", PluginUpdate(settings={"url": "https://c2.test"}))
     assert not plugins.is_enabled("coolify")
     again, plugins_after = make_store(db, hosts_file_registry())  # the secret is back
     await again.load()
@@ -412,8 +417,54 @@ async def test_the_version_holds_across_a_restart_and_follows_the_content(db):
 async def test_a_plugin_change_leaves_the_version_alone(db):
     store, _ = make_store(db, hosts_file_registry())
     before = store.version()
-    await store.set_plugin("coolify", PluginUpdate(settings={"url": "https://c.test"}))
+    await switch(store, "coolify", PluginUpdate(settings={"url": "https://c.test"}))
     assert store.version() == before
+
+
+async def test_a_settings_change_leaves_a_plugin_version_alone(db):
+    store, _ = make_store(db, hosts_file_registry())
+    before = store.plugin_version("coolify")
+    await save(store, {"thresholds": {"disk_percent": 80}})
+    assert store.plugin_version("coolify") == before
+
+
+async def test_a_plugin_change_from_a_stale_version_is_refused_and_nothing_changes(db):
+    """A tab read before a setting was changed elsewhere would put the old one back."""
+    store, plugins = make_store(db, hosts_file_registry())
+    read = store.plugin_version("coolify")
+    await switch(store, "coolify", PluginUpdate(settings={"url": "https://new.test"}))
+    after = store.plugin_version("coolify")
+    assert after != read
+
+    with pytest.raises(SettingsStale) as refused:
+        await store.set_plugin(
+            "coolify", PluginUpdate(settings={"url": "https://old.test"}), version=read
+        )
+    assert refused.value.current == after
+    assert plugins.settings("coolify").url == "https://new.test"
+    again, plugins_after = make_store(db, hosts_file_registry())
+    await again.load()
+    assert plugins_after.settings("coolify").url == "https://new.test"
+
+
+async def test_of_two_plugin_writers_from_one_version_only_the_first_is_applied(db):
+    store, plugins = make_store(db, hosts_file_registry())
+    read = store.plugin_version("coolify")
+    results = await asyncio.gather(
+        store.set_plugin("coolify", PluginUpdate(settings={"url": "https://a.test"}), version=read),
+        store.set_plugin("coolify", PluginUpdate(settings={"url": "https://b.test"}), version=read),
+        return_exceptions=True,
+    )
+    assert results[0] is None and isinstance(results[1], SettingsStale)
+    assert plugins.settings("coolify").url == "https://a.test"
+
+
+async def test_a_plugin_version_holds_across_a_restart(db):
+    store, _ = make_store(db, hosts_file_registry())
+    await switch(store, "coolify", PluginUpdate(enabled=True, settings={"url": "https://c.test"}))
+    again, _ = make_store(db, hosts_file_registry())
+    await again.load()
+    assert again.plugin_version("coolify") == store.plugin_version("coolify")
 
 
 async def test_a_connection_never_shows_the_userinfo_of_an_endpoint_or_address(db):

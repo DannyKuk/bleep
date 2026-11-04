@@ -63,16 +63,9 @@ async def put_settings(
         raise HTTPException(428, "send the settings version you read in If-Match")
     update = parse_body(body, SettingsUpdate)
     try:
-        await parts.settings_store.update(update, version=_version_of(if_match))
+        await parts.settings_store.update(update, version=version_of(if_match))
     except SettingsStale as stale:
-        return JSONResponse(
-            {
-                "detail": "the settings changed since this version was read; nothing was saved",
-                "version": stale.current,
-            },
-            status_code=409,
-            headers={"ETag": f'"{stale.current}"'},
-        )
+        return stale_response(stale, "the settings changed since this version was read")
     except SettingsRefused as refusal:
         raise HTTPException(422, str(refusal)) from None
     view = settings_view(parts)
@@ -80,9 +73,18 @@ async def put_settings(
     return view
 
 
-def _version_of(if_match: str) -> str:
+def version_of(if_match: str) -> str:
     """The version in an `If-Match` header: an ETag, quoted, or the bare version."""
     return if_match.strip().removeprefix("W/").strip('"')
+
+
+def stale_response(stale: SettingsStale, what: str) -> JSONResponse:
+    """409: nothing was saved; the body and the `ETag` carry the version now."""
+    return JSONResponse(
+        {"detail": f"{what}; nothing was saved", "version": stale.current},
+        status_code=409,
+        headers={"ETag": f'"{stale.current}"'},
+    )
 
 
 def parse_body[T](body: Any, model: type[T]) -> T:

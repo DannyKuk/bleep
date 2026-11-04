@@ -30,6 +30,14 @@ def put_settings(client: TestClient, body: object, version: str | None = None):
     return client.put("/api/settings", json=body, headers={"If-Match": f'"{version}"'})
 
 
+def put_plugin(client: TestClient, name: str, json: object, version: str | None = None):
+    """`PUT /api/plugins/{name}` built from the plugin as read just before, unless given."""
+    if version is None:
+        listed = {p["name"]: p for p in client.get("/api/plugins").json()}
+        version = listed[name]["version"] if name in listed else "none"
+    return client.put(f"/api/plugins/{name}", json=json, headers={"If-Match": f'"{version}"'})
+
+
 @pytest.fixture
 def app(settings, monkeypatch):
     """A logged-in client over host `a` (the `shop` service with a URL in the hosts file) with
@@ -165,8 +173,9 @@ def test_settings_show_the_hosts_connection_and_which_protection_is_fixed(app):
 
 
 def test_plugins_list_settings_and_whether_secrets_are_set_never_the_value(app):
-    response = app.put(
-        "/api/plugins/coolify",
+    response = put_plugin(
+        app,
+        "coolify",
         json={"enabled": True, "settings": {"url": "https://coolify.example.test"}},
     )
     assert response.status_code == 200
@@ -191,28 +200,28 @@ def test_plugins_list_settings_and_whether_secrets_are_set_never_the_value(app):
     ],
 )
 def test_a_plugin_put_carrying_a_secret_is_refused(app, body):
-    response = app.put("/api/plugins/coolify", json=body)
+    response = put_plugin(app, "coolify", json=body)
     assert response.status_code == 422
     assert "abc" not in response.text
     assert app.get("/api/plugins").json()[0]["enabled"] is False
 
 
 def test_a_plugin_put_with_unknown_settings_is_refused(app):
-    response = app.put("/api/plugins/coolify", json={"settings": {"url": "x", "surprise": 1}})
+    response = put_plugin(app, "coolify", json={"settings": {"url": "x", "surprise": 1}})
     assert response.status_code == 422
 
 
 def test_switching_on_without_the_secret_is_refused(app, monkeypatch):
     monkeypatch.delenv("COOLIFY_TOKEN")
-    response = app.put(
-        "/api/plugins/coolify", json={"enabled": True, "settings": {"url": "https://c.test"}}
+    response = put_plugin(
+        app, "coolify", json={"enabled": True, "settings": {"url": "https://c.test"}}
     )
     assert response.status_code == 422
     assert "COOLIFY_TOKEN" in response.json()["detail"]
 
 
 def test_unknown_plugin(app):
-    assert app.put("/api/plugins/nope", json={"enabled": True}).status_code == 404
+    assert put_plugin(app, "nope", json={"enabled": True}).status_code == 404
 
 
 def test_switching_a_plugin_off_reaches_the_next_incident(app):
@@ -229,12 +238,12 @@ def test_switching_a_plugin_off_reaches_the_next_incident(app):
             v.rule for v in check_plan(plan, deps.registry, enabled, "a", incident_containers=[])
         }
 
-    app.put("/api/plugins/coolify", json={"enabled": True, "settings": {"url": "https://c.test"}})
+    put_plugin(app, "coolify", json={"enabled": True, "settings": {"url": "https://c.test"}})
     assert "coolify_applications" in {t.name for t in deps.tools.read_tools(ctx)}
     assert "disabled_action" not in rules()
     assert deps.act_tools.get("coolify.redeploy") is not None
 
-    app.put("/api/plugins/coolify", json={"enabled": False})
+    put_plugin(app, "coolify", json={"enabled": False})
     assert "coolify_applications" not in {t.name for t in deps.tools.read_tools(ctx)}
     assert "disabled_action" in rules()
     assert deps.act_tools.get("coolify.redeploy") is None
@@ -268,8 +277,8 @@ def test_a_plugin_that_fails_to_build_is_a_422(app, monkeypatch):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(plugin, "tools", explode)
-    response = app.put(
-        "/api/plugins/coolify", json={"enabled": True, "settings": {"url": "https://c.test"}}
+    response = put_plugin(
+        app, "coolify", json={"enabled": True, "settings": {"url": "https://c.test"}}
     )
     assert response.status_code == 422
     assert app.get("/api/plugins").json()[0]["enabled"] is False
@@ -338,5 +347,40 @@ def test_of_two_saves_from_one_page_the_second_is_refused(app):
 
 def test_a_plugin_save_leaves_the_settings_version_alone(app):
     version = app.get("/api/settings").json()["version"]
-    app.put("/api/plugins/coolify", json={"settings": {"url": "https://c.test"}})
+    put_plugin(app, "coolify", json={"settings": {"url": "https://c.test"}})
     assert app.get("/api/settings").json()["version"] == version
+
+
+def test_a_plugin_read_carries_its_version(app):
+    (plugin,) = app.get("/api/plugins").json()
+    assert isinstance(plugin["version"], str) and plugin["version"]
+
+
+def test_a_plugin_put_without_the_version_is_refused_and_nothing_changes(app):
+    response = app.put("/api/plugins/coolify", json={"settings": {"url": "https://c.test"}})
+    assert response.status_code == 428
+    assert "If-Match" in response.json()["detail"]
+    assert app.get("/api/plugins").json()[0]["settings"] == {}
+
+
+def test_a_plugin_put_from_a_stale_page_is_a_409_and_nothing_changes(app):
+    """A tab read before a setting was changed elsewhere would put the old one back."""
+    stale = app.get("/api/plugins").json()[0]["version"]
+    saved = put_plugin(app, "coolify", json={"settings": {"url": "https://new.test"}})
+    assert saved.status_code == 200
+    current = saved.json()["version"]
+    assert current != stale
+
+    response = put_plugin(
+        app, "coolify", json={"settings": {"url": "https://old.test"}}, version=stale
+    )
+    assert response.status_code == 409
+    assert response.json()["version"] == current
+    assert "nothing was saved" in response.json()["detail"]
+    assert app.get("/api/plugins").json()[0]["settings"]["url"] == "https://new.test"
+
+
+def test_a_settings_save_leaves_a_plugin_version_alone(app):
+    version = app.get("/api/plugins").json()[0]["version"]
+    put_settings(app, {"thresholds": {"disk_percent": 80}})
+    assert app.get("/api/plugins").json()[0]["version"] == version

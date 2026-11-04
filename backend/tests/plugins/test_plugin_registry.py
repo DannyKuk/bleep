@@ -128,7 +128,7 @@ def test_unknown_plugin():
 
 
 async def test_the_view_shows_settings_and_whether_secrets_are_set_never_their_value():
-    view = await on(plugins()).view("coolify")
+    view = await on(plugins()).view("coolify", version="v1")
     dumped = view.model_dump_json()
     assert COOLIFY_TOKEN not in dumped  # the health check echoed it
     assert view.enabled and view.health is not None and view.health.ok
@@ -137,7 +137,7 @@ async def test_the_view_shows_settings_and_whether_secrets_are_set_never_their_v
 
 
 async def test_the_view_of_an_unconfigured_plugin_has_no_settings_and_no_health():
-    view = await plugins(env={}).view("coolify")
+    view = await plugins(env={}).view("coolify", version="v1")
     assert view.settings == {} and view.health is None
     assert view.secrets[0].set is False
 
@@ -147,7 +147,7 @@ async def test_a_failing_health_check_is_reported_in_bleeps_words():
         async def health(self, ctx: PluginContext) -> PluginHealth:
             raise RuntimeError(f"401 for token {COOLIFY_TOKEN}")
 
-    view = await on(plugins(plugin=Broken())).view("coolify")
+    view = await on(plugins(plugin=Broken())).view("coolify", version="v1")
     assert view.health == PluginHealth(ok=False, detail="the health check failed")
 
 

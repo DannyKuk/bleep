@@ -151,8 +151,9 @@ class PluginRegistry:
             (a.handlers[action] for a in self._active.values() if action in a.handlers), None
         )
 
-    async def view(self, name: str) -> PluginView:
-        """What the API shows: settings and which secrets are set, never a secret's value."""
+    async def view(self, name: str, *, version: str) -> PluginView:
+        """What the API shows: settings and which secrets are set, never a secret's value.
+        `version` is the settings store's for this plugin, read before the settings are."""
         plugin = self.get(name)
         active = self._active.get(name)
         return PluginView(
@@ -163,6 +164,7 @@ class PluginRegistry:
             settings_schema=plugin.settings_model.model_json_schema(),
             secrets=[PluginSecret(env=env, set=bool(self._env.get(env))) for env in plugin.secrets],
             health=await self._health(plugin, active.ctx) if active is not None else None,
+            version=version,
         )
 
     def _shown_settings(self, name: str) -> dict[str, Any]:

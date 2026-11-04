@@ -4,10 +4,10 @@ Precedence is database override > hosts file > defaults (and the env for the mod
 store keeps only what was changed, one section per row; the values in force are computed from the
 layers below on every read, so clearing an override brings the hosts file's value back. It is the
 graph's `SettingsSource`: nodes read budgets, models and enabled actions from it as they run.
-Every change names the `version` of the overrides it was built from and is refused when they have
-changed since, so a stale page never reverts someone else's change. Secrets never get in: the API
-refuses them before they reach `update`, and `load` refuses a stored row that holds one. See
-docs/design/settings.md.
+Every change names the `version` of the overrides it was built from (each plugin has its own)
+and is refused when they have changed since, so a stale page never reverts someone else's change.
+Secrets never get in: the API refuses them before they reach `update`, and `load` refuses a stored
+row that holds one. See docs/design/settings.md.
 """
 
 import asyncio
@@ -29,7 +29,7 @@ from bleep.hosts.config import HostConfig, ServiceOverrides, UrlCheckConfig
 from bleep.hosts.registry import Registry
 from bleep.incidents.repository import utcnow
 from bleep.plugins.registry import PluginError, PluginRegistry, UnknownPlugin
-from bleep.schemas.plugins import PluginUpdate
+from bleep.schemas.plugins import PluginUpdate, PluginView
 from bleep.schemas.settings import (
     BudgetOverrides,
     Budgets,
@@ -140,8 +140,18 @@ class SettingsStore:
         for host_id, host in (self._overrides.hosts or {}).items():
             sections[f"{HOST_PREFIX}{host_id}"] = host
         stored = {key: _stored(model) for key, model in sections.items() if model is not None}
-        content = json.dumps({key: value for key, value in stored.items() if value}, sort_keys=True)
-        return hashlib.sha256(content.encode()).hexdigest()[:16]
+        return _hash({key: value for key, value in stored.items() if value})
+
+    def plugin_version(self, name: str) -> str:
+        """A hash of the plugin's stored row (switched on, settings), apart from `version`, so a
+        change of the other settings never makes a plugin form stale, nor the other way round."""
+        row = self._plugin_rows.get(name, _PluginRow())
+        return _hash(row.model_dump(mode="json"))
+
+    async def plugin_view(self, name: str) -> PluginView:
+        """The plugin as the API shows it, with its version read first: a change while the
+        health check runs makes the version older than the view, never newer."""
+        return await self._plugins.view(name, version=self.plugin_version(name))
 
     def plugin_toggles(self) -> dict[str, bool]:
         return {name: self._plugins.is_enabled(name) for name in self._plugins.names()}
@@ -225,11 +235,15 @@ class SettingsStore:
             self._overrides = merged
             self._apply_hosts()
 
-    async def set_plugin(self, name: str, update: PluginUpdate) -> None:
-        """Configure and switch a plugin, then store it. Raises `UnknownPlugin`, or `PluginError`
-        and `SettingsRefused` with the plugin as it was."""
+    async def set_plugin(self, name: str, update: PluginUpdate, *, version: str) -> None:
+        """Configure and switch a plugin, then store it; `update` was built from the plugin at
+        `version`. Raises `UnknownPlugin`, or `SettingsStale`, `PluginError` and
+        `SettingsRefused` with the plugin as it was."""
         _refuse_secrets(update.model_dump(mode="json", exclude_none=True))
         async with self._lock:
+            self._plugins.get(name)  # an unknown plugin is UnknownPlugin, not stale
+            if version != self.plugin_version(name):
+                raise SettingsStale(self.plugin_version(name))
             before = self._plugins.snapshot(name)
             old = self._plugin_rows.get(name, _PluginRow())
             on = update.enabled if update.enabled is not None else self._plugins.is_enabled(name)
@@ -341,6 +355,10 @@ def _connection(host: HostConfig) -> HostConnectionView:
         key_file=SecretStatus(file=str(key), set=_readable(key)) if key is not None else None,
         known_hosts_file=str(host.known_hosts_file) if host.known_hosts_file else None,
     )
+
+
+def _hash(content: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()[:16]
 
 
 def _stored(model: BaseModel) -> dict[str, Any]:
