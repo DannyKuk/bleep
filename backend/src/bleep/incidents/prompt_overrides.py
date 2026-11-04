@@ -130,20 +130,24 @@ class PromptOverrideStore:
 
     async def reset(self, name: str, *, version: str) -> None:
         """Delete the override, so `name` is read from its file again; the reset was asked from
-        the prompt at `version`. Raises `UnknownPrompt` or `PromptStale` with nothing changed."""
+        the prompt at `version`. A stored override that `load` left out is deleted too, so a reset
+        clears one that no longer fits. Raises `UnknownPrompt` or `PromptStale` with nothing
+        changed."""
         if name not in prompts.overridable_names():
             raise UnknownPrompt(name)
         async with self._lock:
             self._refuse_stale(name, version)
-            if name not in self._overrides:
-                return
             conn = await self._db.connect()
             try:
-                await conn.execute("DELETE FROM prompt_overrides WHERE name = ?", (name,))
+                cursor = await conn.execute("DELETE FROM prompt_overrides WHERE name = ?", (name,))
+                deleted = cursor.rowcount > 0
                 await conn.commit()
             finally:
                 await conn.close()
-            self._overrides.pop(name, None)
+            if not deleted:
+                return
+            if self._overrides.pop(name, None) is None:
+                log.info("prompt override %s, left out at start, deleted by a reset", name)
             self._apply()
         self._guard_log.record(GUARD_INCIDENT, "prompt_override", f"override of {name} reset")
 

@@ -245,3 +245,31 @@ async def test_a_stored_override_of_a_prompt_no_longer_overridable_is_deleted_an
     assert "deleted" in caplog.text
     with pytest.raises(UnknownPrompt):
         await save(store, name, text)
+
+
+async def test_reset_deletes_a_stored_override_that_was_left_out_and_records_it(db, caplog):
+    """An override of graph/diagnose saved before it had `{untrusted_rule}` (#147)."""
+    conn = await db.connect()
+    old = "{subject} {signals} {context} {investigation}"
+    await conn.execute(
+        "INSERT INTO prompt_overrides VALUES (?, ?, ?)", ("graph/diagnose", old, T0.isoformat())
+    )
+    await conn.commit()
+    await conn.close()
+    guard_log = RecordingGuardLog()
+    store = new_store(db, guard_log)
+    await store.load()
+    assert store.overrides() == {}
+
+    with caplog.at_level(logging.INFO):
+        await reset(store, "graph/diagnose")
+
+    assert await stored(db) == {}
+    assert "graph/diagnose" in caplog.text and "deleted" in caplog.text
+    assert guard_log.records == [
+        ("dev-panel", "prompt_override", "override of graph/diagnose reset")
+    ]
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        await new_store(db).load()
+    assert "graph/diagnose" not in caplog.text

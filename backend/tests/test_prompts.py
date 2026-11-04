@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from bleep import prompts
@@ -167,3 +169,20 @@ def test_a_name_outside_the_prompt_files_is_unknown(tmp_prompts, name):
     (tmp_prompts / "README.md").write_text("How prompts work", encoding="utf-8")
     with pytest.raises(PromptError):
         prompts.file_text(name)
+
+
+FIXTURES = Path(__file__).parent / "fixtures" / "prompts"
+
+
+@pytest.mark.parametrize(("name", "rule"), UNTRUSTED_RULES.items())
+def test_the_four_prompts_render_as_they_did_before_their_rule_moved_out(name, rule):
+    """The fixtures were rendered from the files at c0afd0f, before #147 moved each rule into
+    `untrusted/`, with every placeholder filled as `<name>`."""
+    fields = placeholders(prompts.file_text(name)) - {"untrusted_rule"}
+    rendered = load(
+        name,
+        **{field: f"<{field}>" for field in fields},
+        untrusted_rule=load(rule).strip(),  # as the code that builds the prompt fills it
+    )
+    expected = (FIXTURES / f"{name.replace('/', '-')}.txt").read_text(encoding="utf-8")
+    assert rendered.encode() == expected.encode()
