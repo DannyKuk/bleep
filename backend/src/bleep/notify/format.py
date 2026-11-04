@@ -100,6 +100,9 @@ def shows_in_full(proposal: Proposal) -> bool:
 # Khmer inherent vowels, the combining grapheme joiner): a run of either could pad a line.
 _INVISIBLE = re.compile(INVISIBLE_CHARS)
 _FILLERS = re.compile(r"[\u034f\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0]")
+# They only switch a character between text and emoji look: common after an emoji, and a single
+# one cannot hide a name, so a step line drops them instead of marking them.
+_PRESENTATION = re.compile("[\ufe0e\ufe0f]")
 _SPACES = re.compile(r"\s+")
 
 
@@ -114,8 +117,10 @@ def prose_line(text: str) -> Redacted:
 def _one_line(text: str) -> str:
     """`text` on one visible line: breaks and control characters read `⏎`, format characters
     (Unicode category Cf: bidi overrides and isolates, zero-width marks) and the other characters
-    that draw nothing (`INVISIBLE_CHARS`: the grapheme joiner, fillers) read `�`."""
+    that draw nothing (`INVISIBLE_CHARS`: the grapheme joiner, fillers, variation selectors) read
+    `�`; U+FE0E and U+FE0F are dropped."""
     text = _BREAKS.sub(LINE_BREAK, text)
+    text = _PRESENTATION.sub("", text)
     hidden = (c for c in text if unicodedata.category(c) == "Cf" or _INVISIBLE.fullmatch(c))
     return text.translate({ord(c): HIDDEN_FORMAT for c in hidden})
 

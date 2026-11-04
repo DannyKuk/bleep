@@ -1,4 +1,8 @@
-from bleep.guard.sanitize import sanitize, strip_control
+import json
+import re
+from pathlib import Path
+
+from bleep.guard.sanitize import INVISIBLE_CHARS, sanitize, strip_control
 
 
 def test_strips_ansi_and_controls_keeps_newline_tab():
@@ -75,3 +79,15 @@ def test_cut_note_keeps_the_line_indentation():
 
 def test_characters_that_draw_nothing_but_are_not_format_characters_are_stripped():
     assert strip_control("a\u034f\u17b4\u17b5\u115f\u1160\u3164\uffa0b") == "ab"
+
+
+def test_the_dashboard_shows_exactly_the_characters_the_guard_treats_as_invisible():
+    ranges = Path(__file__).resolve().parents[3] / "frontend" / "lib" / "invisible-ranges.json"
+    listed = {c for a, b in json.loads(ranges.read_text()) for c in range(a, b + 1)}
+    guarded = {c for c in range(0x110000) if re.fullmatch(INVISIBLE_CHARS, chr(c))}
+
+    assert listed == guarded
+
+
+def test_the_braille_blank_is_stripped():
+    assert strip_control("a\u2800b") == "ab"

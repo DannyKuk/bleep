@@ -595,6 +595,22 @@ def test_a_character_that_draws_nothing_in_mcp_arguments_is_shown_as_a_mark(hidd
     assert hidden not in text and fmt.HIDDEN_FORMAT in text
 
 
+def test_an_emoji_presentation_selector_is_dropped_and_other_variation_selectors_are_marked():
+    def line(text: str) -> str:
+        return fmt.steps_text(
+            Proposal(
+                kind="act",
+                steps=[PlanStep(action="docker.restart", host_id="demo", target=text)],
+                reason="r",
+            )
+        )
+
+    assert "a\u26a0b" in line("a\u26a0\ufe0fb\ufe0e")
+    assert fmt.HIDDEN_FORMAT not in line("\u26a0\ufe0f")
+    assert fmt.HIDDEN_FORMAT in line("a\ufe00b")
+    assert fmt.HIDDEN_FORMAT in line("a\U000e0100b")
+
+
 def test_steps_that_overflow_the_field_get_no_approve_button():
     long = "shop-web-" + "x" * 250
     steps = [

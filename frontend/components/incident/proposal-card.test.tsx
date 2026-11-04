@@ -40,6 +40,24 @@ describe("ProposalCard", () => {
     expect(steps.getByText('arguments={"c": "shop\uFFFD-db-1\uFFFD"}')).toBeInTheDocument();
   });
 
+  it("marks every character the guard calls invisible, but drops an emoji presentation selector", () => {
+    const hidden = proposal({
+      steps: [
+        {
+          action: "mcp.call",
+          host_id: "demo",
+          target: "shop-web-1",
+          params: { note: "a\ufe00b\u{e0100}c\u2800d\u26a0\ufe0f" },
+        },
+      ],
+    });
+    render(
+      <ProposalCard incidentId="inc-1" proposal={hidden} approval={null} onDecided={vi.fn()} />,
+    );
+    const steps = within(screen.getByRole("list", { name: "Steps" }));
+    expect(steps.getByText("note=a\uFFFDb\uFFFDc\uFFFDd\u26a0")).toBeInTheDocument();
+  });
+
   it("says no action is proposed, with no buttons", () => {
     render(
       <ProposalCard
