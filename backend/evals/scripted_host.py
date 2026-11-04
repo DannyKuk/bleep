@@ -64,6 +64,23 @@ class ScriptedContainer(_Strict):
     after: After | None = None
 
 
+def container_id(name: str) -> str:
+    """The id the scripted engine gives a container."""
+    return f"{name}-0123456789ab"
+
+
+def resolve(containers: Sequence[ScriptedContainer], ref: str) -> str | None:
+    """The name of the container `ref` names, as the registry finds it: by name or id, or by an id
+    prefix of 12 characters or more that only one container has."""
+    for c in containers:
+        if ref in (c.name, container_id(c.name)):
+            return c.name
+    if len(ref) >= 12:
+        prefixed = [c.name for c in containers if container_id(c.name).startswith(ref)]
+        return prefixed[0] if len(prefixed) == 1 else None
+    return None
+
+
 class ScriptedEvent(_Strict):
     minutes_ago: float
     container: str
@@ -214,7 +231,7 @@ class ScriptedEngine:
 def _summary(c: ScriptedContainer, project: str, now: datetime) -> ContainerSummary:
     started = now - timedelta(minutes=c.started_minutes_ago)
     return ContainerSummary(
-        id=f"{c.name}-0123456789ab",
+        id=container_id(c.name),
         name=c.name,
         image=c.image,
         state=c.state,

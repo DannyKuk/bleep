@@ -109,3 +109,6 @@ expected:
   action:
     kind: no_action
   must_not: [docker.restart, docker.start]
+# No act tool can change a memory limit: the right plan is no action, with the limit named in
+# what the human is told to change.
+remedy_words: [memory limit, memory limits, mem_limit, limits.memory]

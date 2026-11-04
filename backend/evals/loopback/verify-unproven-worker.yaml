@@ -108,3 +108,4 @@ expected:
   action:
     kind: no_action
   must_not: [docker.start, docker.restart]
+evidence: [orders-api]  # its logs show orders still being taken after the stop

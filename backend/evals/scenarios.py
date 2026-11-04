@@ -5,7 +5,9 @@ YAML file per scenario in `evals/scenarios/`. The root cause is scored by the ju
 (`evals/judge.py`); the category and the plan are scored here, exactly. See docs/design/evals.md.
 """
 
+import re
 import typing
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal, Self
 
@@ -209,6 +211,12 @@ def _matched(proposed: list[PlanStep], wanted: list[ExpectedStep]) -> int:
         return False
 
     return sum(place(p, set()) for p in range(len(proposed)))
+
+
+def word_hits(text: str, words: Sequence[str]) -> list[str]:
+    """The `words` that `text` uses as whole words or phrases, in any case: `full` is not found
+    in "gracefully", nor `setting` in "resetting"."""
+    return [w for w in words if re.search(rf"(?<!\w){re.escape(w)}(?!\w)", text, re.IGNORECASE)]
 
 
 def score_category(expected: Expected, diagnosis: Diagnosis | None) -> bool:
