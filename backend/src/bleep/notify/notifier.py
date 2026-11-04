@@ -79,7 +79,7 @@ class Notifier:
             steps=fmt.steps_text(proposal),
             reason=proposal.reason,
         )
-        await self._ask(incident, approval, text)
+        await self._ask(incident, approval, text, approvable=fmt.shows_in_full(proposal))
 
     async def reminder(self, incident: Incident, approval: ApprovalRequest) -> None:
         await self.bus.publish(incident.id, "reminder", {"approval_id": approval.id})
@@ -91,7 +91,8 @@ class Notifier:
         text = fmt.render(
             "reminder", id=incident.id, title=incident.title, steps=fmt.steps_text(current.proposal)
         )
-        await self._safely(self._ask(incident, approval, text))
+        approvable = fmt.shows_in_full(current.proposal)
+        await self._safely(self._ask(incident, approval, text, approvable=approvable))
 
     async def verification(self, incident: Incident, result: VerificationResult) -> None:
         name = "verification_ok" if result.ok else "verification_failed"
@@ -113,10 +114,14 @@ class Notifier:
     async def notice(self, incident_id: str, text: str) -> None:
         await self._plain("notice", id=incident_id, text=text)
 
-    async def _ask(self, incident: Incident, approval: ApprovalRequest, text: str) -> None:
-        """Send a plan with its buttons and remember which incident the message is about."""
+    async def _ask(
+        self, incident: Incident, approval: ApprovalRequest, text: str, *, approvable: bool = True
+    ) -> None:
+        """Send a plan with its buttons and remember which incident the message is about. A plan
+        the message cannot show in full (`fmt.shows_in_full`) gets Reject only."""
         assert self.telegram is not None and self.chat_id is not None
-        buttons = [("Approve", f"approve:{approval.id}"), ("Reject", f"reject:{approval.id}")]
+        buttons = [("Approve", f"approve:{approval.id}")] if approvable else []
+        buttons.append(("Reject", f"reject:{approval.id}"))
         message_id = await self.telegram.send_message(self.chat_id, text, buttons)
         if self.messages is not None:
             await self.messages.add(message_id, incident.id, approval.id, utcnow())

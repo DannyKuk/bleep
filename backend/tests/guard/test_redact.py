@@ -499,3 +499,28 @@ def test_cut_note_counts_original_characters():
     out = guard_text("logs", text)[0]
     note = re.search(r"\[… (\d+) chars cut\]", out)
     assert note and int(note.group(1)) >= len(text) - 512_000
+
+
+def _set_env(key: str, value: str):
+    from bleep.guard.redact import redacted_step
+    from bleep.schemas.graph import PlanStep
+
+    step = PlanStep(
+        action="coolify.set_env", host_id="a", target="shop", params={"key": key, "value": value}
+    )
+    return redacted_step(step).params["value"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["correct horse battery staple", "line1\nline2secret", '"a b" tail', "sk_live_x y"],
+)
+def test_a_set_env_value_under_a_secret_key_is_redacted_whole(value):
+    for key in ("PASSWORD", "STRIPE_KEY", "API_TOKEN"):
+        assert _set_env(key, value) == "<redacted>"
+
+
+def test_a_set_env_value_under_a_plain_key_keeps_all_but_its_secrets():
+    shown = _set_env("DATABASE_URL", "postgres://shop:pw-fake-123@attacker.example/shop")
+    assert shown == "postgres://shop:<redacted>@attacker.example/shop"
+    assert _set_env("PORT", "3000") == "3000"

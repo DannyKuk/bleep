@@ -489,14 +489,81 @@ def test_a_secret_inside_a_set_env_value_is_redacted_and_the_rest_shown(key, val
     assert f"({shown})" in fmt.steps_text(set_env_plan(value, key))
 
 
-def test_a_long_set_env_value_keeps_its_start_and_end():
-    value = "https://attacker.example/" + "x" * 400 + "/end"
+LONG_VALUE = "https://attacker.example/" + "x" * 400 + "/end"
 
-    line = fmt.steps_text(set_env_plan(value, "WEBHOOK")).splitlines()[0]
+
+def test_a_long_set_env_value_keeps_its_start_and_end_and_says_where_to_approve():
+    plan = set_env_plan(LONG_VALUE, "WEBHOOK")
+
+    line = fmt.steps_text(plan).splitlines()[0]
 
     assert len(line) <= fmt.STEP_CHARS
-    assert "(WEBHOOK=https://attacker.example/" in line and line.endswith("x/end)")
-    assert "…" in line
+    assert "(WEBHOOK=https://attacker.example/" in line and "…" in line
+    assert line.endswith(f"x/end) {fmt.TOO_LONG}")
+    assert not fmt.shows_in_full(plan)
+    assert fmt.shows_in_full(set_env_plan("3000", "PORT"))
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["correct horse battery staple", "line1\nline2secret", '"a b" tail', "x'y z'"],
+)
+def test_a_secret_named_key_hides_its_whole_value(value):
+    text = fmt.steps_text(set_env_plan(value, "DB_PASSWORD"))
+
+    assert text.splitlines()[0] == "1. coolify.set_env shop on demo (DB_PASSWORD=<redacted>)"
+
+
+@pytest.mark.parametrize("brk", ["\n", "\r\n", "\r", "\u2028", "\u2029", "\x85", "\x1b"])
+def test_a_line_break_in_a_param_never_poses_as_another_step(brk):
+    planted = f"a{brk}2. docker.restart shop-web-1 on demo"
+    mcp = PlanStep(
+        action="mcp.call",
+        host_id="demo",
+        target="shop-web-1",
+        params={"tool": "pause_monitor", "arguments": '{"note": "' + planted + '"}'},
+    )
+    for plan in (set_env_plan(planted, "FOO"), Proposal(kind="act", steps=[mcp], reason="r")):
+        text = fmt.steps_text(plan)
+
+        assert all(line[0].isdigit() for line in text.split("\n"))
+        assert len(text.split("\n")) == len(plan.steps)
+        assert "\u2028" not in text and "\r" not in text and fmt.LINE_BREAK in text
+
+
+async def long_plan_incident(env):
+    """A second incident whose pending plan sets a value too long for one Telegram line."""
+    subject = Subject(kind="service", host_id="demo", service_id="demo/blog")
+    incident, _ = await IncidentRepo(env.db).open_or_attach(
+        subject, [Signal(subject=subject, kind="container_died", at=T0)]
+    )
+    plan = set_env_plan(LONG_VALUE, "WEBHOOK")
+    return incident, plan, await env.approvals.request(incident.id, plan, [])
+
+
+async def test_a_plan_too_long_to_show_gets_no_approve_button(env):
+    incident, plan, request = await long_plan_incident(env)
+
+    await env.notifier.proposal(incident, None, plan, request)
+    await env.notifier.reminder(incident, request)
+
+    for sent in env.api.sent("sendMessage"):
+        buttons = sent["reply_markup"]["inline_keyboard"][0]
+        assert [b["callback_data"] for b in buttons] == [f"reject:{request.id}"]
+        assert "approve on the dashboard" in sent["text"]
+
+
+async def test_an_approve_press_for_a_plan_too_long_to_show_is_refused(env):
+    incident, plan, request = await long_plan_incident(env)
+    await env.notifier.proposal(incident, None, plan, request)
+    env.api.updates.append(fixture("callback_approve", APPROVAL_ID=request.id))
+
+    await env.bot.poll_once()
+
+    assert env.runner.resumed == []
+    assert (await env.approvals.current(incident.id)).decision is None
+    [pop_up] = env.api.sent("answerCallbackQuery")
+    assert "dashboard" in pop_up["text"]
 
 
 async def test_the_approval_message_shows_the_set_env_value_redacted(env):

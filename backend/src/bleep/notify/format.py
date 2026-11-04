@@ -55,6 +55,12 @@ def answer(name: str, **values: str) -> str:
     return prompts.load(f"notify/{name}", **values).strip()
 
 
+# Said after a set_env value cut to fit the line; that proposal gets no Approve button.
+TOO_LONG = "(value too long to show here: approve on the dashboard)"
+LINE_BREAK = "⏎"  # shown in place of a line break or control character inside a step
+_BREAKS = re.compile(r"\r\n|[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+
+
 def steps_text(proposal: Proposal) -> str:
     """One line per step: `1. docker.restart shop-web-1 on demo`.
 
@@ -62,37 +68,50 @@ def steps_text(proposal: Proposal) -> str:
     those too; they are redacted and cut so that each line stays within `STEP_CHARS` unless its
     head alone is longer, so no step's params can push a later step out of the message. A Docker
     step's params are never shown: its action ignores them, so they could only be model text in
-    the approval. A `coolify.set_env` step shows `KEY=value`, redacted (`redacted_step`); a value
-    too long for the line keeps its start and end around "…", so the key and the value always
-    show."""
-    return "\n".join(_step_line(n, step) for n, step in enumerate(proposal.steps, 1))
+    the approval. A line break or control character inside a step reads `⏎`, so text in a param
+    can never pose as another step. A `coolify.set_env` step shows `KEY=value`, redacted
+    (`redacted_step`); a value too long for the line keeps its start and end around "…" and is
+    followed by `TOO_LONG` (see `shows_in_full`)."""
+    return "\n".join(_step_line(n, step)[0] for n, step in enumerate(proposal.steps, 1))
 
 
-def _step_line(number: int, step: PlanStep) -> str:
-    head = f"{number}. {step.action} {step.target} on {step.host_id}"
+def shows_in_full(proposal: Proposal) -> bool:
+    """Whether `steps_text` shows every set_env value whole. When it does not, the proposal is
+    approved on the dashboard only (Danny's decision, #38: never approve blind)."""
+    return not any(_step_line(n, step)[1] for n, step in enumerate(proposal.steps, 1))
+
+
+def _one_line(text: str) -> str:
+    return _BREAKS.sub(LINE_BREAK, text)
+
+
+def _step_line(number: int, step: PlanStep) -> tuple[str, bool]:
+    """The step's line, and whether a set_env value in it had to be cut."""
+    head = _one_line(f"{number}. {step.action} {step.target} on {step.host_id}")
     if not step.params or step.action.startswith("docker."):
-        return head
+        return head, False
     # The head is never cut: a person approves this exact action, target and host. Only the
     # params give way, down to "…" when a long target leaves them no room.
     room = max(STEP_CHARS - len(head) - 3, 1)  # the space and the brackets
     if step.action == "coolify.set_env" and {"key", "value"} <= step.params.keys():
         params = redacted_step(step).params
-        return f"{head} ({_env_pair(params['key'], params['value'], room)})"
-    shown = redact_text(", ".join(f"{key}={value}" for key, value in step.params.items()))
+        key, value = _one_line(params["key"]), _one_line(params["value"])
+        if len(key) + 1 + len(value) <= room:
+            return f"{head} ({key}={value})", False
+        cut = _env_pair(key, value, max(room - len(TOO_LONG) - 1, 1))
+        return f"{head} ({cut}) {TOO_LONG}", True
+    shown = _one_line(redact_text(", ".join(f"{k}={v}" for k, v in step.params.items())))
     if len(shown) > room:
         shown = shown[: room - 1] + "…"
-    return f"{head} ({shown})"
+    return f"{head} ({shown})", False
 
 
 def _env_pair(key: str, value: str, room: int) -> str:
-    """`KEY=value` within `room`, the value's middle cut first, so its start (the scheme and
-    host of a URL) and its end both stay in view."""
-    pair = f"{key}={value}"
-    if len(pair) <= room:
-        return pair
+    """`KEY=value` cut to `room`, the value's middle first, so its start (the scheme and host of a
+    URL) and its end both stay in view."""
     keep = room - len(key) - 2  # the "=" and the "…"
     if keep < 2:
-        return pair[: room - 1] + "…"
+        return f"{key}={value}"[: room - 1] + "…"
     start, end = keep - keep // 2, keep // 2
     return f"{key}={value[:start]}…{value[-end:]}"
 

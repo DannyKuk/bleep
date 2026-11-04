@@ -54,7 +54,7 @@ NEARBY = tuple(
 )
 # A single-label name, such as a Docker service; one starting with a digit could be an address.
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,62}")
-_ITEM = re.compile(r"[^\s,]+")
+_ITEM = re.compile(r"[^,]+")  # an item of a comma list; a space does not end it
 APPLICATIONS = (
     "List the Coolify applications: name, uuid, status (running:healthy, exited:unhealthy, ...),"
     " domains, git repo and branch, deployed commit and build pack. The ones whose containers"
