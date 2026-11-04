@@ -153,8 +153,9 @@ class PluginRegistry:
 
     async def view(self, name: str, *, version: str, switched_on: bool | None = None) -> PluginView:
         """What the API shows: settings and which secrets are set, never a secret's value.
-        `version` is the settings store's for this plugin, read before the settings are, and
-        `switched_on` the stored toggle (by default, whether the plugin is on)."""
+        `version` is the settings store's for this plugin, read before the settings are (this
+        relies on `SettingsStore.plugin_view` waiting for the store lock), and `switched_on` the
+        stored toggle (by default, whether the plugin is on)."""
         plugin = self.get(name)
         active = self._active.get(name)
         return PluginView(
