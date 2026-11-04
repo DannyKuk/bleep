@@ -856,3 +856,137 @@ async def test_ending_a_hosts_quiet_while_it_is_reachable_rechecks_its_services(
     [incident] = await r.incidents()
     assert incident.subject.service_id == SHOP
     assert [i.id for i in r.runner.started] == [incident.id]
+
+
+async def test_a_death_during_a_hosts_quiet_is_judged_when_it_answers_after_the_quiet_ended(
+    tmp_path,
+):
+    """shop dies while the host is left alone, then the host stops answering and the person
+    says "Watch again": the host incident opens, and shop's death, whose one event the quiet
+    dropped, is judged by the host's next listing instead of being lost."""
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("host", "h", "leave_alone", None)
+    await r.pulse(urls=False)
+    await r.kill("shop")
+    await r.lose_host()
+    for _ in range(3):
+        await r.pulse()
+    assert not r.registry.hosts()[0].reachable
+    await r.quiet.clear("host", "h")
+    [incident] = await r.incidents()
+    assert incident.subject == HOST
+
+    await r.regain_host()
+    await r.pulse(urls=False)
+    [incident] = await r.incidents()  # shop is routed to the open host_unreachable incident
+    signals = await r.repo.signals(incident.id)
+    shop = [s for s in signals if s.subject.service_id == SHOP]
+    assert [(s.kind, s.container) for s in shop] == [("down_past_grace", "shop-web-1")]
+    # Only shop is down: URL failures taken while the host was unreachable judge nothing.
+    assert {s.subject.service_id for s in signals if s.subject.kind == "service"} == {SHOP}
+    await r.pulse(urls=False)
+    assert len(await r.repo.signals(incident.id)) == len(signals)  # judged once
+
+
+async def test_a_snooze_that_ends_before_the_hosts_first_listing_is_judged_by_that_listing(
+    tmp_path,
+):
+    """A snooze passed while Bleep was down, and the host's first connect at boot failed: the
+    service has no listing yet, so its recheck waits for the host's first one."""
+    r = Rig(tmp_path)
+    await r.db.migrate()
+    await r.quiet.set("service", SHOP, "snooze", T0 + timedelta(hours=1))
+    r.engine.container_list[0] = box(
+        "shop-web-1", "shop", state="exited", exit_code=1, restart_policy="no"
+    )
+    r.engine.drop()
+    await r.registry.start()
+    assert r.registry.service(SHOP) is None
+    r.clock.advance(2 * 3600)
+    await r.quiet.expire()
+    assert await r.incidents() == []
+
+    r.engine.restore()
+    await r.pulse(urls=False)
+    [incident] = await r.incidents()
+    assert incident.subject.service_id == SHOP
+    assert [i.id for i in r.runner.started] == [incident.id]
+    await r.pulse(urls=False)
+    assert len(await r.incidents()) == 1
+
+
+async def test_a_service_snooze_that_ends_while_its_host_is_unreachable_waits_for_it(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("service", SHOP, "snooze", T0 + timedelta(hours=1))
+    await r.pulse(urls=False)
+    await r.kill("shop")
+    await r.lose_host()
+    for _ in range(2):
+        await r.pulse(urls=False)
+    assert not r.registry.hosts()[0].reachable
+    r.clock.advance(3600)
+    await r.quiet.expire()
+    assert await r.incidents() == []  # its last listing is stale: nothing is judged by it
+
+    await r.regain_host()
+    await r.pulse(urls=False)
+    [incident] = await r.incidents()
+    assert incident.subject.service_id == SHOP
+
+
+async def test_a_waiting_recheck_skips_a_service_quiet_again_by_then(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("service", SHOP, "snooze", T0 + timedelta(hours=1))
+    await r.pulse(urls=False)
+    await r.kill("shop")
+    await r.lose_host()
+    for _ in range(2):
+        await r.pulse(urls=False)
+    r.clock.advance(3600)
+    await r.quiet.expire()
+    await r.quiet.set("service", SHOP, "leave_alone", None)
+
+    await r.regain_host()
+    await r.pulse(urls=False)
+    assert await r.incidents() == []
+
+
+async def test_a_removed_host_forgets_its_waiting_rechecks_and_quiet_states(tmp_path):
+    r, machines = await dashboard_rig(tmp_path)
+    await r.manager.stop()
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))
+    await r.quiet.set("service", "c/compose:wiki", "snooze", T0 + timedelta(hours=1))
+    r.clock.advance(3600)
+    await r.quiet.expire()  # c has no listing yet: wiki's recheck waits for one
+    assert "c" in r.manager._deferred
+    await r.quiet.set("host", "c", "leave_alone", None)
+    await r.quiet.set("service", "c/compose:blog", "leave_alone", None)
+    await r.quiet.set("service", SHOP, "leave_alone", None)
+    heard = []
+
+    async def listener(change):
+        heard.append(change)
+
+    r.quiet.subscribe(listener)
+    await r.manager.host_changed(HostChange("c", "removed", None))
+    assert "c" not in r.manager._deferred
+    assert [(q.scope, q.target_id) for q in await r.quiet.active()] == [("service", SHOP)]
+    assert heard == []  # a removed host is not judged again
+
+
+async def test_one_failing_end_does_not_keep_a_quiet_host_from_closing_the_others(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse(urls=False)
+    await r.kill("shop")
+    await r.kill("blog")
+    first, second = sorted(await r.incidents(), key=lambda i: i.opened_at)
+    ending = r.runner.end
+
+    async def end(incident_id: str, text: str, *, spare: tuple[str, ...] = ()) -> None:
+        if incident_id == first.id:
+            raise RuntimeError("the database is locked")
+        await ending(incident_id, text, spare=spare)
+
+    r.runner.end = end
+    await r.quiet.set("host", "h", "leave_alone", None)
+    assert [i for i, _ in r.runner.ended] == [second.id]

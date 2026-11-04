@@ -95,6 +95,21 @@ class QuietStore:
         await self._notify("ended", _state(row))
         return True
 
+    async def forget_host(self, host_id: str) -> None:
+        """Drop a removed host's state and its services' without telling the listeners: a host
+        that is gone is not judged again."""
+        prefix = f"{host_id}/"
+        conn = await self.db.connect()
+        try:
+            await conn.execute(
+                "DELETE FROM quiet WHERE (scope = 'host' AND target_id = ?) "
+                "OR (scope = 'service' AND substr(target_id, 1, ?) = ?)",
+                (host_id, len(prefix), prefix),
+            )
+            await conn.commit()
+        finally:
+            await conn.close()
+
     async def _all(self) -> list[QuietState]:
         conn = await self.db.connect()
         try:

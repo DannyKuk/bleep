@@ -140,3 +140,36 @@ async def test_run_survives_a_failing_expire_and_keeps_ticking(store, monkeypatc
         await asyncio.sleep(0.005)
     task.cancel()
     assert calls >= 3
+
+
+async def test_expire_leaves_a_state_that_was_set_again_meanwhile(store, clock):
+    await store.set("service", "h/compose:shop", "snooze", T0 + HOUR)
+    await store.set("service", "h/compose:blog", "snooze", T0 + HOUR)
+    clock.advance(HOUR)
+    later = clock.now + 2 * HOUR
+
+    async def snooze_blog_again(change):
+        if change.kind == "ended" and change.state.target_id == "h/compose:shop":
+            await store.set("service", "h/compose:blog", "snooze", later)
+
+    store.subscribe(snooze_blog_again)
+    ended = await store.expire()
+    assert [s.target_id for s in ended] == ["h/compose:shop"]
+    blog = await store.of("service", "h/compose:blog")
+    assert blog is not None and blog.until == later
+
+
+async def test_forget_host_drops_its_states_and_its_services_without_telling_anyone(store):
+    heard = listen(store)
+    await store.set("host", "h", "leave_alone", None)
+    await store.set("service", "h/compose:shop", "leave_alone", None)
+    await store.set("service", "hh/compose:shop", "leave_alone", None)
+    await store.set("host", "g", "snooze", T0 + HOUR)
+    heard.clear()
+
+    await store.forget_host("h")
+    assert [(s.scope, s.target_id) for s in await store.active()] == [
+        ("service", "hh/compose:shop"),
+        ("host", "g"),
+    ]
+    assert heard == []
