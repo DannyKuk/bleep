@@ -283,6 +283,46 @@ describe("SettingsPage", () => {
     expect(within(coolify).getByRole("button", { name: "Switch off" })).toBeInTheDocument();
   });
 
+  it("sends a plugin's own version, and after a 409 reads the plugins again without retrying", async () => {
+    // Elsewhere the plugin was pointed at another instance after this page loaded.
+    const moved = plugin({ settings: { url: "https://other.lan", team: "main" }, version: "p2" });
+    const fetchMock = stubBackend({
+      "GET /api/settings": json(settingsView()),
+      "GET /api/services": json([SHOP]),
+      "GET /api/plugins": [json([plugin()]), json([moved])],
+      "GET /api/telegram/status": json(telegram()),
+      "PUT /api/plugins/coolify": [json({ detail: "the plugin changed", version: "p2" }, 409)],
+    });
+    render(<SettingsPage />);
+    const coolify = await screen.findByRole("region", { name: "Plugin Coolify" });
+    await userEvent.type(within(coolify).getByRole("textbox", { name: "Url" }), "https://c.lan");
+    await userEvent.click(within(coolify).getByRole("button", { name: "Save settings" }));
+
+    expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(SETTINGS_CHANGED);
+    expect(await screen.findByDisplayValue("https://other.lan")).toBeInTheDocument();
+    const puts = fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT");
+    expect(puts).toHaveLength(1);
+    expect(puts[0][1]?.headers).toMatchObject({ "if-match": '"p1"' });
+  });
+
+  it("says the settings could not be read again after a 409, rather than that they were", async () => {
+    stubBackend({
+      "GET /api/settings": [json(settingsView()), json({ detail: "Bad Gateway" }, 502)],
+      "GET /api/services": json([SHOP]),
+      "GET /api/plugins": json([]),
+      "GET /api/telegram/status": json(telegram()),
+      "PUT /api/settings": [json({ detail: "the settings changed", version: "v2" }, 409)],
+    });
+    render(<SettingsPage />);
+    const host = await screen.findByRole("region", { name: "Host M1" });
+    await userEvent.type(within(host).getByPlaceholderText("Add a rule for this host"), "r{Enter}");
+    await userEvent.click(within(host).getByRole("button", { name: "Save" }));
+
+    const alert = (await screen.findAllByRole("alert"))[0];
+    expect(alert).toHaveTextContent("Reading them again failed (Bad Gateway)");
+    expect(alert).not.toHaveTextContent("have been read again");
+  });
+
   it("says when the services Bleep sees cannot be loaded", async () => {
     stubBackend({
       "GET /api/settings": json(settingsView()),

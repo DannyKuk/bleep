@@ -90,6 +90,7 @@ export function plugin(overrides: Partial<PluginView> = {}): PluginView {
     },
     secrets: [{ env: "COOLIFY_TOKEN", set: false }],
     health: null,
+    version: "p1",
     ...overrides,
   };
 }

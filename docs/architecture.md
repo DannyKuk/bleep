@@ -159,7 +159,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 **Settings** ([details](design/settings.md))
 - **Database override > hosts file > defaults, in force at once**; the dashboard can protect a container but never unprotect one the hosts file protects.
 - **A settings body with a secret-shaped key or value anywhere is refused with 422**, naming where and never what.
-- **A settings change must send the version it was read at (`If-Match`)**; a stale one is a 409 and changes nothing, so no page silently reverts another's change.
+- **A settings or plugin change must send the version it was read at (`If-Match`)**; a stale one is a 409 and changes nothing, so no page silently reverts another's change.
 - **The settings page has no input for a secret**: each is shown as its variable or file and whether it is set; host connections are read-only, and the model choice and budgets are changed in the dev panel only.
 
 **Dev panel** ([details](design/dev-panel.md))

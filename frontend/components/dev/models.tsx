@@ -8,7 +8,7 @@ import { useSaveLock } from "@/components/save-lock";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { DevSettingsView, ModelChoice } from "@/lib/api-types";
-import { isStale, putSettings, SETTINGS_CHANGED } from "@/lib/settings-api";
+import { isStale, NOT_SAVED, putSettings, rereadFailed } from "@/lib/settings-api";
 
 const NAMES = [
   { key: "model", label: "Model" },
@@ -16,11 +16,36 @@ const NAMES = [
   { key: "local_model", label: "Local model" },
 ] as const;
 
+const READ_AGAIN = `${NOT_SAVED} They have been read again and your edits kept on top of them; check them and save again if your change is still needed.`;
+
+/**
+ * A form's draft of `fresh`, the values in force. When `fresh` changes (a save, or the read after
+ * a 409), the draft keeps only the fields the person edited from the values it was built from and
+ * takes the rest from `fresh`, so an untouched field never carries an old value into a save.
+ */
+export function useDraft<T extends object>(fresh: T) {
+  const [draft, setDraft] = useState(fresh);
+  const [base, setBase] = useState(fresh);
+  if (JSON.stringify(base) !== JSON.stringify(fresh)) {
+    const was = base as Record<string, unknown>;
+    const edited = draft as Record<string, unknown>;
+    const now = fresh as Record<string, unknown>;
+    setBase(fresh);
+    setDraft(
+      Object.fromEntries(
+        Object.keys(now).map((key) => [key, edited[key] !== was[key] ? edited[key] : now[key]]),
+      ) as T,
+    );
+  }
+  return [draft, setDraft] as const;
+}
+
 /** The props of a form that saves one section of the settings. */
 export interface SectionFormProps {
   view: DevSettingsView;
   onSaved: (view: DevSettingsView) => void;
-  /** The save was refused because the settings changed elsewhere: read them again. */
+  /** The save was refused because the settings changed elsewhere: read them again (throws when
+   * that read fails). */
   onStale: () => Promise<void>;
 }
 
@@ -48,8 +73,12 @@ export function useSectionSave(
         onSaved(saved);
       } catch (error) {
         if (isStale(error)) {
-          setFailure(SETTINGS_CHANGED);
-          await onStale().catch(() => undefined);
+          try {
+            await onStale();
+            setFailure(READ_AGAIN);
+          } catch (failed) {
+            setFailure(rereadFailed(failed));
+          }
         } else {
           setFailure(`Could not save the ${what}: ${why(error)}`);
         }
@@ -68,7 +97,7 @@ export function useSectionSave(
  */
 export function ModelsForm(props: SectionFormProps) {
   const { view } = props;
-  const [choice, setChoice] = useState<ModelChoice>(view.models);
+  const [choice, setChoice] = useDraft<ModelChoice>(view.models);
   const { saving, busy, failure, save: put } = useSectionSave("models", props, "models");
   const id = useId();
   const overridden = Object.keys(view.overrides.models ?? {}).length > 0;

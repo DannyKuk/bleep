@@ -132,6 +132,8 @@ export interface PluginView {
   settings_schema: PluginSettingsSchema;
   secrets: { env: string; set: boolean }[];
   health: { ok: boolean; detail: string } | null;
+  /** The plugin's own; a `PUT /api/plugins/{name}` built from this view sends it back. */
+  version: string;
 }
 
 export interface PluginUpdate {

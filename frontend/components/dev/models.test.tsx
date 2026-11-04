@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { json, MODELS, sentBody, settingsView, stubBackend } from "@/components/dev/fixtures";
 import { ModelsForm } from "@/components/dev/models";
-import { SETTINGS_CHANGED } from "@/lib/settings-api";
+import { NOT_SAVED } from "@/lib/settings-api";
 
 describe("ModelsForm", () => {
   it("saves only what changed, on top of the overrides already stored", async () => {
@@ -82,10 +82,27 @@ describe("ModelsForm", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save the models" }));
 
     expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ "if-match": '"v1"' });
-    expect(await screen.findByRole("alert")).toHaveTextContent(SETTINGS_CHANGED);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      `${NOT_SAVED} They have been read again and your edits kept on top of them`,
+    );
     expect(onStale).toHaveBeenCalledTimes(1);
     expect(onSaved).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(screen.getByLabelText("Provider")).toHaveValue("local"); // the draft stays to redo
+  });
+
+  it("says so when reading the settings again after a 409 failed", async () => {
+    stubBackend(json({ detail: "the settings changed", version: "v2" }, 409));
+    const onStale = vi.fn(async () => {
+      throw new Error("Bad Gateway");
+    });
+    render(<ModelsForm view={settingsView()} onSaved={vi.fn()} onStale={onStale} />);
+
+    await userEvent.selectOptions(screen.getByLabelText("Provider"), "local");
+    await userEvent.click(screen.getByRole("button", { name: "Save the models" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Reading them again failed (Bad Gateway)");
+    expect(alert).not.toHaveTextContent("have been read again");
   });
 });

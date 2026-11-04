@@ -25,9 +25,13 @@ describe("PluginList", () => {
     render(<PluginList plugins={[plugin()]} onSave={onSave} />);
     await userEvent.type(screen.getByRole("textbox", { name: "Url" }), "https://coolify.lan");
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    expect(onSave).toHaveBeenCalledWith("coolify", {
-      settings: { url: "https://coolify.lan" },
-    });
+    expect(onSave).toHaveBeenCalledWith(
+      "coolify",
+      {
+        settings: { url: "https://coolify.lan" },
+      },
+      "p1",
+    );
   });
 
   it("shows why it cannot be switched on", async () => {
@@ -36,7 +40,7 @@ describe("PluginList", () => {
     });
     render(<PluginList plugins={[plugin()]} onSave={onSave} />);
     await userEvent.click(screen.getByRole("button", { name: "Switch on" }));
-    expect(onSave).toHaveBeenCalledWith("coolify", { enabled: true });
+    expect(onSave).toHaveBeenCalledWith("coolify", { enabled: true }, "p1");
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "plugin coolify needs COOLIFY_TOKEN set in the environment first",
     );
@@ -56,7 +60,7 @@ describe("PluginList", () => {
     expect(screen.getByText("Set via")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save settings" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Switch off" }));
-    expect(onSave).toHaveBeenCalledWith("coolify", { enabled: false });
+    expect(onSave).toHaveBeenCalledWith("coolify", { enabled: false }, "p1");
   });
 
   it("keeps a boolean's default of true when the person leaves it untouched", async () => {
@@ -77,9 +81,13 @@ describe("PluginList", () => {
 
     await userEvent.type(screen.getByRole("textbox", { name: "Url" }), "https://c.lan");
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    expect(onSave).toHaveBeenCalledWith("coolify", {
-      settings: { url: "https://c.lan", verify_tls: true },
-    });
+    expect(onSave).toHaveBeenCalledWith(
+      "coolify",
+      {
+        settings: { url: "https://c.lan", verify_tls: true },
+      },
+      "p1",
+    );
   });
 
   it("sends a boolean the person switched off as false", async () => {
@@ -96,9 +104,13 @@ describe("PluginList", () => {
     render(<PluginList plugins={[p]} onSave={onSave} />);
     await userEvent.click(screen.getByRole("checkbox", { name: "Verify TLS" }));
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    expect(onSave).toHaveBeenCalledWith("coolify", {
-      settings: { url: "https://c.lan", verify_tls: false },
-    });
+    expect(onSave).toHaveBeenCalledWith(
+      "coolify",
+      {
+        settings: { url: "https://c.lan", verify_tls: false },
+      },
+      "p1",
+    );
   });
 
   it("never renders a SecretStr field, whatever its name", () => {

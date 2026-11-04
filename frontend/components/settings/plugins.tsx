@@ -236,7 +236,8 @@ export function PluginList({
   onSave,
 }: {
   plugins: PluginView[];
-  onSave: (name: string, update: PluginUpdate) => Promise<unknown>;
+  /** `version` is that of the plugin's view the update was built from. */
+  onSave: (name: string, update: PluginUpdate, version: string) => Promise<unknown>;
 }) {
   if (plugins.length === 0) {
     return <p className="text-sm text-muted-foreground">This Bleep has no plugins.</p>;
@@ -247,7 +248,7 @@ export function PluginList({
         <PluginSettings
           key={`${plugin.name}:${JSON.stringify(plugin.settings)}`}
           plugin={plugin}
-          onSave={(update) => onSave(plugin.name, update)}
+          onSave={(update) => onSave(plugin.name, update, plugin.version)}
         />
       ))}
     </div>

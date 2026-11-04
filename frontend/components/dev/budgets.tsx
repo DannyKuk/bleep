@@ -1,9 +1,9 @@
 "use client";
 
 import { Loader2, RotateCcw, Save } from "lucide-react";
-import { useId, useState } from "react";
+import { useId } from "react";
 
-import { type SectionFormProps, useSectionSave } from "@/components/dev/models";
+import { type SectionFormProps, useDraft, useSectionSave } from "@/components/dev/models";
 import { Failed } from "@/components/dev/status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,7 +40,7 @@ const asText = (budgets: Budgets) =>
 /** The limits that keep an incident and a day from running away; in force from the next node. */
 export function BudgetsForm(props: SectionFormProps) {
   const { view } = props;
-  const [values, setValues] = useState(() => asText(view.budgets));
+  const [values, setValues] = useDraft(asText(view.budgets));
   const {
     saving,
     busy,

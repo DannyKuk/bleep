@@ -12,7 +12,14 @@ import { TelegramSettings } from "@/components/settings/telegram";
 import { ThresholdsForm } from "@/components/settings/thresholds";
 import { apiFetch } from "@/lib/api";
 import type { ServiceView } from "@/lib/api-types";
-import { isStale, putSettings, SETTINGS_CHANGED, SettingsChanged } from "@/lib/settings-api";
+import {
+  isStale,
+  putPlugin,
+  putSettings,
+  rereadFailed,
+  SETTINGS_CHANGED,
+  SettingsChanged,
+} from "@/lib/settings-api";
 import type {
   PluginUpdate,
   PluginView,
@@ -110,30 +117,41 @@ function Settings() {
   const services = useLoaded<ServiceView[]>("/api/services");
   const plugins = useLoaded<PluginView[]>("/api/plugins");
   const telegram = useLoaded<TelegramStatus>("/api/telegram/status");
-  const [changedElsewhere, setChangedElsewhere] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const known = servicesByHost(services.data);
 
-  /** `update` was built from the view at `version`; a stale one is never retried, since its
-   * body would put back what changed elsewhere. */
-  async function saveSettings(update: SettingsUpdate, version: string) {
+  /** Runs a save built from a view at some version. A stale one reads the data again and is
+   * never retried, since its body would put back what changed elsewhere. */
+  async function saving(put: () => Promise<void>, readAgain: () => Promise<void>) {
     try {
-      settings.set(await putSettings<SettingsView>(update, version));
-      setChangedElsewhere(false);
+      await put();
+      setNotice(null);
     } catch (error) {
       if (!isStale(error)) throw error;
-      setChangedElsewhere(true);
-      settings.set(await apiFetch<SettingsView>("/api/settings"));
+      try {
+        await readAgain();
+        setNotice(SETTINGS_CHANGED);
+      } catch (failed) {
+        setNotice(rereadFailed(failed));
+      }
       throw new SettingsChanged();
     }
   }
 
-  async function savePlugin(name: string, update: PluginUpdate) {
-    const saved = await apiFetch<PluginView>(`/api/plugins/${encodeURIComponent(name)}`, {
-      method: "PUT",
-      body: JSON.stringify(update),
-    });
-    plugins.set((list) => (list ?? []).map((plugin) => (plugin.name === name ? saved : plugin)));
-  }
+  const saveSettings = (update: SettingsUpdate, version: string) =>
+    saving(
+      async () => settings.set(await putSettings<SettingsView>(update, version)),
+      async () => settings.set(await apiFetch<SettingsView>("/api/settings")),
+    );
+
+  const savePlugin = (name: string, update: PluginUpdate, version: string) =>
+    saving(
+      async () => {
+        const saved = await putPlugin<PluginView>(name, update, version);
+        plugins.set((list) => (list ?? []).map((p) => (p.name === name ? saved : p)));
+      },
+      async () => plugins.set(await apiFetch<PluginView[]>("/api/plugins")),
+    );
 
   return (
     <div className="flex flex-col gap-4">
@@ -146,7 +164,7 @@ function Settings() {
         </p>
       </header>
 
-      {changedElsewhere && <Alert>{SETTINGS_CHANGED}</Alert>}
+      {notice && <Alert>{notice}</Alert>}
       {services.error && (
         <Alert>
           Could not load the services Bleep sees: {services.error.message}. Only services with
