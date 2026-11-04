@@ -31,6 +31,10 @@ const FIELD_LABELS = {
   host_key: "Host key",
 };
 
+/** Where a host that the dashboard cannot add goes instead. */
+export const SSH_ONLY =
+  "Only SSH hosts can be added here. A host with a Docker socket, and a host on the machine Bleep itself runs on (loopback), go in config/hosts.yaml.";
+
 const slug = (name: string) =>
   name
     .toLowerCase()

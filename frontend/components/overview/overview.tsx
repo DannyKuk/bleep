@@ -1,12 +1,14 @@
 "use client";
 
-import { Loader2, ServerOff, TriangleAlert } from "lucide-react";
+import { Loader2, Plus, ServerOff, TriangleAlert } from "lucide-react";
 import { useCallback } from "react";
 
 import { useOverall } from "@/components/overall-state";
+import { AddHostButton, AddHostDialog } from "@/components/overview/add-host-dialog";
 import { OverviewHero } from "@/components/overview/hero";
 import { HostTile } from "@/components/overview/host-tile";
 import { heroSituation, reachLine, unsureIds } from "@/components/overview/situation";
+import { Button } from "@/components/ui/button";
 import { usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
 import type { HostView, Incident, IncidentDetail, ServiceView } from "@/lib/api-types";
@@ -16,13 +18,24 @@ const SETUP_DOCS = "https://github.com/DannyKuk/bleep/blob/main/docs/setup.md";
 
 type Details = Readonly<Record<string, IncidentDetail>>;
 
-function NoHosts() {
+type Reload = () => Promise<void>;
+
+function NoHosts({ onHostAdded }: { onHostAdded: Reload }) {
   return (
-    <div className="flex flex-col items-center gap-2 rounded-card-sm border border-dashed border-line px-6 py-12 text-center md:rounded-card">
+    <div className="flex flex-col items-center gap-3 rounded-card-sm border border-dashed border-line px-6 py-12 text-center md:rounded-card">
       <ServerOff aria-hidden className="size-6 text-ink-2" />
-      <p className="text-[15px] font-bold">
-        No hosts configured. Add one in{" "}
-        <code className="font-mono font-normal">config/hosts.yaml</code>
+      <p className="text-[15px] font-bold">No hosts yet.</p>
+      <AddHostDialog
+        onAdded={onHostAdded}
+        trigger={
+          <Button>
+            <Plus aria-hidden />
+            Add a host
+          </Button>
+        }
+      />
+      <p className="text-[15px] text-ink-2">
+        Or add one in <code className="font-mono">config/hosts.yaml</code>.
       </p>
       <a
         href={SETUP_DOCS}
@@ -34,14 +47,25 @@ function NoHosts() {
   );
 }
 
-function Hosts({ hosts, services }: { hosts: HostView[]; services: ServiceView[] }) {
+function Hosts({
+  hosts,
+  services,
+  onHostAdded,
+}: {
+  hosts: HostView[];
+  services: ServiceView[];
+  onHostAdded: Reload;
+}) {
   return (
     <section aria-labelledby="your-hosts" className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-baseline gap-x-3.5 gap-y-1.5">
-        <h2 id="your-hosts" className="text-xl font-extrabold">
-          Your hosts
-        </h2>
-        <p className="text-[15px] text-ink-2">{reachLine(hosts, services)}</p>
+      <div className="flex items-start gap-3">
+        <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3.5 gap-y-1.5">
+          <h2 id="your-hosts" className="text-xl font-extrabold">
+            Your hosts
+          </h2>
+          <p className="text-[15px] text-ink-2">{reachLine(hosts, services)}</p>
+        </div>
+        <AddHostButton onAdded={onHostAdded} />
       </div>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-4">
         {hosts.map((host) => (
@@ -63,6 +87,7 @@ export function OverviewView({
   incidents,
   details = {},
   now,
+  onHostAdded = async () => undefined,
 }: {
   hosts: HostView[];
   services: ServiceView[];
@@ -71,6 +96,8 @@ export function OverviewView({
   details?: Details;
   /** The moment the incidents were read, for how long a failed run still needs the human. */
   now: number;
+  /** Reads the hosts again after one was added from the overview. */
+  onHostAdded?: Reload;
 }) {
   const situation = heroSituation({ incidents, hosts, details, now });
   const mood =
@@ -80,7 +107,11 @@ export function OverviewView({
   return (
     <div className="flex flex-col gap-10">
       <OverviewHero situation={situation} mood={mood} hosts={hosts} services={services} />
-      {hosts.length === 0 ? <NoHosts /> : <Hosts hosts={hosts} services={services} />}
+      {hosts.length === 0 ? (
+        <NoHosts onHostAdded={onHostAdded} />
+      ) : (
+        <Hosts hosts={hosts} services={services} onHostAdded={onHostAdded} />
+      )}
     </div>
   );
 }
@@ -123,7 +154,11 @@ export function Overview() {
     (signal: AbortSignal) => fetchOverview(signal, waitingKey ? waitingKey.split("\n") : []),
     [waitingKey],
   );
-  const { data, error: servicesError } = usePoll(fetcher, POLL_MS);
+  const { data, error: servicesError, refresh } = usePoll(fetcher, POLL_MS);
+  const reload = useCallback(async () => {
+    overall.refresh();
+    refresh();
+  }, [overall, refresh]);
   const error = overall.error ?? servicesError;
 
   if (!overall.incidents || !overall.hosts || overall.readAt === undefined || !data) {
@@ -156,6 +191,7 @@ export function Overview() {
         incidents={overall.incidents}
         details={data.details}
         now={overall.readAt}
+        onHostAdded={reload}
       />
     </div>
   );
