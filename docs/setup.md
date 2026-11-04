@@ -27,10 +27,10 @@ This runs the whole path from a dead container to the approval question, on the 
    docker compose --profile demo up -d --build
    docker run -d --name bleep-try --restart no nginx:1.27-alpine
    ```
-   Log in at http://localhost:3000. Within about 30 s the overview lists `bleep-try` under the Demo stack as running.
+   Log in at http://localhost:3000. Within about 30 s the overview lists `bleep-try` in the Demo stack's tile as OK.
 3. Break it: `docker kill bleep-try`. Use `kill`, not `stop`: a `docker stop` (exit 0 or 143, a `stop` event) is someone's choice and opens nothing, by design ([watcher](design/watcher.md)). A kill leaves exit 137, the same as a crash, and the restart policy `no` keeps it down.
 4. What to expect:
-   - **Overview:** the service turns red (Down) at the next tick. After the 60 s grace window it is still down, so an incident opens, and the row gets an "Open incident" link. Allow about 75 s from the kill.
+   - **Overview:** the service turns red (Down) at the next tick and the Demo stack's tile is tinted. After the 60 s grace window it is still down, so an incident opens and the service's row gets an "Incident" link. Once the plan is ready, the top of the overview says "bleep-try is down. I know why, and I have a fix." with the plan in one line and "Show me the plan". Allow about 75 s from the kill.
    - **Incident page** (the link, or Incidents in the menu): the badge at the top right says Live. The timeline fills in (Gathered context, Investigating), and Live reasoning lists the tool calls as they happen, for example `inspect_container container=bleep-try`, each with its result folded under it. Then the Diagnosis card shows the cause (killed, exit 137, restart policy `no`), and the Proposal card a plan such as `docker.start bleep-try on demo` with Approve, Reject and "Tell Bleep something". The status badge says Needs your yes.
    - **Telegram:** the same plan arrives as a message with Approve and Reject buttons; a reply to it is an instruction.
 5. Answer on one side, then try the other. The dashboard locks its buttons and says, for example, "Approved on the dashboard"; a tap in Telegram afterwards is told the dashboard already decided. Approve in Telegram first instead, and the page shows "Approved on Telegram" with its buttons locked; a page that has not caught up yet answers a click with "Already decided on Telegram".
@@ -45,7 +45,7 @@ This continues past the approval: Bleep restarts what is down, checks the servic
    docker run -d --name bleep-try-db --restart no --label com.docker.compose.project=bleep-try redis:7-alpine
    docker run -d --name bleep-try-web --restart no --label com.docker.compose.project=bleep-try nginx:1.27-alpine
    ```
-   Within about 30 s the overview lists the `bleep-try` service with both containers running.
+   Within about 30 s the overview lists the `bleep-try` service as OK; its page shows both containers running.
 2. Stop the dependency the way a crash does: `docker kill bleep-try-db` (a `docker stop` opens nothing, by design). After about 75 s an incident opens, and the Proposal card shows a plan such as `docker.start bleep-try-db on demo`.
 3. Approve on the dashboard. What to expect:
    - **Timeline:** "Approved on the dashboard", "Ran the plan" with `docker.start bleep-try-db: started` and `docker.start bleep-try-db: done` under it, then "Checking the service" for about 20 s and "Check 1 passed" (a failed check is followed by up to two more, 10 s apart).

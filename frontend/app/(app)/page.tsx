@@ -3,8 +3,7 @@ import { Recoveries } from "@/components/overview/recoveries";
 
 export default function OverviewPage() {
   return (
-    <div className="flex flex-col gap-4">
-      <h1 className="text-lg font-semibold">Overview</h1>
+    <div className="flex flex-col gap-10">
       <Overview />
       <Recoveries />
     </div>
