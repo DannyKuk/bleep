@@ -26,6 +26,7 @@ const SHOP: ServiceView = {
   containers: [],
   urls: [],
   open_incident_id: null,
+  quiet: null,
 };
 const WORKER: ServiceView = { ...SHOP, id: "m1/compose:worker", name: "worker" };
 

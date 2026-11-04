@@ -34,6 +34,7 @@ const SERVICE: ServiceDetail = {
       },
     ],
     open_incident_id: null,
+    quiet: null,
   },
   rules: ["The shop db is shared with billing."],
   host_rules: ["Never restart postgres without asking."],
