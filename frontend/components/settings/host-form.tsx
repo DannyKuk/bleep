@@ -31,6 +31,31 @@ const FIELD_LABELS = {
   host_key: "Host key",
 };
 
+/** Where a host that the dashboard cannot add goes instead. */
+export const SSH_ONLY =
+  "Only SSH hosts can be added here. A host with a Docker socket, and a host on the machine Bleep itself runs on (loopback), go in config/hosts.yaml.";
+
+const KEYGEN = 'ssh-keygen -t ed25519 -f bleep_key -C bleep -N ""';
+
+const NEW_KEY_HINT = (
+  <>
+    <p>
+      Paste the private key Bleep logs in with. It is stored apart from the database and never shown
+      again.
+    </p>
+    <p>We recommend a new key just for Bleep, so it never holds your own. Make one with</p>
+    <code className="block w-fit max-w-full overflow-x-auto rounded-md bg-soft px-2 py-1 font-mono whitespace-nowrap text-ink">
+      {KEYGEN}
+    </code>
+    <p>
+      then add <code className="font-mono">bleep_key.pub</code> to{" "}
+      <code className="font-mono">~/.ssh/authorized_keys</code> of the user above on the server, and
+      paste <code className="font-mono">bleep_key</code> here. Removing that line cuts Bleep off.
+      Keys with a passphrase are not supported.
+    </p>
+  </>
+);
+
 const slug = (name: string) =>
   name
     .toLowerCase()
@@ -170,7 +195,7 @@ function Field({
 }: {
   label: string;
   children: (id: string) => React.ReactNode;
-  hint?: string;
+  hint?: React.ReactNode;
 }) {
   const id = useId();
   return (
@@ -179,7 +204,7 @@ function Field({
         {label}
       </label>
       {children(id)}
-      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      {hint && <div className="flex flex-col gap-1 text-xs text-muted-foreground">{hint}</div>}
     </div>
   );
 }
@@ -365,7 +390,7 @@ export function HostForm({
         label={adding ? "SSH private key" : "New SSH private key"}
         hint={
           adding
-            ? "Paste the private key Bleep logs in with. It is stored apart from the database and never shown again."
+            ? NEW_KEY_HINT
             : "Leave empty to keep the stored key. A new one is never shown again."
         }
       >

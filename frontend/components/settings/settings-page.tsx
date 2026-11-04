@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import { Panel } from "@/components/panel";
 import { SaveLockProvider } from "@/components/save-lock";
-import { HostForm } from "@/components/settings/host-form";
+import { HostForm, SSH_ONLY } from "@/components/settings/host-form";
 import { HostSettings, type KnownService } from "@/components/settings/hosts";
 import { ModelSettings } from "@/components/settings/models";
 import { PluginList } from "@/components/settings/plugins";
@@ -117,10 +117,7 @@ function AddHost({ onChanged }: { onChanged: () => Promise<void> }) {
   return (
     <Panel title="Add a host">
       <div className="flex flex-col gap-3">
-        <p className="text-sm text-muted-foreground">
-          Only SSH hosts can be added here. A host with a Docker socket, and a host on the machine
-          Bleep itself runs on (loopback), go in config/hosts.yaml.
-        </p>
+        <p className="text-sm text-muted-foreground">{SSH_ONLY}</p>
         {open ? (
           <HostForm onChanged={onChanged} onClose={() => setOpen(false)} />
         ) : (

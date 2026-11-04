@@ -22,6 +22,8 @@ export interface Overall {
   error: Error | undefined;
   /** When the data was read (ms since the epoch), the "now" the state was computed for. */
   readAt: number | undefined;
+  /** Reads the incidents and hosts again now, after a change the page made itself. */
+  refresh: () => void;
 }
 
 async function fetchOverall(signal: AbortSignal) {
@@ -40,7 +42,7 @@ const OverallContext = createContext<Overall | null>(null);
  * with `useOverall()` instead of polling the same endpoints again.
  */
 export function OverallProvider({ children }: { children: ReactNode }) {
-  const { data, error } = usePoll(fetchOverall, POLL_MS);
+  const { data, error, refresh } = usePoll(fetchOverall, POLL_MS);
   const value = useMemo<Overall>(
     () => ({
       incidents: data?.incidents,
@@ -48,8 +50,9 @@ export function OverallProvider({ children }: { children: ReactNode }) {
       state: data ? overallState(data.incidents, data.hosts, data.readAt) : undefined,
       error,
       readAt: data?.readAt,
+      refresh,
     }),
-    [data, error],
+    [data, error, refresh],
   );
   return <OverallContext.Provider value={value}>{children}</OverallContext.Provider>;
 }

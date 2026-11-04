@@ -30,6 +30,19 @@ describe("usePoll", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it("reads at once on refresh and counts the next interval from there", async () => {
+    const fetcher = vi.fn(async () => "x");
+    const { result } = renderHook(() => usePoll(fetcher, 10_000));
+    await act(async () => {});
+    await act(async () => void vi.advanceTimersByTime(6_000));
+    await act(async () => result.current.refresh());
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    await act(async () => void vi.advanceTimersByTime(6_000));
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    await act(async () => void vi.advanceTimersByTime(4_000));
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
   it("pauses while hidden and refetches when visible again", async () => {
     const fetcher = vi.fn(async () => "x");
     renderHook(() => usePoll(fetcher, 10_000));

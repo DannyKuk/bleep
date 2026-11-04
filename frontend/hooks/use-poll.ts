@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 export interface Poll<T> {
   data: T | undefined;
   error: Error | undefined;
   loading: boolean;
+  /** Reads again now and restarts the interval from this read. */
+  refresh: () => void;
 }
 
 /**
@@ -14,12 +16,19 @@ export interface Poll<T> {
  * Each tick aborts the previous one and carries a sequence number, so a slow older response can
  * never overwrite newer data. Keeps the last good data when a refresh fails. `fetcher` must be
  * stable (module level or memoised). Until live events arrive (Task 23), this is the refresh.
+ * `refresh` reads at once after a change the page made itself, such as an added host.
  */
 export function usePoll<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
   intervalMs = 10_000,
 ): Poll<T> {
-  const [state, setState] = useState<Poll<T>>({ data: undefined, error: undefined, loading: true });
+  const [state, setState] = useState<Omit<Poll<T>, "refresh">>({
+    data: undefined,
+    error: undefined,
+    loading: true,
+  });
+  const [round, setRound] = useState(0);
+  const refresh = useCallback(() => setRound((current) => current + 1), []);
 
   useEffect(() => {
     let active = true;
@@ -64,7 +73,7 @@ export function usePoll<T>(
       document.removeEventListener("visibilitychange", onVisibility);
       stop();
     };
-  }, [fetcher, intervalMs]);
+  }, [fetcher, intervalMs, round]);
 
-  return state;
+  return { ...state, refresh };
 }

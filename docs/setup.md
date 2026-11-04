@@ -75,7 +75,7 @@ An SSH host can be added in either of two ways. A socket host (`unix://` or `tcp
 
 Bleep keeps the host's address in its database and the private key and the host key you confirm in `secrets.json` on the `bleep-data` volume, never in the database, and starts watching the host at once, without a restart.
 
-1. Open Settings, then "Add a host" and "Add an SSH host". Fill in a name, the address (a host name or IP, never loopback or link-local), the port, the user and the Docker socket path. Paste the private key into the key box. Bleep never shows it again and empties the box once the host is saved.
+1. On the overview, press the + next to "Your hosts" (or "Add a host" when there are none yet); Settings has the same form under "Add a host" and "Add an SSH host". Fill in a name, the address (a host name or IP, never loopback or link-local), the port, the user and the Docker socket path. Paste the private key into the key box. Bleep never shows it again and empties the box once the host is saved.
 2. Press "Check the host key". Bleep fetches the host key the server offers and shows its fingerprint (`SHA256:...`). Nothing is saved yet. On the server, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` (or the key file of the type shown) must print the same fingerprint; if it does not, stop. Tick that it matches. Any failure of the check says "Could not get an SSH host key from that address." (the backend log names the kind of error), and only one check runs at a time.
 3. Press "Add host" within ten minutes of the check. After ten minutes, or after the address or port changes, the page asks you to check again.
 
