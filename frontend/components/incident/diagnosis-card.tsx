@@ -1,10 +1,27 @@
-import { CircleHelp } from "lucide-react";
+import { ChevronRight, CircleHelp } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import type { Diagnosis } from "@/lib/api-types";
 
-/** What Bleep thinks is wrong, how sure it is, and what it saw. */
-export function DiagnosisCard({ diagnosis }: { diagnosis: Diagnosis }) {
+/** The first `count` sentences of `text`, and the rest (empty when nothing was cut). */
+export function firstSentences(text: string, count: number): [string, string] {
+  // A sentence ends at a stop followed by a space, so "1.2.3" or "db:5432." stay whole.
+  const sentences = text.trim().split(/(?<=[.!?])\s+/);
+  return [sentences.slice(0, count).join(" "), sentences.slice(count).join(" ")];
+}
+
+/**
+ * What Bleep thinks is wrong, how sure it is, and what it saw. `short` is the phone's version:
+ * the cause in two sentences, with the rest of it and the evidence folded under "More".
+ */
+export function DiagnosisCard({
+  diagnosis,
+  short = false,
+}: {
+  diagnosis: Diagnosis;
+  short?: boolean;
+}) {
+  if (short) return <ShortDiagnosis diagnosis={diagnosis} />;
   return (
     <div className="flex flex-col gap-3.5">
       <div className="flex flex-wrap items-center gap-2">
@@ -51,6 +68,55 @@ export function DiagnosisCard({ diagnosis }: { diagnosis: Diagnosis }) {
             </span>
           ))}
         </p>
+      )}
+    </div>
+  );
+}
+
+function ShortDiagnosis({ diagnosis }: { diagnosis: Diagnosis }) {
+  const [lead, rest] = firstSentences(diagnosis.root_cause, 2);
+  const more = rest !== "" || diagnosis.evidence.length > 0;
+  return (
+    <div className="flex flex-col gap-2.5">
+      <p className="text-sm font-extrabold text-ink-2">
+        {Math.round(diagnosis.confidence * 100)}% sure · {diagnosis.category}
+      </p>
+      {diagnosis.unsure && (
+        <p
+          role="note"
+          className="flex items-start gap-2 rounded-row bg-warn-bg px-3.5 py-2.5 text-[15px] text-warn"
+        >
+          <CircleHelp aria-hidden className="mt-0.5 size-4 shrink-0" />
+          <span>
+            <strong className="font-extrabold">I am not sure.</strong> Read the evidence before you
+            decide.
+          </span>
+        </p>
+      )}
+      <p className="text-base leading-snug">{lead}</p>
+      {more && (
+        <details className="group">
+          <summary className="flex min-h-11 w-fit cursor-pointer list-none items-center gap-1 text-sm font-bold text-ink-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [&::-webkit-details-marker]:hidden">
+            <ChevronRight
+              aria-hidden
+              className="size-4 transition-transform group-open:rotate-90 motion-reduce:transition-none"
+            />
+            More
+          </summary>
+          <div className="flex flex-col gap-2 pt-1 text-[15px]">
+            {rest && <p>{rest}</p>}
+            {diagnosis.evidence.length > 0 && (
+              <ul aria-label="Evidence" className="flex flex-col gap-1.5">
+                {diagnosis.evidence.map((item, index) => (
+                  <li key={index} className="flex flex-wrap items-baseline gap-x-2">
+                    <span>{item.detail}</span>
+                    <code className="font-mono text-xs text-ink-2">{item.source}</code>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </details>
       )}
     </div>
   );

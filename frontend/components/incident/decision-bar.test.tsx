@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -79,7 +79,7 @@ describe("DecisionBar", () => {
     await userEvent.click(screen.getByRole("button", { name: "Let it go" }));
 
     await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(/Let go on the dashboard/),
+      expect(screen.getByRole("status")).toHaveTextContent(/You let it go on the dashboard/),
     );
   });
 
@@ -105,7 +105,7 @@ describe("DecisionBar", () => {
     );
     expect(sent(fetchMock)).toEqual({ approval_id: "appr-1", kind: "approve" });
     await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(/Approved on the dashboard/),
+      expect(screen.getByRole("status")).toHaveTextContent(/You said yes on the dashboard/),
     );
     for (const button of buttons()) expect(button).toBeDisabled();
     expect(onDecided).toHaveBeenCalled();
@@ -168,7 +168,155 @@ describe("DecisionBar", () => {
         onDecided={vi.fn()}
       />,
     );
-    expect(screen.getByRole("status")).toHaveTextContent(/Rejected on Telegram/);
+    expect(screen.getByRole("status")).toHaveTextContent(/You said no on Telegram/);
     for (const button of buttons()) expect(button).toBeDisabled();
+  });
+});
+
+describe("DecisionBar pinned to a phone screen", () => {
+  const pinned = (props: Partial<Parameters<typeof DecisionBar>[0]> = {}) =>
+    render(
+      <DecisionBar
+        incidentId="inc-1"
+        approval={approval()}
+        onDecided={vi.fn()}
+        pinned
+        {...props}
+      />,
+    );
+  const bar = (container: HTMLElement) => container.querySelector("[data-pinned]") as HTMLElement;
+
+  it("sits at the bottom of the screen, yes full width at 56 px, the other two side by side", () => {
+    const { container } = pinned();
+    expect(bar(container)).toHaveClass("fixed", "inset-x-0", "bottom-0");
+    expect(bar(container).className).toContain("safe-area-inset-bottom");
+    const [yes, no, tell] = buttons();
+    expect(yes).toHaveClass("h-14", "w-full");
+    expect(no).toHaveClass("h-12", "flex-1");
+    expect(tell).toHaveClass("h-12", "flex-1");
+    expect(no.parentElement).toBe(tell.parentElement);
+    expect(tell).toHaveTextContent(/^Tell Bleep$/);
+  });
+
+  it("sends the approval it shows, then becomes one status line", async () => {
+    const fetchMock = reply(200, decided("approve", "dashboard"));
+    const onDecided = vi.fn();
+    const { container, rerender } = pinned({ onDecided });
+
+    await userEvent.click(screen.getByRole("button", { name: "Yes, go ahead" }));
+
+    expect(sent(fetchMock)).toEqual({ approval_id: "appr-1", kind: "approve" });
+    expect(await screen.findByRole("status")).toHaveTextContent(/You said yes on the dashboard/);
+    expect(within(bar(container)).queryAllByRole("button")).toHaveLength(0);
+    expect(onDecided).toHaveBeenCalled();
+
+    const answered = approval({
+      status: "approved",
+      decision: decided("approve", "dashboard") as never,
+    });
+    for (const [status, line] of [
+      ["executing", "Running the plan."],
+      ["verifying", "Checking it worked."],
+      ["resolved", "Fixed and checked."],
+    ] as const) {
+      rerender(
+        <DecisionBar
+          incidentId="inc-1"
+          approval={answered}
+          onDecided={onDecided}
+          pinned
+          status={status}
+        />,
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(line);
+    }
+  });
+
+  it("says a no ran nothing, or only that this plan did not run when an earlier one did", () => {
+    const rejected = approval({
+      status: "rejected",
+      decision: decided("reject", "telegram") as never,
+    });
+    const { rerender } = pinned({ approval: rejected });
+    expect(screen.getByRole("status")).toHaveTextContent(
+      /You said no on Telegram, .*\. Nothing ran\./,
+    );
+    expect(screen.queryByRole("button")).toBeNull();
+
+    rerender(
+      <DecisionBar incidentId="inc-1" approval={rejected} onDecided={vi.fn()} pinned ranBefore />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("This plan did not run.");
+    expect(screen.getByRole("status")).not.toHaveTextContent("Nothing ran.");
+  });
+
+  it("shows the 409 message naming who decided, with no buttons left", async () => {
+    reply(409, { detail: "Already decided on Telegram", decided_via: "telegram" });
+    const onDecided = vi.fn();
+    const { container } = pinned({ onDecided });
+
+    await userEvent.click(screen.getByRole("button", { name: "No, leave it" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Already decided on Telegram");
+    expect(within(bar(container)).queryAllByRole("button")).toHaveLength(0);
+    expect(onDecided).toHaveBeenCalled();
+  });
+
+  it("keeps the buttons on another error, so the human can try again", async () => {
+    reply(500, { detail: "Internal Server Error" });
+    pinned();
+
+    await userEvent.click(screen.getByRole("button", { name: "Yes, go ahead" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Internal Server Error/);
+    for (const button of buttons()) expect(button).toBeEnabled();
+  });
+
+  it("opens the instruction inside the bar, capped at 2,000 characters", async () => {
+    const fetchMock = reply(200, decided("instruct", "dashboard", "Restart only shop-api"));
+    const { container } = pinned();
+
+    await userEvent.click(screen.getByRole("button", { name: "Tell Bleep something" }));
+    const box = within(bar(container)).getByRole("textbox");
+    expect(box).toHaveAttribute("maxlength", "2000");
+    expect(box).toHaveFocus();
+    const send = within(bar(container)).getByRole("button", { name: "Send" });
+    expect(send).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Yes, go ahead" })).toBeNull();
+
+    await userEvent.type(box, " Restart only shop-api ");
+    await userEvent.click(send);
+
+    expect(sent(fetchMock)).toEqual({
+      approval_id: "appr-1",
+      kind: "instruct",
+      text: "Restart only shop-api",
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(/Restart only shop-api/);
+  });
+
+  it("offers a refused plan only an instruction and Let it go", async () => {
+    const fetchMock = reply(200, decided("reject", "dashboard"));
+    pinned({ approval: refusedApproval() });
+
+    expect(screen.queryByRole("button", { name: "Yes, go ahead" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "No, leave it" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Tell Bleep something" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Let it go" }));
+
+    expect(sent(fetchMock)).toEqual({ approval_id: "appr-1", kind: "reject" });
+    expect(await screen.findByRole("status")).toHaveTextContent(/You let it go on the dashboard/);
+  });
+
+  it("lifts itself above the on-screen keyboard, so Send stays in view", async () => {
+    const viewport = Object.assign(new EventTarget(), { height: 844, offsetTop: 0 });
+    vi.stubGlobal("visualViewport", viewport);
+    vi.stubGlobal("innerHeight", 844);
+    const { container } = pinned();
+    expect(bar(container).style.bottom).toBe("0px");
+
+    viewport.height = 500;
+    await act(async () => void viewport.dispatchEvent(new Event("resize")));
+    expect(bar(container).style.bottom).toBe("344px");
   });
 });

@@ -1,3 +1,4 @@
+import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 
 import { Bleep } from "@/components/bleep/bleep";
@@ -35,13 +36,13 @@ function StreamBadge({ status }: { status: StreamStatus }) {
  */
 export function IncidentHero({ detail, stream }: { detail: IncidentDetail; stream: StreamStatus }) {
   const { incident, diagnosis, outcome } = detail;
-  const serviceId = incident.subject.service_id;
+  const mood = incidentMood(incident.status, diagnosis?.unsure ?? false);
   return (
     <section
       aria-labelledby="incident-headline"
       className="flex flex-wrap items-center gap-x-7 gap-y-4"
     >
-      <Bleep mood={incidentMood(incident.status, diagnosis?.unsure ?? false)} size={112} />
+      <Bleep mood={mood} size={112} />
       <div className="flex min-w-0 flex-[1_1_420px] flex-col gap-2">
         <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px] text-ink-2">
           <Link
@@ -50,16 +51,7 @@ export function IncidentHero({ detail, stream }: { detail: IncidentDetail; strea
           >
             Incidents /
           </Link>
-          {serviceId ? (
-            <Link
-              href={serviceHref(serviceId)}
-              className="font-mono underline-offset-2 hover:text-ink hover:underline"
-            >
-              {subjectText(incident)}
-            </Link>
-          ) : (
-            <span className="font-mono">{subjectText(incident)}</span>
-          )}
+          <Subject detail={detail} />
           <span className="font-mono">
             · opened <time dateTime={incident.opened_at}>{formatDateTime(incident.opened_at)}</time>
           </span>
@@ -95,6 +87,57 @@ function HeadlineWords({ detail }: { detail: IncidentDetail }) {
       {lead}
       {name && <code className="font-mono font-medium">{name}</code>}
       {text}
+    </>
+  );
+}
+
+function Subject({ detail }: { detail: IncidentDetail }) {
+  const serviceId = detail.incident.subject.service_id;
+  return serviceId ? (
+    <Link
+      href={serviceHref(serviceId)}
+      className="font-mono underline-offset-2 hover:text-ink hover:underline"
+    >
+      {subjectText(detail.incident)}
+    </Link>
+  ) : (
+    <span className="font-mono">{subjectText(detail.incident)}</span>
+  );
+}
+
+/**
+ * The phone's top of an incident's page: a small header (back, subject and time), then Bleep at
+ * 76 px beside the status pill and the headline. Nothing else, so the plan and its pinned bar
+ * come soon.
+ */
+export function PhoneIncidentHero({ detail }: { detail: IncidentDetail }) {
+  const { incident, diagnosis } = detail;
+  return (
+    <>
+      <div className="flex items-center gap-3">
+        <Link
+          href="/incidents"
+          aria-label="Back to incidents"
+          className="grid size-11 shrink-0 place-items-center rounded-full border border-line bg-surface hover:bg-soft focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        >
+          <ArrowLeft aria-hidden className="size-5" />
+        </Link>
+        <p className="flex min-w-0 flex-wrap gap-x-1.5 text-xs text-ink-2">
+          <Subject detail={detail} />
+          <span className="font-mono">
+            · <time dateTime={incident.opened_at}>{formatDateTime(incident.opened_at)}</time>
+          </span>
+        </p>
+      </div>
+      <section aria-labelledby="incident-headline" className="flex items-center gap-3.5">
+        <Bleep mood={incidentMood(incident.status, diagnosis?.unsure ?? false)} size={76} />
+        <div className="flex min-w-0 flex-col items-start gap-1.5">
+          <IncidentStatusBadge status={incident.status} />
+          <h1 id="incident-headline" className="text-[22px] leading-tight font-extrabold">
+            <HeadlineWords detail={detail} />
+          </h1>
+        </div>
+      </section>
     </>
   );
 }

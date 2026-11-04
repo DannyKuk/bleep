@@ -1,4 +1,5 @@
 import { act, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -10,6 +11,7 @@ import {
   report,
 } from "@/components/incident/fixtures";
 import { DETAIL_POLL_MS, IncidentPage } from "@/components/incident/incident-page";
+import { PHONE_QUERY } from "@/components/incident/use-phone";
 import type { IncidentDetail } from "@/lib/api-types";
 
 class StubEventSource {
@@ -151,7 +153,7 @@ describe("IncidentPage", () => {
 
     await act(async () => send("decision", { kind: "approve", text: null, via: "telegram" }));
     expect(detailReads(fetchMock)).toBe(2);
-    expect(await screen.findByText(/Approved on Telegram,/)).toBeInTheDocument();
+    expect(await screen.findByText(/You said yes on Telegram,/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Yes, go ahead" })).toBeDisabled();
   });
 
@@ -177,5 +179,65 @@ describe("IncidentPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "There is no incident with this id.",
     );
+  });
+
+  describe("on a phone", () => {
+    beforeEach(() =>
+      vi.stubGlobal(
+        "matchMedia",
+        vi.fn((query: string) => ({
+          matches: query === PHONE_QUERY,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+        })),
+      ),
+    );
+
+    it("is one column: small header, Bleep at 76 px, what I found, the plan, the rest folded", async () => {
+      stubBackend(detail());
+      const { container } = render(<IncidentPage id="inc-1" />);
+      const headline = await screen.findByRole("heading", {
+        level: 1,
+        name: "shop is in trouble. Can I fix it?",
+      });
+      expect(screen.getByRole("link", { name: "Back to incidents" })).toHaveAttribute(
+        "href",
+        "/incidents",
+      );
+      expect(container.querySelector("svg[data-mood]")).toHaveAttribute("width", "76");
+      expect(screen.queryByRole("list", { name: "Progress" })).toBeNull();
+
+      const found = screen.getByRole("region", { name: "What I found" });
+      const plan = screen.getByRole("region", { name: "Here is my plan" });
+      const following = (a: Element, b: Element) =>
+        a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING;
+      expect(following(headline, found)).toBeTruthy();
+      expect(following(found, plan)).toBeTruthy();
+
+      const folded = [...container.querySelectorAll("details")].filter((fold) =>
+        /^(How I got there|Timeline)/.test(fold.querySelector("summary")?.textContent ?? ""),
+      );
+      expect(folded).toHaveLength(2);
+      for (const fold of folded) expect(fold).not.toHaveAttribute("open");
+    });
+
+    it("pins the decision bar to the bottom with the same rules as on a desktop", async () => {
+      const fetchMock = stubBackend(detail());
+      const { container } = render(<IncidentPage id="inc-1" />);
+      await screen.findByRole("button", { name: "Yes, go ahead" });
+      const bar = container.querySelector("[data-pinned]") as HTMLElement;
+      expect(bar).toHaveClass("fixed", "bottom-0");
+      expect(within(bar).getByRole("button", { name: "Yes, go ahead" })).toHaveClass("h-14");
+      expect(within(bar).getByRole("button", { name: "Tell Bleep something" })).toBeEnabled();
+
+      fetchMock.mockImplementationOnce(async () =>
+        json({ detail: "Already decided on Telegram", decided_via: "telegram" }, 409),
+      );
+      await userEvent.click(within(bar).getByRole("button", { name: "No, leave it" }));
+      expect(await within(bar).findByRole("alert")).toHaveTextContent(
+        "Already decided on Telegram",
+      );
+      expect(within(bar).queryAllByRole("button")).toHaveLength(0);
+    });
   });
 });

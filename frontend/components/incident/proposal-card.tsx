@@ -246,6 +246,8 @@ export function ProposalCard({
   onDecided,
   run,
   status,
+  pinned = false,
+  ranBefore = false,
 }: {
   incidentId: string;
   proposal: Proposal | null;
@@ -253,6 +255,10 @@ export function ProposalCard({
   onDecided: () => void;
   run?: PlanRun;
   status?: IncidentStatus;
+  /** Pin the decision bar to the bottom of a phone's screen. */
+  pinned?: boolean;
+  /** Some step of an earlier plan ran (see `DecisionBar`). */
+  ranBefore?: boolean;
 }) {
   const shown = shownPlan(proposal, approval);
   if (!shown) return null;
@@ -266,6 +272,9 @@ export function ProposalCard({
           incidentId={incidentId}
           approval={approval}
           onDecided={onDecided}
+          pinned={pinned}
+          status={status}
+          ranBefore={ranBefore}
         />
       )}
       {approval && !forShown && approval.decision && (
