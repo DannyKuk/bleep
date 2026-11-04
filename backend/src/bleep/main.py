@@ -101,6 +101,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 budgets=parts.settings_store.budgets,
                 store=parts.url_checks,
                 watch_interval_s=settings.watch_interval_s,
+                quiet=parts.quiet,
             )
             reminders = ReminderLoop(
                 parts.approvals,
@@ -119,6 +120,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
             # The manager first: a removed host stops being watched before its settings go.
             parts.dashboard_hosts.subscribe(manager.host_changed)
             parts.dashboard_hosts.subscribe(parts.settings_store.host_changed)
+            parts.quiet.subscribe(manager.quiet_changed)
             stack.push_async_callback(manager.stop)
             await manager.start()
             app.state.reminder_task = asyncio.create_task(reminders.run(), name="reminders")

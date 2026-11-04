@@ -30,12 +30,14 @@ from bleep.guard.log import GuardLogger
 from bleep.hosts.dashboard import HostChange
 from bleep.hosts.registry import Registry
 from bleep.incidents.bus import EventBus
+from bleep.incidents.quiet import QuietStore
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.incidents.runner import IncidentRunner
 from bleep.llm.guard import ModelGuard
 from bleep.llm.usage import BudgetExceeded, CostLedger, UsageTracker, check_daily_cap
 from bleep.schemas.docker import ContainerSummary
-from bleep.schemas.incidents import RecoveryEvent, Signal, Subject
+from bleep.schemas.incidents import Incident, RecoveryEvent, Signal, Subject
+from bleep.schemas.quiet import QuietChange, QuietState
 from bleep.schemas.settings import Budgets
 from bleep.watcher import host_probe, http_checks, poller
 from bleep.watcher.detector import (
@@ -64,6 +66,14 @@ MOVED_NOTICE = (
     "The host's address, port or user was changed on the dashboard: what Bleep reads from here on "
     "comes from the new connection, which may be another machine."
 )
+LEFT_ALONE_NOTICE = "Closed: you told me to leave {name} alone."
+SNOOZED_NOTICE = "Closed: you snoozed {name}; I look at it again when the snooze ends."
+RUNNING_STATUSES = ("executing", "verifying")  # a run mid-step is left to finish
+
+
+def quiet_notice(name: str, state: QuietState) -> str:
+    template = LEFT_ALONE_NOTICE if state.mode == "leave_alone" else SNOOZED_NOTICE
+    return template.format(name=name)
 
 
 class _HostTasks:
@@ -93,6 +103,7 @@ class WatcherManager:
         watch_interval_s: float = poller.INTERVAL_S,
         probe_interval_s: float = host_probe.INTERVAL_S,
         url_interval_s: float = http_checks.INTERVAL_S,
+        quiet: QuietStore | None = None,
     ) -> None:
         self.registry = registry
         self.detector = detector
@@ -100,6 +111,7 @@ class WatcherManager:
         self.runner = runner
         self.bus = bus
         self._clock = clock
+        self._quiet = quiet
         self._models = models
         self._guard_log = guard_log
         self._ledger = ledger
@@ -246,12 +258,43 @@ class WatcherManager:
         """
         await self._handle(self.detector.tick(self._clock(), states, host_id))
 
+    async def _quiet_now(self, subject: Subject) -> bool:
+        return self._quiet is not None and await self._quiet.is_quiet(subject)
+
+    async def quiet_changed(self, change: QuietChange) -> None:
+        """A service or host was snoozed or left alone: close its unfinished incidents with a
+        notice. Starting again on a quiet that is already in force finds nothing left to close."""
+        if change.kind != "started":
+            return
+        state = change.state
+        for incident in await self._incidents_of(state):
+            if incident.status not in RUNNING_STATUSES:
+                await self.runner.end(incident.id, quiet_notice(self._quiet_name(state), state))
+
+    async def _incidents_of(self, state: QuietState) -> list[Incident]:
+        if state.scope == "host":
+            return await self.repo.open_on_host(state.target_id)
+        host_id = state.target_id.split("/", 1)[0]
+        subject = Subject(kind="service", host_id=host_id, service_id=state.target_id)
+        incident_id = await self.repo.open_incident_id(subject)
+        incident = await self.repo.get(incident_id) if incident_id else None
+        return [incident] if incident else []
+
+    def _quiet_name(self, state: QuietState) -> str:
+        if state.scope == "service":
+            service = self.registry.service(state.target_id)
+            return service.name if service else state.target_id
+        host = next((h for h in self.registry.hosts() if h.config.id == state.target_id), None)
+        return host.config.name if host else state.target_id
+
     def _reachable(self, host_id: str) -> bool:
         return any(h.reachable for h in self.registry.hosts() if h.config.id == host_id)
 
     # -- URL failures on an unreachable host --------------------------------------------------
 
     async def _hold(self, signal: Signal) -> None:
+        if await self._quiet_now(signal.subject):
+            return
         held = self._held.setdefault(signal.subject.host_id, {})
         failures = held.setdefault(signal.subject.service_id or "", [])
         failures.append(signal)
@@ -318,6 +361,9 @@ class WatcherManager:
         `AttachSignals` takes the same path: it normally attaches, but if the incident was
         closed in between, it opens a new one, which then needs its run.
         """
+        if await self._quiet_now(subject):
+            log.debug("%s is quiet: no incident for %d signal(s)", subject.key, len(signals))
+            return
         incident, created = await self.repo.open_or_attach(subject, signals)
         if not created:
             return

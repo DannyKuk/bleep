@@ -9,10 +9,12 @@ from bleep.hosts.config import HostConfig, ServiceOverrides, UrlCheckConfig
 from bleep.hosts.dashboard import HostChange
 from bleep.hosts.registry import Registry
 from bleep.incidents.bus import EventBus
+from bleep.incidents.quiet import QuietStore
 from bleep.incidents.repository import IncidentRepo
 from bleep.llm.usage import CostLedger
 from bleep.schemas.docker import ContainerSummary, DockerEvent
 from bleep.schemas.incidents import Incident, Signal, Subject
+from bleep.schemas.quiet import QuietState
 from bleep.schemas.settings import Budgets, Thresholds
 from bleep.store.db import Database
 from bleep.watcher import manager as manager_module
@@ -24,6 +26,7 @@ from bleep.watcher.manager import (
     RECOVERY_USAGE,
     REMOVED_NOTICE,
     WatcherManager,
+    quiet_notice,
 )
 from fakes import FakeChatModel, FakeEngine, socket_host
 
@@ -44,10 +47,11 @@ class Clock:
 
 
 class FakeRunner:
-    def __init__(self) -> None:
+    def __init__(self, repo: IncidentRepo | None = None) -> None:
         self.started: list[Incident] = []
         self.recovered = 0
         self.ended: list[tuple[str, str]] = []
+        self.repo = repo
 
     async def start(self, incident: Incident) -> None:
         self.started.append(incident)
@@ -58,6 +62,8 @@ class FakeRunner:
 
     async def end(self, incident_id: str, text: str) -> None:
         self.ended.append((incident_id, text))
+        if self.repo is not None:
+            await self.repo.close_unfinished(incident_id)
 
     async def close(self) -> None:
         return None
@@ -101,7 +107,8 @@ class Rig:
         self.ledger = CostLedger(self.db, self.clock)
         self.budgets = budgets or Budgets()
         self.bus = EventBus(self.db, self.clock)
-        self.runner = FakeRunner()
+        self.runner = FakeRunner(self.repo)
+        self.quiet = QuietStore(self.db, self.clock)
         self.web_up = True
         self.roles: list[str] = []
 
@@ -137,7 +144,9 @@ class Rig:
             store=self.store,
             ledger=self.ledger,
             budgets=lambda: self.budgets,
+            quiet=self.quiet,
         )
+        self.quiet.subscribe(self.manager.quiet_changed)
 
     async def boot(self) -> Rig:
         await self.db.migrate()
@@ -161,6 +170,16 @@ class Rig:
     async def lose_host(self) -> None:
         self.engine.drop()
         self.web_up = False
+
+    async def kill(self, project: str) -> None:
+        index = PROJECTS.index(project)
+        name = f"{project}-web-1"
+        self.engine.history.append(die(name, self.clock.now + timedelta(seconds=1)))
+        self.engine.container_list[index] = box(
+            name, project, state="exited", exit_code=1, restart_policy="no"
+        )
+        for _ in range(6):  # past the grace window
+            await self.pulse(urls=False)
 
     async def regain_host(self) -> None:
         self.engine.restore()
@@ -639,3 +658,105 @@ async def test_a_removal_that_fails_halfway_still_drops_the_host(tmp_path):
     await r.manager.host_changed(HostChange("c", "added", dashboard_host()))  # can come back
     assert "c" in [h.config.id for h in r.registry.hosts()]
     await r.manager.stop()
+
+
+SHOP = "h/compose:shop"
+
+
+async def test_a_quiet_service_opens_no_incident_for_a_death(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("service", SHOP, "leave_alone", None)
+    await r.pulse(urls=False)
+    await r.kill("shop")
+    assert await r.incidents() == []
+    assert r.runner.started == []
+
+
+async def test_a_quiet_service_does_not_hide_another_service_on_the_host(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("service", SHOP, "leave_alone", None)
+    await r.pulse(urls=False)
+    await r.kill("shop")
+    await r.kill("blog")
+    [incident] = await r.incidents()
+    assert incident.subject.service_id == "h/compose:blog"
+
+
+async def test_a_quiet_host_opens_nothing_for_its_services_or_itself(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("host", "h", "snooze", T0 + timedelta(hours=2))
+    await r.pulse()
+    await r.kill("shop")
+    await r.lose_host()
+    for _ in range(25):  # five minutes and more of an unreachable host
+        await r.pulse()
+    assert await r.incidents() == []
+
+
+async def test_a_quiet_services_url_failures_are_not_held_for_the_host_incident(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("service", SHOP, "leave_alone", None)
+    await r.pulse()
+    await r.lose_host()
+    for _ in range(25):
+        await r.pulse()
+    [incident] = await r.incidents()
+    assert incident.subject == HOST
+    signals = await r.repo.signals(incident.id)
+    assert SHOP not in {s.subject.service_id for s in signals if s.kind == "url_failed"}
+    assert not any(SHOP in held for held in r.manager._held.values())
+
+
+async def open_shop_incident(r: Rig) -> Incident:
+    await r.pulse(urls=False)
+    await r.kill("shop")
+    [incident] = await r.incidents()
+    return incident
+
+
+async def test_quieting_a_service_closes_its_open_incident_with_a_notice(tmp_path):
+    r = await Rig(tmp_path).boot()
+    incident = await open_shop_incident(r)
+    await r.quiet.set("service", SHOP, "leave_alone", None)
+    assert r.runner.ended == [(incident.id, "Closed: you told me to leave shop alone.")]
+    assert (await r.repo.get(incident.id)).status == "closed"
+
+
+async def test_snoozing_a_host_closes_every_open_incident_on_it_with_its_name(tmp_path):
+    r = await Rig(tmp_path).boot()
+    incident = await open_shop_incident(r)
+    await r.quiet.set("host", "h", "snooze", T0 + timedelta(hours=1))
+    [(ended_id, text)] = r.runner.ended
+    assert ended_id == incident.id
+    assert text.startswith("Closed: you snoozed ") and "I look at it again" in text
+
+
+async def test_quieting_leaves_an_executing_incident_to_finish(tmp_path):
+    r = await Rig(tmp_path).boot()
+    incident = await open_shop_incident(r)
+    await r.repo.set_status(incident.id, "executing")
+    await r.quiet.set("service", SHOP, "leave_alone", None)
+    assert r.runner.ended == []
+
+
+async def test_quieting_a_service_leaves_other_services_incidents_alone(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse(urls=False)
+    await r.kill("blog")
+    await r.quiet.set("service", SHOP, "leave_alone", None)
+    assert r.runner.ended == []
+
+
+async def test_snoozing_again_does_not_end_a_closed_incident_twice(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await open_shop_incident(r)
+    await r.quiet.set("service", SHOP, "snooze", T0 + timedelta(hours=1))
+    await r.quiet.set("service", SHOP, "snooze", T0 + timedelta(hours=4))
+    assert len(r.runner.ended) == 1
+
+
+def test_the_notice_names_the_subject_and_the_mode():
+    state = QuietState(scope="service", target_id=SHOP, mode="snooze", until=None, since=T0)
+    assert quiet_notice("shop", state) == (
+        "Closed: you snoozed shop; I look at it again when the snooze ends."
+    )
