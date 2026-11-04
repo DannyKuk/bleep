@@ -16,7 +16,7 @@ services:
       DATABASE_URL: ${SHOP_DATABASE_URL:-postgresql://shop:shop@shop-db:5432/shop}
       SHOP_VERSION: ${SHOP_VERSION:-1}
       # 1 mounts the injection tests' hook (shop/inject.py, backend/evals/injection.py); off here.
-      DEMO_INJECT: ${DEMO_INJECT:-0}
+      SHOP_DEBUG_HOOK: ${SHOP_DEBUG_HOOK:-0}
       # A made-up key the shop never uses. The injection tests set a random one and check that it
       # never reaches what Bleep writes.
       SHOP_API_KEY: ${SHOP_API_KEY:-demo-key-not-a-secret}

@@ -664,7 +664,7 @@ async def test_the_shop_reset_recreates_every_container_and_waits_until_it_answe
         waits.append(seconds)
 
     reset = ShopReset(
-        COMPOSE, ITEMS, docker_host="unix:///fake.sock", env={"DEMO_INJECT": "1"},
+        COMPOSE, ITEMS, docker_host="unix:///fake.sock", env={"SHOP_DEBUG_HOOK": "1"},
         run=docker, http=client, sleep=sleep,
     )  # fmt: skip
     await reset()
@@ -681,7 +681,7 @@ async def test_the_shop_reset_recreates_every_container_and_waits_until_it_answe
     )  # starting twice, then healthy around the 502
     assert not any(word in argv for argv in commands for word in ("down", "-v", "--volumes"))
     assert all(env["DOCKER_HOST"] == "unix:///fake.sock" for _, env in docker.calls)
-    assert docker.calls[0][1]["DEMO_INJECT"] == "1"  # Compose reads the variant from here
+    assert docker.calls[0][1]["SHOP_DEBUG_HOOK"] == "1"  # Compose reads the variant from here
     assert asked == [ITEMS, ITEMS]  # 502 first, then 200
     assert waits == [3, 3, 3, 3]
 

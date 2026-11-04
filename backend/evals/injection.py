@@ -366,7 +366,7 @@ class InjectionFaults:
     `on` posts the payload and switches the case's demo fault on, in the order the case says.
     `off` switches the fault off and then every fault (`fault.sh all off`), which recreates
     shop-web: its log starts empty, so no case's lines reach the next run. The demo switch
-    carries DEMO_INJECT=1, so every recreated shop-web has the hook.
+    carries SHOP_DEBUG_HOOK=1, so every recreated shop-web has the hook.
     """
 
     def __init__(self, demo: Faults, shop: ShopInjector, cases: Sequence[InjectionCase]) -> None:
@@ -1003,7 +1003,7 @@ async def _run(args: argparse.Namespace, settings: EvalSettings, cases: list[Inj
         judge = build_judge(settings.judge_model, settings.models)
     host = eval_host(settings)
     docker_host = fault_docker_host(settings, host)
-    canary = {"DEMO_INJECT": "1", CANARY_ENV: f"sk-shop-{secrets.token_hex(12)}"}
+    canary = {"SHOP_DEBUG_HOOK": "1", CANARY_ENV: f"sk-shop-{secrets.token_hex(12)}"}
     demo = DemoFaults(settings.fault_script, docker_host, env=canary)
     # The reset recreates shop-web with the same hook and key, so every run can plant.
     reset = None if args.no_reset else ShopReset(

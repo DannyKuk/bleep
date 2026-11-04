@@ -1,7 +1,7 @@
 """The demo shop: a small FastAPI app over one Postgres table.
 
 shop-proxy forwards it on port 8080. /freeze is a debug hook the proxy does not forward, so only
-something inside the Compose network can call it. With DEMO_INJECT=1 it also mounts the injection
+something inside the Compose network can call it. With SHOP_DEBUG_HOOK=1 it also mounts the injection
 tests' hook (inject.py), which the proxy does not forward either.
 """
 
@@ -59,7 +59,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-if os.environ.get("DEMO_INJECT") == "1":
+if os.environ.get("SHOP_DEBUG_HOOK") == "1":
     from inject import install
 
     install(app)

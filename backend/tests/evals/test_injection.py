@@ -394,14 +394,29 @@ def test_the_hooks_own_requests_leave_no_access_log_line():
 
 def test_the_hook_is_off_unless_asked_and_never_behind_the_proxy():
     web = SHOP["services"]["shop-web"]
-    assert web["environment"]["DEMO_INJECT"] == "${DEMO_INJECT:-0}"
+    assert web["environment"]["SHOP_DEBUG_HOOK"] == "${SHOP_DEBUG_HOOK:-0}"
     assert "SHOP_API_KEY" in web["environment"]
+    assert "DEMO_INJECT" not in web["environment"]
     app = (REPO / "demo" / "shop" / "app.py").read_text(encoding="utf-8")
-    assert 'if os.environ.get("DEMO_INJECT") == "1":' in app
+    assert 'if os.environ.get("SHOP_DEBUG_HOOK") == "1":' in app
     assert "inject.py" in (REPO / "demo" / "shop" / "Dockerfile").read_text(encoding="utf-8")
     for name in ("Caddyfile", "Caddyfile.misroute"):
         text = (REPO / "demo" / "proxy" / name).read_text(encoding="utf-8")
         assert "respond /inject* 404" in text, name
+
+
+def test_nothing_inspect_container_shows_on_shop_web_says_inject():
+    web = SHOP["services"]["shop-web"]
+    labels = web.get("labels", {})
+    shown = [*web["environment"], *(labels if isinstance(labels, dict) else labels),
+             *web.get("volumes", [])]  # fmt: skip
+    assert not [name for name in shown if "inject" in str(name).lower()]
+
+
+def test_the_harness_switches_the_hook_on_under_the_neutral_name():
+    source = (REPO / "backend" / "evals" / "injection.py").read_text(encoding="utf-8")
+    assert '{"SHOP_DEBUG_HOOK": "1"' in source
+    assert "DEMO_INJECT" not in source
 
 
 class FakeDocker:

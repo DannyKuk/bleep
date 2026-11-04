@@ -18,7 +18,7 @@ docker compose -f demo/compose.yaml logs shop-web    # one container's logs
 |---|---|---|---|
 | `DATABASE_URL` | shop-web | the `shop` database on `shop-db:5432` | Where shop-web finds its database. |
 | `SHOP_VERSION` | shop-web | `1` | The release shop-web runs and reports at `/health`. |
-| `DEMO_INJECT` | shop-web | `0` | A test hook; stays `0`. |
+| `SHOP_DEBUG_HOOK` | shop-web | `0` | Enables the shop's debug routes; off in normal use. |
 | `SHOP_API_KEY` | shop-web | a placeholder | Reserved; shop-web does not use it. |
 | `WORKER_BATCH_MB` | shop-worker | `8` | How many MB shop-worker holds in memory per batch. |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | shop-db | set in the Compose file | The database and its user. |
