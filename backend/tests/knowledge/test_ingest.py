@@ -468,7 +468,7 @@ async def test_a_broken_embedder_with_no_snapshot_synced_reads_the_repos_once(tm
         await broken_index(tmp_path), repos, now, 3, snapshot(tmp_path, {"volumes.md": PAGE})
     )
 
-    assert repos.asked == ["acme/api"]  # its sync failed; nothing more until the snapshot syncs
+    assert repos.asked == ["acme/api"] * 3  # its sync failed; a day apart while the snapshot fails
 
 
 async def test_a_broken_embedder_after_the_snapshot_reads_the_repos_once_a_day(tmp_path):
@@ -513,3 +513,45 @@ async def test_github_failing_for_days_is_retried_with_a_capped_backoff_and_logg
     assert gaps == [600, 1200, 2400, 4800, 9600, 19200, 38400, 76800, DAY]
     warned = [r for r in caplog.records if "could not read the docs of acme/shop" in r.message]
     assert len(warned) == 1
+
+
+async def test_the_repos_are_tried_a_day_apart_while_the_snapshot_keeps_failing(tmp_path):
+    repos = Repos({"acme/shop": [readme("acme/shop")]})
+    now = [0.0]
+    asked_at: list[float] = []
+    real = repos.doc_files
+
+    async def doc_files(repo: str):
+        asked_at.append(now[0])
+        return await real(repo)
+
+    repos.doc_files = doc_files  # type: ignore[method-assign]
+
+    await run_days(
+        await broken_index(tmp_path), repos, now, 3.5, snapshot(tmp_path, {"volumes.md": PAGE})
+    )
+
+    assert asked_at == [0, DAY, 2 * DAY, 3 * DAY]
+
+
+def test_the_backoff_is_capped_at_a_day_for_any_failure_count():
+    refresher = KnowledgeRefresher(
+        None,  # type: ignore[arg-type]
+        incidents_every_s=600,
+        repos_every_s=DAY,
+    )
+
+    assert refresher._backoff(1) == 600
+    assert refresher._backoff(100_000) == DAY
+
+
+async def test_a_repo_no_longer_linked_is_forgotten_by_the_failure_log(index):
+    repos = Repos({"acme/shop": [readme("acme/shop")]}, failing={"acme/shop"})
+    refresher = KnowledgeRefresher(index, repos=repos, snapshot_dir=None)
+    await refresher.refresh_repos()
+    assert set(refresher._failing) == {"acme/shop"}
+
+    repos.files = {"acme/api": [readme("acme/api")]}
+    await refresher.refresh_repos()
+
+    assert refresher._failing == {}
