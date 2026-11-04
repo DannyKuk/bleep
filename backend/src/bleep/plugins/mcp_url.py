@@ -73,6 +73,7 @@ LIST_TIMEOUT_S = 10.0  # opening the session and listing the tools
 CALL_TIMEOUT_S = 30.0  # one tool call, after the listing
 SCHEMA_CHARS = 600  # a tool's input schema in the listing, at most
 DESCRIPTION_CHARS = 400  # a tool's description in the listing, at most
+NAME_CHARS = 120  # a tool's name in the listing, at most; the server's tools may have any name
 REQUIRED_CHARS = 200  # the names of a tool's required arguments, at most
 # The whole listing, measured as the guard will escape it, so `guard_text` (which keeps the tail
 # past MAX_CHARS) never cuts into it; the margin covers what redaction can add.
@@ -392,18 +393,22 @@ def _entry(server: _Server, tool: BaseTool) -> str:
     schema = tool.args_schema if isinstance(tool.args_schema, dict) else {}
     shown = json.dumps(schema.get("properties", {}), separators=(",", ":"))[:SCHEMA_CHARS]
     required = schema.get("required")
-    names = [str(r) for r in required] if isinstance(required, list) else []
+    if required is None or isinstance(required, list):
+        names = _cut(", ".join(str(r) for r in required or []), REQUIRED_CHARS) or "none"
+    else:
+        names = "(not a list)"
     return (
-        f"{tool.name} ({_LABEL[server.kind(tool)]})\n"
+        f"{_cut(tool.name, NAME_CHARS)} ({_LABEL[server.kind(tool)]})\n"
         f"  {_cut(' '.join((tool.description or '-').split()), DESCRIPTION_CHARS)}\n"
         f"  arguments: {shown}\n"
-        f"  required: {_cut(', '.join(names), REQUIRED_CHARS) or 'none'}"
+        f"  required: {names}"
     )
 
 
 def _listing(server: _Server, tools: list[BaseTool]) -> str:
     """Whole entries only, up to `LISTING_CHARS`, so no schema is left without its tool's
-    name; the tools that do not fit are counted at the end."""
+    name; an entry that does not fit is skipped, a later smaller one may still go in, and the
+    tools left out are counted at the end."""
     if not tools:
         return "(the server lists no tools)"
     entries: list[str] = []
@@ -412,12 +417,13 @@ def _listing(server: _Server, tools: list[BaseTool]) -> str:
         entry = _entry(server, tool)
         size = len(escape_untrusted(entry)) + 1
         if used + size > LISTING_CHARS:
-            break
+            continue
         entries.append(entry)
         used += size
     left = len(tools) - len(entries)
     if left:
-        entries.append(f"({left} more tools not shown: the listing is full)")
+        tools_word = "tool" if left == 1 else "tools"
+        entries.append(f"({left} more {tools_word} not shown: the listing is full)")
     return "\n".join(entries)
 
 
