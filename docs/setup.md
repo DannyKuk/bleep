@@ -104,7 +104,7 @@ Only that chat is answered. Messages and button taps from any other chat are ign
 
 ## GitHub token (optional)
 
-Bleep reads each service's repo (the `repo` of a service in the hosts file): its recent commits and their diffs while it investigates, and the docs it names (`docs_paths`, or `docs` and the README) for knowledge search. Without a token it reads public repos only, at 60 requests an hour.
+Bleep reads each service's repo (the `repo` of a service in the hosts file): its recent commits and their diffs while it investigates, and, for knowledge search, its README (unless the service sets `readme: false`) and the markdown under the paths in `docs_paths` (the `docs` folder when it names none). Without a token it reads public repos only, at 60 requests an hour.
 
 1. Create a **fine-grained** personal access token on GitHub (Settings, Developer settings, Personal access tokens, Fine-grained tokens), limited to the repos the hosts file names.
 2. Give it two repository permissions, both **read-only**: **Contents** (commits, diffs and files) and **Metadata** (GitHub adds it to every token). Nothing else: Bleep never writes to GitHub.

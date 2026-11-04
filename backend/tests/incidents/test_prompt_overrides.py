@@ -57,16 +57,16 @@ async def stored(db: Database) -> dict[str, str]:
 
 async def test_a_saved_override_is_what_load_returns_and_reset_brings_the_file_back(db):
     store = new_store(db, clock=lambda: T0)
-    file_text = prompts.load("watcher/recovery_line", logs="LOGS")
+    file_text = prompts.load("llm/json_retry", error="LOGS")
 
-    await save(store, "watcher/recovery_line", "Say in one line why it recovered: {logs}")
-    assert prompts.load("watcher/recovery_line", logs="LOGS") == (
+    await save(store, "llm/json_retry", "Say in one line why it recovered: {error}")
+    assert prompts.load("llm/json_retry", error="LOGS") == (
         "Say in one line why it recovered: LOGS"
     )
-    assert store.overrides()["watcher/recovery_line"].updated_at == T0
+    assert store.overrides()["llm/json_retry"].updated_at == T0
 
-    await reset(store, "watcher/recovery_line")
-    assert prompts.load("watcher/recovery_line", logs="LOGS") == file_text
+    await reset(store, "llm/json_retry")
+    assert prompts.load("llm/json_retry", error="LOGS") == file_text
     assert await stored(db) == {}
 
 
@@ -81,17 +81,17 @@ async def test_overrides_survive_a_restart(db):
 @pytest.mark.parametrize(
     "text",
     [
-        "Why did it recover?",  # {logs} missing
-        "Why did it recover? {logs} {container}",  # a placeholder no caller fills
-        "Why did it recover? {logs",  # a stray brace
+        "Why did it recover?",  # {error} missing
+        "Why did it recover? {error} {container}",  # a placeholder no caller fills
+        "Why did it recover? {error",  # a stray brace
     ],
 )
 async def test_an_override_the_loader_would_refuse_is_not_saved(db, text):
     store = new_store(db)
     with pytest.raises(PromptRefused):
-        await save(store, "watcher/recovery_line", text)
+        await save(store, "llm/json_retry", text)
     assert await stored(db) == {}
-    assert "Why did it recover?" not in prompts.load("watcher/recovery_line", logs="x")
+    assert "Why did it recover?" not in prompts.load("llm/json_retry", error="x")
 
 
 async def test_an_override_holding_a_secret_is_refused_without_quoting_it(db):
@@ -137,7 +137,7 @@ async def test_a_stored_override_that_no_longer_fits_is_left_out_on_load(db, cap
     conn = await db.connect()
     rows = [
         ("graph/propose_unsure", "Still fine.", T0.isoformat()),
-        ("watcher/recovery_line", "the file's placeholder was dropped", T0.isoformat()),
+        ("llm/json_retry", "the file's placeholder was dropped", T0.isoformat()),
         ("graph/gone", "a prompt file that was removed", T0.isoformat()),
         ("graph/diagnose_missing", f"{{root_cause}} {{missing}} {GITHUB_TOKEN}", T0.isoformat()),
     ]
@@ -151,11 +151,13 @@ async def test_a_stored_override_that_no_longer_fits_is_left_out_on_load(db, cap
 
     assert set(store.overrides()) == {"graph/propose_unsure"}
     assert prompts.load("graph/propose_unsure") == "Still fine."
-    assert prompts.load("watcher/recovery_line", logs="x") == prompts.file_text(
-        "watcher/recovery_line"
-    ).format(logs="x")
+    assert prompts.load("llm/json_retry", error="x") == prompts.file_text("llm/json_retry").format(
+        error="x"
+    )
     assert "ghp_" not in caplog.text
-    assert caplog.text.count("left out") == 3
+    assert caplog.text.count("left out") == 2
+    assert caplog.text.count("deleted") == 1
+    assert "graph/gone" not in await stored(db)
 
 
 async def test_reset_of_a_prompt_without_an_override_changes_nothing(db):
@@ -214,21 +216,60 @@ async def test_a_refused_save_and_a_reset_of_nothing_record_nothing(db):
     guard_log = RecordingGuardLog()
     store = new_store(db, guard_log)
     with pytest.raises(PromptRefused):
-        await save(store, "watcher/recovery_line", "no placeholder")
+        await save(store, "llm/json_retry", "no placeholder")
     await reset(store, "graph/propose_unsure")
     assert guard_log.records == []
 
 
-@pytest.mark.parametrize("name", ["graph/system", "notify/proposal", "notify/answer_approved"])
-async def test_a_stored_override_of_a_prompt_no_longer_overridable_is_left_out(db, name):
+@pytest.mark.parametrize(
+    "name", ["graph/system", "notify/proposal", "notify/answer_approved", "untrusted/diagnose"]
+)
+async def test_a_stored_override_of_a_prompt_no_longer_overridable_is_deleted_and_logged_once(
+    db, name, caplog
+):
     conn = await db.connect()
     text = prompts.file_text(name)
-    row = (name, text, T0.isoformat())
-    await conn.execute("INSERT INTO prompt_overrides VALUES (?, ?, ?)", row)
+    rows = [(name, text, T0.isoformat()), ("graph/propose_unsure", "Kept.", T0.isoformat())]
+    await conn.executemany("INSERT INTO prompt_overrides VALUES (?, ?, ?)", rows)
     await conn.commit()
     await conn.close()
     store = new_store(db)
-    await store.load()
-    assert store.overrides() == {}
+
+    with caplog.at_level(logging.WARNING):
+        await store.load()
+        await new_store(db).load()  # the next start finds nothing to say
+
+    assert set(store.overrides()) == {"graph/propose_unsure"}
+    assert await stored(db) == {"graph/propose_unsure": "Kept."}
+    assert caplog.text.count(name) == 1
+    assert "deleted" in caplog.text
     with pytest.raises(UnknownPrompt):
         await save(store, name, text)
+
+
+async def test_reset_deletes_a_stored_override_that_was_left_out_and_records_it(db, caplog):
+    """An override of graph/diagnose saved before it had `{untrusted_rule}` (#147)."""
+    conn = await db.connect()
+    old = "{subject} {signals} {context} {investigation}"
+    await conn.execute(
+        "INSERT INTO prompt_overrides VALUES (?, ?, ?)", ("graph/diagnose", old, T0.isoformat())
+    )
+    await conn.commit()
+    await conn.close()
+    guard_log = RecordingGuardLog()
+    store = new_store(db, guard_log)
+    await store.load()
+    assert store.overrides() == {}
+
+    with caplog.at_level(logging.INFO):
+        await reset(store, "graph/diagnose")
+
+    assert await stored(db) == {}
+    assert "graph/diagnose" in caplog.text and "deleted" in caplog.text
+    assert guard_log.records == [
+        ("dev-panel", "prompt_override", "override of graph/diagnose reset")
+    ]
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        await new_store(db).load()
+    assert "graph/diagnose" not in caplog.text

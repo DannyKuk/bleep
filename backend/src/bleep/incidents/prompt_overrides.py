@@ -71,21 +71,33 @@ class PromptOverrideStore:
         return prompts.text_version(override.text if override is not None else None)
 
     async def load(self) -> None:
-        """Read the stored overrides and put them in force. One that no longer fits (its file
-        is gone or its placeholders changed with an upgrade, or it holds a secret) is logged and
-        left out: that prompt is read from its file."""
+        """Read the stored overrides and put them in force. One of a prompt that can no longer
+        be overridden (its file is gone, or it was taken out of `prompts.OVERRIDABLE`) is deleted
+        and logged once. One that no longer fits (its placeholders changed with an upgrade, or it
+        holds a secret) is logged and left out, and stays stored. Either way that prompt is read
+        from its file."""
+        overridable = set(prompts.overridable_names())
         conn = await self._db.connect()
         try:
             async with conn.execute("SELECT name, text, updated_at FROM prompt_overrides") as cur:
                 rows = await cur.fetchall()
+            unknown = [row["name"] for row in rows if row["name"] not in overridable]
+            if unknown:
+                marks = ", ".join("?" * len(unknown))
+                await conn.execute(f"DELETE FROM prompt_overrides WHERE name IN ({marks})", unknown)
+                await conn.commit()
         finally:
             await conn.close()
+        for name in unknown:
+            log.warning("prompt override %s deleted: %s", name, UnknownPrompt(name))
         async with self._lock:
             self._overrides = {}
             for row in rows:
+                if row["name"] in unknown:
+                    continue
                 try:
                     _check(row["name"], row["text"])
-                except (UnknownPrompt, PromptRefused) as problem:
+                except PromptRefused as problem:
                     log.warning("prompt override %s left out: %s", row["name"], problem)
                     continue
                 updated_at = datetime.fromisoformat(row["updated_at"])
@@ -118,20 +130,24 @@ class PromptOverrideStore:
 
     async def reset(self, name: str, *, version: str) -> None:
         """Delete the override, so `name` is read from its file again; the reset was asked from
-        the prompt at `version`. Raises `UnknownPrompt` or `PromptStale` with nothing changed."""
+        the prompt at `version`. A stored override that `load` left out is deleted too, so a reset
+        clears one that no longer fits. Raises `UnknownPrompt` or `PromptStale` with nothing
+        changed."""
         if name not in prompts.overridable_names():
             raise UnknownPrompt(name)
         async with self._lock:
             self._refuse_stale(name, version)
-            if name not in self._overrides:
-                return
             conn = await self._db.connect()
             try:
-                await conn.execute("DELETE FROM prompt_overrides WHERE name = ?", (name,))
+                cursor = await conn.execute("DELETE FROM prompt_overrides WHERE name = ?", (name,))
+                deleted = cursor.rowcount > 0
                 await conn.commit()
             finally:
                 await conn.close()
-            self._overrides.pop(name, None)
+            if not deleted:
+                return
+            if self._overrides.pop(name, None) is None:
+                log.info("prompt override %s, left out at start, deleted by a reset", name)
             self._apply()
         self._guard_log.record(GUARD_INCIDENT, "prompt_override", f"override of {name} reset")
 

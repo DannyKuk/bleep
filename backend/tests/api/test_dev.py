@@ -13,12 +13,12 @@ from bleep.schemas.incidents import Signal, Subject
 
 T0 = datetime(2026, 11, 3, 10, 0, tzinfo=UTC)
 GITHUB_TOKEN = "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"
-RECOVERY = "watcher/recovery_line"
+RETRY = "llm/json_retry"  # one placeholder, `{error}`
 DEV_GETS = ["/api/dev", "/api/dev/prompts", "/api/dev/costs", "/api/dev/guard-log"]
 
 
-def recovery_file() -> str:
-    return prompts.file_text(RECOVERY)
+def retry_file() -> str:
+    return prompts.file_text(RETRY)
 
 
 @pytest.fixture
@@ -73,8 +73,8 @@ def test_with_the_panel_off_every_dev_route_is_a_404_signed_in_or_not(client, pa
 
 def test_with_the_panel_off_no_override_can_be_written_or_reset(client):
     client.post("/api/auth/login", json={"password": "test-password"})
-    path = f"/api/dev/prompts/{RECOVERY}"
-    assert client.put(path, json={"text": "{logs}"}).status_code == 404
+    path = f"/api/dev/prompts/{RETRY}"
+    assert client.put(path, json={"text": "{error}"}).status_code == 404
     assert client.delete(path).status_code == 404
 
 
@@ -82,11 +82,11 @@ def test_with_the_panel_off_a_stored_override_is_not_used(settings, parts):
     settings.dev_panel = True
     with TestClient(create_app(settings, parts)) as client:
         client.post("/api/auth/login", json={"password": "test-password"})
-        text = "Overridden: {logs}"
-        assert put_prompt(client, RECOVERY, {"text": text}).status_code == 200
+        text = "Overridden: {error}"
+        assert put_prompt(client, RETRY, {"text": text}).status_code == 200
     settings.dev_panel = False
     with TestClient(create_app(settings, parts)):
-        assert prompts.load(RECOVERY, logs="x") == recovery_file().format(logs="x")
+        assert prompts.load(RETRY, error="x") == retry_file().format(error="x")
 
 
 @pytest.mark.parametrize("path", DEV_GETS)
@@ -111,63 +111,63 @@ def test_the_prompt_list_has_every_app_prompt_with_its_file_and_placeholders(dev
     assert names == prompts.overridable_names()
     assert "graph/propose" in names
     assert not [n for n in names if n.startswith("evals/")]
-    recovery = next(p for p in body if p["name"] == RECOVERY)
-    assert recovery["placeholders"] == ["logs"]
-    assert recovery["file_text"] == recovery_file()
-    assert recovery["override"] is None
+    retry = next(p for p in body if p["name"] == RETRY)
+    assert retry["placeholders"] == ["error"]
+    assert retry["file_text"] == retry_file()
+    assert retry["override"] is None
 
 
 def test_a_saved_override_is_what_the_loader_returns_and_reset_restores_the_file(dev_client):
-    text = "Why did it come back? {logs}"
+    text = "Why did it come back? {error}"
 
-    saved = put_prompt(dev_client, RECOVERY, {"text": text})
+    saved = put_prompt(dev_client, RETRY, {"text": text})
     assert saved.status_code == 200
     assert saved.json()["override"] == text
     assert saved.json()["overridden_at"] is not None
-    assert prompts.load(RECOVERY, logs="LOGS") == "Why did it come back? LOGS"
-    listed = next(p for p in dev_client.get("/api/dev/prompts").json() if p["name"] == RECOVERY)
+    assert prompts.load(RETRY, error="LOGS") == "Why did it come back? LOGS"
+    listed = next(p for p in dev_client.get("/api/dev/prompts").json() if p["name"] == RETRY)
     assert listed["override"] == text
 
-    reset = reset_prompt(dev_client, RECOVERY)
+    reset = reset_prompt(dev_client, RETRY)
     assert reset.status_code == 200
     assert reset.json()["override"] is None
-    assert reset.json()["file_text"] == recovery_file()
-    assert prompts.load(RECOVERY, logs="LOGS") == recovery_file().format(logs="LOGS")
+    assert reset.json()["file_text"] == retry_file()
+    assert prompts.load(RETRY, error="LOGS") == retry_file().format(error="LOGS")
 
 
 def test_an_override_stays_in_force_after_a_restart(settings, parts, dev_client):
-    put_prompt(dev_client, RECOVERY, {"text": "Kept: {logs}"})
+    put_prompt(dev_client, RETRY, {"text": "Kept: {error}"})
     prompts.use_overrides({})
     with TestClient(create_app(settings, parts)):
-        assert prompts.load(RECOVERY, logs="x") == "Kept: x"
+        assert prompts.load(RETRY, error="x") == "Kept: x"
 
 
 @pytest.mark.parametrize(
     ("text", "why"),
     [
-        ("Why did it come back? {logs} {container}", "unknown: {container}"),
-        ("Why did it come back?", "missing: {logs}"),
-        ("Why did it come back? {logs", "braces"),
-        ("Why {logs} did it come back? }", "braces"),
-        ("Why {logs!r}", "placeholders"),
+        ("Why did it come back? {error} {container}", "unknown: {container}"),
+        ("Why did it come back?", "missing: {error}"),
+        ("Why did it come back? {error", "braces"),
+        ("Why {error} did it come back? }", "braces"),
+        ("Why {error!r}", "placeholders"),
     ],
 )
 def test_an_override_the_loader_would_refuse_is_a_422_and_not_saved(dev_client, text, why):
-    response = put_prompt(dev_client, RECOVERY, {"text": text})
+    response = put_prompt(dev_client, RETRY, {"text": text})
     assert response.status_code == 422
     assert why in response.json()["detail"]
-    assert prompts.load(RECOVERY, logs="x") == recovery_file().format(logs="x")
+    assert prompts.load(RETRY, error="x") == retry_file().format(error="x")
 
 
 @pytest.mark.parametrize(
     "body",
     [
-        {"text": f"Push with {GITHUB_TOKEN} {{logs}}"},
-        {"text": "{logs}", "token": "abc-secret-value"},
+        {"text": f"Push with {GITHUB_TOKEN} {{error}}"},
+        {"text": "{error}", "token": "abc-secret-value"},
     ],
 )
 def test_an_override_holding_a_secret_is_a_422_that_does_not_echo_it(dev_client, body):
-    response = put_prompt(dev_client, RECOVERY, body)
+    response = put_prompt(dev_client, RETRY, body)
     assert response.status_code == 422
     assert "ghp_" not in response.text and "abc-secret-value" not in response.text
     assert dev_client.get("/api/dev/prompts").json()[0]["override"] is None
@@ -176,15 +176,15 @@ def test_an_override_holding_a_secret_is_a_422_that_does_not_echo_it(dev_client,
 @pytest.mark.parametrize(
     ("text", "reason"),
     [
-        ("Why did it come back?\r\n{logs}", "plain newlines"),
-        ("Why did it come back?\u2028{logs}", "plain newlines"),
-        ("Why did it come back? {logs} " + "x" * 4_000, "4,000 characters"),
-        ("Why did it come back? {logs} \x85", "control characters"),
-        ("Why did it come back? {logs} \u202e", "bidi"),
+        ("Why did it come back?\r\n{error}", "plain newlines"),
+        ("Why did it come back?\u2028{error}", "plain newlines"),
+        ("Why did it come back? {error} " + "x" * 4_000, "4,000 characters"),
+        ("Why did it come back? {error} \x85", "control characters"),
+        ("Why did it come back? {error} \u202e", "bidi"),
     ],
 )
 def test_an_override_refused_for_its_shape_says_why_not_secret(dev_client, text, reason):
-    response = put_prompt(dev_client, RECOVERY, {"text": text})
+    response = put_prompt(dev_client, RETRY, {"text": text})
     assert response.status_code == 422
     assert reason in response.json()["detail"]
     assert "secret" not in response.json()["detail"]
@@ -192,28 +192,28 @@ def test_an_override_refused_for_its_shape_says_why_not_secret(dev_client, text,
 
 def test_a_long_override_in_short_lines_is_saved(dev_client):
     text = "\n".join(["Say why the container came back, in one plain sentence."] * 100)
-    text += "\n{logs}"
-    response = put_prompt(dev_client, RECOVERY, {"text": text})
+    text += "\n{error}"
+    response = put_prompt(dev_client, RETRY, {"text": text})
     assert response.status_code == 200
     assert response.json()["override"] == text
 
 
 def test_an_override_with_a_token_wrapped_across_lines_is_a_422_and_not_stored(dev_client):
     wrapped = f"{GITHUB_TOKEN[:20]}\n{GITHUB_TOKEN[20:]}"
-    response = put_prompt(dev_client, RECOVERY, {"text": f"{recovery_file()}\n{wrapped}"})
+    response = put_prompt(dev_client, RETRY, {"text": f"{retry_file()}\n{wrapped}"})
     assert response.status_code == 422
     assert GITHUB_TOKEN[:20] not in response.text
-    assert prompts.load(RECOVERY, logs="x") == recovery_file().format(logs="x")
+    assert prompts.load(RETRY, error="x") == retry_file().format(error="x")
 
 
 def test_an_override_body_over_the_size_cap_is_a_413(dev_client):
-    response = put_prompt(dev_client, RECOVERY, {"text": "{logs}\n" + "word " * 30_000})
+    response = put_prompt(dev_client, RETRY, {"text": "{error}\n" + "word " * 30_000})
     assert response.status_code == 413
 
 
-@pytest.mark.parametrize("body", [{"text": ""}, {"text": "x" * 20_001}, {}, {"txt": "{logs}"}])
+@pytest.mark.parametrize("body", [{"text": ""}, {"text": "x" * 20_001}, {}, {"txt": "{error}"}])
 def test_an_invalid_body_is_a_422(dev_client, body):
-    assert put_prompt(dev_client, RECOVERY, body).status_code == 422
+    assert put_prompt(dev_client, RETRY, body).status_code == 422
 
 
 @pytest.mark.parametrize(
@@ -232,65 +232,61 @@ def test_a_prompt_change_without_the_version_is_a_428_and_nothing_changes(
     dev_client, method, header
 ):
     headers = {} if header is None else {"If-Match": header}
-    path = f"/api/dev/prompts/{RECOVERY}"
+    path = f"/api/dev/prompts/{RETRY}"
     if method == "put":
-        response = dev_client.put(path, json={"text": "New: {logs}"}, headers=headers)
+        response = dev_client.put(path, json={"text": "New: {error}"}, headers=headers)
     else:
-        put_prompt(dev_client, RECOVERY, {"text": "Kept: {logs}"})
+        put_prompt(dev_client, RETRY, {"text": "Kept: {error}"})
         response = dev_client.delete(path, headers=headers)
     assert response.status_code == 428
-    expected = None if method == "put" else "Kept: {logs}"
+    expected = None if method == "put" else "Kept: {error}"
     assert (
-        next(
-            p["override"]
-            for p in dev_client.get("/api/dev/prompts").json()
-            if p["name"] == RECOVERY
-        )
+        next(p["override"] for p in dev_client.get("/api/dev/prompts").json() if p["name"] == RETRY)
         == expected
     )
 
 
 def test_a_prompt_save_from_a_stale_page_is_a_409_with_the_version_now(dev_client):
-    read = prompt_version(dev_client, RECOVERY)
-    assert put_prompt(dev_client, RECOVERY, {"text": "First: {logs}"}, read).status_code == 200
+    read = prompt_version(dev_client, RETRY)
+    assert put_prompt(dev_client, RETRY, {"text": "First: {error}"}, read).status_code == 200
 
-    stale = put_prompt(dev_client, RECOVERY, {"text": "Second: {logs}"}, read)
+    stale = put_prompt(dev_client, RETRY, {"text": "Second: {error}"}, read)
     assert stale.status_code == 409
-    now = prompt_version(dev_client, RECOVERY)
+    now = prompt_version(dev_client, RETRY)
     assert stale.json()["version"] == now != read
     assert stale.headers["etag"] == f'"{now}"'
-    assert prompts.load(RECOVERY, logs="x") == "First: x"
+    assert prompts.load(RETRY, error="x") == "First: x"
 
-    assert reset_prompt(dev_client, RECOVERY, read).status_code == 409
-    assert prompts.load(RECOVERY, logs="x") == "First: x"
+    assert reset_prompt(dev_client, RETRY, read).status_code == 409
+    assert prompts.load(RETRY, error="x") == "First: x"
 
 
 def test_a_prompt_version_is_taken_bare_or_as_an_etag_and_answered_in_one(dev_client):
-    version = prompt_version(dev_client, RECOVERY)
+    version = prompt_version(dev_client, RETRY)
     saved = dev_client.put(
-        f"/api/dev/prompts/{RECOVERY}",
-        json={"text": "Bare: {logs}"},
+        f"/api/dev/prompts/{RETRY}",
+        json={"text": "Bare: {error}"},
         headers={"If-Match": version},
     )
     assert saved.status_code == 200
     assert saved.headers["etag"] == f'"{saved.json()["version"]}"'
     reset = dev_client.delete(
-        f"/api/dev/prompts/{RECOVERY}", headers={"If-Match": f'W/"{saved.json()["version"]}"'}
+        f"/api/dev/prompts/{RETRY}", headers={"If-Match": f'W/"{saved.json()["version"]}"'}
     )
     assert reset.status_code == 200
     assert reset.json()["version"] == version  # no override again: the version it started at
 
 
 def test_a_save_and_a_reset_are_in_the_guard_log_by_name_never_with_the_text(dev_client):
-    text = "A text only the prompt holds: {logs}"
-    put_prompt(dev_client, RECOVERY, {"text": text})
-    reset_prompt(dev_client, RECOVERY)
-    reset_prompt(dev_client, RECOVERY)  # nothing to reset: nothing changed, nothing recorded
+    text = "A text only the prompt holds: {error}"
+    put_prompt(dev_client, RETRY, {"text": text})
+    reset_prompt(dev_client, RETRY)
+    reset_prompt(dev_client, RETRY)  # nothing to reset: nothing changed, nothing recorded
 
     entries = dev_client.get("/api/dev/guard-log", params={"kind": "prompt_override"}).json()
     assert [e["detail"] for e in entries] == [
-        f"override of {RECOVERY} reset",
-        f"override of {RECOVERY} saved",
+        f"override of {RETRY} reset",
+        f"override of {RETRY} saved",
     ]
     assert {e["incident_id"] for e in entries} == {"dev-panel"}
     assert "only the prompt holds" not in dev_client.get("/api/dev/guard-log").text
@@ -360,16 +356,16 @@ def test_costs_read_every_incident_in_one_query(dev_client, parts, monkeypatch):
 def test_costs_and_the_incident_show_the_overrides_its_run_started_with(dev_client, parts):
     shop = open_incident(dev_client, parts, "a/shop")
     worker = open_incident(dev_client, parts, "a/worker")
-    version = prompts.text_version("Kept: {logs}")
-    call(dev_client, parts.incidents.record_prompt_overrides, shop, {RECOVERY: version})
+    version = prompts.text_version("Kept: {error}")
+    call(dev_client, parts.incidents.record_prompt_overrides, shop, {RETRY: version})
     for incident_id in (shop, worker):
         call(dev_client, parts.graph_deps.ledger.add, incident_id, "m", 1, 1, 0.0)
 
     rows = {r["incident_id"]: r for r in dev_client.get("/api/dev/costs").json()["incidents"]}
-    assert rows[shop]["prompt_overrides"] == {RECOVERY: version}
+    assert rows[shop]["prompt_overrides"] == {RETRY: version}
     assert rows[worker]["prompt_overrides"] is None
     assert dev_client.get(f"/api/incidents/{shop}").json()["incident"]["prompt_overrides"] == {
-        RECOVERY: version
+        RETRY: version
     }
     assert "Kept" not in dev_client.get("/api/dev/costs").text
 

@@ -34,6 +34,15 @@ const COSTS: CostView = {
       calls: 1,
     },
     {
+      incident_id: "dev-panel",
+      title: null,
+      status: null,
+      opened_at: null,
+      trace_url: null,
+      prompt_overrides: null,
+      ...usage,
+    },
+    {
       incident_id: "not-an-incident",
       title: null,
       status: null,
@@ -61,8 +70,10 @@ describe("CostTables", () => {
   it("links each incident and its trace when there is one", () => {
     render(<CostTables costs={COSTS} />);
     const table = screen.getByRole("table", { name: "Cost per incident" });
-    const [, shop, worker, other] = within(table).getAllByRole("row");
+    const [, shop, worker, devPanel, other] = within(table).getAllByRole("row");
 
+    expect(devPanel).toHaveTextContent("dev-panel");
+    expect(within(devPanel).queryByRole("link")).not.toBeInTheDocument();
     expect(within(shop).getByRole("link", { name: "container died on a/shop" })).toHaveAttribute(
       "href",
       "/incidents/inc_shop",
@@ -103,7 +114,7 @@ describe("CostTables", () => {
   it("shows the prompt overrides each incident's run started with", () => {
     render(<CostTables costs={COSTS} />);
     const table = screen.getByRole("table", { name: "Cost per incident" });
-    const [, shop, worker, other] = within(table).getAllByRole("row");
+    const [, shop, worker, , other] = within(table).getAllByRole("row");
     expect(within(shop).getByText("graph/propose")).toHaveAttribute(
       "title",
       "override version 0123456789abcdef",

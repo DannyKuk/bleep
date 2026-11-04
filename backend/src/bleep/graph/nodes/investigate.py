@@ -246,6 +246,7 @@ def _task(state: IncidentState, limit: int, clock: Callable[[], datetime]) -> st
         facts=_facts(context),
         gaps=_bullets(context.gaps),
         budget=str(limit),
+        untrusted_rule=prompts.load("untrusted/investigate").strip(),
     )
 
 
