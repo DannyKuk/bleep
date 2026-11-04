@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 
+import httpx
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
@@ -23,7 +24,7 @@ from bleep.schemas.graph import (
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Budgets
 from fakes import FakeChatModel
-from graph_env import T0, graph_env
+from graph_env import T0, graph_env, no_wait
 
 LOG_LINE = (
     "2026-11-02T12:00:01Z ERROR shop-web sqlalchemy.exc.OperationalError: could not translate "
@@ -329,6 +330,22 @@ async def test_a_failing_model_or_channel_still_ends_with_a_report(tmp_path):
     assert update["report"].summary == f"{TITLE}: rejected, nothing was done."
     assert (await env.repo.get(state["incident_id"])).status == "open"  # closed by the runner
     assert [e.kind for e in await env.bus.history(state["incident_id"])] == ["report"]
+
+
+class TimingOutModel(FakeChatModel):
+    async def _agenerate(self, *args, **kwargs):
+        raise httpx.ReadTimeout("no answer")
+
+
+async def test_an_unavailable_model_still_ends_with_a_record_only_report(tmp_path):
+    env, state, _ = await setup(tmp_path)
+    state |= {"proposal": ACT, "decision": decide("reject")}
+    env.models.model = TimingOutModel(script=[], structured_output_unsupported=True)
+    env.deps.model_sleep = no_wait
+
+    update = await run(env, state)
+
+    assert update["report"].summary == f"{TITLE}: rejected, nothing was done."
 
 
 async def test_the_prompt_carries_no_log_text(tmp_path):

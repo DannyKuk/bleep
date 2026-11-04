@@ -13,6 +13,7 @@ import logging
 import re
 from collections.abc import Callable
 from datetime import datetime
+from functools import partial
 from typing import Any, Literal
 
 from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage, ToolCall, ToolMessage
@@ -152,7 +153,9 @@ def make(deps: GraphDeps) -> Node:
                 return update(outcome="budget")
             if model is None:
                 model = deps.models("main").bind_tools(list(tools.values()))
-            reply = await model.ainvoke(history, config=tracked(tracker))
+            reply = await deps.guard().call(
+                partial(model.ainvoke, history, config=tracked(tracker))
+            )
             # An invalid call (bad JSON arguments) is not an answer: it needs a reply like any
             # call. One with no id cannot be answered, so it is dropped from what is stored.
             invalid = [c for c in reply.invalid_tool_calls if c.get("id")]

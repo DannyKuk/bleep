@@ -14,6 +14,7 @@ from bleep.graph.build import build_graph, open_checkpointer
 from bleep.incidents.reminders import ReminderLoop
 from bleep.incidents.repository import utcnow
 from bleep.incidents.runner import IncidentRunner
+from bleep.incidents.watchdog import Watchdog
 from bleep.watcher.detector import Detector
 from bleep.watcher.manager import WatcherManager
 from bleep.wiring import AppParts, build_parts
@@ -70,6 +71,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 approvals=parts.approvals,
                 notifier=parts.graph_deps.notifier,
                 tracer=parts.tracer,
+                settings=parts.settings_store,
             )
             stack.push_async_callback(runner.close)
             manager = WatcherManager(
@@ -91,11 +93,20 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 parts.graph_deps.notifier,
                 parts.graph_deps.settings_store,
             )
+            watchdog = Watchdog(
+                parts.incidents,
+                parts.bus,
+                parts.graph_deps.notifier,
+                parts.graph_deps.settings_store,
+                skip=runner.retrying,
+            )
             app.state.runner, app.state.reminders = runner, reminders
             stack.push_async_callback(manager.stop)
             await manager.start()
             app.state.reminder_task = asyncio.create_task(reminders.run(), name="reminders")
             stack.push_async_callback(_cancel, app.state.reminder_task)
+            app.state.watchdog_task = asyncio.create_task(watchdog.run(), name="watchdog")
+            stack.push_async_callback(_cancel, app.state.watchdog_task)
             knowledge = asyncio.create_task(parts.knowledge_refresher.run(), name="knowledge")
             stack.push_async_callback(_cancel, knowledge)
             stack.push_async_callback(parts.notify.stop)

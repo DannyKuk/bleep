@@ -7,6 +7,7 @@ wait days for a human and outlive a restart of Bleep. See docs/design/graph.md.
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -14,13 +15,19 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
 from bleep import prompts
-from bleep.graph.deps import Approvals, Notifier, Tracer
+from bleep.graph.build import NODE_STATUS
+from bleep.graph.deps import Approvals, Notifier, SettingsSource, StaticSettings, Tracer
 from bleep.incidents.bus import EventBus
-from bleep.incidents.repository import IncidentRepo
+from bleep.incidents.repository import IncidentRepo, utcnow
+from bleep.llm.guard import ModelUnavailable
 from bleep.schemas.graph import Decision
 from bleep.schemas.incidents import Incident, IncidentStatus, Signal
 
 log = logging.getLogger(__name__)
+
+AFTER_PAUSE = "after_pause"  # config flag: this run goes on from a pause
+MAX_PAUSE_MIN = 60  # the longest wait between two retries of a paused run
+LONG_PAUSE_S = 3600  # a run paused this long in all gets one more notice
 
 
 class IncidentRunner:
@@ -28,7 +35,10 @@ class IncidentRunner:
     while the run was not waiting (Bleep died between the decision and the resume) is delivered
     when the run is started again. `notifier` hears `incident_opened` once, when a new
     incident's run starts, whatever the run ends with, and a `notice` when a run fails. `tracer`
-    adds its callbacks to every graph invocation of an incident; without one, none are added."""
+    adds its callbacks to every graph invocation of an incident; without one, none are added.
+    A run whose model stays unavailable after the retries is paused, not failed, and tried again
+    `Budgets.paused_retry_min` later (read from `settings`; `sleep` waits, and tests pass one that
+    returns at once)."""
 
     def __init__(
         self,
@@ -38,6 +48,9 @@ class IncidentRunner:
         approvals: Approvals | None = None,
         notifier: Notifier | None = None,
         tracer: Tracer | None = None,
+        settings: SettingsSource | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        clock: Callable[[], datetime] = utcnow,
     ) -> None:
         self.graph = graph
         self.repo = repo
@@ -45,7 +58,13 @@ class IncidentRunner:
         self.approvals = approvals
         self.notifier = notifier
         self.tracer = tracer
+        self.settings = settings if settings is not None else StaticSettings()
+        self.sleep = sleep
+        self.clock = clock
         self._runs: dict[str, asyncio.Task[None]] = {}
+        self._pauses: dict[str, int] = {}  # consecutive pauses of a run, for the backoff
+        self._since: dict[str, datetime] = {}  # when a run first paused
+        self._warned_long: set[str] = set()
 
     @staticmethod
     def config(incident_id: str) -> RunnableConfig:
@@ -100,7 +119,7 @@ class IncidentRunner:
 
         A run waiting for approval stays waiting: its checkpoint holds it until a decision
         arrives through `resume`. One whose approval was decided before Bleep stopped is not
-        waiting any more, and goes on with that decision.
+        waiting any more, and goes on with that decision. A paused run goes on at once.
         """
         started = []
         for incident in await self.repo.unfinished():
@@ -208,11 +227,21 @@ class IncidentRunner:
 
     async def _drive(self, incident_id: str, payload: Any) -> None:
         config = self.config(incident_id)
+        was_paused = False
         try:
-            await self.repo.set_status(incident_id, _status_on(payload))
-            await self.graph.ainvoke(payload, await self._traced(incident_id))
+            current = await self.repo.get(incident_id)
+            was_paused = current is not None and current.status == "paused"
+            await self.repo.set_status(incident_id, await self._status_on(incident_id, payload))
+            config = await self._traced(incident_id)
+            if was_paused:  # the graph keeps a retried node off the timeline
+                config = {**config, "configurable": {**config["configurable"], AFTER_PAUSE: True}}
+            await self.graph.ainvoke(payload, config)
+        except ModelUnavailable as unavailable:
+            await self._pause(incident_id, unavailable, announce=not was_paused)
+            return
         except Exception as error:  # a broken run must not take the runner down
             log.exception("incident %s: graph run failed", incident_id)
+            self._forget_pauses(incident_id)
             text = f"The run stopped on an error ({type(error).__name__}); see the backend log."
             try:
                 await self.repo.set_status(incident_id, "failed")
@@ -221,11 +250,83 @@ class IncidentRunner:
                 log.exception("incident %s: recording the failure failed", incident_id)
             await self._tell(incident_id, text)
             return
+        self._forget_pauses(incident_id)
         snapshot = await self.graph.aget_state(config)
         if snapshot.interrupts:
             await self.repo.set_status(incident_id, "awaiting_approval")
         elif not snapshot.next:
             await self._settle(incident_id, snapshot)
+
+    async def _pause(
+        self, incident_id: str, unavailable: ModelUnavailable, *, announce: bool
+    ) -> None:
+        """Park a run whose model is unavailable and try it again later, from its checkpoint.
+
+        The first retry comes `paused_retry_min` minutes later, then twice as late each time up
+        to an hour. The channels hear of it once when the run pauses and once more when it has
+        been paused for an hour in all."""
+        log.warning("incident %s: paused, %s", incident_id, unavailable)
+        base = self.settings.budgets().paused_retry_min
+        ceiling = max(base, MAX_PAUSE_MIN)
+        seconds = min(base * 2 ** self._pauses.get(incident_id, 0), ceiling) * 60
+        self._pauses[incident_id] = self._pauses.get(incident_id, 0) + 1
+        now = self.clock()
+        paused_for = (now - self._since.setdefault(incident_id, now)).total_seconds()
+        text = None
+        if announce:
+            text = (
+                f"The model is not answering ({unavailable.reason}). The run is paused and tries "
+                f"again from where it stopped, first in {base} minutes, then less often."
+            )
+        elif paused_for >= LONG_PAUSE_S and incident_id not in self._warned_long:
+            self._warned_long.add(incident_id)
+            text = "The run has been paused for an hour: the model is still not answering."
+        try:
+            await self.repo.set_status(incident_id, "paused")
+            if text is not None:
+                await self.bus.publish(incident_id, "notice", {"text": text})
+        except Exception:
+            log.exception("incident %s: recording the pause failed", incident_id)
+        if text is not None:
+            await self._tell(incident_id, text)
+        self._schedule(incident_id, lambda: self._retry_after(incident_id, seconds))
+
+    def _forget_pauses(self, incident_id: str) -> None:
+        self._pauses.pop(incident_id, None)
+        self._since.pop(incident_id, None)
+        self._warned_long.discard(incident_id)
+
+    async def _retry_after(self, incident_id: str, seconds: float) -> None:
+        await self.sleep(seconds)
+        incident = await self.repo.get(incident_id)
+        if incident is not None and incident.status == "paused":  # not moved on by someone else
+            await self._advance(incident)
+        else:
+            self._forget_pauses(incident_id)
+
+    def retrying(self, incident_id: str) -> bool:
+        """Whether the run has paused on an unavailable model and is waiting for, or making, a
+        retry. The watchdog leaves such an incident alone: the runner already reports on it."""
+        return incident_id in self._pauses
+
+    async def _status_on(self, incident_id: str, payload: Any) -> IncidentStatus:
+        """The status as a run is driven. A yes goes straight to Execute; a restart or a retry
+        takes the status of the node it goes on at, so a verified fix never shows
+        `investigating` again while Report runs; a new run, a no and an instruction are
+        investigating, and the next node corrects it."""
+        if isinstance(payload, Command):
+            return (
+                "executing"
+                if getattr(payload.resume, "kind", None) == "approve"
+                else "investigating"
+            )
+        if payload is not None:
+            return "investigating"
+        snapshot = await self.graph.aget_state(self.config(incident_id))
+        node = snapshot.next[0] if snapshot.next else ""
+        if node == "report" and _verified(snapshot.values):
+            return "verifying"
+        return NODE_STATUS.get(node, "investigating")
 
     async def _traced(self, incident_id: str) -> RunnableConfig:
         """The run's config, after storing the link to its trace on the incident. Tracing is
@@ -256,12 +357,10 @@ class IncidentRunner:
         await self.repo.set_status(incident_id, "resolved" if outcome == "resolved" else "closed")
 
 
-def _status_on(payload: Any) -> IncidentStatus:
-    """The status as a run is driven: a yes goes straight to Execute, which the graph then
-    confirms; everything else (a new run, a restart, a no, an instruction) is investigating."""
-    if isinstance(payload, Command) and getattr(payload.resume, "kind", None) == "approve":
-        return "executing"
-    return "investigating"
+def _verified(values: dict[str, Any]) -> bool:
+    """Whether the run's last Verify passed (a failed one loops back and leaves it not ok)."""
+    verification = values.get("verification")
+    return verification is not None and verification.ok
 
 
 def _initial(incident: Incident, signals: list[Signal]) -> dict[str, Any]:

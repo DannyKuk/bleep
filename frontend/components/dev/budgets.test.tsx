@@ -24,6 +24,9 @@ describe("BudgetsForm", () => {
       />,
     );
     expect(screen.getByLabelText("Tool calls per Investigate round")).toHaveValue(8);
+    expect(screen.getByLabelText("Model call timeout (seconds)")).toHaveValue(120);
+    expect(screen.getByLabelText("Paused run retry (minutes)")).toHaveValue(5);
+    expect(screen.getByLabelText("Stuck incident notice (minutes)")).toHaveValue(30);
 
     const cap = screen.getByLabelText("Daily cost cap (USD)");
     await userEvent.clear(cap);

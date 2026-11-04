@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiosqlite
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, START, StateGraph
@@ -53,11 +54,20 @@ def _traced(bus: EventBus, incidents: IncidentRepo, name: str, node: Node) -> No
     A node that stops on `interrupt()` publishes no `node_finished`; it starts again on resume.
     """
 
-    async def run(state: IncidentState) -> dict:
+    async def run(state: IncidentState, config: RunnableConfig) -> dict:
         status = NODE_STATUS.get(name)
         if status is not None:
             await incidents.set_status(state["incident_id"], status)
-        await bus.publish(state["incident_id"], "node_started", {"node": name})
+        last = await bus.last_event(state["incident_id"])
+        retried = config.get("configurable", {}).get("after_pause", False)
+        again = (
+            retried
+            and last is not None
+            and last.kind == "node_started"
+            and last.payload["node"] == name
+        )
+        if not again:  # a node run again after a pause adds nothing to the timeline
+            await bus.publish(state["incident_id"], "node_started", {"node": name})
         update = await node(state)
         await bus.publish(state["incident_id"], "node_finished", {"node": name})
         return update

@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+from functools import partial
 from typing import Any
 
 import openai
@@ -13,6 +14,7 @@ from openrouter import errors as openrouter_errors
 from pydantic import BaseModel, ValidationError
 
 from bleep import prompts
+from bleep.llm.guard import ModelGuard
 
 log = logging.getLogger(__name__)
 
@@ -70,9 +72,14 @@ async def _via_tools[T: BaseModel](
     schema: type[T],
     messages: list[BaseMessage],
     config: RunnableConfig | None,
+    guard: ModelGuard | None,
 ) -> T | None:
     try:
-        result = await model.with_structured_output(schema).ainvoke(messages, config=config)
+        structured = model.with_structured_output(schema)
+        if guard is None:
+            result = await structured.ainvoke(messages, config=config)
+        else:
+            result = await guard.call(partial(structured.ainvoke, messages, config=config))
     except TOOLS_REJECTED:
         return None
     if isinstance(result, schema):
@@ -91,15 +98,20 @@ async def invoke_structured[T: BaseModel](
     messages: list[BaseMessage],
     retries: int = 1,
     config: RunnableConfig | None = None,
+    guard: ModelGuard | None = None,
 ) -> T:
-    if (result := await _via_tools(model, schema, messages, config)) is not None:
+    """The model's reply as `schema`. With a `guard`, every model call is bounded and retried."""
+    if (result := await _via_tools(model, schema, messages, config, guard)) is not None:
         return result
     log.info(FALLBACK, schema.__name__)
     ask = prompts.load("llm/json_fallback", schema=json.dumps(schema.model_json_schema()))
     conversation = [*messages, HumanMessage(ask)]
     raw = ""
     for _ in range(retries + 1):
-        reply = await model.ainvoke(conversation, config=config)
+        if guard is None:
+            reply = await model.ainvoke(conversation, config=config)
+        else:
+            reply = await guard.call(partial(model.ainvoke, conversation, config=config))
         raw = reply.text
         try:
             return parse_reply(schema, raw)

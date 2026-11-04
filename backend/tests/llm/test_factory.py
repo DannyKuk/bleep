@@ -54,3 +54,12 @@ def test_openrouter_roles_pick_models(monkeypatch):
 def test_unknown_role_rejected():
     with pytest.raises(ValueError):
         chat_model(ModelSettings(provider="local"), "huge")  # type: ignore[arg-type]
+
+
+def test_the_client_timeout_is_in_the_providers_unit_and_a_little_over_the_guards(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    local = chat_model(ModelSettings(provider="local"), "main", timeout_s=90)
+    assert local.request_timeout == 95 and local.max_retries == 0  # seconds
+    router = chat_model(ModelSettings(), "main", timeout_s=90)
+    assert router.client.sdk_configuration.timeout_ms == 95_000  # milliseconds
+    assert router.max_retries == 0

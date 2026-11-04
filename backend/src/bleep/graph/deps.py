@@ -23,6 +23,7 @@ from bleep.incidents.action_log import ActionLog
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.llm.factory import Role, chat_model
+from bleep.llm.guard import ModelGuard
 from bleep.llm.usage import CostLedger
 from bleep.schemas.graph import (
     ApprovalGrant,
@@ -280,7 +281,9 @@ class StaticSettings:
 
 def model_factory(settings: SettingsSource) -> ModelFactory:
     """Build each role's chat model from the settings as they are when it is asked for."""
-    return lambda role: chat_model(settings.models(), role)
+    return lambda role: chat_model(
+        settings.models(), role, timeout_s=settings.budgets().model_timeout_s
+    )
 
 
 @dataclass(kw_only=True)
@@ -305,5 +308,11 @@ class GraphDeps:
     clock: Callable[[], datetime] = utcnow
     # Waiting between verification checks; tests pass one that only records the delay.
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+    # Waiting between retries of a model call; tests pass one that only records the delay.
+    model_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
     # The client Verify checks URLs with; None makes it open one for each check and close it after.
     http: httpx.AsyncClient | None = None
+
+    def guard(self) -> ModelGuard:
+        """The bounds of a model call as the settings say now: the next call uses a changed one."""
+        return ModelGuard(self.settings_store.budgets().model_timeout_s, sleep=self.model_sleep)

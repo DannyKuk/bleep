@@ -324,6 +324,7 @@ async def _ask[T: BaseModel](deps: GraphDeps, incident_id: str, schema: type[T],
         schema,
         [HumanMessage(prompt)],
         config=tracked(UsageTracker(incident_id, deps.ledger)),
+        guard=deps.guard(),
     )
 
 
