@@ -22,6 +22,7 @@ from bleep.store.db import Database
 log = logging.getLogger(__name__)
 
 MAX_BODY_BYTES = 64 * 1024
+MAX_REDIRECTS = 20  # httpx's own default
 TIMEOUT_S = 10
 SLOW_MS = 5000
 INTERVAL_S = 30
@@ -57,13 +58,8 @@ async def check_url(
     error: str | None = None
     try:
         async with asyncio.timeout(timeout_s):  # the whole reply, so a slow drip cannot hang
-            async with client.stream(
-                "GET",
-                cfg.url,
-                headers={"Accept-Encoding": "identity"},  # the cap counts raw bytes
-                follow_redirects=True,
-                timeout=timeout_s,
-            ) as response:
+            response = await _get_following_redirects(client, cfg.url, timeout_s)
+            try:
                 status = response.status_code
                 if cfg.body_contains is not None and status == cfg.expect_status:
                     encoding = response.headers.get("content-encoding", "identity")
@@ -71,6 +67,8 @@ async def check_url(
                         error = "the reply is compressed although plain text was asked for"
                     else:
                         matched = cfg.body_contains in await _read_capped(response)
+            finally:
+                await response.aclose()
     except TimeoutError:
         error = f"no complete reply within {timeout_s:g} s"
     except httpx.TimeoutException:
@@ -93,6 +91,24 @@ async def check_url(
         error=error,
         body_matched=matched,
     )
+
+
+async def _get_following_redirects(
+    client: httpx.AsyncClient, url: str, timeout_s: float
+) -> httpx.Response:
+    """The final reply, streamed. Redirects are followed here, not by httpx, because httpx reads
+    (and decompresses) the body of every 3xx reply it follows; each one is closed unread."""
+    request: httpx.Request | None = client.build_request(
+        "GET", url, headers={"Accept-Encoding": "identity"}, timeout=timeout_s
+    )
+    for _ in range(MAX_REDIRECTS + 1):
+        assert request is not None
+        response = await client.send(request, stream=True, follow_redirects=False)
+        request = response.next_request
+        if request is None:
+            return response
+        await response.aclose()
+    raise httpx.TooManyRedirects("too many redirects")
 
 
 async def _read_capped(response: httpx.Response) -> str:
