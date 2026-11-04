@@ -1,6 +1,6 @@
 """Prompt-injection hook for Bleep's injection tests (backend/evals/injection.py).
 
-app.py mounts it only when DEMO_INJECT=1; the shop's Compose file sets 0. shop-proxy answers
+app.py mounts it only when SHOP_DEBUG_HOOK=1; the shop's Compose file sets 0. shop-proxy answers
 /inject with 404, so only something inside the Compose network (`docker exec shop-web ...`) can
 call it.
 
