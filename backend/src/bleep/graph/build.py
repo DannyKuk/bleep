@@ -28,15 +28,35 @@ from bleep.graph.nodes import (
 )
 from bleep.graph.state import IncidentState, Node, checkpoint_serializer
 from bleep.incidents.bus import EventBus
+from bleep.incidents.repository import IncidentRepo
+from bleep.schemas.incidents import IncidentStatus
+
+# The status an incident shows while a node runs. Approval and Report are left out: the runner
+# sets `awaiting_approval` when the run stops at the interrupt and settles the end status itself.
+NODE_STATUS: dict[str, IncidentStatus] = {
+    "gather": "investigating",
+    "investigate": "investigating",
+    "diagnose": "investigating",
+    "propose": "investigating",
+    "execute": "executing",
+    "verify": "verifying",
+}
 
 
-def _traced(bus: EventBus, name: str, node: Node) -> Node:
-    """Publish `node_started` and `node_finished` around the node, for the live view.
+def _traced(bus: EventBus, incidents: IncidentRepo, name: str, node: Node) -> Node:
+    """Set the incident's status for the node, publish `node_started` and `node_finished` around
+    it, for the live view.
+
+    The status is written before `node_started` goes out: the dashboard reads the incident again
+    on that event and must find the new status.
 
     A node that stops on `interrupt()` publishes no `node_finished`; it starts again on resume.
     """
 
     async def run(state: IncidentState) -> dict:
+        status = NODE_STATUS.get(name)
+        if status is not None:
+            await incidents.set_status(state["incident_id"], status)
         await bus.publish(state["incident_id"], "node_started", {"node": name})
         update = await node(state)
         await bus.publish(state["incident_id"], "node_finished", {"node": name})
@@ -51,7 +71,7 @@ def build_graph(deps: GraphDeps, checkpointer: BaseCheckpointSaver) -> CompiledS
     graph = StateGraph(IncidentState)
     for module in (gather, investigate, diagnose, propose, approval, execute, verify, report):
         name = module.__name__.rsplit(".", 1)[-1]
-        graph.add_node(name, _traced(deps.bus, name, module.make(deps)))
+        graph.add_node(name, _traced(deps.bus, deps.incidents, name, module.make(deps)))
     graph.add_edge(START, "gather")
     graph.add_edge("gather", "investigate")
     graph.add_conditional_edges("investigate", investigate.route, ["diagnose", "report"])

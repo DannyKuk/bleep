@@ -314,7 +314,7 @@ async def test_a_decision_whose_resumed_run_died_in_the_approval_node_executes_o
     async with bleep(w, bus=lambda db: DyingBus(db, "decision", crash)) as second:
         await second.approve(incident.id)
         await reached(crash)  # the approval node is running again, the decision not yet out
-        assert await second.status(incident.id) == "investigating"
+        assert await second.status(incident.id) == "executing"
 
     async with bleep(w) as third:
         assert await third.runner.recover_on_boot() == [incident.id]
@@ -343,7 +343,7 @@ async def test_killed_after_the_restart_reached_the_engine_the_new_process_resta
     assert w.host.restarts() == ["shop-web-1"]
 
     async with bleep(w) as third:
-        assert await third.status(incident.id) == "investigating"
+        assert await third.status(incident.id) == "executing"
         assert await third.runner.recover_on_boot() == [incident.id]
         await third.runner.join()
 

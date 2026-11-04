@@ -18,7 +18,7 @@ from bleep.graph.deps import Approvals, Notifier, Tracer
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
 from bleep.schemas.graph import Decision
-from bleep.schemas.incidents import Incident, Signal
+from bleep.schemas.incidents import Incident, IncidentStatus, Signal
 
 log = logging.getLogger(__name__)
 
@@ -209,7 +209,7 @@ class IncidentRunner:
     async def _drive(self, incident_id: str, payload: Any) -> None:
         config = self.config(incident_id)
         try:
-            await self.repo.set_status(incident_id, "investigating")
+            await self.repo.set_status(incident_id, _status_on(payload))
             await self.graph.ainvoke(payload, await self._traced(incident_id))
         except Exception as error:  # a broken run must not take the runner down
             log.exception("incident %s: graph run failed", incident_id)
@@ -254,6 +254,14 @@ class IncidentRunner:
         it leaves the incident open and `recover_on_boot` finishes the run."""
         outcome = snapshot.values.get("outcome")
         await self.repo.set_status(incident_id, "resolved" if outcome == "resolved" else "closed")
+
+
+def _status_on(payload: Any) -> IncidentStatus:
+    """The status as a run is driven: a yes goes straight to Execute, which the graph then
+    confirms; everything else (a new run, a restart, a no, an instruction) is investigating."""
+    if isinstance(payload, Command) and getattr(payload.resume, "kind", None) == "approve":
+        return "executing"
+    return "investigating"
 
 
 def _initial(incident: Incident, signals: list[Signal]) -> dict[str, Any]:
