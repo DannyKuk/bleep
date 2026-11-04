@@ -62,6 +62,30 @@ describe("OverviewView hero", () => {
     expect(mood(container)).toBe("needs_you");
   });
 
+  it("reads a plan refused before the refused flag existed as refused, not as a fix", () => {
+    render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[service({ health: "down" })]}
+        incidents={[incident()]}
+        details={{
+          "inc-1": detail({
+            approval: approval({
+              proposal: proposal({
+                kind: "no_action",
+                steps: [],
+                reason: "Bleep's own checks refused the proposed plan twice, so nothing will run.",
+              }),
+            }),
+          }),
+        }}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("My own checks stopped my plan, so I need you.");
+    expect(headline()).not.toHaveTextContent("I have a fix");
+  });
+
   it("shows the incident's title until the waiting incident's detail is read", () => {
     render(
       <OverviewView
