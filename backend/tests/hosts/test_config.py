@@ -177,3 +177,16 @@ def test_the_readme_is_read_unless_the_service_says_not():
     assert services["shop"].readme is True
     shop = load_hosts_file(DEMO).hosts[0].services["shop"]
     assert (shop.docs_paths, shop.readme) == (["demo/shop/docs"], False)
+
+
+def test_a_protected_entry_with_an_empty_slug_is_warned_about(tmp_path, caplog):
+    text = """
+hosts:
+  - {id: a, name: A, kind: ssh, address: h, user: u, key_file: /k,
+      services: {shop: {protected_containers: ["🚀", "shop-db-1"]}}}
+"""
+    with caplog.at_level("WARNING", logger="bleep.hosts.config"):
+        load_hosts_file(write(tmp_path, text))
+
+    assert len(caplog.records) == 1
+    assert "'🚀'" in caplog.text and "protect the application by its uuid" in caplog.text

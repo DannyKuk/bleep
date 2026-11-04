@@ -1,8 +1,9 @@
 import pytest
 
 from bleep.graph.deps import CORE_ACTIONS
-from bleep.guard.plan_check import NoCoolifyApp, check_plan, coolify_app_uuid, coolify_slug
+from bleep.guard.plan_check import NoCoolifyApp, check_plan, coolify_app_uuid
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
+from bleep.hosts.coolify_names import coolify_slug
 from bleep.schemas.graph import PlanStep, Proposal, VerificationPlan
 from fakes import FakeEngine
 from graph_env import box, graph_env, shop_host
@@ -490,3 +491,31 @@ async def test_an_app_uuid_is_a_typed_refusal_when_the_target_names_none(tmp_pat
 
     with pytest.raises(NoCoolifyApp):
         coolify_app_uuid(env.registry, coolify("api"))
+
+
+async def test_a_label_that_is_not_in_slug_form_is_matched_exactly(tmp_path):
+    app = coolify_app("u-shop", "Shop_API")
+    found = await check(
+        tmp_path, act(coolify("Shop_API")), [box("u-shop-1", labels=app)], ["Shop_API"]
+    )
+
+    assert found == [("protected", 1)]
+
+
+async def test_the_exact_match_ignores_case(tmp_path):
+    app = coolify_app("u-shop", "Shop_API")
+    found = await check(
+        tmp_path, act(coolify("Shop_API")), [box("u-shop-1", labels=app)], ["shop_api"]
+    )
+
+    assert found == [("protected", 1)]
+
+
+async def test_an_empty_resource_name_label_protects_nothing(tmp_path):
+    # "магазин" slugs to "", which must not match an app whose name label is empty.
+    app = coolify_app("u-shop", "")
+    found = await check(
+        tmp_path, act(coolify("u-shop")), [box("u-shop-1", labels=app)], ["магазин"]
+    )
+
+    assert found == []
