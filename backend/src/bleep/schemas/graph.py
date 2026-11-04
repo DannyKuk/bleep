@@ -8,7 +8,7 @@ side against fixed shapes. Milestone 3 filled in `StepResult` (#24), `Verificati
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from bleep.schemas.docker import ContainerSummary, HostBasics
 
@@ -174,20 +174,29 @@ class Decision(BaseModel):
 
 
 class TargetSnapshot(BaseModel):
-    """A target container as it was when approval was asked; a change means a stale plan.
+    """A target as it was when approval was asked; a change means a stale plan.
 
-    `host_id` and `target` name it as the plan does; `container_id` is what the name resolved to.
-    `restart_count` and `state` tell a restart policy's own restarts from a start by hand; they
-    are None in an approval stored before #87, and then any new start time is stale.
+    `host_id` and `target` name it as the plan does. A container target holds `container_id`,
+    what the name resolved to; a Coolify application holds `app_uuid` instead (#139), so a
+    recreated application with the same name is another target. `restart_count` and `state`
+    tell a restart policy's own restarts from a start by hand; they are None in an approval
+    stored before #87, and then any new start time is stale.
     """
 
     host_id: str
     target: str
-    container_id: str
+    container_id: str | None = None
+    app_uuid: str | None = None
     created: datetime | None = None
     started_at: datetime | None = None
     restart_count: int | None = None
     state: str | None = None
+
+    @model_validator(mode="after")
+    def _one_resolved_id(self) -> TargetSnapshot:
+        if (self.container_id is None) == (self.app_uuid is None):
+            raise ValueError("a snapshot holds one of container_id and app_uuid")
+        return self
 
 
 class ApprovalRequest(BaseModel):

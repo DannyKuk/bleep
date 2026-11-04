@@ -2,16 +2,21 @@
 
 from datetime import timedelta
 
+import httpx
 import pytest
+from pydantic import SecretStr
 
 from bleep.graph.deps import StaticSettings
-from bleep.graph.nodes import execute
+from bleep.graph.nodes import approval, execute
 from bleep.hosts.engine import EngineError
-from bleep.schemas.graph import Decision, PlanStep, Proposal, TargetSnapshot
+from bleep.plugins.base import PluginContext
+from bleep.plugins.coolify.plugin import CoolifyPlugin, CoolifySettings
+from bleep.schemas.docker import ContainerSummary
+from bleep.schemas.graph import Decision, PlanStep, Proposal, StepResult
 from bleep.schemas.incidents import Subject
 from bleep.schemas.settings import Budgets
 from fakes import FakeEngine
-from graph_env import T0, box, graph_env
+from graph_env import SECRET, T0, box, graph_env
 
 APPROVED_AT = T0
 STARTED_AT = T0 + timedelta(minutes=1)  # the action log's clock: when a step was started
@@ -60,19 +65,12 @@ class Env:
             subject = Subject(kind="service", host_id="a", service_id=self.env.service_id("shop"))
             incident_id = (await self.env.open(subject)).id
         proposal = Proposal(kind="act", steps=list(steps), reason="bring it back")
-        snapshots = []
-        for target in dict.fromkeys(s.target for s in steps):
-            summary = (await self.engine.inspect(target)).summary
-            snapshots.append(
-                TargetSnapshot(
-                    host_id="a",
-                    target=target,
-                    container_id=summary.id,
-                    started_at=summary.started_at,
-                    restart_count=summary.restart_count if counts else None,
-                    state=summary.state if counts else None,
-                )
-            )
+        snapshots, unread = await approval._snapshots(self.deps, proposal)
+        assert unread == []
+        if not counts:
+            snapshots = [
+                s.model_copy(update={"restart_count": None, "state": None}) for s in snapshots
+            ]
         request = await self.deps.approvals.request(incident_id, proposal, snapshots)
         decision = Decision(kind="approve", via="dashboard", at=APPROVED_AT)
         assert await self.deps.approvals.resolve(incident_id, decision, request.id) == decision
@@ -460,3 +458,156 @@ async def test_a_coolify_step_left_started_is_not_judged_as_a_container(env):
     detail = update["step_results"][0].detail
     assert "gone" not in detail and "container" not in detail
     assert "check the application in Coolify" in detail and "not run again" in detail
+
+
+# A Coolify step is bound to the application uuid its name resolved to when the human was asked,
+# and an `mcp.call` to its target container's id (#139).
+
+COOLIFY = "https://coolify.example.com"
+OLD_UUID, NEW_UUID = "shop0uuid0000000000000a1", "shop0uuid0000000000000b2"
+
+
+def coolify_box(name: str, uuid: str) -> ContainerSummary:
+    labels = {"coolify.type": "application", "coolify.applicationUuid": uuid}
+    return box(name, "shop", labels=labels | {"coolify.resourceName": "shop"})
+
+
+def coolify_handlers(env: Env, sent: list[httpx.Request]) -> None:
+    """Add the Coolify plugin's act handlers, its requests recorded and never answered for real."""
+
+    def coolify(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(404, json={"message": "Not found"})
+
+    ctx = PluginContext(
+        settings=CoolifySettings(),
+        secrets={"COOLIFY_URL": SecretStr(COOLIFY), "COOLIFY_TOKEN": SecretStr("token")},
+        grant_secret=SecretStr(SECRET),
+        guard_log=env.env.guard_log,
+    )
+    plugin = CoolifyPlugin(transport=httpx.MockTransport(coolify))
+    env.deps.act_tools = {**env.deps.act_tools, **plugin.act_handlers(ctx)}
+
+
+def redeploy(target: str = "shop") -> PlanStep:
+    return PlanStep(action="coolify.redeploy", host_id="a", target=target)
+
+
+async def test_a_coolify_application_recreated_between_approval_and_execute_gets_nothing(tmp_path):
+    host = FakeEngine("a", [coolify_box(f"{OLD_UUID}-1", OLD_UUID)], clock=lambda: LATER)
+    env = Env(await graph_env(tmp_path, engine=host))
+    sent: list[httpx.Request] = []
+    coolify_handlers(env, sent)
+    state = await env.approve(redeploy())
+    plan = await env.deps.approvals.current(state["incident_id"])
+    assert [(s.target, s.app_uuid, s.container_id) for s in plan.snapshots] == [
+        ("shop", OLD_UUID, None)
+    ]
+    # In Coolify: `shop` deleted and created again, and deployed under its new uuid.
+    host.container_list[:] = [coolify_box(f"{NEW_UUID}-1", NEW_UUID)]
+
+    update, route = await env.run(state)
+
+    assert sent == []
+    assert await env.logged(state["incident_id"]) == []
+    assert route == "propose" and update["grant"] is None
+    notice = (await env.events(state["incident_id"], "notice"))[-1]["text"]
+    assert "state changed since approval" in notice
+    assert "shop on a is another Coolify application now (it was deleted and recreated)" in notice
+
+
+async def test_a_coolify_application_gone_since_approval_is_stale(tmp_path):
+    host = FakeEngine("a", [coolify_box(f"{OLD_UUID}-1", OLD_UUID)], clock=lambda: LATER)
+    env = Env(await graph_env(tmp_path, engine=host))
+    sent: list[httpx.Request] = []
+    coolify_handlers(env, sent)
+    state = await env.approve(redeploy())
+    host.container_list[:] = []
+
+    _, route = await env.run(state)
+
+    assert sent == [] and route == "propose"
+    notice = (await env.events(state["incident_id"], "notice"))[-1]["text"]
+    assert "shop on a names no single Coolify application" in notice
+
+
+async def test_a_rerun_skips_a_coolify_step_whose_application_was_recreated(tmp_path):
+    host = FakeEngine(
+        "a",
+        [coolify_box(f"{OLD_UUID}-1", OLD_UUID), box("shop-db-1", "shop", started_at=T0)],
+        clock=lambda: LATER,
+    )
+    env = Env(await graph_env(tmp_path, engine=host))
+    sent: list[httpx.Request] = []
+    coolify_handlers(env, sent)
+    state = await env.approve(restart("shop-db-1"), redeploy())
+    plan = await env.deps.approvals.current(state["incident_id"])
+    done = await env.deps.action_log.start(
+        state["incident_id"], f"{plan.plan_hash}:{plan.id}", 0, restart("shop-db-1")
+    )
+    assert done is not None
+    await env.deps.action_log.finish(
+        state["incident_id"],
+        f"{plan.plan_hash}:{plan.id}",
+        StepResult(
+            step_index=0,
+            action="docker.restart",
+            target="shop-db-1",
+            ok=True,
+            detail="restarted shop-db-1",
+        ),
+    )
+    # Bleep restarted after step 1; meanwhile `shop` was recreated in Coolify.
+    host.container_list[0] = coolify_box(f"{NEW_UUID}-1", NEW_UUID)
+
+    update, _ = await env.run(state)
+
+    assert sent == []
+    assert await env.logged(state["incident_id"]) == [(0, "done"), (1, "skipped")]
+    assert "another Coolify application now" in update["step_results"][1].detail
+
+
+class RecordingMcp:
+    """An `mcp.call` act handler that records what it ran and checks nothing of its own."""
+
+    def __init__(self) -> None:
+        self.ran: list[PlanStep] = []
+
+    def check(self, step, grant, registry, *, plan, step_index) -> str:
+        return step.target
+
+    async def run(self, step, grant, registry, *, plan, step_index) -> StepResult:
+        self.ran.append(step)
+        return StepResult(
+            step_index=step_index, action=step.action, target=step.target, ok=True, detail="ran"
+        )
+
+
+def mcp_call(target: str) -> PlanStep:
+    params = {"tool": "pause_monitor", "arguments": "{}"}
+    return PlanStep(action="mcp.call", host_id="a", target=target, params=params)
+
+
+async def test_an_mcp_step_whose_container_was_recreated_since_approval_runs_nothing(env):
+    mcp = RecordingMcp()
+    env.deps.act_tools = {**env.deps.act_tools, "mcp.call": mcp}
+    state = await env.approve(mcp_call("shop-web-1"))
+    plan = await env.deps.approvals.current(state["incident_id"])
+    assert [(s.target, s.container_id) for s in plan.snapshots] == [("shop-web-1", "id-shop-web-1")]
+    env.replace("shop-web-1", id="id-shop-web-1-new")
+
+    update, route = await env.run(state)
+
+    assert mcp.ran == [] and route == "propose" and update["grant"] is None
+    notice = (await env.events(state["incident_id"], "notice"))[-1]["text"]
+    assert "shop-web-1 on a was recreated" in notice
+
+
+async def test_an_mcp_step_whose_container_is_as_approved_runs(env):
+    mcp = RecordingMcp()
+    env.deps.act_tools = {**env.deps.act_tools, "mcp.call": mcp}
+    state = await env.approve(mcp_call("shop-web-1"))
+
+    _, route = await env.run(state)
+
+    assert mcp.ran == [mcp_call("shop-web-1")] and route == "verify"

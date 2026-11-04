@@ -312,6 +312,32 @@ async def test_a_plugin_change_that_cannot_be_saved_leaves_the_plugin_as_it_was(
     assert store.enabled_actions() == set(CORE_ACTIONS)
 
 
+async def test_a_view_read_during_a_plugin_save_that_then_fails_shows_nothing_unstored(
+    db, monkeypatch
+):
+    store, plugins = make_store(db, hosts_file_registry())
+    writing, release = asyncio.Event(), asyncio.Event()
+
+    async def failing_write(sections):
+        writing.set()
+        await release.wait()
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store, "_write", failing_write)
+    update = PluginUpdate(enabled=True, settings={"url": "https://c.example.test"})
+    saving = asyncio.create_task(switch(store, "coolify", update))
+    await writing.wait()
+    reading = asyncio.create_task(store.plugin_view("coolify"))
+    await asyncio.sleep(0)
+    release.set()
+    with pytest.raises(OSError):
+        await saving
+    view = await reading
+    assert not view.enabled
+    assert view.settings.get("url") != "https://c.example.test"
+    assert view.version == store.plugin_version("coolify")
+
+
 async def test_switching_on_without_the_secret_is_refused(db):
     store, plugins = make_store(db, hosts_file_registry(), env={})
     with pytest.raises(PluginError, match="COOLIFY_TOKEN"):

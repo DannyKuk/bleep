@@ -495,7 +495,7 @@ async def test_a_plan_url_of_another_service_on_the_host_keeps_its_own_config(tm
 
     def replies(request: httpx.Request) -> httpx.Response:
         seen.append(str(request.url))
-        return httpx.Response(204, text="all ok")
+        return httpx.Response(204, stream=httpx.ByteStream(b"all ok"))
 
     host = shop_host(
         services={

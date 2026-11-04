@@ -11,6 +11,7 @@ per run, is applied to the raw results and the report rendered again:
 """
 
 import argparse
+import json
 import os
 import shlex
 import sys
@@ -21,7 +22,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from evals.judge import MANUAL, PASS_SCORE
-from evals.scenarios import Scenario, ScenarioResult
+from evals.scenarios import ExpectedStep, Scenario, ScenarioResult, step_key
 
 REPO = Path(__file__).resolve().parents[2]
 BACKEND = REPO / "backend"
@@ -208,14 +209,25 @@ def _plan(result: ScenarioResult) -> str:
         return "none"
     if proposal.kind == "no_action":
         return "no action"
-    return ", ".join(f"{s.action} {s.target}" for s in proposal.steps)
+    return ", ".join(_step(*step_key(s)) for s in proposal.steps)
+
+
+def _step(action: str, target: str, tool: str | None) -> str:
+    return f"{action} {target}" + (f" ({tool})" if tool else "")
+
+
+def _expected_step(step: ExpectedStep) -> str:
+    shown = _step(*step.key)
+    if step.arguments is None:
+        return shown
+    return f"{shown} with {json.dumps(step.arguments, separators=(', ', ': '))}"
 
 
 def _expected_plan(scenario: Scenario) -> str:
     action = scenario.expected.action
     if action.kind == "no_action":
         return "no action"
-    plan = ", ".join(f"`{a} {t}`" for a, t in action.pairs)
+    plan = ", ".join(f"`{_expected_step(step)}`" for step in action.steps)
     return plan + (" in this order" if action.ordered and len(action.steps) > 1 else "")
 
 

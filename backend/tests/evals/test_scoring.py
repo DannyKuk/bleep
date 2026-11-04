@@ -1,6 +1,9 @@
 """How a proposal is scored against a scenario's expected plan. Exact checks only, no model."""
 
+from collections import Counter
 from typing import Any
+
+import pytest
 
 from bleep.schemas.graph import Diagnosis, PlanStep, Proposal
 from evals.scenarios import Expected, score_action, score_category
@@ -112,3 +115,114 @@ def test_the_category_must_match_exactly():
     assert score_category(expected("no_action"), diagnosis) is True
     assert score_category(expected("no_action", category="config"), diagnosis) is False
     assert score_category(expected("no_action"), None) is False
+
+
+def mcp_plan(
+    tool: str, target: str = "shop-proxy", arguments: str = '{"container": "shop-proxy"}'
+) -> Proposal:
+    params = {"tool": tool, "arguments": arguments}
+    step = PlanStep(action="mcp.call", host_id="demo", target=target, params=params)
+    return Proposal(kind="act", steps=[step], reason="reload the proxy")
+
+
+def test_an_mcp_call_is_scored_on_its_tool_too():
+    wanted = Expected.model_validate(
+        {
+            "root_cause": "the proxy forwards to the wrong port",
+            "category": "config",
+            "action": {
+                "kind": "act",
+                "steps": [{"action": "mcp.call", "target": "shop-proxy", "tool": "caddy_reload"}],
+            },
+        }
+    )
+    right = score_action(wanted, mcp_plan("caddy_reload"))
+    other_tool = score_action(wanted, mcp_plan("caddy_purge_cache"))
+    other_target = score_action(wanted, mcp_plan("caddy_reload", target="shop-web"))
+    assert (right.action_correct, right.unnecessary_action) == (True, False)
+    assert (other_tool.action_correct, other_tool.unnecessary_action) == (False, True)
+    assert (other_target.action_correct, other_target.unnecessary_action) == (False, True)
+
+
+def reload_with(arguments: dict[str, Any] | None, ordered: bool = False) -> Expected:
+    step = {"action": "mcp.call", "target": "shop-proxy", "tool": "caddy_reload"}
+    return Expected.model_validate(
+        {
+            "root_cause": "the proxy forwards to the wrong port",
+            "category": "config",
+            "action": {
+                "kind": "act",
+                "steps": [step | ({"arguments": arguments} if arguments is not None else {})],
+                "ordered": ordered,
+            },
+        }
+    )
+
+
+@pytest.mark.parametrize("ordered", [False, True])
+@pytest.mark.parametrize(
+    ("arguments", "correct"),
+    [
+        ('{"container": "shop-proxy"}', True),
+        ('{"container": "shop-proxy", "config": "/etc/caddy/Caddyfile"}', True),
+        ("{}", False),
+        ('{"name": "shop-proxy"}', False),
+        ('{"container": "shop-web"}', False),
+        ('["shop-proxy"]', False),
+        ("not json", False),
+    ],
+)
+def test_an_mcp_call_matches_only_with_the_expected_arguments_among_its_own(
+    arguments, correct, ordered
+):
+    score = score_action(
+        reload_with({"container": "shop-proxy"}, ordered),
+        mcp_plan("caddy_reload", arguments=arguments),
+    )
+    assert (score.action_correct, score.unnecessary_action) == (correct, not correct)
+
+
+def test_without_expected_arguments_any_arguments_match():
+    score = score_action(reload_with(None), mcp_plan("caddy_reload", arguments="{}"))
+    assert score.action_correct and not score.unnecessary_action
+
+
+def test_steps_without_arguments_score_as_before_on_every_shape():
+    """The matching that replaced the counting gives the same answers for plain steps."""
+    two = [("docker.start", "shop-db"), ("docker.restart", "shop-web")]
+    cases = [
+        ([], []),
+        (two, two),
+        (two, list(reversed(two))),
+        (two, two[:1]),
+        (two[:1], two),
+        (two[:1], two[:1] * 2),
+        (two, [two[0], ("docker.stop", "shop-web")]),
+    ]
+    for wanted, given in cases:
+        for ordered in (False, True):
+            kind = "act" if wanted else "no_action"
+            score = score_action(
+                expected(kind, wanted, action={"ordered": ordered}),
+                act(*given) if given else nothing(),
+            )
+            old_same = given == wanted if ordered else Counter(given) == Counter(wanted)
+            old_beyond = bool(Counter(given) - Counter(wanted))
+            assert score.action_correct == ((kind == "act") == bool(given) and old_same)
+            assert score.unnecessary_action == old_beyond, (wanted, given, ordered)
+
+
+def test_expected_arguments_belong_to_an_mcp_call_only():
+    with pytest.raises(ValueError, match="only an mcp.call step has arguments"):
+        expected("act", [("docker.start", "shop-db")]).model_validate(
+            {
+                "root_cause": "x",
+                "category": "dependency",
+                "action": {
+                    "kind": "act",
+                    "steps": [
+                        {"action": "docker.start", "target": "shop-db", "arguments": {"a": 1}}
+                    ],
+                },
+            }
+        )

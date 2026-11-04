@@ -2,14 +2,15 @@
 run a step twice.
 
 Before the first step every target is read again and compared with the snapshot taken when the
-human was asked: a target that is gone, recreated (another container id) or started again
-(another start time with the same restart count) since then makes the plan stale, and so does an
-approval that is not the one this run consumed. A start time moved by a rising restart count is a
-restart policy repeating the failure the human approved a fix for, so it is not stale. Every step
-then goes through its act tool's own checks (the grant against the stored plan, and the target
-against the guard's rules). A stale or refused plan runs nothing: the
-grant is voided, a `notice` says why, and the run goes back to Propose for a new plan and a new
-question, at most `Budgets.replans` times (`graph/replan.py`).
+human was asked: a target that is gone, recreated (another container id, or for a Coolify
+application another uuid behind the same name) or started again (another start time with the
+same restart count) since then makes the plan stale, and so does an approval that is not the one
+this run consumed. A start time moved by a rising restart count is a restart policy repeating
+the failure the human approved a fix for, so it is not stale. Every step then goes through its
+act tool's own checks (the grant against the stored plan, and the target against the guard's
+rules). A stale or refused plan runs nothing: the grant is voided, a `notice` says why, and the
+run goes back to Propose for a new plan and a new question, at most `Budgets.replans` times
+(`graph/replan.py`).
 
 The steps run in order. Each is written to the action log `started` before its act tool runs and
 `done` or `failed` after it; a failed step stops the plan and the steps after it are `skipped`.
@@ -34,7 +35,8 @@ from typing import Literal
 from bleep.graph.deps import GraphDeps
 from bleep.graph.replan import replan
 from bleep.graph.state import IncidentState, Node
-from bleep.guard.grant import GrantInvalid
+from bleep.graph.targets import read_app_uuid
+from bleep.guard.grant import GrantInvalid, binds_app, step_snapshot
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import (
@@ -73,12 +75,6 @@ def _what(index: int, step: PlanStep) -> str:
     return f"step {index + 1} ({step.action} {step.target} on {step.host_id})"
 
 
-def _snapshot(plan: ApprovalRecord, step: PlanStep) -> TargetSnapshot | None:
-    return next(
-        (s for s in plan.snapshots if (s.host_id, s.target) == (step.host_id, step.target)), None
-    )
-
-
 def _plan_key(plan: ApprovalRecord) -> str:
     return f"{plan.plan_hash}:{plan.id}"
 
@@ -98,31 +94,57 @@ async def _read(deps: GraphDeps, host_id: str, ref: str) -> tuple[ContainerSumma
 async def _changes(
     deps: GraphDeps, plan: ApprovalRecord, steps: list[PlanStep], touched: set[tuple[str, str]]
 ) -> list[str]:
-    """One line per Docker target of `steps` that is not as it was approved.
+    """One line per target of `steps` that is not as it was approved.
 
-    A target in `touched` was already acted on by an earlier step of this plan, so its start
+    A Coolify application must still be the one its name resolved to (#139); a container, the
+    target of a Docker step or an `mcp.call` alike, must have the same id and start time. A
+    container in `touched` was already acted on by an earlier step of this plan, so its start
     time is expected to have moved and only its id is compared.
     """
     changes: list[str] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, bool]] = set()
     for step in steps:
-        key = (step.host_id, step.target)
-        if not step.action.startswith("docker.") or key in seen:
+        key = (step.host_id, step.target, binds_app(step))
+        if key in seen:
             continue
         seen.add(key)
         where = f"{step.target} on {step.host_id}"
-        snapshot = _snapshot(plan, step)
+        snapshot = step_snapshot(plan.snapshots, step)
         if snapshot is None:
             changes.append(f"{where} was not read when the plan was approved")
-            continue
-        summary, why = await _read(deps, step.host_id, step.target)
-        if summary is None:
-            changes.append(f"{where} {why}")
-        elif summary.id != snapshot.container_id:
-            changes.append(f"{where} was recreated")
-        elif key not in touched and _started_again(snapshot, summary):
-            changes.append(f"{where} was started again")
+        elif binds_app(step):
+            changes += await _app_changes(deps, step, snapshot, where)
+        else:
+            changes += await _container_changes(deps, step, snapshot, where, touched)
     return changes
+
+
+async def _app_changes(
+    deps: GraphDeps, step: PlanStep, snapshot: TargetSnapshot, where: str
+) -> list[str]:
+    uuid, why = await read_app_uuid(deps.registry, step.host_id, step.target)
+    if uuid is None:
+        return [f"{where} {why}"]
+    if uuid != snapshot.app_uuid:
+        return [f"{where} is another Coolify application now (it was deleted and recreated)"]
+    return []
+
+
+async def _container_changes(
+    deps: GraphDeps,
+    step: PlanStep,
+    snapshot: TargetSnapshot,
+    where: str,
+    touched: set[tuple[str, str]],
+) -> list[str]:
+    summary, why = await _read(deps, step.host_id, step.target)
+    if summary is None:
+        return [f"{where} {why}"]
+    if summary.id != snapshot.container_id:
+        return [f"{where} was recreated"]
+    if (step.host_id, step.target) not in touched and _started_again(snapshot, summary):
+        return [f"{where} was started again"]
+    return []
 
 
 def _started_again(snapshot: TargetSnapshot, summary: ContainerSummary) -> bool:
@@ -232,7 +254,7 @@ def make(deps: GraphDeps) -> Node:
         """A step left `started` by a crash: read its target, never run it again."""
         incident_id = state["incident_id"]
         since = row.result.started_at
-        snapshot = _snapshot(plan, step)
+        snapshot = step_snapshot(plan.snapshots, step)
         if not step.action.startswith("docker."):
             # A plugin step has no container to read back; whether it ran is the plugin's to say.
             detail = CONFIRM_PLUGIN.get(step.action, CONFIRM_OTHER)
@@ -249,7 +271,7 @@ def make(deps: GraphDeps) -> Node:
             await publish(incident_id, step, "failed")
             return result
         summary, why = await _read(
-            deps, step.host_id, snapshot.container_id if snapshot else step.target
+            deps, step.host_id, (snapshot and snapshot.container_id) or step.target
         )
         if summary is not None and snapshot is not None and _took_effect(step, summary, snapshot):
             word = DONE_WORD.get(step.action, "ran")

@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 
 from pydantic import SecretStr
 
-from bleep.guard.grant import GrantInvalid, verify_step
+from bleep.guard.grant import GrantInvalid, step_snapshot, verify_step
 from bleep.guard.log import GuardLogger
 from bleep.guard.plan_check import check_target
 from bleep.hosts.discovery import is_self
@@ -149,11 +149,8 @@ class ActTool:
         if violations:
             raise StepRefused("; ".join(v.text for v in violations))
 
-        snapshot = next(
-            (s for s in plan.snapshots if (s.host_id, s.target) == (step.host_id, step.target)),
-            None,
-        )
-        if snapshot is None:
+        snapshot = step_snapshot(plan.snapshots, step)
+        if snapshot is None or snapshot.container_id is None:
             raise StepRefused(f"{what}: the approved plan holds no snapshot of this target")
         approved = registry.container(step.host_id, snapshot.container_id)
         if approved is not None and is_self(approved.labels):
