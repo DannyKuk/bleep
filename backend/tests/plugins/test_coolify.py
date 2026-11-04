@@ -25,7 +25,13 @@ from bleep.plugins.coolify.plugin import (
     check_url,
 )
 from bleep.plugins.registry import PluginError, PluginRegistry
-from bleep.schemas.graph import ApprovalGrant, ApprovalRecord, PlanStep, Proposal
+from bleep.schemas.graph import (
+    ApprovalGrant,
+    ApprovalRecord,
+    PlanStep,
+    Proposal,
+    TargetSnapshot,
+)
 from bleep.tools.docker_act import StepRefused
 from bleep.tools.registry import ToolContext
 from fakes import FakeEngine
@@ -189,13 +195,17 @@ def step(action: str = "coolify.redeploy", target: str = "shop", **params: str) 
     return PlanStep(action=action, host_id="a", target=target, params=params)  # type: ignore[arg-type]
 
 
-def plan(*steps: PlanStep, incident_id: str = "inc_1") -> ApprovalRecord:
+def plan(*steps: PlanStep, incident_id: str = "inc_1", uuid: str = SHOP) -> ApprovalRecord:
+    """An approved plan whose every target the Approval node bound to the application `uuid`."""
     proposal = Proposal(kind="act", steps=list(steps or (step(),)), reason="the release is broken")
+    targets = dict.fromkeys(s.target for s in proposal.steps)
+    snapshots = [TargetSnapshot(host_id="a", target=t, app_uuid=uuid) for t in targets]
     return ApprovalRecord(
         id="ap_1",
         incident_id=incident_id,
-        plan_hash=plan_hash(proposal, []),
+        plan_hash=plan_hash(proposal, snapshots),
         proposal=proposal,
+        snapshots=snapshots,
         requested_at=T0,
     )
 
@@ -522,6 +532,42 @@ async def test_an_application_this_host_does_not_run_is_refused(env):
         await env.act(record, grant_for(record))
 
     assert env.coolify.requests == []
+
+
+async def test_an_application_recreated_since_the_approval_is_not_acted_on(tmp_path):
+    # `shop` was deleted and created again in Coolify: same name, new uuid, new containers.
+    recreated = FakeEngine("a", [app_box("new0shop-1", uuid="new0uuid"), box("db-1", "db")])
+    env = await make_env(tmp_path, recreated)
+    for action, params in (
+        ("coolify.redeploy", {}),
+        ("coolify.set_env", {"key": "A", "value": "1"}),
+    ):
+        record = plan(step(action=action, **params))
+
+        with pytest.raises(StepRefused) as raised:
+            await env.act(record, grant_for(record))
+
+        assert "names the Coolify application new0uuid now, not " + SHOP in str(raised.value)
+        assert "recreated or replaced since the approval" in str(raised.value)
+    assert env.coolify.requests == []
+    assert [kind for _, kind, _ in env.guard_log.records] == ["blocked_action"] * 2
+
+
+async def test_a_plan_approved_without_binding_the_application_is_refused(env):
+    proposal = Proposal(kind="act", steps=[step()], reason="approved before #139")
+    record = plan().model_copy(
+        update={"proposal": proposal, "snapshots": [], "plan_hash": plan_hash(proposal, [])}
+    )
+
+    with pytest.raises(StepRefused, match="holds no snapshot of this application"):
+        await env.act(record, grant_for(record))
+
+    assert env.coolify.requests == []
+
+
+def test_the_plan_hash_binds_the_application_uuid():
+    assert plan().plan_hash == plan().plan_hash
+    assert plan(uuid="new0uuid").plan_hash != plan().plan_hash
 
 
 @pytest.mark.parametrize(

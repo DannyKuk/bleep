@@ -834,8 +834,8 @@ class Graph:
         incident_id = (await self.env.open(subject)).id
         proposal = Proposal(kind="act", steps=list(steps), reason="the monitor flaps")
         snapshots = []
-        for step in steps:  # as Approval does: only Docker targets are read
-            if step.action.startswith("docker."):
+        for step in steps:  # as Approval does: Docker and MCP targets are containers (#139)
+            if not step.action.startswith("coolify."):
                 summary = (await self.env.engine.inspect(step.target)).summary
                 snapshots.append(
                     TargetSnapshot(

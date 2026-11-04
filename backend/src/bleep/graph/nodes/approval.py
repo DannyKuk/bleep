@@ -1,9 +1,9 @@
 """Approval: put the plan to the human and wait for a yes, a no or an instruction.
 
-The node reads each target container (its id, start time, restart count and state, so Execute
-can tell a stale plan),
-stores the plan as a pending approval, publishes `approval_requested`, notifies, and calls
-`interrupt()` with the approval's id. `IncidentRunner.resume` continues it once a channel has won
+The node reads each target (a container's id, start time, restart count and state, or the
+uuid a Coolify application name resolves to, so Execute can tell a stale plan), stores the plan
+as a pending approval, publishes `approval_requested`, notifies, and calls `interrupt()` with
+the approval's id. `IncidentRunner.resume` continues it once a channel has won
 the approval, and only if the run is waiting on that same approval.
 
 A node that interrupts runs again from its first line on resume, so it asks only when the
@@ -22,6 +22,8 @@ from langgraph.types import interrupt
 from bleep.graph.deps import GraphDeps
 from bleep.graph.replan import replan
 from bleep.graph.state import IncidentState, Node
+from bleep.graph.targets import read_app_uuid
+from bleep.guard.grant import binds_app
 from bleep.guard.redact import redacted_proposal
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.graph import ApprovalRecord, Decision, Proposal, TargetSnapshot
@@ -44,15 +46,29 @@ def _why(error: Exception) -> str:
 
 
 async def _snapshots(deps: GraphDeps, proposal: Proposal) -> tuple[list[TargetSnapshot], list[str]]:
-    """Each Docker target as it is now, and a line for each one that cannot be read."""
+    """Each target as it is now, and a line for each one that cannot be read.
+
+    A Coolify step's target is bound to the application uuid it names now; every other step's
+    target (Docker and `mcp.call` alike) to the container it names now, with its start time,
+    restart count and state.
+    """
     snapshots: list[TargetSnapshot] = []
     unread: list[str] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, bool]] = set()
     for step in proposal.steps:
-        key = (step.host_id, step.target)
-        if not step.action.startswith("docker.") or key in seen:
+        key = (step.host_id, step.target, binds_app(step))
+        if key in seen:
             continue
         seen.add(key)
+        if binds_app(step):
+            uuid, why = await read_app_uuid(deps.registry, step.host_id, step.target)
+            if uuid is None:
+                unread.append(f"{step.target} on {step.host_id}: {why}")
+            else:
+                snapshots.append(
+                    TargetSnapshot(host_id=step.host_id, target=step.target, app_uuid=uuid)
+                )
+            continue
         try:
             summary = (await deps.registry.engine(step.host_id).inspect(step.target)).summary
         except (ContainerNotFound, EngineUnavailable, KeyError) as error:
