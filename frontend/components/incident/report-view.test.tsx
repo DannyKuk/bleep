@@ -114,4 +114,41 @@ describe("ReportView", () => {
       unmount();
     }
   });
+
+  it.each([
+    ["done", "text-ok"],
+    ["failed", "text-down"],
+    ["refused", "text-down"],
+    ["skipped", "text-ink-2"],
+    ["weird", "text-ink-2"],
+  ])("marks a step ending %s", (status, tone) => {
+    render(
+      <ReportView
+        report={report({ action_taken: `docker.start shop-web on demo: ${status}` })}
+        outcome="unverified"
+      />,
+    );
+    const row = within(screen.getByRole("list", { name: "Steps" })).getByRole("listitem");
+    expect(row).toHaveTextContent(`docker.start shop-web on demo: ${status}`);
+    expect(row.querySelector("svg")).toHaveClass(tone);
+  });
+
+  it("shows each step of a mixed run on its own row, never a check for a failed one", () => {
+    render(
+      <ReportView
+        report={report({
+          action_taken:
+            "docker.restart shop-web on demo: failed; docker.start shop-db on demo: skipped",
+        })}
+        outcome="unverified"
+      />,
+    );
+    const rows = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "docker.restart shop-web on demo: failed",
+      "docker.start shop-db on demo: skipped",
+    ]);
+    expect(rows[0].querySelector("svg")).toHaveClass("text-down");
+    expect(rows[1].querySelector("svg")).toHaveClass("text-ink-2");
+  });
 });

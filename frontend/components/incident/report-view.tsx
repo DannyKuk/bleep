@@ -36,11 +36,35 @@ function Section({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-/** The mark before the action: a check when it ran, a cross when it failed, a dash for nothing. */
-function ActionMark({ action }: { action: string | null }) {
-  if (action === null) return <Minus aria-hidden className="mt-1 size-4 shrink-0 text-ink-2" />;
-  if (/: failed$/.test(action)) return <X aria-hidden className="mt-1 size-4 shrink-0 text-down" />;
-  return <Check aria-hidden className="mt-1 size-4 shrink-0 text-ok" />;
+/** The mark before a step: a check only when it says done, a cross when it failed or was refused. */
+function StepMark({ step }: { step: string }) {
+  if (/: done$/.test(step)) return <Check aria-hidden className="mt-1 size-4 shrink-0 text-ok" />;
+  if (/: (failed|refused)$/.test(step)) {
+    return <X aria-hidden className="mt-1 size-4 shrink-0 text-down" />;
+  }
+  return <Minus aria-hidden className="mt-1 size-4 shrink-0 text-ink-2" />;
+}
+
+/** One row per step: the backend joins the steps with "; " (`action_taken` in the Report node). */
+function Steps({ action }: { action: string | null }) {
+  if (action === null) {
+    return (
+      <p className="flex items-start gap-2">
+        <Minus aria-hidden className="mt-1 size-4 shrink-0 text-ink-2" />
+        <span className="min-w-0">Nothing ran.</span>
+      </p>
+    );
+  }
+  return (
+    <ul aria-label="Steps" className="flex flex-col gap-1">
+      {action.split("; ").map((step, index) => (
+        <li key={index} className="flex items-start gap-2">
+          <StepMark step={step} />
+          <span className="min-w-0">{step}</span>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 /**
@@ -108,10 +132,7 @@ export function ReportView({
         <p>{report.cause}</p>
       </Section>
       <Section label="What I did">
-        <p className="flex items-start gap-2">
-          <ActionMark action={report.action_taken} />
-          <span className="min-w-0">{report.action_taken ?? "Nothing ran."}</span>
-        </p>
+        <Steps action={report.action_taken} />
       </Section>
       {noAction && report.follow_ups.length > 0 && (
         <Section label="What you can do">
