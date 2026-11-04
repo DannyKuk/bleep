@@ -405,6 +405,7 @@ async def test_a_working_container_no_signal_names_is_refused_and_the_model_trie
     (refused,) = blocked(env)
     assert "shop-proxy-1 is running with no health check" in refused
     assert "it is not one of this incident's containers" in prompt(env, call=1)
+    assert "refus" not in env.models.model.seen[1][-2].text  # its own answer, as the model wrote
 
 
 async def test_a_working_container_the_human_names_in_an_instruction_may_be_acted_on(tmp_path):

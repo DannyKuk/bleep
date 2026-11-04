@@ -103,7 +103,7 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
         return proposal
     _record(deps, incident_id, violations)
     messages += [
-        AIMessage(proposal.model_dump_json()),
+        AIMessage(proposal.model_dump_json(include=set(ProposalDraft.model_fields))),
         HumanMessage(prompts.load("graph/propose_retry", violations=_bullets(violations))),
     ]
     retry = _without_replaced(await _ask(deps, incident_id, messages), deps.registry)
