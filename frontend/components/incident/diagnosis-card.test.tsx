@@ -39,6 +39,7 @@ describe("DiagnosisCard", () => {
     expect(more).toHaveAttribute("open");
     expect(screen.getByText("worker struggles as well.")).toBeInTheDocument();
     expect(screen.getByText("RestartPolicy is no, exit code 137")).toBeInTheDocument();
+    expect(screen.getByText("shop")).toHaveClass("font-mono");
   });
 
   it("splits sentences only at a stop followed by a space", () => {

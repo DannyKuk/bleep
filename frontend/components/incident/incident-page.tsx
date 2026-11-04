@@ -10,7 +10,7 @@ import { IncidentHero, PhoneIncidentHero } from "@/components/incident/incident-
 import { planRun } from "@/components/incident/plan-run";
 import { progressSteps } from "@/components/incident/progress";
 import { ProgressBar } from "@/components/incident/progress-bar";
-import { planTitle, ProposalCard } from "@/components/incident/proposal-card";
+import { barApproval, planTitle, ProposalCard } from "@/components/incident/proposal-card";
 import { ReasoningStream, toolSteps } from "@/components/incident/reasoning-stream";
 import { ReportView } from "@/components/incident/report-view";
 import { Timeline } from "@/components/incident/timeline";
@@ -113,10 +113,11 @@ export function IncidentPage({ id }: { id: string }) {
   const reload = () => setReloads((count) => count + 1);
   const vote = (target: FeedbackTarget) => feedback.find((given) => given.target === target);
   const ended = ENDED.has(incident.status);
-  // Any step that ran belongs to an earlier plan when the one on screen was answered no.
-  const ranBefore = events.some(
-    ({ kind, payload }) => kind === "action" && payload.status !== "skipped",
-  );
+  // Known only once the history has loaded and the stream is open; until then a no says only that
+  // this plan did not run, which is true either way.
+  const nothingRanBefore =
+    status === "live" &&
+    !events.some(({ kind, payload }) => kind === "action" && payload.status !== "skipped");
 
   const refreshFailed = error && (
     <p role="alert" className="flex items-center gap-2 text-sm font-bold text-warn">
@@ -141,7 +142,7 @@ export function IncidentPage({ id }: { id: string }) {
             run={planRun(events)}
             status={incident.status}
             pinned={phone}
-            ranBefore={ranBefore}
+            nothingRanBefore={nothingRanBefore}
           />
           {proposal && (
             <FeedbackBar
@@ -175,44 +176,53 @@ export function IncidentPage({ id }: { id: string }) {
     </Panel>
   );
 
-  if (phone) {
-    const looks = toolSteps(events).length;
-    return (
-      // Room under the last card for the decision bar pinned over the bottom of the screen.
-      <div className={cn("flex flex-col gap-3.5", approval && "pb-52")}>
-        <PhoneIncidentHero detail={data} />
-        {refreshFailed}
-        {reportPanel}
-        {foundPanel}
-        {planPanel}
-        <Folded title="How I got there" note={looks === 1 ? "1 look" : `${looks} looks`}>
-          <ReasoningStream events={events} />
-        </Folded>
-        <Folded title="Timeline">
-          <Timeline events={events} incident={incident} />
-        </Folded>
-      </div>
-    );
-  }
-
+  // One tree for both layouts, with the plan card at the same place in it: crossing the
+  // breakpoint (a tablet turned) moves the decision bar instead of mounting a new one, so an
+  // answer in flight, the lock after it and a typed instruction all survive.
+  const looks = toolSteps(events).length;
   return (
-    <div className="flex flex-col gap-6">
-      <IncidentHero detail={data} stream={status} />
+    <div
+      className={cn(
+        "flex flex-col",
+        phone ? "gap-3.5" : "gap-6",
+        // Room under the last card for the decision bar pinned over the bottom of the screen.
+        phone && barApproval(proposal, approval) && "pb-52",
+      )}
+    >
+      {phone ? <PhoneIncidentHero detail={data} /> : <IncidentHero detail={data} stream={status} />}
       {refreshFailed}
-      <ProgressBar steps={progressSteps(events, incident.status)} />
-
-      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="flex min-w-0 flex-col gap-5">
+      {!phone && <ProgressBar steps={progressSteps(events, incident.status)} />}
+      <div
+        className={cn(
+          phone
+            ? "flex flex-col gap-3.5"
+            : "grid grid-cols-[minmax(0,1fr)_320px] items-start gap-5",
+        )}
+      >
+        <div className={cn("flex min-w-0 flex-col", phone ? "gap-3.5" : "gap-5")}>
           {reportPanel}
+          {phone && foundPanel}
           {planPanel}
-          {foundPanel}
-          <Panel title="How I got there">
-            <ReasoningStream events={events} />
-          </Panel>
+          {!phone && foundPanel}
+          {phone ? (
+            <Folded title="How I got there" note={looks === 1 ? "1 look" : `${looks} looks`}>
+              <ReasoningStream events={events} />
+            </Folded>
+          ) : (
+            <Panel title="How I got there">
+              <ReasoningStream events={events} />
+            </Panel>
+          )}
         </div>
-        <Panel title="Timeline" className="lg:sticky lg:top-6">
-          <Timeline events={events} incident={incident} />
-        </Panel>
+        {phone ? (
+          <Folded title="Timeline">
+            <Timeline events={events} incident={incident} />
+          </Folded>
+        ) : (
+          <Panel title="Timeline" className="sticky top-6">
+            <Timeline events={events} incident={incident} />
+          </Panel>
+        )}
       </div>
     </div>
   );

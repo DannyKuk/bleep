@@ -75,7 +75,8 @@ export function DiagnosisCard({
 
 function ShortDiagnosis({ diagnosis }: { diagnosis: Diagnosis }) {
   const [lead, rest] = firstSentences(diagnosis.root_cause, 2);
-  const more = rest !== "" || diagnosis.evidence.length > 0;
+  const affected = diagnosis.affected_services;
+  const more = rest !== "" || diagnosis.evidence.length > 0 || affected.length > 0;
   return (
     <div className="flex flex-col gap-2.5">
       <p className="text-sm font-extrabold text-ink-2">
@@ -114,6 +115,11 @@ function ShortDiagnosis({ diagnosis }: { diagnosis: Diagnosis }) {
                   </li>
                 ))}
               </ul>
+            )}
+            {affected.length > 0 && (
+              <p className="text-sm text-ink-2">
+                Affects <code className="font-mono">{affected.join(", ")}</code>
+              </p>
             )}
           </div>
         </details>

@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, Loader2, type LucideIcon, MessageSquare, TriangleAlert, X } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { isRefused } from "@/components/incident/headline";
 import { useKeyboardInset } from "@/components/incident/use-phone";
@@ -48,7 +48,7 @@ function answerLine(
   decision: Decision,
   refused: boolean,
   status: IncidentStatus | undefined,
-  ranBefore: boolean,
+  nothingRanBefore: boolean,
 ): AnswerLine {
   const where = `on ${CHANNEL[decision.via]}, ${formatDateTime(decision.at)}`;
   if (decision.kind === "approve") {
@@ -61,7 +61,7 @@ function answerLine(
   }
   if (decision.kind === "reject") {
     // An earlier plan of the same incident may have run before this one was put to the human.
-    const nothing = ranBefore ? "This plan did not run." : "Nothing ran.";
+    const nothing = nothingRanBefore ? "Nothing ran." : "This plan did not run.";
     const who = refused ? "You let it go" : "You said no";
     return { text: `${who} ${where}. ${nothing}`, icon: X, tone: "text-ink-2" };
   }
@@ -89,7 +89,7 @@ export function DecisionBar({
   onDecided,
   pinned = false,
   status,
-  ranBefore = false,
+  nothingRanBefore = false,
 }: {
   incidentId: string;
   approval: ApprovalView;
@@ -98,8 +98,9 @@ export function DecisionBar({
   pinned?: boolean;
   /** The incident's status, for what a yes has led to (running, checking, fixed and checked). */
   status?: IncidentStatus;
-  /** Some step of an earlier plan of this incident ran, so a "no" cannot say nothing ran. */
-  ranBefore?: boolean;
+  /** Known that no step of any plan of this incident ran, so a no may say "Nothing ran."; else
+   * it says only that this plan did not run. */
+  nothingRanBefore?: boolean;
 }) {
   const [sending, setSending] = useState<DecisionKind | null>(null);
   const [mine, setMine] = useState<Decision | null>(null);
@@ -140,6 +141,14 @@ export function DecisionBar({
   }
 
   const keyboard = useKeyboardInset(pinned);
+  const answered = decision !== null || conflict !== null;
+  // The pinned bar drops its buttons once answered; focus moves to the line that replaced them
+  // instead of falling back to the page, when the answer was given here.
+  const answeredHere = pinned && (mine !== null || conflict !== null);
+  const answerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (answeredHere) answerRef.current?.focus();
+  }, [answeredHere]);
 
   const spinner = (kind: DecisionKind) =>
     sending === kind ? <Loader2 aria-hidden className="motion-safe:animate-spin" /> : null;
@@ -245,7 +254,7 @@ export function DecisionBar({
       Not sent: {failure}
     </p>
   );
-  const answer = decision && answerLine(decision, refused, status, ranBefore);
+  const answer = decision && answerLine(decision, refused, status, nothingRanBefore);
   const answerText = answer && (
     <p
       role="status"
@@ -273,15 +282,20 @@ export function DecisionBar({
     );
   }
 
-  const answered = decision !== null || conflict !== null;
   return (
     <div
       data-pinned
+      role="region"
+      aria-label="Your answer"
       style={{ bottom: keyboard }}
-      className="fixed inset-x-0 bottom-0 z-40 flex flex-col gap-2.5 rounded-t-[26px] bg-surface px-4 pt-3 pb-[max(env(safe-area-inset-bottom),16px)] shadow-[0_-6px_24px_rgba(20,19,42,0.08)] dark:shadow-[0_-6px_24px_rgba(0,0,0,0.35)] print:hidden"
+      className="fixed inset-x-0 bottom-0 z-40 flex flex-col gap-2.5 rounded-t-[26px] bg-surface pt-3 pr-[max(env(safe-area-inset-right),16px)] pb-[max(env(safe-area-inset-bottom),16px)] pl-[max(env(safe-area-inset-left),16px)] shadow-[0_-6px_24px_rgba(20,19,42,0.08)] dark:shadow-[0_-6px_24px_rgba(0,0,0,0.35)] print:hidden"
     >
       {answered ? (
-        <div className="flex min-h-14 flex-col justify-center gap-1">
+        <div
+          ref={answerRef}
+          tabIndex={-1}
+          className="flex min-h-14 flex-col justify-center gap-1 rounded-row focus-visible:outline-none"
+        >
           {conflictLine}
           {answerText}
         </div>

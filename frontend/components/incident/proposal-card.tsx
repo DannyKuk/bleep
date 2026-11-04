@@ -45,6 +45,15 @@ function shownPlan(proposal: Proposal | null, approval: ApprovalView | null): Pr
   return approval?.status === "pending" ? approval.proposal : (proposal ?? approval?.proposal);
 }
 
+/** The approval the decision bar answers, when the card shows one: the approval's own plan. */
+export function barApproval(
+  proposal: Proposal | null,
+  approval: ApprovalView | null,
+): ApprovalView | null {
+  const shown = shownPlan(proposal, approval);
+  return approval && shown && samePlan(approval.proposal, shown) ? approval : null;
+}
+
 /** The plan card's title for where the run is. */
 export function planTitle({
   incident,
@@ -247,7 +256,7 @@ export function ProposalCard({
   run,
   status,
   pinned = false,
-  ranBefore = false,
+  nothingRanBefore = false,
 }: {
   incidentId: string;
   proposal: Proposal | null;
@@ -257,12 +266,12 @@ export function ProposalCard({
   status?: IncidentStatus;
   /** Pin the decision bar to the bottom of a phone's screen. */
   pinned?: boolean;
-  /** Some step of an earlier plan ran (see `DecisionBar`). */
-  ranBefore?: boolean;
+  /** No step of any plan of this incident ran (see `DecisionBar`). */
+  nothingRanBefore?: boolean;
 }) {
   const shown = shownPlan(proposal, approval);
   if (!shown) return null;
-  const forShown = approval !== null && samePlan(approval.proposal, shown);
+  const forShown = barApproval(proposal, approval) !== null;
   return (
     <div className="flex flex-col gap-5">
       <Plan proposal={shown} run={run} status={status} />
@@ -274,7 +283,7 @@ export function ProposalCard({
           onDecided={onDecided}
           pinned={pinned}
           status={status}
-          ranBefore={ranBefore}
+          nothingRanBefore={nothingRanBefore}
         />
       )}
       {approval && !forShown && approval.decision && (

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono, Nunito } from "next/font/google";
 
 import "./globals.css";
@@ -21,6 +21,10 @@ export const metadata: Metadata = {
   description: "On-call agent for Docker hosts.",
 };
 
+// Lets the page draw under the iPhone's home indicator and notch, so env(safe-area-inset-*) has
+// real values; the body and the phone's pinned decision bar pad by them.
+export const viewport: Viewport = { viewportFit: "cover" };
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     // The inline script sets the `dark` class before React hydrates, which React would otherwise
@@ -33,7 +37,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
-      <body className="min-h-dvh">{children}</body>
+      <body className="min-h-dvh pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
+        {children}
+      </body>
     </html>
   );
 }

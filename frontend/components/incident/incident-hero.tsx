@@ -5,6 +5,7 @@ import { Bleep } from "@/components/bleep/bleep";
 import { headline } from "@/components/incident/headline";
 import { subjectText } from "@/components/incident/incident-list";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Badge } from "@/components/ui/badge";
 import type { IncidentDetail } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
@@ -106,9 +107,9 @@ function Subject({ detail }: { detail: IncidentDetail }) {
 }
 
 /**
- * The phone's top of an incident's page: a small header (back, subject and time), then Bleep at
- * 76 px beside the status pill and the headline. Nothing else, so the plan and its pinned bar
- * come soon.
+ * The phone's top of an incident's page: a small header (back, subject and time, theme), which
+ * stands in for the app's header on a phone (`AppHeader`), then Bleep at 76 px beside the status
+ * pill and the headline. Nothing else, so the plan and its pinned bar come soon.
  */
 export function PhoneIncidentHero({ detail }: { detail: IncidentDetail }) {
   const { incident, diagnosis } = detail;
@@ -122,12 +123,13 @@ export function PhoneIncidentHero({ detail }: { detail: IncidentDetail }) {
         >
           <ArrowLeft aria-hidden className="size-5" />
         </Link>
-        <p className="flex min-w-0 flex-wrap gap-x-1.5 text-xs text-ink-2">
+        <p className="flex min-w-0 flex-1 flex-wrap gap-x-1.5 text-xs text-ink-2">
           <Subject detail={detail} />
           <span className="font-mono">
             · <time dateTime={incident.opened_at}>{formatDateTime(incident.opened_at)}</time>
           </span>
         </p>
+        <ThemeToggle />
       </div>
       <section aria-labelledby="incident-headline" className="flex items-center gap-3.5">
         <Bleep mood={incidentMood(incident.status, diagnosis?.unsure ?? false)} size={76} />

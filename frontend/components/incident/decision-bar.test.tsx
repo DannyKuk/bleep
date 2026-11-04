@@ -189,7 +189,12 @@ describe("DecisionBar pinned to a phone screen", () => {
   it("sits at the bottom of the screen, yes full width at 56 px, the other two side by side", () => {
     const { container } = pinned();
     expect(bar(container)).toHaveClass("fixed", "inset-x-0", "bottom-0");
-    expect(bar(container).className).toContain("safe-area-inset-bottom");
+    expect(bar(container)).toHaveClass(
+      "pb-[max(env(safe-area-inset-bottom),16px)]",
+      "pl-[max(env(safe-area-inset-left),16px)]",
+      "pr-[max(env(safe-area-inset-right),16px)]",
+    );
+    expect(screen.getByRole("region", { name: "Your answer" })).toBe(bar(container));
     const [yes, no, tell] = buttons();
     expect(yes).toHaveClass("h-14", "w-full");
     expect(no).toHaveClass("h-12", "flex-1");
@@ -208,6 +213,9 @@ describe("DecisionBar pinned to a phone screen", () => {
     expect(sent(fetchMock)).toEqual({ approval_id: "appr-1", kind: "approve" });
     expect(await screen.findByRole("status")).toHaveTextContent(/You said yes on the dashboard/);
     expect(within(bar(container)).queryAllByRole("button")).toHaveLength(0);
+    // The tapped button is gone; focus is on the line that replaced it, not lost to the page.
+    expect(bar(container)).toContainElement(document.activeElement as HTMLElement);
+    expect(document.activeElement).toContainElement(screen.getByRole("status"));
     expect(onDecided).toHaveBeenCalled();
 
     const answered = approval({
@@ -237,15 +245,14 @@ describe("DecisionBar pinned to a phone screen", () => {
       status: "rejected",
       decision: decided("reject", "telegram") as never,
     });
-    const { rerender } = pinned({ approval: rejected });
+    const { rerender } = pinned({ approval: rejected, nothingRanBefore: true });
     expect(screen.getByRole("status")).toHaveTextContent(
       /You said no on Telegram, .*\. Nothing ran\./,
     );
     expect(screen.queryByRole("button")).toBeNull();
 
-    rerender(
-      <DecisionBar incidentId="inc-1" approval={rejected} onDecided={vi.fn()} pinned ranBefore />,
-    );
+    // Not known to be true (an earlier plan ran, or the history has not loaded): the weaker claim.
+    rerender(<DecisionBar incidentId="inc-1" approval={rejected} onDecided={vi.fn()} pinned />);
     expect(screen.getByRole("status")).toHaveTextContent("This plan did not run.");
     expect(screen.getByRole("status")).not.toHaveTextContent("Nothing ran.");
   });
