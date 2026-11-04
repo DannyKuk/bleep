@@ -149,11 +149,12 @@ class SettingsStore:
         return _hash(row.model_dump(mode="json"))
 
     async def plugin_view(self, name: str) -> PluginView:
-        """The plugin as the API shows it. It waits for a save in progress, so the settings it
-        shows are stored ones: `set_plugin` puts a change in force before it writes it, and a
-        write that fails restores the plugin. Nothing yields between that wait and the reading of
-        the version and the settings, so the version belongs to the settings; a change made
-        while the health check runs makes the version older than the view, never newer."""
+        """The plugin as the API shows it. It waits for any settings save in progress (they share
+        one lock), so the settings it shows are stored ones: `set_plugin` puts a change in force
+        before it writes it, and a write that fails restores the plugin. Nothing yields between
+        that wait and the reading of the version and the settings, so the version belongs to the
+        settings; a change made while the health check runs makes the version older than the
+        view, never newer."""
         async with self._lock:
             pass
         version = self.plugin_version(name)

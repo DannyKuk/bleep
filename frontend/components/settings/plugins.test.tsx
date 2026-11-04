@@ -90,7 +90,6 @@ describe("PluginList", () => {
       ],
     });
     render(<PluginList plugins={[p]} onSave={vi.fn()} />);
-    expect(screen.getByText("Missing:")).toBeInTheDocument();
     expect(screen.getAllByText("Missing:")).toHaveLength(1);
     expect(screen.getByText("Not set, optional:")).toBeInTheDocument();
   });
