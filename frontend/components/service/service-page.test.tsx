@@ -73,7 +73,7 @@ describe("ServicePage", () => {
       "Never restart postgres without asking.",
     );
     expect(await screen.findByText(/No facts yet/)).toBeInTheDocument();
-    const past = await screen.findByRole("list", { name: "Incidents" });
+    const past = await screen.findByRole("list", { name: "Needs you" });
     expect(past).toHaveTextContent("shop-web-1 died");
 
     const urlsRead = fetchMock.mock.calls.map(([input]) => String(input));
@@ -87,7 +87,7 @@ describe("ServicePage", () => {
 
     expect(await screen.findByText(/does not see this service/)).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Memory" })).toBeInTheDocument();
-    expect(await screen.findByRole("list", { name: "Incidents" })).toBeInTheDocument();
+    expect(await screen.findByRole("list", { name: "Needs you" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Rules" })).not.toBeInTheDocument();
   });
 });
