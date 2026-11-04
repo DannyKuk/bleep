@@ -17,7 +17,7 @@ describe("PluginList", () => {
     );
     expect(within(coolify).getAllByRole("textbox")).toHaveLength(2); // no input for the token
     expect(within(coolify).getByText("env COOLIFY_TOKEN")).toBeInTheDocument();
-    expect(within(coolify).getByText("Missing:")).toBeInTheDocument();
+    expect(within(coolify).getAllByText("Missing:")).toHaveLength(2);
   });
 
   it("saves the settings, leaving an empty optional field to its default", async () => {
@@ -58,7 +58,7 @@ describe("PluginList", () => {
     render(<PluginList plugins={[on]} onSave={onSave} />);
     expect(screen.getByText("Healthy")).toBeInTheDocument();
     expect(screen.getByText("3 applications")).toBeInTheDocument();
-    expect(screen.getByText("Set via")).toBeInTheDocument();
+    expect(screen.getByText("Set:")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save settings" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Switch off" }));
     expect(onSave).toHaveBeenCalledWith("coolify", { enabled: false }, "p1");

@@ -21,18 +21,7 @@ The data (the SQLite database, and the secret file below) lives in the `bleep-da
 
 Only `BLEEP_ADMIN_PASSWORD` and `BLEEP_SECRET` must be in `.env`: the dashboard is behind them. Every other key, token and plugin address can be set in either of two ways.
 
-1. **From the dashboard.** Bleep keeps it in `secrets.json` on the `bleep-data` volume, readable only by the backend's user, never in the database, and uses it from the next call without a restart. The settings page has no inputs for these yet, so for now the dashboard's API does it, with your login (type the value at the prompt, so it stays out of your shell history):
-   ```bash
-   curl -sc bleep.cookies -H 'Content-Type: application/json' \
-     -d '{"password": "<your admin password>"}' http://localhost:3000/api/auth/login
-   read -rs VALUE && export VALUE && python3 -c 'import json, os; print(json.dumps({"value": os.environ["VALUE"]}))' \
-     | curl -sb bleep.cookies -X PUT -H 'Content-Type: application/json' --data-binary @- \
-     http://localhost:3000/api/secrets/OPENROUTER_API_KEY >/dev/null; unset VALUE
-   curl -sb bleep.cookies http://localhost:3000/api/secrets      # each name: set or not, and from where
-   curl -sb bleep.cookies -X DELETE http://localhost:3000/api/secrets/OPENROUTER_API_KEY   # clear it
-   rm bleep.cookies
-   ```
-   The names are the variables in `.env.example`. A value is never shown again, only whether it is set (of a plugin address, only its `https://host`). A plugin's token also needs the `version` of its address as `GET /api/secrets` lists it, sent as `"address_version"` next to `"value"`, so a token is never stored with an address changed after you read it.
+1. **From the dashboard.** Open Settings: the Secrets panel and each plugin's card have a row per key, token and address, with where it is set (the dashboard or `.env`), an input to set it and a button to clear it. Type the value and save: it goes to Bleep's `secrets.json` on the `bleep-data` volume, readable only by the backend's user, never in the database, and is used from the next call without a restart. A value is never shown again, prefilled or sent back: only whether it is set (of a plugin address, only its `https://host`). A value set in `.env` shows as "Set in .env" with no input, since `.env` wins. A new or cleared plugin address clears its token and switches the plugin off; a token has no input until its address is set. An address that no longer passes the checks (the file was edited by hand) shows as "Set, but not valid": enter it again.
 2. **In `.env`**, then restart the backend (`docker compose up -d backend`). A value in `.env` wins over the dashboard's and cannot be changed or cleared from it, which suits Compose files and CI.
 
 **Back up the volume like `.env`:** a copy of `bleep-data` holds these secrets in clear. Details: [Settings](design/settings.md#secrets-from-the-dashboard-135).

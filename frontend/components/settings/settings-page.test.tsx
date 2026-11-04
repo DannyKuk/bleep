@@ -6,6 +6,7 @@ import {
   invalid,
   json,
   plugin,
+  secretViews,
   sentBody,
   settingsView,
   stubBackend,
@@ -33,6 +34,7 @@ function backend(put: Response[] = [], view = settingsView()) {
     "GET /api/services": json([SHOP, WORKER]),
     "GET /api/plugins": json([plugin()]),
     "GET /api/telegram/status": json(telegram()),
+    "GET /api/secrets": json(secretViews()),
     "PUT /api/settings": put,
   });
 }
@@ -42,7 +44,7 @@ async function shopSection() {
 }
 
 describe("SettingsPage", () => {
-  it("shows the host's connection read-only and every secret as set or missing, with no input for one", async () => {
+  it("shows the host's connection read-only, and a key set in .env as set there", async () => {
     backend();
     render(<SettingsPage />);
 
@@ -53,13 +55,11 @@ describe("SettingsPage", () => {
     expect(within(host).getByText("file /keys/id_ed25519")).toBeInTheDocument();
     expect(within(host).queryByDisplayValue("m1.local")).not.toBeInTheDocument();
 
-    expect(await screen.findByText("env OPENROUTER_API_KEY")).toBeInTheDocument();
-    expect(screen.getByText("env TELEGRAM_BOT_TOKEN")).toBeInTheDocument();
-    expect(screen.getByText("env COOLIFY_TOKEN")).toBeInTheDocument();
-    for (const input of screen.getAllByRole("textbox")) {
-      expect(input).not.toHaveAccessibleName(/token|key|password|secret/i);
-    }
-    expect(document.querySelector('input[type="password"]')).toBeNull();
+    expect(await screen.findByText("Set in .env:")).toBeInTheDocument();
+    expect(screen.getByText("env OPENROUTER_API_KEY")).toBeInTheDocument();
+    expect(screen.getByText("env TELEGRAM_BOT_TOKEN").closest("span")).toHaveTextContent(
+      "Set: env TELEGRAM_BOT_TOKEN",
+    );
   });
 
   it("lists a service Bleep sees but has no settings for", async () => {
@@ -329,6 +329,7 @@ describe("SettingsPage", () => {
       "GET /api/services": json({ detail: "the registry is down" }, 503),
       "GET /api/plugins": json([]),
       "GET /api/telegram/status": json(telegram()),
+      "GET /api/secrets": json(secretViews()),
     });
     render(<SettingsPage />);
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -343,6 +344,7 @@ describe("SettingsPage", () => {
       "GET /api/services": json([]),
       "GET /api/plugins": json([]),
       "GET /api/telegram/status": json(telegram()),
+      "GET /api/secrets": json(secretViews()),
     });
     render(<SettingsPage />);
     expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(

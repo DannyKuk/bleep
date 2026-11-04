@@ -9,9 +9,18 @@ import { HostSettings, type KnownService } from "@/components/settings/hosts";
 import { ModelSettings } from "@/components/settings/models";
 import { PluginList } from "@/components/settings/plugins";
 import { TelegramSettings } from "@/components/settings/telegram";
+import { SecretFields } from "@/components/settings/secret-field";
 import { ThresholdsForm } from "@/components/settings/thresholds";
 import { apiFetch } from "@/lib/api";
 import type { ServiceView } from "@/lib/api-types";
+import {
+  ADDRESS_CHANGED,
+  deleteSecret,
+  isAddressChanged,
+  putSecret,
+  type SecretActions,
+  type SecretView,
+} from "@/lib/secrets-api";
 import {
   isStale,
   putPlugin,
@@ -102,7 +111,8 @@ function servicesByHost(services: ServiceView[] | undefined): Map<string, KnownS
 
 /**
  * Everything a person may change from the dashboard, and the state of what they may not: the
- * hosts' connections and every secret stay in the hosts file and the environment.
+ * hosts' connections stay in the hosts file. Secrets are set and cleared here or in the
+ * environment, and shown only as set or missing.
  */
 export function SettingsPage() {
   return (
@@ -117,6 +127,7 @@ function Settings() {
   const services = useLoaded<ServiceView[]>("/api/services");
   const plugins = useLoaded<PluginView[]>("/api/plugins");
   const telegram = useLoaded<TelegramStatus>("/api/telegram/status");
+  const secrets = useLoaded<SecretView[]>("/api/secrets");
   const [notice, setNotice] = useState<string | null>(null);
   const known = servicesByHost(services.data);
 
@@ -153,14 +164,58 @@ function Settings() {
       async () => plugins.set(await apiFetch<PluginView[]>("/api/plugins")),
     );
 
+  /** What a changed secret changes elsewhere: a plugin's state, Telegram's status. A failed
+   * read says so instead of leaving a stale page unmarked. */
+  async function readAgain() {
+    try {
+      const [list, status] = await Promise.all([
+        apiFetch<PluginView[]>("/api/plugins"),
+        apiFetch<TelegramStatus>("/api/telegram/status"),
+      ]);
+      plugins.set(list);
+      telegram.set(status);
+      setNotice(null);
+    } catch (failed) {
+      setNotice(
+        `Saved, but reading the plugins and Telegram again failed (${failed instanceof Error ? failed.message : String(failed)}); reload the page.`,
+      );
+    }
+  }
+
+  /** The value goes straight to the API and is not kept: only the list it answers is. */
+  const secretActions: SecretActions = {
+    set: async (name, value, addressVersion) => {
+      try {
+        secrets.set(await putSecret(name, value, addressVersion));
+      } catch (error) {
+        if (addressVersion === undefined || !isAddressChanged(error)) throw error;
+        try {
+          secrets.set(await apiFetch<SecretView[]>("/api/secrets"));
+        } catch {
+          // the message below tells the person to reload
+        }
+        throw new Error(ADDRESS_CHANGED);
+      }
+      await readAgain();
+    },
+    clear: async (name) => {
+      secrets.set(await deleteSecret(name));
+      await readAgain();
+    },
+  };
+  const views = secrets.data ?? [];
+  const inPlugins = new Set((plugins.data ?? []).flatMap((p) => p.secrets.map((s) => s.env)));
+  const sourceOf = (name: string) => views.find((v) => v.name === name)?.source;
+
   return (
     <div className="flex flex-col gap-4">
       <header className="flex flex-col gap-1">
         <h1 className="text-lg font-semibold">Settings</h1>
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <KeyRound aria-hidden className="size-4 shrink-0" />
-          Secrets stay in the environment and the hosts file; this page shows whether each one is
-          set, never its value. Every change here takes effect at once.
+          Keys, tokens and plugin addresses are set below or in .env; this page shows whether each
+          one is set, never its value. Hosts connect as the hosts file says. Every change here takes
+          effect at once.
         </p>
       </header>
 
@@ -200,19 +255,44 @@ function Settings() {
 
       <Panel title="Plugins">
         <Status loaded={plugins} what="the plugins">
-          {(list) => <PluginList plugins={list} onSave={savePlugin} />}
+          {(list) => (
+            <PluginList
+              plugins={list}
+              onSave={savePlugin}
+              secrets={secrets.data ? { views, actions: secretActions } : undefined}
+            />
+          )}
+        </Status>
+      </Panel>
+
+      <Panel title="Secrets">
+        <Status loaded={secrets} what="the secrets">
+          {(list) => (
+            <SecretFields
+              views={list.filter((v) => !inPlugins.has(v.name))}
+              actions={secretActions}
+            />
+          )}
         </Status>
       </Panel>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel title="Telegram">
           <Status loaded={telegram} what="the Telegram status">
-            {(status) => <TelegramSettings status={status} />}
+            {(status) => (
+              <TelegramSettings status={status} tokenSource={sourceOf(status.token.env ?? "")} />
+            )}
           </Status>
         </Panel>
         <Panel title="Models">
           <Status loaded={settings} what="the models">
-            {(view) => <ModelSettings models={view.models} apiKey={view.model_key} />}
+            {(view) => (
+              <ModelSettings
+                models={view.models}
+                apiKey={view.model_key}
+                keySource={sourceOf(view.model_key.env ?? "")}
+              />
+            )}
           </Status>
         </Panel>
       </div>
