@@ -140,6 +140,17 @@ def test_a_settings_put_carrying_a_secret_is_refused_without_echoing_it(app, bod
     assert app.get("/api/settings").json()["overrides"] == {"hosts": {}}
 
 
+def test_a_body_over_the_size_cap_is_a_413_before_the_secret_check(app, monkeypatch):
+    def never(_body):
+        raise AssertionError("the secret check must not read a body over the cap")
+
+    monkeypatch.setattr("bleep.api.settings.check_body", never)
+    rules = ["never restart postgres without asking"] * 3_000
+    response = put_settings(app, {"hosts": {"a": {"rules": rules}}})
+    assert response.status_code == 413
+    assert "100,000" in response.json()["detail"]
+
+
 def test_an_invalid_body_is_refused_with_reasons_and_without_its_values(app):
     response = put_settings(app, {"budgets": {"daily_cost_usd": "lots-and-lots"}})
     assert response.status_code == 422

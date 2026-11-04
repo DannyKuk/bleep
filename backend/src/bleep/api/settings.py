@@ -9,6 +9,7 @@ back in `If-Match`: 428 without it, 409 with the current version when the overri
 since, so a stale page or a second writer never silently reverts a change.
 """
 
+import json
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Response
@@ -27,6 +28,9 @@ router = APIRouter(tags=["settings"])
 Parts = Annotated[AppParts, Depends(get_parts)]
 
 MODEL_KEY_ENV = "OPENROUTER_API_KEY"  # `ModelSettings.openrouter_api_key`
+# A settings, plugin or prompt body is a few thousand characters (a prompt override at most
+# 20,000); the cap keeps the secret check, which reads the whole body, a small cost.
+MAX_BODY_CHARS = 100_000
 
 
 def settings_view(parts: AppParts) -> SettingsView:
@@ -97,9 +101,16 @@ def stale_response(current: str, what: str) -> JSONResponse:
     )
 
 
+def check_size(body: Any) -> None:
+    """413 for a body over `MAX_BODY_CHARS` as JSON, before the secret check reads all of it."""
+    if len(json.dumps(body, ensure_ascii=False)) > MAX_BODY_CHARS:
+        raise HTTPException(413, f"the body is over {MAX_BODY_CHARS:,} characters")
+
+
 def parse_body[T](body: Any, model: type[T]) -> T:
-    """`body` as `model`, or 422: for a secret anywhere in it, and for an invalid body with the
-    reasons but never the values sent."""
+    """`body` as `model`, or 413 when it is too large, or 422: for a secret anywhere in it, and
+    for an invalid body with the reasons but never the values sent."""
+    check_size(body)
     try:
         check_body(body)
         return model.model_validate(body)  # type: ignore[attr-defined]

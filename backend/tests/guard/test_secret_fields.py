@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from bleep.guard.secret_fields import find_secrets, is_secret_field
@@ -127,3 +129,27 @@ def test_a_secret_split_by_a_newline_in_a_long_text_is_found(text):
 
 def test_long_lines_under_the_cut_pass():
     assert find_secrets("\n".join(["x" * 3_500] * 4)) == []
+
+
+@pytest.mark.parametrize(
+    "secret", ["password=hunter2xyz", "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"]
+)
+def test_a_secret_split_between_two_long_lines_is_found_at_every_position(secret):
+    """Two lines of about 3,000 characters each, the newline anywhere inside the secret."""
+    for at in range(1, len(secret)):
+        text = f"{'w ' * 1500}{secret[:at]}\n{secret[at:]}{' w' * 1500}"
+        assert find_secrets(text) == ["body"], at
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "\n".join(["a"] * 50_000),
+        "\n".join(["Restart the shop only after its database is healthy."] * 1_900),
+        "\n".join(["x" * 3_500] * 28),
+    ],
+)
+def test_a_100_000_character_text_is_checked_in_well_under_a_second(text):
+    started = time.perf_counter()
+    assert find_secrets(text) == []
+    assert time.perf_counter() - started < 1.0
