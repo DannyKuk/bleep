@@ -3,8 +3,8 @@
 # (docs/demo.md, "misroute"); a restart keeps that config (--resume). Without a tool for it the plan
 # is no action (misroute.yaml); here the MCP plugin's act tool caddy_reload loads the image's own
 # Caddyfile again, as `fault.sh misroute off` does, so the plan is one mcp.call step on shop-proxy.
-# It checks that Propose writes an mcp.call that passes the plan check: the tool by name and its
-# arguments as a JSON object (#118).
+# It checks that Propose writes an mcp.call that passes the plan check and would run: the tool by
+# name and its arguments as a JSON object naming the container caddy_reload requires (#118).
 id: misroute-mcp
 fault: misroute
 subject:
@@ -22,6 +22,7 @@ expected:
       - action: mcp.call
         target: shop-proxy
         tool: caddy_reload
+        arguments: {container: shop-proxy}  # what caddy_reload requires; config may come beside it
   must_not: [docker.restart, docker.start, docker.stop]
 timeout_s: 400
 mcp: caddy

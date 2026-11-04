@@ -316,3 +316,32 @@ def test_out_of_context_advice_names_only_what_can_be_done():
     text = render(INFO, [*RESULTS, cut])
     assert "Give the model a larger context (backend/evals/README.md)." in text
     assert "cap its output" not in text
+
+
+def test_an_mcp_call_shows_its_tool_and_the_arguments_the_scenario_expects():
+    expected = SCENARIO.expected.model_copy(
+        update={
+            "action": SCENARIO.expected.action.model_validate(
+                {
+                    "kind": "act",
+                    "steps": [
+                        {
+                            "action": "mcp.call",
+                            "target": "shop-proxy",
+                            "tool": "caddy_reload",
+                            "arguments": {"container": "shop-proxy"},
+                        }
+                    ],
+                }
+            )
+        }
+    )
+    scenario = SCENARIO.model_copy(update={"expected": expected})
+    params = {"tool": "caddy_reload", "arguments": '{"container": "shop-proxy"}'}
+    step = PlanStep(action="mcp.call", host_id="demo", target="shop-proxy", params=params)
+    planned = result(1, proposal=Proposal(kind="act", steps=[step], reason="reload"))
+
+    text = render(INFO.model_copy(update={"scenarios": [scenario]}), [planned])
+
+    assert '`mcp.call shop-proxy (caddy_reload) with {"container": "shop-proxy"}`' in text
+    assert "mcp.call shop-proxy (caddy_reload)" in text.split("## db-down")[1]

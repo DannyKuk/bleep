@@ -520,6 +520,7 @@ async def run_scenario(
     knowledge: Searcher | None = None,
     after: AfterPropose | None = None,
     github: GithubClient | None = None,
+    mcp: ServedMcp | None = None,
 ) -> ScenarioResult:
     """One run: fault on, the scenario's incident to the end of Propose, fault off, scored.
 
@@ -528,8 +529,9 @@ async def run_scenario(
     Without a judge the root cause is not scored. `memory` is what Gather recalls (none by
     default), and `after` runs once Propose ended without a failure; a failure in it is the
     run's, like one before. `github` is the GitHub the tools read; without it they are absent,
-    and a scenario with a `github` fixture gets one dated from the run's start. A scenario with
-    an `mcp` fixture gets that server, in this process, with the MCP plugin switched on.
+    and a scenario with a `github` fixture gets one dated from the run's start. `mcp` is the MCP
+    server the plugin is switched on for; without it, a scenario with an `mcp` fixture gets that
+    fixture served in this process for the run, and one without has the plugin off.
     `knowledge` is what the `knowledge_search` tool searches (no tool by default).
     """
     result = ScenarioResult(
@@ -541,8 +543,7 @@ async def run_scenario(
     async with contextlib.AsyncExitStack() as stack:
         fallbacks = stack.enter_context(counting_fallbacks())
         folder = stack.enter_context(tempfile.TemporaryDirectory(prefix="bleep-eval-"))
-        mcp = None
-        if scenario.mcp is not None:
+        if mcp is None and scenario.mcp is not None:
             mcp = await stack.enter_async_context(serve(load_mcp_fixture(scenario.mcp)))
         db = Database(Path(folder) / "bleep.db")
         await db.migrate()

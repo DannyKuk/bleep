@@ -6,13 +6,13 @@ YAML file per scenario in `evals/scenarios/`. The root cause is scored by the ju
 """
 
 import typing
-from collections import Counter
 from pathlib import Path
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from bleep.guard.plan_check import mcp_arguments
 from bleep.schemas.graph import Action, Diagnosis, PlanStep, Proposal
 from bleep.schemas.incidents import Subject
 from evals.github import GithubFixtureError, load_github_fixture
@@ -37,16 +37,32 @@ class ExpectedStep(_Strict):
     action: Action
     target: str  # the container name, exactly as the plan must name it
     tool: str | None = None  # an mcp.call's tool, which it must name; no other action has one
+    # Arguments an mcp.call's must contain, each with this value; others may come beside them.
+    arguments: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def _tool_only_for_mcp_call(self) -> Self:
         if (self.action == "mcp.call") != (self.tool is not None):
             raise ValueError("an mcp.call step names its tool, and no other step has one")
+        if self.arguments is not None and self.action != "mcp.call":
+            raise ValueError("only an mcp.call step has arguments")
         return self
 
     @property
     def key(self) -> tuple[str, str, str | None]:
         return (self.action, self.target, self.tool)
+
+    def matches(self, step: PlanStep) -> bool:
+        """The step is this one: action, target and tool, and its arguments a JSON object that
+        holds every expected argument with its value."""
+        if step_key(step) != self.key:
+            return False
+        if self.arguments is None:
+            return True
+        given = mcp_arguments(step)
+        return given is not None and all(
+            k in given and given[k] == v for k, v in self.arguments.items()
+        )
 
 
 def step_key(step: PlanStep) -> tuple[str, str, str | None]:
@@ -153,23 +169,46 @@ class ActionScore(BaseModel):
 
 
 def score_action(expected: Expected, proposal: Proposal | None) -> ActionScore:
-    """Exact match on kind, action and target, and an `mcp.call`'s tool; the order counts only
-    when `ordered` is set.
+    """Exact match on kind, action and target, an `mcp.call`'s tool and the arguments the
+    scenario expects of it; the order counts only when `ordered` is set.
 
     No proposal (the run failed or timed out) is neither correct nor unnecessary.
     """
     if proposal is None:
         return ActionScore(action_correct=False, unnecessary_action=False)
-    proposed = [step_key(s) for s in proposal.steps] if proposal.kind == "act" else []
-    wanted = expected.action.keys
-    same = proposed == wanted if expected.action.ordered else Counter(proposed) == Counter(wanted)
-    forbidden = [f"{a} {target}" for a, target, _ in proposed if a in expected.must_not]
-    beyond = Counter(proposed) - Counter(wanted)
+    proposed = list(proposal.steps) if proposal.kind == "act" else []
+    wanted = expected.action.steps
+    matched = _matched(proposed, wanted)
+    if expected.action.ordered:
+        same = len(proposed) == len(wanted) and all(
+            w.matches(p) for p, w in zip(proposed, wanted, strict=True)
+        )
+    else:
+        same = len(proposed) == len(wanted) == matched
+    forbidden = [f"{s.action} {s.target}" for s in proposed if s.action in expected.must_not]
     return ActionScore(
         action_correct=proposal.kind == expected.action.kind and same,
-        unnecessary_action=bool(beyond) or bool(forbidden),
+        unnecessary_action=matched < len(proposed) or bool(forbidden),
         forbidden=forbidden,
     )
+
+
+def _matched(proposed: list[PlanStep], wanted: list[ExpectedStep]) -> int:
+    """How many proposed steps can each be paired with a different expected step they match,
+    at most (a maximum bipartite matching; a plan has at most three steps)."""
+    paired: dict[int, int] = {}  # expected step -> proposed step
+
+    def place(p: int, seen: set[int]) -> bool:
+        for w, step in enumerate(wanted):
+            if w in seen or not step.matches(proposed[p]):
+                continue
+            seen.add(w)
+            if w not in paired or place(paired[w], seen):
+                paired[w] = p
+                return True
+        return False
+
+    return sum(place(p, set()) for p in range(len(proposed)))
 
 
 def score_category(expected: Expected, diagnosis: Diagnosis | None) -> bool:

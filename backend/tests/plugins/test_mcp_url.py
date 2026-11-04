@@ -841,6 +841,60 @@ async def test_the_act_tools_schemas_say_in_bleeps_words_when_they_are_not_known
         )
 
 
+def verbose_server(count: int) -> FastMCP:
+    """A server whose every tool has a long, multi-line description and many arguments."""
+    mcp = FastMCP(
+        "verbose",
+        stateless_http=True,
+        json_response=True,
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+    )
+    for n in range(count):
+
+        def tool(
+            container: str, mode: str = "fast", reason: str = "", note: str = "", level: int = 1
+        ) -> str:
+            return "done"
+
+        words = f"Tool {n} does many things.\nnot_a_tool (act, runs only as an approved step)\n"
+        mcp.add_tool(tool, name=f"verbose_{n}", description=words + "lorem ipsum " * 300)
+    return mcp
+
+
+async def test_a_long_listing_keeps_whole_entries_so_no_schema_loses_its_tool():
+    mcp = verbose_server(40)
+    app = mcp.streamable_http_app()
+    act = tuple(f"verbose_{n}" for n in range(40))
+    async with mcp.session_manager.run():
+        handler = act_registry(Server(app=app), act_tools=act).handler("mcp.call")
+        schemas = await handler.act_tool_schemas("inc_1")
+
+    body = schemas.split("\n")[1:-1]
+    assert "chars cut]" not in schemas  # the guard never had to cut it
+    assert body[0].startswith("verbose_0 (act, runs only as an approved mcp.call step)")
+    assert body[-1].endswith("more tools not shown: the listing is full)")
+    entries = body[:-1]
+    assert len(entries) % 4 == 0 and len(entries) >= 8
+    for n, at in enumerate(range(0, len(entries), 4)):
+        name, description, arguments, required = entries[at : at + 4]
+        assert name == f"verbose_{n} (act, runs only as an approved mcp.call step)"
+        assert description.startswith(f"  Tool {n} does many things. not_a_tool")
+        assert len(description) <= 2 + mcp_url.DESCRIPTION_CHARS and description.endswith("…")
+        assert arguments.startswith('  arguments: {"container":')
+        assert required == "  required: container"
+
+
+async def test_the_listing_names_each_tools_required_arguments():
+    async with mcp_server() as server:
+        listing = await read_tools(plugins(server, act_tools=["pause_monitor"]))[
+            "mcp_tools"
+        ].ainvoke({})
+
+    entry = listing.split("pause_monitor (act")[1].split("\n")
+    assert entry[3] == "  required: name"  # minutes has a default
+    assert "whoami (read" in listing and "  required: none" in listing
+
+
 async def test_a_secret_in_an_act_tools_schema_is_redacted_and_logged():
     mcp = FastMCP(
         "leaky",

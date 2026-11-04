@@ -130,5 +130,6 @@ def test_a_scenario_with_an_mcp_fixture_expects_the_tool_its_server_offers():
     scenario = load_scenario(SCENARIOS_DIR / "misroute-mcp.yaml")
     assert scenario.mcp == "caddy"
     assert scenario.expected.action.keys == [("mcp.call", "shop-proxy", "caddy_reload")]
+    assert scenario.expected.action.steps[0].arguments == {"container": "shop-proxy"}
     fixture = load_mcp_fixture(scenario.mcp)
     assert "caddy_reload" in fixture.act_tools
