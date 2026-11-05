@@ -1289,8 +1289,8 @@ async def test_a_host_back_before_the_run_parks_is_caught_by_the_next_good_tick(
     incident = await unreachable(env)
     async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
         runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
-        await runner.start(incident)  # scheduled, not yet parked
-        await runner.host_back("a")  # the host's first good tick wins the race
+        await runner.host_back("a")  # the host's first good tick wins the race to the run
+        await runner.start(incident)
         await runner.join()
         assert (await env.repo.get(incident.id)).status == "waiting"
         await runner.host_back("a")  # every good tick calls it again
