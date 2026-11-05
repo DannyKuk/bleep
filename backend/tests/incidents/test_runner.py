@@ -29,7 +29,7 @@ from bleep.schemas.graph import (
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Budgets
 from fakes import FakeChatModel
-from graph_env import confident_model, graph_env, no_wait
+from graph_env import T0, confident_model, graph_env, no_wait
 
 M2_PATH = ["gather", "investigate", "diagnose", "propose", "report"]
 
@@ -1263,9 +1263,19 @@ async def test_the_watchdog_leaves_a_waiting_incident_alone(tmp_path):
     assert await watchdog.tick(incident.opened_at + timedelta(days=1)) == []
 
 
-async def test_an_incident_whose_host_already_answers_closes_quietly_instead_of_waiting(tmp_path):
+@pytest.mark.parametrize(
+    ("answered", "closed"),
+    [
+        (T0 + timedelta(seconds=15), True),  # a probe reached the host after the outage was seen
+        (T0 - timedelta(minutes=10), False),  # before it: the outage is newer than that probe
+        (None, False),  # the last probe failed, though the registry may still call it reachable
+    ],
+)
+async def test_an_incident_closes_quietly_only_when_a_probe_reached_its_host_after_it(
+    tmp_path, answered, closed
+):
     env = await graph_env(tmp_path)
-    incident = await unreachable(env)  # opened just before Bleep stopped
+    incident = await unreachable(env)  # its signal is at T0
     channels = ChannelLog()
     async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
         runner = IncidentRunner(
@@ -1273,14 +1283,19 @@ async def test_an_incident_whose_host_already_answers_closes_quietly_instead_of_
             env.repo,
             env.bus,
             notifier=channels,
-            host_answers=lambda host_id: True,  # the registry connected it at boot
+            host_answered=lambda host_id: answered,
         )
-        assert await runner.recover_on_boot() == [incident.id]
+        await runner.start(incident)
         await runner.join()
 
-    assert (await env.repo.get(incident.id)).status == "closed"
-    assert await notices(env, incident.id) == [ANSWERED_NOTICE]
-    assert channels.heard == []  # no false "the host does not answer"
+    status = (await env.repo.get(incident.id)).status
+    if closed:
+        assert status == "closed"
+        assert await notices(env, incident.id) == [ANSWERED_NOTICE]
+        assert channels.heard == []  # no false "the host does not answer"
+    else:
+        assert status == "waiting"
+        assert channels.heard == [("opened", "waiting")]
     assert env.models.calls == []
 
 

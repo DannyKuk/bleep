@@ -88,7 +88,6 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 notifier=parts.graph_deps.notifier,
                 tracer=parts.tracer,
                 settings=parts.settings_store,
-                host_answers=parts.registry.reachable,
             )
             stack.push_async_callback(runner.close)
             manager = WatcherManager(
@@ -107,6 +106,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 health=parts.service_health,
                 wake_grace_ticks=settings.wake_grace_ticks,
             )
+            runner.host_answered = manager.answered
             reminders = ReminderLoop(
                 parts.approvals,
                 parts.incidents,

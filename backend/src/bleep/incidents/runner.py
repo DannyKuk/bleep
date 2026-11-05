@@ -83,7 +83,7 @@ class IncidentRunner:
         settings: SettingsSource | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], datetime] = utcnow,
-        host_answers: Callable[[str], bool] | None = None,
+        host_answered: Callable[[str], datetime | None] | None = None,
     ) -> None:
         self.graph = graph
         self.repo = repo
@@ -94,7 +94,9 @@ class IncidentRunner:
         self.settings = settings if settings is not None else StaticSettings()
         self.sleep = sleep
         self.clock = clock
-        self.host_answers = host_answers
+        # When the host's last probe reached it, if it did: the watcher manager's, set once both
+        # exist. A registry that still calls the host reachable is no proof (a hung engine).
+        self.host_answered = host_answered
         self._runs: dict[str, asyncio.Task[None]] = {}
         self._pauses: dict[str, int] = {}  # consecutive pauses of a run, for the backoff
         self._since: dict[str, datetime] = {}  # when a run first paused
@@ -264,7 +266,7 @@ class IncidentRunner:
         if not snapshot.values:  # no checkpoint yet: a new run
             signals = await self.repo.signals(incident.id)
             if waits_for_host(incident, signals):
-                await self._wait(incident)
+                await self._wait(incident, signals)
                 return
             await self.repo.record_prompt_overrides(incident.id, prompts.override_versions())
             if incident.status != "waiting":  # one that waited was announced when it opened
@@ -281,22 +283,26 @@ class IncidentRunner:
         else:  # finished, but the status never settled (cancelled or crashed just after the end)
             await self._settle(incident.id, snapshot)
 
-    async def _wait(self, incident: Incident) -> None:
+    async def _wait(self, incident: Incident, signals: list[Signal]) -> None:
         """Park a host-unreachable incident without running the graph, so no model is called
         while every tool would fail; `host_back` closes it. The channels hear of it once."""
         current = await self.repo.get(incident.id)
         status = current.status if current is not None else None
         if status == "waiting" or self._finished(incident.id, status):
             return
-        if self.host_answers is not None and self.host_answers(incident.subject.host_id):
-            # Opened just before a stop, and the host is back by now (the registry connects every
-            # host before runs start): nothing is waited for, and no channel is told of a wait.
+        if self._answered_since(incident.subject.host_id, signals):
+            # The host's last probe reached it after the outage was seen (the host came back
+            # before the run got here): nothing is waited for, and no channel is told of a wait.
             if await self.repo.close_unfinished(incident.id) is not None:
                 await self.bus.publish(incident.id, "notice", {"text": ANSWERED_NOTICE})
             return
         await self.repo.set_status(incident.id, "waiting")
         await self.bus.publish(incident.id, "notice", {"text": WAITING_NOTICE})
         await self._announce(incident.model_copy(update={"status": "waiting"}))
+
+    def _answered_since(self, host_id: str, signals: list[Signal]) -> bool:
+        answered = self.host_answered(host_id) if self.host_answered is not None else None
+        return answered is not None and all(answered > s.at for s in signals)
 
     async def _announce(self, incident: Incident) -> None:
         """Tell the channels a new incident opened, before its run starts; a channel outage is

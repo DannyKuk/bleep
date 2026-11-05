@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage
 
 from bleep.hosts.config import HostConfig, ServiceOverrides, UrlCheckConfig
 from bleep.hosts.dashboard import HostChange
+from bleep.hosts.engine import EngineError
 from bleep.hosts.registry import Registry
 from bleep.incidents.bus import EventBus
 from bleep.incidents.quiet import QuietStore
@@ -1236,3 +1237,20 @@ async def test_a_removed_or_moved_host_forgets_its_services_health(tmp_path):
 
     await r.manager.host_changed(HostChange("c", "removed", None))
     assert await r.health.current("c/compose:wiki") is None
+
+
+async def test_a_host_whose_events_fail_while_its_listing_works_has_not_answered(tmp_path):
+    """A hung engine behind a working session: the registry still calls the host reachable, but
+    no probe reached it, so its host-unreachable incident waits and is announced."""
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    assert r.manager.answered("h") == r.clock.now
+
+    async def failing(since, until):
+        raise EngineError("h", "events timed out")
+
+    r.engine.events = failing  # type: ignore[method-assign]
+    for _ in range(3):
+        await r.pulse(urls=False)
+    assert r.registry.hosts()[0].reachable  # what the quiet close used to trust
+    assert r.manager.answered("h") is None

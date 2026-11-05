@@ -160,6 +160,7 @@ class WatcherManager:
         self._deferred: dict[str, set[str]] = {}  # host -> service ids to recheck on its listing
         self._monotonic = monotonic
         self._answered: dict[str, bool] = {}  # host -> whether its last tick reached it
+        self._answered_at: dict[str, datetime] = {}  # host -> its last tick that reached it
         self._wake_grace_s = watch_interval_s * wake_grace_ticks
         # Held on the monotonic clock, so a wall clock set back cannot stretch it.
         self._grace_until: float | None = None
@@ -277,6 +278,7 @@ class WatcherManager:
         self._announced.pop(host_id, None)
         self._deferred.pop(host_id, None)
         self._answered.pop(host_id, None)
+        self._answered_at.pop(host_id, None)
 
     async def _stop_host(self, host_id: str) -> None:
         self.hosts.pop(host_id, None)
@@ -337,6 +339,7 @@ class WatcherManager:
         if signal.kind == "host_unreachable":
             self._answered[host_id] = bool(signal.detail.get("ok", False))
             if self._answered[host_id]:
+                self._answered_at[host_id] = signal.at
                 await self._host_answers(host_id)
         if self._waking(signal):
             log.debug("%s: %s not counted just after a wake", signal.subject.key, signal.kind)
@@ -350,6 +353,10 @@ class WatcherManager:
         elif signal.kind == "host_unreachable" and signal.detail.get("ok", False):
             self._held.pop(host_id, None)  # contact is back; later failures count on their own
         await self._handle(self.detector.feed(signal))
+
+    def answered(self, host_id: str) -> datetime | None:
+        """When the host's last probe reached it; None when that probe failed or none ran yet."""
+        return self._answered_at.get(host_id) if self._answered.get(host_id) else None
 
     async def _host_answers(self, host_id: str) -> None:
         """Every tick that reaches a host closes its waiting host-unreachable incident, or starts
