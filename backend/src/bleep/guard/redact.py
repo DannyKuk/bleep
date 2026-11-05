@@ -48,8 +48,12 @@ _PLAIN_KEY_PREFIXES = {
     "event", "metric", "label", "tag", "field", "column", "config", "setting", "translation",
     "dedup", "dedupe", "limit", "ratelimit", "request", "trace", "correlation", "natural",
     "surrogate", "compound", "parent", "child", "ref", "cluster", "node", "redis", "kafka", "file",
-    "registry", "record", "entity", "item", "list", "table", "sequence", "id", "last", "next",
-    "start", "end", "evaluated", "tenant", "sharding",
+    "registry", "record", "entity", "item", "list", "table", "sequence", "id",
+}  # fmt: skip
+# Pagination and partition keys, readable only as the whole name (`exclusive_start_key`,
+# `LastEvaluatedKey`): `stripe_last_key`, `next_key` and `tenant_key` can hold a real key.
+_PLAIN_KEY_NAMES = {
+    "last_key", "start_key", "end_key", "exclusive_start_key", "last_evaluated_key", "sharding_key",
 }  # fmt: skip
 # After `tokens`, a count: max_tokens, prompt_tokens. Other `*_tokens` are secrets.
 _TOKEN_COUNTS = {
@@ -82,12 +86,12 @@ _PLAIN_VALUES = {
     "true", "false", "yes", "no", "on", "off", "none", "null", "nil", "empty", "unset", "required",
     "enabled", "disabled", "expired", "invalid", "missing", "ok", "failed", "***", "<redacted>",
 }  # fmt: skip
-# `${VAR}`, `${secrets.db}`, `${env:VAR}` (a known source before the colon), a path after a source
-# that takes one (`${file:/run/secrets/db}`) and `$UPPER_VAR`. A default (`${VAR:-x}`,
+# `${VAR}`, `${secrets.db}`, `${env:VAR}` (a known source before the colon), an absolute file path
+# (`${file:/run/secrets/db}`) and `$UPPER_VAR`. A default (`${VAR:-x}`,
 # `${VAR:=x}`, `${VAR-x}`, Spring's `${VAR:x}`) holds a literal value and is not a reference.
 _REFERENCE = re.compile(
     r"\$\{(?:(?:env|file|secrets|secret|vault|ssm|sys|aws):)?[A-Za-z_][A-Za-z0-9_.]*\}"
-    r"|\$\{(?:file|secrets|secret|vault|ssm|aws):[A-Za-z0-9_./][A-Za-z0-9_./-]{0,255}\}"
+    r"|\$\{file:/[A-Za-z0-9_./-]{1,255}\}"
     r"|\$[A-Z_][A-Z0-9_]*"
 )
 _SMALL_INT = re.compile(r"[0-9]{1,6}")
@@ -104,6 +108,8 @@ def _is_secret_key(key: str) -> bool:
     if _ENV_KEY.fullmatch(key):
         return True
     raw = [w.lower() for w in WORDS.findall(key)]
+    if "_".join(raw) in _PLAIN_KEY_NAMES:
+        return False
     words = [_singular(w) for w in raw]
     last = -1
     for index, word in enumerate(words):
@@ -244,14 +250,15 @@ def _redact_cookie(match: re.Match[str]) -> str:
 # password=x, "password": "x y", password: x, [password] => x, SECRET_KEY_BASE=x, X-Api-Key: x,
 # api_keys: ["a", "b"]. The key is judged by `_is_secret_key`; the cheap lookahead keeps Python
 # out of unrelated pairs. An unquoted value runs to whitespace (so it fails safe on `&`, `,`,
-# quotes), a flow list to its `]` or the line's end, and neither starts with a cut note.
+# quotes), a flow list to a `]` that ends the value or to the line's end (`[aB3]xY9` is a password,
+# not a list), and neither starts with a cut note.
 _KEY_VALUE = re.compile(
     r"(?<![A-Za-z0-9_.-])"
     rf"(?=[A-Za-z0-9_.-]{{0,96}}?{_SECRET_HINT})"
     r"([A-Za-z0-9_.-]{1,96})"
     r"([\"']?\]?[ \t]*+(?:=>|:=|==|[=:])[ \t]*+(?:(?:\n[ \t]*+){1,8}(?<=[ \t]))?)"
     r"(?!\[… )"
-    r"(\"(?:[^\"\\\n]|\\.)*+\"?|'(?:[^'\\\n]|\\.)*+'?|\[[^\]\n]*+\]?|[^\s\"'][^\s]*+)",
+    r"(\"(?:[^\"\\\n]|\\.)*+\"?|'(?:[^'\\\n]|\\.)*+'?|\[[^\]\n]*+(?:\](?![^\s,;})\]])|(?=\n|\Z))|[^\s\"'][^\s]*+)",
     _FLAGS,
 )
 
@@ -279,9 +286,12 @@ def _redact_setting(match: re.Match[str]) -> str:
 
 def _redact_jwt(match: re.Match[str]) -> str:
     """A JWT: `eyJ` and at least five more characters, then two more segments of five or more.
-    The pattern takes the whole first run, so starts inside it (`-eyJ-eyJ…`) are not tried again."""
-    jwt = match.group(0)
-    return REDACTED if jwt.count(".") == 2 and jwt.index(".") >= 8 else jwt
+    `_JWT` takes the whole first run, so starts inside it (`-eyJ-eyJ…`) are not tried again; they
+    end where it ends and could not match where it did not."""
+    return REDACTED if match.group(0).count(".") == 2 else match.group(0)
+
+
+_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{5,}+(?:\.[A-Za-z0-9_-]{5,}+\.[A-Za-z0-9_-]{5,}+)?")
 
 
 Replacement = str | Callable[[re.Match[str]], str]
@@ -351,7 +361,7 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), REDACTED),
     (re.compile(r"\bsk-(?:or-)?[A-Za-z0-9_-]{16,}"), REDACTED),
     (re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"), REDACTED),
-    (re.compile(r"\beyJ[A-Za-z0-9_-]*+(?:\.[A-Za-z0-9_-]{5,}+\.[A-Za-z0-9_-]{5,}+)?"), _redact_jwt),
+    (_JWT, _redact_jwt),
     (re.compile(r"\bya29\.[A-Za-z0-9_.-]{20,}+"), REDACTED),  # Google OAuth access tokens
     # scheme://user:password@host: keep the user. The password may hold `@` and `/`; it ends at
     # the first `@` that is followed by a host and then `/`, `?`, `#`, whitespace or the end. The
@@ -368,6 +378,9 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
     (re.compile(r"(?<![0-9])\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"), REDACTED),
     # crypt hashes: htpasswd/basic-auth ($apr1$, $2y$, $5$, $6$, $y$, $argon2id$)
     (re.compile(r"\$(?:apr1|2[aby]|5|6|y|argon2(?:id|i|d))\$[^\s\"']+"), REDACTED),
+    # md5crypt `$1$salt$hash` (its full shape, so `$1$2` in a script stays) and Django's PBKDF2
+    (re.compile(r"\$1\$[./0-9A-Za-z]{1,8}\$[./0-9A-Za-z]{22,}+"), REDACTED),
+    (re.compile(r"\bpbkdf2_sha(?:1|256|512)\$[0-9]{1,8}\$[^\s\"']+"), REDACTED),
 ]
 
 BLOCK_MAX_LINES = 200

@@ -695,3 +695,20 @@ def test_the_count_is_one_per_secret_value_inside_a_kept_value_too(text, count):
     out, found = redact_with_count(text)
     assert found == count == out.count("<redacted>")
     assert redact_with_count(out) == (out, 0)
+
+
+def test_the_jwt_patterns_match_what_the_plain_regexes_matched():
+    """`_JWT` and `_hide_cut_jwt` read a run once; on any input they must redact exactly what the
+    plain (quadratic) regexes did, including short `eyJ` runs right before a real token."""
+    import random
+
+    from bleep.guard.redact import _JWT, _hide_cut_jwt, _redact_jwt
+
+    plain = re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}")
+    plain_cut = re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*\Z")
+    parts = ["eyJ", ".", "-", "_", "a", "ab", "abcde", "x9Z", " ", "é", "eyJab.", JWT]
+    rng = random.Random(58)
+    for _ in range(50_000):
+        text = "".join(rng.choice(parts) for _ in range(rng.randrange(1, 14)))
+        assert _JWT.sub(_redact_jwt, text) == plain.sub("<redacted>", text), text
+        assert _hide_cut_jwt(text) == plain_cut.sub("<redacted>", text), text

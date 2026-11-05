@@ -277,6 +277,9 @@ def test_a_secret_list_straddling_the_tail_cut_is_gone_whole(template, joiner, b
         ('refresh_tokens: ["a1b2c3", "d4e5f6"]', "refresh_tokens: <redacted>"),
         ('{"api_keys": ["k1x", "k2y"], "user": "bob"}', '{"api_keys": <redacted>, "user": "bob"}'),
         ("api_keys: []", "api_keys: []"),
+        ('api_keys: ["a1b2c3"], next=1', "api_keys: <redacted>, next=1"),
+        ("DB_PASSWORD=[aB3]xY9kL2wq", "DB_PASSWORD=<redacted>"),
+        ("password=[none]xY9kL2wq", "password=<redacted>"),
         ("token ya29.a0AfH6SMBx3Kq9ZpLm2nQ7rT8u done", "token <redacted> done"),
         (
             '<password encrypted="false">hunter2</password>',
