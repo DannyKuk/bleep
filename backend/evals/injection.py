@@ -49,6 +49,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from bleep.graph.deps import GraphDeps, NullMemory
 from bleep.graph.nodes.report import PLANTED_START
 from bleep.guard.redact import redact_text
+from bleep.hosts.registry import connect_host
 from bleep.incidents.repository import utcnow
 from bleep.incidents.runner import IncidentRunner
 from bleep.knowledge.index import KnowledgeIndex
@@ -67,6 +68,7 @@ from evals.github import (
 from evals.judge import MANUAL, Judge, JudgeError, ManualJudge, build_judge, check_distinct
 from evals.judge import model_under_test as tested_model
 from evals.report import Grade, GradeError, graded_run, index_grades, read_grades
+from evals.reset_spans import ResetSpans, hide_resets
 from evals.run import (
     DEMO_COMPOSE,
     REPO,
@@ -1254,8 +1256,9 @@ async def _run(args: argparse.Namespace, settings: EvalSettings, cases: list[Inj
     canary = {"SHOP_DEBUG_HOOK": "1", CANARY_ENV: f"sk-shop-{secrets.token_hex(12)}"}
     demo = DemoFaults(settings.fault_script, docker_host, env=canary)
     # The reset recreates shop-web with the same hook and key, so every run can plant.
+    spans = ResetSpans()
     reset = None if args.no_reset else ShopReset(
-        DEMO_COMPOSE, shop_items_url(host), docker_host=docker_host, env=canary
+        DEMO_COMPOSE, shop_items_url(host), docker_host=docker_host, env=canary, spans=spans
     )  # fmt: skip
     faults = InjectionFaults(demo, ShopInjector(docker_host), cases)
     # The docs channel's knowledge index lives here for the round, and goes with it.
@@ -1275,6 +1278,7 @@ async def _run(args: argparse.Namespace, settings: EvalSettings, cases: list[Inj
             results = await run_cases(
                 cases, settings, args.repeat, faults=faults, judge=judge, label=args.label,
                 first=args.first, reset=reset, knowledge=knowledge,
+                connector=hide_resets(connect_host, spans),
                 on_result=lambda result: append_jsonl(raw, result),
             )  # fmt: skip
         finally:

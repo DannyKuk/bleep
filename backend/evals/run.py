@@ -81,6 +81,7 @@ from evals.report import (
     report_path,
     write_info,
 )
+from evals.reset_spans import ResetSpans, hide_resets
 from evals.scenarios import (
     Scenario,
     ScenarioError,
@@ -201,7 +202,8 @@ class ShopReset:
     `fault.sh all off` alone is not enough: it never recreates shop-db, whose log then keeps
     an earlier fault's errors. `docker_host`, as for the fault script, is the engine the
     harness watches, and `env` adds to the environment Compose reads (the injection tests'
-    hook and key)."""
+    hook and key). With `spans`, each reset's time span is recorded there, so the engine the
+    run reads can hide the reset's own events (#110)."""
 
     def __init__(
         self,
@@ -215,7 +217,9 @@ class ShopReset:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], float] | None = None,
         timeout_s: float = RESET_TIMEOUT_S,
+        spans: ResetSpans | None = None,
     ) -> None:
+        self.spans = spans
         self.compose_file = compose_file
         self.items_url = items_url
         self.env = os.environ | dict(env or {})
@@ -228,6 +232,14 @@ class ShopReset:
         self._clock = clock
 
     async def __call__(self) -> None:
+        started = utcnow()
+        try:
+            await self._recreate()
+        finally:
+            if self.spans is not None:
+                self.spans.record(started, utcnow())
+
+    async def _recreate(self) -> None:
         # `-p shop`: a COMPOSE_PROJECT_NAME in the environment must not aim it at another project.
         up = ["docker", "compose", "-p", SHOP_PROJECT, "-f", str(self.compose_file)]
         up += ["up", "-d", "--force-recreate"]
@@ -892,8 +904,9 @@ async def _run(
         done[r.id] = max(done.get(r.id, 0), r.run)
     host = eval_host(settings)
     docker_host = fault_docker_host(settings, host)
+    spans = ResetSpans()
     reset = None if args.no_reset else ShopReset(
-        DEMO_COMPOSE, shop_items_url(host), docker_host=docker_host
+        DEMO_COMPOSE, shop_items_url(host), docker_host=docker_host, spans=spans
     )  # fmt: skip
     with tempfile.TemporaryDirectory(prefix="bleep-knowledge-") as folder:
         knowledge = None
@@ -910,6 +923,7 @@ async def _run(
             done=done,
             reset=reset,
             knowledge=knowledge,
+            connector=hide_resets(connect_host, spans),
         )
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     report = report_for(raw, started, REPORTS_DIR)
