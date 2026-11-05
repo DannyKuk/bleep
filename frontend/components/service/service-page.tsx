@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, TriangleAlert } from "lucide-react";
+import { Loader2, ThumbsDown, ThumbsUp, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -20,8 +20,14 @@ import {
   useServiceSettings,
 } from "@/components/service/settings-cards";
 import { ApiError, apiFetch } from "@/lib/api";
-import type { ContainerView, Incident, QuietView, ServiceDetail } from "@/lib/api-types";
-import { formatDateTime } from "@/lib/format";
+import type {
+  ContainerView,
+  IncidentListItem,
+  IncidentVotes,
+  QuietView,
+  ServiceDetail,
+} from "@/lib/api-types";
+import { formatDateTime, formatSince } from "@/lib/format";
 import { quietLabel, sinceWords } from "@/lib/quiet-api";
 import { hostHref } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -94,7 +100,41 @@ function ContainerRow({ container }: { container: ContainerView }) {
   );
 }
 
-function PastIncidents({ incidents }: { incidents: Incident[] }) {
+const FINDINGS = [
+  { target: "diagnosis", label: "Diagnosis" },
+  { target: "proposal", label: "Plan" },
+] as const;
+
+/** The human's right or wrong on the incident's diagnosis and plan; nothing when they gave none. */
+function Votes({ votes }: { votes: IncidentVotes }) {
+  const given = FINDINGS.flatMap(({ target, label }) => {
+    const vote = votes[target];
+    return vote ? [{ target, label, vote }] : [];
+  });
+  if (given.length === 0) return null;
+  return (
+    <span className="flex flex-wrap items-center gap-1.5 text-xs font-bold">
+      <span className="sr-only">Your feedback:</span>
+      {given.map(({ target, label, vote }) => {
+        const Icon = vote === "up" ? ThumbsUp : ThumbsDown;
+        return (
+          <span
+            key={target}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full px-2 py-0.5",
+              vote === "up" ? "bg-ok-bg text-ok" : "bg-down-bg text-down",
+            )}
+          >
+            <Icon aria-hidden className="size-3" />
+            {label} {vote === "up" ? "right" : "wrong"}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+function PastIncidents({ incidents }: { incidents: IncidentListItem[] }) {
   if (incidents.length === 0) {
     return (
       <p className="text-sm text-ink-2">
@@ -112,6 +152,7 @@ function PastIncidents({ incidents }: { incidents: Incident[] }) {
           >
             <span className="min-w-0 flex-1 basis-60 text-sm font-bold">{incident.title}</span>
             <IncidentStatusBadge status={incident.status} />
+            <Votes votes={incident.votes} />
             <span className="font-mono text-xs text-ink-2">{subjectText(incident)}</span>
             <time dateTime={incident.opened_at} className="text-xs text-ink-2">
               {formatDateTime(incident.opened_at)}
@@ -159,7 +200,7 @@ function Service({ id }: { id: string }) {
     overall.refresh();
   };
   const detail = useOnce<ServiceDetail>(`/api/services/${encoded}`, reloads);
-  const incidents = useOnce<Incident[]>(
+  const incidents = useOnce<IncidentListItem[]>(
     `/api/incidents?service_id=${encoded}&limit=${PAST_INCIDENTS}`,
     reloads,
   );
@@ -219,6 +260,14 @@ function Service({ id }: { id: string }) {
             {service.source} service on <span className="font-mono">{service.host_id}</span>
             {" · "}
             {count(service.containers.length, "container")}
+            {service.health === "ok" && data?.health_since && (
+              <>
+                {" · healthy since "}
+                <time dateTime={data.health_since} title={formatDateTime(data.health_since)}>
+                  {formatSince(data.health_since)}
+                </time>
+              </>
+            )}
           </p>
         ) : (
           <p className="font-mono text-xs text-ink-2">{id}</p>
@@ -245,7 +294,12 @@ function Service({ id }: { id: string }) {
         {shown && (
           <>
             <Panel title="Checked from outside">
-              <CheckedUrls name={name} statuses={service?.urls ?? []} settings={settings} />
+              <CheckedUrls
+                name={name}
+                statuses={service?.urls ?? []}
+                history={data?.recent_checks}
+                settings={settings}
+              />
             </Panel>
             <Panel title="Containers">
               <div className="flex flex-col gap-4">

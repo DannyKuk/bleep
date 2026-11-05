@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import { incident } from "@/components/incident/fixtures";
 import { ServicePage } from "@/components/service/service-page";
 import { invalid, sentBody, settingsView } from "@/components/settings/fixtures";
-import type { ServiceDetail } from "@/lib/api-types";
+import type { IncidentListItem, ServiceDetail, UrlCheckPoint } from "@/lib/api-types";
+import { formatTime } from "@/lib/format";
 import { SETTINGS_CHANGED } from "@/lib/settings-api";
 
 const overall = vi.hoisted(() => ({ hosts: [], refresh: vi.fn() }));
@@ -44,6 +45,8 @@ const SERVICE: ServiceDetail = {
   },
   rules: ["The shop db is shared with billing."],
   host_rules: ["Never restart postgres without asking."],
+  health_since: null,
+  recent_checks: [{ url: "http://localhost:8080/", checks: [] }],
 };
 
 function json(body: unknown, status = 200) {
@@ -56,16 +59,25 @@ function json(body: unknown, status = 200) {
 /** The settings of a Bleep with no host the service is on, so its cards are read-only. */
 const NO_SETTINGS = settingsView({ hosts: [], overrides: {} });
 
-function stubBackend(service: Response) {
+function stubBackend(service: Response, incidents: IncidentListItem[] = [pastIncident()]) {
   const fetchMock = vi.fn<typeof fetch>(async (input) => {
     const url = String(input);
     if (url === "/api/settings") return json(NO_SETTINGS);
     if (url.endsWith("/facts")) return json([]);
-    if (url.startsWith("/api/incidents")) return json([incident({ status: "closed" })]);
+    if (url.startsWith("/api/incidents")) return json(incidents);
     return service.clone();
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+const NO_VOTES = { diagnosis: null, proposal: null };
+
+function pastIncident(
+  overrides: Partial<IncidentListItem> = {},
+  votes: IncidentListItem["votes"] = NO_VOTES,
+): IncidentListItem {
+  return { ...incident({ status: "closed" }), votes, ...overrides };
 }
 
 describe("ServicePage", () => {
@@ -258,6 +270,7 @@ describe("ServicePage", () => {
 
 const SHOP: ServiceDetail = {
   ...SERVICE,
+  recent_checks: [],
   service: {
     ...SERVICE.service,
     id: "m1/compose:shop",
@@ -303,6 +316,128 @@ function settingsBackend({
 }
 
 const region = (name: string) => screen.findByRole("region", { name });
+
+/** Today at a local wall-clock time, as the ISO string the API sends. */
+function todayAt(hours: number, minutes: number): string {
+  const at = new Date();
+  at.setHours(hours, minutes, 0, 0);
+  return at.toISOString();
+}
+
+function serviceWith(detail: Partial<ServiceDetail>, health = SERVICE.service.health) {
+  return json({ ...SERVICE, ...detail, service: { ...SERVICE.service, health } });
+}
+
+/** The line under the title: source, host, containers and, when healthy, since when. */
+const headline = async () =>
+  (await screen.findByText(/service on/, { selector: "p" })).textContent ?? "";
+
+const CHECKS: UrlCheckPoint[] = [
+  { ok: true, status_code: 200, latency_ms: 12, checked_at: "2026-11-05T09:00:00Z" },
+  { ok: false, status_code: 500, latency_ms: 30, checked_at: "2026-11-05T09:00:30Z" },
+  { ok: false, status_code: null, latency_ms: 10000, checked_at: "2026-11-05T09:01:00Z" },
+];
+
+describe("ServicePage history", () => {
+  it("says since when a healthy service has been healthy", async () => {
+    const since = todayAt(9, 5);
+    stubBackend(serviceWith({ health_since: since }));
+    render(<ServicePage id="demo/compose:shop" />);
+
+    expect(await headline()).toBe("compose service on demo · 1 container · healthy since 9:05");
+    const time = screen.getByText("9:05");
+    expect(time.tagName).toBe("TIME");
+    expect(time).toHaveAttribute("dateTime", since);
+  });
+
+  it("says nothing of since when the service is not healthy or the time is not known", async () => {
+    stubBackend(serviceWith({ health_since: todayAt(9, 5) }, "degraded"));
+    const { unmount } = render(<ServicePage id="demo/compose:shop" />);
+    expect(await headline()).toBe("compose service on demo · 1 container");
+    unmount();
+
+    stubBackend(serviceWith({ health_since: null }));
+    render(<ServicePage id="demo/compose:shop" />);
+    expect(await headline()).toBe("compose service on demo · 1 container");
+  });
+
+  it("draws each URL's recent checks oldest first, with a summary for the strip", async () => {
+    stubBackend(
+      serviceWith({ recent_checks: [{ url: "http://localhost:8080/", checks: CHECKS }] }),
+    );
+    render(<ServicePage id="demo/compose:shop" />);
+
+    const strip = await screen.findByRole("list", {
+      name: "Last 3 checks: 2 failed, oldest first, for http://localhost:8080/",
+    });
+    const ticks = within(strip).getAllByRole("img");
+    expect(ticks.map((tick) => tick.getAttribute("aria-label"))).toEqual([
+      `Passed at ${formatTime(CHECKS[0].checked_at)}, 200, 12 ms`,
+      `Failed at ${formatTime(CHECKS[1].checked_at)}, 500, 30 ms`,
+      `Failed at ${formatTime(CHECKS[2].checked_at)}, no reply, 10000 ms`,
+    ]);
+    expect(ticks.map((tick) => tick.dataset.ok)).toEqual(["true", "false", "false"]);
+    expect(ticks.map((tick) => tick.tabIndex)).toEqual([-1, -1, 0]); // one stop, on the newest
+    expect(screen.getByText("Last 3 checks: 2 failed")).toBeInTheDocument();
+  });
+
+  it("says a tick's time, status code and latency on hover and focus, moving with the arrows", async () => {
+    const user = userEvent.setup();
+    stubBackend(
+      serviceWith({ recent_checks: [{ url: "http://localhost:8080/", checks: CHECKS }] }),
+    );
+    render(<ServicePage id="demo/compose:shop" />);
+    const strip = await screen.findByRole("list", { name: /^Last 3 checks/ });
+    const ticks = within(strip).getAllByRole("img");
+    const first = `Passed at ${formatTime(CHECKS[0].checked_at)}, 200, 12 ms`;
+    const second = `Failed at ${formatTime(CHECKS[1].checked_at)}, 500, 30 ms`;
+
+    await user.hover(ticks[0]);
+    expect(screen.getByText(first, { selector: "p" })).toBeInTheDocument();
+    await user.unhover(strip);
+    expect(screen.getByText("Last 3 checks: 2 failed")).toBeInTheDocument();
+
+    ticks[2].focus();
+    await user.keyboard("{ArrowLeft}");
+    expect(ticks[1]).toHaveFocus();
+    expect(screen.getByText(second, { selector: "p" })).toBeInTheDocument();
+    await user.keyboard("{Home}");
+    expect(ticks[0]).toHaveFocus();
+    expect(ticks.map((tick) => tick.tabIndex)).toEqual([0, -1, -1]);
+  });
+
+  it("draws no strip for a URL with no checks yet", async () => {
+    stubBackend(json(SERVICE));
+    render(<ServicePage id="demo/compose:shop" />);
+    expect(await screen.findByRole("list", { name: "URLs" })).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: /^Last / })).not.toBeInTheDocument();
+  });
+
+  it("shows the human's right or wrong on each past incident that has any", async () => {
+    stubBackend(json(SERVICE), [
+      pastIncident(
+        { id: "inc-1", title: "shop-web-1 died" },
+        { diagnosis: "up", proposal: "down" },
+      ),
+      pastIncident(
+        { id: "inc-2", title: "shop-db-1 is unhealthy" },
+        { diagnosis: null, proposal: "up" },
+      ),
+      pastIncident({ id: "inc-3", title: "shop is slow" }),
+    ]);
+    render(<ServicePage id="demo/compose:shop" />);
+    const rows = within(await screen.findByRole("list", { name: "Incidents" })).getAllByRole(
+      "link",
+    );
+
+    expect(within(rows[0]).getByText("Your feedback:")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("Diagnosis right")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("Plan wrong")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("Plan right")).toBeInTheDocument();
+    expect(rows[1]).not.toHaveTextContent("Diagnosis");
+    expect(rows[2]).not.toHaveTextContent(/feedback|right|wrong/);
+  });
+});
 
 describe("ServicePage settings", () => {
   it("shows the URLs in force with their checks, a new one as not checked yet", async () => {

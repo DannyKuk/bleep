@@ -15,6 +15,30 @@ export function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const clock = (at: Date) => `${at.getHours()}:${String(at.getMinutes()).padStart(2, "0")}`;
+
+/**
+ * When something began, short and in local time: "14:02" today, "yesterday 14:02", "Tue 14:02"
+ * within the last week, else "2 Nov 14:02" (with the year when it is not this one).
+ */
+export function formatSince(iso: string, now: Date = new Date()): string {
+  const at = new Date(iso);
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (at.toDateString() === now.toDateString()) return clock(at);
+  if (at.toDateString() === yesterday.toDateString()) return `yesterday ${clock(at)}`;
+  if (now.getTime() - at.getTime() < 6 * DAY_MS) {
+    return `${at.toLocaleDateString("en-GB", { weekday: "short" })} ${clock(at)}`;
+  }
+  const date = at.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: at.getFullYear() === now.getFullYear() ? undefined : "numeric",
+  });
+  return `${date} ${clock(at)}`;
+}
+
 /** How a channel is named in a sentence: "on Telegram", "on the dashboard". */
 export const CHANNEL: Record<Channel, string> = {
   telegram: "Telegram",

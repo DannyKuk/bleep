@@ -259,6 +259,17 @@ export interface Feedback {
   at: string;
 }
 
+/** The human's vote on an incident's diagnosis and plan, null where there is none. */
+export interface IncidentVotes {
+  diagnosis: Vote | null;
+  proposal: Vote | null;
+}
+
+/** An item of `GET /api/incidents`: the incident with the human's votes (not their notes). */
+export interface IncidentListItem extends Incident {
+  votes: IncidentVotes;
+}
+
 export interface FeedbackBody {
   target: FeedbackTarget;
   vote: Vote;
@@ -280,10 +291,27 @@ export interface FactBody {
 }
 
 /** One service for its page: the overview's view plus its rules and its host's. */
+/** One past check of a URL (`schemas/api.py` `UrlCheckPoint`): no error text, no body. */
+export interface UrlCheckPoint {
+  ok: boolean;
+  status_code: number | null;
+  latency_ms: number;
+  checked_at: string;
+}
+
+/** A configured URL's recent checks, oldest first (the last 30 at most). */
+export interface UrlHistory {
+  url: string;
+  checks: UrlCheckPoint[];
+}
+
 export interface ServiceDetail {
   service: ServiceView;
   rules: string[];
   host_rules: string[];
+  /** When the service's current health began; null when the watcher has not judged it yet. */
+  health_since: string | null;
+  recent_checks: UrlHistory[];
 }
 
 // Dev panel (#42: schemas/dev.py, and the model choice and budgets of schemas/settings.py, which
