@@ -15,7 +15,7 @@ from bleep.schemas.github import Commit, CommitDetail, FileChange
 from bleep.tools.default import default_registry
 from bleep.tools.github import describe_commits, describe_diff, github_specs
 from bleep.tools.registry import ToolContext
-from fakes import FakeEngine, ssh_host
+from fakes import FakeEngine, compose_labels, ssh_host
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "github"
 NOW = datetime(2024, 12, 1, 12, 0, tzinfo=UTC)
@@ -34,7 +34,7 @@ def box(name: str, project: str) -> ContainerSummary:
         name=name,
         image="img:1",
         state="running",
-        labels={"com.docker.compose.project": project},
+        labels=compose_labels(project),
     )
 
 

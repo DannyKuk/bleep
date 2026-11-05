@@ -10,10 +10,9 @@ from bleep.schemas.settings import Thresholds
 from bleep.watcher import poller
 from bleep.watcher.detector import Detector, OpenIncident, Outcome
 from bleep.watcher.poller import HostWatcher
-from fakes import FakeEngine, socket_host
+from fakes import FakeEngine, compose_labels, socket_host
 
 T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
-PROJECT = "com.docker.compose.project"
 
 
 class Clock:
@@ -28,7 +27,7 @@ class Clock:
 
 
 def box(name, state="running", **fields) -> ContainerSummary:
-    fields.setdefault("labels", {PROJECT: "shop"})
+    fields.setdefault("labels", compose_labels("shop"))
     return ContainerSummary(id=f"id-{name}", name=name, image="img", state=state, **fields)
 
 
@@ -321,7 +320,7 @@ async def test_a_restart_the_diff_caught_alone_is_a_recovery_not_an_incident():
 
 
 async def test_a_job_named_in_exits_is_marked_and_a_run_rm_container_joins_its_service():
-    job = {PROJECT: "shop", "com.docker.compose.service": "fetch"}
+    job = compose_labels("shop", "fetch")
     r = await rig(box("shop-web-1"), box("shop-fetch-1", "exited", exit_code=0, labels=job))
     r.registry.override("h", [], {"compose:shop": ServiceOverrides(exits=["fetch"])})
     await r.tick()

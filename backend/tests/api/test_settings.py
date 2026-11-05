@@ -18,7 +18,7 @@ from bleep.schemas.graph import PlanStep, Proposal
 from bleep.schemas.plugins import PluginHealth
 from bleep.tools.registry import ToolContext, ToolSpec
 from bleep.wiring import build_parts
-from fakes import COOLIFY_TOKEN, FakeCoolifyPlugin, FakeEngine, socket_host
+from fakes import COOLIFY_TOKEN, FakeCoolifyPlugin, FakeEngine, compose_labels, socket_host
 
 T0 = datetime(2026, 11, 3, 10, 0, tzinfo=UTC)
 FILE_URL = "https://shop.example.test/health"
@@ -65,7 +65,7 @@ def app(settings, monkeypatch):
         name="shop-web-1",
         image="shop:1",
         state="running",
-        labels={"com.docker.compose.project": "shop"},
+        labels=compose_labels("shop"),
     )
 
     async def connect(_host):

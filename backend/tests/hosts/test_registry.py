@@ -7,13 +7,13 @@ from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.engine import EngineUnavailable
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
-from fakes import FakeEngine, socket_host, ssh_host
+from fakes import FakeEngine, compose_labels, socket_host, ssh_host
 
 T0 = datetime(2026, 11, 2, 10, 0, tzinfo=UTC)
 
 
 def box(name: str, project: str | None = None) -> ContainerSummary:
-    labels = {"com.docker.compose.project": project} if project else {}
+    labels = compose_labels(project) if project else {}
     return ContainerSummary(id=f"id-{name}", name=name, image="img", state="running", labels=labels)
 
 
@@ -376,7 +376,7 @@ async def test_override_puts_rules_and_services_in_force_and_keeps_the_connectio
     host = socket_host(id="a", rules=["file rule"])
     web = ContainerSummary(
         id="id-web", name="web-1", image="i", state="running",
-        labels={"com.docker.compose.project": "shop"},
+        labels=compose_labels("shop"),
     )  # fmt: skip
 
     async def connect(_host):

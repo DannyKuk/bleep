@@ -563,6 +563,23 @@ async def test_a_url_check_incident_still_refuses_another_services_working_conta
     assert "billing-api-1 is running with no health check" in blocked(env)[0]
 
 
+async def test_a_url_check_incident_refuses_a_restart_of_a_container_run_from_its_image(tmp_path):
+    """port-conflict: shop-canary was started with `docker run` from the proxy's Compose-built
+    image and carries its project label, but Compose did not create it, so it is not one of the
+    shop's containers (#282)."""
+    engine = bad_env_engine()
+    image_only = {"com.docker.compose.project": "shop", "com.docker.compose.service": "shop-proxy"}
+    engine.container_list.append(box("shop-canary", labels=image_only))
+    env, state = await setup(
+        tmp_path, acting(restart("shop-canary")), acting(restart("shop-canary")), engine=engine
+    )
+
+    update = await propose.make(env.deps)(state | {"signals": url_failed(state)})
+
+    assert update["proposal"].kind == "no_action"
+    assert "shop-canary is running with no health check" in blocked(env)[0]
+
+
 async def test_a_url_failure_beside_a_container_signal_does_not_widen_the_incident(tmp_path):
     """When a signal names a container, the incident already has its container; a URL failure
     that attached does not make the rest of the service fair game."""

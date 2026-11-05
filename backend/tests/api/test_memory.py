@@ -16,7 +16,7 @@ from bleep.memory.store import MemoryStore
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import Diagnosis, PlanStep, Proposal, Report
 from bleep.schemas.incidents import Incident, Signal, Subject
-from fakes import FakeEngine, ssh_host
+from fakes import FakeEngine, compose_labels, ssh_host
 
 T0 = datetime(2026, 11, 2, 10, 0, tzinfo=UTC)
 SHOP = "a/compose:shop"
@@ -35,7 +35,7 @@ def web(name: str = "shop-web-1") -> ContainerSummary:
         name=name,
         image="shop:1",
         state="running",
-        labels={"com.docker.compose.project": "shop"},
+        labels=compose_labels("shop"),
     )
 
 

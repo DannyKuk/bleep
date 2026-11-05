@@ -19,7 +19,14 @@ from bleep.schemas.plugins import PluginUpdate
 from bleep.schemas.settings import ModelSettings, SettingsUpdate, Thresholds
 from bleep.store.db import Database
 from bleep.watcher.detector import Detector
-from fakes import COOLIFY_TOKEN, FakeCoolifyPlugin, FakeEngine, socket_host, ssh_host
+from fakes import (
+    COOLIFY_TOKEN,
+    FakeCoolifyPlugin,
+    FakeEngine,
+    compose_labels,
+    socket_host,
+    ssh_host,
+)
 
 T0 = datetime(2026, 11, 3, 10, 0, tzinfo=UTC)
 FILE_URL = "https://shop.example.test/health"
@@ -33,7 +40,7 @@ def web(name: str = "shop-web-1") -> ContainerSummary:
         name=name,
         image="shop:1",
         state="running",
-        labels={"com.docker.compose.project": "shop"},
+        labels=compose_labels("shop"),
     )
 
 

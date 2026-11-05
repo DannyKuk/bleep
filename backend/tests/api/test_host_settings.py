@@ -21,7 +21,7 @@ from bleep.memory.embeddings import FakeEmbedder
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
 from bleep.wiring import build_parts
-from fakes import FakeEngine, socket_host
+from fakes import FakeEngine, compose_labels, socket_host
 
 SERVER_KEY = asyncssh.generate_private_key("ssh-ed25519")
 OTHER_SERVER_KEY = asyncssh.generate_private_key("ssh-ed25519")
@@ -41,7 +41,7 @@ def box(name: str, project: str, labels: dict[str, str] | None = None) -> Contai
         name=name,
         image="img",
         state="running",
-        labels={"com.docker.compose.project": project} | (labels or {}),
+        labels=compose_labels(project) | (labels or {}),
     )
 
 

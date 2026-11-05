@@ -201,6 +201,32 @@ async def test_an_override_matching_no_discovered_service_still_protects_its_con
     assert [(v.rule, v.step) for v in violations] == [("protected", 1)]
 
 
+@pytest.mark.parametrize("key", ["compose:shop", "shop"])
+async def test_a_container_run_from_a_compose_image_keeps_its_protection(tmp_path, key):
+    """shop-canary carries the shop's project label from its image only, so it is no longer in
+    the shop's service; the shop's override still protects it by name, and `bleep.self` still
+    marks Bleep's own (#282)."""
+    image_only = {"com.docker.compose.project": "shop", "com.docker.compose.service": "shop-proxy"}
+    engine = guarded_engine()
+    engine.container_list += [
+        box("shop-canary", labels=image_only),
+        box("bleep-probe", labels=image_only | {"bleep.self": "true"}),
+    ]
+    host = shop_host(services={key: ServiceOverrides(protected_containers=["shop-canary"])})
+    env = await graph_env(tmp_path, engine=engine, host=host)
+    assert "shop-canary" not in {c.name for c in env.registry.service("a/compose:shop").containers}
+
+    violations = check_plan(
+        act(restart("shop-canary"), restart("bleep-probe")),
+        env.registry,
+        CORE,
+        "a",
+        incident_containers=SHOP_WEB,
+    )
+
+    assert [(v.rule, v.step) for v in violations] == [("protected", 1), ("self", 2)]
+
+
 async def test_a_verification_url_must_be_a_health_check_of_the_host(tmp_path):
     shop = "https://shop.example/health"
     host = shop_host(

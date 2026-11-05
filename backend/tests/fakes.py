@@ -84,6 +84,13 @@ class FakeChatModel(BaseChatModel):
         return super().with_structured_output(schema, **kwargs)
 
 
+def compose_labels(project: str, service: str | None = None) -> dict[str, str]:
+    """The labels of a container Compose created in `project`: only those carry the config hash,
+    so a container that has the project label from its image alone is not grouped with it."""
+    labels = {"com.docker.compose.project": project, "com.docker.compose.config-hash": "0" * 64}
+    return labels | ({"com.docker.compose.service": service} if service else {})
+
+
 def ssh_host(**overrides: Any) -> HostConfig:
     """An ssh HostConfig with test defaults; keyword arguments replace fields."""
     fields = {

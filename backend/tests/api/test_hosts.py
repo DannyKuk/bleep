@@ -14,7 +14,7 @@ from bleep.schemas.incidents import Signal, Subject
 from bleep.watcher.health import container_health, host_health, service_health
 from bleep.watcher.health_store import HealthStore
 from bleep.watcher.http_checks import HISTORY_PER_URL, UrlCheck
-from fakes import FakeEngine, ssh_host
+from fakes import FakeEngine, compose_labels, ssh_host
 
 T0 = datetime(2026, 11, 2, 10, 0, tzinfo=UTC)
 
@@ -170,7 +170,7 @@ def stocked(settings, parts):
                     image="shop:1",
                     state="running",
                     health="healthy",
-                    labels={"com.docker.compose.project": "shop"},
+                    labels=compose_labels("shop"),
                 ),
                 ContainerSummary(
                     id="2",
@@ -178,7 +178,7 @@ def stocked(settings, parts):
                     image="pg",
                     state="restarting",
                     restart_count=7,
-                    labels={"com.docker.compose.project": "shop", "SECRET": "hunter2"},
+                    labels=compose_labels("shop") | {"SECRET": "hunter2"},
                 ),
             ],
         ),
