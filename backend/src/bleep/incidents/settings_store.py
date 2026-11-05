@@ -25,12 +25,13 @@ from pydantic import BaseModel, ValidationError
 from bleep.graph.deps import CORE_ACTIONS
 from bleep.guard.redact import REDACTED
 from bleep.guard.secret_fields import find_secrets
-from bleep.hosts.config import HostConfig, ServiceOverrides, UrlCheckConfig
+from bleep.hosts.config import HostConfig, ServiceOverrides, UrlCheckConfig, is_exit_name
 from bleep.hosts.dashboard import DashboardHosts, HostChange
 from bleep.hosts.registry import Registry
 from bleep.incidents.repository import utcnow
 from bleep.plugins.registry import PluginError, PluginRegistry, UnknownPlugin
 from bleep.schemas.plugins import PluginUpdate, PluginView
+from bleep.schemas.services import Service
 from bleep.schemas.settings import (
     MODEL_KEY_ENV,
     BudgetOverrides,
@@ -194,6 +195,7 @@ class SettingsStore:
                     rules=over.rules,
                     protected_containers=over.protected_containers,
                     hosts_file_protected_containers=self._hosts_file_protected(base, key),
+                    exits=over.exits,
                 )
                 for key, over in config.services.items()
             }
@@ -256,6 +258,45 @@ class SettingsStore:
             await self._write(writes)
             self._overrides = merged
             self._apply_hosts()
+
+    async def expect_exits(self, service: Service, entries: list[str]) -> None:
+        """Add `entries` to the service's `exits` as a dashboard override ("This is expected").
+        Only adds, so it needs no version: a page saving from an older one gets its 409."""
+        if any(not is_exit_name(entry) for entry in entries):  # never `*`: one tap names jobs
+            raise SettingsRefused("an expected job must be a container or Compose service name")
+        async with self._lock:
+            if service.host_id not in self._base:
+                raise SettingsRefused(f"no host {service.host_id!r} in the hosts file or dashboard")
+            host = self._host_overrides().get(service.host_id, HostSettings()).model_copy(deep=True)
+            config = self._effective(self._base[service.host_id])
+            key = _settings_key(config, service)
+            current = config.services[key].exits if key in config.services else []
+            own = host.services.get(key, ServiceSettings()).model_copy()
+            own.exits = list(dict.fromkeys([*current, *entries]))
+            host.services[key] = own
+            await self._replace_host(service.host_id, host)
+
+    async def expect_sleep(self, host_id: str) -> None:
+        """Mark a host as one that may sleep, as a dashboard override ("This is expected")."""
+        async with self._lock:
+            host = self._host_overrides().get(host_id, HostSettings()).model_copy(deep=True)
+            host.may_sleep = True
+            await self._replace_host(host_id, host)
+
+    async def _replace_host(self, host_id: str, host: HostSettings) -> None:
+        """Store and apply one host's overrides, validated as a page's save is (a field set on a
+        model is not); the caller holds the lock."""
+        base = self._base.get(host_id)
+        if base is None:
+            raise SettingsRefused(f"no host {host_id!r} in the hosts file or the dashboard")
+        try:
+            host = HostSettings.model_validate(host.model_dump(exclude_none=True))
+        except ValidationError as error:
+            raise SettingsRefused(f"host {host_id}: {_why(error)}") from None
+        _merged_host(base, host)
+        await self._write({f"{HOST_PREFIX}{host_id}": host})
+        self._host_overrides()[host_id] = host
+        self._apply_hosts()
 
     async def set_plugin(self, name: str, update: PluginUpdate, *, version: str) -> None:
         """Configure and switch a plugin, then store it; `update` was built from the plugin at
@@ -370,7 +411,7 @@ class SettingsStore:
             host_id = key.removeprefix(HOST_PREFIX)
             if host_id not in self._base:
                 raise ValueError("the host is not in the hosts file or added on the dashboard")
-            host = HostSettings.model_validate(value)
+            host = _salvaged_host(host_id, value)
             _merged_host(self._base[host_id], host)
             self._host_overrides()[host_id] = host
         elif key.startswith(PLUGIN_PREFIX):
@@ -457,6 +498,46 @@ def _connection(host: HostConfig) -> HostConnectionView:
     )
 
 
+def _salvaged_host(host_id: str, value: dict[str, Any]) -> HostSettings:
+    """A stored host row, with every field that no longer validates left out on its own and
+    logged: one bad field (an `exits` entry from an older version) must not drop the others, the
+    protected containers above all."""
+    try:
+        return HostSettings.model_validate(value)
+    except ValidationError:
+        pass
+    kept: dict[str, Any] = {}
+    for field in ("rules", "may_sleep"):
+        if field in value:
+            kept |= _valid(HostSettings, field, value[field], f"host {host_id}")
+    services: dict[str, Any] = {}
+    raw = value.get("services")
+    for key, service in raw.items() if isinstance(raw, dict) else []:
+        own: dict[str, Any] = {}
+        for field, given in service.items() if isinstance(service, dict) else []:
+            own |= _valid(ServiceSettings, field, given, f"host {host_id}, a service")
+        if own and _valid(HostSettings, "services", {key: {}}, f"host {host_id}"):
+            services[key] = own
+    return HostSettings.model_validate(kept | {"services": services})
+
+
+def _valid(model: type[BaseModel], field: str, given: Any, where: str) -> dict[str, Any]:
+    """`{field: given}` when it validates as part of `model`, else nothing and a warning."""
+    try:
+        model.model_validate({field: given})
+    except ValidationError as problem:
+        log.warning("settings: stored %s, %s left out: %s", where, field, _why(problem))
+        return {}
+    return {field: given}
+
+
+def _settings_key(config: HostConfig, service: Service) -> str:
+    """The key the host's settings hold the service under: its own key, or the name the hosts file
+    used for it, so a new override never hides the file's (#230); its own key when it has none."""
+    own = service.id.removeprefix(f"{service.host_id}/")
+    return next((k for k in (own, service.name) if k in config.services), own)
+
+
 def _hash(content: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()[:16]
 
@@ -500,6 +581,7 @@ def _merged_host(base: HostConfig, host: HostSettings) -> HostConfig:
             update={
                 "urls": over.urls if over.urls is not None else below.urls,
                 "rules": over.rules if over.rules is not None else below.rules,
+                "exits": over.exits if over.exits is not None else below.exits,
                 "protected_containers": protected,
             }
         )

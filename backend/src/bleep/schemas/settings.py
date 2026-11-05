@@ -16,7 +16,7 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from bleep.hosts.config import UrlCheckConfig, check_url_syntax
+from bleep.hosts.config import MAX_EXITS, UrlCheckConfig, check_exits, check_url_syntax
 
 
 def _env(name: str, field: str) -> AliasChoices:
@@ -150,12 +150,18 @@ class ThresholdOverrides(_Overrides):
 
 
 class ServiceSettings(_Overrides):
-    """One service's overrides. `urls` and `rules` replace the hosts file's; protected
+    """One service's overrides. `urls`, `rules` and `exits` replace the hosts file's; protected
     containers are added to the hosts file's, which the dashboard can never unprotect."""
 
     urls: list[UrlCheckConfig] | None = Field(None, max_length=20)
     rules: list[RuleText] | None = Field(None, max_length=50)
     protected_containers: list[ContainerName] | None = Field(None, max_length=100)
+    exits: list[str] | None = Field(None, max_length=MAX_EXITS)
+
+    @field_validator("exits")
+    @classmethod
+    def _exits(cls, exits: list[str] | None) -> list[str] | None:
+        return check_exits(exits) if exits is not None else None
 
     @field_validator("urls")
     @classmethod
@@ -226,6 +232,7 @@ class ServiceSettingsView(BaseModel):
     rules: list[str]
     protected_containers: list[str]  # the hosts file's and the dashboard's
     hosts_file_protected_containers: list[str]  # those the dashboard cannot unprotect
+    exits: list[str] = []  # jobs meant to finish: the dashboard's list, else the hosts file's
 
 
 class HostSettingsView(BaseModel):

@@ -201,9 +201,10 @@ class IncidentRunner:
 
     async def end(
         self, incident_id: str, text: str, *, spare: tuple[IncidentStatus, ...] = ()
-    ) -> None:
+    ) -> bool:
         """Close an incident from outside its run (its host was removed) and say why, on its
-        timeline and to the channels; one that is finished already is left as it is.
+        timeline and to the channels; one that is finished already is left as it is. Returns
+        whether this call closed it.
 
         Without `spare` it is marked ended before the first await, so no run of it is driven
         from here on; then it is closed, which shuts `ApprovalStore.resolve` for it on every
@@ -217,7 +218,7 @@ class IncidentRunner:
         if spare:
             before = await self.repo.close_unfinished(incident_id, spare)
             if before is None:
-                return
+                return False
             self._ended.add(incident_id)
         else:
             self._ended.add(incident_id)
@@ -228,11 +229,12 @@ class IncidentRunner:
             await asyncio.gather(run, return_exceptions=True)
         self._forget_pauses(incident_id)
         if before is None:
-            return
+            return False
         if before in ("executing", "verifying"):
             text += " A step of the approved plan may already have run; see the actions above."
         await self.bus.publish(incident_id, "notice", {"text": text})
         await self._tell(incident_id, text)
+        return True
 
     def _finished(self, incident_id: str, status: IncidentStatus | None) -> bool:
         if incident_id in self._ended or status is None or status in TERMINAL_STATUSES:

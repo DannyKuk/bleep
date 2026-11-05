@@ -3,6 +3,7 @@ import json
 import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -1103,3 +1104,82 @@ def test_the_same_bot_rebuilt_goes_on_from_the_last_confirmed_update():
     same.continue_from(old)
     other.continue_from(old)
     assert same._offset == 42 and other._offset is None
+
+
+# --- "It's expected" ---
+
+
+class FakeExpectations:
+    def __init__(self, offered: bool = True) -> None:
+        self.is_offered = offered
+        self.marked: list[tuple[str, str]] = []
+
+    async def offered(self, incident_id: str):
+        return "it applies" if self.is_offered else None
+
+    async def expected(self, incident_id: str, via: str):
+        self.marked.append((incident_id, via))
+        return SimpleNamespace(done=True, text="You said this is expected. " + "x" * 300)
+
+
+def buttons(body: dict) -> list[tuple[str, str]]:
+    rows = body.get("reply_markup", {}).get("inline_keyboard", [])
+    return [(b["text"], b["callback_data"]) for row in rows for b in row]
+
+
+async def test_an_opened_message_carries_its_expected_button_only_when_it_applies(env):
+    env.notifier.expectations = FakeExpectations(offered=False)
+    await env.notifier.incident_opened(env.incident)
+    env.notifier.expectations = FakeExpectations()
+    await env.notifier.incident_opened(env.incident)
+    plain, offered = env.api.sent("sendMessage")
+    assert buttons(plain) == []
+    assert buttons(offered) == [("It's expected", "expected")]
+    assert await MessageLog(env.db).get(311) == (env.incident_id, "")  # asks about no plan
+
+
+async def test_a_proposal_carries_the_expected_button_beside_approve_and_reject(env):
+    env.notifier.expectations = FakeExpectations()
+    request = (await env.approvals.current(env.incident_id)).request
+    await env.notifier.proposal(env.incident, None, PLAN, request)
+    [body] = env.api.sent("sendMessage")
+    assert [label for label, _ in buttons(body)] == ["Approve", "Reject", "It's expected"]
+
+
+async def test_pressing_its_expected_marks_the_incident_and_clears_the_buttons(env):
+    env.bot.expectations = expectations = FakeExpectations()
+    update = fixture("callback_approve", APPROVAL_ID=env.approval_id)
+    update["result"][0]["callback_query"]["data"] = "expected"
+    env.api.updates.append(update)
+    await env.bot.poll_once()
+
+    assert expectations.marked == [(env.incident_id, "telegram")]
+    [answer] = env.api.sent("answerCallbackQuery")
+    assert answer["text"].startswith("You said this is expected.") and len(answer["text"]) == 200
+    assert env.api.sent("editMessageReplyMarkup")
+    assert env.runner.resumed == []
+
+
+async def test_a_press_that_fails_leaves_the_plans_buttons_in_place(env):
+    class Refusing(FakeExpectations):
+        async def expected(self, incident_id: str, via: str):
+            return SimpleNamespace(done=False, text="Nothing here can be marked as expected now.")
+
+    env.bot.expectations = Refusing()
+    update = fixture("callback_approve", APPROVAL_ID=env.approval_id)
+    update["result"][0]["callback_query"]["data"] = "expected"
+    env.api.updates.append(update)
+    await env.bot.poll_once()
+
+    assert "Nothing here" in env.api.sent("answerCallbackQuery")[0]["text"]
+    assert env.api.sent("editMessageReplyMarkup") == []
+
+
+async def test_a_reply_to_an_opened_message_is_never_an_instruction(env):
+    env.notifier.expectations = FakeExpectations()
+    await env.notifier.incident_opened(env.incident)  # logged as message 311, no plan
+    env.api.calls.clear()
+    await poll(env, "reply_instruction")
+    assert env.runner.resumed == []
+    [reply] = env.api.sent("sendMessage")
+    assert "reply" in reply["text"].lower()

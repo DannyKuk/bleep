@@ -22,6 +22,9 @@ from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import utcnow
 from bleep.notify import format as fmt
 from bleep.notify.telegram import (
+    EXPECTED_LABEL,
+    EXPECTED_VERB,
+    Expecting,
     MessageLog,
     Resumer,
     TelegramBot,
@@ -58,12 +61,37 @@ class Notifier:
         self.chat_id = chat_id
         self.messages = messages
         self.approvals = approvals
+        self.expectations: Expecting | None = None
 
     async def incident_opened(self, incident: Incident) -> None:
         """A host-unreachable incident that waits for its host says so instead of promising a
-        plan."""
+        plan. When "This is expected" applies, the message carries its button and is logged, so
+        the press finds the incident."""
         name = "incident_waiting" if incident.status == "waiting" else "incident_opened"
-        await self._plain(name, id=incident.id, title=incident.title)
+        buttons = await self._expect_button(incident.id)
+        if not buttons:
+            await self._plain(name, id=incident.id, title=incident.title)
+            return
+        assert self.telegram is not None and self.chat_id is not None
+        text = fmt.render(name, id=incident.id, title=incident.title)
+        try:
+            message_id = await self.telegram.send_message(self.chat_id, text, buttons)
+        except TelegramError as error:
+            log.warning("telegram: could not send: %s", error)
+            return
+        if self.messages is not None:
+            await self.messages.add(message_id, incident.id, "", utcnow())
+
+    async def _expect_button(self, incident_id: str) -> list[tuple[str, str]]:
+        """The "It's expected" button when it applies to the incident, else none."""
+        if self.telegram is None or self.expectations is None:
+            return []
+        try:
+            offered = await self.expectations.offered(incident_id)
+        except Exception:  # the message goes out without the button
+            log.exception("incident %s: could not tell whether it can be expected", incident_id)
+            return []
+        return [(EXPECTED_LABEL, EXPECTED_VERB)] if offered is not None else []
 
     async def proposal(
         self,
@@ -156,6 +184,7 @@ class Notifier:
         assert self.telegram is not None and self.chat_id is not None
         buttons = [("Approve", f"approve:{approval.id}")] if approvable else []
         buttons.append((reject_label, f"reject:{approval.id}"))
+        buttons += await self._expect_button(incident.id)
         message_id = await self.telegram.send_message(self.chat_id, text, buttons)
         if self.messages is not None:
             await self.messages.add(message_id, incident.id, approval.id, utcnow())
@@ -197,6 +226,7 @@ class NotifySetup:
     token_source: Source | None = None
     _rebuild: Callable[[], NotifySetup] | None = field(default=None, repr=False)
     _runner: Resumer | None = field(default=None, repr=False)
+    _expectations: Expecting | None = field(default=None, repr=False)
 
     def status(self) -> TelegramStatus:
         """What the settings page shows: set up or not, the chat masked, when it last polled."""
@@ -230,11 +260,17 @@ class NotifySetup:
         if self._runner is not None:
             self.start(self._runner)
 
+    def use_expectations(self, expectations: Expecting) -> None:
+        """ "This is expected" for the buttons; it needs the runner, so it comes after setup."""
+        self._expectations = expectations
+        self.notifier.expectations = expectations
+
     def start(self, runner: Resumer) -> None:
         """Start polling. Does nothing without a token."""
         self._runner = runner
         if self.bot is not None and self._task is None:
             self.bot.runner = runner
+            self.bot.expectations = self._expectations
             self._task = asyncio.create_task(self.bot.poll_forever(), name="telegram poller")
 
     async def stop(self) -> None:

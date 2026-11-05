@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 
+from bleep.hosts.config import ServiceOverrides
 from bleep.hosts.engine import EngineUnavailable
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary, DockerEvent
@@ -317,3 +318,21 @@ async def test_a_restart_the_diff_caught_alone_is_a_recovery_not_an_incident():
     await r.tick()  # events missed it; only the restart count shows
     await r.tick(600)  # well past any grace
     assert [o for o in outcomes if isinstance(o, OpenIncident)] == []
+
+
+async def test_a_job_named_in_exits_is_marked_and_a_run_rm_container_joins_its_service():
+    job = {PROJECT: "shop", "com.docker.compose.service": "fetch"}
+    r = await rig(box("shop-web-1"), box("shop-fetch-1", "exited", exit_code=0, labels=job))
+    r.registry.override("h", [], {"compose:shop": ServiceOverrides(exits=["fetch"])})
+    await r.tick()
+    run = "shop-fetch-run-ab12"  # never listed: it lived between two listings
+    at = T0 + timedelta(seconds=20)
+    r.engine.history += [
+        ev("die", run, at, exitCode="0", **job),
+        ev("destroy", run, at + timedelta(seconds=1), **job),
+    ]
+    await r.tick()
+    [signal] = r.deaths
+    assert signal.subject.service_id == "h/compose:shop"  # by its labels, not container:<name>
+    assert signal.detail["expected_exit"] is True
+    assert signal.detail["compose_service"] == "fetch"

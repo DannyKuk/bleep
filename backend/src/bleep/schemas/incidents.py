@@ -46,6 +46,7 @@ EventKind = Literal[
     "verification",
     "report",
     "notice",
+    "expected",  # "This is expected": what was recorded, and on which channel
 ]
 
 

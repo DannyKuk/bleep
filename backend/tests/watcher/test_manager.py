@@ -101,14 +101,14 @@ def box(name: str, project: str, **fields) -> ContainerSummary:
     )
 
 
-def die(name: str, at: datetime) -> DockerEvent:
+def die(name: str, at: datetime, exit_code: int = 1) -> DockerEvent:
     return DockerEvent(
         time=at,
         type="container",
         action="die",
         container_id=f"id-{name}",
         container_name=name,
-        attributes={"name": name, "exitCode": "1"},
+        attributes={"name": name, "exitCode": str(exit_code)},
     )
 
 
@@ -392,6 +392,31 @@ async def test_an_asleep_hosts_services_are_not_stored_as_down(tmp_path):
     for _ in range(8):  # two minutes asleep, every URL failing
         await r.pulse()
     assert await r.health.current(shop) == before  # still "ok since", never "down"
+
+
+async def finish(r: Rig, exit_code: int) -> None:
+    """shop's container, a job under `on-failure`, exits; then the grace window passes."""
+    name = "shop-web-1"
+    r.engine.history.append(die(name, r.clock.now + timedelta(seconds=1), exit_code))
+    r.engine.container_list[0] = box(
+        name, "shop", state="exited", exit_code=exit_code, restart_policy="on-failure"
+    )
+    for _ in range(6):
+        await r.pulse(urls=False)
+
+
+@pytest.mark.parametrize(
+    ("exits", "exit_code", "opens"), [([], 0, True), (["*"], 0, False), (["*"], 3, True)]
+)
+async def test_a_job_named_in_exits_opens_nothing_on_exit_0_and_a_crash_still_does(
+    tmp_path, exits, exit_code, opens
+):
+    r = await Rig(tmp_path).boot()
+    r.engine.container_list[0] = box("shop-web-1", "shop", restart_policy="on-failure")
+    r.registry.override("h", [], {"compose:shop": ServiceOverrides(exits=exits)})
+    await r.pulse(urls=False)
+    await finish(r, exit_code)
+    assert bool(await r.incidents()) is opens
 
 
 async def test_held_url_failures_are_announced_once_per_new_set_of_urls(tmp_path):

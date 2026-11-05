@@ -21,7 +21,8 @@ from bleep.schemas.incidents import Incident
 from bleep.schemas.quiet import QuietMode, QuietScope, QuietState
 
 # `asleep`: a host that may sleep (a laptop) and does not answer, and every service on it.
-Health = Literal["ok", "degraded", "down", "stopped", "unknown", "asleep"]
+# `done`: a job that ran to its end (exit 0, a one-shot or named in its service's `exits`).
+Health = Literal["ok", "degraded", "down", "stopped", "done", "unknown", "asleep"]
 
 
 class Me(BaseModel):
@@ -157,6 +158,8 @@ class IncidentDetail(BaseModel):
     outcome: Outcome | None
     report: Report | None
     feedback: list[Feedback] = Field(default_factory=list)  # the human's votes, by target
+    # What "This is expected" would record, in one sentence; null when it is not offered.
+    expectation: str | None = None
 
 
 class DecisionBody(BaseModel):

@@ -30,6 +30,7 @@ def test_hosts_file_parses_example():
     assert [h.id for h in hf.hosts] == ["mac", "coolify-1"]
     assert hf.hosts[1].services["shop"].urls[0].expect_status == 200
     assert [h.may_sleep for h in hf.hosts] == [True, False]  # false unless the file says so
+    assert hf.hosts[1].services["shop"].exits == ["migrate"]
 
 
 def test_demo_file_parses():

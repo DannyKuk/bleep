@@ -477,3 +477,14 @@ def test_forgetting_a_removed_host_drops_its_deaths_streaks_and_timers_only():
     assert det.tick(clock.now, states(box(state="exited")), host_id="h1") == []
     out = det.tick(clock.now, states(box(state="exited")), host_id="h2")
     assert [o.subject for o in out] == [H2_SVC]  # the other host's death is still judged
+
+
+def test_an_expected_job_exiting_0_is_ignored_and_never_adds_up_to_a_loop():
+    det, clock = make()
+    for second in range(0, 300, 60):  # five clean exits in five minutes, under `always`
+        clock.at(second)
+        out = det.feed(died(clock, exit_code=0, restart_policy="always", expected_exit=True))
+        assert out == [Ignored("expected exit 0")]
+    assert det.tick(clock(), states(box("exited")), "h1") == []
+    crash = det.feed(died(clock, exit_code=1, restart_policy="always", expected_exit=True))
+    assert crash == []  # a crash is a death as any other: pending, judged by the grace window

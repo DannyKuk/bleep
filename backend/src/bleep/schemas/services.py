@@ -21,6 +21,9 @@ class Service(BaseModel):
     docs_paths: list[str] = Field(default_factory=list)
     rules: list[str] = Field(default_factory=list)
     protected: set[str] = Field(default_factory=set)  # container names act tools must refuse
+    exits: list[str] = Field(
+        default_factory=list
+    )  # entries of jobs meant to finish (`expects_exit`)
 
 
 @dataclass(frozen=True)

@@ -7,8 +7,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from bleep.api.deps import get_parts, get_runner
+from bleep.api.deps import get_expectations, get_parts, get_runner
 from bleep.guard.redact import redacted_proposal
+from bleep.incidents.expectations import Expectations
 from bleep.incidents.repository import utcnow
 from bleep.incidents.runner import IncidentRunner
 from bleep.schemas.api import (
@@ -93,9 +94,11 @@ async def get_incident(
     incident_id: str,
     parts: Parts,
     runner: Annotated[IncidentRunner, Depends(get_runner)],
+    expectations: Annotated[Expectations, Depends(get_expectations)],
 ) -> IncidentDetail:
     incident = await _incident(parts, incident_id)
     state = await runner.state(incident_id)
+    expectation = await expectations.offered(incident_id)
     return IncidentDetail(
         incident=incident,
         diagnosis=state.get("diagnosis"),
@@ -104,7 +107,26 @@ async def get_incident(
         outcome=state.get("outcome"),
         report=state.get("report"),
         feedback=await parts.memory.feedback(incident_id),
+        expectation=expectation.sentence() if expectation is not None else None,
     )
+
+
+@router.post(
+    "/incidents/{incident_id}/expected",
+    responses={409: {"description": "Not offered now, or the plan was decided elsewhere"}},
+)
+async def mark_expected(
+    incident_id: str,
+    parts: Parts,
+    expectations: Annotated[Expectations, Depends(get_expectations)],
+) -> dict[str, str]:
+    """ "This is expected": record what makes the next identical event quiet (a job's clean exit,
+    a host that sleeps) and close the incident. A pending plan is rejected first, first wins."""
+    await _incident(parts, incident_id)
+    answer = await expectations.expected(incident_id, "dashboard")
+    if not answer.done:
+        raise HTTPException(409, answer.text)
+    return {"text": answer.text}
 
 
 @router.get("/incidents/{incident_id}/events")

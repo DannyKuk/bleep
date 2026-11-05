@@ -221,12 +221,12 @@ class Detector:
 
     def _death(self, signal: Signal, now: datetime) -> list[Outcome]:
         key = _key(signal)
-        if (
-            signal.kind == "container_died"
-            and signal.detail.get("exit_code") == 0
-            and signal.detail.get("restart_policy", "") in ("", "no")
-        ):
-            return [Ignored("one-shot exit 0")]
+        if signal.kind == "container_died" and signal.detail.get("exit_code") == 0:
+            # Ignored before it is counted, so a job that exits 0 under `always` is no loop.
+            if signal.detail.get("expected_exit"):
+                return [Ignored("expected exit 0")]
+            if signal.detail.get("restart_policy", "") in ("", "no"):
+                return [Ignored("one-shot exit 0")]
         deaths = self._deaths[key]
         deaths.append(signal)
         cutoff = signal.at - timedelta(seconds=self.t.repeated_window_s)

@@ -8,7 +8,7 @@ T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
 SVC = Subject(kind="service", host_id="h", service_id="h/web")
 
 
-def subject_of(name, container_id):
+def subject_of(name, container_id, labels):
     return SVC
 
 
@@ -112,3 +112,35 @@ def test_diff_skips_handled_deliberate_self_and_not_running_before():
         box("d", "was-down", state="exited"),
     ]
     assert diff(before, [], T0, subject_of, {"a"}, {"b"}) == []
+
+
+def expects_fetch(subject, name, labels):
+    return labels.get("com.docker.compose.service") == "fetch" or name == "fetch-1"
+
+
+def test_a_failed_run_rm_job_is_a_death_although_it_is_removed_and_marked_expected():
+    job = {"com.docker.compose.service": "fetch"}
+    failed = [event("die", exitCode="3", **job), event("destroy", at=1, **job)]
+    t = translate(failed, {}, subject_of, {}, expects_fetch)
+    [signal] = t.signals
+    assert signal.detail["exit_code"] == 3
+    assert signal.detail["expected_exit"] is True
+    assert signal.detail["compose_service"] == "fetch"
+
+
+def test_a_stop_still_silences_a_job_and_a_removal_still_silences_any_other_container():
+    job = {"com.docker.compose.service": "fetch"}
+    stopped = [event("die", exitCode="143", **job), event("stop", at=1, **job)]
+    assert translate(stopped, {}, subject_of, {}, expects_fetch).signals == []
+    removed = [event("die", exitCode="3"), event("destroy", at=1)]
+    assert translate(removed, {}, subject_of, {}, expects_fetch).signals == []
+
+
+def test_diff_takes_a_vanished_job_for_its_rm_end_and_still_reports_its_crash():
+    before = [box("a", "fetch-1"), box("b", "other")]
+    assert [s.container for s in diff(before, [], T0, subject_of, set(), set(), expects_fetch)] == [
+        "other"
+    ]
+    after = [box("a", "fetch-1", state="exited", exit_code=1)]
+    [signal] = diff(before[:1], after, T0, subject_of, set(), set(), expects_fetch)
+    assert signal.detail == {"exit_code": 1, "restart_policy": "", "expected_exit": True}
