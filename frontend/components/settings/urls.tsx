@@ -46,18 +46,25 @@ export function UrlEditor({
   overridden,
   onSave,
   onReset,
+  onClose,
 }: {
   service: string;
   urls: UrlCheck[];
   overridden: boolean;
   onSave: (urls: UrlCheck[]) => Promise<unknown>;
   onReset: () => Promise<unknown>;
+  /** Set when the URLs are opened for editing: Cancel always shows, and a save closes them. */
+  onClose?: () => void;
 }) {
   const [rows, setRows] = useState(() => urls.map(toRow));
   const { saving, busy, problems, run } = useSaving(URL_LABELS);
   const checks = rows.map(toCheck);
   const [blank, setBlank] = useState<number[]>([]);
   const dirty = JSON.stringify(checks) !== JSON.stringify(urls.map((u) => toCheck(toRow(u))));
+
+  async function done(save: () => Promise<unknown>) {
+    if (await run(save)) onClose?.();
+  }
 
   function change(index: number, field: keyof Row, value: string) {
     setRows(rows.map((row, at) => (at === index ? { ...row, [field]: value } : row)));
@@ -67,12 +74,12 @@ export function UrlEditor({
   function save() {
     const empty = rows.flatMap((row, at) => (row.url.trim() ? [] : [at]));
     setBlank(empty);
-    if (empty.length === 0) void run(() => onSave(checks));
+    if (empty.length === 0) void done(() => onSave(checks));
   }
 
   return (
     <div className="flex flex-col gap-2">
-      <SourceNote overridden={overridden} disabled={busy} onReset={() => void run(onReset)} />
+      <SourceNote overridden={overridden} disabled={busy} onReset={() => void done(onReset)} />
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">No URLs are checked.</p>
       ) : (
@@ -128,24 +135,25 @@ export function UrlEditor({
           Add a URL
         </Button>
         {dirty && (
-          <>
-            <Button type="button" size="sm" disabled={busy} onClick={save}>
-              {saving && <Loader2 aria-hidden className="animate-spin" />}
-              Save
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              disabled={saving}
-              onClick={() => {
-                setRows(urls.map(toRow));
-                setBlank([]);
-              }}
-            >
-              Cancel
-            </Button>
-          </>
+          <Button type="button" size="sm" disabled={busy} onClick={save}>
+            {saving && <Loader2 aria-hidden className="animate-spin" />}
+            Save
+          </Button>
+        )}
+        {(dirty || onClose) && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={saving}
+            onClick={() => {
+              setRows(urls.map(toRow));
+              setBlank([]);
+              onClose?.();
+            }}
+          >
+            Cancel
+          </Button>
         )}
       </div>
       <SaveError

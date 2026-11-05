@@ -10,9 +10,9 @@ import { Panel } from "@/components/panel";
 import { QuietButton } from "@/components/quiet/quiet-button";
 import { QuietPill } from "@/components/quiet/quiet-pill";
 import { SaveLockProvider } from "@/components/save-lock";
-import { HostSettings, type KnownService } from "@/components/settings/hosts";
+import { HostSettings } from "@/components/settings/hosts";
 import { Alert, Status, useLoaded, useStaleSaving } from "@/components/settings/loaded";
-import { usePoll } from "@/hooks/use-poll";
+import { type Poll, usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
 import type { HostView, QuietView, ServiceView } from "@/lib/api-types";
 import { quietLabel, sinceWords } from "@/lib/quiet-api";
@@ -39,12 +39,15 @@ function quietNote(quiet: QuietView): string {
   return `Bleep opens no incidents for it or its services until ${until}.`;
 }
 
-/** What the services Bleep sees on the host are called, by their key there (`compose:shop`). */
-function knownServices(hostId: string, services: ServiceView[]): KnownService[] {
-  return services.map((service) => ({
-    key: service.id.slice(hostId.length + 1),
-    name: service.name,
-  }));
+/**
+ * The services the host's settings hold that Bleep does not see now, by their key there. One
+ * the hosts file names (`shop`) matches the service with that key or that name, as discovery does.
+ */
+function unseenKeys(hostId: string, configured: string[], seen: ServiceView[]): string[] {
+  const known = new Set(
+    seen.flatMap((service) => [service.id.slice(hostId.length + 1), service.name]),
+  );
+  return configured.filter((key) => !known.has(key)).sort();
 }
 
 function ServiceRow({ service }: { service: ServiceView }) {
@@ -67,6 +70,67 @@ function ServiceRow({ service }: { service: ServiceView }) {
         </span>
       </Link>
     </li>
+  );
+}
+
+/** A service with settings that Bleep does not see; `unseen` is unknown while the read failed. */
+function ConfiguredRow({
+  hostId,
+  serviceKey,
+  unseen,
+}: {
+  hostId: string;
+  serviceKey: string;
+  unseen: boolean;
+}) {
+  return (
+    <li>
+      <Link
+        href={serviceHref(`${hostId}/${serviceKey}`)}
+        className="flex min-h-11 flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-row bg-soft px-3 py-2 hover:bg-line focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      >
+        <span className="font-mono text-sm font-bold">{serviceKey}</span>
+        {unseen && <span className="text-[13px] font-bold text-ink-2">Not seen now</span>}
+      </Link>
+    </li>
+  );
+}
+
+/** The services on the host, each linking to its page, where its settings are edited. */
+function ServiceList({
+  hostId,
+  name,
+  services,
+  configured,
+}: {
+  hostId: string;
+  name: string;
+  services: Poll<ServiceView[]>;
+  configured: string[];
+}) {
+  const read = services.data !== undefined;
+  const seen = (services.data ?? []).filter((service) => service.host_id === hostId);
+  const others = unseenKeys(hostId, configured, seen);
+  return (
+    <div className="flex flex-col gap-2">
+      {!read && (
+        <Status loaded={services} what="the services">
+          {() => null}
+        </Status>
+      )}
+      {seen.length + others.length > 0 ? (
+        <ul aria-label={`Services on ${name}`} className="flex flex-col gap-1.5">
+          {seen.map((service) => (
+            <ServiceRow key={service.id} service={service} />
+          ))}
+          {others.map((key) => (
+            <ConfiguredRow key={key} hostId={hostId} serviceKey={key} unseen={read} />
+          ))}
+        </ul>
+      ) : (
+        read && <p className="text-sm text-ink-2">Bleep sees no services on this host yet.</p>
+      )}
+    </div>
   );
 }
 
@@ -114,7 +178,7 @@ function Header({
   );
 }
 
-/** A host's page: its state, its services, and its settings (connection, rules, each service's). */
+/** A host's page: its state, its services, and its settings (connection and rules). */
 export function HostPage({ id }: { id: string }) {
   return (
     <SaveLockProvider>
@@ -189,19 +253,12 @@ function Host({ id }: { id: string }) {
           {notice && <Alert>{notice}</Alert>}
 
           <Panel title="Services">
-            <Status loaded={services} what="the services">
-              {() =>
-                onHost.length > 0 ? (
-                  <ul aria-label={`Services on ${name}`} className="flex flex-col gap-1.5">
-                    {onHost.map((service) => (
-                      <ServiceRow key={service.id} service={service} />
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-sm text-ink-2">Bleep sees no services on this host yet.</p>
-                )
-              }
-            </Status>
+            <ServiceList
+              hostId={id}
+              name={name}
+              services={services}
+              configured={Object.keys(hostSettings?.services ?? {})}
+            />
           </Panel>
 
           <Status loaded={settings} what="the host's settings">
@@ -210,7 +267,6 @@ function Host({ id }: { id: string }) {
                 <HostSettings
                   host={hostSettings}
                   overrides={view.overrides.hosts?.[id]}
-                  services={knownServices(id, onHost)}
                   save={(overrides) => saveSettings({ hosts: { [id]: overrides } }, view.version)}
                   onHostChanged={readSettings}
                   onRemoved={async () => {

@@ -10,17 +10,17 @@ import { subjectText } from "@/components/incident/incident-list";
 import { useOverall } from "@/components/overall-state";
 import { Panel } from "@/components/panel";
 import { QuietButton } from "@/components/quiet/quiet-button";
+import { SaveLockProvider } from "@/components/save-lock";
 import { MemoryPanel } from "@/components/service/memory-panel";
+import {
+  CheckedUrls,
+  FollowedRules,
+  ProtectedContainers,
+  useServiceSettings,
+} from "@/components/service/settings-cards";
 import { ApiError, apiFetch } from "@/lib/api";
-import type {
-  ContainerView,
-  Health,
-  Incident,
-  QuietView,
-  ServiceDetail,
-  UrlStatus,
-} from "@/lib/api-types";
-import { formatDateTime, formatTime } from "@/lib/format";
+import type { ContainerView, Incident, QuietView, ServiceDetail } from "@/lib/api-types";
+import { formatDateTime } from "@/lib/format";
 import { quietLabel, sinceWords } from "@/lib/quiet-api";
 import { hostHref } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -66,39 +66,6 @@ function Loading({ children }: { children: React.ReactNode }) {
   );
 }
 
-const NEVER_WITHOUT_YES = "I never change anything without your yes.";
-
-/** The rules Bleep follows for the service, its own first, then its host's. */
-export function RuleList({ rules, hostRules }: { rules: string[]; hostRules: string[] }) {
-  const groups = [
-    { label: "This service", items: rules },
-    { label: "Its host", items: hostRules },
-  ].filter((group) => group.items.length > 0);
-  return (
-    <div className="flex flex-col gap-3">
-      {groups.length === 0 && (
-        <p className="text-sm text-ink-2">
-          No rules of its own. Add them under the service in{" "}
-          <code className="font-mono">hosts.yaml</code>.
-        </p>
-      )}
-      {groups.map((group) => (
-        <div key={group.label} className="flex flex-col gap-1.5">
-          <h3 className="text-xs font-bold text-ink-2">{group.label}</h3>
-          <ul aria-label={`Rules: ${group.label}`} className="flex flex-col gap-1.5">
-            {group.items.map((rule) => (
-              <li key={rule} className="rounded-row bg-soft px-3 py-2 text-sm">
-                {rule}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
-      <p className="text-sm font-bold">{NEVER_WITHOUT_YES}</p>
-    </div>
-  );
-}
-
 function containerTone(container: ContainerView): string {
   if (container.health === "unhealthy") return "text-down";
   if (container.state === "running") {
@@ -122,32 +89,6 @@ function ContainerRow({ container }: { container: ContainerView }) {
     >
       <span className="font-mono break-all">{container.name}</span>
       <span className={cn("font-bold", containerTone(container))}>{detail}</span>
-    </li>
-  );
-}
-
-const URL_HEALTH: Record<UrlStatus["status"], { label: string; health: Health }> = {
-  ok: { label: "OK", health: "ok" },
-  failing: { label: "Failing", health: "down" },
-  unknown: { label: "Not checked yet", health: "unknown" },
-};
-
-function UrlRow({ url }: { url: UrlStatus }) {
-  const { label: statusLabel, health } = URL_HEALTH[url.status];
-  const label =
-    url.status === "unknown" && url.last_checked != null ? "No recent check" : statusLabel;
-  const facts = [
-    url.status_code,
-    url.latency_ms != null ? `${url.latency_ms} ms` : null,
-    url.last_checked != null ? `checked ${formatTime(url.last_checked)}` : null,
-  ].filter((part) => part != null);
-  return (
-    <li className="flex flex-col gap-1.5 rounded-row bg-soft px-3 py-2 text-sm">
-      <span className="font-mono break-all">{url.url}</span>
-      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <HealthBadge health={health} label={label} />
-        {facts.length > 0 && <span className="text-xs text-ink-2">{facts.join(" · ")}</span>}
-      </span>
     </li>
   );
 }
@@ -196,8 +137,26 @@ function quietNote(quiet: QuietView): string {
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
-/** A service's page: its health, what Bleep knows, its checks and containers, rules, incidents. */
+/** The name in a service's id (`shop` in `m1/compose:shop` or `m1/shop`), until it is read. */
+const nameIn = (id: string) =>
+  id
+    .slice(id.indexOf("/") + 1)
+    .split(":")
+    .pop() || id;
+
+/**
+ * A service's page: its health, what Bleep knows, its checks and containers, rules, incidents.
+ * Its URLs, rules and protected containers are edited here.
+ */
 export function ServicePage({ id }: { id: string }) {
+  return (
+    <SaveLockProvider>
+      <Service id={id} />
+    </SaveLockProvider>
+  );
+}
+
+function Service({ id }: { id: string }) {
   const encoded = encodeURIComponent(id);
   const [reloads, setReloads] = useState(0);
   const overall = useOverall();
@@ -213,7 +172,9 @@ export function ServicePage({ id }: { id: string }) {
   const data = detail.data;
   const service = data?.service;
   const missing = detail.error instanceof ApiError && detail.error.status === 404;
-  const name = service?.name ?? id.split(":").pop() ?? id;
+  const name = service?.name ?? nameIn(id);
+  const { settings, error: settingsError, notice } = useServiceSettings(id, service);
+  const shown = service !== undefined || (missing && settings !== undefined);
   const target = { scope: "service", id, name } as const;
 
   return (
@@ -277,38 +238,42 @@ export function ServicePage({ id }: { id: string }) {
           <Failed>Could not load the service: {detail.error.message}</Failed>
         )}
         {!detail.data && !detail.error && <Loading>Loading the service</Loading>}
+        {settingsError && (
+          <Failed>Could not load the service&apos;s settings: {settingsError.message}</Failed>
+        )}
+        {notice && <Failed>{notice}</Failed>}
       </header>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel title={`What I know about ${name}`} className="lg:col-span-2">
           <MemoryPanel serviceId={id} />
         </Panel>
-        {service && data && (
+        {shown && (
           <>
             <Panel title="Checked from outside">
-              {service.urls.length > 0 ? (
-                <ul className="flex flex-col gap-1.5" aria-label="URLs">
-                  {service.urls.map((url) => (
-                    <UrlRow key={url.url} url={url} />
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-ink-2">No URLs are checked.</p>
-              )}
+              <CheckedUrls name={name} statuses={service?.urls ?? []} settings={settings} />
             </Panel>
             <Panel title="Containers">
-              {service.containers.length > 0 ? (
-                <ul className="flex flex-col gap-1.5" aria-label="Containers">
-                  {service.containers.map((container) => (
-                    <ContainerRow key={container.id} container={container} />
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-ink-2">No containers.</p>
-              )}
+              <div className="flex flex-col gap-4">
+                {service && service.containers.length > 0 ? (
+                  <ul className="flex flex-col gap-1.5" aria-label="Containers">
+                    {service.containers.map((container) => (
+                      <ContainerRow key={container.id} container={container} />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-ink-2">No containers.</p>
+                )}
+                {settings && <ProtectedContainers name={name} settings={settings} />}
+              </div>
             </Panel>
             <Panel title="Rules I follow" className="lg:col-span-2">
-              <RuleList rules={data.rules} hostRules={data.host_rules} />
+              <FollowedRules
+                name={name}
+                rules={data?.rules ?? []}
+                hostRules={data?.host_rules ?? []}
+                settings={settings}
+              />
             </Panel>
           </>
         )}
