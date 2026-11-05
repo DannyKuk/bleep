@@ -183,6 +183,11 @@ class UsageTracker(AsyncCallbackHandler):
                 metadata = message.response_metadata or {}
                 model = str(metadata.get("model_name") or metadata.get("model") or "unknown")
                 tokens_in, tokens_out = tokens["input_tokens"], tokens["output_tokens"]
+                reasoning = (tokens.get("output_token_details") or {}).get("reasoning") or 0
+                if reasoning > tokens_out:
+                    # Some servers report reasoning beside the completion, not inside it; more
+                    # reasoning than output cannot be a part of it.
+                    tokens_out += reasoning
                 usd = _cost(model, metadata, tokens_in, tokens_out)
                 await self.ledger.add(self.incident_id, model, tokens_in, tokens_out, usd)
 
