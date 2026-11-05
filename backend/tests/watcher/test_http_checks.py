@@ -1,5 +1,5 @@
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -7,12 +7,20 @@ import pytest
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.registry import Registry
 from bleep.store.db import Database
-from bleep.watcher.http_checks import MAX_BODY_BYTES, UrlCheckStore, UrlWatcher, check_url
+from bleep.watcher.http_checks import (
+    HISTORY_PER_URL,
+    MAX_BODY_BYTES,
+    UrlCheck,
+    UrlCheckStore,
+    UrlWatcher,
+    check_url,
+)
 from fakes import FakeEngine, socket_host
 from graph_env import box
 
 URL = "https://shop.example/health"
 T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
+SECOND = timedelta(seconds=30)
 
 
 def client(handler) -> httpx.AsyncClient:
@@ -192,6 +200,95 @@ async def test_the_watcher_checks_every_configured_url_and_feeds_each_result(tmp
     ]
     await watcher.tick()  # a second tick replaces the row instead of adding one
     assert len(await store.latest("h")) == 2
+
+
+async def store_at(tmp_path) -> UrlCheckStore:
+    db = Database(tmp_path / "bleep.sqlite")
+    await db.migrate()
+    return UrlCheckStore(db)
+
+
+def result(ok: bool = True, status: int | None = 200, latency_ms: int = 40, url: str = URL):
+    return UrlCheck(
+        url=url,
+        ok=ok,
+        status=status,
+        latency_ms=latency_ms,
+        error=None if ok else "expected status 200, got 500 <secret-ish server text>",
+    )
+
+
+async def test_every_check_is_kept_in_the_history_oldest_first(tmp_path):
+    store = await store_at(tmp_path)
+    await store.record("h", "h/shop", result(latency_ms=10), T0)
+    await store.record("h", "h/shop", result(ok=False, status=500, latency_ms=20), T0 + SECOND)
+    await store.record("h", "h/shop", result(status=None, ok=False, latency_ms=0), T0 + 2 * SECOND)
+    [(url, points)] = (await store.history("h", "h/shop")).items()
+    assert url == URL
+    assert [(p.ok, p.status_code, p.latency_ms, p.checked_at) for p in points] == [
+        (True, 200, 10, T0),
+        (False, 500, 20, T0 + SECOND),
+        (False, None, 0, T0 + 2 * SECOND),
+    ]
+
+
+async def test_the_history_keeps_only_the_last_checks_of_each_url(tmp_path):
+    store = await store_at(tmp_path)
+    other = "https://shop.example/other"
+    for n in range(HISTORY_PER_URL + 12):
+        await store.record("h", "h/shop", result(latency_ms=n), T0 + n * SECOND)
+    await store.record("h", "h/shop", result(url=other), T0)
+    history = await store.history("h", "h/shop")
+    assert [p.latency_ms for p in history[URL]] == list(range(12, HISTORY_PER_URL + 12))
+    assert len(history[other]) == 1  # pruning one URL leaves another alone
+
+
+async def test_the_history_is_per_host_and_service(tmp_path):
+    store = await store_at(tmp_path)
+    await store.record("h", "h/shop", result(), T0)
+    await store.record("h", "h/blog", result(ok=False, status=500), T0)
+    await store.record("g", "g/shop", result(ok=False, status=500), T0)
+    assert [p.ok for p in (await store.history("h", "h/shop"))[URL]] == [True]
+    assert await store.history("h", "h/none") == {}
+
+
+async def test_the_history_carries_no_error_text(tmp_path):
+    store = await store_at(tmp_path)
+    await store.record("h", "h/shop", result(ok=False, status=500), T0)
+    [point] = (await store.history("h", "h/shop"))[URL]
+    assert "secret" not in point.model_dump_json()
+    assert set(point.model_dump()) == {"ok", "status_code", "latency_ms", "checked_at"}
+
+
+async def test_the_watcher_tells_when_a_round_of_checks_is_done(tmp_path):
+    host = socket_host(
+        id="h", services={"compose:shop": ServiceOverrides(urls=[UrlCheckConfig(url=URL)])}
+    )
+    engine = FakeEngine("h", [box("shop-web-1", "shop")])
+
+    async def connect(_host):
+        return None, engine
+
+    registry = Registry([host], connect)
+    await registry.start()
+    store = await store_at(tmp_path)
+    rounds: list[tuple[str, int]] = []
+
+    async def sink(signal):
+        return None
+
+    async def on_round(host_id: str) -> None:
+        rounds.append((host_id, len(await store.latest(host_id))))  # the results are stored first
+
+    async def failing_round(host_id: str) -> None:
+        raise RuntimeError("boom")
+
+    watcher = UrlWatcher("h", registry, client(ok_handler), sink, lambda: T0, store)
+    watcher.on_round = on_round
+    await watcher.tick()
+    assert rounds == [("h", 1)]
+    watcher.on_round = failing_round
+    assert [c.ok for c in await watcher.tick()] == [True]  # a failing hook never stops the tick
 
 
 async def test_a_failing_sink_does_not_drop_the_other_urls(tmp_path):

@@ -2,7 +2,8 @@
 
 `check_url` is one check and is also what Verify uses after a fix. `UrlWatcher` runs
 every configured URL of one host on a timer and feeds each result to the detector, good or bad,
-so its failure streaks can reset (docs/design/watcher.md).
+so its failure streaks can reset. `UrlCheckStore` keeps the latest result per URL and the last
+`HISTORY_PER_URL` for the service page (docs/design/watcher.md).
 """
 
 import asyncio
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.registry import Registry
+from bleep.schemas.api import UrlCheckPoint
 from bleep.schemas.incidents import Signal, Subject
 from bleep.store.db import Database
 
@@ -26,8 +28,10 @@ MAX_REDIRECTS = 20  # httpx's own default
 TIMEOUT_S = 10
 SLOW_MS = 5000
 INTERVAL_S = 30
+HISTORY_PER_URL = 30  # 15 minutes of checks at the default interval
 
 Sink = Callable[[Signal], Awaitable[None]]
+RoundHook = Callable[[str], Awaitable[None]]
 
 
 class UrlCheck(BaseModel):
@@ -123,7 +127,8 @@ async def _read_capped(response: httpx.Response) -> str:
 
 
 class UrlCheckStore:
-    """The latest result per (host, url), for the dashboard."""
+    """The latest result per (host, service, url), and the last `HISTORY_PER_URL` of them without
+    their error text, for the dashboard."""
 
     def __init__(self, db: Database) -> None:
         self.db = db
@@ -131,6 +136,7 @@ class UrlCheckStore:
     async def record(self, host_id: str, service_id: str, check: UrlCheck, at: datetime) -> None:
         conn = await self.db.connect()
         try:
+            await conn.execute("BEGIN IMMEDIATE")
             await conn.execute(
                 "INSERT OR REPLACE INTO url_checks (host_id, url, service_id, ok, status,"
                 " latency_ms, error, body_matched, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -146,9 +152,47 @@ class UrlCheckStore:
                     at.isoformat(),
                 ),
             )
+            key = (host_id, service_id, check.url)
+            await conn.execute(
+                "INSERT INTO url_check_history (host_id, service_id, url, ok, status, latency_ms,"
+                " checked_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (*key, check.ok, check.status, check.latency_ms, at.isoformat()),
+            )
+            await conn.execute(
+                "DELETE FROM url_check_history WHERE host_id = ? AND service_id = ? AND url = ?"
+                " AND id NOT IN (SELECT id FROM url_check_history WHERE host_id = ?"
+                " AND service_id = ? AND url = ? ORDER BY id DESC LIMIT ?)",
+                (*key, *key, HISTORY_PER_URL),
+            )
             await conn.commit()
+        except BaseException:
+            await conn.rollback()
+            raise
         finally:
             await conn.close()
+
+    async def history(self, host_id: str, service_id: str) -> dict[str, list[UrlCheckPoint]]:
+        """The service's recent checks by URL, oldest first."""
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                "SELECT * FROM url_check_history WHERE host_id = ? AND service_id = ? ORDER BY id",
+                (host_id, service_id),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        finally:
+            await conn.close()
+        history: dict[str, list[UrlCheckPoint]] = {}
+        for row in rows:
+            history.setdefault(row["url"], []).append(
+                UrlCheckPoint(
+                    ok=bool(row["ok"]),
+                    status_code=row["status"],
+                    latency_ms=row["latency_ms"],
+                    checked_at=datetime.fromisoformat(row["checked_at"]),
+                )
+            )
+        return history
 
     async def latest(self, host_id: str) -> list[tuple[str, UrlCheck, datetime]]:
         """(service id, check, when) for every URL of the host, ordered by URL."""
@@ -179,7 +223,8 @@ class UrlCheckStore:
 
 
 class UrlWatcher:
-    """Checks every URL configured for the services of one host, once per `tick()`."""
+    """Checks every URL configured for the services of one host, once per `tick()`, then calls
+    `on_round` with the host id once the round's results are stored."""
 
     def __init__(
         self,
@@ -190,9 +235,11 @@ class UrlWatcher:
         clock: Callable[[], datetime],
         store: UrlCheckStore | None = None,
         interval_s: float = INTERVAL_S,
+        on_round: RoundHook | None = None,
     ) -> None:
         self.host_id = host_id
         self.interval_s = interval_s
+        self.on_round = on_round
         self._registry = registry
         self._client = client
         self._sink = sink
@@ -211,7 +258,13 @@ class UrlWatcher:
             for service in self._registry.services(self.host_id)
             for cfg in service.urls
         ]
-        return list(await asyncio.gather(*(self._one(sid, cfg) for sid, cfg in targets)))
+        checks = list(await asyncio.gather(*(self._one(sid, cfg) for sid, cfg in targets)))
+        if self.on_round is not None:
+            try:
+                await self.on_round(self.host_id)
+            except Exception:
+                log.exception("url round hook failed for host %s", self.host_id)
+        return checks
 
     async def _one(self, service_id: str, cfg: UrlCheckConfig) -> UrlCheck:
         try:

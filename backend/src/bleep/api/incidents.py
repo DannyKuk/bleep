@@ -17,6 +17,8 @@ from bleep.schemas.api import (
     DecisionConflict,
     FeedbackBody,
     IncidentDetail,
+    IncidentListItem,
+    IncidentVotes,
 )
 from bleep.schemas.graph import ApprovalRecord, Decision, Feedback
 from bleep.schemas.incidents import (
@@ -75,9 +77,15 @@ async def list_incidents(
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
     service_id: str | None = None,
-) -> list[Incident]:
-    """Newest first; `service_id` keeps one service's (its page lists its past incidents)."""
-    return await parts.incidents.list(status, limit, offset, service_id)
+) -> list[IncidentListItem]:
+    """Newest first, each with the human's votes on its diagnosis and plan; `service_id` keeps
+    one service's (its page lists its past incidents)."""
+    incidents = await parts.incidents.list(status, limit, offset, service_id)
+    votes = await parts.memory.votes([i.id for i in incidents])
+    return [
+        IncidentListItem(**incident.model_dump(), votes=IncidentVotes(**votes.get(incident.id, {})))
+        for incident in incidents
+    ]
 
 
 @router.get("/incidents/{incident_id}")

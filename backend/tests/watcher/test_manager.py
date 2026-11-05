@@ -19,6 +19,7 @@ from bleep.schemas.settings import Budgets, Thresholds
 from bleep.store.db import Database
 from bleep.watcher import manager as manager_module
 from bleep.watcher.detector import NO_LOGS_LINE, Detector
+from bleep.watcher.health_store import HealthStore
 from bleep.watcher.http_checks import UrlCheckStore
 from bleep.watcher.manager import (
     CAP_SPENT_EXPLANATION,
@@ -127,6 +128,7 @@ class Rig:
         self.registry = Registry([socket_host(id="h", services=urls)], connect, clock=self.clock)
         self.detector = Detector(Thresholds(), self.clock)
         self.store = UrlCheckStore(self.db)
+        self.health = HealthStore(self.db)
 
         def models(role: str):
             self.roles.append(role)
@@ -145,6 +147,7 @@ class Rig:
             ledger=self.ledger,
             budgets=lambda: self.budgets,
             quiet=self.quiet,
+            health=self.health,
         )
         self.quiet.subscribe(self.manager.quiet_changed)
 
@@ -990,3 +993,65 @@ async def test_one_failing_end_does_not_keep_a_quiet_host_from_closing_the_other
     r.runner.end = end
     await r.quiet.set("host", "h", "leave_alone", None)
     assert [i for i, _ in r.runner.ended] == [second.id]
+
+
+# -- health since (#232) ---------------------------------------------------------------------
+
+
+async def test_each_services_health_is_stored_from_the_first_tick_that_judged_it(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    first = r.clock()
+    for _ in range(3):
+        await r.pulse()
+    for project in PROJECTS:
+        assert await r.health.current(f"h/compose:{project}") == ("ok", first)
+
+
+async def test_a_failing_url_round_moves_since_to_when_the_service_went_down(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    r.web_up = False  # the host still answers; its URLs do not
+    await r.pulse()
+    went_down = r.clock()
+    await r.pulse()
+    assert await r.health.current(SHOP) == ("down", went_down)
+    r.web_up = True
+    await r.pulse()
+    assert await r.health.current(SHOP) == ("ok", r.clock())
+
+
+async def test_a_dead_container_moves_since_on_the_poll_tick(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    await r.kill("shop")  # polls only, no URL rounds
+    current = await r.health.current(SHOP)
+    assert current is not None and current[0] == "down"
+    assert await r.health.current("h/compose:blog") == ("ok", T0 + timedelta(seconds=15))
+
+
+async def test_a_quiet_services_health_is_still_stored(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("service", SHOP, "leave_alone", None)
+    await r.pulse(urls=False)
+    await r.kill("shop")
+    current = await r.health.current(SHOP)
+    assert current is not None and current[0] == "down"
+    assert await r.incidents() == []
+
+
+async def test_a_removed_or_moved_host_forgets_its_services_health(tmp_path):
+    r, machines = await dashboard_rig(tmp_path)
+    await r.manager.stop()  # ticks by hand from here
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))
+    await r.manager.hosts["c"].watcher.tick()
+    assert await r.health.current("c/compose:blog") is not None
+
+    moved = dashboard_host("other.lan")
+    await r.manager.host_changed(HostChange("c", "connection", moved, moved=True))
+    assert await r.health.current("c/compose:blog") is None
+    await r.manager.hosts["c"].watcher.tick()
+    assert await r.health.current("c/compose:wiki") is not None
+
+    await r.manager.host_changed(HostChange("c", "removed", None))
+    assert await r.health.current("c/compose:wiki") is None

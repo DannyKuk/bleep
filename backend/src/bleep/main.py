@@ -103,6 +103,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 store=parts.url_checks,
                 watch_interval_s=settings.watch_interval_s,
                 quiet=parts.quiet,
+                health=parts.service_health,
             )
             reminders = ReminderLoop(
                 parts.approvals,

@@ -10,6 +10,10 @@ probe (disk, memory, load) and the URL checks. Every signal goes through the one
   tick so a slow model never delays the next pull. The call is in the usage ledger under
   `RECOVERY_USAGE` and is skipped once the day's cost cap is spent.
 
+After every poll tick and every round of URL checks each of the host's services is judged
+(`watcher/health.service_health`, from the same inputs the services API uses) and kept in the
+`HealthStore`, so the service page can say since when it has had its health.
+
 A host added, changed or removed on the dashboard is put in force by `host_changed`, without a
 restart: its loops start, start again on the new connection, or stop and its open incidents
 are closed with a notice.
@@ -51,8 +55,9 @@ from bleep.watcher.detector import (
     explain_recovery,
 )
 from bleep.watcher.health import container_health, service_health, url_status
+from bleep.watcher.health_store import HealthStore
 from bleep.watcher.host_probe import HostProbe
-from bleep.watcher.http_checks import UrlCheckStore, UrlWatcher
+from bleep.watcher.http_checks import UrlCheck, UrlCheckStore, UrlWatcher
 from bleep.watcher.poller import HostWatcher
 
 log = logging.getLogger(__name__)
@@ -120,6 +125,7 @@ class WatcherManager:
         probe_interval_s: float = host_probe.INTERVAL_S,
         url_interval_s: float = http_checks.INTERVAL_S,
         quiet: QuietStore | None = None,
+        health: HealthStore | None = None,
     ) -> None:
         self.registry = registry
         self.detector = detector
@@ -128,6 +134,7 @@ class WatcherManager:
         self.bus = bus
         self._clock = clock
         self._quiet = quiet
+        self._health = health
         self._models = models
         self._guard_log = guard_log
         self._ledger = ledger
@@ -154,7 +161,16 @@ class WatcherManager:
                 host_id, self.registry, self.sink, self._clock, watch_s, on_snapshot=self.snapshot
             ),
             HostProbe(host_id, self.registry, self.sink, self._clock, probe_s),
-            UrlWatcher(host_id, self.registry, self._http, self.sink, self._clock, store, url_s),
+            UrlWatcher(
+                host_id,
+                self.registry,
+                self._http,
+                self.sink,
+                self._clock,
+                store,
+                url_s,
+                on_round=self.record_health,
+            ),
         )
 
     async def start(self) -> None:
@@ -208,10 +224,15 @@ class WatcherManager:
                 self._forget(host_id)
                 if self._quiet is not None:  # one re-added under this id starts out watched
                     await self._quiet.forget_host(host_id)
+                if self._health is not None:
+                    await self._health.forget_host(host_id)
             return
         if change.moved:
-            # Possibly another machine: nothing pending on the old one may open an incident here.
+            # Possibly another machine: nothing pending on the old one may open an incident here,
+            # and the old one's health says nothing about since when this one has had its own.
             self._forget(host_id)
+            if self._health is not None:
+                await self._health.forget_host(host_id)
             for incident in await self.repo.open_on_host(host_id):
                 await self.bus.publish(incident.id, "notice", {"text": MOVED_NOTICE})
         if change.kind == "added":
@@ -280,6 +301,31 @@ class WatcherManager:
         """
         await self._handle(self.detector.tick(self._clock(), states, host_id))
         await self._run_deferred(host_id)
+        await self.record_health(host_id)
+
+    async def record_health(self, host_id: str) -> None:
+        """Judge each of the host's services as the services API does and keep the result, quiet
+        ones too (quiet only stops incidents). Never raises: it must not cost the tick."""
+        if self._health is None:
+            return
+        try:
+            now = self._clock()
+            stored = await self._stored_checks(host_id)
+            for service in self.registry.services(host_id):
+                urls = [
+                    url_status(u.url, stored.get((service.id, u.url)), now) for u in service.urls
+                ]
+                health = service_health(service.containers, (u.status for u in urls))
+                await self._health.record(host_id, service.id, health, now)
+        except Exception:
+            log.exception("recording the health of host %s's services failed", host_id)
+
+    async def _stored_checks(
+        self, host_id: str
+    ) -> dict[tuple[str, str], tuple[UrlCheck, datetime]]:
+        """The host's latest URL results by (service id, url)."""
+        latest = await self._store.latest(host_id) if self._store is not None else []
+        return {(sid, check.url): (check, at) for sid, check, at in latest}
 
     async def _quiet_now(self, subject: Subject) -> bool:
         return self._quiet is not None and await self._quiet.is_quiet(subject)
@@ -355,8 +401,7 @@ class WatcherManager:
         if service is None:
             return []
         now = self._clock()
-        latest = await self._store.latest(service.host_id) if self._store and with_urls else []
-        stored = {(sid, check.url): (check, at) for sid, check, at in latest}
+        stored = await self._stored_checks(service.host_id) if with_urls else {}
         configured = service.urls if with_urls else []
         urls = [url_status(u.url, stored.get((service.id, u.url)), now) for u in configured]
         if service_health(service.containers, (u.status for u in urls)) != "down":

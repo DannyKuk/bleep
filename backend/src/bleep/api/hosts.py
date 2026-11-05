@@ -15,6 +15,7 @@ from bleep.schemas.api import (
     QuietView,
     ServiceDetail,
     ServiceView,
+    UrlHistory,
 )
 from bleep.schemas.docker import HostBasics
 from bleep.schemas.incidents import Subject
@@ -152,7 +153,8 @@ async def list_services(
 async def get_service(
     service_id: str, parts: Annotated[AppParts, Depends(get_parts)]
 ) -> ServiceDetail:
-    """One service as the overview shows it, with its own rules and its host's.
+    """One service as the overview shows it, with its own rules and its host's, since when it
+    has had its health and each configured URL's recent checks.
 
     A service id holds a `/` (`<host>/<key>`), so this route takes the rest of the path; the facts
     routes under `/services/{id}/facts` are registered before it (`main.create_app`).
@@ -166,14 +168,27 @@ async def get_service(
     if service is None or host is None:
         raise HTTPException(404, "no such service")
     subject = Subject(kind="service", host_id=service.host_id, service_id=service.id)
+    view = _view(
+        service,
+        await parts.incidents.open_incident_id(subject),
+        await _stored_checks(parts, service.host_id),
+        utcnow(),
+        _quiet_of(service, await parts.quiet.active()),
+    )
+    history = await parts.url_checks.history(service.host_id, service.id)
     return ServiceDetail(
-        service=_view(
-            service,
-            await parts.incidents.open_incident_id(subject),
-            await _stored_checks(parts, service.host_id),
-            utcnow(),
-            _quiet_of(service, await parts.quiet.active()),
-        ),
+        service=view,
         rules=list(service.rules),
         host_rules=list(host.config.rules),
+        health_since=await _health_since(parts, view),
+        recent_checks=[UrlHistory(url=u.url, checks=history.get(u.url, [])) for u in service.urls],
     )
+
+
+async def _health_since(parts: AppParts, view: ServiceView) -> datetime | None:
+    """When the service's current health began, as the watcher stored it. A stored health that
+    differs from the one judged now (the watcher has not judged the change yet) gives no time."""
+    stored = await parts.service_health.current(view.id)
+    if stored is None or stored[0] != view.health:
+        return None
+    return stored[1]

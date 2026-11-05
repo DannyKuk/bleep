@@ -89,6 +89,22 @@ class UrlStatus(BaseModel):
     latency_ms: int | None
 
 
+class UrlCheckPoint(BaseModel):
+    """One past check of a URL, for the service page's strip: no error text, no body."""
+
+    ok: bool
+    status_code: int | None
+    latency_ms: int
+    checked_at: datetime
+
+
+class UrlHistory(BaseModel):
+    """A configured URL's recent checks, oldest first (the last 30 at most)."""
+
+    url: str
+    checks: list[UrlCheckPoint]
+
+
 class ServiceView(BaseModel):
     id: str
     host_id: str
@@ -114,6 +130,19 @@ class ApprovalView(BaseModel):
     requested_at: datetime
     reminders: int
     decision: Decision | None
+
+
+class IncidentVotes(BaseModel):
+    """The human's vote on an incident's diagnosis and plan; null where there is none."""
+
+    diagnosis: Vote | None = None
+    proposal: Vote | None = None
+
+
+class IncidentListItem(Incident):
+    """An incident as the lists show it, with the human's votes (not their notes)."""
+
+    votes: IncidentVotes = Field(default_factory=IncidentVotes)
 
 
 class IncidentDetail(BaseModel):
@@ -179,9 +208,12 @@ class FactBody(BaseModel):
 
 
 class ServiceDetail(BaseModel):
-    """One service for its page: the overview's view of it plus the rules Bleep follows for it
-    (its own and its host's)."""
+    """One service for its page: the overview's view of it, the rules Bleep follows for it (its
+    own and its host's), since when it has had its current health (null when that is not known)
+    and each configured URL's recent checks."""
 
     service: ServiceView
     rules: list[str]
     host_rules: list[str]
+    health_since: datetime | None = None
+    recent_checks: list[UrlHistory] = []
