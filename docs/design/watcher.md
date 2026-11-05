@@ -57,6 +57,15 @@ One `HostWatcher` per host ticks every 15 s (`BLEEP_WATCH_INTERVAL_S`). A tick i
 - **An `unhealthy` signal for a container with a pending death** folds that death into its incident and clears it, so grace expiry does not open a second one. A second death while one is pending keeps the first death's grace window (#14).
 - **Bounded state.** `tick` drops death history older than the repeat window and debounce windows older than `debounce_s` (#14).
 
+## Health since and recent checks (#232)
+
+- **The watcher keeps each service's health with the time it last changed** (`service_health`, migration 0021, `watcher/health_store.py`). `WatcherManager.record_health` judges each of the host's services with `watcher/health.service_health` from the same inputs the services API uses (the registry's containers and the stored URL results through `url_status`), after every successful poll tick (from `snapshot`) and after every round of URL checks (`UrlWatcher`'s `on_round`, once the round's results are stored). One upsert moves `since` only when the health differs from the stored one. Reason: the service page says "healthy since" from it, and judging it where the inputs change keeps it as fresh as the views; the API stays a reader (#232).
+- **`unknown` is never stored.** It means no data (no listing yet after a restart, a URL check gone stale), so the last known health and its time stay. Reason: a backend restart or a host's watcher pausing must not reset "healthy since" to the moment Bleep looked again (#232).
+- **Quiet services and hosts get their health stored too.** Reason: quiet only stops incidents; the page must still say how the service has been (#232).
+- **A removed host's rows are dropped, and so are a moved host's** (a new address, port or user). Reason: the old machine's history says nothing about the new one, and a host re-added under the same id starts fresh (#232).
+- **Every URL check is also written to `url_check_history`** (migration 0022) in the same transaction as the latest row, and the URL's rows past the last 30 per (host, service, URL) are deleted in that insert (`HISTORY_PER_URL`, 15 minutes at one check every 30 s). The history keeps `ok`, the status code, the latency and the time, not the error text. Reason: the service page's strip of recent checks needs a short, bounded history, and pruning on insert keeps the table bounded without a sweeper (#232).
+- **Limit:** a row in either table for a service that is gone from a host that is still watched stays until the host is removed or moved. It is a few small rows and is read only for a service the registry knows (#232).
+
 ## Quiet services and hosts (#220)
 
 - **A quiet service or host is still read, not acted on.** The detector, URL checks and host probe keep running, so health stays true. `WatcherManager` drops an `OpenIncident` or `AttachSignals` for a quiet subject with a debug log line, and a service's URL failures that would be held for a host incident are dropped too. Reason: the person decided to be left alone, but Bleep must know the real state the moment the quiet ends (#220).
