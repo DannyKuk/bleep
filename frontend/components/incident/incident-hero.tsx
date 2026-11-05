@@ -65,7 +65,7 @@ export function IncidentHero({ detail, stream }: { detail: IncidentDetail; strea
         </p>
         <h1
           id="incident-headline"
-          className="text-[32px] leading-tight font-extrabold text-balance md:text-4xl"
+          className="text-[32px] leading-tight font-extrabold text-balance wrap-anywhere md:text-4xl"
         >
           <HeadlineWords detail={detail} />
         </h1>
@@ -135,7 +135,10 @@ export function PhoneIncidentHero({ detail }: { detail: IncidentDetail }) {
         <Bleep mood={incidentMood(incident.status, diagnosis?.unsure ?? false)} size={76} />
         <div className="flex min-w-0 flex-col items-start gap-1.5">
           <IncidentStatusBadge status={incident.status} />
-          <h1 id="incident-headline" className="text-[22px] leading-tight font-extrabold">
+          <h1
+            id="incident-headline"
+            className="text-[22px] leading-tight font-extrabold wrap-anywhere"
+          >
             <HeadlineWords detail={detail} />
           </h1>
         </div>
