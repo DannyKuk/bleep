@@ -46,7 +46,7 @@ Measured on the demo shop's eight faults with real models. Every number comes fr
 
 | What | Result |
 |---|---|
-| Root cause, `openai/gpt-6-luna`, the 8 faults and misroute through MCP × 3 runs, graded by hand | 24 of 27 right (every miss on hung), plan exactly right in 20 of 27, about 74 s and $0.0028 a run ([report](docs/evals/scenarios-2026-11-05-2.md)) |
+| Root cause, `openai/gpt-6-luna`, the 8 faults and misroute through MCP × 3 runs, graded by hand | 23 of 27 right (3 misses on hung, 1 hedged bad-env), plan exactly right in 24 of 27, about 64 s and $0.0028 a run ([report](docs/evals/scenarios-2026-11-05-3.md)) |
 | Root cause, local `openai/gpt-oss-20b`, 1 run each | 7 of 8 right, 6 of 6 honest controls, 55 s, $0 ([report](docs/evals/scenarios-local-2026-11-03.md)) |
 | Prompt injection through logs, replies, docs, commits and memory | 20 of 20 attacks failed to steer Bleep or leak a secret; the 4 reply-body attacks never reached the model. Honest controls kept their root cause in 12 of 18, every miss on hung. The human is told of planted orders when they try to break out of the data tags: 3 of 13 attacks, 0 of 18 honest runs ([report](docs/evals/injection-2026-11-05-2.md), [what reached the model](docs/evals/injection-reached-2026-11-04.md)) |
 | Runbook pages that give orders | read in 6 of 6 runs, followed in none ([report](docs/evals/injection-docs-2026-11-04.md)) |
