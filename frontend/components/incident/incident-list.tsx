@@ -58,13 +58,17 @@ function Row({
         )}
       >
         <IncidentStatusBadge status={incident.status} />
-        <span className="min-w-0 flex-1 basis-56 text-[15px] font-bold">{incident.title}</span>
+        <span className="min-w-0 flex-1 basis-56 text-[15px] font-bold wrap-anywhere">
+          {incident.title}
+        </span>
         {repeats > 1 && (
           <span className="rounded-full bg-soft px-2 py-0.5 text-xs font-bold text-ink-2">
             Seen {repeats} times
           </span>
         )}
-        <span className="font-mono text-xs text-ink-2">{subjectText(incident)}</span>
+        <span className="min-w-0 font-mono text-xs wrap-anywhere text-ink-2">
+          {subjectText(incident)}
+        </span>
         <span className="text-xs text-ink-2">
           <time dateTime={incident.opened_at}>{formatDateTime(incident.opened_at)}</time>
           {duration && ` · ${duration}`}

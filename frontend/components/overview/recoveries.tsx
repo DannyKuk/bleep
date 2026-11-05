@@ -1,6 +1,6 @@
 "use client";
 
-import { RotateCcw, TriangleAlert } from "lucide-react";
+import { Loader2, RotateCcw, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 
 import { usePoll } from "@/hooks/use-poll";
@@ -59,7 +59,7 @@ export function RecoveriesView({ recoveries }: { recoveries: RecoveryEvent[] }) 
                 {formatDateTime(recovery.at)}
               </time>
             </div>
-            <p className="text-[15px] text-ink-2">{recovery.explanation}</p>
+            <p className="text-[15px] wrap-anywhere text-ink-2">{recovery.explanation}</p>
           </div>
         </li>
       ))}
@@ -82,6 +82,12 @@ export function Recoveries() {
         <p role="alert" className="flex items-center gap-2 text-[13px] text-warn">
           <TriangleAlert aria-hidden className="size-3.5" />
           Could not load recoveries: {error.message}
+        </p>
+      )}
+      {!data && !error && (
+        <p role="status" className="flex items-center gap-2 text-[15px] text-ink-2">
+          <Loader2 aria-hidden className="size-4 animate-spin motion-reduce:animate-none" />
+          Loading what fixed itself
         </p>
       )}
       {data && <RecoveriesView recoveries={data} />}

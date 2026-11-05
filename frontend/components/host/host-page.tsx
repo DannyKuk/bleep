@@ -57,7 +57,7 @@ function ServiceRow({ service }: { service: ServiceView }) {
         href={serviceHref(service.id)}
         className="flex min-h-11 flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-row bg-soft px-3 py-2 hover:bg-line focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
       >
-        <span className="text-sm font-bold">{service.name}</span>
+        <span className="min-w-0 text-sm font-bold wrap-anywhere">{service.name}</span>
         <span className="flex items-center gap-2">
           {service.open_incident_id && (
             <span className="text-[13px] font-bold text-down">Incident open</span>
@@ -89,7 +89,7 @@ function ConfiguredRow({
         href={serviceHref(`${hostId}/${serviceKey}`)}
         className="flex min-h-11 flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-row bg-soft px-3 py-2 hover:bg-line focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
       >
-        <span className="font-mono text-sm font-bold">{serviceKey}</span>
+        <span className="min-w-0 font-mono text-sm font-bold wrap-anywhere">{serviceKey}</span>
         {unseen && <span className="text-[13px] font-bold text-ink-2">Not seen now</span>}
       </Link>
     </li>
@@ -245,6 +245,11 @@ function Host({ id }: { id: string }) {
             <Header host={host} services={onHost.length} onChanged={refresh} />
           ) : (
             <h1 className="text-3xl font-extrabold wrap-anywhere md:text-4xl">{name}</h1>
+          )}
+          {overall.hosts === undefined && (
+            <Status loaded={{ error: overall.error }} what="the host">
+              {() => null}
+            </Status>
           )}
           {notice && <Alert>{notice}</Alert>}
 

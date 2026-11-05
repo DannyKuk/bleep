@@ -50,6 +50,7 @@ function Hosts({
         <p className="text-sm text-muted-foreground">
           Each host&apos;s connection, rules and services are set on its own page.
         </p>
+        {hosts.length === 0 && <p className="text-sm text-ink-2">No hosts yet.</p>}
         {hosts.length > 0 && (
           <ul aria-label="Hosts" className="flex flex-col gap-1.5">
             {hosts.map((host) => (

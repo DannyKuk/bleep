@@ -43,6 +43,38 @@ const refusedApproval = () =>
   });
 
 describe("DecisionBar", () => {
+  it("lets the decision be made by keyboard alone, with a focus ring on each button", async () => {
+    const fetchMock = reply(200, decided("approve", "dashboard"));
+    const onDecided = vi.fn();
+    render(<DecisionBar incidentId="inc-1" approval={approval()} onDecided={onDecided} />);
+
+    for (const button of buttons()) expect(button).toHaveClass("focus-visible:ring-2");
+    await userEvent.tab();
+    expect(screen.getByRole("button", { name: "Yes, go ahead" })).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+
+    await waitFor(() => expect(onDecided).toHaveBeenCalled());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("POST");
+    expect(sent(fetchMock)).toEqual({ approval_id: "appr-1", kind: "approve" });
+  });
+
+  it("reaches No and Tell Bleep something by Tab, and refuses by keyboard", async () => {
+    const fetchMock = reply(200, decided("reject", "dashboard"));
+    render(<DecisionBar incidentId="inc-1" approval={approval()} onDecided={vi.fn()} />);
+
+    await userEvent.tab();
+    await userEvent.tab();
+    expect(screen.getByRole("button", { name: "No, leave it" })).toHaveFocus();
+    await userEvent.tab();
+    expect(screen.getByRole("button", { name: "Tell Bleep something" })).toHaveFocus();
+    await userEvent.tab({ shift: true });
+    await userEvent.keyboard(" ");
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(sent(fetchMock)).toEqual({ approval_id: "appr-1", kind: "reject" });
+  });
+
   it("offers a refused plan an instruction and Let it go, never Yes, go ahead", async () => {
     const fetchMock = reply(200, decided("instruct", "dashboard", "restart shop-proxy-1"));
     render(<DecisionBar incidentId="inc-1" approval={refusedApproval()} onDecided={vi.fn()} />);
