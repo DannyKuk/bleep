@@ -3,7 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { HostPage } from "@/components/host/host-page";
-import { json, settingsView, sshHost, stubBackend } from "@/components/settings/fixtures";
+import { OverallProvider } from "@/components/overall-state";
+import {
+  json,
+  settingsView,
+  sshHost,
+  stubBackend as stubSettingsBackend,
+} from "@/components/settings/fixtures";
 import type { HostView, ServiceView } from "@/lib/api-types";
 
 const HOST: HostView = {
@@ -28,12 +34,6 @@ const HOST: HostView = {
   quiet_service_ids: [],
 };
 
-const overall = vi.hoisted(() => ({
-  hosts: [] as HostView[] | undefined,
-  refresh: vi.fn(),
-}));
-vi.mock("@/components/overall-state", () => ({ useOverall: () => overall }));
-
 const router = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 
@@ -51,6 +51,24 @@ const SHOP: ServiceView = {
 const WORKER: ServiceView = { ...SHOP, id: "m1/compose:worker", name: "worker", health: "down" };
 const ELSEWHERE: ServiceView = { ...SHOP, id: "m2/compose:blog", host_id: "m2", name: "blog" };
 
+let hostList: HostView[] = [];
+
+/** The header's overall poll (`OverallProvider`): the newest incidents and the hosts. */
+function stubBackend(routes: Parameters<typeof stubSettingsBackend>[0]) {
+  const inner = stubSettingsBackend(routes);
+  const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/hosts") return json(hostList);
+    if (url.startsWith("/api/incidents?limit=")) return json([]);
+    return inner(input, init);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+const hostReads = (fetchMock: ReturnType<typeof stubBackend>) =>
+  fetchMock.mock.calls.filter(([input]) => String(input) === "/api/hosts").length;
+
 function backend(put: Response[] = [], view = settingsView()) {
   return stubBackend({
     "GET /api/settings": json(view),
@@ -60,8 +78,12 @@ function backend(put: Response[] = [], view = settingsView()) {
 }
 
 function renderPage(id = "m1", hosts: HostView[] = [HOST]) {
-  overall.hosts = hosts;
-  return render(<HostPage id={id} />);
+  hostList = hosts;
+  return render(
+    <OverallProvider>
+      <HostPage id={id} />
+    </OverallProvider>,
+  );
 }
 
 describe("HostPage", () => {
@@ -69,7 +91,7 @@ describe("HostPage", () => {
     backend();
     renderPage();
 
-    expect(screen.getByRole("heading", { level: 1, name: "M1" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "M1" })).toBeInTheDocument();
     expect(screen.getByText("load 0.3 · mem 75%")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Quiet M1" })).toBeInTheDocument();
     const list = await screen.findByRole("list", { name: "Services on M1" });
@@ -81,17 +103,17 @@ describe("HostPage", () => {
     expect(within(list).queryByText("blog")).toBeNull();
   });
 
-  it("lets a long unbroken host name wrap instead of widening the page", () => {
+  it("lets a long unbroken host name wrap instead of widening the page", async () => {
     backend();
     const name = "h".repeat(50);
     renderPage(name, [{ ...HOST, id: name, name }]);
-    expect(screen.getByRole("heading", { level: 1, name })).toHaveClass("wrap-anywhere");
+    expect(await screen.findByRole("heading", { level: 1, name })).toHaveClass("wrap-anywhere");
   });
 
   it("shows an unreachable host's error", async () => {
     backend();
     renderPage("m1", [{ ...HOST, reachable: false, error: "ssh: connection refused" }]);
-    expect(screen.getByText("Unreachable")).toBeInTheDocument();
+    expect(await screen.findByText("Unreachable")).toBeInTheDocument();
     expect(screen.getByText("ssh: connection refused")).toBeInTheDocument();
   });
 
@@ -136,6 +158,7 @@ describe("HostPage", () => {
     });
     renderPage();
     const connection = await screen.findByRole("region", { name: "Connection" });
+    expect(hostReads(fetchMock)).toBe(1);
     expect(within(connection).getByText("Key: set")).toBeInTheDocument();
     expect(within(connection).getByText("Host key: missing")).toBeInTheDocument();
 
@@ -144,7 +167,7 @@ describe("HostPage", () => {
       within(connection).getByRole("button", { name: "Yes, remove this host" }),
     );
     await waitFor(() => expect(router.push).toHaveBeenCalledWith("/"));
-    expect(overall.refresh).toHaveBeenCalled();
+    await waitFor(() => expect(hostReads(fetchMock)).toBe(2));
     const removal = fetchMock.mock.calls.find(([, init]) => init?.method === "DELETE");
     expect(removal?.[1]?.headers).toMatchObject({ "if-match": '"v-m1"' });
   });
