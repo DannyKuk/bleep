@@ -1,13 +1,12 @@
 """Group a host's containers into services (docs/design/hosts.md, "Service discovery")."""
 
-from bleep.hosts.config import ServiceOverrides
+from bleep.hosts.config import EVERY_CONTAINER, ServiceOverrides
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.services import Service
 
 SELF_LABEL = "bleep.self"
 COMPOSE_PROJECT = "com.docker.compose.project"
 COMPOSE_SERVICE = "com.docker.compose.service"
-EVERY_CONTAINER = "*"
 
 
 def is_self(labels: dict[str, str]) -> bool:

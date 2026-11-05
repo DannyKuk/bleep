@@ -2,12 +2,13 @@
 
 from datetime import UTC, datetime
 
+import pytest
 from pydantic import SecretStr
 
 from bleep.graph.build import build_graph, open_checkpointer
 from bleep.incidents.expectations import CLOSED_NOTICE, Answer, Expectations, expectation_for
 from bleep.incidents.runner import IncidentRunner
-from bleep.incidents.settings_store import SettingsStore
+from bleep.incidents.settings_store import SettingsRefused, SettingsStore
 from bleep.plugins.registry import PluginRegistry
 from bleep.schemas.graph import Decision, PlanStep, Proposal, VerificationPlan
 from bleep.schemas.incidents import Signal, Subject
@@ -149,7 +150,7 @@ class YesFirst:
         return await self.real.resolve(incident_id, decision, approval_id)
 
 
-async def test_a_yes_that_lands_first_wins_the_race_and_nothing_is_recorded(tmp_path):
+async def test_a_yes_that_lands_first_wins_the_plan_and_the_incident_stays_open(tmp_path):
     env = await graph_env(tmp_path)
     incident = await opened(env, death(shop(env), 0))
     await env.deps.approvals.request(incident.id, PLAN, [])
@@ -158,5 +159,52 @@ async def test_a_yes_that_lands_first_wins_the_race_and_nothing_is_recorded(tmp_
         rig = Rig(env, IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus))
         answer = await rig.expectations.expected(incident.id, "telegram")
 
-    assert answer == Answer(False, "Already decided on the dashboard; nothing was recorded.")
-    assert env.registry.service(shop(env).service_id).exits == []
+    assert not answer.done
+    assert answer.text.endswith(
+        "The plan was already decided on the dashboard, so the incident stays open."
+    )
+    assert env.registry.service(shop(env).service_id).exits == ["shop-web-1"]  # written first
+    assert (await env.repo.get(incident.id)).status != "closed"
+
+
+async def test_a_write_that_fails_changes_nothing_and_the_plan_still_waits(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await opened(env, death(shop(env), 0))
+    request = await env.deps.approvals.request(incident.id, PLAN, [])
+    async with open_checkpointer(tmp_path / "c.sqlite") as saver:
+        rig = Rig(env, IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus))
+
+        async def refuse(*args):
+            raise SettingsRefused("the database is read-only")
+
+        rig.settings.expect_exits = refuse  # type: ignore[method-assign]
+        answer = await rig.expectations.expected(incident.id, "telegram")
+
+    assert answer == Answer(False, "Bleep could not record that; nothing was changed.")
+    record = await env.deps.approvals.current(incident.id)
+    assert record.id == request.id and record.decision is None
+    assert (await env.repo.get(incident.id)).status == "open"
+
+
+@pytest.mark.parametrize(
+    ("label", "entry"),
+    [("fetch", "fetch"), ("*", "shop-web-1"), ("x" * 300, "shop-web-1"), ("a\nb", "shop-web-1")],
+)
+async def test_a_label_that_is_no_name_falls_back_to_the_container_name(tmp_path, label, entry):
+    env = await graph_env(tmp_path)
+    incident = await opened(env, death(shop(env), 0, compose_service=label))
+    offered = expectation_for(incident, await env.repo.signals(incident.id), env.registry)
+    assert offered is not None and offered.entries == (entry,)
+
+
+async def test_nothing_is_offered_when_no_name_can_hold_the_job(tmp_path):
+    env = await graph_env(tmp_path)
+    odd = Signal(
+        subject=shop(env),
+        kind="container_died",
+        at=T0,
+        container="-odd name",
+        detail={"exit_code": 0, "compose_service": "*"},
+    )
+    incident = await opened(env, odd)
+    assert expectation_for(incident, await env.repo.signals(incident.id), env.registry) is None

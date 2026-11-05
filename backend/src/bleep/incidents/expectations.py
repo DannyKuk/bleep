@@ -13,11 +13,12 @@ from datetime import datetime
 from typing import Literal
 
 from bleep.graph.deps import Approvals
+from bleep.hosts.config import is_exit_name
 from bleep.hosts.registry import Registry
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.incidents.runner import IncidentRunner, waits_for_host
-from bleep.incidents.settings_store import SettingsStore
+from bleep.incidents.settings_store import SettingsRefused, SettingsStore
 from bleep.schemas.graph import Decision
 from bleep.schemas.incidents import TERMINAL_STATUSES, Incident, Signal
 
@@ -80,20 +81,26 @@ def expectation_for(
         return None
     if any(s.detail.get("exit_code") != 0 for s in deaths):
         return None  # a crash is never expected
-    entries = tuple(dict.fromkeys(_entry(s, registry) for s in deaths))
+    found = [_entry(s, registry) for s in deaths]
+    if None in found:
+        return None
+    entries = tuple(dict.fromkeys(e for e in found if e is not None))
     return Expectation("exits", service.host_id, service.id, entries, service.name)
 
 
-def _entry(death: Signal, registry: Registry) -> str:
+def _entry(death: Signal, registry: Registry) -> str | None:
     """The Compose service of the container when it has one (so every `compose run` of it
-    matches), else its name."""
-    if compose_service := death.detail.get("compose_service"):
-        return str(compose_service)
+    matches), else its name; None when neither is a name `exits` can hold (a label is whatever
+    the container was given, `*` included)."""
     name = death.container or ""
-    container = registry.container(death.subject.host_id, name)
-    if container is not None and (label := container.labels.get("com.docker.compose.service")):
-        return label
-    return name
+    label = death.detail.get("compose_service")
+    if label is None:
+        container = registry.container(death.subject.host_id, name)
+        label = container.labels.get("com.docker.compose.service") if container else None
+    for candidate in (label, name):
+        if isinstance(candidate, str) and is_exit_name(candidate):
+            return candidate
+    return None
 
 
 class Expectations:
@@ -129,35 +136,41 @@ class Expectations:
         return expectation_for(incident, await self.repo.signals(incident_id), self.registry)
 
     async def expected(self, incident_id: str, via: Channel) -> Answer:
-        """Record the expectation and close the incident. A pending plan is rejected first,
-        through the same first-wins decision as any other answer: when another channel decided
-        it already, or approved the latest plan, nothing is recorded and the answer says where."""
+        """Record the expectation, then reject a pending plan, then close the incident: a write
+        that fails changes nothing. The reject is the same first-wins decision as any other
+        answer; when a yes on another channel won it, the expectation stays recorded, the
+        incident stays open with its plan, and the answer says so."""
         expectation = await self.offered(incident_id)
         if expectation is None:
             return Answer(False, "Nothing here can be marked as expected now.")
         service = self.registry.service(expectation.service_id or "")
         if expectation.kind == "exits" and service is None:
             return Answer(False, "Bleep does not see that service now; nothing was recorded.")
+        try:
+            if expectation.kind == "may_sleep":
+                await self.settings.expect_sleep(expectation.host_id)
+            elif service is not None:
+                await self.settings.expect_exits(service, list(expectation.entries))
+        except SettingsRefused as refused:
+            log.warning("incident %s: expectation not recorded: %s", incident_id, refused)
+            return Answer(False, "Bleep could not record that; nothing was changed.")
+        text = f"You said this is expected. {expectation.sentence()}"
         pending = await self.approvals.current(incident_id)
         if pending is not None and pending.decision is None:
             decision = Decision(kind="reject", text=DECISION_TEXT, via=via, at=self.clock())
             if await self.approvals.resolve(incident_id, decision, pending.id) is None:
-                return await self._lost(incident_id)
-        elif pending is not None and pending.decision is not None:
-            if pending.decision.kind == "approve":  # its plan runs, or is about to
-                return await self._lost(incident_id)
-        if expectation.kind == "may_sleep":
-            await self.settings.expect_sleep(expectation.host_id)
-        elif service is not None:
-            await self.settings.expect_exits(service, list(expectation.entries))
-        text = f"You said this is expected. {expectation.sentence()}"
+                return await self._lost(incident_id, text)
         await self.bus.publish(incident_id, "expected", {"text": text, "via": via})
         await self.runner.end(incident_id, CLOSED_NOTICE, spare=RUNNING)
         log.info("incident %s: marked expected on %s", incident_id, via)
         return Answer(True, text)
 
-    async def _lost(self, incident_id: str) -> Answer:
+    async def _lost(self, incident_id: str, recorded: str) -> Answer:
+        """A decision on another channel won the plan after the expectation was written."""
         latest = await self.approvals.current(incident_id)
         won = latest.decision if latest is not None else None
         where = f" on {_CHANNEL[won.via]}" if won is not None else ""
-        return Answer(False, f"Already decided{where}; nothing was recorded.")
+        await self.bus.publish(incident_id, "expected", {"text": recorded})
+        return Answer(
+            False, f"{recorded} The plan was already decided{where}, so the incident stays open."
+        )

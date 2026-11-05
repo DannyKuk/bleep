@@ -283,7 +283,8 @@ class TelegramBot:
         if len(text) > CALLBACK_TEXT_MAX:
             text = text[: CALLBACK_TEXT_MAX - 1] + "…"
         await self.client.answer_callback(callback_id, text)
-        await self.client.clear_buttons(self.chat_id, message_id)
+        if result.done:  # a failed press leaves Approve and Reject to a plan that still waits
+            await self.client.clear_buttons(self.chat_id, message_id)
 
     async def _refused_plan(self, incident_id: str, approval_id: str) -> bool:
         current = await self.approvals.current(incident_id)

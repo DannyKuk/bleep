@@ -25,6 +25,10 @@ from bleep.hosts.coolify_names import coolify_slug
 # A GitHub repo, owner/name; `.` and `..` are no names, since they would change a request's path.
 REPO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/(?!\.\.?$)[A-Za-z0-9._-]{1,100}")
 MAX_DOCS_PATH = 300
+# An `exits` entry: a container name or a Compose service name, by Docker's own rule for names.
+EXIT_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}")
+EVERY_CONTAINER = "*"
+MAX_EXITS = 100
 log = logging.getLogger(__name__)
 
 
@@ -98,6 +102,26 @@ def normalise_docs_path(path: str) -> str:
     return normal
 
 
+def is_exit_name(entry: str) -> bool:
+    """Whether `entry` can name a container or a Compose service (never `*`)."""
+    return EXIT_NAME.fullmatch(entry) is not None
+
+
+def check_exits(entries: list[str]) -> list[str]:
+    """`exits` as stored: names by Docker's rule, `*` only alone, at most `MAX_EXITS`. The
+    errors never quote an entry: one may come from a container's label."""
+    if EVERY_CONTAINER in entries and len(set(entries)) > 1:
+        raise ValueError('"*" stands alone in exits: it already names every container')
+    if any(e != EVERY_CONTAINER and not is_exit_name(e) for e in entries):
+        raise ValueError(
+            "exits entries are container or Compose service names: letters, digits, _ . -, "
+            "starting with a letter or digit, at most 128 characters"
+        )
+    if len(set(entries)) > MAX_EXITS:
+        raise ValueError(f"exits holds at most {MAX_EXITS} entries")
+    return list(dict.fromkeys(entries))
+
+
 class ServiceOverrides(Strict):
     urls: list[UrlCheckConfig] = []
     repo: str | None = None
@@ -114,6 +138,11 @@ class ServiceOverrides(Strict):
         if value is not None and not REPO_NAME.fullmatch(value):
             raise ValueError(f"repo {value!r} must be a GitHub repo name, owner/name")
         return value
+
+    @field_validator("exits")
+    @classmethod
+    def _exits(cls, value: list[str]) -> list[str]:
+        return check_exits(value)
 
     @field_validator("docs_paths")
     @classmethod

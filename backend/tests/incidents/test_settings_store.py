@@ -685,3 +685,46 @@ async def test_a_dashboard_override_under_the_name_keeps_the_hosts_files_key_pro
     assert "protected" in refusals(registry, "shop-db-1")
     view = store.host_views()[0].services["shop"]
     assert view.hosts_file_protected_containers == ["shop-db-1"]
+
+
+# --- exits: validated when written, salvaged when read ---
+
+
+async def test_a_bad_stored_exits_entry_is_left_out_and_dashboard_protection_survives_a_restart(
+    db,
+):
+    services = {
+        "compose:shop": {"protected_containers": ["shop-web-1"], "exits": ["x" * 300]},
+    }
+    await _store_raw(db, "host:a", {"rules": ["host rule"], "services": services})
+    registry = hosts_file_registry()
+    store, _ = make_store(db, registry)
+    await store.load()
+    await registry.start()
+
+    assert "protected" in refusals(registry, "shop-web-1")  # the dashboard's protection held
+    assert registry.service(SHOP).exits == []
+    assert registry.hosts()[0].config.rules == ["host rule"]
+
+
+@pytest.mark.parametrize(
+    "exits",
+    [["x" * 300], ["*", "fetch"], ["-dash"], ["a b"], [f"job{n}" for n in range(101)]],
+)
+async def test_an_exits_list_that_is_no_list_of_names_is_refused(db, exits):
+    store, _ = make_store(db, hosts_file_registry())
+    with pytest.raises((SettingsRefused, ValidationError)):
+        await save(store, {"hosts": {"a": {"services": {"compose:shop": {"exits": exits}}}}})
+
+
+async def test_this_is_expected_never_writes_a_star_a_bad_name_or_past_the_cap(db):
+    registry = hosts_file_registry()
+    store, _ = make_store(db, registry)
+    await registry.start()
+    for entries in (["*"], ["x" * 300]):
+        with pytest.raises(SettingsRefused):
+            await store.expect_exits(registry.service(SHOP), entries)
+    await store.expect_exits(registry.service(SHOP), [f"job{n}" for n in range(100)])
+    with pytest.raises(SettingsRefused):
+        await store.expect_exits(registry.service(SHOP), ["one-too-many"])
+    assert len(registry.service(SHOP).exits) == 100

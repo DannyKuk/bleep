@@ -16,7 +16,7 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from bleep.hosts.config import UrlCheckConfig, check_url_syntax
+from bleep.hosts.config import MAX_EXITS, UrlCheckConfig, check_exits, check_url_syntax
 
 
 def _env(name: str, field: str) -> AliasChoices:
@@ -156,7 +156,12 @@ class ServiceSettings(_Overrides):
     urls: list[UrlCheckConfig] | None = Field(None, max_length=20)
     rules: list[RuleText] | None = Field(None, max_length=50)
     protected_containers: list[ContainerName] | None = Field(None, max_length=100)
-    exits: list[ContainerName] | None = Field(None, max_length=100)
+    exits: list[str] | None = Field(None, max_length=MAX_EXITS)
+
+    @field_validator("exits")
+    @classmethod
+    def _exits(cls, exits: list[str] | None) -> list[str] | None:
+        return check_exits(exits) if exits is not None else None
 
     @field_validator("urls")
     @classmethod

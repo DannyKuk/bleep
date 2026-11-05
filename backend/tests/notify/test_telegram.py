@@ -1160,6 +1160,21 @@ async def test_pressing_its_expected_marks_the_incident_and_clears_the_buttons(e
     assert env.runner.resumed == []
 
 
+async def test_a_press_that_fails_leaves_the_plans_buttons_in_place(env):
+    class Refusing(FakeExpectations):
+        async def expected(self, incident_id: str, via: str):
+            return SimpleNamespace(done=False, text="Nothing here can be marked as expected now.")
+
+    env.bot.expectations = Refusing()
+    update = fixture("callback_approve", APPROVAL_ID=env.approval_id)
+    update["result"][0]["callback_query"]["data"] = "expected"
+    env.api.updates.append(update)
+    await env.bot.poll_once()
+
+    assert "Nothing here" in env.api.sent("answerCallbackQuery")[0]["text"]
+    assert env.api.sent("editMessageReplyMarkup") == []
+
+
 async def test_a_reply_to_an_opened_message_is_never_an_instruction(env):
     env.notifier.expectations = FakeExpectations()
     await env.notifier.incident_opened(env.incident)  # logged as message 311, no plan
