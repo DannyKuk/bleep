@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, TriangleAlert } from "lucide-react";
+import { Loader2, Moon, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
@@ -297,8 +297,13 @@ export function ServicePage({ id }: { id: string }) {
               quiet={service.quiet}
               onChanged={reload}
               trigger={
-                <Button variant="outline" aria-label={`Quiet ${name}`}>
-                  Quiet ▾
+                <Button
+                  variant="outline"
+                  aria-label={`Quiet ${name}`}
+                  className="relative h-7 gap-1 px-3 text-[13px] pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-[''] [&_svg]:size-3.5"
+                >
+                  <Moon aria-hidden />
+                  Quiet
                 </Button>
               }
             />
