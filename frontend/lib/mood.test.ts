@@ -31,6 +31,7 @@ function incident(
     tokens: 0,
     trace_url: null,
     prompt_overrides: null,
+    fold_of: null,
   };
 }
 

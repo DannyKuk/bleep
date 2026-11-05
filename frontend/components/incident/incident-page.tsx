@@ -13,6 +13,7 @@ import { progressSteps } from "@/components/incident/progress";
 import { ProgressBar } from "@/components/incident/progress-bar";
 import { barApproval, planTitle, ProposalCard } from "@/components/incident/proposal-card";
 import { ReasoningStream, toolSteps } from "@/components/incident/reasoning-stream";
+import { Repeats } from "@/components/incident/repeats";
 import { ReportView } from "@/components/incident/report-view";
 import { Timeline } from "@/components/incident/timeline";
 import { usePhone } from "@/components/incident/use-phone";
@@ -241,6 +242,7 @@ export function IncidentPage({ id }: { id: string }) {
     >
       {phone ? <PhoneIncidentHero detail={data} /> : <IncidentHero detail={data} stream={status} />}
       {refreshFailed}
+      <Repeats incident={incident} repeats={data.repeats} />
       {imOnIt}
       {!phone && <ProgressBar steps={progressSteps(events, incident.status)} />}
       <div

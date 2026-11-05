@@ -24,6 +24,11 @@ export const THRESHOLDS: { name: Name; label: string; unit?: string }[] = [
   { name: "load_polls", label: "Load high for this many probes" },
   { name: "host_unreachable_s", label: "Host unreachable before an incident", unit: "s" },
   { name: "debounce_s", label: "Signals within this time join one incident", unit: "s" },
+  {
+    name: "fold_window_h",
+    label: "A repeat within this time joins its group (0: never)",
+    unit: "h",
+  },
 ];
 
 const LABELS = Object.fromEntries(THRESHOLDS.map(({ name, label }) => [name, label]));

@@ -95,3 +95,24 @@ describe("IncidentListView", () => {
     expect(screen.getByText("No incident matches.")).toBeInTheDocument();
   });
 });
+
+describe("IncidentListView with repeats", () => {
+  it("shows a group of repeats as one row with its count", () => {
+    const rows = [
+      {
+        ...incident({ id: "r2", status: "closed", fold_of: "first", title: "shop died" }),
+        repeats: 3,
+      },
+      {
+        ...incident({ id: "r1", status: "closed", fold_of: "first", title: "shop died" }),
+        repeats: 3,
+      },
+      { ...incident({ id: "first", status: "closed", title: "shop died" }), repeats: 3 },
+    ];
+    render(<IncidentListView incidents={rows} now={NOW} />);
+    const links = screen.getAllByRole("link");
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute("href", "/incidents/r2");
+    expect(links[0]).toHaveTextContent("Seen 3 times");
+  });
+});

@@ -93,7 +93,7 @@ function pastIncident(
   overrides: Partial<IncidentListItem> = {},
   votes: IncidentListItem["votes"] = NO_VOTES,
 ): IncidentListItem {
-  return { ...incident({ status: "closed" }), votes, ...overrides };
+  return { ...incident({ status: "closed" }), votes, repeats: 1, ...overrides };
 }
 
 describe("ServicePage", () => {

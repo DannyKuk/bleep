@@ -22,6 +22,7 @@ export const THRESHOLD_VALUES: Thresholds = {
   load_polls: 3,
   host_unreachable_s: 300,
   debounce_s: 30,
+  fold_window_h: 24,
 };
 
 export function sshHost(overrides: Partial<HostSettingsView> = {}): HostSettingsView {
