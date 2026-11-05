@@ -8,7 +8,7 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from bleep.graph.deps import CORE_ACTIONS
-from bleep.guard.plan_check import check_plan, host_urls, protected_names
+from bleep.guard.plan_check import check_plan, check_target, host_urls, protected_names
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.registry import Registry
 from bleep.incidents.settings_store import SettingsRefused, SettingsStale, SettingsStore
@@ -578,3 +578,50 @@ async def test_a_key_file_bleep_cannot_read_is_not_set(db, tmp_path):
         assert m2.key_file is not None and not m2.key_file.set
     finally:
         key.chmod(0o600)
+
+
+def name_keyed_registry(services: dict[str, ServiceOverrides]) -> Registry:
+    host = socket_host(id="a", services=services)
+
+    async def connect(_host):
+        return None, FakeEngine("a", [web(), web("shop-db-1")])
+
+    return Registry([host], connect, clock=lambda: T0)
+
+
+def refusals(registry: Registry, target: str) -> set[str]:
+    """What the plan check and, right before its engine call, the act tool refuse."""
+    step = PlanStep(action="docker.restart", host_id="a", target=target)
+    proposal = Proposal(kind="act", steps=[step], reason="r")
+    planned = check_plan(proposal, registry, set(CORE_ACTIONS), "a", incident_containers=[target])
+    return {v.rule for v in planned} | {v.rule for v in check_target(1, step, registry)}
+
+
+async def test_a_dashboard_override_under_the_key_keeps_the_hosts_files_name_keyed_protection(db):
+    registry = name_keyed_registry({"shop": ServiceOverrides(protected_containers=["shop-db-1"])})
+    store, _ = make_store(db, registry)
+    await registry.start()
+    services = {"compose:shop": {"urls": [{"url": DB_URL}], "rules": ["dashboard rule"]}}
+    await save(store, {"hosts": {"a": {"services": services}}})
+    shop = registry.service(SHOP)
+    assert shop.protected == {"shop-db-1"}
+    assert [u.url for u in shop.urls] == [DB_URL]
+    assert shop.rules == ["dashboard rule"]
+    assert "protected" in refusals(registry, "shop-db-1")
+    assert "protected" not in refusals(registry, "shop-web-1")
+    view = store.host_views()[0].services["compose:shop"]
+    assert view.hosts_file_protected_containers == ["shop-db-1"]
+
+
+async def test_a_dashboard_override_under_the_name_keeps_the_hosts_files_key_protection(db):
+    registry = name_keyed_registry(
+        {"compose:shop": ServiceOverrides(protected_containers=["shop-db-1"])}
+    )
+    store, _ = make_store(db, registry)
+    await registry.start()
+    services = {"shop": {"urls": [{"url": DB_URL}], "protected_containers": ["shop-web-1"]}}
+    await save(store, {"hosts": {"a": {"services": services}}})
+    assert registry.service(SHOP).protected == {"shop-db-1", "shop-web-1"}
+    assert "protected" in refusals(registry, "shop-db-1")
+    view = store.host_views()[0].services["shop"]
+    assert view.hosts_file_protected_containers == ["shop-db-1"]

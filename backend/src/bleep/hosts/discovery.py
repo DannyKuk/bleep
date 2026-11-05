@@ -44,6 +44,15 @@ def _classify(container: ContainerSummary) -> tuple[str, str, str]:
     return f"container:{container.name}", container.name, "single"
 
 
+def _named(
+    groups: dict[str, tuple[str, str, list[ContainerSummary]]],
+    name: str,
+    overrides: dict[str, ServiceOverrides],
+) -> list[str]:
+    """The keys of the services called `name` that have no override under their own key."""
+    return [k for k, (n, _, _) in groups.items() if n == name and k not in overrides]
+
+
 def group_services(
     host_id: str,
     containers: list[ContainerSummary],
@@ -59,23 +68,20 @@ def group_services(
             groups[key] = (name, source, [])
         groups[key][2].append(container)
 
-    by_key: dict[str, ServiceOverrides] = {}
-    for okey, over in overrides.items():
-        if okey in groups:
-            by_key[okey] = over
-            continue
-        named = [k for k, (name, _, _) in groups.items() if name == okey and k not in overrides]
-        if len(named) > 1:
+    for okey in overrides:
+        unclaimed = [] if okey in groups else _named(groups, okey, overrides)
+        if len(unclaimed) > 1:
             raise AmbiguousOverride(
                 f"host {host_id}: override {okey!r} matches the display name of several "
-                f"services ({', '.join(named)}); use one of those keys instead"
+                f"services ({', '.join(unclaimed)}); use one of those keys instead"
             )
-        if named:
-            by_key[named[0]] = over
 
     services = []
     for key, (name, source, members) in groups.items():
-        over = by_key.get(key) or ServiceOverrides()
+        by_key = overrides.get(key)
+        by_name = overrides.get(name) if name not in groups else None
+        over = by_key or by_name or ServiceOverrides()
+        protected = {c for o in (by_key, by_name) if o is not None for c in o.protected_containers}
         services.append(
             Service(
                 id=f"{host_id}/{key}",
@@ -87,7 +93,7 @@ def group_services(
                 repo=over.repo,
                 docs_paths=over.docs_paths,
                 rules=over.rules,
-                protected=set(over.protected_containers),
+                protected=protected,
             )
         )
     return services
