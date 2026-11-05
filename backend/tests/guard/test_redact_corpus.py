@@ -238,3 +238,55 @@ def test_spring_defaults_vendor_keys_token_lists_and_syslog_blocks_are_redacted(
 )
 def test_sources_identifier_keys_and_token_counts_stay_readable(text):
     assert redact_text(text) == text
+
+
+LIST_KEYS = [f"k{i:02d}" + _b64(30, 100 + i).replace("-", "Z").replace("_", "Q") for i in range(12)]
+
+
+@pytest.mark.parametrize(
+    ("template", "joiner"),
+    [
+        ("API_KEYS={}", ","),
+        ("VALID_TOKENS={}", ";"),
+        ("api_keys: {}", ","),
+        ('"api_keys":"{}"', ","),
+        ('"api_keys": "{}"', ","),
+        ('"api_keys":["{}"]', '","'),
+        ('"refresh_tokens": ["{}"]', '", "'),
+    ],
+)
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ("a " * 1100 + " ", " " + "y " * 1000),
+        ('{"pad":"' + "p" * 2200 + '",', ',"b":"' + "y" * 2000),
+    ],
+)
+def test_a_secret_list_straddling_the_tail_cut_is_gone_whole(template, joiner, before, after):
+    item = template.format(joiner.join(LIST_KEYS))
+    for rest in range(HALF - 200, HALF + 20, 3):
+        # the tail cut moves from the list's start to its end
+        line = before + item + after[:rest]
+        for out in (redact_text(line), guard_text("logs", line)[0]):
+            assert not [k for k in LIST_KEYS if k[3:19] in out], rest
+
+
+@pytest.mark.parametrize(
+    ("text", "out"),
+    [
+        ('refresh_tokens: ["a1b2c3", "d4e5f6"]', "refresh_tokens: <redacted>"),
+        ('{"api_keys": ["k1x", "k2y"], "user": "bob"}', '{"api_keys": <redacted>, "user": "bob"}'),
+        ("api_keys: []", "api_keys: []"),
+        ("token ya29.a0AfH6SMBx3Kq9ZpLm2nQ7rT8u done", "token <redacted> done"),
+        (
+            '<password encrypted="false">hunter2</password>',
+            '<password encrypted="false"><redacted></password>',
+        ),
+        ("<password>\n  hunter2\n</password>", "<password>\n  <redacted>\n</password>"),
+        ('<add key="Password" value="hunter2"/>', '<add key="Password" value="<redacted>"/>'),
+        ("<add key='Password' value='hunter2'/>", "<add key='Password' value='<redacted>'/>"),
+    ],
+)
+def test_lists_google_tokens_and_xml_are_redacted_in_place(text, out):
+    assert redact_with_count(text) == (out, out.count("<redacted>"))
+    assert redact_with_count(out) == (out, 0)

@@ -6,6 +6,7 @@ characters, and each pattern below is written to run in linear time on what is l
 """
 
 import re
+import string
 from collections.abc import Callable
 from functools import lru_cache
 
@@ -47,7 +48,8 @@ _PLAIN_KEY_PREFIXES = {
     "event", "metric", "label", "tag", "field", "column", "config", "setting", "translation",
     "dedup", "dedupe", "limit", "ratelimit", "request", "trace", "correlation", "natural",
     "surrogate", "compound", "parent", "child", "ref", "cluster", "node", "redis", "kafka", "file",
-    "registry", "record", "entity", "item", "list", "table", "sequence", "id",
+    "registry", "record", "entity", "item", "list", "table", "sequence", "id", "last", "next",
+    "start", "end", "evaluated", "tenant", "sharding",
 }  # fmt: skip
 # After `tokens`, a count: max_tokens, prompt_tokens. Other `*_tokens` are secrets.
 _TOKEN_COUNTS = {
@@ -80,11 +82,12 @@ _PLAIN_VALUES = {
     "true", "false", "yes", "no", "on", "off", "none", "null", "nil", "empty", "unset", "required",
     "enabled", "disabled", "expired", "invalid", "missing", "ok", "failed", "***", "<redacted>",
 }  # fmt: skip
-# `${VAR}`, `${secrets.db}`, `${env:VAR}` (a known source before the colon) and `$UPPER_VAR`. A
-# default (`${VAR:-x}`, `${VAR:=x}`, `${VAR-x}`, Spring's `${VAR:x}`) holds a literal value and is
-# not a reference.
+# `${VAR}`, `${secrets.db}`, `${env:VAR}` (a known source before the colon), a path after a source
+# that takes one (`${file:/run/secrets/db}`) and `$UPPER_VAR`. A default (`${VAR:-x}`,
+# `${VAR:=x}`, `${VAR-x}`, Spring's `${VAR:x}`) holds a literal value and is not a reference.
 _REFERENCE = re.compile(
     r"\$\{(?:(?:env|file|secrets|secret|vault|ssm|sys|aws):)?[A-Za-z_][A-Za-z0-9_.]*\}"
+    r"|\$\{(?:file|secrets|secret|vault|ssm|aws):[A-Za-z0-9_./][A-Za-z0-9_./-]{0,255}\}"
     r"|\$[A-Z_][A-Z0-9_]*"
 )
 _SMALL_INT = re.compile(r"[0-9]{1,6}")
@@ -145,6 +148,12 @@ def _redact_pair(match: re.Match[str], depth: int = 0) -> str:
         return f"{key}{separator}{_hide_dsn_user(kept) if _is_dsn_key(key) else kept}"
     if _BLOCK_HEADER.fullmatch(value):
         return match.group(0)
+    if value[0] == "[":
+        closed = len(value) > 1 and value.endswith("]")
+        items = (value[1:-1] if closed else value[1:]).strip()
+        if (closed and not items) or _is_plain(items):
+            return match.group(0)  # an empty list is evidence
+        return f"{key}{separator}{REDACTED}"
     quote = value[0] if value[0] in "\"'" else ""
     closed = bool(quote) and len(value) > 1 and value.endswith(quote)
     inner = value[1:-1] if closed else value[len(quote) :]
@@ -232,36 +241,69 @@ def _redact_cookie(match: re.Match[str]) -> str:
     return f"{match.group(1)}{quote}{';'.join(parts)}{quote if closed else ''}"
 
 
-# password=x, "password": "x y", password: x, [password] => x, SECRET_KEY_BASE=x, X-Api-Key: x.
-# The key is judged by `_is_secret_key`; the cheap lookahead keeps Python out of unrelated pairs.
-# An unquoted value runs to whitespace (so it fails safe on `&`, `,`, quotes) and never starts
-# with a cut note.
+# password=x, "password": "x y", password: x, [password] => x, SECRET_KEY_BASE=x, X-Api-Key: x,
+# api_keys: ["a", "b"]. The key is judged by `_is_secret_key`; the cheap lookahead keeps Python
+# out of unrelated pairs. An unquoted value runs to whitespace (so it fails safe on `&`, `,`,
+# quotes), a flow list to its `]` or the line's end, and neither starts with a cut note.
 _KEY_VALUE = re.compile(
     r"(?<![A-Za-z0-9_.-])"
     rf"(?=[A-Za-z0-9_.-]{{0,96}}?{_SECRET_HINT})"
     r"([A-Za-z0-9_.-]{1,96})"
     r"([\"']?\]?[ \t]*+(?:=>|:=|==|[=:])[ \t]*+(?:(?:\n[ \t]*+){1,8}(?<=[ \t]))?)"
     r"(?!\[… )"
-    r"(\"(?:[^\"\\\n]|\\.)*+\"?|'(?:[^'\\\n]|\\.)*+'?|[^\s\"'][^\s]*+)",
+    r"(\"(?:[^\"\\\n]|\\.)*+\"?|'(?:[^'\\\n]|\\.)*+'?|\[[^\]\n]*+\]?|[^\s\"'][^\s]*+)",
     _FLAGS,
 )
 
 
 def _redact_element(match: re.Match[str]) -> str:
-    """`<password>x</password>`: an XML element named like a secret."""
-    if not _is_secret_key(match.group(1)) or _is_plain(match.group(2)):
+    """`<password>x</password>`: an XML element named like a secret, its attributes and the
+    whitespace around its value kept."""
+    name, attributes, content, close = match.groups()
+    value = content.strip()
+    if not _is_secret_key(name) or not value or _is_plain(value):
         return match.group(0)
-    return f"<{match.group(1)}>{REDACTED}{match.group(3)}"
+    lead, trail = content[: len(content) - len(content.lstrip())], content[len(content.rstrip()) :]
+    return f"<{name}{attributes}>{lead}{REDACTED}{trail}{close}"
+
+
+def _redact_setting(match: re.Match[str]) -> str:
+    """`<add key="Password" value="x"/>`: a value attribute after a key or name that is secret."""
+    value = match.group(4)
+    closed = len(value) > 1 and value.endswith(value[0])
+    inner = value[1:-1] if closed else value[1:]
+    if not _is_secret_key(match.group(3)) or not inner or _is_plain(inner):
+        return match.group(0)
+    return f"{match.group(1)}{value[0]}{REDACTED}{value[0] if closed else ''}"
+
+
+def _redact_jwt(match: re.Match[str]) -> str:
+    """A JWT: `eyJ` and at least five more characters, then two more segments of five or more.
+    The pattern takes the whole first run, so starts inside it (`-eyJ-eyJ…`) are not tried again."""
+    jwt = match.group(0)
+    return REDACTED if jwt.count(".") == 2 and jwt.index(".") >= 8 else jwt
 
 
 Replacement = str | Callable[[re.Match[str]], str]
 _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
-    # runs first so a value holding a token (`password=ghp_...!tail`) is one redaction
+    # <add key="Password" value="x"/>, <input name="password" value="x">; before `_KEY_VALUE`,
+    # whose pass inside a kept value takes `key="Jwt:Secret"` for a pair and hides `Secret`
+    (
+        re.compile(
+            r"(?<![A-Za-z0-9_.:-])((?:key|name)[ \t]*=[ \t]*([\"'])([A-Za-z0-9_.:-]{1,96})\2"
+            r"\s{1,64}+value[ \t]*=[ \t]*)(\"[^\"\n]*+\"?|'[^'\n]*+'?)",
+            _FLAGS,
+        ),
+        _redact_setting,
+    ),
+    # before the value patterns, so a value holding a token (`password=ghp_...!tail`) is one
+    # redaction
     (_KEY_VALUE, _redact_pair),
+    # <password>x</password>, with attributes, the value on lines of its own
     (
         re.compile(
             rf"<(?=[A-Za-z0-9_.:-]{{0,64}}?{_SECRET_HINT})"
-            r"([A-Za-z0-9_.:-]{1,64})>([^<\n]{1,512}+)(</\1>)",
+            r"([A-Za-z0-9_.:-]{1,64})((?:\s[^<>]{0,256}+)?)>([^<]{1,512}+)(</\1>)",
             _FLAGS,
         ),
         _redact_element,
@@ -309,7 +351,8 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), REDACTED),
     (re.compile(r"\bsk-(?:or-)?[A-Za-z0-9_-]{16,}"), REDACTED),
     (re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"), REDACTED),
-    (re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}"), REDACTED),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]*+(?:\.[A-Za-z0-9_-]{5,}+\.[A-Za-z0-9_-]{5,}+)?"), _redact_jwt),
+    (re.compile(r"\bya29\.[A-Za-z0-9_.-]{20,}+"), REDACTED),  # Google OAuth access tokens
     # scheme://user:password@host: keep the user. The password may hold `@` and `/`; it ends at
     # the first `@` that is followed by a host and then `/`, `?`, `#`, whitespace or the end. The
     # lookbehind lets only the start of a scheme begin a match, so starts cannot overlap.
@@ -488,6 +531,7 @@ def _redact_all(text: str) -> tuple[str, int]:
 
 
 WINDOW = 300
+REACH = 2000  # how far before the tail cut its window may start, to take in a key
 KEEP_MAX = MAX_LINE // 2  # a kept piece stays under the line cap, so a second pass keeps it whole
 
 
@@ -496,31 +540,72 @@ def _cut_line(line: str) -> tuple[str, int]:
     number of secrets redacted in what is kept.
 
     The kept head comes from redacting everything up to 300 characters past the head cut, the
-    kept tail from redacting everything from 300 characters before the tail cut to the end of the
-    line. Each window runs to the line's end on the kept side, so no kept token is cut by a window
-    edge, and both are under about 2,200 characters, so the work stays bounded. If the head window
-    ends inside a redacted value and no value end follows before the tail, that value fills the
-    tail too, and the tail is dropped.
+    kept tail from redacting everything from `_tail_window_start` to the end of the line. Each
+    window runs to the line's end on the kept side, so no kept token is cut by a window edge, and
+    both are under about 4,000 characters, so the work stays bounded. If the head window ends
+    inside a redacted value and no value end follows before the tail, that value fills the tail
+    too, and the tail is dropped.
     """
     head, tail = cut_points(line, (MAX_LINE - 300) // 2, at_value_ends=True)
     kept_head, open_value = _kept_head(line[:head], line[head : head + WINDOW])
     if open_value and not VALUE_END.search(line, min(head + WINDOW, tail), tail + 1):
         tail = len(line)  # the redacted value runs on through the middle and the whole tail
-    kept_tail = _kept_tail(line[max(0, tail - WINDOW) : tail], line[tail:])
+    kept_tail = _kept_tail(line[_tail_window_start(line, tail) : tail], line[tail:])
     found = max(0, kept_head.count(REDACTED) - line.count(REDACTED, 0, head))
     found += max(0, kept_tail.count(REDACTED) - line.count(REDACTED, tail))
     return join_cut(kept_head, tail - head, kept_tail, _lead(line)), found
 
 
-# A JWT the head window's far edge cut before its third segment, so the JWT pattern missed it.
-_CUT_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*\Z")
+_GAP_BEFORE = re.compile(r"[\s\"'][^\s\"']*\Z")
+_KEY_BEFORE = re.compile(r"[\"']?[A-Za-z0-9_.-]{1,96}[\"']?\]?[ \t]*+(?:=>|:=|==|[=:])[ \t]*+\Z")
+
+
+def _tail_window_start(line: str, tail: int) -> int:
+    """Where the tail window starts: at the last whitespace or quote at least 300 characters
+    before the tail cut, or before the key whose value follows it, about 2,000 characters back
+    at most.
+
+    A secret list (`API_KEYS=k1,…,k10`, `"api_keys": ["k1", …]`) runs on past any fixed edge, so
+    a window starting inside it saw only elements, no key, and kept the later ones. A list with
+    spaces is taken from its unclosed `[`.
+    """
+    lo = max(0, tail - REACH)
+    edge = max(lo, tail - WINDOW)
+    bracket = line.rfind("[", lo, edge)
+    if bracket != -1 and line.find("]", bracket, edge) == -1:
+        edge = bracket
+    gap = _GAP_BEFORE.search(line, lo, edge)
+    start = gap.start() if gap else edge
+    for end in (edge, start):
+        key = _KEY_BEFORE.search(line, max(0, end - 128), end)
+        if key:
+            start = min(start, key.start())
+    return start
+
+
+_SEGMENT = string.ascii_letters + string.digits + "_-"
+_JWT_START = re.compile(r"\beyJ")
+
+
+def _hide_cut_jwt(text: str) -> str:
+    """A JWT the head window's far edge cut before its third segment (`eyJ…` of at least eight
+    characters, a dot and a part at the very end), which the JWT pattern missed. Found from the
+    end, so a run of `-eyJ-eyJ…` is read once."""
+    before_dot = text.rstrip(_SEGMENT)
+    if not before_dot.endswith("."):
+        return text
+    dot = len(before_dot) - 1
+    start = _JWT_START.search(text, len(before_dot[:dot].rstrip(_SEGMENT)), dot)
+    if start is None or dot - start.start() < 8:
+        return text
+    return text[: start.start()] + REDACTED
 
 
 def _kept_head(head: str, after: str) -> tuple[str, bool]:
     """The part of `redact(head + after)` that stands for `head`, never ending inside a
     `<redacted>`, and whether the window ended inside a redacted value. Where the mapping is
     unsure it keeps less, and any piece of the redacted window is safe to keep."""
-    new = _CUT_JWT.sub(REDACTED, _redact_all(head + after)[0])
+    new = _hide_cut_jwt(_redact_all(head + after)[0])
     if new.endswith(after):  # `after` came through unchanged
         end = len(new) - len(after)
     elif new.startswith(head):  # `head` came through unchanged
