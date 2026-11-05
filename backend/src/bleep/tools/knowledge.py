@@ -16,7 +16,7 @@ from bleep.guard.redact import redact_with_count
 from bleep.guard.sanitize import MAX_CHARS, strip_control
 from bleep.guard.untrusted import escape_untrusted
 from bleep.schemas.knowledge import KnowledgeHit, KnowledgeSource
-from bleep.tools.docker_read import _guard, _invalid
+from bleep.tools.common import guard_result, invalid_arguments
 from bleep.tools.registry import ToolContext, ToolSpec
 
 SEARCH_K = 5
@@ -112,14 +112,14 @@ def knowledge_specs(index: Searcher) -> list[ToolSpec]:
                     "redacted",
                     f"{redactions} secret(s) redacted from knowledge output",
                 )
-            return await _guard(ctx, "knowledge", text)
+            return await guard_result(ctx, "knowledge", text)
 
         return StructuredTool(
             name="knowledge_search",
             description=DESCRIPTION,
             args_schema=KnowledgeArgs,
             coroutine=call,
-            handle_validation_error=_invalid,
+            handle_validation_error=invalid_arguments,
         )
 
     return [ToolSpec("knowledge_search", "read", "knowledge", build)]

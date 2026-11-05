@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from bleep.memory.text import describe_past
 from bleep.schemas.graph import PastIncident
-from bleep.tools.docker_read import _invalid
+from bleep.tools.common import invalid_arguments
 from bleep.tools.registry import ToolContext, ToolSpec
 
 RECALL_K = 5
@@ -55,7 +55,7 @@ def recall_specs(memory: Recall) -> list[ToolSpec]:
             description=DESCRIPTION,
             args_schema=RecallArgs,
             coroutine=call,
-            handle_validation_error=_invalid,
+            handle_validation_error=invalid_arguments,
         )
 
     return [ToolSpec("recall_incidents", "read", "memory", build)]
