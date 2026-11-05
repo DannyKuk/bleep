@@ -17,9 +17,10 @@ class HealthStore:
     async def record(self, host_id: str, service_id: str, health: Health, at: datetime) -> None:
         """Keep the service's health; `since` moves to `at` only when the health changed.
 
-        `unknown` means no data, so it is not kept: the last known health and its time stay.
+        `unknown` and `asleep` say nothing about the service, so they are not kept: the last known
+        health and its time stay.
         """
-        if health == "unknown":
+        if health in ("unknown", "asleep"):
             return
         conn = await self.db.connect()
         try:

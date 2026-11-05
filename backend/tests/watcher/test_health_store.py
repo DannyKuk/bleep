@@ -1,5 +1,9 @@
 from datetime import UTC, datetime, timedelta
+from typing import get_args
 
+import pytest
+
+from bleep.schemas.api import Health
 from bleep.store.db import Database
 from bleep.watcher.health_store import HealthStore
 
@@ -61,3 +65,21 @@ async def test_forgetting_a_host_drops_only_its_services(tmp_path):
     await store.forget_host("h")
     assert await store.current(SHOP) is None
     assert await store.current("g/compose:shop") == ("down", T0)
+
+
+NO_DATA = {"unknown", "asleep"}
+
+
+@pytest.mark.parametrize("health", sorted(set(get_args(Health)) - NO_DATA))
+async def test_every_judged_health_is_stored(tmp_path, health):
+    store = await store_at(tmp_path)
+    await store.record("h", SHOP, health, T0)
+    assert await store.current(SHOP) == (health, T0)
+
+
+@pytest.mark.parametrize("health", sorted(NO_DATA))
+async def test_no_data_is_not_stored_and_keeps_the_last_judgement(tmp_path, health):
+    store = await store_at(tmp_path)
+    await store.record("h", SHOP, "ok", T0)
+    await store.record("h", SHOP, health, LATER)
+    assert await store.current(SHOP) == ("ok", T0)
