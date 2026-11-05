@@ -137,6 +137,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 **Incidents** ([details](design/incidents.md))
 - **One open incident per subject, enforced by a unique index.**
 - **An unreachable host absorbs its services' signals.**
+- **A repeat within a day joins its group with a count and sends no "opened" message**; what came of it (its plan, its report, a wait) is still told, with the count.
 - **The bus persists before it fans out**, so the timeline never loses an event.
 - **Every act step is logged `started` before its engine call and finished after it**, so a resumed run never repeats a finished step.
 - **A model call is cut off after 120 s and retried twice; a model that stays down pauses the run instead of failing it**, and an incident that stops moving gets one watchdog notice.

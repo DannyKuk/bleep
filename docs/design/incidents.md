@@ -2,6 +2,7 @@
 
 How signals become incidents and how an incident's progress reaches the dashboard.
 
+- **A repeat of a finished incident within `fold_window_h` is linked to its group's first by `fold_of`**, with the count in its title and no "incident opened" message; what came of it (its plan, its report, a failure, a wait for its host) is still told ([watcher](watcher.md#folded-repeats-84-258), #258).
 - **One open incident per subject, enforced by the database.** A partial unique index on `subject_key` (`kind:host_id:service_id`) covers every status except resolved, closed and failed. Reason: two watchers firing at once must end with one incident, and a code-level check alone loses that race (#11).
 - **`open_or_attach` takes the write lock first.** It begins an immediate transaction, so concurrent callers serialize on the lock and the second sees the first's incident and attaches. The unique index, with one re-select and attach on conflict, is only the backstop. Reason: callers wait instead of failing (#11).
 - **A host that is unreachable absorbs its services' signals.** A service signal attaches to the host's open incident when that incident has a `host_unreachable` signal. Reason: when the host is down every service on it looks down, and one incident per service would page about one cause many times (#11).

@@ -223,6 +223,7 @@ def build_parts(
         resolver=resolver,
     )
     store = SettingsStore(db, registry, plugin_registry, secrets=secrets, dashboard=dashboard_hosts)
+    incidents.fold_window_h = lambda: store.thresholds().fold_window_h
     tracer = tracer or ReloadingTracer(secrets.get)
     subscribe_reloads(secrets, notify, store, tracer)
     return AppParts(

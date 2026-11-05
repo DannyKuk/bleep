@@ -26,7 +26,7 @@ from bleep.graph.deps import (
     Tracer,
 )
 from bleep.incidents.bus import EventBus
-from bleep.incidents.repository import IncidentRepo, utcnow
+from bleep.incidents.repository import IncidentRepo, seen_note, utcnow
 from bleep.llm.guard import ModelUnavailable
 from bleep.schemas.graph import Decision
 from bleep.schemas.incidents import TERMINAL_STATUSES, Incident, IncidentStatus, Signal, Subject
@@ -197,7 +197,8 @@ class IncidentRunner:
         if await self.repo.close_unfinished(incident.id, spare=NOT_WAITING) is None:
             return
         await self.bus.publish(incident.id, "notice", {"text": BACK_NOTICE})
-        await self._tell(incident.id, BACK_NOTICE)
+        if incident.fold_of is None:  # a repeat told of its wait once; its end stays here
+            await self._tell(incident.id, BACK_NOTICE)
 
     async def end(
         self, incident_id: str, text: str, *, spare: tuple[IncidentStatus, ...] = ()
@@ -272,7 +273,7 @@ class IncidentRunner:
                 return
             await self.repo.record_prompt_overrides(incident.id, prompts.override_versions())
             if incident.status != "waiting":  # one that waited was announced when it opened
-                await self._announce(incident)
+                await self._announce(incident)  # a repeat is not
             await self._drive(incident.id, _initial(incident, signals))
         elif snapshot.interrupts:
             decision = await self._decided(incident.id)
@@ -308,9 +309,13 @@ class IncidentRunner:
 
     async def _announce(self, incident: Incident) -> None:
         """Tell the channels a new incident opened, before its run starts; a channel outage is
-        logged and never stops the run."""
+        logged and never stops the run. A repeat is announced only when it waits for its host
+        (with its count in the title); otherwise what came of it is told instead: its plan, its
+        report, or its failure."""
         if self.notifier is None:
             return
+        if incident.fold_of is not None and incident.status != "waiting":
+            return  # what came of the repeat is told instead: its plan, its report or its wait
         try:
             await self.notifier.incident_opened(incident)
         except Exception as error:
@@ -355,6 +360,7 @@ class IncidentRunner:
     async def _drive(self, incident_id: str, payload: Any) -> None:
         config = self.config(incident_id)
         was_paused = False
+        current: Incident | None = None
         try:
             current = await self.repo.get(incident_id)
             if self._finished(incident_id, current.status if current is not None else None):
@@ -378,6 +384,8 @@ class IncidentRunner:
             log.exception("incident %s: graph run failed", incident_id)
             self._forget_pauses(incident_id)
             text = f"The run stopped on an error ({type(error).__name__}); see the backend log."
+            if current is not None and (note := seen_note(current.title)):
+                text += f" This incident is {note[1:-1]}."
             try:
                 await self.repo.set_status(incident_id, "failed")
                 await self.bus.publish(incident_id, "notice", {"text": text})

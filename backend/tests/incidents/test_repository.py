@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from bleep.incidents.repository import IncidentRepo
+from bleep.incidents.repository import IncidentRepo, fold_key
 from bleep.llm.usage import CostLedger
 from bleep.schemas.incidents import RecoveryEvent, Signal, Subject
 from bleep.store.db import Database
@@ -224,3 +224,95 @@ async def test_incident_tokens_and_cost_are_the_usage_ledger_sums(repo):
         assert (read.tokens, read.cost_usd) == expected
     assert (await repo.get(other.id)).tokens == 10
     assert (await repo.get(other.id)).cost_usd is None
+
+
+# --- folded repeats ---
+
+
+class Hours:
+    def __init__(self) -> None:
+        self.now = T0
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def later(self, hours: float) -> None:
+        self.now += timedelta(hours=hours)
+
+
+@pytest.fixture
+async def folding(tmp_path):
+    db = Database(tmp_path / "fold.sqlite")
+    await db.migrate()
+    clock = Hours()
+    window = {"h": 24}
+    return IncidentRepo(db, clock=clock, fold_window_h=lambda: window["h"]), clock, window
+
+
+def died(container="web-1", kind="container_died") -> Signal:
+    return Signal(subject=svc(), kind=kind, at=T0, container=container, detail={"exit_code": 1})
+
+
+async def again(repo, clock, signal, hours=2):
+    """Close the subject's open incident, wait, and open the next one."""
+    open_id = await repo.open_incident_id(signal.subject)
+    if open_id is not None:
+        await repo.close_unfinished(open_id)
+    clock.later(hours)
+    incident, created = await repo.open_or_attach(signal.subject, [signal])
+    assert created
+    return incident
+
+
+async def test_a_repeat_within_the_window_joins_the_group_of_the_first(folding):
+    repo, clock, _ = folding
+    first = await again(repo, clock, died(), 0)
+    second = await again(repo, clock, died(kind="down_past_grace"))  # the same death, told late
+    third = await again(repo, clock, died(kind="oom"))
+    assert first.fold_of is None
+    assert second.fold_of == first.id and third.fold_of == first.id  # the root, not the last
+    assert second.title.endswith("(seen 2 times since 02 Nov 12:00 UTC)")
+    assert third.title.endswith("(seen 3 times since 02 Nov 12:00 UTC)")
+    groups = await repo.groups([first, third])
+    assert groups[first.id].count == groups[third.id].count == 3
+    assert [i.id for i in await repo.list(fold_of=first.id)] == [third.id, second.id]
+
+
+def test_the_fold_key_is_the_incidents_most_telling_kind_in_the_detectors_order():
+    deaths = [died() for _ in range(3)]
+    loop = Signal(subject=svc(), kind="restart_loop", at=T0, container="web-1")
+    unhealthy = Signal(subject=svc(), kind="unhealthy", at=T0, container="web-1")
+    url = Signal(subject=svc(), kind="url_failed", at=T0, detail={"url": "https://x/"})
+    assert fold_key(svc(), [*deaths, loop]).endswith("|restart_loop|web-1")
+    assert fold_key(svc(), [deaths[0], unhealthy]).endswith("|unhealthy|web-1")
+    assert fold_key(svc(), [deaths[0], url]).endswith("|url_failed|https://x/")
+    assert fold_key(svc(), deaths).endswith("|death|web-1")
+
+
+async def test_a_loop_after_a_single_death_is_no_repeat_of_it(folding):
+    repo, clock, _ = folding
+    loop = Signal(subject=svc(), kind="restart_loop", at=T0, container="web-1")
+    await again(repo, clock, died(), 0)
+    clock.later(2)
+    await repo.close_unfinished(await repo.open_incident_id(svc()))
+    escalated, _ = await repo.open_or_attach(svc(), [died(), died(), died(), loop])
+    assert escalated.fold_of is None
+
+
+async def test_another_target_or_kind_is_not_a_repeat_and_a_loop_has_its_own_group(folding):
+    repo, clock, _ = folding
+    await again(repo, clock, died(), 0)
+    assert (await again(repo, clock, died("worker-1"))).fold_of is None
+    loop = await again(repo, clock, died(kind="restart_loop"))
+    assert loop.fold_of is None
+    assert await repo.groups([loop]) == {}  # alone: no group
+
+
+async def test_the_window_slides_from_the_latest_repeat_and_0_turns_folding_off(folding):
+    repo, clock, window = folding
+    first = await again(repo, clock, died(), 0)
+    for _ in range(3):  # every 20 hours: each is within a day of the one before
+        assert (await again(repo, clock, died(), 20)).fold_of == first.id
+    assert (await again(repo, clock, died(), 25)).fold_of is None  # more than a day later
+    window["h"] = 0
+    assert (await again(repo, clock, died(), 1)).fold_of is None

@@ -82,6 +82,8 @@ class Incident(BaseModel):
     # The prompt overrides in force when its run started, name to a hash of the text
     # (`prompts.text_version`); None before the run started (docs/design/dev-panel.md).
     prompt_overrides: dict[str, str] | None = None
+    # The first incident of its group when this one repeats it (docs/design/watcher.md, folding).
+    fold_of: str | None = None
 
 
 class IncidentEvent(BaseModel):

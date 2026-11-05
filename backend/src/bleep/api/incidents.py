@@ -78,13 +78,20 @@ async def list_incidents(
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
     service_id: str | None = None,
+    fold_of: str | None = None,
 ) -> list[IncidentListItem]:
-    """Newest first, each with the human's votes on its diagnosis and plan; `service_id` keeps
-    one service's (its page lists its past incidents)."""
-    incidents = await parts.incidents.list(status, limit, offset, service_id)
+    """Newest first, each with the human's votes on its diagnosis and plan and the size of its
+    group of repeats; `service_id` keeps one service's (its page lists its past incidents),
+    `fold_of` the repeats of one incident."""
+    incidents = await parts.incidents.list(status, limit, offset, service_id, fold_of)
     votes = await parts.memory.votes([i.id for i in incidents])
+    groups = await parts.incidents.groups(incidents)
     return [
-        IncidentListItem(**incident.model_dump(), votes=IncidentVotes(**votes.get(incident.id, {})))
+        IncidentListItem(
+            **incident.model_dump(),
+            votes=IncidentVotes(**votes.get(incident.id, {})),
+            repeats=groups[incident.id].count if incident.id in groups else 1,
+        )
         for incident in incidents
     ]
 
@@ -99,6 +106,7 @@ async def get_incident(
     incident = await _incident(parts, incident_id)
     state = await runner.state(incident_id)
     expectation = await expectations.offered(incident_id)
+    groups = await parts.incidents.groups([incident])
     return IncidentDetail(
         incident=incident,
         diagnosis=state.get("diagnosis"),
@@ -108,6 +116,7 @@ async def get_incident(
         report=state.get("report"),
         feedback=await parts.memory.feedback(incident_id),
         expectation=expectation.sentence() if expectation is not None else None,
+        repeats=group.count if (group := groups.get(incident_id)) is not None else 1,
     )
 
 

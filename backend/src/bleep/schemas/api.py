@@ -146,6 +146,7 @@ class IncidentListItem(Incident):
     """An incident as the lists show it, with the human's votes (not their notes)."""
 
     votes: IncidentVotes = Field(default_factory=IncidentVotes)
+    repeats: int = 1  # how many incidents its group of repeats holds (`fold_of`), itself included
 
 
 class IncidentDetail(BaseModel):
@@ -160,6 +161,7 @@ class IncidentDetail(BaseModel):
     feedback: list[Feedback] = Field(default_factory=list)  # the human's votes, by target
     # What "This is expected" would record, in one sentence; null when it is not offered.
     expectation: str | None = None
+    repeats: int = 1  # how many incidents its group of repeats holds, itself included
 
 
 class DecisionBody(BaseModel):
