@@ -40,11 +40,11 @@ export function ExpectedButton({
   }
 
   return (
-    <div className="flex flex-col items-end gap-1">
+    <div className="flex max-w-full min-w-0 flex-col items-end gap-1">
       <Button variant="outline" disabled={busy} onClick={() => void mark()} title={expectation}>
         This is expected
       </Button>
-      <p className="max-w-md text-right text-xs text-ink-2">{expectation}</p>
+      <p className="max-w-md min-w-0 text-right text-xs wrap-anywhere text-ink-2">{expectation}</p>
       {problem && (
         <p role="alert" className="flex items-center gap-1 text-xs font-bold text-down">
           <TriangleAlert aria-hidden className="size-3.5" />

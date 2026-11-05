@@ -107,6 +107,14 @@ describe("ServicePage", () => {
     expect(within(crumbs).getByText(name)).toHaveClass("wrap-anywhere");
   });
 
+  it("shows a finished job as done", async () => {
+    stubBackend(json({ ...SERVICE, service: { ...SERVICE.service, health: "done" } }));
+    renderPage("demo/compose:shop");
+    await screen.findByRole("heading", { level: 1, name: "shop" });
+    expect(await screen.findAllByText("Done")).not.toHaveLength(0);
+    expect(screen.queryByText("Down")).toBeNull();
+  });
+
   it("lists the service's URLs, rules, facts and past incidents", async () => {
     const fetchMock = stubBackend(json(SERVICE));
     renderPage("demo/compose:shop");
@@ -628,9 +636,9 @@ describe("ServicePage settings", () => {
     const saved = settingsView({ version: "v2" });
     saved.hosts[0].services["compose:shop"].exits = ["fetch"];
     const fetchMock = settingsBackend({ puts: [json(saved)] });
-    render(<ServicePage id="m1/compose:shop" />);
+    renderPage("m1/compose:shop");
     const containers = await region("Containers");
-    expect(within(containers).getByText("Expected to exit")).toBeInTheDocument();
+    expect(await within(containers).findByText("Expected to exit")).toBeInTheDocument();
 
     await userEvent.click(within(containers).getByRole("button", { name: "Edit jobs" }));
     await userEvent.type(

@@ -146,7 +146,7 @@ export function IncidentPage({ id }: { id: string }) {
       : ({ scope: "host", id: subject.host_id, name: hostName ?? subject.host_id } as const);
   const quietable = quietTarget && !NOT_QUIETABLE.has(incident.status);
   const imOnIt = (quietable || data.expectation) && (
-    <div className="flex flex-wrap items-start justify-end gap-2">
+    <div className="flex min-w-0 flex-wrap items-start justify-end gap-2">
       {data.expectation && (
         <ExpectedButton
           incidentId={incident.id}
