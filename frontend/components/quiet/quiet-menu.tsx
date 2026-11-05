@@ -5,6 +5,7 @@ import { useRef, useState, type ReactElement } from "react";
 
 import { SaveError, problemsOf } from "@/components/settings/save-error";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,10 +38,16 @@ interface QuietMenuProps {
   quiet: QuietView | null;
   onChanged: () => void;
   trigger?: ReactElement;
+  /** Extra classes for the default moon button. */
+  className?: string;
 }
 
 /** The moon menu: snooze the target, leave it alone, or watch it again. */
-export function QuietMenu({ target, quiet, onChanged, trigger }: QuietMenuProps) {
+// As tall as a health badge beside it (28 px); a touch screen gets a 44 px tap area around it.
+const MOON =
+  "relative size-7 shrink-0 [&_svg]:size-3.5 pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-['']";
+
+export function QuietMenu({ target, quiet, onChanged, trigger, className }: QuietMenuProps) {
   const [open, setOpen] = useState(false);
   const busy = useRef(false);
   const [problems, setProblems] = useState<string[]>([]);
@@ -76,7 +83,12 @@ export function QuietMenu({ target, quiet, onChanged, trigger }: QuietMenuProps)
       <DropdownMenuTrigger
         render={
           trigger ?? (
-            <Button variant="ghost" size="icon" aria-label={`Quiet ${target.name}`}>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={`Quiet ${target.name}`}
+              className={cn(MOON, className)}
+            >
               <Moon aria-hidden />
             </Button>
           )

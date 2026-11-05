@@ -1,11 +1,10 @@
-import { ArrowUpRight, Moon } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import Link from "next/link";
 
 import { HealthBadge } from "@/components/overview/health-badge";
 import { isHurting } from "@/components/overview/situation";
 import { QuietMenu } from "@/components/quiet/quiet-menu";
 import { QuietPill } from "@/components/quiet/quiet-pill";
-import { Button } from "@/components/ui/button";
 import type { HostView, ServiceView } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
 import { serviceHref } from "@/lib/routes";
@@ -66,16 +65,7 @@ function ServicePill({ service, onChanged }: { service: ServiceView; onChanged: 
         target={{ scope: "service", id: service.id, name: service.name }}
         quiet={service.quiet}
         onChanged={onChanged}
-        trigger={
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={`Quiet ${service.name}`}
-            className={cn("shrink-0", MOON_REVEAL)}
-          >
-            <Moon aria-hidden />
-          </Button>
-        }
+        className={MOON_REVEAL}
       />
       {service.quiet ? (
         <QuietPill quiet={service.quiet} />
