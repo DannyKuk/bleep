@@ -129,6 +129,11 @@
   [role="button"]:not([aria-disabled="true"]) {
     cursor: pointer;
   }
+  /* Anything a rule above does not style still shows where the keyboard is. */
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
   html {
     color-scheme: light;
   }
