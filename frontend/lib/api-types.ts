@@ -1,6 +1,6 @@
-// Hand-written from the API contract (Tasks 8, 9 and 21). Once Task 8 lands, `npm run gen:api`
-// regenerates this file from the backend's /openapi.json; keep the exported names below
-// (HostView, ServiceView, ContainerView, UrlStatus, Health) when switching.
+// Hand-written from the API's schemas (backend/src/bleep/schemas/api.py). `npm run gen:api` would
+// regenerate the whole file from the backend's /openapi.json; keep the exported names below
+// (HostView, ServiceView, ContainerView, UrlStatus, Health) if it is ever switched.
 
 export type Health = "ok" | "degraded" | "down" | "stopped" | "unknown";
 

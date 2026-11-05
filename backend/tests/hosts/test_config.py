@@ -27,7 +27,7 @@ def write(tmp_path, text: str) -> Path:
 def test_hosts_file_parses_example():
     hf = load_hosts_file(EXAMPLE)
     assert {h.kind for h in hf.hosts} == {"ssh"}
-    assert [h.id for h in hf.hosts] == ["macbook", "coolify-1"]
+    assert [h.id for h in hf.hosts] == ["mac", "coolify-1"]
     assert hf.hosts[1].services["shop"].urls[0].expect_status == 200
 
 

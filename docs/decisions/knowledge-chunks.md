@@ -4,7 +4,7 @@
 
 ## Question
 
-The plan suggested chunks of 400 tokens with 50 of overlap. bge-small reads at most 512 tokens and cuts the rest, the tool's answer is capped at 8,000 characters for 5 hits, and Docker's pages are long references with many short sections. How big should a chunk be, how is the size counted without loading the model, and what does a search return?
+The starting suggestion was chunks of 400 tokens with 50 of overlap. bge-small reads at most 512 tokens and cuts the rest, the tool's answer is capped at 8,000 characters for 5 hits, and Docker's pages are long references with many short sections. How big should a chunk be, how is the size counted without loading the model, and what does a search return?
 
 ## What we tried
 

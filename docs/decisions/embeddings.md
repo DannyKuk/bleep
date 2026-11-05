@@ -4,11 +4,11 @@
 
 ## Question
 
-Memory needs a vector for every incident report and for every recall query (spec §4.7). The spec leaves the model to the builder but asks for a local option, and Bleep must run with no paid service (§3, §5). Which model, run where, and what does it cost the laptop Bleep runs on: CPU per embed, memory, image size?
+Memory needs a vector for every incident report and for every recall query Bleep must offer a local option and run with no paid service. Which model, run where, and what does it cost the laptop Bleep runs on: CPU per embed, memory, image size?
 
 ## What we tried
 
-- **`fastembed` with `BAAI/bge-small-en-v1.5`** (the plan's default). fastembed runs ONNX models through onnxruntime with no PyTorch; the model it ships for this name is Qdrant's quantised export (`Qdrant/bge-small-en-v1.5-onnx-Q`). It installed under Python 3.14 on macOS and in the `python:3.14-slim` arm64 image with no build step (fastembed 0.9.1, onnxruntime 1.31.1, numpy 2.5.4).
+- **`fastembed` with `BAAI/bge-small-en-v1.5`** (the default candidate). fastembed runs ONNX models through onnxruntime with no PyTorch; the model it ships for this name is Qdrant's quantised export (`Qdrant/bge-small-en-v1.5-onnx-Q`). It installed under Python 3.14 on macOS and in the `python:3.14-slim` arm64 image with no build step (fastembed 0.9.1, onnxruntime 1.31.1, numpy 2.5.4).
 - **Where the model file lives.** Fetched at build time into `/app/models` (`FASTEMBED_CACHE_PATH`) by a `RUN` that embeds one word, versus downloaded on first use into the data volume. Build time won: see "Decided along the way".
 - **Thread counts.** onnxruntime's default (one thread per core) against 1, 2 and 4 threads, inside the image.
 - **Scores.** Four Gather-style queries (`"<service or host>: <signal kinds>"`) against five stored incident texts (`"<title>. Cause: <cause> Action: <action>."`), to see how far apart similar and unrelated incidents land.
@@ -54,7 +54,7 @@ Cosine scores of the real model (`scores.py`), queries in rows, stored incidents
 - **The local model is cheap enough to never think about.** An incident embeds once when its report is written and once per recall, so a whole incident costs well under a tenth of a second of CPU. Re-embedding 1,000 past incidents after a model change takes about 9 s at 8.6 ms each in batches.
 - **onnxruntime's default spends five times the CPU for half the wall time.** With every core it spins its threads: 6 ms of wall time cost about 100 ms of CPU. Two threads cost 22 ms of CPU for 11 ms. Bleep runs on a laptop next to the services it watches and is never in a hurry for a vector, so it uses two (`LOCAL_THREADS`).
 - **The model is loaded on first use, not at boot.** The backend's memory grows by about 160 MB at the first recall (Gather of the first incident), not at startup; a Bleep that has seen no incident since boot does not carry it.
-- **The right incident is always the closest, but unrelated ones still score 0.49 to 0.80.** `min_score=0.5` (the plan's value) therefore removes almost nothing with this model; what keeps Gather's three short is `k=3` and the same-service-first order. A died container on another service (#5 at 0.80) is the closest outsider, which is the useful kind of neighbour.
+- **The right incident is always the closest, but unrelated ones still score 0.49 to 0.80.** `min_score=0.5` (the value used) therefore removes almost nothing with this model; what keeps Gather's three short is `k=3` and the same-service-first order. A died container on another service (#5 at 0.80) is the closest outsider, which is the useful kind of neighbour.
 - **Most of the image growth is onnxruntime and numpy, not the model.** The model is 71 MB of the 268 MB.
 
 ## Decided along the way

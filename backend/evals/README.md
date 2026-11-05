@@ -22,7 +22,7 @@ How it works and why is in [docs/design/evals.md](../../docs/design/evals.md). T
 
    The harness runs on this machine, not in a container, so a `host.docker.internal` URL from `.env` is read as `localhost`. The same goes for the hosts file's URLs: the backend checks the shop at `http://host.docker.internal:8080`, shop-proxy's published port, and the harness at `http://localhost:8080`. A URL on a bare container name (`http://shop-web:8000`) does not answer from here; the harness logs it.
 
-4. Make the judge reachable: `OPENROUTER_API_KEY` in `.env` for the default judge, or `export EVAL_JUDGE_MODEL=claude-code` to judge with the Claude Code CLI on your own plan, or `--judge manual` to grade by hand afterwards.
+4. Pick and reach the judge. The default judge, `openai/gpt-6-luna`, is also the default cloud model under test, and the harness refuses a judge that is the model under test. So with the default cloud model under test, set `EVAL_JUDGE_MODEL` to another OpenRouter model (with `OPENROUTER_API_KEY` in `.env`), or `export EVAL_JUDGE_MODEL=claude-code` to judge with the Claude Code CLI on your own plan, or pass `--judge manual` to grade by hand afterwards.
 
 `demo/fault.sh` switches the faults. It runs compose on `demo/compose.yaml` itself and acts on the engine `docker` points at; for a socket host the harness sets its `DOCKER_HOST` to the engine it watches (`EVAL_DOCKER_ENDPOINT`, below), so both act on the same one. For an SSH host the script keeps your shell's `DOCKER_HOST`, which must point at that host's engine ([on another host](../../docs/demo.md#on-another-host)).
 
@@ -56,7 +56,7 @@ Read from the environment, then the repo's `.env`.
 | Variable | Default | What it sets |
 |---|---|---|
 | `LLM_PROVIDER`, `LLM_MODEL`, `LOCAL_BASE_URL`, `LOCAL_MODEL` | Bleep's defaults | The model under test, as for Bleep itself. |
-| `EVAL_JUDGE_MODEL` | `openai/gpt-6-luna` | The judge: an OpenRouter model id (needs `OPENROUTER_API_KEY`), `claude-code` / `claude-code:<model>` (needs the `claude` CLI), or `manual` (no judge call; graded by hand). `--judge` sets it for one run. |
+| `EVAL_JUDGE_MODEL` | `openai/gpt-6-luna` | The judge, never the model under test (the default is the default cloud model under test, so set another one then): an OpenRouter model id (needs `OPENROUTER_API_KEY`), `claude-code` / `claude-code:<model>` (needs the `claude` CLI), or `manual` (no judge call; graded by hand). `--judge` sets it for one run. |
 | `EVAL_DOCKER_ENDPOINT` | `DOCKER_HOST`, else Docker Desktop's socket, else `unix:///var/run/docker.sock` | The demo host's Docker engine as this machine reaches it; also the fault script's `DOCKER_HOST` for a socket host. |
 | `EVAL_HOSTS_FILE` | `config/hosts.demo.yaml` | The hosts file the demo host's rules and URLs come from. |
 | `EVAL_HOST_ID` | `demo` | The host in that file. |
@@ -66,9 +66,9 @@ Read from the environment, then the repo's `.env`.
 
 ## A model that runs out of context
 
-A reasoning model can spend its whole context thinking. On the local Qwen with a 16,128-token context, one live Diagnose call reasoned for 9,729 tokens on a 6,361-token prompt and ended without an answer (`LengthFinishReasonError`, [demo](../../docs/demo.md#full-runs)). The harness records such a run as failed with `failure: context_length`, keeps what Investigate found, switches the fault off and goes on with the next run; the report counts these runs in its headline, in the Totals' "Out of context" column and under "What it shows".
+A reasoning model can spend its whole context thinking. On an earlier local reasoning model (Qwen) with a 16,128-token context, one live Diagnose call reasoned for 9,729 tokens on a 6,361-token prompt and ended without an answer (`LengthFinishReasonError`, [demo](../../docs/demo.md#full-runs)). The harness records such a run as failed with `failure: context_length`, keeps what Investigate found, switches the fault off and goes on with the next run; the report counts these runs in its headline, in the Totals' "Out of context" column and under "What it shows".
 
-Bleep's settings cannot cap the model's output tokens: `ModelSettings` has no such field and `llm/factory.py` sends no `max_tokens`, so the harness cannot either. Until they do, give the model room in the model server instead: load it with a larger context (LM Studio's context length), so that the largest prompt (the report's peak prompt) plus the model's reasoning fit.
+Bleep's settings cannot cap the model's output tokens: `ModelSettings` has no such field and `llm/factory.py` sends no `max_tokens`, so the harness cannot either. So give the model room in the model server instead: load it with a larger context (LM Studio's context length), so that the largest prompt (the report's peak prompt) plus the model's reasoning fit.
 
 ## What a run writes
 

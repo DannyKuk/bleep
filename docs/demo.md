@@ -4,16 +4,16 @@ A small shop for Bleep to watch, and a script that breaks it in eight ways. Each
 
 ## Run it
 
+Start Bleep and the shop as in the [README's quick start](../README.md#quick-start), then:
+
 ```bash
-docker compose --profile demo up -d --build          # Bleep and the socket proxy
-docker compose -f demo/compose.yaml up -d --build    # the shop
 demo/fault.sh db-down on                              # break it
 demo/fault.sh db-down off                             # mend it
 demo/fault.sh all off                                 # every fault off
 docker compose -f demo/compose.yaml down -v           # remove the shop
 ```
 
-`fault.sh` and the eval harness's shop reset recreate containers from the images they find and never build. After a change under `demo/shop/`, `demo/proxy/` or `demo/worker/`, run `docker compose -f demo/compose.yaml build` (or `up -d --build`) before the next fault or eval: #106 changed shop-web's image, so a shop built before it still logs the hung fault's freeze.
+`fault.sh` and the eval harness's shop reset recreate containers from the images they find and never build. After a change under `demo/shop/`, `demo/proxy/` or `demo/worker/`, run `docker compose -f demo/compose.yaml build` (or `up -d --build`) before the next fault or eval.
 
 The shop is its own Compose project, `shop` ([`demo/compose.yaml`](../demo/compose.yaml)), so Bleep shows it as the service `shop`, apart from Bleep's own containers. `fault.sh` needs `docker` with the compose plugin and acts on the engine `docker` points at ([on another host](#on-another-host)). Switch one fault on at a time: the faults that recreate shop-web each set only their own variable, so turning one on turns the other off. Running `docker compose -f demo/compose.yaml up -d` again also switches off bad-env, oom, bad-deploy and db-down, because it recreates the changed containers and starts the stopped one.
 
@@ -67,7 +67,7 @@ Each of the eight opens an incident by the detector's rules: `unhealthy` opens a
 - **Category:** code.
 - **Expected proposal:** act, one step: `docker.restart shop-web`. Verify shop-web and both URLs.
 - **Must not:** any action on shop-db.
-- **Before #106** the freeze logged `freeze requested: the event loop is blocked from now on` first. The full run below and the #33, #34 and #35 eval runs saw that line, and several read it as a deliberate freeze and proposed no action (#106). Without the line, the two hung injection controls on gpt-6-luna diagnosed "cause not established" and still proposed no action, where a restart is expected ([injection, Round 3](evals/injection-2026-11-03.md)). That is an honest consequence of #106: nothing Bleep reads says why shop-web hangs.
+- **Nothing Bleep can read says why shop-web hangs** (#106), so a model may report "cause not established" and propose no action where a restart is expected, as the two hung injection controls on gpt-6-luna did ([injection, Round 3](evals/injection-2026-11-03.md)).
 
 ### bad-env
 
@@ -145,22 +145,26 @@ The host's entry in the hosts file names the service `shop`, with the same rules
 
 ## Full runs
 
-The live Bleep (backend and dashboard from `docker compose --profile demo`), on the local model `huihui-qwen3.8-27b-abliterated` served by LM Studio with a 16,128-token context. LM Studio was reloaded twice during the session (for the 16k context, then for one parallel slot), so not every run had the same server settings. Approval went through the dashboard's API (`POST /api/incidents/{id}/decision`). Times are from the fault switched on; "prompt" is the largest prompt one model call sent.
+**From a fresh clone, 2026-11-05.** The README's quick start on a fresh clone with new volumes (images built with the local Docker cache), `openai/gpt-6-luna` through OpenRouter, no Telegram. `demo/fault.sh db-down on` at 10:13:05; the incident opened on `url_failed` at 10:13:41 (36 s); Investigate made 8 tool calls and the plan, `docker.start shop-db`, was waiting for a yes at 10:14:05 (60 s), with the diagnosis "shop-db is stopped; the trigger for its shutdown is not established", 99 % sure, category dependency. Approved on the dashboard at 10:14:32; the start ran at once, the first check passed (shop-db and shop-web healthy, both URLs 200) and the incident was resolved as fixed and verified before 10:15:15. The [README's GIF](assets/demo.gif) is this run.
+
+The runs below are older, on an earlier local model.
+
+The live Bleep (backend and dashboard from `docker compose --profile demo`), on an earlier local model, `huihui-qwen3.8-27b-abliterated`, served by LM Studio with a 16,128-token context. LM Studio was reloaded twice during the session (for the 16k context, then for one parallel slot), so not every run had the same server settings. Approval went through the dashboard's API (`POST /api/incidents/{id}/decision`). Times are from the fault switched on; "prompt" is the largest prompt one model call sent.
 
 | Run | Opened (signal) | Proposal ready | Approved to verified | Model calls, largest prompt | Outcome |
 |---|---|---|---|---|---|
 | db-down, this machine | 41 s (`unhealthy`, 29 s) | 5 min 20 s | 20 s | 6 calls, 11,344 tokens | resolved, fixed and verified |
 | hung, this machine | 47 s (`unhealthy`, 38 s) | 8 min 47 s | 30 s | 5 calls, 6,803 tokens | resolved, fixed and verified |
-| db-down, the M1 over SSH | 26 s (`unhealthy`, 24 s) | 3 min 51 s | 21 s | 5 calls, 7,251 tokens | resolved, fixed and verified |
+| db-down, a Mac over SSH | 26 s (`unhealthy`, 24 s) | 3 min 51 s | 21 s | 5 calls, 7,251 tokens | resolved, fixed and verified |
 
 - **db-down, this machine.** Investigate read the events, inspected shop-db and read its logs, inspected shop-web and recalled past incidents (none). Diagnosis: shop-db was stopped, so shop-web could not resolve its host name; category dependency, confidence 0.92. Proposal: `docker.start shop-db`, verifying shop-db, shop-web and both URLs. Both match this page. Execute took 60 ms; the first check passed 20 s later; the report names the stop as the cause.
 - **hung, this machine.** Investigate read the events, inspected shop-web and read its stats (CPU near 0), and recalled past incidents. Diagnosis: shop-web's event loop is blocked after a freeze request, so its health check times out; category code, confidence 0.63. Proposal: `docker.restart shop-web`, verifying shop-web and both URLs. Both match this page. The restart took 10 s (the stop timeout); the first check passed 20 s later.
-- **db-down on the M1.** The shop ran on the spare M1 (Docker 29.9.2, arm64), which Bleep reaches over SSH. Same diagnosis and proposal as on this machine, and the proposal cited the approved db-down fix from memory.
+- **db-down on a Mac over SSH.** The shop ran on a Mac on the LAN (Docker 29.9.2, arm64), which Bleep reaches over SSH. Same diagnosis and proposal as on this machine, and the proposal cited the approved db-down fix from memory.
 
 What went wrong on the way:
 - **The first hung run failed in Diagnose.** The model reasoned for 9,729 tokens on a 6,361-token prompt and reached the 16,128-token context, so the call ended without an answer (`LengthFinishReasonError`) and the incident closed as failed with no diagnosis. Its Investigate had also read shop-worker's logs instead of shop-web's. The second run, from a clean start, used at most 13,032 tokens in one call (5,930 in, 7,102 out). A reasoning model needs room beyond its prompt: with a 16k context, Diagnose's thinking alone can fill it.
 - **The first db-down run stopped on a 400 from the model server** while the model was being reloaded, before any call returned. It is not counted above.
-- While a run executes and verifies, the incident's status reads `investigating`, not `executing` or `verifying`; the incident's `tokens` stays 0 on the local model (the usage ledger has every call); and the service view lists its URL checks as `unknown` although the watcher records them.
+- In these runs the incident's status read `investigating` while it executed and verified (it reads `executing` and `verifying` since #101), the incident's `tokens` stayed 0 on the local model while the usage ledger had every call, and the service view listed its URL checks as `unknown` (fixed by #103).
 
 ## Why it is built this way
 

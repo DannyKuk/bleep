@@ -11,11 +11,11 @@ github:
 
 hosts:
   # An SSH host: Bleep opens an SSH connection and forwards the Docker socket.
-  - id: macbook                  # unique, stable id
-    name: Spare MacBook          # shown in the UI
+  - id: mac                      # unique, stable id
+    name: Mac mini               # shown in the UI
     kind: ssh                    # "ssh" or "socket"
-    address: MacBook-Pro-M1.local   # ssh only, required
-    user: dannykukic             # ssh only, required
+    address: mac-mini.local        # ssh only, required
+    user: bleep                  # ssh only, required
     port: 22                     # ssh only, default 22
     key_file: /run/secrets/ssh/id_ed25519          # ssh only, required: path to a mounted private key
     known_hosts_file: /run/secrets/ssh/known_hosts # ssh only: path to a mounted known_hosts file
@@ -28,7 +28,7 @@ hosts:
     name: Coolify server
     kind: ssh
     address: 203.0.113.10
-    user: root
+    user: bleep                  # a user in the docker group
     key_file: /run/secrets/ssh/id_ed25519
     known_hosts_file: /run/secrets/ssh/known_hosts
     services:                    # optional overrides, keyed by service name

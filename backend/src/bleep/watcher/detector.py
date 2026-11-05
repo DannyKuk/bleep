@@ -157,8 +157,8 @@ class Detector:
 
         A container running with health healthy or none whose `started_at` is within the grace
         window of the death (and not before it) is recovered whenever it is first seen, even on a
-        late tick. One still `starting` cannot be judged that way, so the manager must tick about
-        every 10 s.
+        late tick. One still `starting` on the first tick after the window opens as down past grace,
+        so a slow healthcheck gets the window plus up to one tick.
         """
         by_name: dict[str, ContainerSummary] = {}
         for containers in states.values():
