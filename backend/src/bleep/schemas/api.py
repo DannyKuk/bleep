@@ -120,14 +120,18 @@ class ServiceView(BaseModel):
     quiet: QuietView | None = None
 
 
+ApprovalStatus = Literal["pending", "approved", "rejected", "instructed", "closed"]
+
+
 class ApprovalView(BaseModel):
     """An incident's latest approval: the plan put to the human and, once decided, the answer.
 
-    `status` is `pending` until a channel decides it; the snapshots stay on the server.
+    `status` is `pending` until a channel decides it, or `closed` when the incident finished
+    before anyone answered (#277); the snapshots stay on the server.
     """
 
     id: str
-    status: Literal["pending", "approved", "rejected", "instructed"]
+    status: ApprovalStatus
     plan_hash: str
     proposal: Proposal
     requested_at: datetime

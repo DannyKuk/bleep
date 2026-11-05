@@ -25,7 +25,22 @@ const STATUS_WORD: Record<ApprovalView["status"], string> = {
   approved: "approved",
   rejected: "rejected",
   instructed: "answered with an instruction",
+  closed: "closed before you answered",
 };
+
+/** The statuses an incident ends in; nothing can be decided for it from then on. */
+export const ENDED = new Set<IncidentStatus>(["resolved", "closed", "failed"]);
+
+/** The approval still waits for the human's answer: undecided, and its incident has not ended. */
+export function awaitsAnswer(approval: ApprovalView | null, status?: IncidentStatus): boolean {
+  return approval?.status === "pending" && !(status && ENDED.has(status));
+}
+
+/** Its incident ended before anyone answered it. The store marks it `closed`; the page also
+ * reads one still `pending` under an ended incident that way, so it never offers a live choice. */
+function closedUnanswered(approval: ApprovalView | null, status?: IncidentStatus): boolean {
+  return approval !== null && approval.decision === null && !awaitsAnswer(approval, status);
+}
 
 const VERB: Record<Action, string> = {
   "docker.restart": "Restart",
@@ -40,16 +55,22 @@ function samePlan(a: Proposal, b: Proposal): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-/** The plan this card shows: while an approval waits, the plan that approval put to the human. */
+/** The plan this card shows: while an approval is unanswered (waiting, or closed before anyone
+ * answered), the plan that approval put to the human. */
 function shownPlan(proposal: Proposal | null, approval: ApprovalView | null): Proposal | undefined {
-  return approval?.status === "pending" ? approval.proposal : (proposal ?? approval?.proposal);
+  return approval && approval.decision === null
+    ? approval.proposal
+    : (proposal ?? approval?.proposal);
 }
 
-/** The approval the decision bar answers, when the card shows one: the approval's own plan. */
+/** The approval the decision bar answers, when the card shows one: the approval's own plan,
+ * waiting or decided. One its incident ended under unanswered gets no bar. */
 export function barApproval(
   proposal: Proposal | null,
   approval: ApprovalView | null,
+  status?: IncidentStatus,
 ): ApprovalView | null {
+  if (closedUnanswered(approval, status)) return null;
   const shown = shownPlan(proposal, approval);
   return approval && shown && samePlan(approval.proposal, shown) ? approval : null;
 }
@@ -65,7 +86,7 @@ export function planTitle({
   if (!shown) return "My plan";
   if (isRefused(shown)) return "No plan I may run";
   if (shown.kind === "no_action") return "What I suggest";
-  if (approval?.status === "pending") return "Here is my plan";
+  if (awaitsAnswer(approval, incident.status)) return "Here is my plan";
   if (incident.status === "executing" || incident.status === "verifying") return "Doing it now";
   if (incident.status === "resolved") return "What I did";
   if (outcome === "rejected") return "The plan you said no to";
@@ -271,10 +292,13 @@ export function ProposalCard({
 }) {
   const shown = shownPlan(proposal, approval);
   if (!shown) return null;
-  const forShown = barApproval(proposal, approval) !== null;
+  const forShown = barApproval(proposal, approval, status) !== null;
   return (
     <div className="flex flex-col gap-5">
       <Plan proposal={shown} run={run} status={status} />
+      {closedUnanswered(approval, status) && (
+        <p className="text-sm text-ink-2">Closed before you answered. This plan did not run.</p>
+      )}
       {approval && forShown && (
         <DecisionBar
           key={approval.id}

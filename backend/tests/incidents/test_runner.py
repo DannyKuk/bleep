@@ -938,6 +938,56 @@ async def test_an_approve_landing_while_end_closes_the_incident_never_runs_execu
     assert "execute" not in await env.nodes(incident.id)
 
 
+@pytest.mark.parametrize("yes_first", [True, False])
+async def test_a_yes_racing_end_with_the_stored_approvals_never_runs_and_leaves_none_pending(
+    tmp_path, acting, yes_first
+):
+    """The same interleaving over the SQLite store (#277): a Telegram yes lands just before the
+    close, or just after it. Before, it wins the row and is resumed into nothing; after, the
+    approval is already closed and the yes wins nothing. Either way Execute never runs and the
+    store holds no pending approval for the closed incident."""
+    env = await graph_env(tmp_path)
+    env.deps.approvals = ApprovalStore(env.db, "test-secret")
+    incident = await env.open(service(env), container="shop-web-1")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        approvals = env.deps.approvals
+        runner = IncidentRunner(
+            build_graph(env.deps, saver), env.repo, env.bus, approvals=approvals
+        )
+        await runner.start(incident)
+        await runner.join()
+        approval_id = await runner.waiting_for(incident.id)
+        real = env.repo.close_unfinished
+        won: list = []
+
+        async def yes() -> None:
+            decision = await approvals.resolve(incident.id, decide("approve"), approval_id)
+            won.append(decision)
+            if decision is not None:
+                await runner.resume(incident.id, decision, approval_id)
+
+        async def close_unfinished(incident_id):
+            if yes_first:
+                await yes()
+            closed = await real(incident_id)
+            if not yes_first:
+                await yes()
+            return closed
+
+        env.repo.close_unfinished = close_unfinished
+        await runner.end(incident.id, "Closed: you told me to leave shop alone.")
+        await runner.join()
+        record = await approvals.current(incident.id)
+
+    assert (await env.repo.get(incident.id)).status == "closed"
+    assert "execute" not in await env.nodes(incident.id)
+    assert await approvals.pending() == []
+    if yes_first:
+        assert won[0] is not None and record.decision == won[0] and not record.closed
+    else:
+        assert won == [None] and record.closed and record.decision is None
+
+
 async def test_a_resume_that_arrives_after_end_is_not_driven(tmp_path, acting):
     """A decision won before `end`, whose resume is scheduled only after `end` returned (a
     Telegram handler between its two awaits), and a runner that does not know of the `end` (a

@@ -11,7 +11,13 @@ import { IncidentHero, PhoneIncidentHero } from "@/components/incident/incident-
 import { planRun } from "@/components/incident/plan-run";
 import { progressSteps } from "@/components/incident/progress";
 import { ProgressBar } from "@/components/incident/progress-bar";
-import { barApproval, planTitle, ProposalCard } from "@/components/incident/proposal-card";
+import {
+  awaitsAnswer,
+  barApproval,
+  ENDED,
+  planTitle,
+  ProposalCard,
+} from "@/components/incident/proposal-card";
 import { ReasoningStream, toolSteps } from "@/components/incident/reasoning-stream";
 import { Repeats } from "@/components/incident/repeats";
 import { ReportView } from "@/components/incident/report-view";
@@ -74,8 +80,6 @@ function useIncidentDetail(id: string, version: string): Loaded {
   }, [id, version, ticks]);
   return state;
 }
-
-const ENDED = new Set<IncidentStatus>(["resolved", "closed", "failed"]);
 
 // A quiet choice has nothing left to silence once the incident ended, and would cut short a run
 // that is changing the host while it executes or verifies.
@@ -181,7 +185,7 @@ export function IncidentPage({ id }: { id: string }) {
     <ReportView report={report} outcome={data.outcome} incident={incident} />
   );
   const planPanel = (
-    <Panel key="plan" title={planTitle(data)} awaitingYou={approval?.status === "pending"}>
+    <Panel key="plan" title={planTitle(data)} awaitingYou={awaitsAnswer(approval, incident.status)}>
       {proposal || approval ? (
         <div className="flex flex-col gap-4">
           <ProposalCard
@@ -237,7 +241,7 @@ export function IncidentPage({ id }: { id: string }) {
         "flex flex-col",
         phone ? "gap-3.5" : "gap-6",
         // Room under the last card for the decision bar pinned over the bottom of the screen.
-        phone && barApproval(proposal, approval) && "pb-52",
+        phone && barApproval(proposal, approval, incident.status) && "pb-52",
       )}
     >
       {phone ? <PhoneIncidentHero detail={data} /> : <IncidentHero detail={data} stream={status} />}

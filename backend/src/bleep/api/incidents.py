@@ -13,6 +13,7 @@ from bleep.incidents.expectations import Expectations
 from bleep.incidents.repository import utcnow
 from bleep.incidents.runner import IncidentRunner
 from bleep.schemas.api import (
+    ApprovalStatus,
     ApprovalView,
     DecisionBody,
     DecisionConflict,
@@ -36,7 +37,11 @@ router = APIRouter(tags=["incidents"])
 Parts = Annotated[AppParts, Depends(get_parts)]
 MAX_PAGE = 200
 
-_STATUS = {"approve": "approved", "reject": "rejected", "instruct": "instructed"}
+_STATUS: dict[str, ApprovalStatus] = {
+    "approve": "approved",
+    "reject": "rejected",
+    "instruct": "instructed",
+}
 _CHANNEL = {"telegram": "Telegram", "dashboard": "the dashboard"}
 _FINDING = {"diagnosis": "diagnosis", "proposal": "plan"}
 
@@ -48,12 +53,18 @@ async def _incident(parts: AppParts, incident_id: str) -> Incident:
     return incident
 
 
+def _approval_status(record: ApprovalRecord) -> ApprovalStatus:
+    if record.decision is not None:
+        return _STATUS[record.decision.kind]
+    return "closed" if record.closed else "pending"
+
+
 def _approval(record: ApprovalRecord | None) -> ApprovalView | None:
     if record is None:
         return None
     return ApprovalView(
         id=record.id,
-        status=_STATUS[record.decision.kind] if record.decision else "pending",
+        status=_approval_status(record),
         plan_hash=record.plan_hash,
         proposal=redacted_proposal(record.proposal),
         requested_at=record.requested_at,
@@ -175,10 +186,12 @@ async def decide(
 
     decision = Decision(kind=body.kind, text=body.text, via="dashboard", at=utcnow())
     won = await parts.approvals.resolve(incident_id, decision, body.approval_id)
-    if won is None:  # another channel answered between the read above and this write
+    if won is None:  # another channel answered, or the incident closed, since the read above
         latest = await parts.approvals.current(incident_id)
         if latest is not None and latest.id == body.approval_id and latest.decision is not None:
             return _already_decided(latest.decision)
+        if latest is not None and latest.id == body.approval_id and latest.closed:
+            return _conflict("The incident was closed before anyone answered")
         return _conflict("That plan was replaced by a newer one; reload to see it")
     await runner.resume(incident_id, won, body.approval_id)
     return won

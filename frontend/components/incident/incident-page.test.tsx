@@ -203,6 +203,22 @@ describe("IncidentPage", () => {
     expect(screen.getByText("Needs your yes")).toBeInTheDocument();
   });
 
+  it("shows a plan nobody answered before the incident closed without the decision bar", async () => {
+    stubBackend(
+      detail({
+        incident: incident({ status: "closed" }),
+        approval: approval({ status: "closed" }),
+      }),
+    );
+    renderPage();
+    const plan = await screen.findByRole("region", { name: "My plan" });
+    expect(plan).not.toHaveClass("border-accent");
+    expect(within(plan).getByText(/Closed before you answered/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Yes, go ahead" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "No, leave it" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Tell Bleep something" })).toBeNull();
+  });
+
   it("says so when there is no such incident", async () => {
     stubBackend(json({ detail: "no such incident" }, 404));
     renderPage();
@@ -251,6 +267,22 @@ describe("IncidentPage", () => {
       expect(folded).toHaveLength(2);
       for (const fold of folded) expect(fold).not.toHaveAttribute("open");
     });
+
+    it.each(["closed", "pending"] as const)(
+      "pins no decision bar on a closed incident whose %s approval was never answered",
+      async (approvalStatus) => {
+        stubBackend(
+          detail({
+            incident: incident({ status: "closed" }),
+            approval: approval({ status: approvalStatus }),
+          }),
+        );
+        const { container } = renderPage();
+        await screen.findByRole("region", { name: "My plan" });
+        expect(container.querySelector("[data-pinned]")).toBeNull();
+        expect(screen.queryByRole("region", { name: "Your answer" })).toBeNull();
+      },
+    );
 
     it("pins the decision bar to the bottom with the same rules as on a desktop", async () => {
       const fetchMock = stubBackend(detail());

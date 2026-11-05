@@ -38,7 +38,7 @@ from bleep.schemas.graph import (
     TargetSnapshot,
     VerificationResult,
 )
-from bleep.schemas.incidents import Incident, Subject
+from bleep.schemas.incidents import TERMINAL_STATUSES, Incident, Subject
 from bleep.schemas.settings import Budgets, ModelSettings, Thresholds
 from bleep.tools.registry import ActHandler, ToolRegistry
 
@@ -208,12 +208,13 @@ class Approvals(Protocol):
     async def resolve(
         self, incident_id: str, decision: Decision, approval_id: str | None = None
     ) -> Decision | None:
-        """The decision if it won, None if the approval was already decided or never asked;
-        with `approval_id`, only that approval can be won."""
+        """The decision if it won, None if the approval was already decided, closed or never
+        asked; with `approval_id`, only that approval can be won."""
         ...
 
     async def current(self, incident_id: str) -> ApprovalRecord | None:
-        """The incident's latest approval, pending or decided."""
+        """The incident's latest approval: pending, decided, or `closed` when its incident
+        finished before anyone answered (#277)."""
         ...
 
     async def grant(self, incident_id: str) -> ApprovalGrant | None:
@@ -223,11 +224,24 @@ class Approvals(Protocol):
 
 class InMemoryApprovals:
     """Approvals in a dict, lost on restart, so for tests only. Grants are keyed with `secret`
-    (random by default); a test that runs act tools passes the one it gives them."""
+    (random by default); a test that runs act tools passes the one it gives them. With
+    `incidents`, an approval nobody answered before its incident finished reads as `closed` and
+    cannot be won, as the SQLite store's triggers make it; without, finished incidents are not
+    seen."""
 
-    def __init__(self, secret: str | None = None) -> None:
+    def __init__(self, secret: str | None = None, incidents: IncidentRepo | None = None) -> None:
         self.records: dict[str, ApprovalRecord] = {}
         self._secret = secret or secrets.token_hex(16)
+        self._incidents = incidents
+
+    async def _record(self, incident_id: str) -> ApprovalRecord | None:
+        record = self.records.get(incident_id)
+        if record is None or record.decision is not None or record.closed:
+            return record
+        if self._incidents is not None:
+            incident = await self._incidents.get(incident_id)
+            record.closed = incident is not None and incident.status in TERMINAL_STATUSES
+        return record
 
     async def request(
         self, incident_id: str, proposal: Proposal, snapshots: list[TargetSnapshot]
@@ -241,13 +255,14 @@ class InMemoryApprovals:
             requested_at=utcnow(),
         )
         self.records[incident_id] = record
+        await self._record(incident_id)
         return record.request
 
     async def resolve(
         self, incident_id: str, decision: Decision, approval_id: str | None = None
     ) -> Decision | None:
-        record = self.records.get(incident_id)
-        if record is None or record.decision is not None:
+        record = await self._record(incident_id)
+        if record is None or record.decision is not None or record.closed:
             return None
         if approval_id is not None and record.id != approval_id:
             return None
@@ -257,10 +272,10 @@ class InMemoryApprovals:
         return decision
 
     async def current(self, incident_id: str) -> ApprovalRecord | None:
-        return self.records.get(incident_id)
+        return await self._record(incident_id)
 
     async def grant(self, incident_id: str) -> ApprovalGrant | None:
-        record = self.records.get(incident_id)
+        record = await self._record(incident_id)
         if record is None or record.decision is None or record.decision.kind != "approve":
             return None
         token = grant_token(self._secret, incident_id, record.plan_hash)
