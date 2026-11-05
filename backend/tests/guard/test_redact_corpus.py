@@ -315,3 +315,83 @@ def test_a_value_starting_with_a_bracket_hides_at_least_what_main_hid():
         out = redact_text(text)
         if "TSEC" in old_span:
             assert out.count("TSEC") <= value[len(old_span) :].count("TSEC"), text
+
+
+LONG_KEYS = [f"k{i:02d}" + _b64(30, 100 + i).replace("-", "Z").replace("_", "Q") for i in range(60)]
+COOKIES = [f"c{i:02d}=" + _b64(30, 300 + i).replace("-", "Z").replace("_", "Q") for i in range(12)]
+
+
+@pytest.mark.parametrize(
+    ("item", "needles"),
+    [
+        # a key more than 2,000 characters before the tail cut
+        ("API_KEYS=" + ",".join(LONG_KEYS), LONG_KEYS),
+        ('"api_keys":"' + ",".join(LONG_KEYS) + '"', LONG_KEYS),
+        ('"api_keys":["' + '","'.join(LONG_KEYS) + '"]', LONG_KEYS),
+        ('"refresh_tokens": ["' + '", "'.join(LONG_KEYS) + '"]', LONG_KEYS),
+        # values with spaces inside, longer than 300 characters
+        ('"api_keys": "' + ", ".join(LONG_KEYS[:12]) + '"', LONG_KEYS[:12]),
+        ("API_KEYS='" + " ".join(LONG_KEYS[:12]) + "'", LONG_KEYS[:12]),
+        ("Cookie: " + "; ".join(COOKIES), [c[1:] for c in COOKIES]),
+        ('"cookie": "' + "; ".join(COOKIES) + '"', [c[1:] for c in COOKIES]),
+        ('<entry key="db.password">' + ",".join(LONG_KEYS) + "</entry>", LONG_KEYS),
+    ],
+)
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ("a " * 1100 + " ", " " + "y " * 1500),
+        ('{"pad":"' + "p" * 2200 + '",', ',"b":"' + "y" * 3000),
+    ],
+)
+def test_a_long_value_straddling_the_tail_cut_is_gone_whatever_its_key_distance(
+    item, needles, before, after
+):
+    needles = [n[4:20] for n in needles]
+    for rest in range(HALF - len(item) - 40, HALF + 40, 7):
+        # the tail cut moves from before the value's start to past its end
+        line = before + item + after[: max(0, rest)]
+        for out in (redact_text(line), guard_text("logs", line)[0]):
+            assert not [n for n in needles if n in out], rest
+
+
+def test_an_escaped_quote_at_the_tail_window_start_does_not_end_the_value():
+    # the tail window starts at a quote; here every quote inside the value is escaped
+    value = " ".join(f'\\"{k}\\"' for k in LONG_KEYS[:20])
+    for rest in range(HALF - len(value) - 40, HALF + 40, 5):
+        line = "a " * 1100 + ' "api_keys": "' + value + '" ' + ("y " * 1500)[: max(0, rest)]
+        out = redact_text(line)
+        assert not [k for k in LONG_KEYS[:20] if k[4:20] in out], rest
+
+
+@pytest.mark.parametrize(
+    ("text", "out"),
+    [
+        ('api_keys: [\n  "k1",\n  "k2"\n]\nnext: 1', "api_keys: <redacted>\nnext: 1"),
+        (
+            '{\n  "api_keys": [\n    "k1"\n  ],\n  "a": 1\n}',
+            '{\n  "api_keys": <redacted>,\n  "a": 1\n}',
+        ),
+        ("api_keys: [\n]", "api_keys: [\n]"),
+        ('<entry key="db.password">hunter2</entry>', '<entry key="db.password"><redacted></entry>'),
+        (
+            '<property name="db.password" type="s">\n  hunter2\n</property>',
+            '<property name="db.password" type="s">\n  <redacted>\n</property>',
+        ),
+        ('<add value="hunter2" key="Password"/>', '<add value="<redacted>" key="Password"/>'),
+        ("<password><![CDATA[hunter2]]></password>", "<password><redacted></password>"),
+        (
+            "<password>\n  <![CDATA[hun]ter2]]>\n</password>",
+            "<password>\n  <redacted>\n</password>",
+        ),
+        ('<add key="Jwt:Secret" value="hunter2"/>', '<add key="Jwt:Secret" value="<redacted>"/>'),
+        (
+            '<add key="Jwt:Secret" value="${JWT_SECRET}"/>',
+            '<add key="Jwt:Secret" value="${JWT_SECRET}"/>',
+        ),
+        ('key="token:abc123"', 'key="token:<redacted>'),
+    ],
+)
+def test_multi_line_lists_xml_settings_and_cdata_are_redacted_in_place(text, out):
+    assert redact_with_count(text) == (out, out.count("<redacted>"))
+    assert redact_with_count(out) == (out, 0)
