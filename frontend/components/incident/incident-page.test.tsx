@@ -12,14 +12,9 @@ import {
 } from "@/components/incident/fixtures";
 import { DETAIL_POLL_MS, IncidentPage } from "@/components/incident/incident-page";
 import { subjectText } from "@/components/incident/incident-list";
+import { OverallProvider } from "@/components/overall-state";
 import { PHONE_QUERY } from "@/components/incident/use-phone";
 import type { IncidentDetail } from "@/lib/api-types";
-
-const overall = vi.hoisted(() => ({
-  hosts: [{ id: "demo", name: "Demo stack" }] as { id: string; name: string }[] | undefined,
-  refresh: vi.fn(),
-}));
-vi.mock("@/components/overall-state", () => ({ useOverall: () => overall }));
 
 class StubEventSource {
   static readonly CLOSED = 2;
@@ -43,9 +38,29 @@ function json(body: unknown, status = 200) {
   });
 }
 
+let hostList: { id: string; name: string }[] = [];
+
+/** The header's overall poll (`OverallProvider`): the newest incidents and the hosts. */
+function answerOverall(input: RequestInfo | URL): Response | undefined {
+  const url = String(input);
+  if (url === "/api/hosts") return json(hostList);
+  if (url.startsWith("/api/incidents?limit=")) return json([]);
+  return undefined;
+}
+
+function renderPage() {
+  return render(
+    <OverallProvider>
+      <IncidentPage id="inc-1" />
+    </OverallProvider>,
+  );
+}
+
 /** Serves the incident's detail (one reply per read, the last repeating) and an empty history. */
 function stubBackend(...details: (IncidentDetail | Response)[]) {
   const fetchMock = vi.fn<typeof fetch>(async (input) => {
+    const overallReply = answerOverall(input);
+    if (overallReply) return overallReply;
     const url = String(input);
     if (url.includes("/events")) return json([]);
     const next = details.length > 1 ? details.shift()! : details[0];
@@ -55,19 +70,22 @@ function stubBackend(...details: (IncidentDetail | Response)[]) {
   return fetchMock;
 }
 
+const hostReads = (fetchMock: ReturnType<typeof stubBackend>) =>
+  fetchMock.mock.calls.filter(([input]) => String(input) === "/api/hosts").length;
+
 const detailReads = (fetchMock: ReturnType<typeof stubBackend>) =>
   fetchMock.mock.calls.filter(([input]) => String(input) === "/api/incidents/inc-1").length;
 
 describe("IncidentPage", () => {
   beforeEach(() => {
     vi.stubGlobal("EventSource", StubEventSource);
-    overall.refresh.mockClear();
+    hostList = [{ id: "demo", name: "Demo stack" }];
   });
   afterEach(() => vi.useRealTimers());
 
   it("shows the incident with its diagnosis and the plan waiting for a decision", async () => {
     stubBackend(detail());
-    render(<IncidentPage id="inc-1" />);
+    renderPage();
     expect(
       await screen.findByRole("heading", { name: "shop is in trouble. Can I fix it?" }),
     ).toBeInTheDocument();
@@ -79,7 +97,7 @@ describe("IncidentPage", () => {
 
   it("tells the story from the top: Bleep's mood, the progress, the plan waiting for you", async () => {
     stubBackend(detail());
-    const { container } = render(<IncidentPage id="inc-1" />);
+    const { container } = renderPage();
     const plan = await screen.findByRole("region", { name: "Here is my plan" });
     expect(container.querySelector("svg[data-mood]")).toHaveAttribute("data-mood", "needs_you");
     expect(container.querySelector("svg[data-mood]")).toHaveAttribute("width", "112");
@@ -96,7 +114,7 @@ describe("IncidentPage", () => {
 
   it("shows the not-sure Bleep while an unsure diagnosis waits", async () => {
     stubBackend(detail({ diagnosis: diagnosis({ unsure: true }) }));
-    const { container } = render(<IncidentPage id="inc-1" />);
+    const { container } = renderPage();
     await screen.findByRole("region", { name: "Here is my plan" });
     expect(container.querySelector("svg[data-mood]")).toHaveAttribute("data-mood", "not_sure");
     expect(screen.getByRole("note")).toHaveTextContent("I am not sure");
@@ -108,7 +126,7 @@ describe("IncidentPage", () => {
         feedback: [{ target: "diagnosis", vote: "down", note: null, at: "2026-11-02T18:10:00Z" }],
       }),
     );
-    render(<IncidentPage id="inc-1" />);
+    renderPage();
     const diagnosisPanel = await screen.findByRole("region", { name: "What I found" });
     const proposalPanel = screen.getByRole("region", { name: "Here is my plan" });
     expect(diagnosisPanel).toHaveTextContent("Was this diagnosis right?");
@@ -125,7 +143,7 @@ describe("IncidentPage", () => {
 
   it("asks for no vote before there is a diagnosis or a plan", async () => {
     stubBackend(detail({ diagnosis: null, proposal: null, approval: null }));
-    render(<IncidentPage id="inc-1" />);
+    renderPage();
     await screen.findByRole("heading", { name: "shop is in trouble. Can I fix it?" });
     expect(screen.queryByText(/Was this .* right\?/)).not.toBeInTheDocument();
   });
@@ -138,7 +156,7 @@ describe("IncidentPage", () => {
         report: report(),
       }),
     );
-    render(<IncidentPage id="inc-1" />);
+    renderPage();
     const card = await screen.findByRole("article", { name: "Report" });
     expect(card).toHaveTextContent("Fixed and verified");
     expect(card).toHaveTextContent("Set restart: unless-stopped on shop-web.");
@@ -154,7 +172,7 @@ describe("IncidentPage", () => {
       }),
     });
     const fetchMock = stubBackend(detail(), decidedOnTelegram);
-    render(<IncidentPage id="inc-1" />);
+    renderPage();
     await screen.findByRole("button", { name: "Yes, go ahead" });
     expect(detailReads(fetchMock)).toBe(1);
 
@@ -175,7 +193,7 @@ describe("IncidentPage", () => {
       detail({ incident: incident({ status: "investigating" }) }),
       detail(),
     );
-    render(<IncidentPage id="inc-1" />);
+    renderPage();
     await act(async () => {});
     expect(screen.getByText("Investigating")).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("I am looking into it.");
@@ -187,7 +205,7 @@ describe("IncidentPage", () => {
 
   it("says so when there is no such incident", async () => {
     stubBackend(json({ detail: "no such incident" }, 404));
-    render(<IncidentPage id="inc-1" />);
+    renderPage();
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "There is no incident with this id.",
     );
@@ -207,7 +225,7 @@ describe("IncidentPage", () => {
 
     it("is one column: small header, Bleep at 76 px, what I found, the plan, the rest folded", async () => {
       stubBackend(detail());
-      const { container } = render(<IncidentPage id="inc-1" />);
+      const { container } = renderPage();
       const headline = await screen.findByRole("heading", {
         level: 1,
         name: "shop is in trouble. Can I fix it?",
@@ -236,7 +254,7 @@ describe("IncidentPage", () => {
 
     it("pins the decision bar to the bottom with the same rules as on a desktop", async () => {
       const fetchMock = stubBackend(detail());
-      const { container } = render(<IncidentPage id="inc-1" />);
+      const { container } = renderPage();
       await screen.findByRole("button", { name: "Yes, go ahead" });
       const bar = container.querySelector("[data-pinned]") as HTMLElement;
       expect(bar).toHaveClass("fixed", "bottom-0");
@@ -279,12 +297,14 @@ describe("IncidentPage", () => {
     it("keeps an answer in flight locked when the screen turns mid-answer", async () => {
       const answers: ((reply: Response) => void)[] = [];
       const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+        const overallReply = answerOverall(input);
+        if (overallReply) return overallReply;
         if (String(input).includes("/events")) return json([]);
         if (init?.method === "POST") return new Promise<Response>((done) => answers.push(done));
         return json(detail());
       });
       vi.stubGlobal("fetch", fetchMock);
-      const { container } = render(<IncidentPage id="inc-1" />);
+      const { container } = renderPage();
       await userEvent.click(await screen.findByRole("button", { name: "Yes, go ahead" }));
       expect(screen.getByRole("button", { name: "Yes, go ahead" })).toBeDisabled();
 
@@ -311,7 +331,7 @@ describe("IncidentPage", () => {
 
     it("keeps a typed instruction when the screen turns", async () => {
       stubBackend(detail());
-      const { container } = render(<IncidentPage id="inc-1" />);
+      const { container } = renderPage();
       await userEvent.click(await screen.findByRole("button", { name: "Tell Bleep something" }));
       await userEvent.type(screen.getByRole("textbox"), "Restart only shop-api");
 
@@ -328,12 +348,14 @@ describe("IncidentPage", () => {
       vi.stubGlobal(
         "fetch",
         vi.fn<typeof fetch>(async (input, init) => {
+          const overallReply = answerOverall(input);
+          if (overallReply) return overallReply;
           if (String(input).includes("/events")) return json([]);
           if (init?.method === "POST") return new Promise<Response>((done) => votes.push(done));
           return json(detail());
         }),
       );
-      render(<IncidentPage id="inc-1" />);
+      renderPage();
       const found = () => screen.getByRole("region", { name: "What I found" });
       await within(await screen.findByRole("region", { name: "What I found" })).findByRole(
         "button",
@@ -373,6 +395,8 @@ describe("IncidentPage", () => {
 
     function stubWithPut() {
       const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+        const overallReply = answerOverall(input);
+        if (overallReply) return overallReply;
         const url = String(input);
         if (init?.method === "PUT") return json({});
         if (url.includes("/events")) return json([]);
@@ -384,7 +408,7 @@ describe("IncidentPage", () => {
 
     it("an awaiting incident offers I'm on it; Leave it alone PUTs for its service", async () => {
       const fetchMock = stubWithPut();
-      render(<IncidentPage id="inc-1" />);
+      renderPage();
       await userEvent.click(await screen.findByRole("button", { name: "I'm on it" }));
       await userEvent.click(await screen.findByRole("menuitem", { name: /Leave it alone/ }));
       await waitFor(() => expect(detailReads(fetchMock)).toBeGreaterThan(1));
@@ -397,18 +421,18 @@ describe("IncidentPage", () => {
       "a %s incident offers no I'm on it",
       async (status) => {
         stubBackend(detail({ incident: incident({ status }) }));
-        render(<IncidentPage id="inc-1" />);
+        renderPage();
         await screen.findByRole("heading", { level: 1 });
         expect(screen.queryByRole("button", { name: "I'm on it" })).toBeNull();
       },
     );
 
     it("a quiet choice refreshes the header's overall state", async () => {
-      stubWithPut();
-      render(<IncidentPage id="inc-1" />);
+      const fetchMock = stubWithPut();
+      renderPage();
       await userEvent.click(await screen.findByRole("button", { name: "I'm on it" }));
       await userEvent.click(await screen.findByRole("menuitem", { name: /Leave it alone/ }));
-      await waitFor(() => expect(overall.refresh).toHaveBeenCalled());
+      await waitFor(() => expect(hostReads(fetchMock)).toBe(2));
     });
 
     it("a service incident without a service id offers no I'm on it", async () => {
@@ -417,14 +441,14 @@ describe("IncidentPage", () => {
           incident: incident({ subject: { kind: "service", host_id: "demo", service_id: null } }),
         }),
       );
-      render(<IncidentPage id="inc-1" />);
+      renderPage();
       await screen.findByRole("heading", { level: 1 });
       expect(screen.queryByRole("button", { name: "I'm on it" })).toBeNull();
     });
 
     it("names the service in the menu", async () => {
       stubWithPut();
-      render(<IncidentPage id="inc-1" />);
+      renderPage();
       await userEvent.click(await screen.findByRole("button", { name: "I'm on it" }));
       expect(await screen.findByText("Snooze shop")).toBeInTheDocument();
     });
@@ -432,28 +456,29 @@ describe("IncidentPage", () => {
     it("a host incident's menu says Snooze with the host's name, or its id if unlisted", async () => {
       const host = detail({ incident: incident({ subject: subject("host") }) });
       stubBackend(host);
-      const { unmount } = render(<IncidentPage id="inc-1" />);
+      const { unmount } = renderPage();
       await userEvent.click(await screen.findByRole("button", { name: "I'm on it" }));
       expect(await screen.findByText("Snooze Demo stack")).toBeInTheDocument();
       unmount();
 
-      overall.hosts = undefined;
+      hostList = [];
       stubBackend(host);
-      render(<IncidentPage id="inc-1" />);
+      renderPage();
       await userEvent.click(await screen.findByRole("button", { name: "I'm on it" }));
       expect(await screen.findByText("Snooze demo")).toBeInTheDocument();
-      overall.hosts = [{ id: "demo", name: "Demo stack" }];
     });
 
     it("a host incident's I'm on it targets the host", async () => {
       const host = detail({ incident: incident({ subject: subject("host") }) });
       const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+        const overallReply = answerOverall(input);
+        if (overallReply) return overallReply;
         if (init?.method === "PUT") return json({});
         if (String(input).includes("/events")) return json([]);
         return json(host);
       });
       vi.stubGlobal("fetch", fetchMock);
-      render(<IncidentPage id="inc-1" />);
+      renderPage();
       await userEvent.click(await screen.findByRole("button", { name: "I'm on it" }));
       await userEvent.click(await screen.findByRole("menuitem", { name: /Leave it alone/ }));
       await waitFor(() =>
