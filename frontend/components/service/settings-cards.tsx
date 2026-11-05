@@ -66,6 +66,13 @@ export function settingsKey(
   return undefined;
 }
 
+/** The name in a service's id (`shop` in `m1/compose:shop` or `m1/shop`), until it is read. */
+export const nameIn = (id: string) =>
+  id
+    .slice(id.indexOf("/") + 1)
+    .split(":")
+    .pop() || id;
+
 /** A service's settings as the page edits them. */
 export interface ServiceSettings {
   hostId: string;
@@ -80,7 +87,8 @@ export interface ServiceSettings {
 /**
  * The service's settings from `GET /api/settings`, saved through `PUT /api/settings` with the
  * version check and the stale notice. `seen` is the service as Bleep sees it now; one it does not
- * see has settings here only when the host's settings hold some for it.
+ * see has settings here only when the host's settings hold some for it, by its key or the name in
+ * its id.
  */
 export function useServiceSettings(id: string, seen: { name: string } | undefined) {
   const loaded = useLoaded<SettingsView>("/api/settings");
@@ -90,7 +98,7 @@ export function useServiceSettings(id: string, seen: { name: string } | undefine
   let settings: ServiceSettings | undefined;
   if (all && host) {
     const own = id.slice(host.id.length + 1);
-    const key = settingsKey(host, own, seen?.name) ?? (seen ? own : undefined);
+    const key = settingsKey(host, own, seen?.name ?? nameIn(id)) ?? (seen ? own : undefined);
     const hostOverrides = all.overrides.hosts?.[host.id];
     if (key !== undefined) {
       settings = {

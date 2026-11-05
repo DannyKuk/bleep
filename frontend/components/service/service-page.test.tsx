@@ -609,21 +609,46 @@ describe("ServicePage settings", () => {
     });
   });
 
-  it("edits the settings of a service Bleep does not see now, and none for one with none", async () => {
-    const view = settingsView();
+  it("edits the settings of a service Bleep does not see now", async () => {
+    const view = settingsView({ overrides: {} });
     view.hosts[0].services["compose:old"] = view.hosts[0].services["compose:shop"];
-    settingsBackend({ service: json({ detail: "no such service" }, 404), reads: [view] });
-    const { unmount } = render(<ServicePage id="m1/compose:old" />);
+    const fetchMock = settingsBackend({
+      service: json({ detail: "no such service" }, 404),
+      reads: [view],
+      puts: [json(view)],
+    });
+    render(<ServicePage id="m1/compose:old" />);
     expect(await screen.findByText(/does not see this service/)).toBeInTheDocument();
     expect(await region("Checked from outside")).toHaveTextContent(
       "https://shop.example.test/health",
     );
-    expect(await region("Rules I follow")).toHaveTextContent("The db is shared with billing.");
-    unmount();
+    const rules = await region("Rules I follow");
+    await userEvent.click(within(rules).getByRole("button", { name: "Edit rules" }));
+    await userEvent.clear(within(rules).getByRole("textbox", { name: "Rules for old: entry 1" }));
+    await userEvent.click(within(rules).getByRole("button", { name: "Save" }));
+    expect(sentBody(fetchMock, "PUT")).toEqual({
+      hosts: { m1: { services: { "compose:old": { rules: [] } } } },
+    });
+  });
 
+  it("finds a gone service's settings the hosts file keeps under its name", async () => {
+    const view = settingsView({ overrides: {} });
+    view.hosts[0].services = { shop: view.hosts[0].services["compose:shop"] };
+    settingsBackend({ service: json({ detail: "no such service" }, 404), reads: [view] });
+    render(<ServicePage id="m1/compose:shop" />);
+    expect(await region("Rules I follow")).toHaveTextContent("The db is shared with billing.");
+  });
+
+  it("shows no settings for a gone service that has none", async () => {
+    const fetchMock = settingsBackend({ service: json({ detail: "no such service" }, 404) });
     render(<ServicePage id="m1/compose:gone" />);
     expect(await screen.findByText(/does not see this service/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([path]) => path === "/api/settings")).toBe(true),
+    );
+    expect(await screen.findByText(/No incidents yet/)).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Checked from outside" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Rules I follow" })).toBeNull();
   });
 
   it("falls back to the service's read when the settings cannot be loaded", async () => {

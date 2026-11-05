@@ -15,6 +15,7 @@ import { MemoryPanel } from "@/components/service/memory-panel";
 import {
   CheckedUrls,
   FollowedRules,
+  nameIn,
   ProtectedContainers,
   useServiceSettings,
 } from "@/components/service/settings-cards";
@@ -136,13 +137,6 @@ function quietNote(quiet: QuietView): string {
 }
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
-
-/** The name in a service's id (`shop` in `m1/compose:shop` or `m1/shop`), until it is read. */
-const nameIn = (id: string) =>
-  id
-    .slice(id.indexOf("/") + 1)
-    .split(":")
-    .pop() || id;
 
 /**
  * A service's page: its health, what Bleep knows, its checks and containers, rules, incidents.
