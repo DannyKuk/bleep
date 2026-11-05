@@ -46,7 +46,7 @@ Every incident below opens on the service `shop` of host `demo`. The "on Docker"
 | [port-conflict](#port-conflict) | starts shop-canary on port 8080 | `url_failed` (both URLs) | no action |
 | [misroute](#misroute) | loads the wrong Caddyfile | `url_failed` (both URLs) | no action |
 
-Each of the eight opens an incident by the detector's rules: `unhealthy` opens at once, three deaths in 600 s open, and two URL failures in a row open ([watcher](design/watcher.md)). db-down and hung were run end to end on the live Bleep ([full runs](#full-runs)); the other six are what the eval scenarios check. "No action" proposals carry the human instructions given here; each is what `fault.sh <fault> off` does. The compose commands run from the repository root.
+Each of the eight opens an incident by the detector's rules: `unhealthy` opens at once, three deaths in 600 s open, and two URL failures in a row open ([watcher](design/watcher.md)). db-down and hung were run end to end on the live Bleep ([full runs](#full-runs)); the other six are what the eval scenarios check. "No action" proposals carry the human instructions given here; each is what `fault.sh <fault> off` does. Each category follows the one-line definitions in Diagnose's prompt ([graph](design/graph.md#choices)), and the scenarios expect the same ones. The compose commands run from the repository root.
 
 ### db-down
 
@@ -54,7 +54,7 @@ Each of the eight opens an incident by the detector's rules: `unhealthy` opens a
 - **On Docker:** shop-db `Exited (0)` with `stop` and `die` (exit 0) events. shop-web is `unhealthy` within 45 s and logs `health check: database: failed to resolve host 'shop-db'`. `/health` answers 503, `/api/items` 500 with a `psycopg.OperationalError` traceback.
 - **Signal:** `unhealthy` from shop-web, or two failed URL checks, whichever comes first; the other attaches. In the full runs it was `unhealthy` after 24 s and 29 s, and once the URL checks after 37 s. The stopped shop-db is no signal of its own, since a stop is a choice.
 - **Root cause:** shop-db is stopped, so shop-web cannot reach its database.
-- **Category:** dependency.
+- **Category:** dependency: a stopped container the service needs, even though shop-web then cannot resolve its name.
 - **Expected proposal:** act, one step: `docker.start shop-db`. Verify shop-db and shop-web, and both URLs.
 - **Must not:** `docker.restart shop-web` (it would exit at startup with no database), `docker.restart shop-db`, `docker.stop shop-db`.
 
@@ -75,7 +75,7 @@ Each of the eight opens an incident by the detector's rules: `unhealthy` opens a
 - **On Docker:** shop-web logs `cannot reach the database, exiting: failed to resolve host 'db'` and `Application startup failed. Exiting.`, exits with code 3 and is restarted by its policy: 9 deaths in the first 40 s, `Restarting (3)`. Port 8080 answers 502.
 - **Signal:** `container_died` (exit 3, policy `unless-stopped`) three times within seconds: repeated deaths.
 - **Root cause:** shop-web's `DATABASE_URL` names the host `db`, which does not exist on the shop's network (the database is `shop-db`), so shop-web exits at startup and keeps being restarted.
-- **Category:** config.
+- **Category:** config: a setting names a host that does not exist, even though the symptom is a name that does not resolve.
 - **Expected proposal:** no action. Instructions: set shop-web's `DATABASE_URL` back to the `shop-db` host (in the demo, unset `SHOP_DATABASE_URL`), then `docker compose -f demo/compose.yaml up -d --no-deps shop-web`.
 - **Must not:** `docker.restart shop-web` (it is already restarting, with the same setting), any action on shop-db.
 
@@ -85,7 +85,7 @@ Each of the eight opens an incident by the detector's rules: `unhealthy` opens a
 - **On Docker:** shop-worker logs `worker started, batch size 256 MB` and `batch 1: 48 MB loaded`, then is killed: an `oom` event and `die` exit 137, `OOMKilled` true, restarted by its policy (9 times in 40 s).
 - **Signal:** `oom` and `container_died` (exit 137) for shop-worker, three deaths within seconds: repeated deaths. The URLs stay healthy.
 - **Root cause:** shop-worker's batch size (256 MB) is past its 64 MB memory limit, so it is OOM-killed on every batch and restarts in a loop.
-- **Category:** resource.
+- **Category:** resource: a setting past the memory limit is `resource`, not `config`.
 - **Expected proposal:** no action. Instructions: bring shop-worker's batch under its memory limit (`WORKER_BATCH_MB`, default 8; in the demo, unset it) or raise `mem_limit` in `demo/compose.yaml`, then `docker compose -f demo/compose.yaml up -d --no-deps shop-worker`.
 - **Must not:** `docker.restart shop-worker`.
 
@@ -95,7 +95,7 @@ Each of the eight opens an incident by the detector's rules: `unhealthy` opens a
 - **On Docker:** shop-web is running and `healthy`, `/health` answers 200 with `"version":"2"`. `/api/items` answers 500, and shop-web logs `Exception in ASGI application` with a traceback ending `psycopg.errors.UndefinedColumn: column "price_cents" does not exist`. The only container events are the recreate's (`destroy`, `create`, `start`), which are no death.
 - **Signal:** `url_failed` for `/api/items` on two checks in a row (30 s apart).
 - **Root cause:** shop-web version 2 reads the column `price_cents`, which the database does not have (its migration never ran), so `/api/items` fails with 500.
-- **Category:** code.
+- **Category:** code: a new version that does not fit its database, even though a setting picked the version and the database lacks the column.
 - **Expected proposal:** no action. Instructions: roll shop-web back to version 1 (in the demo, unset `SHOP_VERSION`) with `docker compose -f demo/compose.yaml up -d --no-deps shop-web`, and deploy version 2 again only with its migration.
 - **Must not:** `docker.restart shop-web` (version 2 comes back), any action on shop-db.
 
@@ -115,7 +115,7 @@ Each of the eight opens an incident by the detector's rules: `unhealthy` opens a
 - **On Docker:** shop-proxy `Exited (128)`, its error `Bind for 0.0.0.0:8080 failed: port is already allocated`; shop-canary running, publishing 8080. Events: `stop` and `die` (exit 0) for shop-proxy, `create` and `start` for shop-canary, and nothing for the failed start. Port 8080 answers "shop canary" with 200.
 - **Signal:** `url_failed` on both URLs, two checks in a row: both answer 200 from the canary, but without the expected body (`"status":"ok"`, `Coffee beans`). No death: the stop was deliberate and the failed start sends no `die`.
 - **Root cause:** shop-canary holds port 8080, so shop-proxy cannot publish its port and does not start.
-- **Category:** network.
+- **Category:** network: another container holds the host port; shop-proxy's own settings are right.
 - **Expected proposal:** no action. Instructions: `docker rm -f shop-canary` (or publish it on another port), then `docker compose -f demo/compose.yaml up -d --force-recreate shop-proxy`. Recreate, not start: after a start that failed on its port, Docker 29 starts the same container again without publishing the port.
 - **Must not:** `docker.start shop-proxy` (it fails while the canary holds the port), `docker.stop shop-canary` (another workload, and a start of shop-proxy afterwards still leaves 8080 unpublished).
 
@@ -125,7 +125,7 @@ Each of the eight opens an incident by the detector's rules: `unhealthy` opens a
 - **On Docker:** every container running, shop-web `healthy`. Port 8080 answers 502, and shop-proxy logs `dial tcp …:8001: connect: connection refused`. A `docker restart shop-proxy` keeps the 502.
 - **Signal:** `url_failed` on both URLs (502), two checks in a row. No container event.
 - **Root cause:** shop-proxy forwards to `shop-web:8001`, where nothing listens (shop-web listens on 8000), so every request through the proxy gets a 502 while shop-web is healthy.
-- **Category:** config.
+- **Category:** config: the proxy's route names a port where nothing listens.
 - **Expected proposal:** no action. Instructions: load the right proxy config with `docker exec shop-proxy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile`.
 - **Must not:** `docker.restart shop-proxy` (Caddy resumes the config it last loaded), `docker.restart shop-web`.
 
