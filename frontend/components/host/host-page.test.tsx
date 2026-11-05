@@ -3,16 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { HostPage } from "@/components/host/host-page";
-import {
-  invalid,
-  json,
-  sentBody,
-  settingsView,
-  sshHost,
-  stubBackend,
-} from "@/components/settings/fixtures";
+import { json, settingsView, sshHost, stubBackend } from "@/components/settings/fixtures";
 import type { HostView, ServiceView } from "@/lib/api-types";
-import { SETTINGS_CHANGED } from "@/lib/settings-api";
 
 const HOST: HostView = {
   id: "m1",
@@ -70,10 +62,6 @@ function backend(put: Response[] = [], view = settingsView()) {
 function renderPage(id = "m1", hosts: HostView[] = [HOST]) {
   overall.hosts = hosts;
   return render(<HostPage id={id} />);
-}
-
-async function shopSection() {
-  return screen.findByRole("region", { name: "Service shop" });
 }
 
 describe("HostPage", () => {
@@ -154,80 +142,6 @@ describe("HostPage", () => {
     expect(removal?.[1]?.headers).toMatchObject({ "if-match": '"v-m1"' });
   });
 
-  it("says when the services cannot be loaded and still lists those with settings", async () => {
-    stubBackend({
-      "GET /api/settings": json(settingsView()),
-      "GET /api/services": json({ detail: "the registry is down" }, 503),
-    });
-    renderPage();
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not load the services: the registry is down",
-    );
-    expect(await screen.findByRole("region", { name: "Service compose:shop" })).toBeInTheDocument();
-  });
-
-  it("saves a service's URLs as that host's overrides and keeps the host's others", async () => {
-    const ready = {
-      url: "https://shop.example.test/ready",
-      expect_status: 204,
-      body_contains: null,
-    };
-    const saved = settingsView();
-    saved.hosts[0].services["compose:shop"].urls = [ready];
-    saved.overrides.hosts = {
-      m1: {
-        services: { "compose:shop": { protected_containers: ["shop-cache-1"], urls: [ready] } },
-      },
-    };
-    const fetchMock = backend([json(saved)]);
-    renderPage();
-    const shop = await shopSection();
-
-    const url = within(shop).getByRole("textbox", { name: "URL 1" });
-    await userEvent.clear(url);
-    await userEvent.type(url, "https://shop.example.test/ready");
-    const status = within(shop).getByRole("textbox", { name: "Expected status 1" });
-    await userEvent.clear(status);
-    await userEvent.type(status, "204");
-    await userEvent.click(within(shop).getByRole("button", { name: "Save" }));
-
-    expect(sentBody(fetchMock, "PUT")).toEqual({
-      hosts: {
-        m1: {
-          services: {
-            "compose:shop": {
-              protected_containers: ["shop-cache-1"],
-              urls: [ready],
-            },
-          },
-        },
-      },
-    });
-    expect(await within(shop).findByDisplayValue("https://shop.example.test/ready")).toBeVisible();
-    expect(within(shop).getByText("Changed here")).toBeInTheDocument();
-  });
-
-  it("shows the API's reason when it refuses a URL, and keeps the draft", async () => {
-    backend([
-      invalid(
-        ["hosts", "m1", "services", "compose:shop", "urls"],
-        "Value error, invalid url: must be http:// or https:// with a host and a valid port",
-      ),
-    ]);
-    renderPage();
-    const shop = await shopSection();
-
-    const url = within(shop).getByRole("textbox", { name: "URL 1" });
-    await userEvent.clear(url);
-    await userEvent.type(url, "ftp://shop");
-    await userEvent.click(within(shop).getByRole("button", { name: "Save" }));
-
-    expect(await within(shop).findByRole("alert")).toHaveTextContent(
-      "URL: invalid url: must be http:// or https:// with a host and a valid port",
-    );
-    expect(url).toHaveValue("ftp://shop");
-  });
-
   it("shows a refusal for a secret in a rule as the API words it", async () => {
     backend([
       json(
@@ -252,24 +166,6 @@ describe("HostPage", () => {
     );
   });
 
-  it("shows the hosts file's protected containers as fixed and only the dashboard's as removable", async () => {
-    const saved = settingsView();
-    saved.overrides.hosts = { m1: { services: {} } };
-    saved.hosts[0].services["compose:shop"].protected_containers = ["shop-db-1"];
-    const fetchMock = backend([json(saved)]);
-    renderPage();
-    const shop = await shopSection();
-
-    const fixed = within(shop).getByRole("list", { name: "Protected by the hosts file: shop" });
-    expect(within(fixed).getByText("shop-db-1")).toBeInTheDocument();
-    expect(within(shop).queryByRole("button", { name: "Remove shop-db-1" })).toBeNull();
-
-    await userEvent.click(within(shop).getByRole("button", { name: "Remove shop-cache-1" }));
-    await userEvent.click(within(shop).getByRole("button", { name: "Save" }));
-    expect(sentBody(fetchMock, "PUT")).toEqual({ hosts: { m1: { services: {} } } });
-    expect(await within(shop).findByText("None added here.")).toBeInTheDocument();
-  });
-
   it("sends the version the save was built from", async () => {
     const fetchMock = backend([json(settingsView({ version: "v2" }))]);
     renderPage();
@@ -279,83 +175,6 @@ describe("HostPage", () => {
 
     const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
     expect(put?.[1]?.headers).toMatchObject({ "if-match": '"v1"' });
-  });
-
-  it("after a 409 reads the settings again, says the save was not applied and never retries it", async () => {
-    // Elsewhere, shop-web-1 was protected after this page loaded; the stale save would drop it.
-    const now = settingsView({ version: "v2" });
-    now.overrides.hosts = {
-      m1: {
-        services: { "compose:shop": { protected_containers: ["shop-cache-1", "shop-web-1"] } },
-      },
-    };
-    now.hosts[0].services["compose:shop"].protected_containers = ["shop-cache-1", "shop-web-1"];
-    const fetchMock = stubBackend({
-      "GET /api/settings": [json(settingsView()), json(now)],
-      "GET /api/services": json([SHOP, WORKER]),
-      "PUT /api/settings": [json({ detail: "the settings changed", version: "v2" }, 409)],
-    });
-    renderPage();
-    const shop = await shopSection();
-
-    await userEvent.click(within(shop).getByRole("button", { name: "Remove shop-cache-1" }));
-    await userEvent.click(within(shop).getByRole("button", { name: "Save" }));
-
-    expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(SETTINGS_CHANGED);
-    expect(await within(shop).findByDisplayValue("shop-web-1")).toBeInTheDocument();
-    expect(within(shop).getByDisplayValue("shop-cache-1")).toBeInTheDocument();
-    const puts = fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT");
-    expect(puts).toHaveLength(1);
-    expect(fetchMock.mock.calls.filter(([path]) => path === "/api/settings")).toHaveLength(3);
-  });
-
-  it("lets one save be in flight at a time, so the next is built from its result", async () => {
-    let answer: (response: Response) => void = () => undefined;
-    const saved = settingsView({ version: "v2" });
-    saved.overrides.hosts = {
-      m1: {
-        services: { "compose:shop": { protected_containers: ["shop-cache-1", "shop-web-1"] } },
-      },
-    };
-    saved.hosts[0].services["compose:shop"].protected_containers = ["shop-cache-1", "shop-web-1"];
-    const fetchMock = backend([
-      new Promise<Response>((resolve) => (answer = resolve)) as unknown as Response,
-      json(saved),
-    ]);
-    renderPage();
-    const shop = await shopSection();
-
-    await userEvent.type(
-      within(shop).getByPlaceholderText("Container name, such as shop-db-1"),
-      "shop-web-1{Enter}",
-    );
-    await userEvent.click(within(shop).getByRole("button", { name: "Save" }));
-    await userEvent.type(
-      within(shop).getByRole("textbox", { name: "Rules for shop: entry 1" }),
-      "!",
-    );
-    const saves = within(shop).getAllByRole("button", { name: "Save" });
-    expect(saves).toHaveLength(2);
-    for (const button of saves) expect(button).toBeDisabled();
-
-    answer(json(saved));
-    await waitFor(() => expect(within(shop).getByRole("button", { name: "Save" })).toBeEnabled());
-    await userEvent.click(within(shop).getByRole("button", { name: "Save" }));
-    expect(sentBody(fetchMock, "PUT", 1)).toEqual({
-      hosts: {
-        m1: {
-          services: {
-            "compose:shop": {
-              protected_containers: ["shop-cache-1", "shop-web-1"],
-              rules: ["The db is shared with billing.!"],
-            },
-          },
-        },
-      },
-    });
-    expect(
-      fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT")[1][1]?.headers,
-    ).toMatchObject({ "if-match": '"v2"' });
   });
 
   it("says the settings could not be read again after a 409, rather than that they were", async () => {
@@ -374,10 +193,49 @@ describe("HostPage", () => {
     expect(alert).not.toHaveTextContent("have been read again");
   });
 
-  it("lists a service Bleep sees but has no settings for", async () => {
+  it("says when the services cannot be loaded and still links those with settings", async () => {
+    stubBackend({
+      "GET /api/settings": json(settingsView()),
+      "GET /api/services": json({ detail: "the registry is down" }, 503),
+    });
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not load the services: the registry is down",
+    );
+    const list = await screen.findByRole("list", { name: "Services on M1" });
+    const shop = within(list).getByRole("link", { name: /compose:shop/ });
+    expect(shop).toHaveAttribute("href", "/services/m1%2Fcompose%3Ashop");
+    expect(shop).not.toHaveTextContent("Not seen now");
+  });
+
+  it("links a service with settings that Bleep does not see now, saying so", async () => {
+    const view = settingsView();
+    view.hosts[0].services["compose:old"] = view.hosts[0].services["compose:shop"];
+    backend([], view);
+    renderPage();
+    const list = await screen.findByRole("list", { name: "Services on M1" });
+    const old = await within(list).findByRole("link", { name: /compose:old/ });
+    expect(old).toHaveAttribute("href", "/services/m1%2Fcompose%3Aold");
+    expect(old).toHaveTextContent("Not seen now");
+    expect(within(list).getAllByRole("link")).toHaveLength(3);
+  });
+
+  it("takes a service the hosts file names by its name for the one Bleep sees", async () => {
+    const view = settingsView();
+    view.hosts[0].services = { shop: view.hosts[0].services["compose:shop"] };
+    backend([], view);
+    renderPage();
+    const list = await screen.findByRole("list", { name: "Services on M1" });
+    await screen.findByRole("region", { name: "Rules for every service" });
+    expect(within(list).getAllByRole("link")).toHaveLength(2);
+    expect(within(list).queryByText("Not seen now")).toBeNull();
+  });
+
+  it("edits no service's settings here", async () => {
     backend();
     renderPage();
-    const worker = await screen.findByRole("region", { name: "Service worker" });
-    expect(within(worker).getByText("No URLs are checked.")).toBeInTheDocument();
+    await screen.findByRole("region", { name: "Rules for every service" });
+    expect(screen.queryByRole("region", { name: "Service settings" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "URL 1" })).toBeNull();
   });
 });

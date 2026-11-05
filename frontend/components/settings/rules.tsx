@@ -49,6 +49,7 @@ export function ListEditor({
   labels,
   overridden,
   onReset,
+  onClose,
 }: {
   /** Names the list and its inputs ("Rules for shop"). */
   label: string;
@@ -62,6 +63,8 @@ export function ListEditor({
   /** Set for a list the hosts file has too: whether the database's list replaces it. */
   overridden?: boolean;
   onReset?: () => Promise<unknown>;
+  /** Set when the list is opened for editing: Cancel always shows, and a save closes it. */
+  onClose?: () => void;
 }) {
   const [draft, setDraft] = useState(items);
   const [adding, setAdding] = useState("");
@@ -69,6 +72,10 @@ export function ListEditor({
   const addId = useId();
   const cleaned = draft.map((item) => item.trim()).filter(Boolean);
   const dirty = JSON.stringify(cleaned) !== JSON.stringify(items);
+
+  async function done(save: () => Promise<unknown>) {
+    if (await run(save)) onClose?.();
+  }
 
   function add() {
     if (!adding.trim()) return;
@@ -79,7 +86,7 @@ export function ListEditor({
   return (
     <div className="flex flex-col gap-2">
       {overridden !== undefined && onReset && (
-        <SourceNote overridden={overridden} disabled={busy} onReset={() => void run(onReset)} />
+        <SourceNote overridden={overridden} disabled={busy} onReset={() => void done(onReset)} />
       )}
       {draft.length === 0 ? (
         <p className="text-sm text-muted-foreground">{emptyText}</p>
@@ -130,23 +137,28 @@ export function ListEditor({
           Add
         </Button>
       </div>
-      {dirty && (
+      {(dirty || onClose) && (
         <div className="flex gap-2">
-          <Button
-            type="button"
-            size="sm"
-            disabled={busy}
-            onClick={() => void run(() => onSave(cleaned))}
-          >
-            {saving && <Loader2 aria-hidden className="animate-spin" />}
-            Save
-          </Button>
+          {dirty && (
+            <Button
+              type="button"
+              size="sm"
+              disabled={busy}
+              onClick={() => void done(() => onSave(cleaned))}
+            >
+              {saving && <Loader2 aria-hidden className="animate-spin" />}
+              Save
+            </Button>
+          )}
           <Button
             type="button"
             size="sm"
             variant="ghost"
             disabled={saving}
-            onClick={() => setDraft(items)}
+            onClick={() => {
+              setDraft(items);
+              onClose?.();
+            }}
           >
             Cancel
           </Button>
