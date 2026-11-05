@@ -9,7 +9,7 @@ import { HealthBadge } from "@/components/overview/health-badge";
 import { joinNames, type Situation } from "@/components/overview/situation";
 import type {
   Action,
-  Health,
+  HostHealth,
   HostView,
   Incident,
   IncidentDetail,
@@ -19,12 +19,13 @@ import type {
 import { formatDateTime, showInvisible } from "@/lib/format";
 import type { Mood } from "@/lib/mood";
 
-const TROUBLE: Record<Health, string> = {
+const TROUBLE: Record<HostHealth, string> = {
   down: "is down",
   degraded: "is struggling",
   stopped: "has stopped",
   unknown: "has a problem",
   ok: "had a problem",
+  asleep: "is asleep",
 };
 
 const VERB: Record<Action, string> = {

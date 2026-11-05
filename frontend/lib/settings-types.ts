@@ -53,6 +53,8 @@ export interface HostSettingsView {
   name: string;
   connection: HostConnection;
   rules: string[];
+  /** In force: the dashboard's choice, else the hosts file's. */
+  may_sleep: boolean;
   /** Keyed by the service's key on its host (`compose:shop`), not its id. */
   services: Record<string, ServiceSettingsView>;
 }
@@ -87,6 +89,7 @@ export interface ServiceOverrides {
 
 export interface HostOverrides {
   rules?: string[];
+  may_sleep?: boolean;
   services?: Record<string, ServiceOverrides>;
 }
 

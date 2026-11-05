@@ -1,5 +1,5 @@
 import type { HostView, Incident, IncidentDetail, ServiceView } from "@/lib/api-types";
-import { overallMood, type Mood } from "@/lib/mood";
+import { isAsleep, overallMood, type Mood } from "@/lib/mood";
 
 /** What the overview's hero is about, picked in the order of Bleep's moods. */
 export type Situation =
@@ -56,7 +56,7 @@ export function heroSituation({ incidents, hosts, details, now }: HeroInput): Si
     };
   }
   const working = withMood("working");
-  const unreachable = hosts.find((host) => !host.reachable && !host.quiet);
+  const unreachable = hosts.find((host) => !host.reachable && !host.quiet && !isAsleep(host));
   if (unreachable) {
     const about = working.find(
       (incident) => incident.subject.kind === "host" && incident.subject.host_id === unreachable.id,
@@ -93,10 +93,10 @@ export function joinNames(names: readonly string[]): string {
 const serviceHurting = (service: ServiceView) =>
   service.quiet === null && (service.health === "down" || service.health === "degraded");
 
-/** A host with a problem: out of reach, or a service down or degraded. A quiet host, or one whose
- * only hurting services are quiet, is left alone and does not count. */
+/** A host with a problem: out of reach, or a service down or degraded. A quiet host, an asleep
+ * one, or one whose only hurting services are quiet, is left alone and does not count. */
 export function isHurting(host: HostView, services: readonly ServiceView[]): boolean {
-  if (host.quiet) return false;
+  if (host.quiet || isAsleep(host)) return false;
   if (!host.reachable) return true;
   const own = services.filter((service) => service.host_id === host.id);
   const hurtingOwn = own.filter(

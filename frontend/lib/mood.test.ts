@@ -43,6 +43,7 @@ const SNOOZED = {
 const hostOf = (overrides: Partial<Parameters<typeof overallMood>[1][number]> = {}) => ({
   id: "demo",
   reachable: true,
+  may_sleep: false,
   quiet: null,
   quiet_service_ids: [],
   ...overrides,
@@ -61,6 +62,7 @@ describe("incidentMood", () => {
     ["executing", false, "working"],
     ["verifying", false, "working"],
     ["paused", false, "working"],
+    ["waiting", false, "working"],
     ["resolved", false, "all_good"],
     ["closed", false, "resting"],
     ["failed", false, "needs_you"],
@@ -193,6 +195,16 @@ describe("quiet subjects", () => {
     const hosts = [hostOf({ reachable: false, quiet: { ...SNOOZED } })];
     expect(overallMood([], hosts, new Set(), NOW)).toBe("all_good");
     expect(overallState([], hosts, NOW)).toBe("green");
+  });
+
+  it("an asleep host that may sleep does not make the mood working", () => {
+    const hosts = [hostOf({ reachable: false, may_sleep: true })];
+    expect(overallMood([], hosts, new Set(), NOW)).toBe("all_good");
+    expect(overallState([], hosts, NOW)).toBe("green");
+  });
+
+  it("an incident waiting for its host counts as one Bleep is on", () => {
+    expect(overallMood([incident("waiting")], [], new Set(), NOW)).toBe("working");
   });
 
   it("knows a quiet subject by its service or its host", () => {

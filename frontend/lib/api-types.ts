@@ -3,6 +3,8 @@
 // (HostView, ServiceView, ContainerView, UrlStatus, Health) if it is ever switched.
 
 export type Health = "ok" | "degraded" | "down" | "stopped" | "unknown";
+/** A host's health: a host that may sleep and does not answer is asleep, not down. */
+export type HostHealth = Health | "asleep";
 
 export type HostKind = "ssh" | "socket";
 
@@ -38,7 +40,9 @@ export interface HostView {
   error: string | null;
   basics: BasicsView | null;
   service_count: number;
-  health: Health;
+  health: HostHealth;
+  /** A laptop that sleeps by design: not answering opens no incident. */
+  may_sleep: boolean;
   quiet: QuietView | null;
   quiet_service_ids: string[];
 }
@@ -87,6 +91,7 @@ export type IncidentStatus =
   | "executing"
   | "verifying"
   | "paused"
+  | "waiting"
   | "resolved"
   | "closed"
   | "failed";

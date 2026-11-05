@@ -43,6 +43,7 @@ export function sshHost(overrides: Partial<HostSettingsView> = {}): HostSettings
       version: null,
     },
     rules: ["Ask before touching anything at night."],
+    may_sleep: false,
     services: {
       "compose:shop": {
         urls: [

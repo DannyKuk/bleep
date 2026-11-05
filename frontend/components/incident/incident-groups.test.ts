@@ -19,6 +19,7 @@ const ALL: IncidentStatus[] = [
   "executing",
   "verifying",
   "paused",
+  "waiting",
   "resolved",
   "closed",
   "failed",

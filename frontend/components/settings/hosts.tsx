@@ -5,7 +5,8 @@ import { useState } from "react";
 
 import { Panel } from "@/components/panel";
 import { HostForm, RemoveHost } from "@/components/settings/host-form";
-import { ListEditor } from "@/components/settings/rules";
+import { ListEditor, SourceNote } from "@/components/settings/rules";
+import { SaveError, useSaving } from "@/components/settings/save-error";
 import { Fact, SecretBadge } from "@/components/settings/secret";
 import { Button } from "@/components/ui/button";
 import type { HostConnection, HostOverrides, HostSettingsView } from "@/lib/settings-types";
@@ -17,6 +18,53 @@ export function withHostRules(host: HostOverrides | undefined, rules?: string[])
   const next = { ...host, rules };
   if (rules === undefined) delete next.rules;
   return next;
+}
+
+/** The host's overrides with `may_sleep` set, or back to the hosts file's (undefined). */
+export function withMaySleep(host: HostOverrides | undefined, maySleep?: boolean): HostOverrides {
+  const next = { ...host, may_sleep: maySleep };
+  if (maySleep === undefined) delete next.may_sleep;
+  return next;
+}
+
+function MaySleep({
+  host,
+  overrides,
+  save,
+}: {
+  host: HostSettingsView;
+  overrides: HostOverrides | undefined;
+  save: (host: HostOverrides) => Promise<unknown>;
+}) {
+  const { busy, problems, run } = useSaving();
+  return (
+    <div className="flex flex-col gap-2">
+      {host.connection.source === "file" && (
+        <SourceNote
+          overridden={overrides?.may_sleep !== undefined}
+          disabled={busy}
+          onReset={() => void run(() => save(withMaySleep(overrides)))}
+        />
+      )}
+      <label className="flex min-h-11 items-center gap-2 text-sm font-bold">
+        <input
+          type="checkbox"
+          checked={host.may_sleep}
+          disabled={busy}
+          onChange={(changed) =>
+            void run(() => save(withMaySleep(overrides, changed.target.checked)))
+          }
+          className="size-4"
+        />
+        This host may sleep
+      </label>
+      <p className="text-xs text-muted-foreground">
+        For a laptop: while it does not answer, it shows as asleep and Bleep opens no incident for
+        it.
+      </p>
+      <SaveError problems={problems} />
+    </div>
+  );
 }
 
 function KeyState({ what, set }: { what: string; set: boolean }) {
@@ -85,8 +133,9 @@ function Connection({ connection }: { connection: HostConnection }) {
 }
 
 /**
- * One host's settings as two panels: how Bleep reaches it (edit and remove for a dashboard host)
- * and its rules. Each service's settings are edited on the service's page.
+ * One host's settings as three panels: how Bleep reaches it (edit and remove for a dashboard
+ * host), whether it may sleep, and its rules. Each service's settings are edited on the service's
+ * page.
  */
 export function HostSettings({
   host,
@@ -137,6 +186,9 @@ export function HostSettings({
               </div>
             ))}
         </div>
+      </Panel>
+      <Panel title="Sleep">
+        <MaySleep host={host} overrides={overrides} save={save} />
       </Panel>
       <Panel title="Rules for every service">
         <ListEditor

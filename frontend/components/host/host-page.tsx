@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { useOverall } from "@/components/overall-state";
-import { basicsLine } from "@/components/overview/host-tile";
+import { basicsLine, errorTone, healthLabel } from "@/components/overview/host-tile";
 import { HealthBadge } from "@/components/overview/health-badge";
 import { Panel } from "@/components/panel";
 import { QuietButton } from "@/components/quiet/quiet-button";
@@ -148,9 +148,7 @@ function Header({
     <header className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h1 className="text-3xl font-extrabold wrap-anywhere md:text-4xl">{host.name}</h1>
-        {!host.quiet && (
-          <HealthBadge health={host.health} label={host.reachable ? undefined : "Unreachable"} />
-        )}
+        {!host.quiet && <HealthBadge health={host.health} label={healthLabel(host)} />}
         <QuietButton
           target={{ scope: "host", id: host.id, name: host.name }}
           quiet={host.quiet}
@@ -170,9 +168,7 @@ function Header({
       </p>
       {basics && <p className="font-mono text-xs text-ink-2">{basics}</p>}
       {!host.reachable && host.error && (
-        <p className={cn("font-mono text-xs break-words", host.quiet ? "text-ink-2" : "text-down")}>
-          {host.error}
-        </p>
+        <p className={cn("font-mono text-xs break-words", errorTone(host))}>{host.error}</p>
       )}
     </header>
   );

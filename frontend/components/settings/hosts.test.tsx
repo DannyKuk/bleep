@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { sshHost } from "@/components/settings/fixtures";
-import { HostSettings, withHostRules } from "@/components/settings/hosts";
+import { HostSettings, withHostRules, withMaySleep } from "@/components/settings/hosts";
 
 describe("withHostRules", () => {
   it("replaces the host's rules or goes back to the hosts file's", () => {
@@ -13,7 +13,40 @@ describe("withHostRules", () => {
   });
 });
 
+describe("withMaySleep", () => {
+  it("sets may_sleep and keeps the other overrides, or goes back to the hosts file's", () => {
+    const host = { rules: ["r"], may_sleep: false };
+    expect(withMaySleep(host, true)).toEqual({ rules: ["r"], may_sleep: true });
+    expect(withMaySleep(host)).toEqual({ rules: ["r"] });
+  });
+});
+
 describe("HostSettings", () => {
+  it("saves that the host may sleep with its other overrides kept", async () => {
+    const save = vi.fn(async () => undefined);
+    const overrides = { rules: ["dashboard rule"] };
+    render(<HostSettings host={sshHost()} overrides={overrides} save={save} />);
+    const box = screen.getByRole("checkbox", { name: "This host may sleep" });
+    expect(box).not.toBeChecked();
+    await userEvent.click(box);
+    expect(save).toHaveBeenCalledWith({ rules: ["dashboard rule"], may_sleep: true });
+  });
+
+  it("offers the hosts file's choice back once the dashboard changed it", async () => {
+    const save = vi.fn(async () => undefined);
+    render(
+      <HostSettings
+        host={sshHost({ may_sleep: true })}
+        overrides={{ may_sleep: true }}
+        save={save}
+      />,
+    );
+    expect(screen.getByRole("checkbox", { name: "This host may sleep" })).toBeChecked();
+    const [reset] = screen.getAllByRole("button", { name: "Use the hosts file's" });
+    await userEvent.click(reset);
+    expect(save).toHaveBeenCalledWith({});
+  });
+
   it("shows a socket host's endpoint and no ssh fields", () => {
     const host = sshHost({
       connection: {

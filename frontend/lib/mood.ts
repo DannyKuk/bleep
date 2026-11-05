@@ -17,6 +17,7 @@ const WORKING: ReadonlySet<IncidentStatus> = new Set([
   "executing",
   "verifying",
   "paused",
+  "waiting",
 ]);
 
 /** The incident page's mood: `unsure` is the diagnosis's flag, which only matters while the plan
@@ -43,7 +44,12 @@ export function failedRecently(incident: Incident, now: number): boolean {
   return now - ended < FAILED_NEEDS_YOU_MS;
 }
 
-type QuietHost = Pick<HostView, "id" | "reachable" | "quiet" | "quiet_service_ids">;
+type QuietHost = Pick<HostView, "id" | "reachable" | "may_sleep" | "quiet" | "quiet_service_ids">;
+
+/** A host that may sleep and does not answer: it is asleep, which is no trouble. */
+export function isAsleep(host: Pick<HostView, "reachable" | "may_sleep">): boolean {
+  return !host.reachable && host.may_sleep;
+}
 
 /** Whether the subject's service, or its whole host, is quiet: Bleep leaves it alone. */
 export function isQuietSubject(
@@ -74,7 +80,7 @@ export function overallMood(
   if (waiting.some((incident) => !unsureIds.has(incident.id))) return "needs_you";
   if (waiting.length > 0) return "not_sure";
   if (incidents.some((incident) => WORKING.has(incident.status))) return "working";
-  if (hosts.some((host) => !host.reachable && !host.quiet)) return "working";
+  if (hosts.some((host) => !host.reachable && !host.quiet && !isAsleep(host))) return "working";
   return "all_good";
 }
 

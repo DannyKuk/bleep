@@ -2,17 +2,18 @@ import {
   AlertTriangle,
   CheckCircle2,
   HelpCircle,
+  Moon,
   PauseCircle,
   XCircle,
   type LucideIcon,
 } from "lucide-react";
 
-import type { Health } from "@/lib/api-types";
+import type { HostHealth } from "@/lib/api-types";
 import { cn } from "@/lib/utils";
 
 // Colour is never the only signal: every health has its own icon and word too. The full class
 // names are written out so Tailwind sees them.
-const HEALTH: Record<Health, { label: string; icon: LucideIcon; className: string }> = {
+const HEALTH: Record<HostHealth, { label: string; icon: LucideIcon; className: string }> = {
   ok: { label: "OK", icon: CheckCircle2, className: "bg-health-ok-bg text-health-ok" },
   degraded: {
     label: "Degraded",
@@ -30,6 +31,11 @@ const HEALTH: Record<Health, { label: string; icon: LucideIcon; className: strin
     icon: HelpCircle,
     className: "bg-health-unknown-bg text-health-unknown",
   },
+  asleep: {
+    label: "Asleep",
+    icon: Moon,
+    className: "bg-health-stopped-bg text-health-stopped",
+  },
 };
 
 export function HealthBadge({
@@ -37,7 +43,7 @@ export function HealthBadge({
   label,
   className,
 }: {
-  health: Health;
+  health: HostHealth;
   /** Overrides the default word (URL checks say "Failing", not "Down"). */
   label?: string;
   className?: string;

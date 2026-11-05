@@ -79,6 +79,8 @@ export function headline({
       return say("I am looking into it.");
     case "paused":
       return say("Paused for a moment. I will try again.");
+    case "waiting":
+      return say("The host does not answer. I wait for it to come back.");
     case "awaiting_approval": {
       if (approval && isRefused(approval.proposal)) {
         return say("I found no plan I may run. What now?");

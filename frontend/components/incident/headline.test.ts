@@ -81,6 +81,10 @@ describe("headline", () => {
     expect(at("closed")).toBe("Closed.");
   });
 
+  it("says it waits for a host that does not answer, and promises no plan", () => {
+    expect(at("waiting")).toBe("The host does not answer. I wait for it to come back.");
+  });
+
   it("says a failed run needs a look", () => {
     expect(at("failed")).toBe("I got stuck. This needs a look.");
   });

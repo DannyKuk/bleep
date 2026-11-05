@@ -128,6 +128,14 @@ describe("quiet subjects", () => {
     expect(situation).toEqual({ kind: "quiet" });
   });
 
+  it("does not make an asleep host the headline or count it as hurting", () => {
+    const asleep = host({ reachable: false, may_sleep: true, health: "asleep" });
+    const situation = heroSituation({ incidents: [], hosts: [asleep], details: {}, now: NOW });
+    expect(situation).toEqual({ kind: "quiet" });
+    expect(isHurting(asleep, [])).toBe(false);
+    expect(reachLine([asleep], [])).toBe("It is fine.");
+  });
+
   it("does not make an unreachable quiet host the headline", () => {
     const quiet = { ...leftAlone, scope: "host" } as const;
     const situation = heroSituation({
