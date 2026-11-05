@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { incident } from "@/components/incident/fixtures";
+import { host } from "@/components/overview/fixtures";
 import {
   FILTERS,
   formatDuration,
@@ -37,6 +38,21 @@ describe("incident groups", () => {
     expect(grouped.map((g) => g.group)).toEqual(["needs_you", "on_it", "earlier"]);
     expect(groupOf(incident(), NOW)).toBe("needs_you");
     expect(groupOf(incident({ status: "failed" }), NOW)).toBe("earlier");
+  });
+
+  it("the Needs you group leaves out a failed incident of a quiet subject", () => {
+    const failed = incident({
+      id: "f",
+      status: "failed",
+      closed_at: "2026-11-04T17:30:00Z",
+      subject: { kind: "service", host_id: "demo", service_id: "demo/compose:shop" },
+    });
+    const quiet = [host({ quiet_service_ids: ["demo/compose:shop"] })];
+    expect(groupOf(failed, NOW, [host()])).toBe("needs_you");
+    expect(groupOf(failed, NOW, quiet)).toBe("earlier");
+    expect(matchesFilter(failed, "needs_you", NOW, quiet)).toBe(false);
+    expect(groupIncidents([failed], NOW, quiet).map((g) => g.group)).toEqual(["earlier"]);
+    expect(headline([failed], NOW, quiet)).toBe("Nothing needs you right now.");
   });
 
   it("matches each status with exactly the filters that name it", () => {

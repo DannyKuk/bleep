@@ -15,7 +15,10 @@ import { ReasoningStream, toolSteps } from "@/components/incident/reasoning-stre
 import { ReportView } from "@/components/incident/report-view";
 import { Timeline } from "@/components/incident/timeline";
 import { usePhone } from "@/components/incident/use-phone";
+import { useOverall } from "@/components/overall-state";
 import { Panel } from "@/components/panel";
+import { QuietMenu } from "@/components/quiet/quiet-menu";
+import { Button } from "@/components/ui/button";
 import { ApiError, apiFetch } from "@/lib/api";
 import type {
   FeedbackTarget,
@@ -72,12 +75,17 @@ function useIncidentDetail(id: string, version: string): Loaded {
 
 const ENDED = new Set<IncidentStatus>(["resolved", "closed", "failed"]);
 
+// A quiet choice has nothing left to silence once the incident ended, and would cut short a run
+// that is changing the host while it executes or verifies.
+const NOT_QUIETABLE = new Set<IncidentStatus>([...ENDED, "executing", "verifying"]);
+
 function Waiting({ children }: { children: React.ReactNode }) {
   return <p className="text-[15px] text-ink-2">{children}</p>;
 }
 
 export function IncidentPage({ id }: { id: string }) {
   const { events, status } = useIncidentStream(id);
+  const overall = useOverall();
   const phone = usePhone();
   const [reloads, setReloads] = useState(0);
   const { data, error } = useIncidentDetail(id, `${reloadKey(events)}:${reloads}`);
@@ -111,6 +119,10 @@ export function IncidentPage({ id }: { id: string }) {
 
   const { incident, diagnosis, proposal, approval, report, feedback } = data;
   const reload = () => setReloads((count) => count + 1);
+  const quietChanged = () => {
+    reload();
+    overall.refresh();
+  };
   const vote = (target: FeedbackTarget) => feedback.find((given) => given.target === target);
   const ended = ENDED.has(incident.status);
   // Known only once the history has loaded and the stream is open; until then a no says only that
@@ -118,6 +130,33 @@ export function IncidentPage({ id }: { id: string }) {
   const nothingRanBefore =
     status === "live" &&
     !events.some(({ kind, payload }) => kind === "action" && payload.status !== "skipped");
+
+  const { subject } = incident;
+  const hostName = overall.hosts?.find((host) => host.id === subject.host_id)?.name;
+  const quietTarget =
+    subject.kind === "service"
+      ? subject.service_id
+        ? ({
+            scope: "service",
+            id: subject.service_id,
+            name: subject.service_id.split(":").pop() ?? subject.service_id,
+          } as const)
+        : null
+      : ({ scope: "host", id: subject.host_id, name: hostName ?? subject.host_id } as const);
+  const imOnIt = quietTarget && !NOT_QUIETABLE.has(incident.status) && (
+    <div className="flex justify-end">
+      <QuietMenu
+        target={quietTarget}
+        quiet={null}
+        onChanged={quietChanged}
+        trigger={
+          <Button variant="outline" aria-label="I'm on it">
+            I&apos;m on it ▾
+          </Button>
+        }
+      />
+    </div>
+  );
 
   const refreshFailed = error && (
     <p role="alert" className="flex items-center gap-2 text-sm font-bold text-warn">
@@ -191,6 +230,7 @@ export function IncidentPage({ id }: { id: string }) {
     >
       {phone ? <PhoneIncidentHero detail={data} /> : <IncidentHero detail={data} stream={status} />}
       {refreshFailed}
+      {imOnIt}
       {!phone && <ProgressBar steps={progressSteps(events, incident.status)} />}
       <div
         className={cn(

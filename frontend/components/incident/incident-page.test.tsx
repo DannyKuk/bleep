@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -14,6 +14,12 @@ import { DETAIL_POLL_MS, IncidentPage } from "@/components/incident/incident-pag
 import { subjectText } from "@/components/incident/incident-list";
 import { PHONE_QUERY } from "@/components/incident/use-phone";
 import type { IncidentDetail } from "@/lib/api-types";
+
+const overall = vi.hoisted(() => ({
+  hosts: [{ id: "demo", name: "Demo stack" }] as { id: string; name: string }[] | undefined,
+  refresh: vi.fn(),
+}));
+vi.mock("@/components/overall-state", () => ({ useOverall: () => overall }));
 
 class StubEventSource {
   static readonly CLOSED = 2;
@@ -53,7 +59,10 @@ const detailReads = (fetchMock: ReturnType<typeof stubBackend>) =>
   fetchMock.mock.calls.filter(([input]) => String(input) === "/api/incidents/inc-1").length;
 
 describe("IncidentPage", () => {
-  beforeEach(() => vi.stubGlobal("EventSource", StubEventSource));
+  beforeEach(() => {
+    vi.stubGlobal("EventSource", StubEventSource);
+    overall.refresh.mockClear();
+  });
   afterEach(() => vi.useRealTimers());
 
   it("shows the incident with its diagnosis and the plan waiting for a decision", async () => {
@@ -353,6 +362,105 @@ describe("IncidentPage", () => {
       );
       expect(await within(found()).findByRole("status")).toHaveTextContent("Marked wrong");
       expect(votes).toHaveLength(1);
+    });
+  });
+
+  describe("I'm on it", () => {
+    const subject = (kind: "service" | "host") =>
+      kind === "service"
+        ? { kind, host_id: "demo", service_id: "demo/compose:shop" }
+        : { kind, host_id: "demo", service_id: null };
+
+    function stubWithPut() {
+      const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+        const url = String(input);
+        if (init?.method === "PUT") return json({});
+        if (url.includes("/events")) return json([]);
+        return json(detail());
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
+
+    it("an awaiting incident offers I'm on it; Leave it alone PUTs for its service", async () => {
+      const fetchMock = stubWithPut();
+      render(<IncidentPage id="inc-1" />);
+      await userEvent.click(await screen.findByRole("button", { name: "I'm on it" }));
+      await userEvent.click(await screen.findByRole("menuitem", { name: /Leave it alone/ }));
+      await waitFor(() => expect(detailReads(fetchMock)).toBeGreaterThan(1));
+      const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT")!;
+      expect(String(put[0])).toBe("/api/quiet/services/demo/compose%3Ashop");
+      expect(JSON.parse(String(put[1]?.body))).toEqual({ mode: "leave_alone" });
+    });
+
+    it.each(["executing", "verifying", "resolved", "closed", "failed"] as const)(
+      "a %s incident offers no I'm on it",
+      async (status) => {
+        stubBackend(detail({ incident: incident({ status }) }));
+        render(<IncidentPage id="inc-1" />);
+        await screen.findByRole("heading", { level: 1 });
+        expect(screen.queryByRole("button", { name: "I'm on it" })).toBeNull();
+      },
+    );
+
+    it("a quiet choice refreshes the header's overall state", async () => {
+      stubWithPut();
+      render(<IncidentPage id="inc-1" />);
+      await userEvent.click(await screen.findByRole("button", { name: "I'm on it" }));
+      await userEvent.click(await screen.findByRole("menuitem", { name: /Leave it alone/ }));
+      await waitFor(() => expect(overall.refresh).toHaveBeenCalled());
+    });
+
+    it("a service incident without a service id offers no I'm on it", async () => {
+      stubBackend(
+        detail({
+          incident: incident({ subject: { kind: "service", host_id: "demo", service_id: null } }),
+        }),
+      );
+      render(<IncidentPage id="inc-1" />);
+      await screen.findByRole("heading", { level: 1 });
+      expect(screen.queryByRole("button", { name: "I'm on it" })).toBeNull();
+    });
+
+    it("names the service in the menu", async () => {
+      stubWithPut();
+      render(<IncidentPage id="inc-1" />);
+      await userEvent.click(await screen.findByRole("button", { name: "I'm on it" }));
+      expect(await screen.findByText("Snooze shop")).toBeInTheDocument();
+    });
+
+    it("a host incident's menu says Snooze with the host's name, or its id if unlisted", async () => {
+      const host = detail({ incident: incident({ subject: subject("host") }) });
+      stubBackend(host);
+      const { unmount } = render(<IncidentPage id="inc-1" />);
+      await userEvent.click(await screen.findByRole("button", { name: "I'm on it" }));
+      expect(await screen.findByText("Snooze Demo stack")).toBeInTheDocument();
+      unmount();
+
+      overall.hosts = undefined;
+      stubBackend(host);
+      render(<IncidentPage id="inc-1" />);
+      await userEvent.click(await screen.findByRole("button", { name: "I'm on it" }));
+      expect(await screen.findByText("Snooze demo")).toBeInTheDocument();
+      overall.hosts = [{ id: "demo", name: "Demo stack" }];
+    });
+
+    it("a host incident's I'm on it targets the host", async () => {
+      const host = detail({ incident: incident({ subject: subject("host") }) });
+      const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+        if (init?.method === "PUT") return json({});
+        if (String(input).includes("/events")) return json([]);
+        return json(host);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      render(<IncidentPage id="inc-1" />);
+      await userEvent.click(await screen.findByRole("button", { name: "I'm on it" }));
+      await userEvent.click(await screen.findByRole("menuitem", { name: /Leave it alone/ }));
+      await waitFor(() =>
+        expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(true),
+      );
+      const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT")!;
+      expect(String(put[0])).toBe("/api/quiet/hosts/demo");
     });
   });
 });

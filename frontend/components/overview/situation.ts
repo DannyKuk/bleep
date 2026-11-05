@@ -39,7 +39,10 @@ const awaitingFirst = (a: Incident, b: Incident) =>
  */
 export function heroSituation({ incidents, hosts, details, now }: HeroInput): Situation {
   const unsure = unsureIds(details);
-  const moodOf = (incident: Incident): Mood => overallMood([incident], [], unsure, now);
+  // Only the hosts' quiet state matters here: an unreachable host must not turn every incident
+  // into "working", the hero picks the unreachable host itself below.
+  const reachable = hosts.map((host) => ({ ...host, reachable: true }));
+  const moodOf = (incident: Incident): Mood => overallMood([incident], reachable, unsure, now);
   const withMood = (mood: Mood) => incidents.filter((incident) => moodOf(incident) === mood);
 
   const needsYou = [...withMood("needs_you").sort(awaitingFirst), ...withMood("not_sure")];
@@ -53,7 +56,7 @@ export function heroSituation({ incidents, hosts, details, now }: HeroInput): Si
     };
   }
   const working = withMood("working");
-  const unreachable = hosts.find((host) => !host.reachable);
+  const unreachable = hosts.find((host) => !host.reachable && !host.quiet);
   if (unreachable) {
     const about = working.find(
       (incident) => incident.subject.kind === "host" && incident.subject.host_id === unreachable.id,
@@ -87,13 +90,21 @@ export function joinNames(names: readonly string[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
-/** A host with a problem: out of reach, or a service down or degraded. */
-export function isHurting(host: HostView): boolean {
-  return !host.reachable || host.health === "down" || host.health === "degraded";
-}
-
 const serviceHurting = (service: ServiceView) =>
-  service.health === "down" || service.health === "degraded";
+  service.quiet === null && (service.health === "down" || service.health === "degraded");
+
+/** A host with a problem: out of reach, or a service down or degraded. A quiet host, or one whose
+ * only hurting services are quiet, is left alone and does not count. */
+export function isHurting(host: HostView, services: readonly ServiceView[]): boolean {
+  if (host.quiet) return false;
+  if (!host.reachable) return true;
+  const own = services.filter((service) => service.host_id === host.id);
+  const hurtingOwn = own.filter(
+    (service) => service.health === "down" || service.health === "degraded",
+  );
+  if (hurtingOwn.length > 0 && hurtingOwn.every((service) => service.quiet !== null)) return false;
+  return host.health === "down" || host.health === "degraded";
+}
 
 function servicesReach(host: HostView, services: readonly ServiceView[]): string {
   const own = services.filter((service) => service.host_id === host.id);
@@ -128,7 +139,7 @@ function fineSentence(fine: number, hostCount: number): string {
 
 /** The line above the host tiles: how far a problem reaches, and that the rest is fine. */
 export function reachLine(hosts: readonly HostView[], services: readonly ServiceView[]): string {
-  const hurting = hosts.filter(isHurting);
+  const hurting = hosts.filter((host) => isHurting(host, services));
   const fine = fineSentence(hosts.length - hurting.length, hosts.length);
   if (hurting.length === 0) return fine;
   return [hurtingSentence(hurting, services, hosts.length), fine].filter(Boolean).join(" ");

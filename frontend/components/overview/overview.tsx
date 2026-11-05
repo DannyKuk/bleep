@@ -51,10 +51,12 @@ function Hosts({
   hosts,
   services,
   onHostAdded,
+  onChanged,
 }: {
   hosts: HostView[];
   services: ServiceView[];
   onHostAdded: Reload;
+  onChanged: Reload;
 }) {
   return (
     <section aria-labelledby="your-hosts" className="flex flex-col gap-4">
@@ -73,6 +75,7 @@ function Hosts({
             key={host.id}
             host={host}
             services={services.filter((service) => service.host_id === host.id)}
+            onChanged={onChanged}
           />
         ))}
       </div>
@@ -88,6 +91,7 @@ export function OverviewView({
   details = {},
   now,
   onHostAdded = async () => undefined,
+  onChanged = async () => undefined,
 }: {
   hosts: HostView[];
   services: ServiceView[];
@@ -98,6 +102,8 @@ export function OverviewView({
   now: number;
   /** Reads the hosts again after one was added from the overview. */
   onHostAdded?: Reload;
+  /** Reads the overview again after a quiet state was set or cleared on a row or a tile. */
+  onChanged?: Reload;
 }) {
   const situation = heroSituation({ incidents, hosts, details, now });
   const mood =
@@ -110,7 +116,7 @@ export function OverviewView({
       {hosts.length === 0 ? (
         <NoHosts onHostAdded={onHostAdded} />
       ) : (
-        <Hosts hosts={hosts} services={services} onHostAdded={onHostAdded} />
+        <Hosts hosts={hosts} services={services} onHostAdded={onHostAdded} onChanged={onChanged} />
       )}
     </div>
   );
@@ -192,6 +198,7 @@ export function Overview() {
         details={data.details}
         now={overall.readAt}
         onHostAdded={reload}
+        onChanged={reload}
       />
     </div>
   );

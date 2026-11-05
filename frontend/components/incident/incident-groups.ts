@@ -1,5 +1,7 @@
-import type { Incident, IncidentStatus } from "@/lib/api-types";
-import { failedRecently } from "@/lib/mood";
+import type { HostView, Incident, IncidentStatus } from "@/lib/api-types";
+import { failedRecently, isQuietSubject } from "@/lib/mood";
+
+type QuietHost = Pick<HostView, "id" | "quiet" | "quiet_service_ids">;
 
 export type Group = "needs_you" | "on_it" | "earlier";
 export type Filter = "all" | "needs_you" | "open" | "resolved" | "closed_or_failed";
@@ -32,18 +34,25 @@ const GROUP_OF: Record<IncidentStatus, Group> = {
   failed: "earlier",
 };
 
-/** The incident's group at `now` (ms since the epoch). */
-export function groupOf(incident: Incident, now: number): Group {
-  return failedRecently(incident, now) ? "needs_you" : GROUP_OF[incident.status];
+/** The incident's group at `now` (ms since the epoch). A failed run of a quiet service or host
+ * does not need the human: it was left alone on purpose. */
+export function groupOf(incident: Incident, now: number, hosts: readonly QuietHost[] = []): Group {
+  const needsYou = failedRecently(incident, now) && !isQuietSubject(incident.subject, hosts);
+  return needsYou ? "needs_you" : GROUP_OF[incident.status];
 }
 
-export function matchesFilter(incident: Incident, filter: Filter, now: number): boolean {
+export function matchesFilter(
+  incident: Incident,
+  filter: Filter,
+  now: number,
+  hosts: readonly QuietHost[] = [],
+): boolean {
   const { status } = incident;
   switch (filter) {
     case "all":
       return true;
     case "needs_you":
-      return groupOf(incident, now) === "needs_you";
+      return groupOf(incident, now, hosts) === "needs_you";
     case "open":
       return GROUP_OF[status] === "on_it";
     case "resolved":
@@ -63,10 +72,14 @@ export function matchesSearch(incident: Incident, subject: string, query: string
 export function groupIncidents(
   incidents: Incident[],
   now: number,
+  hosts: readonly QuietHost[] = [],
 ): { group: Group; incidents: Incident[] }[] {
   const order: Group[] = ["needs_you", "on_it", "earlier"];
   return order
-    .map((group) => ({ group, incidents: incidents.filter((i) => groupOf(i, now) === group) }))
+    .map((group) => ({
+      group,
+      incidents: incidents.filter((i) => groupOf(i, now, hosts) === group),
+    }))
     .filter((g) => g.incidents.length > 0);
 }
 
@@ -83,10 +96,14 @@ export function formatDuration(openedAt: string, closedAt: string | null): strin
   return `${Math.floor(hours / 24)} d`;
 }
 
-export function headline(incidents: Incident[], now: number): string {
+export function headline(
+  incidents: Incident[],
+  now: number,
+  hosts: readonly QuietHost[] = [],
+): string {
   if (incidents.length === 0) return "No incidents yet.";
-  const needs = incidents.filter((i) => groupOf(i, now) === "needs_you").length;
-  const onIt = incidents.filter((i) => groupOf(i, now) === "on_it").length;
+  const needs = incidents.filter((i) => groupOf(i, now, hosts) === "needs_you").length;
+  const onIt = incidents.filter((i) => groupOf(i, now, hosts) === "on_it").length;
   if (needs === 0 && onIt === 0) return "Nothing needs you right now.";
   const parts = [];
   if (needs > 0) parts.push(`${needs} ${needs === 1 ? "needs" : "need"} you`);

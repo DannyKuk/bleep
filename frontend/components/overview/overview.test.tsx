@@ -1,7 +1,9 @@
-import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { json } from "@/components/dev/fixtures";
+import { stubBackend } from "@/components/settings/fixtures";
 import { approval, diagnosis, incident, proposal } from "@/components/incident/fixtures";
 import { OverallProvider } from "@/components/overall-state";
 import { host, service } from "@/components/overview/fixtures";
@@ -339,5 +341,120 @@ describe("Overview", () => {
     );
     expect(await screen.findByText("shop-web-1 died")).toBeInTheDocument();
     expect(headline()).toHaveTextContent("I need you.");
+  });
+});
+
+describe("OverviewView quiet", () => {
+  const snoozed = {
+    scope: "service",
+    mode: "snooze",
+    until: new Date(2026, 10, 4, 18, 0).toISOString(),
+    since: "2026-11-04T10:00:00Z",
+  } as const;
+
+  function atNoon() {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 4, 12, 0));
+  }
+
+  afterEach(() => vi.useRealTimers());
+
+  it("a quiet service row shows Snoozed until 18:00 instead of Down and has a Quiet button", () => {
+    atNoon();
+    render(
+      <OverviewView
+        hosts={[host({ health: "down", quiet_service_ids: ["demo/compose:shop"] })]}
+        services={[service({ health: "down", quiet: snoozed })]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    const row = screen.getByRole("list", { name: "Services on Demo stack" });
+    expect(within(row).getByText("Snoozed until 18:00")).toBeInTheDocument();
+    expect(within(row).queryByText("Down")).toBeNull();
+    expect(screen.getByRole("button", { name: "Quiet shop" })).toBeInTheDocument();
+  });
+
+  it("a quiet unreachable host's error is not printed in the down colour", () => {
+    const quiet = { scope: "host", mode: "leave_alone", until: null, since: "x" } as const;
+    const down = host({ reachable: false, error: "ssh: timed out", health: "down" });
+    const errorLine = () =>
+      within(screen.getByRole("region", { name: "Demo stack" })).getByText("ssh: timed out");
+    const { rerender } = render(
+      <OverviewView hosts={[down]} services={[]} incidents={[]} now={NOW} />,
+    );
+    expect(errorLine()).toHaveClass("text-down");
+    rerender(<OverviewView hosts={[{ ...down, quiet }]} services={[]} incidents={[]} now={NOW} />);
+    expect(errorLine()).not.toHaveClass("text-down");
+    expect(errorLine()).toHaveClass("text-ink-2");
+  });
+
+  it("a quiet host's tile is not tinted and shows Host left alone on its services", () => {
+    render(
+      <OverviewView
+        hosts={[
+          host({
+            health: "down",
+            quiet: { scope: "host", mode: "leave_alone", until: null, since: "x" },
+          }),
+        ]}
+        services={[
+          service({
+            health: "down",
+            quiet: { scope: "host", mode: "leave_alone", until: null, since: "x" },
+          }),
+        ]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    const tile = screen.getByRole("region", { name: "Demo stack" });
+    expect(tile).toHaveAttribute("data-hurting", "false");
+    const list = within(tile).getByRole("list", { name: "Services on Demo stack" });
+    expect(within(list).getByText("Host left alone")).toBeInTheDocument();
+    expect(within(list).queryByText("Down")).toBeNull();
+    expect(screen.getByRole("button", { name: "Quiet Demo stack" })).toBeInTheDocument();
+  });
+
+  it("choosing Leave it alone on a row reads the overview again", async () => {
+    stubBackend({
+      "PUT /api/quiet/services/demo/compose%3Ashop": json({
+        scope: "service",
+        mode: "leave_alone",
+        until: null,
+        since: "x",
+      }),
+    });
+    const onChanged = vi.fn();
+    render(
+      <OverviewView
+        hosts={[host()]}
+        services={[service()]}
+        incidents={[]}
+        now={NOW}
+        onChanged={onChanged}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Quiet shop" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /Leave it alone/ }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
+  });
+
+  it("the hero rests when the only failed incident is about a quiet service", () => {
+    const { container } = render(
+      <OverviewView
+        hosts={[host({ quiet_service_ids: ["demo/compose:shop"] })]}
+        services={[service({ quiet: snoozed })]}
+        incidents={[
+          incident({
+            status: "failed",
+            closed_at: "2026-11-02T18:30:00Z",
+            opened_at: "2026-11-02T18:00:00Z",
+          }),
+        ]}
+        now={NOW}
+      />,
+    );
+    expect(mood(container)).toBe("all_good");
   });
 });

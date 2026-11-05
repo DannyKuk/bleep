@@ -21,6 +21,14 @@ export interface BasicsView {
   disks: DiskView[];
 }
 
+/** `schemas/api.py` `QuietView`. On a service, `scope: "host"` means quiet through its host. */
+export interface QuietView {
+  scope: "service" | "host";
+  mode: "snooze" | "leave_alone";
+  until: string | null;
+  since: string;
+}
+
 export interface HostView {
   id: string;
   name: string;
@@ -31,6 +39,8 @@ export interface HostView {
   basics: BasicsView | null;
   service_count: number;
   health: Health;
+  quiet: QuietView | null;
+  quiet_service_ids: string[];
 }
 
 export type ContainerHealth = "healthy" | "unhealthy" | "starting" | "none";
@@ -65,6 +75,7 @@ export interface ServiceView {
   containers: ContainerView[];
   urls: UrlStatus[];
   open_incident_id: string | null;
+  quiet: QuietView | null;
 }
 
 // Incidents (Task 21's contract: schemas/incidents.py, schemas/graph.py, schemas/api.py).

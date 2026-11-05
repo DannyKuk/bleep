@@ -11,6 +11,8 @@ export function host(overrides: Partial<HostView> = {}): HostView {
     basics: null,
     service_count: 1,
     health: "ok",
+    quiet: null,
+    quiet_service_ids: [],
     ...overrides,
   };
 }
@@ -44,6 +46,7 @@ export function service(overrides: Partial<ServiceView> = {}): ServiceView {
       },
     ],
     open_incident_id: null,
+    quiet: null,
     ...overrides,
   };
 }
