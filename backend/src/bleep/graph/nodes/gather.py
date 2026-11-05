@@ -16,7 +16,7 @@ from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.graph import ContainerMemory, GatherContext
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.services import HostState, Service
-from bleep.tools.docker_read import _guard
+from bleep.tools.common import guard_result
 from bleep.tools.registry import ToolContext
 
 log = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ async def _service(
         except Exception as error:
             context.gaps.append(f"logs of {name}: {_why(error)}")
             continue
-        context.logs[name] = await _guard(ctx, "logs", text or "(no log lines)")
+        context.logs[name] = await guard_result(ctx, "logs", text or "(no log lines)")
 
 
 async def _host(deps: GraphDeps, host: HostState, context: GatherContext) -> None:

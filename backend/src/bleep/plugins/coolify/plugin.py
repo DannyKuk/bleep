@@ -56,8 +56,8 @@ from bleep.plugins.coolify.client import CoolifyClient, CoolifyError, CoolifyUna
 from bleep.schemas.coolify import CoolifyApplication, CoolifyDeployment, CoolifyEnvKey
 from bleep.schemas.graph import Action, ApprovalGrant, ApprovalRecord, PlanStep, StepResult
 from bleep.schemas.plugins import PluginHealth
+from bleep.tools.common import UNTRUSTED
 from bleep.tools.docker_act import StepRefused
-from bleep.tools.docker_read import UNTRUSTED
 from bleep.tools.registry import ActHandler, ToolContext, ToolSpec
 
 log = logging.getLogger(__name__)

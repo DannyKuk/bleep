@@ -19,7 +19,7 @@ from bleep.guard.sanitize import MAX_CHARS, strip_control
 from bleep.guard.untrusted import escape_untrusted
 from bleep.hosts.github import GithubClient, GithubError, GithubUnavailable, NotFound, RateLimited
 from bleep.schemas.github import Commit, CommitDetail
-from bleep.tools.docker_read import _guard, _invalid
+from bleep.tools.common import guard_result, invalid_arguments
 from bleep.tools.registry import ToolContext, ToolSpec
 
 Clock = Callable[[], datetime]
@@ -228,7 +228,7 @@ def _tool(
         description=description,
         args_schema=schema,
         coroutine=call,
-        handle_validation_error=_invalid,
+        handle_validation_error=invalid_arguments,
     )
 
 
@@ -240,14 +240,16 @@ def github_specs(client: GithubClient, clock: Clock = lambda: datetime.now(UTC))
             path = (path or "").strip().strip("/") or None
             since = clock() - timedelta(hours=since_hours)
             found = await client.commits(repo, since, path=path, limit=COMMITS)
-            return await _guard(ctx, "commits", describe_commits(repo, since_hours, path, found))
+            return await guard_result(
+                ctx, "commits", describe_commits(repo, since_hours, path, found)
+            )
 
         return _tool(ctx, client, "recent_commits", RECENT_COMMITS, CommitsArgs, run)
 
     def diff_tool(ctx: ToolContext) -> StructuredTool:
         async def run(repo: str, sha: str, max_chars: int = 8000) -> str:
             detail = await client.commit(repo, sha)
-            return await _guard(ctx, "diff", describe_diff(detail, max_chars))
+            return await guard_result(ctx, "diff", describe_diff(detail, max_chars))
 
         return _tool(ctx, client, "commit_diff", COMMIT_DIFF, DiffArgs, run)
 

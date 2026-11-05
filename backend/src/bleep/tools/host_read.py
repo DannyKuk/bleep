@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from bleep.hosts.shell import CommandNotAllowed, allowed_text, run_allowed
 from bleep.hosts.ssh import SshUnavailable
-from bleep.tools.docker_read import UNTRUSTED, _guard, _invalid
+from bleep.tools.common import UNTRUSTED, guard_result, invalid_arguments
 from bleep.tools.registry import ToolContext, ToolSpec
 
 log = logging.getLogger(__name__)
@@ -40,17 +40,17 @@ async def _host_command(ctx: ToolContext, command: str) -> str:
     try:
         name = (await shell.run(["uname", "-s"], 20.0)).stdout.strip()
         if name != "Linux" and name != "Darwin":
-            return f"host commands are not supported on {await _guard(ctx, 'error', name)}"
+            return f"host commands are not supported on {await guard_result(ctx, 'error', name)}"
         text = await run_allowed(shell, command, name)
     except CommandNotAllowed as refusal:
         if ctx.guard_log is not None:
             ctx.guard_log.record(ctx.incident_id, "refused_command", command)
         return str(refusal)
     except SshUnavailable as error:
-        return f"host unreachable: {await _guard(ctx, 'error', str(error))}"
+        return f"host unreachable: {await guard_result(ctx, 'error', str(error))}"
     except TimeoutError:
         return "the command timed out"
-    return await _guard(ctx, "host_command", text or "(no output)")
+    return await guard_result(ctx, "host_command", text or "(no output)")
 
 
 def _build(ctx: ToolContext) -> StructuredTool:
@@ -62,7 +62,7 @@ def _build(ctx: ToolContext) -> StructuredTool:
         description=DESCRIPTION,
         args_schema=HostCommandArgs,
         coroutine=call,
-        handle_validation_error=_invalid,
+        handle_validation_error=invalid_arguments,
     )
 
 

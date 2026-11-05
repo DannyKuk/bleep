@@ -57,8 +57,8 @@ from bleep.plugins import urls
 from bleep.plugins.base import Plugin, PluginContext
 from bleep.schemas.graph import ApprovalGrant, ApprovalRecord, PlanStep, StepResult
 from bleep.schemas.plugins import PluginHealth
+from bleep.tools.common import UNTRUSTED
 from bleep.tools.docker_act import StepRefused
-from bleep.tools.docker_read import UNTRUSTED
 from bleep.tools.registry import ActHandler, ToolContext, ToolSpec
 
 log = logging.getLogger(__name__)
