@@ -1,0 +1,27 @@
+{"run_id": "bad-deploy/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names version 2 reading price_cents, which the database lacks (migration not applied)"}
+{"run_id": "bad-deploy/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names version 2 reading price_cents, which the database lacks (migration not applied)"}
+{"run_id": "bad-deploy/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names version 2 reading price_cents, which the database lacks (migration not applied)"}
+{"run_id": "bad-env/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the setting pointing at host db while the database runs as shop-db"}
+{"run_id": "bad-env/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the setting pointing at host db while the database runs as shop-db"}
+{"run_id": "bad-env/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the setting pointing at host db while the database runs as shop-db"}
+{"run_id": "db-down/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-db stopped, leaving shop-web without its database"}
+{"run_id": "db-down/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-db stopped, leaving shop-web without its database"}
+{"run_id": "db-down/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-db stopped, leaving shop-web without its database"}
+{"run_id": "disk-full/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the full uploads volume failing shop-web's health check"}
+{"run_id": "disk-full/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the full uploads volume failing shop-web's health check"}
+{"run_id": "disk-full/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the full uploads volume failing shop-web's health check"}
+{"run_id": "hung/1", "root_cause_pass": false, "root_cause_score": 0.0, "note": "no cause named; reads healthy log lines and misses the hang"}
+{"run_id": "hung/2", "root_cause_pass": false, "root_cause_score": 0.0, "note": "no cause named; reads healthy log lines and misses the hang"}
+{"run_id": "hung/3", "root_cause_pass": false, "root_cause_score": 0.0, "note": "no cause named; reads healthy log lines and misses the hang"}
+{"run_id": "misroute-mcp/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the live proxy config routing to shop-web:8001 while shop-web listens on 8000"}
+{"run_id": "misroute-mcp/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the live proxy config routing to shop-web:8001 while shop-web listens on 8000"}
+{"run_id": "misroute-mcp/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the live proxy config routing to shop-web:8001 while shop-web listens on 8000"}
+{"run_id": "misroute/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the proxy routing to port 8001 while shop-web listens on 8000"}
+{"run_id": "misroute/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the proxy routing to port 8001 while shop-web listens on 8000"}
+{"run_id": "misroute/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the proxy routing to port 8001 while shop-web listens on 8000"}
+{"run_id": "oom/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the 256 MB batch past the 64 MiB limit, OOM-killed in a loop"}
+{"run_id": "oom/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the 256 MB batch past the 64 MiB limit, OOM-killed in a loop"}
+{"run_id": "oom/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the 256 MB batch past the 64 MiB limit, OOM-killed in a loop"}
+{"run_id": "port-conflict/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-canary holding port 8080 so shop-proxy cannot bind it"}
+{"run_id": "port-conflict/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-canary holding port 8080 so shop-proxy cannot bind it"}
+{"run_id": "port-conflict/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-canary holding port 8080 so shop-proxy cannot bind it"}

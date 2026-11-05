@@ -6,6 +6,10 @@ message saying what is missing and the route sends the run back to Investigate o
 result goes on to Propose still `unsure`, so the proposal says "I am not sure, here is what I
 found". A model that cannot produce the structure, or a spent budget, gives the same fallback
 diagnosis instead of an error, built from what Gather saw.
+
+The model's `planted_in` is kept only for places the run read and is never shown
+(`graph/planted.py`, #105). When the guard escaped a wrapper tag in host text the run read, Bleep
+adds one evidence line of its own that names where and quotes nothing.
 """
 
 import logging
@@ -17,6 +21,7 @@ from pydantic import Field, field_validator
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
+from bleep.graph.planted import EVIDENCE_SOURCE, planted_places, planted_sentence, read_sources
 from bleep.graph.state import IncidentState, Node
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
@@ -58,6 +63,21 @@ def _planted(said: list[str]) -> list[PlantedSource]:
     """The sources the model named, on the closed list, in its order; anything else is `other`."""
     found = {s if s in SOURCES else "other" for s in (x.strip().lower() for x in said)}
     return [s for s in SOURCES if s in found]
+
+
+def _with_planted(
+    diagnosis: Diagnosis, context: GatherContext, messages: list[AnyMessage]
+) -> Diagnosis:
+    """The diagnosis with `planted_in` cut to the places the run read, and Bleep's own evidence
+    line when the guard escaped a wrapper tag. Neither changes what Bleep does next."""
+    read = read_sources(context, messages)
+    planted_in = [s for s in diagnosis.planted_in if s in read]
+    found = diagnosis.model_copy(update={"planted_in": planted_in})
+    sentence = planted_sentence(planted_places(context, messages))
+    if sentence is not None:
+        line = Evidence(source=EVIDENCE_SOURCE, detail=sentence)
+        found = found.model_copy(update={"evidence": [*found.evidence, line]})
+    return found
 
 
 def _clip(text: str, limit: int) -> str:
@@ -158,13 +178,14 @@ def make(deps: GraphDeps) -> Node:
         rounds = state.get("investigate_rounds", 0)
         if context is None:
             context = GatherContext(at=deps.clock())
+        messages = state.get("messages", [])
 
         prompt = prompts.load(
             "graph/diagnose",
             subject=_describe_subject(state["subject"], context),
             signals=_describe_signals(state.get("signals", [])),
             context=_describe_context(context),
-            investigation=_describe_investigation(state.get("messages", [])),
+            investigation=_describe_investigation(messages),
             untrusted_rule=prompts.load("untrusted/diagnose").strip(),
             planted_in_rule=prompts.load("untrusted/diagnose_planted_in").strip(),
         )
@@ -179,10 +200,10 @@ def make(deps: GraphDeps) -> Node:
             )
         except BudgetExceeded as spent:
             log.info("diagnose: %s budget spent, no model call", spent.kind)
-            return {"diagnosis": _fallback(context)}
+            return {"diagnosis": _with_planted(_fallback(context), context, messages)}
         except StructuredOutputFailed as failed:
             log.warning("diagnose: no structured output: %s", _clip(failed.raw, 120))
-            return {"diagnosis": _fallback(context)}
+            return {"diagnosis": _with_planted(_fallback(context), context, messages)}
 
         missing = _clip(draft.missing, MISSING_LIMIT)
         diagnosis = Diagnosis(
@@ -194,6 +215,7 @@ def make(deps: GraphDeps) -> Node:
             unsure=draft.confidence < budgets.low_confidence,
             planted_in=_planted(draft.planted_in),
         )
+        diagnosis = _with_planted(diagnosis, context, messages)
         update: dict = {"diagnosis": diagnosis}
         if diagnosis.unsure and rounds == 1:
             update["messages"] = [

@@ -1,0 +1,272 @@
+{
+  "started_at": "2026-11-05T12:12:40.087245Z",
+  "finished_at": "2026-11-05T12:56:37.054785Z",
+  "model": "openai/gpt-6-luna",
+  "provider": "openrouter",
+  "judge": "manual",
+  "repeat": 3,
+  "scenarios": [
+    {
+      "id": "bad-deploy",
+      "fault": "bad-deploy",
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-web version 2 reads the column price_cents, which the database does not have (its migration never ran), so /api/items fails with 500 while shop-web stays healthy.",
+        "category": "code",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ]
+      },
+      "timeout_s": 400,
+      "github": "bad-deploy",
+      "mcp": null
+    },
+    {
+      "id": "bad-env",
+      "fault": "bad-env",
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-web's DATABASE_URL names the host `db`, which does not exist on the shop's network (the database is shop-db), so shop-web cannot reach its database, exits at startup and keeps being restarted.",
+        "category": "config",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ]
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null
+    },
+    {
+      "id": "db-down",
+      "fault": "db-down",
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "The database container shop-db is stopped, so shop-web cannot connect to its database and the shop's API fails.",
+        "category": "dependency",
+        "action": {
+          "kind": "act",
+          "steps": [
+            {
+              "action": "docker.start",
+              "target": "shop-db",
+              "tool": null,
+              "arguments": null
+            }
+          ],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.stop"
+        ]
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null
+    },
+    {
+      "id": "disk-full",
+      "fault": "disk-full",
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "The shop's 20 MB uploads volume is full (No space left on device), so shop-web cannot write to it and its health check fails.",
+        "category": "resource",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ]
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null
+    },
+    {
+      "id": "hung",
+      "fault": "hung",
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-web hangs: the container runs but answers no request, so its health check times out.",
+        "category": "code",
+        "action": {
+          "kind": "act",
+          "steps": [
+            {
+              "action": "docker.restart",
+              "target": "shop-web",
+              "tool": null,
+              "arguments": null
+            }
+          ],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.stop"
+        ]
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null
+    },
+    {
+      "id": "misroute-mcp",
+      "fault": "misroute",
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-proxy forwards to shop-web:8001, where nothing listens (shop-web listens on 8000), so every request through the proxy gets a 502 while shop-web itself is healthy.",
+        "category": "config",
+        "action": {
+          "kind": "act",
+          "steps": [
+            {
+              "action": "mcp.call",
+              "target": "shop-proxy",
+              "tool": "caddy_reload",
+              "arguments": {
+                "container": "shop-proxy"
+              }
+            }
+          ],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ]
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": "caddy"
+    },
+    {
+      "id": "misroute",
+      "fault": "misroute",
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-proxy forwards to shop-web:8001, where nothing listens (shop-web listens on 8000), so every request through the proxy gets a 502 while shop-web itself is healthy.",
+        "category": "config",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ]
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null
+    },
+    {
+      "id": "oom",
+      "fault": "oom",
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-worker's batch size (WORKER_BATCH_MB=256) is past its 64 MB memory limit, so it is OOM-killed on every batch and restarts in a loop.",
+        "category": "resource",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ]
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null
+    },
+    {
+      "id": "port-conflict",
+      "fault": "port-conflict",
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-canary holds port 8080, so shop-proxy cannot publish its port (port is already allocated) and does not start; the shop's URLs answer the canary instead.",
+        "category": "network",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.start",
+          "docker.stop",
+          "docker.restart"
+        ]
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null
+    }
+  ],
+  "commit": "2a73ad7",
+  "command": "uv run --group evals python -m evals.run --judge manual --repeat 3",
+  "reset_shop": true,
+  "knowledge": true,
+  "raw": "../../data/evals/scenarios-20261105-121240.jsonl",
+  "report": "docs/evals/scenarios-2026-11-05-2.md",
+  "grader": null,
+  "grades": null
+}
