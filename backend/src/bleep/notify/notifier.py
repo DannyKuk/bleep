@@ -155,8 +155,6 @@ class Notifier:
         await self._plain(name, id=incident.id, detail=result.detail)
 
     async def report(self, incident: Incident, report: Report) -> None:
-        if incident.fold_of is not None:
-            return  # a repeat's report stays on the dashboard; its group's first was the message
         await self._plain(
             "report",
             id=incident.id,

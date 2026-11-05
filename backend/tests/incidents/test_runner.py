@@ -1149,12 +1149,18 @@ class ChannelLog:
 
     def __init__(self) -> None:
         self.heard: list[tuple[str, str]] = []
+        self.titles: list[str] = []  # the incident title of each opening and report
 
     async def incident_opened(self, incident) -> None:
         self.heard.append(("opened", incident.status))
+        self.titles.append(incident.title)
 
     async def notice(self, incident_id: str, text: str) -> None:
         self.heard.append(("notice", text))
+
+    async def report(self, incident, report) -> None:
+        self.heard.append(("report", incident.id))
+        self.titles.append(report.title)
 
 
 async def unreachable(env):
@@ -1317,11 +1323,10 @@ async def test_a_host_back_before_the_run_parks_is_caught_by_the_next_good_tick(
 # -- folded repeats ------------------------------------------------------------------------------
 
 
-async def test_a_repeat_runs_without_being_announced_and_a_waiting_one_ends_without_a_message(
-    tmp_path,
-):
+async def test_a_repeat_is_not_announced_but_what_came_of_it_is_told_with_its_count(tmp_path):
     env = await graph_env(tmp_path)
     channels = ChannelLog()
+    env.deps.notifier = channels  # the Report node tells the channels too
     async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
         runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=channels)
         first = await env.open(service(env), container="shop-web-1")
@@ -1331,22 +1336,54 @@ async def test_a_repeat_runs_without_being_announced_and_a_waiting_one_ends_with
         assert repeat.fold_of == first.id
         await runner.start(repeat)
         await runner.join()
-        assert await env.nodes(repeat.id) == M2_PATH  # it is looked at like any incident
 
-        outage = await unreachable(env)
-        await runner.start(outage)
-        await runner.join()
-        await runner.host_back("a")
-        again = await unreachable(env)
-        assert again.fold_of == outage.id
-        await runner.start(again)
-        await runner.join()
-        await runner.host_back("a")
-        await runner.join()
-
-    assert (await env.repo.get(again.id)).status == "closed"
+    assert await env.nodes(repeat.id) == M2_PATH  # it is looked at like any incident
     assert channels.heard == [
-        ("opened", "open"),  # the first incident; its repeat is not announced
-        ("opened", "waiting"),
-        ("notice", BACK_NOTICE),  # the first outage's end; the repeat's ends without a message
+        ("opened", "open"),
+        ("report", first.id),
+        ("report", repeat.id),  # no "opened" for the repeat, but its outcome (no action)
     ]
+    assert "(seen 2 times since" in channels.titles[-1]
+
+
+async def test_a_host_that_flaps_then_stays_down_is_told_of_its_second_wait(tmp_path):
+    env = await graph_env(tmp_path)
+    channels = ChannelLog()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=channels)
+        flap = await unreachable(env)
+        await runner.start(flap)
+        await runner.join()
+        await runner.host_back("a")  # it answered again
+        down = await unreachable(env)  # then it went down for good
+        assert down.fold_of == flap.id
+        await runner.start(down)
+        await runner.join()
+
+    assert (await env.repo.get(down.id)).status == "waiting"
+    assert channels.heard == [
+        ("opened", "waiting"),
+        ("notice", BACK_NOTICE),
+        ("opened", "waiting"),  # the repeat's wait is told, with its count
+    ]
+    assert "(seen 2 times since" in channels.titles[-1]
+
+
+async def test_a_repeats_failed_run_says_its_count(tmp_path, monkeypatch):
+    env = await graph_env(tmp_path)
+    channels = ChannelLog()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=channels)
+        first = await env.open(service(env), container="shop-web-1")
+        await env.repo.close_unfinished(first.id)
+        repeat = await env.open(service(env), container="shop-web-1")
+
+        async def broken(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(runner.graph, "ainvoke", broken)
+        await runner.start(repeat)
+        await runner.join()
+
+    [(kind, text)] = channels.heard
+    assert kind == "notice" and "RuntimeError" in text and "seen 2 times since" in text

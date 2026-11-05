@@ -265,3 +265,33 @@ async def test_it_is_not_done_when_a_plan_started_running_and_the_close_was_spar
         "The incident was not closed here; see its page."
     )
     assert (await env.repo.get(incident.id)).status == "executing"
+
+
+async def test_a_crash_after_this_is_expected_is_a_repeat_that_still_reports(tmp_path):
+    """The job's exit 0 was marked expected; then the same container crashes. The crash joins
+    the group, so it is not announced as new, but what came of its run reaches the channels."""
+    env = await graph_env(tmp_path)
+    reports: list[str] = []
+
+    class Reports:
+        async def report(self, incident, report) -> None:
+            reports.append(report.title)
+
+        def __getattr__(self, name):
+            async def nothing(*args, **kwargs) -> None:
+                return None
+
+            return nothing
+
+    env.deps.notifier = Reports()
+    expected = await opened(env, death(shop(env), 0))
+    async with open_checkpointer(tmp_path / "c.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        rig = Rig(env, runner)
+        assert (await rig.expectations.expected(expected.id, "telegram")).done
+        crash = await opened(env, death(shop(env), 137))
+        assert crash.fold_of == expected.id
+        await runner.start(crash)
+        await runner.join()
+
+    assert len(reports) == 1 and "(seen 2 times since" in reports[0]

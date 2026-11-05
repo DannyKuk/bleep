@@ -1,6 +1,7 @@
 """Incidents and their signals in SQLite. At most one incident is open per subject."""
 
 import json
+import re
 import secrets
 import sqlite3
 from collections.abc import Callable, Collection
@@ -54,17 +55,37 @@ def _incident(row: aiosqlite.Row) -> Incident:
 _DEATHS = ("container_died", "oom", "down_past_grace")
 
 
+# The detector sends the deaths before what they add up to (`[*deaths, restart_loop]`, a pending
+# death before `unhealthy`), so the incident's kind is its most telling signal, not its first.
+_PRECEDENCE = ("restart_loop", "unhealthy")
+_SEEN = re.compile(r"\(seen \d+ times since [^)]*\)$")
+
+
+def _primary(signals: list[Signal]) -> Signal | None:
+    for kind in _PRECEDENCE:
+        if found := next((s for s in signals if s.kind == kind), None):
+            return found
+    others = [s for s in signals if s.kind not in _DEATHS]
+    return others[0] if others else (signals[0] if signals else None)
+
+
 def fold_key(subject: Subject, signals: list[Signal]) -> str:
-    """What makes an incident a repeat of another: its subject, its opening kind and the target
-    (the container, or the URL)."""
-    first = signals[0] if signals else None
-    kind = "death" if first is None or first.kind in _DEATHS else first.kind
+    """What makes an incident a repeat of another: its subject, its primary kind (a restart
+    loop, then `unhealthy`, then any other kind, then a death) and that signal's target (the
+    container, or the URL)."""
+    primary = _primary(signals)
+    kind = "death" if primary is None or primary.kind in _DEATHS else primary.kind
     target = ""
-    if first is not None:
-        target = (
-            str(first.detail.get("url")) if first.kind == "url_failed" else first.container or ""
-        )
+    if primary is not None:
+        url = primary.detail.get("url")
+        target = str(url) if primary.kind == "url_failed" else primary.container or ""
     return f"{subject.key}|{kind}|{target}"
+
+
+def seen_note(title: str) -> str:
+    """The "(seen N times since …)" a repeat's title ends with; empty for any other title."""
+    found = _SEEN.search(title)
+    return found.group(0) if found else ""
 
 
 @dataclass(frozen=True)

@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from bleep.incidents.repository import IncidentRepo
+from bleep.incidents.repository import IncidentRepo, fold_key
 from bleep.llm.usage import CostLedger
 from bleep.schemas.incidents import RecoveryEvent, Signal, Subject
 from bleep.store.db import Database
@@ -276,6 +276,27 @@ async def test_a_repeat_within_the_window_joins_the_group_of_the_first(folding):
     groups = await repo.groups([first, third])
     assert groups[first.id].count == groups[third.id].count == 3
     assert [i.id for i in await repo.list(fold_of=first.id)] == [third.id, second.id]
+
+
+def test_the_fold_key_is_the_incidents_most_telling_kind_in_the_detectors_order():
+    deaths = [died() for _ in range(3)]
+    loop = Signal(subject=svc(), kind="restart_loop", at=T0, container="web-1")
+    unhealthy = Signal(subject=svc(), kind="unhealthy", at=T0, container="web-1")
+    url = Signal(subject=svc(), kind="url_failed", at=T0, detail={"url": "https://x/"})
+    assert fold_key(svc(), [*deaths, loop]).endswith("|restart_loop|web-1")
+    assert fold_key(svc(), [deaths[0], unhealthy]).endswith("|unhealthy|web-1")
+    assert fold_key(svc(), [deaths[0], url]).endswith("|url_failed|https://x/")
+    assert fold_key(svc(), deaths).endswith("|death|web-1")
+
+
+async def test_a_loop_after_a_single_death_is_no_repeat_of_it(folding):
+    repo, clock, _ = folding
+    loop = Signal(subject=svc(), kind="restart_loop", at=T0, container="web-1")
+    await again(repo, clock, died(), 0)
+    clock.later(2)
+    await repo.close_unfinished(await repo.open_incident_id(svc()))
+    escalated, _ = await repo.open_or_attach(svc(), [died(), died(), died(), loop])
+    assert escalated.fold_of is None
 
 
 async def test_another_target_or_kind_is_not_a_repeat_and_a_loop_has_its_own_group(folding):
