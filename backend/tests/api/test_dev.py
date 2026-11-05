@@ -424,3 +424,13 @@ def test_a_secret_in_a_guard_log_detail_is_redacted_before_it_is_returned(dev_cl
 
 def test_an_unknown_guard_kind_is_a_422(dev_client):
     assert dev_client.get("/api/dev/guard-log", params={"kind": "nope"}).status_code == 422
+
+
+def test_a_guard_record_pending_from_one_app_survives_a_second_app_over_the_same_parts(
+    settings, parts, dev_client
+):
+    dev_client.portal.call(parts.guard_log.record, "inc-1", "budget", "made in the first app")
+    with TestClient(create_app(settings, parts)) as second:
+        second.post("/api/auth/login", json={"password": "test-password"})
+        entries = second.get("/api/dev/guard-log").json()
+    assert [e["detail"] for e in entries] == ["made in the first app"]

@@ -73,13 +73,22 @@ class GuardLog:
                 conn.execute(_INSERT, row)
             return
         self._pending.append(row)
-        if self._writer is None or self._writer.done():
-            self._writer = loop.create_task(self._write())
+        self._ensure_writer(loop)
+
+    def _ensure_writer(self, loop: asyncio.AbstractEventLoop) -> asyncio.Task[None] | None:
+        """A writer owned by another loop (an app restarted over the same log, in tests) can never
+        be awaited from this one, so it is dropped; its unwritten rows are still in the queue."""
+        writer = self._writer
+        if writer is not None and not writer.done() and writer.get_loop() is not loop:
+            writer = self._writer = None
+        if (writer is None or writer.done()) and self._pending:
+            writer = self._writer = loop.create_task(self._write())
+        return None if writer is None or writer.done() else writer
 
     async def _write(self) -> None:
         """One writer drains the queue, so records keep the order they were made in."""
         while self._pending:
-            rows, self._pending = self._pending, []
+            rows = list(self._pending)
             try:
                 conn = await self.db.connect()
                 try:
@@ -89,11 +98,12 @@ class GuardLog:
                     await conn.close()
             except Exception:
                 log.exception("guard log: could not write %d record(s)", len(rows))
+            del self._pending[: len(rows)]  # kept until written, so a dropped writer loses none
 
     async def flush(self) -> None:
         """Wait until every record made so far is written."""
-        while self._writer is not None and not self._writer.done():
-            await self._writer
+        while writer := self._ensure_writer(asyncio.get_running_loop()):
+            await writer
 
     async def entries(self, incident_id: str | None = None, limit: int = 200) -> list[GuardEntry]:
         """Oldest first: one incident's, or every incident's."""
