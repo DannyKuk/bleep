@@ -221,6 +221,31 @@ async def test_a_button_on_a_replaced_plan_wins_nothing(env):
     assert (await env.approvals.current(env.incident_id)).decision is None
 
 
+@pytest.mark.parametrize("name", ["callback_approve", "callback_reject"])
+async def test_a_button_on_a_plan_whose_incident_closed_unanswered_is_answered_as_closed(env, name):
+    """Leave alone or a removed host closed the incident while the message waited (#277)."""
+    await IncidentRepo(env.db).close_unfinished(env.incident_id)
+    await poll(env, name)
+
+    assert env.runner.resumed == []
+    [pop_up] = env.api.sent("answerCallbackQuery")
+    assert pop_up["text"] == "The incident was closed before anyone answered. Nothing will run."
+    [cleared] = env.api.sent("editMessageReplyMarkup")
+    assert cleared["message_id"] == 311 and cleared["reply_markup"] == {"inline_keyboard": []}
+    record = await env.approvals.current(env.incident_id)
+    assert record.closed and record.decision is None
+
+
+async def test_a_reply_to_a_plan_whose_incident_closed_unanswered_is_answered_as_closed(env):
+    await IncidentRepo(env.db).close_unfinished(env.incident_id)
+    await poll(env, "reply_instruction")
+
+    assert env.runner.resumed == []
+    [reply] = env.api.sent("sendMessage")
+    assert reply["text"] == "The incident was closed before anyone answered. Nothing will run."
+    assert (await env.approvals.current(env.incident_id)).decision is None
+
+
 async def test_a_button_on_an_unknown_message_is_refused(env):
     update = fixture("callback_approve", APPROVAL_ID=env.approval_id)
     update["result"][0]["callback_query"]["message"]["message_id"] = 9999

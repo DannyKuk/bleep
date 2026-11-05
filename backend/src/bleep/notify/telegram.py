@@ -336,6 +336,8 @@ class TelegramBot:
         if current is not None and current.id == approval_id and current.decision is not None:
             via = current.decision.via
             return answer("answer_already_decided", channel=_CHANNEL_NAMES.get(via, via))
+        if current is not None and current.id == approval_id and current.closed:
+            return answer("answer_closed")
         if current is not None and current.id != approval_id:
             return answer("answer_stale")
         return answer("answer_not_waiting")

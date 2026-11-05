@@ -332,3 +332,81 @@ async def test_a_closed_incidents_pending_approval_cannot_be_decided_from_any_ch
         assert await store.resolve(incident_id, decide(via=via), request.id) is None
     assert await store.grant(incident_id) is None
     assert await store.pending() == []
+
+
+# --- an incident that ends before anyone answered (#277) ---
+
+
+@pytest.mark.parametrize("status", ["closed", "failed", "resolved"])
+async def test_an_incident_that_finishes_closes_its_unanswered_approval(db, status):
+    incident_id = await open_incident(db)
+    store = ApprovalStore(db, SECRET, Clock())
+    request = await store.request(incident_id, restart(), [snap()])
+    await IncidentRepo(db).set_status(incident_id, status)
+
+    record = await store.current(incident_id)
+    assert record is not None and record.id == request.id
+    assert record.closed and record.decision is None
+    assert await store.resolve(incident_id, decide(), request.id) is None
+    assert await store.grant(incident_id) is None
+
+
+async def test_a_close_from_outside_the_run_closes_the_unanswered_approval(db):
+    """Quiet and a removed host both end the incident through `close_unfinished`."""
+    incident_id = await open_incident(db)
+    store = ApprovalStore(db, SECRET, Clock())
+    await store.request(incident_id, restart(), [snap()])
+    await IncidentRepo(db).set_status(incident_id, "awaiting_approval")
+    await IncidentRepo(db).close_unfinished(incident_id)
+
+    record = await store.current(incident_id)
+    assert record is not None and record.closed and record.decision is None
+
+
+async def test_a_decided_approval_stays_as_decided_when_its_incident_finishes(db):
+    incident_id = await open_incident(db)
+    store = ApprovalStore(db, SECRET, Clock())
+    await store.request(incident_id, restart(), [snap()])
+    await store.resolve(incident_id, decide("reject", "telegram"))
+    await IncidentRepo(db).close_unfinished(incident_id)
+
+    record = await store.current(incident_id)
+    assert record is not None and not record.closed
+    assert record.decision is not None and record.decision.kind == "reject"
+
+
+async def test_a_still_open_incidents_approval_is_not_closed(db):
+    incident_id = await open_incident(db)
+    store = ApprovalStore(db, SECRET, Clock())
+    await store.request(incident_id, restart(), [snap()])
+    await IncidentRepo(db).set_status(incident_id, "awaiting_approval")
+
+    record = await store.current(incident_id)
+    assert record is not None and not record.closed and record.decision is None
+
+
+async def test_a_yes_racing_the_close_either_wins_first_or_finds_the_approval_closed(db):
+    """Each round races a yes on its own connection against the close on another. The yes wins
+    only before the close (then the approval holds it and the grant exists, and the runner and
+    Execute refuse the closed incident); after it, the approval is closed and nothing is won."""
+    store = ApprovalStore(db, SECRET, Clock())
+    for n in range(20):
+        incident_id = await open_incident(db, f"a/shop{n}")
+        request = await store.request(incident_id, restart(), [snap()])
+        yes = ApprovalStore(db, SECRET).resolve(incident_id, decide(), request.id)
+        close = IncidentRepo(db).close_unfinished(incident_id)
+        if n % 2:
+            won, before = await asyncio.gather(yes, close)
+        else:
+            before, won = await asyncio.gather(close, yes)
+
+        record = await store.current(incident_id)
+        assert before is not None  # the close always went through
+        assert (await IncidentRepo(db).get(incident_id)).status == "closed"
+        if won is not None:
+            assert record.decision == won and not record.closed
+            assert await store.grant(incident_id) is not None
+        else:
+            assert record.closed and record.decision is None
+            assert await store.grant(incident_id) is None
+    assert await store.pending() == []

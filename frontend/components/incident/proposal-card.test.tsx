@@ -160,6 +160,47 @@ describe("ProposalCard", () => {
     expect(screen.queryByRole("button", { name: "Yes, go ahead" })).toBeNull();
   });
 
+  it.each([
+    ["closed", "closed"],
+    ["closed", "pending"],
+    ["failed", "pending"],
+    ["resolved", "pending"],
+  ] as const)(
+    "shows no decision bar on a %s incident whose %s approval was never answered",
+    (status, approvalStatus) => {
+      render(
+        <ProposalCard
+          incidentId="inc-1"
+          proposal={proposal({ reason: "the plan in the run" })}
+          approval={approval({ status: approvalStatus, proposal: proposal({ reason: "asked" }) })}
+          onDecided={vi.fn()}
+          status={status}
+        />,
+      );
+      expect(screen.getByText("asked")).toBeInTheDocument();
+      expect(screen.queryByRole("button")).toBeNull();
+      expect(screen.getByText("Closed before you answered. This plan did not run.")).toBeVisible();
+    },
+  );
+
+  it("keeps the answer on screen for a plan decided before the incident ended", () => {
+    render(
+      <ProposalCard
+        incidentId="inc-1"
+        proposal={proposal()}
+        approval={approval({
+          status: "rejected",
+          decision: { kind: "reject", text: null, via: "telegram", at: "2026-11-02T18:05:00Z" },
+        })}
+        onDecided={vi.fn()}
+        status="closed"
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(/You said no on Telegram/);
+    expect(screen.queryByText(/Closed before you answered/)).toBeNull();
+    for (const button of screen.getAllByRole("button")) expect(button).toBeDisabled();
+  });
+
   it("shows each step's progress while the plan runs: a spinner, then a check", () => {
     const twoSteps = proposal({
       steps: [
@@ -243,6 +284,15 @@ describe("ProposalCard", () => {
       ),
     ).toBe("The plan you said no to");
     expect(planTitle(detail({ proposal: null, approval: null }))).toBe("My plan");
+    expect(planTitle(detail({ incident: incident({ status: "closed" }) }))).toBe("My plan");
+    expect(
+      planTitle(
+        detail({
+          incident: incident({ status: "closed" }),
+          approval: approval({ status: "closed" }),
+        }),
+      ),
+    ).toBe("My plan");
     const refused = proposal({ kind: "no_action", steps: [], refused: true });
     expect(planTitle(detail({ approval: approval({ proposal: refused }) }))).toBe(
       "No plan I may run",

@@ -256,6 +256,23 @@ def test_detail_shows_who_decided_the_latest_approval(app_client, parts):
     assert approval["decision"]["via"] == "telegram"
 
 
+def test_an_approval_its_incident_was_closed_under_is_reported_closed_not_pending(
+    app_client, parts
+):
+    """Leave alone or a removed host ends the incident through `IncidentRunner.end` (#277)."""
+    incident = open_incident(app_client, parts)
+    approval_id = ask(app_client, parts, incident.id)
+    call(app_client, parts.incidents.set_status, incident.id, "awaiting_approval")
+    runner = app_client.app.state.runner
+    assert call(app_client, runner.end, incident.id, "Closed: you told me to leave shop alone.")
+
+    body = app_client.get(f"/api/incidents/{incident.id}").json()
+    assert body["incident"]["status"] == "closed"
+    assert body["approval"]["id"] == approval_id
+    assert body["approval"]["status"] == "closed"
+    assert body["approval"]["decision"] is None
+
+
 # --- events ---
 
 

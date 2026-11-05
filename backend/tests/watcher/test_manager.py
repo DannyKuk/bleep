@@ -9,11 +9,13 @@ from bleep.hosts.config import HostConfig, ServiceOverrides, UrlCheckConfig
 from bleep.hosts.dashboard import HostChange
 from bleep.hosts.engine import EngineError
 from bleep.hosts.registry import Registry
+from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.quiet import QuietStore
 from bleep.incidents.repository import IncidentRepo
 from bleep.llm.usage import CostLedger
 from bleep.schemas.docker import ContainerSummary, DockerEvent
+from bleep.schemas.graph import PlanStep, Proposal
 from bleep.schemas.incidents import Incident, Signal, Subject
 from bleep.schemas.quiet import QuietState
 from bleep.schemas.settings import Budgets, Thresholds
@@ -35,6 +37,11 @@ from fakes import FakeChatModel, FakeEngine, socket_host
 T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
 PROJECTS = ("shop", "blog", "cache")
 HOST = Subject(kind="host", host_id="h")
+PLAN = Proposal(
+    kind="act",
+    steps=[PlanStep(action="docker.start", host_id="h", target="shop-web-1")],
+    reason="it stopped",
+)
 
 
 class Clock:
@@ -780,6 +787,24 @@ async def test_a_removed_host_stops_being_watched_and_its_open_incidents_are_end
     await r.manager.stop()
 
 
+async def test_removing_a_host_leaves_no_approval_of_its_incidents_pending(tmp_path):
+    r, _ = await dashboard_rig(tmp_path)
+    await r.manager.host_changed(HostChange("c", "added", dashboard_host()))
+    subject = Subject(kind="service", host_id="c", service_id="c/compose:blog")
+    incident, _ = await r.repo.open_or_attach(
+        subject, [Signal(subject=subject, kind="unhealthy", at=T0, container="blog-web-1")]
+    )
+    approvals = ApprovalStore(r.db, "secret")
+    await approvals.request(incident.id, PLAN, [])
+    await r.repo.set_status(incident.id, "awaiting_approval")
+
+    await r.manager.host_changed(HostChange("c", "removed", None))
+    record = await approvals.current(incident.id)
+    assert record.closed and record.decision is None
+    assert await approvals.pending() == []
+    await r.manager.stop()
+
+
 async def test_a_new_name_keeps_the_watch_running(tmp_path):
     r, machines = await dashboard_rig(tmp_path)
     await r.manager.host_changed(HostChange("c", "added", dashboard_host()))
@@ -949,6 +974,20 @@ async def test_quieting_a_service_closes_its_open_incident_with_a_notice(tmp_pat
     await r.quiet.set("service", SHOP, "leave_alone", None)
     assert r.runner.ended == [(incident.id, "Closed: you told me to leave shop alone.")]
     assert (await r.repo.get(incident.id)).status == "closed"
+
+
+async def test_leave_alone_on_an_incident_waiting_for_a_yes_leaves_no_approval_pending(tmp_path):
+    """The plan put to the human is closed with the incident, not left pending (#277)."""
+    r = await Rig(tmp_path).boot()
+    incident = await open_shop_incident(r)
+    approvals = ApprovalStore(r.db, "secret")
+    await approvals.request(incident.id, PLAN, [])
+    await r.repo.set_status(incident.id, "awaiting_approval")
+    await r.quiet.set("service", SHOP, "leave_alone", None)
+
+    record = await approvals.current(incident.id)
+    assert record.closed and record.decision is None
+    assert await approvals.pending() == []
 
 
 async def test_snoozing_a_host_closes_every_open_incident_on_it_with_its_name(tmp_path):

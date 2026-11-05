@@ -200,7 +200,8 @@ export interface Decision {
 
 export interface ApprovalView {
   id: string;
-  status: "pending" | "approved" | "rejected" | "instructed";
+  /** `closed`: the incident ended before anyone answered; nothing can decide it any more. */
+  status: "pending" | "approved" | "rejected" | "instructed" | "closed";
   plan_hash: string;
   proposal: Proposal;
   requested_at: string;

@@ -234,8 +234,9 @@ class ApprovalRecord(BaseModel):
     proposal: Proposal
     snapshots: list[TargetSnapshot] = Field(default_factory=list)
     requested_at: datetime
-    decision: Decision | None = None  # None while pending
+    decision: Decision | None = None  # None while pending, and when closed
     reminders: int = 0
+    closed: bool = False  # its incident finished before anyone answered (#277)
 
     @property
     def request(self) -> ApprovalRequest:

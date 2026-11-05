@@ -1,9 +1,11 @@
 """Approvals in SQLite: each plan is put to the human once and decided once.
 
 Telegram and the dashboard both call `resolve`; it is one `UPDATE ... WHERE status = 'pending'`,
-so whichever answers first wins and the other gets None. A grant, the proof act tools check, is
-issued only for a plan the store holds as approved; `guard/grant.py` computes it and the act
-tools check it. See docs/design/graph.md.
+so whichever answers first wins and the other gets None. An approval still pending when its
+incident finishes becomes `closed` in the same statement (a trigger, migration 0026), so it can
+never be won after that. A grant, the proof act tools check, is issued only for a plan the store
+holds as approved; `guard/grant.py` computes it and the act tools check it. See
+docs/design/graph.md.
 """
 
 import json
@@ -40,6 +42,7 @@ def _record(row: aiosqlite.Row) -> ApprovalRecord:
         requested_at=datetime.fromisoformat(row["requested_at"]),
         decision=Decision.model_validate_json(row["decision"]) if row["decision"] else None,
         reminders=row["reminders"],
+        closed=row["status"] == "closed",
     )
 
 
