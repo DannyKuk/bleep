@@ -1,12 +1,13 @@
 "use client";
 
-import { KeyRound, Loader2, TriangleAlert } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ChevronRight, KeyRound } from "lucide-react";
+import Link from "next/link";
+import { useState } from "react";
 
 import { Panel } from "@/components/panel";
 import { SaveLockProvider } from "@/components/save-lock";
 import { HostForm, SSH_ONLY } from "@/components/settings/host-form";
-import { HostSettings, type KnownService } from "@/components/settings/hosts";
+import { Alert, Status, useLoaded, useStaleSaving } from "@/components/settings/loaded";
 import { ModelSettings } from "@/components/settings/models";
 import { PluginList } from "@/components/settings/plugins";
 import { TelegramSettings } from "@/components/settings/telegram";
@@ -14,7 +15,6 @@ import { SecretFields } from "@/components/settings/secret-field";
 import { ThresholdsForm } from "@/components/settings/thresholds";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
-import type { ServiceView } from "@/lib/api-types";
 import {
   ADDRESS_CHANGED,
   ADDRESS_NOT_CHECKED,
@@ -24,15 +24,10 @@ import {
   type SecretActions,
   type SecretView,
 } from "@/lib/secrets-api";
-import {
-  isStale,
-  putPlugin,
-  putSettings,
-  rereadFailed,
-  SETTINGS_CHANGED,
-  SettingsChanged,
-} from "@/lib/settings-api";
+import { hostHref } from "@/lib/routes";
+import { putPlugin, putSettings } from "@/lib/settings-api";
 import type {
+  HostSettingsView,
   PluginUpdate,
   PluginView,
   SettingsUpdate,
@@ -40,91 +35,51 @@ import type {
   TelegramStatus,
 } from "@/lib/settings-types";
 
-interface Loaded<T> {
-  data?: T;
-  error?: Error;
-}
-
-/** One GET, read on mount; `set` replaces the data with what a save returned, or updates it. */
-function useLoaded<T>(path: string) {
-  const [state, setState] = useState<Loaded<T>>({});
-  useEffect(() => {
-    const controller = new AbortController();
-    apiFetch<T>(path, { signal: controller.signal })
-      .then((data) => setState({ data }))
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return;
-        setState({ error: error instanceof Error ? error : new Error(String(error)) });
-      });
-    return () => controller.abort();
-  }, [path]);
-  const set = (next: T | ((data: T | undefined) => T)) =>
-    setState((now) => ({
-      data: typeof next === "function" ? (next as (data: T | undefined) => T)(now.data) : next,
-    }));
-  return { ...state, set };
-}
-
-function Alert({ children }: { children: React.ReactNode }) {
-  return (
-    <p role="alert" className="flex items-center gap-2 text-sm text-health-down">
-      <TriangleAlert aria-hidden className="size-4 shrink-0" />
-      <span>{children}</span>
-    </p>
-  );
-}
-
-function Status<T>({
-  loaded,
-  what,
-  children,
+/** The hosts as links to their pages, where each is configured, and the add-a-host form. */
+function Hosts({
+  hosts,
+  onChanged,
 }: {
-  loaded: Loaded<T>;
-  what: string;
-  children: (data: T) => React.ReactNode;
+  hosts: HostSettingsView[];
+  onChanged: () => Promise<void>;
 }) {
-  if (loaded.data !== undefined) return children(loaded.data);
-  if (loaded.error) {
-    return (
-      <Alert>
-        Could not load {what}: {loaded.error.message}
-      </Alert>
-    );
-  }
-  return (
-    <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-      <Loader2 aria-hidden className="size-4 animate-spin" />
-      Loading {what}
-    </p>
-  );
-}
-
-/** The services Bleep sees on each host, by their key there. */
-function servicesByHost(services: ServiceView[] | undefined): Map<string, KnownService[]> {
-  const byHost = new Map<string, KnownService[]>();
-  for (const service of services ?? []) {
-    const key = service.id.slice(service.host_id.length + 1);
-    byHost.set(service.host_id, [
-      ...(byHost.get(service.host_id) ?? []),
-      { key, name: service.name },
-    ]);
-  }
-  return byHost;
-}
-
-function AddHost({ onChanged }: { onChanged: () => Promise<void> }) {
   const [open, setOpen] = useState(false);
   return (
-    <Panel title="Add a host">
+    <Panel title="Hosts">
       <div className="flex flex-col gap-3">
-        <p className="text-sm text-muted-foreground">{SSH_ONLY}</p>
+        <p className="text-sm text-muted-foreground">
+          Each host&apos;s connection, rules and services are set on its own page.
+        </p>
+        {hosts.length > 0 && (
+          <ul aria-label="Hosts" className="flex flex-col gap-1.5">
+            {hosts.map((host) => (
+              <li key={host.id}>
+                <Link
+                  href={hostHref(host.id)}
+                  className="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1 rounded-row bg-soft px-3 py-2 hover:bg-line focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                >
+                  <span className="text-sm font-bold">{host.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {host.connection.source === "dashboard"
+                      ? "added on the dashboard"
+                      : "from config/hosts.yaml"}
+                  </span>
+                  <ChevronRight aria-hidden className="ml-auto size-4 text-muted-foreground" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
         {open ? (
           <HostForm onChanged={onChanged} onClose={() => setOpen(false)} />
         ) : (
-          <div>
-            <Button type="button" size="sm" onClick={() => setOpen(true)}>
-              Add an SSH host
-            </Button>
+          <div className="flex flex-col gap-1.5">
+            <p className="text-xs text-muted-foreground">{SSH_ONLY}</p>
+            <div>
+              <Button type="button" size="sm" onClick={() => setOpen(true)}>
+                Add an SSH host
+              </Button>
+            </div>
           </div>
         )}
       </div>
@@ -133,9 +88,9 @@ function AddHost({ onChanged }: { onChanged: () => Promise<void> }) {
 }
 
 /**
- * Everything a person may change from the dashboard, and the state of what they may not: the
- * connections of the hosts file's hosts stay in the file. Secrets are set and cleared here or in the
- * environment, and shown only as set or missing.
+ * What is Bleep-wide: the hosts as links to their own pages, thresholds, plugins, secrets,
+ * Telegram and models. Secrets are set and cleared here or in the environment, and shown only as
+ * set or missing.
  */
 export function SettingsPage() {
   return (
@@ -147,30 +102,10 @@ export function SettingsPage() {
 
 function Settings() {
   const settings = useLoaded<SettingsView>("/api/settings");
-  const services = useLoaded<ServiceView[]>("/api/services");
   const plugins = useLoaded<PluginView[]>("/api/plugins");
   const telegram = useLoaded<TelegramStatus>("/api/telegram/status");
   const secrets = useLoaded<SecretView[]>("/api/secrets");
-  const [notice, setNotice] = useState<string | null>(null);
-  const known = servicesByHost(services.data);
-
-  /** Runs a save built from a view at some version. A stale one reads the data again and is
-   * never retried, since its body would put back what changed elsewhere. */
-  async function saving(put: () => Promise<void>, readAgain: () => Promise<void>) {
-    try {
-      await put();
-      setNotice(null);
-    } catch (error) {
-      if (!isStale(error)) throw error;
-      try {
-        await readAgain();
-        setNotice(SETTINGS_CHANGED);
-      } catch (failed) {
-        setNotice(rereadFailed(failed));
-      }
-      throw new SettingsChanged();
-    }
-  }
+  const { notice, setNotice, saving } = useStaleSaving();
 
   const saveSettings = (update: SettingsUpdate, version: string) =>
     saving(
@@ -241,35 +176,16 @@ function Settings() {
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <KeyRound aria-hidden className="size-4 shrink-0" />
           Keys, tokens and plugin addresses are set below or in .env; this page shows whether each
-          one is set, never its value. Hosts from config/hosts.yaml connect as the file says; hosts
-          added here are kept by Bleep. Every change here takes effect at once.
+          one is set, never its value. Every change here takes effect at once.
         </p>
       </header>
 
       {notice && <Alert>{notice}</Alert>}
-      {services.error && (
-        <Alert>
-          Could not load the services Bleep sees: {services.error.message}. Only services with
-          settings of their own are listed.
-        </Alert>
-      )}
 
       <Status loaded={settings} what="the settings">
         {(view) => (
           <>
-            {view.hosts.map((host) => (
-              <HostSettings
-                key={host.id}
-                host={host}
-                overrides={view.overrides.hosts?.[host.id]}
-                services={known.get(host.id) ?? []}
-                save={(overrides) =>
-                  saveSettings({ hosts: { [host.id]: overrides } }, view.version)
-                }
-                onHostChanged={readSettings}
-              />
-            ))}
-            <AddHost onChanged={readSettings} />
+            <Hosts hosts={view.hosts} onChanged={readSettings} />
             <Panel title="Thresholds">
               <ThresholdsForm
                 key={JSON.stringify(view.thresholds)}

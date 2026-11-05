@@ -70,7 +70,10 @@ describe("ServicePage", () => {
     expect(await screen.findByRole("heading", { name: "shop" })).toBeInTheDocument();
     const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
     expect(within(crumbs).getByRole("link", { name: "Home" })).toHaveAttribute("href", "/");
-    expect(within(crumbs).getByText("demo")).toBeInTheDocument();
+    expect(within(crumbs).getByRole("link", { name: "demo" })).toHaveAttribute(
+      "href",
+      "/hosts/demo",
+    );
     expect(within(crumbs).getByText("shop")).toHaveAttribute("aria-current", "page");
     const urls = screen.getByRole("list", { name: "URLs" });
     expect(urls).toHaveTextContent("http://localhost:8080/");

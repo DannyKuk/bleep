@@ -143,7 +143,7 @@ function ServiceSettings({
   return (
     <section
       aria-label={`Service ${name}`}
-      className="flex flex-col gap-3 border-t border-border pt-3"
+      className="flex flex-col gap-3 border-t border-border pt-3 first:border-t-0 first:pt-0"
     >
       <h3 className="flex flex-wrap items-baseline gap-x-2 text-sm font-medium">
         {name}
@@ -214,36 +214,39 @@ function ServiceSettings({
   );
 }
 
-/** One host: how Bleep reaches it (read-only), its rules, and each service's settings. */
+/**
+ * One host's settings as three panels: how Bleep reaches it (edit and remove for a dashboard
+ * host), its rules, and each service's URLs, rules and protected containers.
+ */
 export function HostSettings({
   host,
   overrides,
   services,
   save,
   onHostChanged,
+  onRemoved,
 }: {
   host: HostSettingsView;
   overrides: HostOverrides | undefined;
   /** Services Bleep sees on the host now; those with settings but not seen are shown too. */
   services: KnownService[];
   save: (host: HostOverrides) => Promise<unknown>;
-  /** Reads the settings again after the host was edited or removed on the dashboard. */
+  /** Reads the settings again after the host was edited, or after a stale edit or removal. */
   onHostChanged?: () => Promise<void>;
+  /** Called once the host is removed; without it the settings are read again. */
+  onRemoved?: () => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
   const fromDashboard = host.connection.source === "dashboard" && onHostChanged !== undefined;
   const names = new Map(services.map((service) => [service.key, service.name]));
   const keys = [...new Set([...names.keys(), ...Object.keys(host.services)])].sort();
   return (
-    <Panel title={`Host ${host.name}`}>
-      <div className="flex flex-col gap-4">
+    <>
+      <Panel title="Connection">
         <div className="flex flex-col gap-1.5">
-          <h3 className="flex flex-wrap items-center gap-2 text-xs font-medium">
-            Connection
-            <span className="font-normal text-muted-foreground">
-              {fromDashboard ? "Added on the dashboard" : "From config/hosts.yaml; change it there"}
-            </span>
-          </h3>
+          <p className="text-xs text-muted-foreground">
+            {fromDashboard ? "Added on the dashboard" : "From config/hosts.yaml; change it there"}
+          </p>
           <Connection connection={host.connection} />
           {fromDashboard &&
             (editing ? (
@@ -265,39 +268,42 @@ export function HostSettings({
                     Edit connection
                   </Button>
                 </div>
-                <RemoveHost host={host} onChanged={onHostChanged} />
+                <RemoveHost host={host} onChanged={onHostChanged} onRemoved={onRemoved} />
               </div>
             ))}
         </div>
-        <div className="flex flex-col gap-1.5">
-          <h3 className="text-xs font-medium">Rules for every service on {host.name}</h3>
-          <ListEditor
-            key={JSON.stringify(host.rules)}
-            label={`Rules for ${host.name}`}
-            items={host.rules}
-            addLabel="Add a rule for this host"
-            emptyText="No host rules."
-            labels={RULE_LABELS}
-            overridden={overrides?.rules !== undefined}
-            onSave={(rules) => save(withHostRules(overrides, rules))}
-            onReset={() => save(withHostRules(overrides))}
-          />
-        </div>
+      </Panel>
+      <Panel title="Rules for every service">
+        <ListEditor
+          key={JSON.stringify(host.rules)}
+          label={`Rules for ${host.name}`}
+          items={host.rules}
+          addLabel="Add a rule for this host"
+          emptyText="No host rules."
+          labels={RULE_LABELS}
+          overridden={overrides?.rules !== undefined}
+          onSave={(rules) => save(withHostRules(overrides, rules))}
+          onReset={() => save(withHostRules(overrides))}
+        />
+      </Panel>
+      <Panel title="Service settings">
         {keys.length === 0 ? (
           <p className="text-sm text-muted-foreground">Bleep sees no services on this host yet.</p>
         ) : (
-          keys.map((key) => (
-            <ServiceSettings
-              key={key}
-              serviceKey={key}
-              name={names.get(key) ?? key}
-              view={host.services[key] ?? NOTHING}
-              overrides={overrides?.services?.[key]}
-              save={(change) => save(withService(overrides, key, change))}
-            />
-          ))
+          <div className="flex flex-col gap-4">
+            {keys.map((key) => (
+              <ServiceSettings
+                key={key}
+                serviceKey={key}
+                name={names.get(key) ?? key}
+                view={host.services[key] ?? NOTHING}
+                overrides={overrides?.services?.[key]}
+                save={(change) => save(withService(overrides, key, change))}
+              />
+            ))}
+          </div>
         )}
-      </div>
-    </Panel>
+      </Panel>
+    </>
   );
 }

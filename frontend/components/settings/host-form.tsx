@@ -438,9 +438,13 @@ export function HostForm({
 export function RemoveHost({
   host,
   onChanged,
+  onRemoved = onChanged,
 }: {
   host: HostSettingsView;
+  /** Reads the settings again, after a removal or a stale one. */
   onChanged: () => Promise<void>;
+  /** Called once the host is removed, instead of `onChanged`. */
+  onRemoved?: () => Promise<void>;
 }) {
   const [sure, setSure] = useState(false);
   const { saving, busy, problems, run } = useSaving();
@@ -457,7 +461,7 @@ export function RemoveHost({
         throw new Error(HOST_CHANGED);
       }
     });
-    if (removed) await onChanged();
+    if (removed) await onRemoved();
     else setSure(false);
   }
 

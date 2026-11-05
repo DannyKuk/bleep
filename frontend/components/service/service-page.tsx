@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, Loader2, Moon, TriangleAlert } from "lucide-react";
+import { Loader2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -9,8 +9,7 @@ import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import { subjectText } from "@/components/incident/incident-list";
 import { useOverall } from "@/components/overall-state";
 import { Panel } from "@/components/panel";
-import { QuietMenu } from "@/components/quiet/quiet-menu";
-import { Button } from "@/components/ui/button";
+import { QuietButton } from "@/components/quiet/quiet-button";
 import { MemoryPanel } from "@/components/service/memory-panel";
 import { ApiError, apiFetch } from "@/lib/api";
 import type {
@@ -23,6 +22,7 @@ import type {
 } from "@/lib/api-types";
 import { formatDateTime, formatTime } from "@/lib/format";
 import { quietLabel, sinceWords } from "@/lib/quiet-api";
+import { hostHref } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 const PAST_INCIDENTS = 20;
@@ -194,11 +194,6 @@ function quietNote(quiet: QuietView): string {
   return `Bleep opens no incidents for it until ${label.replace(/^Snoozed until /, "")}.`;
 }
 
-// Tag-sized, so it sits level with the health badge beside the title; a touch screen gets a 44 px
-// tap area around it.
-const CHIP =
-  "relative h-7 gap-1 px-3 text-[13px] pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-[''] [&_svg]:size-3.5";
-
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 /** A service's page: its health, what Bleep knows, its checks and containers, rules, incidents. */
@@ -236,7 +231,14 @@ export function ServicePage({ id }: { id: string }) {
           {service && (
             <>
               <li aria-hidden>&rsaquo;</li>
-              <li className="font-mono">{service.host_id}</li>
+              <li>
+                <Link
+                  href={hostHref(service.host_id)}
+                  className="inline-flex min-h-11 items-center font-mono font-bold text-accent hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                >
+                  {service.host_id}
+                </Link>
+              </li>
             </>
           )}
           <li aria-hidden>&rsaquo;</li>
@@ -250,32 +252,7 @@ export function ServicePage({ id }: { id: string }) {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <h1 className="text-3xl font-extrabold md:text-4xl">{name}</h1>
           {service && !service.quiet && <HealthBadge health={service.health} />}
-          {service && (
-            <QuietMenu
-              target={target}
-              quiet={service.quiet}
-              onChanged={reload}
-              trigger={
-                service.quiet ? (
-                  // While quiet the grey pill is the control: it opens the menu with Watch again.
-                  <Button
-                    variant="ghost"
-                    aria-label={`Quiet ${name}: ${quietLabel(service.quiet, new Date())}`}
-                    className={cn(CHIP, "bg-stop-bg text-stop hover:bg-stop-bg/70")}
-                  >
-                    <Moon aria-hidden />
-                    {quietLabel(service.quiet, new Date())}
-                    <ChevronDown aria-hidden />
-                  </Button>
-                ) : (
-                  <Button variant="outline" aria-label={`Quiet ${name}`} className={CHIP}>
-                    <Moon aria-hidden />
-                    Quiet
-                  </Button>
-                )
-              }
-            />
-          )}
+          {service && <QuietButton target={target} quiet={service.quiet} onChanged={reload} />}
         </div>
         {service?.quiet && (
           <p role="note" className="text-sm text-ink-2">
