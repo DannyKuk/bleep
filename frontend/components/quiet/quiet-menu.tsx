@@ -83,14 +83,12 @@ export function QuietMenu({ target, quiet, onChanged, trigger }: QuietMenuProps)
         }
       />
       <DropdownMenuContent>
-        {quiet && (
-          <DropdownMenuGroup>
-            <DropdownMenuLabel>
-              {quietLabel(quiet, new Date())}
-              {throughHost && " (set on its host)"}
-            </DropdownMenuLabel>
-          </DropdownMenuGroup>
-        )}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>
+            {quiet ? quietLabel(quiet, new Date()) : `Snooze ${target.name}`}
+            {throughHost && " (set on its host)"}
+          </DropdownMenuLabel>
+        </DropdownMenuGroup>
         {own && (
           <DropdownMenuItem closeOnClick={false} onClick={() => apply(() => clearQuiet(target))}>
             Watch again

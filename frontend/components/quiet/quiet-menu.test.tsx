@@ -17,6 +17,12 @@ const openMenu = () => userEvent.click(screen.getByRole("button", { name: "Quiet
 const item = (name: string | RegExp) => screen.findByRole("menuitem", { name });
 
 describe("QuietMenu", () => {
+  it("names what it silences when nothing is quiet yet", async () => {
+    render(<QuietMenu target={service} quiet={null} onChanged={() => {}} />);
+    await openMenu();
+    expect(await screen.findByText("Snooze shop")).toBeInTheDocument();
+  });
+
   it("choosing For 4 hours PUTs a snooze with until four hours ahead and calls onChanged", async () => {
     const fetchMock = stubBackend({
       [`PUT ${PATH}`]: json({ ...view, mode: "snooze", until: "x" }),

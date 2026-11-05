@@ -6,6 +6,9 @@ import { incident } from "@/components/incident/fixtures";
 import { ServicePage } from "@/components/service/service-page";
 import type { ServiceDetail } from "@/lib/api-types";
 
+const overall = vi.hoisted(() => ({ hosts: [], refresh: vi.fn() }));
+vi.mock("@/components/overall-state", () => ({ useOverall: () => overall }));
+
 const SERVICE: ServiceDetail = {
   service: {
     id: "demo/compose:shop",
@@ -98,7 +101,24 @@ describe("ServicePage", () => {
   });
 
   const QUIET_PATH = "/api/quiet/services/demo/compose%3Ashop";
-  const own = { scope: "service", mode: "leave_alone", until: null, since: "2026-11-04T14:02:00" };
+  /** An ISO string with the local offset, for a local wall-clock time `daysAgo` days back. */
+  function localIso(daysAgo: number, hours = 14, minutes = 2): string {
+    const at = new Date();
+    at.setDate(at.getDate() - daysAgo);
+    at.setHours(hours, minutes, 0, 0);
+    const offset = -at.getTimezoneOffset();
+    const pad = (n: number) => String(Math.trunc(Math.abs(n))).padStart(2, "0");
+    const zone = `${offset < 0 ? "-" : "+"}${pad(offset / 60)}:${pad(offset % 60)}`;
+    const local = new Date(at.getTime() + offset * 60_000).toISOString().slice(0, 19);
+    return local + zone;
+  }
+  const leftAloneSince = (since: string) => ({
+    scope: "service",
+    mode: "leave_alone",
+    until: null,
+    since,
+  });
+  const own = leftAloneSince(localIso(0));
 
   function quietService(quiet: unknown) {
     return json({ ...SERVICE, service: { ...SERVICE.service, quiet } });
@@ -136,6 +156,53 @@ describe("ServicePage", () => {
     await waitFor(() => expect(screen.queryByRole("note")).toBeNull());
     const deletes = fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE");
     expect(String(deletes[0][0])).toBe(QUIET_PATH);
+  });
+
+  it.each([
+    [0, /^Left alone since 14:02\./],
+    [1, /^Left alone since yesterday 14:02\./],
+    [5, /^Left alone since \w{3} 14:02\./],
+  ])("the banner says when it began, %i days ago", async (daysAgo, words) => {
+    stubBackend(quietService(leftAloneSince(localIso(daysAgo))));
+    render(<ServicePage id="demo/compose:shop" />);
+    expect((await screen.findByRole("note")).textContent).toMatch(words);
+  });
+
+  it("a failed Watch again says why and keeps the banner", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if (init?.method === "DELETE") return json({ detail: "The store is busy." }, 500);
+      if (url.endsWith("/facts")) return json([]);
+      if (url.startsWith("/api/incidents")) return json([]);
+      return quietService(own);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ServicePage id="demo/compose:shop" />);
+    await userEvent.click(await screen.findByRole("button", { name: "Watch again" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The store is busy.");
+    expect(screen.getByRole("note")).toBeInTheDocument();
+  });
+
+  it("a quiet choice reads the incidents and the header again", async () => {
+    let quiet: unknown = own;
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if (init?.method === "DELETE") {
+        quiet = null;
+        return new Response(null, { status: 204 });
+      }
+      if (url.endsWith("/facts")) return json([]);
+      if (url.startsWith("/api/incidents")) return json([]);
+      return quietService(quiet);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    overall.refresh.mockClear();
+    render(<ServicePage id="demo/compose:shop" />);
+    const incidentReads = () =>
+      fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/incidents")).length;
+    await userEvent.click(await screen.findByRole("button", { name: "Watch again" }));
+    await waitFor(() => expect(incidentReads()).toBe(2));
+    expect(overall.refresh).toHaveBeenCalled();
   });
 
   it("shows a snooze's end in the banner", async () => {

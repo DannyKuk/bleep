@@ -375,6 +375,20 @@ describe("OverviewView quiet", () => {
     expect(screen.getByRole("button", { name: "Quiet shop" })).toBeInTheDocument();
   });
 
+  it("a quiet unreachable host's error is not printed in the down colour", () => {
+    const quiet = { scope: "host", mode: "leave_alone", until: null, since: "x" } as const;
+    const down = host({ reachable: false, error: "ssh: timed out", health: "down" });
+    const errorLine = () =>
+      within(screen.getByRole("region", { name: "Demo stack" })).getByText("ssh: timed out");
+    const { rerender } = render(
+      <OverviewView hosts={[down]} services={[]} incidents={[]} now={NOW} />,
+    );
+    expect(errorLine()).toHaveClass("text-down");
+    rerender(<OverviewView hosts={[{ ...down, quiet }]} services={[]} incidents={[]} now={NOW} />);
+    expect(errorLine()).not.toHaveClass("text-down");
+    expect(errorLine()).toHaveClass("text-ink-2");
+  });
+
   it("a quiet host's tile is not tinted and shows Host left alone on its services", () => {
     render(
       <OverviewView

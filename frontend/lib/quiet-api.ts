@@ -33,6 +33,15 @@ function untilWords(until: Date, now: Date): string {
   return `${until.toLocaleDateString("en-GB", { weekday: "short" })} ${clock(until)}`;
 }
 
+/** When a quiet state began: "14:02" today, "yesterday 14:02", else the weekday and time. */
+export function sinceWords(since: Date, now: Date): string {
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (since.toDateString() === now.toDateString()) return clock(since);
+  if (since.toDateString() === yesterday.toDateString()) return `yesterday ${clock(since)}`;
+  return `${since.toLocaleDateString("en-GB", { weekday: "short" })} ${clock(since)}`;
+}
+
 /** "Left alone", "Snoozed until 18:00"; "Host …" when a service is quiet through its host. */
 export function quietLabel(quiet: QuietView, now: Date): string {
   const words =

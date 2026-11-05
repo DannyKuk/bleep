@@ -2,14 +2,16 @@
 
 import { Loader2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { HealthBadge } from "@/components/overview/health-badge";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import { subjectText } from "@/components/incident/incident-list";
+import { useOverall } from "@/components/overall-state";
 import { Panel } from "@/components/panel";
 import { QuietMenu } from "@/components/quiet/quiet-menu";
 import { QuietPill } from "@/components/quiet/quiet-pill";
+import { SaveError, problemsOf } from "@/components/settings/save-error";
 import { Button } from "@/components/ui/button";
 import { MemoryPanel } from "@/components/service/memory-panel";
 import { ApiError, apiFetch } from "@/lib/api";
@@ -22,7 +24,7 @@ import type {
   UrlStatus,
 } from "@/lib/api-types";
 import { formatDateTime, formatTime } from "@/lib/format";
-import { clearQuiet, quietLabel } from "@/lib/quiet-api";
+import { clearQuiet, quietLabel, sinceWords } from "@/lib/quiet-api";
 import { cn } from "@/lib/utils";
 
 const PAST_INCIDENTS = 20;
@@ -181,21 +183,42 @@ function PastIncidents({ incidents }: { incidents: Incident[] }) {
   );
 }
 
-const clockOf = (iso: string) => {
-  const at = new Date(iso);
-  return `${at.getHours()}:${String(at.getMinutes()).padStart(2, "0")}`;
-};
-
 function bannerText(quiet: QuietView): string {
-  const label = quietLabel(quiet, new Date());
+  const now = new Date();
+  const label = quietLabel(quiet, now);
   if (quiet.scope === "host") {
     return `Its host is ${label.replace(/^Host /, "")}. Bleep opens no incidents for it.`;
   }
-  const lead = quiet.mode === "leave_alone" ? `${label} since ${clockOf(quiet.since)}` : label;
+  const lead =
+    quiet.mode === "leave_alone"
+      ? `${label} since ${sinceWords(new Date(quiet.since), now)}`
+      : label;
   return `${lead}. Bleep opens no incidents for it.`;
 }
 
-function QuietBanner({ quiet, onWatchAgain }: { quiet: QuietView; onWatchAgain: () => void }) {
+function QuietBanner({
+  quiet,
+  onWatchAgain,
+}: {
+  quiet: QuietView;
+  onWatchAgain: () => Promise<void>;
+}) {
+  const busy = useRef(false);
+  const [problems, setProblems] = useState<string[]>([]);
+
+  async function watchAgain() {
+    if (busy.current) return;
+    busy.current = true;
+    setProblems([]);
+    try {
+      await onWatchAgain();
+    } catch (error) {
+      setProblems(problemsOf(error));
+    } finally {
+      busy.current = false;
+    }
+  }
+
   return (
     <div
       role="note"
@@ -203,10 +226,11 @@ function QuietBanner({ quiet, onWatchAgain }: { quiet: QuietView; onWatchAgain: 
     >
       <span className="font-bold">{bannerText(quiet)}</span>
       {quiet.scope === "service" && (
-        <Button variant="outline" size="sm" onClick={onWatchAgain}>
+        <Button variant="outline" size="sm" onClick={() => void watchAgain()}>
           Watch again
         </Button>
       )}
+      {problems.length > 0 && <SaveError problems={problems} />}
     </div>
   );
 }
@@ -217,10 +241,15 @@ const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 export function ServicePage({ id }: { id: string }) {
   const encoded = encodeURIComponent(id);
   const [reloads, setReloads] = useState(0);
-  const reload = () => setReloads((n) => n + 1);
+  const overall = useOverall();
+  const reload = () => {
+    setReloads((n) => n + 1);
+    overall.refresh();
+  };
   const detail = useOnce<ServiceDetail>(`/api/services/${encoded}`, reloads);
   const incidents = useOnce<Incident[]>(
     `/api/incidents?service_id=${encoded}&limit=${PAST_INCIDENTS}`,
+    reloads,
   );
   const data = detail.data;
   const service = data?.service;
@@ -278,7 +307,10 @@ export function ServicePage({ id }: { id: string }) {
         {service?.quiet && (
           <QuietBanner
             quiet={service.quiet}
-            onWatchAgain={() => void clearQuiet(target).then(reload, reload)}
+            onWatchAgain={async () => {
+              await clearQuiet(target);
+              reload();
+            }}
           />
         )}
         {service ? (

@@ -15,6 +15,12 @@ import { subjectText } from "@/components/incident/incident-list";
 import { PHONE_QUERY } from "@/components/incident/use-phone";
 import type { IncidentDetail } from "@/lib/api-types";
 
+const overall = vi.hoisted(() => ({
+  hosts: [{ id: "demo", name: "Demo stack" }] as { id: string; name: string }[] | undefined,
+  refresh: vi.fn(),
+}));
+vi.mock("@/components/overall-state", () => ({ useOverall: () => overall }));
+
 class StubEventSource {
   static readonly CLOSED = 2;
   static last: StubEventSource | undefined;
@@ -53,7 +59,10 @@ const detailReads = (fetchMock: ReturnType<typeof stubBackend>) =>
   fetchMock.mock.calls.filter(([input]) => String(input) === "/api/incidents/inc-1").length;
 
 describe("IncidentPage", () => {
-  beforeEach(() => vi.stubGlobal("EventSource", StubEventSource));
+  beforeEach(() => {
+    vi.stubGlobal("EventSource", StubEventSource);
+    overall.refresh.mockClear();
+  });
   afterEach(() => vi.useRealTimers());
 
   it("shows the incident with its diagnosis and the plan waiting for a decision", async () => {
@@ -393,6 +402,48 @@ describe("IncidentPage", () => {
         expect(screen.queryByRole("button", { name: "I'm on it" })).toBeNull();
       },
     );
+
+    it("a quiet choice refreshes the header's overall state", async () => {
+      stubWithPut();
+      render(<IncidentPage id="inc-1" />);
+      await userEvent.click(await screen.findByRole("button", { name: "I'm on it" }));
+      await userEvent.click(await screen.findByRole("menuitem", { name: /Leave it alone/ }));
+      await waitFor(() => expect(overall.refresh).toHaveBeenCalled());
+    });
+
+    it("a service incident without a service id offers no I'm on it", async () => {
+      stubBackend(
+        detail({
+          incident: incident({ subject: { kind: "service", host_id: "demo", service_id: null } }),
+        }),
+      );
+      render(<IncidentPage id="inc-1" />);
+      await screen.findByRole("heading", { level: 1 });
+      expect(screen.queryByRole("button", { name: "I'm on it" })).toBeNull();
+    });
+
+    it("names the service in the menu", async () => {
+      stubWithPut();
+      render(<IncidentPage id="inc-1" />);
+      await userEvent.click(await screen.findByRole("button", { name: "I'm on it" }));
+      expect(await screen.findByText("Snooze shop")).toBeInTheDocument();
+    });
+
+    it("a host incident's menu says Snooze with the host's name, or its id if unlisted", async () => {
+      const host = detail({ incident: incident({ subject: subject("host") }) });
+      stubBackend(host);
+      const { unmount } = render(<IncidentPage id="inc-1" />);
+      await userEvent.click(await screen.findByRole("button", { name: "I'm on it" }));
+      expect(await screen.findByText("Snooze Demo stack")).toBeInTheDocument();
+      unmount();
+
+      overall.hosts = undefined;
+      stubBackend(host);
+      render(<IncidentPage id="inc-1" />);
+      await userEvent.click(await screen.findByRole("button", { name: "I'm on it" }));
+      expect(await screen.findByText("Snooze demo")).toBeInTheDocument();
+      overall.hosts = [{ id: "demo", name: "Demo stack" }];
+    });
 
     it("a host incident's I'm on it targets the host", async () => {
       const host = detail({ incident: incident({ subject: subject("host") }) });

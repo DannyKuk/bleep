@@ -141,7 +141,9 @@ export function HostTile({
       )}
       {basics && <p className="font-mono text-xs text-ink-2">{basics}</p>}
       {!host.reachable && host.error && (
-        <p className="font-mono text-xs break-words text-down">{host.error}</p>
+        <p className={cn("font-mono text-xs break-words", host.quiet ? "text-ink-2" : "text-down")}>
+          {host.error}
+        </p>
       )}
     </section>
   );
