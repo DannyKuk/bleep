@@ -1,8 +1,8 @@
 "use client";
 
-import { Loader2, Moon, TriangleAlert } from "lucide-react";
+import { ChevronDown, Loader2, Moon, TriangleAlert } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { HealthBadge } from "@/components/overview/health-badge";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
@@ -10,8 +10,6 @@ import { subjectText } from "@/components/incident/incident-list";
 import { useOverall } from "@/components/overall-state";
 import { Panel } from "@/components/panel";
 import { QuietMenu } from "@/components/quiet/quiet-menu";
-import { QuietPill } from "@/components/quiet/quiet-pill";
-import { SaveError, problemsOf } from "@/components/settings/save-error";
 import { Button } from "@/components/ui/button";
 import { MemoryPanel } from "@/components/service/memory-panel";
 import { ApiError, apiFetch } from "@/lib/api";
@@ -24,7 +22,7 @@ import type {
   UrlStatus,
 } from "@/lib/api-types";
 import { formatDateTime, formatTime } from "@/lib/format";
-import { clearQuiet, quietLabel, sinceWords } from "@/lib/quiet-api";
+import { quietLabel, sinceWords } from "@/lib/quiet-api";
 import { cn } from "@/lib/utils";
 
 const PAST_INCIDENTS = 20;
@@ -183,57 +181,23 @@ function PastIncidents({ incidents }: { incidents: Incident[] }) {
   );
 }
 
-function bannerText(quiet: QuietView): string {
+/** The one line under a quiet service's title: why Bleep is silent about it, and since or until when. */
+function quietNote(quiet: QuietView): string {
   const now = new Date();
   const label = quietLabel(quiet, now);
   if (quiet.scope === "host") {
-    return `Its host is ${label.replace(/^Host /, "")}. Bleep opens no incidents for it.`;
+    return `Its host is ${label.replace(/^Host /, "")}, so Bleep opens no incidents for it.`;
   }
-  const lead =
-    quiet.mode === "leave_alone"
-      ? `${label} since ${sinceWords(new Date(quiet.since), now)}`
-      : label;
-  return `${lead}. Bleep opens no incidents for it.`;
+  if (quiet.mode === "leave_alone") {
+    return `Since ${sinceWords(new Date(quiet.since), now)} Bleep opens no incidents for it.`;
+  }
+  return `Bleep opens no incidents for it until ${label.replace(/^Snoozed until /, "")}.`;
 }
 
-function QuietBanner({
-  quiet,
-  onWatchAgain,
-}: {
-  quiet: QuietView;
-  onWatchAgain: () => Promise<void>;
-}) {
-  const busy = useRef(false);
-  const [problems, setProblems] = useState<string[]>([]);
-
-  async function watchAgain() {
-    if (busy.current) return;
-    busy.current = true;
-    setProblems([]);
-    try {
-      await onWatchAgain();
-    } catch (error) {
-      setProblems(problemsOf(error));
-    } finally {
-      busy.current = false;
-    }
-  }
-
-  return (
-    <div
-      role="note"
-      className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-row bg-stop-bg px-3 py-2 text-sm text-stop"
-    >
-      <span className="font-bold">{bannerText(quiet)}</span>
-      {quiet.scope === "service" && (
-        <Button variant="outline" size="sm" onClick={() => void watchAgain()}>
-          Watch again
-        </Button>
-      )}
-      {problems.length > 0 && <SaveError problems={problems} />}
-    </div>
-  );
-}
+// Tag-sized, so it sits level with the health badge beside the title; a touch screen gets a 44 px
+// tap area around it.
+const CHIP =
+  "relative h-7 gap-1 px-3 text-[13px] pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-[''] [&_svg]:size-3.5";
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
@@ -285,38 +249,38 @@ export function ServicePage({ id }: { id: string }) {
       <header className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <h1 className="text-3xl font-extrabold md:text-4xl">{name}</h1>
-          {service &&
-            (service.quiet ? (
-              <QuietPill quiet={service.quiet} />
-            ) : (
-              <HealthBadge health={service.health} />
-            ))}
+          {service && !service.quiet && <HealthBadge health={service.health} />}
           {service && (
             <QuietMenu
               target={target}
               quiet={service.quiet}
               onChanged={reload}
               trigger={
-                <Button
-                  variant="outline"
-                  aria-label={`Quiet ${name}`}
-                  className="relative h-7 gap-1 px-3 text-[13px] pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-[''] [&_svg]:size-3.5"
-                >
-                  <Moon aria-hidden />
-                  Quiet
-                </Button>
+                service.quiet ? (
+                  // While quiet the grey pill is the control: it opens the menu with Watch again.
+                  <Button
+                    variant="ghost"
+                    aria-label={`Quiet ${name}: ${quietLabel(service.quiet, new Date())}`}
+                    className={cn(CHIP, "bg-stop-bg text-stop hover:bg-stop-bg/70")}
+                  >
+                    <Moon aria-hidden />
+                    {quietLabel(service.quiet, new Date())}
+                    <ChevronDown aria-hidden />
+                  </Button>
+                ) : (
+                  <Button variant="outline" aria-label={`Quiet ${name}`} className={CHIP}>
+                    <Moon aria-hidden />
+                    Quiet
+                  </Button>
+                )
               }
             />
           )}
         </div>
         {service?.quiet && (
-          <QuietBanner
-            quiet={service.quiet}
-            onWatchAgain={async () => {
-              await clearQuiet(target);
-              reload();
-            }}
-          />
+          <p role="note" className="text-sm text-ink-2">
+            {quietNote(service.quiet)}
+          </p>
         )}
         {service ? (
           <p className="text-sm text-ink-2">
