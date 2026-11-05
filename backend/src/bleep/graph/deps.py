@@ -38,7 +38,7 @@ from bleep.schemas.graph import (
     TargetSnapshot,
     VerificationResult,
 )
-from bleep.schemas.incidents import Incident
+from bleep.schemas.incidents import Incident, Subject
 from bleep.schemas.settings import Budgets, ModelSettings, Thresholds
 from bleep.tools.registry import ActHandler, ToolRegistry
 
@@ -51,6 +51,22 @@ ModelFactory = Callable[[Role], BaseChatModel]
 class IncidentFinished(Exception):
     """The incident was closed from outside its run (its host was removed): the run stops here
     and acts on nothing."""
+
+
+class IncidentQuiet(Exception):
+    """The incident's service or host went quiet: the run stops before its next step, so a failed
+    check never leads to a new plan and a new approval request."""
+
+
+class QuietCheck(Protocol):
+    """Whether a service or host is quiet now (`incidents.quiet.QuietStore`)."""
+
+    async def is_quiet(self, subject: Subject) -> bool: ...
+
+
+class NeverQuiet:
+    async def is_quiet(self, subject: Subject) -> bool:
+        return False
 
 
 class Memory(Protocol):
@@ -310,6 +326,7 @@ class GraphDeps:
     memory: Memory = field(default_factory=NullMemory)
     approvals: Approvals = field(default_factory=InMemoryApprovals)
     notifier: Notifier = field(default_factory=NullNotifier)
+    quiet: QuietCheck = field(default_factory=NeverQuiet)
     guard_log: GuardLogger | None = None
     settings_store: SettingsSource = field(default_factory=StaticSettings)
     clock: Callable[[], datetime] = utcnow

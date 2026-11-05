@@ -16,7 +16,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from bleep.graph.deps import GraphDeps
+from bleep.graph.deps import GraphDeps, IncidentQuiet, QuietCheck
 from bleep.graph.nodes import (
     approval,
     diagnose,
@@ -44,17 +44,29 @@ NODE_STATUS: dict[str, IncidentStatus] = {
 }
 
 
-def _traced(bus: EventBus, incidents: IncidentRepo, name: str, node: Node) -> Node:
+# A quiet subject starts no new step, but a running plan is never cut short: Execute, Verify and
+# Report always run on, so a passed check still resolves.
+QUIET_STOPS = frozenset({"gather", "investigate", "diagnose", "propose", "approval"})
+
+
+def _traced(
+    bus: EventBus, incidents: IncidentRepo, quiet: QuietCheck, name: str, node: Node
+) -> Node:
     """Set the incident's status for the node, publish `node_started` and `node_finished` around
     it, for the live view.
 
     The status is written before `node_started` goes out: the dashboard reads the incident again
     on that event and must find the new status.
 
+    For the nodes in `QUIET_STOPS` it first raises `IncidentQuiet` when the incident's service or
+    host is quiet, before any status or event is written.
+
     A node that stops on `interrupt()` publishes no `node_finished`; it starts again on resume.
     """
 
     async def run(state: IncidentState, config: RunnableConfig) -> dict:
+        if name in QUIET_STOPS and await quiet.is_quiet(state["subject"]):
+            raise IncidentQuiet(state["incident_id"])
         status = NODE_STATUS.get(name)
         if status is not None:
             await incidents.set_status(state["incident_id"], status)
@@ -81,7 +93,7 @@ def build_graph(deps: GraphDeps, checkpointer: BaseCheckpointSaver) -> CompiledS
     graph = StateGraph(IncidentState)
     for module in (gather, investigate, diagnose, propose, approval, execute, verify, report):
         name = module.__name__.rsplit(".", 1)[-1]
-        graph.add_node(name, _traced(deps.bus, deps.incidents, name, module.make(deps)))
+        graph.add_node(name, _traced(deps.bus, deps.incidents, deps.quiet, name, module.make(deps)))
     graph.add_edge(START, "gather")
     graph.add_edge("gather", "investigate")
     graph.add_conditional_edges("investigate", investigate.route, ["diagnose", "report"])

@@ -19,6 +19,7 @@ from bleep.graph.build import NODE_STATUS
 from bleep.graph.deps import (
     Approvals,
     IncidentFinished,
+    IncidentQuiet,
     Notifier,
     SettingsSource,
     StaticSettings,
@@ -35,6 +36,8 @@ log = logging.getLogger(__name__)
 AFTER_PAUSE = "after_pause"  # config flag: this run goes on from a pause
 MAX_PAUSE_MIN = 60  # the longest wait between two retries of a paused run
 LONG_PAUSE_S = 3600  # a run paused this long in all gets one more notice
+QUIET_RUN_NOTICE = "Closed: the service was made quiet while I worked on it, so I stopped here."
+QUIET_RUN_NOTICE_HOST = "Closed: the host was made quiet while I worked on it, so I stopped here."
 
 
 class IncidentRunner:
@@ -150,16 +153,29 @@ class IncidentRunner:
             task.cancel()
         await asyncio.gather(*runs, return_exceptions=True)
 
-    async def end(self, incident_id: str, text: str) -> None:
+    async def end(
+        self, incident_id: str, text: str, *, spare: tuple[IncidentStatus, ...] = ()
+    ) -> None:
         """Close an incident from outside its run (its host was removed) and say why, on its
         timeline and to the channels; one that is finished already is left as it is.
 
-        It is marked ended before the first await, so no run of it is driven from here on; then
-        it is closed, which shuts `ApprovalStore.resolve` for it on every channel; then whatever
-        run is in flight is cancelled. A decision that won just before is resumed into nothing:
-        `_resume` and `_drive` refuse an ended or finished incident, and so does Execute."""
-        self._ended.add(incident_id)
-        before = await self.repo.close_unfinished(incident_id)
+        Without `spare` it is marked ended before the first await, so no run of it is driven
+        from here on; then it is closed, which shuts `ApprovalStore.resolve` for it on every
+        channel; then whatever run is in flight is cancelled. A decision that won just before is
+        resumed into nothing: `_resume` and `_drive` refuse an ended or finished incident, and so
+        does Execute.
+
+        With `spare`, an incident in one of those statuses is left entirely alone (its run goes
+        on). So it is closed first and marked ended only once that close happened, after an
+        await; in that gap `_drive` already refuses it by its closed status."""
+        if spare:
+            before = await self.repo.close_unfinished(incident_id, spare)
+            if before is None:
+                return
+            self._ended.add(incident_id)
+        else:
+            self._ended.add(incident_id)
+            before = await self.repo.close_unfinished(incident_id)
         run = self._runs.get(incident_id)
         if run is not None:
             run.cancel()
@@ -282,6 +298,9 @@ class IncidentRunner:
         except IncidentFinished:
             log.info("incident %s: closed while its run went on; stopped", incident_id)
             return
+        except IncidentQuiet:
+            await self._close_quiet(incident_id)
+            return
         except Exception as error:  # a broken run must not take the runner down
             log.exception("incident %s: graph run failed", incident_id)
             self._forget_pauses(incident_id)
@@ -299,6 +318,18 @@ class IncidentRunner:
             await self.repo.set_status(incident_id, "awaiting_approval")
         elif not snapshot.next:
             await self._settle(incident_id, snapshot)
+
+    async def _close_quiet(self, incident_id: str) -> None:
+        """Close an incident whose run stopped because its service or host went quiet."""
+        incident = await self.repo.get(incident_id)
+        before = await self.repo.close_unfinished(incident_id)
+        self._forget_pauses(incident_id)
+        if before is None:  # already closed, e.g. by `end` as the quiet started: it said why
+            return
+        is_host = incident is not None and incident.subject.kind == "host"
+        text = QUIET_RUN_NOTICE_HOST if is_host else QUIET_RUN_NOTICE
+        await self.bus.publish(incident_id, "notice", {"text": text})
+        await self._tell(incident_id, text)
 
     async def _pause(
         self, incident_id: str, unavailable: ModelUnavailable, *, announce: bool

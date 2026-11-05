@@ -30,12 +30,15 @@ from bleep.guard.log import GuardLogger
 from bleep.hosts.dashboard import HostChange
 from bleep.hosts.registry import Registry
 from bleep.incidents.bus import EventBus
+from bleep.incidents.quiet import QuietStore
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.incidents.runner import IncidentRunner
 from bleep.llm.guard import ModelGuard
 from bleep.llm.usage import BudgetExceeded, CostLedger, UsageTracker, check_daily_cap
 from bleep.schemas.docker import ContainerSummary
-from bleep.schemas.incidents import RecoveryEvent, Signal, Subject
+from bleep.schemas.incidents import Incident, IncidentStatus, RecoveryEvent, Signal, Subject
+from bleep.schemas.quiet import QuietChange, QuietState
+from bleep.schemas.services import HostState
 from bleep.schemas.settings import Budgets
 from bleep.watcher import host_probe, http_checks, poller
 from bleep.watcher.detector import (
@@ -47,6 +50,7 @@ from bleep.watcher.detector import (
     Recovered,
     explain_recovery,
 )
+from bleep.watcher.health import container_health, service_health, url_status
 from bleep.watcher.host_probe import HostProbe
 from bleep.watcher.http_checks import UrlCheckStore, UrlWatcher
 from bleep.watcher.poller import HostWatcher
@@ -64,6 +68,28 @@ MOVED_NOTICE = (
     "The host's address, port or user was changed on the dashboard: what Bleep reads from here on "
     "comes from the new connection, which may be another machine."
 )
+LEFT_ALONE_NOTICE = "Closed: you told me to leave {name} alone."
+SNOOZED_NOTICE = "Closed: you snoozed {name}; I look at it again when the snooze ends."
+EVERY_SERVICE = "*"  # a waiting recheck of all of a host's services, known only from a listing
+RUNNING_STATUSES: tuple[IncidentStatus, ...] = (
+    "executing",
+    "verifying",
+)  # a run mid-step is left to finish
+
+
+def quiet_notice(name: str, state: QuietState) -> str:
+    template = LEFT_ALONE_NOTICE if state.mode == "leave_alone" else SNOOZED_NOTICE
+    return template.format(name=name)
+
+
+def _host_of(service_id: str) -> str:
+    return service_id.split("/", 1)[0]
+
+
+def _subject_of(state: QuietState) -> Subject:
+    if state.scope == "host":
+        return Subject(kind="host", host_id=state.target_id)
+    return Subject(kind="service", host_id=_host_of(state.target_id), service_id=state.target_id)
 
 
 class _HostTasks:
@@ -93,6 +119,7 @@ class WatcherManager:
         watch_interval_s: float = poller.INTERVAL_S,
         probe_interval_s: float = host_probe.INTERVAL_S,
         url_interval_s: float = http_checks.INTERVAL_S,
+        quiet: QuietStore | None = None,
     ) -> None:
         self.registry = registry
         self.detector = detector
@@ -100,6 +127,7 @@ class WatcherManager:
         self.runner = runner
         self.bus = bus
         self._clock = clock
+        self._quiet = quiet
         self._models = models
         self._guard_log = guard_log
         self._ledger = ledger
@@ -109,7 +137,9 @@ class WatcherManager:
         self._owns_http = http is None
         self._held: dict[str, dict[str, list[Signal]]] = {}  # host -> service id -> URL failures
         self._announced: dict[str, tuple[str, set[str]]] = {}  # host -> (incident, URLs named)
+        self._deferred: dict[str, set[str]] = {}  # host -> service ids to recheck on its listing
         self._background: set[asyncio.Task[None]] = set()
+        self._store = store
         self._intervals = (watch_interval_s, probe_interval_s, url_interval_s, store)
         self._tasks: dict[str, list[asyncio.Task[None]]] = {}
         self._started = False
@@ -176,6 +206,8 @@ class WatcherManager:
             finally:  # the host goes whatever happened above, so it can be added again
                 await self.registry.remove(host_id)
                 self._forget(host_id)
+                if self._quiet is not None:  # one re-added under this id starts out watched
+                    await self._quiet.forget_host(host_id)
             return
         if change.moved:
             # Possibly another machine: nothing pending on the old one may open an incident here.
@@ -194,6 +226,7 @@ class WatcherManager:
         self.detector.forget_host(host_id)
         self._held.pop(host_id, None)
         self._announced.pop(host_id, None)
+        self._deferred.pop(host_id, None)
 
     async def _stop_host(self, host_id: str) -> None:
         self.hosts.pop(host_id, None)
@@ -243,15 +276,144 @@ class WatcherManager:
 
         Only this host's deaths: a host that stops answering takes no listing, so its deaths
         stay pending until it answers again instead of being judged by its last, stale one.
+        The rechecks that waited for this listing run after them.
         """
         await self._handle(self.detector.tick(self._clock(), states, host_id))
+        await self._run_deferred(host_id)
+
+    async def _quiet_now(self, subject: Subject) -> bool:
+        return self._quiet is not None and await self._quiet.is_quiet(subject)
+
+    async def quiet_changed(self, change: QuietChange) -> None:
+        """A service or host was snoozed or left alone: close its unfinished incidents with a
+        notice. Starting again on a quiet that is already in force finds nothing left to close.
+        When a quiet ends, the subject is judged as it is now."""
+        state = change.state
+        if change.kind == "ended":
+            await self.recheck(_subject_of(state))
+            return
+        self._drop_held(state)
+        notice = quiet_notice(self._quiet_name(state), state)
+        for incident in await self._incidents_of(state):
+            try:
+                await self.runner.end(incident.id, notice, spare=RUNNING_STATUSES)
+            except Exception:  # one incident that cannot be closed must not keep the others open
+                log.exception("closing incident %s for a quiet failed", incident.id)
+
+    async def recheck(self, subject: Subject, *, with_urls: bool = True) -> None:
+        """Judge a subject whose quiet just ended by what is true now, not by what happened while
+        it was quiet: only a `down` service or an unreachable host opens an incident. Whatever is
+        still quiet (a service quiet on its own under a host whose quiet ended) is left alone.
+
+        A host that cannot be reached has no listing to judge its services by, so their recheck
+        waits for its next one (`snapshot`); an unreachable host opens its host incident now.
+        """
+        if await self._quiet_now(subject):
+            return
+        if self._host(subject.host_id) is None:
+            return
+        if not self._reachable(subject.host_id):
+            await self._recheck_unreachable(subject)
+            return
+        if subject.kind == "host":
+            for service in self.registry.services(subject.host_id):
+                await self._recheck_service(service.id, with_urls)
+            return
+        signals = await self._down_signals(subject, with_urls)
+        if signals:
+            await self._open(subject, signals)
+
+    async def _recheck_unreachable(self, subject: Subject) -> None:
+        waiting = self._deferred.setdefault(subject.host_id, set())
+        if subject.kind == "service":
+            waiting.add(subject.service_id or "")
+            return
+        waiting.add(EVERY_SERVICE)
+        signal = Signal(
+            kind="host_unreachable", subject=subject, at=self._clock(), detail={"ok": False}
+        )
+        await self._open(subject, [signal])
+
+    async def _run_deferred(self, host_id: str) -> None:
+        """Recheck what waited for this host's listing, once. Its URL results are left out: they
+        were taken while the host was unreachable, and the live checks judge the URLs from here."""
+        waiting = self._deferred.pop(host_id, set())
+        if EVERY_SERVICE in waiting:
+            waiting = (waiting - {EVERY_SERVICE}) | {s.id for s in self.registry.services(host_id)}
+        for service_id in sorted(waiting):
+            await self._recheck_service(service_id, with_urls=False)
+
+    async def _recheck_service(self, service_id: str, with_urls: bool) -> None:
+        subject = Subject(kind="service", host_id=_host_of(service_id), service_id=service_id)
+        try:
+            await self.recheck(subject, with_urls=with_urls)
+        except Exception:  # one service that cannot be judged must not stop the others
+            log.exception("rechecking %s after its quiet failed", service_id)
+
+    async def _down_signals(self, subject: Subject, with_urls: bool) -> list[Signal]:
+        service = self.registry.service(subject.service_id or "")
+        if service is None:
+            return []
+        now = self._clock()
+        latest = await self._store.latest(service.host_id) if self._store and with_urls else []
+        stored = {(sid, check.url): (check, at) for sid, check, at in latest}
+        configured = service.urls if with_urls else []
+        urls = [url_status(u.url, stored.get((service.id, u.url)), now) for u in configured]
+        if service_health(service.containers, (u.status for u in urls)) != "down":
+            return []
+        signals = [
+            Signal(
+                kind="down_past_grace",
+                subject=subject,
+                at=now,
+                container=c.name,
+                detail={"state": c.state, "exit_code": c.exit_code},
+            )
+            for c in service.containers
+            if container_health(c) == "down"
+        ]
+        signals += [
+            Signal(kind="url_failed", subject=subject, at=now, detail={"url": u.url})
+            for u in urls
+            if u.status == "failing"
+        ]
+        return signals
+
+    def _drop_held(self, state: QuietState) -> None:
+        if state.scope == "host":
+            self._held.pop(state.target_id, None)
+            return
+        held = self._held.get(_host_of(state.target_id))
+        if held is not None:
+            held.pop(state.target_id, None)
+
+    async def _incidents_of(self, state: QuietState) -> list[Incident]:
+        if state.scope == "host":
+            return await self.repo.open_on_host(state.target_id)
+        subject = _subject_of(state)
+        incident_id = await self.repo.open_incident_id(subject)
+        incident = await self.repo.get(incident_id) if incident_id else None
+        return [incident] if incident else []
+
+    def _quiet_name(self, state: QuietState) -> str:
+        if state.scope == "service":
+            service = self.registry.service(state.target_id)
+            return service.name if service else state.target_id
+        host = self._host(state.target_id)
+        return host.config.name if host else state.target_id
+
+    def _host(self, host_id: str) -> HostState | None:
+        return next((h for h in self.registry.hosts() if h.config.id == host_id), None)
 
     def _reachable(self, host_id: str) -> bool:
-        return any(h.reachable for h in self.registry.hosts() if h.config.id == host_id)
+        host = self._host(host_id)
+        return host is not None and host.reachable
 
     # -- URL failures on an unreachable host --------------------------------------------------
 
     async def _hold(self, signal: Signal) -> None:
+        if await self._quiet_now(signal.subject):
+            return
         held = self._held.setdefault(signal.subject.host_id, {})
         failures = held.setdefault(signal.subject.service_id or "", [])
         failures.append(signal)
@@ -278,6 +440,7 @@ class WatcherManager:
         held = self._held.pop(host_id, None)
         if not held:
             return
+        held = {sid: f for sid, f in held.items() if not await self._quiet_now(f[0].subject)}
         for failures in held.values():
             incident, created = await self.repo.open_or_attach(failures[0].subject, failures)
             if created:  # the host incident closed between the checks: this one is new
@@ -318,6 +481,9 @@ class WatcherManager:
         `AttachSignals` takes the same path: it normally attaches, but if the incident was
         closed in between, it opens a new one, which then needs its run.
         """
+        if await self._quiet_now(subject):
+            log.debug("%s is quiet: no incident for %d signal(s)", subject.key, len(signals))
+            return
         incident, created = await self.repo.open_or_attach(subject, signals)
         if not created:
             return

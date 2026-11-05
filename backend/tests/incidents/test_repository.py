@@ -193,3 +193,11 @@ async def test_open_on_host_lists_the_hosts_unfinished_incidents_its_services_in
     await repo.set_status(done.id, "resolved")
     assert {i.id for i in await repo.open_on_host("c")} == {on_host.id, on_service.id}
     assert elsewhere.id not in {i.id for i in await repo.open_on_host("c")}
+
+
+async def test_close_unfinished_leaves_a_spared_status_open(repo):
+    incident, _ = await repo.open_or_attach(svc(), [sig(svc())])
+    await repo.set_status(incident.id, "executing")
+    assert await repo.close_unfinished(incident.id, spare=("executing", "verifying")) is None
+    assert (await repo.get(incident.id)).status == "executing"
+    assert await repo.close_unfinished(incident.id) == "executing"

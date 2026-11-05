@@ -155,9 +155,12 @@ class IncidentRepo:
         finally:
             await conn.close()
 
-    async def close_unfinished(self, incident_id: str) -> IncidentStatus | None:
+    async def close_unfinished(
+        self, incident_id: str, spare: tuple[IncidentStatus, ...] = ()
+    ) -> IncidentStatus | None:
         """Close the incident if it is unfinished; the status it had, or None when it was
-        finished already (and is left as it was)."""
+        finished already (and is left as it was). An incident in a `spare` status is left open
+        too and gives None: the check and the close are one transaction."""
         conn = await self.db.connect()
         try:
             await conn.execute("BEGIN IMMEDIATE")
@@ -165,13 +168,15 @@ class IncidentRepo:
                 f"SELECT status FROM incidents WHERE id = ? AND {_OPEN}", (incident_id,)
             ) as cursor:
                 row = await cursor.fetchone()
-            if row is not None:
-                await conn.execute(
-                    "UPDATE incidents SET status = 'closed', closed_at = ? WHERE id = ?",
-                    (self.clock().isoformat(), incident_id),
-                )
+            if row is None or row["status"] in spare:
+                await conn.commit()
+                return None
+            await conn.execute(
+                "UPDATE incidents SET status = 'closed', closed_at = ? WHERE id = ?",
+                (self.clock().isoformat(), incident_id),
+            )
             await conn.commit()
-            return row["status"] if row is not None else None
+            return row["status"]
         finally:
             await conn.close()
 

@@ -5,7 +5,8 @@ from datetime import UTC, datetime
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 
-from bleep.graph.build import build_graph
+from bleep.graph.build import QUIET_STOPS, _traced, build_graph
+from bleep.graph.deps import IncidentQuiet
 from bleep.graph.nodes import propose
 from bleep.graph.state import checkpoint_serializer
 from bleep.incidents.runner import IncidentRunner
@@ -129,3 +130,50 @@ async def test_reject_reports_rejected(tmp_path, seen_instructions):
     await runner.join()
 
     assert await outcome(runner, incident.id) == "rejected"
+
+
+class FlagQuiet:
+    def __init__(self, quiet: bool) -> None:
+        self.quiet = quiet
+
+    async def is_quiet(self, subject: Subject) -> bool:
+        return self.quiet
+
+
+async def test_a_quiet_subject_stops_the_run_before_the_next_node(tmp_path):
+    env = await graph_env(tmp_path)
+    env.deps.quiet = FlagQuiet(True)
+    subject = Subject(kind="service", host_id="a", service_id=env.service_id("shop"))
+    incident = await env.open(subject, container="shop-web-1")
+    graph = build_graph(env.deps, InMemorySaver(serde=checkpoint_serializer()))
+
+    with pytest.raises(IncidentQuiet):
+        await graph.ainvoke(
+            {"incident_id": incident.id, "subject": subject, "signals": []},
+            IncidentRunner.config(incident.id),
+        )
+
+    assert await env.nodes(incident.id) == []
+    assert (await env.repo.get(incident.id)).status == "open"
+
+
+@pytest.mark.parametrize("name", ["execute", "verify", "report"])
+async def test_execute_verify_and_report_run_on_while_quiet(tmp_path, name):
+    env = await graph_env(tmp_path)
+    ran: list[str] = []
+
+    async def node(state):
+        ran.append(name)
+        return {}
+
+    wrapped = _traced(env.bus, env.repo, FlagQuiet(True), name, node)
+    subject = Subject(kind="service", host_id="a", service_id=env.service_id("shop"))
+    incident = await env.open(subject, container="shop-web-1")
+
+    await wrapped({"incident_id": incident.id, "subject": subject}, {})
+
+    assert ran == [name]
+
+
+def test_only_the_steps_that_start_new_work_stop_for_a_quiet_subject():
+    assert {"gather", "investigate", "diagnose", "propose", "approval"} == QUIET_STOPS

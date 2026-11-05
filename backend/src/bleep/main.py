@@ -13,6 +13,7 @@ from bleep.api import (
     incidents,
     memory,
     plugins,
+    quiet,
     secrets,
     stream,
     telegram,
@@ -101,6 +102,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 budgets=parts.settings_store.budgets,
                 store=parts.url_checks,
                 watch_interval_s=settings.watch_interval_s,
+                quiet=parts.quiet,
             )
             reminders = ReminderLoop(
                 parts.approvals,
@@ -119,8 +121,11 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
             # The manager first: a removed host stops being watched before its settings go.
             parts.dashboard_hosts.subscribe(manager.host_changed)
             parts.dashboard_hosts.subscribe(parts.settings_store.host_changed)
+            parts.quiet.subscribe(manager.quiet_changed)
             stack.push_async_callback(manager.stop)
             await manager.start()
+            quiet_task = asyncio.create_task(parts.quiet.run(), name="quiet")
+            stack.push_async_callback(_cancel, quiet_task)
             app.state.reminder_task = asyncio.create_task(reminders.run(), name="reminders")
             stack.push_async_callback(_cancel, app.state.reminder_task)
             app.state.watchdog_task = asyncio.create_task(watchdog.run(), name="watchdog")
@@ -151,6 +156,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
     protected.include_router(stream.router)
     protected.include_router(settings_api.router)
     protected.include_router(host_settings.router)
+    protected.include_router(quiet.router)
     protected.include_router(plugins.router)
     protected.include_router(secrets.router)
     protected.include_router(telegram.router)

@@ -8,7 +8,15 @@ from pydantic import SecretStr
 
 from bleep.auth.sessions import LoginLimiter, SessionStore
 from bleep.config import Settings
-from bleep.graph.deps import GraphDeps, Notifier, SettingsSource, Tracer, model_factory
+from bleep.graph.deps import (
+    GraphDeps,
+    NeverQuiet,
+    Notifier,
+    QuietCheck,
+    SettingsSource,
+    Tracer,
+    model_factory,
+)
 from bleep.guard.log import GuardLog
 from bleep.hosts.config import GithubConfig, load_hosts_file
 from bleep.hosts.dashboard import HOST_KEYS, SSH_KEYS, DashboardHosts, dashboard_keys
@@ -19,6 +27,7 @@ from bleep.incidents.action_log import ActionLog
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.prompt_overrides import PromptOverrideStore
+from bleep.incidents.quiet import QuietStore
 from bleep.incidents.repository import IncidentRepo
 from bleep.incidents.settings_store import SettingsStore
 from bleep.knowledge.index import KnowledgeIndex
@@ -58,6 +67,7 @@ class AppParts:
     bus: EventBus
     graph_deps: GraphDeps
     incidents: IncidentRepo
+    quiet: QuietStore
     approvals: ApprovalStore
     guard_log: GuardLog
     sessions: SessionStore
@@ -196,7 +206,7 @@ def build_parts(
     if scan is not None:
         dashboard_hosts.scan = scan
     github = GithubClient(github_token_source(github_config, secrets))
-    bus, incidents = EventBus(db), IncidentRepo(db)
+    bus, incidents, quiet = EventBus(db), IncidentRepo(db), QuietStore(db)
     approvals, guard_log = ApprovalStore(db, settings.secret), GuardLog(db)
     notify = setup_notify(settings, db, bus, approvals, guard_log, secrets=secrets)
     embedder = embedder or build_embedder(settings, secrets)  # one model, loaded once, for both
@@ -231,8 +241,10 @@ def build_parts(
             plugin_registry,
             github,
             knowledge,
+            quiet,
         ),
         incidents=incidents,
+        quiet=quiet,
         approvals=approvals,
         guard_log=guard_log,
         sessions=SessionStore(db),
@@ -290,6 +302,7 @@ def graph_deps(
     plugins: PluginRegistry,
     github: GithubClient | None = None,
     knowledge: KnowledgeIndex | None = None,
+    quiet: QuietCheck | None = None,
 ) -> GraphDeps:
     """What the incident graph runs on. Models are built when a node asks, so no key is needed.
 
@@ -311,6 +324,7 @@ def graph_deps(
         incidents=incidents,
         action_log=ActionLog(db),
         approvals=approvals,
+        quiet=quiet or NeverQuiet(),
         guard_log=guard_log,
         settings_store=settings_store,
         notifier=notifier,
