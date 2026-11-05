@@ -89,6 +89,8 @@ imports `graph`, `tools` or `api`. `wiring.py` builds the parts from the setting
   `npm run build` must pass.
 - The pre-commit hook runs ruff, the frontend checks and `scripts/check_docs.py`; enable it once
   per clone with `git config core.hooksPath .githooks`.
+- `.github/workflows/ci.yml` runs all of the above plus the image builds on a clean machine; start
+  it by hand from the Actions tab (see `docs/setup.md`).
 
 ## Code style
 

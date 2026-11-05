@@ -177,6 +177,19 @@ docker compose -f docker-compose.yaml -f docker-compose.observability.yaml --pro
 
 Langfuse creates its project, keys and login from `.env` on first start; the UI is at http://localhost:3001, and each incident carries a link to its trace (`trace_url`). The links use `LANGFUSE_UI_URL` from `.env` (default `http://localhost:3001`); set it when the browser reaches Langfuse at another address. An unreachable Langfuse does not hold up incidents; the backend logs a warning for each batch of spans it could not send. For Langfuse elsewhere or LangSmith, set `TRACING` and the variables listed in `.env.example` instead; the keys (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGSMITH_API_KEY`) can be set on the dashboard first, then `TRACING` in `.env` and a restart. Pass `docker-compose.observability.yaml` only with the profile: it turns the backend's tracing on, and without the profile no Langfuse runs. Bleep refuses to start when `TRACING` names a tracer whose keys are missing. Details: [Observability](design/observability.md).
 
+## CI
+
+`.github/workflows/ci.yml` proves the repo builds and its checks pass on a clean `ubuntu-latest` machine. The repo is private, so it does not run on push or pull request: open the **Actions** tab, pick **CI** and choose **Run workflow** (or `gh workflow run ci.yml`). It needs no secrets and no `.env`.
+
+| Job | Runs |
+|---|---|
+| backend | `uv sync --all-groups`, `ruff check`, `ruff format --check`, `pytest -q`, and `pytest tests/evals` with the `evals` group so the GEval judge tests run instead of skipping |
+| docs | `scripts/check_docs.py` |
+| frontend | `npm ci`, `format:check`, `lint`, `typecheck`, `test`, `build` (Node 24, as in the image) |
+| compose | `docker compose build` and `docker compose --profile demo build`; `.env` is optional in the Compose file, so no placeholder is needed |
+
+Tests use fakes, so nothing touches the network or a real model. Real-model evals are not part of CI.
+
 ## Not built
 
 - **Always-on on a small machine that stays up** (a spare Mac or a mini PC), so Bleep watches its hosts while your laptop sleeps.

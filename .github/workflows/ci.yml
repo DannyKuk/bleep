@@ -1,0 +1,68 @@
+# Started by hand from the Actions tab: the repo is private, so nothing runs on push or PR.
+# No secrets are used. Tests use fakes, so nothing needs the network, a model key or a host.
+name: CI
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.12.17"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --all-groups
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest -q
+      # deepeval is only in the evals group; this run executes the GEval judge tests that skip above.
+      - run: uv run --group evals pytest tests/evals
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.12.17"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv run --project backend python scripts/check_docs.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      # .env is optional in docker-compose.yaml (required: false), so the build needs no
+      # placeholder; ./secrets and ./config are bind mounts that only matter on `up`.
+      - run: docker compose build
+      - run: docker compose --profile demo build
