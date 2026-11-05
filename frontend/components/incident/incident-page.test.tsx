@@ -387,6 +387,57 @@ describe("IncidentPage", () => {
     });
   });
 
+  describe("This is expected", () => {
+    const SENTENCE = "fetch on shop is expected to exit: I stay quiet when it exits with 0.";
+
+    /** The overall poll, the detail with `expectation`, and the POST's reply. */
+    function stubExpected(post: Response) {
+      const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+        const overallReply = answerOverall(input);
+        if (overallReply) return overallReply;
+        if (init?.method === "POST") return post.clone();
+        if (String(input).includes("/events")) return json([]);
+        return json(detail({ expectation: SENTENCE }));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
+
+    it("is offered with what it records, posts, and reads the incident and the header again", async () => {
+      const fetchMock = stubExpected(json({ text: `You said this is expected. ${SENTENCE}` }));
+      renderPage();
+      expect(await screen.findByText(SENTENCE)).toBeInTheDocument();
+      await waitFor(() => expect(hostReads(fetchMock)).toBe(1));
+      await userEvent.click(screen.getByRole("button", { name: "This is expected" }));
+      await waitFor(() => expect(detailReads(fetchMock)).toBeGreaterThan(1));
+      const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")!;
+      expect(String(post[0])).toBe("/api/incidents/inc-1/expected");
+      await waitFor(() => expect(hostReads(fetchMock)).toBe(2));
+    });
+
+    it("lets a long sentence wrap instead of widening a phone's page", async () => {
+      stubExpected(json({ text: "" }));
+      renderPage();
+      const sentence = await screen.findByText(SENTENCE);
+      expect(sentence).toHaveClass("wrap-anywhere", "min-w-0");
+      expect(sentence.parentElement).toHaveClass("min-w-0", "max-w-full");
+    });
+
+    it("is not offered when the API says nothing can be expected", async () => {
+      stubBackend(detail({ expectation: null }));
+      renderPage();
+      await screen.findByRole("heading", { level: 1 });
+      expect(screen.queryByRole("button", { name: "This is expected" })).toBeNull();
+    });
+
+    it("shows the API's words when a decision elsewhere won", async () => {
+      stubExpected(json({ detail: "Already decided on Telegram; nothing was recorded." }, 409));
+      renderPage();
+      await userEvent.click(await screen.findByRole("button", { name: "This is expected" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Already decided on Telegram");
+    });
+  });
+
   describe("I'm on it", () => {
     const subject = (kind: "service" | "host") =>
       kind === "service"

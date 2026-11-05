@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  CheckCheck,
   CheckCircle2,
   HelpCircle,
   Moon,
@@ -30,6 +31,11 @@ const HEALTH: Record<HostHealth, { label: string; icon: LucideIcon; className: s
     label: "Unknown",
     icon: HelpCircle,
     className: "bg-health-unknown-bg text-health-unknown",
+  },
+  done: {
+    label: "Done",
+    icon: CheckCheck,
+    className: "bg-health-stopped-bg text-health-stopped",
   },
   asleep: {
     label: "Asleep",

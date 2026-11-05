@@ -2,8 +2,9 @@
 // regenerate the whole file from the backend's /openapi.json; keep the exported names below
 // (HostView, ServiceView, ContainerView, UrlStatus, Health) if it is ever switched.
 
-/** `asleep`: a host that may sleep and does not answer, and every service on it. */
-export type Health = "ok" | "degraded" | "down" | "stopped" | "unknown" | "asleep";
+/** `asleep`: a host that may sleep and does not answer, and every service on it. `done`: a job
+ * that exited 0 (a one-shot, or named in its service's `exits`). */
+export type Health = "ok" | "degraded" | "down" | "stopped" | "done" | "unknown" | "asleep";
 /** A host's health; the same values as a service's. */
 export type HostHealth = Health;
 
@@ -239,6 +240,8 @@ export interface IncidentDetail {
   report: Report | null;
   /** The human's votes on the diagnosis and the plan (Task 30), at most one per target. */
   feedback: Feedback[];
+  /** What "This is expected" would record, in one sentence; null when it is not offered. */
+  expectation: string | null;
 }
 
 export interface DecisionBody {

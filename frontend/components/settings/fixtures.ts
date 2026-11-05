@@ -52,6 +52,7 @@ export function sshHost(overrides: Partial<HostSettingsView> = {}): HostSettings
         rules: ["The db is shared with billing."],
         protected_containers: ["shop-db-1", "shop-cache-1"],
         hosts_file_protected_containers: ["shop-db-1"],
+        exits: [],
       },
     },
     ...overrides,

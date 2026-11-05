@@ -40,6 +40,17 @@ describe("Timeline", () => {
     expect(screen.getByText(/could not be sent to a channel/)).toBeInTheDocument();
   });
 
+  it("says what This is expected recorded", () => {
+    render(
+      <Timeline
+        events={[
+          event("expected", { text: "You said this is expected. A may sleep.", via: "telegram" }),
+        ]}
+      />,
+    );
+    expect(screen.getByText("You said this is expected. A may sleep.")).toBeInTheDocument();
+  });
+
   it("shows each step of the plan as it starts and ends, and each check", () => {
     render(
       <Timeline

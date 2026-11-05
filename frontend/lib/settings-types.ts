@@ -24,6 +24,8 @@ export interface ServiceSettingsView {
   protected_containers: string[];
   /** Those the dashboard can never unprotect. */
   hosts_file_protected_containers: string[];
+  /** Jobs meant to finish: the dashboard's list, else the hosts file's. */
+  exits: string[];
 }
 
 /**
@@ -85,6 +87,8 @@ export interface ServiceOverrides {
   urls?: UrlCheck[];
   rules?: string[];
   protected_containers?: string[];
+  /** Jobs meant to finish; replaces the hosts file's list. */
+  exits?: string[];
 }
 
 export interface HostOverrides {

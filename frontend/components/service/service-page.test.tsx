@@ -107,6 +107,14 @@ describe("ServicePage", () => {
     expect(within(crumbs).getByText(name)).toHaveClass("wrap-anywhere");
   });
 
+  it("shows a finished job as done", async () => {
+    stubBackend(json({ ...SERVICE, service: { ...SERVICE.service, health: "done" } }));
+    renderPage("demo/compose:shop");
+    await screen.findByRole("heading", { level: 1, name: "shop" });
+    expect(await screen.findAllByText("Done")).not.toHaveLength(0);
+    expect(screen.queryByText("Down")).toBeNull();
+  });
+
   it("lists the service's URLs, rules, facts and past incidents", async () => {
     const fetchMock = stubBackend(json(SERVICE));
     renderPage("demo/compose:shop");
@@ -622,6 +630,26 @@ describe("ServicePage settings", () => {
     expect(sentBody(fetchMock, "PUT", 1)).toEqual({
       hosts: { m1: { services: { "compose:shop": { protected_containers: ["shop-cache-1"] } } } },
     });
+  });
+
+  it("edits the jobs expected to exit, saved as the service's list", async () => {
+    const saved = settingsView({ version: "v2" });
+    saved.hosts[0].services["compose:shop"].exits = ["fetch"];
+    const fetchMock = settingsBackend({ puts: [json(saved)] });
+    renderPage("m1/compose:shop");
+    const containers = await region("Containers");
+    expect(await within(containers).findByText("Expected to exit")).toBeInTheDocument();
+
+    await userEvent.click(within(containers).getByRole("button", { name: "Edit jobs" }));
+    await userEvent.type(
+      within(containers).getByPlaceholderText(/Container or Compose service name/),
+      "fetch{Enter}",
+    );
+    await userEvent.click(within(containers).getByRole("button", { name: "Save" }));
+    expect(sentBody(fetchMock, "PUT").hosts.m1.services["compose:shop"].exits).toEqual(["fetch"]);
+    expect(
+      await within(containers).findByRole("list", { name: "Expected to exit: shop" }),
+    ).toHaveTextContent("fetch");
   });
 
   it("keeps the hosts file's protected containers locked and removes only the dashboard's", async () => {
