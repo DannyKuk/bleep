@@ -82,13 +82,14 @@ async def test_without_a_reset_nothing_is_filtered():
     assert "destroy" in out and "die" in out
 
 
-async def test_the_margin_covers_a_slightly_skewed_engine_clock_on_both_sides():
+async def test_the_margin_is_before_the_start_only():
     spans = spans_of((10, 8))
     start, end = NOW - timedelta(minutes=10), NOW - timedelta(minutes=8)
     assert spans.hides(start - MARGIN + timedelta(milliseconds=1))
-    assert spans.hides(end + MARGIN - timedelta(milliseconds=1))
+    assert spans.hides(start - timedelta(seconds=1.5))
     assert not spans.hides(start - MARGIN - timedelta(seconds=1))
-    assert not spans.hides(end + MARGIN + timedelta(seconds=1))
+    assert spans.hides(end)
+    assert not spans.hides(end + timedelta(seconds=0.5))
 
 
 async def test_the_live_event_stream_is_filtered_too():
@@ -120,10 +121,10 @@ async def test_a_shop_reset_records_its_span_even_when_it_fails():
     client, _ = items_server([])
     before = datetime.now(UTC)
     await ShopReset(COMPOSE, ITEMS, run=FakeDockerCli(), http=client, sleep=no_sleep, spans=spans)()
-    assert spans.hides(before + MARGIN / 2) and spans.hides(datetime.now(UTC))
+    assert spans.hides(before)
 
     failed = ResetSpans()
     reset = ShopReset(COMPOSE, ITEMS, run=FakeDockerCli(up_fails=True), http=client, spans=failed)
     with pytest.raises(Exception, match="port 8080"):
         await reset()
-    assert failed.hides(datetime.now(UTC))
+    assert failed.hides(before)

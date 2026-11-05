@@ -16,19 +16,21 @@ from bleep.hosts.registry import Connector
 from bleep.schemas.docker import DockerEvent
 
 # Docker stamps events with the engine's clock, this process stamps the span with its own. A
-# Docker Desktop VM can drift a couple of seconds from the machine; more would start to hide the
-# fault's own first events, which come a moment after the reset returns.
+# Docker Desktop VM can drift a couple of seconds from the machine, so a span starts `MARGIN`
+# early. It does not end late: the fault is switched on right after the reset returns, and its
+# first events (a kill, a recreate) must never be hidden, while a reset's health event that
+# leaks past the end is harmless.
 MARGIN = timedelta(seconds=2)
 
 
 class ResetSpans:
-    """The time spans of the resets so far, each widened by `MARGIN` on both sides."""
+    """The time spans of the resets so far: each starts `MARGIN` early, ends with the reset."""
 
     def __init__(self) -> None:
         self._spans: list[tuple[datetime, datetime]] = []
 
     def record(self, start: datetime, end: datetime) -> None:
-        self._spans.append((start - MARGIN, end + MARGIN))
+        self._spans.append((start - MARGIN, end))
 
     def hides(self, when: datetime) -> bool:
         when = when if when.tzinfo else when.replace(tzinfo=UTC)
