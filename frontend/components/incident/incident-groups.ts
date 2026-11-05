@@ -27,6 +27,7 @@ const GROUP_OF: Record<IncidentStatus, Group> = {
   open: "on_it",
   investigating: "on_it",
   paused: "on_it",
+  waiting: "on_it",
   executing: "on_it",
   verifying: "on_it",
   resolved: "earlier",

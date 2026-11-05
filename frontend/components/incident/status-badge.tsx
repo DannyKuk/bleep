@@ -10,6 +10,7 @@ const STATUS: Record<IncidentStatus, { health: Health; label: string }> = {
   executing: { health: "degraded", label: "Executing" },
   verifying: { health: "degraded", label: "Verifying" },
   paused: { health: "degraded", label: "Paused" },
+  waiting: { health: "degraded", label: "Waiting for the host" },
   resolved: { health: "ok", label: "Resolved" },
   closed: { health: "stopped", label: "Closed" },
   failed: { health: "down", label: "Failed" },

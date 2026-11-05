@@ -7,6 +7,7 @@ import { QuietMenu } from "@/components/quiet/quiet-menu";
 import { QuietPill } from "@/components/quiet/quiet-pill";
 import type { HostView, ServiceView } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
+import { isAsleep } from "@/lib/mood";
 import { hostHref, serviceHref } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +30,16 @@ export function basicsLine(host: HostView): string | null {
     parts.push(`disk ${Math.max(...basics.disks.map((disk) => disk.used_percent))}%`);
   }
   return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/** The word on the host's health badge: an unreachable host that may sleep is simply asleep. */
+export function healthLabel(host: HostView): string | undefined {
+  return host.reachable || isAsleep(host) ? undefined : "Unreachable";
+}
+
+/** An unreachable host's error, muted when nothing is wrong with that (quiet or asleep). */
+export function errorTone(host: HostView): string {
+  return host.quiet || isAsleep(host) ? "text-ink-2" : "text-down";
 }
 
 // Fine pointers see the moon on hover or focus (it stays reachable by keyboard); touch screens
@@ -116,7 +127,7 @@ export function HostTile({
           {host.quiet ? (
             <QuietPill quiet={host.quiet} />
           ) : (
-            <HealthBadge health={host.health} label={host.reachable ? undefined : "Unreachable"} />
+            <HealthBadge health={host.health} label={healthLabel(host)} />
           )}
           <QuietMenu
             target={{ scope: "host", id: host.id, name: host.name }}
@@ -136,9 +147,7 @@ export function HostTile({
       )}
       {basics && <p className="font-mono text-xs text-ink-2">{basics}</p>}
       {!host.reachable && host.error && (
-        <p className={cn("font-mono text-xs break-words", host.quiet ? "text-ink-2" : "text-down")}>
-          {host.error}
-        </p>
+        <p className={cn("font-mono text-xs break-words", errorTone(host))}>{host.error}</p>
       )}
     </section>
   );

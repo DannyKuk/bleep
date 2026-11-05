@@ -6,6 +6,7 @@ import { HostPage } from "@/components/host/host-page";
 import { OverallProvider } from "@/components/overall-state";
 import {
   json,
+  sentBody,
   settingsView,
   sshHost,
   stubBackend as stubSettingsBackend,
@@ -30,6 +31,7 @@ const HOST: HostView = {
   },
   service_count: 2,
   health: "ok",
+  may_sleep: false,
   quiet: null,
   quiet_service_ids: [],
 };
@@ -117,6 +119,28 @@ describe("HostPage", () => {
     expect(screen.getByText("ssh: connection refused")).toBeInTheDocument();
   });
 
+  it("shows a host that may sleep and does not answer as asleep", async () => {
+    backend();
+    renderPage("m1", [
+      { ...HOST, reachable: false, may_sleep: true, health: "asleep", error: "ssh: no route" },
+    ]);
+    expect(await screen.findByText("Asleep")).toBeInTheDocument();
+    expect(screen.queryByText("Unreachable")).toBeNull();
+    expect(screen.getByText("ssh: no route")).not.toHaveClass("text-down");
+  });
+
+  it("lets the host be marked as one that may sleep", async () => {
+    const fetchMock = backend([json(settingsView({ version: "v2" }))]);
+    renderPage();
+    const sleep = await screen.findByRole("region", { name: "Sleep" });
+    await userEvent.click(within(sleep).getByRole("checkbox", { name: "This host may sleep" }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(true),
+    );
+    expect(sentBody(fetchMock, "PUT").hosts.m1.may_sleep).toBe(true);
+  });
+
   it("says when Bleep does not know the host, with a way home", async () => {
     backend();
     renderPage("nope");
@@ -170,6 +194,28 @@ describe("HostPage", () => {
     await waitFor(() => expect(hostReads(fetchMock)).toBe(2));
     const removal = fetchMock.mock.calls.find(([, init]) => init?.method === "DELETE");
     expect(removal?.[1]?.headers).toMatchObject({ "if-match": '"v-m1"' });
+  });
+
+  it("lets a dashboard host be marked as one that may sleep, with no hosts file to go back to", async () => {
+    const base = sshHost({ services: {} });
+    const dashboard = {
+      ...base,
+      connection: { ...base.connection, source: "dashboard" as const, version: "v-m1" },
+    };
+    const fetchMock = stubBackend({
+      "GET /api/settings": json(settingsView({ hosts: [dashboard], overrides: {} })),
+      "GET /api/services": json([]),
+      "PUT /api/settings": [json(settingsView({ hosts: [{ ...dashboard, may_sleep: true }] }))],
+    });
+    renderPage();
+    const sleep = await screen.findByRole("region", { name: "Sleep" });
+    expect(within(sleep).queryByText("From the hosts file")).toBeNull();
+    await userEvent.click(within(sleep).getByRole("checkbox", { name: "This host may sleep" }));
+
+    await waitFor(() =>
+      expect(within(sleep).getByRole("checkbox", { name: "This host may sleep" })).toBeChecked(),
+    );
+    expect(sentBody(fetchMock, "PUT")).toEqual({ hosts: { m1: { may_sleep: true } } });
   });
 
   it("shows a refusal for a secret in a rule as the API words it", async () => {

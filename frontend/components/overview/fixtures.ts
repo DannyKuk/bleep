@@ -11,6 +11,7 @@ export function host(overrides: Partial<HostView> = {}): HostView {
     basics: null,
     service_count: 1,
     health: "ok",
+    may_sleep: false,
     quiet: null,
     quiet_service_ids: [],
     ...overrides,

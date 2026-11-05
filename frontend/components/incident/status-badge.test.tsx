@@ -9,6 +9,7 @@ describe("IncidentStatusBadge", () => {
     ["executing", "Executing"],
     ["verifying", "Verifying"],
     ["paused", "Paused"],
+    ["waiting", "Waiting for the host"],
     ["awaiting_approval", "Needs your yes"],
     ["open", "Open"],
     ["investigating", "Investigating"],

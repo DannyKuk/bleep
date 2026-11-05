@@ -100,7 +100,7 @@ Secrets inside the hosts file are references, `{env: NAME}` or `{file: PATH}`, n
 - **Encrypted private keys are not supported**, since there is no ssh-agent in the container. Use a dedicated, unencrypted deploy key for Bleep, give it to Bleep only, and revoke it by removing it from `authorized_keys`.
 - **The SSH user needs access to the Docker socket, which is root-equivalent.** On Linux that means the user is in the `docker` group, or is root. Anyone who can use that key can take over the host. Treat the key like a root password: a dedicated key, a dashboard on a trusted network only, and nothing else sharing the secrets directory.
 - **Docker Desktop on macOS** keeps its socket in the user's home, so the host needs `docker_socket: /Users/<user>/.docker/run/docker.sock`. The remote login also has to be on (System Settings, Sharing, Remote Login). How the socket is forwarded: [Docker over SSH](decisions/docker-over-ssh.md).
-- **A laptop that sleeps** gets `may_sleep: true` in the hosts file: while it does not answer it shows as asleep and opens no incident ([why](design/watcher.md#bleeps-own-sleep-hosts-that-may-sleep-and-recovery-85)).
+- **A laptop that sleeps** gets `may_sleep: true` in the hosts file, or "This host may sleep" on its page: while it does not answer it shows as asleep and opens no incident ([why](design/watcher.md#bleeps-own-sleep-hosts-that-may-sleep-and-recovery-85)).
 
 ## Network and cookies
 

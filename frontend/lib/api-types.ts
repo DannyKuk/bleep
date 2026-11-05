@@ -2,7 +2,10 @@
 // regenerate the whole file from the backend's /openapi.json; keep the exported names below
 // (HostView, ServiceView, ContainerView, UrlStatus, Health) if it is ever switched.
 
-export type Health = "ok" | "degraded" | "down" | "stopped" | "unknown";
+/** `asleep`: a host that may sleep and does not answer, and every service on it. */
+export type Health = "ok" | "degraded" | "down" | "stopped" | "unknown" | "asleep";
+/** A host's health; the same values as a service's. */
+export type HostHealth = Health;
 
 export type HostKind = "ssh" | "socket";
 
@@ -38,7 +41,9 @@ export interface HostView {
   error: string | null;
   basics: BasicsView | null;
   service_count: number;
-  health: Health;
+  health: HostHealth;
+  /** A laptop that sleeps by design: not answering opens no incident. */
+  may_sleep: boolean;
   quiet: QuietView | null;
   quiet_service_ids: string[];
 }
@@ -87,6 +92,7 @@ export type IncidentStatus =
   | "executing"
   | "verifying"
   | "paused"
+  | "waiting"
   | "resolved"
   | "closed"
   | "failed";
