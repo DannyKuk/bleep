@@ -16,6 +16,8 @@ import { ReportView } from "@/components/incident/report-view";
 import { Timeline } from "@/components/incident/timeline";
 import { usePhone } from "@/components/incident/use-phone";
 import { Panel } from "@/components/panel";
+import { QuietMenu } from "@/components/quiet/quiet-menu";
+import { Button } from "@/components/ui/button";
 import { ApiError, apiFetch } from "@/lib/api";
 import type {
   FeedbackTarget,
@@ -70,6 +72,15 @@ function useIncidentDetail(id: string, version: string): Loaded {
   return state;
 }
 
+// Still being acted on: a quiet choice then would cut a run short.
+const NOT_QUIETABLE = new Set<IncidentStatus>([
+  "executing",
+  "verifying",
+  "resolved",
+  "closed",
+  "failed",
+]);
+
 const ENDED = new Set<IncidentStatus>(["resolved", "closed", "failed"]);
 
 function Waiting({ children }: { children: React.ReactNode }) {
@@ -118,6 +129,30 @@ export function IncidentPage({ id }: { id: string }) {
   const nothingRanBefore =
     status === "live" &&
     !events.some(({ kind, payload }) => kind === "action" && payload.status !== "skipped");
+
+  const { subject } = incident;
+  const quietTarget =
+    subject.kind === "service" && subject.service_id
+      ? ({
+          scope: "service",
+          id: subject.service_id,
+          name: subject.service_id.split(":").pop() ?? subject.service_id,
+        } as const)
+      : ({ scope: "host", id: subject.host_id, name: subject.host_id } as const);
+  const imOnIt = !NOT_QUIETABLE.has(incident.status) && (
+    <div className="flex justify-end">
+      <QuietMenu
+        target={quietTarget}
+        quiet={null}
+        onChanged={reload}
+        trigger={
+          <Button variant="outline" aria-label="I'm on it">
+            I&apos;m on it ▾
+          </Button>
+        }
+      />
+    </div>
+  );
 
   const refreshFailed = error && (
     <p role="alert" className="flex items-center gap-2 text-sm font-bold text-warn">
@@ -191,6 +226,7 @@ export function IncidentPage({ id }: { id: string }) {
     >
       {phone ? <PhoneIncidentHero detail={data} /> : <IncidentHero detail={data} stream={status} />}
       {refreshFailed}
+      {imOnIt}
       {!phone && <ProgressBar steps={progressSteps(events, incident.status)} />}
       <div
         className={cn(

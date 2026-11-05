@@ -157,6 +157,16 @@ One service's page (`/services/[id]`, `components/service/`), reached from the s
 - **"I never change anything without your yes." is always the last line of "Rules I follow",** also when the service has no rules of its own, and the card is hidden for a service gone from its host. Reason: it is a fixed guarantee, not data from the hosts file (#97).
 - **The page draws its container and URL rows itself instead of reusing the overview's chips,** and its past incidents as rows with the shared status badge. Reason: the page needs one row per line, which the overview's inline chips do not give, and the overview is restyled in its own issue (#97).
 
+### Quiet services and hosts (#221)
+
+- **A quiet service shows a grey pill in place of its health.** "Left alone", "Snoozed until 18:00" (with "tomorrow" or a weekday when it ends on another day) and "Host left alone" when the host's state is the reason. Reason: the real health stays in the API, and the dashboard decides how to show it, so a person can tell "quiet" from "fine" (#221).
+- **The moon sits on service rows and host tiles; it appears on hover and focus on fine pointers and is always visible on touch.** Reason: it is rare to want it, so it stays out of the way on a desktop, but a touch screen has no hover to reveal it (#221).
+- **The menu is Base UI's menu from the shadcn base-nova set,** the same set as the dialog. Reason: it brings keyboard and focus handling that is not rebuilt by hand (#218, #221).
+- **"Until tomorrow 8:00" means the next 08:00 in the browser's local time after the choice, and the menu says "Until 8:00" before 08:00.** Reason: at 02:00 "tomorrow" would skip the morning the person means (#221).
+- **The service page has a "Quiet" button in its header and, while quiet, a grey banner:** "Left alone since 14:02. Bleep opens no incidents for it.", "Snoozed until 18:00. ..." or "Its host is left alone. ...". Only a state set on the service itself has "Watch again" on the banner; one that comes through its host is ended on the host. Reason: ending the host's state from a service page would change every other service on it (#221).
+- **An open incident's page has "I'm on it" beside the decision, with the same menu,** for incidents that are open, investigating, awaiting approval or paused, and not while executing or verifying or once finished; it targets the service, or the host for a host incident. After a choice the page reads again and shows the closing notice. Reason: a run that is changing a host must not be cut short, and a finished incident has nothing left to silence (#221).
+- **The mood and "Needs you" leave out the failed runs of quiet subjects.** Reason: a quiet service must not make Bleep look worried (#221).
+
 ### Settings page (#41)
 
 The settings page (`/settings`, `components/settings/`). What it may change and how a save is built is in [settings](settings.md).

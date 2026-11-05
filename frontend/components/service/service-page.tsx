@@ -8,10 +8,21 @@ import { HealthBadge } from "@/components/overview/health-badge";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import { subjectText } from "@/components/incident/incident-list";
 import { Panel } from "@/components/panel";
+import { QuietMenu } from "@/components/quiet/quiet-menu";
+import { QuietPill } from "@/components/quiet/quiet-pill";
+import { Button } from "@/components/ui/button";
 import { MemoryPanel } from "@/components/service/memory-panel";
 import { ApiError, apiFetch } from "@/lib/api";
-import type { ContainerView, Health, Incident, ServiceDetail, UrlStatus } from "@/lib/api-types";
+import type {
+  ContainerView,
+  Health,
+  Incident,
+  QuietView,
+  ServiceDetail,
+  UrlStatus,
+} from "@/lib/api-types";
 import { formatDateTime, formatTime } from "@/lib/format";
+import { clearQuiet, quietLabel } from "@/lib/quiet-api";
 import { cn } from "@/lib/utils";
 
 const PAST_INCIDENTS = 20;
@@ -22,7 +33,7 @@ interface Loaded<T> {
 }
 
 /** One GET, read once when `path` changes. */
-function useOnce<T>(path: string): Loaded<T> {
+function useOnce<T>(path: string, version = 0): Loaded<T> {
   const [state, setState] = useState<Loaded<T>>({});
   useEffect(() => {
     const controller = new AbortController();
@@ -33,7 +44,7 @@ function useOnce<T>(path: string): Loaded<T> {
         setState({ error: error instanceof Error ? error : new Error(String(error)) });
       });
     return () => controller.abort();
-  }, [path]);
+  }, [path, version]);
   return state;
 }
 
@@ -170,12 +181,44 @@ function PastIncidents({ incidents }: { incidents: Incident[] }) {
   );
 }
 
+const clockOf = (iso: string) => {
+  const at = new Date(iso);
+  return `${at.getHours()}:${String(at.getMinutes()).padStart(2, "0")}`;
+};
+
+function bannerText(quiet: QuietView): string {
+  const label = quietLabel(quiet, new Date());
+  if (quiet.scope === "host") {
+    return `Its host is ${label.replace(/^Host /, "")}. Bleep opens no incidents for it.`;
+  }
+  const lead = quiet.mode === "leave_alone" ? `${label} since ${clockOf(quiet.since)}` : label;
+  return `${lead}. Bleep opens no incidents for it.`;
+}
+
+function QuietBanner({ quiet, onWatchAgain }: { quiet: QuietView; onWatchAgain: () => void }) {
+  return (
+    <div
+      role="note"
+      className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-row bg-stop-bg px-3 py-2 text-sm text-stop"
+    >
+      <span className="font-bold">{bannerText(quiet)}</span>
+      {quiet.scope === "service" && (
+        <Button variant="outline" size="sm" onClick={onWatchAgain}>
+          Watch again
+        </Button>
+      )}
+    </div>
+  );
+}
+
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 /** A service's page: its health, what Bleep knows, its checks and containers, rules, incidents. */
 export function ServicePage({ id }: { id: string }) {
   const encoded = encodeURIComponent(id);
-  const detail = useOnce<ServiceDetail>(`/api/services/${encoded}`);
+  const [reloads, setReloads] = useState(0);
+  const reload = () => setReloads((n) => n + 1);
+  const detail = useOnce<ServiceDetail>(`/api/services/${encoded}`, reloads);
   const incidents = useOnce<Incident[]>(
     `/api/incidents?service_id=${encoded}&limit=${PAST_INCIDENTS}`,
   );
@@ -183,6 +226,7 @@ export function ServicePage({ id }: { id: string }) {
   const service = data?.service;
   const missing = detail.error instanceof ApiError && detail.error.status === 404;
   const name = service?.name ?? id.split(":").pop() ?? id;
+  const target = { scope: "service", id, name } as const;
 
   return (
     <div className="flex flex-col gap-4">
@@ -212,8 +256,31 @@ export function ServicePage({ id }: { id: string }) {
       <header className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <h1 className="text-3xl font-extrabold md:text-4xl">{name}</h1>
-          {service && <HealthBadge health={service.health} />}
+          {service &&
+            (service.quiet ? (
+              <QuietPill quiet={service.quiet} />
+            ) : (
+              <HealthBadge health={service.health} />
+            ))}
+          {service && (
+            <QuietMenu
+              target={target}
+              quiet={service.quiet}
+              onChanged={reload}
+              trigger={
+                <Button variant="outline" aria-label={`Quiet ${name}`}>
+                  Quiet ▾
+                </Button>
+              }
+            />
+          )}
         </div>
+        {service?.quiet && (
+          <QuietBanner
+            quiet={service.quiet}
+            onWatchAgain={() => void clearQuiet(target).then(reload, reload)}
+          />
+        )}
         {service ? (
           <p className="text-sm text-ink-2">
             {service.source} service on <span className="font-mono">{service.host_id}</span>
