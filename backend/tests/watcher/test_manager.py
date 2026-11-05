@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage
 
 from bleep.hosts.config import HostConfig, ServiceOverrides, UrlCheckConfig
 from bleep.hosts.dashboard import HostChange
+from bleep.hosts.engine import EngineError
 from bleep.hosts.registry import Registry
 from bleep.incidents.bus import EventBus
 from bleep.incidents.quiet import QuietStore
@@ -37,14 +38,29 @@ HOST = Subject(kind="host", host_id="h")
 
 
 class Clock:
+    """The wall and the monotonic clock; only Bleep's own sleep moves one without the other."""
+
     def __init__(self) -> None:
         self.now = T0
+        self.mono = 1000.0
 
     def __call__(self) -> datetime:
         return self.now
 
+    def monotonic(self) -> float:
+        return self.mono
+
     def advance(self, seconds: float) -> None:
         self.now += timedelta(seconds=seconds)
+        self.mono += seconds
+
+    def suspend(self, seconds: float) -> None:
+        """Bleep's machine sleeps: the wall clock runs on, the monotonic clock does not."""
+        self.now += timedelta(seconds=seconds)
+
+    def set_back(self, seconds: float) -> None:
+        """The wall clock is set back (NTP); the monotonic clock goes on as before."""
+        self.now -= timedelta(seconds=seconds)
 
 
 class FakeRunner:
@@ -52,6 +68,7 @@ class FakeRunner:
         self.started: list[Incident] = []
         self.recovered = 0
         self.ended: list[tuple[str, str]] = []
+        self.back: list[str] = []
         self.repo = repo
 
     async def start(self, incident: Incident) -> None:
@@ -60,6 +77,9 @@ class FakeRunner:
     async def recover_on_boot(self) -> list[str]:
         self.recovered += 1
         return []
+
+    async def host_back(self, host_id: str) -> None:
+        self.back.append(host_id)
 
     async def end(self, incident_id: str, text: str, *, spare: tuple[str, ...] = ()) -> None:
         if self.repo is not None and await self.repo.close_unfinished(incident_id, spare) is None:
@@ -94,7 +114,11 @@ def die(name: str, at: datetime) -> DockerEvent:
 
 class Rig:
     def __init__(
-        self, tmp_path, model: FakeChatModel | None = None, budgets: Budgets | None = None
+        self,
+        tmp_path,
+        model: FakeChatModel | None = None,
+        budgets: Budgets | None = None,
+        may_sleep: bool = False,
     ) -> None:
         self.clock = Clock()
         self.engine = FakeEngine(
@@ -125,7 +149,8 @@ class Rig:
             f"compose:{p}": ServiceOverrides(urls=[UrlCheckConfig(url=f"https://{p}.example/")])
             for p in PROJECTS
         }
-        self.registry = Registry([socket_host(id="h", services=urls)], connect, clock=self.clock)
+        host = socket_host(id="h", services=urls, may_sleep=may_sleep)
+        self.registry = Registry([host], connect, clock=self.clock)
         self.detector = Detector(Thresholds(), self.clock)
         self.store = UrlCheckStore(self.db)
         self.health = HealthStore(self.db)
@@ -141,6 +166,7 @@ class Rig:
             self.runner,  # type: ignore[arg-type]
             self.bus,
             clock=self.clock,
+            monotonic=self.clock.monotonic,
             models=models if model is not None else None,
             http=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
             store=self.store,
@@ -211,6 +237,161 @@ async def test_a_host_down_for_five_minutes_opens_one_incident_and_the_urls_atta
     assert sorted(check.url for _, check, _ in recorded) == [
         f"https://{p}.example/" for p in sorted(PROJECTS)
     ]
+
+
+def sleep_inside_next_reconnects(r: Rig, *seconds: float) -> None:
+    """Bleep's machine sleeps in the middle of the next ticks' connects, one sleep each: the
+    tick began before the sleep and ends after it."""
+    reconnect = r.registry.reconnect
+    sleeps = list(seconds)
+
+    async def sleepy(host_id: str) -> bool:
+        if sleeps:
+            r.clock.suspend(sleeps.pop(0))
+        return await reconnect(host_id)
+
+    r.registry.reconnect = sleepy  # type: ignore[method-assign]
+
+
+async def test_bleeps_own_sleep_between_ticks_opens_no_incident_inside_the_grace_window(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    await r.lose_host()
+    for _ in range(4):  # a minute of failed ticks before Bleep's machine sleeps
+        await r.pulse()
+    r.clock.suspend(8 * 3600)  # it slept all night; on waking the network is not back yet
+    for _ in range(4):  # the grace window: four ticks after the wake
+        await r.pulse()
+    assert await r.incidents() == []
+
+    # Past the grace window an outage counts again, from zero: five minutes of failed ticks.
+    for _ in range(20):
+        await r.pulse()
+    assert await r.incidents() == []
+    await r.pulse()
+    [incident] = await r.incidents()
+    assert incident.subject == HOST
+
+
+async def test_a_sleep_that_starts_inside_a_tick_is_noticed_before_its_probe_counts(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    await r.lose_host()
+    for _ in range(4):  # a minute of failed ticks: the outage timer runs
+        await r.pulse()
+    sleep_inside_next_reconnects(r, 8 * 3600)  # the lid closes inside the next connect
+    await r.pulse()
+    assert await r.incidents() == []
+    assert r.manager.waking()
+
+
+async def test_a_second_dark_wake_after_a_sleep_inside_a_connect_opens_nothing(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    await r.lose_host()
+    r.clock.suspend(15 * 60)  # dark wake 1, noticed between ticks
+    for _ in range(8):  # it lasts two minutes, failing
+        await r.pulse()
+    sleep_inside_next_reconnects(r, 15 * 60)  # the next sleep begins inside a connect
+    for _ in range(2):  # dark wake 2
+        await r.pulse()
+    assert await r.incidents() == []
+
+
+async def test_short_dark_wakes_whose_sleeps_start_inside_connects_open_nothing(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    await r.lose_host()
+    for wake in range(20):  # every 15 minutes, a wake of two failed ticks
+        if wake % 2:
+            sleep_inside_next_reconnects(r, 15 * 60)
+        else:
+            r.clock.suspend(15 * 60)
+        await r.pulse()
+        await r.pulse()
+    assert await r.incidents() == []
+    assert r.runner.started == []
+
+
+async def test_a_wall_clock_set_back_is_no_wake_and_never_stretches_the_grace(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    r.clock.suspend(3600)  # a real wake
+    await r.pulse()
+    assert r.manager.waking()
+    r.clock.set_back(3600)  # then NTP steps the wall clock back an hour
+    await r.lose_host()
+    for _ in range(26):  # six and a half minutes of a host that does not answer
+        await r.pulse()
+    [incident] = await r.incidents()
+    assert incident.subject == HOST
+
+
+async def test_a_url_check_taken_across_bleeps_sleep_is_not_counted(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    r.web_up = False  # the URLs fail; the host itself still answers
+    await r.parts.urls.tick()  # one failure: one more opens a service incident
+    r.clock.suspend(3600)
+    await r.parts.urls.tick()  # the network is not back after the wake yet
+    r.clock.advance(30)
+    await r.parts.urls.tick()  # nor half a minute later, still inside the grace window
+    assert await r.incidents() == []
+
+
+async def test_a_slow_failing_tick_is_not_taken_for_bleeps_own_sleep(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    await r.lose_host()
+    reconnect = r.registry.reconnect
+
+    async def slow_reconnect(host_id: str) -> bool:
+        r.clock.advance(60)  # each failed tick takes the full minute its bound allows
+        return await reconnect(host_id)
+
+    r.registry.reconnect = slow_reconnect  # type: ignore[method-assign]
+    for _ in range(5):
+        await r.pulse(urls=False)  # the usual 15 s sleep, then the slow tick
+    [incident] = await r.incidents()  # 5 minutes and more of outage: it opens as before
+    assert incident.subject == HOST
+
+
+async def test_a_host_that_may_sleep_opens_nothing_when_it_stops_answering(tmp_path):
+    r = await Rig(tmp_path, may_sleep=True).boot()
+    await r.pulse()
+    await r.lose_host()
+    for _ in range(40):  # ten minutes asleep, every URL failing with it
+        await r.pulse()
+    assert await r.incidents() == [] and r.runner.started == []
+    await r.regain_host()
+    for _ in range(4):
+        await r.pulse()
+    assert await r.incidents() == []  # the URL failures held while it slept were dropped
+
+
+async def test_every_tick_that_reaches_a_host_tells_the_runner(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    await r.pulse()
+    assert r.runner.back == ["h", "h"]  # level, not edge: a run parked late is caught next tick
+    await r.lose_host()
+    for _ in range(3):
+        await r.pulse()
+    assert r.runner.back == ["h", "h"]  # never while it does not answer
+    await r.regain_host()
+    await r.pulse()
+    assert r.runner.back == ["h", "h", "h"]
+
+
+async def test_an_asleep_hosts_services_are_not_stored_as_down(tmp_path):
+    r = await Rig(tmp_path, may_sleep=True).boot()
+    await r.pulse()
+    shop = "h/compose:shop"
+    before = await r.health.current(shop)
+    await r.lose_host()
+    for _ in range(8):  # two minutes asleep, every URL failing
+        await r.pulse()
+    assert await r.health.current(shop) == before  # still "ok since", never "down"
 
 
 async def test_held_url_failures_are_announced_once_per_new_set_of_urls(tmp_path):
@@ -450,6 +631,7 @@ async def test_a_death_on_an_unreachable_host_is_not_judged_by_another_hosts_tic
         runner,  # type: ignore[arg-type]
         EventBus(db, clock),
         clock=clock,
+        monotonic=clock.monotonic,
         http=httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200))),
     )
     a, b = manager.hosts["a"].watcher, manager.hosts["b"].watcher
@@ -1055,3 +1237,20 @@ async def test_a_removed_or_moved_host_forgets_its_services_health(tmp_path):
 
     await r.manager.host_changed(HostChange("c", "removed", None))
     assert await r.health.current("c/compose:wiki") is None
+
+
+async def test_a_host_whose_events_fail_while_its_listing_works_has_not_answered(tmp_path):
+    """A hung engine behind a working session: the registry still calls the host reachable, but
+    no probe reached it, so its host-unreachable incident waits and is announced."""
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    assert r.manager.answered("h") == r.clock.now
+
+    async def failing(since, until):
+        raise EngineError("h", "events timed out")
+
+    r.engine.events = failing  # type: ignore[method-assign]
+    for _ in range(3):
+        await r.pulse(urls=False)
+    assert r.registry.hosts()[0].reachable  # what the quiet close used to trust
+    assert r.manager.answered("h") is None

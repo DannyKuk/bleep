@@ -9,9 +9,17 @@ from datetime import datetime, timedelta
 
 from bleep.schemas.api import Health, UrlStatus
 from bleep.schemas.docker import ContainerSummary
+from bleep.schemas.services import HostState
 from bleep.watcher.http_checks import INTERVAL_S, UrlCheck
 
-_RANK: dict[Health, int] = {"unknown": 0, "ok": 1, "stopped": 1, "degraded": 2, "down": 3}
+_RANK: dict[Health, int] = {
+    "unknown": 0,
+    "asleep": 0,
+    "ok": 1,
+    "stopped": 1,
+    "degraded": 2,
+    "down": 3,
+}
 
 # Exit codes of a process that was asked to stop (0, or killed by SIGTERM). 137 is left out: it
 # is also what the OOM killer leaves, so it counts as a crash.
@@ -74,10 +82,24 @@ def service_health(containers: Iterable[ContainerSummary], url_statuses: Iterabl
     return _worst([*healths, *from_urls])
 
 
-def host_health(reachable: bool, last_seen: datetime | None, services: Iterable[Health]) -> Health:
-    """Unknown when unreachable with no snapshot, down when unreachable, else the worst service
-    (ok when it has none; a stopped service counts as ok)."""
+def is_asleep(host: HostState) -> bool:
+    """A host that may sleep (a laptop) and does not answer: it is asleep, and so is everything
+    on it."""
+    return not host.reachable and host.config.may_sleep
+
+
+def host_health(
+    reachable: bool,
+    last_seen: datetime | None,
+    services: Iterable[Health],
+    may_sleep: bool = False,
+) -> Health:
+    """Asleep when a host that may sleep is unreachable; else unknown when unreachable with no
+    snapshot, down when unreachable, else the worst service (ok when it has none; a stopped
+    service counts as ok)."""
     if not reachable:
+        if may_sleep:
+            return "asleep"
         return "unknown" if last_seen is None else "down"
     healths: list[Health] = ["ok" if h == "stopped" else h for h in services]
     return _worst(healths) if healths else "ok"

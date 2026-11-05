@@ -765,6 +765,15 @@ async def test_other_messages_are_sent_and_a_send_failure_does_not_raise(env):
         )
 
 
+async def test_an_incident_waiting_for_its_host_promises_no_plan(env):
+    await env.notifier.incident_opened(env.incident.model_copy(update={"status": "waiting"}))
+
+    [message] = env.api.sent("sendMessage")
+    text = message["text"].replace("\\", "")
+    assert "does not answer" in text and "closes this incident when it answers again" in text
+    assert "A plan will follow" not in text
+
+
 # --- no token ---
 
 

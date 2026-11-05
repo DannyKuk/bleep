@@ -132,6 +132,8 @@ class HostConfig(Strict):
     known_hosts_file: Path | None = None
     docker_socket: str = "/var/run/docker.sock"
     endpoint: str | None = None
+    # A machine that sleeps by design (a laptop): not answering opens no incident.
+    may_sleep: bool = False
     rules: list[str] = []
     services: dict[str, ServiceOverrides] = {}
 

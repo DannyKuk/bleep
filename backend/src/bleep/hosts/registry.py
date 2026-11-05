@@ -102,7 +102,11 @@ class Registry:
         async with entry.lock:
             current = entry.state.config
             config = config.model_copy(
-                update={"rules": current.rules, "services": current.services}
+                update={
+                    "rules": current.rules,
+                    "services": current.services,
+                    "may_sleep": current.may_sleep,
+                }
             )
             if not reconnect:
                 self._mark(entry, config=config)
@@ -204,15 +208,21 @@ class Registry:
         return None
 
     def override(
-        self, host_id: str, rules: list[str], services: dict[str, ServiceOverrides]
+        self,
+        host_id: str,
+        rules: list[str],
+        services: dict[str, ServiceOverrides],
+        may_sleep: bool = False,
     ) -> None:
-        """Put the host's rules and service overrides in force, the hosts file's merged with the
-        settings store's; the connection stays as it is. The services are regrouped from the last
-        listing at once, so the URL checks, the plan check and Gather all read the new values."""
+        """Put the host's rules, service overrides and `may_sleep` in force, the hosts file's
+        merged with the settings store's; the connection stays as it is. The services are regrouped
+        from the last listing at once, so the URL checks, the plan check and Gather all read the
+        new values."""
         entry = self._entries.get(host_id)
         if entry is None:
             return
-        config = entry.state.config.model_copy(update={"rules": rules, "services": services})
+        update = {"rules": rules, "services": services, "may_sleep": may_sleep}
+        config = entry.state.config.model_copy(update=update)
         self._mark(entry, config=config)
         if entry.containers is not None:
             error = self._group(host_id, entry)

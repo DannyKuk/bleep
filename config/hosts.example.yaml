@@ -20,6 +20,7 @@ hosts:
     key_file: /run/secrets/ssh/id_ed25519          # ssh only, required: path to a mounted private key
     known_hosts_file: /run/secrets/ssh/known_hosts # ssh only: path to a mounted known_hosts file
     docker_socket: /var/run/docker.sock            # ssh only: remote Docker socket, this is the default
+    may_sleep: true              # default false: a laptop that sleeps; not answering opens no incident and shows "asleep"
     rules:                       # plain-text rules the agent is shown for this host
       - Never restart the postgres container without telling me which app depends on it.
 

@@ -117,6 +117,15 @@ def test_host_health(reachable, last_seen, services, expected):
     assert host_health(reachable, last_seen, services) == expected
 
 
+@pytest.mark.parametrize(("reachable", "last_seen"), [(False, T0), (False, None)])
+def test_a_host_that_may_sleep_and_does_not_answer_is_asleep_not_down(reachable, last_seen):
+    assert host_health(reachable, last_seen, ["ok"], may_sleep=True) == "asleep"
+
+
+def test_a_host_that_may_sleep_and_answers_is_judged_by_its_services():
+    assert host_health(True, T0, ["degraded"], may_sleep=True) == "degraded"
+
+
 @pytest.fixture
 def stocked(settings, parts):
     hosts = [
@@ -178,6 +187,7 @@ def test_hosts(stocked):
             "basics": None,
             "service_count": 1,
             "health": "degraded",
+            "may_sleep": False,
             "quiet": None,
             "quiet_service_ids": [],
         },
@@ -191,6 +201,7 @@ def test_hosts(stocked):
             "basics": None,
             "service_count": 1,
             "health": "ok",
+            "may_sleep": False,
             "quiet": None,
             "quiet_service_ids": [],
         },
@@ -519,3 +530,20 @@ def test_hosts_carry_basics_when_known(stocked, parts):
         "disks": [{"mount": "/", "used_percent": 49.0}],
     }
     assert body["b"]["basics"] is None
+
+
+def test_the_services_of_an_asleep_host_are_asleep_not_down(settings, parts):
+    engine = FakeEngine("a", [c(name="shop-web-1")])
+    hosts = [ssh_host(id="a", name="Laptop", may_sleep=True)]
+
+    async def connect(host):
+        return None, engine
+
+    parts.registry = Registry(hosts, connect, clock=lambda: T0)
+    with TestClient(create_app(settings, parts)) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        engine.drop()  # the lid closes
+        client.portal.call(parts.registry.refresh, "a")
+        [host] = client.get("/api/hosts").json()
+        assert host["health"] == "asleep"
+        assert [s["health"] for s in client.get("/api/services").json()] == ["asleep"]

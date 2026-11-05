@@ -100,12 +100,13 @@ Secrets inside the hosts file are references, `{env: NAME}` or `{file: PATH}`, n
 - **Encrypted private keys are not supported**, since there is no ssh-agent in the container. Use a dedicated, unencrypted deploy key for Bleep, give it to Bleep only, and revoke it by removing it from `authorized_keys`.
 - **The SSH user needs access to the Docker socket, which is root-equivalent.** On Linux that means the user is in the `docker` group, or is root. Anyone who can use that key can take over the host. Treat the key like a root password: a dedicated key, a dashboard on a trusted network only, and nothing else sharing the secrets directory.
 - **Docker Desktop on macOS** keeps its socket in the user's home, so the host needs `docker_socket: /Users/<user>/.docker/run/docker.sock`. The remote login also has to be on (System Settings, Sharing, Remote Login). How the socket is forwarded: [Docker over SSH](decisions/docker-over-ssh.md).
+- **A laptop that sleeps** gets `may_sleep: true` in the hosts file: while it does not answer it shows as asleep and opens no incident ([why](design/watcher.md#bleeps-own-sleep-hosts-that-may-sleep-and-recovery-85)).
 
 ## Network and cookies
 
 The dashboard (port 3000) is for a trusted LAN only. It has one admin password, a limit of 5 failed logins a minute per address, and nothing more; it is not hardened for the internet. The backend's port 8000 is published on `127.0.0.1` only, so other machines reach Bleep through the dashboard, which forwards `/api` to the backend.
 
-The watcher checks every host every 15 s; `BLEEP_WATCH_INTERVAL_S` in `.env` changes that.
+The watcher checks every host every 15 s; `BLEEP_WATCH_INTERVAL_S` in `.env` changes that. When the machine Bleep runs on wakes from sleep, a host that does not answer is not counted for the next 4 checks (`BLEEP_WAKE_GRACE_TICKS`), so the network can come back first.
 
 The dev panel (models, prompts, budgets, cost per incident and per day, the guard log) is off; set `BLEEP_DEV_PANEL=true` in `.env` and restart to get it under Dev in the dashboard ([dev panel](design/dev-panel.md)).
 

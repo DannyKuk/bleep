@@ -203,6 +203,7 @@ class SettingsStore:
                     name=base.name,
                     connection=self._connection(base),
                     rules=config.rules,
+                    may_sleep=config.may_sleep,
                     services=services,
                 )
             )
@@ -338,7 +339,7 @@ class SettingsStore:
                 return
             self._base[change.host_id] = change.config
             config = self._effective(change.config)
-            self._registry.override(change.host_id, config.rules, config.services)
+            self._registry.override(change.host_id, config.rules, config.services, config.may_sleep)
 
     def _hosts_file_protected(self, base: HostConfig, key: str) -> list[str]:
         """The hosts file's protected containers for the service held under `key`, by its key
@@ -397,7 +398,7 @@ class SettingsStore:
     def _apply_hosts(self) -> None:
         for base in self._base.values():
             config = self._effective(base)
-            self._registry.override(base.id, config.rules, config.services)
+            self._registry.override(base.id, config.rules, config.services, config.may_sleep)
 
     def _effective(self, base: HostConfig) -> HostConfig:
         host = self._host_overrides().get(base.id)
@@ -504,6 +505,7 @@ def _merged_host(base: HostConfig, host: HostSettings) -> HostConfig:
         )
     data = base.model_dump() | {
         "rules": host.rules if host.rules is not None else base.rules,
+        "may_sleep": host.may_sleep if host.may_sleep is not None else base.may_sleep,
         "services": {key: s.model_dump() for key, s in services.items()},
     }
     try:

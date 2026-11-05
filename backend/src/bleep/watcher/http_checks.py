@@ -20,6 +20,7 @@ from bleep.hosts.registry import Registry
 from bleep.schemas.api import UrlCheckPoint
 from bleep.schemas.incidents import Signal, Subject
 from bleep.store.db import Database
+from bleep.watcher.wake import SleepWatch
 
 log = logging.getLogger(__name__)
 
@@ -236,6 +237,7 @@ class UrlWatcher:
         store: UrlCheckStore | None = None,
         interval_s: float = INTERVAL_S,
         on_round: RoundHook | None = None,
+        sleep_watch: SleepWatch | None = None,
     ) -> None:
         self.host_id = host_id
         self.interval_s = interval_s
@@ -245,6 +247,7 @@ class UrlWatcher:
         self._sink = sink
         self._clock = clock
         self._store = store
+        self._sleep_watch = sleep_watch
 
     async def run(self) -> None:
         while True:
@@ -277,6 +280,11 @@ class UrlWatcher:
                 latency_ms=0,
                 error=f"check crashed: {type(problem).__name__}",
             )
+        if self._sleep_watch is not None:  # a check across Bleep's own sleep is fed after the wake
+            try:
+                await self._sleep_watch.check()
+            except Exception:
+                log.exception("checking for a sleep failed on host %s", self.host_id)
         at = self._clock()
         signal = Signal(
             subject=Subject(kind="service", host_id=self.host_id, service_id=service_id),

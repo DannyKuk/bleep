@@ -18,17 +18,25 @@ A host added, changed or removed on the dashboard is put in force by `host_chang
 restart: its loops start, start again on the new connection, or stop and its open incidents
 are closed with a notice.
 
+Bleep's own sleep is not a host outage: when the wall clock ran on while the monotonic clock did
+not (`SleepWatch`, asked by every loop before it feeds a result), every host's outage timer starts
+again and failed contact is not counted for a grace window (`woke`). A host that may sleep opens
+no incident by not answering, and every tick that reaches a host closes its waiting
+host-unreachable incident (`IncidentRunner.host_back`).
+
 See docs/design/watcher.md.
 """
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 
 import httpx
 from langchain_core.language_models import BaseChatModel
 
+from bleep.config import Settings
 from bleep.graph.deps import ModelFactory
 from bleep.guard.log import GuardLogger
 from bleep.hosts.dashboard import HostChange
@@ -54,15 +62,18 @@ from bleep.watcher.detector import (
     Recovered,
     explain_recovery,
 )
-from bleep.watcher.health import container_health, service_health, url_status
+from bleep.watcher.health import container_health, is_asleep, service_health, url_status
 from bleep.watcher.health_store import HealthStore
 from bleep.watcher.host_probe import HostProbe
 from bleep.watcher.http_checks import UrlCheck, UrlCheckStore, UrlWatcher
 from bleep.watcher.poller import HostWatcher
+from bleep.watcher.wake import SleepWatch
 
 log = logging.getLogger(__name__)
 
 HELD_PER_SERVICE = 5  # URL failures kept per service while its host is unreachable
+# Wall time beyond monotonic time between two looks, in watcher intervals, that means Bleep slept.
+SLEPT_AFTER_INTERVALS = 2
 RESTART_BACKOFF_S = (1, 2, 5, 15, 60)
 LOG_TAIL_LINES = 50
 NO_EXPLANATION = "No explanation could be generated for this restart."
@@ -126,6 +137,8 @@ class WatcherManager:
         url_interval_s: float = http_checks.INTERVAL_S,
         quiet: QuietStore | None = None,
         health: HealthStore | None = None,
+        wake_grace_ticks: int = Settings.model_fields["wake_grace_ticks"].default,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self.registry = registry
         self.detector = detector
@@ -145,6 +158,15 @@ class WatcherManager:
         self._held: dict[str, dict[str, list[Signal]]] = {}  # host -> service id -> URL failures
         self._announced: dict[str, tuple[str, set[str]]] = {}  # host -> (incident, URLs named)
         self._deferred: dict[str, set[str]] = {}  # host -> service ids to recheck on its listing
+        self._monotonic = monotonic
+        self._answered: dict[str, bool] = {}  # host -> whether its last tick reached it
+        self._answered_at: dict[str, datetime] = {}  # host -> its last tick that reached it
+        self._wake_grace_s = watch_interval_s * wake_grace_ticks
+        # Held on the monotonic clock, so a wall clock set back cannot stretch it.
+        self._grace_until: float | None = None
+        self.sleep_watch = SleepWatch(
+            clock, monotonic, watch_interval_s * SLEPT_AFTER_INTERVALS, self.woke
+        )
         self._background: set[asyncio.Task[None]] = set()
         self._store = store
         self._intervals = (watch_interval_s, probe_interval_s, url_interval_s, store)
@@ -158,7 +180,13 @@ class WatcherManager:
         watch_s, probe_s, url_s, store = self._intervals
         return _HostTasks(
             HostWatcher(
-                host_id, self.registry, self.sink, self._clock, watch_s, on_snapshot=self.snapshot
+                host_id,
+                self.registry,
+                self.sink,
+                self._clock,
+                watch_s,
+                on_snapshot=self.snapshot,
+                sleep_watch=self.sleep_watch,
             ),
             HostProbe(host_id, self.registry, self.sink, self._clock, probe_s),
             UrlWatcher(
@@ -170,6 +198,7 @@ class WatcherManager:
                 store,
                 url_s,
                 on_round=self.record_health,
+                sleep_watch=self.sleep_watch,
             ),
         )
 
@@ -248,6 +277,8 @@ class WatcherManager:
         self._held.pop(host_id, None)
         self._announced.pop(host_id, None)
         self._deferred.pop(host_id, None)
+        self._answered.pop(host_id, None)
+        self._answered_at.pop(host_id, None)
 
     async def _stop_host(self, host_id: str) -> None:
         self.hosts.pop(host_id, None)
@@ -280,8 +311,39 @@ class WatcherManager:
 
     # -- what the host tasks feed in ----------------------------------------------------------
 
+    async def woke(self, at: datetime) -> None:
+        """Bleep itself was suspended (its machine slept): what it could not see while asleep is
+        no outage. Every host's outage timer and URL streak starts again, and failed contact is
+        not counted until the grace window after the wake has passed, so the network can come
+        back first."""
+        log.info(
+            "Bleep slept until %s; failed contact is not counted for %.0f s", at, self._wake_grace_s
+        )
+        self._grace_until = self._monotonic() + self._wake_grace_s
+        self.detector.woke()
+
+    def waking(self) -> bool:
+        """Whether this is the grace window after Bleep's own wake."""
+        return self._grace_until is not None and self._monotonic() < self._grace_until
+
+    def _waking(self, signal: Signal) -> bool:
+        """A failed contact inside the grace window after Bleep's own wake."""
+        return (
+            signal.kind in ("host_unreachable", "url_failed")
+            and not signal.detail.get("ok", False)
+            and self.waking()
+        )
+
     async def sink(self, signal: Signal) -> None:
         host_id = signal.subject.host_id
+        if signal.kind == "host_unreachable":
+            self._answered[host_id] = bool(signal.detail.get("ok", False))
+            if self._answered[host_id]:
+                self._answered_at[host_id] = signal.at
+                await self._host_answers(host_id)
+        if self._waking(signal):
+            log.debug("%s: %s not counted just after a wake", signal.subject.key, signal.kind)
+            return
         if signal.kind == "url_failed" and not self._reachable(host_id):
             if not signal.detail.get("ok", False):
                 # The host is out of contact: a failing URL is a symptom of that, so hold it for
@@ -291,6 +353,19 @@ class WatcherManager:
         elif signal.kind == "host_unreachable" and signal.detail.get("ok", False):
             self._held.pop(host_id, None)  # contact is back; later failures count on their own
         await self._handle(self.detector.feed(signal))
+
+    def answered(self, host_id: str) -> datetime | None:
+        """When the host's last probe reached it; None when that probe failed or none ran yet."""
+        return self._answered_at.get(host_id) if self._answered.get(host_id) else None
+
+    async def _host_answers(self, host_id: str) -> None:
+        """Every tick that reaches a host closes its waiting host-unreachable incident, or starts
+        its run (`host_back`), not only the first after an outage: a run that parked just after
+        the host came back is caught by the next tick. It is one indexed read when none waits."""
+        try:
+            await self.runner.host_back(host_id)
+        except Exception:  # the incident stays waiting; the next tick tries again
+            log.exception("closing the waiting incident of host %s failed", host_id)
 
     async def snapshot(self, host_id: str, states: dict[str, list[ContainerSummary]]) -> None:
         """Judge the host's pending deaths against the listing its watcher just took.
@@ -306,8 +381,8 @@ class WatcherManager:
     async def record_health(self, host_id: str) -> None:
         """Judge each of the host's services as the services API does and keep the result, quiet
         ones too (quiet only stops incidents). Never raises: it must not cost the tick."""
-        if self._health is None:
-            return
+        if self._health is None or self.waking() or self._asleep_host(host_id):
+            return  # nothing is known about it now, and `unknown` is never stored either
         try:
             now = self._clock()
             stored = await self._stored_checks(host_id)
@@ -447,6 +522,24 @@ class WatcherManager:
         host = self._host(state.target_id)
         return host.config.name if host else state.target_id
 
+    def _asleep_host(self, host_id: str) -> bool:
+        """Asleep as the API shows it, or already from its last failed tick: the registry marks a
+        host unreachable only once its reconnect fails, a tick later."""
+        host = self._host(host_id)
+        if host is None or not host.config.may_sleep:
+            return False
+        return is_asleep(host) or self._answered.get(host_id) is False
+
+    def _asleep(self, subject: Subject, signals: list[Signal]) -> bool:
+        """A host that may sleep (a laptop) and only does not answer: that is its sleep."""
+        host = self._host(subject.host_id)
+        return (
+            subject.kind == "host"
+            and host is not None
+            and host.config.may_sleep
+            and all(s.kind == "host_unreachable" for s in signals)
+        )
+
     def _host(self, host_id: str) -> HostState | None:
         return next((h for h in self.registry.hosts() if h.config.id == host_id), None)
 
@@ -528,6 +621,9 @@ class WatcherManager:
         """
         if await self._quiet_now(subject):
             log.debug("%s is quiet: no incident for %d signal(s)", subject.key, len(signals))
+            return
+        if self._asleep(subject, signals):
+            log.debug("%s may sleep: not answering opens no incident", subject.key)
             return
         incident, created = await self.repo.open_or_attach(subject, signals)
         if not created:

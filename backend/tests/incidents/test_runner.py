@@ -10,7 +10,14 @@ from bleep.graph.deps import StaticSettings
 from bleep.graph.nodes import propose, verify
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
-from bleep.incidents.runner import QUIET_RUN_NOTICE, QUIET_RUN_NOTICE_HOST, IncidentRunner
+from bleep.incidents.runner import (
+    ANSWERED_NOTICE,
+    BACK_NOTICE,
+    QUIET_RUN_NOTICE,
+    QUIET_RUN_NOTICE_HOST,
+    WAITING_NOTICE,
+    IncidentRunner,
+)
 from bleep.incidents.watchdog import Watchdog
 from bleep.schemas.graph import (
     Decision,
@@ -19,10 +26,10 @@ from bleep.schemas.graph import (
     VerificationPlan,
     VerificationResult,
 )
-from bleep.schemas.incidents import Subject
+from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Budgets
 from fakes import FakeChatModel
-from graph_env import confident_model, graph_env, no_wait
+from graph_env import T0, confident_model, graph_env, no_wait
 
 M2_PATH = ["gather", "investigate", "diagnose", "propose", "report"]
 
@@ -1130,3 +1137,178 @@ async def test_a_quiet_starting_after_the_yes_stops_the_run_at_approval(
     texts = [e.payload["text"] for e in await env.bus.history(incident.id) if e.kind == "notice"]
     assert texts == [QUIET_RUN_NOTICE]
     assert notifier.notices == [(incident.id, QUIET_RUN_NOTICE)]
+
+
+# -- host-unreachable incidents wait for their host --------------------------------------------
+
+HOST = Subject(kind="host", host_id="a")
+
+
+class ChannelLog:
+    """Records what the channels hear: each opening (with the status it was told) and notice."""
+
+    def __init__(self) -> None:
+        self.heard: list[tuple[str, str]] = []
+
+    async def incident_opened(self, incident) -> None:
+        self.heard.append(("opened", incident.status))
+
+    async def notice(self, incident_id: str, text: str) -> None:
+        self.heard.append(("notice", text))
+
+
+async def unreachable(env):
+    return await env.open(HOST, kind="host_unreachable", detail={"ok": False})
+
+
+async def notices(env, incident_id: str) -> list[str]:
+    return [e.payload["text"] for e in await env.bus.history(incident_id) if e.kind == "notice"]
+
+
+async def test_a_host_unreachable_incident_calls_no_model_and_closes_when_the_host_answers(
+    tmp_path,
+):
+    env = await graph_env(tmp_path)
+    incident = await unreachable(env)
+    channels = ChannelLog()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=channels)
+        await runner.start(incident)
+        await runner.join()
+
+        assert (await env.repo.get(incident.id)).status == "waiting"
+        assert env.models.calls == [] and await env.nodes(incident.id) == []
+        assert await notices(env, incident.id) == [WAITING_NOTICE]
+
+        await runner.host_back("a")
+        await runner.join()
+
+    assert (await env.repo.get(incident.id)).status == "closed"
+    assert env.models.calls == [] and await env.nodes(incident.id) == []
+    assert await notices(env, incident.id) == [WAITING_NOTICE, BACK_NOTICE]
+    assert channels.heard == [("opened", "waiting"), ("notice", BACK_NOTICE)]
+
+
+async def test_a_waiting_incident_stays_waiting_across_a_restart_and_closes_after_it(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await unreachable(env)
+    never_started = await env.open(Subject(kind="host", host_id="b"), kind="host_unreachable")
+    channels = ChannelLog()
+    checkpoints = tmp_path / "checkpoints.sqlite"
+    async with open_checkpointer(checkpoints) as saver:
+        first = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=channels)
+        await first.start(incident)
+        await first.join()
+        await first.close()  # Bleep stops while the host is still away
+
+    async with open_checkpointer(checkpoints) as saver:
+        second = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=channels)
+        # The one that opened just before the stop waits now; the waiting one is left as it is.
+        assert await second.recover_on_boot() == [never_started.id]
+        await second.join()
+        assert (await env.repo.get(incident.id)).status == "waiting"
+        assert (await env.repo.get(never_started.id)).status == "waiting"
+        await second.host_back("a")
+        await second.join()
+
+    assert (await env.repo.get(incident.id)).status == "closed"
+    assert env.models.calls == []
+    assert await env.nodes(incident.id) == [] and await env.nodes(never_started.id) == []
+    assert channels.heard.count(("opened", "waiting")) == 2  # once each, not again on the boot
+    assert await notices(env, incident.id) == [WAITING_NOTICE, BACK_NOTICE]
+
+
+async def test_the_hosts_return_never_closes_an_incident_of_another_kind(tmp_path):
+    env = await graph_env(tmp_path)
+    disk = await env.open(HOST, kind="disk", detail={"percent": 97})
+    shop = await env.open(service(env), container="shop-web-1")
+    await env.repo.set_status(disk.id, "investigating")
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await runner.host_back("a")
+        await runner.join()
+
+    assert (await env.repo.get(disk.id)).status == "investigating"
+    assert (await env.repo.get(shop.id)).status == "open"
+    assert await notices(env, disk.id) == [] and await notices(env, shop.id) == []
+
+
+async def test_a_waiting_incident_that_took_another_signal_runs_when_the_host_answers(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await unreachable(env)
+    channels = ChannelLog()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=channels)
+        await runner.start(incident)
+        await runner.join()
+        disk = Signal(subject=HOST, kind="disk", at=incident.opened_at, detail={"percent": 97})
+        await env.repo.open_or_attach(HOST, [disk])  # read just as the host came back
+        await runner.host_back("a")
+        await runner.join()
+
+    assert await env.nodes(incident.id) == M2_PATH  # now there is a host to look at
+    assert BACK_NOTICE not in await notices(env, incident.id)
+    assert channels.heard == [("opened", "waiting")]  # not announced a second time
+    assert (await env.repo.get(incident.id)).status == "closed"
+
+
+async def test_the_watchdog_leaves_a_waiting_incident_alone(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await unreachable(env)
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await runner.start(incident)
+        await runner.join()
+    watchdog = Watchdog(env.repo, env.bus, ChannelLog(), StaticSettings())
+    assert await watchdog.tick(incident.opened_at + timedelta(days=1)) == []
+
+
+@pytest.mark.parametrize(
+    ("answered", "closed"),
+    [
+        (T0 + timedelta(seconds=15), True),  # a probe reached the host after the outage was seen
+        (T0 - timedelta(minutes=10), False),  # before it: the outage is newer than that probe
+        (None, False),  # the last probe failed, though the registry may still call it reachable
+    ],
+)
+async def test_an_incident_closes_quietly_only_when_a_probe_reached_its_host_after_it(
+    tmp_path, answered, closed
+):
+    env = await graph_env(tmp_path)
+    incident = await unreachable(env)  # its signal is at T0
+    channels = ChannelLog()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(
+            build_graph(env.deps, saver),
+            env.repo,
+            env.bus,
+            notifier=channels,
+            host_answered=lambda host_id: answered,
+        )
+        await runner.start(incident)
+        await runner.join()
+
+    status = (await env.repo.get(incident.id)).status
+    if closed:
+        assert status == "closed"
+        assert await notices(env, incident.id) == [ANSWERED_NOTICE]
+        assert channels.heard == []  # no false "the host does not answer"
+    else:
+        assert status == "waiting"
+        assert channels.heard == [("opened", "waiting")]
+    assert env.models.calls == []
+
+
+async def test_a_host_back_before_the_run_parks_is_caught_by_the_next_good_tick(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await unreachable(env)
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await runner.host_back("a")  # the host's first good tick wins the race to the run
+        await runner.start(incident)
+        await runner.join()
+        assert (await env.repo.get(incident.id)).status == "waiting"
+        await runner.host_back("a")  # every good tick calls it again
+        await runner.join()
+
+    assert (await env.repo.get(incident.id)).status == "closed"

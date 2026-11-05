@@ -146,6 +146,26 @@ async def test_host_rules_override_and_the_service_overrides_stay(db):
     assert host.config.kind == "socket" and host.config.endpoint is not None  # connection kept
 
 
+async def test_may_sleep_comes_from_the_hosts_file_and_the_dashboard_overrides_it(db):
+    host = socket_host(id="a", may_sleep=True)
+
+    async def connect(_host):
+        return None, FakeEngine("a", [web()])
+
+    registry = Registry([host], connect, clock=lambda: T0)
+    store, _ = make_store(db, registry)
+    await registry.start()
+    assert registry.hosts()[0].config.may_sleep is True
+    assert store.host_views()[0].may_sleep is True
+
+    await save(store, {"hosts": {"a": {"may_sleep": False}}})
+    assert registry.hosts()[0].config.may_sleep is False
+    assert store.host_views()[0].may_sleep is False
+
+    await save(store, {"hosts": {"a": {}}})  # cleared: the hosts file's value holds again
+    assert registry.hosts()[0].config.may_sleep is True
+
+
 async def test_the_dashboard_can_add_protected_containers_but_never_unprotect_one(db):
     registry = hosts_file_registry()
     store, _ = make_store(db, registry)

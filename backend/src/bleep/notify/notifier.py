@@ -60,7 +60,10 @@ class Notifier:
         self.approvals = approvals
 
     async def incident_opened(self, incident: Incident) -> None:
-        await self._plain("incident_opened", id=incident.id, title=incident.title)
+        """A host-unreachable incident that waits for its host says so instead of promising a
+        plan."""
+        name = "incident_waiting" if incident.status == "waiting" else "incident_opened"
+        await self._plain(name, id=incident.id, title=incident.title)
 
     async def proposal(
         self,

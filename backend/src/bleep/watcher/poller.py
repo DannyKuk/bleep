@@ -16,6 +16,7 @@ from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
 from bleep.watcher.events import EventKey, diff, event_key, translate
+from bleep.watcher.wake import SleepWatch
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +34,9 @@ class HostWatcher:
     `sink` receives every signal, including the host's `host_unreachable` probe result on each
     tick (`ok` says whether the tick reached the host). `on_snapshot`, when given, receives the
     host's containers grouped by service id after every successful tick, which is what the
-    detector's `tick` wants.
+    detector's `tick` wants. `sleep_watch`, when given, is asked before the tick pulls and again
+    before its probe result goes out, so a wake of Bleep's own (also one in the middle of the
+    tick) is known before anything the tick saw is fed.
     """
 
     def __init__(
@@ -44,6 +47,7 @@ class HostWatcher:
         clock: Callable[[], datetime],
         interval_s: float = INTERVAL_S,
         on_snapshot: Snapshot | None = None,
+        sleep_watch: SleepWatch | None = None,
     ) -> None:
         self.host_id = host_id
         self.interval_s = interval_s
@@ -51,6 +55,7 @@ class HostWatcher:
         self._sink = sink
         self._clock = clock
         self._on_snapshot = on_snapshot
+        self._sleep_watch = sleep_watch
         self._cursor = clock()
         self._previous: list[ContainerSummary] | None = None
         self._service_of: dict[str, str] = {}  # container id -> service id, as of last tick
@@ -65,14 +70,24 @@ class HostWatcher:
 
     async def tick(self) -> bool:
         """One pull. Returns whether it succeeded; a failure emits nothing but the probe result."""
+        await self._notice_sleep()
         try:
             async with asyncio.timeout(TICK_TIMEOUT_S):
                 ok = await self._pull()
         except Exception:
             log.exception("watcher tick for host %s failed", self.host_id)
             ok = False
+        await self._notice_sleep()
         await self._probe(ok)
         return ok
+
+    async def _notice_sleep(self) -> None:
+        if self._sleep_watch is None:
+            return
+        try:
+            await self._sleep_watch.check()
+        except Exception:
+            log.exception("checking for a sleep failed on host %s", self.host_id)
 
     async def _probe(self, ok: bool) -> None:
         signal = Signal(
