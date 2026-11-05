@@ -3,11 +3,16 @@ export function serviceHref(serviceId: string): string {
   return `/services/${encodeURIComponent(serviceId)}`;
 }
 
-/** The id from a service page's route segment, whether or not the router decoded it. */
-export function serviceIdFrom(segment: string): string {
+/** The id from a page's route segment, whether or not the router decoded it. */
+export function idFromSegment(segment: string): string {
   try {
     return decodeURIComponent(segment);
   } catch {
     return segment; // a lone "%" that was never encoded
   }
+}
+
+/** A host's page. */
+export function hostHref(hostId: string): string {
+  return `/hosts/${encodeURIComponent(hostId)}`;
 }

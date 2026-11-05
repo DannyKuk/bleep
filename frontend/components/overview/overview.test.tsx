@@ -216,7 +216,7 @@ describe("OverviewView hosts", () => {
     ).toBeInTheDocument();
   });
 
-  it("puts each host's services in its tile, linked to their pages, and tints a host in trouble", () => {
+  it("links each host to its page and its services to theirs, and tints a host in trouble", () => {
     render(
       <OverviewView
         hosts={[
@@ -236,6 +236,10 @@ describe("OverviewView hosts", () => {
     expect(within(demo).getByRole("link", { name: "shop" })).toHaveAttribute(
       "href",
       "/services/demo%2Fcompose%3Ashop",
+    );
+    expect(within(demo).getByRole("link", { name: "Demo stack" })).toHaveAttribute(
+      "href",
+      "/hosts/demo",
     );
     expect(within(demo).queryByText("blog")).toBeNull();
     expect(within(spare).getByText("ssh")).toBeInTheDocument();

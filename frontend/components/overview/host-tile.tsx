@@ -7,7 +7,7 @@ import { QuietMenu } from "@/components/quiet/quiet-menu";
 import { QuietPill } from "@/components/quiet/quiet-pill";
 import type { HostView, ServiceView } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
-import { serviceHref } from "@/lib/routes";
+import { hostHref, serviceHref } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 const FOCUS = "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
@@ -104,7 +104,12 @@ export function HostTile({
     >
       <header className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
         <h3 id={titleId} className="text-[17px] font-extrabold">
-          {host.name}
+          <Link
+            href={hostHref(host.id)}
+            className={cn("rounded-field underline-offset-2 hover:underline", FOCUS)}
+          >
+            {host.name}
+          </Link>
         </h3>
         <span className="text-xs font-bold text-ink-2">{host.kind}</span>
         <span className="ml-auto flex items-center gap-1">
