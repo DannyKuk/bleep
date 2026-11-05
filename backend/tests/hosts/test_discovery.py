@@ -6,6 +6,7 @@ import pytest
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.discovery import AmbiguousOverride, expects_exit, group_services
 from bleep.schemas.docker import ContainerSummary
+from fakes import compose_labels
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "labels"
 
@@ -30,7 +31,7 @@ def box(name: str, labels: dict[str, str] | None = None) -> ContainerSummary:
 
 
 def compose(name: str, project: str = "shop") -> ContainerSummary:
-    return box(name, {"com.docker.compose.project": project})
+    return box(name, compose_labels(project))
 
 
 def by_id(services):
@@ -86,8 +87,8 @@ def test_a_non_application_coolify_type_is_not_an_app():
         {
             "coolify.type": "database",
             "coolify.applicationId": "9",
-            "com.docker.compose.project": "p",
-        },
+        }
+        | compose_labels("p"),
     )
     (svc,) = group_services("h", [db], {})
     assert (svc.id, svc.source) == ("h/compose:p", "compose")
@@ -133,13 +134,70 @@ def test_compose_project_groups_containers():
     assert svcs[0].source == "compose"
 
 
+def test_a_container_run_from_a_compose_built_image_is_its_own_service():
+    """`docker compose build` labels the image with its project and service, and `docker run`
+    copies them onto the container; only a container Compose created has the config hash."""
+    pair = [captured("compose-shop-proxy"), captured("image-only-shop-canary")]
+    svcs = by_id(group_services("h", pair, {}))
+    assert set(svcs) == {"h/compose:shop", "h/container:shop-canary"}
+    assert [c.name for c in svcs["h/compose:shop"].containers] == ["shop-proxy"]
+    canary = svcs["h/container:shop-canary"]
+    assert (canary.name, canary.source) == ("shop-canary", "single")
+
+
+def test_a_compose_override_still_reaches_every_container_compose_created():
+    """Protected names under the key and the name (#230), rules and URLs all still apply to the
+    Compose-created containers; the canary takes none of the shop's settings."""
+    db = captured("compose-shop-proxy", name="shop-db")
+    db.labels = db.labels | {"com.docker.compose.service": "shop-db"}
+    run = captured("compose-shop-proxy", name="shop-proxy-run-3f2a")
+    run.labels = run.labels | {"com.docker.compose.oneoff": "True"}
+    run.labels.pop("com.docker.compose.container-number")
+    containers = [captured("compose-shop-proxy"), db, run, captured("image-only-shop-canary")]
+    overrides = {
+        "shop": ServiceOverrides(protected_containers=["shop-db"]),
+        "compose:shop": ServiceOverrides(
+            urls=[UrlCheckConfig(url="https://shop.example")],
+            rules=["never restart the db"],
+            protected_containers=["shop-proxy"],
+        ),
+    }
+    svcs = by_id(group_services("h", containers, overrides))
+    shop = svcs["h/compose:shop"]
+    assert [c.name for c in shop.containers] == ["shop-proxy", "shop-db", "shop-proxy-run-3f2a"]
+    assert shop.protected == {"shop-db", "shop-proxy"}
+    assert shop.rules == ["never restart the db"]
+    assert [u.url for u in shop.urls] == ["https://shop.example"]
+    canary = svcs["h/container:shop-canary"]
+    assert (canary.rules, canary.urls, canary.protected) == ([], [], set())
+
+
+def test_a_container_that_left_its_compose_group_keeps_the_protection_its_name_has():
+    """The hosts file protects by container name, wherever the override sits, so the canary is
+    still shown protected when the shop's override names it."""
+    overrides = {"shop": ServiceOverrides(protected_containers=["shop-canary"])}
+    svcs = by_id(
+        group_services(
+            "h", [captured("compose-shop-proxy"), captured("image-only-shop-canary")], overrides
+        )
+    )
+    assert svcs["h/container:shop-canary"].protected == {"shop-canary"}
+    assert svcs["h/compose:shop"].protected == {"shop-canary"}
+
+
+def test_bleep_own_container_is_excluded_without_compose_labels_too():
+    own = captured("image-only-shop-canary", name="bleep-probe")
+    own.labels = own.labels | {"bleep.self": "true"}
+    assert group_services("h", [own], {}) == []
+
+
 def test_unlabelled_container_is_its_own_service():
     (svc,) = group_services("h", [box("redis")], {})
     assert (svc.id, svc.name, svc.source) == ("h/container:redis", "redis", "single")
 
 
 def test_bleep_self_containers_are_excluded():
-    own = box("bleep-backend-1", {"bleep.self": "true", "com.docker.compose.project": "shop"})
+    own = box("bleep-backend-1", {"bleep.self": "true"} | compose_labels("shop"))
     alone = box("bleep-ui", {"bleep.self": "true"})
     svcs = group_services("h", [own, alone, compose("shop-web-1")], {})
     assert [c.name for s in svcs for c in s.containers] == ["shop-web-1"]
@@ -296,7 +354,7 @@ def test_exits_names_a_container_by_its_name_its_compose_service_or_all():
 
 
 def test_a_service_takes_exits_from_its_override_like_its_urls():
-    labels = {"com.docker.compose.project": "molecula"}
+    labels = compose_labels("molecula")
     [service] = group_services(
         "h", [box("molecula-fetch-1", labels)], {"molecula": ServiceOverrides(exits=["fetch"])}
     )

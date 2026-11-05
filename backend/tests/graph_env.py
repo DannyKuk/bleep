@@ -26,15 +26,14 @@ from bleep.schemas.incidents import Incident, Signal, Subject
 from bleep.store.db import Database
 from bleep.tools.default import default_registry
 from bleep.tools.docker_act import docker_act_tools
-from fakes import FakeChatModel, FakeEngine, FakeShell, ssh_host
+from fakes import FakeChatModel, FakeEngine, FakeShell, compose_labels, ssh_host
 
 T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
 SECRET = "test-secret"  # keys the default approvals' grants and the act tools alike
-COMPOSE_PROJECT = "com.docker.compose.project"
 
 
 def box(name: str, project: str | None = None, **fields: Any) -> ContainerSummary:
-    labels = {COMPOSE_PROJECT: project} if project else {}
+    labels = compose_labels(project) if project else {}
     defaults: dict[str, Any] = {"image": "img:1", "state": "running", "labels": labels}
     return ContainerSummary(id=f"id-{name}", name=name, **(defaults | fields))
 

@@ -25,6 +25,7 @@ from bleep.schemas.docker import (
 
 COMPOSE_PROJECT = "com.docker.compose.project"
 COMPOSE_SERVICE = "com.docker.compose.service"
+COMPOSE_CONFIG_HASH = "com.docker.compose.config-hash"  # only on containers Compose created
 MIB = 2**20
 Health = Literal["healthy", "unhealthy", "starting", "none"]
 
@@ -236,7 +237,11 @@ def _summary(c: ScriptedContainer, project: str, now: datetime) -> ContainerSumm
         image=c.image,
         state=c.state,
         health=c.health,
-        labels={COMPOSE_PROJECT: project, COMPOSE_SERVICE: c.name.removeprefix(f"{project}-")},
+        labels={
+            COMPOSE_PROJECT: project,
+            COMPOSE_SERVICE: c.name.removeprefix(f"{project}-"),
+            COMPOSE_CONFIG_HASH: "0" * 64,
+        },
         restart_policy=c.restart_policy,
         restart_count=c.restart_count,
         exit_code=c.exit_code,

@@ -32,7 +32,7 @@ from bleep.watcher.manager import (
     WatcherManager,
     quiet_notice,
 )
-from fakes import FakeChatModel, FakeEngine, socket_host
+from fakes import FakeChatModel, FakeEngine, compose_labels, socket_host
 
 T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
 PROJECTS = ("shop", "blog", "cache")
@@ -103,7 +103,7 @@ def box(name: str, project: str, **fields) -> ContainerSummary:
         name=name,
         image="img",
         state=fields.pop("state", "running"),
-        labels={"com.docker.compose.project": project},
+        labels=compose_labels(project),
         **fields,
     )
 

@@ -7,6 +7,7 @@ from bleep.schemas.services import Service
 SELF_LABEL = "bleep.self"
 COMPOSE_PROJECT = "com.docker.compose.project"
 COMPOSE_SERVICE = "com.docker.compose.service"
+COMPOSE_CONFIG_HASH = "com.docker.compose.config-hash"
 
 
 def is_self(labels: dict[str, str]) -> bool:
@@ -36,9 +37,20 @@ def _is_coolify_app(labels: dict[str, str]) -> bool:
     return "coolify.applicationId" in labels
 
 
+def compose_project(labels: dict[str, str]) -> str | None:
+    """The Compose project of a container Compose created, else None.
+
+    `docker compose build` labels the image with its project and service, and a container
+    `docker run` starts from that image carries them too. Only a container Compose created (`up`
+    or `run`) also has the config hash, and Compose lists a project's containers by it."""
+    if COMPOSE_CONFIG_HASH not in labels:
+        return None
+    return labels.get(COMPOSE_PROJECT) or None
+
+
 def _classify(container_name: str, labels: dict[str, str]) -> tuple[str, str, str]:
     """(key, display name, source) of one container."""
-    project = labels.get(COMPOSE_PROJECT)
+    project = compose_project(labels)
     if _is_coolify_app(labels):
         if labels.get("coolify.applicationUuid"):
             key = labels["coolify.applicationUuid"]
@@ -88,12 +100,16 @@ def group_services(
                 f"services ({', '.join(unclaimed)}); use one of those keys instead"
             )
 
+    # The guard refuses a protected name whichever override lists it, so a member another
+    # service's override protects is shown protected too.
+    anywhere = {c for o in overrides.values() for c in o.protected_containers}
     services = []
     for key, (name, source, members) in groups.items():
         by_key = overrides.get(key)
         by_name = overrides.get(name) if name not in groups else None
         over = by_key or by_name or ServiceOverrides()
         protected = {c for o in (by_key, by_name) if o is not None for c in o.protected_containers}
+        protected |= {c.name for c in members if c.name in anywhere}
         services.append(
             Service(
                 id=f"{host_id}/{key}",

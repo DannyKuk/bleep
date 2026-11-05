@@ -121,7 +121,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 **Hosts** ([details](design/hosts.md))
 - **Docker over SSH by forwarding the socket**, so a macOS host whose non-interactive `PATH` lacks `docker` works too ([Docker over SSH](decisions/docker-over-ssh.md)).
 - **The demo host goes through a filtered socket proxy**, never a raw socket mount ([socket host](decisions/socket-host.md)).
-- **Services are keyed by Coolify labels, else the Compose project, else the container**, and Bleep's own containers (`bleep.self=true`) are left out.
+- **Services are keyed by Coolify labels, else the Compose project of a container Compose created, else the container**, and Bleep's own containers (`bleep.self=true`) are left out.
 - **Host commands are exact argv templates run without a shell**; anything else is refused by code.
 - **An ssh host can be added on the dashboard, a socket host only in the hosts file**, which wins for the hosts it names; its key and host key go to the secret file, the host key is trusted only once a person confirms its fingerprint, and a new address, port or user clears both.
 - **The GitHub client lives in `hosts/`**, where the token and each service's `repo` are set, so the knowledge ingest can use it without importing `tools`.

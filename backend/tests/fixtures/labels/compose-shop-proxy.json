@@ -1,0 +1,25 @@
+{
+  "container": "shop-proxy",
+  "image": [
+    "shop-shop-proxy"
+  ],
+  "labels": {
+    "com.docker.compose.config-hash": "9d1d4a5cfc275703a8ced6bc9b561c37cc8650558795e2990b5d76665cfa4e24",
+    "com.docker.compose.container-number": "1",
+    "com.docker.compose.depends_on": "shop-web:service_started:false",
+    "com.docker.compose.image": "sha256:b6cf0d790b8fb1165da901cea390de3b537c9bf09ab488dc6706a000ac5bcd8a",
+    "com.docker.compose.oneoff": "False",
+    "com.docker.compose.project": "shop",
+    "com.docker.compose.replace": "shop-proxy",
+    "com.docker.compose.service": "shop-proxy",
+    "com.docker.compose.version": "5.6.0",
+    "org.opencontainers.image.description": "a powerful, enterprise-ready, open source web server with automatic HTTPS written in Go",
+    "org.opencontainers.image.documentation": "https://caddyserver.com/docs",
+    "org.opencontainers.image.licenses": "Apache-2.0",
+    "org.opencontainers.image.source": "https://github.com/caddyserver/caddy-docker",
+    "org.opencontainers.image.title": "Caddy",
+    "org.opencontainers.image.url": "https://caddyserver.com",
+    "org.opencontainers.image.vendor": "Light Code Labs",
+    "org.opencontainers.image.version": "v2.11.7"
+  }
+}
