@@ -83,6 +83,7 @@ class Thresholds(BaseModel):
     load_polls: int = 3
     host_unreachable_s: int = 300
     debounce_s: int = 30
+    fold_window_h: int = 24  # a repeat within this many hours of the last joins its group; 0 off
 
 
 # What a person may change from the dashboard (#36). Each field left out keeps the value below it:
@@ -147,6 +148,7 @@ class ThresholdOverrides(_Overrides):
     load_polls: int | None = Field(None, ge=1, le=60)
     host_unreachable_s: int | None = Field(None, ge=30, le=86_400)
     debounce_s: int | None = Field(None, ge=0, le=3_600)
+    fold_window_h: int | None = Field(None, ge=0, le=24 * 30)
 
 
 class ServiceSettings(_Overrides):

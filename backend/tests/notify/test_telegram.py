@@ -1183,3 +1183,19 @@ async def test_a_reply_to_an_opened_message_is_never_an_instruction(env):
     assert env.runner.resumed == []
     [reply] = env.api.sent("sendMessage")
     assert "reply" in reply["text"].lower()
+
+
+# --- folded repeats ---
+
+
+async def test_a_repeats_report_stays_on_the_dashboard_and_its_plan_still_asks(env):
+    repeat = env.incident.model_copy(
+        update={"fold_of": "inc_first", "title": "container died on demo/shop (seen 3 times)"}
+    )
+    await env.notifier.report(repeat, REPORT)
+    assert env.api.sent("sendMessage") == []
+    request = (await env.approvals.current(env.incident_id)).request
+    await env.notifier.proposal(repeat, None, PLAN, request)
+    [plan] = env.api.sent("sendMessage")
+    assert "seen 3 times" in plan["text"].replace("\\", "")
+    assert [label for label, _ in buttons(plan)][:2] == ["Approve", "Reject"]

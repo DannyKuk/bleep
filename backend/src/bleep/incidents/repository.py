@@ -4,7 +4,8 @@ import json
 import secrets
 import sqlite3
 from collections.abc import Callable, Collection
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 import aiosqlite
 
@@ -44,7 +45,35 @@ def _incident(row: aiosqlite.Row) -> Incident:
         tokens=row["tokens"],
         trace_url=row["trace_url"],
         prompt_overrides=json.loads(row["prompt_overrides"]) if row["prompt_overrides"] else None,
+        fold_of=row["fold_of"],
     )
+
+
+# Opening kinds that are one cause told apart only by how it showed; the others keep their own key,
+# so a restart loop is never counted as one more single death.
+_DEATHS = ("container_died", "oom", "down_past_grace")
+
+
+def fold_key(subject: Subject, signals: list[Signal]) -> str:
+    """What makes an incident a repeat of another: its subject, its opening kind and the target
+    (the container, or the URL)."""
+    first = signals[0] if signals else None
+    kind = "death" if first is None or first.kind in _DEATHS else first.kind
+    target = ""
+    if first is not None:
+        target = (
+            str(first.detail.get("url")) if first.kind == "url_failed" else first.container or ""
+        )
+    return f"{subject.key}|{kind}|{target}"
+
+
+@dataclass(frozen=True)
+class FoldGroup:
+    """A group of repeats: its first incident, how many incidents it holds, since when."""
+
+    root: str
+    count: int
+    since: datetime
 
 
 def _title(subject: Subject, signals: list[Signal]) -> str:
@@ -56,7 +85,7 @@ def _title(subject: Subject, signals: list[Signal]) -> str:
 # Tokens and cost are the usage ledger's sums, so an incident and the ledger never disagree.
 _COLUMNS = (
     "id, kind, host_id, service_id, status, title, opened_at, closed_at, trace_url,"
-    " prompt_overrides,"
+    " prompt_overrides, fold_of,"
     " (SELECT COALESCE(SUM(tokens_in + tokens_out), 0) FROM usage"
     "  WHERE usage.incident_id = incidents.id) AS tokens,"
     " (SELECT SUM(usd) FROM usage WHERE usage.incident_id = incidents.id) AS cost_usd"
@@ -66,9 +95,18 @@ _OPEN = f"status NOT IN ({', '.join(repr(s) for s in TERMINAL_STATUSES)})"
 
 
 class IncidentRepo:
-    def __init__(self, db: Database, clock: Callable[[], datetime] = utcnow) -> None:
+    """`fold_window_h` is read at every open (the threshold of the same name, 0 turns folding
+    off)."""
+
+    def __init__(
+        self,
+        db: Database,
+        clock: Callable[[], datetime] = utcnow,
+        fold_window_h: Callable[[], float] = lambda: 24,
+    ) -> None:
         self.db = db
         self.clock = clock
+        self.fold_window_h = fold_window_h
 
     async def open_or_attach(
         self, subject: Subject, signals: list[Signal]
@@ -134,20 +172,80 @@ class IncidentRepo:
     ) -> str:
         now = self.clock()
         incident_id = new_incident_id(now)
+        key = fold_key(subject, signals)
+        title = _title(subject, signals)
+        group = await self._group_to_join(conn, key, now)
+        if group is not None:
+            # The title carries the count, so every message about the repeat says it.
+            title += f" (seen {group.count + 1} times since {group.since:%d %b %H:%M} UTC)"
         await conn.execute(
             "INSERT INTO incidents (id, kind, host_id, service_id, subject_key, status, title,"
-            " opened_at) VALUES (?, ?, ?, ?, ?, 'open', ?, ?)",
+            " opened_at, fold_key, fold_of) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)",
             (
                 incident_id,
                 subject.kind,
                 subject.host_id,
                 subject.service_id,
                 subject.key,
-                _title(subject, signals),
+                title,
                 now.isoformat(),
+                key,
+                group.root if group is not None else None,
             ),
         )
         return incident_id
+
+    async def _group_to_join(
+        self, conn: aiosqlite.Connection, key: str, now: datetime
+    ) -> FoldGroup | None:
+        """The group a new incident with `key` repeats: the latest finished one with that key
+        opened within the window; the window slides with each repeat."""
+        window_h = self.fold_window_h()
+        if window_h <= 0:
+            return None
+        async with conn.execute(
+            f"SELECT id, fold_of FROM incidents WHERE fold_key = ? AND NOT {_OPEN}"
+            " AND opened_at >= ? ORDER BY opened_at DESC LIMIT 1",
+            (key, (now - timedelta(hours=window_h)).isoformat()),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        groups = await self._groups(conn, [row["fold_of"] or row["id"]])
+        return next(iter(groups.values()))
+
+    async def _groups(
+        self, conn: aiosqlite.Connection, roots: Collection[str]
+    ) -> dict[str, FoldGroup]:
+        if not roots:
+            return {}
+        marks = ", ".join("?" for _ in roots)
+        async with conn.execute(
+            f"SELECT r.id, r.opened_at, (SELECT COUNT(*) FROM incidents f WHERE f.fold_of = r.id)"
+            f" AS repeats FROM incidents r WHERE r.id IN ({marks})",
+            list(roots),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return {
+            row["id"]: FoldGroup(
+                row["id"], row["repeats"] + 1, datetime.fromisoformat(row["opened_at"])
+            )
+            for row in rows
+        }
+
+    async def groups(self, incidents: Collection[Incident]) -> dict[str, FoldGroup]:
+        """Each incident's group by its id; one that is not in a group (alone) is left out."""
+        roots = {i.id: i.fold_of or i.id for i in incidents}
+        conn = await self.db.connect()
+        try:
+            found = await self._groups(conn, set(roots.values()))
+        finally:
+            await conn.close()
+        return {
+            incident_id: found[root]
+            for incident_id, root in roots.items()
+            if root in found and found[root].count > 1
+        }
 
     async def set_status(self, incident_id: str, status: IncidentStatus) -> None:
         """Set the status of an unfinished incident; a finished one keeps its status, so a run
@@ -248,9 +346,11 @@ class IncidentRepo:
         limit: int = 50,
         offset: int = 0,
         service_id: str | None = None,
+        fold_of: str | None = None,
     ) -> list[Incident]:
-        """Newest first, optionally only those with `status` or of the service `service_id`."""
-        filters = {"status": status, "service_id": service_id}
+        """Newest first, optionally only those with `status`, of the service `service_id`, or the
+        repeats of `fold_of`."""
+        filters = {"status": status, "service_id": service_id, "fold_of": fold_of}
         given = {column: value for column, value in filters.items() if value is not None}
         where = " AND ".join(f"{column} = ?" for column in given)
         args: list[object] = list(given.values())

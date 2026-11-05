@@ -1312,3 +1312,41 @@ async def test_a_host_back_before_the_run_parks_is_caught_by_the_next_good_tick(
         await runner.join()
 
     assert (await env.repo.get(incident.id)).status == "closed"
+
+
+# -- folded repeats ------------------------------------------------------------------------------
+
+
+async def test_a_repeat_runs_without_being_announced_and_a_waiting_one_ends_without_a_message(
+    tmp_path,
+):
+    env = await graph_env(tmp_path)
+    channels = ChannelLog()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=channels)
+        first = await env.open(service(env), container="shop-web-1")
+        await runner.start(first)
+        await runner.join()
+        repeat = await env.open(service(env), container="shop-web-1")
+        assert repeat.fold_of == first.id
+        await runner.start(repeat)
+        await runner.join()
+        assert await env.nodes(repeat.id) == M2_PATH  # it is looked at like any incident
+
+        outage = await unreachable(env)
+        await runner.start(outage)
+        await runner.join()
+        await runner.host_back("a")
+        again = await unreachable(env)
+        assert again.fold_of == outage.id
+        await runner.start(again)
+        await runner.join()
+        await runner.host_back("a")
+        await runner.join()
+
+    assert (await env.repo.get(again.id)).status == "closed"
+    assert channels.heard == [
+        ("opened", "open"),  # the first incident; its repeat is not announced
+        ("opened", "waiting"),
+        ("notice", BACK_NOTICE),  # the first outage's end; the repeat's ends without a message
+    ]

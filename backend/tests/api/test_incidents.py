@@ -488,3 +488,17 @@ def test_this_is_expected_is_not_offered_for_a_crash_and_404s_for_no_incident(ap
     assert app_client.get(f"/api/incidents/{incident.id}").json()["expectation"] is None
     assert app_client.post(f"/api/incidents/{incident.id}/expected").status_code == 409
     assert app_client.post("/api/incidents/inc_nope/expected").status_code == 404
+
+
+def test_the_list_and_the_detail_carry_a_groups_size_and_its_repeats(app_client, parts):
+    first = open_incident(app_client, parts)
+    call(app_client, parts.incidents.close_unfinished, first.id)
+    repeat = open_incident(app_client, parts)
+    assert repeat.fold_of == first.id
+
+    listed = {i["id"]: i for i in app_client.get("/api/incidents").json()}
+    assert listed[first.id]["repeats"] == listed[repeat.id]["repeats"] == 2
+    assert listed[repeat.id]["fold_of"] == first.id
+    repeats = app_client.get("/api/incidents", params={"fold_of": first.id}).json()
+    assert [i["id"] for i in repeats] == [repeat.id]
+    assert app_client.get(f"/api/incidents/{first.id}").json()["repeats"] == 2

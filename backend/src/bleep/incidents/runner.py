@@ -197,7 +197,8 @@ class IncidentRunner:
         if await self.repo.close_unfinished(incident.id, spare=NOT_WAITING) is None:
             return
         await self.bus.publish(incident.id, "notice", {"text": BACK_NOTICE})
-        await self._tell(incident.id, BACK_NOTICE)
+        if incident.fold_of is None:  # a repeat waited and ends without a message
+            await self._tell(incident.id, BACK_NOTICE)
 
     async def end(
         self, incident_id: str, text: str, *, spare: tuple[IncidentStatus, ...] = ()
@@ -272,7 +273,7 @@ class IncidentRunner:
                 return
             await self.repo.record_prompt_overrides(incident.id, prompts.override_versions())
             if incident.status != "waiting":  # one that waited was announced when it opened
-                await self._announce(incident)
+                await self._announce(incident)  # a repeat is not
             await self._drive(incident.id, _initial(incident, signals))
         elif snapshot.interrupts:
             decision = await self._decided(incident.id)
@@ -308,8 +309,9 @@ class IncidentRunner:
 
     async def _announce(self, incident: Incident) -> None:
         """Tell the channels a new incident opened, before its run starts; a channel outage is
-        logged and never stops the run."""
-        if self.notifier is None:
+        logged and never stops the run. A repeat is not announced: its group's first incident
+        was the one message, and what needs a yes from it is still sent."""
+        if self.notifier is None or incident.fold_of is not None:
             return
         try:
             await self.notifier.incident_opened(incident)
