@@ -215,3 +215,72 @@ def test_override_by_key_disambiguates_equal_names():
         {"compose:app": ServiceOverrides(repo="me/app")},
     )
     assert {s.id: s.repo for s in svcs} == {"h/compose:app": "me/app", "h/container:app": None}
+
+
+def test_a_name_override_still_protects_when_the_key_has_one_too():
+    by_name = ServiceOverrides(protected_containers=["shop-db-1"])
+    by_key = ServiceOverrides(urls=[UrlCheckConfig(url="https://shop.example")])
+    (svc,) = group_services(
+        "h",
+        [compose("shop-web-1"), compose("shop-db-1")],
+        {"shop": by_name, "compose:shop": by_key},
+    )
+    assert svc.protected == {"shop-db-1"}
+    assert [u.url for u in svc.urls] == ["https://shop.example"]
+
+
+def test_a_key_override_still_protects_when_the_name_has_one_too():
+    by_key = ServiceOverrides(protected_containers=["shop-db-1"])
+    by_name = ServiceOverrides(protected_containers=[])
+    (svc,) = group_services(
+        "h",
+        [compose("shop-web-1"), compose("shop-db-1")],
+        {"compose:shop": by_key, "shop": by_name},
+    )
+    assert svc.protected == {"shop-db-1"}
+
+
+def test_protected_containers_of_the_key_and_the_name_are_unioned():
+    (svc,) = group_services(
+        "h",
+        [compose("shop-web-1"), compose("shop-db-1")],
+        {
+            "shop": ServiceOverrides(protected_containers=["shop-db-1"]),
+            "compose:shop": ServiceOverrides(protected_containers=["shop-web-1"]),
+        },
+    )
+    assert svc.protected == {"shop-db-1", "shop-web-1"}
+
+
+def test_urls_repo_docs_and_rules_come_from_the_key_when_both_match():
+    by_name = ServiceOverrides(
+        urls=[UrlCheckConfig(url="https://name.example")],
+        repo="name/repo",
+        docs_paths=["NAME.md"],
+        rules=["name rule"],
+    )
+    by_key = ServiceOverrides(
+        urls=[UrlCheckConfig(url="https://key.example")],
+        repo="key/repo",
+        docs_paths=["KEY.md"],
+        rules=["key rule"],
+    )
+    (svc,) = group_services("h", [compose("shop-web-1")], {"shop": by_name, "compose:shop": by_key})
+    assert [u.url for u in svc.urls] == ["https://key.example"]
+    assert (svc.repo, svc.docs_paths, svc.rules) == ("key/repo", ["KEY.md"], ["key rule"])
+
+
+def test_a_name_shared_with_a_key_matched_service_still_goes_to_the_other_one():
+    svcs = by_id(
+        group_services(
+            "h",
+            [box("app"), compose("app-web-1", "app")],
+            {
+                "app": ServiceOverrides(repo="name/app", protected_containers=["app"]),
+                "compose:app": ServiceOverrides(repo="key/app"),
+            },
+        )
+    )
+    assert svcs["h/container:app"].repo == "name/app"
+    assert svcs["h/container:app"].protected == {"app"}
+    assert svcs["h/compose:app"].repo == "key/app"

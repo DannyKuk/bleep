@@ -193,9 +193,7 @@ class SettingsStore:
                     urls=over.urls,
                     rules=over.rules,
                     protected_containers=over.protected_containers,
-                    hosts_file_protected_containers=(
-                        base.services[key].protected_containers if key in base.services else []
-                    ),
+                    hosts_file_protected_containers=self._hosts_file_protected(base, key),
                 )
                 for key, over in config.services.items()
             }
@@ -341,6 +339,17 @@ class SettingsStore:
             self._base[change.host_id] = change.config
             config = self._effective(change.config)
             self._registry.override(change.host_id, config.rules, config.services)
+
+    def _hosts_file_protected(self, base: HostConfig, key: str) -> list[str]:
+        """The hosts file's protected containers for the service held under `key`, by its key
+        and by its name: discovery applies both (#230). A service not seen yet has only `key`."""
+        same = {key}
+        for service in self._registry.services(base.id):
+            own = service.id.removeprefix(f"{base.id}/")
+            if key in (own, service.name):
+                same |= {own, service.name}
+        found = [c for k, o in base.services.items() if k in same for c in o.protected_containers]
+        return list(dict.fromkeys(found))
 
     def _connection(self, host: HostConfig) -> HostConnectionView:
         if host.source == "dashboard" and self._dashboard is not None:
