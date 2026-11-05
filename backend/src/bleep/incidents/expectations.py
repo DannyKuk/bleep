@@ -14,6 +14,7 @@ from typing import Literal
 
 from bleep.graph.deps import Approvals
 from bleep.hosts.config import is_exit_name
+from bleep.hosts.discovery import compose_service
 from bleep.hosts.registry import Registry
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
@@ -97,7 +98,7 @@ def _entry(death: Signal, registry: Registry) -> str | None:
     label = death.detail.get("compose_service")
     if label is None:
         container = registry.container(death.subject.host_id, name)
-        label = container.labels.get("com.docker.compose.service") if container else None
+        label = compose_service(container.labels) if container else None
     for candidate in (label, name):
         if isinstance(candidate, str) and is_exit_name(candidate):
             return candidate

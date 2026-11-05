@@ -1,6 +1,8 @@
 """ "This is expected": what it records, when it is offered, and how it races a decision."""
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from pydantic import SecretStr
@@ -13,7 +15,9 @@ from bleep.plugins.registry import PluginRegistry
 from bleep.schemas.graph import Decision, PlanStep, Proposal, VerificationPlan
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import ModelSettings
-from graph_env import T0, graph_env
+from graph_env import T0, box, graph_env, shop_engine
+
+LABELS = Path(__file__).parent.parent / "fixtures" / "labels"
 
 PLAN = Proposal(
     kind="act",
@@ -345,3 +349,14 @@ async def test_a_crash_after_this_is_expected_is_a_repeat_that_still_reports(tmp
         await runner.join()
 
     assert len(reports) == 1 and "(seen 2 times since" in reports[0]
+
+
+async def test_an_image_only_container_is_recorded_by_its_name_not_its_inherited_service(tmp_path):
+    canary = json.loads((LABELS / "image-only-shop-canary.json").read_text())["labels"]
+    engine = shop_engine()
+    engine.container_list.append(box("shop-canary", state="exited", labels=canary))
+    env = await graph_env(tmp_path, engine=engine)
+    gone = death(shop(env), 0).model_copy(update={"container": "shop-canary"})
+    incident = await opened(env, gone)
+    offered = expectation_for(incident, await env.repo.signals(incident.id), env.registry)
+    assert offered is not None and offered.entries == ("shop-canary",)

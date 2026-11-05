@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
 
-from bleep.hosts.discovery import COMPOSE_SERVICE, is_self
+from bleep.hosts.discovery import compose_service, is_self
 from bleep.schemas.docker import ContainerSummary, DockerEvent
 from bleep.schemas.incidents import Signal, Subject
 
@@ -96,8 +96,8 @@ def translate(
                 )
                 if expected:
                     detail["expected_exit"] = True
-                if compose_service := labels.get(COMPOSE_SERVICE):
-                    detail["compose_service"] = compose_service  # "This is expected" names it
+                if service := compose_service(labels):
+                    detail["compose_service"] = service  # "This is expected" names it
             case "restart" if cid not in deliberate and cid not in died:
                 kind, detail = "container_died", {"exit_code": None, "restart_policy": policy}
             case "oom":
@@ -162,8 +162,8 @@ def diff(
         }
         if expected:
             detail["expected_exit"] = True
-        if compose_service := before.labels.get(COMPOSE_SERVICE):
-            detail["compose_service"] = compose_service
+        if service := compose_service(before.labels):
+            detail["compose_service"] = service
         signals.append(
             Signal(
                 subject=subject,

@@ -1,10 +1,14 @@
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from bleep.schemas.docker import ContainerSummary, DockerEvent
 from bleep.schemas.incidents import Subject
 from bleep.watcher.events import diff, event_key, translate
+from fakes import compose_labels
 
 T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
+FIXTURES = Path(__file__).parent.parent / "fixtures" / "labels"
 SVC = Subject(kind="service", host_id="h", service_id="h/web")
 
 
@@ -119,7 +123,7 @@ def expects_fetch(subject, name, labels):
 
 
 def test_a_failed_run_rm_job_is_a_death_although_it_is_removed_and_marked_expected():
-    job = {"com.docker.compose.service": "fetch"}
+    job = compose_labels("shop", "fetch")
     failed = [event("die", exitCode="3", **job), event("destroy", at=1, **job)]
     t = translate(failed, {}, subject_of, {}, expects_fetch)
     [signal] = t.signals
@@ -144,3 +148,20 @@ def test_diff_takes_a_vanished_job_for_its_rm_end_and_still_reports_its_crash():
     after = [box("a", "fetch-1", state="exited", exit_code=1)]
     [signal] = diff(before[:1], after, T0, subject_of, set(), set(), expects_fetch)
     assert signal.detail == {"exit_code": 1, "restart_policy": "", "expected_exit": True}
+
+
+def test_a_death_of_a_container_compose_did_not_create_names_no_compose_service():
+    canary = json.loads((FIXTURES / "image-only-shop-canary.json").read_text())["labels"]
+    [signal] = translate([event("die", exitCode="1", **canary)], {}, subject_of, {}).signals
+    assert "compose_service" not in signal.detail
+    created = json.loads((FIXTURES / "compose-shop-proxy.json").read_text())["labels"]
+    [signal] = translate([event("die", exitCode="1", **created)], {}, subject_of, {}).signals
+    assert signal.detail["compose_service"] == "shop-proxy"
+
+
+def test_diff_names_no_compose_service_for_an_image_only_container():
+    canary = json.loads((FIXTURES / "image-only-shop-canary.json").read_text())["labels"]
+    before = [box("a", "shop-canary", labels=canary)]
+    after = [box("a", "shop-canary", state="exited", exit_code=1, labels=canary)]
+    [signal] = diff(before, after, T0, subject_of, set(), set())
+    assert "compose_service" not in signal.detail
