@@ -12,7 +12,8 @@ from bleep.main import create_app
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
 from bleep.watcher.health import container_health, host_health, service_health
-from bleep.watcher.http_checks import UrlCheck
+from bleep.watcher.health_store import HealthStore
+from bleep.watcher.http_checks import HISTORY_PER_URL, UrlCheck
 from fakes import FakeEngine, ssh_host
 
 T0 = datetime(2026, 11, 2, 10, 0, tzinfo=UTC)
@@ -320,6 +321,100 @@ def test_checks_of_other_urls_or_hosts_are_ignored(stocked, parts):
     )
     [url] = shop_view(stocked)["urls"]
     assert (url["status"], url["last_checked"]) == ("unknown", None)
+
+
+SHOP = "a/compose:shop"
+
+
+@pytest.fixture
+def unjudged(parts, monkeypatch):
+    """The app's own watcher keeps no health, so a test decides what is stored."""
+
+    async def keep_nothing(*args) -> None:
+        return None
+
+    monkeypatch.setattr(parts.service_health, "record", keep_nothing)
+
+
+def store_health(client, parts, health: str, at: datetime) -> None:
+    client.portal.call(HealthStore.record, parts.service_health, "a", SHOP, health, at)
+
+
+def shop_detail(client):
+    return client.get(f"/api/services/{SHOP}").json()
+
+
+def test_the_detail_says_since_when_the_service_has_had_its_health(unjudged, stocked, parts):
+    store_health(stocked, parts, "degraded", T0)
+    body = shop_detail(stocked)
+    assert body["service"]["health"] == "degraded"
+    assert datetime.fromisoformat(body["health_since"]) == T0
+
+
+def test_a_service_never_judged_has_no_since(unjudged, stocked):
+    assert shop_detail(stocked)["health_since"] is None
+
+
+def test_a_stored_health_that_is_not_the_current_one_gives_no_since(unjudged, stocked, parts):
+    store_health(stocked, parts, "ok", T0)  # e.g. the last judgement before the backend stopped
+    assert shop_detail(stocked)["service"]["health"] == "degraded"
+    assert shop_detail(stocked)["health_since"] is None
+
+
+def test_the_apps_watcher_keeps_the_since_the_detail_shows(stocked, parts):
+    for _ in range(100):
+        if stocked.portal.call(parts.service_health.current, SHOP) is not None:
+            break
+        time.sleep(0.02)
+    stored = stocked.portal.call(parts.service_health.current, SHOP)
+    assert stored is not None and stored[0] == "degraded"
+    assert datetime.fromisoformat(shop_detail(stocked)["health_since"]) == stored[1]
+
+
+def test_the_detail_lists_each_urls_recent_checks_oldest_first(stocked, parts):
+    first = record_check(
+        stocked, parts, UrlCheck(url="http://a/", ok=True, status=200, latency_ms=42), age_s=60
+    )
+    failing = UrlCheck(
+        url="http://a/", ok=False, status=500, latency_ms=9, error="expected 200, got 500 hunter2"
+    )
+    second = record_check(stocked, parts, failing, age_s=30)
+    record_check(stocked, parts, UrlCheck(url="http://gone/", ok=True, latency_ms=1))
+    body = shop_detail(stocked)
+    assert body["recent_checks"] == [
+        {
+            "url": "http://a/",
+            "checks": [
+                {
+                    "ok": True,
+                    "status_code": 200,
+                    "latency_ms": 42,
+                    "checked_at": first.isoformat().replace("+00:00", "Z"),
+                },
+                {
+                    "ok": False,
+                    "status_code": 500,
+                    "latency_ms": 9,
+                    "checked_at": second.isoformat().replace("+00:00", "Z"),
+                },
+            ],
+        }
+    ]
+    assert "hunter2" not in json.dumps(body)  # no error text, no body
+
+
+def test_the_detail_lists_at_most_the_last_checks_per_url(stocked, parts):
+    for n in range(HISTORY_PER_URL + 5):
+        check = UrlCheck(url="http://a/", ok=True, status=200, latency_ms=n)
+        record_check(stocked, parts, check, age_s=1000 - n)
+    [url] = shop_detail(stocked)["recent_checks"]
+    assert [c["latency_ms"] for c in url["checks"]] == list(range(5, HISTORY_PER_URL + 5))
+
+
+def test_a_service_with_no_checks_lists_its_urls_with_none(stocked):
+    assert shop_detail(stocked)["recent_checks"] == [{"url": "http://a/", "checks": []}]
+    redis = stocked.get("/api/services/b/container:redis").json()
+    assert redis["recent_checks"] == []
 
 
 def test_services_without_filter_lists_all_hosts(stocked):

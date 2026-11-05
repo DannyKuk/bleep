@@ -138,6 +138,26 @@ class MemoryStore:
         finally:
             await conn.close()
 
+    async def votes(self, incident_ids: list[str]) -> dict[str, dict[FeedbackTarget, Vote]]:
+        """Each incident's votes by target, without notes; an incident with none is left out."""
+        if not incident_ids:
+            return {}
+        conn = await self.db.connect()
+        try:
+            marks = ", ".join("?" * len(incident_ids))
+            async with conn.execute(
+                "SELECT incident_id, target, vote FROM incident_feedback"
+                f" WHERE incident_id IN ({marks})",
+                incident_ids,
+            ) as cursor:
+                rows = await cursor.fetchall()
+        finally:
+            await conn.close()
+        votes: dict[str, dict[FeedbackTarget, Vote]] = {}
+        for row in rows:
+            votes.setdefault(row["incident_id"], {})[row["target"]] = row["vote"]
+        return votes
+
     async def set_feedback(
         self, incident_id: str, target: FeedbackTarget, vote: Vote, note: str | None = None
     ) -> Feedback:

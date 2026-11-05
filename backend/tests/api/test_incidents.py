@@ -122,6 +122,27 @@ def test_list_is_newest_first_with_status_filter_limit_and_offset(app_client, pa
     assert [i["id"] for i in page] == [second.id]
 
 
+def test_list_items_carry_the_humans_votes_without_the_note(app_client, parts):
+    rated = open_incident(app_client, parts, "a/one")
+    half = open_incident(app_client, parts, "a/two")
+    call(app_client, parts.memory.set_feedback, rated.id, "diagnosis", "up", "spot on hunter2")
+    call(app_client, parts.memory.set_feedback, rated.id, "proposal", "up")
+    call(app_client, parts.memory.set_feedback, rated.id, "proposal", "down")  # replaces the up
+    call(app_client, parts.memory.set_feedback, half.id, "proposal", "up")
+
+    response = app_client.get("/api/incidents")
+    votes = {i["id"]: i["votes"] for i in response.json()}
+    assert votes[rated.id] == {"diagnosis": "up", "proposal": "down"}
+    assert votes[half.id] == {"diagnosis": None, "proposal": "up"}
+    assert "hunter2" not in response.text
+
+
+def test_an_incident_with_no_feedback_has_no_votes(app_client, parts):
+    open_incident(app_client, parts)
+    [item] = app_client.get("/api/incidents").json()
+    assert item["votes"] == {"diagnosis": None, "proposal": None}
+
+
 @pytest.mark.parametrize(
     "params", [{"limit": 0}, {"limit": 201}, {"offset": -1}, {"status": "sleeping"}]
 )

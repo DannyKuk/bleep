@@ -18,7 +18,7 @@ How the dashboard signs in and what it reads (`auth/`, `api/`).
 
 ### Health rules
 
-One pure function per level (`watcher/health.py`, shared by the API and the watcher's recheck after a quiet), table-tested for every state.
+One pure function per level (`watcher/health.py`, shared by the API, the watcher's recheck after a quiet and its stored health with its "since", #232), table-tested for every state.
 
 - **Container.** Running with health `healthy` or `none` is `ok`. Running and `starting`, or state `restarting`, is `degraded`. Running and `unhealthy`, `dead`, `created`, `paused`, or `exited` with a crash exit code (anything but 0 and 143, or none known), is `down`. `exited` with 0 or 143 (SIGTERM, what `docker stop` leaves) is `stopped`. Any other state is `unknown`. Reason: degraded means "may fix itself", down means "needs someone"; a paused container serves nothing; a clean exit is somebody's choice, not a fault. 137 stays a crash because the OOM killer leaves it too (#8, #13).
 - **Service.** The worst of its containers and its URLs, where a `failing` URL counts as `down`. With no data it is `unknown`. A finished one-shot (exited 0, restart policy `no` or empty, e.g. Molecula's `fetch` init job) is left out while another container is there. When everything has exited cleanly the service is `stopped`, whatever its URLs say, because a failing URL is expected when it was shut down. One container stopped on purpose among running ones makes the service `degraded`. Crashes stay `down`. Reason: one dead dependency makes the service unusable, but a finished job or a deliberate stop is not an outage (#8, #13).
@@ -33,7 +33,7 @@ What the dashboard reads about incidents and how it answers an approval (`api/in
 
 | Route | Returns |
 |---|---|
-| `GET /api/incidents?status=&service_id=&limit=&offset=` | `Incident[]`, newest first; `limit` 1 to 200 (default 50); `service_id` keeps one service's |
+| `GET /api/incidents?status=&service_id=&limit=&offset=` | `IncidentListItem[]`: each `Incident` with `votes` `{diagnosis, proposal}`, each `"up"`, `"down"` or null; newest first; `limit` 1 to 200 (default 50); `service_id` keeps one service's |
 | `GET /api/incidents/{id}` | `IncidentDetail`: the incident, `diagnosis`, `proposal`, `approval` (the latest, pending or decided), `outcome`, `report`, each null until the run has it, and `feedback`, the human's votes |
 | `GET /api/incidents/{id}/events?after=` | `IncidentEvent[]` with `seq > after`, in seq order |
 | `POST /api/incidents/{id}/decision` | body `{approval_id, kind, text?}`; 200 with the recorded `Decision`, or 409 `{detail, decided_via}` |
@@ -48,6 +48,7 @@ What the dashboard reads about incidents and how it answers an approval (`api/in
 - **Other refusals are 409 too, with `decided_via: null`:** nothing asked yet ("Nothing is waiting for a decision"), or the incident already resolved, closed or failed. An unknown incident is 404. Reason: one error shape for every "this decision did not count" (#21).
 - **An instruction needs text; an approve or reject drops it.** Text is trimmed, at most 2,000 characters; an empty instruction is 422. Reason: the text goes into Propose's prompt as the human's instruction, and only an instruction has a use for it (#21).
 - **Feedback needs the finding it rates.** A vote on the diagnosis or the plan before the run has one is 409 "There is no diagnosis to rate yet" (or "plan"). The note is trimmed, an empty one dropped, at most 200 characters, the length memory keeps (#87). A second vote on the same target replaces the first, and the memory record gets the votes now or when Report writes it ([memory](memory.md)). Reason: a vote on nothing would be remembered as a judgement on a finding nobody saw (#30).
+- **The list carries the human's votes, not their notes.** `votes` comes from `incident_feedback` in one query per page (`MemoryStore.votes`); an incident nobody rated has both null. Reason: the service page shows right or wrong per past incident without a detail read for each, and a note is free text that belongs on the incident's own page (#232).
 - **Recoveries are newest first.** `IncidentRepo.recoveries` orders by time descending. Reason: with a limit, oldest first would show the same old rows forever (#21).
 
 ### Services and their memory
@@ -56,13 +57,16 @@ The service page's reads and a service's facts (`api/hosts.py`, `api/memory.py`)
 
 | Route | Returns |
 |---|---|
-| `GET /api/services/{id}` | `ServiceDetail`: the `ServiceView` the overview shows, its `rules` and its host's `host_rules`; 404 for a service the registry does not know, or whose host is gone |
+| `GET /api/services/{id}` | `ServiceDetail`: the `ServiceView` the overview shows, its `rules` and its host's `host_rules`, `health_since` (null when not known) and `recent_checks`, per configured URL its last checks oldest first (`ok`, `status_code`, `latency_ms`, `checked_at`); 404 for a service the registry does not know, or whose host is gone |
 | `GET /api/services/{id}/facts` | `ServiceFact[]`, oldest first: `{id, text, source: "human" \| "report", created_at, incident_id}` |
 | `POST /api/services/{id}/facts` | body `{text}`; 200 with the new `ServiceFact` (`source: "human"`); 404 for an unknown service |
 | `DELETE /api/services/{id}/facts/{fact_id}` | 204; 404 when the service has no such fact |
 
 - **A service id is a path: `demo/compose:shop`.** The routes take it with `{service_id:path}`, and the facts router is registered before the hosts router, because `GET /services/{id:path}` would also match `.../facts`. The dashboard encodes the id (`demo%2Fcompose%3Ashop`); the backend sees it decoded either way. Reason: the id is the registry's own key, and a second, URL-safe id would have to be kept in step with it (#30).
 - **The service page reuses the overview's view and the incident API.** `ServiceDetail` wraps the same `ServiceView` (containers, URLs, health, open incident) and adds only the rules; past incidents are `GET /api/incidents?service_id=`, drawn on the page as rows with the shared status badge (#97). Reason: one shape per thing, so the page and the overview cannot disagree (#30).
+- **"Since" and the recent checks are on the detail only.** `GET /api/services` and `GET /api/hosts` keep their shape; `ServiceDetail` gains `health_since` and `recent_checks`. Reason: the overview polls every service every 10 s and shows neither, so it should not pay for 30 rows per URL (#232).
+- **`health_since` is given only when the stored health is the one judged now.** It is the `since` of the watcher's `service_health` row ([watcher](watcher.md#health-since-and-recent-checks-232)); when that row's health differs from the view's (the watcher has not judged the change yet, or the view is `unknown` after a restart before the first listing), it is null. Reason: "healthy since" next to a `down` pill, or a time from before an outage, would be a wrong answer, and null lets the page say nothing (#232).
+- **A recent check is the result and its numbers only:** `ok`, `status_code`, `latency_ms`, `checked_at`, no error text and no body. Each configured URL is listed, with an empty list before its first check; results for URLs no longer configured are left out. Reason: the error text can carry what a server wrote, the latest check's status already says why it failed, and the strip only needs green or red with a time (#232).
 - **A fact needs a service Bleep knows, and text.** Trimmed, at most 200 characters (the length memory keeps, #87), empty is 422; it is cleaned like every memory text. Listing and deleting work for a service that is gone, so its memory can still be cleared. Reason: a fact for a typo'd id would never reach an incident (#30).
 
 ### The stream

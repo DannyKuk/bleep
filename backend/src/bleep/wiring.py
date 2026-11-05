@@ -55,6 +55,7 @@ from bleep.store.db import Database
 from bleep.store.secrets import SecretName, SecretStore
 from bleep.tools.default import default_registry
 from bleep.tools.docker_act import docker_act_tools
+from bleep.watcher.health_store import HealthStore
 from bleep.watcher.http_checks import UrlCheckStore
 
 
@@ -82,6 +83,7 @@ class AppParts:
     knowledge_refresher: KnowledgeRefresher
     prompt_overrides: PromptOverrideStore
     url_checks: UrlCheckStore
+    service_health: HealthStore
     secrets: SecretStore
     dashboard_hosts: DashboardHosts
 
@@ -261,6 +263,7 @@ def build_parts(
         ),
         prompt_overrides=PromptOverrideStore(db, guard_log),
         url_checks=UrlCheckStore(db),
+        service_health=HealthStore(db),
         secrets=secrets,
         dashboard_hosts=dashboard_hosts,
     )
