@@ -186,10 +186,12 @@ async def decide(
 
     decision = Decision(kind=body.kind, text=body.text, via="dashboard", at=utcnow())
     won = await parts.approvals.resolve(incident_id, decision, body.approval_id)
-    if won is None:  # another channel answered between the read above and this write
+    if won is None:  # another channel answered, or the incident closed, since the read above
         latest = await parts.approvals.current(incident_id)
         if latest is not None and latest.id == body.approval_id and latest.decision is not None:
             return _already_decided(latest.decision)
+        if latest is not None and latest.id == body.approval_id and latest.closed:
+            return _conflict("The incident was closed before anyone answered")
         return _conflict("That plan was replaced by a newer one; reload to see it")
     await runner.resume(incident_id, won, body.approval_id)
     return won

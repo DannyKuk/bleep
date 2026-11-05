@@ -269,6 +269,34 @@ async def test_an_instruction_or_no_that_lands_during_the_write_wins_too(tmp_pat
     assert (await env.deps.approvals.current(incident.id)).decision.kind == kind
 
 
+async def test_a_close_from_outside_during_the_write_is_told_as_a_close_not_a_decision(tmp_path):
+    """Leave alone closes the incident while "This is expected" writes the settings (#277): the
+    plan was never decided, so the answer must not say it was or that the incident stays open."""
+    env = await graph_env(tmp_path)
+    incident = await opened(env, death(shop(env), 0))
+    await env.repo.set_status(incident.id, "awaiting_approval")
+    await env.deps.approvals.request(incident.id, PLAN, [])
+    async with open_checkpointer(tmp_path / "c.sqlite") as saver:
+        rig = Rig(env, IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus))
+        write = rig.settings.expect_exits
+
+        async def closed_meanwhile(service, entries):
+            await env.repo.close_unfinished(incident.id)
+            await write(service, entries)
+
+        rig.settings.expect_exits = closed_meanwhile  # type: ignore[method-assign]
+        answer = await rig.expectations.expected(incident.id, "dashboard")
+
+    assert not answer.done
+    assert answer.text.endswith(
+        "The incident was closed meanwhile, before anyone answered its plan."
+    )
+    assert "stays open" not in answer.text
+    assert (await env.repo.get(incident.id)).status == "closed"
+    record = await env.deps.approvals.current(incident.id)
+    assert record.closed and record.decision is None
+
+
 async def test_it_is_not_done_when_a_plan_started_running_and_the_close_was_spared(tmp_path):
     env = await graph_env(tmp_path)
     incident = await opened(env, death(shop(env), 0))

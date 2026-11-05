@@ -6,7 +6,7 @@ CREATE TABLE approvals (
     plan_hash TEXT NOT NULL,
     proposal TEXT NOT NULL,           -- Proposal JSON
     snapshots TEXT NOT NULL,          -- [TargetSnapshot] JSON, one per target container
-    status TEXT NOT NULL,             -- pending, approved, rejected, instructed
+    status TEXT NOT NULL,             -- pending, approved, rejected, instructed; closed (0026)
     requested_at TEXT NOT NULL,
     decision TEXT,                    -- Decision JSON, set with the status
     reminders INTEGER NOT NULL DEFAULT 0

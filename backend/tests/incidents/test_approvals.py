@@ -410,3 +410,38 @@ async def test_a_yes_racing_the_close_either_wins_first_or_finds_the_approval_cl
             assert record.closed and record.decision is None
             assert await store.grant(incident_id) is None
     assert await store.pending() == []
+
+
+async def test_a_question_stored_after_its_incident_closed_is_closed_at_once(db):
+    """The run's Approval node can commit its question just after an outside close: `end`
+    closes the incident before the cancel of the run reaches it (#277)."""
+    incident_id = await open_incident(db)
+    await IncidentRepo(db).close_unfinished(incident_id)
+    store = ApprovalStore(db, SECRET, Clock())
+    request = await store.request(incident_id, restart(), [snap()])
+
+    record = await store.current(incident_id)
+    assert record is not None and record.id == request.id
+    assert record.closed and record.decision is None
+    assert await store.resolve(incident_id, decide(), request.id) is None
+
+
+async def test_the_in_memory_approvals_close_an_unanswered_approval_like_the_store(db):
+    from bleep.graph.deps import InMemoryApprovals
+
+    repo = IncidentRepo(db)
+    answered, unanswered, late = [await open_incident(db, f"a/s{n}") for n in range(3)]
+    store = InMemoryApprovals(SECRET, repo)
+    for incident_id in (answered, unanswered):
+        await store.request(incident_id, restart(), [snap()])
+    await store.resolve(answered, decide("reject"))
+    for incident_id in (answered, unanswered, late):
+        await repo.close_unfinished(incident_id)
+    await store.request(late, restart(), [snap()])  # stored after the close
+
+    assert not (await store.current(answered)).closed
+    for incident_id in (unanswered, late):
+        record = await store.current(incident_id)
+        assert record.closed and record.decision is None
+        assert await store.resolve(incident_id, decide()) is None
+        assert await store.grant(incident_id) is None

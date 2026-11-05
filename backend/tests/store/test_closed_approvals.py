@@ -48,3 +48,22 @@ async def test_a_pending_approval_left_on_a_finished_incident_is_closed_by_the_m
     assert left_behind is not None and left_behind.closed and left_behind.decision is None
     assert waiting is not None and not waiting.closed
     assert [record.id for record in await store.pending()] == ["ap1"]
+
+
+async def test_both_triggers_that_close_unanswered_approvals_exist_after_migrate(tmp_path):
+    """A later migration that rebuilds `incidents` or `approvals` drops their triggers without an
+    error; this fails until it creates them again."""
+    db = Database(tmp_path / "bleep.sqlite")
+    await db.migrate()
+    conn = await db.connect()
+    try:
+        async with conn.execute(
+            "SELECT name, tbl_name FROM sqlite_master WHERE type = 'trigger'"
+        ) as cursor:
+            triggers = {(row[0], row[1]) for row in await cursor.fetchall()}
+    finally:
+        await conn.close()
+    assert {
+        ("approvals_close_with_incident", "incidents"),
+        ("approvals_closed_on_insert", "approvals"),
+    } <= triggers

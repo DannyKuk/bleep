@@ -265,6 +265,10 @@ class TelegramBot:
             return
         kind: Literal["approve", "reject"] = "approve" if verb == "approve" else "reject"
         incident_id = known[0]
+        if await self._closed(incident_id, approval_id):  # before why a yes is not offered here
+            await self.client.answer_callback(callback_id, answer("answer_closed"))
+            await self.client.clear_buttons(self.chat_id, message_id)
+            return
         if kind == "approve" and await self._refused_plan(incident_id, approval_id):
             await self.client.answer_callback(callback_id, answer("answer_refused_plan"))
             return
@@ -285,6 +289,10 @@ class TelegramBot:
         await self.client.answer_callback(callback_id, text)
         if result.done:  # a failed press leaves Approve and Reject to a plan that still waits
             await self.client.clear_buttons(self.chat_id, message_id)
+
+    async def _closed(self, incident_id: str, approval_id: str) -> bool:
+        current = await self.approvals.current(incident_id)
+        return current is not None and current.id == approval_id and current.closed
 
     async def _refused_plan(self, incident_id: str, approval_id: str) -> bool:
         current = await self.approvals.current(incident_id)

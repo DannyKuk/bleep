@@ -273,6 +273,15 @@ def test_an_approval_its_incident_was_closed_under_is_reported_closed_not_pendin
     assert body["approval"]["decision"] is None
 
 
+def test_a_question_stored_just_after_the_close_is_reported_closed(app_client, parts):
+    incident = open_incident(app_client, parts)
+    call(app_client, parts.incidents.close_unfinished, incident.id)
+    ask(app_client, parts, incident.id)  # the run's Approval node commits after the close
+
+    approval = app_client.get(f"/api/incidents/{incident.id}").json()["approval"]
+    assert approval["status"] == "closed"
+
+
 # --- events ---
 
 
@@ -404,6 +413,28 @@ def test_losing_the_race_inside_resolve_is_409_naming_the_winner(
     response = post_decision(app_client, incident.id, approval_id, "approve")
     assert response.status_code == 409
     assert response.json()["decided_via"] == "telegram"
+    assert resumes.calls == []
+
+
+def test_a_yes_that_loses_to_an_outside_close_is_409_saying_it_closed_unanswered(
+    app_client, parts, resumes, monkeypatch
+):
+    """Leave alone closes the incident between the route's read and its own resolve (#277)."""
+    incident = open_incident(app_client, parts)
+    approval_id = ask(app_client, parts, incident.id)
+    resolve = parts.approvals.resolve
+
+    async def closed_first(incident_id, decision, approval_id=None):
+        await parts.incidents.close_unfinished(incident_id)
+        return await resolve(incident_id, decision, approval_id)
+
+    monkeypatch.setattr(parts.approvals, "resolve", closed_first)
+    response = post_decision(app_client, incident.id, approval_id, "approve")
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "The incident was closed before anyone answered",
+        "decided_via": None,
+    }
     assert resumes.calls == []
 
 

@@ -31,6 +31,7 @@ RUNNING = ("executing", "verifying")
 EXIT_KINDS = ("container_died", "down_past_grace", "restart_loop")
 CLOSED_NOTICE = "Closed: you said this is expected."
 DECISION_TEXT = "This is expected."
+CLOSED_MEANWHILE = "The incident was closed meanwhile, before anyone answered its plan."
 _CHANNEL = {"telegram": "Telegram", "dashboard": "the dashboard"}
 
 
@@ -172,11 +173,14 @@ class Expectations:
         return Answer(True, text)
 
     async def _lost(self, incident_id: str, recorded: str, via: Channel) -> Answer:
-        """A decision on another channel won the plan after the expectation was written."""
+        """A decision on another channel won the plan after the expectation was written, or the
+        incident was closed from outside (quiet, a removed host) before anyone answered it."""
         latest = await self.approvals.current(incident_id)
+        await self.bus.publish(incident_id, "expected", {"text": recorded, "via": via})
+        if latest is not None and latest.closed:
+            return Answer(False, f"{recorded} {CLOSED_MEANWHILE}")
         won = latest.decision if latest is not None else None
         where = f" on {_CHANNEL[won.via]}" if won is not None else ""
-        await self.bus.publish(incident_id, "expected", {"text": recorded, "via": via})
         return Answer(
             False, f"{recorded} The plan was already decided{where}, so the incident stays open."
         )

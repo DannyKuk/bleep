@@ -155,7 +155,7 @@ async def graph_env(
         ledger=CostLedger(db),
         incidents=repo,
         action_log=ActionLog(db),
-        approvals=InMemoryApprovals(SECRET),
+        approvals=InMemoryApprovals(SECRET, repo),
         guard_log=guard_log,
         sleep=no_wait,
         http=httpx.AsyncClient(transport=httpx.MockTransport(unreachable_urls)),

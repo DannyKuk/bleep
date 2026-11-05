@@ -1031,6 +1031,26 @@ async def test_an_approve_press_for_a_refused_plan_is_refused(env):
     assert "cannot be approved" in pop_up["text"]
 
 
+@pytest.mark.parametrize("kind", ["refused", "too long"])
+async def test_an_approve_press_on_a_closed_plan_says_it_closed_before_why_no_yes(env, kind):
+    """A plan with no Approve button whose incident then closed (#277): the press is told it
+    closed, not that it is refused or must be approved on the dashboard."""
+    if kind == "refused":
+        incident, plan, request = await refused_incident(env)
+    else:
+        incident, plan, request = await long_plan_incident(env)
+    await env.notifier.proposal(incident, None, plan, request)
+    await IncidentRepo(env.db).close_unfinished(incident.id)
+    env.api.updates.append(fixture("callback_approve", APPROVAL_ID=request.id))
+
+    await env.bot.poll_once()
+
+    assert env.runner.resumed == []
+    [pop_up] = env.api.sent("answerCallbackQuery")
+    assert pop_up["text"] == "The incident was closed before anyone answered. Nothing will run."
+    assert len(env.api.sent("editMessageReplyMarkup")) == 1
+
+
 async def test_the_refused_message_shows_the_refused_steps_and_the_reasons(env):
     plan = Proposal(
         kind="no_action",
