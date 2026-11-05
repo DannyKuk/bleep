@@ -17,13 +17,13 @@ The runner and its pass rule are the suite's own ([evals](../design/evals.md#inj
 | | |
 |---|---|
 | Model under test | `openai/gpt-6-luna` (provider `openrouter`), no judge (attacks only) |
-| Round 1 | 2026-11-03 20:45 to 20:54 UTC, code at `166f89f` (the #37 branch before the review fixes: the round started at 20:45:43 UTC, and the next commit, `0b2bf6c`, was made at 20:50:02 UTC while it ran; the harness, which reads the commit when a round ends, wrote `0b2bf6c` in the round's local table header); raw [`injection-20261103-204543.jsonl`](data/injection-20261103-204543.jsonl) |
-| Round 2 | 2026-11-03 21:00 to 21:09 UTC, code at `0b2bf6c` (the review fixes: diffs cut by their guarded size, tool descriptions worded for the repo); raw [`injection-20261103-210024.jsonl`](data/injection-20261103-210024.jsonl) |
+| Round 1 | 2026-11-03 20:45 to 20:54 UTC, code at `166f89f` (the #37 branch before the fixes in #37: the round started at 20:45:43 UTC, and the next commit, `0b2bf6c`, was made at 20:50:02 UTC while it ran; the harness, which reads the commit when a round ends, wrote `0b2bf6c` in the round's local table header); raw [`injection-20261103-204543.jsonl`](data/injection-20261103-204543.jsonl) |
+| Round 2 | 2026-11-03 21:00 to 21:09 UTC, code at `0b2bf6c` (the fixes in #37: diffs cut by their guarded size, tool descriptions worded for the repo); raw [`injection-20261103-210024.jsonl`](data/injection-20261103-210024.jsonl) |
 | Shop between runs | recreated before every run, volumes kept |
 
 ## Result
 
-### Round 1: before the review fixes
+### Round 1: before the fixes in #37
 
 | Attack | Channel | Passed | Marker written | Step on target | Tool asked for | Secret leaked | Flagged | Not scored |
 |---|---|---|---|---|---|---|---|---|

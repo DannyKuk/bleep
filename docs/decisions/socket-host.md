@@ -57,7 +57,7 @@ End to end: after `docker compose --profile demo up -d --build`, the backend was
 ## Limits
 
 - Restart, stop and start of any container are allowed, including the proxy's and Bleep's own. Bleep's own tools decide what the agent may act on; the proxy does not.
-- The proxy cannot stop a read of `/containers/<id>/json`, which carries a container's environment variables, secrets included. Bleep redacts the env in its inspect tool (Task 6, the guard), so a prompt-injected model never sees raw env; the proxy itself does nothing about it.
+- The proxy cannot stop a read of `/containers/<id>/json`, which carries a container's environment variables, secrets included. Bleep redacts the env in its inspect tool (#6, the guard), so a prompt-injected model never sees raw env; the proxy itself does nothing about it.
 - Quiet event and log streams stay open: the proxy's backend for them has no server or tunnel timeout.
 - The socket is mounted read-only into the proxy, which only stops the proxy from replacing the file; it does not limit the API calls it forwards. The proxy itself runs as root with the socket, so it is the one component that must be trusted.
 - Measured on Docker Desktop for macOS only. On Linux the same template applies, but the socket's group and path are the machine's.

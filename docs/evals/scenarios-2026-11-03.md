@@ -272,7 +272,7 @@ hung came right after disk-full in Round 1, and all three of its diagnoses blame
 
 ## Decided along the way
 
-- **The model under test is `openai/gpt-6-luna`, not the local Qwen**, after Round 0 (Danny's ruling). It is Bleep's default, so this is the baseline people get, and the local model has its own task (#35).
+- **The model under test is `openai/gpt-6-luna`, not the local Qwen**, after Round 0. It is Bleep's default, so this is the baseline people get, and the local model has its own task (#35).
 - **The root cause is graded by hand, not by a judge model.** The default judge, `openai/gpt-6-luna`, is the model under test, and the harness refuses that. Claude (Opus 5.5) graded each run against the scenario's expected root cause, with a note per grade. The harness gained a `manual` judge and `python -m evals.report --grades` for this ([design](../design/evals.md)). The GEval judge stays available.
 - **Each scenario has 400 s**, down from 900 s, after the timing-check run took 138 s.
 - **The suite ran in three batches of one run per scenario**, appended to one raw file with `--append`, so the shared demo shop could alternate with #34 under one lock. Each batch rewrote the same report.

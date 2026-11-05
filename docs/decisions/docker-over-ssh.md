@@ -1,6 +1,6 @@
 # Docker over SSH: forward the socket through asyncssh
 
-> **Answer:** one asyncssh connection per host. It forwards the remote Docker socket to a local unix socket (`conn.forward_local_path`), the `docker` SDK talks to that local socket, and the same connection runs the allowlisted shell commands. It worked on both hosts, including the macOS Docker Desktop host where the usual `ssh://` route fails because `docker` is not on the non-interactive `PATH`. `docker_socket` defaults to `/var/run/docker.sock` on Linux and needs per-host config for Docker Desktop (`/Users/<user>/.docker/run/docker.sock`). Services are keyed by `coolify.applicationUuid`, else a prefixed `coolify.applicationId`, else the compose project, else the container name, and shown under `coolify.resourceName` (this replaces the plan's `resourceName` then `applicationId` order, because `resourceName` is not unique). A dropped connection does **not** raise: the event iterator just ends, so Task 4 must treat any end of the stream that it did not ask for as a drop and reconnect with a new connection, forward and client.
+> **Answer:** one asyncssh connection per host. It forwards the remote Docker socket to a local unix socket (`conn.forward_local_path`), the `docker` SDK talks to that local socket, and the same connection runs the allowlisted shell commands. It worked on both hosts, including the macOS Docker Desktop host where the usual `ssh://` route fails because `docker` is not on the non-interactive `PATH`. `docker_socket` defaults to `/var/run/docker.sock` on Linux and needs per-host config for Docker Desktop (`/Users/<user>/.docker/run/docker.sock`). Services are keyed by `coolify.applicationUuid`, else a prefixed `coolify.applicationId`, else the compose project, else the container name, and shown under `coolify.resourceName` (this differs from the obvious `resourceName`-first order, because `resourceName` is not unique). A dropped connection does **not** raise: the event iterator just ends, so #4 must treat any end of the stream that it did not ask for as a drop and reconnect with a new connection, forward and client.
 
 > **Update (2026-11-02, #13):** the watcher does not hold the event stream open. It pulls: every 15 s per host it reconnects if needed, reads `events(since=cursor, until=now)` and lists containers. Reason: with agentless SSH to a few hosts, some of which sleep (a laptop, a spare Mac), a dropped link is normal and a pull catches up from the cursor with no stream state to repair. The cost is up to 15 s of detection delay and one listing per tick per host; at hundreds of hosts an agent on each host would be the right design. The stream notes below stay as evidence for the connection behaviour. `SshSession.open()` now also has an outer timeout, so a host that vanished without a FIN fails a tick fast.
 
@@ -17,7 +17,7 @@ Both on 2026-11-02 (figures are from the saved results of the final run; ranges 
 - **A, socket forward:** `asyncssh.connect`, `forward_local_path(local, remote_socket)`, `docker.DockerClient("unix://local")`: ping, list, 50 log lines, a 30 s event stream.
 - **B, the usual route:** `DockerClient("ssh://user@host")` with `use_ssh_client=True` and with paramiko.
 - **Connection drop:** `close()` and `abort()` of the connection during an open event stream.
-- **Shell commands** over the same connection, saved as fixtures for Task 7.
+- **Shell commands** over the same connection, saved as fixtures for #7.
 - **Labels** of Coolify apps and of Coolify's own containers.
 
 Hosts: an M1 Mac (macOS 27.2, Docker Desktop 29.9.2) and a production Coolify server (Linux 6.8, Docker 29.9.2), the latter strictly read-only.
@@ -32,7 +32,7 @@ Hosts: an M1 Mac (macOS 27.2, Docker Desktop 29.9.2) and a production Coolify se
 | B: `ssh://`, `use_ssh_client=True` | **fails**, `docker: command not found` on the remote | works, 797 ms for a ping (earlier runs 753-1,112 ms, not saved) |
 | B: `ssh://`, paramiko | **fails**, same | works, 454 ms for a ping (earlier runs 425-695 ms, not saved) |
 | Remote `PATH` has `docker` | no (`/usr/bin:/bin:/usr/sbin:/sbin`) | yes |
-| Engine socket | `/Users/dannykukic/.docker/run/docker.sock`; no `/var/run/docker.sock` | `/var/run/docker.sock` |
+| Engine socket | `/Users/<user>/.docker/run/docker.sock`; no `/var/run/docker.sock` | `/var/run/docker.sock` |
 | asyncssh connect | 185-275 ms | 193-197 ms |
 
 Dropping the connection during an open event stream:
@@ -53,29 +53,29 @@ Dropping the connection during an open event stream:
 
 ## Decided along the way
 
-- **Mechanism: A (asyncssh forward).** `ssh://` plus a per-host `docker_path` was the plan's fallback and is not needed; it also could not work, because the SDK has no such option.
+- **Mechanism: A (asyncssh forward).** `ssh://` plus a per-host `docker_path` was the fallback and is not needed; it also could not work, because the SDK has no such option.
 - **`docker_socket` per host.** Default `/var/run/docker.sock` (Linux). On Docker Desktop for Mac the path is `/Users/<user>/.docker/run/docker.sock` and goes into the host's config. A missing `/var/run/docker.sock` on a Mac is expected, not a fault.
 - **All SDK calls in worker threads** (`asyncio.to_thread`), including `DockerClient(...)` and attribute access that loads data (`container.image`). Use `containers.list(sparse=True)` and read what is needed from the listing; the default does one inspect per container.
 - **Events: `timeout=None`, no `until`.** The default read timeout is 60 s and a quiet host sends nothing. Ending the stream is done by closing the connection, which stopped the reader thread within 3 ms (0.8-2.9 ms measured).
 - **Reconnect builds everything again.** After a drop the local socket file is gone, so the old `DockerClient` is useless: open a new asyncssh connection, a new forward (a new temp socket path) and a new `DockerClient`.
 - **Detect silent drops with asyncssh keepalives** (`keepalive_interval`, `keepalive_count_max`), so a vanished network path closes the connection and ends the stream instead of blocking it.
-- **Shell commands are built from constant argv lists joined with `shlex.join`.** SSH exec takes one string; the allowlist in Task 7 must quote every argument and take no free-form input. Remote shells differ (the Mac's is zsh).
-- **Task 7 parses what the captures show**, in [`captures/`](../spikes/ssh-docker/captures/): `df -P` on Linux repeats the root filesystem once per container `overlay` mount, so count a device once and prefer `/`; macOS needs `vm_stat` (16384-byte pages here) and `sysctl -n hw.memsize hw.ncpu vm.loadavg`, whose load comes as `{ 1.50 2.32 4.75 }`; `top` shows process names, not arguments.
+- **Shell commands are built from constant argv lists joined with `shlex.join`.** SSH exec takes one string; the allowlist in #7 must quote every argument and take no free-form input. Remote shells differ (the Mac's is zsh).
+- **#7 parses what the captures show**, in [`captures/`](../spikes/ssh-docker/captures/): `df -P` on Linux repeats the root filesystem once per container `overlay` mount, so count a device once and prefer `/`; macOS needs `vm_stat` (16384-byte pages here) and `sysctl -n hw.memsize hw.ncpu vm.loadavg`, whose load comes as `{ 1.50 2.32 4.75 }`; `top` shows process names, not arguments.
 - **Events: filter `exec_*`.** They made up every event in the saved sample of a Coolify host's stream (health checks, 108 events in 30 s), and the action text carries the whole command line. Keep only the event types that matter (container `start`, `die`, `kill`, `oom`, `stop`, `destroy`, `health_status`) and never store or show the action text of `exec_*`.
 - **Host keys:** the spike skipped checking (`known_hosts=None`); the product pins them.
 
-### What Task 4 must handle on a connection drop
+### What the engine must handle on a connection drop (#4)
 
 1. The event iterator ends **without an exception**. `stream_events` treats every end it did not request as a drop. A deliberate stop (shutdown, host removed) sets a stop flag **before** closing the connection, so it is not mistaken for a drop. The same applies to any SDK exception (`requests.exceptions.ConnectionError` wrapping `FileNotFoundError` once the socket file is gone).
 2. Check `conn.is_closed()` (or catch `asyncssh.Error`, `OSError`) to tell the cause; the response is the same: close what is left, then build a new connection, forward and client.
-3. Resuming events with `since=<time of the last event seen>` so nothing is missed is a **proposal that was not tested** here; Task 4 verifies it.
+3. Resuming events with `since=<time of the last event seen>` so nothing is missed is a **proposal that was not tested** here; #4 verifies it.
 4. Connect with `keepalive_interval=15` and `keepalive_count_max=3`, which bounds the detection of a silent drop at about 45 s. These values were not measured; the silent-drop case itself was not tested.
 5. Mark the host unreachable only after the reconnect attempts fail, with backoff; do not open an incident for one drop.
 6. Run `ping`, `list` and the event iterator in threads; never construct the client on the loop.
 
-**Acceptance test for Task 4:** a silent drop (the network path vanishes without a reset) is detected by the keepalive within the 45 s bound, the event stream ends, and the watcher reconnects.
+**Acceptance test for #4:** a silent drop (the network path vanishes without a reset) is detected by the keepalive within the 45 s bound, the event stream ends, and the watcher reconnects.
 
-### Coolify labels: the grouping rule for Task 5
+### Coolify labels: the grouping rule (#5)
 
 Keys found on real application containers (saved in [`captures/labels/`](../spikes/ssh-docker/captures/labels/)):
 
@@ -98,12 +98,12 @@ Each container's version is its own `coolify.version` label (the Coolify that de
 - **Preview deployments:** `coolify.pullRequestId` present and not `"0"` makes their own service, keyed `<uuid>-pr-<n>`.
 - **Coolify's own containers** (`coolify`, `coolify-db`, `coolify-redis`, `coolify-sentinel`, `coolify-proxy`) are not excluded. They have no application labels, so they fall back to the compose project (`source`, `coolify-proxy`), else the container name. `coolify-sentinel` has only `coolify.managed`, and no compose project, so it is keyed by its name.
 
-**This replaces the plan's `coolify.resourceName`, then `coolify.applicationId`, order.** `resourceName` is a name, not an id: two apps in different projects or environments can share it, and it would merge their incidents. The UUID is unique and is on every 4.5.x container, while `applicationId` exists only on older ones. In the saved data `backend` and `frontend` of one app share both `applicationUuid` and `resourceName` (`molecula`), so the UUID key still groups them together.
+**This differs from the obvious `coolify.resourceName`-first order.** `resourceName` is a name, not an id: two apps in different projects or environments can share it, and it would merge their incidents. The UUID is unique and is on every 4.5.x container, while `applicationId` exists only on older ones. In the saved data `backend` and `frontend` of one app share both `applicationUuid` and `resourceName` (`molecula`), so the UUID key still groups them together.
 
 ## Limits
 
 - **Two hosts, one Docker version (29.9.2).** Older engines, rootless Docker and Podman sockets were not tried.
-- **Coolify databases, one-click services and preview deployments were not on the host.** Their label sets (`coolify.type` other than `application`, `pullRequestId` other than 0) are unverified; Task 5 should group them by the same fallbacks and the compose project.
+- **Coolify databases, one-click services and preview deployments were not on the host.** Their label sets (`coolify.type` other than `application`, `pullRequestId` other than 0) are unverified; #5 should group them by the same fallbacks and the compose project.
 - **The compose step is test-only.** `--allow-test-container` writes to the host and the script refuses it unless `--os darwin`; it is never part of the product.
 - **No silent-drop test.** Only `close()` and `abort()` were tried; a network that vanishes without a reset was not.
 - **No container logs on the M1, and the sparse list only with 0 containers,** because it had no container running during the list.

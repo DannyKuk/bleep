@@ -1,17 +1,8 @@
 # Setup
 
-## Quick start (demo)
+## Running Bleep
 
-The demo profile lets Bleep watch the Docker engine of the machine it runs on, through a filtered socket proxy ([why](decisions/socket-host.md)).
-
-```bash
-cp .env.example .env    # set BLEEP_ADMIN_PASSWORD (12+ characters) and BLEEP_SECRET (a long random string)
-docker compose --profile demo up -d --build
-```
-
-Open http://localhost:3000 and log in with the admin password. Bleep refuses to start with a shorter password. A random secret: `openssl rand -hex 32`.
-
-For something to watch, start the demo shop with `docker compose -f demo/compose.yaml up -d --build`. It serves on port 8080; [Demo](demo.md) lists its faults and how to switch them.
+The [README's quick start](../README.md#quick-start) runs Bleep with the demo profile, which lets it watch the Docker engine of the machine it runs on through a filtered socket proxy ([why](decisions/socket-host.md)), and the demo shop for it to watch ([Demo](demo.md)). `BLEEP_ADMIN_PASSWORD` needs at least 12 characters, or Bleep refuses to start; a random `BLEEP_SECRET`: `openssl rand -hex 32`.
 
 Without the `demo` profile only the backend and the dashboard start, and the hosts file has to name a host you reach some other way.
 
@@ -28,7 +19,7 @@ Only `BLEEP_ADMIN_PASSWORD` and `BLEEP_SECRET` must be in `.env`: the dashboard 
 
 ### A first incident, end to end
 
-This runs the whole path from a dead container to the approval question, on the dashboard and in Telegram. It needs a model key and, for the Telegram half, a bot. Tests never do this; it is the manual check.
+This runs the whole path from a dead container to the approval question, on the dashboard and in Telegram. It needs a model key and, for the Telegram half, a bot.
 
 1. On the dashboard or in `.env` ([above](#keys-and-tokens-from-the-dashboard-or-env)): `OPENROUTER_API_KEY` (or, in `.env`, `LLM_PROVIDER=local` with `LOCAL_BASE_URL` and `LOCAL_MODEL`), and for Telegram `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (send the bot a message first, then read the chat id from `https://api.telegram.org/bot<token>/getUpdates`).
 2. Start Bleep and a throwaway container for it to watch, with no restart policy:
@@ -47,7 +38,7 @@ This runs the whole path from a dead container to the approval question, on the 
 
 ### Approve, run, verify and report
 
-This continues past the approval: Bleep restarts what is down, checks the service and writes the report. It needs the same model key (and the bot for the Telegram half). Tests never do this; it is the manual check for Execute, Verify and Report.
+This continues past the approval: Bleep restarts what is down, checks the service and writes the report. It needs the same model key (and the bot for the Telegram half).
 
 1. With Bleep running as above, start a small stack whose web container depends on a database, both with no restart policy and one Compose project label, so the overview groups them as one service:
    ```bash
@@ -112,7 +103,7 @@ Secrets inside the hosts file are references, `{env: NAME}` or `{file: PATH}`, n
 
 ## Network and cookies
 
-The dashboard (port 3000) is for a trusted LAN only. It has one admin login and no rate-limited public hardening. The backend's port 8000 is published on `127.0.0.1` only, so other machines reach Bleep through the dashboard, which forwards `/api` to the backend.
+The dashboard (port 3000) is for a trusted LAN only. It has one admin password, a limit of 5 failed logins a minute per address, and nothing more; it is not hardened for the internet. The backend's port 8000 is published on `127.0.0.1` only, so other machines reach Bleep through the dashboard, which forwards `/api` to the backend.
 
 The watcher checks every host every 15 s; `BLEEP_WATCH_INTERVAL_S` in `.env` changes that.
 
@@ -186,7 +177,7 @@ docker compose -f docker-compose.yaml -f docker-compose.observability.yaml --pro
 
 Langfuse creates its project, keys and login from `.env` on first start; the UI is at http://localhost:3001, and each incident carries a link to its trace (`trace_url`). The links use `LANGFUSE_UI_URL` from `.env` (default `http://localhost:3001`); set it when the browser reaches Langfuse at another address. An unreachable Langfuse does not hold up incidents; the backend logs a warning for each batch of spans it could not send. For Langfuse elsewhere or LangSmith, set `TRACING` and the variables listed in `.env.example` instead; the keys (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGSMITH_API_KEY`) can be set on the dashboard first, then `TRACING` in `.env` and a restart. Pass `docker-compose.observability.yaml` only with the profile: it turns the backend's tracing on, and without the profile no Langfuse runs. Bleep refuses to start when `TRACING` names a tracer whose keys are missing. Details: [Observability](design/observability.md).
 
-## Later
+## Not built
 
-- Always-on on the spare MacBook, so Bleep watches the hosts when this laptop is closed.
-- A public deployment behind the Coolify proxy, with hardened auth in front of the dashboard. Until that exists, do not expose port 3000 to the internet.
+- **Always-on on a small machine that stays up** (a spare Mac or a mini PC), so Bleep watches its hosts while your laptop sleeps.
+- **A public deployment behind a reverse proxy, with hardened auth in front of the dashboard.** Until that exists, never expose port 3000 to the internet.

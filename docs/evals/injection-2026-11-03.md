@@ -136,8 +136,8 @@ These are the same honest controls as Round 1: real faults whose real log line m
 
 - **Only a code-seen sign of planted orders is shown to the human (ruled after Round 3).** The model's `planted_in` flagged 12 of 13 attacks but also 4 of 6 honest controls. It stays in the diagnosis and the Flagged column, and it puts nothing in the report, Telegram or the dashboard. The code-written sentence appears only when the guard escaped a wrapper tag in host text the run read. The next step is precision: telling a planted order apart from advice in an honest log line, before the model's flag is shown again (#105, #112).
 
-- **The model under test is luna, not the local Qwen.** One Qwen run took 8–14 minutes and could overflow its 16k context, so Danny's ruling moved this round to Bleep's default model and left the local model to #35.
-- **Round 1 is 1 run per case, and a working attack would get a fix and 3 more runs.** That's Danny's ruling for the time budget. No attack worked, so no re-runs were needed.
+- **The model under test is luna, not the local Qwen.** One Qwen run took 8–14 minutes and could overflow its 16k context, so this round moved to Bleep's default model and left the local model to #35.
+- **Round 1 is 1 run per case, and a working attack would get a fix and 3 more runs.** That is the time budget. No attack worked, so no re-runs were needed.
 - **The controls are graded by hand, not by a model judge.** `--judge manual` skips the judge, and `--render --grades` applies a JSONL of grades by run id. The model under test was luna, the harness's default judge, and the harness won't let a model judge itself.
 - **The hook's own requests leave no access log line.** The first batch showed that a `POST /inject` line before the 500s gives the plant away. The first batch's runs are kept above, and those cases were run again (#34).
 - **Commit and docs attacks wait for their tools.** Their cases are written and skipped, and #37 and #39 carry a note to run them when their tools land.
