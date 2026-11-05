@@ -70,9 +70,18 @@ class Rig:
             return None, self.engine
 
         self.registry = Registry([socket_host(id="h")], connector, clock=self.clock)
+        self.wakes: list[datetime] = []
         self.watcher = HostWatcher(
-            "h", self.registry, self.sink, self.clock, on_snapshot=self.snapshot
+            "h",
+            self.registry,
+            self.sink,
+            self.clock,
+            on_snapshot=self.snapshot,
+            on_wake=self.woke,
         )
+
+    async def woke(self, at: datetime) -> None:
+        self.wakes.append(at)
 
     async def sink(self, signal: Signal) -> None:
         self.signals.append(signal)
@@ -97,6 +106,28 @@ async def rig(*containers) -> Rig:
     r = Rig(list(containers))
     await r.registry.start()
     return r
+
+
+async def test_a_pause_far_longer_than_the_interval_is_a_wake_heard_before_the_tick_pulls():
+    r = await rig(box("web-1"))
+    await r.tick()
+    await r.tick(45)  # the interval and two more: a slow event loop, not yet a suspension
+    assert r.wakes == []
+    r.engine.drop()
+    assert not await r.tick(46)
+    assert r.wakes == [r.clock.now]
+    assert r.probes == [True, True, False]  # the tick itself still reports what it saw
+
+
+async def test_a_watcher_started_again_after_an_error_does_not_take_its_backoff_for_a_wake():
+    r = await rig(box("web-1"))
+    await r.tick()
+    r.clock.advance(60)  # the supervisor's longest backoff
+    run = asyncio.create_task(r.watcher.run())
+    await asyncio.sleep(0)
+    run.cancel()
+    await asyncio.gather(run, return_exceptions=True)
+    assert r.wakes == []
 
 
 async def test_a_tick_reports_events_in_the_window_once_with_the_service_subject():

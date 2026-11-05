@@ -52,6 +52,7 @@ class FakeRunner:
         self.started: list[Incident] = []
         self.recovered = 0
         self.ended: list[tuple[str, str]] = []
+        self.back: list[str] = []
         self.repo = repo
 
     async def start(self, incident: Incident) -> None:
@@ -60,6 +61,9 @@ class FakeRunner:
     async def recover_on_boot(self) -> list[str]:
         self.recovered += 1
         return []
+
+    async def host_back(self, host_id: str) -> None:
+        self.back.append(host_id)
 
     async def end(self, incident_id: str, text: str, *, spare: tuple[str, ...] = ()) -> None:
         if self.repo is not None and await self.repo.close_unfinished(incident_id, spare) is None:
@@ -94,7 +98,11 @@ def die(name: str, at: datetime) -> DockerEvent:
 
 class Rig:
     def __init__(
-        self, tmp_path, model: FakeChatModel | None = None, budgets: Budgets | None = None
+        self,
+        tmp_path,
+        model: FakeChatModel | None = None,
+        budgets: Budgets | None = None,
+        may_sleep: bool = False,
     ) -> None:
         self.clock = Clock()
         self.engine = FakeEngine(
@@ -125,7 +133,8 @@ class Rig:
             f"compose:{p}": ServiceOverrides(urls=[UrlCheckConfig(url=f"https://{p}.example/")])
             for p in PROJECTS
         }
-        self.registry = Registry([socket_host(id="h", services=urls)], connect, clock=self.clock)
+        host = socket_host(id="h", services=urls, may_sleep=may_sleep)
+        self.registry = Registry([host], connect, clock=self.clock)
         self.detector = Detector(Thresholds(), self.clock)
         self.store = UrlCheckStore(self.db)
         self.health = HealthStore(self.db)
@@ -211,6 +220,81 @@ async def test_a_host_down_for_five_minutes_opens_one_incident_and_the_urls_atta
     assert sorted(check.url for _, check, _ in recorded) == [
         f"https://{p}.example/" for p in sorted(PROJECTS)
     ]
+
+
+async def test_bleeps_own_sleep_opens_no_incident_inside_the_grace_window(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    await r.lose_host()
+    for _ in range(4):  # a minute of failed ticks before Bleep's machine sleeps
+        await r.pulse()
+    await r.pulse(8 * 3600)  # it slept all night; on waking the network is not back yet
+    for _ in range(3):  # the rest of the grace window: four ticks after the wake
+        await r.pulse()
+    assert await r.incidents() == []
+
+    # Past the grace window an outage counts again, from zero: five minutes of failed ticks.
+    for _ in range(20):
+        await r.pulse()
+    assert await r.incidents() == []
+    await r.pulse()
+    [incident] = await r.incidents()
+    assert incident.subject == HOST
+
+
+async def test_short_wakes_through_the_night_open_no_incident(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    await r.lose_host()
+    for _ in range(30):  # every 15 minutes for seven hours, a wake of two failed ticks
+        await r.pulse(15 * 60)
+        await r.pulse()
+    assert await r.incidents() == []
+    assert r.runner.started == []
+
+
+async def test_a_slow_failing_tick_is_not_taken_for_bleeps_own_sleep(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    await r.lose_host()
+    reconnect = r.registry.reconnect
+
+    async def slow_reconnect(host_id: str) -> bool:
+        r.clock.advance(60)  # each failed tick takes the full minute its bound allows
+        return await reconnect(host_id)
+
+    r.registry.reconnect = slow_reconnect  # type: ignore[method-assign]
+    for _ in range(5):
+        await r.pulse(urls=False)  # the usual 15 s sleep, then the slow tick
+    [incident] = await r.incidents()  # 5 minutes and more of outage: it opens as before
+    assert incident.subject == HOST
+
+
+async def test_a_host_that_may_sleep_opens_nothing_when_it_stops_answering(tmp_path):
+    r = await Rig(tmp_path, may_sleep=True).boot()
+    await r.pulse()
+    await r.lose_host()
+    for _ in range(40):  # ten minutes asleep, every URL failing with it
+        await r.pulse()
+    assert await r.incidents() == [] and r.runner.started == []
+    await r.regain_host()
+    for _ in range(4):
+        await r.pulse()
+    assert await r.incidents() == []  # the URL failures held while it slept were dropped
+
+
+async def test_the_first_tick_that_reaches_a_host_again_tells_the_runner_once(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    await r.pulse()
+    assert r.runner.back == ["h"]  # Bleep started: a host incident may be waiting from before
+    await r.lose_host()
+    for _ in range(3):
+        await r.pulse()
+    await r.regain_host()
+    for _ in range(3):
+        await r.pulse()
+    assert r.runner.back == ["h", "h"]
 
 
 async def test_held_url_failures_are_announced_once_per_new_set_of_urls(tmp_path):

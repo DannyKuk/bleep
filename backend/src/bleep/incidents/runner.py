@@ -8,7 +8,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any
+from typing import Any, get_args
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
@@ -29,7 +29,7 @@ from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.llm.guard import ModelUnavailable
 from bleep.schemas.graph import Decision
-from bleep.schemas.incidents import TERMINAL_STATUSES, Incident, IncidentStatus, Signal
+from bleep.schemas.incidents import TERMINAL_STATUSES, Incident, IncidentStatus, Signal, Subject
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +38,24 @@ MAX_PAUSE_MIN = 60  # the longest wait between two retries of a paused run
 LONG_PAUSE_S = 3600  # a run paused this long in all gets one more notice
 QUIET_RUN_NOTICE = "Closed: the service was made quiet while I worked on it, so I stopped here."
 QUIET_RUN_NOTICE_HOST = "Closed: the host was made quiet while I worked on it, so I stopped here."
+WAITING_NOTICE = (
+    "The host does not answer, so there is nothing I can look at: every check would fail. "
+    "I wait for it and close this incident when it answers again."
+)
+BACK_NOTICE = "Closed: the host answers again. It recovered on its own; nothing was changed."
+# Every status but `waiting`: closing on the host's return must never close an incident whose run
+# has started, whatever kind it is.
+NOT_WAITING = tuple(s for s in get_args(IncidentStatus) if s != "waiting")
+
+
+def waits_for_host(incident: Incident, signals: list[Signal]) -> bool:
+    """A host-unreachable incident: opened on a host that does not answer, with nothing but that
+    and the URL failures it causes. Every tool would fail, so its run waits for the host."""
+    return (
+        incident.subject.kind == "host"
+        and any(s.kind == "host_unreachable" for s in signals)
+        and all(s.kind in ("host_unreachable", "url_failed") for s in signals)
+    )
 
 
 class IncidentRunner:
@@ -130,10 +148,13 @@ class IncidentRunner:
 
         A run waiting for approval stays waiting: its checkpoint holds it until a decision
         arrives through `resume`. One whose approval was decided before Bleep stopped is not
-        waiting any more, and goes on with that decision. A paused run goes on at once.
+        waiting any more, and goes on with that decision. A paused run goes on at once. A
+        host-unreachable incident stays `waiting` until its host answers (`host_back`).
         """
         started = []
         for incident in await self.repo.unfinished():
+            if incident.status == "waiting":
+                continue
             if incident.status == "awaiting_approval" and await self._decided(incident.id) is None:
                 continue
             await self.start(incident)
@@ -152,6 +173,23 @@ class IncidentRunner:
         for task in runs:
             task.cancel()
         await asyncio.gather(*runs, return_exceptions=True)
+
+    async def host_back(self, host_id: str) -> None:
+        """The host answers again. Its host-unreachable incident, if one is waiting, closes as
+        recovered on its own with one notice, and no approval since nothing is done. One that took
+        other signals while it waited (a full disk) starts its run instead: now there is a host to
+        look at. An incident whose run has started is never touched here."""
+        incident_id = await self.repo.open_incident_id(Subject(kind="host", host_id=host_id))
+        incident = await self.repo.get(incident_id) if incident_id is not None else None
+        if incident is None or incident.status != "waiting":
+            return
+        if not waits_for_host(incident, await self.repo.signals(incident.id)):
+            await self.start(incident)
+            return
+        if await self.repo.close_unfinished(incident.id, spare=NOT_WAITING) is None:
+            return
+        await self.bus.publish(incident.id, "notice", {"text": BACK_NOTICE})
+        await self._tell(incident.id, BACK_NOTICE)
 
     async def end(
         self, incident_id: str, text: str, *, spare: tuple[IncidentStatus, ...] = ()
@@ -218,9 +256,13 @@ class IncidentRunner:
     async def _advance(self, incident: Incident) -> None:
         snapshot = await self.graph.aget_state(self.config(incident.id))
         if not snapshot.values:  # no checkpoint yet: a new run
-            await self.repo.record_prompt_overrides(incident.id, prompts.override_versions())
-            await self._announce(incident)
             signals = await self.repo.signals(incident.id)
+            if waits_for_host(incident, signals):
+                await self._wait(incident)
+                return
+            await self.repo.record_prompt_overrides(incident.id, prompts.override_versions())
+            if incident.status != "waiting":  # one that waited was announced when it opened
+                await self._announce(incident)
             await self._drive(incident.id, _initial(incident, signals))
         elif snapshot.interrupts:
             decision = await self._decided(incident.id)
@@ -232,6 +274,17 @@ class IncidentRunner:
             await self._drive(incident.id, None)  # None: go on from the checkpoint
         else:  # finished, but the status never settled (cancelled or crashed just after the end)
             await self._settle(incident.id, snapshot)
+
+    async def _wait(self, incident: Incident) -> None:
+        """Park a host-unreachable incident without running the graph, so no model is called
+        while every tool would fail; `host_back` closes it. The channels hear of it once."""
+        current = await self.repo.get(incident.id)
+        status = current.status if current is not None else None
+        if status == "waiting" or self._finished(incident.id, status):
+            return
+        await self.repo.set_status(incident.id, "waiting")
+        await self.bus.publish(incident.id, "notice", {"text": WAITING_NOTICE})
+        await self._announce(incident.model_copy(update={"status": "waiting"}))
 
     async def _announce(self, incident: Incident) -> None:
         """Tell the channels a new incident opened, before its run starts; a channel outage is

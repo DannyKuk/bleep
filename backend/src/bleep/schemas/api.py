@@ -21,6 +21,8 @@ from bleep.schemas.incidents import Incident
 from bleep.schemas.quiet import QuietMode, QuietScope, QuietState
 
 Health = Literal["ok", "degraded", "down", "stopped", "unknown"]
+# A host that may sleep (a laptop) and does not answer is asleep, not down.
+HostHealth = Literal["ok", "degraded", "down", "stopped", "unknown", "asleep"]
 
 
 class Me(BaseModel):
@@ -65,7 +67,8 @@ class HostView(BaseModel):
     error: str | None
     basics: BasicsView | None
     service_count: int
-    health: Health
+    health: HostHealth
+    may_sleep: bool = False
     quiet: QuietView | None = None
     quiet_service_ids: list[str] = []
 

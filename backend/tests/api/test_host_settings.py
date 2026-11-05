@@ -310,6 +310,20 @@ def test_a_dashboard_hosts_services_take_rules_and_protected_containers(app):
     assert blog.protected == {"blog-web-1"}
 
 
+def test_a_dashboard_host_may_sleep_and_keeps_it_across_a_new_connection(app):
+    assert add(app).status_code == 201
+    assert host_view(app)["may_sleep"] is False
+    version = app.get("/api/settings").json()["version"]
+    body = {"hosts": {"c": {"may_sleep": True}}}
+    assert app.put("/api/settings", json=body, headers={"If-Match": version}).status_code == 200
+
+    assert host_view(app)["may_sleep"] is True
+    assert watched(app)["may_sleep"] is True
+    assert edit(app, port=2222).status_code == 200  # a new connection: the setting stays
+    assert host_view(app)["may_sleep"] is True
+    assert next(h for h in app.get("/api/hosts").json() if h["id"] == "c")["may_sleep"] is True
+
+
 def test_a_removed_host_stops_being_watched_and_its_open_incidents_close_with_a_notice(app):
     assert add(app).status_code == 201
     watched(app)

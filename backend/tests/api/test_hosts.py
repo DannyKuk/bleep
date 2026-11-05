@@ -117,6 +117,15 @@ def test_host_health(reachable, last_seen, services, expected):
     assert host_health(reachable, last_seen, services) == expected
 
 
+@pytest.mark.parametrize(("reachable", "last_seen"), [(False, T0), (False, None)])
+def test_a_host_that_may_sleep_and_does_not_answer_is_asleep_not_down(reachable, last_seen):
+    assert host_health(reachable, last_seen, ["ok"], may_sleep=True) == "asleep"
+
+
+def test_a_host_that_may_sleep_and_answers_is_judged_by_its_services():
+    assert host_health(True, T0, ["degraded"], may_sleep=True) == "degraded"
+
+
 @pytest.fixture
 def stocked(settings, parts):
     hosts = [
@@ -178,6 +187,7 @@ def test_hosts(stocked):
             "basics": None,
             "service_count": 1,
             "health": "degraded",
+            "may_sleep": False,
             "quiet": None,
             "quiet_service_ids": [],
         },
@@ -191,6 +201,7 @@ def test_hosts(stocked):
             "basics": None,
             "service_count": 1,
             "health": "ok",
+            "may_sleep": False,
             "quiet": None,
             "quiet_service_ids": [],
         },

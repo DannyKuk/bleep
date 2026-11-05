@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     admin_password: SecretStr
     secret: SecretStr
     watch_interval_s: float = 15  # seconds between watcher ticks per host
+    # Ticks after Bleep's own machine wakes in which a host not answering is not counted.
+    wake_grace_ticks: int = Field(default=4, ge=0, le=40)
     cookie_secure: bool = False  # true once the dashboard is served over https
     dev_panel: bool = False  # the dev panel's routes and nav entry (docs/design/dev-panel.md)
     # Telegram is optional and has its own names in .env (no BLEEP_ prefix). Only this chat is

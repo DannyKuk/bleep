@@ -134,7 +134,10 @@ async def list_hosts(parts: Annotated[AppParts, Depends(get_parts)]) -> list[Hos
                 error=state.error,
                 basics=_basics(state.basics),
                 service_count=len(views),
-                health=host_health(state.reachable, state.last_seen, judged),
+                health=host_health(
+                    state.reachable, state.last_seen, judged, state.config.may_sleep
+                ),
+                may_sleep=state.config.may_sleep,
                 quiet=quiet_view(host_quiet),
                 quiet_service_ids=[v.id for v in views if v.quiet is not None],
             )

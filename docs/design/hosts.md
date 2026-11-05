@@ -7,6 +7,7 @@ How Bleep reaches its Docker hosts, groups containers into services, and reads h
 - **One top-level GitHub token.** `github: {token: ...}` is a reference, shared by every service's `repo`. Reason: one token covers the repos of a small setup, and a per-service override can be added when a second token is needed (#3).
 - **Two host kinds.** `ssh` (address, user, key file) for real servers and `socket` (a `unix://` or `tcp://` endpoint) for the demo stack and the machine Bleep runs on. Reason: the combination is validated so a half-filled host fails early (#3).
 - **Key and known_hosts are mounted file paths.** The YAML holds the path, never the key. Reason: the key stays a mounted secret and the file is safe to share (#3).
+- **`may_sleep: true` marks a host that sleeps by design** (default false). Not answering opens no incident and the overview shows it `asleep`; `PUT /api/settings` can change it for any host, the dashboard's choice over the file's ([watcher](watcher.md#bleeps-own-sleep-hosts-that-may-sleep-and-recovery-85)). `Registry.override` puts it in force with the host's rules, and a dashboard host's new connection keeps it. Reason: a laptop closing its lid is not an outage (#85).
 
 ## Store
 

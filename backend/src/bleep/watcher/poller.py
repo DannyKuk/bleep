@@ -22,9 +22,13 @@ log = logging.getLogger(__name__)
 INTERVAL_S = 15
 TICK_TIMEOUT_S = 60  # a hung call fails the tick instead of stopping the loop
 SEEN_KEEP_S = 120  # how long an event identity is remembered, past the cursor
+# A pause between two ticks longer than the interval by more than this many intervals means Bleep
+# itself was not running: its machine slept, or its container was paused.
+SUSPENDED_AFTER_INTERVALS = 2
 
 Sink = Callable[[Signal], Awaitable[None]]
 Snapshot = Callable[[str, dict[str, list[ContainerSummary]]], Awaitable[None]]
+Wake = Callable[[datetime], Awaitable[None]]
 
 
 class HostWatcher:
@@ -33,7 +37,8 @@ class HostWatcher:
     `sink` receives every signal, including the host's `host_unreachable` probe result on each
     tick (`ok` says whether the tick reached the host). `on_snapshot`, when given, receives the
     host's containers grouped by service id after every successful tick, which is what the
-    detector's `tick` wants.
+    detector's `tick` wants. `on_wake`, when given, hears the time of a tick that comes after a
+    pause much longer than the interval, before that tick pulls: Bleep itself was suspended.
     """
 
     def __init__(
@@ -44,6 +49,7 @@ class HostWatcher:
         clock: Callable[[], datetime],
         interval_s: float = INTERVAL_S,
         on_snapshot: Snapshot | None = None,
+        on_wake: Wake | None = None,
     ) -> None:
         self.host_id = host_id
         self.interval_s = interval_s
@@ -51,6 +57,8 @@ class HostWatcher:
         self._sink = sink
         self._clock = clock
         self._on_snapshot = on_snapshot
+        self._on_wake = on_wake
+        self._last_tick_end: datetime | None = None
         self._cursor = clock()
         self._previous: list[ContainerSummary] | None = None
         self._service_of: dict[str, str] = {}  # container id -> service id, as of last tick
@@ -59,12 +67,14 @@ class HostWatcher:
         self._needs_reconnect = False
 
     async def run(self) -> None:
+        self._last_tick_end = None  # a restart's backoff is no suspension
         while True:
             await self.tick()
             await asyncio.sleep(self.interval_s)
 
     async def tick(self) -> bool:
         """One pull. Returns whether it succeeded; a failure emits nothing but the probe result."""
+        await self._notice_wake()
         try:
             async with asyncio.timeout(TICK_TIMEOUT_S):
                 ok = await self._pull()
@@ -72,7 +82,23 @@ class HostWatcher:
             log.exception("watcher tick for host %s failed", self.host_id)
             ok = False
         await self._probe(ok)
+        self._last_tick_end = self._clock()
         return ok
+
+    async def _notice_wake(self) -> None:
+        """Measured from the end of the last tick, so a slow tick (up to 60 s against a host that
+        does not answer) never looks like a suspension; only the sleep between ticks counts."""
+        now = self._clock()
+        last = self._last_tick_end
+        if last is None or self._on_wake is None:
+            return
+        limit = self.interval_s * (1 + SUSPENDED_AFTER_INTERVALS)
+        if (now - last).total_seconds() <= limit:
+            return
+        try:
+            await self._on_wake(now)
+        except Exception:
+            log.exception("wake hook failed for host %s", self.host_id)
 
     async def _probe(self, ok: bool) -> None:
         signal = Signal(

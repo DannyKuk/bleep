@@ -271,6 +271,18 @@ def test_host_unreachable_opens_after_five_minutes_and_resets_when_ok():
     assert det2.feed(sig(HOST, "host_unreachable", clock2)) == []
 
 
+def test_after_bleeps_own_wake_an_outage_and_a_url_streak_count_from_zero():
+    det, clock = make()
+    det.feed(sig(HOST, "host_unreachable", clock))
+    det.feed(sig(SVC, "url_failed", clock, url="https://x/"))
+    clock.at(8 * 3600)
+    det.woke()
+    assert det.feed(sig(HOST, "host_unreachable", clock)) == []  # not eight hours of outage
+    assert det.feed(sig(SVC, "url_failed", clock, url="https://x/")) == []  # one failure, not two
+    clock.at(8 * 3600 + 300)
+    assert isinstance(det.feed(sig(HOST, "host_unreachable", clock))[0], OpenIncident)
+
+
 def test_debounce_merges_signals_within_30s_into_one_open():
     det, clock = make()
     first = det.feed(sig(SVC, "unhealthy", clock, container="web-1"))

@@ -7,7 +7,7 @@ ends.
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
-from bleep.schemas.api import Health, UrlStatus
+from bleep.schemas.api import Health, HostHealth, UrlStatus
 from bleep.schemas.docker import ContainerSummary
 from bleep.watcher.http_checks import INTERVAL_S, UrlCheck
 
@@ -74,10 +74,18 @@ def service_health(containers: Iterable[ContainerSummary], url_statuses: Iterabl
     return _worst([*healths, *from_urls])
 
 
-def host_health(reachable: bool, last_seen: datetime | None, services: Iterable[Health]) -> Health:
-    """Unknown when unreachable with no snapshot, down when unreachable, else the worst service
-    (ok when it has none; a stopped service counts as ok)."""
+def host_health(
+    reachable: bool,
+    last_seen: datetime | None,
+    services: Iterable[Health],
+    may_sleep: bool = False,
+) -> HostHealth:
+    """Asleep when a host that may sleep is unreachable; else unknown when unreachable with no
+    snapshot, down when unreachable, else the worst service (ok when it has none; a stopped
+    service counts as ok)."""
     if not reachable:
+        if may_sleep:
+            return "asleep"
         return "unknown" if last_seen is None else "down"
     healths: list[Health] = ["ok" if h == "stopped" else h for h in services]
     return _worst(healths) if healths else "ok"

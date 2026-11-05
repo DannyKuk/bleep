@@ -24,6 +24,7 @@ IncidentStatus = Literal[
     "executing",
     "verifying",
     "paused",
+    "waiting",  # a host-unreachable incident waiting for its host to answer again
     "resolved",
     "closed",
     "failed",

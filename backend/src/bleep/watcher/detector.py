@@ -104,6 +104,13 @@ class Detector:
             for key in [k for k in timers if on_host(k)]:
                 del timers[key]
 
+    def woke(self) -> None:
+        """Bleep itself was suspended: forget every host's outage timer and every unreachable and
+        URL streak, so the time Bleep was not watching never counts as an outage."""
+        self._down_since.clear()
+        for key in [k for k in self._streaks if k[1] in ("host_unreachable", "url_failed")]:
+            del self._streaks[key]
+
     def feed(self, signal: Signal) -> list[Outcome]:
         """Take one signal. Contract with the watcher (details in docs/design/watcher.md):
 

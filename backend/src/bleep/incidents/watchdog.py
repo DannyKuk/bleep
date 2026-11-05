@@ -14,9 +14,9 @@ log = logging.getLogger(__name__)
 
 TICK_S = 60  # how often `run` looks; a notice is at most this late
 
-# Waiting for a human has reminders of its own, and a paused run has already said so and retries
-# by itself.
-EXEMPT = ("awaiting_approval", "paused")
+# Waiting for a human has reminders of its own, a paused run has already said so and retries by
+# itself, and a waiting one waits for its host, which it said when it opened.
+EXEMPT = ("awaiting_approval", "paused", "waiting")
 
 
 class Watchdog:

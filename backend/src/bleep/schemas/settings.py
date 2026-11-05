@@ -170,6 +170,7 @@ class ServiceSettings(_Overrides):
 
 class HostSettings(_Overrides):
     rules: list[RuleText] | None = Field(None, max_length=50)
+    may_sleep: bool | None = None
     services: dict[ServiceKey, ServiceSettings] = Field(default_factory=dict, max_length=200)
 
 
@@ -232,6 +233,7 @@ class HostSettingsView(BaseModel):
     name: str
     connection: HostConnectionView
     rules: list[str]
+    may_sleep: bool  # in force: the dashboard's choice, else the hosts file's
     services: dict[str, ServiceSettingsView]
 
 

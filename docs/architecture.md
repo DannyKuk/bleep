@@ -131,6 +131,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **A death that recovers within 60 s is not an incident**; three deaths in ten minutes are.
 - **Open at once, attach within the 30 s debounce**, so there is never a second incident for one cause.
 - **A snoozed or left-alone service or host is still watched but opens nothing**; when the quiet ends it is judged once more.
+- **Bleep's own sleep is no outage**: after a wake an outage counts from zero and failed contact waits out a grace window; a host marked `may_sleep` shows `asleep` and opens nothing, and a host-unreachable incident waits without a model call and closes itself when the host answers.
 
 **Incidents** ([details](design/incidents.md))
 - **One open incident per subject, enforced by a unique index.**

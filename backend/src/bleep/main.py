@@ -104,6 +104,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 watch_interval_s=settings.watch_interval_s,
                 quiet=parts.quiet,
                 health=parts.service_health,
+                wake_grace_ticks=settings.wake_grace_ticks,
             )
             reminders = ReminderLoop(
                 parts.approvals,
