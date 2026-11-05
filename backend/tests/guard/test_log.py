@@ -102,3 +102,47 @@ def test_a_detail_written_outside_an_event_loop_is_redacted_too(tmp_path):
     log.record("inc-1", "refused_command", f"echo {GITHUB_TOKEN}")
     [entry] = asyncio.run(log.entries("inc-1"))
     assert GITHUB_TOKEN not in entry.detail and "<redacted>" in entry.detail
+
+
+def test_a_record_pending_on_an_old_event_loop_is_written_by_the_next_one(tmp_path):
+    import asyncio
+
+    log = asyncio.run(guard_log(tmp_path))
+    first_loop = asyncio.new_event_loop()
+
+    async def record_and_leave():
+        log.record("inc-1", "budget", "made under the first loop")
+
+    first_loop.run_until_complete(record_and_leave())  # its writer task never gets to run
+
+    async def under_the_second_loop():
+        log.record("inc-1", "redacted", "made under the second loop")
+        await log.flush()
+        return await log.entries("inc-1")
+
+    entries = asyncio.run(under_the_second_loop())
+    first_loop.close()
+
+    assert [e.detail for e in entries] == [
+        "made under the first loop",
+        "made under the second loop",
+    ]
+
+
+def test_flush_under_a_new_event_loop_writes_what_an_old_one_left(tmp_path):
+    import asyncio
+
+    log = asyncio.run(guard_log(tmp_path))
+    first_loop = asyncio.new_event_loop()
+
+    async def record_and_leave():
+        log.record("inc-1", "budget", "left pending")
+
+    first_loop.run_until_complete(record_and_leave())
+
+    async def flush_then_read():
+        await log.flush()
+        return await log.entries("inc-1")
+
+    assert [e.detail for e in asyncio.run(flush_then_read())] == ["left pending"]
+    first_loop.close()
