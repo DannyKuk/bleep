@@ -53,6 +53,7 @@ Rule = Literal[
     "unknown_url",
     "unknown_container",
     "healthy_target",
+    "unnamed_stop",
 ]
 
 
@@ -79,6 +80,7 @@ def check_plan(
     host_id: str,
     *,
     incident_containers: Collection[str],
+    named_containers: Collection[str] | None = None,
     step_rules: Mapping[str, StepRule] | None = None,
 ) -> list[Violation]:
     """Every reason to refuse `proposal` for an incident on `host_id`; empty means it may go on.
@@ -88,12 +90,13 @@ def check_plan(
     (an ambiguous override means its protected list may not apply), a target not found on the
     host, a protected container, a Bleep container (`bleep.self=true`), a Docker action on a
     container that works (running and healthy, or running with no health check) unless it is one
-    of the incident's own (`incident_containers`, by name; Propose says which), a verification
-    URL that is not one of the host's health checks in the hosts file, and a verification
-    container that is not on the host. A plugin step must take exactly its params, and an
-    `mcp.call` must pass its action's `step_rules` (the tool is one of the plugin's act tools;
-    with no rule given it is refused) and name no protected container or Bleep's own in its
-    arguments (`check_arguments`).
+    of the incident's own (`incident_containers`, by name; Propose says which), a `docker.stop`
+    of a container that the incident's signals or the human do not name (`named_containers`; by
+    default `incident_containers`), a verification URL that is not one of the host's health
+    checks in the hosts file, and a verification container that is not on the host. A plugin
+    step must take exactly its params, and an `mcp.call` must pass its action's `step_rules`
+    (the tool is one of the plugin's act tools; with no rule given it is refused) and name no
+    protected container or Bleep's own in its arguments (`check_arguments`).
     """
     violations: list[Violation] = []
     if proposal.kind == "no_action" and proposal.steps:
@@ -107,11 +110,16 @@ def check_plan(
                 f"the plan has {len(proposal.steps)} steps; at most {MAX_STEPS} are allowed",
             )
         )
-    named = set(incident_containers)
+    incident = set(incident_containers)
+    named = incident if named_containers is None else set(named_containers)
     for number, step in enumerate(proposal.steps, start=1):
         rule = (step_rules or {}).get(step.action)
         found = _check_step(number, step, registry, enabled_actions, host_id, rule)
-        violations.extend(found or _check_working(number, step, registry, named))
+        violations.extend(
+            found
+            or _check_working(number, step, registry, incident)
+            or _check_stop(number, step, registry, named)
+        )
     violations.extend(_check_set_env_redeploy(proposal))
     if proposal.kind == "act":
         violations.extend(_check_urls(proposal, registry, host_id))
@@ -186,7 +194,8 @@ def _check_working(
     """A Docker action on a container that works is no fix for an incident about something
     else: a planted log line that names a healthy container is the usual way such a step gets
     into a plan (#35). The incident's own containers stay allowed; Propose's
-    `_incident_containers` says which those are, from trusted sources only (#112).
+    `_named_containers` and `_service_containers` say which those are, from trusted sources only
+    (#112).
     A Coolify action is left alone: a release can fail its URLs while every container is
     healthy, and a rollback is then the fix."""
     if not step.action.startswith("docker."):
@@ -206,6 +215,27 @@ def _check_working(
         "a container that works is not a fix for this incident"
     )
     return [Violation("healthy_target", f"{what}: {why}", number)]
+
+
+def _check_stop(
+    number: int, step: PlanStep, registry: Registry, named: set[str]
+) -> list[Violation]:
+    """A stop takes a workload down and brings nothing back, so only a container the incident's
+    signals or the human name may be stopped. When only a service's URL checks failed, every
+    container of the service is the incident's for a restart, but stopping one of them (another
+    workload that holds the port, say) is the human's call (#276)."""
+    if step.action != "docker.stop":
+        return []
+    container = registry.container(step.host_id, step.target)
+    if container is None or container.name in named:
+        return []
+    what = f"step {number} ({step.action} {step.target} on {step.host_id})"
+    why = (
+        f"neither this incident's signals nor the human name {container.name}, so stopping it is"
+        " the human's call; leave it out, and if the fix needs it, answer no_action and say in"
+        " human_instructions what to stop and why"
+    )
+    return [Violation("unnamed_stop", f"{what}: {why}", number)]
 
 
 def _check_step(

@@ -176,7 +176,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **All host text is redacted, cleaned, capped at 8,000 characters and wrapped as untrusted data with a random id.**
 - **Env values never reach the model.**
 - **Only the closing tag with the same random id ends untrusted data**, and the system prompt says so.
-- **Every plan is checked in code**: allowlisted actions on the incident's host only, never a protected or Bleep container, never a working container that is not the incident's own or named by the human, at most 3 steps.
+- **Every plan is checked in code**: allowlisted actions on the incident's host only, never a protected or Bleep container, never a working container that is not the incident's own or named by the human, a stop only of a container the incident's signals or the human name, at most 3 steps.
 - **Act tools refuse without a grant for the exact plan** and act on the approved container id; no model is ever given them.
 - **A report loses any 60-character stretch it shares with a log the run read.**
 

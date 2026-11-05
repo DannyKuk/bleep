@@ -321,6 +321,72 @@ async def test_a_protected_working_container_gets_one_refusal_not_two(tmp_path):
     assert [(v.rule, v.step) for v in violations] == [("protected", 1)]
 
 
+# --- a stop of a container nothing trusted names (#276) --------------------------------------
+
+# A service incident opened only by its URL checks: the whole service is the incident's, but no
+# signal and no human names a container.
+SHOP = ("shop-web-1", "shop-db-1", "shop-proxy-1", "shop-worker-1", "shop-cache-1", "shop-queue-1")
+
+
+def stop(target: str) -> PlanStep:
+    return PlanStep(action="docker.stop", host_id="a", target=target)
+
+
+async def stopping(tmp_path, *steps: PlanStep, named=()) -> list:
+    env = await graph_env(tmp_path, engine=working_engine(), host=shop_host())
+    plan = act(*steps)
+    violations = check_plan(
+        plan, env.registry, CORE, "a", incident_containers=SHOP, named_containers=named
+    )
+    return [(v.rule, v.step) for v in violations]
+
+
+async def test_a_stop_of_a_container_no_signal_or_human_names_is_refused(tmp_path):
+    # port-conflict on gpt-6-luna: only URL checks failed, so every container of the shop was the
+    # incident's, and the plan stopped another workload to free its port.
+    assert await stopping(tmp_path, stop("shop-proxy-1")) == [("unnamed_stop", 1)]
+    assert await stopping(tmp_path, stop("shop-web-1")) == [("unnamed_stop", 1)]
+    assert await stopping(tmp_path, stop("shop-queue-1")) == [("unnamed_stop", 1)]
+    assert await stopping(tmp_path, start("shop-db-1"), stop("id-shop-proxy-1")) == [
+        ("unnamed_stop", 2)
+    ]
+
+
+async def test_a_stop_of_a_container_the_incident_names_passes(tmp_path):
+    assert await stopping(tmp_path, stop("shop-queue-1"), named=["shop-queue-1"]) == []
+    assert await stopping(tmp_path, stop("id-shop-proxy-1"), named=["shop-proxy-1"]) == []
+
+
+async def test_only_a_stop_needs_a_named_container(tmp_path):
+    assert await stopping(tmp_path, restart("shop-proxy-1"), start("shop-db-1")) == []
+
+
+async def test_without_named_containers_the_incidents_own_may_be_stopped(tmp_path):
+    env = await graph_env(tmp_path, engine=working_engine(), host=shop_host())
+    plan = act(stop("shop-proxy-1"))
+    assert check_plan(plan, env.registry, CORE, "a", incident_containers=["shop-proxy-1"]) == []
+
+
+async def test_a_stop_of_a_working_container_outside_the_incident_gets_one_refusal(tmp_path):
+    env = await graph_env(tmp_path, engine=working_engine(), host=shop_host())
+    violations = check_plan(
+        act(stop("shop-worker-1")), env.registry, CORE, "a",
+        incident_containers=["shop-web-1"], named_containers=["shop-web-1"],
+    )  # fmt: skip
+    assert [(v.rule, v.step) for v in violations] == [("healthy_target", 1)]
+
+
+async def test_the_stop_refusal_leaves_the_decision_to_the_human(tmp_path):
+    env = await graph_env(tmp_path, engine=working_engine(), host=shop_host())
+    plan = act(stop("shop-proxy-1"))
+    (refusal,) = check_plan(
+        plan, env.registry, CORE, "a", incident_containers=SHOP, named_containers=[]
+    )
+    assert "shop-proxy-1" in refusal.text
+    assert "the human's call" in refusal.text
+    assert "human_instructions" in refusal.text
+
+
 def set_env(target: str, **params: str) -> PlanStep:
     return PlanStep(action="coolify.set_env", host_id="a", target=target, params=params)
 

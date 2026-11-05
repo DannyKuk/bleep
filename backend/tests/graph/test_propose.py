@@ -644,6 +644,66 @@ async def test_a_refusal_with_no_replan_left_does_not_offer_an_instruction(tmp_p
     assert propose.BY_HAND_ONLY in told and "name it" not in told
 
 
+# A stop needs a container the incident's signals, Gather's memory measurements or the human
+# name (#276): a URL check incident makes every container of the service its own for a restart,
+# not for a stop.
+
+
+def stop(target: str) -> dict:
+    return {"action": "docker.stop", "host_id": "a", "target": target}
+
+
+async def test_a_url_check_incident_does_not_stop_a_container_nothing_names(tmp_path):
+    """port-conflict on gpt-6-luna: shop-canary ran the proxy's Compose-built image, so it was in
+    the shop's service, and the plan stopped it to free the port. Told why, the model gives the
+    human the instructions instead."""
+    told = reply(kind="no_action", steps=[], reason="another workload holds the port")
+    env, state = await setup(tmp_path, acting(stop("shop-proxy-1")), told)
+
+    update = await propose.make(env.deps)(state | {"signals": url_failed(state)})
+
+    assert update["proposal"].kind == "no_action" and not update["proposal"].refused
+    assert "the human's call" in blocked(env)[0]
+
+
+async def test_a_container_a_signal_names_may_be_stopped(tmp_path):
+    env, state = await setup(tmp_path, acting(stop("shop-web-1")))
+
+    update = await propose.make(env.deps)(state)
+
+    assert update["proposal"].steps == [PlanStep(**stop("shop-web-1"))]
+    assert blocked(env) == []
+
+
+async def test_a_container_the_human_names_may_be_stopped(tmp_path):
+    env, state = await setup(tmp_path, acting(stop("shop-proxy-1")))
+    said = {"signals": url_failed(state), "instructions": ["Stop shop-proxy-1 for now."]}
+
+    update = await propose.make(env.deps)(state | said)
+
+    assert update["proposal"].steps == [PlanStep(**stop("shop-proxy-1"))]
+
+
+async def test_a_host_memory_incident_may_stop_a_top_memory_user(tmp_path):
+    env, state = await setup(tmp_path, acting(stop("shop-proxy-1")))
+
+    update = await propose.make(env.deps)(host_memory_state(state))
+
+    assert update["proposal"].steps == [PlanStep(**stop("shop-proxy-1"))]
+
+
+async def test_a_refused_stop_tells_the_human_how_to_get_it(tmp_path):
+    env, state = await setup(tmp_path, *[acting(stop("shop-proxy-1"))] * 4)
+
+    update = await propose.make(env.deps)(state | {"signals": url_failed(state)})
+    last = await propose.make(env.deps)(state | {"signals": url_failed(state), "replans": 3})
+
+    assert update["proposal"].refused
+    assert propose.STOP_BY_HAND in update["proposal"].human_instructions
+    assert propose.BY_HAND not in update["proposal"].human_instructions
+    assert propose.STOP_BY_HAND_ONLY in last["proposal"].human_instructions
+
+
 async def test_other_no_action_reasons_are_not_refused(tmp_path):
     env, state = await setup(tmp_path, reply(kind="no_action", steps=[], reason="env var"))
 

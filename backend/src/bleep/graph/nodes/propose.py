@@ -50,6 +50,14 @@ BY_HAND_ONLY = (
     "A container that works is acted on only when it is this incident's own. If it is the one at "
     "fault, act on it by hand."
 )
+STOP_BY_HAND = (
+    "A container is stopped only when this incident's signals name it or you name it in an "
+    "instruction. If it should stop, name it, or stop it by hand."
+)
+STOP_BY_HAND_ONLY = (
+    "A container is stopped only when this incident's signals name it. If it should stop, stop it "
+    "by hand."
+)
 
 
 def make(deps: GraphDeps) -> Node:
@@ -87,12 +95,19 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
     """Ask, check, ask once more with the reasons, then fall back to `no_action`."""
     incident_id, host_id = state["incident_id"], state["subject"].host_id
     enabled = deps.settings_store.enabled_actions()
-    named = _incident_containers(deps, state)
+    named = _named_containers(deps, state)
+    incident = named | _service_containers(deps, state)
     rules = _step_rules(deps)
 
     def check(plan: Proposal) -> list[Violation]:
         return check_plan(
-            plan, deps.registry, enabled, host_id, incident_containers=named, step_rules=rules
+            plan,
+            deps.registry,
+            enabled,
+            host_id,
+            incident_containers=incident,
+            named_containers=named,
+            step_rules=rules,
         )
 
     mcp = await _mcp_section(deps, incident_id, enabled)
@@ -155,14 +170,13 @@ def _without_replaced(proposal: Proposal, registry: Registry) -> Proposal:
     return proposal.model_copy(update={"verification": verification})
 
 
-def _incident_containers(deps: GraphDeps, state: IncidentState) -> set[str]:
-    """The containers a plan may act on even while they work (#35, #112), read only from trusted
-    sources, never from the diagnosis, a plan, a tool result, the logs or memory:
+def _named_containers(deps: GraphDeps, state: IncidentState) -> set[str]:
+    """The containers the incident names, the only ones a plan may stop (#276) and, with
+    `_service_containers`, the ones it may act on even while they work (#35, #112). They are read
+    only from trusted sources, never from the diagnosis, a plan, a tool result, the logs or
+    memory:
 
     - the ones the incident's signals name (engine-reported names);
-    - for a service incident no signal names a container of (its URL checks failed and nothing
-      else), the service's own containers, from the registry: the URL is the only symptom, so
-      any of them may be the one at fault;
     - for a host incident about memory, the top memory users Gather measured;
     - any the human names in an instruction. Approval fills the instructions only from the
       human's own `instruct` decision. A name counts only as a whole word, in any case, so
@@ -171,9 +185,6 @@ def _incident_containers(deps: GraphDeps, state: IncidentState) -> set[str]:
       alone": the human still approves the plan."""
     subject, signals = state["subject"], state.get("signals", [])
     named = {s.container for s in signals if s.container}
-    if subject.kind == "service" and signals and not named:
-        service = deps.registry.service(subject.service_id or "")
-        named |= {c.name for c in service.containers} if service else set()
     context = state.get("context")
     if subject.kind == "host" and context and any(s.kind == "memory" for s in signals):
         named |= {m.name for m in context.top_memory}
@@ -183,6 +194,18 @@ def _incident_containers(deps: GraphDeps, state: IncidentState) -> set[str]:
         if re.search(whole, said, re.IGNORECASE):
             named.add(container.name)
     return named
+
+
+def _service_containers(deps: GraphDeps, state: IncidentState) -> set[str]:
+    """For a service incident no signal names a container of (its URL checks failed and nothing
+    else), the service's own containers, from the registry. The URL is the only symptom and any
+    of them may be the one at fault, so a plan may act on one even while it works, but not stop
+    it (#112, #276)."""
+    subject, signals = state["subject"], state.get("signals", [])
+    if subject.kind != "service" or not signals or any(s.container for s in signals):
+        return set()
+    service = deps.registry.service(subject.service_id or "")
+    return {c.name for c in service.containers} if service else set()
 
 
 async def _ask(deps: GraphDeps, incident_id: str, messages: list[BaseMessage]) -> Proposal:
@@ -207,6 +230,8 @@ def _refused(proposal: Proposal, violations: list[Violation], *, can_instruct: b
     lines.append(f"The model's reason: {proposal.reason}")
     if any(v.rule == "healthy_target" for v in violations):
         lines.append(BY_HAND if can_instruct else BY_HAND_ONLY)
+    if any(v.rule == "unnamed_stop" for v in violations):
+        lines.append(STOP_BY_HAND if can_instruct else STOP_BY_HAND_ONLY)
     if can_instruct:
         lines.append(INSTRUCT)
     return Proposal(
