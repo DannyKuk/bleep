@@ -10,12 +10,12 @@ Reply with one JSON object and nothing else, with these fields:
   - `resource`: a service ran out of something or hit its limit: memory, CPU, its volume's space, file handles.
   - `dependency`: something the service needs and does not own is down or failing: its database, a queue, another container, an outside API.
   - `code`: the service's own program fails: a bug, a crash on bad data, a hang, or a new version that does not fit its data.
-  - `network`: the settings are right but the way is blocked: a host port taken, a container cut off from its network, DNS or a firewall failing.
+  - `network`: the settings are right but the way is blocked: a host port taken, a container cut off from its network, a firewall in the way.
   - `host`: the machine itself, not one service: the Docker engine failing, the host out of disk or memory for everything on it, the host unreachable.
   - `unknown`: the evidence points to none of these.
   When two fit, what changed decides it, and these cases have one answer each:
   - a setting past a resource limit (a batch bigger than the memory limit) is `resource`;
-  - a setting that names a host or port that does not exist or does not answer is `config`, even when the symptom is a name that does not resolve or a refused connection;
+  - when the host a setting names is no container or alias on the service's network, running or stopped, the setting is wrong: `config`, even when the symptom is a name that does not resolve; do not leave it open between the setting and Docker's networking. A port in a setting where nothing listens is `config` too;
   - a needed container that is stopped is `dependency`, even when its name then does not resolve;
   - a host port held by another container or process is `network`;
   - a new version that does not fit its database (it reads a column the database lacks) is `code`, even when a setting picked the version.

@@ -193,11 +193,21 @@ async def test_the_diagnose_prompt_defines_every_category_in_one_line(tmp_path):
     assert defined == list(CATEGORIES)
 
 
+async def test_a_name_that_does_not_resolve_is_not_left_open_as_a_network_question(tmp_path):
+    """bad-env on 2026-11-05: 2 of 3 runs named the unresolvable host `db` and then left open
+    whether the setting or Docker's DNS was wrong, answering `unknown` (#108)."""
+    text = await sent_prompt(tmp_path)
+    network = next(line for line in text.splitlines() if line.startswith("  - `network`:"))
+    assert "DNS" not in network and "the settings are right" in network
+    assert "do not leave it open between the setting and Docker's networking" in text
+
+
 @pytest.mark.parametrize(
     ("case", "category"),
     [
         ("a setting past a resource limit", "resource"),
-        ("names a host or port that does not exist or does not answer", "config"),
+        ("is no container or alias on the service's network, running or stopped", "config"),
+        ("A port in a setting where nothing listens", "config"),
         ("a needed container that is stopped", "dependency"),
         ("a host port held by another container or process", "network"),
         ("a new version that does not fit its database", "code"),
@@ -207,7 +217,7 @@ async def test_the_diagnose_prompt_settles_the_cases_the_baseline_split(tmp_path
     text = await sent_prompt(tmp_path)
     assert "what changed decides it" in text
     rule = next(line for line in text.splitlines() if case in line)
-    assert f"is `{category}`" in rule
+    assert f": `{category}`" in rule or f"is `{category}`" in rule
 
 
 async def test_an_override_of_the_diagnose_prompt_keeps_the_untrusted_data_rule(tmp_path):
