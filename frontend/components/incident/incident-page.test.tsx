@@ -390,7 +390,7 @@ describe("IncidentPage", () => {
   describe("repeats", () => {
     it("a repeat links the first time it happened", async () => {
       stubBackend(detail({ incident: incident({ fold_of: "inc-first" }), repeats: 3 }));
-      render(<IncidentPage id="inc-1" />);
+      renderPage();
       expect(await screen.findByRole("note")).toHaveTextContent("this happened 3 times in all");
       expect(screen.getByRole("link", { name: "See the first time" })).toHaveAttribute(
         "href",
@@ -400,6 +400,8 @@ describe("IncidentPage", () => {
 
     it("the first incident lists its repeats, newest first", async () => {
       const fetchMock = vi.fn<typeof fetch>(async (input) => {
+        const overallReply = answerOverall(input);
+        if (overallReply) return overallReply;
         const url = String(input);
         if (url.includes("fold_of=inc-1")) {
           return json([
@@ -419,7 +421,7 @@ describe("IncidentPage", () => {
         return json(detail({ repeats: 3 }));
       });
       vi.stubGlobal("fetch", fetchMock);
-      render(<IncidentPage id="inc-1" />);
+      renderPage();
       const repeats = await screen.findByRole("region", { name: "Repeats" });
       expect(repeats).toHaveTextContent("Seen 3 times");
       const links = await within(repeats).findAllByRole("link");

@@ -94,13 +94,19 @@ describe("incident groups", () => {
 });
 
 describe("foldRepeats", () => {
-  it("keeps one row per group, its newest, and every repeat that needs a yes", () => {
+  it("keeps one row per group: its newest, or its newest that needs a yes", () => {
     const first = incident({ id: "first", status: "closed" });
     const older = incident({ id: "r1", status: "closed", fold_of: "first" });
     const asking = incident({ id: "r2", status: "awaiting_approval", fold_of: "first" });
     const newest = incident({ id: "r3", status: "investigating", fold_of: "first" });
     const other = incident({ id: "other", status: "closed" });
-    const rows = foldRepeats([newest, asking, older, first, other], NOW);
-    expect(rows.map((i) => i.id)).toEqual(["r3", "r2", "other"]);
+    expect(foldRepeats([newest, asking, older, first, other], NOW).map((i) => i.id)).toEqual([
+      "r2",
+      "other",
+    ]);
+    expect(foldRepeats([newest, older, first, other], NOW).map((i) => i.id)).toEqual([
+      "r3",
+      "other",
+    ]);
   });
 });
