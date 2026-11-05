@@ -3,14 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { incident } from "@/components/incident/fixtures";
+import { OverallProvider } from "@/components/overall-state";
 import { ServicePage } from "@/components/service/service-page";
 import { invalid, sentBody, settingsView } from "@/components/settings/fixtures";
 import type { IncidentListItem, ServiceDetail, UrlCheckPoint } from "@/lib/api-types";
 import { formatTime } from "@/lib/format";
 import { SETTINGS_CHANGED } from "@/lib/settings-api";
-
-const overall = vi.hoisted(() => ({ hosts: [], refresh: vi.fn() }));
-vi.mock("@/components/overall-state", () => ({ useOverall: () => overall }));
 
 const SERVICE: ServiceDetail = {
   service: {
@@ -56,11 +54,29 @@ function json(body: unknown, status = 200) {
   });
 }
 
+/** The header's overall poll (`OverallProvider`): the newest incidents and the hosts. */
+function answerOverall(input: RequestInfo | URL): Response | undefined {
+  const url = String(input);
+  if (url === "/api/hosts") return json([]);
+  if (url.startsWith("/api/incidents?limit=")) return json([]);
+  return undefined;
+}
+
+function renderPage(id = "demo/compose:shop") {
+  return render(
+    <OverallProvider>
+      <ServicePage id={id} />
+    </OverallProvider>,
+  );
+}
+
 /** The settings of a Bleep with no host the service is on, so its cards are read-only. */
 const NO_SETTINGS = settingsView({ hosts: [], overrides: {} });
 
 function stubBackend(service: Response, incidents: IncidentListItem[] = [pastIncident()]) {
   const fetchMock = vi.fn<typeof fetch>(async (input) => {
+    const overallReply = answerOverall(input);
+    if (overallReply) return overallReply;
     const url = String(input);
     if (url === "/api/settings") return json(NO_SETTINGS);
     if (url.endsWith("/facts")) return json([]);
@@ -84,7 +100,7 @@ describe("ServicePage", () => {
   it("lets a long unbroken service name wrap instead of widening the page", async () => {
     const name = "s".repeat(50);
     stubBackend(json({ ...SERVICE, service: { ...SERVICE.service, name } }));
-    render(<ServicePage id="demo/compose:shop" />);
+    renderPage("demo/compose:shop");
 
     expect(await screen.findByRole("heading", { level: 1, name })).toHaveClass("wrap-anywhere");
     const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
@@ -93,7 +109,7 @@ describe("ServicePage", () => {
 
   it("lists the service's URLs, rules, facts and past incidents", async () => {
     const fetchMock = stubBackend(json(SERVICE));
-    render(<ServicePage id="demo/compose:shop" />);
+    renderPage("demo/compose:shop");
 
     expect(await screen.findByRole("heading", { name: "shop" })).toBeInTheDocument();
     const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
@@ -123,7 +139,7 @@ describe("ServicePage", () => {
 
   it("still shows the memory and the incidents of a service Bleep no longer sees", async () => {
     stubBackend(json({ detail: "no such service" }, 404));
-    render(<ServicePage id="demo/compose:gone" />);
+    renderPage("demo/compose:gone");
 
     expect(await screen.findByText(/does not see this service/)).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "What I know about gone" })).toBeInTheDocument();
@@ -167,14 +183,14 @@ describe("ServicePage", () => {
 
   it("shows the health badge and a Quiet button, or the quiet pill as the one control", async () => {
     stubBackend(quietService(null));
-    const { unmount } = render(<ServicePage id="demo/compose:shop" />);
+    const { unmount } = renderPage("demo/compose:shop");
     expect(await screen.findByRole("button", { name: "Quiet shop" })).toBeInTheDocument();
     expect(titleBadge()).not.toBeNull();
     expect(screen.queryByRole("note")).toBeNull();
     unmount();
 
     stubBackend(quietService(own));
-    render(<ServicePage id="demo/compose:shop" />);
+    renderPage("demo/compose:shop");
     expect(
       await screen.findByRole("button", { name: "Quiet shop: Left alone" }),
     ).toBeInTheDocument();
@@ -189,6 +205,8 @@ describe("ServicePage", () => {
   it("Watch again from the pill's menu DELETEs and reloads", async () => {
     let quiet: unknown = own;
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const overallReply = answerOverall(input);
+      if (overallReply) return overallReply;
       const url = String(input);
       if (init?.method === "DELETE") {
         quiet = null;
@@ -200,7 +218,7 @@ describe("ServicePage", () => {
       return quietService(quiet);
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<ServicePage id="demo/compose:shop" />);
+    renderPage("demo/compose:shop");
     await watchAgain();
     await waitFor(() => expect(screen.queryByRole("note")).toBeNull());
     expect(screen.getByRole("button", { name: "Quiet shop" })).toBeInTheDocument();
@@ -214,12 +232,14 @@ describe("ServicePage", () => {
     [5, /^Since \w{3} 14:02 Bleep/],
   ])("the note says when it began, %i days ago", async (daysAgo, words) => {
     stubBackend(quietService(leftAloneSince(localIso(daysAgo))));
-    render(<ServicePage id="demo/compose:shop" />);
+    renderPage("demo/compose:shop");
     expect((await screen.findByRole("note")).textContent).toMatch(words);
   });
 
   it("a failed Watch again says why in the menu and keeps the pill", async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const overallReply = answerOverall(input);
+      if (overallReply) return overallReply;
       const url = String(input);
       if (init?.method === "DELETE") return json({ detail: "The store is busy." }, 500);
       if (url === "/api/settings") return json(NO_SETTINGS);
@@ -228,7 +248,7 @@ describe("ServicePage", () => {
       return quietService(own);
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<ServicePage id="demo/compose:shop" />);
+    renderPage("demo/compose:shop");
     await watchAgain();
     expect(await screen.findByRole("alert")).toHaveTextContent("The store is busy.");
     expect(screen.getByRole("note")).toBeInTheDocument();
@@ -237,6 +257,8 @@ describe("ServicePage", () => {
   it("a quiet choice reads the incidents and the header again", async () => {
     let quiet: unknown = own;
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const overallReply = answerOverall(input);
+      if (overallReply) return overallReply;
       const url = String(input);
       if (init?.method === "DELETE") {
         quiet = null;
@@ -248,19 +270,18 @@ describe("ServicePage", () => {
       return quietService(quiet);
     });
     vi.stubGlobal("fetch", fetchMock);
-    overall.refresh.mockClear();
-    render(<ServicePage id="demo/compose:shop" />);
-    const incidentReads = () =>
-      fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/incidents")).length;
+    renderPage("demo/compose:shop");
+    const reads = (path: string) =>
+      fetchMock.mock.calls.filter(([input]) => String(input).startsWith(path)).length;
     await watchAgain();
-    await waitFor(() => expect(incidentReads()).toBe(2));
-    expect(overall.refresh).toHaveBeenCalled();
+    await waitFor(() => expect(reads("/api/incidents?service_id=")).toBe(2));
+    await waitFor(() => expect(reads("/api/hosts")).toBe(2));
   });
 
   it("a snooze says until when", async () => {
     const until = new Date(2030, 0, 1, 18, 0).toISOString();
     stubBackend(quietService({ ...own, mode: "snooze", until }));
-    render(<ServicePage id="demo/compose:shop" />);
+    renderPage("demo/compose:shop");
     expect((await screen.findByRole("note")).textContent).toMatch(
       /^Bleep opens no incidents for it until .*18:00\.$/,
     );
@@ -268,7 +289,7 @@ describe("ServicePage", () => {
 
   it("a service quiet through its host says so and offers no Watch again", async () => {
     stubBackend(quietService({ ...own, scope: "host" }));
-    render(<ServicePage id="demo/compose:shop" />);
+    renderPage("demo/compose:shop");
     expect(await screen.findByRole("note")).toHaveTextContent(
       "Its host is left alone, so Bleep opens no incidents for it.",
     );
@@ -311,6 +332,8 @@ function settingsBackend({
   puts?: (Response | Promise<Response>)[];
 } = {}) {
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+    const overallReply = answerOverall(input);
+    if (overallReply) return overallReply;
     const url = String(input);
     if (url === "/api/settings" && init?.method === "PUT") return puts.shift() ?? json({}, 500);
     if (url === "/api/settings") {
@@ -352,7 +375,7 @@ describe("ServicePage history", () => {
   it("says since when a healthy service has been healthy", async () => {
     const since = todayAt(9, 5);
     stubBackend(serviceWith({ health_since: since }));
-    render(<ServicePage id="demo/compose:shop" />);
+    renderPage("demo/compose:shop");
 
     expect(await headline()).toBe("compose service on demo · 1 container · healthy since 9:05");
     const time = screen.getByText("9:05");
@@ -362,12 +385,12 @@ describe("ServicePage history", () => {
 
   it("says nothing of since when the service is not healthy or the time is not known", async () => {
     stubBackend(serviceWith({ health_since: todayAt(9, 5) }, "degraded"));
-    const { unmount } = render(<ServicePage id="demo/compose:shop" />);
+    const { unmount } = renderPage("demo/compose:shop");
     expect(await headline()).toBe("compose service on demo · 1 container");
     unmount();
 
     stubBackend(serviceWith({ health_since: null }));
-    render(<ServicePage id="demo/compose:shop" />);
+    renderPage("demo/compose:shop");
     expect(await headline()).toBe("compose service on demo · 1 container");
   });
 
@@ -375,7 +398,7 @@ describe("ServicePage history", () => {
     stubBackend(
       serviceWith({ recent_checks: [{ url: "http://localhost:8080/", checks: CHECKS }] }),
     );
-    render(<ServicePage id="demo/compose:shop" />);
+    renderPage("demo/compose:shop");
 
     const strip = await screen.findByRole("list", {
       name: "Last 3 checks: 2 failed, oldest first, for http://localhost:8080/",
@@ -396,7 +419,7 @@ describe("ServicePage history", () => {
     stubBackend(
       serviceWith({ recent_checks: [{ url: "http://localhost:8080/", checks: CHECKS }] }),
     );
-    render(<ServicePage id="demo/compose:shop" />);
+    renderPage("demo/compose:shop");
     const strip = await screen.findByRole("list", { name: /^Last 3 checks/ });
     const ticks = within(strip).getAllByRole("img");
     const first = `Passed at ${formatTime(CHECKS[0].checked_at)}, 200, 12 ms`;
@@ -418,7 +441,7 @@ describe("ServicePage history", () => {
 
   it("draws no strip for a URL with no checks yet", async () => {
     stubBackend(json(SERVICE));
-    render(<ServicePage id="demo/compose:shop" />);
+    renderPage("demo/compose:shop");
     expect(await screen.findByRole("list", { name: "URLs" })).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: /^Last / })).not.toBeInTheDocument();
   });
@@ -435,7 +458,7 @@ describe("ServicePage history", () => {
       ),
       pastIncident({ id: "inc-3", title: "shop is slow" }),
     ]);
-    render(<ServicePage id="demo/compose:shop" />);
+    renderPage("demo/compose:shop");
     const rows = within(await screen.findByRole("list", { name: "Incidents" })).getAllByRole(
       "link",
     );
@@ -458,7 +481,7 @@ describe("ServicePage settings", () => {
       body_contains: null,
     });
     settingsBackend({ reads: [view] });
-    render(<ServicePage id="m1/compose:shop" />);
+    renderPage("m1/compose:shop");
     const urls = await region("Checked from outside");
     const rows = await within(urls).findAllByRole("listitem");
     expect(rows).toHaveLength(2);
@@ -481,7 +504,7 @@ describe("ServicePage settings", () => {
       },
     };
     const fetchMock = settingsBackend({ puts: [json(saved)] });
-    render(<ServicePage id="m1/compose:shop" />);
+    renderPage("m1/compose:shop");
     const urls = await region("Checked from outside");
 
     await userEvent.click(await within(urls).findByRole("button", { name: "Edit URLs" }));
@@ -518,7 +541,7 @@ describe("ServicePage settings", () => {
         ),
       ],
     });
-    render(<ServicePage id="m1/compose:shop" />);
+    renderPage("m1/compose:shop");
     const urls = await region("Checked from outside");
     await userEvent.click(await within(urls).findByRole("button", { name: "Edit URLs" }));
 
@@ -535,7 +558,7 @@ describe("ServicePage settings", () => {
 
   it("shows a URL row left empty as invalid and sends nothing", async () => {
     const fetchMock = settingsBackend();
-    render(<ServicePage id="m1/compose:shop" />);
+    renderPage("m1/compose:shop");
     const urls = await region("Checked from outside");
     await userEvent.click(await within(urls).findByRole("button", { name: "Edit URLs" }));
     await userEvent.click(within(urls).getByRole("button", { name: "Add a URL" }));
@@ -553,7 +576,7 @@ describe("ServicePage settings", () => {
 
   it("Cancel closes the editor and sends nothing", async () => {
     const fetchMock = settingsBackend();
-    render(<ServicePage id="m1/compose:shop" />);
+    renderPage("m1/compose:shop");
     const urls = await region("Checked from outside");
     await userEvent.click(await within(urls).findByRole("button", { name: "Edit URLs" }));
     await userEvent.type(within(urls).getByRole("textbox", { name: "URL 1" }), "x");
@@ -577,7 +600,7 @@ describe("ServicePage settings", () => {
     const fetchMock = settingsBackend({
       puts: [json(changed), json(settingsView({ version: "v3" }))],
     });
-    render(<ServicePage id="m1/compose:shop" />);
+    renderPage("m1/compose:shop");
     const rules = await region("Rules I follow");
     expect(await within(rules).findByRole("list", { name: "Rules: Its host" })).toHaveTextContent(
       "Ask before touching anything at night.",
@@ -606,7 +629,7 @@ describe("ServicePage settings", () => {
     saved.overrides.hosts = { m1: { services: {} } };
     saved.hosts[0].services["compose:shop"].protected_containers = ["shop-db-1"];
     const fetchMock = settingsBackend({ puts: [json(saved)] });
-    render(<ServicePage id="m1/compose:shop" />);
+    renderPage("m1/compose:shop");
     const containers = await region("Containers");
 
     const fixed = await within(containers).findByRole("list", {
@@ -643,7 +666,7 @@ describe("ServicePage settings", () => {
       reads: [settingsView(), now],
       puts: [json({ detail: "the settings changed", version: "v2" }, 409)],
     });
-    render(<ServicePage id="m1/compose:shop" />);
+    renderPage("m1/compose:shop");
     const containers = await region("Containers");
     await userEvent.click(
       await within(containers).findByRole("button", { name: "Edit protected containers" }),
@@ -663,7 +686,7 @@ describe("ServicePage settings", () => {
       reads: [settingsView(), json({ detail: "Bad Gateway" }, 502)],
       puts: [json({ detail: "the settings changed", version: "v2" }, 409)],
     });
-    render(<ServicePage id="m1/compose:shop" />);
+    renderPage("m1/compose:shop");
     const rules = await region("Rules I follow");
     await userEvent.click(await within(rules).findByRole("button", { name: "Edit rules" }));
     await userEvent.type(within(rules).getByPlaceholderText(/Add a rule/), "r{Enter}");
@@ -686,7 +709,7 @@ describe("ServicePage settings", () => {
     const fetchMock = settingsBackend({
       puts: [new Promise<Response>((resolve) => (answer = resolve)), json(saved)],
     });
-    render(<ServicePage id="m1/compose:shop" />);
+    renderPage("m1/compose:shop");
     const containers = await region("Containers");
     const rules = await region("Rules I follow");
     await userEvent.click(
@@ -730,7 +753,7 @@ describe("ServicePage settings", () => {
     const view = settingsView({ overrides: {} });
     view.hosts[0].services = {};
     settingsBackend({ reads: [view] });
-    render(<ServicePage id="m1/compose:shop" />);
+    renderPage("m1/compose:shop");
     const urls = await region("Checked from outside");
     expect(await within(urls).findByText("No URLs are checked.")).toBeInTheDocument();
     expect(within(urls).getByRole("button", { name: "Edit URLs" })).toBeInTheDocument();
@@ -741,7 +764,7 @@ describe("ServicePage settings", () => {
     const view = settingsView({ overrides: {} });
     view.hosts[0].services = { shop: view.hosts[0].services["compose:shop"] };
     const fetchMock = settingsBackend({ reads: [view], puts: [json(view)] });
-    render(<ServicePage id="m1/compose:shop" />);
+    renderPage("m1/compose:shop");
     const rules = await region("Rules I follow");
     await userEvent.click(await within(rules).findByRole("button", { name: "Edit rules" }));
     await userEvent.type(
@@ -762,7 +785,7 @@ describe("ServicePage settings", () => {
       reads: [view],
       puts: [json(view)],
     });
-    render(<ServicePage id="m1/compose:old" />);
+    renderPage("m1/compose:old");
     expect(await screen.findByText(/does not see this service/)).toBeInTheDocument();
     expect(await region("Checked from outside")).toHaveTextContent(
       "https://shop.example.test/health",
@@ -780,13 +803,13 @@ describe("ServicePage settings", () => {
     const view = settingsView({ overrides: {} });
     view.hosts[0].services = { shop: view.hosts[0].services["compose:shop"] };
     settingsBackend({ service: json({ detail: "no such service" }, 404), reads: [view] });
-    render(<ServicePage id="m1/compose:shop" />);
+    renderPage("m1/compose:shop");
     expect(await region("Rules I follow")).toHaveTextContent("The db is shared with billing.");
   });
 
   it("shows no settings for a gone service that has none", async () => {
     const fetchMock = settingsBackend({ service: json({ detail: "no such service" }, 404) });
-    render(<ServicePage id="m1/compose:gone" />);
+    renderPage("m1/compose:gone");
     expect(await screen.findByText(/does not see this service/)).toBeInTheDocument();
     await waitFor(() =>
       expect(fetchMock.mock.calls.some(([path]) => path === "/api/settings")).toBe(true),
@@ -798,7 +821,7 @@ describe("ServicePage settings", () => {
 
   it("falls back to the service's read when the settings cannot be loaded", async () => {
     settingsBackend({ reads: [json({ detail: "the store is down" }, 503)] });
-    render(<ServicePage id="m1/compose:shop" />);
+    renderPage("m1/compose:shop");
     expect(await screen.findByText(/Could not load the service's settings/)).toHaveTextContent(
       "the store is down",
     );
