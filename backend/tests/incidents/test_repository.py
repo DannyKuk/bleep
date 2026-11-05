@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from bleep.incidents.repository import IncidentRepo
+from bleep.llm.usage import CostLedger
 from bleep.schemas.incidents import RecoveryEvent, Signal, Subject
 from bleep.store.db import Database
 
@@ -201,3 +202,25 @@ async def test_close_unfinished_leaves_a_spared_status_open(repo):
     assert await repo.close_unfinished(incident.id, spare=("executing", "verifying")) is None
     assert (await repo.get(incident.id)).status == "executing"
     assert await repo.close_unfinished(incident.id) == "executing"
+
+
+async def test_incident_tokens_and_cost_are_the_usage_ledger_sums(repo):
+    incident, _ = await repo.open_or_attach(svc(), [sig(svc())])
+    other, _ = await repo.open_or_attach(svc("db"), [sig(svc("db"))])
+    assert (incident.tokens, incident.cost_usd) == (0, None)
+
+    ledger = CostLedger(repo.db)
+    await ledger.add(incident.id, "m", 100, 20, 0.5)
+    await ledger.add(incident.id, "m", 50, 5, 0.25)
+    await ledger.add(other.id, "m", 7, 3, None)
+
+    expected = (175, 0.75)
+    for read in (
+        await repo.get(incident.id),
+        (await repo.get_many([incident.id]))[incident.id],
+        (await repo.list(service_id="web"))[0],
+        next(i for i in await repo.unfinished() if i.id == incident.id),
+    ):
+        assert (read.tokens, read.cost_usd) == expected
+    assert (await repo.get(other.id)).tokens == 10
+    assert (await repo.get(other.id)).cost_usd is None

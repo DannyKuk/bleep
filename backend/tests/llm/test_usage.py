@@ -187,3 +187,42 @@ async def test_a_day_of_unpriced_calls_only_has_no_cost(tmp_path):
     [day] = await ledger.by_day()
     [incident] = await ledger.by_incident()
     assert (day.usd, day.unpriced, incident.usd, incident.unpriced) == (None, 1, None, 1)
+
+
+def local_reply(completion_tokens, reasoning_tokens):
+    """What the OpenAI-protocol client makes of a local server's reply that carries usage."""
+    from langchain_openai import ChatOpenAI
+
+    chat = ChatOpenAI(model="local", api_key="none", base_url="http://localhost:1234/v1")
+    body = {
+        "id": "x",
+        "model": "local",
+        "choices": [
+            {"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+        ],
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": completion_tokens,
+            "total_tokens": 100 + completion_tokens,
+            "completion_tokens_details": {"reasoning_tokens": reasoning_tokens},
+        },
+    }
+    return chat._create_chat_result(body).generations[0].message
+
+
+async def test_local_reply_with_openai_usage_is_recorded(ledger):
+    model = FakeChatModel(script=[local_reply(20, 8)])
+    await model.ainvoke([HumanMessage("a")], config={"callbacks": [UsageTracker("i", ledger)]})
+    assert (await ledger.incident_total("i")).tokens == 120
+
+
+async def test_reasoning_tokens_the_server_reports_beside_the_completion_are_counted(ledger):
+    model = FakeChatModel(script=[local_reply(12, 30)])
+    await model.ainvoke([HumanMessage("a")], config={"callbacks": [UsageTracker("i", ledger)]})
+    assert (await ledger.incident_total("i")).tokens_out == 42
+
+
+async def test_reasoning_tokens_inside_the_completion_are_not_counted_twice(ledger):
+    model = FakeChatModel(script=[local_reply(40, 30)])
+    await model.ainvoke([HumanMessage("a")], config={"callbacks": [UsageTracker("i", ledger)]})
+    assert (await ledger.incident_total("i")).tokens_out == 40

@@ -53,6 +53,15 @@ def _title(subject: Subject, signals: list[Signal]) -> str:
     return f"{what} on {where}"
 
 
+# Tokens and cost are the usage ledger's sums, so an incident and the ledger never disagree.
+_COLUMNS = (
+    "id, kind, host_id, service_id, status, title, opened_at, closed_at, trace_url,"
+    " prompt_overrides,"
+    " (SELECT COALESCE(SUM(tokens_in + tokens_out), 0) FROM usage"
+    "  WHERE usage.incident_id = incidents.id) AS tokens,"
+    " (SELECT SUM(usd) FROM usage WHERE usage.incident_id = incidents.id) AS cost_usd"
+)
+
 _OPEN = f"status NOT IN ({', '.join(repr(s) for s in TERMINAL_STATUSES)})"
 
 
@@ -206,7 +215,9 @@ class IncidentRepo:
             await conn.close()
 
     async def _get(self, conn: aiosqlite.Connection, incident_id: str) -> Incident | None:
-        async with conn.execute("SELECT * FROM incidents WHERE id = ?", (incident_id,)) as cursor:
+        async with conn.execute(
+            f"SELECT {_COLUMNS} FROM incidents WHERE id = ?", (incident_id,)
+        ) as cursor:
             row = await cursor.fetchone()
         return _incident(row) if row is not None else None
 
@@ -225,7 +236,7 @@ class IncidentRepo:
         conn = await self.db.connect()
         try:
             async with conn.execute(
-                f"SELECT * FROM incidents WHERE id IN ({', '.join('?' * len(ids))})", ids
+                f"SELECT {_COLUMNS} FROM incidents WHERE id IN ({', '.join('?' * len(ids))})", ids
             ) as cursor:
                 return {row["id"]: _incident(row) for row in await cursor.fetchall()}
         finally:
@@ -246,7 +257,7 @@ class IncidentRepo:
         conn = await self.db.connect()
         try:
             async with conn.execute(
-                f"SELECT * FROM incidents {'WHERE ' + where if where else ''}"
+                f"SELECT {_COLUMNS} FROM incidents {'WHERE ' + where if where else ''}"
                 " ORDER BY opened_at DESC, id DESC LIMIT ? OFFSET ?",
                 [*args, limit, offset],
             ) as cursor:
@@ -259,7 +270,7 @@ class IncidentRepo:
         conn = await self.db.connect()
         try:
             async with conn.execute(
-                f"SELECT * FROM incidents WHERE {_OPEN} ORDER BY opened_at, id"
+                f"SELECT {_COLUMNS} FROM incidents WHERE {_OPEN} ORDER BY opened_at, id"
             ) as cursor:
                 return [_incident(row) for row in await cursor.fetchall()]
         finally:
@@ -270,7 +281,8 @@ class IncidentRepo:
         conn = await self.db.connect()
         try:
             async with conn.execute(
-                f"SELECT * FROM incidents WHERE host_id = ? AND {_OPEN} ORDER BY opened_at, id",
+                f"SELECT {_COLUMNS} FROM incidents WHERE host_id = ? AND {_OPEN}"
+                " ORDER BY opened_at, id",
                 (host_id,),
             ) as cursor:
                 return [_incident(row) for row in await cursor.fetchall()]
