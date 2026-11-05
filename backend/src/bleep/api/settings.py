@@ -31,6 +31,23 @@ Parts = Annotated[AppParts, Depends(get_parts)]
 # A settings, plugin or prompt body is a few thousand characters (a prompt override at most
 # 20,000); the cap keeps the secret check, which reads the whole body, a small cost.
 MAX_BODY_CHARS = 100_000
+# The deepest body the dashboard sends is about six levels (settings > services > key > urls >
+# item). A fixed limit keeps the answer the same on every platform: `json.dumps` alone raises
+# RecursionError at a depth set by the thread's stack size, which differs between macOS and Linux.
+MAX_BODY_DEPTH = 32
+
+
+def _too_deep(body: Any) -> bool:
+    pending: list[tuple[Any, int]] = [(body, 1)]
+    while pending:
+        value, depth = pending.pop()
+        if not isinstance(value, dict | list):
+            continue
+        if depth > MAX_BODY_DEPTH:
+            return True
+        children = value.values() if isinstance(value, dict) else value
+        pending.extend((child, depth + 1) for child in children)
+    return False
 
 
 def settings_view(parts: AppParts) -> SettingsView:
@@ -122,7 +139,10 @@ def stale_response(current: str, what: str) -> JSONResponse:
 
 def check_size(body: Any) -> None:
     """413 for a body over `MAX_BODY_CHARS` as JSON, before the secret check reads all of it; 422
-    for one nested too deeply to measure. `BodyLimitMiddleware` caps the raw bytes earlier."""
+    for one nested deeper than `MAX_BODY_DEPTH`. `BodyLimitMiddleware` caps the raw bytes
+    earlier."""
+    if _too_deep(body):
+        raise HTTPException(422, "the body is nested too deeply")
     try:
         size = len(json.dumps(body, ensure_ascii=False))
     except RecursionError:
