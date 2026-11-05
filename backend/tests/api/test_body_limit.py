@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from bleep.api.body_limit import MAX_BODY_BYTES, BodyLimitMiddleware
-from bleep.api.settings import check_size
+from bleep.api.settings import MAX_BODY_DEPTH, check_size
 
 BIG = b'{"x": "' + b"a" * (MAX_BODY_BYTES + 1) + b'"}'
 WRITES = [
@@ -94,6 +94,26 @@ def test_check_size_refuses_a_body_nested_too_deeply_to_measure():
     with pytest.raises(HTTPException) as refusal:
         check_size(body)
     assert refusal.value.status_code == 422
+
+
+def test_check_size_refuses_nesting_past_the_depth_limit_on_any_platform():
+    shallow_enough_to_dump_anywhere: dict = {"x": 1}
+    for _ in range(MAX_BODY_DEPTH):
+        shallow_enough_to_dump_anywhere = {"a": shallow_enough_to_dump_anywhere}
+    with pytest.raises(HTTPException) as refusal:
+        check_size(shallow_enough_to_dump_anywhere)
+    assert (refusal.value.status_code, refusal.value.detail) == (
+        422,
+        "the body is nested too deeply",
+    )
+
+
+def test_check_size_accepts_nesting_up_to_the_limit():
+    check_size({"settings": {"services": {"web": {"urls": [{"url": "https://a.test"}]}}}})
+    at_the_limit: list = [1]
+    for _ in range(MAX_BODY_DEPTH - 1):
+        at_the_limit = [at_the_limit]
+    check_size(at_the_limit)
 
 
 def test_a_deeply_nested_request_reaches_check_size_and_is_a_422(dev_client):
