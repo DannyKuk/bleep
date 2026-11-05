@@ -7,9 +7,9 @@ result goes on to Propose still `unsure`, so the proposal says "I am not sure, h
 found". A model that cannot produce the structure, or a spent budget, gives the same fallback
 diagnosis instead of an error, built from what Gather saw.
 
-The model's `planted_in` is kept only for places the run read, and when host text tried to give
-orders (that, or a wrapper tag the guard escaped) Bleep adds one evidence line of its own that
-names where and quotes nothing (`graph/planted.py`, #105).
+The model's `planted_in` is kept only for places the run read and is never shown
+(`graph/planted.py`, #105). When the guard escaped a wrapper tag in host text the run read, Bleep
+adds one evidence line of its own that names where and quotes nothing.
 """
 
 import logging
@@ -69,11 +69,11 @@ def _with_planted(
     diagnosis: Diagnosis, context: GatherContext, messages: list[AnyMessage]
 ) -> Diagnosis:
     """The diagnosis with `planted_in` cut to the places the run read, and Bleep's own evidence
-    line when host text tried to give orders. Neither changes what Bleep does next."""
+    line when the guard escaped a wrapper tag. Neither changes what Bleep does next."""
     read = read_sources(context, messages)
     planted_in = [s for s in diagnosis.planted_in if s in read]
     found = diagnosis.model_copy(update={"planted_in": planted_in})
-    sentence = planted_sentence(planted_places(context, messages, found))
+    sentence = planted_sentence(planted_places(context, messages))
     if sentence is not None:
         line = Evidence(source=EVIDENCE_SOURCE, detail=sentence)
         found = found.model_copy(update={"evidence": [*found.evidence, line]})

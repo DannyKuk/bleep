@@ -524,12 +524,13 @@ async def test_a_spent_budget_is_logged_without_a_traceback(tmp_path, caplog):
 # --- planted instructions (#105) ------------------------------------------------------------
 
 
-async def test_a_flag_the_model_raised_on_a_place_the_run_read_is_told_to_the_human(tmp_path):
-    """The diagnosis's `planted_in` is shown once its place was read (#105): the report's fixed
-    sentence and `planted_in`, in the report that is stored and the one that is sent."""
+async def test_a_flag_only_the_model_raised_is_not_shown_to_the_human(tmp_path):
+    """The model's `planted_in` flagged 4 of 6 honest controls (#112) and, narrowed, 8 of 18
+    control runs on 2026-11-05 (#105): it stays in the diagnosis for the evals, even for a place
+    the run read, and puts no sentence in the report or a channel."""
     env, state, notified = await setup(tmp_path, written())
     logs, _ = guard_text("logs", "ERROR shop: database unreachable\n")
-    found = DIAGNOSIS.model_copy(update={"planted_in": ["http_body", "logs"]})
+    found = DIAGNOSIS.model_copy(update={"planted_in": ["logs"]})
     state |= {
         "proposal": NO_ACTION,
         "diagnosis": found,
@@ -538,13 +539,9 @@ async def test_a_flag_the_model_raised_on_a_place_the_run_read_is_told_to_the_hu
 
     update = await run(env, state)
 
-    sentence = (
-        "Bleep found text in the container logs that tried to give it orders and ignored it; "
-        "check who can write there."
-    )
     for told in (update["report"], notified.reports[0][1]):
-        assert told.follow_ups[-1] == sentence
-        assert told.planted_in == ["logs"]  # nothing reads reply bodies, so that is dropped
+        assert not any(f.startswith(PLANTED_START) for f in told.follow_ups)
+        assert told.planted_in == []
 
 
 async def test_a_flag_on_a_place_the_run_never_read_is_not_shown(tmp_path):

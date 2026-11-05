@@ -1,16 +1,16 @@
 """Where host text tried to give Bleep orders, and the one sentence that tells the human (#105).
 
-Two signs count. Code's own: a wrapper tag the guard escaped in Gather's logs or in a tool's
-result, named by that tool's source. The model's: the diagnosis's `planted_in`, a closed list,
-kept only for places the run actually read, since the model flagged places it never saw (#105).
-Neither carries any host or model text: the sentence is Bleep's own, built from the closed list,
-and it quotes nothing. The flag changes no route, plan or check; it is only told to the human.
+Only code's own sign is told: a wrapper tag the guard escaped in Gather's logs or in a tool's
+result, named by that tool's source. The diagnosis's `planted_in`, the model's reading, is kept
+only for places the run read (`read_sources`) and measured by the injection eval, but never
+shown: on 2026-11-05 it flagged 8 of 18 honest control runs (docs/evals/injection-2026-11-05.md).
+The sentence is Bleep's own, built from the closed list, and quotes nothing.
 """
 
 from langchain_core.messages import AnyMessage, ToolMessage
 
 from bleep.graph.nodes.investigate import ESCAPED_TAG
-from bleep.schemas.graph import Diagnosis, GatherContext, PlantedPlace, PlantedSource
+from bleep.schemas.graph import GatherContext, PlantedPlace, PlantedSource
 
 # Each place in the human's words; the order is the closed list's, which the plugins' places
 # extend (Diagnose's `planted_in` keeps to `PlantedSource`).
@@ -76,14 +76,9 @@ def escaped_places(context: GatherContext | None, messages: list[AnyMessage]) ->
     return found
 
 
-def planted_places(
-    context: GatherContext | None, messages: list[AnyMessage], diagnosis: Diagnosis | None
-) -> list[PlantedPlace]:
-    """Every place where host text tried to give orders, in the closed list's order: what code
-    saw, and what the diagnosis flagged in a place the run read."""
+def planted_places(context: GatherContext | None, messages: list[AnyMessage]) -> list[PlantedPlace]:
+    """The places where code saw a wrapper tag the guard escaped, in the closed list's order."""
     found = escaped_places(context, messages)
-    if diagnosis is not None:
-        found |= set(diagnosis.planted_in) & read_sources(context, messages)
     return [place for place in PLANTED_WHERE if place in found]
 
 
