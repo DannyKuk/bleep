@@ -9,6 +9,7 @@ import {
   FILTERS,
   GROUP_TITLE,
   type Filter,
+  foldRepeats,
   formatDuration,
   groupIncidents,
   groupOf,
@@ -40,10 +41,11 @@ function Row({
   now,
   hosts,
 }: {
-  incident: Incident;
+  incident: Incident & { repeats?: number };
   now: number;
   hosts: readonly QuietHost[];
 }) {
+  const repeats = incident.repeats ?? 1;
   const waiting = groupOf(incident, now, hosts) === "needs_you";
   const duration = formatDuration(incident.opened_at, incident.closed_at);
   return (
@@ -57,6 +59,11 @@ function Row({
       >
         <IncidentStatusBadge status={incident.status} />
         <span className="min-w-0 flex-1 basis-56 text-[15px] font-bold">{incident.title}</span>
+        {repeats > 1 && (
+          <span className="rounded-full bg-soft px-2 py-0.5 text-xs font-bold text-ink-2">
+            Seen {repeats} times
+          </span>
+        )}
         <span className="font-mono text-xs text-ink-2">{subjectText(incident)}</span>
         <span className="text-xs text-ink-2">
           <time dateTime={incident.opened_at}>{formatDateTime(incident.opened_at)}</time>
@@ -92,7 +99,7 @@ export function IncidentListView({
     );
   }
 
-  const shown = incidents.filter(
+  const shown = foldRepeats(incidents, now, hosts).filter(
     (i) => matchesFilter(i, filter, now, hosts) && matchesSearch(i, subjectText(i), query),
   );
   return (

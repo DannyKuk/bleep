@@ -20,6 +20,7 @@ export function incident(overrides: Partial<Incident> = {}): Incident {
     tokens: 5400,
     trace_url: null,
     prompt_overrides: null,
+    fold_of: null,
     ...overrides,
   };
 }
@@ -90,6 +91,7 @@ export function detail(overrides: Partial<IncidentDetail> = {}): IncidentDetail 
     report: null,
     feedback: [],
     expectation: null,
+    repeats: 1,
     ...overrides,
   };
 }

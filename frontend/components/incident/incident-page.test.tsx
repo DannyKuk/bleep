@@ -387,6 +387,51 @@ describe("IncidentPage", () => {
     });
   });
 
+  describe("repeats", () => {
+    it("a repeat links the first time it happened", async () => {
+      stubBackend(detail({ incident: incident({ fold_of: "inc-first" }), repeats: 3 }));
+      renderPage();
+      expect(await screen.findByRole("note")).toHaveTextContent("this happened 3 times in all");
+      expect(screen.getByRole("link", { name: "See the first time" })).toHaveAttribute(
+        "href",
+        "/incidents/inc-first",
+      );
+    });
+
+    it("the first incident lists its repeats, newest first", async () => {
+      const fetchMock = vi.fn<typeof fetch>(async (input) => {
+        const overallReply = answerOverall(input);
+        if (overallReply) return overallReply;
+        const url = String(input);
+        if (url.includes("fold_of=inc-1")) {
+          return json([
+            {
+              ...incident({ id: "inc-3", status: "closed", fold_of: "inc-1" }),
+              votes: {},
+              repeats: 3,
+            },
+            {
+              ...incident({ id: "inc-2", status: "closed", fold_of: "inc-1" }),
+              votes: {},
+              repeats: 3,
+            },
+          ]);
+        }
+        if (url.includes("/events")) return json([]);
+        return json(detail({ repeats: 3 }));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      renderPage();
+      const repeats = await screen.findByRole("region", { name: "Repeats" });
+      expect(repeats).toHaveTextContent("Seen 3 times");
+      const links = await within(repeats).findAllByRole("link");
+      expect(links.map((link) => link.getAttribute("href"))).toEqual([
+        "/incidents/inc-3",
+        "/incidents/inc-2",
+      ]);
+    });
+  });
+
   describe("This is expected", () => {
     const SENTENCE = "fetch on shop is expected to exit: I stay quiet when it exits with 0.";
 

@@ -69,6 +69,36 @@ export function matchesSearch(incident: Incident, subject: string, query: string
   return incident.title.toLowerCase().includes(needle) || subject.toLowerCase().includes(needle);
 }
 
+/**
+ * One row per group of repeats, at the place of its newest incident (the list is newest first):
+ * the newest that needs the human when one does, so a yes is never folded away, else the newest.
+ * Each row carries the group's size.
+ */
+export function foldRepeats<T extends Incident>(
+  incidents: T[],
+  now: number,
+  hosts: readonly QuietHost[] = [],
+): T[] {
+  const chosen = new Map<string, T>();
+  for (const incident of incidents) {
+    const root = incident.fold_of ?? incident.id;
+    const current = chosen.get(root);
+    const needsYou = groupOf(incident, now, hosts) === "needs_you";
+    if (current === undefined || (needsYou && groupOf(current, now, hosts) !== "needs_you")) {
+      chosen.set(root, incident);
+    }
+  }
+  const placed = new Set<string>();
+  const rows: T[] = [];
+  for (const incident of incidents) {
+    const root = incident.fold_of ?? incident.id;
+    if (placed.has(root)) continue;
+    placed.add(root);
+    rows.push(chosen.get(root)!);
+  }
+  return rows;
+}
+
 /** Non-empty groups in display order; each keeps the order of the incidents given. */
 export function groupIncidents(
   incidents: Incident[],

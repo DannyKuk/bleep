@@ -4,6 +4,7 @@ import { incident } from "@/components/incident/fixtures";
 import { host } from "@/components/overview/fixtures";
 import {
   FILTERS,
+  foldRepeats,
   formatDuration,
   groupIncidents,
   groupOf,
@@ -89,5 +90,23 @@ describe("incident groups", () => {
     expect(matchesFilter(endedAgo(DAY / 2), "closed_or_failed", NOW)).toBe(true);
     expect(headline([endedAgo(DAY / 2)], NOW)).toBe("1 needs you.");
     expect(headline([endedAgo(DAY + 60_000)], NOW)).toBe("Nothing needs you right now.");
+  });
+});
+
+describe("foldRepeats", () => {
+  it("keeps one row per group: its newest, or its newest that needs a yes", () => {
+    const first = incident({ id: "first", status: "closed" });
+    const older = incident({ id: "r1", status: "closed", fold_of: "first" });
+    const asking = incident({ id: "r2", status: "awaiting_approval", fold_of: "first" });
+    const newest = incident({ id: "r3", status: "investigating", fold_of: "first" });
+    const other = incident({ id: "other", status: "closed" });
+    expect(foldRepeats([newest, asking, older, first, other], NOW).map((i) => i.id)).toEqual([
+      "r2",
+      "other",
+    ]);
+    expect(foldRepeats([newest, older, first, other], NOW).map((i) => i.id)).toEqual([
+      "r3",
+      "other",
+    ]);
   });
 });

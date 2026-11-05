@@ -81,6 +81,7 @@ export interface Thresholds {
   load_polls: number;
   host_unreachable_s: number;
   debounce_s: number;
+  fold_window_h: number;
 }
 
 export interface ServiceOverrides {

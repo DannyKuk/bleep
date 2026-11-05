@@ -22,6 +22,7 @@ function detail(overrides: Partial<IncidentDetail> = {}): IncidentDetail {
     report: null,
     feedback: [],
     expectation: null,
+    repeats: 1,
     ...overrides,
   };
 }
