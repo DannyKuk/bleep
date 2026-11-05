@@ -147,7 +147,7 @@ function Header({
   return (
     <header className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h1 className="text-3xl font-extrabold md:text-4xl">{host.name}</h1>
+        <h1 className="text-3xl font-extrabold wrap-anywhere md:text-4xl">{host.name}</h1>
         {!host.quiet && (
           <HealthBadge health={host.health} label={host.reachable ? undefined : "Unreachable"} />
         )}
@@ -227,7 +227,7 @@ function Host({ id }: { id: string }) {
             </Link>
           </li>
           <li aria-hidden>&rsaquo;</li>
-          <li aria-current="page" className="font-bold text-ink">
+          <li aria-current="page" className="min-w-0 font-bold wrap-anywhere text-ink">
             {name}
           </li>
         </ol>
@@ -235,7 +235,7 @@ function Host({ id }: { id: string }) {
 
       {missing ? (
         <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-extrabold md:text-4xl">{id}</h1>
+          <h1 className="text-3xl font-extrabold wrap-anywhere md:text-4xl">{id}</h1>
           <p className="text-sm text-ink-2">
             Bleep does not know a host called <span className="font-mono">{id}</span>.{" "}
             <Link href="/" className={LINK}>
@@ -248,7 +248,7 @@ function Host({ id }: { id: string }) {
           {host ? (
             <Header host={host} services={onHost.length} onChanged={refresh} />
           ) : (
-            <h1 className="text-3xl font-extrabold md:text-4xl">{name}</h1>
+            <h1 className="text-3xl font-extrabold wrap-anywhere md:text-4xl">{name}</h1>
           )}
           {notice && <Alert>{notice}</Alert>}
 

@@ -238,7 +238,7 @@ function Service({ id }: { id: string }) {
             </>
           )}
           <li aria-hidden>&rsaquo;</li>
-          <li aria-current="page" className="font-bold text-ink">
+          <li aria-current="page" className="min-w-0 font-bold wrap-anywhere text-ink">
             {name}
           </li>
         </ol>
@@ -246,7 +246,7 @@ function Service({ id }: { id: string }) {
 
       <header className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <h1 className="text-3xl font-extrabold md:text-4xl">{name}</h1>
+          <h1 className="text-3xl font-extrabold wrap-anywhere md:text-4xl">{name}</h1>
           {service && !service.quiet && <HealthBadge health={service.health} />}
           {service && <QuietButton target={target} quiet={service.quiet} onChanged={reload} />}
         </div>

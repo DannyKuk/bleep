@@ -81,6 +81,13 @@ describe("HostPage", () => {
     expect(within(list).queryByText("blog")).toBeNull();
   });
 
+  it("lets a long unbroken host name wrap instead of widening the page", () => {
+    backend();
+    const name = "h".repeat(50);
+    renderPage(name, [{ ...HOST, id: name, name }]);
+    expect(screen.getByRole("heading", { level: 1, name })).toHaveClass("wrap-anywhere");
+  });
+
   it("shows an unreachable host's error", async () => {
     backend();
     renderPage("m1", [{ ...HOST, reachable: false, error: "ssh: connection refused" }]);

@@ -81,6 +81,16 @@ function pastIncident(
 }
 
 describe("ServicePage", () => {
+  it("lets a long unbroken service name wrap instead of widening the page", async () => {
+    const name = "s".repeat(50);
+    stubBackend(json({ ...SERVICE, service: { ...SERVICE.service, name } }));
+    render(<ServicePage id="demo/compose:shop" />);
+
+    expect(await screen.findByRole("heading", { level: 1, name })).toHaveClass("wrap-anywhere");
+    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(crumbs).getByText(name)).toHaveClass("wrap-anywhere");
+  });
+
   it("lists the service's URLs, rules, facts and past incidents", async () => {
     const fetchMock = stubBackend(json(SERVICE));
     render(<ServicePage id="demo/compose:shop" />);
