@@ -2,9 +2,10 @@
 // regenerate the whole file from the backend's /openapi.json; keep the exported names below
 // (HostView, ServiceView, ContainerView, UrlStatus, Health) if it is ever switched.
 
-export type Health = "ok" | "degraded" | "down" | "stopped" | "unknown";
-/** A host's health: a host that may sleep and does not answer is asleep, not down. */
-export type HostHealth = Health | "asleep";
+/** `asleep`: a host that may sleep and does not answer, and every service on it. */
+export type Health = "ok" | "degraded" | "down" | "stopped" | "unknown" | "asleep";
+/** A host's health; the same values as a service's. */
+export type HostHealth = Health;
 
 export type HostKind = "ssh" | "socket";
 

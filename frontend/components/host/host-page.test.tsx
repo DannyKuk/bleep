@@ -196,6 +196,28 @@ describe("HostPage", () => {
     expect(removal?.[1]?.headers).toMatchObject({ "if-match": '"v-m1"' });
   });
 
+  it("lets a dashboard host be marked as one that may sleep, with no hosts file to go back to", async () => {
+    const base = sshHost({ services: {} });
+    const dashboard = {
+      ...base,
+      connection: { ...base.connection, source: "dashboard" as const, version: "v-m1" },
+    };
+    const fetchMock = stubBackend({
+      "GET /api/settings": json(settingsView({ hosts: [dashboard], overrides: {} })),
+      "GET /api/services": json([]),
+      "PUT /api/settings": [json(settingsView({ hosts: [{ ...dashboard, may_sleep: true }] }))],
+    });
+    renderPage();
+    const sleep = await screen.findByRole("region", { name: "Sleep" });
+    expect(within(sleep).queryByText("From the hosts file")).toBeNull();
+    await userEvent.click(within(sleep).getByRole("checkbox", { name: "This host may sleep" }));
+
+    await waitFor(() =>
+      expect(within(sleep).getByRole("checkbox", { name: "This host may sleep" })).toBeChecked(),
+    );
+    expect(sentBody(fetchMock, "PUT")).toEqual({ hosts: { m1: { may_sleep: true } } });
+  });
+
   it("shows a refusal for a secret in a rule as the API words it", async () => {
     backend([
       json(

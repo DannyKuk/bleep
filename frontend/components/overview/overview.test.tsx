@@ -394,6 +394,25 @@ describe("OverviewView quiet", () => {
     expect(within(tile).getByText("ssh unavailable: not connected")).not.toHaveClass("text-down");
   });
 
+  it("shows the services of an asleep host as asleep, not down", () => {
+    const asleep = host({ reachable: false, may_sleep: true, health: "asleep" });
+    render(
+      <OverviewView
+        hosts={[asleep]}
+        services={[service({ health: "asleep" })]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    const row = screen.getByRole("list", { name: "Services on Demo stack" });
+    expect(within(row).getByText("Asleep")).toBeInTheDocument();
+    expect(within(row).queryByText("Down")).toBeNull();
+    expect(screen.getByRole("region", { name: "Demo stack" })).toHaveAttribute(
+      "data-hurting",
+      "false",
+    );
+  });
+
   it("a quiet unreachable host's error is not printed in the down colour", () => {
     const quiet = { scope: "host", mode: "leave_alone", until: null, since: "x" } as const;
     const down = host({ reachable: false, error: "ssh: timed out", health: "down" });
