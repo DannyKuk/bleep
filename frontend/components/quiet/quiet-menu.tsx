@@ -44,8 +44,10 @@ interface QuietMenuProps {
 
 /** The moon menu: snooze the target, leave it alone, or watch it again. */
 // As tall as a health badge beside it (28 px); a touch screen gets a 44 px tap area around it.
+// The hover is a tint of the text colour, since the ghost button's `soft` is a healthy tile's own
+// background.
 const MOON =
-  "relative size-7 shrink-0 [&_svg]:size-3.5 pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-['']";
+  "relative size-7 shrink-0 hover:bg-ink/10 data-popup-open:bg-ink/10 [&_svg]:size-3.5 pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-['']";
 
 export function QuietMenu({ target, quiet, onChanged, trigger, className }: QuietMenuProps) {
   const [open, setOpen] = useState(false);
