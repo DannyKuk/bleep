@@ -138,8 +138,9 @@ class Expectations:
     async def expected(self, incident_id: str, via: Channel) -> Answer:
         """Record the expectation, then reject a pending plan, then close the incident: a write
         that fails changes nothing. The reject is the same first-wins decision as any other
-        answer; when a yes on another channel won it, the expectation stays recorded, the
-        incident stays open with its plan, and the answer says so."""
+        answer; when a yes on another channel won it (also one that landed while the settings
+        were written), the expectation stays recorded, the incident stays open with its plan,
+        and the answer says so. It is done only when this call closed the incident."""
         expectation = await self.offered(incident_id)
         if expectation is None:
             return Answer(False, "Nothing here can be marked as expected now.")
@@ -159,18 +160,23 @@ class Expectations:
         if pending is not None and pending.decision is None:
             decision = Decision(kind="reject", text=DECISION_TEXT, via=via, at=self.clock())
             if await self.approvals.resolve(incident_id, decision, pending.id) is None:
-                return await self._lost(incident_id, text)
+                return await self._lost(incident_id, text, via)
+        elif pending is not None and pending.decision is not None:
+            if pending.decision.kind == "approve":  # a yes won while the settings were written
+                return await self._lost(incident_id, text, via)
         await self.bus.publish(incident_id, "expected", {"text": text, "via": via})
-        await self.runner.end(incident_id, CLOSED_NOTICE, spare=RUNNING)
+        if not await self.runner.end(incident_id, CLOSED_NOTICE, spare=RUNNING):
+            # A plan started running on the host meanwhile, or the incident closed on its own.
+            return Answer(False, f"{text} The incident was not closed here; see its page.")
         log.info("incident %s: marked expected on %s", incident_id, via)
         return Answer(True, text)
 
-    async def _lost(self, incident_id: str, recorded: str) -> Answer:
+    async def _lost(self, incident_id: str, recorded: str, via: Channel) -> Answer:
         """A decision on another channel won the plan after the expectation was written."""
         latest = await self.approvals.current(incident_id)
         won = latest.decision if latest is not None else None
         where = f" on {_CHANNEL[won.via]}" if won is not None else ""
-        await self.bus.publish(incident_id, "expected", {"text": recorded})
+        await self.bus.publish(incident_id, "expected", {"text": recorded, "via": via})
         return Answer(
             False, f"{recorded} The plan was already decided{where}, so the incident stays open."
         )
