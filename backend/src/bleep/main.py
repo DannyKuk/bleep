@@ -88,6 +88,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 notifier=parts.graph_deps.notifier,
                 tracer=parts.tracer,
                 settings=parts.settings_store,
+                host_answers=parts.registry.reachable,
             )
             stack.push_async_callback(runner.close)
             manager = WatcherManager(

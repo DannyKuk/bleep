@@ -175,6 +175,11 @@ class Registry:
     def hosts(self) -> list[HostState]:
         return [e.state for e in self._entries.values()]
 
+    def reachable(self, host_id: str) -> bool:
+        """Whether the host answered the last connect or listing; False for an unknown host."""
+        entry = self._entries.get(host_id)
+        return entry is not None and entry.state.reachable
+
     def services(self, host_id: str | None = None) -> list[Service]:
         if host_id is None:
             entries = list(self._entries.values())

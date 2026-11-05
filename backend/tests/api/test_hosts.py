@@ -530,3 +530,20 @@ def test_hosts_carry_basics_when_known(stocked, parts):
         "disks": [{"mount": "/", "used_percent": 49.0}],
     }
     assert body["b"]["basics"] is None
+
+
+def test_the_services_of_an_asleep_host_are_asleep_not_down(settings, parts):
+    engine = FakeEngine("a", [c(name="shop-web-1")])
+    hosts = [ssh_host(id="a", name="Laptop", may_sleep=True)]
+
+    async def connect(host):
+        return None, engine
+
+    parts.registry = Registry(hosts, connect, clock=lambda: T0)
+    with TestClient(create_app(settings, parts)) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        engine.drop()  # the lid closes
+        client.portal.call(parts.registry.refresh, "a")
+        [host] = client.get("/api/hosts").json()
+        assert host["health"] == "asleep"
+        assert [s["health"] for s in client.get("/api/services").json()] == ["asleep"]

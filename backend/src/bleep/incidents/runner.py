@@ -43,6 +43,10 @@ WAITING_NOTICE = (
     "I wait for it and close this incident when it answers again."
 )
 BACK_NOTICE = "Closed: the host answers again. It recovered on its own; nothing was changed."
+ANSWERED_NOTICE = (
+    "Closed: the host answered again before I got to it. It recovered on its own; nothing was "
+    "changed."
+)
 # Every status but `waiting`: closing on the host's return must never close an incident whose run
 # has started, whatever kind it is.
 NOT_WAITING = tuple(s for s in get_args(IncidentStatus) if s != "waiting")
@@ -79,6 +83,7 @@ class IncidentRunner:
         settings: SettingsSource | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], datetime] = utcnow,
+        host_answers: Callable[[str], bool] | None = None,
     ) -> None:
         self.graph = graph
         self.repo = repo
@@ -89,6 +94,7 @@ class IncidentRunner:
         self.settings = settings if settings is not None else StaticSettings()
         self.sleep = sleep
         self.clock = clock
+        self.host_answers = host_answers
         self._runs: dict[str, asyncio.Task[None]] = {}
         self._pauses: dict[str, int] = {}  # consecutive pauses of a run, for the backoff
         self._since: dict[str, datetime] = {}  # when a run first paused
@@ -281,6 +287,12 @@ class IncidentRunner:
         current = await self.repo.get(incident.id)
         status = current.status if current is not None else None
         if status == "waiting" or self._finished(incident.id, status):
+            return
+        if self.host_answers is not None and self.host_answers(incident.subject.host_id):
+            # Opened just before a stop, and the host is back by now (the registry connects every
+            # host before runs start): nothing is waited for, and no channel is told of a wait.
+            if await self.repo.close_unfinished(incident.id) is not None:
+                await self.bus.publish(incident.id, "notice", {"text": ANSWERED_NOTICE})
             return
         await self.repo.set_status(incident.id, "waiting")
         await self.bus.publish(incident.id, "notice", {"text": WAITING_NOTICE})

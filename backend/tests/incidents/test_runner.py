@@ -11,6 +11,7 @@ from bleep.graph.nodes import propose, verify
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.runner import (
+    ANSWERED_NOTICE,
     BACK_NOTICE,
     QUIET_RUN_NOTICE,
     QUIET_RUN_NOTICE_HOST,
@@ -1260,3 +1261,39 @@ async def test_the_watchdog_leaves_a_waiting_incident_alone(tmp_path):
         await runner.join()
     watchdog = Watchdog(env.repo, env.bus, ChannelLog(), StaticSettings())
     assert await watchdog.tick(incident.opened_at + timedelta(days=1)) == []
+
+
+async def test_an_incident_whose_host_already_answers_closes_quietly_instead_of_waiting(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await unreachable(env)  # opened just before Bleep stopped
+    channels = ChannelLog()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(
+            build_graph(env.deps, saver),
+            env.repo,
+            env.bus,
+            notifier=channels,
+            host_answers=lambda host_id: True,  # the registry connected it at boot
+        )
+        assert await runner.recover_on_boot() == [incident.id]
+        await runner.join()
+
+    assert (await env.repo.get(incident.id)).status == "closed"
+    assert await notices(env, incident.id) == [ANSWERED_NOTICE]
+    assert channels.heard == []  # no false "the host does not answer"
+    assert env.models.calls == []
+
+
+async def test_a_host_back_before_the_run_parks_is_caught_by_the_next_good_tick(tmp_path):
+    env = await graph_env(tmp_path)
+    incident = await unreachable(env)
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        await runner.start(incident)  # scheduled, not yet parked
+        await runner.host_back("a")  # the host's first good tick wins the race
+        await runner.join()
+        assert (await env.repo.get(incident.id)).status == "waiting"
+        await runner.host_back("a")  # every good tick calls it again
+        await runner.join()
+
+    assert (await env.repo.get(incident.id)).status == "closed"

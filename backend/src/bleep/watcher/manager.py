@@ -18,22 +18,25 @@ A host added, changed or removed on the dashboard is put in force by `host_chang
 restart: its loops start, start again on the new connection, or stop and its open incidents
 are closed with a notice.
 
-Bleep's own sleep is not a host outage: when a watcher sees a pause far longer than its interval
-(`woke`), every host's outage timer starts again and failed contact is not counted for a grace
-window. A host that may sleep opens no incident by not answering, and a host that answers again
-closes its waiting host-unreachable incident (`IncidentRunner.host_back`).
+Bleep's own sleep is not a host outage: when the wall clock ran on while the monotonic clock did
+not (`SleepWatch`, asked by every loop before it feeds a result), every host's outage timer starts
+again and failed contact is not counted for a grace window (`woke`). A host that may sleep opens
+no incident by not answering, and every tick that reaches a host closes its waiting
+host-unreachable incident (`IncidentRunner.host_back`).
 
 See docs/design/watcher.md.
 """
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import httpx
 from langchain_core.language_models import BaseChatModel
 
+from bleep.config import Settings
 from bleep.graph.deps import ModelFactory
 from bleep.guard.log import GuardLogger
 from bleep.hosts.dashboard import HostChange
@@ -59,16 +62,18 @@ from bleep.watcher.detector import (
     Recovered,
     explain_recovery,
 )
-from bleep.watcher.health import container_health, service_health, url_status
+from bleep.watcher.health import container_health, is_asleep, service_health, url_status
 from bleep.watcher.health_store import HealthStore
 from bleep.watcher.host_probe import HostProbe
 from bleep.watcher.http_checks import UrlCheck, UrlCheckStore, UrlWatcher
 from bleep.watcher.poller import HostWatcher
+from bleep.watcher.wake import SleepWatch
 
 log = logging.getLogger(__name__)
 
 HELD_PER_SERVICE = 5  # URL failures kept per service while its host is unreachable
-WAKE_GRACE_TICKS = 4  # watcher ticks after Bleep's own wake in which failed contact is not counted
+# Wall time beyond monotonic time between two looks, in watcher intervals, that means Bleep slept.
+SLEPT_AFTER_INTERVALS = 2
 RESTART_BACKOFF_S = (1, 2, 5, 15, 60)
 LOG_TAIL_LINES = 50
 NO_EXPLANATION = "No explanation could be generated for this restart."
@@ -132,7 +137,8 @@ class WatcherManager:
         url_interval_s: float = http_checks.INTERVAL_S,
         quiet: QuietStore | None = None,
         health: HealthStore | None = None,
-        wake_grace_ticks: int = WAKE_GRACE_TICKS,
+        wake_grace_ticks: int = Settings.model_fields["wake_grace_ticks"].default,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self.registry = registry
         self.detector = detector
@@ -152,9 +158,14 @@ class WatcherManager:
         self._held: dict[str, dict[str, list[Signal]]] = {}  # host -> service id -> URL failures
         self._announced: dict[str, tuple[str, set[str]]] = {}  # host -> (incident, URLs named)
         self._deferred: dict[str, set[str]] = {}  # host -> service ids to recheck on its listing
-        self._contact: dict[str, bool] = {}  # host -> whether its last tick reached it
-        self._wake_grace = timedelta(seconds=watch_interval_s * wake_grace_ticks)
-        self._grace_until: datetime | None = None  # after Bleep's own wake
+        self._monotonic = monotonic
+        self._answered: dict[str, bool] = {}  # host -> whether its last tick reached it
+        self._wake_grace_s = watch_interval_s * wake_grace_ticks
+        # Held on the monotonic clock, so a wall clock set back cannot stretch it.
+        self._grace_until: float | None = None
+        self.sleep_watch = SleepWatch(
+            clock, monotonic, watch_interval_s * SLEPT_AFTER_INTERVALS, self.woke
+        )
         self._background: set[asyncio.Task[None]] = set()
         self._store = store
         self._intervals = (watch_interval_s, probe_interval_s, url_interval_s, store)
@@ -174,7 +185,7 @@ class WatcherManager:
                 self._clock,
                 watch_s,
                 on_snapshot=self.snapshot,
-                on_wake=self.woke,
+                sleep_watch=self.sleep_watch,
             ),
             HostProbe(host_id, self.registry, self.sink, self._clock, probe_s),
             UrlWatcher(
@@ -186,6 +197,7 @@ class WatcherManager:
                 store,
                 url_s,
                 on_round=self.record_health,
+                sleep_watch=self.sleep_watch,
             ),
         )
 
@@ -264,7 +276,7 @@ class WatcherManager:
         self._held.pop(host_id, None)
         self._announced.pop(host_id, None)
         self._deferred.pop(host_id, None)
-        self._contact.pop(host_id, None)
+        self._answered.pop(host_id, None)
 
     async def _stop_host(self, host_id: str) -> None:
         self.hosts.pop(host_id, None)
@@ -301,25 +313,31 @@ class WatcherManager:
         """Bleep itself was suspended (its machine slept): what it could not see while asleep is
         no outage. Every host's outage timer and URL streak starts again, and failed contact is
         not counted until the grace window after the wake has passed, so the network can come
-        back first. Every watcher notices the same wake; the second notice changes little."""
-        if self._grace_until is None or at >= self._grace_until:
-            log.info("Bleep was suspended; failed contact is not counted for %s", self._wake_grace)
-        self._grace_until = at + self._wake_grace
+        back first."""
+        log.info(
+            "Bleep slept until %s; failed contact is not counted for %.0f s", at, self._wake_grace_s
+        )
+        self._grace_until = self._monotonic() + self._wake_grace_s
         self.detector.woke()
+
+    def waking(self) -> bool:
+        """Whether this is the grace window after Bleep's own wake."""
+        return self._grace_until is not None and self._monotonic() < self._grace_until
 
     def _waking(self, signal: Signal) -> bool:
         """A failed contact inside the grace window after Bleep's own wake."""
         return (
             signal.kind in ("host_unreachable", "url_failed")
             and not signal.detail.get("ok", False)
-            and self._grace_until is not None
-            and self._clock() < self._grace_until
+            and self.waking()
         )
 
     async def sink(self, signal: Signal) -> None:
         host_id = signal.subject.host_id
         if signal.kind == "host_unreachable":
-            await self._note_contact(host_id, bool(signal.detail.get("ok", False)))
+            self._answered[host_id] = bool(signal.detail.get("ok", False))
+            if self._answered[host_id]:
+                await self._host_answers(host_id)
         if self._waking(signal):
             log.debug("%s: %s not counted just after a wake", signal.subject.key, signal.kind)
             return
@@ -333,18 +351,14 @@ class WatcherManager:
             self._held.pop(host_id, None)  # contact is back; later failures count on their own
         await self._handle(self.detector.feed(signal))
 
-    async def _note_contact(self, host_id: str, ok: bool) -> None:
-        """On the first tick that reaches a host after one that did not (or after Bleep started),
-        its waiting host-unreachable incident closes or starts its run (`host_back`)."""
-        before = self._contact.get(host_id)
-        self._contact[host_id] = ok
-        if not ok or before is True:
-            return
+    async def _host_answers(self, host_id: str) -> None:
+        """Every tick that reaches a host closes its waiting host-unreachable incident, or starts
+        its run (`host_back`), not only the first after an outage: a run that parked just after
+        the host came back is caught by the next tick. It is one indexed read when none waits."""
         try:
             await self.runner.host_back(host_id)
-        except Exception:  # the incident stays waiting; the next return tries again
+        except Exception:  # the incident stays waiting; the next tick tries again
             log.exception("closing the waiting incident of host %s failed", host_id)
-            self._contact[host_id] = False
 
     async def snapshot(self, host_id: str, states: dict[str, list[ContainerSummary]]) -> None:
         """Judge the host's pending deaths against the listing its watcher just took.
@@ -360,8 +374,8 @@ class WatcherManager:
     async def record_health(self, host_id: str) -> None:
         """Judge each of the host's services as the services API does and keep the result, quiet
         ones too (quiet only stops incidents). Never raises: it must not cost the tick."""
-        if self._health is None:
-            return
+        if self._health is None or self.waking() or self._asleep_host(host_id):
+            return  # nothing is known about it now, and `unknown` is never stored either
         try:
             now = self._clock()
             stored = await self._stored_checks(host_id)
@@ -500,6 +514,14 @@ class WatcherManager:
             return service.name if service else state.target_id
         host = self._host(state.target_id)
         return host.config.name if host else state.target_id
+
+    def _asleep_host(self, host_id: str) -> bool:
+        """Asleep as the API shows it, or already from its last failed tick: the registry marks a
+        host unreachable only once its reconnect fails, a tick later."""
+        host = self._host(host_id)
+        if host is None or not host.config.may_sleep:
+            return False
+        return is_asleep(host) or self._answered.get(host_id) is False
 
     def _asleep(self, subject: Subject, signals: list[Signal]) -> bool:
         """A host that may sleep (a laptop) and only does not answer: that is its sleep."""

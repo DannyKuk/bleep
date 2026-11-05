@@ -21,7 +21,7 @@ from bleep.schemas.docker import HostBasics
 from bleep.schemas.incidents import Subject
 from bleep.schemas.quiet import QuietState
 from bleep.schemas.services import Service
-from bleep.watcher.health import host_health, service_health, url_status
+from bleep.watcher.health import host_health, is_asleep, service_health, url_status
 from bleep.watcher.http_checks import UrlCheck
 from bleep.wiring import AppParts
 
@@ -59,14 +59,17 @@ def _view(
     checks: Checks,
     now: datetime,
     quiet: QuietState | None,
+    asleep: bool = False,
 ) -> ServiceView:
     urls = [url_status(u.url, checks.get((service.id, u.url)), now) for u in service.urls]
+    health = service_health(service.containers, (u.status for u in urls))
     return ServiceView(
         id=service.id,
         host_id=service.host_id,
         name=service.name,
         source=service.source,
-        health=service_health(service.containers, (u.status for u in urls)),
+        # Its host sleeps: its last listing and its failing URLs say nothing about the service.
+        health="asleep" if asleep else health,
         containers=[
             ContainerView(
                 id=c.id,
@@ -93,14 +96,16 @@ async def _service_views(
         return []
     now = utcnow()
     checks: dict[str, Checks] = {}
+    asleep = {h.config.id for h in parts.registry.hosts() if is_asleep(h)}
     views = []
     for service in parts.registry.services(host_id):
         if service.host_id not in checks:
             checks[service.host_id] = await _stored_checks(parts, service.host_id)
         subject = Subject(kind="service", host_id=service.host_id, service_id=service.id)
         open_id = await parts.incidents.open_incident_id(subject)
+        quiet = _quiet_of(service, active)
         views.append(
-            _view(service, open_id, checks[service.host_id], now, _quiet_of(service, active))
+            _view(service, open_id, checks[service.host_id], now, quiet, service.host_id in asleep)
         )
     return views
 
@@ -177,6 +182,7 @@ async def get_service(
         await _stored_checks(parts, service.host_id),
         utcnow(),
         _quiet_of(service, await parts.quiet.active()),
+        is_asleep(host),
     )
     history = await parts.url_checks.history(service.host_id, service.id)
     return ServiceDetail(
