@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { DiagnosisCard } from "@/components/incident/diagnosis-card";
+import { ExpectedButton } from "@/components/incident/expected-button";
 import { FeedbackBar } from "@/components/incident/feedback";
 import { IncidentHero, PhoneIncidentHero } from "@/components/incident/incident-hero";
 import { planRun } from "@/components/incident/plan-run";
@@ -143,18 +144,28 @@ export function IncidentPage({ id }: { id: string }) {
           } as const)
         : null
       : ({ scope: "host", id: subject.host_id, name: hostName ?? subject.host_id } as const);
-  const imOnIt = quietTarget && !NOT_QUIETABLE.has(incident.status) && (
-    <div className="flex justify-end">
-      <QuietMenu
-        target={quietTarget}
-        quiet={null}
-        onChanged={quietChanged}
-        trigger={
-          <Button variant="outline" aria-label="I'm on it">
-            I&apos;m on it ▾
-          </Button>
-        }
-      />
+  const quietable = quietTarget && !NOT_QUIETABLE.has(incident.status);
+  const imOnIt = (quietable || data.expectation) && (
+    <div className="flex flex-wrap items-start justify-end gap-2">
+      {data.expectation && (
+        <ExpectedButton
+          incidentId={incident.id}
+          expectation={data.expectation}
+          onDone={quietChanged}
+        />
+      )}
+      {quietable && (
+        <QuietMenu
+          target={quietTarget}
+          quiet={null}
+          onChanged={quietChanged}
+          trigger={
+            <Button variant="outline" aria-label="I'm on it">
+              I&apos;m on it ▾
+            </Button>
+          }
+        />
+      )}
     </div>
   );
 

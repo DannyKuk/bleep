@@ -24,11 +24,13 @@ import type {
 
 const RULE_LABELS = { rules: "Rule" };
 const CONTAINER_LABELS = { protected_containers: "Container" };
+const EXIT_LABELS = { exits: "Job" };
 const NOTHING: ServiceSettingsView = {
   urls: [],
   rules: [],
   protected_containers: [],
   hosts_file_protected_containers: [],
+  exits: [],
 };
 const NEVER_WITHOUT_YES = "I never change anything without your yes.";
 
@@ -359,6 +361,48 @@ export function ProtectedContainers({
           )}
           {fixed.length === 0 && added.length === 0 && <p className="text-sm text-ink-2">None.</p>}
           <EditButton onClick={() => setEditing(true)}>Edit protected containers</EditButton>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The jobs of the service that are meant to finish: their exit 0 is done, not down, and opens
+ * nothing; a crash is still an incident. The list here replaces the hosts file's.
+ */
+export function ExpectedExits({ name, settings }: { name: string; settings: ServiceSettings }) {
+  const [editing, setEditing] = useState(false);
+  const jobs = settings.view.exits;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <h3 className="text-xs font-bold text-ink-2">Expected to exit</h3>
+      <p className="text-xs text-ink-2">
+        Jobs that run and finish: when they exit with 0 it is done, not down. A crash is still an
+        incident.
+      </p>
+      {editing ? (
+        <ListEditor
+          key={JSON.stringify(jobs)}
+          label={`Expected to exit: ${name}`}
+          items={jobs}
+          addLabel="Container or Compose service name, such as fetch, or * for all"
+          emptyText="None."
+          mono
+          labels={EXIT_LABELS}
+          overridden={settings.overrides?.exits !== undefined}
+          onSave={(next) => settings.save({ exits: next })}
+          onReset={() => settings.save({ exits: undefined })}
+          onClose={() => setEditing(false)}
+        />
+      ) : (
+        <>
+          {jobs.length > 0 ? (
+            <ContainerBadges label={`Expected to exit: ${name}`} containers={jobs} />
+          ) : (
+            <p className="text-sm text-ink-2">None.</p>
+          )}
+          <EditButton onClick={() => setEditing(true)}>Edit jobs</EditButton>
         </>
       )}
     </div>

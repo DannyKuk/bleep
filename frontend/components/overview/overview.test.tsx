@@ -21,6 +21,7 @@ function detail(overrides: Partial<IncidentDetail> = {}): IncidentDetail {
     outcome: null,
     report: null,
     feedback: [],
+    expectation: null,
     ...overrides,
   };
 }
@@ -392,6 +393,23 @@ describe("OverviewView quiet", () => {
     expect(within(tile).queryByText("Unreachable")).toBeNull();
     expect(tile).toHaveAttribute("data-hurting", "false");
     expect(within(tile).getByText("ssh unavailable: not connected")).not.toHaveClass("text-down");
+  });
+
+  it("shows a finished job as done, and its host is not hurting", () => {
+    render(
+      <OverviewView
+        hosts={[host()]}
+        services={[service({ health: "done" })]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    const row = screen.getByRole("list", { name: "Services on Demo stack" });
+    expect(within(row).getByText("Done")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Demo stack" })).toHaveAttribute(
+      "data-hurting",
+      "false",
+    );
   });
 
   it("shows the services of an asleep host as asleep, not down", () => {

@@ -624,6 +624,26 @@ describe("ServicePage settings", () => {
     });
   });
 
+  it("edits the jobs expected to exit, saved as the service's list", async () => {
+    const saved = settingsView({ version: "v2" });
+    saved.hosts[0].services["compose:shop"].exits = ["fetch"];
+    const fetchMock = settingsBackend({ puts: [json(saved)] });
+    render(<ServicePage id="m1/compose:shop" />);
+    const containers = await region("Containers");
+    expect(within(containers).getByText("Expected to exit")).toBeInTheDocument();
+
+    await userEvent.click(within(containers).getByRole("button", { name: "Edit jobs" }));
+    await userEvent.type(
+      within(containers).getByPlaceholderText(/Container or Compose service name/),
+      "fetch{Enter}",
+    );
+    await userEvent.click(within(containers).getByRole("button", { name: "Save" }));
+    expect(sentBody(fetchMock, "PUT").hosts.m1.services["compose:shop"].exits).toEqual(["fetch"]);
+    expect(
+      await within(containers).findByRole("list", { name: "Expected to exit: shop" }),
+    ).toHaveTextContent("fetch");
+  });
+
   it("keeps the hosts file's protected containers locked and removes only the dashboard's", async () => {
     const saved = settingsView({ version: "v2" });
     saved.overrides.hosts = { m1: { services: {} } };

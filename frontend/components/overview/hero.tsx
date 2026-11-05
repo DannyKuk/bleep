@@ -23,6 +23,7 @@ const TROUBLE: Record<HostHealth, string> = {
   down: "is down",
   degraded: "is struggling",
   stopped: "has stopped",
+  done: "has finished",
   unknown: "has a problem",
   ok: "had a problem",
   asleep: "is asleep",

@@ -17,6 +17,7 @@ import {
   FollowedRules,
   nameIn,
   ProtectedContainers,
+  ExpectedExits,
   useServiceSettings,
 } from "@/components/service/settings-cards";
 import { ApiError, apiFetch } from "@/lib/api";
@@ -313,6 +314,7 @@ function Service({ id }: { id: string }) {
                   <p className="text-sm text-ink-2">No containers.</p>
                 )}
                 {settings && <ProtectedContainers name={name} settings={settings} />}
+                {settings && <ExpectedExits name={name} settings={settings} />}
               </div>
             </Panel>
             <Panel title="Rules I follow" className="lg:col-span-2">

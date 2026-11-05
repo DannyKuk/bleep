@@ -129,6 +129,9 @@ export function timelineEntries(events: IncidentEvent[]): Entry[] {
           tone: payload.ok ? undefined : "text-warn",
         });
         break;
+      case "expected":
+        entries.push({ seq, at, dot: "ok", text: String(payload.text ?? "") });
+        break;
       case "notice":
         entries.push({
           seq,
