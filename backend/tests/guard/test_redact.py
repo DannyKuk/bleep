@@ -446,6 +446,22 @@ def test_cr_chunked_input_is_bounded():
     assert time.perf_counter() - start < 1.0
 
 
+def _best_of_three(text: str) -> float:
+    times = []
+    for _ in range(3):
+        start = time.perf_counter()
+        guard_text("logs", text)
+        times.append(time.perf_counter() - start)
+    return min(times)
+
+
+def assert_no_slower_than_benign(text: str) -> None:
+    # Relative to benign text of the same shape and size, so a slow CI runner scales both sides;
+    # a quadratic regression is hundreds of times slower, the worst input here about 2 times.
+    benign = "\n".join(["hello world " * (len(line) // 12 + 1) for line in text.split("\n")])
+    assert _best_of_three(text) < 10 * _best_of_three(benign)
+
+
 @pytest.mark.parametrize(
     "unit",
     [
@@ -469,9 +485,8 @@ def test_maximal_tool_input_is_fast(unit, length):
     # 4,001 characters is the shortest line that is cut, where both windows cover most of it
     line = (unit * (length // len(unit) + 1))[:length]
     text = "\n".join([line] * 1000)
-    start = time.perf_counter()
+    assert_no_slower_than_benign(text)
     out, _ = guard_text("logs", text)
-    assert time.perf_counter() - start < 1.0
     assert len(out) <= 8300
 
 
@@ -481,9 +496,9 @@ def test_a_tail_window_reaching_far_back_is_fast(unit, mark):
     # one space or `[` near the start lets the tail window of a 4,001-character line start there
     line = (unit * 4001)[:4001]
     line = line[:160] + mark + line[161:]
-    start = time.perf_counter()
-    out, _ = guard_text("logs", "\n".join([line] * 1000))
-    assert time.perf_counter() - start < 1.0
+    text = "\n".join([line] * 1000)
+    assert_no_slower_than_benign(text)
+    out, _ = guard_text("logs", text)
     assert len(out) <= 8300
 
 
