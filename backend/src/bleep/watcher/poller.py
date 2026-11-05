@@ -11,6 +11,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 
+from bleep.hosts.discovery import expects_exit, service_key
 from bleep.hosts.engine import EngineError
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
@@ -130,21 +131,35 @@ class HostWatcher:
         fresh = [e for e in events if event_key(e) not in self._seen]
         by_id = {c.id: c for c in [*(self._previous or []), *current]}
         service_of = dict(self._service_of)
-        for service in reg.services(self.host_id):
+        services = {s.id: s for s in reg.services(self.host_id)}
+        for service in services.values():
             service_of.update({c.id: service.id for c in service.containers})
 
-        def subject_of(name: str, container_id: str | None) -> Subject:
-            service_id = service_of.get(container_id or "") or f"{self.host_id}/container:{name}"
+        def subject_of(name: str, container_id: str | None, labels: dict[str, str]) -> Subject:
+            # A container never listed (a `compose run --rm` job) is placed by its labels.
+            service_id = service_of.get(container_id or "")
+            if service_id is None:
+                service_id = f"{self.host_id}/{service_key(name, labels)}"
             return Subject(kind="service", host_id=self.host_id, service_id=service_id)
 
-        translation = translate(fresh, by_id, subject_of, self._covered)
+        def expects(subject: Subject, name: str, labels: dict[str, str]) -> bool:
+            service = services.get(subject.service_id or "")
+            return service is not None and expects_exit(service.exits, name, labels)
+
+        translation = translate(fresh, by_id, subject_of, self._covered, expects)
         signals = translation.signals
         if self._previous is not None:
             deliberate = {
                 e.container_id for e in fresh if e.action in ("stop", "destroy") and e.container_id
             }
             reported = diff(
-                self._previous, current, until, subject_of, translation.died_ids, deliberate
+                self._previous,
+                current,
+                until,
+                subject_of,
+                translation.died_ids,
+                deliberate,
+                expects,
             )
             for signal in reported:
                 cid = next(c.id for c in self._previous if c.name == signal.container)

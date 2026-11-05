@@ -390,7 +390,7 @@ class WatcherManager:
                 urls = [
                     url_status(u.url, stored.get((service.id, u.url)), now) for u in service.urls
                 ]
-                health = service_health(service.containers, (u.status for u in urls))
+                health = service_health(service.containers, (u.status for u in urls), service.exits)
                 await self._health.record(host_id, service.id, health, now)
         except Exception:
             log.exception("recording the health of host %s's services failed", host_id)
@@ -479,7 +479,7 @@ class WatcherManager:
         stored = await self._stored_checks(service.host_id) if with_urls else {}
         configured = service.urls if with_urls else []
         urls = [url_status(u.url, stored.get((service.id, u.url)), now) for u in configured]
-        if service_health(service.containers, (u.status for u in urls)) != "down":
+        if service_health(service.containers, (u.status for u in urls), service.exits) != "down":
             return []
         signals = [
             Signal(

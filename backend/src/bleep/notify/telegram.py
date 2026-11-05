@@ -54,6 +54,26 @@ class Resumer(Protocol):
     async def resume(self, incident_id: str, decision: Decision, approval_id: str) -> Any: ...
 
 
+class ExpectAnswer(Protocol):
+    done: bool
+    text: str
+
+
+class Expecting(Protocol):
+    """The part of `incidents.expectations.Expectations` the bot and the notifier use."""
+
+    async def offered(self, incident_id: str) -> Any: ...
+
+    async def expected(
+        self, incident_id: str, via: Literal["telegram", "dashboard"]
+    ) -> ExpectAnswer: ...
+
+
+EXPECTED_VERB = "expected"  # the "It's expected" button's data; the incident is the message's
+EXPECTED_LABEL = "It's expected"
+CALLBACK_TEXT_MAX = 200  # Telegram's limit for a button's answer
+
+
 class TelegramClient:
     """Bot API calls the bot and the notifier make. `http` is the caller's `httpx.AsyncClient`."""
 
@@ -117,7 +137,9 @@ class TelegramClient:
 
 
 class MessageLog:
-    """`telegram_messages`: which incident and plan each proposal message is about."""
+    """`telegram_messages`: which incident and plan each proposal message is about. An
+    incident-opened message with an "It's expected" button is logged with an empty approval id:
+    it asks about no plan."""
 
     def __init__(self, db: Database) -> None:
         self.db = db
@@ -172,6 +194,7 @@ class TelegramBot:
         self.guard_log = guard_log
         self.clock = clock
         self._sleep = sleep
+        self.expectations: Expecting | None = None
         self._offset: int | None = None
         self.last_poll: datetime | None = None  # the last getUpdates that Telegram answered
 
@@ -234,6 +257,9 @@ class TelegramBot:
         message_id = callback["message"]["message_id"]
         verb, _, approval_id = str(callback.get("data", "")).partition(":")
         known = await self.messages.get(message_id)
+        if verb == EXPECTED_VERB and known is not None and self.expectations is not None:
+            await self._expected(callback_id, message_id, known[0])
+            return
         if verb not in ("approve", "reject") or not approval_id or known is None:
             await self.client.answer_callback(callback_id, answer("answer_unknown"))
             return
@@ -249,6 +275,16 @@ class TelegramBot:
         decision = Decision(kind=kind, via="telegram", at=self.clock())
         await self._decide(callback_id, message_id, incident_id, approval_id, decision)
 
+    async def _expected(self, callback_id: str, message_id: int, incident_id: str) -> None:
+        """ "It's expected": record it and close the incident, as the dashboard's button does."""
+        assert self.expectations is not None
+        result = await self.expectations.expected(incident_id, "telegram")
+        text = result.text
+        if len(text) > CALLBACK_TEXT_MAX:
+            text = text[: CALLBACK_TEXT_MAX - 1] + "…"
+        await self.client.answer_callback(callback_id, text)
+        await self.client.clear_buttons(self.chat_id, message_id)
+
     async def _refused_plan(self, incident_id: str, approval_id: str) -> bool:
         current = await self.approvals.current(incident_id)
         return current is not None and current.id == approval_id and current.proposal.refused
@@ -263,7 +299,7 @@ class TelegramBot:
         reply_to = message.get("reply_to_message", {}).get("message_id")
         known = await self.messages.get(reply_to) if reply_to else None
         reply = message["message_id"]
-        if known is None:
+        if known is None or not known[1]:  # no message, or one that asks about no plan
             await self.client.send_message(
                 self.chat_id, answer("answer_no_reply"), reply_to=reply, markdown=False
             )

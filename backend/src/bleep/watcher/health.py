@@ -7,6 +7,7 @@ ends.
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
+from bleep.hosts.discovery import expects_exit
 from bleep.schemas.api import Health, UrlStatus
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.services import HostState
@@ -17,6 +18,7 @@ _RANK: dict[Health, int] = {
     "asleep": 0,
     "ok": 1,
     "stopped": 1,
+    "done": 1,
     "degraded": 2,
     "down": 3,
 }
@@ -44,10 +46,14 @@ def is_stopped(container: ContainerSummary) -> bool:
     return container.state == "exited" and container.exit_code in CLEAN_EXITS
 
 
-def container_health(container: ContainerSummary) -> Health:
+def container_health(container: ContainerSummary, expected_exit: bool = False) -> Health:
     """One container's health: running and healthy (or no healthcheck) is ok; starting or
-    restarting is degraded; a clean exit is stopped; unhealthy, crashed, dead, created and
-    paused are down."""
+    restarting is degraded; a job that exited 0 (a one-shot, or `expected_exit`: its service
+    names it in `exits`) is done; another clean exit is stopped; unhealthy, crashed, dead,
+    created and paused are down."""
+    exited_clean = container.state == "exited" and container.exit_code == 0
+    if exited_clean and (expected_exit or is_finished(container)):
+        return "done"
     if container.state == "running":
         return {"healthy": "ok", "none": "ok", "starting": "degraded", "unhealthy": "down"}[
             container.health
@@ -61,17 +67,22 @@ def container_health(container: ContainerSummary) -> Health:
     return "unknown"  # a state Bleep has no rule for, such as removing
 
 
-def service_health(containers: Iterable[ContainerSummary], url_statuses: Iterable[str]) -> Health:
+def service_health(
+    containers: Iterable[ContainerSummary],
+    url_statuses: Iterable[str],
+    exits: list[str] | None = None,
+) -> Health:
     """The worst of its containers and its URLs (a failing URL is down); unknown with no data.
 
-    Finished one-shots (exit 0, no restart policy) are left out while anything else is there.
-    When everything has exited cleanly the service is `stopped`, whatever its URLs say.
+    Finished jobs (`done`: exit 0 as a one-shot, or named in the service's `exits`) are left out
+    while anything else is there, and a service of finished jobs only is `done`. When everything
+    has exited cleanly the service is `stopped`, whatever its URLs say.
     """
     members = list(containers)
-    active = [c for c in members if not is_finished(c)]
-    if members and not active:
-        return "stopped"
-    healths: list[Health] = [container_health(c) for c in active]
+    judged = [container_health(c, expects_exit(exits or [], c.name, c.labels)) for c in members]
+    if members and all(h == "done" for h in judged):
+        return "done"
+    healths: list[Health] = [h for h in judged if h != "done"]
     if healths and all(h == "stopped" for h in healths):
         return "stopped"
     # One container stopped on purpose among running ones leaves the service partly working.
@@ -101,7 +112,7 @@ def host_health(
         if may_sleep:
             return "asleep"
         return "unknown" if last_seen is None else "down"
-    healths: list[Health] = ["ok" if h == "stopped" else h for h in services]
+    healths: list[Health] = ["ok" if h in ("stopped", "done") else h for h in services]
     return _worst(healths) if healths else "ok"
 
 

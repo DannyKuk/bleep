@@ -2,6 +2,7 @@ from fastapi import HTTPException, Request, Response
 
 from bleep.api.cookie import COOKIE_NAME, set_session_cookie
 from bleep.config import Settings
+from bleep.incidents.expectations import Expectations
 from bleep.incidents.runner import IncidentRunner
 from bleep.wiring import AppParts
 
@@ -17,6 +18,11 @@ def get_settings(request: Request) -> Settings:
 def get_runner(request: Request) -> IncidentRunner:
     """The runner the lifespan started; it exists only while the app runs."""
     return request.app.state.runner
+
+
+def get_expectations(request: Request) -> Expectations:
+    """ "This is expected", built with the runner by the lifespan."""
+    return request.app.state.expectations
 
 
 async def require_session(request: Request, response: Response) -> str:

@@ -6,11 +6,25 @@ from bleep.schemas.services import Service
 
 SELF_LABEL = "bleep.self"
 COMPOSE_PROJECT = "com.docker.compose.project"
+COMPOSE_SERVICE = "com.docker.compose.service"
+EVERY_CONTAINER = "*"
 
 
 def is_self(labels: dict[str, str]) -> bool:
     """Whether these labels mark a container as Bleep's own."""
     return labels.get(SELF_LABEL) == "true"
+
+
+def expects_exit(entries: list[str], name: str, labels: dict[str, str]) -> bool:
+    """Whether a service's `exits` entries name this container: by its name, by its Compose
+    service (so every `compose run --rm` container of `fetch` matches), or all of them (`*`)."""
+    compose_service = labels.get(COMPOSE_SERVICE)
+    return any(e in (EVERY_CONTAINER, name) or e == compose_service for e in entries)
+
+
+def service_key(name: str, labels: dict[str, str]) -> str:
+    """The key of the service a container with these labels belongs to."""
+    return _classify(name, labels)[0]
 
 
 class AmbiguousOverride(ValueError):
@@ -23,9 +37,8 @@ def _is_coolify_app(labels: dict[str, str]) -> bool:
     return "coolify.applicationId" in labels
 
 
-def _classify(container: ContainerSummary) -> tuple[str, str, str]:
+def _classify(container_name: str, labels: dict[str, str]) -> tuple[str, str, str]:
     """(key, display name, source) of one container."""
-    labels = container.labels
     project = labels.get(COMPOSE_PROJECT)
     if _is_coolify_app(labels):
         if labels.get("coolify.applicationUuid"):
@@ -33,7 +46,7 @@ def _classify(container: ContainerSummary) -> tuple[str, str, str]:
         elif labels.get("coolify.applicationId"):
             key = f"id:{labels['coolify.applicationId']}"
         else:
-            key = f"compose:{project}" if project else f"container:{container.name}"
+            key = f"compose:{project}" if project else f"container:{container_name}"
         name = labels.get("coolify.resourceName") or key
         pr = labels.get("coolify.pullRequestId", "0")
         if pr not in ("", "0"):
@@ -41,7 +54,7 @@ def _classify(container: ContainerSummary) -> tuple[str, str, str]:
         return key, name, "coolify"
     if project:
         return f"compose:{project}", project, "compose"
-    return f"container:{container.name}", container.name, "single"
+    return f"container:{container_name}", container_name, "single"
 
 
 def _named(
@@ -63,7 +76,7 @@ def group_services(
     for container in containers:
         if is_self(container.labels):
             continue
-        key, name, source = _classify(container)
+        key, name, source = _classify(container.name, container.labels)
         if key not in groups:
             groups[key] = (name, source, [])
         groups[key][2].append(container)
@@ -94,6 +107,7 @@ def group_services(
                 docs_paths=over.docs_paths,
                 rules=over.rules,
                 protected=protected,
+                exits=over.exits,
             )
         )
     return services

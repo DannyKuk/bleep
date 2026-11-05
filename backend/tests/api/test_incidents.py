@@ -3,8 +3,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from bleep.hosts.registry import Registry
 from bleep.incidents.repository import IncidentRepo
 from bleep.main import create_app
+from bleep.memory.embeddings import FakeEmbedder
 from bleep.schemas.graph import (
     Decision,
     Diagnosis,
@@ -15,6 +17,8 @@ from bleep.schemas.graph import (
     TimelineEntry,
 )
 from bleep.schemas.incidents import Incident, RecoveryEvent, Signal, Subject
+from bleep.wiring import build_parts
+from fakes import FakeEngine, socket_host
 
 T0 = datetime(2026, 11, 2, 10, 0, tzinfo=UTC)
 REPORT = Report(
@@ -438,3 +442,49 @@ def test_recoveries_are_newest_first_up_to_the_limit(app_client, parts):
     body = app_client.get("/api/recoveries", params={"limit": 2}).json()
     assert [r["container"] for r in body] == ["c2", "c1"]
     assert app_client.get("/api/recoveries", params={"limit": 0}).status_code == 422
+
+
+# --- "This is expected" ---
+
+
+@pytest.fixture
+def host_client(settings):
+    """A client over one socket host, so an expectation can be recorded for it."""
+
+    async def connect(_host):
+        return None, FakeEngine("a", [])
+
+    parts = build_parts(settings, Registry([socket_host(id="a")], connect), FakeEmbedder())
+    parts.notify.start = lambda runner: None  # type: ignore[method-assign]  # never polls
+    with TestClient(create_app(settings, parts)) as client:
+        assert client.post("/api/auth/login", json={"password": "test-password"}).status_code == 204
+        client.parts = parts  # type: ignore[attr-defined]
+        yield client
+
+
+def unreachable(client) -> Incident:
+    subject = Subject(kind="host", host_id="a")
+    signal = Signal(subject=subject, kind="host_unreachable", at=T0, detail={"ok": False})
+    incident, _ = call(client, client.parts.incidents.open_or_attach, subject, [signal])
+    return incident
+
+
+def test_detail_says_what_this_is_expected_would_record_and_a_post_records_it(host_client):
+    incident = unreachable(host_client)
+    detail = host_client.get(f"/api/incidents/{incident.id}").json()
+    assert detail["expectation"].startswith("A may sleep")
+
+    response = host_client.post(f"/api/incidents/{incident.id}/expected")
+    assert response.status_code == 200, response.text
+    assert "may sleep" in response.json()["text"]
+    after = host_client.get(f"/api/incidents/{incident.id}").json()
+    assert after["incident"]["status"] == "closed" and after["expectation"] is None
+    assert host_client.parts.registry.hosts()[0].config.may_sleep is True
+    assert host_client.post(f"/api/incidents/{incident.id}/expected").status_code == 409
+
+
+def test_this_is_expected_is_not_offered_for_a_crash_and_404s_for_no_incident(app_client, parts):
+    incident = open_incident(app_client, parts)
+    assert app_client.get(f"/api/incidents/{incident.id}").json()["expectation"] is None
+    assert app_client.post(f"/api/incidents/{incident.id}/expected").status_code == 409
+    assert app_client.post("/api/incidents/inc_nope/expected").status_code == 404

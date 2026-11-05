@@ -104,6 +104,8 @@ class ServiceOverrides(Strict):
     docs_paths: list[str] = []
     readme: bool = True
     protected_containers: list[str] = []
+    # Jobs meant to finish: a container name, a Compose service name or "*" (design/watcher.md).
+    exits: list[str] = []
     rules: list[str] = []
 
     @field_validator("repo")

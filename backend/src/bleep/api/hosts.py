@@ -62,7 +62,7 @@ def _view(
     asleep: bool = False,
 ) -> ServiceView:
     urls = [url_status(u.url, checks.get((service.id, u.url)), now) for u in service.urls]
-    health = service_health(service.containers, (u.status for u in urls))
+    health = service_health(service.containers, (u.status for u in urls), service.exits)
     return ServiceView(
         id=service.id,
         host_id=service.host_id,

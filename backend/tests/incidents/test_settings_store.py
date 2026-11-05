@@ -166,6 +166,46 @@ async def test_may_sleep_comes_from_the_hosts_file_and_the_dashboard_overrides_i
     assert registry.hosts()[0].config.may_sleep is True
 
 
+async def test_dashboard_exits_replace_the_hosts_files_like_urls(db):
+    registry = hosts_file_registry()
+    store, _ = make_store(db, registry)
+    await registry.start()
+    await save(store, {"hosts": {"a": {"services": {"compose:shop": {"exits": ["fetch"]}}}}})
+    assert registry.service(SHOP).exits == ["fetch"]
+    assert store.host_views()[0].services["compose:shop"].exits == ["fetch"]
+
+
+async def test_this_is_expected_adds_to_exits_under_the_key_the_hosts_file_used(db):
+    host = socket_host(
+        id="a", services={"shop": ServiceOverrides(urls=[UrlCheckConfig(url=FILE_URL)])}
+    )
+
+    async def connect(_host):
+        return None, FakeEngine("a", [web()])
+
+    registry = Registry([host], connect, clock=lambda: T0)
+    store, _ = make_store(db, registry)
+    await registry.start()
+    version = store.version()
+    await store.expect_exits(registry.service(SHOP), ["fetch"])
+    await store.expect_exits(registry.service(SHOP), ["fetch", "backup"])
+
+    shop = registry.service(SHOP)
+    assert shop.exits == ["fetch", "backup"]
+    assert [u.url for u in shop.urls] == [FILE_URL]  # the file's name-keyed entry still holds
+    assert store.overrides().hosts["a"].services["shop"].exits == ["fetch", "backup"]
+    assert store.version() != version  # a page that saves from the old version gets its 409
+
+
+async def test_this_is_expected_marks_a_host_as_one_that_may_sleep(db):
+    registry = hosts_file_registry()
+    store, _ = make_store(db, registry)
+    await registry.start()
+    await store.expect_sleep("a")
+    assert registry.hosts()[0].config.may_sleep is True
+    assert registry.hosts()[0].config.rules == ["file rule"]
+
+
 async def test_the_dashboard_can_add_protected_containers_but_never_unprotect_one(db):
     registry = hosts_file_registry()
     store, _ = make_store(db, registry)

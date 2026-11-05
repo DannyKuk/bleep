@@ -55,7 +55,14 @@ def test_container_health_table(state, health, expected):
     [(0, "stopped"), (143, "stopped"), (1, "down"), (137, "down"), (None, "down")],
 )
 def test_an_exited_container_is_stopped_only_after_a_clean_exit(exit_code, expected):
-    assert container_health(c("exited", exit_code=exit_code)) == expected
+    assert container_health(c("exited", exit_code=exit_code, policy="always")) == expected
+
+
+def test_a_job_that_exited_0_is_done_and_one_that_crashed_is_still_down():
+    assert container_health(c("exited", exit_code=0)) == "done"  # a one-shot, no restart policy
+    assert container_health(c("exited", exit_code=0, policy="on-failure"), True) == "done"
+    assert container_health(c("exited", exit_code=1, policy="on-failure"), True) == "down"
+    assert container_health(c("running"), True) == "ok"
 
 
 @pytest.mark.parametrize(
@@ -73,7 +80,7 @@ def test_an_exited_container_is_stopped_only_after_a_clean_exit(exit_code, expec
         ([], ["unknown"], "unknown"),
         # a finished one-shot (exit 0, no restart policy) does not count
         ([c(), c("exited", name="fetch", exit_code=0)], [], "ok"),
-        ([c("exited", name="fetch", exit_code=0, policy="no")], [], "stopped"),
+        ([c("exited", name="fetch", exit_code=0, policy="no")], [], "done"),
         # stopped on purpose, all of it: grey, also with a URL that now fails
         ([c("exited", exit_code=0, policy="always")], [], "stopped"),
         ([c("exited", exit_code=143, policy="unless-stopped")], ["failing"], "stopped"),
@@ -96,6 +103,19 @@ def test_an_exited_container_is_stopped_only_after_a_clean_exit(exit_code, expec
 )
 def test_service_health_is_the_worst_of_containers_and_urls(containers, urls, expected):
     assert service_health(containers, urls) == expected
+
+
+def test_a_service_of_jobs_named_in_exits_is_done_and_a_crash_among_them_is_down():
+    job = c("exited", name="fetch", exit_code=0, policy="on-failure")
+    assert service_health([job], []) == "stopped"  # without `exits`: stopped by somebody
+    assert service_health([job], [], ["fetch"]) == "done"
+    assert service_health([c(), job], [], ["*"]) == "ok"
+    crashed = c("exited", name="fetch", exit_code=2, policy="on-failure")
+    assert service_health([crashed], [], ["fetch"]) == "down"
+
+
+def test_a_host_counts_a_done_service_as_ok():
+    assert host_health(True, T0, ["done", "ok"]) == "ok"
 
 
 @pytest.mark.parametrize(

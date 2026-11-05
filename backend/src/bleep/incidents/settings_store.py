@@ -31,6 +31,7 @@ from bleep.hosts.registry import Registry
 from bleep.incidents.repository import utcnow
 from bleep.plugins.registry import PluginError, PluginRegistry, UnknownPlugin
 from bleep.schemas.plugins import PluginUpdate, PluginView
+from bleep.schemas.services import Service
 from bleep.schemas.settings import (
     MODEL_KEY_ENV,
     BudgetOverrides,
@@ -194,6 +195,7 @@ class SettingsStore:
                     rules=over.rules,
                     protected_containers=over.protected_containers,
                     hosts_file_protected_containers=self._hosts_file_protected(base, key),
+                    exits=over.exits,
                 )
                 for key, over in config.services.items()
             }
@@ -256,6 +258,36 @@ class SettingsStore:
             await self._write(writes)
             self._overrides = merged
             self._apply_hosts()
+
+    async def expect_exits(self, service: Service, entries: list[str]) -> None:
+        """Add `entries` to the service's `exits` as a dashboard override ("This is expected").
+        Only adds, so it needs no version: a page saving from an older one gets its 409."""
+        async with self._lock:
+            host = self._host_overrides().get(service.host_id, HostSettings()).model_copy(deep=True)
+            config = self._effective(self._base[service.host_id])
+            key = _settings_key(config, service)
+            current = config.services[key].exits if key in config.services else []
+            own = host.services.get(key, ServiceSettings()).model_copy()
+            own.exits = list(dict.fromkeys([*current, *entries]))
+            host.services[key] = own
+            await self._replace_host(service.host_id, host)
+
+    async def expect_sleep(self, host_id: str) -> None:
+        """Mark a host as one that may sleep, as a dashboard override ("This is expected")."""
+        async with self._lock:
+            host = self._host_overrides().get(host_id, HostSettings()).model_copy(deep=True)
+            host.may_sleep = True
+            await self._replace_host(host_id, host)
+
+    async def _replace_host(self, host_id: str, host: HostSettings) -> None:
+        """Store and apply one host's overrides; the caller holds the lock."""
+        base = self._base.get(host_id)
+        if base is None:
+            raise SettingsRefused(f"no host {host_id!r} in the hosts file or the dashboard")
+        _merged_host(base, host)
+        await self._write({f"{HOST_PREFIX}{host_id}": host})
+        self._host_overrides()[host_id] = host
+        self._apply_hosts()
 
     async def set_plugin(self, name: str, update: PluginUpdate, *, version: str) -> None:
         """Configure and switch a plugin, then store it; `update` was built from the plugin at
@@ -457,6 +489,13 @@ def _connection(host: HostConfig) -> HostConnectionView:
     )
 
 
+def _settings_key(config: HostConfig, service: Service) -> str:
+    """The key the host's settings hold the service under: its own key, or the name the hosts file
+    used for it, so a new override never hides the file's (#230); its own key when it has none."""
+    own = service.id.removeprefix(f"{service.host_id}/")
+    return next((k for k in (own, service.name) if k in config.services), own)
+
+
 def _hash(content: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()[:16]
 
@@ -500,6 +539,7 @@ def _merged_host(base: HostConfig, host: HostSettings) -> HostConfig:
             update={
                 "urls": over.urls if over.urls is not None else below.urls,
                 "rules": over.rules if over.rules is not None else below.rules,
+                "exits": over.exits if over.exits is not None else below.exits,
                 "protected_containers": protected,
             }
         )

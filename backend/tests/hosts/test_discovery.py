@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
-from bleep.hosts.discovery import AmbiguousOverride, group_services
+from bleep.hosts.discovery import AmbiguousOverride, expects_exit, group_services
 from bleep.schemas.docker import ContainerSummary
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "labels"
@@ -284,3 +284,20 @@ def test_a_name_shared_with_a_key_matched_service_still_goes_to_the_other_one():
     assert svcs["h/container:app"].repo == "name/app"
     assert svcs["h/container:app"].protected == {"app"}
     assert svcs["h/compose:app"].repo == "key/app"
+
+
+def test_exits_names_a_container_by_its_name_its_compose_service_or_all():
+    job = {"com.docker.compose.service": "fetch", "com.docker.compose.project": "molecula"}
+    assert expects_exit(["fetch"], "molecula-fetch-run-3f2a", job)  # every `compose run --rm`
+    assert expects_exit(["molecula-fetch-1"], "molecula-fetch-1", {})
+    assert expects_exit(["*"], "anything", {})
+    assert not expects_exit(["fetch"], "molecula-web-1", {"com.docker.compose.service": "web"})
+    assert not expects_exit([], "molecula-fetch-1", job)
+
+
+def test_a_service_takes_exits_from_its_override_like_its_urls():
+    labels = {"com.docker.compose.project": "molecula"}
+    [service] = group_services(
+        "h", [box("molecula-fetch-1", labels)], {"molecula": ServiceOverrides(exits=["fetch"])}
+    )
+    assert service.exits == ["fetch"]

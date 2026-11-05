@@ -42,6 +42,7 @@ hosts:
         docs_paths: [docs/runbook.md, ops]          # markdown files or folders for knowledge search (default docs)
         readme: true                               # read the repo's README too (default true); another service linking the same repo with the default turns it back on
         protected_containers: [shop-db]            # never a target of an action
+        exits: [migrate]                           # jobs meant to finish (container or Compose service name, or "*"): exit 0 is done, a crash is still an incident
         rules:
           - Roll back before restarting when the last deploy is under an hour old.
 

@@ -150,12 +150,13 @@ class ThresholdOverrides(_Overrides):
 
 
 class ServiceSettings(_Overrides):
-    """One service's overrides. `urls` and `rules` replace the hosts file's; protected
+    """One service's overrides. `urls`, `rules` and `exits` replace the hosts file's; protected
     containers are added to the hosts file's, which the dashboard can never unprotect."""
 
     urls: list[UrlCheckConfig] | None = Field(None, max_length=20)
     rules: list[RuleText] | None = Field(None, max_length=50)
     protected_containers: list[ContainerName] | None = Field(None, max_length=100)
+    exits: list[ContainerName] | None = Field(None, max_length=100)
 
     @field_validator("urls")
     @classmethod
@@ -226,6 +227,7 @@ class ServiceSettingsView(BaseModel):
     rules: list[str]
     protected_containers: list[str]  # the hosts file's and the dashboard's
     hosts_file_protected_containers: list[str]  # those the dashboard cannot unprotect
+    exits: list[str] = []  # jobs meant to finish: the dashboard's list, else the hosts file's
 
 
 class HostSettingsView(BaseModel):
