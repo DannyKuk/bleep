@@ -278,6 +278,11 @@ def test_a_secret_list_straddling_the_tail_cut_is_gone_whole(template, joiner, b
         ('{"api_keys": ["k1x", "k2y"], "user": "bob"}', '{"api_keys": <redacted>, "user": "bob"}'),
         ("api_keys: []", "api_keys: []"),
         ('api_keys: ["a1b2c3"], next=1', "api_keys: <redacted>, next=1"),
+        ('{"api_keys":["k1","k2"],"user":"bob"}', '{"api_keys":<redacted>'),
+        ('{"api_keys": ["k1", "k2"], "user": "bob"}', '{"api_keys": <redacted>, "user": "bob"}'),
+        ('x: {"api_keys": ["k1x"]}', 'x: {"api_keys": <redacted>}'),
+        ("password=[aB3],xY9kL2wq more", "password=<redacted> more"),
+        ('msg="api_keys=[k1x]" level=info', 'msg="api_keys=<redacted>" level=info'),
         ("DB_PASSWORD=[aB3]xY9kL2wq", "DB_PASSWORD=<redacted>"),
         ("password=[none]xY9kL2wq", "password=<redacted>"),
         ("token ya29.a0AfH6SMBx3Kq9ZpLm2nQ7rT8u done", "token <redacted> done"),
@@ -293,3 +298,20 @@ def test_a_secret_list_straddling_the_tail_cut_is_gone_whole(template, joiner, b
 def test_lists_google_tokens_and_xml_are_redacted_in_place(text, out):
     assert redact_with_count(text) == (out, out.count("<redacted>"))
     assert redact_with_count(out) == (out, 0)
+
+
+def test_a_value_starting_with_a_bracket_hides_at_least_what_main_hid():
+    """Before flow lists, an unquoted value under a secret key ran from its `[` to the next
+    whitespace and was hidden whole. A random `[`-first value must still hide everything there."""
+    import random
+
+    rng = random.Random(58)
+    alphabet = [*"[],;})]\"'aB3{(:= ", "TSEC", "none", "\n"]
+    keys = ["password=", "DB_PASSWORD=", "api_keys: ", '"token": ', "secret => "]
+    for _ in range(30_000):
+        value = "[" + "".join(rng.choice(alphabet) for _ in range(rng.randrange(0, 12)))
+        text = rng.choice(keys) + value + rng.choice(["", " next=1", '"}'])
+        old_span = re.match(r"\S*", value).group(0)
+        out = redact_text(text)
+        if "TSEC" in old_span:
+            assert out.count("TSEC") <= value[len(old_span) :].count("TSEC"), text

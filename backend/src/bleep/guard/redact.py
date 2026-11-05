@@ -143,7 +143,7 @@ def _singular(word: str) -> str:
 def _is_plain(value: str) -> bool:
     if _REFERENCE.fullmatch(value.rstrip(",;")):
         return True
-    value = value.rstrip(",;})]").lower()
+    value = value.rstrip(",;})]\"'").lower()  # `<redacted>"` when a list ended inside quotes
     return value in _PLAIN_VALUES or _SMALL_INT.fullmatch(value) is not None
 
 
@@ -250,15 +250,19 @@ def _redact_cookie(match: re.Match[str]) -> str:
 # password=x, "password": "x y", password: x, [password] => x, SECRET_KEY_BASE=x, X-Api-Key: x,
 # api_keys: ["a", "b"]. The key is judged by `_is_secret_key`; the cheap lookahead keeps Python
 # out of unrelated pairs. An unquoted value runs to whitespace (so it fails safe on `&`, `,`,
-# quotes), a flow list to a `]` that ends the value or to the line's end (`[aB3]xY9` is a password,
-# not a list), and neither starts with a cut note.
+# quotes), a flow list to a `]` that ends the value (closers and one quote may follow it, then
+# whitespace or the end), or else on to the next whitespace (`[aB3],xY9` is a password, and so
+# compact JSON after a list goes too), or to the line's end when it has no `]`. Neither starts
+# with a cut note.
 _KEY_VALUE = re.compile(
     r"(?<![A-Za-z0-9_.-])"
     rf"(?=[A-Za-z0-9_.-]{{0,96}}?{_SECRET_HINT})"
     r"([A-Za-z0-9_.-]{1,96})"
     r"([\"']?\]?[ \t]*+(?:=>|:=|==|[=:])[ \t]*+(?:(?:\n[ \t]*+){1,8}(?<=[ \t]))?)"
     r"(?!\[… )"
-    r"(\"(?:[^\"\\\n]|\\.)*+\"?|'(?:[^'\\\n]|\\.)*+'?|\[[^\]\n]*+(?:\](?![^\s,;})\]])|(?=\n|\Z))|[^\s\"'][^\s]*+)",
+    r"(\"(?:[^\"\\\n]|\\.)*+\"?|'(?:[^'\\\n]|\\.)*+'?"
+    r"|\[[^\]\n]*+(?:\](?:(?=[,;})\]]*+[\"']?(?:\s|\Z))|\S*+)|(?=\n|\Z))"
+    r"|[^\s\"'][^\s]*+)",
     _FLAGS,
 )
 

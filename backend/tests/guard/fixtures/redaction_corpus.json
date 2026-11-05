@@ -1492,7 +1492,18 @@
   ["password=${vault:secret/data/TESTdb9}", "TESTdb9"],
   ["password_hashes=$1$TESTsalt$TESThashTESThash0123456", "TESThashTESThash0123456"],
   ["password_hashes=pbkdf2_sha256$260000$TESTsalt9$TESThash0123456789abcdefABCDEF=", "TESThash0123456789"],
-  ["password_hashes: pbkdf2_sha1$10000$s4lt$TESThash0123456789abcd", "TESThash0123456789"]
+  ["password_hashes: pbkdf2_sha1$10000$s4lt$TESThash0123456789abcd", "TESThash0123456789"],
+  ["DB_PASSWORD=[aB3],xY9TESTkL2wq", "xY9TESTkL2wq"],
+  ["password=[],TESTSECRETvalue", "TESTSECRETvalue"],
+  ["password=[none];TESTSECRETvalue", "TESTSECRETvalue"],
+  ["DB_PASSWORD=[aB3];xY9TESTkL2wq", "xY9TESTkL2wq"],
+  ["DB_PASSWORD=[aB3]}xY9TESTkL2wq", "xY9TESTkL2wq"],
+  ["DB_PASSWORD=[aB3])xY9TESTkL2wq", "xY9TESTkL2wq"],
+  ["DB_PASSWORD=[aB3]]xY9TESTkL2wq", "xY9TESTkL2wq"],
+  ["password=[]]]TESTSECvalue", "TESTSECvalue"],
+  ["password=[a]'TESTSECvalue", "TESTSECvalue"],
+  ["password=[a]\"TESTSECvalue", "TESTSECvalue"],
+  ["password=[a])]'TESTSECvalue", "TESTSECvalue"]
  ],
  "controls": [
   "auth_method=password",
@@ -1648,6 +1659,7 @@
   "cost: $1$ each",
   "password_hashes=pbkdf2_sha256",
   "tokens: [123456]",
-  "tokens: [none] ok"
+  "tokens: [none] ok",
+  "msg=\"tokens=[none]\" level=info"
  ]
 }
