@@ -209,7 +209,8 @@ def test_the_prompts_with_a_fixed_part_render_as_they_did_before_it_moved_out(na
     """The fixtures were rendered from the files at c0afd0f, before #147 moved each rule (and
     #165 Diagnose's `planted_in` bullet) into `untrusted/`, with every placeholder filled as
     `<name>`; `{mcp}` came later (#118) and is filled as it is with the MCP plugin off.
-    `graph-diagnose.txt` was rendered again when #108 defined the categories in the prompt."""
+    `graph-diagnose.txt` was rendered again when #108 defined the categories in the prompt and
+    when #105 narrowed the `planted_in` bullet."""
     extra = {field: load(rule).strip() for field, rule in FIXED_PARTS.get(name, {}).items()}
     fields = placeholders(prompts.file_text(name)) - {"untrusted_rule"} - set(extra)
     values = {field: f"<{field}>" for field in fields}

@@ -18,6 +18,8 @@ Outcome = Literal["resolved", "rejected", "no_action", "unverified", "budget", "
 PlantedSource = Literal[
     "logs", "events", "inspect", "http_body", "memory", "commits", "docs", "other"
 ]
+# The places a report can name: Diagnose's list and the plugins' answers, which code alone sees.
+PlantedPlace = PlantedSource | Literal["mcp", "coolify"]
 Action = Literal[
     "docker.restart",
     "docker.stop",
@@ -336,7 +338,8 @@ class Report(BaseModel):
     The model writes `summary`, `cause` and `follow_ups`, checked by `guard.report_check` before
     they are stored or sent; everything else is Bleep's own. `outcome` is the fixed text for the
     run's outcome ("Fixed and verified" only for `resolved`). `action_taken` is None when nothing
-    ran.
+    ran. `planted_in` names where host text tried to give Bleep orders (`graph/planted.py`), the
+    places its fixed follow-up names; code sets it, never the model.
     """
 
     title: str
@@ -347,3 +350,4 @@ class Report(BaseModel):
     timeline: list[TimelineEntry] = Field(default_factory=list)
     follow_ups: list[str] = Field(default_factory=list)
     human_decision: str | None = None
+    planted_in: list[PlantedPlace] = Field(default_factory=list)
