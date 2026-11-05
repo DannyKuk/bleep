@@ -4,13 +4,14 @@ import { Lock } from "lucide-react";
 import { useState } from "react";
 
 import { HealthBadge } from "@/components/overview/health-badge";
+import { CheckStrip } from "@/components/service/check-strip";
 import { useLoaded, useStaleSaving } from "@/components/settings/loaded";
 import { ListEditor } from "@/components/settings/rules";
 import { UrlEditor } from "@/components/settings/urls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
-import type { Health, UrlStatus } from "@/lib/api-types";
+import type { Health, UrlCheckPoint, UrlHistory, UrlStatus } from "@/lib/api-types";
 import { formatTime } from "@/lib/format";
 import { putSettings } from "@/lib/settings-api";
 import type {
@@ -144,7 +145,7 @@ const notChecked = (url: string): UrlStatus => ({
   latency_ms: null,
 });
 
-function UrlRow({ url }: { url: UrlStatus }) {
+function UrlRow({ url, checks }: { url: UrlStatus; checks: UrlCheckPoint[] }) {
   const { label: statusLabel, health } = URL_HEALTH[url.status];
   const label =
     url.status === "unknown" && url.last_checked != null ? "No recent check" : statusLabel;
@@ -160,21 +161,25 @@ function UrlRow({ url }: { url: UrlStatus }) {
         <HealthBadge health={health} label={label} />
         {facts.length > 0 && <span className="text-xs text-ink-2">{facts.join(" · ")}</span>}
       </span>
+      <CheckStrip url={url.url} checks={checks} />
     </li>
   );
 }
 
 /**
- * The URLs Bleep checks for the service, each with its last check. With settings, the list is
- * the one in force (a URL just added shows as not checked yet) and can be edited.
+ * The URLs Bleep checks for the service, each with its last check and the strip of its recent
+ * ones. With settings, the list is the one in force (a URL just added shows as not checked yet)
+ * and can be edited.
  */
 export function CheckedUrls({
   name,
   statuses,
+  history = [],
   settings,
 }: {
   name: string;
   statuses: UrlStatus[];
+  history?: UrlHistory[];
   settings?: ServiceSettings;
 }) {
   const [editing, setEditing] = useState(false);
@@ -201,7 +206,11 @@ export function CheckedUrls({
       {shown.length > 0 ? (
         <ul className="flex flex-col gap-1.5" aria-label="URLs">
           {shown.map((url) => (
-            <UrlRow key={url.url} url={url} />
+            <UrlRow
+              key={url.url}
+              url={url}
+              checks={history.find((recent) => recent.url === url.url)?.checks ?? []}
+            />
           ))}
         </ul>
       ) : (
