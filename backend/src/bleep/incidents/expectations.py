@@ -138,9 +138,10 @@ class Expectations:
     async def expected(self, incident_id: str, via: Channel) -> Answer:
         """Record the expectation, then reject a pending plan, then close the incident: a write
         that fails changes nothing. The reject is the same first-wins decision as any other
-        answer; when a yes on another channel won it (also one that landed while the settings
-        were written), the expectation stays recorded, the incident stays open with its plan,
-        and the answer says so. It is done only when this call closed the incident."""
+        answer; when another decision (a yes, an instruction or a no) won it, also one that
+        landed while the settings were written, the expectation stays recorded, the incident
+        follows that decision, and the answer says so. It is done only when this call closed the
+        incident."""
         expectation = await self.offered(incident_id)
         if expectation is None:
             return Answer(False, "Nothing here can be marked as expected now.")
@@ -161,9 +162,8 @@ class Expectations:
             decision = Decision(kind="reject", text=DECISION_TEXT, via=via, at=self.clock())
             if await self.approvals.resolve(incident_id, decision, pending.id) is None:
                 return await self._lost(incident_id, text, via)
-        elif pending is not None and pending.decision is not None:
-            if pending.decision.kind == "approve":  # a yes won while the settings were written
-                return await self._lost(incident_id, text, via)
+        elif pending is not None:  # a decision won while the settings were written
+            return await self._lost(incident_id, text, via)
         await self.bus.publish(incident_id, "expected", {"text": text, "via": via})
         if not await self.runner.end(incident_id, CLOSED_NOTICE, spare=RUNNING):
             # A plan started running on the host meanwhile, or the incident closed on its own.

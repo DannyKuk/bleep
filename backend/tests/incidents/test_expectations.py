@@ -210,14 +210,17 @@ async def test_nothing_is_offered_when_no_name_can_hold_the_job(tmp_path):
     assert expectation_for(incident, await env.repo.signals(incident.id), env.registry) is None
 
 
-def yes_during_the_write(env, rig, incident_id: str, status: str | None = None) -> None:
-    """A yes on the dashboard wins the plan while "This is expected" writes the settings, and
-    the run may reach `status` before the write returns."""
+def yes_during_the_write(
+    env, rig, incident_id: str, status: str | None = None, kind: str = "approve"
+) -> None:
+    """A decision on the dashboard (a yes by default) wins the plan while "This is expected"
+    writes the settings, and the run may reach `status` before the write returns."""
     write = rig.settings.expect_exits
 
     async def racing(service, entries):
         current = await env.deps.approvals.current(incident_id)
-        yes = Decision(kind="approve", via="dashboard", at=datetime(2026, 11, 5, tzinfo=UTC))
+        text = "use the other port" if kind == "instruct" else None
+        yes = Decision(kind=kind, text=text, via="dashboard", at=datetime(2026, 11, 5, tzinfo=UTC))
         await env.deps.approvals.resolve(incident_id, yes, current.id)
         if status is not None:
             await env.repo.set_status(incident_id, status)
@@ -245,6 +248,25 @@ async def test_a_yes_that_lands_during_the_write_wins_and_the_incident_stays_ope
     assert (await env.deps.approvals.current(incident.id)).decision.kind == "approve"
     events = [e for e in await env.bus.history(incident.id) if e.kind == "expected"]
     assert events[-1].payload["via"] == "telegram"
+
+
+@pytest.mark.parametrize("kind", ["instruct", "reject"])
+async def test_an_instruction_or_no_that_lands_during_the_write_wins_too(tmp_path, kind):
+    env = await graph_env(tmp_path)
+    incident = await opened(env, death(shop(env), 0))
+    await env.repo.set_status(incident.id, "awaiting_approval")
+    await env.deps.approvals.request(incident.id, PLAN, [])
+    async with open_checkpointer(tmp_path / "c.sqlite") as saver:
+        rig = Rig(env, IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus))
+        yes_during_the_write(env, rig, incident.id, kind=kind)
+        answer = await rig.expectations.expected(incident.id, "telegram")
+
+    assert not answer.done
+    assert answer.text.endswith(
+        "The plan was already decided on the dashboard, so the incident stays open."
+    )
+    assert (await env.repo.get(incident.id)).status == "awaiting_approval"
+    assert (await env.deps.approvals.current(incident.id)).decision.kind == kind
 
 
 async def test_it_is_not_done_when_a_plan_started_running_and_the_close_was_spared(tmp_path):
