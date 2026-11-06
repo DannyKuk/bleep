@@ -10,7 +10,14 @@ import string
 from collections.abc import Callable
 from functools import lru_cache
 
-from bleep.guard.sanitize import MAX_LINE, VALUE_END, cut_points, join_cut, normalise_newlines
+from bleep.guard.sanitize import (
+    MAX_LEAD,
+    MAX_LINE,
+    VALUE_END,
+    cut_points,
+    join_cut,
+    normalise_newlines,
+)
 from bleep.schemas.graph import PlanStep, Proposal
 
 REDACTED = "<redacted>"
@@ -147,8 +154,47 @@ def _is_plain(value: str) -> bool:
     return value in _PLAIN_VALUES or _SMALL_INT.fullmatch(value) is not None
 
 
+# A part of a setting's path written as a key: `ClientSecret`, `clientSecret`, `client_secret`,
+# `CLIENT_SECRET`, and dotted (`Spring.Datasource`). A plain word (`secret`) or one with digits
+# (`Secret123`) may be a value.
+_KEY_FORM = (
+    r"(?:[A-Z][a-z]+(?:[A-Z][a-z]*)*|[a-z]+(?:[A-Z][a-z]*)+|[a-z]+(?:_[a-z]+)+|[A-Z]+(?:_[A-Z]+)+)"
+)
+_SETTING_PATH = re.compile(rf"{_KEY_FORM}(?:\.{_KEY_FORM})*(?::{_KEY_FORM}(?:\.{_KEY_FORM})*)+")
+_NAME_ATTRIBUTE = re.compile(
+    r"(?<![A-Za-z0-9_.:-])(?:key|name)[ \t]*=[ \t]*([\"'])([A-Za-z0-9_.:-]{1,96})\1", _FLAGS
+)
+_NAME_ATTRIBUTE_OPEN = re.compile(r"(?<![A-Za-z0-9_.:-])(?:key|name)[ \t]*=[ \t]*[\"']\Z", _FLAGS)
+
+
+def _names_a_setting(match: re.Match[str]) -> bool:
+    """Whether the pair is a setting's name in a `key` or `name` attribute (`key="Jwt:Secret"`,
+    `name="Auth:ClientSecret"`): a path of parts written as keys whose last part names a secret.
+    There `:` divides the path, and `Secret` is no value. `key="token:abc123"` and
+    `key="password:Secret123"` stay pairs."""
+    attribute = _NAME_ATTRIBUTE.fullmatch(match.group(0))
+    if attribute:  # the pair is the attribute itself: `key` and the quoted path
+        path = attribute.group(2)
+    else:
+        # the pair starts inside the attribute's quotes (`name="Auth:ClientSecret"`, where `Auth`
+        # is the key `_KEY_VALUE` found): the attribute must open right before it, and the pair
+        # must end with the closing quote
+        start, value = match.start(), match.group(3)
+        quote = match.string[start - 1 : start]
+        if not quote or not value.endswith(quote) or quote not in "\"'":
+            return False
+        if not _NAME_ATTRIBUTE_OPEN.search(match.string, max(0, start - 40), start):
+            return False
+        path = match.group(0)[:-1]
+    if len(path) > 96 or not _SETTING_PATH.fullmatch(path):
+        return False
+    return _is_secret_key(path.rpartition(":")[2])
+
+
 def _redact_pair(match: re.Match[str], depth: int = 0) -> str:
     key, separator, value = match.group(1), match.group(2), match.group(3)
+    if _names_a_setting(match):
+        return match.group(0)
     if not _is_secret_key(key):
         kept = _redact_inside(value, depth)
         return f"{key}{separator}{_hide_dsn_user(kept) if _is_dsn_key(key) else kept}"
@@ -247,13 +293,41 @@ def _redact_cookie(match: re.Match[str]) -> str:
     return f"{match.group(1)}{quote}{';'.join(parts)}{quote if closed else ''}"
 
 
+LIST_MAX_LINES = 20
+# A line that starts a new log record (a date, syslog's `Nov  2 `, a level) ends a flow list.
+_NEW_RECORD = (
+    r"[ \t]*+(?:\d{4}-\d\d-\d\d|[A-Z][a-z]{2} [ \d]\d "
+    r"|(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)\b)"
+)
+# The start of a key `_KEY_VALUE` or `_COOKIE` takes, with its separator: a multi-line flow list
+# runs on after its `]` up to the next one. Inside a run of name characters only its first one
+# reads ahead, and only over that run, so the check stays linear.
+_NEXT_KEY = (
+    r"(?<![A-Za-z0-9_.-])"
+    rf"(?=[A-Za-z0-9_.-]{{0,96}}?(?:{_SECRET_HINT}|cookie))"
+    r"[A-Za-z0-9_.-]{1,96}[\"']?\]?[ \t]*+(?:=>|:=|==|[=:])"
+)
+# The `[… N chars cut]` line `_cut_line` puts into a line over 4,000 characters, after its lead.
+_CUT_NOTE_LINE = r"[^\[\]\n]{0,200}+\[… [0-9]+ chars cut\]\n"
+# A flow list's `]` ends the value when closers and at most one quote follow it, then whitespace or
+# the end; otherwise the value runs on to the next whitespace (`[aB3],xY9` is a password).
+_LIST_END = r"\](?:(?=[,;})\]]*+[\"']?(?:\s|\Z))|\S*+)"
 # password=x, "password": "x y", password: x, [password] => x, SECRET_KEY_BASE=x, X-Api-Key: x,
 # api_keys: ["a", "b"]. The key is judged by `_is_secret_key`; the cheap lookahead keeps Python
 # out of unrelated pairs. An unquoted value runs to whitespace (so it fails safe on `&`, `,`,
-# quotes), a flow list to a `]` that ends the value (closers and one quote may follow it, then
-# whitespace or the end), or else on to the next whitespace (`[aB3],xY9` is a password, and so
-# compact JSON after a list goes too), or to the line's end when it has no `]`. Neither starts
-# with a cut note.
+# quotes), a flow list to a `]` that ends the value (`_LIST_END`, so compact JSON after a list
+# goes too), or to the line's end when it has no `]`. Neither starts with a cut note.
+#
+# A list left open at the end of its line runs on to its `]` over at most 20 lines, stepping over
+# a cut note, unless another `[` or `]` or a new log record comes first; each scan stops at the
+# next bracket, so no two overlap. Where the lines would hold a pair that runs on past the `]`,
+# it is not taken (and the line alone counts, as before): its last line holds no `=` or `:`
+# before the `]` (`token=a]b`), and no line ends in a separator, whose value is on the next line
+# (`api_key:` and then `'x]y'`). It ends at that `]` when closers and a quote follow, then
+# whitespace or the next key (`],"password": "x"` is the next pair), else runs on as `_LIST_END`
+# does but stops before the next key. A `]` followed by a separator is a PHP key
+# (`[\ncredential] => x`), not the end of a list. Such a list redacted, `<redacted>` followed by
+# the next key is a value of its own, so a second pass changes nothing.
 _KEY_VALUE = re.compile(
     r"(?<![A-Za-z0-9_.-])"
     rf"(?=[A-Za-z0-9_.-]{{0,96}}?{_SECRET_HINT})"
@@ -261,31 +335,73 @@ _KEY_VALUE = re.compile(
     r"([\"']?\]?[ \t]*+(?:=>|:=|==|[=:])[ \t]*+(?:(?:\n[ \t]*+){1,8}(?<=[ \t]))?)"
     r"(?!\[… )"
     r"(\"(?:[^\"\\\n]|\\.)*+\"?|'(?:[^'\\\n]|\\.)*+'?"
-    r"|\[[^\]\n]*+(?:\](?:(?=[,;})\]]*+[\"']?(?:\s|\Z))|\S*+)|(?=\n|\Z))"
+    rf"|\[(?:(?:[^\[\]\n]*+(?<![=:>])\n|{_CUT_NOTE_LINE})(?!{_NEW_RECORD})){{1,{LIST_MAX_LINES}}}+"
+    r"[^\[\]\n=:]*+\](?![ \t]*+(?:=>|:=|==|[=:]))"
+    rf"(?:(?=[,;}})\]]*+[\"']?(?:\s|\Z|{_NEXT_KEY}))|(?:(?!{_NEXT_KEY})\S)*+)"
+    rf"|\[[^\]\n]*+(?:{_LIST_END}|(?=\n|\Z))"
+    rf"|<redacted>(?=[,;}})\]]*+[\"']?(?:\s|\Z|{_NEXT_KEY}))"
     r"|[^\s\"'][^\s]*+)",
     _FLAGS,
 )
 
 
+# The opening tag of an element named like a secret or with a `key` or `name` attribute; each
+# lookahead stops at the next `<` or `>`.
+_ELEMENT_TAG = (
+    rf"<(?=[A-Za-z0-9_.:-]{{0,64}}?{_SECRET_HINT}"
+    r"|[A-Za-z0-9_.:-]{1,64}\s[^<>]{0,256}?(?<![A-Za-z0-9_.:-])(?:key|name)[ \t]*=)"
+    r"([A-Za-z0-9_.:-]{1,64})((?:\s[^<>]{0,256}+)?)>"
+)
+# <password>x</password>, <entry key="db.password">x</entry>, with attributes, the value on lines
+# of its own or in CDATA. The text runs to the next `<`, and CDATA for at most 512 characters to
+# its `]]>` or the next CDATA, so no text is read for more than two matches. A CDATA without its
+# `]]>` counts only up to the end of the text and holds no `<`, so it never takes in the elements
+# after it.
+_ELEMENT_TEXT = (
+    r"([^<]*+(?:<!\[CDATA\[(?:(?:[^\]<]|\](?!\]>)|<(?!!\[CDATA\[)){0,512}+\]\]>[^<]*+"
+    r"|[^<\n]{0,512}+(?=\Z)))?)"
+)
+_ELEMENT = re.compile(_ELEMENT_TAG + _ELEMENT_TEXT + r"(</\1>)", _FLAGS)
+# In the head window of a cut line, whose end is a cut and not the end of the value, an element
+# still open there takes the rest of the window (`_redact_all(cut_end=True)`).
+_ELEMENT_TO_CUT = re.compile(_ELEMENT_TAG + _ELEMENT_TEXT + r"(</\1>|\Z)", _FLAGS)
+_ELEMENT_OPEN = re.compile(_ELEMENT_TAG, _FLAGS)
+_CDATA = re.compile(r"<!\[CDATA\[(.*?)(?:\]\]>|\Z)", re.DOTALL)
+
+
+def _is_secret_element(name: str, attributes: str) -> bool:
+    return _is_secret_key(name) or any(
+        _is_secret_key(attribute.group(2)) for attribute in _NAME_ATTRIBUTE.finditer(attributes)
+    )
+
+
 def _redact_element(match: re.Match[str]) -> str:
-    """`<password>x</password>`: an XML element named like a secret, its attributes and the
-    whitespace around its value kept."""
+    """`<password>x</password>`, `<entry key="db.password">x</entry>`: an XML element named like
+    a secret or with a `key` or `name` attribute that is one, its attributes and the whitespace
+    around its value kept. A value in CDATA is judged by its text and hidden with the CDATA."""
     name, attributes, content, close = match.groups()
-    value = content.strip()
-    if not _is_secret_key(name) or not value or _is_plain(value):
+    value = _CDATA.sub(r"\1", content).strip()
+    if not _is_secret_element(name, attributes) or not value or _is_plain(value):
+        return match.group(0)
+    before = match.string[match.start() - 1 : match.start()]
+    if not close and ("\n" in content or before.isalnum() or before in ("_", "$")):
+        # still open at a cut: only a tag on its own counts, not a type parameter after a name
+        # (`List<AccessToken>`, `ArrayList<com.acme.ApiToken>`); its text holds no `<`, so no
+        # element is skipped by keeping it
         return match.group(0)
     lead, trail = content[: len(content) - len(content.lstrip())], content[len(content.rstrip()) :]
     return f"<{name}{attributes}>{lead}{REDACTED}{trail}{close}"
 
 
 def _redact_setting(match: re.Match[str]) -> str:
-    """`<add key="Password" value="x"/>`: a value attribute after a key or name that is secret."""
-    value = match.group(4)
+    """`<add key="Password" value="x"/>`, `<add value="x" key="Password"/>`: a value attribute
+    next to a key or name that is secret."""
+    value = match.group("value")
     closed = len(value) > 1 and value.endswith(value[0])
     inner = value[1:-1] if closed else value[1:]
-    if not _is_secret_key(match.group(3)) or not inner or _is_plain(inner):
+    if not _is_secret_key(match.group("name")) or not inner or _is_plain(inner):
         return match.group(0)
-    return f"{match.group(1)}{value[0]}{REDACTED}{value[0] if closed else ''}"
+    return f"{match.group('lead')}{value[0]}{REDACTED}{value[0] if closed else ''}"
 
 
 def _redact_jwt(match: re.Match[str]) -> str:
@@ -298,14 +414,31 @@ def _redact_jwt(match: re.Match[str]) -> str:
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{5,}+(?:\.[A-Za-z0-9_-]{5,}+\.[A-Za-z0-9_-]{5,}+)?")
 
 
+# Cookie and Set-Cookie, as a header, JSON or logfmt (request_Cookie, "cookie": "..."): the cookie
+# names stay, their values go
+_COOKIE = re.compile(
+    r"((?<![A-Za-z0-9])[A-Za-z0-9_-]{0,32}cookies?[\"']?[ \t]*+[:=][ \t]*+)"
+    r"(\"(?:[^\"\\\n]|\\.)*+\"?|'(?:[^'\\\n]|\\.)*+'?|[^\n]*)",
+    _FLAGS,
+)
+
 Replacement = str | Callable[[re.Match[str]], str]
 _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
-    # <add key="Password" value="x"/>, <input name="password" value="x">; before `_KEY_VALUE`,
-    # whose pass inside a kept value takes `key="Jwt:Secret"` for a pair and hides `Secret`
+    # <add key="Password" value="x"/>, <input name="password" value="x">, and the value first
     (
         re.compile(
-            r"(?<![A-Za-z0-9_.:-])((?:key|name)[ \t]*=[ \t]*([\"'])([A-Za-z0-9_.:-]{1,96})\2"
-            r"\s{1,64}+value[ \t]*=[ \t]*)(\"[^\"\n]*+\"?|'[^'\n]*+'?)",
+            r"(?<![A-Za-z0-9_.:-])"
+            r"(?P<lead>(?:key|name)[ \t]*=[ \t]*(?P<q>[\"'])(?P<name>[A-Za-z0-9_.:-]{1,96})(?P=q)"
+            r"\s{1,64}+value[ \t]*=[ \t]*)(?P<value>\"[^\"\n]*+\"?|'[^'\n]*+'?)",
+            _FLAGS,
+        ),
+        _redact_setting,
+    ),
+    (
+        re.compile(
+            r"(?<![A-Za-z0-9_.:-])(?P<lead>value[ \t]*=[ \t]*)(?P<value>\"[^\"\n]*+\"?|'[^'\n]*+'?)"
+            r"(?=\s{1,64}+(?:key|name)[ \t]*=[ \t]*"
+            r"(?P<q>[\"'])(?P<name>[A-Za-z0-9_.:-]{1,96})(?P=q))",
             _FLAGS,
         ),
         _redact_setting,
@@ -313,15 +446,7 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
     # before the value patterns, so a value holding a token (`password=ghp_...!tail`) is one
     # redaction
     (_KEY_VALUE, _redact_pair),
-    # <password>x</password>, with attributes, the value on lines of its own
-    (
-        re.compile(
-            rf"<(?=[A-Za-z0-9_.:-]{{0,64}}?{_SECRET_HINT})"
-            r"([A-Za-z0-9_.:-]{1,64})((?:\s[^<>]{0,256}+)?)>([^<]{1,512}+)(</\1>)",
-            _FLAGS,
-        ),
-        _redact_element,
-    ),
+    (_ELEMENT, _redact_element),
     # --db-password hunter2, --api-key abc, --key abc: a secret option followed by its value
     (
         re.compile(
@@ -342,16 +467,7 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
         ),
         rf"\1\2{REDACTED}",
     ),
-    # Cookie and Set-Cookie, as a header, JSON or logfmt (request_Cookie, "cookie": "..."): the
-    # cookie names stay, their values go
-    (
-        re.compile(
-            r"((?<![A-Za-z0-9])[A-Za-z0-9_-]{0,32}cookies?[\"']?[ \t]*+[:=][ \t]*+)"
-            r"(\"(?:[^\"\\\n]|\\.)*+\"?|'(?:[^'\\\n]|\\.)*+'?|[^\n]*)",
-            _FLAGS,
-        ),
-        _redact_cookie,
-    ),
+    (_COOKIE, _redact_cookie),
     # a bare "Bearer xyz" / "Basic xyz" must look like a credential, not prose
     (
         re.compile(
@@ -537,11 +653,15 @@ def _apply(pattern: re.Pattern[str], replacement: Replacement, text: str) -> tup
     return pattern.sub(replace, text), changed
 
 
-def _redact_all(text: str) -> tuple[str, int]:
+_PATTERNS_TO_CUT = [(_ELEMENT_TO_CUT if p is _ELEMENT else p, r) for p, r in _PATTERNS]
+
+
+def _redact_all(text: str, cut_end: bool = False) -> tuple[str, int]:
+    """All patterns over `text`; with `cut_end`, its end is a window edge inside a cut line."""
     text, total = _redact_blocks(text)
     text, count = _redact_keys(text)
     total += count
-    for pattern, replacement in _PATTERNS:
+    for pattern, replacement in _PATTERNS_TO_CUT if cut_end else _PATTERNS:
         text, count = _apply(pattern, replacement, text)
         total += count
     return text, total
@@ -552,12 +672,13 @@ REACH = 2000  # how far before the tail cut its window may start, to take in a k
 KEEP_MAX = MAX_LINE // 2  # a kept piece stays under the line cap, so a second pass keeps it whole
 
 
-def _cut_line(line: str) -> tuple[str, int]:
+def _cut_line(line: str, next_line: str = "") -> tuple[str, int]:
     """Cut a line over 4,000 characters, redacting around each cut first; return the line and the
     number of secrets redacted in what is kept.
 
     The kept head comes from redacting everything up to 300 characters past the head cut, the
-    kept tail from redacting everything from `_tail_window_start` to the end of the line. Each
+    kept tail from redacting everything from `_tail_window_start` to the end of the line, after
+    the opening of a value still open there (`_reopen`). Each
     window runs to the line's end on the kept side, so no kept token is cut by a window edge, and
     both are under about 4,000 characters, so the work stays bounded. If the head window ends
     inside a redacted value and no value end follows before the tail, that value fills the tail
@@ -567,7 +688,15 @@ def _cut_line(line: str) -> tuple[str, int]:
     kept_head, open_value = _kept_head(line[:head], line[head : head + WINDOW])
     if open_value and not VALUE_END.search(line, min(head + WINDOW, tail), tail + 1):
         tail = len(line)  # the redacted value runs on through the middle and the whole tail
-    kept_tail = _kept_tail(line[_tail_window_start(line, tail) : tail], line[tail:])
+    opener, start = _reopen(line, _tail_window_start(line, tail))
+    rest = len(line) - _key_at_end(opener + line[start:], next_line)
+    if rest < tail:
+        rest = len(line)
+    kept_tail = _kept_tail(opener + line[start:tail], line[tail:rest])
+    if rest < len(line):
+        # on a line of its own, so no value the kept tail leaves open (`<redacted>`, a quote)
+        # takes it in
+        kept_tail += f"\n{_lead(line)[:MAX_LEAD]}{line[rest:]}"
     found = max(0, kept_head.count(REDACTED) - line.count(REDACTED, 0, head))
     found += max(0, kept_tail.count(REDACTED) - line.count(REDACTED, tail))
     return join_cut(kept_head, tail - head, kept_tail, _lead(line)), found
@@ -600,6 +729,119 @@ def _tail_window_start(line: str, tail: int) -> int:
     return start
 
 
+KEY_AT_END_NEXT = 256  # how much of the next line decides whether a key ending a line takes it
+_KEY_AT_END = re.compile(
+    rf"(?<![A-Za-z0-9_.-])(?=[A-Za-z0-9_.-]{{0,96}}?{_SECRET_HINT})"
+    r"[A-Za-z0-9_.-]{1,96}[\"']?\]?[ \t]*+(?:=>|:=|==|[=:])[ \t]*+\Z",
+    _FLAGS,
+)
+
+
+def _key_at_end(window: str, next_line: str) -> int:
+    """How many characters at the end of the tail window are a key that `_KEY_VALUE` would pair
+    with a value on the next line (`refresh_tokens:` and then `  ["a"]`), or 0. That key is kept
+    out of the window: there a cookie or element opening would hide it with the rest of its
+    line, and the final pass could no longer pair it with its value, as redacting the uncut text
+    does, since `_KEY_VALUE` runs first."""
+    key = _KEY_AT_END.search(window, max(0, len(window) - 160))
+    if key is None:
+        return 0
+    probe = window + "\n" + next_line[:KEY_AT_END_NEXT]
+    for match in _KEY_VALUE.finditer(probe):
+        if match.end() > key.start():
+            return len(window) - key.start() if match.start() == key.start() else 0
+    return 0
+
+
+def _reopen(line: str, start: int) -> tuple[str, int]:
+    """Where the tail window starts and the text to put before it: the opening of a value that
+    runs on across `start` (`API_KEYS=k`, `"api_keys": "`, `Cookie: x=`), so the window hides
+    the rest of that value as redacting the whole line would, however far back its key is.
+
+    The opening is found by reading the line from its start with the same patterns, which costs
+    one linear pass. It stands in for the part of the value before the window, which the window
+    never sees, and it is cut off again with the rest of the window's head (`_kept_tail`).
+    """
+    opener = "".join(
+        found or "" for found in (_open_cookie(line, start), _open_element(line, start))
+    ) + (_open_pair(line, start) or "")
+    if not opener:
+        return "", start
+    before = line[:start]
+    if (len(before) - len(before.rstrip("\\"))) % 2:
+        start -= 1  # the window must not start on a character a backslash escapes (`\"`)
+    return opener, start
+
+
+OPENING_MAX = 256  # a key, separator or tag that runs across the window start, at most
+
+
+def _opening(key: str, separator: str, value: str) -> str:
+    return f"{key}{' '.join(separator.split())}{value[:1]}"
+
+
+def _open_pair(text: str, start: int, depth: int = 0) -> str | None:
+    """The opening of the secret value `_KEY_VALUE` takes across `start` in `text` (or of the key
+    and separator it starts inside), or None. A value under a key that is no secret is searched
+    for pairs inside it, as `_redact_inside` does, and hidden whole past `MAX_NESTING` levels."""
+    for match in _KEY_VALUE.finditer(text):
+        if match.end() > start:
+            break
+    else:
+        return None
+    key, separator, value = match.groups()
+    if match.start() >= start:
+        return None
+    if match.start(3) >= start:
+        return text[match.start() : start] if start - match.start() <= OPENING_MAX else None
+    if _is_secret_key(key) and not _names_a_setting(match):
+        return _opening(key, separator, value)
+    if depth >= MAX_NESTING:
+        # `_redact_inside` hides such a value whole if it holds a pair; any secret key does that
+        return _opening("secret", separator, value) if _KEY_VALUE.search(value) else None
+    return _open_pair(value, start - match.start(3), depth + 1)
+
+
+def _open_element(line: str, start: int) -> str | None:
+    """The opening tag of the secret element whose text runs across `start`, or the part of any
+    tag `start` falls inside; None otherwise."""
+    tag_start = line.rfind("<", 0, start)
+    tag = _ELEMENT_OPEN.match(line, tag_start) if tag_start != -1 else None
+    if tag is None:
+        return None
+    if tag.end() > start:
+        return line[tag_start:start]
+    return tag.group(0) if _is_secret_element(tag.group(1), tag.group(2)) else None
+
+
+_COOKIE_NAME = re.compile(r"cookies?[\"']?[ \t]*+[:=]", _FLAGS)
+
+
+def _open_cookie(line: str, start: int) -> str | None:
+    """The opening of the cookie value `_COOKIE` takes across `start`, or None. A value without
+    quotes runs to the end of the line. The cheap `_COOKIE_NAME` finds each header first, so the
+    full pattern runs only near one."""
+    pos = 0
+    while (name := _COOKIE_NAME.search(line, pos, start + 64)) is not None:
+        found = _COOKIE.search(line, max(pos, name.start() - 32), name.end())
+        if found is None or found.start() >= start:
+            pos = name.end()
+            continue
+        header = _COOKIE.match(line, found.start())
+        if header is None or header.end() <= start:
+            # a quoted cookie value that closes before `start`: the next header can only come
+            # after it, as matches of `_COOKIE` never overlap
+            pos = name.end() if header is None else max(header.end(), name.end())
+            continue
+        if header.start(2) >= start:
+            return line[header.start() : start] if start - header.start() <= OPENING_MAX else None
+        value = header.group(2)
+        quote = value[:1] if value[:1] in ('"', "'") else ""
+        # a plain header: its own name prefix (`SecretCookie:`) could read as a secret key
+        return f"Cookie: {quote}x="
+    return None
+
+
 _SEGMENT = string.ascii_letters + string.digits + "_-"
 _JWT_START = re.compile(r"\beyJ")
 
@@ -618,38 +860,75 @@ def _hide_cut_jwt(text: str) -> str:
     return text[: start.start()] + REDACTED
 
 
+def _common_prefix(a: str, b: str) -> int:
+    """How many characters `a` and `b` share at the start (a binary search over slices, so the
+    comparing runs in C)."""
+    low, high = 0, min(len(a), len(b))
+    while low < high:
+        middle = (low + high + 1) // 2
+        if a[:middle] == b[:middle]:
+            low = middle
+        else:
+            high = middle - 1
+    return low
+
+
+def _common_suffix(a: str, b: str) -> int:
+    low, high = 0, min(len(a), len(b))
+    while low < high:
+        middle = (low + high + 1) // 2
+        if a[len(a) - middle :] == b[len(b) - middle :]:
+            low = middle
+        else:
+            high = middle - 1
+    return low
+
+
 def _kept_head(head: str, after: str) -> tuple[str, bool]:
     """The part of `redact(head + after)` that stands for `head`, never ending inside a
     `<redacted>`, and whether the window ended inside a redacted value. Where the mapping is
-    unsure it keeps less, and any piece of the redacted window is safe to keep."""
-    new = _hide_cut_jwt(_redact_all(head + after)[0])
+    unsure it keeps less, and any piece of the redacted window is safe to keep; text before the
+    first change is `head`'s own. Text of `head` it drops unmarked is marked `<redacted>`, so
+    the count shows that something went."""
+    window = head + after
+    new = _hide_cut_jwt(_redact_all(window, cut_end=True)[0])
     if new.endswith(after):  # `after` came through unchanged
         end = len(new) - len(after)
     elif new.startswith(head):  # `head` came through unchanged
         end = len(head)
     else:
         end = min(len(head), len(new) - len(after))
-    end = max(0, min(end, KEEP_MAX))
+    end = max(0, end, min(_common_prefix(new, window), len(head)))
+    end = min(end, KEEP_MAX)
     marker = new.rfind(REDACTED, max(0, end - len(REDACTED) + 1), end + len(REDACTED) - 1)
     if marker != -1:
         end = marker + len(REDACTED)
-    return new[:end], new.endswith(REDACTED)
+    kept = new[:end]
+    if len(kept) < len(head) and head.startswith(kept):
+        kept += REDACTED
+    return kept, new.endswith(REDACTED)
 
 
 def _kept_tail(before: str, tail: str) -> str:
     """The part of `redact(before + tail)` that stands for `tail`; see `_kept_head`."""
-    new = _redact_all(before + tail)[0]
+    window = before + tail
+    new = _redact_all(window)[0]
     if new.startswith(before):
         start = len(before)
     elif new.endswith(tail):
         start = len(new) - len(tail)
     else:
         start = max(len(before), len(new) - len(tail))
+    same_end = min(_common_suffix(new, window), len(tail))
+    start = min(start, len(new) - same_end)
     start = min(len(new), max(start, len(new) - KEEP_MAX))
     marker = new.find(REDACTED, max(0, start - len(REDACTED) + 1), start + len(REDACTED) - 1)
     if marker != -1:
         start = marker
-    return new[start:]
+    kept = new[start:]
+    if len(kept) < len(tail) and tail.endswith(kept):
+        kept = REDACTED + kept
+    return kept
 
 
 def redact_with_count(text: str) -> tuple[str, int]:
@@ -666,7 +945,8 @@ def redact_with_count(text: str) -> tuple[str, int]:
         lines = text.split("\n")
         for index, line in enumerate(lines):
             if len(line) > MAX_LINE:
-                lines[index], count = _cut_line(line)
+                following = lines[index + 1] if index + 1 < len(lines) else ""
+                lines[index], count = _cut_line(line, following)
                 found += count
         text = "\n".join(lines)
     text, total = _redact_all(text)

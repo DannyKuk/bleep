@@ -478,6 +478,13 @@ def assert_no_slower_than_benign(text: str) -> None:
         '<password a="b">',
         'key="password" value=',
         "a,",
+        "token: [\n  a,\n",
+        "<password><![CDATA[",
+        '<entry key="password">',
+        'value="a" key="password" ',
+        '"cookie": "a=b; ',
+        "token: [\n  a\n]x,",
+        "token: [\n  a:\n",
     ],
 )
 @pytest.mark.parametrize("length", [4000, 4001])
@@ -504,10 +511,34 @@ def test_a_tail_window_reaching_far_back_is_fast(unit, mark):
 
 @pytest.mark.parametrize(("unit", "length"), [("token=abc ", 4000), ("-eyJ", 4001)])
 def test_event_loop_gap_stays_small_on_the_worst_input(unit, length):
-    import asyncio
-
     line = (unit * length)[:length]
-    text = "\n".join([line] * 1000)
+    assert _event_loop_gap("\n".join([line] * 1000)) < 0.3
+
+
+@pytest.mark.parametrize(
+    ("opener", "unit"),
+    [
+        ("API_KEYS=", "a,"),
+        ("API_KEYS=", "-"),
+        ('"api_keys": "', "a "),
+        ('"api_keys": "', "\\"),
+        ("Cookie: ", "-"),
+        ("Cookie: ", "a=b; "),
+        ("", "cookie"),
+        ("", 'cookie="a" '),
+        ("", "pw=a "),
+        ("url=x?", "path="),
+    ],
+)
+def test_a_value_opened_far_back_on_a_long_line_is_fast(opener, unit):
+    # the tail window reads the whole line once for the value open where it starts
+    line = (opener + unit * 512_000)[:512_000]
+    assert_no_slower_than_benign(line)
+    assert _event_loop_gap(line) < 0.3
+
+
+def _event_loop_gap(text: str) -> float:
+    import asyncio
 
     async def run():
         gaps, last, done = [], time.perf_counter(), False
@@ -527,7 +558,7 @@ def test_event_loop_gap_stays_small_on_the_worst_input(unit, length):
         await task
         return max(gaps)
 
-    assert asyncio.run(run()) < 0.3
+    return asyncio.run(run())
 
 
 def test_cut_note_counts_original_characters():
