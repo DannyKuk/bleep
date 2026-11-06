@@ -189,7 +189,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **The Coolify plugin reads applications, deployments and env keys, never an env value**, parsed down to the fields Bleep names.
 - **Coolify's actions run the Docker act tools' checks**, a redeploy waits for its deployment to end, and a `set_env` value is never logged.
 - **The MCP plugin runs only the server tools a person allowed**, read tools freely and act tools only as an approved `mcp.call` step; the server's descriptions and answers arrive wrapped as untrusted data.
-- **A plugin step is held to its act tool's rules in the plan check, and never approved blind in Telegram**: a step whose params do not fit the line gets Reject only there.
+- **A plugin step is held to its act tool's rules in the plan check, and never approved blind**: a step whose params redaction would change is refused (`hidden_param`, #294), and one whose params do not fit the Telegram line gets Reject only there.
 
 **Settings** ([details](design/settings.md))
 - **Database override > hosts file > defaults, in force at once**; the dashboard can protect a container (or a Coolify application by its name as written) but never unprotect one the hosts file protects.

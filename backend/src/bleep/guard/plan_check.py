@@ -14,6 +14,7 @@ from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from bleep.guard.redact import hides_params
 from bleep.guard.sanitize import strip_control
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.coolify_names import name_matches
@@ -54,6 +55,7 @@ Rule = Literal[
     "unknown_container",
     "healthy_target",
     "unnamed_stop",
+    "hidden_param",
 ]
 
 
@@ -96,7 +98,9 @@ def check_plan(
     checks in the hosts file, and a verification container that is not on the host. A plugin
     step must take exactly its params, and an `mcp.call` must pass its action's `step_rules`
     (the tool is one of the plugin's act tools; with no rule given it is refused) and name no
-    protected container or Bleep's own in its arguments (`check_arguments`).
+    protected container or Bleep's own in its arguments (`check_arguments`). A step of any
+    action whose params redaction would change, as the human approving it would see them, is
+    refused (`check_shown`).
     """
     violations: list[Violation] = []
     if proposal.kind == "no_action" and proposal.steps:
@@ -259,6 +263,7 @@ def _check_step(
         return [Violation("disabled_action", f"{what}: {why}", number)]
     return (
         check_params(number, step)
+        or check_shown(number, step)
         or (rule(number, step) if rule is not None else [])
         or check_target(number, step, registry)
         or check_arguments(number, step, registry)
@@ -290,6 +295,24 @@ def check_params(number: int, step: PlanStep) -> list[Violation]:
         why = f"value is longer than {MAX_ENV_VALUE} characters"
         return [Violation("bad_params", f"{what}: {why}", number)]
     return []
+
+
+def check_shown(number: int, step: PlanStep) -> list[Violation]:
+    """A step whose params the person approving it would see changed by redaction is refused
+    (`hidden_param`), whatever its action: the dashboard and Telegram show `<redacted>` or a cut
+    where the real text would run, so a yes would be given blind (#294). The model never holds a
+    real secret, so a param that looks like one is a false positive or planted. The text never
+    quotes a param."""
+    if not hides_params(step):
+        return []
+    what = f"step {number} ({step.action} {step.target} on {step.host_id})"
+    why = (
+        "part of its params would be hidden from the human approving it (text that looks like a"
+        " secret, or a line too long to show whole), and the human could not read what they"
+        " approve; write every param in plain words with no secret, password or token in it,"
+        " or answer no_action and say in human_instructions what to change"
+    )
+    return [Violation("hidden_param", f"{what}: {why}", number)]
 
 
 def check_target(number: int, step: PlanStep, registry: Registry) -> list[Violation]:

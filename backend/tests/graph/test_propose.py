@@ -721,6 +721,21 @@ async def test_a_refused_stop_tells_the_human_how_to_get_it(tmp_path):
     assert propose.STOP_BY_HAND_ONLY in last["proposal"].human_instructions
 
 
+async def test_a_refused_hidden_param_tells_the_human_to_make_the_change_by_hand(tmp_path):
+    hidden = mcp_call("flush_cache", '{"service": "shop", "auth": "x; rm -rf /srv/shop/data"}')
+    env, state = await setup(tmp_path, *[acting(hidden)] * 4)
+    with_mcp(env, httpx.MockTransport(lambda r: httpx.Response(500)))
+
+    update = await propose.make(env.deps)(state)
+    last = await propose.make(env.deps)(state | {"replans": 3})
+
+    for told in (update["proposal"].human_instructions, last["proposal"].human_instructions):
+        assert propose.HIDDEN_BY_HAND in told and "rm -rf" not in told
+        assert propose.BY_HAND not in told and propose.STOP_BY_HAND not in told
+    assert propose.INSTRUCT in update["proposal"].human_instructions
+    assert propose.INSTRUCT not in last["proposal"].human_instructions
+
+
 async def test_other_no_action_reasons_are_not_refused(tmp_path):
     env, state = await setup(tmp_path, reply(kind="no_action", steps=[], reason="env var"))
 
@@ -738,11 +753,7 @@ WEB_APP = {
 WEB_BOX = "web0uuid-074501234567"  # Coolify names an app's containers anew at every deploy
 
 
-async def test_a_set_env_value_is_kept_for_execute_shown_redacted_and_never_logged(
-    tmp_path, caplog
-):
-    caplog.set_level(logging.DEBUG)
-    value = "postgres://web:pw-fake-123@db.internal/web"
+def set_env_plan(value: str) -> AIMessage:
     set_env = {
         "action": "coolify.set_env",
         "host_id": "a",
@@ -750,18 +761,27 @@ async def test_a_set_env_value_is_kept_for_execute_shown_redacted_and_never_logg
         "params": {"key": "DATABASE_URL", "value": value},
     }
     redeploy = {"action": "coolify.redeploy", "host_id": "a", "target": "web"}
-    plan = reply(
+    return reply(
         kind="act",
         steps=[set_env, redeploy],
         reason="web reads a new variable",
         verification={"containers": [WEB_BOX, "shop-db-1"]},
     )
+
+
+async def setup_web(tmp_path, *script: AIMessage):
     engine = bad_env_engine()
     engine.container_list.append(box(WEB_BOX, labels=WEB_APP))
-    env, state = await setup(tmp_path, plan, plan, engine=engine)
+    env, state = await setup(tmp_path, *script, engine=engine)
     env.deps.settings_store = StaticSettings(
         actions=CORE_ACTIONS | {"coolify.set_env", "coolify.redeploy"}
     )
+    return env, state
+
+
+async def test_a_set_env_value_is_kept_for_execute_and_shown_as_it_runs(tmp_path):
+    value = "postgres://web@db.internal/web"
+    env, state = await setup_web(tmp_path, set_env_plan(value), set_env_plan(value))
     node = propose.make(env.deps)
 
     first = (await node(state))["proposal"]
@@ -773,12 +793,31 @@ async def test_a_set_env_value_is_kept_for_execute_shown_redacted_and_never_logg
     events = [
         e.payload for e in await env.bus.history(state["incident_id"]) if e.kind == "proposal"
     ]
-    assert len(events) == 2 and "pw-fake-123" not in json.dumps(events)
-    assert events[0]["steps"][0]["params"]["value"] == "postgres://web:<redacted>@db.internal/web"
+    assert events[0]["steps"][0]["params"]["value"] == value
     # The model wrote the value, so the next round's prompt may carry it.
-    assert "coolify.set_env web on a (key=DATABASE_URL, value=" in prompt(env, 1)
+    assert f"coolify.set_env web on a (key=DATABASE_URL, value={value})" in prompt(env, 1)
+
+
+async def test_a_set_env_value_the_human_would_see_redacted_is_refused_and_never_logged(
+    tmp_path, caplog
+):
+    """#294: the human would approve `postgres://web:<redacted>@…` while the password ran."""
+    caplog.set_level(logging.DEBUG)
+    plan = set_env_plan("postgres://web:pw-fake-123@db.internal/web")
+    env, state = await setup_web(tmp_path, plan, plan)
+
+    proposal = (await propose.make(env.deps)(state))["proposal"]
+
+    assert proposal.kind == "no_action" and proposal.refused
+    assert proposal.refused_steps[0].params["value"] == "postgres://web:<redacted>@db.internal/web"
+    events = [
+        e.payload for e in await env.bus.history(state["incident_id"]) if e.kind == "proposal"
+    ]
+    assert len(events) == 1 and "pw-fake-123" not in json.dumps(events)
+    assert "pw-fake-123" not in proposal.human_instructions
     assert "pw-fake-123" not in caplog.text
     assert all("pw-fake-123" not in str(r) for r in env.guard_log.records)
+    assert "could not read what they approve" in env.models.model.seen[1][-1].text
 
 
 def mcp_call(tool: str, arguments: str = '{"name": "shop"}') -> dict:
@@ -921,8 +960,12 @@ async def test_an_unreachable_mcp_server_still_names_the_act_tools(tmp_path):
             mcp_call("flush_cache", '{"service": "bleep-backend-1"}'),
             "its arguments name bleep-backend-1, one of Bleep's own containers",
         ),
+        (
+            mcp_call("flush_cache", '{"service": "shop", "auth": "x; rm -rf /srv/shop/data"}'),
+            "the human could not read what they approve",
+        ),
     ],
-    ids=["tool not an act tool", "a list", "not json", "protected", "bleep's own"],
+    ids=["tool not an act tool", "a list", "not json", "protected", "bleep's own", "hidden"],
 )
 async def test_an_mcp_step_the_plugin_would_refuse_never_reaches_the_human(tmp_path, step, said):
     """The plan check runs the MCP plugin's own rules before a human is asked: only one of its

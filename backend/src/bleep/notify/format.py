@@ -11,7 +11,7 @@ import unicodedata
 
 from bleep import prompts
 from bleep.guard.plan_check import MAX_STEPS
-from bleep.guard.redact import redact_text, redacted_step
+from bleep.guard.redact import params_line, redact_text, redacted_step
 from bleep.guard.sanitize import INVISIBLE_CHARS
 from bleep.schemas.graph import Diagnosis, PlanStep, Proposal
 
@@ -142,8 +142,7 @@ def _step_line(number: int, step: PlanStep) -> tuple[str, bool]:
         return f"{head} ({cut}) {TOO_LONG}", True
     # The tool goes first: planted text could otherwise put long arguments before it and push
     # the name of what runs past the cut.
-    params = sorted(step.params.items(), key=lambda item: item[0] != "tool")
-    shown = _one_line(redact_text(", ".join(f"{k}={v}" for k, v in params)))
+    shown = _one_line(redact_text(params_line(step)))
     if len(shown) <= room:
         return f"{head} ({shown})", False
     keep = max(room - len(PARAMS_TOO_LONG) - 1, 1)

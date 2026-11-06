@@ -989,6 +989,21 @@ def redacted_step(step: PlanStep) -> PlanStep:
     return step.model_copy(update={"params": params})
 
 
+def params_line(step: PlanStep) -> str:
+    """A step's params on one line, `tool` first, before redaction: what the Telegram approval
+    shows of a plugin step (`notify/format._step_line`)."""
+    params = sorted(step.params.items(), key=lambda item: item[0] != "tool")
+    return ", ".join(f"{k}={v}" for k, v in params)
+
+
+def hides_params(step: PlanStep) -> bool:
+    """Whether a person approving `step` would see any of its params other than they run: changed
+    by redaction on the dashboard (`redacted_step`) or in the Telegram line (`params_line`,
+    redacted as a whole, where one param's text can hide the next)."""
+    line = params_line(step)
+    return redacted_step(step).params != step.params or redact_text(line) != line
+
+
 def redacted_proposal(proposal: Proposal) -> Proposal:
     """The plan as the dashboard, the event stream and a chat show it (`redacted_step`); Execute
     alone reads the real one."""
