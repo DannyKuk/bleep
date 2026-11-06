@@ -59,6 +59,7 @@ class FakeTelegram:
     def __init__(self) -> None:
         self.updates: list[dict | httpx.Response] = []
         self.calls: list[tuple[str, dict]] = []
+        self.fail_clear = False
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         assert request.url.host == "api.telegram.org"
@@ -72,6 +73,8 @@ class FakeTelegram:
             )
         if method == "sendMessage":
             return httpx.Response(200, json=fixture("send_message_ok"))
+        if method == "editMessageReplyMarkup" and self.fail_clear:
+            return httpx.Response(400, json={"ok": False, "description": "message can't be edited"})
         return httpx.Response(200, json={"ok": True, "result": True})
 
     def sent(self, method: str) -> list[dict]:
@@ -99,6 +102,11 @@ class Env:
     notifier: Notifier
     incident_id: str
     approval_id: str
+    messages: MessageLog
+
+    async def messages_add_opened(self) -> None:
+        """An incident-opened message (no plan) as the notifier logs one."""
+        await self.messages.add(312, self.incident_id, "", T0)
 
 
 @pytest.fixture
@@ -109,7 +117,7 @@ async def env(tmp_path) -> Env:
     e.api, e.runner = FakeTelegram(), FakeRunner()
     e.approvals, e.guard, e.bus = ApprovalStore(e.db, "s"), GuardLog(e.db), EventBus(e.db)
     http = httpx.AsyncClient(transport=httpx.MockTransport(e.api))
-    messages = MessageLog(e.db)
+    messages = e.messages = MessageLog(e.db)
 
     async def no_sleep(_: float) -> None:
         return None
@@ -1243,3 +1251,115 @@ async def test_a_repeats_report_and_its_plan_are_sent_with_its_count(env):
     assert "seen 3 times" in report["text"].replace("\\", "")
     assert "seen 3 times" in plan["text"].replace("\\", "")
     assert [label for label, _ in buttons(plan)][:2] == ["Approve", "Reject"]
+
+
+# --- buttons removed when the question closes (#291) ---
+
+
+class Closing:
+    """The repo and approval store wired to the notifier as `wiring.py` does it."""
+
+    def __init__(self, env: Env) -> None:
+        self.env = env
+        self.repo = IncidentRepo(env.db)
+        self.repo.on_finished(env.notifier.incident_finished)
+        env.approvals.on_decided(env.notifier.approval_decided)
+
+    async def cleared(self) -> list[int]:
+        await self.env.notifier.drain()
+        return [c["message_id"] for c in self.env.api.sent("editMessageReplyMarkup")]
+
+
+@pytest.fixture
+def closing(env) -> Closing:
+    return Closing(env)
+
+
+async def test_closing_an_incident_clears_every_message_it_logged(env, closing):
+    await env.messages.add(313, env.incident_id, env.approval_id, T0)  # a reminder
+    await closing.repo.close_unfinished(env.incident_id)
+    assert sorted(await closing.cleared()) == [311, 313]
+
+
+@pytest.mark.parametrize("status", ["resolved", "closed", "failed"])
+async def test_every_terminal_status_clears_the_buttons(env, closing, status):
+    await closing.repo.set_status(env.incident_id, status)
+    assert len(await closing.cleared()) == 1
+
+
+async def test_a_status_that_is_not_terminal_clears_nothing(env, closing):
+    await closing.repo.set_status(env.incident_id, "investigating")
+    assert await closing.cleared() == []
+
+
+async def test_an_incident_already_finished_clears_nothing_again(env, closing):
+    await closing.repo.set_status(env.incident_id, "closed")
+    await closing.cleared()
+    env.api.calls.clear()
+    await closing.repo.set_status(env.incident_id, "failed")
+    assert await closing.cleared() == []
+
+
+async def test_an_incident_opened_message_loses_its_expected_button_when_it_ends(env, closing):
+    await env.messages_add_opened()
+    env.api.calls.clear()
+    await closing.repo.close_unfinished(env.incident_id)
+    assert sorted(await closing.cleared()) == [311, 312]
+
+
+async def test_a_dashboard_decision_clears_the_buttons_of_that_plan_only(env, closing):
+    await env.messages_add_opened()
+    env.api.calls.clear()
+    decision = Decision(kind="reject", via="dashboard", at=T0)
+    await env.approvals.resolve(env.incident_id, decision, env.approval_id)
+    assert await closing.cleared() == [311]
+
+
+@pytest.mark.parametrize("kind", ["approve", "reject", "instruct"])
+async def test_each_dashboard_decision_clears_the_buttons(env, closing, kind):
+    decision = Decision(kind=kind, text="x", via="dashboard", at=T0)
+    await env.approvals.resolve(env.incident_id, decision, env.approval_id)
+    assert await closing.cleared() == [311]
+
+
+async def test_a_lost_decision_clears_nothing(env, closing):
+    decision = Decision(kind="reject", via="dashboard", at=T0)
+    await env.approvals.resolve(env.incident_id, decision, "someone-elses")
+    assert await closing.cleared() == []
+
+
+async def test_a_telegram_press_clears_its_message_once(env, closing):
+    await poll(env, "callback_approve")
+    assert await closing.cleared() == [311]
+
+
+async def test_a_failing_clear_never_blocks_the_close_or_the_decision(env, closing, caplog):
+    env.api.fail_clear = True
+    won = await env.approvals.resolve(
+        env.incident_id, Decision(kind="approve", via="dashboard", at=T0), env.approval_id
+    )
+    assert won is not None
+    await closing.repo.close_unfinished(env.incident_id)
+    await env.notifier.drain()
+    assert (await closing.repo.get(env.incident_id)).status == "closed"
+    assert "could not clear" in caplog.text
+    assert TOKEN not in caplog.text
+
+
+async def test_a_press_after_a_failed_clear_is_still_answered_as_closed(env, closing):
+    env.api.fail_clear = True
+    await closing.repo.close_unfinished(env.incident_id)
+    await env.notifier.drain()
+    env.api.fail_clear = False
+    await poll(env, "callback_approve")
+    [pop_up] = env.api.sent("answerCallbackQuery")
+    assert pop_up["text"].startswith("The incident was closed")
+
+
+async def test_a_failing_listener_never_blocks_the_close(env, closing, caplog):
+    async def broken(_: str) -> None:
+        raise RuntimeError("boom")
+
+    closing.repo.on_finished(broken)
+    assert await closing.repo.close_unfinished(env.incident_id) is not None
+    assert "boom" in caplog.text or "listener" in caplog.text

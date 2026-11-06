@@ -211,6 +211,8 @@ def build_parts(
     bus, incidents, quiet = EventBus(db), IncidentRepo(db), QuietStore(db)
     approvals, guard_log = ApprovalStore(db, settings.secret), GuardLog(db)
     notify = setup_notify(settings, db, bus, approvals, guard_log, secrets=secrets)
+    incidents.on_finished(notify.notifier.incident_finished)
+    approvals.on_decided(notify.notifier.approval_decided)
     embedder = embedder or build_embedder(settings, secrets)  # one model, loaded once, for both
     memory = MemoryStore(db, embedder)
     knowledge = KnowledgeIndex(db, embedder)

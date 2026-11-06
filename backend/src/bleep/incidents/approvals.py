@@ -9,8 +9,9 @@ and the act tools check it. See docs/design/graph.md.
 """
 
 import json
+import logging
 import secrets
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 
 import aiosqlite
@@ -28,6 +29,8 @@ from bleep.schemas.graph import (
 )
 from bleep.schemas.incidents import TERMINAL_STATUSES
 from bleep.store.db import Database
+
+log = logging.getLogger(__name__)
 
 _STATUS = {"approve": "approved", "reject": "rejected", "instruct": "instructed"}
 
@@ -55,6 +58,12 @@ class ApprovalStore:
         self.db = db
         self._secret = secret.get_secret_value() if isinstance(secret, SecretStr) else secret
         self.clock = clock
+        self._decided: list[Callable[[str, str | None, Decision], Awaitable[None]]] = []
+
+    def on_decided(self, listener: Callable[[str, str | None, Decision], Awaitable[None]]) -> None:
+        """Call `listener(incident_id, approval_id, decision)` after a decision wins, whichever
+        channel made it. A listener that raises is logged and never undoes the decision."""
+        self._decided.append(listener)
 
     async def request(
         self, incident_id: str, proposal: Proposal, snapshots: list[TargetSnapshot]
@@ -111,9 +120,17 @@ class ApprovalStore:
         try:
             cursor = await conn.execute(sql, args)
             await conn.commit()
-            return decision if cursor.rowcount == 1 else None
+            won = cursor.rowcount == 1
         finally:
             await conn.close()
+        if not won:
+            return None
+        for listener in self._decided:
+            try:
+                await listener(incident_id, approval_id, decision)
+            except Exception:
+                log.exception("incident %s: a listener for its decision failed", incident_id)
+        return decision
 
     async def current(self, incident_id: str) -> ApprovalRecord | None:
         """The incident's latest approval, pending or decided; None if none was ever asked."""

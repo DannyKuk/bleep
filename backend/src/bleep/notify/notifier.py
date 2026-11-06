@@ -10,8 +10,9 @@ Approval node tells the dashboard when a plan could not be sent.
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
+from typing import Any
 
 import httpx
 
@@ -32,7 +33,14 @@ from bleep.notify.telegram import (
     TelegramError,
     mask_chat_id,
 )
-from bleep.schemas.graph import ApprovalRequest, Diagnosis, Proposal, Report, VerificationResult
+from bleep.schemas.graph import (
+    ApprovalRequest,
+    Decision,
+    Diagnosis,
+    Proposal,
+    Report,
+    VerificationResult,
+)
 from bleep.schemas.incidents import Incident
 from bleep.schemas.settings import SecretStatus
 from bleep.schemas.telegram import TelegramStatus
@@ -62,6 +70,45 @@ class Notifier:
         self.messages = messages
         self.approvals = approvals
         self.expectations: Expecting | None = None
+        self._clearing: set[asyncio.Task[None]] = set()
+
+    async def incident_finished(self, incident_id: str) -> None:
+        """Remove the buttons from every message logged for an incident that ended: a message
+        that still shows Approve, Reject or "It's expected" means the question is open."""
+        if self.messages is not None:
+            self._spawn(self.messages.ids_for_incident(incident_id))
+
+    async def approval_decided(
+        self, incident_id: str, approval_id: str | None, decision: Decision
+    ) -> None:
+        """Remove the buttons of the plan a dashboard decision answered. A decision made on
+        Telegram clears the message it was pressed on itself."""
+        if self.messages is not None and approval_id and decision.via != "telegram":
+            self._spawn(self.messages.ids_for_approval(approval_id))
+
+    async def drain(self) -> None:
+        """Wait for the clearing in flight (tests, and shutdown)."""
+        await asyncio.gather(*self._clearing, return_exceptions=True)
+
+    def _spawn(self, ids: Coroutine[Any, Any, list[int]]) -> None:
+        """Clear in the background, so a slow Telegram never holds a close or a decision."""
+        task = asyncio.create_task(self._clear(ids))
+        self._clearing.add(task)
+        task.add_done_callback(self._clearing.discard)
+
+    async def _clear(self, ids: Coroutine[Any, Any, list[int]]) -> None:
+        try:
+            message_ids = await ids
+        except Exception:
+            log.exception("telegram: could not look up the messages to clear")
+            return
+        if self.telegram is None or self.chat_id is None:
+            return
+        for message_id in message_ids:
+            try:
+                await self.telegram.clear_buttons(self.chat_id, message_id)
+            except TelegramError as error:
+                log.warning("telegram: could not clear the buttons: %s", error)
 
     async def incident_opened(self, incident: Incident) -> None:
         """A host-unreachable incident that waits for its host says so instead of promising a
