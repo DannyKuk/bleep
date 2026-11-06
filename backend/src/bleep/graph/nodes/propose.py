@@ -14,8 +14,10 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
+from bleep.graph.host_text import service_name
 from bleep.graph.replan import replans_left
 from bleep.graph.state import IncidentState, Node
+from bleep.guard.pipeline import is_plain_name
 from bleep.guard.plan_check import (
     StepRule,
     Violation,
@@ -299,8 +301,9 @@ def _lines(lines: list[str]) -> str:
 def _subject(subject: Subject, context: GatherContext | None) -> str:
     if subject.kind == "host":
         return f"Host `{subject.host_id}` as a whole."
-    name = context.service_name if context and context.service_name else subject.service_id
-    return f"Service `{name}` on host `{subject.host_id}`."
+    name = service_name(subject, context)
+    shown = f"`{name}`" if is_plain_name(name) else name
+    return f"Service {shown} on host `{subject.host_id}`."
 
 
 def _diagnosis(d: Diagnosis) -> str:
