@@ -96,26 +96,14 @@ def _record_holds_tag(text: str) -> bool:
     return holds_escaped_tag(without_copied_wrappers(text))
 
 
-def _knowledge_without_copied_wrappers(text: str) -> str:
-    """A knowledge search result with Bleep's copied wrappers taken out of the past incidents'
-    hits only; the docs' hits are host text."""
-    lines, own = [], False
-    for line in text.split("\n"):
-        if hit := _HIT.match(line):
-            own = hit[1] == SOURCE_LABEL["incident"]
-        lines.append(without_copied_wrappers(line) if own else line)
-    return "\n".join(lines)
-
-
 def result_holds_tag(name: str, text: str) -> bool:
-    """Whether a tool's guarded result holds a wrapper tag the guard escaped. In Bleep's own
-    records (`recall_incidents`, the past incidents' hits of `knowledge_search`) the wrappers they
-    copied are left out first (`_record_holds_tag`). Investigate's `injection_marker` and the
-    planted-orders hint both read a result this way."""
+    """Whether a tool's guarded result holds a wrapper tag the guard escaped. In
+    `recall_incidents`' answer, all Bleep's own records, the wrappers they copied are left out
+    first (`_record_holds_tag`); a knowledge search is read whole, as a doc can forge the head of
+    a past incident's hit. Investigate's `injection_marker` and the planted-orders hint both read
+    a result this way."""
     if name == "recall_incidents":
         return _record_holds_tag(text)
-    if name == "knowledge_search":
-        return holds_escaped_tag(_knowledge_without_copied_wrappers(text))
     return holds_escaped_tag(text)
 
 
