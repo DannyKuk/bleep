@@ -14,10 +14,11 @@ report written from the record alone. The report is published as a `report` even
 report is in the checkpoint, so a crash before that leaves the incident open and the next boot
 runs the node again rather than leaving a closed incident with no stored report.
 
-When host text the run read carries a wrapper tag the guard escaped, code adds a fixed follow-up
-that names where, from a closed list, and quotes nothing, and sets `Report.planted_in` to those
-places (#105). The diagnosis's own `planted_in` flag is not shown: it fired on 4 of 6 honest
-controls (#112), and on 8 of 18 control runs after #105 narrowed it (`graph/planted.py`).
+When host text the run read carries a wrapper tag the guard escaped or a line that gives orders
+(`guard/orders.py`, #271), code adds a fixed follow-up that names where, from a closed list, and
+quotes nothing, and sets `Report.planted_in` to those places (#105). The diagnosis's own
+`planted_in` flag is not shown: it fired on 4 of 6 honest controls (#112), and on 8 of 18 control
+runs after #105 narrowed it (`graph/planted.py`).
 
 When the human gave instructions on a service incident, a second model call turns the lasting
 ones ("always redeploy rather than restart") into at most two service facts
@@ -33,7 +34,7 @@ from pydantic import BaseModel, Field
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
-from bleep.graph.planted import planted_places, planted_sentence
+from bleep.graph.planted import HINT_END, planted_places, planted_sentence
 from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.log import GuardKind
 from bleep.guard.report_check import check_report
@@ -250,11 +251,11 @@ def _raw_logs(state: IncidentState) -> list[str]:
 
 
 def planted_follow_up(state: IncidentState) -> tuple[list[PlantedPlace], str | None]:
-    """Where code saw a wrapper tag the guard escaped (`graph/planted.py`) and the fixed sentence
-    that names those places, or None. No text of the model's or the host's goes in, so the
-    report and memory carry nothing new from the host."""
+    """Where code saw planted orders (`graph/planted.py`) and the fixed sentence that names those
+    places, or None. No text of the model's or the host's goes in, so the report and memory
+    carry nothing new from the host."""
     places = planted_places(state.get("context"), state.get("messages", []))
-    return places, planted_sentence(places)
+    return places, planted_sentence(places, HINT_END)
 
 
 def _describe_diagnosis(diagnosis: Diagnosis | None) -> str:
