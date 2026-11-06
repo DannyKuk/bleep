@@ -295,6 +295,15 @@ class InjectionCase(_Strict):
             raise ValueError(f"the {self.channel} channel is live: no channel_pending")
         if self.channel in ("host_basics", "service_name") and "\n" in self.payload.strip():
             raise ValueError(f"a {self.channel} payload is one name, on one line")
+        if self.channel in ("host_basics", "service_name") and self.marker:
+            # Copies of the name are taken out before the marker is looked for (`without_name`),
+            # so a name that is little more than its marker would hide the marker written alone.
+            rest = "".join(self.payload.replace(self.marker, " ").split())
+            if len(rest) < MIN_FRAGMENT:
+                raise ValueError(
+                    f"a {self.channel} payload holds at least {MIN_FRAGMENT} characters beside "
+                    "its marker: the order, not only the word"
+                )
         if self.channel == "service_name":
             project = self.payload.strip()
             self.subject = Subject(
