@@ -690,9 +690,13 @@ WITH_MCP = WITH_COOLIFY | {"mcp.call"}
 ANY_TOOL = {"mcp.call": lambda number, step: []}  # the MCP plugin's own rule lets every tool by
 
 
+def mcp_raw(arguments: str, tool: str = "run_command", target: str = "shop-web-1") -> PlanStep:
+    params = {"tool": tool, "arguments": arguments}
+    return PlanStep(action="mcp.call", host_id="a", target=target, params=params)
+
+
 def mcp(arguments: object, tool: str = "run_command") -> PlanStep:
-    params = {"tool": tool, "arguments": json.dumps(arguments)}
-    return PlanStep(action="mcp.call", host_id="a", target="shop-web-1", params=params)
+    return mcp_raw(json.dumps(arguments, ensure_ascii=False), tool)
 
 
 async def hiding(tmp_path, *steps: PlanStep) -> list[Violation]:
@@ -729,6 +733,23 @@ HIDDEN = {
     # Each param reads plainly, but the Telegram line joins them and the cookie swallows the rest.
     "params hidden only when shown on one line": (mcp({"service": "shop"}, tool="Cookie:"),),
     "a line too long to show whole": (mcp({"script": "a" * 4_100}),),
+    # What runs is the decoded JSON; the human reads the text (review of #300).
+    "a command written as \\u escapes": (
+        mcp_raw('{"command": "' + "".join(f"\\u{ord(c):04x}" for c in "rm -rf /srv") + '"}'),
+    ),
+    "a key written as a \\u escape": (mcp_raw('{"command": "ls", "\\u0061uth": "x"}'),),
+    "a repeated key, the last one runs": (
+        mcp_raw(
+            '{"command": "docker compose pull", "s": "shop", "command": "docker compose down"}'
+        ),
+    ),
+    "a repeated key in a nested object": (mcp_raw('{"steps": [{"c": "ls", "c": "rm -rf /"}]}'),),
+    # Both displays drop an emoji presentation selector; the server would get it.
+    "an emoji presentation selector": (mcp({"url": "https://shop\ufe0f.example.com/hook"}),),
+    "a text presentation selector in a set_env value": (
+        set_env("api", key="START_COMMAND", value="node server.js\ufe0e"),
+        coolify("api"),
+    ),
     "a docker step's params": (
         PlanStep(
             action="docker.restart", host_id="a", target="shop-web-1", params={"why": "token=x1"}
@@ -765,9 +786,56 @@ SHOWN = {
         coolify("api"),
     ),
     "a plain restart": (restart("shop-web-1"),),
+    # A line break, a control character, a quote and a backslash may only be written escaped;
+    # in the JSON text `\\u0041` is an escaped backslash and then the text u0041, and `\/` is a
+    # slash.
+    "the escapes JSON requires": (
+        mcp_raw('{"text": "one\\ntwo\\u001b \\"q\\" C:\\\\u0041 \\/"}', tool="flush_cache"),
+    ),
+    "the same key in two objects": (
+        mcp_raw('{"a": {"name": "x"}, "b": {"name": "y"}}', tool="flush_cache"),
+    ),
 }
 
 
 @pytest.mark.parametrize("steps", SHOWN.values(), ids=SHOWN.keys())
 async def test_a_step_whose_params_read_the_same_after_redaction_passes(tmp_path, steps):
     assert await hiding(tmp_path, *steps) == []
+
+
+async def test_a_target_the_telegram_line_would_show_redacted_is_refused(tmp_path):
+    """Telegram redacts a step's head too: a target that reads like a token would show as
+    `<redacted>` while the real one runs (review of #300)."""
+    name = "ghp_" + "a" * 36
+    engine = FakeEngine("a", [box(name, "shop", state="exited", exit_code=1)])
+    env = await graph_env(tmp_path, engine=engine, host=shop_host())
+
+    [found] = check_plan(act(restart(name)), env.registry, CORE, "a", incident_containers=[name])
+
+    assert (found.rule, found.step) == ("hidden_param", 1)
+    assert "its target" in found.text and "could not read what they approve" in found.text
+
+
+async def test_a_json_misreading_is_refused_in_its_own_words(tmp_path):
+    [found] = await hiding(tmp_path, *HIDDEN["a repeated key, the last one runs"])
+
+    assert found.rule == "hidden_param"
+    assert "repeat a key or write a character as a \\u escape" in found.text
+    assert "docker compose down" not in found.text
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        (mcp_raw('{"name": "x", "auth": "x; rm -rf /srv/shop/data"}', target="shop-db-1"),),
+        (set_env("api", key="STRIPE_KEY", value="x"), coolify("api")),
+    ],
+    ids=["mcp.call", "coolify.set_env"],
+)
+async def test_a_protected_target_is_refused_as_protected_before_its_hidden_params(tmp_path, steps):
+    env = await graph_env(tmp_path, engine=guarded_engine(), host=guarded_host())
+    found = check_plan(
+        act(*steps), env.registry, WITH_MCP, "a", incident_containers=SHOP_WEB, step_rules=ANY_TOOL
+    )
+
+    assert [(v.rule, v.step) for v in found if v.step == 1] == [("protected", 1)]

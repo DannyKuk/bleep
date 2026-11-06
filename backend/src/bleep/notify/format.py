@@ -11,8 +11,8 @@ import unicodedata
 
 from bleep import prompts
 from bleep.guard.plan_check import MAX_STEPS
-from bleep.guard.redact import params_line, redact_text, redacted_step
-from bleep.guard.sanitize import INVISIBLE_CHARS
+from bleep.guard.redact import params_line, redact_text, redacted_step, step_head
+from bleep.guard.sanitize import INVISIBLE_CHARS, PRESENTATION_SELECTORS
 from bleep.schemas.graph import Diagnosis, PlanStep, Proposal
 
 TELEGRAM_LIMIT = 4096
@@ -100,9 +100,9 @@ def shows_in_full(proposal: Proposal) -> bool:
 # Khmer inherent vowels, the combining grapheme joiner): a run of either could pad a line.
 _INVISIBLE = re.compile(INVISIBLE_CHARS)
 _FILLERS = re.compile(r"[\u034f\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0]")
-# They only switch a character between text and emoji look: common after an emoji, and a single
-# one cannot hide a name, so a step line drops them instead of marking them.
-_PRESENTATION = re.compile("[\ufe0e\ufe0f]")
+# Common after an emoji, and a single one cannot hide a name, so a step line drops them instead of
+# marking them; the plan check refuses a step that holds one (`guard/redact.hides_params`).
+_PRESENTATION = re.compile(f"[{PRESENTATION_SELECTORS}]")
 _SPACES = re.compile(r"\s+")
 
 
@@ -127,7 +127,7 @@ def _one_line(text: str) -> str:
 
 def _step_line(number: int, step: PlanStep) -> tuple[str, bool]:
     """The step's line, and whether its params had to be cut to fit it."""
-    head = _one_line(redact_text(f"{number}. {step.action} {step.target} on {step.host_id}"))
+    head = _one_line(redact_text(step_head(number, step)))
     if not step.params or step.action.startswith("docker."):
         return head, False
     # The head is never cut: a person approves this exact action, target and host. Only the

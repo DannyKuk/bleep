@@ -59,6 +59,28 @@ describe("ProposalCard", () => {
     expect(steps.getByText("note=a\uFFFDb\uFFFDc\uFFFDd\u26a0")).toBeInTheDocument();
   });
 
+  it("keeps a line break inside a param, so a second command reads as its own line", () => {
+    const twoLines = proposal({
+      steps: [
+        {
+          action: "coolify.set_env",
+          host_id: "demo",
+          target: "shop",
+          params: { value: "node server.js\nrm -rf /data" },
+        },
+      ],
+    });
+    render(
+      <ProposalCard incidentId="inc-1" proposal={twoLines} approval={null} onDecided={vi.fn()} />,
+    );
+    const steps = within(screen.getByRole("list", { name: "Steps" }));
+    const value = steps.getByText(
+      (_, element) => element?.textContent === "value=node server.js\nrm -rf /data",
+    );
+    expect(value.tagName).toBe("CODE");
+    expect(value).toHaveClass("whitespace-pre-wrap");
+  });
+
   it("says no action is proposed, with no buttons", () => {
     render(
       <ProposalCard

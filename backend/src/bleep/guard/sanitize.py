@@ -30,6 +30,9 @@ INVISIBLE_CHARS = (
     "\u034f\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0]"
 )
 _INVISIBLE = re.compile(INVISIBLE_CHARS)
+# They only switch a character between text and emoji look, so the plan's displays drop them
+# instead of marking them (`notify/format._one_line`, `showInvisible` on the dashboard).
+PRESENTATION_SELECTORS = "\ufe0e\ufe0f"
 
 
 def normalise_newlines(text: str | bytes) -> str:

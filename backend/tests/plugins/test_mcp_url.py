@@ -654,6 +654,12 @@ async def test_a_grant_for_other_arguments_runs_nothing(host):
         (mcp_step(arguments='{"name": "bleep-backend-1"}'), "one of Bleep's own containers"),
         (mcp_step(arguments='{"name": "id-bleep-backend-1"}'), "one of Bleep's own containers"),
         (mcp_step(arguments='{"name": ["x", "shop-db-1"]}'), "protected in the hosts file"),
+        # Approved before #294 shipped: the human saw `"auth": "<redacted>"`.
+        (
+            mcp_step(arguments='{"name": "shop", "auth": "x; rm -rf /srv/shop/data"}'),
+            "could not read what they approve",
+        ),
+        (mcp_step(arguments='{"name": "shop", "name": "shop-api"}'), "repeat a key"),
         (
             PlanStep(
                 action="mcp.call",

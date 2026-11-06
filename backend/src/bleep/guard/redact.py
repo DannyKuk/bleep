@@ -13,6 +13,7 @@ from functools import lru_cache
 from bleep.guard.sanitize import (
     MAX_LEAD,
     MAX_LINE,
+    PRESENTATION_SELECTORS,
     VALUE_END,
     cut_points,
     join_cut,
@@ -989,6 +990,22 @@ def redacted_step(step: PlanStep) -> PlanStep:
     return step.model_copy(update={"params": params})
 
 
+def step_head(number: int, step: PlanStep) -> str:
+    """A step's number, action, target and host as the Telegram approval heads its line, before
+    redaction (`notify/format._step_line`)."""
+    return f"{number}. {step.action} {step.target} on {step.host_id}"
+
+
+def hides_head(number: int, step: PlanStep) -> bool:
+    """Whether the Telegram line would show step `number`'s head other than it runs: redacted
+    (a target that reads like a token), or with a presentation selector dropped."""
+    return _shown_otherwise(step_head(number, step))
+
+
+def _shown_otherwise(text: str) -> bool:
+    return redact_text(text) != text or any(c in text for c in PRESENTATION_SELECTORS)
+
+
 def params_line(step: PlanStep) -> str:
     """A step's params on one line, `tool` first, before redaction: what the Telegram approval
     shows of a plugin step (`notify/format._step_line`)."""
@@ -999,9 +1016,9 @@ def params_line(step: PlanStep) -> str:
 def hides_params(step: PlanStep) -> bool:
     """Whether a person approving `step` would see any of its params other than they run: changed
     by redaction on the dashboard (`redacted_step`) or in the Telegram line (`params_line`,
-    redacted as a whole, where one param's text can hide the next)."""
-    line = params_line(step)
-    return redacted_step(step).params != step.params or redact_text(line) != line
+    redacted as a whole, where one param's text can hide the next), or holding a presentation
+    selector, which both displays drop."""
+    return redacted_step(step).params != step.params or _shown_otherwise(params_line(step))
 
 
 def redacted_proposal(proposal: Proposal) -> Proposal:
