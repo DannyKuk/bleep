@@ -453,3 +453,46 @@ async def test_render_scores_stored_runs_again_with_todays_rules(tmp_path: Path,
 
     assert main(["--only", FAILED, "--render", str(raw), "--grades", str(grades)]) == 0
     assert f"| `{FAILED}` | verify_failed | 1 of 1 | 0.90 |" in capsys.readouterr().out
+
+
+# --- a restart that works while the service's URL still fails (#296, #305) ---------------------
+
+URL_FAILED = "verify-failed-url"
+
+
+async def test_a_running_container_whose_service_url_fails_loops_back_and_never_ends_fixed():
+    """Round one's verification plan names no URL, and the restarted container passes every
+    container check; Verify still checks the service's URL, which answers 503."""
+    c = case(URL_FAILED)
+    assert c.round_one.plan.verification.urls == []
+    engine = engine_for(c)
+    no_action = {
+        "kind": "no_action",
+        "reason": "a restart cannot change where shop-web looks for its database",
+        "human_instructions": "Set DATABASE_URL to shop-db in compose.yaml and apply it.",
+    }
+    models = Models(round_two("shop-web", "DATABASE_URL names shop-db-old", no_action))
+
+    result = await run_case(c, settings(), judge=FakeJudge(), models=models, engine=engine)
+
+    assert result.run.error is None, result.run.error
+    assert engine.acts == [("restart", "shop-web")]
+    assert result.loop_back == "verify_failed"
+    # Only the URL failed: the container checks passed.
+    assert len(result.checks) == 1
+    assert result.checks[0].startswith("url http://shop.lab:8080/api/items")
+    assert result.remedy_given is True and result.repeated_fix == []
+    assert result.passed is True
+
+
+async def test_the_same_restart_with_the_url_answering_ends_without_a_loop_back():
+    """The case hinges on the URL alone: answering 200, Verify finds the service fixed."""
+    c = case(URL_FAILED)
+    answers = {"http://shop.lab:8080/api/items": {"status": 200, "body": "Coffee beans"}}
+    c = LoopBackCase.model_validate(c.model_dump() | {"url_answers": answers})
+    models = Models([])
+
+    result = await run_case(c, settings(), judge=FakeJudge(), models=models, engine=engine_for(c))
+
+    assert "did not make Verify loop back" in (result.run.error or "")
+    assert models.model.cursor == 0

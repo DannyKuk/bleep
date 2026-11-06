@@ -539,6 +539,7 @@ async def run_scenario(
     after: AfterPropose | None = None,
     github: GithubClient | None = None,
     mcp: ServedMcp | None = None,
+    make_registry: Callable[[list[HostConfig], Connector], Registry] = Registry,
 ) -> ScenarioResult:
     """One run: fault on, the scenario's incident to the end of Propose, fault off, scored.
 
@@ -551,6 +552,8 @@ async def run_scenario(
     server the plugin is switched on for; without it, a scenario with an `mcp` fixture gets that
     fixture served in this process for the run, and one without has the plugin off.
     `knowledge` is what the `knowledge_search` tool searches (no tool by default).
+    `make_registry` builds the host registry, so an injection case can plant text in what it
+    reads from the host (`evals.injection.PlantedBasics`).
     """
     result = ScenarioResult(
         id=scenario.id,
@@ -565,7 +568,7 @@ async def run_scenario(
             mcp = await stack.enter_async_context(serve(load_mcp_fixture(scenario.mcp)))
         db = Database(Path(folder) / "bleep.db")
         await db.migrate()
-        registry = Registry([eval_host(settings)], connector)
+        registry = make_registry([eval_host(settings)], connector)
         await registry.start()
         try:
             async with open_checkpointer(Path(folder) / "checkpoints.sqlite") as saver:
