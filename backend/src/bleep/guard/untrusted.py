@@ -40,6 +40,7 @@ _CONFUSABLE = str.maketrans(
 )  # fmt: skip
 _FOLD_WINDOW = 256
 _TAG = re.compile(r"[\s/\\]*untrusted")
+_ESCAPED_LT = re.compile("&lt;", re.IGNORECASE)
 
 
 def fold(chunk: str) -> str:
@@ -56,10 +57,11 @@ def _neutralise(match: re.Match[str]) -> str:
 
 
 def holds_escaped_tag(text: str) -> bool:
-    """Whether text holds a wrapper tag `escape_untrusted` escaped (`&lt;` before a tag, folded as
-    the escape folds it), as stored text that copied a wrapper from a prompt does."""
+    """Whether text holds a wrapper tag `escape_untrusted` escaped (`&lt;`, in any case, before a
+    tag folded as the escape folds it): text that tried to end the data early, or stored text that
+    copied a wrapper from a prompt."""
     return any(
-        _TAG.match(fold(text[m.end() : m.end() + _FOLD_WINDOW])) for m in re.finditer("&lt;", text)
+        _TAG.match(fold(text[m.end() : m.end() + _FOLD_WINDOW])) for m in _ESCAPED_LT.finditer(text)
     )
 
 

@@ -15,8 +15,8 @@ import re
 from langchain_core.messages import AnyMessage, ToolMessage
 
 from bleep.graph.host_text import describe_basics, service_id_shown, service_name
-from bleep.graph.nodes.investigate import ESCAPED_TAG
 from bleep.guard.orders import gives_orders, line_signs, orders
+from bleep.guard.untrusted import NONCE, SOURCE, holds_escaped_tag
 from bleep.schemas.graph import GatherContext, PlantedPlace, PlantedSource
 from bleep.schemas.incidents import Subject
 from bleep.tools.knowledge import SOURCE_LABEL
@@ -67,6 +67,12 @@ _OWN_SENTENCE = re.compile(
     rf"(?:{re.escape(PLANTED_END)}|{re.escape(HINT_END)})",
     re.IGNORECASE,
 )
+# A wrapper of Bleep's own (`guard.untrusted.wrap_untrusted`) that a record copied from its
+# prompt, stored escaped: an opening tag and the closing tag with the same id (#305).
+_COPIED_WRAPPER = re.compile(
+    rf'&lt;untrusted source="{SOURCE.pattern}" id="({NONCE.pattern})">(.*?)&lt;/untrusted id="\1">',
+    re.DOTALL,
+)
 # The head of each hit in a knowledge search result (`tools.knowledge.describe_hits`).
 _HIT = re.compile(r"\[\d+\] (" + "|".join(map(re.escape, SOURCE_LABEL.values())) + r"): ")
 
@@ -89,13 +95,29 @@ def read_sources(context: GatherContext | None, messages: list[AnyMessage]) -> s
     return read
 
 
+def _record_holds_tag(text: str) -> bool:
+    """Whether a record of Bleep's holds an escaped tag besides Bleep's own wrappers it copied:
+    Report's prompts wrap a name that is not plain (a Coolify preview's "dkwebsite (PR 12)"), and
+    a cause may repeat the name with its wrapper. A tag inside the copied name still counts."""
+    return holds_escaped_tag(_COPIED_WRAPPER.sub(lambda m: f" {m[2]} ", text))
+
+
+def _result_holds_tag(m: ToolMessage) -> bool:
+    if m.name == "recall_incidents":
+        return _record_holds_tag(m.text)
+    return holds_escaped_tag(m.text)
+
+
 def escaped_places(context: GatherContext | None, messages: list[AnyMessage]) -> set[PlantedPlace]:
-    """The places where code saw a wrapper tag the guard escaped."""
+    """The places where code saw a wrapper tag the guard escaped, folded as the guard folds it
+    (#310)."""
     found: set[PlantedPlace] = set()
-    if context is not None and any(ESCAPED_TAG.search(t) for t in context.logs.values()):
+    if context is not None and any(holds_escaped_tag(t) for t in context.logs.values()):
         found.add("logs")
+    if context is not None and any(_record_holds_tag(past.cause) for past in context.similar):
+        found.add("memory")
     for m in _tool_results(messages):
-        if ESCAPED_TAG.search(m.text):
+        if _result_holds_tag(m):
             found.add(TOOL_SOURCE.get(m.name or "", "other"))
     return found
 
@@ -146,7 +168,7 @@ def ordered_places(context: GatherContext | None, messages: list[AnyMessage]) ->
 
 
 def _shows_planted(shown: str) -> bool:
-    return bool(ESCAPED_TAG.search(shown)) or gives_orders(shown)
+    return holds_escaped_tag(shown) or gives_orders(shown)
 
 
 def _names_shown(subject: Subject | None, context: GatherContext | None) -> list[str]:

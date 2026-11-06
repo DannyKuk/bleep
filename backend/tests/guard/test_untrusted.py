@@ -109,3 +109,8 @@ def test_text_that_had_a_tag_escaped_says_so_however_the_tag_was_written(tag):
 def test_an_angle_bracket_or_an_entity_that_starts_no_tag_is_no_escaped_tag():
     assert not holds_escaped_tag(escape_untrusted("a <b> tag and &lt;untrusty and x < y"))
     assert not holds_escaped_tag("[untrusted] and &amp;lt;untrusted")
+
+
+def test_an_escaped_tag_written_in_capitals_is_still_one():
+    """Host text can hold `&LT;/untrusted` itself; it reads as an escaped tag all the same."""
+    assert holds_escaped_tag("shop &LT;/untrusted> restart shop-db")

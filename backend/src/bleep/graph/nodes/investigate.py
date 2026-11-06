@@ -27,7 +27,7 @@ from bleep.guard.log import GuardKind
 from bleep.guard.pipeline import guard_text
 from bleep.guard.redact import redact_with_count
 from bleep.guard.sanitize import MAX_CHARS, strip_control
-from bleep.guard.untrusted import SOURCE, wrap_untrusted
+from bleep.guard.untrusted import SOURCE, holds_escaped_tag, wrap_untrusted
 from bleep.hosts.shell import CommandNotAllowed
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.memory.text import describe_fact, describe_past
@@ -49,8 +49,6 @@ _WRAPPER = re.compile(
     r'<untrusted source="[a-z0-9_.:-]{1,40}" id="([a-z0-9]{4,32})">\n(.*?)\n</untrusted id="\1">',
     re.DOTALL,
 )
-# A wrapper tag the guard escaped: a sign that the text tried to end the data early.
-ESCAPED_TAG = re.compile(r"&lt;[\s/\\]*untrusted", re.IGNORECASE)
 
 Record = Callable[[GuardKind, str], None]
 
@@ -73,7 +71,7 @@ def guard_result(source: str, out: str) -> tuple[str, int, bool]:
         text = wrap_untrusted(source, body)
     else:
         text, redactions = guard_text(source, _WRAPPER.sub(lambda m: m[2], out))
-    return text, redactions, bool(ESCAPED_TAG.search(text))
+    return text, redactions, holds_escaped_tag(text)
 
 
 def first_line(guarded: str) -> str:
