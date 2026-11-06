@@ -1,10 +1,13 @@
 """Host text as the prompts show it: through the guard, with Bleep's own numbers left as they are.
 
 A host's basics carry text the host wrote (the OS name, mount names, which on macOS are disk and
-USB labels), and a service's name comes from a container label. Both go through the guard before
+USB labels), and a service's name and id come from container labels (the incident's title holds
+the id). Both go through the guard before
 any prompt holds them (#295); the memory and load figures are Bleep's own reading and stay
 outside the wrapper.
 """
+
+import re
 
 from bleep.guard.pipeline import guard_name, guard_text
 from bleep.schemas.docker import HostBasics
@@ -36,3 +39,13 @@ def service_name(subject: Subject, context: GatherContext | None) -> str:
     """The service's name, or its id when Gather found none, through `guard_name`."""
     name = (context.service_name if context else None) or subject.service_id or ""
     return guard_name("service_name", name)
+
+
+def with_names_guarded(text: str, subject: Subject, context: GatherContext | None) -> str:
+    """Bleep's own `text` (an incident title) with the service's id and name in it each through
+    `guard_name`, in one pass so a guarded name is not searched again."""
+    names = {n for n in (subject.service_id, context.service_name if context else None) if n}
+    if not names:
+        return text
+    found = re.compile("|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)))
+    return found.sub(lambda m: guard_name("service_name", m[0]), text)
