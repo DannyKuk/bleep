@@ -3,6 +3,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from bleep.guard.plan_check import check_shown
+from bleep.guard.redact import redacted_step
 from bleep.hosts.registry import Registry
 from bleep.incidents.repository import IncidentRepo
 from bleep.main import create_app
@@ -337,6 +339,33 @@ def test_an_approve_on_a_refused_plan_is_409_and_nothing_resumes(app_client, par
 
     assert response.status_code == 409
     assert "instead" in response.json()["detail"]
+    assert resumes.calls == []
+    assert call(app_client, parts.approvals.current, incident.id).decision is None
+
+
+def test_an_approve_on_a_plan_refused_for_a_hidden_param_is_409(app_client, parts, resumes):
+    """#294: the dashboard would have shown `"auth": "<redacted>"` while the real text ran."""
+    hidden = PlanStep(
+        action="mcp.call",
+        host_id="a",
+        target="shop-web-1",
+        params={"tool": "run_command", "arguments": '{"auth": "x; rm -rf /srv/shop/data"}'},
+    )
+    [violation] = check_shown(1, hidden)
+    plan = Proposal(
+        kind="no_action",
+        refused=True,
+        reason="refused",
+        refused_steps=[redacted_step(hidden)],
+        refusal_reasons=[violation.text],
+    )
+    incident = open_incident(app_client, parts)
+    approval_id = call(app_client, parts.approvals.request, incident.id, plan, []).id
+
+    response = post_decision(app_client, incident.id, approval_id, "approve")
+
+    assert violation.rule == "hidden_param"
+    assert response.status_code == 409
     assert resumes.calls == []
     assert call(app_client, parts.approvals.current, incident.id).decision is None
 

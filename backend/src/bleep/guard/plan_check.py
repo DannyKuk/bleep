@@ -14,7 +14,8 @@ from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from bleep.guard.sanitize import strip_control
+from bleep.guard.redact import hides_head, hides_params, pads_step
+from bleep.guard.sanitize import INVISIBLE_CHARS, strip_control
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.coolify_names import name_matches
 from bleep.hosts.discovery import is_self
@@ -54,6 +55,7 @@ Rule = Literal[
     "unknown_container",
     "healthy_target",
     "unnamed_stop",
+    "hidden_param",
 ]
 
 
@@ -96,7 +98,8 @@ def check_plan(
     checks in the hosts file, and a verification container that is not on the host. A plugin
     step must take exactly its params, and an `mcp.call` must pass its action's `step_rules`
     (the tool is one of the plugin's act tools; with no rule given it is refused) and name no
-    protected container or Bleep's own in its arguments (`check_arguments`).
+    protected container or Bleep's own in its arguments (`check_arguments`). A step of any
+    action that the human approving it would read other than it runs is refused (`check_shown`).
     """
     violations: list[Violation] = []
     if proposal.kind == "no_action" and proposal.steps:
@@ -262,6 +265,7 @@ def _check_step(
         or (rule(number, step) if rule is not None else [])
         or check_target(number, step, registry)
         or check_arguments(number, step, registry)
+        or check_shown(number, step)
     )
 
 
@@ -290,6 +294,88 @@ def check_params(number: int, step: PlanStep) -> list[Violation]:
         why = f"value is longer than {MAX_ENV_VALUE} characters"
         return [Violation("bad_params", f"{what}: {why}", number)]
     return []
+
+
+def check_shown(number: int, step: PlanStep) -> list[Violation]:
+    """A step the person approving it would read other than it runs is refused (`hidden_param`),
+    whatever its action, so a yes is never given blind (#294): its head (the Telegram line
+    redacts a target that reads like a token) or its params changed by redaction, with a
+    presentation selector dropped or holding a control character (`guard/redact`), or
+    `mcp.call` arguments whose JSON text decodes to something else (`_misread_json`). It runs
+    after the other rules, so a step that breaks one of them gets that rule's reason. The act
+    handlers run it again before their call. The text never quotes a param."""
+    what = f"step {number} ({step.action} {step.target} on {step.host_id})"
+    if hides_head(number, step):
+        why = (
+            "its target would be shown to the human redacted, with a character dropped or with a"
+            " control character, and the human could not read what they approve; answer"
+            " no_action and say in human_instructions what to do by hand"
+        )
+    elif step.action == "mcp.call" and _misread_json(step.params.get("arguments", "")):
+        why = (
+            "its arguments repeat a key or write a character as a \\u escape, so the human would"
+            " read other text than what runs, and could not read what they approve; write the"
+            " arguments as plain JSON, every key once and every character as itself"
+        )
+    elif pads_step(number, step):
+        why = (
+            "it is padded with blank lines or spaces (more than two line breaks in a row, 16 or"
+            " more blanks in a row, or over 30 lines), so the human could miss what follows and"
+            " could not read what they approve; write it without the padding"
+        )
+    elif hides_params(step):
+        why = (
+            "part of its params would be hidden from the human approving it (text that looks like"
+            " a secret, a line too long to show whole, a line break written as CR, a control"
+            " character, or a character the display drops), and the human could not read what"
+            " they approve; write every param in plain words with no secret, password or token"
+            " in it, or answer no_action and say in human_instructions what to change"
+        )
+    else:
+        return []
+    return [Violation("hidden_param", f"{what}: {why}", number)]
+
+
+# A JSON escape; an escaped backslash is one match, so the `u0041` in `\\u0041` is not one.
+_JSON_ESCAPE = re.compile(r"\\(?:u([0-9a-fA-F]{4})|.)", re.DOTALL)
+FIRST_PRINTABLE, LAST_ASCII = 0x20, 0x7E  # JSON must escape U+0000 to U+001F
+_INVISIBLE = re.compile(INVISIBLE_CHARS)
+
+
+def _hiding_escape(code: int) -> bool:
+    """Whether a `\\u` escape of `code` hides what runs: a printable ASCII character (which can
+    spell a command), or a control, format, surrogate or invisible one. An escape JSON requires
+    does not, and nor does a printable character outside ASCII (`json.dumps` writes `é` as
+    `\\u00e9`): the escape is what the human reads, and it runs as that one letter."""
+    if code < FIRST_PRINTABLE:
+        return False
+    char = chr(code)
+    return (
+        code <= LAST_ASCII
+        or unicodedata.category(char) in {"Cc", "Cf", "Cs"}
+        or _INVISIBLE.fullmatch(char) is not None
+    )
+
+
+def _misread_json(text: str) -> bool:
+    """Whether JSON `text` decodes to something other than a person reads in it: a `\\u` escape
+    that hides what runs (`_hiding_escape`), or a key repeated in one object (the last one
+    wins), at any depth. Text that is not JSON is `check_params`'s to refuse."""
+    escapes = (m.group(1) for m in _JSON_ESCAPE.finditer(text))
+    if any(code is not None and _hiding_escape(int(code, 16)) for code in escapes):
+        return True
+    repeated = False
+
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        nonlocal repeated
+        repeated = repeated or len({key for key, _ in items}) < len(items)
+        return dict(items)
+
+    try:
+        json.loads(text, object_pairs_hook=pairs)
+    except json.JSONDecodeError:
+        return False
+    return repeated
 
 
 def check_target(number: int, step: PlanStep, registry: Registry) -> list[Violation]:

@@ -11,8 +11,10 @@ from collections.abc import Callable
 from functools import lru_cache
 
 from bleep.guard.sanitize import (
+    CONTROL_CHARS,
     MAX_LEAD,
     MAX_LINE,
+    PRESENTATION_SELECTORS,
     VALUE_END,
     cut_points,
     join_cut,
@@ -987,6 +989,68 @@ def redacted_step(step: PlanStep) -> PlanStep:
         elif _is_dsn_key(key):
             params["value"] = _hide_dsn_user(params["value"])
     return step.model_copy(update={"params": params})
+
+
+def step_head(number: int, step: PlanStep) -> str:
+    """A step's number, action, target and host as the Telegram approval heads its line, before
+    redaction (`notify/format._step_line`)."""
+    return f"{number}. {step.action} {step.target} on {step.host_id}"
+
+
+def hides_head(number: int, step: PlanStep) -> bool:
+    """Whether the Telegram line would show step `number`'s head other than it runs: redacted
+    (a target that reads like a token), with a presentation selector dropped, or holding a control
+    character (`_shown_otherwise`)."""
+    return _shown_otherwise(step_head(number, step))
+
+
+_CONTROL_CHAR = re.compile(CONTROL_CHARS)
+
+
+def _shown_otherwise(text: str) -> bool:
+    """Whether a display would show `text` other than it is: redacted, with a presentation
+    selector dropped, or holding a control character (C0 but line feed and tab, DEL, C1), which
+    Telegram shows as a line break and the dashboard as the browser does."""
+    return (
+        redact_text(text) != text
+        or any(c in text for c in PRESENTATION_SELECTORS)
+        or _CONTROL_CHAR.search(text) is not None
+    )
+
+
+MAX_PARAM_LINES = 30
+# Three line breaks with only blanks between them, or 16 blanks of any kind in a row: enough to
+# push the rest of a param out of sight on the dashboard, which keeps a param's line breaks.
+_PADDING = re.compile(r"\n(?:[^\S\n]*\n){2}|\s{16}")
+
+
+def padded(text: str) -> bool:
+    """Whether `text` is padded so a reader could miss what follows: more than two line breaks
+    in a row (a line of blanks counts as empty), a run of 16 or more blanks of any kind (NBSP,
+    U+3000 and tabs included), or more than `MAX_PARAM_LINES` lines."""
+    return _PADDING.search(text) is not None or text.count("\n") >= MAX_PARAM_LINES
+
+
+def pads_step(number: int, step: PlanStep) -> bool:
+    """Whether step `number`'s head or any param (`key=value`, as the dashboard shows it) is
+    `padded`."""
+    shown = [step_head(number, step), *(f"{k}={v}" for k, v in step.params.items())]
+    return any(padded(text) for text in shown)
+
+
+def params_line(step: PlanStep) -> str:
+    """A step's params on one line, `tool` first, before redaction: what the Telegram approval
+    shows of a plugin step (`notify/format._step_line`)."""
+    params = sorted(step.params.items(), key=lambda item: item[0] != "tool")
+    return ", ".join(f"{k}={v}" for k, v in params)
+
+
+def hides_params(step: PlanStep) -> bool:
+    """Whether a person approving `step` would see any of its params other than they run: changed
+    by redaction on the dashboard (`redacted_step`) or in the Telegram line (`params_line`,
+    redacted as a whole, where one param's text can hide the next), or holding a presentation
+    selector or a control character (`_shown_otherwise`)."""
+    return redacted_step(step).params != step.params or _shown_otherwise(params_line(step))
 
 
 def redacted_proposal(proposal: Proposal) -> Proposal:

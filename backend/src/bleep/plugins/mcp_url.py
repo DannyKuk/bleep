@@ -45,6 +45,7 @@ from bleep.guard.plan_check import (
     Violation,
     check_arguments,
     check_params,
+    check_shown,
     check_target,
     mcp_arguments,
     named_off_limits,
@@ -638,6 +639,7 @@ class McpCall:
             or check_params(number, step)
             or self.plan_violations(number, step)
             or check_arguments(number, step, registry)
+            or check_shown(number, step)
         )
         if violations:
             raise StepRefused("; ".join(v.text for v in violations))

@@ -44,6 +44,7 @@ from bleep.guard.plan_check import (
     COOLIFY_NAME,
     NoCoolifyApp,
     check_params,
+    check_shown,
     check_target,
     coolify_app_uuid,
 )
@@ -326,8 +327,11 @@ class CoolifyAction:
             if step.action != self.name:
                 raise StepRefused(f"{what}: {self.name} cannot run {step.action}")
             verify_step(step, grant, plan, step_index, self.secret)
-            violations = check_params(step_index + 1, step) or check_target(
-                step_index + 1, step, registry
+            number = step_index + 1
+            violations = (
+                check_params(number, step)
+                or check_target(number, step, registry)
+                or check_shown(number, step)
             )
             if violations:
                 raise StepRefused("; ".join(v.text for v in violations))

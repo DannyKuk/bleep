@@ -137,7 +137,7 @@ function Step({ step, number, status }: { step: PlanStep; number: number; status
           on <code className="font-mono">{step.host_id}</code>
         </span>
         {Object.entries(step.params).map(([key, value]) => (
-          <code key={key} className="font-mono text-xs break-all">
+          <code key={key} className="font-mono text-xs break-all whitespace-pre-wrap">
             {showInvisible(`${key}=${value}`)}
           </code>
         ))}

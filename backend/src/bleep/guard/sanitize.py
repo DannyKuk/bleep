@@ -13,7 +13,8 @@ _ANSI = re.compile(
     r"|\x1b\][^\x07\x1b\n]*(?:\x07|\x1b\\)?"  # OSC: window title, hyperlinks
     r"|\x1b[@-Z\\-_]"  # two-character escapes
 )
-_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")  # all but \n and \t
+CONTROL_CHARS = r"[\x00-\x08\x0b-\x1f\x7f-\x9f]"  # C0 but \n and \t, DEL, C1 (NEL included)
+_CONTROL = re.compile(CONTROL_CHARS)
 # Every Unicode "format" (Cf) character of Unicode 16.0 (`unicodedata.unidata_version` of the
 # Python Bleep runs on; a test fails when a newer Python has Cf characters missing here): soft
 # hyphen, zero-width, bidi marks and overrides, the byte-order mark, U+180E, the tag block; plus
@@ -30,6 +31,9 @@ INVISIBLE_CHARS = (
     "\u034f\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0]"
 )
 _INVISIBLE = re.compile(INVISIBLE_CHARS)
+# They only switch a character between text and emoji look, so the plan's displays drop them
+# instead of marking them (`notify/format._one_line`, `showInvisible` on the dashboard).
+PRESENTATION_SELECTORS = "\ufe0e\ufe0f"
 
 
 def normalise_newlines(text: str | bytes) -> str:

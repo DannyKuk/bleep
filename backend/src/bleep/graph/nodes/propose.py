@@ -59,6 +59,11 @@ STOP_BY_HAND_ONLY = (
     "by hand."
 )
 
+HIDDEN_BY_HAND = (
+    "A step runs only when you can read every param of it, and Bleep hides anything that looks "
+    "like a secret. If the change is needed, make it by hand."
+)
+
 
 def make(deps: GraphDeps) -> Node:
     async def propose(state: IncidentState) -> dict:
@@ -232,6 +237,8 @@ def _refused(proposal: Proposal, violations: list[Violation], *, can_instruct: b
         lines.append(BY_HAND if can_instruct else BY_HAND_ONLY)
     if any(v.rule == "unnamed_stop" for v in violations):
         lines.append(STOP_BY_HAND if can_instruct else STOP_BY_HAND_ONLY)
+    if any(v.rule == "hidden_param" for v in violations):
+        lines.append(HIDDEN_BY_HAND)
     if can_instruct:
         lines.append(INSTRUCT)
     return Proposal(
