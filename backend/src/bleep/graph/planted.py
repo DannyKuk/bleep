@@ -16,7 +16,7 @@ from langchain_core.messages import AnyMessage, ToolMessage
 
 from bleep.graph.host_text import describe_basics, service_id_shown, service_name
 from bleep.guard.orders import gives_orders, line_signs, orders
-from bleep.guard.untrusted import NONCE, SOURCE, holds_escaped_tag
+from bleep.guard.untrusted import holds_escaped_tag, without_copied_wrappers
 from bleep.schemas.graph import GatherContext, PlantedPlace, PlantedSource
 from bleep.schemas.incidents import Subject
 from bleep.tools.knowledge import SOURCE_LABEL
@@ -67,12 +67,6 @@ _OWN_SENTENCE = re.compile(
     rf"(?:{re.escape(PLANTED_END)}|{re.escape(HINT_END)})",
     re.IGNORECASE,
 )
-# A wrapper of Bleep's own (`guard.untrusted.wrap_untrusted`) that a record copied from its
-# prompt, stored escaped: an opening tag and the closing tag with the same id (#305).
-_COPIED_WRAPPER = re.compile(
-    rf'&lt;untrusted source="{SOURCE.pattern}" id="({NONCE.pattern})">(.*?)&lt;/untrusted id="\1">',
-    re.DOTALL,
-)
 # The head of each hit in a knowledge search result (`tools.knowledge.describe_hits`).
 _HIT = re.compile(r"\[\d+\] (" + "|".join(map(re.escape, SOURCE_LABEL.values())) + r"): ")
 
@@ -99,13 +93,30 @@ def _record_holds_tag(text: str) -> bool:
     """Whether a record of Bleep's holds an escaped tag besides Bleep's own wrappers it copied:
     Report's prompts wrap a name that is not plain (a Coolify preview's "dkwebsite (PR 12)"), and
     a cause may repeat the name with its wrapper. A tag inside the copied name still counts."""
-    return holds_escaped_tag(_COPIED_WRAPPER.sub(lambda m: f" {m[2]} ", text))
+    return holds_escaped_tag(without_copied_wrappers(text))
 
 
-def _result_holds_tag(m: ToolMessage) -> bool:
-    if m.name == "recall_incidents":
-        return _record_holds_tag(m.text)
-    return holds_escaped_tag(m.text)
+def _knowledge_without_copied_wrappers(text: str) -> str:
+    """A knowledge search result with Bleep's copied wrappers taken out of the past incidents'
+    hits only; the docs' hits are host text."""
+    lines, own = [], False
+    for line in text.split("\n"):
+        if hit := _HIT.match(line):
+            own = hit[1] == SOURCE_LABEL["incident"]
+        lines.append(without_copied_wrappers(line) if own else line)
+    return "\n".join(lines)
+
+
+def result_holds_tag(name: str, text: str) -> bool:
+    """Whether a tool's guarded result holds a wrapper tag the guard escaped. In Bleep's own
+    records (`recall_incidents`, the past incidents' hits of `knowledge_search`) the wrappers they
+    copied are left out first (`_record_holds_tag`). Investigate's `injection_marker` and the
+    planted-orders hint both read a result this way."""
+    if name == "recall_incidents":
+        return _record_holds_tag(text)
+    if name == "knowledge_search":
+        return holds_escaped_tag(_knowledge_without_copied_wrappers(text))
+    return holds_escaped_tag(text)
 
 
 def escaped_places(context: GatherContext | None, messages: list[AnyMessage]) -> set[PlantedPlace]:
@@ -117,7 +128,7 @@ def escaped_places(context: GatherContext | None, messages: list[AnyMessage]) ->
     if context is not None and any(_record_holds_tag(past.cause) for past in context.similar):
         found.add("memory")
     for m in _tool_results(messages):
-        if _result_holds_tag(m):
+        if result_holds_tag(m.name or "", m.text):
             found.add(TOOL_SOURCE.get(m.name or "", "other"))
     return found
 
