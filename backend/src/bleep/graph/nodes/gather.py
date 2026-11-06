@@ -11,6 +11,7 @@ import asyncio
 import logging
 
 from bleep.graph.deps import GraphDeps
+from bleep.graph.host_text import service_id_shown
 from bleep.graph.state import IncidentState, Node
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.graph import ContainerMemory, GatherContext
@@ -83,7 +84,8 @@ async def _service(
 ) -> None:
     service = deps.registry.service(subject.service_id or "")
     if service is None:
-        context.gaps.append(f"service {subject.service_id} is no longer on host {subject.host_id}")
+        shown = service_id_shown(subject)
+        context.gaps.append(f"service {shown} is no longer on host {subject.host_id}")
         return
     context.service_name = service.name
     context.containers = list(service.containers)
