@@ -32,13 +32,20 @@ import base64
 import json
 import subprocess
 import sys
+from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
-from bleep.graph.planted import PLANTED_END, PLANTED_START, PLANTED_WHERE
+from bleep.graph.planted import (
+    HINT_END,
+    PLANTED_END,
+    PLANTED_START,
+    PLANTED_WHERE,
+    without_own_sentences,
+)
 from bleep.guard.orders import SIGNS, line_signs, orders
 from bleep.guard.pipeline import guard_text
 from evals.injection import CASES_DIR, InjectionCase, InjectionResult, load_cases, read_jsonl
@@ -69,15 +76,16 @@ class Tally:
     file_hits: dict[str, int] = field(default_factory=lambda: dict.fromkeys(COLUMNS, 0))
     fired: list[tuple[str, str]] = field(default_factory=list)  # (file, line) of each order
 
-    def add(self, name: str, text: str) -> None:
+    def add(self, name: str, text: str, own_record: bool = False) -> None:
+        """Count `text`; `own_record` reads it as Bleep's own records, as memory is read."""
         self.files += 1
         in_file: set[str] = set()
         for line in text.splitlines():
             if not line.strip():
                 continue
             self.lines += 1
-            signs = line_signs(line)
-            found = set(signs) | ({"orders"} if orders(signs) else set())
+            signs = line_signs(without_own_sentences(line) if own_record else line)
+            found = set(signs) | ({"orders"} if orders(signs, own_record) else set())
             for column in found:
                 self.line_hits[column] += 1
             in_file |= found
@@ -87,12 +95,12 @@ class Tally:
             self.file_hits[column] += 1
 
 
-def fires(text: str) -> set[str]:
+def fires(text: str, own_record: bool = False) -> set[str]:
     """The signs found in `text`, and `orders` when a line gives orders."""
     found: set[str] = set()
     for line in text.splitlines():
-        signs = line_signs(line)
-        found |= set(signs) | ({"orders"} if orders(signs) else set())
+        signs = line_signs(without_own_sentences(line) if own_record else line)
+        found |= set(signs) | ({"orders"} if orders(signs, own_record) else set())
     return found
 
 
@@ -152,8 +160,9 @@ def _scripted_logs(path: Path) -> str:
 
 
 def bleep_wrote(paths: Iterable[Path]) -> str:
-    """Every cause, summary, follow-up, human decision and root cause Bleep wrote in recorded
-    eval runs: what memory keeps and recalls."""
+    """Everything Bleep wrote in recorded eval runs: the report's cause, summary, action,
+    follow-ups and human decision (what memory keeps and recalls), the root cause, every evidence
+    line as the prompts show it ("source: detail"), and the plan's reason and advice."""
     found: list[str] = []
     for path in paths:
         for text in path.read_text().splitlines():
@@ -161,12 +170,17 @@ def bleep_wrote(paths: Iterable[Path]) -> str:
             run = record["run"] if isinstance(record.get("run"), dict) else record
             report = record.get("report") or {}
             diagnosis = run.get("diagnosis") or {}
+            proposal = run.get("proposal") or {}
             found += [
                 report.get("cause"),
                 report.get("summary"),
+                report.get("action_taken"),
                 report.get("human_decision"),
                 *report.get("follow_ups", []),
                 diagnosis.get("root_cause"),
+                *(f"{e['source']}: {e['detail']}" for e in diagnosis.get("evidence", [])),
+                proposal.get("reason"),
+                proposal.get("human_instructions"),
             ]
     return "\n".join(" ".join(t.split()) for t in found if t)
 
@@ -203,8 +217,10 @@ def honest_corpus() -> dict[str, dict[str, str]]:
         "mcp": {_rel(p): p.read_text() for p in sorted((BACKEND / "evals/fixtures/mcp").glob("*"))},
         "memory": {
             "reports Bleep wrote in docs/evals/data": bleep_wrote(data),
-            "Bleep's planted-orders sentence": "\n".join(
-                f"{PLANTED_START}in the {where} {PLANTED_END}" for where in PLANTED_WHERE.values()
+            "Bleep's planted-orders sentences": "\n".join(
+                f"{PLANTED_START}in the {where} {end}"
+                for where in PLANTED_WHERE.values()
+                for end in (PLANTED_END, HINT_END)
             ),
         },
     }
@@ -249,7 +265,8 @@ def replay(
         case = cases.get(result.case)
         if case is None or result.run.failure is not None or result.payload_reached is None:
             continue
-        told = result.payload_reached and "orders" in fires(as_read(case))
+        own = case.channel == "memory"
+        told = result.payload_reached and "orders" in fires(as_read(case), own_record=own)
         if case.kind == "control":
             found.control_runs += 1
             found.control_fired += told
@@ -274,6 +291,15 @@ def _signs(found: set[str]) -> str:
     return ", ".join(c for c in COLUMNS if c in found) or "none"
 
 
+def _fired(fired: Sequence[tuple[str, str]]) -> list[str]:
+    """One line per distinct line that gave orders, with how often it did."""
+    counts = Counter(fired)
+    return [
+        f"- fired{f' ({n} times)' if n > 1 else ''}: `{name}`: {line[:160]}"
+        for (name, line), n in counts.items()
+    ]
+
+
 def _tally_rows(tallies: dict[str, Tally]) -> list[str]:
     lines = [
         "| Place | Files | Lines | " + " | ".join(f"`{c}` lines (files)" for c in COLUMNS) + " |",
@@ -291,11 +317,12 @@ def render(
     honest: dict[str, Tally],
     stress: Tally,
     replays: Sequence[Replay],
+    own_words: dict[str, Tally] | None = None,
 ) -> str:
     out = ["## Payloads", "", "| Case | Kind | Channel | Gives orders | Signs | Fires |"]
     out.append("|---|---|---|---|---|---|")
     for case in cases:
-        found = fires(as_read(case))
+        found = fires(as_read(case), own_record=case.channel == "memory")
         out.append(
             _row(
                 f"`{case.id}`",
@@ -320,10 +347,14 @@ def render(
             total.line_hits[c] += t.line_hits[c]
             total.file_hits[c] += t.file_hits[c]
     out += ["", "## Honest text", "", *_tally_rows({**honest, "**all**": total})]
-    out += [f"- fired: `{name}`: {line[:160]}" for t in honest.values() for name, line in t.fired]
+    out += _fired([f for t in honest.values() for f in t.fired])
+    if own_words:
+        out += ["", "## Bleep's own words, read as host text", ""]
+        out += _tally_rows(own_words)
+        out += _fired([f for t in own_words.values() for f in t.fired])
     out += ["", "## Stress set: this repo's docs and commit messages", ""]
     out += _tally_rows({"stress": stress})
-    out += [f"- fired: `{name}`: {line[:160]}" for name, line in stress.fired]
+    out += _fired(stress.fired)
     out += [
         "",
         "## Recorded rounds",
@@ -353,7 +384,7 @@ def measure(read_stress: Callable[[], dict[str, str]] = stress_corpus) -> str:
     for place, files in honest_corpus().items():
         honest[place] = Tally()
         for name, text in files.items():
-            honest[place].add(name, text)
+            honest[place].add(name, text, own_record=place == "memory")
     stress = Tally()
     for name, text in read_stress().items():
         stress.add(name, text)
@@ -365,7 +396,18 @@ def measure(read_stress: Callable[[], dict[str, str]] = stress_corpus) -> str:
         found = replay(path.name, read_jsonl(path), by_id)
         if found.control_runs or found.order_runs_reached or found.order_runs_not_reached:
             replays.append(found)
-    return render(cases, held_out_attacks(), honest, stress, replays)
+    return render(cases, held_out_attacks(), honest, stress, replays, own_words())
+
+
+def own_words() -> dict[str, Tally]:
+    """What Bleep wrote, and its prompts, read as if they were host text: stricter than memory is
+    read (`own_record`), and the prompts are never read by the signs at all."""
+    data = sorted(p for p in DATA.glob("*.jsonl") if "grades" not in p.name)
+    wrote, prompts = Tally(), Tally()
+    wrote.add("docs/evals/data", bleep_wrote(data))
+    for path in sorted((BACKEND / "src" / "bleep" / "prompts").rglob("*.md")):
+        prompts.add(_rel(path), path.read_text())
+    return {"what Bleep wrote": wrote, "prompts": prompts}
 
 
 def main(argv: Sequence[str] | None = None) -> int:

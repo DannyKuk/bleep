@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
-from bleep.graph.planted import planted_places, planted_sentence
+from bleep.graph.planted import HINT_END, planted_places, planted_sentence
 from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.log import GuardKind
 from bleep.guard.report_check import check_report
@@ -255,7 +255,7 @@ def planted_follow_up(state: IncidentState) -> tuple[list[PlantedPlace], str | N
     places, or None. No text of the model's or the host's goes in, so the report and memory
     carry nothing new from the host."""
     places = planted_places(state.get("context"), state.get("messages", []))
-    return places, planted_sentence(places)
+    return places, planted_sentence(places, HINT_END)
 
 
 def _describe_diagnosis(diagnosis: Diagnosis | None) -> str:

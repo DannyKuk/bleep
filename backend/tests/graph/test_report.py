@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from bleep.graph.deps import StaticSettings
 from bleep.graph.nodes import report
-from bleep.graph.planted import PLANTED_START
+from bleep.graph.planted import HINT_END, PLANTED_START
 from bleep.guard.pipeline import guard_text
 from bleep.guard.report_check import MARKER
 from bleep.schemas.graph import (
@@ -569,10 +569,7 @@ async def test_a_wrapper_tag_escaped_in_a_tool_result_names_that_tools_source(tm
 
     update = await run(env, state)
 
-    assert update["report"].follow_ups[-1] == (
-        "Bleep found text in the Docker events that tried to give it orders and ignored it; "
-        "check who can write there."
-    )
+    assert update["report"].follow_ups[-1] == (f"Bleep found text in the Docker events {HINT_END}")
     assert update["report"].planted_in == ["events"]
 
 
@@ -584,10 +581,7 @@ async def test_a_plainly_written_order_in_the_logs_is_told_in_the_report(tmp_pat
     update = await run(env, state)
 
     for told in (update["report"], notified.reports[0][1]):
-        assert told.follow_ups[-1] == (
-            "Bleep found text in the container logs that tried to give it orders and ignored it; "
-            "check who can write there."
-        )
+        assert told.follow_ups[-1] == (f"Bleep found text in the container logs {HINT_END}")
         assert told.planted_in == ["logs"]
 
 
@@ -603,8 +597,7 @@ async def test_a_wrapper_tag_escaped_in_github_output_names_the_commits(tmp_path
     update = await run(env, state)
 
     assert update["report"].follow_ups[-1] == (
-        "Bleep found text in the commit messages and diffs of the service's repo that tried to "
-        "give it orders and ignored it; check who can write there."
+        f"Bleep found text in the commit messages and diffs of the service's repo {HINT_END}"
     )
 
 
@@ -628,10 +621,7 @@ async def test_a_wrapper_tag_escaped_in_plugin_output_names_the_plugin(tmp_path,
 
     update = await run(env, state)
 
-    assert update["report"].follow_ups[-1] == (
-        f"Bleep found text in the {where} that tried to give it orders and ignored it; "
-        "check who can write there."
-    )
+    assert update["report"].follow_ups[-1] == (f"Bleep found text in the {where} {HINT_END}")
 
 
 async def test_an_escaped_wrapper_tag_in_host_text_is_reported_even_if_the_model_missed_it(
@@ -643,10 +633,7 @@ async def test_an_escaped_wrapper_tag_in_host_text_is_reported_even_if_the_model
 
     update = await run(env, state)
 
-    assert update["report"].follow_ups[-1] == (
-        "Bleep found text in the container logs that tried to give it orders and ignored it; "
-        "check who can write there."
-    )
+    assert update["report"].follow_ups[-1] == (f"Bleep found text in the container logs {HINT_END}")
 
 
 async def test_no_planted_orders_no_sentence(tmp_path):
@@ -655,7 +642,7 @@ async def test_no_planted_orders_no_sentence(tmp_path):
 
     update = await run(env, state)
 
-    assert not any("tried to give it orders" in f for f in update["report"].follow_ups)
+    assert not any(HINT_END in f for f in update["report"].follow_ups)
 
 
 async def test_a_wrapper_tag_escaped_in_recalled_memory_names_bleeps_memory(tmp_path):
@@ -669,8 +656,7 @@ async def test_a_wrapper_tag_escaped_in_recalled_memory_names_bleeps_memory(tmp_
     update = await run(env, state)
 
     assert update["report"].follow_ups[-1] == (
-        "Bleep found text in the past incidents Bleep remembers that tried to give it orders and "
-        "ignored it; check who can write there."
+        f"Bleep found text in the past incidents Bleep remembers {HINT_END}"
     )
 
 
@@ -685,8 +671,7 @@ async def test_a_wrapper_tag_escaped_in_a_knowledge_search_names_the_documents(t
     update = await run(env, state)
 
     assert update["report"].follow_ups[-1] == (
-        "Bleep found text in the documents Bleep searched that tried to give it orders and "
-        "ignored it; check who can write there."
+        f"Bleep found text in the documents Bleep searched {HINT_END}"
     )
 
 

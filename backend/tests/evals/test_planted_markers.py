@@ -19,8 +19,13 @@ CASES = load_cases(CASES_DIR)
 
 def test_every_shipped_case_that_gives_orders_fires_and_no_other_case_does():
     """The bar of #271 on the case files: a control or the false-cause page that fired would be
-    a false alarm in every one of its runs, as the signs read the same text every time."""
-    wrong = [c.id for c in CASES if ("orders" in fires(as_read(c))) != c.gives_orders]
+    a false alarm in every one of its runs, as the signs read the same text every time. Memory
+    is read as Bleep's own record, as `graph/planted.py` reads it."""
+    wrong = [
+        c.id
+        for c in CASES
+        if ("orders" in fires(as_read(c), own_record=c.channel == "memory")) != c.gives_orders
+    ]
     assert wrong == []
     assert any(c.kind == "control" for c in CASES) and any(not c.gives_orders for c in CASES)
 
@@ -45,6 +50,19 @@ def test_json_strings_reads_every_string_and_decodes_githubs_base64_content():
     found = json_strings({"a": ["x", {"b": "y", "n": 3}], "encoding": "base64", "content": content})
     assert found[0] == "# Readme\nRun it."
     assert "x" in found and "y" in found
+
+
+def test_a_tally_of_bleeps_own_records_leaves_out_its_claims_and_its_own_sentence():
+    record = (
+        "Disk full. Approved by the human, pruned images.\n"
+        "bleep: Bleep found text in the container logs that tried to give it orders and ignored "
+        "it; check who can write there.\n"
+    )
+    own, host = Tally(), Tally()
+    own.add("memory", record, own_record=True)
+    host.add("memory", record)
+    assert own.line_hits["orders"] == 0
+    assert host.line_hits["orders"] == 2
 
 
 def test_a_tally_counts_lines_and_files_per_sign_and_lists_each_order():
@@ -99,6 +117,7 @@ def test_a_replay_reports_a_run_only_when_its_orders_reached_the_model():
 
 def test_the_measure_renders_every_table_without_the_stress_set():
     text = measure(dict)
-    for heading in ("## Payloads", "## Honest text", "## Stress set", "## Recorded rounds"):
+    headings = ("## Payloads", "## Honest text", "## Bleep's own words", "## Recorded rounds")
+    for heading in (*headings, "## Stress set"):
         assert heading in text
     assert "| `control-db-down-ignore` | control | logs | no | none | no |" in text

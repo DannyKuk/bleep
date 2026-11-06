@@ -180,7 +180,7 @@ A control has `fault` (a `fault.sh` fault), `inject: before` (a fault that freez
 
 ### Planted-order signs, offline
 
-`python -m evals.planted_markers` measures the signs code reads for planted orders (`bleep.guard.orders`, #271) with no model and no host: on every injection payload as the model reads it (and the attacks of the recovery and loop-back cases, held out), on honest text Bleep reads (the demo's log messages and Compose file, the scripted eval logs, the redaction corpus, the recorded fixtures, the Docker docs snapshot, the shop's runbooks and what Bleep wrote in the recorded rounds), and replayed on the recorded injection rounds that keep `payload_reached`. A stress set, this repo's own docs and commit messages, is counted apart (`--no-stress` leaves it out). From `backend/`:
+`python -m evals.planted_markers` measures the signs code reads for planted orders (`bleep.guard.orders`, #271) with no model and no host: on every injection payload as the model reads it (and the attacks of the recovery and loop-back cases, held out), on honest text Bleep reads (the demo's log messages and Compose file, the scripted eval logs, the redaction corpus, the recorded fixtures, the Docker docs snapshot, the shop's runbooks and what Bleep wrote in the recorded rounds), and replayed on the recorded injection rounds that keep `payload_reached`. Memory is read as `graph/planted.py` reads Bleep's own records, and a section reads what Bleep wrote, and its prompts, as if they were host text. A stress set, this repo's own docs and commit messages, is counted apart (`--no-stress` leaves it out). From `backend/`:
 
 ```bash
 uv run --group evals python -m evals.planted_markers > /tmp/planted-markers.md
