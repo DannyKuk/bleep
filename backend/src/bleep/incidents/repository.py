@@ -11,6 +11,9 @@ from datetime import UTC, datetime, timedelta
 
 import aiosqlite
 
+from bleep.guard.pipeline import is_plain_name
+from bleep.guard.redact import redact_text
+from bleep.guard.sanitize import strip_control
 from bleep.schemas.incidents import (
     TERMINAL_STATUSES,
     Incident,
@@ -100,10 +103,48 @@ class FoldGroup:
     since: datetime
 
 
-def _title(subject: Subject, signals: list[Signal]) -> str:
+# The kinds `hosts.discovery` puts before a service key: Bleep's own words, not the label's.
+_KEY_KINDS = ("compose:", "container:", "id:")
+TITLE_NAME_CHARS = 40  # a name that is not plain, cut to this in a title, "…" included
+# A name in a title is shown inside straight double quotes, so it must not hold anything that
+# reads as one: each of these becomes `'`.
+_QUOTES = re.compile('["\u00ab\u00bb\u201c-\u201f\u2033\u2036\u3003\u301d-\u301f\uff02]')
+_BLANKS = re.compile(r"\s+")
+
+
+def service_key(subject: Subject) -> tuple[str, str]:
+    """The service id split into Bleep's own prefix (`<host>/<kind>:`) and the key a label
+    wrote. An id that does not start with its host gives no prefix: all of it is the label's."""
+    service_id = subject.service_id or ""
+    host = f"{subject.host_id}/"
+    if not service_id.startswith(host):
+        return "", service_id
+    key = service_id[len(host) :]
+    kind = next((k for k in _KEY_KINDS if key.startswith(k)), "")
+    return host + kind, key[len(kind) :]
+
+
+def title_name(name: str) -> str:
+    """A name from a label as an incident title shows it: a plain one (`is_plain_name`) as it
+    is, any other as host text: in double quotes, on one line, redacted, with no quote of its
+    own, cut to 40 characters with "…"."""
+    if is_plain_name(name):
+        return name
+    text = _QUOTES.sub("'", _BLANKS.sub(" ", redact_text(strip_control(name))).strip())
+    if len(text) > TITLE_NAME_CHARS:
+        text = text[: TITLE_NAME_CHARS - 1].rstrip() + "…"
+    return f'"{text}"'
+
+
+def build_title(subject: Subject, signals: list[Signal]) -> str:
+    """The title an incident opens with ("container died on a/compose:shop"): Bleep's words for
+    its first signal and its subject, a service's key through `title_name`. The host id is the
+    hosts file's or the dashboard's, written by the operator, and stands as it is."""
     what = signals[0].kind.replace("_", " ") if signals else "incident"
-    where = subject.service_id or subject.host_id
-    return f"{what} on {where}"
+    if not subject.service_id:
+        return f"{what} on {subject.host_id}"
+    prefix, key = service_key(subject)
+    return f"{what} on {prefix}{title_name(key)}"
 
 
 # Tokens and cost are the usage ledger's sums, so an incident and the ledger never disagree.
@@ -210,7 +251,7 @@ class IncidentRepo:
         now = self.clock()
         incident_id = new_incident_id(now)
         key = fold_key(subject, signals)
-        title = _title(subject, signals)
+        title = build_title(subject, signals)
         group = await self._group_to_join(conn, key, now)
         if group is not None:
             # The title carries the count, so every message about the repeat says it.
