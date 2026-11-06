@@ -14,8 +14,8 @@ from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from bleep.guard.redact import hides_head, hides_params
-from bleep.guard.sanitize import strip_control
+from bleep.guard.redact import hides_head, hides_params, pads_step
+from bleep.guard.sanitize import INVISIBLE_CHARS, strip_control
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.coolify_names import name_matches
 from bleep.hosts.discovery import is_self
@@ -317,6 +317,12 @@ def check_shown(number: int, step: PlanStep) -> list[Violation]:
             " read other text than what runs, and could not read what they approve; write the"
             " arguments as plain JSON, every key once and every character as itself"
         )
+    elif pads_step(number, step):
+        why = (
+            "it is padded with blank lines or spaces (more than two line breaks in a row, 16 or"
+            " more blanks in a row, or over 30 lines), so the human could miss what follows and"
+            " could not read what they approve; write it without the padding"
+        )
     elif hides_params(step):
         why = (
             "part of its params would be hidden from the human approving it (text that looks like"
@@ -332,15 +338,31 @@ def check_shown(number: int, step: PlanStep) -> list[Violation]:
 
 # A JSON escape; an escaped backslash is one match, so the `u0041` in `\\u0041` is not one.
 _JSON_ESCAPE = re.compile(r"\\(?:u([0-9a-fA-F]{4})|.)", re.DOTALL)
-FIRST_PRINTABLE = 0x20  # JSON must escape U+0000 to U+001F, and nothing else needs `\u`
+FIRST_PRINTABLE, LAST_ASCII = 0x20, 0x7E  # JSON must escape U+0000 to U+001F
+_INVISIBLE = re.compile(INVISIBLE_CHARS)
+
+
+def _hiding_escape(code: int) -> bool:
+    """Whether a `\\u` escape of `code` hides what runs: a printable ASCII character (which can
+    spell a command), or a control, format, surrogate or invisible one. An escape JSON requires
+    does not, and nor does a printable character outside ASCII (`json.dumps` writes `é` as
+    `\\u00e9`): the escape is what the human reads, and it runs as that one letter."""
+    if code < FIRST_PRINTABLE:
+        return False
+    char = chr(code)
+    return (
+        code <= LAST_ASCII
+        or unicodedata.category(char) in {"Cc", "Cf", "Cs"}
+        or _INVISIBLE.fullmatch(char) is not None
+    )
 
 
 def _misread_json(text: str) -> bool:
     """Whether JSON `text` decodes to something other than a person reads in it: a `\\u` escape
-    of a character JSON does not require escaped, or a key repeated in one object (the last
-    one wins), at any depth. Text that is not JSON is `check_params`'s to refuse."""
+    that hides what runs (`_hiding_escape`), or a key repeated in one object (the last one
+    wins), at any depth. Text that is not JSON is `check_params`'s to refuse."""
     escapes = (m.group(1) for m in _JSON_ESCAPE.finditer(text))
-    if any(code is not None and int(code, 16) >= FIRST_PRINTABLE for code in escapes):
+    if any(code is not None and _hiding_escape(int(code, 16)) for code in escapes):
         return True
     repeated = False
 

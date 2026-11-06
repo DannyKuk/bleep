@@ -687,6 +687,13 @@ async def test_a_character_that_draws_nothing_cannot_split_a_name(tmp_path, fill
 # --- params the human approving the step could not read (#294) -------------------------------
 
 WITH_MCP = WITH_COOLIFY | {"mcp.call"}
+
+
+def start_command(value: str) -> PlanStep:
+    """A set_env value, which runs as written: unlike JSON arguments, a line break in it is one."""
+    return set_env("api", key="START_COMMAND", value=value)
+
+
 ANY_TOOL = {"mcp.call": lambda number, step: []}  # the MCP plugin's own rule lets every tool by
 
 
@@ -760,6 +767,31 @@ HIDDEN = {
         set_env("api", key="START_COMMAND", value="node\x9bserver.js"),
         coolify("api"),
     ),
+    # Padding that pushes the rest of a param out of sight on the dashboard (re-review of #300).
+    "a set_env value padded with line breaks": (
+        set_env("api", key="START_COMMAND", value="node server.js" + "\n" * 400 + "rm -rf /srv"),
+        coolify("api"),
+    ),
+    "a set_env value padded with ideographic spaces": (
+        set_env("api", key="START_COMMAND", value="node server.js" + "\u3000" * 3900 + "rm -rf /"),
+        coolify("api"),
+    ),
+    "line breaks between json tokens": (
+        mcp_raw('{"command": "docker compose pull",' + "\n" * 400 + '"then": "down -v"}'),
+    ),
+    "three line breaks in a row": (start_command("ls\n\n\nrm -rf /srv"), coolify("api")),
+    "whitespace-only lines count as blank": (
+        start_command("ls\n \n\t\nrm -rf /srv"),
+        coolify("api"),
+    ),
+    "16 no-break spaces": (mcp({"command": "ls" + "\u00a0" * 16 + "rm -rf /srv"}),),
+    "16 tabs": (start_command("ls" + "\t" * 16 + "rm -rf /srv"), coolify("api")),
+    "31 lines": (start_command("\n".join(["echo ok"] * 31)), coolify("api")),
+    # An escape of anything but a printable character outside ASCII hides what runs.
+    "an ascii character written as a \\u escape": (mcp_raw('{"url": "/a?x=1\\u0026y=2"}'),),
+    "an invisible character written as a \\u escape": (mcp_raw('{"name": "shop\\u200b"}'),),
+    "a C1 control written as a \\u escape": (mcp_raw('{"name": "shop\\u0085"}'),),
+    "an emoji written as surrogate escapes": (mcp_raw('{"note": "\\ud83d\\ude00"}'),),
     "a docker step's params": (
         PlanStep(
             action="docker.restart", host_id="a", target="shop-web-1", params={"why": "token=x1"}
@@ -801,6 +833,16 @@ SHOWN = {
     # slash.
     "the escapes JSON requires": (
         mcp_raw('{"text": "one\\ntwo\\u001b \\"q\\" C:\\\\u0041 \\/"}', tool="flush_cache"),
+    ),
+    "a few honest lines": (
+        set_env("api", key="START_COMMAND", value="set -e\nnpm run migrate\n\nnode server.js"),
+        coolify("api"),
+    ),
+    "15 spaces": (mcp({"text": "a" + " " * 15 + "b"}, tool="flush_cache"),),
+    "30 lines": (start_command("\n".join(["echo ok"] * 30)), coolify("api")),
+    # What json.dumps writes for text outside ASCII: shown as the escape, decoded to the letter.
+    "a letter outside ascii written as a \\u escape": (
+        mcp_raw('{"name": "Caf\\u00e9", "note": "\\u26a0 check"}', tool="flush_cache"),
     ),
     "a tab": (set_env("api", key="START_COMMAND", value="node\tserver.js"), coolify("api")),
     "the same key in two objects": (
@@ -860,3 +902,20 @@ async def test_a_target_with_a_control_character_is_refused(tmp_path):
     [found] = check_plan(act(restart(name)), env.registry, CORE, "a", incident_containers=[name])
 
     assert (found.rule, found.step) == ("hidden_param", 1) and "its target" in found.text
+
+
+async def test_padding_is_refused_in_its_own_words(tmp_path):
+    [found] = await hiding(tmp_path, *HIDDEN["a set_env value padded with line breaks"])
+
+    assert found.rule == "hidden_param"
+    assert "padded with blank lines or spaces" in found.text and "rm -rf" not in found.text
+
+
+async def test_a_padded_target_is_refused(tmp_path):
+    name = "shop" + " " * 16 + "web-1"
+    engine = FakeEngine("a", [box(name, "shop", state="exited", exit_code=1)])
+    env = await graph_env(tmp_path, engine=engine, host=shop_host())
+
+    [found] = check_plan(act(restart(name)), env.registry, CORE, "a", incident_containers=[name])
+
+    assert found.rule == "hidden_param" and "padded with blank lines or spaces" in found.text

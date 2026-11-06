@@ -1018,6 +1018,26 @@ def _shown_otherwise(text: str) -> bool:
     )
 
 
+MAX_PARAM_LINES = 30
+# Three line breaks with only blanks between them, or 16 blanks of any kind in a row: enough to
+# push the rest of a param out of sight on the dashboard, which keeps a param's line breaks.
+_PADDING = re.compile(r"\n(?:[^\S\n]*\n){2}|\s{16}")
+
+
+def padded(text: str) -> bool:
+    """Whether `text` is padded so a reader could miss what follows: more than two line breaks
+    in a row (a line of blanks counts as empty), a run of 16 or more blanks of any kind (NBSP,
+    U+3000 and tabs included), or more than `MAX_PARAM_LINES` lines."""
+    return _PADDING.search(text) is not None or text.count("\n") >= MAX_PARAM_LINES
+
+
+def pads_step(number: int, step: PlanStep) -> bool:
+    """Whether step `number`'s head or any param (`key=value`, as the dashboard shows it) is
+    `padded`."""
+    shown = [step_head(number, step), *(f"{k}={v}" for k, v in step.params.items())]
+    return any(padded(text) for text in shown)
+
+
 def params_line(step: PlanStep) -> str:
     """A step's params on one line, `tool` first, before redaction: what the Telegram approval
     shows of a plugin step (`notify/format._step_line`)."""
