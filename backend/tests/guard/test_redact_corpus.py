@@ -463,6 +463,18 @@ def test_an_element_open_at_the_head_cut_is_hidden_to_the_cut():
     assert "hUnt3r" not in out and count > 0
 
 
+@pytest.mark.parametrize("at", [0, 1500])
+def test_a_tag_open_anywhere_in_the_head_window_hides_the_rest_of_the_head(at):
+    # fail-safe: whether the element closes in the dropped middle cannot be known, so a long
+    # value (a key in `<privateKey>`) stays hidden, at the cost of the head's later text
+    fields = " ".join(f"field{i}=value{i}" for i in range(600))
+    line = (fields[:at] + " Expected <token> but found EOF " + fields[at:])[:6000]
+    out, count = redact_with_count(line)
+    head = out.split("\n")[0]
+    assert head.endswith("Expected <token> <redacted>") and len(head) < at + 40
+    assert count == 1
+
+
 @pytest.mark.parametrize("before", ["Set-Cookie: a=1; b=2 ", '<entry key="db.password">'])
 def test_a_key_ending_a_cut_line_still_takes_its_value_on_the_next_line(before):
     line = "y " * 900 + before + "z " * 2000 + "x.refresh_tokens:"
