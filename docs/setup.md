@@ -40,10 +40,10 @@ This runs the whole path from a dead container to the approval question, on the 
 
 This continues past the approval: Bleep restarts what is down, checks the service and writes the report. It needs the same model key (and the bot for the Telegram half).
 
-1. With Bleep running as above, start a small stack whose web container depends on a database, both with no restart policy and one Compose project label, so the overview groups them as one service:
+1. With Bleep running as above, start a small stack whose web container depends on a database, both with no restart policy and the two labels that make Bleep group them as one Compose project, so the overview shows one service. Bleep treats a container as part of a Compose project only when it carries `com.docker.compose.config-hash` as well as the project label, because `docker compose build` puts the project label on the image and a plain `docker run` of that image would inherit it ([why](design/hosts.md)):
    ```bash
-   docker run -d --name bleep-try-db --restart no --label com.docker.compose.project=bleep-try redis:7-alpine
-   docker run -d --name bleep-try-web --restart no --label com.docker.compose.project=bleep-try nginx:1.27-alpine
+   docker run -d --name bleep-try-db --restart no --label com.docker.compose.project=bleep-try --label com.docker.compose.config-hash=demo redis:7-alpine
+   docker run -d --name bleep-try-web --restart no --label com.docker.compose.project=bleep-try --label com.docker.compose.config-hash=demo nginx:1.27-alpine
    ```
    Within about 30 s the overview lists the `bleep-try` service as OK; its page shows both containers running.
 2. Stop the dependency the way a crash does: `docker kill bleep-try-db` (a `docker stop` opens nothing, by design). After about 75 s an incident opens, and "Here is my plan" shows a plan such as Start `bleep-try-db` (`docker.start` on `demo`).
