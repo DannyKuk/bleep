@@ -3,7 +3,9 @@ quote in an incident title (#311).
 
 A character is in the set when, after NFC (what `title_name` does first):
 - its confusable skeleton (UTS #39: NFD, the confusables.txt map, NFD again) is made only of `'`
-  (the skeleton of `"` is `''`), or
+  (the skeleton of `"` is `''`), or is once its combining marks are left out and NFC keeps the
+  character whole (the Greek `῎`, a breathing and an accent drawn as two ticks; what NFC changes
+  is looked up as what NFC makes of it), or
 - it is an opening or closing quote (Unicode categories Pi and Pf), or
 - its Unicode name says it is a quotation mark (the low „ and ⹂, 〝 〞 〟 and the ornaments ❝ ❞,
   which are Ps, Pe or So and have skeletons of their own), or
@@ -48,6 +50,11 @@ def read_map(path: Path) -> tuple[dict[str, str], str, str]:
     return table, version, date
 
 
+def _marks_off(text: str) -> set[str]:
+    """The characters of `text` but its combining marks, which `title_name` drops."""
+    return {c for c in text if unicodedata.category(c) not in ("Mn", "Me")}
+
+
 def lookalikes(table: dict[str, str]) -> list[int]:
     def skeleton(text: str) -> str:
         text = unicodedata.normalize("NFD", text)
@@ -61,6 +68,7 @@ def lookalikes(table: dict[str, str]) -> list[int]:
         drawn = skeleton(char)
         if (
             (drawn and set(drawn) == {"'"})
+            or (unicodedata.normalize("NFC", char) == char and _marks_off(drawn) == {"'"})
             or unicodedata.category(char) in ("Pi", "Pf")
             or "QUOTATION MARK" in unicodedata.name(char, "")
             or any(q in unicodedata.normalize("NFKC", char) for q in QUOTES)

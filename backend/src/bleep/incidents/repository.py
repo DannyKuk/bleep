@@ -112,6 +112,8 @@ _MARKS = ("Mn", "Me", "Cs")  # combining marks (a `"` can be drawn on a letter),
 _BLANKS = re.compile(r"\s+")
 # A name in a title is shown inside straight double quotes, so nothing in it may read as one:
 # each character of `QUOTE_LOOKALIKES` becomes `'`, and a run of `'` one, since two read as `"`.
+# `ŉ` is drawn as `'n`, so it is written so before the run is collapsed.
+_PLAIN_QUOTES = {ord(c): "'" for c in QUOTE_LOOKALIKES} | {0x0149: "'n"}
 _APOSTROPHES = re.compile(r"''+")
 _SKIN_TONES = ("\U0001f3fb", "\U0001f3ff")
 _REGIONAL = ("\U0001f1e6", "\U0001f1ff")
@@ -167,7 +169,7 @@ def title_name(name: str) -> str:
     text = unicodedata.normalize("NFC", strip_control(name))
     text = "".join(c for c in text if unicodedata.category(c) not in _MARKS)
     text = _BLANKS.sub(" ", redact_text(text)).strip()
-    text = _APOSTROPHES.sub("'", "".join("'" if c in QUOTE_LOOKALIKES else c for c in text))
+    text = _APOSTROPHES.sub("'", text.translate(_PLAIN_QUOTES))
     # Again: a secret in curly quotes (`“password”: “…”`) is found only once they read `'`.
     return f'"{_cut(redact_text(text), TITLE_NAME_CHARS)}"'
 

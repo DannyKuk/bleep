@@ -462,6 +462,12 @@ SURVIVORS = [
     "\U00016f51",
     "\U00016f52",
     "\U0001e94b",
+    "\u1fcd",  # ῍ psili and varia: two ticks in one character
+    "\u1fce",  # ῎ psili and oxia
+    "\u1fcf",  # ῏ psili and perispomeni
+    "\u1fdd",  # ῝ dasia and varia
+    "\u1fde",  # ῞ dasia and oxia
+    "\u1fdf",  # ῟ dasia and perispomeni
 ]
 
 
@@ -482,8 +488,10 @@ def test_the_look_alike_table_holds_every_quote_this_python_knows():
             assert char in QUOTE_LOOKALIKES, hex(code)
 
 
-def test_a_letter_that_only_holds_an_apostrophe_stays():
-    assert title_name("Ma\u0149 app") == '"Ma\u0149 app"'  # ŉ
+def test_a_letter_drawn_with_an_apostrophe_is_written_out_so_no_two_read_as_one_quote():
+    assert title_name("Ma\u0149 app") == '"Ma\'n app"'  # ŉ is drawn as 'n
+    assert title_name('shop"\u0149ot approved') == '"shop\'not approved"'
+    assert title_name("shop\u02bc\u0149ot approved") == '"shop\'not approved"'
 
 
 def test_a_secret_in_curly_quotes_is_redacted_once_they_are_plain():
