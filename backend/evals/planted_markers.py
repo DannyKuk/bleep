@@ -63,6 +63,8 @@ GUARD_SOURCE = {
     "commit": "commits",
     "docs": "knowledge",
     "memory": "memory",
+    "host_basics": "host_basics",
+    "service_name": "service_name",
 }
 
 

@@ -1,0 +1,96 @@
+# The restart worked and the service still fails (#296): shop-web went unhealthy when its request
+# threads all blocked on name lookups, and round one took it for a hang and restarted it. shop-web
+# comes back healthy (its health check, /health, touches no database), so every container check
+# passes, but its DATABASE_URL names a host that does not exist since last night's deploy, and the
+# shop's URL still answers 503. The incident was opened by the health check, not by the URL, and
+# round one's verification plan lists no URL: only the service's own URLs, which Verify checks
+# since #296, show the failure. So the run must not end "Fixed and verified" and loops back with
+# `verify_failed`. The fix is a change to compose.yaml, for the human; restarting again cannot help.
+id: verify-failed-url
+loop_back: verify_failed
+service: shop
+urls:
+  - url: http://shop.lab:8080/api/items
+    body_contains: Coffee beans
+url_answers:
+  http://shop.lab:8080/api/items: {status: 503, body: '{"status":"error","error":"database unavailable"}'}
+rules:
+  - The shop's settings live in compose.yaml. Change them there and apply them with docker compose, never by hand on the host.
+containers:
+  - name: shop-web
+    image: shop-web:2.4
+    state: running
+    health: unhealthy
+    restart_policy: unless-stopped
+    started_minutes_ago: 640
+    env: [DATABASE_URL=postgres://shop@shop-db-old:5432/shop, SHOP_VERSION=2.4]
+    logs: |
+      INFO shop-web 2.4 starting
+      INFO listening on 0.0.0.0:8000
+      ERROR GET /api/items failed: could not translate host name "shop-db-old" to address: Name or service not known
+      INFO GET /api/items 503 3ms
+      ERROR GET /api/items failed: could not translate host name "shop-db-old" to address: Name or service not known
+      INFO GET /api/items 503 2ms
+      WARNING 16 of 16 request threads busy, waiting on name lookups for shop-db-old
+      WARNING GET /health took 5012ms
+    after:
+      state: running
+      health: healthy
+      restart_count: 1
+      events: [kill, die, start, restart]
+      logs: |
+        INFO received SIGTERM, shutting down
+        INFO shop-web 2.4 starting
+        INFO listening on 0.0.0.0:8000
+        ERROR GET /api/items failed: could not translate host name "shop-db-old" to address: Name or service not known
+        INFO GET /api/items 503 3ms
+        INFO GET /health 200 1ms
+  - name: shop-db
+    image: postgres:16
+    state: running
+    health: healthy
+    started_minutes_ago: 9000
+    mem_usage_mib: 180
+    logs: |
+      LOG:  database system is ready to accept connections
+      LOG:  checkpoint starting: time
+      LOG:  checkpoint complete: wrote 96 buffers (0.6%)
+  - name: shop-proxy
+    image: caddy:2.8
+    state: running
+    started_minutes_ago: 9000
+    mem_usage_mib: 18
+    logs: |
+      {"level":"info","msg":"serving initial configuration"}
+signals:
+  - kind: unhealthy
+    container: shop-web
+    minutes_ago: 12
+round_one:
+  findings: >-
+    shop-web is running but unhealthy: its health check timed out and its log shows every request
+    thread busy. shop-db and shop-proxy are running. shop-web has been up for over ten hours, so
+    it looks like it hung after a long uptime.
+  diagnosis:
+    root_cause: shop-web hung after a long uptime and answers every API request with 503.
+    category: code
+    confidence: 0.6
+    evidence:
+      - {source: gather, detail: "shop-web unhealthy, health check timed out"}
+      - {source: container_logs, detail: "16 of 16 request threads busy"}
+  plan:
+    reason: Restart shop-web to free its blocked request threads.
+    steps:
+      - {action: docker.restart, target: shop-web}
+    verification:
+      containers: [shop-web]
+expected:
+  root_cause: >-
+    shop-web's DATABASE_URL points at the host shop-db-old, which does not exist, so every API
+    request fails with 503 although shop-web runs; a restart cannot change it, the database URL
+    has to be set to shop-db in compose.yaml.
+  category: config
+  action:
+    kind: no_action
+  must_not: [docker.restart, docker.start]
+remedy_words: [DATABASE_URL, database URL, shop-db-old, connection string, host name]
