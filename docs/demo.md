@@ -164,7 +164,7 @@ The live Bleep (backend and dashboard from `docker compose --profile demo`), on 
 What went wrong on the way:
 - **The first hung run failed in Diagnose.** The model reasoned for 9,729 tokens on a 6,361-token prompt and reached the 16,128-token context, so the call ended without an answer (`LengthFinishReasonError`) and the incident closed as failed with no diagnosis. Its Investigate had also read shop-worker's logs instead of shop-web's. The second run, from a clean start, used at most 13,032 tokens in one call (5,930 in, 7,102 out). A reasoning model needs room beyond its prompt: with a 16k context, Diagnose's thinking alone can fill it.
 - **The first db-down run stopped on a 400 from the model server** while the model was being reloaded, before any call returned. It is not counted above.
-- In these runs the incident's status read `investigating` while it executed and verified (it reads `executing` and `verifying` since #101), the incident's `tokens` stayed 0 on the local model while the usage ledger had every call, and the service view listed its URL checks as `unknown` (fixed by #103).
+- In these runs the incident's status read `investigating` while it executed and verified (it reads `executing` and `verifying` since #101), the incident's `tokens` stayed 0 on the local model while the usage ledger had every call, and the service view listed its URL checks as `unknown` (the tokens: fixed by #102; the URL checks: #103).
 
 ## Why it is built this way
 

@@ -98,7 +98,7 @@ The allowlisted, read-only shell and what is read through it (`hosts/shell.py`, 
 - **Darwin load comes from `sysctl vm.loadavg`** (`{ 1.15 1.80 3.61 }`), Linux from `/proc/loadavg`. Reason: `uptime` text differs per OS and locale (#7).
 - **`df -P` rows are filtered.** Dropped: `tmpfs`, `devtmpfs`, `overlay`, `shm`, `squashfs`, `devfs`, `map ...` automounts, and on macOS every `/System/Volumes/*` mount except `Data`. Repeated mounts are shown once. Reason: the Coolify host listed one overlay per container (9 identical rows), and macOS lists seven system volumes that share one disk (#7).
 - **A field that cannot be read is None and logged; it never raises.** A lost connection is the exception: it propagates. Reason: one odd `free` output must not blank the host's other numbers, but a dead connection must not be mistaken for an empty host (#7).
-- **Basics are refreshed with the container list but at most every 60 s, a failed read included, and a failure keeps the old basics.** A socket host uses the engine's `info` (CPUs and memory, no disks or load). Reason: 60 s is the host probe cadence, six SSH commands do not belong in every 15 s poll, and unreadable basics must not mark a reachable host down (#7).
+- **Basics are refreshed with the container list but at most every 60 s, a failed read retried after 10 s (the next tick), and a failure keeps the old basics.** A socket host uses the engine's `info` (CPUs and memory, no disks or load). Reason: 60 s is the host probe cadence, six SSH commands do not belong in every 15 s poll, and unreadable basics must not mark a reachable host down (#7).
 - **`BasicsView` numbers are nullable.** Reason: a socket host has no load and a parse can fail, and a made-up 0 would read as a real value (#7).
 
 ## GitHub

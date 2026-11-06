@@ -45,7 +45,7 @@ flowchart LR
 
 | Piece | Path | What it does |
 |---|---|---|
-| **Hosts file** | `config/hosts.example.yaml`, `backend/src/bleep/hosts/config.py` | Which hosts to watch and how to reach them, per-host and per-service rules, URLs and protected containers. Secrets are references to env vars or files, never values. |
+| **Hosts file** | `config/hosts.example.yaml`, `backend/src/bleep/hosts/config.py` | Which hosts to watch and how to reach them, per-host and per-service rules, URLs, protected containers, the `exits` of jobs meant to finish and `may_sleep` for a host that sleeps by design. Secrets are references to env vars or files, never values. |
 | **SSH session and engine** | `hosts/ssh.py`, `hosts/engine.py` | One asyncssh connection per SSH host forwards the remote Docker socket; the `docker` SDK talks to it. A socket host talks to a local endpoint, in the demo a filtered proxy. |
 | **Host shell** | `hosts/shell.py` | The read-only command allowlist (exact argv templates) and host basics (disk, memory, load) for Linux and macOS. |
 | **Registry** | `hosts/registry.py`, `hosts/discovery.py` | Each host's connection, reachability, containers grouped into services, and basics. |
@@ -56,6 +56,9 @@ flowchart LR
 | **Detector** | `watcher/detector.py` | Pure decision logic: a signal becomes an incident, a self-recovery or nothing (grace window, repeated deaths, debounce, host thresholds). |
 | **Watcher manager** | `watcher/manager.py` | Runs a supervised task group per host, feeds every signal to the detector, opens or attaches incidents for subjects that are not quiet, starts the runner for new ones, and logs self-recoveries with a one-line explanation. |
 | **Incidents** | `incidents/repository.py`, `incidents/bus.py` | Incidents and their signals, one open per subject; the event bus stores every event, then fans it out to live subscribers. |
+| **Expectations** | `incidents/expectations.py` | "This is expected": records that what opened an incident is normal, only where a later identical event can be judged by it: a job's clean exit goes into its service's `exits`, a host that sleeps gets `may_sleep`. |
+| **Watchdog** | `incidents/watchdog.py` | Tells the human once about an incident that has stopped moving. It only reports; it never acts. |
+| **Sleep watch** | `watcher/wake.py` | Notices that Bleep itself was suspended (its machine slept, its container was paused) from the gap between the wall clock and the monotonic clock, so the time it could not see is not counted as an outage. |
 | **Quiet store** | `incidents/quiet.py`, `api/quiet.py` | One quiet state per service or host, snooze or leave alone. Its listeners close the subject's incidents when a quiet starts and judge it again when one ends; a 30 s loop ends snoozes whose time has passed. |
 | **Runner** | `incidents/runner.py` | Runs each incident's graph in the background, started by the watcher manager for each newly opened incident, resumed after a decision or a restart (`recover_on_boot` at startup), and keeps the incident's status in step. |
 | **Approvals** | `incidents/approvals.py`, `incidents/reminders.py` | Pending approvals in SQLite, decided once by whichever channel answers first; HMAC grants for approved plans; reminders that never approve. |
@@ -90,7 +93,7 @@ Paths under `backend/src/bleep/` are given from there.
 |---|---|---|
 | 1. Detect | A container dies, a URL fails or a host crosses a threshold; the detector waits out the grace window and debounces, then asks for an incident. | `watcher/detector.py` |
 | 2. Open | The incident is opened, or the signal attaches to the subject's open one. | `IncidentRepo.open_or_attach` |
-| 3. Run | The runner tells the channels the incident opened (Telegram gets it whatever the run ends with), then starts the incident's graph thread in the background (`thread_id` = incident id). | `IncidentRunner.start`, `Notifier.incident_opened` |
+| 3. Run | The runner tells the channels the incident opened (Telegram gets it whatever the run ends with), then starts the incident's graph thread in the background (`thread_id` = incident id), except for a repeat of a finished incident (no "opened" message) and a host-unreachable incident (it waits for its host, with no graph run). | `IncidentRunner.start`, `Notifier.incident_opened` |
 | 4. Gather | Containers, the last 200 log lines of the affected ones through the guard, host basics, rules, the 3 most similar past incidents (the same service's first) and the service's facts. No model call. | `graph/nodes/gather.py`, `MemoryStore.similar` |
 | 5. Investigate | The model reads with read-only tools, at most 8 calls a round; each result is guarded and wrapped once, and every call and result streams to the bus. A spent cost budget stops here with a notice. | `graph/nodes/investigate.py` |
 | 6. Diagnose | Root cause, evidence, confidence; low confidence investigates once more, then goes on marked unsure, and Propose still asks the model. | `graph/nodes/diagnose.py` |
@@ -248,7 +251,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 
 | Report | What it measured |
 |---|---|
-| [Scenarios, 2026-11-03](evals/scenarios-2026-11-03.md) | The eight demo faults on `openai/gpt-6-luna`, 3 runs each: root cause right in 21 of 24 (hung 0 of 3 on a shop with stale logs, 3 of 3 on a reset shop), plan exact in 18 of 24, $0.0035 and about 70 s to a diagnosis per run. |
+| [Scenarios, 2026-11-03](evals/scenarios-2026-11-03.md) | The eight demo faults on `openai/gpt-6-luna`, 3 runs each: root cause right in 21 of 24 (hung 0 of 3 on a shop with stale logs, 3 of 3 while the log still held a freeze line; 0 of 3 since #106 removed it, see 2026-11-05), plan exact in 18 of 24, $0.0035 and about 70 s to a diagnosis per run. |
 | [Prompt injection, 2026-11-03](evals/injection-2026-11-03.md) | On gpt-6-luna, 13 of 13 live attacks (log, reply body, memory) failed to steer Bleep or leak a secret, though the 4 reply-body attacks never reached the model ([what reached it](evals/injection-reached-2026-11-04.md)); 6 of 6 honest controls kept the right root cause. After #105, the model flagged planted orders in 12 of 13 attacks but also in 4 of 6 honest controls, so its flag is measured and not shown. |
 | [Local model, 2026-11-03](evals/scenarios-local-2026-11-03.md) | The eight faults and the injection suite on `openai/gpt-oss-20b`, 1 run each on a reset shop: root cause 7 of 8, controls 6 of 6, 0 fallbacks, 55 s to a diagnosis, $0; 2 of 13 attacks worked, 13 of 13 passed after the `healthy_target` rule, but the diagnoses were still steered: the plan check and the approval gate carry the safety. |
 | [bad-deploy with the GitHub tools, 2026-11-03](evals/scenarios-2026-11-03-2.md) | bad-deploy on gpt-6-luna with a GitHub fixture, 2 rounds of 3: root cause 6 of 6 at 0.85 to 1.00, every run citing the version-2 commit and its migration, against 0.80 to 0.85 and neither named on the logs alone; category still off (#108). |
