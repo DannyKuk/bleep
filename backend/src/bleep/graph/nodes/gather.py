@@ -2,9 +2,9 @@
 
 Deterministic, no model call. A service gets its containers, the last 200 log lines of the
 affected ones, the host's basics and the host and service rules; a host gets its basics and the
-containers using the most memory. Similar past incidents and the service's facts come from
-long-term memory. Whatever cannot be read (an unreachable host, a vanished service) becomes a
-line in `gaps`, never an error, so the run goes on with what it has.
+containers using the most memory, Bleep's own left out. Similar past incidents and the service's
+facts come from long-term memory. Whatever cannot be read (an unreachable host, a vanished
+service) becomes a line in `gaps`, never an error, so the run goes on with what it has.
 """
 
 import asyncio
@@ -13,6 +13,7 @@ import logging
 from bleep.graph.deps import GraphDeps
 from bleep.graph.host_text import service_id_shown
 from bleep.graph.state import IncidentState, Node
+from bleep.hosts.discovery import is_self
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.graph import ContainerMemory, GatherContext
 from bleep.schemas.incidents import Signal, Subject
@@ -103,10 +104,12 @@ async def _host(deps: GraphDeps, host: HostState, context: GatherContext) -> Non
     host_id = host.config.id
     try:
         engine = deps.registry.engine(host_id)
-        running = [c.name for c in await engine.containers() if c.state == "running"]
+        listed = await engine.containers()
     except Exception as error:
         context.gaps.append(f"container list: {_why(error)}")
         return
+    # Bleep's own containers are never read or shown, as in the read tools (#297).
+    running = [c.name for c in listed if c.state == "running" and not is_self(c.labels)]
     limit = asyncio.Semaphore(STATS_AT_ONCE)
 
     async def memory(name: str) -> ContainerMemory | None:

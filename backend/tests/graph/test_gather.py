@@ -1,8 +1,13 @@
-from bleep.graph.nodes import gather
+from typing import Any
+
+from langchain_core.messages import AIMessage
+
+from bleep.graph.nodes import gather, investigate, propose
 from bleep.schemas.docker import ContainerStats
-from bleep.schemas.graph import GatherContext, PastIncident
+from bleep.schemas.graph import Diagnosis, GatherContext, PastIncident
 from bleep.schemas.incidents import Signal, Subject
-from graph_env import T0, graph_env, shop_engine
+from fakes import FakeChatModel, FakeEngine
+from graph_env import T0, box, graph_env, shop_engine
 
 NOISY_LOG = (
     "".join(f"line {i:03d} ok\n" for i in range(290))
@@ -80,6 +85,61 @@ async def test_host_subject_gets_basics_and_top_containers_by_memory(tmp_path):
     assert [(m.name, m.mem_usage) for m in ctx.top_memory] == [("shop-db-1", 500), ("blog-1", 300)]
     assert ctx.host_rules == ["never restart postgres without telling me which app depends on it"]
     assert ctx.service_name is None and ctx.service_rules == [] and ctx.logs == {}
+
+
+class StatsCountingEngine(FakeEngine):
+    """Keeps the name of every container whose `docker stats` was read."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.stats_read: list[str] = []
+
+    async def stats(self, container: str) -> ContainerStats:
+        self.stats_read.append(container)
+        return await super().stats(container)
+
+
+def stop_own_container() -> AIMessage:
+    step = {"action": "docker.stop", "host_id": "a", "target": "bleep-backend"}
+    plan = {"kind": "act", "steps": [step], "reason": "free memory", "verification": {}}
+    return AIMessage(content="", tool_calls=[{"name": "ProposalDraft", "args": plan, "id": "p"}])
+
+
+async def test_a_host_incident_leaves_bleeps_own_containers_out_of_the_readings(tmp_path):
+    """Bleep's own container is the top memory user, yet Gather neither reads nor shows it, and
+    Propose does not count it among the containers a stop may name (#297)."""
+    engine = StatsCountingEngine(
+        "a",
+        [box("shop-web-1", "shop"), box("bleep-backend", labels={"bleep.self": "true"})],
+        stats={
+            "bleep-backend": ContainerStats(mem_usage=3 * 2**30, mem_limit=0, mem_percent=75.0),
+            "shop-web-1": ContainerStats(mem_usage=2**28, mem_limit=0, mem_percent=25.0),
+        },
+    )
+    env = await graph_env(tmp_path, engine=engine)
+    env.models.model = FakeChatModel(script=[stop_own_container(), stop_own_container()])
+    subject = Subject(kind="host", host_id="a")
+    signals = [Signal(subject=subject, kind="memory", at=T0)]
+    incident = await env.open(subject, kind="memory")
+    state: dict = {"incident_id": incident.id, "subject": subject, "signals": signals}
+
+    ctx = await run_gather(env, subject, signals)
+
+    assert [m.name for m in ctx.top_memory] == ["shop-web-1"]
+    assert engine.stats_read == ["shop-web-1"]
+    task = investigate._task(state | {"context": ctx}, 8, lambda: T0)
+    assert "bleep-backend" not in task
+
+    cause = Diagnosis(root_cause="the host ran out of memory", category="host", confidence=0.9)
+    update = await propose.make(env.deps)(state | {"context": ctx, "diagnosis": cause})
+
+    assert update["proposal"].kind == "no_action"
+    refusals = update["proposal"].refusal_reasons
+    assert any("bleep-backend is one of Bleep's own containers" in r for r in refusals)
+    with_ctx = state | {"context": ctx}
+    assert "bleep-backend" not in propose._named_containers(env.deps, with_ctx)
+    containers = "\n".join(m.text for m in env.models.model.seen[0]).split("## Containers")[1]
+    assert "bleep-backend" not in containers.split("## Off limits")[0]
 
 
 async def test_gather_makes_no_model_call(tmp_path):
