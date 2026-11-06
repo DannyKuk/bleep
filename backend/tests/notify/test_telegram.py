@@ -1390,7 +1390,7 @@ async def test_one_failing_message_does_not_skip_the_rest(env, closing, caplog):
     async def flaky(chat_id: str, message_id: int) -> None:
         seen.append(message_id)
         if len(seen) == 1:
-            raise httpx.ReadError("down")
+            raise TelegramError("clear: down")
 
     env.notifier.telegram.clear_buttons = flaky
     await closing.repo.close_unfinished(env.incident_id)
@@ -1439,3 +1439,53 @@ async def test_a_failing_listener_never_blocks_the_close(env, closing, caplog):
     assert (await closing.repo.get(env.incident_id)).status == "closed"
     assert "a listener for its end failed" in caplog.text
     assert "boom" in caplog.text
+
+
+async def test_a_reminder_sent_as_its_plan_is_decided_is_cleared_as_it_is_logged(env, closing):
+    decision = Decision(kind="reject", via="dashboard", at=T0)
+    await env.approvals.resolve(env.incident_id, decision, env.approval_id)
+    await closing.cleared()
+    env.api.calls.clear()
+    current = await env.approvals.current(env.incident_id)
+    await env.notifier.proposal(env.incident, None, PLAN, current)
+    assert len(env.api.sent("editMessageReplyMarkup")) == 1
+
+
+async def test_an_unexpected_error_in_one_clear_neither_skips_the_rest_nor_hides_the_bug(
+    env, closing, caplog
+):
+    await env.messages.add(313, env.incident_id, env.approval_id, T0)
+    seen: list[int] = []
+
+    async def flaky(chat_id: str, message_id: int) -> None:
+        seen.append(message_id)
+        if len(seen) == 1:
+            raise KeyError("unexpected")
+
+    env.notifier.telegram.clear_buttons = flaky
+    await closing.repo.close_unfinished(env.incident_id)
+    await env.notifier.drain()
+    assert sorted(seen) == [311, 313]
+    assert "KeyError" in caplog.text  # the traceback is logged
+
+
+async def test_drain_gives_up_on_a_hanging_telegram(env, closing):
+    async def hang(chat_id: str, message_id: int) -> None:
+        await asyncio.sleep(3600)
+
+    env.notifier.telegram.clear_buttons = hang
+    await closing.repo.close_unfinished(env.incident_id)
+    await asyncio.wait_for(env.notifier.drain(timeout_s=0.05), timeout=2)
+    for task in list(env.notifier._clearing):
+        task.cancel()
+
+
+async def test_a_database_error_in_the_late_check_does_not_fail_the_send(env, closing, caplog):
+    async def broken(incident_id: str) -> None:
+        raise RuntimeError("db down")
+
+    env.approvals.current = broken
+    request = SimpleNamespace(id=env.approval_id)
+    await env.notifier.proposal(env.incident, None, PLAN, request)
+    assert len(env.api.sent("sendMessage")) == 1
+    assert "db down" in caplog.text

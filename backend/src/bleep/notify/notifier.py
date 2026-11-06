@@ -53,6 +53,7 @@ log = logging.getLogger(__name__)
 
 TOKEN_ENV = "TELEGRAM_BOT_TOKEN"  # `Settings.telegram_bot_token`
 CHAT_ID_ENV = "TELEGRAM_CHAT_ID"  # `Settings.telegram_chat_id`
+DRAIN_TIMEOUT_S = 5.0  # how long a shutdown waits for buttons still being cleared
 
 
 class Notifier:
@@ -90,9 +91,11 @@ class Notifier:
         if self.messages is not None and approval_id:
             self._spawn(self.messages.ids_for_approval(approval_id))
 
-    async def drain(self) -> None:
-        """Wait for the clearing in flight (tests, and the app's shutdown)."""
-        await asyncio.gather(*self._clearing, return_exceptions=True)
+    async def drain(self, timeout_s: float = DRAIN_TIMEOUT_S) -> None:
+        """Wait for the clearing in flight (tests, and the app's shutdown) for at most
+        `timeout_s`, so a hanging Telegram cannot stall a shutdown."""
+        if self._clearing:
+            await asyncio.wait(set(self._clearing), timeout=timeout_s)
 
     def _spawn(self, ids: Coroutine[Any, Any, list[int]]) -> None:
         """Clear in the background, so a slow Telegram never holds a close or a decision."""
@@ -120,22 +123,30 @@ class Notifier:
                     log.debug("telegram: buttons already gone from message %s", message_id)
                 else:
                     log.warning("telegram: could not clear the buttons: %s", error)
-            except (httpx.HTTPError, OSError, RuntimeError) as error:  # not mapped by `call`
-                log.warning("telegram: could not clear the buttons (%s)", type(error).__name__)
+            except Exception:  # a bug must keep its traceback, and the other messages still clear
+                log.exception("telegram: clearing message %s failed unexpectedly", message_id)
 
     async def _clear_if_finished(self, incident_id: str, message_id: int, approval_id: str) -> None:
         """A message logged after its incident ended or its plan was closed (the run's Approval
         node can still send one just after an outside close) never met the clear: do it now."""
-        if self.approvals is not None and approval_id:
-            current = await self.approvals.current(incident_id)
-            finished = current is not None and current.id == approval_id and current.closed
-        elif self.incidents is not None:
-            incident = await self.incidents.get(incident_id)
-            finished = incident is not None and incident.status in TERMINAL_STATUSES
-        else:
-            finished = False
+        try:
+            finished = await self._finished(incident_id, approval_id)
+        except Exception:  # best effort: the message is sent, and the Approval node must know it
+            log.exception("incident %s: could not tell whether to clear a new message", incident_id)
+            return
         if finished:
             await self._clear([message_id])
+
+    async def _finished(self, incident_id: str, approval_id: str) -> bool:
+        if self.approvals is not None and approval_id:
+            current = await self.approvals.current(incident_id)
+            if current is None or current.id != approval_id:
+                return False
+            return current.closed or current.decision is not None
+        if self.incidents is not None:
+            incident = await self.incidents.get(incident_id)
+            return incident is not None and incident.status in TERMINAL_STATUSES
+        return False
 
     async def incident_opened(self, incident: Incident) -> None:
         """A host-unreachable incident that waits for its host says so instead of promising a
