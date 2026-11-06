@@ -60,6 +60,7 @@ class FakeTelegram:
         self.updates: list[dict | httpx.Response] = []
         self.calls: list[tuple[str, dict]] = []
         self.fail_clear = False
+        self.not_modified = False
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         assert request.url.host == "api.telegram.org"
@@ -75,6 +76,9 @@ class FakeTelegram:
             return httpx.Response(200, json=fixture("send_message_ok"))
         if method == "editMessageReplyMarkup" and self.fail_clear:
             return httpx.Response(400, json={"ok": False, "description": "message can't be edited"})
+        if method == "editMessageReplyMarkup" and self.not_modified:
+            description = "Bad Request: message is not modified"
+            return httpx.Response(400, json={"ok": False, "description": description})
         return httpx.Response(200, json={"ok": True, "result": True})
 
     def sent(self, method: str) -> list[dict]:
@@ -1328,9 +1332,79 @@ async def test_a_lost_decision_clears_nothing(env, closing):
     assert await closing.cleared() == []
 
 
-async def test_a_telegram_press_clears_its_message_once(env, closing):
+async def test_a_telegram_press_leaves_no_button_on_the_plan(env, closing):
     await poll(env, "callback_approve")
+    assert set(await closing.cleared()) == {311}
+
+
+async def test_a_press_on_a_reminder_clears_the_original_proposal_too(env, closing):
+    await env.messages.add(313, env.incident_id, env.approval_id, T0)  # a reminder
+    update = fixture("callback_approve", APPROVAL_ID=env.approval_id)
+    update["result"][0]["callback_query"]["message"]["message_id"] = 313
+    env.api.updates.append(update)
+    await env.bot.poll_once()
+    assert set(await closing.cleared()) == {311, 313}
+
+
+async def test_a_telegram_reply_instruction_clears_the_plans_buttons(env, closing):
+    await poll(env, "reply_instruction")
+    assert env.runner.resumed[0][1].kind == "instruct"
     assert await closing.cleared() == [311]
+
+
+async def test_a_plan_sent_after_its_incident_closed_is_cleared_as_it_is_logged(env, closing):
+    await closing.repo.close_unfinished(env.incident_id)
+    await closing.cleared()
+    env.api.calls.clear()
+    late = await env.approvals.request(env.incident_id, PLAN, [])  # closed as it is inserted
+    await env.notifier.proposal(env.incident, None, PLAN, late)
+    assert len(env.api.sent("sendMessage")) == 1
+    assert len(env.api.sent("editMessageReplyMarkup")) == 1
+
+
+async def test_a_plan_sent_while_its_incident_is_open_keeps_its_buttons(env, closing):
+    env.api.calls.clear()
+    current = await env.approvals.current(env.incident_id)
+    await env.notifier.proposal(env.incident, None, PLAN, current)
+    assert env.api.sent("editMessageReplyMarkup") == []
+
+
+async def test_an_opened_message_sent_after_its_incident_closed_is_cleared(env, closing):
+    class Offers:
+        async def offered(self, incident_id: str) -> object:
+            return object()
+
+    env.notifier.expectations = Offers()
+    env.notifier.incidents = closing.repo
+    await closing.repo.close_unfinished(env.incident_id)
+    await closing.cleared()
+    env.api.calls.clear()
+    await env.notifier.incident_opened(env.incident)
+    assert len(env.api.sent("editMessageReplyMarkup")) == 1
+
+
+async def test_one_failing_message_does_not_skip_the_rest(env, closing, caplog):
+    await env.messages.add(313, env.incident_id, env.approval_id, T0)
+    seen: list[int] = []
+
+    async def flaky(chat_id: str, message_id: int) -> None:
+        seen.append(message_id)
+        if len(seen) == 1:
+            raise httpx.ReadError("down")
+
+    env.notifier.telegram.clear_buttons = flaky
+    await closing.repo.close_unfinished(env.incident_id)
+    await env.notifier.drain()
+    assert sorted(seen) == [311, 313]
+    assert "could not clear" in caplog.text
+
+
+async def test_a_message_that_is_not_modified_is_not_a_warning(env, closing, caplog):
+    env.api.not_modified = True
+    with caplog.at_level("DEBUG"):
+        await closing.repo.close_unfinished(env.incident_id)
+        await env.notifier.drain()
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]
 
 
 async def test_a_failing_clear_never_blocks_the_close_or_the_decision(env, closing, caplog):
@@ -1362,4 +1436,6 @@ async def test_a_failing_listener_never_blocks_the_close(env, closing, caplog):
 
     closing.repo.on_finished(broken)
     assert await closing.repo.close_unfinished(env.incident_id) is not None
-    assert "boom" in caplog.text or "listener" in caplog.text
+    assert (await closing.repo.get(env.incident_id)).status == "closed"
+    assert "a listener for its end failed" in caplog.text
+    assert "boom" in caplog.text

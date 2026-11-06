@@ -65,6 +65,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
             # Pushed in start order, so a failure at any point closes exactly what was opened,
             # and a normal stop runs them in reverse: stop what sends, then close what it sends on.
             stack.push_async_callback(parts.notify.close)  # last: runs and reminders still send
+            stack.push_async_callback(parts.notify.notifier.drain)  # clears in flight finish first
             await parts.db.migrate()
             if settings.dev_panel:  # with the panel off, every prompt is read from its file
                 await parts.prompt_overrides.load()

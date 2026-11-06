@@ -10,17 +10,19 @@ Approval node tells the dashboard when a plan could not be sent.
 
 import asyncio
 import logging
+import sqlite3
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any
 
+import aiosqlite
 import httpx
 
 from bleep.config import Settings
 from bleep.graph.deps import Approvals
 from bleep.guard.log import GuardLogger
 from bleep.incidents.bus import EventBus
-from bleep.incidents.repository import utcnow
+from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.notify import format as fmt
 from bleep.notify.telegram import (
     EXPECTED_LABEL,
@@ -41,7 +43,7 @@ from bleep.schemas.graph import (
     Report,
     VerificationResult,
 )
-from bleep.schemas.incidents import Incident
+from bleep.schemas.incidents import TERMINAL_STATUSES, Incident
 from bleep.schemas.settings import SecretStatus
 from bleep.schemas.telegram import TelegramStatus
 from bleep.store.db import Database
@@ -71,6 +73,7 @@ class Notifier:
         self.approvals = approvals
         self.expectations: Expecting | None = None
         self._clearing: set[asyncio.Task[None]] = set()
+        self.incidents: IncidentRepo | None = None
 
     async def incident_finished(self, incident_id: str) -> None:
         """Remove the buttons from every message logged for an incident that ended: a message
@@ -81,34 +84,58 @@ class Notifier:
     async def approval_decided(
         self, incident_id: str, approval_id: str | None, decision: Decision
     ) -> None:
-        """Remove the buttons of the plan a dashboard decision answered. A decision made on
-        Telegram clears the message it was pressed on itself."""
-        if self.messages is not None and approval_id and decision.via != "telegram":
+        """Remove the buttons from every message of the plan a decision answered (the proposal
+        and its reminders), whichever channel decided and however it was said: a press clears
+        only its own message, and a reply clears none."""
+        if self.messages is not None and approval_id:
             self._spawn(self.messages.ids_for_approval(approval_id))
 
     async def drain(self) -> None:
-        """Wait for the clearing in flight (tests, and shutdown)."""
+        """Wait for the clearing in flight (tests, and the app's shutdown)."""
         await asyncio.gather(*self._clearing, return_exceptions=True)
 
     def _spawn(self, ids: Coroutine[Any, Any, list[int]]) -> None:
         """Clear in the background, so a slow Telegram never holds a close or a decision."""
-        task = asyncio.create_task(self._clear(ids))
+        task = asyncio.create_task(self._look_up_and_clear(ids))
         self._clearing.add(task)
         task.add_done_callback(self._clearing.discard)
 
-    async def _clear(self, ids: Coroutine[Any, Any, list[int]]) -> None:
+    async def _look_up_and_clear(self, ids: Coroutine[Any, Any, list[int]]) -> None:
         try:
             message_ids = await ids
-        except Exception:
+        except sqlite3.Error, aiosqlite.Error, OSError:
             log.exception("telegram: could not look up the messages to clear")
             return
+        await self._clear(message_ids)
+
+    async def _clear(self, message_ids: list[int]) -> None:
+        """Clear each message on its own: one that fails never skips the rest."""
         if self.telegram is None or self.chat_id is None:
             return
         for message_id in message_ids:
             try:
                 await self.telegram.clear_buttons(self.chat_id, message_id)
             except TelegramError as error:
-                log.warning("telegram: could not clear the buttons: %s", error)
+                if "message is not modified" in str(error):  # a press cleared it already
+                    log.debug("telegram: buttons already gone from message %s", message_id)
+                else:
+                    log.warning("telegram: could not clear the buttons: %s", error)
+            except (httpx.HTTPError, OSError, RuntimeError) as error:  # not mapped by `call`
+                log.warning("telegram: could not clear the buttons (%s)", type(error).__name__)
+
+    async def _clear_if_finished(self, incident_id: str, message_id: int, approval_id: str) -> None:
+        """A message logged after its incident ended or its plan was closed (the run's Approval
+        node can still send one just after an outside close) never met the clear: do it now."""
+        if self.approvals is not None and approval_id:
+            current = await self.approvals.current(incident_id)
+            finished = current is not None and current.id == approval_id and current.closed
+        elif self.incidents is not None:
+            incident = await self.incidents.get(incident_id)
+            finished = incident is not None and incident.status in TERMINAL_STATUSES
+        else:
+            finished = False
+        if finished:
+            await self._clear([message_id])
 
     async def incident_opened(self, incident: Incident) -> None:
         """A host-unreachable incident that waits for its host says so instead of promising a
@@ -128,6 +155,7 @@ class Notifier:
             return
         if self.messages is not None:
             await self.messages.add(message_id, incident.id, "", utcnow())
+            await self._clear_if_finished(incident.id, message_id, "")
 
     async def _expect_button(self, incident_id: str) -> list[tuple[str, str]]:
         """The "It's expected" button when it applies to the incident, else none."""
@@ -235,6 +263,7 @@ class Notifier:
         message_id = await self.telegram.send_message(self.chat_id, text, buttons)
         if self.messages is not None:
             await self.messages.add(message_id, incident.id, approval.id, utcnow())
+            await self._clear_if_finished(incident.id, message_id, approval.id)
 
     async def _plain(self, template: str, **values: str) -> None:
         if self.telegram is None:
