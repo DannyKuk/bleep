@@ -14,7 +14,7 @@ from bleep.schemas.graph import Decision, Diagnosis, GatherContext, PlanStep, Pr
 from bleep.schemas.incidents import Signal, Subject
 from bleep.tools.default import default_registry
 from bleep.tools.registry import ToolContext
-from fakes import FakeChatModel
+from fakes import FakeChatModel, LowScoringEmbedder
 from graph_env import T0, graph_env
 
 RESTART = Proposal(
@@ -29,9 +29,9 @@ def past_report(title: str, cause: str) -> Report:
     return Report(title=title, summary="s", cause=cause, outcome="Rejected, nothing was done")
 
 
-async def memory_env(tmp_path):
+async def memory_env(tmp_path, embedder: FakeEmbedder | None = None):
     env = await graph_env(tmp_path)
-    store = MemoryStore(env.db, FakeEmbedder(), clock=lambda: T0)
+    store = MemoryStore(env.db, embedder or FakeEmbedder(), clock=lambda: T0)
     env.deps.memory = store
     return env, store
 
@@ -86,7 +86,7 @@ async def test_a_failing_memory_is_a_gap_not_an_error(tmp_path):
     env = await graph_env(tmp_path)
 
     class Broken:
-        async def similar(self, text, service_id=None, k=3, min_score=0.5):
+        async def similar(self, text, service_id=None, k=3, min_score=None):
             raise RuntimeError("model missing")
 
         async def facts(self, service_id):
@@ -187,6 +187,30 @@ async def test_recall_incidents_is_a_read_tool_over_memory(tmp_path):
     assert "the db was down" in answer
     assert nothing == "No past incident is like this one."
     assert "recall_incidents" not in {s.name for s in default_registry().specs()}
+
+
+async def test_gather_and_the_tool_both_recall_with_the_embedders_min_score(tmp_path):
+    """One threshold, the embedder's, for every recall: a model whose matches sit lower is
+    heard by Gather and by recall_incidents once its min_score is set for it (#306)."""
+
+    async def recall(min_score: float) -> tuple[GatherContext, str]:
+        env, store = await memory_env(
+            tmp_path / str(min_score), LowScoringEmbedder(factor=0.5, min_score=min_score)
+        )
+        here = await closed_incident(env, shop(env))
+        await store.add_report(here, past_report("container died on shop", "the db was down"))
+        ctx = ToolContext("inc-new", "a", env.registry)
+        tools = {t.name: t for t in default_registry(store).read_tools(ctx)}
+        answer = await tools["recall_incidents"].ainvoke({"query": "container died: db was down"})
+        return await gather_for(env, shop(env)), answer
+
+    strict, strict_answer = await recall(0.5)
+    loose, loose_answer = await recall(0.1)
+
+    assert strict.similar == [] and strict_answer == "No past incident is like this one."
+    assert [p.title for p in loose.similar] == ["container died on shop"]
+    assert loose.similar[0].score < 0.5
+    assert "the db was down" in loose_answer
 
 
 async def test_report_remembers_after_it_publishes_and_before_it_closes(tmp_path):

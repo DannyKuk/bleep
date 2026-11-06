@@ -200,6 +200,23 @@ def test_the_embedder_follows_the_settings(settings):
         check_settings(half)
 
 
+def test_recalls_min_score_is_the_models_unless_the_settings_name_one(settings):
+    """bge-small keeps 0.5, a known endpoint model brings its own, EMBEDDINGS_MIN_SCORE wins
+    (#306)."""
+    from bleep.wiring import build_embedder
+
+    endpoint = {"embeddings_provider": "openai", "embeddings_base_url": "http://x/v1"}
+    m3 = settings.model_copy(update={**endpoint, "embeddings_model": "bge-m3"})
+    other = settings.model_copy(update={**endpoint, "embeddings_model": "nomic-embed-text"})
+
+    assert build_embedder(settings).min_score == 0.5
+    assert build_embedder(m3).min_score == 0.35
+    assert build_embedder(other).min_score == 0.5
+    for chosen in (m3, other, settings):
+        told = chosen.model_copy(update={"embeddings_min_score": 0.42})
+        assert build_embedder(told).min_score == 0.42
+
+
 def test_the_embeddings_settings_are_read_from_their_env_names(monkeypatch, tmp_path):
     from bleep.config import Settings
 
@@ -207,12 +224,25 @@ def test_the_embeddings_settings_are_read_from_their_env_names(monkeypatch, tmp_
     monkeypatch.setenv("EMBEDDINGS_BASE_URL", "http://x/v1")
     monkeypatch.setenv("EMBEDDINGS_MODEL", "m")
     monkeypatch.setenv("EMBEDDINGS_API_KEY", "k")
+    monkeypatch.setenv("EMBEDDINGS_MIN_SCORE", "0.35")
     loaded = Settings(admin_password=SecretStr("p" * 12), secret=SecretStr("s"))
 
+    assert loaded.embeddings_min_score == 0.35
     assert loaded.embeddings_provider == "openai"
     assert loaded.embeddings_base_url == "http://x/v1" and loaded.embeddings_model == "m"
     assert loaded.embeddings_api_key is not None
     assert loaded.embeddings_api_key.get_secret_value() == "k"
+
+
+@pytest.mark.parametrize("value", ["1.5", "-0.1", "half"])
+def test_a_min_score_outside_zero_to_one_is_refused(monkeypatch, value):
+    from pydantic import ValidationError
+
+    from bleep.config import Settings
+
+    monkeypatch.setenv("EMBEDDINGS_MIN_SCORE", value)
+    with pytest.raises(ValidationError, match="embeddings_min_score|EMBEDDINGS_MIN_SCORE"):
+        Settings(admin_password=SecretStr("p" * 12), secret=SecretStr("s"))
 
 
 def test_the_runner_traces_with_the_parts_tracer_and_it_is_flushed_at_shutdown(settings, parts):

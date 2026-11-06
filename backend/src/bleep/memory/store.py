@@ -6,10 +6,10 @@ it), with the human's feedback on the incident (`set_feedback`, which also updat
 written), and up to two facts learned from the human's instructions (`replace_report_facts`).
 Gather and the `recall_incidents` tool ask `similar`: the query is embedded, every record of
 the current embedder is scored by cosine with numpy (brute force; a few thousand records take
-well under a millisecond), records below `min_score` are dropped, and the same service's
-records come first. Records whose `model` is not the current embedder's name are left out until
-`reembed` (run on boot) embeds them again. Text is cleaned before it is stored (`memory.text`).
-See docs/design/memory.md.
+well under a millisecond), records below the embedder's `min_score` are dropped, and the same
+service's records come first. Records whose `model` is not the current embedder's name are left
+out until `reembed` (run on boot) embeds them again. Text is cleaned before it is stored
+(`memory.text`). See docs/design/memory.md.
 """
 
 import asyncio
@@ -191,10 +191,12 @@ class MemoryStore:
         return kept
 
     async def similar(
-        self, text: str, service_id: str | None = None, k: int = 3, min_score: float = 0.5
+        self, text: str, service_id: str | None = None, k: int = 3, min_score: float | None = None
     ) -> list[PastIncident]:
-        """At most `k` past incidents scoring at least `min_score`, the same service's first and
-        the closest first within each group."""
+        """At most `k` past incidents scoring at least `min_score` (by default the embedder's),
+        the same service's first and the closest first within each group."""
+        if min_score is None:
+            min_score = self.embedder.min_score
         conn = await self.db.connect()
         try:
             async with conn.execute(

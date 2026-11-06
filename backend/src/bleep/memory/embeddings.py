@@ -3,8 +3,10 @@ as the option, and a hash-based fake for tests.
 
 Every embedder returns float32 rows of unit length, so a dot product is the cosine similarity.
 Its `name` is stored next to each vector; a different name on boot means the vectors are
-re-embedded (`MemoryStore.reembed`). `embed` blocks (CPU work or an HTTP call), so the store runs
-it in a worker thread. See docs/decisions/embeddings.md.
+re-embedded (`MemoryStore.reembed`). Its `min_score` is where recall cuts off, since every model
+spreads its scores differently: the model's measured one (`min_score_for`) unless set. `embed`
+blocks (CPU work or an HTTP call), so the store runs it in a worker thread. See
+docs/decisions/embeddings.md.
 """
 
 import hashlib
@@ -22,6 +24,11 @@ DEFAULT_LOCAL_MODEL = "BAAI/bge-small-en-v1.5"
 # on a 14-core laptop. Two threads cost 22 ms of CPU for 11 ms (docs/decisions/embeddings.md).
 LOCAL_THREADS = 2
 HTTP_TIMEOUT_S = 30.0
+DEFAULT_MIN_SCORE = 0.5
+# Recall's cut-off per model. bge-small's is the one recall was built on; bge-m3's is one 0.025
+# step below the highest that still returned every right past incident in
+# docs/spikes/embeddings/recall.py (docs/evals/embeddings-min-score-2026-11-06.md, #306).
+MIN_SCORES = {"bge-small-en-v1.5": 0.5, "bge-m3": 0.35}
 _WORD = re.compile(r"[a-z0-9]+")
 
 
@@ -29,10 +36,22 @@ class EmbedderError(Exception):
     """The embedder could not turn the texts into vectors."""
 
 
+def min_score_for(model: str) -> float:
+    """Recall's measured cut-off for a model, by its name with or without an owner or a tag
+    ("BAAI/bge-m3", "bge-m3:latest"); 0.5 for a model that was not measured."""
+    key = model.lower().rsplit("/", 1)[-1].split(":", 1)[0]
+    return MIN_SCORES.get(key, DEFAULT_MIN_SCORE)
+
+
 class Embedder(Protocol):
     @property
     def name(self) -> str:
         """Which model the vectors come from; a change re-embeds the stored ones."""
+        ...
+
+    @property
+    def min_score(self) -> float:
+        """Recall leaves out past incidents that score under this."""
         ...
 
     def embed(self, texts: list[str]) -> np.ndarray:
@@ -58,10 +77,12 @@ class FastEmbedEmbedder:
         model: str = DEFAULT_LOCAL_MODEL,
         cache_dir: str | None = None,
         threads: int | None = LOCAL_THREADS,
+        min_score: float | None = None,
     ) -> None:
         self.model = model
         self.cache_dir = cache_dir
         self.threads = threads
+        self.min_score = min_score_for(model) if min_score is None else min_score
         self._model: Any = None
         self._lock = threading.Lock()
 
@@ -94,9 +115,11 @@ class OpenAICompatEmbedder:
         model: str,
         api_key: SecretStr | str | Callable[[], SecretStr | None] | None = None,
         transport: httpx.BaseTransport | None = None,
+        min_score: float | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.min_score = min_score_for(model) if min_score is None else min_score
         key = SecretStr(api_key) if isinstance(api_key, str) else api_key
         # A callable is read at every call, so a key changed on the dashboard is used next.
         self._api_key = key if callable(key) else lambda: key
@@ -137,9 +160,12 @@ class FakeEmbedder:
     """Bag of words hashed into `dims` buckets: texts that share words score higher. For tests;
     it records every batch it was asked for in `calls`."""
 
-    def __init__(self, dims: int = 256, name: str = "fake") -> None:
+    def __init__(
+        self, dims: int = 256, name: str = "fake", min_score: float = DEFAULT_MIN_SCORE
+    ) -> None:
         self.dims = dims
         self._name = name
+        self.min_score = min_score
         self.calls: list[list[str]] = []
 
     @property

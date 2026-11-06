@@ -1,11 +1,15 @@
 """Memory recall on past incidents written in English and in German (#146): ten stored records in
 MemoryStore's form, searched with Gather's query and with free-text recall_incidents queries in
 both languages. For each query: the expected record's rank and score, the best other record's
-score, how many other records pass recall's `min_score` (0.5), and where the record lands in
-Bleep's own recall: Gather keeps the top 3 over 0.5 with the same service's first
-(`MemoryStore.similar`), recall_incidents the top 5 over 0.5.
+score, how many other records pass recall's `min_score` (MIN_SCORE, 0.5 by default), and where
+the record lands in Bleep's own recall: Gather keeps the top 3 over it with the same service's
+first (`MemoryStore.similar`), recall_incidents the top 5 over it.
 
-    MODEL=small|m3 python docs/spikes/embeddings/recall.py      (in backend's venv or the image)
+Then a sweep (#306): for each threshold from 0.30 to 0.60, how many right records Bleep's recall
+returns and how many records that are not the answer pass it, to pick a model's `min_score`.
+
+    MODEL=small|m3 [MIN_SCORE=0.5] python docs/spikes/embeddings/recall.py   (backend's venv or
+    the image)
 """
 
 import json
@@ -15,7 +19,8 @@ import sys
 import numpy as np
 from models import embedder
 
-MIN_SCORE = 0.5
+MIN_SCORE = float(os.environ.get("MIN_SCORE", "0.5"))
+SWEEP = [round(0.30 + 0.025 * i, 3) for i in range(13)]
 GATHER_K, TOOL_K = 3, 5
 
 # What MemoryStore embeds: "<title>. Cause: <cause> Action: <action>." The title, cause and
@@ -75,11 +80,13 @@ QUERIES = [
 ]
 
 
-def bleep_position(group: str, query: str, row: np.ndarray, ids: list[str], want: int) -> str:
+def bleep_position(
+    group: str, query: str, row: np.ndarray, ids: list[str], want: int, min_score: float
+) -> str:
     """The record's place in what Bleep's recall returns, or why it is not there."""
-    if row[want] < MIN_SCORE:
-        return "dropped (< 0.5)"
-    kept = [i for i in range(len(ids)) if row[i] >= MIN_SCORE]
+    if row[want] < min_score:
+        return f"dropped (< {min_score})"
+    kept = [i for i in range(len(ids)) if row[i] >= min_score]
     if group == "gather":
         service, k = query.split(":")[0], GATHER_K
         kept.sort(key=lambda i: (SERVICE[ids[i]] != service, -row[i]))
@@ -88,6 +95,28 @@ def bleep_position(group: str, query: str, row: np.ndarray, ids: list[str], want
         kept.sort(key=lambda i: -row[i])
     place = kept.index(want) + 1
     return str(place) if place <= k else f"cut ({place} > k={k})"
+
+
+def sweep(scores: np.ndarray, ids: list[str]) -> None:
+    """Right records returned and wrong records passing, per threshold."""
+    right = [float(row[ids.index(e)]) for (_, _, e), row in zip(QUERIES, scores, strict=True)]
+    wrong = [
+        float(row[i])
+        for (_, _, e), row in zip(QUERIES, scores, strict=True)
+        for i in range(len(ids))
+        if ids[i] != e
+    ]
+    print(f"right records: lowest {min(right):.3f}, mean {np.mean(right):.3f}")
+    print(f"other records: highest {max(wrong):.3f}, mean {np.mean(wrong):.3f}")
+    print("| min_score | Right returned (of 18) | Right dropped | Others passing (of 162) |")
+    print("|---|---|---|---|")
+    for t in SWEEP:
+        returned = sum(
+            bleep_position(g, q, row, ids, ids.index(e), t).isdigit()
+            for (g, q, e), row in zip(QUERIES, scores, strict=True)
+        )
+        dropped = sum(s < t for s in right)
+        print(f"| {t:.3f} | {returned} | {dropped} | {sum(s >= t for s in wrong)} |")
 
 
 def main() -> None:
@@ -111,11 +140,15 @@ def main() -> None:
                 "best_other": round(max(others), 3),
                 "best_other_id": ids[int(np.argmax(masked))],
                 "others_over_min": sum(s >= MIN_SCORE for s in others),
-                "in_bleep": bleep_position(group, query, row, ids, want),
+                "in_bleep": bleep_position(group, query, row, ids, want, MIN_SCORE),
+                "scores": {ids[i]: round(float(row[i]), 3) for i in range(len(ids))},
             }
         )
-    print(f"model {model.model}")
-    print("| Group | Query | Expected | Rank | Score | Best other | Others >= 0.5 | In Bleep |")
+    print(f"model {model.model}, min_score {MIN_SCORE}")
+    print(
+        f"| Group | Query | Expected | Rank | Score | Best other | Others >= {MIN_SCORE}"
+        " | In Bleep |"
+    )
     print("|---|---|---|---|---|---|---|---|")
     for r in rows:
         print(
@@ -134,6 +167,8 @@ def main() -> None:
         returned = sum(r["in_bleep"].isdigit() for r in part)
         name = group or "all"
         print(f"| {name} | {len(part)} | {hit1} | {hit3} | {margin:+.2f} | {returned} |")
+    print()
+    sweep(scores, ids)
     if out := os.environ.get("OUT"):
         with open(out, "w", encoding="utf-8") as f:
             for r in rows:

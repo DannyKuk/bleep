@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun, CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
@@ -18,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from bleep.hosts.config import HostConfig
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.hosts.ssh import CommandResult
+from bleep.memory.embeddings import FakeEmbedder
 from bleep.plugins.base import Plugin, PluginContext
 from bleep.schemas.docker import (
     ContainerDetail,
@@ -504,3 +506,24 @@ class FakeCoolifyPlugin(Plugin):
     async def health(self, ctx: PluginContext) -> PluginHealth:
         token = ctx.secrets["COOLIFY_TOKEN"].get_secret_value()
         return PluginHealth(ok=True, detail=f"reached {ctx.settings.url} as {token}")
+
+
+class LowScoringEmbedder(FakeEmbedder):
+    """`FakeEmbedder` with every score between two different texts multiplied by `factor`, as a
+    model whose matches all sit lower: each text also gets a direction of its own. One instance
+    must embed both the stored texts and the queries."""
+
+    OWN_DIMS = 1024
+
+    def __init__(self, factor: float = 0.5, min_score: float = 0.5) -> None:
+        super().__init__(min_score=min_score)
+        self.factor = factor
+        self._own: dict[str, int] = {}
+
+    def embed(self, texts: list[str]) -> np.ndarray:
+        shared = super().embed(texts) * np.sqrt(self.factor)
+        own = np.zeros((len(texts), self.OWN_DIMS), dtype=np.float32)
+        for row, text in enumerate(texts):
+            column = self._own.setdefault(text, len(self._own)) % self.OWN_DIMS
+            own[row, column] = np.sqrt(1 - self.factor)
+        return np.hstack([shared, own])

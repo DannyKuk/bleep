@@ -29,7 +29,7 @@ DESCRIPTION = (
 
 class Recall(Protocol):
     async def similar(
-        self, text: str, service_id: str | None = None, k: int = 3, min_score: float = 0.5
+        self, text: str, service_id: str | None = None, k: int = 3, min_score: float | None = None
     ) -> list[PastIncident]: ...
 
 
