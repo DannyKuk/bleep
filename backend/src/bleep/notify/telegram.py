@@ -156,6 +156,22 @@ class MessageLog:
         finally:
             await conn.close()
 
+    async def ids_for_incident(self, incident_id: str) -> list[int]:
+        return await self._ids("incident_id = ?", incident_id)
+
+    async def ids_for_approval(self, approval_id: str) -> list[int]:
+        return await self._ids("approval_id = ?", approval_id)
+
+    async def _ids(self, where: str, value: str) -> list[int]:
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                f"SELECT message_id FROM telegram_messages WHERE {where}", (value,)
+            ) as cursor:
+                return [row["message_id"] for row in await cursor.fetchall()]
+        finally:
+            await conn.close()
+
     async def get(self, message_id: int) -> tuple[str, str] | None:
         """(incident id, approval id) the message asked about."""
         conn = await self.db.connect()

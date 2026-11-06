@@ -1,10 +1,11 @@
 """Incidents and their signals in SQLite. At most one incident is open per subject."""
 
 import json
+import logging
 import re
 import secrets
 import sqlite3
-from collections.abc import Callable, Collection
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -19,6 +20,8 @@ from bleep.schemas.incidents import (
     Subject,
 )
 from bleep.store.db import Database
+
+log = logging.getLogger(__name__)
 
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
@@ -128,6 +131,19 @@ class IncidentRepo:
         self.db = db
         self.clock = clock
         self.fold_window_h = fold_window_h
+        self._finished: list[Callable[[str], Awaitable[None]]] = []
+
+    def on_finished(self, listener: Callable[[str], Awaitable[None]]) -> None:
+        """Call `listener(incident_id)` after an incident reaches a terminal status, by whatever
+        path. A listener that raises is logged and never undoes or blocks the close."""
+        self._finished.append(listener)
+
+    async def _tell_finished(self, incident_id: str) -> None:
+        for listener in self._finished:
+            try:
+                await listener(incident_id)
+            except Exception:
+                log.exception("incident %s: a listener for its end failed", incident_id)
 
     async def open_or_attach(
         self, subject: Subject, signals: list[Signal]
@@ -274,14 +290,17 @@ class IncidentRepo:
         closed_at = self.clock().isoformat() if status in TERMINAL_STATUSES else None
         conn = await self.db.connect()
         try:
-            await conn.execute(
+            cursor = await conn.execute(
                 "UPDATE incidents SET status = ?, closed_at = COALESCE(?, closed_at)"
                 f" WHERE id = ? AND {_OPEN}",
                 (status, closed_at, incident_id),
             )
             await conn.commit()
+            moved = cursor.rowcount == 1
         finally:
             await conn.close()
+        if moved and status in TERMINAL_STATUSES:
+            await self._tell_finished(incident_id)
 
     async def close_unfinished(
         self, incident_id: str, spare: tuple[IncidentStatus, ...] = ()
@@ -304,9 +323,10 @@ class IncidentRepo:
                 (self.clock().isoformat(), incident_id),
             )
             await conn.commit()
-            return row["status"]
         finally:
             await conn.close()
+        await self._tell_finished(incident_id)
+        return row["status"]
 
     async def set_trace_url(self, incident_id: str, url: str) -> None:
         conn = await self.db.connect()
