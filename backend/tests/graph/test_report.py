@@ -230,6 +230,34 @@ async def test_the_timeline_is_ordered_and_names_the_decision_and_its_channel(tm
     assert stored.human_decision == "Approved on Telegram"
 
 
+def check(kind: str, ok: bool = True) -> dict:
+    return {"kind": kind, "target": "t", "ok": ok, "detail": ""}
+
+
+@pytest.mark.parametrize(
+    ("ok", "checks", "text"),
+    [
+        (True, [check("container")], "Check 1 passed; no URL was checked"),
+        (True, [check("container"), check("url")], "Check 1 passed"),
+        (False, [check("container", ok=False)], "Check 1 failed"),
+        (True, [check("host")], "Check 1 passed"),
+    ],
+)
+async def test_a_passed_check_of_containers_alone_says_no_url_was_checked(
+    tmp_path, ok, checks, text
+):
+    """A service with no health URL is verified by its containers only; the report says so,
+    since a running container does not show that the service answers."""
+    env, state, _ = await setup(tmp_path, written())
+    payload = {"ok": ok, "attempt": 1, "checks": checks}
+    await env.bus.publish(state["incident_id"], "verification", payload)
+    state |= {"proposal": ACT, "decision": decide("approve"), "outcome": "resolved"}
+
+    update = await run(env, state)
+
+    assert update["report"].timeline[-1].text == text
+
+
 async def test_an_instruction_and_a_dashboard_rejection_are_named(tmp_path):
     env, state, _ = await setup(tmp_path, written())
     incident_id = state["incident_id"]
