@@ -18,8 +18,8 @@ def is_self(labels: dict[str, str]) -> bool:
 def expects_exit(entries: list[str], name: str, labels: dict[str, str]) -> bool:
     """Whether a service's `exits` entries name this container: by its name, by its Compose
     service (so every `compose run --rm` container of `fetch` matches), or all of them (`*`)."""
-    compose_service = labels.get(COMPOSE_SERVICE)
-    return any(e in (EVERY_CONTAINER, name) or e == compose_service for e in entries)
+    service = compose_service(labels)
+    return any(e in (EVERY_CONTAINER, name) or e == service for e in entries)
 
 
 def service_key(name: str, labels: dict[str, str]) -> str:
@@ -46,6 +46,14 @@ def compose_project(labels: dict[str, str]) -> str | None:
     if COMPOSE_CONFIG_HASH not in labels:
         return None
     return labels.get(COMPOSE_PROJECT) or None
+
+
+def compose_service(labels: dict[str, str]) -> str | None:
+    """The Compose service of a container Compose created, else None (see `compose_project`;
+    an image-only container inherits the service label of the container it was built for)."""
+    if COMPOSE_CONFIG_HASH not in labels:
+        return None
+    return labels.get(COMPOSE_SERVICE) or None
 
 
 def _classify(container_name: str, labels: dict[str, str]) -> tuple[str, str, str]:

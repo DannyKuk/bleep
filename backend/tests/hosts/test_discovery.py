@@ -4,7 +4,12 @@ from pathlib import Path
 import pytest
 
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
-from bleep.hosts.discovery import AmbiguousOverride, expects_exit, group_services
+from bleep.hosts.discovery import (
+    AmbiguousOverride,
+    compose_service,
+    expects_exit,
+    group_services,
+)
 from bleep.schemas.docker import ContainerSummary
 from fakes import compose_labels
 
@@ -345,12 +350,23 @@ def test_a_name_shared_with_a_key_matched_service_still_goes_to_the_other_one():
 
 
 def test_exits_names_a_container_by_its_name_its_compose_service_or_all():
-    job = {"com.docker.compose.service": "fetch", "com.docker.compose.project": "molecula"}
+    job = compose_labels("molecula", "fetch")
     assert expects_exit(["fetch"], "molecula-fetch-run-3f2a", job)  # every `compose run --rm`
     assert expects_exit(["molecula-fetch-1"], "molecula-fetch-1", {})
     assert expects_exit(["*"], "anything", {})
-    assert not expects_exit(["fetch"], "molecula-web-1", {"com.docker.compose.service": "web"})
+    assert not expects_exit(["fetch"], "molecula-web-1", compose_labels("molecula", "web"))
     assert not expects_exit([], "molecula-fetch-1", job)
+
+
+def test_a_container_compose_did_not_create_is_matched_by_its_name_not_its_inherited_service():
+    canary = captured("image-only-shop-canary")
+    assert canary.labels["com.docker.compose.service"] == "shop-proxy"  # inherited from the image
+    assert compose_service(canary.labels) is None
+    assert not expects_exit(["shop-proxy"], canary.name, canary.labels)
+    assert expects_exit(["shop-canary"], canary.name, canary.labels)
+    proxy = captured("compose-shop-proxy")
+    assert compose_service(proxy.labels) == "shop-proxy"
+    assert expects_exit(["shop-proxy"], proxy.name, proxy.labels)
 
 
 def test_a_service_takes_exits_from_its_override_like_its_urls():
