@@ -3,6 +3,7 @@ that answers it, searched with the real embedding model. Reports hit@1, hit@3, h
 reciprocal rank (by page, over the top 5), with what ingest and search cost.
 
     cd backend && uv run python -m evals.knowledge [--max-tokens 300] [--overlap 50] [--label x]
+        [--questions evals/knowledge/questions_multilingual.yaml]
 
 The snapshot is ingested into a temporary database with Bleep's local embedder (it is downloaded
 on a first run outside the image). One JSON line per question goes to
@@ -31,6 +32,8 @@ from bleep.memory.embeddings import Embedder, FastEmbedEmbedder
 from bleep.store.db import Database
 
 QUESTIONS = Path(__file__).parent / "knowledge" / "questions.yaml"
+# German and mixed-language questions over the same English snapshot (#146).
+MULTILINGUAL_QUESTIONS = Path(__file__).parent / "knowledge" / "questions_multilingual.yaml"
 DATA_DIR = Path(__file__).resolve().parents[2] / "docs" / "evals" / "data"
 K = 5
 
@@ -164,8 +167,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--max-tokens", type=int, default=MAX_TOKENS)
     parser.add_argument("--overlap", type=int, default=OVERLAP)
     parser.add_argument("--label", default="")
+    parser.add_argument("--questions", type=Path, default=QUESTIONS)
     args = parser.parse_args(argv)
-    answers, totals = asyncio.run(run(FastEmbedEmbedder(), args.max_tokens, args.overlap))
+    answers, totals = asyncio.run(
+        run(FastEmbedEmbedder(), args.max_tokens, args.overlap, questions_file=args.questions)
+    )
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     raw = DATA_DIR / f"knowledge-{stamp}{'-' + args.label if args.label else ''}.jsonl"

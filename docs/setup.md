@@ -166,7 +166,7 @@ EMBEDDINGS_MODEL=text-embedding-nomic-embed-text-v1.5     # a model that server 
 EMBEDDINGS_API_KEY=                                        # only if the server wants one
 ```
 
-Bleep refuses to start with the provider set and the URL or the model missing. After a model change, the next start embeds the stored incidents again; until that is done they are left out of recall. The same embedder indexes the docs for knowledge search. Embedding calls are not in the usage ledger: the dev panel's cost and the daily cap count only the chat models, so a paid embeddings endpoint is billed outside them. Details: [Memory](design/memory.md), [Embeddings](decisions/embeddings.md).
+Bleep refuses to start with the provider set and the URL or the model missing. After a model change, the next start embeds the stored incidents again; until that is done they are left out of recall. The same embedder indexes the docs for knowledge search. For logs and runbooks mostly in another language, a multilingual model behind the endpoint is the option: `BAAI/bge-m3` found German questions' pages first twice as often as bge-small, English ones less often, and is too heavy to ship in the image; Ollama offers it as `bge-m3` (not measured through Ollama; [bge-m3 against bge-small](evals/embeddings-multilingual-2026-11-06.md)). Embedding calls are not in the usage ledger: the dev panel's cost and the daily cap count only the chat models, so a paid embeddings endpoint is billed outside them. Details: [Memory](design/memory.md), [Embeddings](decisions/embeddings.md).
 
 ## Tracing (optional)
 

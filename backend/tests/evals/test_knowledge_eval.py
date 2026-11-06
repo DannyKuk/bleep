@@ -3,6 +3,7 @@ import pytest
 from bleep.knowledge.ingest import SNAPSHOT_DIR
 from bleep.memory.embeddings import FakeEmbedder
 from evals.knowledge import (
+    MULTILINGUAL_QUESTIONS,
     QUESTIONS,
     Answer,
     KnowledgeEvalError,
@@ -42,6 +43,15 @@ def test_the_shipped_questions_are_20_and_name_real_pages():
 
     assert len(questions) == 20
     assert len({q.question for q in questions}) == 20
+
+
+def test_the_multilingual_questions_are_11_new_ones_and_name_real_pages():
+    questions = load_questions(MULTILINGUAL_QUESTIONS, SNAPSHOT_DIR)
+    english = {q.question for q in load_questions(QUESTIONS, SNAPSHOT_DIR)}
+
+    assert len(questions) == 11
+    assert len({q.question for q in questions}) == 11
+    assert not english & {q.question for q in questions}
 
 
 def test_a_question_naming_a_missing_page_is_refused(tmp_path):
