@@ -11,6 +11,7 @@ from collections.abc import Callable
 from functools import lru_cache
 
 from bleep.guard.sanitize import (
+    CONTROL_CHARS,
     MAX_LEAD,
     MAX_LINE,
     PRESENTATION_SELECTORS,
@@ -998,12 +999,23 @@ def step_head(number: int, step: PlanStep) -> str:
 
 def hides_head(number: int, step: PlanStep) -> bool:
     """Whether the Telegram line would show step `number`'s head other than it runs: redacted
-    (a target that reads like a token), or with a presentation selector dropped."""
+    (a target that reads like a token), with a presentation selector dropped, or holding a control
+    character (`_shown_otherwise`)."""
     return _shown_otherwise(step_head(number, step))
 
 
+_CONTROL_CHAR = re.compile(CONTROL_CHARS)
+
+
 def _shown_otherwise(text: str) -> bool:
-    return redact_text(text) != text or any(c in text for c in PRESENTATION_SELECTORS)
+    """Whether a display would show `text` other than it is: redacted, with a presentation
+    selector dropped, or holding a control character (C0 but line feed and tab, DEL, C1), which
+    Telegram shows as a line break and the dashboard as the browser does."""
+    return (
+        redact_text(text) != text
+        or any(c in text for c in PRESENTATION_SELECTORS)
+        or _CONTROL_CHAR.search(text) is not None
+    )
 
 
 def params_line(step: PlanStep) -> str:
@@ -1017,7 +1029,7 @@ def hides_params(step: PlanStep) -> bool:
     """Whether a person approving `step` would see any of its params other than they run: changed
     by redaction on the dashboard (`redacted_step`) or in the Telegram line (`params_line`,
     redacted as a whole, where one param's text can hide the next), or holding a presentation
-    selector, which both displays drop."""
+    selector or a control character (`_shown_otherwise`)."""
     return redacted_step(step).params != step.params or _shown_otherwise(params_line(step))
 
 

@@ -299,17 +299,17 @@ def check_params(number: int, step: PlanStep) -> list[Violation]:
 def check_shown(number: int, step: PlanStep) -> list[Violation]:
     """A step the person approving it would read other than it runs is refused (`hidden_param`),
     whatever its action, so a yes is never given blind (#294): its head (the Telegram line
-    redacts a target that reads like a token) or its params changed by redaction or with a
-    presentation selector dropped (`guard/redact`), or `mcp.call` arguments whose JSON text
-    decodes to something else (`_misread_json`). It runs after the other rules, so a step that
-    breaks one of them gets that rule's reason. The act handlers run it again before their call.
-    The text never quotes a param."""
+    redacts a target that reads like a token) or its params changed by redaction, with a
+    presentation selector dropped or holding a control character (`guard/redact`), or
+    `mcp.call` arguments whose JSON text decodes to something else (`_misread_json`). It runs
+    after the other rules, so a step that breaks one of them gets that rule's reason. The act
+    handlers run it again before their call. The text never quotes a param."""
     what = f"step {number} ({step.action} {step.target} on {step.host_id})"
     if hides_head(number, step):
         why = (
-            "its target would be shown to the human redacted or with a character dropped, and"
-            " the human could not read what they approve; answer no_action and say in"
-            " human_instructions what to do by hand"
+            "its target would be shown to the human redacted, with a character dropped or with a"
+            " control character, and the human could not read what they approve; answer"
+            " no_action and say in human_instructions what to do by hand"
         )
     elif step.action == "mcp.call" and _misread_json(step.params.get("arguments", "")):
         why = (
@@ -320,10 +320,10 @@ def check_shown(number: int, step: PlanStep) -> list[Violation]:
     elif hides_params(step):
         why = (
             "part of its params would be hidden from the human approving it (text that looks like"
-            " a secret, a line too long to show whole, a line break written as CR, or a character"
-            " the display drops), and the human could not read what they approve; write every"
-            " param in plain words with no secret, password or token in it, or answer no_action"
-            " and say in human_instructions what to change"
+            " a secret, a line too long to show whole, a line break written as CR, a control"
+            " character, or a character the display drops), and the human could not read what"
+            " they approve; write every param in plain words with no secret, password or token"
+            " in it, or answer no_action and say in human_instructions what to change"
         )
     else:
         return []

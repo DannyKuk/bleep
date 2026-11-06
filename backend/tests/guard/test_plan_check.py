@@ -750,6 +750,16 @@ HIDDEN = {
         set_env("api", key="START_COMMAND", value="node server.js\ufe0e"),
         coolify("api"),
     ),
+    # Telegram shows these as a line break, the dashboard as the browser does (review of #300).
+    "a next line character": (mcp({"command": "docker compose pull\x85rm -rf /srv"}),),
+    "raw control characters in a set_env value": (
+        set_env("api", key="START_COMMAND", value="node server.js\x1b\x08\x7f"),
+        coolify("api"),
+    ),
+    "a C1 control": (
+        set_env("api", key="START_COMMAND", value="node\x9bserver.js"),
+        coolify("api"),
+    ),
     "a docker step's params": (
         PlanStep(
             action="docker.restart", host_id="a", target="shop-web-1", params={"why": "token=x1"}
@@ -792,6 +802,7 @@ SHOWN = {
     "the escapes JSON requires": (
         mcp_raw('{"text": "one\\ntwo\\u001b \\"q\\" C:\\\\u0041 \\/"}', tool="flush_cache"),
     ),
+    "a tab": (set_env("api", key="START_COMMAND", value="node\tserver.js"), coolify("api")),
     "the same key in two objects": (
         mcp_raw('{"a": {"name": "x"}, "b": {"name": "y"}}', tool="flush_cache"),
     ),
@@ -839,3 +850,13 @@ async def test_a_protected_target_is_refused_as_protected_before_its_hidden_para
     )
 
     assert [(v.rule, v.step) for v in found if v.step == 1] == [("protected", 1)]
+
+
+async def test_a_target_with_a_control_character_is_refused(tmp_path):
+    name = "shop-web-1\x85"
+    engine = FakeEngine("a", [box(name, "shop", state="exited", exit_code=1)])
+    env = await graph_env(tmp_path, engine=engine, host=shop_host())
+
+    [found] = check_plan(act(restart(name)), env.registry, CORE, "a", incident_containers=[name])
+
+    assert (found.rule, found.step) == ("hidden_param", 1) and "its target" in found.text
