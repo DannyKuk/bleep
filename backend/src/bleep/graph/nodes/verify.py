@@ -4,10 +4,12 @@ After Execute the node waits 20 s, then checks up to 3 times, 10 s apart, and st
 check where everything passes. A check passes only when every planned container is running and
 healthy (or running with no healthcheck) and every planned URL passes `check_url`. The plan is
 the proposal's verification plan; when that is empty it falls back to the affected service's
-containers (protected ones too) and URLs, and then to the containers the plan's steps acted on.
+containers (protected ones too), and then to the containers the plan's steps acted on.
 Whatever the plan names, the incident's own symptoms are checked too: every container its signals
 name and every URL they report failing, so a plan that checks something else cannot pass while
-the failure that opened the incident goes on.
+the failure that opened the incident goes on. So is every URL the hosts file gives the incident's
+service, with its expected status and body text: a container that runs again does not show that
+the service answers. A service with no URL is judged by its containers alone.
 A host incident's disk, memory or load is read again on the host and judged against the same
 thresholds that opened it (`hosts/readings.past_threshold`, load over the last minute); a host
 incident about anything else has nothing to read again, so it ends `unverified` without a
@@ -96,12 +98,13 @@ class _Plan:
 
 def _plan(deps: GraphDeps, state: IncidentState) -> _Plan:
     """The containers and URLs to check: the plan's, or else what it acted on, and always the
-    incident's own symptoms (`_symptoms`). A signalled container the plan stopped (its last
-    Docker step is a stop) is checked to be down, unless a redeploy of the plan replaced it or
-    it is among the containers that must run (the fallback can put it there; that check then
-    fails, the safe side). When no URL of the incident's is checked, those stop checks are all
-    there is about the stopped containers, and the plan is `unproven` and cannot pass. URLs are
-    compared and deduplicated by `_url_key`.
+    incident's own symptoms (`_symptoms`) and its service's URLs. A signalled container the plan
+    stopped (its last Docker step is a stop) is checked to be down, unless a redeploy of the plan
+    replaced it or it is among the containers that must run (the fallback can put it there; that
+    check then fails, the safe side). When no URL of the incident's is checked (its service has
+    none and no signal saw one fail), those stop checks are all there is about the stopped
+    containers, and the plan is `unproven` and cannot pass. URLs are compared and deduplicated by
+    `_url_key`.
 
     A URL keeps its expected status and body text from the hosts file, whichever of the host's
     services it belongs to (the plan check allows any of them). The fallback checks every
@@ -117,10 +120,10 @@ def _plan(deps: GraphDeps, state: IncidentState) -> _Plan:
     replaced = _replaced(deps, state)
     containers = list(planned.containers) if planned is not None else []
     urls = list(planned.urls) if planned is not None else []
+    service_urls = [cfg.url for cfg in service.urls] if service is not None else []
     if not containers and not urls:
         if service is not None:
             containers = [c.name for c in service.containers]
-            urls = [cfg.url for cfg in service.urls]
         else:
             acted = proposal.steps if proposal is not None else []
             containers = [s.target for s in acted if s.action.startswith("docker.")]
@@ -128,16 +131,12 @@ def _plan(deps: GraphDeps, state: IncidentState) -> _Plan:
     signalled, failing_urls = _symptoms(signals)
     # The URLs that say something about this incident: those its signals saw fail and its own
     # service's. Another service's URL the plan names says nothing about this one.
-    own_urls = {*failing_urls, *(cfg.url for cfg in service.urls)} if service else set(failing_urls)
+    own_urls = {*failing_urls, *service_urls}
     stopped = _stopped(proposal)
     left_out = [c for c in signalled if c in stopped or replaced(c)]
-    if left_out and service is not None:
-        # The plan meant that container gone or down; only the service's URLs can say whether
-        # that fixed anything.
-        failing_urls += [cfg.url for cfg in service.urls]
     named = [*containers, *(c for c in signalled if c not in left_out)]
     containers = [c for c in dict.fromkeys(named) if not replaced(c)]
-    urls = _unique_urls([*urls, *failing_urls])
+    urls = _unique_urls([*urls, *service_urls, *failing_urls])
     down = [c for c in left_out if c in stopped and not replaced(c) and c not in containers]
     own_url_checked = bool({_url_key(u) for u in own_urls} & {_url_key(u) for u in urls})
     by_key = {_url_key(u): cfg for u, cfg in known.items()}

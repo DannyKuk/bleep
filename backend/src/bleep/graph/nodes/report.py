@@ -190,11 +190,21 @@ def _event_text(event: IncidentEvent, tool_calls: int) -> str | None:
             action, target = payload.get("action", "?"), payload.get("target", "?")
             return f"{action} {target}: {payload.get('status', '?')}"
         case "verification":
-            verdict = "passed" if payload.get("ok") else "failed"
-            return f"Check {payload.get('attempt', 1)} {verdict}"
+            return _verification_text(payload)
         case "notice":
             return str(payload.get("text", "")) or None
     return None
+
+
+def _verification_text(payload: dict) -> str:
+    """A check's line, such as "Check 2 passed", with "; no URL was checked" when it passed on
+    containers alone (a service with no health URL): a running container does not show that the
+    service answers."""
+    line = f"Check {payload.get('attempt', 1)} {'passed' if payload.get('ok') else 'failed'}"
+    kinds = {check.get("kind") for check in payload.get("checks") or []}
+    if payload.get("ok") and "container" in kinds and "url" not in kinds:
+        return f"{line}; no URL was checked"
+    return line
 
 
 def timeline(signals: list[Signal], events: list[IncidentEvent]) -> list[Entry]:

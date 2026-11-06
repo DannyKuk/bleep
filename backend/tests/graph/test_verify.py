@@ -497,18 +497,122 @@ async def test_a_plan_url_of_another_service_on_the_host_keeps_its_own_config(tm
         seen.append(str(request.url))
         return httpx.Response(204, stream=httpx.ByteStream(b"all ok"))
 
-    host = shop_host(
-        services={
-            "shop": ServiceOverrides(urls=[UrlCheckConfig(url=URL)]),
-            "blog": ServiceOverrides(urls=[blog]),
-        }
-    )
+    host = shop_host(services={"shop": ServiceOverrides(), "blog": ServiceOverrides(urls=[blog])})
     env, state = await setup(tmp_path, replies, plan=VerificationPlan(urls=[blog.url]), host=host)
 
     update, _ = await run(env, state)
 
     assert seen == [blog.url]
     assert [(c.kind, c.ok) for c in update["verification"].checks] == [("url", True)]
+
+
+def died(state: dict, container: str = "shop-web-1") -> list[Signal]:
+    return [Signal(subject=state["subject"], kind="container_died", at=T0, container=container)]
+
+
+@pytest.mark.parametrize(
+    ("status", "outcome"), [(503, "unverified"), (200, "resolved")], ids=["503", "200"]
+)
+async def test_the_services_url_is_checked_when_the_plan_names_only_the_container(
+    tmp_path, status, outcome
+):
+    """A container died, the restart brought it back, the plan checks only that container: the
+    service's own URL must answer too before Bleep says "Fixed and verified"."""
+    replies = Replies(status)
+    plan = VerificationPlan(containers=["shop-web-1"])
+    env, state = await setup(tmp_path, replies, plan=plan)
+    state |= {"signals": died(state), "verify_loops": 2}
+
+    update, _ = await run(env, state)
+
+    checks = [(c.kind, c.target, c.ok) for c in update["verification"].checks]
+    assert checks == [("container", "shop-web-1", True), ("url", URL, status == 200)]
+    assert replies.seen >= 1
+    assert update["outcome"] == outcome
+
+
+async def test_the_services_url_is_checked_with_its_configured_status_and_body(tmp_path):
+    """The hosts file expects 204 with "ok" in the body: a bare 200 is no pass."""
+    own = UrlCheckConfig(url=URL, expect_status=204, body_contains="ok")
+    host = shop_host(services={"shop": ServiceOverrides(urls=[own])})
+    answers = [httpx.Response(200), httpx.Response(204, stream=httpx.ByteStream(b"all ok"))]
+    env, state = await setup(
+        tmp_path,
+        lambda request: answers.pop(0),
+        plan=VerificationPlan(containers=["shop-web-1"]),
+        host=host,
+    )
+    state["signals"] = died(state)
+
+    update, _ = await run(env, state)
+
+    assert [(c.kind, c.ok) for c in update["verification"].checks] == [
+        ("container", True),
+        ("url", True),
+    ]
+    assert update["verification"].attempt == 2
+    events = [e for e in await env.bus.history(state["incident_id"]) if e.kind == "verification"]
+    assert "200" in events[0].payload["checks"][1]["detail"]
+
+
+async def test_the_services_url_is_requested_once_when_the_plan_and_signals_name_it(tmp_path):
+    seen: list[str] = []
+
+    def replies(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200)
+
+    plan = VerificationPlan(containers=["shop-web-1"], urls=[f"{URL}/"])
+    env, state = await setup(tmp_path, replies, plan=plan)
+    failed = Signal(
+        subject=state["subject"], kind="url_failed", at=T0, detail={"ok": False, "url": URL}
+    )
+    state["signals"] = [*died(state), failed]
+
+    update, _ = await run(env, state)
+
+    assert len(seen) == 1
+    assert [c.kind for c in update["verification"].checks] == ["container", "url"]
+    assert update["outcome"] == "resolved"
+
+
+async def test_the_services_url_is_checked_beside_another_services_url_the_plan_names(tmp_path):
+    blog = UrlCheckConfig(url=BLOG_URL)
+    host = shop_host(
+        services={
+            "shop": ServiceOverrides(urls=[UrlCheckConfig(url=URL)]),
+            "blog": ServiceOverrides(urls=[blog]),
+        }
+    )
+
+    def replies(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200 if str(request.url) == BLOG_URL else 503)
+
+    env, state = await setup(tmp_path, replies, plan=VerificationPlan(urls=[BLOG_URL]), host=host)
+    state |= {"signals": died(state), "verify_loops": 2}
+
+    update, _ = await run(env, state)
+
+    checks = [(c.kind, c.target, c.ok) for c in update["verification"].checks]
+    assert checks == [
+        ("container", "shop-web-1", True),
+        ("url", BLOG_URL, True),
+        ("url", URL, False),
+    ]
+    assert update["outcome"] == "unverified"
+
+
+async def test_a_service_with_no_url_is_judged_by_its_containers_alone(tmp_path):
+    replies = Replies(503)
+    plan = VerificationPlan(containers=["shop-web-1"])
+    env, state = await setup(tmp_path, replies, plan=plan, urls=False)
+    state["signals"] = died(state)
+
+    update, _ = await run(env, state)
+
+    assert [c.kind for c in update["verification"].checks] == ["container"]
+    assert replies.seen == 0
+    assert update["outcome"] == "resolved"
 
 
 async def test_a_malformed_plan_url_fails_the_check_instead_of_crashing(tmp_path):
