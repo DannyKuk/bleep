@@ -1,0 +1,18 @@
+{"group": "gather", "query": "shop: container_died", "expected": "E1", "rank": 1, "score": 0.701, "best_other": 0.619, "best_other_id": "E5", "others_over_min": 3, "in_bleep": "1"}
+{"group": "gather", "query": "shop: url_failed", "expected": "E2", "rank": 1, "score": 0.742, "best_other": 0.597, "best_other_id": "D1", "others_over_min": 5, "in_bleep": "1"}
+{"group": "gather", "query": "blog: oom", "expected": "E4", "rank": 1, "score": 0.581, "best_other": 0.397, "best_other_id": "E2", "others_over_min": 0, "in_bleep": "1"}
+{"group": "gather", "query": "wiki: oom", "expected": "D2", "rank": 2, "score": 0.387, "best_other": 0.471, "best_other_id": "E4", "others_over_min": 0, "in_bleep": "dropped (< 0.5)"}
+{"group": "gather", "query": "cloud: url_failed", "expected": "D3", "rank": 1, "score": 0.655, "best_other": 0.638, "best_other_id": "E2", "others_over_min": 4, "in_bleep": "1"}
+{"group": "gather", "query": "worker: container_died", "expected": "D5", "rank": 3, "score": 0.58, "best_other": 0.636, "best_other_id": "E1", "others_over_min": 2, "in_bleep": "1"}
+{"group": "same language", "query": "proxy sends requests to the wrong upstream port", "expected": "E2", "rank": 1, "score": 0.717, "best_other": 0.575, "best_other_id": "D3", "others_over_min": 1, "in_bleep": "1"}
+{"group": "same language", "query": "postfix stopped because of a syntax error in its config", "expected": "E5", "rank": 1, "score": 0.688, "best_other": 0.499, "best_other_id": "E2", "others_over_min": 0, "in_bleep": "1"}
+{"group": "same language", "query": "Datenbank nimmt keine Verbindungen an, weil das Volume voll ist", "expected": "D1", "rank": 1, "score": 0.612, "best_other": 0.528, "best_other_id": "D4", "others_over_min": 2, "in_bleep": "1"}
+{"group": "same language", "query": "Logs ohne Rotation haben die Festplatte gefüllt", "expected": "D4", "rank": 1, "score": 0.722, "best_other": 0.524, "best_other_id": "E3", "others_over_min": 1, "in_bleep": "1"}
+{"group": "same language", "query": "Umgebungsvariable fehlt nach dem Deploy, Worker startet nicht", "expected": "D5", "rank": 1, "score": 0.606, "best_other": 0.459, "best_other_id": "E2", "others_over_min": 0, "in_bleep": "1"}
+{"group": "cross language", "query": "container killed after it went over its memory limit", "expected": "D2", "rank": 3, "score": 0.547, "best_other": 0.606, "best_other_id": "E5", "others_over_min": 3, "in_bleep": "3"}
+{"group": "cross language", "query": "expired TLS certificate on the reverse proxy", "expected": "D3", "rank": 1, "score": 0.706, "best_other": 0.521, "best_other_id": "E2", "others_over_min": 1, "in_bleep": "1"}
+{"group": "cross language", "query": "container logs without rotation filled the disk", "expected": "D4", "rank": 1, "score": 0.682, "best_other": 0.568, "best_other_id": "E3", "others_over_min": 1, "in_bleep": "1"}
+{"group": "cross language", "query": "worker exits with code 1, an environment variable is missing", "expected": "D5", "rank": 1, "score": 0.654, "best_other": 0.515, "best_other_id": "E5", "others_over_min": 2, "in_bleep": "1"}
+{"group": "cross language", "query": "Container wurde gestoppt und die Restart-Policy startet ihn nicht", "expected": "E1", "rank": 1, "score": 0.596, "best_other": 0.547, "best_other_id": "D5", "others_over_min": 1, "in_bleep": "1"}
+{"group": "cross language", "query": "Der Build-Cache hat /var/lib/docker gefüllt", "expected": "E3", "rank": 1, "score": 0.773, "best_other": 0.615, "best_other_id": "E4", "others_over_min": 7, "in_bleep": "1"}
+{"group": "cross language", "query": "Speicherleck im Blog-Worker, Speicherlimit erreicht", "expected": "E4", "rank": 1, "score": 0.759, "best_other": 0.634, "best_other_id": "D2", "others_over_min": 3, "in_bleep": "1"}

@@ -10,7 +10,7 @@ How the agent looks things up (`backend/src/bleep/knowledge/`, `tools/knowledge.
 | **Sources and refresh** | `knowledge/ingest.py` | `load_snapshot`, `incident_document` (from `MemoryStore.all_records`), `repo_documents` (from a `RepoDocs`), and `KnowledgeRefresher`, the loop the app runs. |
 | **Repo docs** | `knowledge/repos.py` | `GithubRepoDocs`, the `RepoDocs` the app runs: linked repos from the hosts file, read with the GitHub client (`hosts/github.py`). |
 | **Tool** | `tools/knowledge.py` | `knowledge_search(query, sources?)`, a read tool, offered whenever the app has the index. |
-| **Retrieval check** | `backend/evals/knowledge.py`, `backend/evals/knowledge/questions.yaml` | 20 questions with their expected page, hit@k with the real embedder ([report](../evals/knowledge-2026-11-03.md)). |
+| **Retrieval check** | `backend/evals/knowledge.py`, `backend/evals/knowledge/questions.yaml`, `questions_multilingual.yaml` | 20 questions with their expected page, hit@k with the real embedder ([report](../evals/knowledge-2026-11-03.md)); 11 German and mixed-language ones over the same snapshot, `--questions` ([bge-m3 against bge-small](../evals/embeddings-multilingual-2026-11-06.md), #146). |
 
 ## Choices
 

@@ -1,22 +1,21 @@
 """Time the local embedder inside the backend image: model load, one text, a batch of 32, the CPU
-one embed costs, and the process's peak memory. THREADS=n overrides Bleep's thread count.
+one embed costs, and the process's peak memory. THREADS=n overrides Bleep's thread count, and
+MODEL=m3 times bge-m3 instead of bge-small (models.py; #146).
 
     docker run --rm --network none -v "$PWD/docs/spikes/embeddings:/bench:ro" \
         --entrypoint python bleep-backend /bench/embed_bench.py
 """
 
-import os
 import resource
 import statistics
 import time
 
-from bleep.memory.embeddings import LOCAL_THREADS, FastEmbedEmbedder
+from models import embedder as make_embedder
 
 TEXT = (
     "container died on a/compose:shop. Cause: shop-web was stopped and its restart policy is "
     "no, so nothing brought it back. Action: docker.start shop-web-1 on a: done."
 )
-threads = int(os.environ["THREADS"]) if os.environ.get("THREADS") else LOCAL_THREADS
 
 
 def peak_mb() -> float:
@@ -25,7 +24,7 @@ def peak_mb() -> float:
 
 before = peak_mb()
 start = time.perf_counter()
-embedder = FastEmbedEmbedder(threads=threads)
+embedder = make_embedder()
 embedder.embed(["warm up"])
 load_s = time.perf_counter() - start
 loaded = peak_mb()
@@ -44,9 +43,10 @@ for _ in range(10):
     embedder.embed([TEXT] * 32)
     batch.append(time.perf_counter() - start)
 
-print(f"threads {threads}, dims {embedder.embed([TEXT]).shape[1]}")
+print(f"{embedder.model}, threads {embedder.threads}, dims {embedder.embed([TEXT]).shape[1]}")
 print(f"load {load_s:.2f} s")
-print(f"one text: median {statistics.median(one) * 1000:.1f} ms, p95 {sorted(one)[94] * 1000:.1f} ms")
+median, p95 = statistics.median(one) * 1000, sorted(one)[94] * 1000
+print(f"one text: median {median:.1f} ms, p95 {p95:.1f} ms")
 print(f"one text: {cpu_ms:.1f} ms of CPU")
 print(f"batch of 32: median {statistics.median(batch) * 1000:.0f} ms")
 print(f"peak memory: {before:.0f} MB before, {loaded:.0f} MB loaded, {peak_mb():.0f} MB at the end")

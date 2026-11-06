@@ -1,10 +1,12 @@
 # Embeddings: a local model in-process, an endpoint as the option
 
-> **Answer:** long-term memory embeds with `fastembed` running `BAAI/bge-small-en-v1.5` (384 dimensions, the quantised ONNX build, 64 MB) on the CPU inside the backend, with two onnxruntime threads. Measured inside the backend image on an Apple M4 Pro (Docker Desktop, 14 CPUs given to the VM): the model loads in 0.2 s, one incident text embeds in 11 ms using 22 ms of CPU, and the process grows by about 160 MB once the model is loaded. The model is fetched at build time, so recall works offline. The backend image grows from 605 MB to 873 MB (+268 MB); the dependencies alone are +198 MB and the model +71 MB, and dropping the uv download cache from the image in the same change won back 131 MB. Any OpenAI-compatible `/embeddings` endpoint (OpenAI, LM Studio, Ollama) is the option, set with `EMBEDDINGS_PROVIDER=openai`; it was not measured here.
+> **Answer:** long-term memory embeds with `fastembed` running `BAAI/bge-small-en-v1.5` (384 dimensions, the quantised ONNX build, 64 MB) on the CPU inside the backend, with two onnxruntime threads. Measured inside the backend image on an Apple M4 Pro (Docker Desktop, 14 CPUs given to the VM): the model loads in 0.2 s, one incident text embeds in 11 ms using 22 ms of CPU, and the process grows by about 160 MB once the model is loaded. The model is fetched at build time, so recall works offline. The backend image grows from 605 MB to 873 MB (+268 MB); the dependencies alone are +198 MB and the model +71 MB, and dropping the uv download cache from the image in the same change won back 131 MB. Any OpenAI-compatible `/embeddings` endpoint (OpenAI, LM Studio, Ollama) is the option, set with `EMBEDDINGS_PROVIDER=openai`; it was not measured here. **Multilingual (#146): bge-small stays the default, and `BAAI/bge-m3` is the option for setups whose logs and runbooks are mostly in another language, behind that endpoint.** Against bge-small, bge-m3 put the right Docker docs page first for 8 of 11 German and mixed-language questions (bge-small 4) but for 16 of 20 English ones (bge-small 20), and ranked the right past incident first in 15 of 18 English and German recall queries (bge-small 13). Inside the image it costs 320 ms of CPU per text (14 times), 566 s for the first ingest of the snapshot (33 s), 1.56 GB loaded (0.21 GB) and 4.44 GB of image (925 MB). It runs through fastembed only as a custom model; the endpoint route (Ollama serves `bge-m3`) was not measured.
 
 ## Question
 
 Memory needs a vector for every incident report and for every recall query Bleep must offer a local option and run with no paid service. Which model, run where, and what does it cost the laptop Bleep runs on: CPU per embed, memory, image size?
+
+Later (#146): logs, commit messages and runbooks are often in another language than English, or mixed. Is a multilingual model, bge-m3 in particular, worth its cost over bge-small for memory and knowledge search?
 
 ## What we tried
 
@@ -13,6 +15,8 @@ Memory needs a vector for every incident report and for every recall query Bleep
 - **Thread counts.** onnxruntime's default (one thread per core) against 1, 2 and 4 threads, inside the image.
 - **Scores.** Four Gather-style queries (`"<service or host>: <signal kinds>"`) against five stored incident texts (`"<title>. Cause: <cause> Action: <action>."`), to see how far apart similar and unrelated incidents land.
 - **Image size.** The backend image built from `main` before this change, and with this change, each with and without the uv cache in the image.
+
+- **bge-m3 against bge-small (#146).** bge-m3 (570M parameters, 1,024 dimensions, BAAI's own fp32 ONNX export) is not in fastembed 0.9.1's list, so it was added with `TextEmbedding.add_custom_model` and CLS pooling ([`models.py`](../spikes/embeddings/models.py)); its vectors matched the export's own pooled output. Both models ran the 20 English knowledge questions and 11 new German and mixed-language ones over the English snapshot, 18 memory recall queries over 10 past incidents (5 written in German), and the timing scripts in the image, with bge-m3 baked in where bge-small was. Full numbers: [embeddings multilingual, 2026-11-06](../evals/embeddings-multilingual-2026-11-06.md).
 
 The scripts are in [`docs/spikes/embeddings/`](../spikes/embeddings/); every number below is from the image built from this branch, run with `--network none` as the image's own non-root user.
 
@@ -49,6 +53,19 @@ Cosine scores of the real model (`scores.py`), queries in rows, stored incidents
 | `a: disk` | 0.56 | 0.51 | **0.66** | 0.58 | 0.57 |
 | `blog: oom` | 0.56 | 0.52 | 0.49 | **0.74** | 0.58 |
 
+bge-m3 against bge-small (#146), inside the images on two threads unless noted; retrieval scores from macOS:
+
+| | bge-small | bge-m3 |
+|---|---|---|
+| Knowledge, 20 English questions: first, top 5 | 20, 20 | 16, 20 |
+| Knowledge, 11 German and mixed questions: first, top 5 | 4, 11 | 8, 11 |
+| Memory, 18 English and German queries: first, returned by Bleep's recall | 13, 17 | 15, 17 |
+| Unrelated records scoring over `min_score` 0.5 | 158 of 162 | 36 of 162 |
+| One text, CPU per text | 11 ms, 22 ms | 158 ms, 320 ms |
+| First ingest of the snapshot (444 chunks) | 33.4 s | 565.8 s |
+| Peak memory: loaded, at the ingest's peak | 0.21 GB, 0.84 GB | 1.56 GB, 3.02 GB |
+| Image (`docker image ls`), compressed content | 925 MB, 239 MB | 4.44 GB, 1.53 GB |
+
 ## What it shows
 
 - **The local model is cheap enough to never think about.** An incident embeds once when its report is written and once per recall, so a whole incident costs well under a tenth of a second of CPU. Re-embedding 1,000 past incidents after a model change takes about 9 s at 8.6 ms each in batches.
@@ -56,6 +73,7 @@ Cosine scores of the real model (`scores.py`), queries in rows, stored incidents
 - **The model is loaded on first use, not at boot.** The backend's memory grows by about 160 MB at the first recall (Gather of the first incident), not at startup; a Bleep that has seen no incident since boot does not carry it.
 - **The right incident is always the closest, but unrelated ones still score 0.49 to 0.80.** `min_score=0.5` (the value used) therefore removes almost nothing with this model; what keeps Gather's three short is `k=3` and the same-service-first order. A died container on another service (#5 at 0.80) is the closest outsider, which is the useful kind of neighbour.
 - **Most of the image growth is onnxruntime and numpy, not the model.** The model is 71 MB of the 268 MB.
+- **bge-m3 trades English first places for German ones, at a cost Bleep would carry on every install.** Over all 31 knowledge questions both models put the right page first for 24 and in the top 5 for 31, and Investigate reads the top 5. In memory it ranks the right incident first a little more often and separates it better (+0.10 against +0.04), but it also dropped one under the 0.5 threshold, which was set for bge-small. Most installs gain nothing from it and would pay 14 times the CPU per text, a 9-minute first start and 3.5 GB more image (#146).
 
 ## Decided along the way
 
@@ -64,6 +82,7 @@ Cosine scores of the real model (`scores.py`), queries in rows, stored incidents
 - **The uv cache leaves the image** (`UV_NO_CACHE=1`). It held a second copy of every wheel; dropping it pays for half of what the embeddings add.
 - **The vectors are float32 blobs in SQLite, scored by brute force with numpy.** One 384-dimension vector is 1.5 KB, and a dot product over a few thousand of them is far below a millisecond, so no vector index is needed for a few hosts' incidents.
 - **The embedder's name is stored with every vector** (`fastembed:BAAI/bge-small-en-v1.5`, `openai:<model>`). A record from another model is left out of recall, and `MemoryStore.reembed` embeds it again on the next boot, because two models' vectors cannot be compared.
+- **bge-small stays the default; bge-m3 is the multilingual option behind the endpoint, not baked in** (#146). A second baked-in model would grow every image for the few setups that need it; an endpoint (Ollama lists `bge-m3`) costs Bleep's image nothing. Switching the default, or setting `min_score` per model, is a code change for its own issue.
 - **The endpoint option takes any OpenAI-compatible server**: `EMBEDDINGS_PROVIDER=openai`, `EMBEDDINGS_BASE_URL`, `EMBEDDINGS_MODEL` and, when the server wants one, `EMBEDDINGS_API_KEY`. Bleep refuses to start when the URL or the model is missing. The key stays in the environment, never in the database.
 
 ## Limits
@@ -71,7 +90,8 @@ Cosine scores of the real model (`scores.py`), queries in rows, stored incidents
 - **One laptop.** The CPU numbers are from an M4 Pro through Docker Desktop's Linux VM. A small x86 server will be slower per text; the incident path still embeds only a few texts.
 - **The score sample is small** (four queries, five records). It shows the order is right and the threshold is loose; it is not a retrieval benchmark. Host incidents (`a: disk`) separate less than service incidents, because the query has only the host id and a signal kind to go on.
 - **The endpoint option is not measured here.** Its cost and latency are the provider's; with it, nothing local is loaded, but the model files stay in the image.
-- **English model.** Log text and causes in other languages embed less well.
+- **English model.** Log text and causes in other languages embed less well: on 11 German and mixed-language questions bge-small put the right page first for 4 and in the top 5 for all 11, and it scores every incident 0.5 or more against every other, so `min_score` filters nothing (#146).
+- **bge-m3 was measured in-process only, in fp32, in German only** (#146). Its cost and scores through Ollama, a quantised build, other multilingual models fastembed lists, and chunk sizes chosen for it were not measured; with it, recall's `min_score` of 0.5 is too high for Gather's short query (a right record scored 0.39).
 
 ## Reproduce
 
@@ -84,6 +104,11 @@ docker run --rm --network none -e THREADS=14 -v "$PWD/docs/spikes/embeddings:/be
     --entrypoint python bleep-backend /bench/embed_bench.py
 docker run --rm --network none -v "$PWD/docs/spikes/embeddings:/bench:ro" \
     --entrypoint python bleep-backend /bench/scores.py
+# bge-m3 against bge-small (#146): see docs/evals/embeddings-multilingual-2026-11-06.md
+docker build -f docs/spikes/embeddings/m3.Dockerfile --build-context spike=docs/spikes/embeddings \
+    -t bleep-spike-146:m3 backend
+docker run --rm --network none -e MODEL=m3 -v "$PWD/docs/spikes/embeddings:/bench:ro" \
+    --entrypoint python bleep-spike-146:m3 /bench/embed_bench.py
 # the one test that runs the real model (it downloads it on a first run outside the image):
 cd backend && BLEEP_REAL_EMBEDDINGS=1 uv run pytest tests/memory -k real_local_model
 ```

@@ -1,0 +1,27 @@
+# German and mixed-language questions for the retrieval check (#146), next to the 20 English
+# ones in questions.yaml and over the same English snapshot. 1 to 5 are German, in other words
+# than English #3, #8, #13, #18 and #14. 6 to 10 are German questions around English output as
+# Docker prints it; 11 is an English question around a German application log line.
+# Run: uv run python -m evals.knowledge --questions evals/knowledge/questions_multilingual.yaml
+- question: Wie begrenze ich den Arbeitsspeicher eines Containers, und was passiert, wenn er das Limit überschreitet?
+  page: resource-constraints
+- question: Die Logdateien der Container füllen die Festplatte. Wie stelle ich für den json-file-Treiber eine Rotation nach Größe ein?
+  page: logging-json-file
+- question: Wie entferne ich ungenutzte Images, gestoppte Container und den Build-Cache, um Speicherplatz freizugeben?
+  page: pruning
+- question: Ein veröffentlichter Port ist von anderen Rechnern im Netzwerk aus nicht erreichbar. An welche Adressen bindet Docker ihn?
+  page: port-publishing
+- question: Die Datenbank hat nach dem Neuerstellen ihres Containers alle Daten verloren. Wie bleiben die Daten in einem benannten Volume erhalten?
+  page: volumes
+- question: 'Der Container wurde vom Kernel beendet, docker inspect zeigt "OOMKilled": true und "ExitCode": 137. Was ist da passiert?'
+  page: resource-constraints
+- question: 'docker compose up bricht ab mit "dependency failed to start: container shop-db is unhealthy". Wie wartet ein Dienst richtig auf die Datenbank?'
+  page: compose-startup-order
+- question: docker ps zeigt seit Minuten "Restarting (1) 5 seconds ago" für shop-worker. Nach welchen Regeln startet Docker den Container neu?
+  page: restart-policies
+- question: 'Der Health Check meldet "Status": "unhealthy", "FailingStreak": 3. Was bedeuten interval, timeout und retries?'
+  page: dockerfile-healthcheck
+- question: 'Docker meldet "write /var/lib/docker/containers/4f2a/4f2a-json.log: no space left on device". Wie begrenze ich die Größe der Container-Logs?'
+  page: logging-json-file
+- question: 'shop-web logs "FEHLER: Verbindung zu shop-db:5432 abgelehnt" right after it starts, while the database is still starting. How do I make it wait?'
+  page: compose-startup-order
