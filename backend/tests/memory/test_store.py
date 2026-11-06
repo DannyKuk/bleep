@@ -14,6 +14,7 @@ from bleep.memory.embeddings import (
     FakeEmbedder,
     FastEmbedEmbedder,
     OpenAICompatEmbedder,
+    min_score_for,
 )
 from bleep.memory.store import MemoryStore
 from bleep.memory.text import describe_fact, describe_past, label_quotes
@@ -30,6 +31,7 @@ from bleep.schemas.graph import (
 )
 from bleep.schemas.incidents import Incident, Signal, Subject
 from bleep.store.db import Database
+from fakes import LowScoringEmbedder
 
 T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
 SHOP = "a/compose:shop"
@@ -112,6 +114,55 @@ async def test_k_and_min_score_bound_the_answer(env):
     assert len(await env.store.similar("database connection refused", SHOP, k=2)) == 2
     assert await env.store.similar("database connection refused", SHOP, min_score=1.01) == []
     assert await env.store.similar("database connection refused", SHOP, k=0) == []
+
+
+async def test_the_embedders_min_score_decides_recall(tmp_path):
+    """A model whose matches sit lower recalls them with its own threshold (#306)."""
+
+    async def recall(min_score: float):
+        db = Database(tmp_path / f"{min_score}.db")
+        await db.migrate()
+        env = Env(db, LowScoringEmbedder(factor=0.5, min_score=min_score))
+        incident = await env.incident(SHOP)
+        await env.store.add_report(incident, report("web crashed: database connection refused"))
+        return await env.store.similar("container died: database connection refused", SHOP)
+
+    assert await recall(0.5) == []
+    [past] = await recall(0.25)
+    assert 0.25 <= past.score < 0.5
+
+
+async def test_a_min_score_passed_to_similar_wins_over_the_embedders(env):
+    incident = await env.incident(SHOP)
+    await env.store.add_report(incident, report("database connection refused"))
+
+    assert await env.store.similar("database connection refused", SHOP, min_score=1.01) == []
+    assert len(await env.store.similar("database connection refused", SHOP)) == 1
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("BAAI/bge-small-en-v1.5", 0.5),
+        ("BAAI/bge-m3", 0.35),
+        ("bge-m3", 0.35),  # as Ollama names it
+        ("bge-m3:latest", 0.35),
+        ("BGE-M3:567m", 0.35),
+        ("text-embedding-nomic-embed-text-v1.5", 0.5),  # not measured: the old default
+    ],
+)
+def test_each_known_model_has_its_measured_min_score(model, expected):
+    assert min_score_for(model) == expected
+
+
+def test_the_embedders_take_their_models_min_score_unless_told_one():
+    assert FastEmbedEmbedder().min_score == 0.5
+    assert FastEmbedEmbedder("BAAI/bge-m3").min_score == 0.35
+    assert OpenAICompatEmbedder("http://x/v1", "bge-m3").min_score == 0.35
+    assert OpenAICompatEmbedder("http://x/v1", "nomic-embed").min_score == 0.5
+    assert OpenAICompatEmbedder("http://x/v1", "bge-m3", min_score=0.3).min_score == 0.3
+    assert FastEmbedEmbedder(min_score=0.6).min_score == 0.6
+    assert FakeEmbedder().min_score == 0.5
 
 
 async def test_a_rejected_proposal_shows_up_in_recall(env):

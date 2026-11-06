@@ -154,15 +154,18 @@ def build_embedder(settings: Settings, secrets: SecretStore | None = None) -> Em
     """The local model unless the settings name an OpenAI-compatible endpoint (checked complete
     by `check_settings`). `EMBEDDINGS_MODEL` names the endpoint's model only: the local model is
     the one baked into the image, and another could not be downloaded there. With `secrets`, the
-    endpoint's key is read from there at each call."""
+    endpoint's key is read from there at each call. `EMBEDDINGS_MIN_SCORE` sets recall's cut-off
+    for either; unset, the model's own applies."""
+    min_score = settings.embeddings_min_score
     if settings.embeddings_provider == "openai":
         key = settings.embeddings_api_key
         return OpenAICompatEmbedder(
             settings.embeddings_base_url or "",
             settings.embeddings_model or "",
             (lambda: secrets.get(EMBEDDINGS_KEY_ENV)) if secrets is not None else key,
+            min_score=min_score,
         )
-    return FastEmbedEmbedder(DEFAULT_LOCAL_MODEL)
+    return FastEmbedEmbedder(DEFAULT_LOCAL_MODEL, min_score=min_score)
 
 
 def build_parts(

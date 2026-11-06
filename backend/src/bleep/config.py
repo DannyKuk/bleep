@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     embeddings_api_key: SecretStr | None = Field(
         default=None, validation_alias=AliasChoices("EMBEDDINGS_API_KEY", "embeddings_api_key")
     )
+    # Where memory recall cuts off; unset, the model's measured one (memory.embeddings.MIN_SCORES).
+    embeddings_min_score: float | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        validation_alias=AliasChoices("EMBEDDINGS_MIN_SCORE", "embeddings_min_score"),
+    )
 
 
 def check_settings(settings: Settings) -> None:

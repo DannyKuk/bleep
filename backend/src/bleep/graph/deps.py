@@ -77,7 +77,7 @@ class Memory(Protocol):
     """
 
     async def similar(
-        self, text: str, service_id: str | None = None, k: int = 3, min_score: float = 0.5
+        self, text: str, service_id: str | None = None, k: int = 3, min_score: float | None = None
     ) -> list[PastIncident]:
         """At most `k` past incidents like `text`, the same service's first."""
         ...
@@ -106,7 +106,7 @@ class NullMemory:
     """No memory: nothing is ever similar, no service has facts, and nothing is kept."""
 
     async def similar(
-        self, text: str, service_id: str | None = None, k: int = 3, min_score: float = 0.5
+        self, text: str, service_id: str | None = None, k: int = 3, min_score: float | None = None
     ) -> list[PastIncident]:
         return []
 
