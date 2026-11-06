@@ -395,3 +395,93 @@ def test_an_escaped_quote_at_the_tail_window_start_does_not_end_the_value():
 def test_multi_line_lists_xml_settings_and_cdata_are_redacted_in_place(text, out):
     assert redact_with_count(text) == (out, out.count("<redacted>"))
     assert redact_with_count(out) == (out, 0)
+
+
+@pytest.mark.parametrize(
+    ("text", "out"),
+    [
+        (
+            '{"api_keys": [\n  "k1"\n],"password": "correct horse"}',
+            '{"api_keys": <redacted>,"password": "<redacted>"}',
+        ),
+        ("token_list: [\n  a\n];password='a b'", "token_list: <redacted>;password='<redacted>'"),
+        ("key=[\ncredential] =hunter2", "key=[\ncredential] =<redacted>"),
+        # a log record ends a list, and so does a pair whose value could run on past the `]`
+        (
+            "ERROR bad credentials: [\nplain one\nplain two\nWARN slow]",
+            "ERROR bad credentials: <redacted>\nplain one\nplain two\nWARN slow]",
+        ),
+        ("api_keys: [\n  a\n  token=b]c d", "api_keys: <redacted>\n  a\n  token=<redacted> d"),
+    ],
+)
+def test_a_multi_line_list_ends_at_its_bracket_and_leaves_the_next_pair(text, out):
+    assert redact_with_count(text) == (out, out.count("<redacted>"))
+    assert redact_with_count(out) == (out, 0)
+
+
+def test_a_multi_line_list_spans_at_most_20_lines():
+    items = "".join(f"  k{i}x,\n" for i in range(21))
+    assert "k3x" in redact_text("api_keys: [\n" + items + "]")
+    assert "k3x" not in redact_text("api_keys: [\n" + items[: items.index("  k19x")] + "]")
+
+
+def _spring_line() -> str:
+    frames = "".join(
+        f"\\n\\tat com.acme.billing.InvoiceService.process{i}(InvoiceService.java:{100 + i})"
+        for i in range(60)
+    )
+    record = {
+        "level": "ERROR",
+        "message": "JSON parse error: Cannot deserialize value of type "
+        "`java.util.ArrayList<com.acme.auth.ApiToken>` from Object value",
+        "stack_trace": "org.springframework.http.converter.HttpMessageNotReadableException"
+        + frames,
+        "status": 500,
+    }
+    return json.dumps(record)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        _spring_line(),
+        json.dumps({"msg": "type List<AccessToken> " + "word " * 1100, "status": 500}),
+        "a " * 950 + "Expected <token> but found EOF " + "b " * 1500,
+    ],
+)
+def test_a_type_parameter_on_a_cut_line_is_no_element(line):
+    out, count = redact_with_count(line)
+    head, _, tail = out.split("\n")
+    assert count == 0
+    assert len(head) > 1500 and line.startswith(head)
+    assert len(tail) > 1500 and line.endswith(tail)
+
+
+def test_an_element_open_at_the_head_cut_is_hidden_to_the_cut():
+    line = "a " * 900 + "<password>" + "hUnt3r Zq9x " * 300 + "</password> " + "b " * 900
+    out, count = redact_with_count(line)
+    assert "hUnt3r" not in out and count > 0
+
+
+@pytest.mark.parametrize("before", ["Set-Cookie: a=1; b=2 ", '<entry key="db.password">'])
+def test_a_key_ending_a_cut_line_still_takes_its_value_on_the_next_line(before):
+    line = "y " * 900 + before + "z " * 2000 + "x.refresh_tokens:"
+    out = redact_text(line + '\n  ["hUnt3rZq9"]\nnext: 1')
+    assert "hUnt3rZq9" not in out and out.endswith("next: 1")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        _spring_line(),
+        "a " * 900 + "<password>" + "q" * 3000 + "</password> " + "b " * 900,
+        "a " * 900 + "Cookie: " + "; ".join(f"c{i}=v{i}" for i in range(400)) + " b",
+        '{"pad":"' + "p" * 2000 + '","api_keys":["' + '","'.join(LONG_KEYS) + '"],"b":1}',
+    ],
+)
+def test_a_cut_piece_that_lost_text_is_counted(line):
+    out, count = redact_with_count(line)
+    head, _, tail = out.split("\n")
+    if not line.startswith(head) or not line.endswith(tail):
+        assert count > 0
+    assert count == out.count("<redacted>")

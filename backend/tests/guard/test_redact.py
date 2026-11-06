@@ -483,6 +483,8 @@ def assert_no_slower_than_benign(text: str) -> None:
         '<entry key="password">',
         'value="a" key="password" ',
         '"cookie": "a=b; ',
+        "token: [\n  a\n]x,",
+        "token: [\n  a:\n",
     ],
 )
 @pytest.mark.parametrize("length", [4000, 4001])
