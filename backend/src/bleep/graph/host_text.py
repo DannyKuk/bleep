@@ -7,7 +7,7 @@ outside the wrapper.
 """
 
 from bleep.guard.pipeline import NAME_CHARS, guard_name, guard_text, is_plain_name
-from bleep.incidents.repository import build_title, seen_note, service_key
+from bleep.incidents.repository import build_title, seen_note, split_service_id
 from bleep.schemas.docker import HostBasics
 from bleep.schemas.graph import GatherContext
 from bleep.schemas.incidents import Signal, Subject
@@ -54,7 +54,7 @@ def service_id_shown(subject: Subject) -> str:
     kind are Bleep's own, so only the key, taken from a label, is judged: a plain key leaves the
     id as it is, any other wraps the whole id."""
     service_id = subject.service_id or ""
-    prefix, key = service_key(subject)
+    prefix, key = split_service_id(subject)
     if prefix and is_plain_name(key):
         return service_id
     return guard_text("service_id", service_id, NAME_CHARS)[0]

@@ -1,10 +1,12 @@
 """Incidents and their signals in SQLite. At most one incident is open per subject."""
 
+import functools
 import json
 import logging
 import re
 import secrets
 import sqlite3
+import unicodedata
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -106,13 +108,33 @@ class FoldGroup:
 # The kinds `hosts.discovery` puts before a service key: Bleep's own words, not the label's.
 _KEY_KINDS = ("compose:", "container:", "id:")
 TITLE_NAME_CHARS = 40  # a name that is not plain, cut to this in a title, "…" included
-# A name in a title is shown inside straight double quotes, so it must not hold anything that
-# reads as one: each of these becomes `'`.
-_QUOTES = re.compile('["\u00ab\u00bb\u201c-\u201f\u2033\u2036\u3003\u301d-\u301f\uff02]')
+# A name in a title is shown inside straight double quotes, so nothing in it may read as one.
+# Besides the opening and closing quotes (Pi, Pf), a character is replaced when a word of its
+# Unicode name is one of these: the primes, ʺ, ˮ, ˝, ˵, ״, 〃, ᳓, the quote ornaments, and the
+# single apostrophes and accents two of which read as `"`. A letter "WITH" an accent (ő) and a
+# math symbol (the acute angle) stay.
+_QUOTE_WORDS = frozenset(
+    {
+        "QUOTATION",
+        "QUOTE",
+        "PRIME",
+        "APOSTROPHE",
+        "ACUTE",
+        "GRAVE",
+        "GERESH",
+        "GERSHAYIM",
+        "DITTO",
+        "NIHSHVASA",
+    }
+)
+_MARKS = ("Mn", "Me", "Cs")  # combining marks (a `"` can be drawn on a letter), lone surrogates
 _BLANKS = re.compile(r"\s+")
+_APOSTROPHES = re.compile(r"''+")  # two read as one `"`
+_SKIN_TONES = ("\U0001f3fb", "\U0001f3ff")
+_REGIONAL = ("\U0001f1e6", "\U0001f1ff")
 
 
-def service_key(subject: Subject) -> tuple[str, str]:
+def split_service_id(subject: Subject) -> tuple[str, str]:
     """The service id split into Bleep's own prefix (`<host>/<kind>:`) and the key a label
     wrote. An id that does not start with its host gives no prefix: all of it is the label's."""
     service_id = subject.service_id or ""
@@ -124,16 +146,55 @@ def service_key(subject: Subject) -> tuple[str, str]:
     return host + kind, key[len(kind) :]
 
 
+@functools.lru_cache(maxsize=4096)
+def _reads_as_quote(char: str) -> bool:
+    category = unicodedata.category(char)
+    if category in ("Pi", "Pf"):
+        return True
+    name = unicodedata.name(char, "")
+    return category != "Sm" and " WITH " not in name and not _QUOTE_WORDS.isdisjoint(name.split())
+
+
+def _regional(char: str) -> bool:
+    return _REGIONAL[0] <= char <= _REGIONAL[1]
+
+
+def _joins_previous(text: str, at: int) -> bool:
+    """Whether `text[at]` is drawn as one with the character before it: a spacing mark, a skin
+    tone, or the second letter of a flag. (Zero-width joiners and variation selectors are gone
+    by then, `strip_control` drops them.)"""
+    char = text[at]
+    if unicodedata.category(char) == "Mc" or _SKIN_TONES[0] <= char <= _SKIN_TONES[1]:
+        return True
+    if not _regional(char):
+        return False
+    flags = 0  # the flag letters before it: an odd number leaves it the second of a pair
+    while flags < at and _regional(text[at - 1 - flags]):
+        flags += 1
+    return flags % 2 == 1
+
+
+def _cut(text: str, limit: int) -> str:
+    """`text` cut to `limit` characters with "…", never inside what draws as one character."""
+    if len(text) <= limit:
+        return text
+    end = limit - 1
+    while end > 0 and _joins_previous(text, end):
+        end -= 1
+    return text[:end].rstrip() + "…"
+
+
 def title_name(name: str) -> str:
     """A name from a label as an incident title shows it: a plain one (`is_plain_name`) as it
-    is, any other as host text: in double quotes, on one line, redacted, with no quote of its
-    own, cut to 40 characters with "…"."""
+    is, any other as host text: in double quotes, on one line, redacted, with nothing of its own
+    that reads as a double quote, cut to 40 characters with "…"."""
     if is_plain_name(name):
         return name
-    text = _QUOTES.sub("'", _BLANKS.sub(" ", redact_text(strip_control(name))).strip())
-    if len(text) > TITLE_NAME_CHARS:
-        text = text[: TITLE_NAME_CHARS - 1].rstrip() + "…"
-    return f'"{text}"'
+    text = unicodedata.normalize("NFC", strip_control(name))
+    text = "".join(c for c in text if unicodedata.category(c) not in _MARKS)
+    text = _BLANKS.sub(" ", redact_text(text)).strip()
+    text = _APOSTROPHES.sub("'", "".join("'" if _reads_as_quote(c) else c for c in text))
+    return f'"{_cut(text, TITLE_NAME_CHARS)}"'
 
 
 def build_title(subject: Subject, signals: list[Signal]) -> str:
@@ -143,7 +204,7 @@ def build_title(subject: Subject, signals: list[Signal]) -> str:
     what = signals[0].kind.replace("_", " ") if signals else "incident"
     if not subject.service_id:
         return f"{what} on {subject.host_id}"
-    prefix, key = service_key(subject)
+    prefix, key = split_service_id(subject)
     return f"{what} on {prefix}{title_name(key)}"
 
 

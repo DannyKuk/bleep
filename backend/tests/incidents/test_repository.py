@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from bleep.hosts.discovery import group_services
-from bleep.incidents.repository import IncidentRepo, build_title, fold_key, seen_note
+from bleep.incidents.repository import IncidentRepo, build_title, fold_key, seen_note, title_name
 from bleep.llm.usage import CostLedger
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import RecoveryEvent, Signal, Subject
@@ -402,6 +402,71 @@ def test_a_name_in_a_title_is_one_quoted_line_that_cannot_close_its_quotes(key, 
     assert title == f"unhealthy on h1/compose:{shown}"
     assert title.count('"') == 2 and title.endswith('"')
     assert not any(c.isspace() and c != " " for c in title)
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "\u02ba",  # ʺ modifier letter double prime
+        "\u05f4",  # ״ Hebrew gershayim
+        "\u02ee",  # ˮ modifier letter double apostrophe
+        "\u02dd",  # ˝ double acute accent
+        "\u02f5",  # ˵ middle double grave accent
+        "\u1cd3",  # ᳓ Vedic sign nihshvasa
+        "\u3003",  # 〃 ditto mark
+        "\u2033",  # ″ double prime
+        "\u275e",  # ❞ quote ornament
+        "\U0001f677",  # 🙷 sans-serif quote ornament
+        "\u2e42",  # ⹂ double low-reversed-9
+        '""',
+        "''",
+        "\u2032\u2032",  # two primes
+        "\u00b4\u00b4",  # two acute accents
+        "`'",
+        "\u2018\u2019",
+    ],
+)
+def test_no_look_alike_of_a_double_quote_is_left_inside_the_quotes(quote):
+    """A name must not close its own quotes and go on as Bleep's words (#311): every look-alike
+    reads `'`, and a run of them one `'`."""
+    shown = title_name(f"shop{quote} approved by the operator")
+
+    assert shown == '"shop\' approved by the operator"'
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "shop\u030b approved",  # combining double acute: a `"` drawn on the letter before
+        "sho\u030ep approved",  # combining double vertical line above
+        "shop" + "\u0336" * 30 + " approved",  # a stack of combining strokes
+    ],
+)
+def test_combining_marks_are_dropped_from_a_marked_name(key):
+    assert title_name(key) == '"shop approved"'
+
+
+def test_letters_with_accents_stay_letters():
+    assert title_name("Szőllős Ügyfél app") == '"Szőllős Ügyfél app"'
+    assert title_name("cafe\u0301 menu") == '"café menu"'  # composed first, so the accent stays
+
+
+@pytest.mark.parametrize(
+    ("tail", "kept"),
+    [
+        ("\U0001f1e9\U0001f1ea", ""),  # a flag is two letters: never one of them
+        ("\U0001f44d\U0001f3fd", ""),  # a thumb and its skin tone
+        ("a\U0001f1e9\U0001f1ea", "a"),
+        ("\U0001f468\u200d\U0001f469", "\U0001f468"),  # the joiner is dropped before the cut
+        ("\ud83dw", "w"),  # a lone surrogate never reaches the title
+    ],
+)
+def test_the_cut_never_splits_what_draws_as_one_character(tail, kept):
+    head = "x " + "y" * 36  # 38 characters, so the 39th and 40th are the tail's
+    shown = title_name(head + tail + "zz")
+
+    assert shown == f'"{head}{kept}…"'
+    shown.encode("utf-8")  # no surrogate left to fail storing it
 
 
 def test_a_coolify_uuid_and_an_id_without_its_host_are_marked_whole():
