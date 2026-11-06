@@ -1,11 +1,13 @@
 import asyncio
 import json
+import unicodedata
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from bleep.hosts.discovery import group_services
+from bleep.incidents.quote_lookalikes import QUOTE_LOOKALIKES
 from bleep.incidents.repository import IncidentRepo, build_title, fold_key, seen_note, title_name
 from bleep.llm.usage import CostLedger
 from bleep.schemas.docker import ContainerSummary
@@ -432,6 +434,63 @@ def test_no_look_alike_of_a_double_quote_is_left_inside_the_quotes(quote):
     shown = title_name(f"shop{quote} approved by the operator")
 
     assert shown == '"shop\' approved by the operator"'
+
+
+# The characters a Unicode-wide sweep against confusables.txt found still reading as a quote
+# after the first rule on names: each alone reads `'`, or (ײ) `"`.
+SURVIVORS = [
+    "\u05f2",  # ײ Yiddish double yod
+    "\ufb1f",  # ײַ, which NFC makes ײ and a mark
+    "\u02c8",  # ˈ modifier letter vertical line
+    "\u02bb",  # ʻ
+    "\u02bd",  # ʽ
+    "\u02be",  # ʾ
+    "\u0384",  # ΄ tonos
+    "\u1fbd",  # ᾽ koronis
+    "\u1fbf",  # ᾿ psili
+    "\u1ffe",  # ῾ dasia
+    "\ua78b",  # Ꞌ saltillo
+    "\ua78c",  # ꞌ
+    "\u05d9",  # י yod
+    "\ufb1d",  # yod with hiriq
+    "\ufb39",  # yod with dagesh
+    "\u055b",
+    "\u055d",
+    "\u144a",
+    "\u16cc",
+    "\u2cff",
+    "\U00016f51",
+    "\U00016f52",
+    "\U0001e94b",
+]
+
+
+@pytest.mark.parametrize("char", SURVIVORS)
+def test_every_quote_look_alike_in_confusables_reads_as_one_apostrophe(char):
+    for key in (f"shop{char} approved", f"shop{char}{char} approved", f'shop"{char} approved'):
+        assert title_name(key) == '"shop\' approved"', key
+
+
+def test_the_look_alike_table_holds_every_quote_this_python_knows():
+    """The table is generated (scripts/quote_lookalikes.py); this fails when a newer Python
+    knows quote characters it was not generated with."""
+    for code in range(0x110000):
+        char = chr(code)
+        if unicodedata.category(char) in ("Pi", "Pf") or any(
+            q in unicodedata.normalize("NFKC", char) for q in ("'", '"', "\u201c", "\u201d")
+        ):
+            assert char in QUOTE_LOOKALIKES, hex(code)
+
+
+def test_a_letter_that_only_holds_an_apostrophe_stays():
+    assert title_name("Ma\u0149 app") == '"Ma\u0149 app"'  # ŉ
+
+
+def test_a_secret_in_curly_quotes_is_redacted_once_they_are_plain():
+    shown = title_name("x {\u201cpassword\u201d: \u201chunter2hunter2\u201d}")
+
+    assert "hunter2" not in shown
+    assert "<redacted>" in shown
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,5 @@
 """Incidents and their signals in SQLite. At most one incident is open per subject."""
 
-import functools
 import json
 import logging
 import re
@@ -16,6 +15,7 @@ import aiosqlite
 from bleep.guard.pipeline import is_plain_name
 from bleep.guard.redact import redact_text
 from bleep.guard.sanitize import strip_control
+from bleep.incidents.quote_lookalikes import QUOTE_LOOKALIKES
 from bleep.schemas.incidents import (
     TERMINAL_STATUSES,
     Incident,
@@ -108,28 +108,11 @@ class FoldGroup:
 # The kinds `hosts.discovery` puts before a service key: Bleep's own words, not the label's.
 _KEY_KINDS = ("compose:", "container:", "id:")
 TITLE_NAME_CHARS = 40  # a name that is not plain, cut to this in a title, "…" included
-# A name in a title is shown inside straight double quotes, so nothing in it may read as one.
-# Besides the opening and closing quotes (Pi, Pf), a character is replaced when a word of its
-# Unicode name is one of these: the primes, ʺ, ˮ, ˝, ˵, ״, 〃, ᳓, the quote ornaments, and the
-# single apostrophes and accents two of which read as `"`. A letter "WITH" an accent (ő) and a
-# math symbol (the acute angle) stay.
-_QUOTE_WORDS = frozenset(
-    {
-        "QUOTATION",
-        "QUOTE",
-        "PRIME",
-        "APOSTROPHE",
-        "ACUTE",
-        "GRAVE",
-        "GERESH",
-        "GERSHAYIM",
-        "DITTO",
-        "NIHSHVASA",
-    }
-)
 _MARKS = ("Mn", "Me", "Cs")  # combining marks (a `"` can be drawn on a letter), lone surrogates
 _BLANKS = re.compile(r"\s+")
-_APOSTROPHES = re.compile(r"''+")  # two read as one `"`
+# A name in a title is shown inside straight double quotes, so nothing in it may read as one:
+# each character of `QUOTE_LOOKALIKES` becomes `'`, and a run of `'` one, since two read as `"`.
+_APOSTROPHES = re.compile(r"''+")
 _SKIN_TONES = ("\U0001f3fb", "\U0001f3ff")
 _REGIONAL = ("\U0001f1e6", "\U0001f1ff")
 
@@ -144,15 +127,6 @@ def split_service_id(subject: Subject) -> tuple[str, str]:
     key = service_id[len(host) :]
     kind = next((k for k in _KEY_KINDS if key.startswith(k)), "")
     return host + kind, key[len(kind) :]
-
-
-@functools.lru_cache(maxsize=4096)
-def _reads_as_quote(char: str) -> bool:
-    category = unicodedata.category(char)
-    if category in ("Pi", "Pf"):
-        return True
-    name = unicodedata.name(char, "")
-    return category != "Sm" and " WITH " not in name and not _QUOTE_WORDS.isdisjoint(name.split())
 
 
 def _regional(char: str) -> bool:
@@ -193,8 +167,9 @@ def title_name(name: str) -> str:
     text = unicodedata.normalize("NFC", strip_control(name))
     text = "".join(c for c in text if unicodedata.category(c) not in _MARKS)
     text = _BLANKS.sub(" ", redact_text(text)).strip()
-    text = _APOSTROPHES.sub("'", "".join("'" if _reads_as_quote(c) else c for c in text))
-    return f'"{_cut(text, TITLE_NAME_CHARS)}"'
+    text = _APOSTROPHES.sub("'", "".join("'" if c in QUOTE_LOOKALIKES else c for c in text))
+    # Again: a secret in curly quotes (`“password”: “…”`) is found only once they read `'`.
+    return f'"{_cut(redact_text(text), TITLE_NAME_CHARS)}"'
 
 
 def build_title(subject: Subject, signals: list[Signal]) -> str:
