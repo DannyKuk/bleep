@@ -1,15 +1,18 @@
 """Where host text tried to give Bleep orders, and the one sentence that tells the human (#105).
 
-Only code's own sign is told: a wrapper tag the guard escaped in Gather's logs or in a tool's
-result, named by that tool's source. The diagnosis's `planted_in`, the model's reading, is kept
-only for places the run read (`read_sources`) and measured by the injection eval, but never
-shown: on 2026-11-05 it flagged 8 of 18 honest control runs (docs/evals/injection-2026-11-05.md).
-The sentence is Bleep's own, built from the closed list, and quotes nothing.
+Only code's own signs are told, in the host text the run read (Gather's logs, the causes of the
+past incidents it recalled, and every tool's result, named by that tool's source): a wrapper tag
+the guard escaped, or a line that gives orders by `guard.orders` (#271). The diagnosis's
+`planted_in`, the model's reading, is kept only for places the run read (`read_sources`) and
+measured by the injection eval, but never shown: on 2026-11-05 it flagged 8 of 18 honest control
+runs (docs/evals/injection-2026-11-05.md). The sentence is Bleep's own, built from the closed
+list, and quotes nothing.
 """
 
 from langchain_core.messages import AnyMessage, ToolMessage
 
 from bleep.graph.nodes.investigate import ESCAPED_TAG
+from bleep.guard.orders import gives_orders
 from bleep.schemas.graph import GatherContext, PlantedPlace, PlantedSource
 
 # Each place in the human's words; the order is the closed list's, which the plugins' places
@@ -76,9 +79,23 @@ def escaped_places(context: GatherContext | None, messages: list[AnyMessage]) ->
     return found
 
 
+def ordered_places(context: GatherContext | None, messages: list[AnyMessage]) -> set[PlantedPlace]:
+    """The places where a line gives orders by the signs of `guard.orders`."""
+    found: set[PlantedPlace] = set()
+    if context is not None and any(gives_orders(t) for t in context.logs.values()):
+        found.add("logs")
+    if context is not None and any(gives_orders(past.cause) for past in context.similar):
+        found.add("memory")
+    for m in _tool_results(messages):
+        if gives_orders(m.text):
+            found.add(TOOL_SOURCE.get(m.name or "", "other"))
+    return found
+
+
 def planted_places(context: GatherContext | None, messages: list[AnyMessage]) -> list[PlantedPlace]:
-    """The places where code saw a wrapper tag the guard escaped, in the closed list's order."""
-    found = escaped_places(context, messages)
+    """The places where code saw a wrapper tag the guard escaped or a line that gives orders, in
+    the closed list's order."""
+    found = escaped_places(context, messages) | ordered_places(context, messages)
     return [place for place in PLANTED_WHERE if place in found]
 
 
