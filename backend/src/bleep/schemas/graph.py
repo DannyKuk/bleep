@@ -18,8 +18,9 @@ Outcome = Literal["resolved", "rejected", "no_action", "unverified", "budget", "
 PlantedSource = Literal[
     "logs", "events", "inspect", "http_body", "memory", "commits", "docs", "other"
 ]
-# The places a report can name: Diagnose's list and the plugins' answers, which code alone sees.
-PlantedPlace = PlantedSource | Literal["mcp", "coolify"]
+# The places a report can name: Diagnose's list, and the plugins' answers, the host basics and a
+# service's name or id, which code alone reads for planted orders.
+PlantedPlace = PlantedSource | Literal["mcp", "coolify", "host_basics", "service_name"]
 Action = Literal[
     "docker.restart",
     "docker.stop",

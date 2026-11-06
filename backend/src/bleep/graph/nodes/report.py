@@ -265,7 +265,7 @@ def planted_follow_up(state: IncidentState) -> tuple[list[PlantedPlace], str | N
     """Where code saw planted orders (`graph/planted.py`) and the fixed sentence that names those
     places, or None. No text of the model's or the host's goes in, so the report and memory
     carry nothing new from the host."""
-    places = planted_places(state.get("context"), state.get("messages", []))
+    places = planted_places(state.get("context"), state.get("messages", []), state["subject"])
     return places, planted_sentence(places, HINT_END)
 
 

@@ -1,8 +1,9 @@
 """Where host text tried to give Bleep orders, and the one sentence that tells the human (#105).
 
 Only code's own signs are told, in the host text the run read (Gather's logs, the causes of the
-past incidents it recalled, and every tool's result, named by that tool's source): a wrapper tag
-the guard escaped, or a line that gives orders by `guard.orders` (#271). The diagnosis's
+past incidents it recalled, every tool's result, named by that tool's source, the host basics and
+a service name or id the guard wrapped, as the prompts show them): a wrapper tag the guard
+escaped, or a line that gives orders by `guard.orders` (#271, #304). The diagnosis's
 `planted_in`, the model's reading, is kept only for places the run read (`read_sources`) and
 measured by the injection eval, but never shown: on 2026-11-05 it flagged 8 of 18 honest control
 runs (docs/evals/injection-2026-11-05.md). The sentence is Bleep's own, built from the closed
@@ -13,9 +14,11 @@ import re
 
 from langchain_core.messages import AnyMessage, ToolMessage
 
+from bleep.graph.host_text import describe_basics, service_id_shown, service_name
 from bleep.graph.nodes.investigate import ESCAPED_TAG
 from bleep.guard.orders import gives_orders, line_signs, orders
 from bleep.schemas.graph import GatherContext, PlantedPlace, PlantedSource
+from bleep.schemas.incidents import Subject
 from bleep.tools.knowledge import SOURCE_LABEL
 
 # Each place in the human's words; the order is the closed list's, which the plugins' places
@@ -30,6 +33,8 @@ PLANTED_WHERE: dict[PlantedPlace, str] = {
     "docs": "documents Bleep searched",
     "mcp": "answers of the MCP server",
     "coolify": "answers from Coolify",
+    "host_basics": "host basics",
+    "service_name": "service name",
     "other": "other host output",
 }
 PLANTED_START = "Bleep found text "  # the injection eval reads it
@@ -140,10 +145,40 @@ def ordered_places(context: GatherContext | None, messages: list[AnyMessage]) ->
     return found
 
 
-def planted_places(context: GatherContext | None, messages: list[AnyMessage]) -> list[PlantedPlace]:
+def _shows_planted(shown: str) -> bool:
+    return bool(ESCAPED_TAG.search(shown)) or gives_orders(shown)
+
+
+def _names_shown(subject: Subject | None, context: GatherContext | None) -> list[str]:
+    """The service's name and id as the prompts show them, each only when the guard wrapped it:
+    a plain name stands in Bleep's own text and is no more than a container name may be."""
+    if subject is None or subject.kind != "service":
+        return []
+    shown = [service_name(subject, context)]
+    if subject.service_id:
+        shown.append(service_id_shown(subject))
+    raw = {subject.service_id, context.service_name if context else None}
+    return [text for text in shown if text not in raw]
+
+
+def host_text_places(context: GatherContext | None, subject: Subject | None) -> set[PlantedPlace]:
+    """The host basics and the service's name or id, read as the prompts show them (#304)."""
+    found: set[PlantedPlace] = set()
+    basics = context.basics if context is not None else None
+    if basics is not None and _shows_planted(describe_basics(basics)[0]):
+        found.add("host_basics")
+    if any(_shows_planted(text) for text in _names_shown(subject, context)):
+        found.add("service_name")
+    return found
+
+
+def planted_places(
+    context: GatherContext | None, messages: list[AnyMessage], subject: Subject | None = None
+) -> list[PlantedPlace]:
     """The places where code saw a wrapper tag the guard escaped or a line that gives orders, in
     the closed list's order."""
     found = escaped_places(context, messages) | ordered_places(context, messages)
+    found |= host_text_places(context, subject)
     return [place for place in PLANTED_WHERE if place in found]
 
 
