@@ -461,8 +461,10 @@ URL_FAILED = "verify-failed-url"
 
 
 async def test_a_running_container_whose_service_url_fails_loops_back_and_never_ends_fixed():
-    """Round one's verification plan names no URL, and the restarted container passes every
-    container check; Verify still checks the service's URL, which answers 503."""
+    """The health check opened the incident, round one's verification plan names no URL, and the
+    restarted container comes back healthy; Verify still checks the service's URL, which answers
+    503. With `verify.py` from before #296 this run ends without a loop-back."""
+    assert [signal.kind for signal in case(URL_FAILED).signals] == ["unhealthy"]
     c = case(URL_FAILED)
     assert c.round_one.plan.verification.urls == []
     engine = engine_for(c)

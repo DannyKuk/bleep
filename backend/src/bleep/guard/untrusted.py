@@ -55,6 +55,14 @@ def _neutralise(match: re.Match[str]) -> str:
     return "&lt;" if _TAG.match(fold(window)) else match.group(0)
 
 
+def holds_escaped_tag(text: str) -> bool:
+    """Whether text holds a wrapper tag `escape_untrusted` escaped (`&lt;` before a tag, folded as
+    the escape folds it), as stored text that copied a wrapper from a prompt does."""
+    return any(
+        _TAG.match(fold(text[m.end() : m.end() + _FOLD_WINDOW])) for m in re.finditer("&lt;", text)
+    )
+
+
 def escape_untrusted(text: str) -> str:
     """Turn every `<` that starts an `untrusted` tag into `&lt;`.
 
