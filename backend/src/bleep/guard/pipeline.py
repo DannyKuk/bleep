@@ -1,6 +1,8 @@
 """The one path text takes on its way to the model: bound, clean, redact, escape, cut, wrap."""
 
-from bleep.guard.redact import redact_with_count
+import re
+
+from bleep.guard.redact import redact_text, redact_with_count
 from bleep.guard.sanitize import (
     MAX_CHARS,
     collapse_repeats,
@@ -12,6 +14,10 @@ from bleep.guard.sanitize import (
 from bleep.guard.untrusted import escape_untrusted, wrap_untrusted
 
 WORK_FACTOR = 64  # the raw text is cut to this many times `max_chars` before anything else
+NAME_CHARS = 200  # a name that is not plain is cut to this inside its wrapper
+PLAIN_CHARS = 64
+# Docker's own rule for a container name, which every prompt already shows as it is.
+_PLAIN_NAME = re.compile(rf"[A-Za-z0-9][A-Za-z0-9_.-]{{0,{PLAIN_CHARS - 1}}}")
 
 
 def guard_text(source: str, text: str | bytes, max_chars: int = MAX_CHARS) -> tuple[str, int]:
@@ -39,3 +45,16 @@ def guard_text(source: str, text: str | bytes, max_chars: int = MAX_CHARS) -> tu
     growth = escaped[:extra].count("&lt;") * 3
     cut = dropped + len(collapsed) - len(kept) + extra - growth
     return wrap_untrusted(source, cut_tail(escaped, max_chars, cut - extra)), count
+
+
+def is_plain_name(name: str) -> bool:
+    """Whether a name from a host may stand as it is in Bleep's own text: it fits Docker's rule
+    for a container name (`[a-zA-Z0-9][a-zA-Z0-9_.-]*`), is at most 64 characters, and holds
+    nothing redaction would hide. Such a name is no more than a container name may already be."""
+    return bool(_PLAIN_NAME.fullmatch(name)) and redact_text(name) == name
+
+
+def guard_name(source: str, name: str) -> str:
+    """A name from a host (a service name taken from a label) as a prompt may show it: a plain
+    name as it is, any other through `guard_text`, cut to 200 characters and wrapped."""
+    return name if is_plain_name(name) else guard_text(source, name, NAME_CHARS)[0]

@@ -17,6 +17,8 @@ from bleep.schemas.graph import NOTE_CHARS, Feedback, PastIncident, ServiceFact
 FIELD_CHARS = 500
 _FINDING = {"diagnosis": "the diagnosis", "proposal": "the plan"}
 QUOTE_SOURCE = "memory.quote"
+# The stored title holds the service id, which comes from a container label (#295).
+TITLE_SOURCE = "memory.title"
 # A stretch in straight, typographic or back quotes, on one line, of any length. A quote with no
 # closing mark (cut short by `clean`, or never closed) runs to the end of the text. Single quotes
 # are left alone: they are apostrophes far more often than quotes.
@@ -43,10 +45,12 @@ def label_quotes(text: str) -> str:
 
 
 def describe_past(past: PastIncident) -> str:
-    """A past incident as one line for a prompt, each field's quotes labelled on their own."""
+    """A past incident as one line for a prompt: its title wrapped as untrusted, each other
+    field's quotes labelled on their own."""
     q = label_quotes
     line = (
-        f"{past.date:%Y-%m-%d} {q(past.title)} (similarity {past.score:.2f}):"
+        f"{past.date:%Y-%m-%d} {wrap_untrusted(TITLE_SOURCE, past.title)}"
+        f" (similarity {past.score:.2f}):"
         f" cause {q(past.cause)}; action {q(past.action)}; outcome {q(past.outcome)}"
     )
     if past.human_decision:

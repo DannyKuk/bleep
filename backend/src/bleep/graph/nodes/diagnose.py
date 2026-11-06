@@ -22,6 +22,7 @@ from pydantic import Field, field_validator
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
+from bleep.graph.host_text import describe_basics, service_name
 from bleep.graph.planted import EVIDENCE_SOURCE, planted_places, planted_sentence, read_sources
 from bleep.graph.state import IncidentState, Node
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
@@ -89,7 +90,7 @@ def _clip(text: str, limit: int) -> str:
 
 def _describe_subject(subject: Subject, context: GatherContext) -> str:
     if subject.kind == "service":
-        return f"the service {context.service_name or subject.service_id} on host {subject.host_id}"
+        return f"the service {service_name(subject, context)} on host {subject.host_id}"
     return f"the host {subject.host_id}"
 
 
@@ -115,7 +116,7 @@ def _describe_context(context: GatherContext) -> str:
     for name, text in context.logs.items():
         parts.append(f"Recent log of {name}:\n{text}")
     if context.basics is not None:
-        parts.append(f"Host basics:\n{context.basics.model_dump_json()}")
+        parts.append("Host basics:\n" + "\n".join(describe_basics(context.basics)))
     if context.top_memory:
         parts.append(
             "Containers using the most memory:\n"

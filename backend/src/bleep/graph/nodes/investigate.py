@@ -21,6 +21,7 @@ from langchain_core.tools import BaseTool
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
+from bleep.graph.host_text import describe_basics, gib, service_name
 from bleep.graph.state import IncidentState, Node
 from bleep.guard.log import GuardKind
 from bleep.guard.pipeline import guard_text
@@ -233,7 +234,7 @@ def _task(state: IncidentState, limit: int, clock: Callable[[], datetime]) -> st
     if context is None:
         context = GatherContext(at=clock(), gaps=["Gather did not run"])
     if subject.kind == "service":
-        what = f"Service {context.service_name or subject.service_id} on host {subject.host_id}."
+        what = f"Service {service_name(subject, context)} on host {subject.host_id}."
     else:
         what = f"Host {subject.host_id}."
     return prompts.load(
@@ -286,31 +287,16 @@ def _logs(context: GatherContext) -> str:
 
 
 def _host(context: GatherContext) -> str:
-    lines: list[str] = []
-    b = context.basics
-    if b is not None:
-        lines.append(f"os: {b.os or 'unknown'}")
-        if b.disks:
-            lines.append("disks: " + ", ".join(f"{d.mount} {d.used_percent:.0f}%" for d in b.disks))
-        if b.mem_total and b.mem_available is not None:
-            share = b.mem_available / b.mem_total
-            lines.append(f"memory available: {share:.0%} of {_gib(b.mem_total)}")
-        if b.load15 is not None:
-            cpus = f" on {b.cpus} CPUs" if b.cpus else ""
-            lines.append(f"load: {b.load1} (1 min), {b.load15} (15 min){cpus}")
+    lines = describe_basics(context.basics) if context.basics is not None else []
     if context.top_memory:
         lines.append("containers using the most memory:")
         lines += [
-            f"  {m.name}: {_gib(m.mem_usage)}"
-            + (f" of {_gib(m.mem_limit)}" if m.mem_limit else "")
+            f"  {m.name}: {gib(m.mem_usage)}"
+            + (f" of {gib(m.mem_limit)}" if m.mem_limit else "")
             + f" ({m.mem_percent:.0f}%)"
             for m in context.top_memory
         ]
     return "\n".join(lines) or "(no basics read)"
-
-
-def _gib(n: int) -> str:
-    return f"{n / 2**30:.1f} GiB"
 
 
 def _similar(context: GatherContext) -> str:

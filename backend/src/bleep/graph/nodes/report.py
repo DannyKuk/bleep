@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
+from bleep.graph.host_text import incident_title, service_name
 from bleep.graph.planted import HINT_END, planted_places, planted_sentence
 from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.log import GuardKind
@@ -328,7 +329,7 @@ async def _learn(deps: GraphDeps, state: IncidentState) -> None:
     steps = proposal.steps if proposal is not None else []
     prompt = prompts.load(
         "graph/report_facts",
-        service=(context.service_name if context else None) or subject.service_id,
+        service=service_name(subject, context),
         instructions="\n".join(f"{n}. {text}" for n, text in enumerate(instructions, 1)),
         plan=_steps_text([s.model_dump() for s in steps]) or "no action",
     )
@@ -383,7 +384,9 @@ def make(deps: GraphDeps) -> Node:
 
         prompt = prompts.load(
             "graph/report",
-            title=title,
+            title=incident_title(
+                state["subject"], state.get("signals", []), incident.title if incident else None
+            ),
             outcome=said,
             diagnosis=_describe_diagnosis(diagnosis),
             plan=_describe_plan(proposal),
