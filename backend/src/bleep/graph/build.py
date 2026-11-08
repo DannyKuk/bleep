@@ -16,7 +16,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from bleep.graph.deps import GraphDeps, IncidentQuiet, QuietCheck
+from bleep.graph.deps import GraphDeps, IncidentEvents, IncidentQuiet, Incidents, QuietCheck
 from bleep.graph.nodes import (
     approval,
     diagnose,
@@ -28,8 +28,6 @@ from bleep.graph.nodes import (
     verify,
 )
 from bleep.graph.state import IncidentState, Node, checkpoint_serializer
-from bleep.incidents.bus import EventBus
-from bleep.incidents.repository import IncidentRepo
 from bleep.schemas.incidents import IncidentStatus
 
 # The status an incident shows while a node runs. Approval and Report are left out: the runner
@@ -50,7 +48,7 @@ QUIET_STOPS = frozenset({"gather", "investigate", "diagnose", "propose", "approv
 
 
 def _traced(
-    bus: EventBus, incidents: IncidentRepo, quiet: QuietCheck, name: str, node: Node
+    bus: IncidentEvents, incidents: Incidents, quiet: QuietCheck, name: str, node: Node
 ) -> Node:
     """Set the incident's status for the node, publish `node_started` and `node_finished` around
     it, for the live view.

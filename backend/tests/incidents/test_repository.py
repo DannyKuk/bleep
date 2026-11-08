@@ -6,9 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from bleep.guard.quote_lookalikes import QUOTE_LOOKALIKES
+from bleep.guard.titles import build_title, seen_note, title_name
 from bleep.hosts.discovery import group_services
-from bleep.incidents.quote_lookalikes import QUOTE_LOOKALIKES
-from bleep.incidents.repository import IncidentRepo, build_title, fold_key, seen_note, title_name
+from bleep.incidents.repository import IncidentRepo, fold_key
 from bleep.llm.usage import CostLedger
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import RecoveryEvent, Signal, Subject

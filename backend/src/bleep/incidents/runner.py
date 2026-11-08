@@ -25,8 +25,9 @@ from bleep.graph.deps import (
     StaticSettings,
     Tracer,
 )
+from bleep.guard.titles import seen_note
 from bleep.incidents.bus import EventBus
-from bleep.incidents.repository import IncidentRepo, seen_note, utcnow
+from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.llm.guard import ModelUnavailable
 from bleep.schemas.graph import Decision
 from bleep.schemas.incidents import TERMINAL_STATUSES, Incident, IncidentStatus, Signal, Subject

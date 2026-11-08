@@ -1,4 +1,4 @@
-"""Write backend/src/bleep/incidents/quote_lookalikes.py: every character that can read as a
+"""Write backend/src/bleep/guard/quote_lookalikes.py: every character that can read as a
 quote in an incident title (#311).
 
 A character is in the set when, after NFC (what `title_name` does first):
@@ -23,7 +23,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
-OUT = Path(__file__).resolve().parent.parent / "backend/src/bleep/incidents/quote_lookalikes.py"
+OUT = Path(__file__).resolve().parent.parent / "backend/src/bleep/guard/quote_lookalikes.py"
 QUOTES = ("'", '"', "\u201c", "\u201d")
 # ˵ is the grave twin of ˶ (which confusables.txt maps to `"`); ᐥ is drawn as ˝.
 MISSING = {

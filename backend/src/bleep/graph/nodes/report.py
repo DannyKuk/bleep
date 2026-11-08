@@ -40,7 +40,7 @@ from bleep.graph.planted import HINT_END, planted_places, planted_sentence
 from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.log import GuardKind
 from bleep.guard.report_check import check_report
-from bleep.incidents.repository import build_title
+from bleep.guard.titles import build_title
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.schemas.graph import (

@@ -27,7 +27,7 @@ backend/
   src/bleep/
     main.py        create_app(); lifespan starts store, registry, watchers, runner, telegram
     config.py      Settings (pydantic-settings, BLEEP_* env)
-    wiring.py      build_parts(settings) -> AppParts; only main.py imports it
+    wiring.py      build_parts(settings) -> AppParts; only main.py calls it
     store/         SQLite access, migrations/NNNN_*.sql
     prompts/       every prompt as .md by area, plus the loader
     schemas/       pydantic models shared across layers
@@ -59,11 +59,34 @@ docker-compose.yaml
 
 ### Dependency direction
 
-Dependencies point one way: `api` → `incidents` → `graph` → `tools` → `guard`, `hosts`.
-`watcher` → `incidents`, `hosts`. `memory`, `knowledge`, `llm` and `plugins` are leaves used by
-`graph` and `tools`. `schemas` imports only other schemas, so every layer may use it. `hosts` never
-imports `graph`, `tools` or `api`. `wiring.py` builds the parts from the settings, and only
-`main.py` imports it.
+Dependencies point one way, from the top of this list down. Each line names everything a part
+may import besides itself; `backend/tests/test_dependency_direction.py` checks every import
+against it, including imports inside functions and under `if TYPE_CHECKING:`.
+
+- `main` → `api`, `wiring`, `watcher`, `incidents`, `graph`, `hosts`, `config`.
+- `api` → `watcher`, `notify`, `incidents`, `plugins`, `auth`, `llm`, `guard`, `hosts`, `store`,
+  `schemas`, `config`, `prompts`, and only the `AppParts` type from `wiring`.
+- `wiring` → every part below it. It builds the parts from the settings; only `main` calls it.
+- `watcher` → `incidents`, `graph`, `llm`, `guard`, `hosts`, `store`, `schemas`, `config`,
+  `prompts`.
+- `notify` → `incidents`, `graph`, `guard`, `store`, `schemas`, `config`, `prompts`.
+- `incidents` → `graph`, `plugins`, `llm`, `guard`, `hosts`, `store`, `schemas`, `prompts`.
+- `graph` → `tools`, `memory`, `llm`, `guard`, `hosts`, `schemas`, `prompts`. It takes the
+  incident store, bus and action log as Protocols (`graph/deps.py`), so it never imports
+  `incidents`.
+- `plugins` are built on `tools`: `plugins` → `tools`, `guard`, `hosts`, `schemas`.
+- `tools` → `memory`, `guard`, `hosts`, `schemas`.
+- `knowledge` → `memory`, `guard`, `hosts`, `store`, `schemas`.
+- `memory` → `guard`, `store`, `schemas`.
+- `llm` → `store`, `schemas`, `config`, `prompts`.
+- `auth` → `store`.
+- `guard` → `hosts`, `store`, `schemas`.
+- `hosts` → `store`, `schemas`.
+- `schemas` → only `hosts.config` (below); `store`, `prompts` and `config` import no other part.
+
+Two arrows go the other way, each held to one module. `schemas` uses the hosts file's models in
+`hosts.config`, which import no schemas. `graph` (Verify) uses `check_url` from
+`watcher.http_checks` until it moves below `graph`.
 
 ## Prompts: one structure, no exceptions
 
