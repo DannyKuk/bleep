@@ -1,5 +1,6 @@
 """Label text from outside Bleep as data, so the model never reads it as an instruction."""
 
+import functools
 import re
 import secrets
 import unicodedata
@@ -40,6 +41,15 @@ _CONFUSABLE = str.maketrans(
 )  # fmt: skip
 _FOLD_WINDOW = 256
 _TAG = re.compile(r"[\s/\\]*untrusted")
+_ESCAPED_LT = re.compile("&lt;", re.IGNORECASE)
+_LEAD = re.compile(r"[\s/\\]")
+_WORD = "untrusted"
+# Bleep's own wrapper (`wrap_untrusted`) as a record that copied it from a prompt stores it,
+# escaped: an opening tag and the closing tag with the same id.
+_COPIED_WRAPPER = re.compile(
+    rf'&lt;untrusted source="{SOURCE.pattern}" id="({NONCE.pattern})">(.*?)&lt;/untrusted id="\1">',
+    re.DOTALL,
+)
 
 
 def fold(chunk: str) -> str:
@@ -55,12 +65,50 @@ def _neutralise(match: re.Match[str]) -> str:
     return "&lt;" if _TAG.match(fold(window)) else match.group(0)
 
 
+@functools.lru_cache(maxsize=4096)
+def _fold_char(char: str) -> str:
+    return fold(char)
+
+
+def _fold_sequence(sequence: str) -> str:
+    return _fold_char(sequence) if len(sequence) == 1 else fold(sequence)
+
+
+def _starts_tag(text: str, start: int) -> bool:
+    """What `_TAG.match(fold(window))` says for the window at `start`, folded one combining
+    sequence at a time and stopped at the first folded character that cannot lead to the tag, so
+    the work stays linear in the text however many `&lt;` it holds. A sequence (a character and
+    the combining marks after it) is what NFKC composes, so folding them one by one gives the
+    same characters as folding the window."""
+    end = min(len(text), start + _FOLD_WINDOW)
+    matched, i = 0, start
+    while i < end:
+        j = i + 1
+        while j < end and unicodedata.combining(text[j]):
+            j += 1
+        for c in _fold_sequence(text[i:j]):
+            if c == _WORD[matched]:
+                matched += 1
+                if matched == len(_WORD):
+                    return True
+            elif matched or not _LEAD.match(c):
+                return False
+        i = j
+    return False
+
+
 def holds_escaped_tag(text: str) -> bool:
-    """Whether text holds a wrapper tag `escape_untrusted` escaped (`&lt;` before a tag, folded as
-    the escape folds it), as stored text that copied a wrapper from a prompt does."""
-    return any(
-        _TAG.match(fold(text[m.end() : m.end() + _FOLD_WINDOW])) for m in re.finditer("&lt;", text)
-    )
+    """Whether text holds a wrapper tag `escape_untrusted` escaped (`&lt;`, in any case, before a
+    tag folded as the escape folds it): text that tried to end the data early, or stored text that
+    copied a wrapper from a prompt."""
+    return any(_starts_tag(text, m.end()) for m in _ESCAPED_LT.finditer(text))
+
+
+def without_copied_wrappers(text: str) -> str:
+    """Bleep's record with the escaped copies of Bleep's own wrapper taken out, their text kept:
+    an opening tag and the closing tag with the same id, as a cause that copied a wrapped name
+    from its prompt holds them (#310)."""
+    return _COPIED_WRAPPER.sub(lambda m: f" {m[2]} ", text)
 
 
 def escape_untrusted(text: str) -> str:

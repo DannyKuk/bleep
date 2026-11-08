@@ -22,6 +22,7 @@ from langchain_core.tools import BaseTool
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.host_text import describe_basics, gib, service_name
+from bleep.graph.planted import result_holds_tag
 from bleep.graph.state import IncidentState, Node
 from bleep.guard.log import GuardKind
 from bleep.guard.pipeline import guard_text
@@ -49,15 +50,13 @@ _WRAPPER = re.compile(
     r'<untrusted source="[a-z0-9_.:-]{1,40}" id="([a-z0-9]{4,32})">\n(.*?)\n</untrusted id="\1">',
     re.DOTALL,
 )
-# A wrapper tag the guard escaped: a sign that the text tried to end the data early.
-ESCAPED_TAG = re.compile(r"&lt;[\s/\\]*untrusted", re.IGNORECASE)
 
 Record = Callable[[GuardKind, str], None]
 
 
 def guard_result(source: str, out: str) -> tuple[str, int, bool]:
     """Return the result as the model gets it, the number of secrets redacted, and whether it
-    held an escaped wrapper tag.
+    held an escaped wrapper tag, read as the planted-orders hint reads it (`result_holds_tag`).
 
     A result that is one wrapper already (the Docker and host tools guard their own output) is
     cleaned and redacted again and rewrapped under the tool's name, without a second cut.
@@ -73,7 +72,7 @@ def guard_result(source: str, out: str) -> tuple[str, int, bool]:
         text = wrap_untrusted(source, body)
     else:
         text, redactions = guard_text(source, _WRAPPER.sub(lambda m: m[2], out))
-    return text, redactions, bool(ESCAPED_TAG.search(text))
+    return text, redactions, result_holds_tag(source, text)
 
 
 def first_line(guarded: str) -> str:

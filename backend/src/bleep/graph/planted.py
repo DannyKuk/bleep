@@ -15,8 +15,8 @@ import re
 from langchain_core.messages import AnyMessage, ToolMessage
 
 from bleep.graph.host_text import describe_basics, service_id_shown, service_name
-from bleep.graph.nodes.investigate import ESCAPED_TAG
 from bleep.guard.orders import gives_orders, line_signs, orders
+from bleep.guard.untrusted import holds_escaped_tag, without_copied_wrappers
 from bleep.schemas.graph import GatherContext, PlantedPlace, PlantedSource
 from bleep.schemas.incidents import Subject
 from bleep.tools.knowledge import SOURCE_LABEL
@@ -89,13 +89,34 @@ def read_sources(context: GatherContext | None, messages: list[AnyMessage]) -> s
     return read
 
 
+def _record_holds_tag(text: str) -> bool:
+    """Whether a record of Bleep's holds an escaped tag besides Bleep's own wrappers it copied:
+    Report's prompts wrap a name that is not plain (a Coolify preview's "dkwebsite (PR 12)"), and
+    a cause may repeat the name with its wrapper. A tag inside the copied name still counts."""
+    return holds_escaped_tag(without_copied_wrappers(text))
+
+
+def result_holds_tag(name: str, text: str) -> bool:
+    """Whether a tool's guarded result holds a wrapper tag the guard escaped. In
+    `recall_incidents`' answer, all Bleep's own records, the wrappers they copied are left out
+    first (`_record_holds_tag`); a knowledge search is read whole, as a doc can forge the head of
+    a past incident's hit. Investigate's `injection_marker` and the planted-orders hint both read
+    a result this way."""
+    if name == "recall_incidents":
+        return _record_holds_tag(text)
+    return holds_escaped_tag(text)
+
+
 def escaped_places(context: GatherContext | None, messages: list[AnyMessage]) -> set[PlantedPlace]:
-    """The places where code saw a wrapper tag the guard escaped."""
+    """The places where code saw a wrapper tag the guard escaped, folded as the guard folds it
+    (#310)."""
     found: set[PlantedPlace] = set()
-    if context is not None and any(ESCAPED_TAG.search(t) for t in context.logs.values()):
+    if context is not None and any(holds_escaped_tag(t) for t in context.logs.values()):
         found.add("logs")
+    if context is not None and any(_record_holds_tag(past.cause) for past in context.similar):
+        found.add("memory")
     for m in _tool_results(messages):
-        if ESCAPED_TAG.search(m.text):
+        if result_holds_tag(m.name or "", m.text):
             found.add(TOOL_SOURCE.get(m.name or "", "other"))
     return found
 
@@ -146,7 +167,7 @@ def ordered_places(context: GatherContext | None, messages: list[AnyMessage]) ->
 
 
 def _shows_planted(shown: str) -> bool:
-    return bool(ESCAPED_TAG.search(shown)) or gives_orders(shown)
+    return holds_escaped_tag(shown) or gives_orders(shown)
 
 
 def _names_shown(subject: Subject | None, context: GatherContext | None) -> list[str]:
