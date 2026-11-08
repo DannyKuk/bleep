@@ -39,6 +39,7 @@ from bleep.graph.planted import HINT_END, planted_places, planted_sentence
 from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.log import GuardKind
 from bleep.guard.report_check import check_report
+from bleep.incidents.repository import build_title
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.schemas.graph import (
@@ -371,7 +372,8 @@ def make(deps: GraphDeps) -> Node:
         said = outcome_text(result, results, proposal)
         fixed = said == OUTCOME_TEXT["resolved"]  # only then may the report say "fixed"
         incident = await deps.incidents.get(incident_id)
-        title = incident.title if incident is not None else state["subject"].key
+        signals = state.get("signals", [])
+        title = incident.title if incident is not None else build_title(state["subject"], signals)
         decision: Decision | None = state.get("decision")
         let_go = bool(proposal and proposal.refused)
         human = (
@@ -380,13 +382,11 @@ def make(deps: GraphDeps) -> Node:
             else None
         )
         taken = action_taken(results, proposal, state["subject"].host_id)
-        entries = timeline(state.get("signals", []), await deps.bus.history(incident_id))
+        entries = timeline(signals, await deps.bus.history(incident_id))
 
         prompt = prompts.load(
             "graph/report",
-            title=incident_title(
-                state["subject"], state.get("signals", []), incident.title if incident else None
-            ),
+            title=incident_title(state["subject"], signals, incident.title if incident else None),
             outcome=said,
             diagnosis=_describe_diagnosis(diagnosis),
             plan=_describe_plan(proposal),

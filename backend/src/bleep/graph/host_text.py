@@ -7,13 +7,10 @@ outside the wrapper.
 """
 
 from bleep.guard.pipeline import NAME_CHARS, guard_name, guard_text, is_plain_name
-from bleep.incidents.repository import seen_note
+from bleep.incidents.repository import build_title, seen_note, split_service_id
 from bleep.schemas.docker import HostBasics
 from bleep.schemas.graph import GatherContext
 from bleep.schemas.incidents import Signal, Subject
-
-# The kinds `hosts.discovery` puts before a service key: Bleep's own words, not the label's.
-_KEY_KINDS = ("compose:", "container:", "id:")
 
 
 def gib(n: int) -> str:
@@ -57,10 +54,8 @@ def service_id_shown(subject: Subject) -> str:
     kind are Bleep's own, so only the key, taken from a label, is judged: a plain key leaves the
     id as it is, any other wraps the whole id."""
     service_id = subject.service_id or ""
-    prefix = f"{subject.host_id}/"
-    key = service_id.removeprefix(prefix) if service_id.startswith(prefix) else service_id
-    key = next((key[len(k) :] for k in _KEY_KINDS if key.startswith(k)), key)
-    if service_id.startswith(prefix) and is_plain_name(key):
+    prefix, key = split_service_id(subject)
+    if prefix and is_plain_name(key):
         return service_id
     return guard_text("service_id", service_id, NAME_CHARS)[0]
 
@@ -76,12 +71,12 @@ def incident_title(subject: Subject, signals: list[Signal], stored: str | None) 
     """The incident's title as a prompt may show it, built the way the repository builds it
     ("container died on a/compose:shop") from Bleep's own words and the shown service id, never
     by searching the stored title for the id. The stored title's repeat note is kept only when
-    the stored title is exactly that title plus the note: an id that ends like a note is the
-    label's text."""
+    the stored title is exactly the repository's title (`build_title`) plus the note: an id that
+    ends like a note is the label's text, which that title quotes (#311)."""
     what = signals[0].kind.replace("_", " ") if signals else "incident"
     where = service_id_shown(subject) if subject.service_id else subject.host_id
     shown = f"{what} on {where}"
     note = seen_note(stored or "")
-    if note and stored == f"{what} on {subject.service_id or subject.host_id} {note}":
+    if note and stored == f"{build_title(subject, signals)} {note}":
         shown += f" {note}"
     return shown
