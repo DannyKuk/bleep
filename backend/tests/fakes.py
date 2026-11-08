@@ -284,9 +284,15 @@ class FakeEngine:
             raise EngineUnavailable(self.host_id, "simulated drop")
 
     def _find(self, ref: str) -> int:
-        for index, c in enumerate(self.container_list):
-            if ref in (c.id, c.name):
-                return index
+        """As the Docker daemon resolves a reference: a full id, then a name, then a unique id
+        prefix."""
+        for match in (lambda c: c.id == ref, lambda c: c.name == ref):
+            for index, c in enumerate(self.container_list):
+                if match(c):
+                    return index
+        prefixed = [i for i, c in enumerate(self.container_list) if ref and c.id.startswith(ref)]
+        if len(prefixed) == 1:
+            return prefixed[0]
         raise ContainerNotFound(self.host_id, ref)
 
     async def containers(self) -> list[ContainerSummary]:

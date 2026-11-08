@@ -17,6 +17,7 @@ from bleep.graph.deps import GraphDeps
 from bleep.graph.host_text import service_name
 from bleep.graph.replan import replans_left
 from bleep.graph.state import IncidentState, Node
+from bleep.guard.grant import binds_app
 from bleep.guard.plan_check import (
     StepRule,
     Violation,
@@ -27,7 +28,7 @@ from bleep.guard.plan_check import (
 )
 from bleep.guard.redact import redacted_proposal, redacted_step
 from bleep.hosts.discovery import is_self
-from bleep.hosts.registry import Registry
+from bleep.hosts.registry import MIN_ID_PREFIX, Registry
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.memory.text import describe_fact, describe_past
@@ -107,7 +108,7 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
     rules = _step_rules(deps)
 
     def check(plan: Proposal) -> list[Violation]:
-        return check_plan(
+        found = check_plan(
             plan,
             deps.registry,
             enabled,
@@ -116,10 +117,12 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
             named_containers=named,
             step_rules=rules,
         )
+        refused = {v.step for v in found}
+        return found + [v for v in _unclear_names(plan, deps.registry) if v.step not in refused]
 
     mcp = await _mcp_section(deps, incident_id, enabled)
     messages: list[BaseMessage] = [HumanMessage(_prompt(deps, state, diagnosis, enabled, mcp))]
-    proposal = _without_replaced(await _ask(deps, incident_id, messages), deps.registry)
+    proposal = _read(await _ask(deps, incident_id, messages), deps.registry)
     violations = check(proposal)
     if not violations:
         return proposal
@@ -128,7 +131,7 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
         AIMessage(proposal.model_dump_json(include=set(ProposalDraft.model_fields))),
         HumanMessage(prompts.load("graph/propose_retry", violations=_bullets(violations))),
     ]
-    retry = _without_replaced(await _ask(deps, incident_id, messages), deps.registry)
+    retry = _read(await _ask(deps, incident_id, messages), deps.registry)
     again = check(retry)
     if not again:
         return retry
@@ -157,6 +160,46 @@ async def _mcp_section(deps: GraphDeps, incident_id: str, enabled: set[str]) -> 
         tools=", ".join(f"`{name}`" for name in handler.act_tool_names()),
         schemas=await handler.act_tool_schemas(incident_id),
     )
+
+
+def _read(proposal: Proposal, registry: Registry) -> Proposal:
+    """The model's plan as Bleep checks it and the human approves it."""
+    return _without_replaced(_by_name(proposal, registry), registry)
+
+
+def _by_name(proposal: Proposal, registry: Registry) -> Proposal:
+    """The plan with every container target given by its id or an id prefix written as the
+    container's name, the one the registry resolves it to (as Docker does), so the plan check,
+    the snapshot, the grant and both displays all read the name the human approves (#321). A
+    target the registry cannot resolve stays as written, for the plan check to refuse."""
+    steps = []
+    for step in proposal.steps:
+        container = None if binds_app(step) else registry.container(step.host_id, step.target)
+        named = container is None or container.name == step.target
+        steps.append(step if named else step.model_copy(update={"target": container.name}))
+    return proposal.model_copy(update={"steps": steps})
+
+
+def _unclear_names(proposal: Proposal, registry: Registry) -> list[Violation]:
+    """A container target that is one container's name and the start of another's id. Docker
+    acts on the named one, but the human reading the name could take it for the other's id
+    (#321)."""
+    found = []
+    for number, step in enumerate(proposal.steps, start=1):
+        if binds_app(step) or len(step.target) < MIN_ID_PREFIX:
+            continue
+        containers = registry.snapshot(step.host_id) or []
+        if not any(c.name == step.target for c in containers):
+            continue
+        if any(c.name != step.target and c.id.startswith(step.target) for c in containers):
+            what = f"step {number} ({step.action} {step.target} on {step.host_id})"
+            why = (
+                f"{step.target} is a container's name and also the start of another container's"
+                " id, so the human could not tell which one it acts on; leave it out, and if the"
+                " fix needs it, answer no_action and say in human_instructions what to do"
+            )
+            found.append(Violation("not_found", f"{what}: {why}", number))
+    return found
 
 
 def _without_replaced(proposal: Proposal, registry: Registry) -> Proposal:
