@@ -104,6 +104,26 @@ def test_sixth_failure_is_429_with_retry_after_and_success_after_the_window(sett
         assert login(client).status_code == 204
 
 
+def test_every_browser_behind_the_dashboard_shares_one_limit(settings, parts):
+    """A documented limit (docs/design/app.md, #322): the backend's peer is the dashboard's
+    server for every browser, and a forwarded header never picks the key."""
+    parts.login_limiter = LoginLimiter(clock=Clock())
+    with TestClient(create_app(settings, parts), client=("172.24.0.3", 50000)) as client:
+        for n in range(5):
+            response = client.post(
+                "/api/auth/login",
+                json={"password": "nope"},
+                headers={"x-forwarded-for": f"192.168.1.{n}"},
+            )
+            assert response.status_code == 401
+        other_browser = client.post(
+            "/api/auth/login",
+            json={"password": PASSWORD},
+            headers={"x-forwarded-for": "192.168.1.99"},
+        )
+        assert other_browser.status_code == 429
+
+
 def test_successful_logins_do_not_count(client):
     for _ in range(8):
         assert login(client).status_code == 204
