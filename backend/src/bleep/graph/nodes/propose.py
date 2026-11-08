@@ -62,6 +62,11 @@ STOP_BY_HAND_ONLY = (
     "by hand."
 )
 
+UNCLEAR_BY_HAND = (
+    "Bleep never acts on a container whose name is also the start of another container's id, "
+    "and an instruction cannot change that. Act on it by hand, or rename it (`docker rename`) so "
+    "its name reads as no container's id."
+)
 HIDDEN_BY_HAND = (
     "A step runs only when you can read every param of it, and Bleep hides anything that looks "
     "like a secret. If the change is needed, make it by hand."
@@ -136,7 +141,8 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
     if not again:
         return retry
     _record(deps, incident_id, again)
-    return _refused(retry, again, can_instruct=replans_left(deps, state))
+    unclear = any(v in again for v in _unclear_names(retry, deps.registry))
+    return _refused(retry, again, can_instruct=replans_left(deps, state), unclear=unclear)
 
 
 def _step_rules(deps: GraphDeps) -> dict[str, StepRule]:
@@ -169,9 +175,12 @@ def _read(proposal: Proposal, registry: Registry) -> Proposal:
 
 def _by_name(proposal: Proposal, registry: Registry) -> Proposal:
     """The plan with every container target given by its id or an id prefix written as the
-    container's name, the one the registry resolves it to (as Docker does), so the plan check,
-    the snapshot, the grant and both displays all read the name the human approves (#321). A
-    target the registry cannot resolve stays as written, for the plan check to refuse."""
+    container's name, the one the registry resolves it to, so the plan check, the snapshot, the
+    grant and both displays all read the name the human approves (#321). A target the registry
+    cannot resolve stays as written, for the plan check to refuse.
+
+    The registry takes an exact id or name in list order, Docker a full id before a name; they
+    differ only for a name that is also another container's id, which `_unclear_names` refuses."""
     steps = []
     for step in proposal.steps:
         container = None if binds_app(step) else registry.container(step.host_id, step.target)
@@ -181,9 +190,9 @@ def _by_name(proposal: Proposal, registry: Registry) -> Proposal:
 
 
 def _unclear_names(proposal: Proposal, registry: Registry) -> list[Violation]:
-    """A container target that is one container's name and the start of another's id. Docker
-    acts on the named one, but the human reading the name could take it for the other's id
-    (#321)."""
+    """A container target that is one container's name and the start of another's id, in any
+    case (Docker writes ids in lower case). Docker acts on the named one, but the human reading
+    the name could take it for the other's id (#321)."""
     found = []
     for number, step in enumerate(proposal.steps, start=1):
         if binds_app(step) or len(step.target) < MIN_ID_PREFIX:
@@ -191,7 +200,8 @@ def _unclear_names(proposal: Proposal, registry: Registry) -> list[Violation]:
         containers = registry.snapshot(step.host_id) or []
         if not any(c.name == step.target for c in containers):
             continue
-        if any(c.name != step.target and c.id.startswith(step.target) for c in containers):
+        as_id = step.target.lower()
+        if any(c.name != step.target and c.id.startswith(as_id) for c in containers):
             what = f"step {number} ({step.action} {step.target} on {step.host_id})"
             why = (
                 f"{step.target} is a container's name and also the start of another container's"
@@ -273,7 +283,9 @@ def _record(deps: GraphDeps, incident_id: str, violations: list[Violation]) -> N
             deps.guard_log.record(incident_id, "blocked_action", v.text)
 
 
-def _refused(proposal: Proposal, violations: list[Violation], *, can_instruct: bool) -> Proposal:
+def _refused(
+    proposal: Proposal, violations: list[Violation], *, can_instruct: bool, unclear: bool = False
+) -> Proposal:
     """`no_action` that tells the human what was refused and why, and what they can do next."""
     steps = [f"{n}. {_step(redacted_step(s))}" for n, s in enumerate(proposal.steps, start=1)]
     lines = [REFUSED, "Why:", _bullets(violations), "The refused plan:", *(steps or ["no steps"])]
@@ -284,6 +296,8 @@ def _refused(proposal: Proposal, violations: list[Violation], *, can_instruct: b
         lines.append(STOP_BY_HAND if can_instruct else STOP_BY_HAND_ONLY)
     if any(v.rule == "hidden_param" for v in violations):
         lines.append(HIDDEN_BY_HAND)
+    if unclear:
+        lines.append(UNCLEAR_BY_HAND)
     if can_instruct:
         lines.append(INSTRUCT)
     return Proposal(

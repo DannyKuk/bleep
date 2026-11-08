@@ -1186,18 +1186,29 @@ async def test_a_prefix_two_containers_share_is_refused_as_before(tmp_path):
     assert all("no container by that name on this host" in b for b in blocked(env))
 
 
-@pytest.mark.parametrize("given", ["name", "id"])
-async def test_a_name_that_starts_another_containers_id_is_refused(tmp_path, given):
+@pytest.mark.parametrize(
+    ("given", "name"),
+    [
+        ("name", DB_ID[:12]),
+        ("id", DB_ID[:12]),
+        ("name", DB_ID[:12].upper()),
+        ("id", DB_ID[:12].upper()),
+    ],
+    ids=["by name", "by id", "upper-case name", "upper-case name by id"],
+)
+async def test_a_name_that_starts_another_containers_id_is_refused(tmp_path, given, name):
     """A container named like another's id: Docker acts on the named one, yet the human reading
-    the name could take it for the other, so neither way of naming it reaches them."""
-    decoy = with_id(box(DB_ID[:12], state="exited", exit_code=0), hex_id("decoy"))
-    target = DB_ID[:12] if given == "name" else hex_id("decoy")[:12]
+    the name could take it for the other, so neither way of naming it reaches them. Docker
+    writes ids in lower case, and a name in upper case reads as the same id."""
+    decoy = with_id(box(name, state="exited", exit_code=0), hex_id("decoy"))
+    target = name if given == "name" else hex_id("decoy")[:12]
     env, state = await setup(
         tmp_path, acting(start(target)), acting(start(target)), engine=id_engine(decoy)
     )
 
     proposal = (await propose.make(env.deps)(state))["proposal"]
 
-    assert proposal.refused and [s.target for s in proposal.refused_steps] == [DB_ID[:12]]
+    assert proposal.refused and [s.target for s in proposal.refused_steps] == [name]
     assert len(blocked(env)) == 2
+    assert propose.UNCLEAR_BY_HAND in proposal.human_instructions
     assert all("also the start of another container's id" in b for b in blocked(env))
