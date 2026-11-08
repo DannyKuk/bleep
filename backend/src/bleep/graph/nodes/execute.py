@@ -15,9 +15,7 @@ run goes back to Propose for a new plan and a new question, at most `Budgets.rep
 The steps run in order. Each is written to the action log `started` before its act tool runs and
 `done` or `failed` after it; a failed step stops the plan and the steps after it are `skipped`.
 Every status change is published as an `action` event (`{action, target, status}`), and the
-results are appended to `step_results`. A restart or start that succeeded carries its container
-as read right after it (`StepResult.after`), from which Verify tells a restart policy's restart
-after the fix from the step's own (#320). Then Verify judges what happened.
+results are appended to `step_results`. Then Verify judges what happened.
 
 A node rerun after a crash reads the log first. A finished step is never run again. A step left
 `started` may have reached the engine, so it is never run again either: its target is read on the
@@ -59,7 +57,6 @@ STALE = "The plan did not run, the state changed since approval: {changes}."
 REFUSED = "The plan did not run, Bleep's checks refused it: {reasons}."
 NOT_APPROVED = "The plan did not run, it is not the plan the human approved."
 DONE_WORD = {"docker.restart": "restarted", "docker.stop": "stopped", "docker.start": "started"}
-READ_AFTER = ("docker.restart", "docker.start")
 _COOLIFY_STEP = (
     "not confirmed after a restart (Bleep cannot read back a Coolify step; check the application"
     " in Coolify, a deployment may be queued); not run again"
@@ -192,34 +189,6 @@ def _took_effect(step: PlanStep, summary: ContainerSummary, snapshot: TargetSnap
             and (before is None or finished > before)
         )
     return False
-
-
-async def _with_reading(
-    deps: GraphDeps, plan: ApprovalRecord, step: PlanStep, result: StepResult
-) -> StepResult:
-    """`result` with its container as the host shows it now, for a restart or start that
-    succeeded and has no reading yet; unchanged when the read fails.
-
-    The approval's snapshot cannot stand in: Docker resets the restart count on every start or
-    restart through its API. A result from the action log (a step finished before a crash) has
-    no reading, so it is read on the rerun, later than the step."""
-    if not result.ok or step.action not in READ_AFTER or result.after is not None:
-        return result
-    snapshot = step_snapshot(plan.snapshots, step)
-    summary, _why = await _read(
-        deps, step.host_id, (snapshot and snapshot.container_id) or step.target
-    )
-    if summary is None:
-        return result
-    reading = TargetSnapshot(
-        host_id=step.host_id,
-        target=step.target,
-        container_id=summary.id,
-        started_at=summary.started_at,
-        restart_count=summary.restart_count,
-        state=summary.state,
-    )
-    return result.model_copy(update={"after": reading})
 
 
 def make(deps: GraphDeps) -> Node:
@@ -400,7 +369,6 @@ def make(deps: GraphDeps) -> Node:
                         results.append(await skip(state, plan, index, step, stop))
                         continue
                 result = await run_step(state, plan, index, step)
-            result = await _with_reading(deps, plan, step, result)
             results.append(result)
             if not result.ok and stop is None:
                 stop = f"step {index + 1} did not succeed"

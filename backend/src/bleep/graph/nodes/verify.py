@@ -2,12 +2,12 @@
 
 After Execute the node waits 20 s, then checks up to 3 times, 10 s apart, and stops at the first
 check where everything passes. A check passes only when every planned container is running and
-healthy (or running with no healthcheck) and every planned URL passes `check_url`. A container a
-restart or start step of the plan acted on must also not have been started again since Execute
-read it right after that step (`_after_fix`): a restart policy that restarted it then is the
-failure repeating, however it looks at the check (#320). The plan is the proposal's
-verification plan; when that is empty it falls back to the affected service's containers
-(protected ones too), and then to the containers the plan's steps acted on.
+healthy (or running with no healthcheck) and every planned URL passes `check_url`. Every
+container checked to run is read once before the wait and must not have been started again since
+(`_after_fix`): once Execute is done nothing Bleep does restarts a container, so a restart policy
+that restarted it then is the failure repeating, however it looks at the check (#320). The plan
+is the proposal's verification plan; when that is empty it falls back to the affected service's
+containers (protected ones too), and then to the containers the plan's steps acted on.
 Whatever the plan names, the incident's own symptoms are checked too: every container its signals
 name and every URL they report failing, so a plan that checks something else cannot pass while
 the failure that opened the incident goes on. So is every URL the hosts file gives the incident's
@@ -56,7 +56,6 @@ from bleep.schemas.graph import (
     Check,
     Proposal,
     StepResult,
-    TargetSnapshot,
     VerificationResult,
 )
 from bleep.schemas.incidents import Signal
@@ -82,8 +81,8 @@ NOT_REREAD = (
     "only disk, memory and load can be read again; nothing shows this host's problem is over"
 )
 HOST_READINGS = ("disk", "memory", "load")
-RESTARTED = STARTED_AFTER_FIX[0] + " (restart count {now}, {then} right after the fix)"
-STARTED_AGAIN = STARTED_AFTER_FIX[1] + " (a later start time than right after it)"
+RESTARTED = STARTED_AFTER_FIX[0] + " (restart count {now}, {then} when Verify began)"
+STARTED_AGAIN = STARTED_AFTER_FIX[1] + " (a later start time than when Verify began)"
 RECREATED = STARTED_AFTER_FIX[2] + ", then restarted by its restart policy (restart count {now})"
 
 
@@ -251,51 +250,42 @@ def _symptoms(signals: list[Signal]) -> tuple[list[str], list[str]]:
     return list(dict.fromkeys(containers)), urls
 
 
-def _readings_after(
-    proposal: Proposal | None, results: list[StepResult] | None, host_id: str
-) -> dict[str, TargetSnapshot | None]:
-    """Each container this plan's Docker steps on `host_id` acted on, as Execute read it right
-    after the last of those steps, keyed by the step's target and by the container id read then.
-    None when that last step left no reading: a stop, a failed step, a read that failed, or a
-    result stored before #320. Only this plan's results count (`plan_results`)."""
-    steps = proposal.steps if proposal is not None else []
-    readings: dict[str, TargetSnapshot | None] = {}
-    for r in plan_results(proposal, results):
-        if not 0 <= r.step_index < len(steps) or not r.reached_engine:
+async def _first_reads(
+    deps: GraphDeps, host_id: str, names: list[str]
+) -> dict[str, ContainerSummary]:
+    """The containers to check, read once before the settle wait. One Bleep cannot read then
+    (gone, or the host unreachable) has no entry and is judged without it."""
+    reads: dict[str, ContainerSummary] = {}
+    for name in names:
+        try:
+            reads[name] = (await deps.registry.engine(host_id).inspect(name)).summary
+        except ContainerNotFound, EngineUnavailable, KeyError:
             continue
-        step = steps[r.step_index]
-        if not step.action.startswith("docker.") or step.host_id != host_id:
-            continue
-        earlier = readings.get(r.target)
-        if earlier is not None:
-            readings.pop(earlier.container_id or "", None)
-        readings[r.target] = r.after
-        if r.after is not None and r.after.container_id:
-            readings[r.after.container_id] = r.after
-    return readings
+    return reads
 
 
-def _after_fix(reading: TargetSnapshot | None, now: ContainerSummary) -> str | None:
-    """Why `now` was started again after the step `reading` was taken after, or None.
+def _after_fix(first: ContainerSummary | None, now: ContainerSummary) -> str | None:
+    """Why `now` was started again since `first`, Verify's read before its wait, or None.
 
-    Docker raises the restart count only for its restart policy's restarts and resets it on a
-    start or restart through its API, so the count is compared with the reading after the step,
-    never with the approval's. Both start times are the host's, so clock skew does not matter. A
-    container with another id was recreated since (by Compose or Coolify): it counts its restarts
-    from 0. Without a reading there is nothing to compare."""
-    if reading is None:
+    Docker raises the restart count only for its restart policy's restarts, and resets it only on
+    a start or restart through its API, which nothing does once Execute is done; so a higher
+    count is the policy restarting the container after the fix, whether a step of the plan acted
+    on it or not. Both start times are the host's, so clock skew does not matter. A container
+    with another id was recreated since (by Compose or Coolify): it counts its restarts from 0.
+    Without a first read there is nothing to compare."""
+    if first is None:
         return None
-    if now.id != reading.container_id:
+    if now.id != first.id:
         return RECREATED.format(now=now.restart_count) if now.restart_count > 0 else None
-    if reading.restart_count is not None and now.restart_count > reading.restart_count:
-        return RESTARTED.format(now=now.restart_count, then=reading.restart_count)
-    if reading.started_at and now.started_at and now.started_at > reading.started_at:
+    if now.restart_count > first.restart_count:
+        return RESTARTED.format(now=now.restart_count, then=first.restart_count)
+    if first.started_at and now.started_at and now.started_at > first.started_at:
         return STARTED_AGAIN
     return None
 
 
 async def _check_container(
-    deps: GraphDeps, host_id: str, name: str, readings: dict[str, TargetSnapshot | None]
+    deps: GraphDeps, host_id: str, name: str, first: ContainerSummary | None
 ) -> Check:
     try:
         summary = (await deps.registry.engine(host_id).inspect(name)).summary
@@ -305,8 +295,7 @@ async def _check_container(
         return Check(kind="container", target=name, ok=False, detail="host not reachable")
     if summary.state != "running":
         return Check(kind="container", target=name, ok=False, detail=f"is {summary.state}")
-    reading = readings[summary.id] if summary.id in readings else readings.get(name)
-    started_again = _after_fix(reading, summary)
+    started_again = _after_fix(first, summary)
     if started_again is not None:
         return Check(kind="container", target=name, ok=False, detail=started_again)
     if summary.health in ("unhealthy", "starting"):
@@ -475,7 +464,7 @@ def make(deps: GraphDeps) -> Node:
         plan: _Plan,
         apps: list[str],
         starts: dict[str, datetime],
-        readings: dict[str, TargetSnapshot | None],
+        first_reads: dict[str, ContainerSummary],
         attempt: int,
         calm: set[str],
     ) -> VerificationResult:
@@ -484,7 +473,8 @@ def make(deps: GraphDeps) -> Node:
         try:
             checks = [await _check_application(deps, host_id, app, starts.get(app)) for app in apps]
             checks += [
-                await _check_container(deps, host_id, name, readings) for name in plan.containers
+                await _check_container(deps, host_id, name, first_reads.get(name))
+                for name in plan.containers
             ]
             checks += [await _check_stopped(deps, host_id, name) for name in plan.stopped]
             if plan.unproven:
@@ -509,18 +499,18 @@ def make(deps: GraphDeps) -> Node:
         plan = _plan(deps, state)
         apps = _redeployed(proposal)
         starts = _deploy_starts(proposal, state.get("step_results"))
-        readings = _readings_after(proposal, state.get("step_results"), subject.host_id)
 
         result = VerificationResult(ok=False)
         if plan.empty() and not apps:
             # Nothing to look at is not a pass, and another look at nothing would not help either.
             await deps.bus.publish(incident_id, "verification", _payload(result))
         else:
+            first_reads = await _first_reads(deps, subject.host_id, plan.containers)
             await deps.sleep(SETTLE_S)
             calm: set[str] = set()
             for attempt in range(1, CHECKS + 1):
                 result = await one_check(
-                    subject.host_id, plan, apps, starts, readings, attempt, calm
+                    subject.host_id, plan, apps, starts, first_reads, attempt, calm
                 )
                 await deps.bus.publish(incident_id, "verification", _payload(result))
                 if result.ok or attempt == CHECKS:
