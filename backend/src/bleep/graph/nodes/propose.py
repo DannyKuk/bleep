@@ -20,6 +20,7 @@ from bleep.graph.state import IncidentState, Node
 from bleep.guard.plan_check import (
     StepRule,
     Violation,
+    app_protected_by,
     check_plan,
     coolify_members,
     protected_names,
@@ -331,11 +332,20 @@ def _containers(context: GatherContext | None) -> str:
 
 
 def _off_limits(deps: GraphDeps, host_id: str) -> str:
-    """Protected and Bleep's own containers, so the model need not learn them by refusal."""
+    """Protected and Bleep's own containers, so the model need not learn them by refusal: each
+    protected entry, and each container a protected Coolify application entry covers (#319)."""
     host = next((h for h in deps.registry.hosts() if h.config.id == host_id), None)
     protected = sorted(protected_names(host)) if host else []
-    own = sorted(c.name for c in deps.registry.snapshot(host_id) or [] if is_self(c.labels))
-    lines = [f"- {n} (protected)" for n in protected] + [f"- {n} (Bleep itself)" for n in own]
+    containers = sorted(deps.registry.snapshot(host_id) or [], key=lambda c: c.name)
+    apps = [
+        (c.name, app)
+        for c in containers
+        if c.name not in protected and (app := app_protected_by(c, protected))
+    ]
+    own = [c.name for c in containers if is_self(c.labels)]
+    lines = [f"- {n} (protected)" for n in protected]
+    lines += [f"- {n} (protected: Coolify application {app})" for n, app in apps]
+    lines += [f"- {n} (Bleep itself)" for n in own]
     return "\n".join(lines) or "none"
 
 

@@ -330,3 +330,51 @@ async def test_act_tools_are_never_bound_to_the_model(env):
 
 def test_an_act_tool_never_prints_its_secret():
     assert SECRET not in repr(docker_act_tools(SECRET)["docker.restart"])
+
+
+DB = "k8s0db1x-104512093422"  # Coolify names a container <uuid>-<deploy time>
+DB_APP = {
+    "coolify.type": "application",
+    "coolify.applicationUuid": "k8s0db1x",
+    "coolify.resourceName": "billing-db",
+}
+
+
+async def coolify_env(tmp_path, protected: str) -> Env:
+    engine = FakeEngine(
+        "a",
+        [box(DB, labels=DB_APP, state="exited", exit_code=1), box("shop-web-1", "shop")],
+        clock=lambda: T1,
+    )
+    host = shop_host(services={"billing": ServiceOverrides(protected_containers=[protected])})
+    return Env(await graph_env(tmp_path, engine=engine, host=host), RecordingGuardLog())
+
+
+@pytest.mark.parametrize("action", ["docker.restart", "docker.stop"])
+@pytest.mark.parametrize("protected", ["k8s0db1x", "billing-db"])
+async def test_a_protected_coolify_apps_container_is_refused_even_with_a_valid_grant(
+    tmp_path, action, protected
+):
+    env = await coolify_env(tmp_path, protected)
+    record = plan(step(DB, action))
+
+    with pytest.raises(StepRefused, match="protected"):
+        await env.run(record, grant_for(record))
+
+    assert env.engine.acts == []
+    [(_, kind, detail)] = env.guard_log.records
+    assert kind == "blocked_action"
+    assert f"{DB} belongs to the Coolify application {protected}" in detail
+
+
+async def test_a_snapshot_id_of_a_protected_container_is_refused(tmp_path):
+    # The step names a plain container, but the id the plan would act on is a protected one's.
+    env = await coolify_env(tmp_path, "k8s0db1x")
+    record = plan()
+    record.snapshots[0] = record.snapshots[0].model_copy(update={"container_id": f"id-{DB}"})
+    record = record.model_copy(update={"plan_hash": plan_hash(record.proposal, record.snapshots)})
+
+    with pytest.raises(StepRefused, match="protected"):
+        await env.run(record, grant_for(record))
+
+    assert env.engine.acts == []

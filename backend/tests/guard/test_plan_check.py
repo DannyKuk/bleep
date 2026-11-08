@@ -919,3 +919,110 @@ async def test_a_padded_target_is_refused(tmp_path):
     [found] = check_plan(act(restart(name)), env.registry, CORE, "a", incident_containers=[name])
 
     assert found.rule == "hidden_param" and "padded with blank lines or spaces" in found.text
+
+
+# --- a Coolify app's containers under docker.* steps (#319) -----------------------------------
+
+DB_APP = coolify_app("k8s0db1x", "billing-db")
+DB = "k8s0db1x-104512093422"  # Coolify names a container <uuid>-<deploy time>
+
+
+async def docker_checked(
+    tmp_path, step: PlanStep, labels: dict[str, str], protected: list[str], enabled=WITH_MCP
+) -> list[Violation]:
+    """The plan check of one step on host a, whose exited container DB carries `labels` and is
+    the incident's own, so only the protection rules can refuse it."""
+    engine = FakeEngine(
+        "a", [box(DB, labels=labels, state="exited", exit_code=1), box("shop-web-1", "shop")]
+    )
+    host = shop_host(services={"billing": ServiceOverrides(protected_containers=protected)})
+    env = await graph_env(tmp_path, engine=engine, host=host)
+    return check_plan(
+        act(step), env.registry, enabled, "a", incident_containers=[DB], step_rules=ANY_TOOL
+    )
+
+
+def docker(action: str, target: str = DB) -> PlanStep:
+    return PlanStep(action=action, host_id="a", target=target)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("action", ["docker.restart", "docker.stop", "docker.start"])
+@pytest.mark.parametrize("protected", ["k8s0db1x", "billing-db", "Billing DB", "BILLING-DB"])
+async def test_a_docker_step_on_a_protected_coolify_apps_container_is_refused(
+    tmp_path, action, protected
+):
+    found = await docker_checked(tmp_path, docker(action), DB_APP, [protected])
+
+    assert [(v.rule, v.step) for v in found] == [("protected", 1)]
+    assert f"{DB} belongs to the Coolify application {protected}" in found[0].text
+
+
+@pytest.mark.parametrize("target", [DB, f"id-{DB}", f"id-{DB}"[:12]])
+async def test_every_name_of_the_container_is_refused(tmp_path, target):
+    found = await docker_checked(tmp_path, docker("docker.restart", target), DB_APP, ["k8s0db1x"])
+
+    assert [v.rule for v in found] == ["protected"]
+
+
+async def test_a_uuid_protects_the_app_whatever_its_resource_name(tmp_path):
+    renamed = coolify_app("k8s0db1x", "ledger")
+    other_uuid = coolify_app("p0zz9w2q", "billing-db")
+
+    stop = docker("docker.stop")
+    by_uuid = await docker_checked(tmp_path / "1", stop, renamed, ["k8s0db1x"])
+    by_name = await docker_checked(tmp_path / "2", stop, other_uuid, ["billing-db"])
+
+    assert [v.rule for v in by_uuid] == ["protected"]
+    assert [v.rule for v in by_name] == ["protected"]
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        coolify_app("k8s0db1x2", "billing-db-2"),  # one character more on each
+        coolify_app("k8s0db1", "billing-d"),  # one character less
+        coolify_app("K8S0DB1X", "billingdb"),  # a uuid compares exactly; the name slugs apart
+        coolify_app("x-k8s0db1x", "old-billing-db"),
+        {"coolify.applicationuuid": "k8s0db1x", "coolify.resourcename": "billing-db"},
+        {"coolify.applicationId": "k8s0db1x", "coolify.name": "billing-db"},
+        {"com.docker.compose.project": "k8s0db1x", "app": "billing-db"},
+        coolify_app("", ""),
+    ],
+)
+async def test_a_label_that_only_resembles_a_protected_entry_protects_nothing(tmp_path, labels):
+    found = await docker_checked(
+        tmp_path, docker("docker.restart"), labels, ["k8s0db1x", "billing-db"]
+    )
+
+    assert found == []
+
+
+async def test_coolify_labels_protect_a_container_with_the_coolify_plugin_off(tmp_path):
+    # Bleep without a Coolify token can still watch a Coolify host; the labels are the engine's.
+    found = await docker_checked(
+        tmp_path, docker("docker.restart"), DB_APP, ["billing-db"], enabled=CORE
+    )
+
+    assert [v.rule for v in found] == ["protected"]
+
+
+async def test_an_mcp_call_on_a_protected_coolify_apps_container_is_refused(tmp_path):
+    on_it = PlanStep(
+        action="mcp.call",
+        host_id="a",
+        target=DB,
+        params={"tool": "run_command", "arguments": "{}"},
+    )
+    naming_it = mcp_raw(json.dumps({"container": f"id-{DB}"[:12]}))
+
+    for number, step in enumerate((on_it, naming_it)):
+        found = await docker_checked(tmp_path / str(number), step, DB_APP, ["billing-db"])
+
+        assert [v.rule for v in found] == ["protected"]
+
+
+async def test_the_container_name_still_gets_its_own_refusal_text(tmp_path):
+    found = await docker_checked(tmp_path, docker("docker.restart"), DB_APP, [DB, "k8s0db1x"])
+
+    assert [v.rule for v in found] == ["protected"]
+    assert found[0].text.endswith(f"{DB} is protected in the hosts file")
