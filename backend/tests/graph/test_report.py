@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from bleep.graph.deps import StaticSettings
-from bleep.graph.nodes import report
+from bleep.graph.nodes import report, verify
 from bleep.graph.planted import HINT_END, PLANTED_START, planted_places
 from bleep.guard.pipeline import guard_text
 from bleep.guard.report_check import MARKER
@@ -243,6 +243,17 @@ def check(kind: str, ok: bool = True) -> dict:
         (True, [check("container"), check("url")], "Check 1 passed"),
         (False, [check("container", ok=False)], "Check 1 failed"),
         (True, [check("host")], "Check 1 passed"),
+        (
+            False,
+            [check("url"), check("container", ok=False) | {"detail": verify.STARTED_AGAIN}],
+            "Check 1 failed; a container was started again after the fix",
+        ),
+        (
+            False,
+            [check("container", ok=False) | {"detail": verify.RESTARTED}],
+            "Check 1 failed; a container was started again after the fix",
+        ),
+        (False, [check("container", ok=False) | {"detail": "is restarting"}], "Check 1 failed"),
     ],
 )
 async def test_a_passed_check_of_containers_alone_says_no_url_was_checked(

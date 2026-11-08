@@ -203,6 +203,9 @@ class TargetSnapshot(BaseModel):
     recreated application with the same name is another target. `restart_count` and `state`
     tell a restart policy's own restarts from a start by hand; they are None in an approval
     stored before #87, and then any new start time is stale.
+
+    The same shape holds a container as Execute read it right after a restart or start step
+    (`StepResult.after`), on the host's clock, which Verify compares with its own reads (#320).
     """
 
     host_id: str
@@ -260,6 +263,8 @@ class StepResult(BaseModel):
 
     `step_index` is the step's 0-based place in the plan. `started_at` is None for a step that
     never ran (skipped, or refused at run time), `finished_at` for one that has not finished.
+    `after` is the container as read right after a `docker.restart` or `docker.start` that
+    succeeded, None for any other step, a read that failed, or a result stored before #320.
     """
 
     step_index: int
@@ -269,6 +274,7 @@ class StepResult(BaseModel):
     detail: str = ""
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    after: TargetSnapshot | None = None
 
     @property
     def refused(self) -> bool:
@@ -294,6 +300,15 @@ class LoggedStep(BaseModel):
     host_id: str
     status: StepStatus
     result: StepResult
+
+
+# How Verify's failed container check begins when the container was started again after the
+# plan's step (#320); the report's timeline reads it.
+STARTED_AFTER_FIX = (
+    "restarted by its restart policy after the fix",
+    "started again after the fix",
+    "recreated after the fix",
+)
 
 
 class Check(BaseModel):

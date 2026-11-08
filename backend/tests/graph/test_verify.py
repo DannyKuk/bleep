@@ -13,6 +13,7 @@ from bleep.schemas.graph import (
     PlanStep,
     Proposal,
     StepResult,
+    TargetSnapshot,
     VerificationPlan,
     VerificationResult,
 )
@@ -1259,4 +1260,298 @@ async def test_a_loop_back_with_another_failed_check_asks_why_the_service_is_unh
             f"- symptom shop-web-1: {verify.UNPROVEN}"
         ),
         budget=str(Budgets().investigate_tool_calls),
+    )
+
+
+FIXED_AT = T0 + timedelta(seconds=1)  # the host's start time right after the plan's restart
+
+
+def after(name: str, *, restart_count: int = 0, started_at=FIXED_AT, id: str | None = None):
+    """The container as Execute read it right after its step (`StepResult.after`)."""
+    return TargetSnapshot(
+        host_id="a",
+        target=name,
+        container_id=id or f"id-{name}",
+        started_at=started_at,
+        restart_count=restart_count,
+        state="running",
+    )
+
+
+def ran(index: int, step: PlanStep, reading: TargetSnapshot | None) -> StepResult:
+    return StepResult(
+        step_index=index,
+        action=step.action,
+        target=step.target,
+        ok=True,
+        detail="done",
+        started_at=T0,
+        finished_at=T0 + timedelta(seconds=1),
+        after=reading,
+    )
+
+
+def crash_loop(engine: FakeEngine, name: str = "shop-worker-1", times: int = 1):
+    """The settle hook of #320: the container dies again after the fix and its restart policy
+    starts it again, so it is running at the check with a higher count and a later start."""
+
+    def hook(waits: int) -> None:
+        if waits != 1:  # once, during the 20 s settle
+            return
+        for i, c in enumerate(engine.container_list):
+            if c.name == name:
+                engine.container_list[i] = c.model_copy(
+                    update={
+                        "restart_count": c.restart_count + times,
+                        "started_at": T0 + timedelta(seconds=15),
+                        "state": "running",
+                    }
+                )
+
+    return hook
+
+
+async def worker_incident(
+    tmp_path,
+    *steps: PlanStep,
+    readings: list[TargetSnapshot | None],
+    engine: FakeEngine,
+    hook=None,
+    urls: bool = False,
+    replies=None,
+):
+    """A restart_loop incident on shop-worker-1 (policy `always`), a service with no URL unless
+    `urls`; `steps` ran, each with its reading after the step."""
+    sleeps = Sleeps(hook)
+    env, state = await setup(
+        tmp_path,
+        replies or Replies(200),
+        plan=VerificationPlan(containers=["shop-worker-1"]),
+        sleeps=sleeps,
+        engine=engine,
+        urls=urls,
+    )
+    signal = Signal(subject=state["subject"], kind="restart_loop", at=T0, container="shop-worker-1")
+    proposal = state["proposal"].model_copy(update={"steps": list(steps)})
+    results = [
+        ran(i, step, reading) for i, (step, reading) in enumerate(zip(steps, readings, strict=True))
+    ]
+    state |= {"proposal": proposal, "signals": [signal], "step_results": results}
+    return env, state
+
+
+def worker(**fields) -> FakeEngine:
+    defaults = {"restart_policy": "always", "restart_count": 0, "started_at": FIXED_AT}
+    container = box("shop-worker-1", "shop").model_copy(update=defaults | fields)
+    return FakeEngine("a", [container])
+
+
+RESTART_WORKER = PlanStep(action="docker.restart", host_id="a", target="shop-worker-1")
+
+
+async def test_a_container_its_policy_restarted_after_the_fix_is_never_resolved(tmp_path):
+    """The sequence of #320: the approved restart left the worker at restart count 0 (Docker
+    resets it on a restart), it crashed during the settle and its policy started it again, and
+    it is running at every check. All three checks fail, and the run loops back."""
+    engine = worker()
+    env, state = await worker_incident(
+        tmp_path, RESTART_WORKER, readings=[after("shop-worker-1")], engine=engine,
+        hook=crash_loop(engine),
+    )  # fmt: skip
+
+    update, route = await run(env, state)
+
+    result = update["verification"]
+    assert not result.ok and result.attempt == 3
+    assert update.get("outcome") != "resolved" and route == "investigate"
+    check = result.checks[0]
+    assert (check.target, check.ok) == ("shop-worker-1", False)
+    assert check.detail == (
+        "restarted by its restart policy after the fix (restart count 1, 0 right after the fix)"
+    )
+    assert check.detail in env.deps.notifier.results[0].detail
+    assert check.detail in update["messages"][0].text
+
+
+async def test_out_of_loop_backs_a_policy_restart_after_the_fix_ends_unverified(tmp_path):
+    engine = worker()
+    env, state = await worker_incident(
+        tmp_path, RESTART_WORKER, readings=[after("shop-worker-1")], engine=engine,
+        hook=crash_loop(engine),
+    )  # fmt: skip
+    state["verify_loops"] = Budgets().verify_loops
+
+    update, route = await run(env, state)
+
+    assert update["outcome"] == "unverified" and route == "report"
+
+
+async def test_a_restart_whose_count_stays_put_during_the_settle_is_resolved(tmp_path):
+    env, state = await worker_incident(
+        tmp_path, RESTART_WORKER, readings=[after("shop-worker-1")], engine=worker()
+    )
+
+    update, _ = await run(env, state)
+
+    assert update["outcome"] == "resolved"
+    assert update["verification"].checks[0].detail == "running"
+
+
+async def test_a_count_that_rises_from_the_reading_not_the_approval_fails(tmp_path):
+    """Without Docker's reset (a count read as 3 right after the step) the rise is still read
+    from the reading after the step."""
+    engine = worker(restart_count=3)
+    env, state = await worker_incident(
+        tmp_path, RESTART_WORKER, readings=[after("shop-worker-1", restart_count=3)],
+        engine=engine, hook=crash_loop(engine),
+    )  # fmt: skip
+
+    update, _ = await run(env, state)
+
+    assert not update["verification"].ok
+    assert "restart count 4, 3 right after the fix" in update["verification"].checks[0].detail
+
+
+async def test_a_plan_that_restarts_the_container_twice_is_not_read_as_a_crash(tmp_path):
+    """Each restart moves the start time; only the reading after the last one counts."""
+    second = T0 + timedelta(seconds=5)
+    env, state = await worker_incident(
+        tmp_path,
+        RESTART_WORKER,
+        RESTART_WORKER,
+        readings=[after("shop-worker-1"), after("shop-worker-1", started_at=second)],
+        engine=worker(started_at=second),
+    )
+
+    update, _ = await run(env, state)
+
+    assert update["outcome"] == "resolved"
+
+
+async def test_a_start_of_a_stopped_container_is_judged_from_the_start_it_made(tmp_path):
+    """The approval saw it exited with no restarts; the start step set its start time itself."""
+    start = PlanStep(action="docker.start", host_id="a", target="shop-worker-1")
+    env, state = await worker_incident(
+        tmp_path, start, readings=[after("shop-worker-1")], engine=worker()
+    )
+
+    update, _ = await run(env, state)
+
+    assert update["outcome"] == "resolved"
+
+
+async def test_a_start_of_a_stopped_container_that_crashes_again_fails(tmp_path):
+    start = PlanStep(action="docker.start", host_id="a", target="shop-worker-1")
+    engine = worker()
+    env, state = await worker_incident(
+        tmp_path, start, readings=[after("shop-worker-1")], engine=engine,
+        hook=crash_loop(engine),
+    )  # fmt: skip
+
+    update, _ = await run(env, state)
+
+    assert not update["verification"].ok
+
+
+async def test_a_container_started_again_with_no_count_in_its_inspect_fails(tmp_path):
+    """An inspect without a restart count reads 0 before and after; the start time still moved,
+    so it was started again after the fix."""
+    engine = worker()
+    env, state = await worker_incident(
+        tmp_path, RESTART_WORKER, readings=[after("shop-worker-1")], engine=engine,
+        hook=crash_loop(engine, times=0),
+    )  # fmt: skip
+
+    update, _ = await run(env, state)
+
+    assert update["verification"].checks[0].detail == (
+        "started again after the fix (a later start time than right after it)"
+    )
+
+
+async def test_a_container_with_neither_count_nor_moved_start_is_judged_as_before(tmp_path):
+    env, state = await worker_incident(
+        tmp_path, RESTART_WORKER, readings=[after("shop-worker-1", restart_count=0)],
+        engine=worker(started_at=FIXED_AT),
+    )  # fmt: skip
+
+    update, _ = await run(env, state)
+
+    assert update["outcome"] == "resolved"
+
+
+async def test_a_result_with_no_reading_after_the_step_is_judged_as_before(tmp_path):
+    """A result from before #320, or one whose read after the step failed: nothing to compare,
+    so the container check is what it was."""
+    engine = worker()
+    env, state = await worker_incident(
+        tmp_path, RESTART_WORKER, readings=[None], engine=engine, hook=crash_loop(engine)
+    )
+
+    update, _ = await run(env, state)
+
+    assert update["outcome"] == "resolved"
+
+
+async def test_a_container_recreated_after_the_fix_is_judged_by_its_own_restarts(tmp_path):
+    """Compose or Coolify replaced it under the same name: a new id, its count from 0. Running
+    with no restart passes as before; restarted by its policy since, it fails."""
+    fresh = worker(id="id-new", restart_count=0, started_at=T0 + timedelta(seconds=10))
+    env, state = await worker_incident(
+        tmp_path, RESTART_WORKER, readings=[after("shop-worker-1")], engine=fresh
+    )
+    update, _ = await run(env, state)
+    assert update["outcome"] == "resolved"
+
+    looping = worker(id="id-new", restart_count=2, started_at=T0 + timedelta(seconds=10))
+    (tmp_path / "2").mkdir()
+    env, state = await worker_incident(
+        tmp_path / "2", RESTART_WORKER, readings=[after("shop-worker-1")], engine=looping
+    )
+    update, _ = await run(env, state)
+    assert update["verification"].checks[0].detail == (
+        "recreated after the fix, then restarted by its restart policy (restart count 2)"
+    )
+
+
+async def test_a_step_named_by_id_is_matched_to_the_container_checked_by_name(tmp_path):
+    by_id = PlanStep(action="docker.restart", host_id="a", target="id-shop-worker-1")
+    engine = worker()
+    env, state = await worker_incident(
+        tmp_path, by_id, readings=[after("id-shop-worker-1", id="id-shop-worker-1")],
+        engine=engine, hook=crash_loop(engine),
+    )  # fmt: skip
+
+    update, _ = await run(env, state)
+
+    assert not update["verification"].ok
+
+
+async def test_a_url_that_answers_does_not_cover_a_restart_after_the_fix(tmp_path):
+    engine = worker()
+    env, state = await worker_incident(
+        tmp_path, RESTART_WORKER, readings=[after("shop-worker-1")], engine=engine,
+        hook=crash_loop(engine), urls=True, replies=Replies(200),
+    )  # fmt: skip
+
+    update, _ = await run(env, state)
+
+    by_kind = {c.kind: c for c in update["verification"].checks}
+    assert by_kind["url"].ok and not by_kind["container"].ok
+    assert update.get("outcome") != "resolved"
+
+
+async def test_a_stop_step_is_still_checked_to_stay_down(tmp_path):
+    """A stopped container is not running on purpose; the reading compare does not touch it."""
+    env, state = await stop_without_a_url(tmp_path, "exited")
+    stop = state["proposal"].steps[0]
+    state["step_results"] = [ran(0, stop, None)]
+
+    update, _ = await run(env, state)
+
+    stopped = update["verification"].checks[1]
+    assert (stopped.target, stopped.ok, stopped.detail) == (
+        "shop-web-1 (stopped by the plan)",
+        True,
+        "is exited",
     )

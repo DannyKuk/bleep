@@ -7,12 +7,12 @@ import pytest
 from pydantic import SecretStr
 
 from bleep.graph.deps import StaticSettings
-from bleep.graph.nodes import approval, execute
+from bleep.graph.nodes import approval, execute, verify
 from bleep.hosts.engine import EngineError
 from bleep.plugins.base import PluginContext
 from bleep.plugins.coolify.plugin import CoolifyPlugin, CoolifySettings
 from bleep.schemas.docker import ContainerSummary
-from bleep.schemas.graph import Decision, PlanStep, Proposal, StepResult
+from bleep.schemas.graph import Decision, PlanStep, Proposal, StepResult, TargetSnapshot
 from bleep.schemas.incidents import Subject
 from bleep.schemas.settings import Budgets
 from fakes import FakeEngine
@@ -611,3 +611,98 @@ async def test_an_mcp_step_whose_container_is_as_approved_runs(env):
     _, route = await env.run(state)
 
     assert mcp.ran == [mcp_call("shop-web-1")] and route == "verify"
+
+
+def read_after(name: str, started_at=LATER, restart_count: int = 0) -> TargetSnapshot:
+    return TargetSnapshot(
+        host_id="a",
+        target=name,
+        container_id=f"id-{name}",
+        started_at=started_at,
+        restart_count=restart_count,
+        state="running",
+    )
+
+
+async def test_a_restart_or_start_records_the_container_as_read_right_after_it(env):
+    """Verify compares later reads with this one (#320); a stop leaves none."""
+    state = await env.approve(restart("shop-db-1"), start("shop-web-1"), stop("shop-cache-1"))
+
+    update, _ = await env.run(state)
+
+    assert [r.after for r in update["step_results"]] == [
+        read_after("shop-db-1"),
+        read_after("shop-web-1"),
+        None,
+    ]
+
+
+async def test_a_read_that_fails_after_the_step_leaves_no_reading_and_the_step_done(
+    env, monkeypatch
+):
+    restart_now = env.engine.restart
+
+    async def restart_then_drop(container: str) -> None:
+        await restart_now(container)
+        env.engine.drop()
+
+    monkeypatch.setattr(env.engine, "restart", restart_then_drop)
+    state = await env.approve(restart("shop-db-1"))
+
+    update, _ = await env.run(state)
+
+    assert await env.logged(state["incident_id"]) == [(0, "done")]
+    assert update["step_results"][0].ok and update["step_results"][0].after is None
+
+
+async def test_a_step_confirmed_after_a_crash_is_read_when_confirmed(env):
+    state = await env.approve(restart("shop-db-1"))
+    plan = await env.deps.approvals.current(state["incident_id"])
+    await env.deps.action_log.start(
+        state["incident_id"], f"{plan.plan_hash}:{plan.id}", 0, restart("shop-db-1")
+    )
+    env.replace("shop-db-1", started_at=LATER, restart_count=2)
+
+    update, _ = await env.run(state)
+
+    assert update["step_results"][0].after == read_after("shop-db-1", restart_count=2)
+
+
+class DockerEngine(FakeEngine):
+    """Resets the restart count on a start or restart, as Docker does for a start through its
+    API (moby `daemon/start.go`, `ResetRestartManager(true)`)."""
+
+    def _act(self, action: str, container: str, state: str) -> None:
+        super()._act(action, container, state)
+        if state == "running":
+            index = self._find(container)
+            reset = self.container_list[index].model_copy(update={"restart_count": 0})
+            self.container_list[index] = reset
+
+
+@pytest.mark.parametrize(("crashes", "outcome"), [(True, None), (False, "resolved")])
+async def test_a_restart_policy_restart_after_the_approved_restart_is_not_verified(
+    tmp_path, crashes, outcome
+):
+    """#320 through Execute and Verify: a crash-looping worker with no URL (restart count 3) is
+    restarted as approved, which resets its count to 0. Crashing again during Verify's settle,
+    its policy starts it again (count 1); at every check it is running, and the run is not
+    resolved. When it stays up, it is."""
+    worker = box(
+        "shop-worker-1", "shop", restart_policy="always", restart_count=3, started_at=APPROVED_AT
+    )
+    docker = DockerEngine("a", [worker], clock=lambda: LATER)
+    env = Env(await graph_env(tmp_path, engine=docker))
+    state = await env.approve(restart("shop-worker-1"))
+    update, _ = await env.run(state)
+    state |= update
+
+    async def settle(_seconds: float) -> None:
+        if crashes:
+            env.replace("shop-worker-1", restart_count=1, started_at=LATER + timedelta(seconds=14))
+
+    env.deps.sleep = settle
+    verified = await verify.make(env.deps)(state)
+
+    assert verified.get("outcome") == outcome
+    assert verified["verification"].ok is (not crashes)
