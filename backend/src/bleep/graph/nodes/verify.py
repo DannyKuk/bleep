@@ -5,7 +5,8 @@ check where everything passes. A check passes only when every planned container 
 healthy (or running with no healthcheck) and every planned URL passes `check_url`. Every
 container checked to run must not have been started again since Verify first saw it running
 (`_after_fix`): read once before the wait, or at the first check that finds it running when it
-was not then (still in its restart backoff, or unreadable). Once Execute is done nothing Bleep
+was not then (still in its restart backoff, or unreadable); that check fails, so such a
+container can pass only at a later check, against that read. Once Execute is done nothing Bleep
 does restarts a container, so a restart policy that restarted it then is the failure repeating,
 however it looks at the check (#320). The plan is the proposal's verification plan; when that
 is empty it falls back to the affected service's containers (protected ones too), and then to
@@ -87,6 +88,7 @@ HOST_READINGS = ("disk", "memory", "load")
 SEEN = "when Verify first saw it running"
 RESTARTED = STARTED_AFTER_FIX[0] + " (restart count {now}, {then} " + SEEN + ")"
 STARTED_AGAIN = STARTED_AFTER_FIX[1] + " (a later start time than " + SEEN + ")"
+CAME_UP = "first seen running at this check; it has to stay up until the next one"
 REDEPLOY_RESTARTED = STARTED_AFTER_FIX[0] + " (a container the redeploy made, restart count {now})"
 RECREATED = STARTED_AFTER_FIX[2] + ", then restarted by its restart policy (restart count {now})"
 
@@ -294,7 +296,9 @@ async def _check_container(
     deps: GraphDeps, host_id: str, name: str, first_running: dict[str, ContainerSummary]
 ) -> Check:
     """A container that must run: running, not started again since Verify first saw it running
-    (`first_running`, which this adds it to the first time), and not unhealthy or starting."""
+    (`first_running`), and not unhealthy or starting. The check that first sees it running adds
+    it there and fails: a read compared with itself proves nothing, and a crash-looper caught in
+    its few seconds up would pass after one look."""
     try:
         summary = (await deps.registry.engine(host_id).inspect(name)).summary
     except ContainerNotFound:
@@ -303,7 +307,10 @@ async def _check_container(
         return Check(kind="container", target=name, ok=False, detail="host not reachable")
     if summary.state != "running":
         return Check(kind="container", target=name, ok=False, detail=f"is {summary.state}")
-    first = first_running.setdefault(name, summary)
+    first = first_running.get(name)
+    if first is None:
+        first_running[name] = summary
+        return Check(kind="container", target=name, ok=False, detail=CAME_UP)
     started_again = _after_fix(first, summary)
     if started_again is not None:
         return Check(kind="container", target=name, ok=False, detail=started_again)

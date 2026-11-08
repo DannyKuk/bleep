@@ -147,6 +147,7 @@ async def test_a_stopped_container_fails_even_when_the_url_answers(tmp_path):
 
 
 async def test_a_container_that_recovers_between_checks_passes(tmp_path):
+    """Up from check 2 on: that check takes its first read and fails (#320), check 3 passes."""
     engine = FakeEngine("a", [box("shop-web-1", "shop", state="exited")])
     sleeps = Sleeps(
         lambda n: setattr(engine.container_list[0], "state", "running") if n == 2 else None
@@ -155,7 +156,7 @@ async def test_a_container_that_recovers_between_checks_passes(tmp_path):
 
     update, _ = await run(env, state)
 
-    assert update["verification"].ok and update["verification"].attempt == 2
+    assert update["verification"].ok and update["verification"].attempt == 3
 
 
 async def test_a_failure_hands_the_failed_checks_to_investigate(tmp_path):
@@ -1445,9 +1446,9 @@ async def test_a_container_started_again_with_no_count_in_its_inspect_fails(tmp_
     )
 
 
-async def test_a_container_unreadable_when_verify_began_is_judged_as_before(tmp_path):
-    """With no first read there is nothing to compare: a later read that shows it running
-    passes, as it did before #320."""
+async def test_a_container_unreadable_when_verify_began_gets_its_first_read_later(tmp_path):
+    """No first read before the wait: the first check that reads it running takes it (and
+    fails), and the next check compares with it."""
     engine = worker()
 
     def back_and_restarted(waits: int) -> None:
@@ -1461,7 +1462,8 @@ async def test_a_container_unreadable_when_verify_began_is_judged_as_before(tmp_
 
     update, _ = await run(env, state)
 
-    assert update["outcome"] == "resolved"
+    assert update["outcome"] == "resolved" and update["verification"].attempt == 2
+    assert (await check_details(env, state))[0] == verify.CAME_UP
 
 
 async def test_a_container_recreated_after_the_fix_is_judged_by_its_own_restarts(tmp_path):
@@ -1515,58 +1517,139 @@ async def test_a_stop_step_is_still_checked_to_stay_down(tmp_path):
     )
 
 
+def timeline(engine: FakeEngine, *changes: dict | None):
+    """A settle hook that changes shop-worker-1 by `changes[k]` after wait k + 1: the settle,
+    then before checks 2 and 3."""
+
+    def hook(waits: int) -> None:
+        change = changes[waits - 1] if waits <= len(changes) else None
+        if change:
+            i = next(i for i, c in enumerate(engine.container_list) if c.name == "shop-worker-1")
+            engine.container_list[i] = engine.container_list[i].model_copy(update=change)
+
+    return hook
+
+
+async def check_details(env, state, target: str = "shop-worker-1") -> list[str]:
+    """The detail of `target`'s check at each check of the round, from the published events."""
+    events = await env.bus.history(state["incident_id"])
+    return [
+        c["detail"]
+        for e in events
+        if e.kind == "verification"
+        for c in e.payload["checks"]
+        if c["target"] == target
+    ]
+
+
+def up_at(seconds: int) -> dict:
+    return {"state": "running", "started_at": FIXED_AT + timedelta(seconds=seconds)}
+
+
 async def test_a_container_still_in_its_restart_backoff_when_verify_began_is_judged_once_up(
     tmp_path,
 ):
     """The db was down and its worker crash-looped; when Verify began the worker was in Docker's
     backoff (`restarting`, its count already raised). The plan restarted the db, and the
-    worker's next start, due before the fix, came up during the settle and stays up. Its first
-    read is the first that finds it running, so that start is not read as a crash."""
+    worker's next start, due before the fix, came up during the settle and stays up. The check
+    that first finds it running takes its first read and fails; the next one compares with it
+    and passes."""
     engine = worker(box("shop-db-1", "shop"), restart_count=7, state="restarting")
-
-    def comes_up(waits: int) -> None:
-        if waits == 1:
-            c = engine.container_list[0]
-            engine.container_list[0] = c.model_copy(
-                update={"state": "running", "started_at": FIXED_AT + timedelta(seconds=12)}
-            )
-
     env, state = await worker_incident(
-        tmp_path, RESTART_DB, engine=engine, hook=comes_up, containers=("shop-db-1",)
-    )
+        tmp_path, RESTART_DB, engine=engine, hook=timeline(engine, up_at(12)),
+        containers=("shop-db-1",),
+    )  # fmt: skip
 
     update, _ = await run(env, state)
 
-    assert update["outcome"] == "resolved"
+    assert update["outcome"] == "resolved" and update["verification"].attempt == 2
+    assert await check_details(env, state) == [verify.CAME_UP, "running"]
 
 
 async def test_a_container_that_came_up_late_and_crashes_again_fails(tmp_path):
-    """Not running when Verify began, running at check 1 (whose URL still fails), restarted by
-    its policy before check 2: compared with check 1's read, it fails."""
+    """Not running when Verify began, running at check 1 (its URL answers), restarted by its
+    policy before check 2: check 1 fails because it took the first read, checks 2 and 3 because
+    the count rose since."""
     engine = worker(restart_count=7, state="restarting")
-
-    def up_then_crash(waits: int) -> None:
-        c = engine.container_list[0]
-        if waits == 1:
-            update = {"state": "running", "started_at": FIXED_AT + timedelta(seconds=12)}
-        elif waits == 2:
-            update = {"restart_count": 8, "started_at": FIXED_AT + timedelta(seconds=30)}
-        else:
-            return
-        engine.container_list[0] = c.model_copy(update=update)
-
+    crash = {"restart_count": 8, "started_at": FIXED_AT + timedelta(seconds=30)}
     env, state = await worker_incident(
-        tmp_path, RESTART_WORKER, engine=engine, hook=up_then_crash,
-        urls=True, replies=Replies(503, 200, 200),
+        tmp_path, RESTART_WORKER, engine=engine, hook=timeline(engine, up_at(12), crash),
+        urls=True, replies=Replies(200),
     )  # fmt: skip
 
     update, _ = await run(env, state)
 
     assert update.get("outcome") != "resolved"
-    assert update["verification"].checks[0].detail == (
+    restarted = (
         "restarted by its restart policy after the fix "
         "(restart count 8, 7 when Verify first saw it running)"
     )
+    assert await check_details(env, state) == [verify.CAME_UP, restarted, restarted]
+
+
+async def test_an_untouched_crash_looper_briefly_up_at_one_check_is_not_resolved(tmp_path):
+    """The plan restarted the db, which was not the cause. The worker loops at Docker's backoff
+    cap: `restarting` (count 7) when Verify began, up just before check 1, dead again before
+    check 2 (count 8), up again before check 3."""
+    engine = worker(box("shop-db-1", "shop"), restart_count=7, state="restarting")
+    hook = timeline(
+        engine,
+        up_at(19),
+        {"state": "restarting", "restart_count": 8},
+        {"state": "running", "started_at": FIXED_AT + timedelta(seconds=39)},
+    )
+    env, state = await worker_incident(
+        tmp_path, RESTART_DB, engine=engine, hook=hook, containers=("shop-db-1",)
+    )
+
+    update, _ = await run(env, state)
+
+    assert update.get("outcome") != "resolved" and update["verification"].attempt == 3
+    details = await check_details(env, state)
+    assert details[:2] == [verify.CAME_UP, "is restarting"]
+    assert details[2].startswith("restarted by its restart policy after the fix")
+
+
+async def test_a_restarted_worker_first_read_in_its_backoff_is_not_resolved(tmp_path):
+    """The issue's sequence, one timing over: right after the approved restart the worker
+    crashes, and Verify's first read lands in Docker's first backoff (`restarting`, count 1).
+    It is up at check 1 and crashes again after it."""
+    engine = worker(restart_count=1, state="restarting")
+    hook = timeline(engine, up_at(1), {"state": "restarting", "restart_count": 2})
+    env, state = await worker_incident(tmp_path, RESTART_WORKER, engine=engine, hook=hook)
+
+    update, _ = await run(env, state)
+
+    assert update.get("outcome") != "resolved"
+    assert (await check_details(env, state))[0] == verify.CAME_UP
+
+
+async def test_a_container_up_only_at_the_second_check_is_not_resolved(tmp_path):
+    """`restarting` when Verify began and at check 1, up at check 2, `restarting` at check 3."""
+    engine = worker(box("shop-db-1", "shop"), restart_count=4, state="restarting")
+    hook = timeline(engine, None, up_at(29), {"state": "restarting", "restart_count": 5})
+    env, state = await worker_incident(
+        tmp_path, RESTART_DB, engine=engine, hook=hook, containers=("shop-db-1",)
+    )
+
+    update, _ = await run(env, state)
+
+    assert update.get("outcome") != "resolved"
+    assert await check_details(env, state) == ["is restarting", verify.CAME_UP, "is restarting"]
+
+
+async def test_a_container_first_seen_running_at_the_last_check_is_not_resolved(tmp_path):
+    """A Limit: with no later check to compare with, it is not verified in that round."""
+    engine = worker(box("shop-db-1", "shop"), restart_count=4, state="restarting")
+    env, state = await worker_incident(
+        tmp_path, RESTART_DB, engine=engine, hook=timeline(engine, None, None, up_at(39)),
+        containers=("shop-db-1",),
+    )  # fmt: skip
+
+    update, route = await run(env, state)
+
+    assert update.get("outcome") != "resolved" and route == "investigate"
+    assert (await check_details(env, state))[-1] == verify.CAME_UP
 
 
 async def test_a_redeployed_container_its_policy_restarted_is_not_resolved(tmp_path):
