@@ -367,6 +367,24 @@ async def test_off_limits_lists_the_containers_of_a_protected_coolify_app(tmp_pa
     assert "- k8s0db1x-104512093422 (protected: Coolify application billing-db)" in prompt(env)
 
 
+async def test_off_limits_names_a_bleep_container_once_as_bleep(tmp_path):
+    app = {
+        "bleep.self": "true",
+        "coolify.applicationUuid": "k8s0db1x",
+        "coolify.resourceName": "billing-db",
+    }
+    engine = bad_env_engine()
+    engine.container_list.append(box("k8s0db1x-104512093422", labels=app))
+    env, state = await setup(
+        tmp_path, acting(restart("shop-web-1")), protected=["billing-db"], engine=engine
+    )
+
+    await propose.make(env.deps)(state)
+
+    lines = [line for line in prompt(env).splitlines() if "k8s0db1x-104512093422" in line]
+    assert lines == ["- k8s0db1x-104512093422 (Bleep itself)"]
+
+
 async def test_the_prompt_carries_the_services_facts_and_the_humans_past_decision(tmp_path):
     """I2: what the human taught reaches the node that writes the plan, labelled as Bleep's
     own record, with any quoted log text inside it still untrusted."""

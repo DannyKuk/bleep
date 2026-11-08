@@ -1,4 +1,6 @@
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from langchain_core.tools import BaseTool
@@ -374,7 +376,33 @@ async def test_a_snapshot_id_of_a_protected_container_is_refused(tmp_path):
     record.snapshots[0] = record.snapshots[0].model_copy(update={"container_id": f"id-{DB}"})
     record = record.model_copy(update={"plan_hash": plan_hash(record.proposal, record.snapshots)})
 
-    with pytest.raises(StepRefused, match="protected"):
+    with pytest.raises(StepRefused, match="belongs to the Coolify application k8s0db1x"):
         await env.run(record, grant_for(record))
 
     assert env.engine.acts == []
+
+
+async def test_a_coolify_4_1_2_container_protected_by_its_uuid_is_refused(tmp_path):
+    # Captured from a real host: no coolify.applicationUuid, the uuid only in its names.
+    data = json.loads(
+        (
+            Path(__file__).parent.parent
+            / "fixtures"
+            / "labels"
+            / ("coolify-4.1.2-applicationid.json")
+        ).read_text()
+    )
+    name = data["container"]
+    engine = FakeEngine(
+        "a", [box(name, labels=data["labels"], state="exited", exit_code=1)], clock=lambda: T1
+    )
+    host = shop_host(
+        services={"x": ServiceOverrides(protected_containers=["cr2hzhk4nvabtad0zinjw1ev"])}
+    )
+    env = Env(await graph_env(tmp_path, engine=engine, host=host), RecordingGuardLog())
+    record = plan(step(name, "docker.stop"))
+
+    with pytest.raises(StepRefused, match="Coolify application cr2hzhk4nvabtad0zinjw1ev"):
+        await env.run(record, grant_for(record))
+
+    assert engine.acts == []

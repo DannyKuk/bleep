@@ -17,7 +17,7 @@ from typing import Any, Literal
 from bleep.guard.redact import hides_head, hides_params, pads_step
 from bleep.guard.sanitize import INVISIBLE_CHARS, strip_control
 from bleep.hosts.config import UrlCheckConfig
-from bleep.hosts.coolify_names import name_matches
+from bleep.hosts.coolify_names import coolify_container_name, name_matches
 from bleep.hosts.discovery import is_self
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
@@ -29,6 +29,12 @@ KNOWN_ACTIONS: frozenset[str] = frozenset(typing.get_args(Action))
 # shows an application's id, and a bare number could match another application's name.
 COOLIFY_UUID, COOLIFY_NAME = "coolify.applicationUuid", "coolify.resourceName"
 COOLIFY_APP_LABELS = (COOLIFY_UUID, COOLIFY_NAME)
+# Coolify 4.1.x wrote no application uuid label; its uuid is in these and in the container name.
+COOLIFY_MANAGED, COOLIFY_TYPE, COOLIFY_SHORT_NAME = (
+    "coolify.managed",
+    "coolify.type",
+    "coolify.name",
+)
 # The params each action takes; an action not listed here takes whatever it is given.
 ACTION_PARAMS: dict[str, frozenset[str]] = {
     "coolify.redeploy": frozenset(),
@@ -436,15 +442,19 @@ def check_target(number: int, step: PlanStep, registry: Registry) -> list[Violat
     for c in members:
         if is_self(c.labels):
             found += refuse("self", f"{c.name} is one of Bleep's own containers")
-        elif (entry := protected_by(c, protected)) == c.name:
-            found += refuse("protected", f"{c.name} is protected in the hosts file")
-        elif entry is not None:
-            found += refuse(
-                "protected",
-                f"{c.name} belongs to the Coolify application {entry}, which is protected in"
-                " the hosts file",
-            )
+        elif (entry := protected_by(c, protected)) is not None:
+            found += refuse("protected", protected_reason(c, entry))
     return found
+
+
+def protected_reason(container: ContainerSummary, entry: str) -> str:
+    """Why `container` is refused, given the protected entry that covers it (`protected_by`)."""
+    if entry == container.name:
+        return f"{container.name} is protected in the hosts file"
+    return (
+        f"{container.name} belongs to the Coolify application {entry}, which is protected in the"
+        " hosts file"
+    )
 
 
 def app_protected_by(container: ContainerSummary, protected: Collection[str]) -> str | None:
@@ -455,13 +465,30 @@ def app_protected_by(container: ContainerSummary, protected: Collection[str]) ->
     too, not only a container name that lasts until the next deploy. A uuid compares exactly. The
     name label is Coolify's slug of the app's name, so a protected name is compared slugged, and
     also exactly and in any case, for a label an older Coolify wrote that is not a slug
-    (`name_matches`). The labels count without the Coolify plugin: Bleep can watch a Coolify host
-    with the plugin off."""
-    uuid = container.labels.get(COOLIFY_UUID)
+    (`name_matches`). A Coolify 4.1.x container carries no uuid label, so on a container with
+    Coolify labels an entry also counts when it is the `coolify.name` label or the uuid in
+    Coolify's container name (`coolify_container_name`). The labels count without the Coolify
+    plugin: Bleep can watch a Coolify host with the plugin off."""
+    labels = container.labels
+    uuid = labels.get(COOLIFY_UUID)
     if uuid and uuid in protected:
         return uuid
-    name = container.labels.get(COOLIFY_NAME)
-    return next((p for p in sorted(protected) if name and name_matches(p, {name})), None)
+    name = labels.get(COOLIFY_NAME)
+    by_name = next((p for p in sorted(protected) if name and name_matches(p, {name})), None)
+    if by_name is not None or not _coolify_labelled(labels):
+        return by_name
+    return next(
+        (
+            p
+            for p in sorted(protected)
+            if p == labels.get(COOLIFY_SHORT_NAME) or coolify_container_name(container.name, p)
+        ),
+        None,
+    )
+
+
+def _coolify_labelled(labels: Mapping[str, str]) -> bool:
+    return labels.get(COOLIFY_MANAGED) == "true" or COOLIFY_TYPE in labels
 
 
 def protected_by(container: ContainerSummary, protected: Collection[str]) -> str | None:

@@ -25,7 +25,12 @@ from pydantic import SecretStr
 
 from bleep.guard.grant import GrantInvalid, step_snapshot, verify_step
 from bleep.guard.log import GuardLogger
-from bleep.guard.plan_check import check_target, protected_by, protected_names
+from bleep.guard.plan_check import (
+    check_target,
+    protected_by,
+    protected_names,
+    protected_reason,
+)
 from bleep.hosts.discovery import is_self
 from bleep.hosts.engine import ContainerNotFound, EngineError, EngineUnavailable
 from bleep.hosts.registry import Registry
@@ -157,8 +162,8 @@ class ActTool:
             raise StepRefused(f"{what}: {approved.name} is one of Bleep's own containers")
         host = next((h for h in registry.hosts() if h.config.id == step.host_id), None)
         entries = protected_names(host) if host is not None else set()
-        if approved is not None and protected_by(approved, entries) is not None:
-            raise StepRefused(f"{what}: {approved.name} is protected in the hosts file")
+        if approved is not None and (entry := protected_by(approved, entries)) is not None:
+            raise StepRefused(f"{what}: {protected_reason(approved, entry)}")
         return snapshot.container_id
 
 

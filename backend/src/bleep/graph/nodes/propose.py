@@ -340,7 +340,9 @@ def _off_limits(deps: GraphDeps, host_id: str) -> str:
     apps = [
         (c.name, app)
         for c in containers
-        if c.name not in protected and (app := app_protected_by(c, protected))
+        if c.name not in protected
+        and not is_self(c.labels)
+        and (app := app_protected_by(c, protected))
     ]
     own = [c.name for c in containers if is_self(c.labels)]
     lines = [f"- {n} (protected)" for n in protected]
