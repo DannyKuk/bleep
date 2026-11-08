@@ -26,6 +26,7 @@ ones ("always redeploy rather than restart") into at most two service facts
 name, never a diagnosis or a log, so nothing a host wrote can become a fact Bleep trusts later.
 """
 
+import asyncio
 import logging
 import re
 
@@ -265,7 +266,8 @@ def _raw_logs(state: IncidentState) -> list[str]:
 def planted_follow_up(state: IncidentState) -> tuple[list[PlantedPlace], str | None]:
     """Where code saw planted orders (`graph/planted.py`) and the fixed sentence that names those
     places, or None. No text of the model's or the host's goes in, so the report and memory
-    carry nothing new from the host."""
+    carry nothing new from the host. Slow on hostile output, so the node runs it in a worker
+    thread (#314)."""
     places = planted_places(state.get("context"), state.get("messages", []), state["subject"])
     return places, planted_sentence(places, HINT_END)
 
@@ -421,7 +423,7 @@ def make(deps: GraphDeps) -> Node:
                 deps.guard_log.record(incident_id, kind, detail)
 
         written = check_report(written, _raw_logs(state), record)
-        places, planted = planted_follow_up(state)
+        places, planted = await asyncio.to_thread(planted_follow_up, state)
         if planted is not None:  # after the check: Bleep's own text, never cut or removed
             follow_ups = [*written.follow_ups, planted]
             written = written.model_copy(update={"follow_ups": follow_ups, "planted_in": places})

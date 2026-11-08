@@ -4,6 +4,7 @@ import pytest
 
 from bleep.guard.orders import gives_orders, line_signs
 from bleep.guard.pipeline import guard_text
+from bleep.guard.untrusted import fold
 
 
 @pytest.mark.parametrize(
@@ -155,3 +156,27 @@ def test_a_hostile_result_is_checked_quickly(text):
     for line in text.splitlines():
         line_signs(line)
     assert time.perf_counter() - started < 1.0
+
+
+def _best_of_five(text: str) -> float:
+    times = []
+    for _ in range(5):
+        start = time.perf_counter()
+        gives_orders(text)
+        times.append(time.perf_counter() - start)
+    return min(times)
+
+
+def test_text_that_grows_under_nfkc_is_read_in_linear_time():
+    """The worst case of #312's review: one 8,000-character result of `&lt;ﷺﷺﷺ` lines. U+FDFA
+    grows 18-fold under NFKC, so the signs read about 8 times more text than in everyday text of
+    the same size, and are about 1.5 times slower per character they read; a pattern that
+    backtracks on the grown text would be far slower. Against everyday text of the same shape,
+    so a slow runner scales both sides (#314)."""
+    hostile, _ = guard_text(
+        "logs", "\n".join(f"{i} " + ("&lt;" + "\ufdfa" * 3) * 500 for i in range(40))
+    )
+    benign = "\n".join("hello world " * (len(line) // 12 + 1) for line in hostile.split("\n"))
+    grown = len(fold(hostile)) / len(fold(benign))
+    assert grown > 5
+    assert _best_of_five(hostile) < 5 * grown * _best_of_five(benign)

@@ -13,6 +13,7 @@ line that gives orders (`guard/orders.py`, #271), Bleep adds one evidence line o
 names where and quotes nothing.
 """
 
+import asyncio
 import logging
 import typing
 from typing import Literal
@@ -67,16 +68,17 @@ def _planted(said: list[str]) -> list[PlantedSource]:
     return [s for s in SOURCES if s in found]
 
 
-def _with_planted(
+async def _with_planted(
     diagnosis: Diagnosis, context: GatherContext, messages: list[AnyMessage], subject: Subject
 ) -> Diagnosis:
     """The diagnosis with `planted_in` cut to the places the run read, and Bleep's own evidence
-    line when code saw planted orders (`graph/planted.planted_places`). Neither changes what Bleep
-    does next."""
+    line when code saw planted orders (`graph/planted.planted_places`, read in a worker thread, as
+    hostile output makes it slow, #314). Neither changes what Bleep does next."""
     read = read_sources(context, messages)
     planted_in = [s for s in diagnosis.planted_in if s in read]
     found = diagnosis.model_copy(update={"planted_in": planted_in})
-    sentence = planted_sentence(planted_places(context, messages, subject))
+    places = await asyncio.to_thread(planted_places, context, messages, subject)
+    sentence = planted_sentence(places)
     if sentence is not None:
         line = Evidence(source=EVIDENCE_SOURCE, detail=sentence)
         found = found.model_copy(update={"evidence": [*found.evidence, line]})
@@ -203,10 +205,12 @@ def make(deps: GraphDeps) -> Node:
             )
         except BudgetExceeded as spent:
             log.info("diagnose: %s budget spent, no model call", spent.kind)
-            return {"diagnosis": _with_planted(_fallback(context), context, messages, subject)}
+            fallback = _fallback(context)
+            return {"diagnosis": await _with_planted(fallback, context, messages, subject)}
         except StructuredOutputFailed as failed:
             log.warning("diagnose: no structured output: %s", _clip(failed.raw, 120))
-            return {"diagnosis": _with_planted(_fallback(context), context, messages, subject)}
+            fallback = _fallback(context)
+            return {"diagnosis": await _with_planted(fallback, context, messages, subject)}
 
         missing = _clip(draft.missing, MISSING_LIMIT)
         diagnosis = Diagnosis(
@@ -218,7 +222,7 @@ def make(deps: GraphDeps) -> Node:
             unsure=draft.confidence < budgets.low_confidence,
             planted_in=_planted(draft.planted_in),
         )
-        diagnosis = _with_planted(diagnosis, context, messages, subject)
+        diagnosis = await _with_planted(diagnosis, context, messages, subject)
         update: dict = {"diagnosis": diagnosis}
         if diagnosis.unsure and rounds == 1:
             update["messages"] = [
