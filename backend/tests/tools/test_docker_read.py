@@ -50,6 +50,9 @@ class Env:
 
 @pytest.fixture
 async def env():
+    # Events are placed from the fixture's own time, not the module's, so the 30-minute window
+    # cannot drift past them however long the suite runs before this test (#330).
+    now = datetime.now(UTC)
     web_log = (
         "".join(f"2026 INFO tick {i}\n" for i in range(20000))
         + "x" * 3_000_000
@@ -94,13 +97,13 @@ async def env():
         stats={"shop-web-1": ContainerStats(cpu_percent=12.5, mem_usage=100, mem_limit=200)},
         events=[
             DockerEvent(
-                time=NOW - timedelta(minutes=5),
+                time=now - timedelta(minutes=5),
                 type="container",
                 action="die",
                 container_name="shop-web-1",
             ),
             DockerEvent(
-                time=NOW - timedelta(hours=3),
+                time=now - timedelta(hours=3),
                 type="container",
                 action="start",
                 container_name="old-one",
