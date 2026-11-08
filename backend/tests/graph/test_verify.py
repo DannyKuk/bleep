@@ -1338,7 +1338,8 @@ async def test_a_container_its_policy_restarted_after_the_fix_is_never_resolved(
     check = result.checks[0]
     assert (check.target, check.ok) == ("shop-worker-1", False)
     assert check.detail == (
-        "restarted by its restart policy after the fix (restart count 1, 0 when Verify began)"
+        "restarted by its restart policy after the fix "
+        "(restart count 1, 0 when Verify first saw it running)"
     )
     assert check.detail in env.deps.notifier.results[0].detail
     assert check.detail in update["messages"][0].text
@@ -1378,7 +1379,10 @@ async def test_a_count_left_high_by_earlier_crashes_is_not_a_crash_after_the_fix
         tmp_path / "2", RESTART_DB, engine=engine, hook=crash_loop(engine)
     )
     update, _ = await run(env, state)
-    assert "restart count 4, 3 when Verify began" in update["verification"].checks[0].detail
+    assert (
+        "restart count 4, 3 when Verify first saw it running"
+        in update["verification"].checks[0].detail
+    )
 
 
 async def test_an_untouched_signalled_container_that_keeps_crashing_is_not_resolved(tmp_path):
@@ -1437,7 +1441,7 @@ async def test_a_container_started_again_with_no_count_in_its_inspect_fails(tmp_
     update, _ = await run(env, state)
 
     assert update["verification"].checks[0].detail == (
-        "started again after the fix (a later start time than when Verify began)"
+        "started again after the fix (a later start time than when Verify first saw it running)"
     )
 
 
@@ -1509,3 +1513,74 @@ async def test_a_stop_step_is_still_checked_to_stay_down(tmp_path):
         True,
         "is exited",
     )
+
+
+async def test_a_container_still_in_its_restart_backoff_when_verify_began_is_judged_once_up(
+    tmp_path,
+):
+    """The db was down and its worker crash-looped; when Verify began the worker was in Docker's
+    backoff (`restarting`, its count already raised). The plan restarted the db, and the
+    worker's next start, due before the fix, came up during the settle and stays up. Its first
+    read is the first that finds it running, so that start is not read as a crash."""
+    engine = worker(box("shop-db-1", "shop"), restart_count=7, state="restarting")
+
+    def comes_up(waits: int) -> None:
+        if waits == 1:
+            c = engine.container_list[0]
+            engine.container_list[0] = c.model_copy(
+                update={"state": "running", "started_at": FIXED_AT + timedelta(seconds=12)}
+            )
+
+    env, state = await worker_incident(
+        tmp_path, RESTART_DB, engine=engine, hook=comes_up, containers=("shop-db-1",)
+    )
+
+    update, _ = await run(env, state)
+
+    assert update["outcome"] == "resolved"
+
+
+async def test_a_container_that_came_up_late_and_crashes_again_fails(tmp_path):
+    """Not running when Verify began, running at check 1 (whose URL still fails), restarted by
+    its policy before check 2: compared with check 1's read, it fails."""
+    engine = worker(restart_count=7, state="restarting")
+
+    def up_then_crash(waits: int) -> None:
+        c = engine.container_list[0]
+        if waits == 1:
+            update = {"state": "running", "started_at": FIXED_AT + timedelta(seconds=12)}
+        elif waits == 2:
+            update = {"restart_count": 8, "started_at": FIXED_AT + timedelta(seconds=30)}
+        else:
+            return
+        engine.container_list[0] = c.model_copy(update=update)
+
+    env, state = await worker_incident(
+        tmp_path, RESTART_WORKER, engine=engine, hook=up_then_crash,
+        urls=True, replies=Replies(503, 200, 200),
+    )  # fmt: skip
+
+    update, _ = await run(env, state)
+
+    assert update.get("outcome") != "resolved"
+    assert update["verification"].checks[0].detail == (
+        "restarted by its restart policy after the fix "
+        "(restart count 8, 7 when Verify first saw it running)"
+    )
+
+
+async def test_a_redeployed_container_its_policy_restarted_is_not_resolved(tmp_path):
+    """A container the plan's redeploy made starts at restart count 0, so any count means its
+    policy restarted it after the fix."""
+    engine = FakeEngine("a", [web(restart_count=1), box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state, containers=["shop-db-1"]))
+
+    app = update["verification"].checks[0]
+    assert (app.target, app.ok) == ("web (Coolify application)", False)
+    assert app.detail == (
+        "restarted by its restart policy after the fix (a container the redeploy made, "
+        "restart count 1)"
+    )
+    assert update.get("outcome") != "resolved"
