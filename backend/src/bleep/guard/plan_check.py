@@ -488,7 +488,13 @@ def app_protected_by(container: ContainerSummary, protected: Collection[str]) ->
 
 
 def _coolify_labelled(labels: Mapping[str, str]) -> bool:
-    return labels.get(COOLIFY_MANAGED) == "true" or COOLIFY_TYPE in labels
+    """Whether `labels` mark a Coolify container; `coolify.applicationId` alone counts, as it
+    does for discovery."""
+    return (
+        labels.get(COOLIFY_MANAGED) == "true"
+        or COOLIFY_TYPE in labels
+        or bool(labels.get("coolify.applicationId"))
+    )
 
 
 def protected_by(container: ContainerSummary, protected: Collection[str]) -> str | None:

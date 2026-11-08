@@ -992,7 +992,7 @@ async def test_a_uuid_protects_the_app_whatever_its_resource_name(tmp_path):
         coolify_app("K8S0DB1X", "billingdb"),  # a uuid compares exactly; the name slugs apart
         coolify_app("x-k8s0db1x", "old-billing-db"),
         {"coolify.applicationuuid": "k8s0db1x", "coolify.resourcename": "billing-db"},
-        {"coolify.applicationId": "k8s0db1x", "coolify.name": "billing-db"},
+        {"coolify.applicationId": "k8s0db1x", "coolify.name": "billing-db-2"},
         {"com.docker.compose.project": "k8s0db1x", "app": "billing-db"},
         coolify_app("", ""),
     ],
@@ -1104,6 +1104,15 @@ async def test_a_coolify_name_that_only_holds_the_uuid_protects_nothing(tmp_path
     container = box(name, labels=labels, state="exited", exit_code=1)
 
     assert await captured_checked(tmp_path, container, "docker.stop", OLD_UUID) == []
+
+
+async def test_an_application_id_label_alone_marks_a_coolify_container(tmp_path):
+    labels = {"coolify.applicationId": "4"}  # discovery reads this label alone as a Coolify app
+    container = box(f"{OLD_UUID}-000205002169", labels=labels, state="exited", exit_code=1)
+
+    found = await captured_checked(tmp_path, container, "docker.stop", OLD_UUID)
+
+    assert [v.rule for v in found] == ["protected"]
 
 
 async def test_a_container_with_no_coolify_labels_is_not_protected_by_its_name_alone(tmp_path):
