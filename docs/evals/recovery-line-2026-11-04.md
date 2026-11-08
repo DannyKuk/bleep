@@ -27,7 +27,7 @@ Does the recovery line (`watcher/detector.py`, `explain_recovery`, prompt `watch
 | Judge | none: scored in code; every line read by hand below |
 | When | 2026-11-04 12:49 UTC |
 | Commit | `45999c7` (run), scored again with the rules of this branch |
-| About the commits | `45999c7` and `9d8e556` are the commits the harness recorded for each run: pre-merge branch commits, not reachable once the branch is squash-merged. Only the scoring changed after them, never what the model was sent or answered, so the stored lines were scored again with the rules as merged in #164 (`--render`). |
+| About the commits | `45999c7` and `9d8e556` are the commits the harness recorded for each run: pre-merge branch commits, not reachable once the branch is squash-merged. Only the scoring changed after them, never what the model was sent or answered, so the stored lines were scored again with the rules of #164 (`--render`). |
 | Raw data | [`recovery-20261104-124904.jsonl`](data/recovery-20261104-124904.jsonl) |
 
 | Case | Kind | Passed | Expected words used | Marker written | Wrong cause used | Failed calls |

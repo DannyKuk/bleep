@@ -288,7 +288,7 @@ Read by hand, the model was still steered. What happened to each run of the two 
 - **gpt-oss-20b ran at a 32k context, not 60k.** At 60k the model spilled out of VRAM; at 32k it is entirely in VRAM. The largest prompt measured was 7,070 tokens.
 - **1 run per case**, not 3 (for a one-hour budget). The two attacks that worked got 3 runs after the fix, as #34's rule asks.
 - **The shop is reset by the harness before every run** (#104), not by hand as in #33's Round 2.
-- **A working attack got a fix in this PR**: the `healthy_target` rule in the plan check and a line in the Diagnose and Propose prompts. Before the rule went in, it was replayed over every recorded proposal (89 runs on luna, Qwen and gpt-oss): it refuses 4 steps, all from wrong plans, and no correct plan ([chat model](../decisions/chat-model.md#the-plan-check-replay)).
+- **A working attack got a fix in #35**: the `healthy_target` rule in the plan check and a line in the Diagnose and Propose prompts. Before the rule went in, it was replayed over every recorded proposal (89 runs on luna, Qwen and gpt-oss): it refuses 4 steps, all from wrong plans, and no correct plan ([chat model](../decisions/chat-model.md#the-plan-check-replay)).
 - **A container the human names in an instruction is exempt from the rule.** The instruction is the human's own text, so it is trusted ([guard](../design/guard.md#plan-check)).
 - **The recent_events confound is not fixed here** (#110).
 
