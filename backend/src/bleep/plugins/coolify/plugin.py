@@ -71,6 +71,12 @@ ENDED = {"finished", "failed", "cancelled-by-user"}
 _VERSION = re.compile(r"v?\d+(\.\d+){1,3}[\w.-]{0,20}")
 _UUID_LABEL, _ID_LABEL = "coolify.applicationUuid", "coolify.applicationId"
 _ITEM = re.compile(r"[^,]+")  # an item of a comma list; a space does not end it
+# Coolify keeps the ref it deploys ("HEAD") in its commit fields too; only a hex sha (SHA-1 or
+# SHA-256, or a short one) is a commit.
+_SHA = re.compile(r"[0-9a-fA-F]{7,64}")
+# What Coolify writes into the git fields of an application built without git: a Docker image,
+# or a Dockerfile typed into Coolify.
+PLACEHOLDER_REPO = "coollabsio/coolify"
 APPLICATIONS = (
     "List the Coolify applications: name, uuid, status (running:healthy, exited:unhealthy, ...),"
     " domains, git repo and branch, deployed commit and build pack. The ones whose containers"
@@ -156,6 +162,29 @@ def _no_userinfo(text: str) -> str:
     return _ITEM.sub(strip, text)
 
 
+def _commit(sha: str | None) -> str | None:
+    """The short commit `sha` names, or None when it is a ref or anything else."""
+    return sha[:7] if sha and _SHA.fullmatch(sha) else None
+
+
+def _built_from_git(a: CoolifyApplication) -> bool:
+    if a.build_pack == "dockerimage":
+        return False
+    return bool(a.git_repository) and not (
+        a.build_pack == "dockerfile" and a.git_repository == PLACEHOLDER_REPO
+    )
+
+
+def _source(a: CoolifyApplication) -> str:
+    """Where `a` is built from, as ` repo=…@branch commit=…`; nothing for an application built
+    without git, whose git fields hold Coolify's own repo, `main` and `HEAD`."""
+    if not _built_from_git(a):
+        return ""
+    commit = _commit(a.git_commit_sha)
+    repo = f" repo={_no_userinfo(a.git_repository)}@{a.git_branch or '?'}"
+    return repo + (f" commit={commit}" if commit else "")
+
+
 def _failed(error: CoolifyError) -> str:
     return f"Coolify could not be read: {error}."
 
@@ -165,14 +194,11 @@ def describe_applications(apps: list[CoolifyApplication], here: set[str]) -> str
         return "Coolify has no applications this token can see."
     lines = ["Coolify applications:"]
     for a in sorted(apps, key=lambda a: (a.uuid not in here, a.name or "")):
-        repo = a.git_repository and _no_userinfo(a.git_repository)
-        repo = f" repo={repo}@{a.git_branch or '?'}" if repo else ""
-        commit = f" commit={a.git_commit_sha[:7]}" if a.git_commit_sha else ""
         mark = " (on this host)" if a.uuid in here else ""
         domains = _no_userinfo(a.fqdn) if a.fqdn else "none"
         lines.append(
             f"- {a.name or '?'} uuid={a.uuid}{mark} status={a.status or '?'} "
-            f"domains={domains}{repo}{commit} build={a.build_pack or '?'}"
+            f"domains={domains}{_source(a)} build={a.build_pack or '?'}"
         )
     return "\n".join(lines)
 
@@ -192,9 +218,10 @@ def describe_deployments(app: CoolifyApplication, found: list[CoolifyDeployment]
     lines = [f"Latest deployments of {app.name} ({app.uuid}), newest first:"]
     for d in found:
         message = (d.commit_message or "").strip().split("\n", 1)[0][:MESSAGE_CHARS]
-        commit = (d.commit or "?")[:7]
+        commit = _commit(d.commit)
+        commit = f" commit={commit}" if commit else ""
         lines.append(
-            f"- {d.created_at or '?'} {d.status or '?'} commit={commit} ({_via(d)}) "
+            f"- {d.created_at or '?'} {d.status or '?'}{commit} ({_via(d)}) "
             f"finished={d.finished_at or 'not yet'}: {message or 'no message'}"
         )
     return "\n".join(lines)

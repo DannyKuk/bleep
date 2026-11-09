@@ -21,6 +21,7 @@ from bleep.plugins.coolify.plugin import (
     CoolifyPlugin,
     CoolifySettings,
     CoolifyUrlRefused,
+    _commit,
     _no_userinfo,
     check_url,
 )
@@ -43,6 +44,9 @@ TOKEN = "cool-root-token-7d1e9f"
 SECRET = "test-secret"
 SHOP = "shop0uuid0000000000000a1"
 BLOG = "blog0uuid0000000000000b2"
+NOTES = "note0uuid0000000000000c3"  # a Dockerfile typed into Coolify, no git
+WIKI = "wiki0uuid0000000000000e5"  # a public GitLab repo: Coolify records no source for it
+CACHE = "cache0uuid000000000000f6"  # a Docker image, no git
 DEPLOYMENT = "dep0uuid00000000000000141"
 # A value the approver read as it runs (#294), still never logged: Bleep never logs a value.
 NEW_VALUE = "postgres://shop@db-2.internal/shop"
@@ -216,6 +220,10 @@ def grant_for(record: ApprovalRecord, secret: str = SECRET) -> ApprovalGrant:
     return ApprovalGrant(incident_id=record.incident_id, plan_hash=record.plan_hash, token=token)
 
 
+def line_of(out: str, uuid: str) -> str:
+    return next(line for line in out.splitlines() if uuid in line)
+
+
 def writes(coolify: Coolify) -> list[httpx.Request]:
     return [r for r in coolify.requests if r.method != "GET"]
 
@@ -293,7 +301,13 @@ async def test_one_odd_record_does_not_lose_the_others():
         200, json=deployments
     )
 
-    assert [a.uuid for a in await client(coolify).applications()] == [SHOP, BLOG]
+    assert [a.uuid for a in await client(coolify).applications()] == [
+        SHOP,
+        BLOG,
+        NOTES,
+        WIKI,
+        CACHE,
+    ]
     assert [d.status for d in await client(coolify).deployments(SHOP)] == [None, "failed"]
 
 
@@ -328,7 +342,7 @@ async def test_an_application_whose_uuid_is_not_one_is_skipped():
     coolify = Coolify()
     coolify.routes[("GET", "/api/v1/applications")] = httpx.Response(200, json=apps)
 
-    assert [a.uuid for a in await client(coolify).applications()] == [BLOG]
+    assert [a.uuid for a in await client(coolify).applications()] == [BLOG, NOTES, WIKI, CACHE]
 
 
 async def test_an_unreachable_coolify_is_unavailable_without_httpxs_message():
@@ -378,6 +392,69 @@ async def test_a_token_in_a_repo_url_or_domain_is_never_shown(env):
     assert "glpat" not in out and "hunter2" not in out and "oauth2" not in out
     assert "repo=https://gitlab.com/example/blog.git@main" in out
     assert "domains=https://blog.example.com,https://blog-admin.example.com" in out
+
+
+@pytest.mark.parametrize("source_type", ["App\\Models\\GithubApp", None])  # the UI's, the API's
+async def test_an_application_built_without_git_shows_no_repo_or_commit(env, source_type):
+    apps = fixture("applications.json")
+    next(a for a in apps if a["uuid"] == NOTES)["source_type"] = source_type
+    env.coolify.routes[("GET", "/api/v1/applications")] = httpx.Response(200, json=apps)
+
+    out = await env.read("coolify_applications")
+
+    assert line_of(out, NOTES).endswith("domains=https://notes.example.com build=dockerfile")
+    assert line_of(out, CACHE).endswith("domains=none build=dockerimage")
+    assert "coollabsio" not in out
+
+
+async def test_a_repo_coolify_records_no_source_for_still_shows(env):
+    out = await env.read("coolify_applications")
+
+    assert (
+        "domains=https://wiki.example.com repo=https://gitlab.com/example/wiki.git@stable"
+        " commit=5eed1e5 build=nixpacks"
+    ) in out
+    assert "repo=example/shop@main commit=4b1d3c0 build=dockerfile" in out
+
+
+async def test_a_ref_that_is_not_a_commit_is_never_shown_as_one(env):
+    apps = fixture("applications.json")
+    apps[0]["git_commit_sha"] = "4b1d3c0"  # the shortest hex Bleep takes as a commit
+    env.coolify.routes[("GET", "/api/v1/applications")] = httpx.Response(200, json=apps)
+    deployments = fixture("deployments.json")
+    deployments["deployments"][0]["commit"] = "HEAD"
+    deployments["deployments"][1]["commit"] = None
+    env.coolify.routes[("GET", f"/api/v1/deployments/applications/{SHOP}")] = httpx.Response(
+        200, json=deployments
+    )
+
+    listed = await env.read("coolify_applications")
+    deployed = await env.read("coolify_deployments", app="shop")
+
+    assert "repo=example/shop@main commit=4b1d3c0 build" in listed
+    assert "repo=example/blog@main build=nixpacks" in listed
+    assert "HEAD" not in listed and "HEAD" not in deployed and "commit=" not in deployed
+    assert "finished (webhook)" in deployed and "failed (api)" in deployed
+
+
+@pytest.mark.parametrize(
+    ("sha", "shown"),
+    [
+        ("4b1d3c0ffee0123456789abcdef0123456789abc", "4b1d3c0"),
+        ("4B1D3C0", "4B1D3C0"),
+        ("4b1d3c", None),  # too short to be a commit
+        ("4b1d3c0ffee0123456789abcdef0123456789abc0", "4b1d3c0"),
+        ("4b1d3c0ffee0" + "0123456789abcdef" * 3 + "4b1d", "4b1d3c0"),  # SHA-256: 64 hex
+        ("4b1d3c0ffee0" + "0123456789abcdef" * 3 + "4b1d0", None),  # longer than any sha
+        ("HEAD", None),
+        ("main", None),
+        ("deadbeefnope", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_only_a_hex_commit_of_7_to_64_chars_is_a_commit(sha, shown):
+    assert _commit(sha) == shown
 
 
 @pytest.mark.parametrize(
