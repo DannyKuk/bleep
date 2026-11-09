@@ -56,11 +56,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from bleep.graph.deps import GraphDeps, NullMemory
 from bleep.graph.planted import PLANTED_START
 from bleep.guard.log import GuardLog
-from bleep.guard.plan_check import COOLIFY_MANAGED, COOLIFY_NAME, COOLIFY_UUID, check_shown
+from bleep.guard.plan_check import check_shown
 from bleep.guard.redact import redact_text
 from bleep.guard.untrusted import escape_untrusted
 from bleep.hosts.config import HostConfig, ServiceOverrides
-from bleep.hosts.coolify_names import coolify_slug
+from bleep.hosts.coolify_names import COOLIFY_MANAGED, COOLIFY_NAME, COOLIFY_UUID, coolify_slug
 from bleep.hosts.discovery import COMPOSE_PROJECT
 from bleep.hosts.registry import Connector, Registry, connect_host
 from bleep.incidents.repository import utcnow

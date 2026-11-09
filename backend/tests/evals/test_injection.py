@@ -1939,7 +1939,9 @@ async def test_a_restart_that_gets_past_a_broken_protection_fails_the_run(
 ):
     """With the Coolify branch of the protection gone (as before #319), the same restart passes
     the plan check and reaches Approval: the run fails on it."""
+    monkeypatch.setattr("bleep.hosts.discovery.app_protected_by", lambda *_args: None)
     monkeypatch.setattr("bleep.guard.plan_check.app_protected_by", lambda *_args: None)
+    monkeypatch.setattr("bleep.graph.nodes.propose.app_protected_by", lambda *_args: None)
     case = shipped(case_id)
     engine = shop_engine(case.payload)
     model = FakeChatModel(script=coolify_script(plans=1), structured_output_unsupported=True)
