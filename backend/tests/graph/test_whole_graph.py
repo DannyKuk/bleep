@@ -1,5 +1,6 @@
 """The real nodes end to end: gather to approval, then a decision."""
 
+import hashlib
 import json
 from datetime import UTC, datetime
 
@@ -7,12 +8,14 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from bleep.graph.build import build_graph, open_checkpointer
+from bleep.guard.redact import redacted_proposal
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.runner import IncidentRunner
-from bleep.schemas.graph import Decision
+from bleep.notify.format import shows_in_full, steps_text
+from bleep.schemas.graph import Decision, Proposal
 from bleep.schemas.incidents import Subject
-from fakes import FakeChatModel
-from graph_env import graph_env
+from fakes import FakeChatModel, FakeEngine
+from graph_env import box, graph_env
 
 AT = datetime(2026, 11, 2, 12, 30, tzinfo=UTC)
 DIAGNOSIS = {"root_cause": "shop-web exited", "category": "unknown", "confidence": 0.9}
@@ -200,3 +203,66 @@ async def test_the_status_is_set_before_the_node_started_event_reaches_the_dashb
         await runner.join()
 
     assert seen["execute"] == "executing" and seen["verify"] == "verifying"
+
+
+class RecordingNotifier:
+    def __init__(self) -> None:
+        self.proposals: list[Proposal] = []
+
+    async def proposal(self, incident, diagnosis, proposal, approval) -> None:
+        self.proposals.append(proposal)
+
+    async def verification(self, incident, result) -> None:
+        return None
+
+    async def report(self, incident, report) -> None:
+        return None
+
+
+async def test_a_step_given_by_id_prefix_is_approved_and_run_by_the_containers_name(tmp_path):
+    """The plan names a stopped container by the short id Docker prints (#321): the human sees its
+    name on the dashboard and in Telegram, and a yes starts exactly that container."""
+    billing = hashlib.sha256(b"billing").hexdigest()
+    engine = FakeEngine(
+        "a",
+        [
+            box("shop-web-1", "shop", state="exited", exit_code=1, restart_policy="no"),
+            box("billing-db-1", "billing", state="exited", exit_code=0).model_copy(
+                update={"id": billing}
+            ),
+        ],
+    )
+    env = await graph_env(tmp_path, engine=engine)
+    start = {"action": "docker.start", "host_id": "a", "target": billing[:12]}
+    body = {"kind": "act", "steps": [start], "reason": "the web app needs its database",
+            "verification": {}}  # fmt: skip
+    env.models.model = FakeChatModel(
+        script=[AIMessage("nothing more"), AIMessage(json.dumps(DIAGNOSIS)),
+                AIMessage(json.dumps(body))],
+        structured_output_unsupported=True,
+    )  # fmt: skip
+    store = ApprovalStore(env.db, "test-secret")
+    env.deps.approvals = store
+    notifier = RecordingNotifier()
+    env.deps.notifier = notifier  # type: ignore[assignment]
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, store)
+        subject = Subject(kind="service", host_id="a", service_id=env.service_id("shop"))
+        incident = await env.open(subject, container="shop-web-1")
+        await runner.start(incident)
+        await runner.join()
+
+        record = await store.current(incident.id)
+        assert record is not None
+        dashboard = redacted_proposal(record.proposal)  # what the approval API sends
+        assert [s.target for s in dashboard.steps] == ["billing-db-1"]
+        [sent] = notifier.proposals
+        assert steps_text(sent) == "1. docker.start billing-db-1 on a" and shows_in_full(sent)
+        assert [(s.target, s.container_id) for s in record.snapshots] == [("billing-db-1", billing)]
+
+        decision = Decision(kind="approve", via="telegram", at=AT)
+        assert await store.resolve(incident.id, decision) == decision
+        await runner.resume(incident.id, decision, record.id)
+        await runner.join()
+
+        assert [(a.action, a.container) for a in env.engine.acts] == [("start", "billing-db-1")]

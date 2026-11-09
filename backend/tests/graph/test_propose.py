@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -19,6 +20,7 @@ from bleep.guard.plan_check import check_plan
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.plugins.mcp_url import McpUrlPlugin
 from bleep.plugins.registry import PluginRegistry
+from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import (
     ContainerMemory,
     Diagnosis,
@@ -1084,3 +1086,129 @@ async def test_a_refusal_keeps_the_refused_steps_and_reasons_for_the_human(tmp_p
     assert [s.target for s in plan.refused_steps] == ["shop-proxy-1"]
     assert plan.steps == [] and plan.refusal_reasons
     assert "shop-proxy-1" in plan.refusal_reasons[0]
+
+
+def hex_id(seed: str) -> str:
+    """A 64-character container id the way Docker writes one."""
+    return hashlib.sha256(seed.encode()).hexdigest()
+
+
+WEB_ID, DB_ID = hex_id("web"), hex_id("billing")
+
+
+def with_id(container: ContainerSummary, container_id: str) -> ContainerSummary:
+    return container.model_copy(update={"id": container_id})
+
+
+def id_engine(*extra: Any) -> FakeEngine:
+    """The bad-env stack with Docker-like ids, and a stopped billing-db-1 nothing protects."""
+    engine = bad_env_engine()
+    engine.container_list = [
+        with_id(c, WEB_ID) if c.name == "shop-web-1" else c for c in engine.container_list
+    ] + [with_id(box("billing-db-1", "billing", state="exited", exit_code=0), DB_ID), *extra]
+    return engine
+
+
+def start(target: str) -> dict:
+    return {"action": "docker.start", "host_id": "a", "target": target}
+
+
+@pytest.mark.parametrize("target", [DB_ID[:12], DB_ID[:20], DB_ID], ids=["short", "longer", "full"])
+async def test_a_target_given_by_id_reaches_the_human_as_the_containers_name(tmp_path, target):
+    """A model reads ids in inspect output, and a planted line can steer it to one: the plan the
+    human approves names the container the id resolves to, on every display (#321)."""
+    env, state = await setup(tmp_path, acting(start(target)), engine=id_engine())
+
+    proposal = (await propose.make(env.deps)(state))["proposal"]
+
+    assert proposal.kind == "act" and blocked(env) == []
+    assert proposal.steps[0].target == "billing-db-1"
+    events = await env.bus.history(state["incident_id"])
+    [shown] = [e.payload for e in events if e.kind == "proposal"]
+    assert shown["steps"][0]["target"] == "billing-db-1"
+    assert DB_ID[:12] not in json.dumps(shown)
+
+
+async def test_an_mcp_call_target_given_by_id_is_named_too(tmp_path):
+    step = mcp_call("flush_cache", '{"service": "shop"}') | {"target": WEB_ID[:12]}
+    answer = reply(kind="act", steps=[step], reason="flush the cache", verification={})
+    env, state = await setup(tmp_path, answer, engine=id_engine())
+    with_mcp(env, httpx.MockTransport(lambda r: httpx.Response(500)))
+
+    proposal = (await propose.make(env.deps)(state))["proposal"]
+
+    assert proposal.kind == "act" and proposal.steps[0].target == "shop-web-1"
+    assert proposal.steps[0].params == step["params"]  # the arguments are the MCP tool's own
+
+
+async def test_the_rules_judge_the_container_an_id_names(tmp_path):
+    """A working container given by id is still refused as one the incident does not name."""
+    proxy = with_id(box("shop-proxy-2", "shop"), hex_id("proxy"))
+    target = hex_id("proxy")[:12]
+    env, state = await setup(
+        tmp_path, acting(restart(target)), acting(restart(target)), engine=id_engine(proxy)
+    )
+
+    proposal = (await propose.make(env.deps)(state))["proposal"]
+
+    assert proposal.refused
+    assert [s.target for s in proposal.refused_steps] == ["shop-proxy-2"]
+    assert all(b.startswith("step 1 (docker.restart shop-proxy-2 on a): ") for b in blocked(env))
+
+
+@pytest.mark.parametrize(
+    "target",
+    [DB_ID[:11], hex_id("nothing")[:12], "abc"],
+    ids=["too short", "unknown", "not an id"],
+)
+async def test_a_target_no_container_has_is_refused_as_before(tmp_path, target):
+    env, state = await setup(
+        tmp_path, acting(start(target)), acting(start(target)), engine=id_engine()
+    )
+
+    proposal = (await propose.make(env.deps)(state))["proposal"]
+
+    assert proposal.refused and [s.target for s in proposal.refused_steps] == [target]
+    assert all("no container by that name on this host" in b for b in blocked(env))
+
+
+async def test_a_prefix_two_containers_share_is_refused_as_before(tmp_path):
+    twin = box("billing-db-2", "billing", state="exited", exit_code=0)
+    twin = with_id(twin, DB_ID[:12] + "0" * 52)
+    target = DB_ID[:12]
+    env, state = await setup(
+        tmp_path, acting(start(target)), acting(start(target)), engine=id_engine(twin)
+    )
+
+    proposal = (await propose.make(env.deps)(state))["proposal"]
+
+    assert proposal.refused and [s.target for s in proposal.refused_steps] == [target]
+    assert all("no container by that name on this host" in b for b in blocked(env))
+
+
+@pytest.mark.parametrize(
+    ("given", "name"),
+    [
+        ("name", DB_ID[:12]),
+        ("id", DB_ID[:12]),
+        ("name", DB_ID[:12].upper()),
+        ("id", DB_ID[:12].upper()),
+    ],
+    ids=["by name", "by id", "upper-case name", "upper-case name by id"],
+)
+async def test_a_name_that_starts_another_containers_id_is_refused(tmp_path, given, name):
+    """A container named like another's id: Docker acts on the named one, yet the human reading
+    the name could take it for the other, so neither way of naming it reaches them. Docker
+    writes ids in lower case, and a name in upper case reads as the same id."""
+    decoy = with_id(box(name, state="exited", exit_code=0), hex_id("decoy"))
+    target = name if given == "name" else hex_id("decoy")[:12]
+    env, state = await setup(
+        tmp_path, acting(start(target)), acting(start(target)), engine=id_engine(decoy)
+    )
+
+    proposal = (await propose.make(env.deps)(state))["proposal"]
+
+    assert proposal.refused and [s.target for s in proposal.refused_steps] == [name]
+    assert len(blocked(env)) == 2
+    assert propose.UNCLEAR_BY_HAND in proposal.human_instructions
+    assert all("also the start of another container's id" in b for b in blocked(env))

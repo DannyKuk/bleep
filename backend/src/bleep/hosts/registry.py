@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 
 BASICS_EVERY_S = 60  # the host probe cadence
 BASICS_RETRY_S = 10  # after a failed read
+MIN_ID_PREFIX = 12  # the short id Docker prints; a shorter prefix names no container here
 
 Connector = Callable[[HostConfig], Awaitable[tuple[SshSession | None, Engine]]]
 
@@ -202,7 +203,7 @@ class Registry:
         for c in entry.containers or []:
             if name_or_id in (c.id, c.name):
                 return c
-        if len(name_or_id) >= 12:
+        if len(name_or_id) >= MIN_ID_PREFIX:
             prefixed = [c for c in (entry.containers or []) if c.id.startswith(name_or_id)]
             return prefixed[0] if len(prefixed) == 1 else None
         return None
