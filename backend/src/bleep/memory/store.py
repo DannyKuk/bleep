@@ -14,13 +14,12 @@ out until `reembed` (run on boot) embeds them again. Text is cleaned before it i
 
 import asyncio
 from collections.abc import Callable, Iterable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 import aiosqlite
 import numpy as np
 
-from bleep.incidents.repository import utcnow
 from bleep.memory.embeddings import Embedder
 from bleep.memory.text import clean, describe_feedback
 from bleep.schemas.graph import (
@@ -71,7 +70,10 @@ def _blob(vector: np.ndarray) -> bytes:
 
 class MemoryStore:
     def __init__(
-        self, db: Database, embedder: Embedder, clock: Callable[[], datetime] = utcnow
+        self,
+        db: Database,
+        embedder: Embedder,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.db = db
         self.embedder = embedder

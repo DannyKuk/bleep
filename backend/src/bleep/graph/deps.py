@@ -3,14 +3,16 @@
 `Memory`, `Notifier`, `Approvals` and `SettingsSource` are Protocols with small defaults, so the
 graph runs (and is tested) without long-term memory, Telegram or the settings store; the app
 passes its own in their place (`memory.store.MemoryStore`, `incidents.approvals.ApprovalStore`).
+`Incidents`, `IncidentEvents` and `StepLog` are the parts of the incident store, event bus and
+action log the nodes use, so `graph` never imports `incidents`, which runs it (#315).
 """
 
 import asyncio
 import secrets
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Protocol
+from datetime import UTC, datetime
+from typing import Any, Protocol
 
 import httpx
 from langchain_core.language_models import BaseChatModel
@@ -19,9 +21,6 @@ from langchain_core.runnables import RunnableConfig
 from bleep.guard.grant import grant_token, plan_hash
 from bleep.guard.log import GuardLogger
 from bleep.hosts.registry import Registry
-from bleep.incidents.action_log import ActionLog
-from bleep.incidents.bus import EventBus
-from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.llm.factory import Role, chat_model
 from bleep.llm.guard import ModelGuard
 from bleep.llm.usage import CostLedger
@@ -31,14 +30,23 @@ from bleep.schemas.graph import (
     ApprovalRequest,
     Decision,
     Diagnosis,
+    LoggedStep,
     PastIncident,
+    PlanStep,
     Proposal,
     Report,
     ServiceFact,
+    StepResult,
     TargetSnapshot,
     VerificationResult,
 )
-from bleep.schemas.incidents import TERMINAL_STATUSES, Incident, Subject
+from bleep.schemas.incidents import (
+    TERMINAL_STATUSES,
+    Incident,
+    IncidentEvent,
+    IncidentStatus,
+    Subject,
+)
 from bleep.schemas.settings import Budgets, ModelSettings, Thresholds
 from bleep.tools.registry import ActHandler, ToolRegistry
 
@@ -46,6 +54,46 @@ from bleep.tools.registry import ActHandler, ToolRegistry
 CORE_ACTIONS: frozenset[str] = frozenset({"docker.restart", "docker.stop", "docker.start"})
 
 ModelFactory = Callable[[Role], BaseChatModel]
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+class Incidents(Protocol):
+    """The incidents as the nodes read and move them (`incidents.repository.IncidentRepo`)."""
+
+    async def get(self, incident_id: str) -> Incident | None: ...
+
+    async def set_status(self, incident_id: str, status: IncidentStatus) -> None: ...
+
+
+class IncidentEvents(Protocol):
+    """The incident's event stream the live view reads (`incidents.bus.EventBus`)."""
+
+    async def publish(
+        self, incident_id: str, kind: str, payload: dict[str, Any] | None = None
+    ) -> IncidentEvent: ...
+
+    async def last_event(self, incident_id: str) -> IncidentEvent | None: ...
+
+    async def history(self, incident_id: str, after_seq: int = 0) -> list[IncidentEvent]: ...
+
+
+class StepLog(Protocol):
+    """Execute's crash-safety ledger of plan steps (`incidents.action_log.ActionLog`)."""
+
+    async def start(
+        self, incident_id: str, plan_key: str, step_index: int, step: PlanStep
+    ) -> datetime | None: ...
+
+    async def finish(self, incident_id: str, plan_key: str, result: StepResult) -> bool: ...
+
+    async def skip(
+        self, incident_id: str, plan_key: str, step_index: int, step: PlanStep, detail: str
+    ) -> bool: ...
+
+    async def steps(self, incident_id: str) -> list[LoggedStep]: ...
 
 
 class IncidentFinished(Exception):
@@ -229,7 +277,7 @@ class InMemoryApprovals:
     cannot be won, as the SQLite store's triggers make it; without, finished incidents are not
     seen."""
 
-    def __init__(self, secret: str | None = None, incidents: IncidentRepo | None = None) -> None:
+    def __init__(self, secret: str | None = None, incidents: Incidents | None = None) -> None:
         self.records: dict[str, ApprovalRecord] = {}
         self._secret = secret or secrets.token_hex(16)
         self._incidents = incidents
@@ -252,7 +300,7 @@ class InMemoryApprovals:
             plan_hash=plan_hash(proposal, snapshots),
             proposal=proposal,
             snapshots=snapshots,
-            requested_at=utcnow(),
+            requested_at=_utcnow(),
         )
         self.records[incident_id] = record
         await self._record(incident_id)
@@ -334,17 +382,17 @@ class GraphDeps:
     tools: ToolRegistry
     act_tools: Mapping[str, ActHandler]
     models: ModelFactory
-    bus: EventBus
+    bus: IncidentEvents
     ledger: CostLedger
-    incidents: IncidentRepo
-    action_log: ActionLog
+    incidents: Incidents
+    action_log: StepLog
     memory: Memory = field(default_factory=NullMemory)
     approvals: Approvals = field(default_factory=InMemoryApprovals)
     notifier: Notifier = field(default_factory=NullNotifier)
     quiet: QuietCheck = field(default_factory=NeverQuiet)
     guard_log: GuardLogger | None = None
     settings_store: SettingsSource = field(default_factory=StaticSettings)
-    clock: Callable[[], datetime] = utcnow
+    clock: Callable[[], datetime] = _utcnow
     # Waiting between verification checks; tests pass one that only records the delay.
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
     # Waiting between retries of a model call; tests pass one that only records the delay.

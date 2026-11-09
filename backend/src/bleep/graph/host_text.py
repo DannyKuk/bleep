@@ -7,7 +7,7 @@ outside the wrapper.
 """
 
 from bleep.guard.pipeline import NAME_CHARS, guard_name, guard_text, is_plain_name
-from bleep.incidents.repository import build_title, seen_note, split_service_id
+from bleep.guard.titles import build_title, seen_note, split_service_id
 from bleep.schemas.docker import HostBasics
 from bleep.schemas.graph import GatherContext
 from bleep.schemas.incidents import Signal, Subject

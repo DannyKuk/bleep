@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage
 
 from bleep.graph.host_text import describe_basics, incident_title
 from bleep.graph.nodes import diagnose, gather, investigate, propose, report
-from bleep.incidents.repository import build_title
+from bleep.guard.titles import build_title
 from bleep.memory.text import clean
 from bleep.schemas.docker import ContainerSummary, DiskUsage, HostBasics
 from bleep.schemas.graph import GatherContext, PastIncident
