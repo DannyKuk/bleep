@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useCallback } from "react";
 
+import { ENDED } from "@/components/incident/proposal-card";
 import { useOverall } from "@/components/overall-state";
 import { basicsLine, errorTone, healthLabel } from "@/components/overview/host-tile";
 import { HealthBadge } from "@/components/overview/health-badge";
@@ -14,7 +16,9 @@ import { HostSettings } from "@/components/settings/hosts";
 import { Alert, Status, useLoaded, useStaleSaving } from "@/components/settings/loaded";
 import { type Poll, usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
-import type { HostView, QuietView, ServiceView } from "@/lib/api-types";
+import type { HostView, IncidentListItem, QuietView, ServiceView } from "@/lib/api-types";
+import { formatDateTime, formatSince } from "@/lib/format";
+import { isAsleep } from "@/lib/mood";
 import { quietLabel, sinceWords } from "@/lib/quiet-api";
 import { serviceHref } from "@/lib/routes";
 import { putSettings } from "@/lib/settings-api";
@@ -134,13 +138,47 @@ function ServiceList({
   );
 }
 
+/**
+ * The line under a host that is still unreachable after its own last unreachable incident ended:
+ * Bleep holds the next one back for a failure it could not fix, so the page says it is still
+ * there. It follows the watcher's rule: a host that answered after that incident opened is down
+ * anew, and opens its own. Exported for its tests.
+ */
+export function StillFailing({
+  host,
+  last,
+}: {
+  host: HostView;
+  last: IncidentListItem | undefined;
+}) {
+  if (host.quiet || host.reachable || isAsleep(host)) return null;
+  if (!last || last.kind !== "host_unreachable" || !ENDED.has(last.status)) return null;
+  if (host.last_seen !== null && new Date(host.last_seen) > new Date(last.opened_at)) return null;
+  const ended = last.closed_at ?? last.opened_at;
+  return (
+    <p role="note" aria-label="Still failing" className="text-sm text-ink-2">
+      Still unreachable after its last incident ended{" "}
+      <time dateTime={ended} title={formatDateTime(ended)}>
+        {formatSince(ended)}
+      </time>
+      :{" "}
+      <Link href={`/incidents/${last.id}`} className={LINK}>
+        {last.title}
+      </Link>
+      . Bleep opens a new one after a wait that grows with each repeat, from an hour to a day.
+    </p>
+  );
+}
+
 function Header({
   host,
   services,
+  last,
   onChanged,
 }: {
   host: HostView;
   services: number;
+  last: IncidentListItem | undefined;
   onChanged: () => void;
 }) {
   const basics = basicsLine(host);
@@ -160,6 +198,7 @@ function Header({
           {quietNote(host.quiet)}
         </p>
       )}
+      <StillFailing host={host} last={last} />
       <p className="text-sm text-ink-2">
         {host.kind === "ssh" ? "SSH" : "Docker socket"} host{" "}
         <span className="font-mono">{host.id}</span>
@@ -187,6 +226,14 @@ function Host({ id }: { id: string }) {
   const router = useRouter();
   const overall = useOverall();
   const services = usePoll(fetchServices, POLL_MS);
+  const fetchLastIncident = useCallback(
+    (signal: AbortSignal) =>
+      apiFetch<IncidentListItem[]>(`/api/incidents?host_id=${encodeURIComponent(id)}&limit=1`, {
+        signal,
+      }),
+    [id],
+  );
+  const lastIncident = usePoll(fetchLastIncident, POLL_MS);
   const settings = useLoaded<SettingsView>("/api/settings");
   const { notice, saving } = useStaleSaving();
 
@@ -242,7 +289,12 @@ function Host({ id }: { id: string }) {
       ) : (
         <>
           {host ? (
-            <Header host={host} services={onHost.length} onChanged={refresh} />
+            <Header
+              host={host}
+              services={onHost.length}
+              last={lastIncident.data?.[0]}
+              onChanged={refresh}
+            />
           ) : (
             <h1 className="text-3xl font-extrabold wrap-anywhere md:text-4xl">{name}</h1>
           )}

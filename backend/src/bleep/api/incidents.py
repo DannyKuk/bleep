@@ -90,18 +90,24 @@ async def list_incidents(
     offset: Annotated[int, Query(ge=0)] = 0,
     service_id: str | None = None,
     fold_of: str | None = None,
+    host_id: str | None = None,
 ) -> list[IncidentListItem]:
     """Newest first, each with the human's votes on its diagnosis and plan and the size of its
     group of repeats; `service_id` keeps one service's (its page lists its past incidents),
-    `fold_of` the repeats of one incident."""
-    incidents = await parts.incidents.list(status, limit, offset, service_id, fold_of)
+    `fold_of` the repeats of one incident, `host_id` a host's own, not its services' (its page
+    says when the host is still unreachable after its last one)."""
+    incidents = await parts.incidents.list(
+        status, limit, offset, service_id, fold_of, host_id=host_id
+    )
     votes = await parts.memory.votes([i.id for i in incidents])
     groups = await parts.incidents.groups(incidents)
+    kinds = await parts.incidents.kinds(incidents)
     return [
         IncidentListItem(
             **incident.model_dump(),
             votes=IncidentVotes(**votes.get(incident.id, {})),
             repeats=groups[incident.id].count if incident.id in groups else 1,
+            kind=kinds.get(incident.id),
         )
         for incident in incidents
     ]

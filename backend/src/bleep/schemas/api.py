@@ -151,6 +151,9 @@ class IncidentListItem(Incident):
 
     votes: IncidentVotes = Field(default_factory=IncidentVotes)
     repeats: int = 1  # how many incidents its group of repeats holds (`fold_of`), itself included
+    # Its kind as its fold key holds it (`host_unreachable`, `disk`, `death` for any death, ...);
+    # null for an incident from before fold keys.
+    kind: str | None = None
 
 
 class IncidentDetail(BaseModel):
