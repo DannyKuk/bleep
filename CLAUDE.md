@@ -84,9 +84,8 @@ against it, including imports inside functions and under `if TYPE_CHECKING:`.
 - `hosts` → `store`, `schemas`.
 - `schemas` → only `hosts.config` (below); `store`, `prompts` and `config` import no other part.
 
-Two arrows go the other way, each held to one module. `schemas` uses the hosts file's models in
-`hosts.config`, which import no schemas. `graph` (Verify) uses `check_url` from
-`watcher.http_checks` until it moves below `graph`.
+One arrow goes the other way, held to one module: `schemas` uses the hosts file's models in
+`hosts.config`, which import no schemas.
 
 ## Prompts: one structure, no exceptions
 

@@ -41,6 +41,7 @@ from bleep.graph.deps import ModelFactory
 from bleep.guard.log import GuardLogger
 from bleep.hosts.dashboard import HostChange
 from bleep.hosts.registry import Registry
+from bleep.hosts.url_check import UrlCheck
 from bleep.incidents.bus import EventBus
 from bleep.incidents.quiet import QuietStore
 from bleep.incidents.repository import IncidentRepo, utcnow
@@ -65,7 +66,7 @@ from bleep.watcher.detector import (
 from bleep.watcher.health import container_health, is_asleep, service_health, url_status
 from bleep.watcher.health_store import HealthStore
 from bleep.watcher.host_probe import HostProbe
-from bleep.watcher.http_checks import UrlCheck, UrlCheckStore, UrlWatcher
+from bleep.watcher.http_checks import UrlCheckStore, UrlWatcher
 from bleep.watcher.poller import HostWatcher
 from bleep.watcher.wake import SleepWatch
 

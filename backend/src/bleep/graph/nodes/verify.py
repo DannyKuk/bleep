@@ -56,6 +56,7 @@ from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.hosts.readings import past_threshold, readings
 from bleep.hosts.shell import HostUnreadable, host_basics
 from bleep.hosts.ssh import SshUnavailable
+from bleep.hosts.url_check import check_url
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import (
     STARTED_AFTER_FIX,
@@ -66,7 +67,6 @@ from bleep.schemas.graph import (
 )
 from bleep.schemas.incidents import Signal
 from bleep.schemas.settings import Thresholds
-from bleep.watcher.http_checks import check_url
 
 log = logging.getLogger(__name__)
 

@@ -73,10 +73,9 @@ ALLOWED: dict[str, set[str]] = {
     "config": set(),
 }
 
-# The arrows against the direction, each held to one module and named in CLAUDE.md.
+# The arrow against the direction, held to one module and named in CLAUDE.md.
 NARROW: dict[str, set[str]] = {
     "schemas": {"hosts.config"},
-    "graph": {"watcher.http_checks"},
 }
 
 # `api` takes only the type of the parts from `wiring`; only `main` builds them.
