@@ -293,6 +293,8 @@ def test_a_coolify_4_1_container_shows_protected_by_the_uuid_in_its_anchored_nam
         (captured("coolify-4.5.0-dkwebsite"), "vclhwoxxy60z4vk70g0vpes"),  # a uuid prefix
         (captured("coolify-4.5.0-dkwebsite"), "VCLHWOXXY60Z4VK70G0VPESQ"),  # exact case
         (captured("coolify-4.5.0-dkwebsite"), "dkwebsit"),
+        (captured("coolify-4.5.0-dkwebsite"), "dkwebsite-2"),
+        (captured("coolify-4.1.2-applicationid"), "4"),  # its coolify.applicationId
         (old_coolify(f"{OLD_UUID}-000205002169-old"), OLD_UUID),  # the name is not anchored
         (old_coolify(f"x{OLD_UUID}-000205002169"), OLD_UUID),  # the uuid is not a whole part
         (box(f"{OLD_UUID}-000205002169"), OLD_UUID),  # no Coolify labels

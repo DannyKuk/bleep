@@ -20,7 +20,10 @@ class Service(BaseModel):
     repo: str | None = None
     docs_paths: list[str] = Field(default_factory=list)
     rules: list[str] = Field(default_factory=list)
-    protected: set[str] = Field(default_factory=set)  # container names act tools must refuse
+    # The entries of the service's own overrides as written (a container name, or a Coolify
+    # app's uuid or name), plus the name of each member any entry on the host protects
+    # (`protected_by`); a member is shown locked when its name is in here.
+    protected: set[str] = Field(default_factory=set)
     exits: list[str] = Field(
         default_factory=list
     )  # entries of jobs meant to finish (`expects_exit`)
