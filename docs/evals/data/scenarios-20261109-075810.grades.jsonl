@@ -1,0 +1,9 @@
+{"run_id": "bad-deploy/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names version 2 reading price_cents, which the schema lacks because the migration was not applied, so /api/items answers 500"}
+{"run_id": "bad-env/1", "root_cause_pass": true, "root_cause_score": 0.7, "note": "names the unresolvable host db that shop-web exits on at startup; hedges between a wrong name and a missing network alias, and calls the category unknown"}
+{"run_id": "db-down/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-db exited and left stopped, so shop-web cannot resolve its database"}
+{"run_id": "disk-full/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the full shop_uploads volume behind /uploads failing the health check"}
+{"run_id": "hung/1", "root_cause_pass": false, "root_cause_score": 0.1, "note": "says the cause is undetermined and that the application answers its health requests; does not find that shop-web hangs, as in every round since #106"}
+{"run_id": "misroute-mcp/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the live Caddy config sending to port 8001 while shop-web listens on 8000, the on-disk Caddyfile being right"}
+{"run_id": "misroute/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the proxy's active upstream on port 8001 while shop-web listens on 8000, so the proxy answers 502"}
+{"run_id": "oom/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names 256 MB batches against the 64 MiB limit, OOM-killed and restarted by its policy"}
+{"run_id": "port-conflict/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-canary holding host port 8080, so shop-proxy could not bind it and the canary answers"}
