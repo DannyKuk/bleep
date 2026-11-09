@@ -109,7 +109,14 @@ def translate(
         if kind == "container_died":
             died_ids.add(cid)
         signals.append(
-            Signal(subject=subject, kind=kind, at=e.time, detail=detail, container=name)  # type: ignore[arg-type]
+            Signal(
+                subject=subject,
+                kind=kind,  # type: ignore[arg-type]
+                at=e.time,
+                detail=detail,
+                container=name,
+                container_id=cid,
+            )
         )
     return Translation(signals, died_ids)
 
@@ -171,6 +178,7 @@ def diff(
                 at=min(died_at, now),
                 detail=detail,
                 container=before.name,
+                container_id=before.id,
             )
         )
     return signals

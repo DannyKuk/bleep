@@ -81,6 +81,15 @@ def fold_key(subject: Subject, signals: list[Signal]) -> str:
     if primary is not None:
         url = primary.detail.get("url")
         target = str(url) if primary.kind == "url_failed" else primary.container or ""
+    return _fold_key(subject, kind, target)
+
+
+def container_fold_keys(subject: Subject, container: str) -> list[str]:
+    """The fold keys of a container's deaths, its restart loops and its turns unhealthy."""
+    return [_fold_key(subject, kind, container) for kind in ("death", "restart_loop", "unhealthy")]
+
+
+def _fold_key(subject: Subject, kind: str, target: str) -> str:
     return f"{subject.key}|{kind}|{target}"
 
 
@@ -279,22 +288,22 @@ class IncidentRepo:
         }
 
     async def finished_since(
-        self, subject: Subject, since: datetime, signals: list[Signal] | None = None
+        self, subject: Subject, since: datetime, keys: Collection[str] | None = None
     ) -> Repeats | None:
-        """The subject's finished incidents opened at or after `since`: those an incident for
-        `signals` would repeat (the same fold key), or of any kind when `signals` is None; None
-        when there is none."""
-        column, value = ("subject_key", subject.key)
-        if signals is not None:
-            column, value = ("fold_key", fold_key(subject, signals))
+        """The subject's finished incidents opened at or after `since`: those with one of the
+        fold `keys`, or of any kind when `keys` is None; None when there is none."""
+        column, values = ("subject_key", [subject.key])
+        if keys is not None:
+            column, values = ("fold_key", list(keys))
+        marks = ", ".join("?" for _ in values)
         conn = await self.db.connect()
         try:
             async with conn.execute(
                 "SELECT id, COUNT(*) OVER () AS n,"
                 " MAX(COALESCE(closed_at, opened_at)) OVER () AS last FROM incidents"
-                f" WHERE {column} = ? AND NOT {_OPEN} AND opened_at >= ?"
+                f" WHERE {column} IN ({marks}) AND NOT {_OPEN} AND opened_at >= ?"
                 " ORDER BY opened_at DESC, id DESC LIMIT 1",
-                (value, since.isoformat()),
+                (*values, since.isoformat()),
             ) as cursor:
                 row = await cursor.fetchone()
         finally:

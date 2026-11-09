@@ -67,6 +67,7 @@ class Signal(BaseModel):
     at: datetime
     detail: dict[str, Any] = Field(default_factory=dict)
     container: str | None = None
+    container_id: str | None = None  # Docker's id, for a death: a recreated container has a new one
 
 
 class Incident(BaseModel):

@@ -43,10 +43,17 @@ def make() -> tuple[Detector, Clock]:
     return Detector(Thresholds(), clock), clock
 
 
-def died(clock: Clock, container="web-1", subject: Subject = SVC, **detail) -> Signal:
+def died(
+    clock: Clock, container="web-1", subject: Subject = SVC, container_id="abc", **detail
+) -> Signal:
     detail = {"exit_code": 1, "restart_policy": "always", **detail}
     return Signal(
-        subject=subject, kind="container_died", at=clock.now, detail=detail, container=container
+        subject=subject,
+        kind="container_died",
+        at=clock.now,
+        detail=detail,
+        container=container,
+        container_id=container_id,
     )
 
 
@@ -568,3 +575,173 @@ def test_an_expected_job_exiting_0_is_ignored_and_never_adds_up_to_a_loop():
     assert det.tick(clock(), states(box("exited")), "h1") == []
     crash = det.feed(died(clock, exit_code=1, restart_policy="always", expected_exit=True))
     assert crash == []  # a crash is a death as any other: pending, judged by the grace window
+
+
+# --- a restart loop that outlives its incident (#361) ---
+
+
+def crash_loop(det: Detector, clock: Clock, start_s: float, container="web-1") -> OpenIncident:
+    """Three deaths a minute apart from `start_s`: the third is a restart loop."""
+    out: list = []
+    for minute in range(3):
+        clock.at(start_s + minute * 60)
+        out = det.feed(died(clock, container=container))
+    [loop] = out
+    assert isinstance(loop, OpenIncident)
+    assert loop.signals[-1].kind == "restart_loop"
+    return loop
+
+
+def still_restarting(det: Detector, clock: Clock, at_s: float, container="web-1") -> OpenIncident:
+    """One more death, judged down past grace: Docker is still waiting to restart it."""
+    clock.at(at_s)
+    assert det.feed(died(clock, container=container)) == []
+    [down] = det.tick(clock.at(at_s + 65), states(box("restarting", name=container)), "h1")
+    assert isinstance(down, OpenIncident)
+    assert down.signals[-1].kind == "down_past_grace"
+    return down
+
+
+def two_more_deaths(det: Detector, clock: Clock, start_s: float) -> OpenIncident:
+    """With the death before them, two more a minute apart are a restart loop."""
+    clock.at(start_s)
+    assert det.feed(died(clock)) == []
+    clock.at(start_s + 60)
+    [loop] = det.feed(died(clock))
+    assert isinstance(loop, OpenIncident)
+    assert loop.signals[-1].kind == "restart_loop"
+    return loop
+
+
+def test_a_loop_and_the_deaths_after_it_carry_the_loops_run_until_a_window_without_a_death():
+    det, clock = make()
+    loop = crash_loop(det, clock, 0)
+    assert loop.run == FailingRun(since=T0, passed=None, container="web-1")
+
+    assert still_restarting(det, clock, 180).run == loop.run  # the loop goes on
+    assert two_more_deaths(det, clock, 300).run == loop.run
+
+    # No death for more than the window (600 s) after the last one at 360 s: it recovered.
+    assert still_restarting(det, clock, 1100).run is None
+    again = two_more_deaths(det, clock, 1200)
+    assert again.run == FailingRun(
+        since=T0 + timedelta(seconds=1100), passed=T0 + timedelta(seconds=960), container="web-1"
+    )
+
+
+def test_a_container_that_ran_a_window_since_bleep_started_has_passed():
+    det, clock = make()
+    loop = crash_loop(det, clock, 700)
+    assert loop.run == FailingRun(
+        since=T0 + timedelta(seconds=700), passed=T0 + timedelta(seconds=600), container="web-1"
+    )
+
+
+def test_a_death_outside_a_loop_and_another_containers_loop_carry_no_run_of_it():
+    det, clock = make()
+    crash_loop(det, clock, 0, container="web-1")
+    assert still_restarting(det, clock, 200, container="web-2").run is None
+    other = crash_loop(det, clock, 1000, container="web-2")
+    assert other.run is not None and other.run.container == "web-2"
+
+
+def test_forgetting_the_host_ends_its_loops():
+    det, clock = make()
+    crash_loop(det, clock, 0)
+    det.forget_host("h1")
+    assert still_restarting(det, clock, 180).run is None
+
+
+def test_a_verified_fix_ends_the_loop_at_once():
+    det, clock = make()
+    crash_loop(det, clock, 0)
+    det.recovered("h1", "web-1", T0 + timedelta(seconds=200))  # its incident was resolved
+    assert still_restarting(det, clock, 240).run is None  # a relapse opens as on any death
+    again = two_more_deaths(det, clock, 360)
+    assert again.run is not None and again.run.passed == T0 + timedelta(seconds=200)
+
+
+def test_a_recreated_container_starts_a_new_loop():
+    det, clock = make()
+    crash_loop(det, clock, 0)
+    clock.at(200)
+    assert det.feed(died(clock, container_id="new")) == []  # a redeploy: the same name
+    [down] = det.tick(clock.at(265), states(box("restarting")), "h1")
+    assert down.run is None
+    clock.at(300)
+    assert det.feed(died(clock, container_id="new")) == []  # the old deaths do not add up
+
+
+def test_unhealthy_of_a_looping_container_carries_the_loops_run():
+    det, clock = make()
+    loop = crash_loop(det, clock, 0)
+    clock.at(180)
+    det.feed(died(clock))
+    clock.at(210)
+    [sick] = det.feed(sig(SVC, "unhealthy", clock, container="web-1"))
+    assert [s.kind for s in sick.signals] == ["container_died", "unhealthy"]
+    assert sick.run == loop.run
+    clock.at(300)
+    [other] = det.feed(sig(SVC, "unhealthy", clock, container="web-2"))
+    assert other.run is None
+
+
+def test_a_services_url_failing_while_its_container_loops_has_passed_only_before_the_loop():
+    det, clock = make()
+    url = {"url": "https://x/"}
+    clock.at(700)
+    loop = crash_loop(det, clock, 700)  # it ran a window first: it last recovered at 600 s
+    clock.at(900)
+    det.feed(sig(SVC, "url_failed", clock, ok=True, latency_ms=10, **url))  # up between crashes
+    clock.at(930)
+    det.feed(sig(SVC, "url_failed", clock, **url))
+    clock.at(960)
+    [down] = det.feed(sig(SVC, "url_failed", clock, **url))
+    assert down.run == FailingRun(since=T0 + timedelta(seconds=700), passed=loop.run.passed)
+    host = sig(HOST, "memory", clock, available_percent=3)
+    det.feed(host)
+    det.feed(host)
+    [memory] = det.feed(host)
+    assert memory.run == FailingRun(since=clock.now, passed=None)  # a host is not its services
+
+
+def test_a_window_without_a_death_ends_the_loop_on_the_hosts_tick_and_drops_its_state():
+    det, clock = make()
+    url = {"url": "https://x/"}
+    crash_loop(det, clock, 700)
+    det.tick(clock.at(1000), states(box()), "h2")  # another host's listing judges nothing here
+    det.tick(clock.at(1500), states(box()), "h1")  # no death since 820 s: recovered at 1420 s
+    det.feed(sig(SVC, "url_failed", clock, **url))
+    clock.at(1530)
+    [down] = det.feed(sig(SVC, "url_failed", clock, **url))
+    assert down.run == FailingRun(since=T0 + timedelta(seconds=1500), passed=None)
+    again = crash_loop(det, clock, 2000)
+    assert again.run is not None and again.run.passed == T0 + timedelta(seconds=1420)
+
+    det.tick(clock.at(2000 + 86_400 + 1200), states(box()), "h1")  # a day after it recovered
+    assert not det._last_death and not det._loops and not det._clean_until
+
+
+def test_an_unhealthy_redeployed_container_is_not_held_by_the_old_ones_loop():
+    det, clock = make()
+    crash_loop(det, clock, 0)  # the container "abc" loops; then a deploy replaces it
+    clock.at(300)
+    new = Signal(subject=SVC, kind="unhealthy", at=clock.now, container="web-1", container_id="new")
+    [sick] = det.feed(new)
+    assert sick.run is None  # Docker says `unhealthy` once: held, it would be lost
+    clock.at(400)
+    assert det.feed(died(clock, container_id="new")) == []  # its own deaths start anew
+
+
+def test_a_new_container_drops_the_old_ones_pending_death():
+    det, clock = make()
+    crash_loop(det, clock, 0)
+    clock.at(150)
+    assert det.feed(died(clock)) == []  # the old container's death, waiting for its grace
+    clock.at(170)
+    assert det.feed(died(clock, container_id="new")) == []
+    [down] = det.tick(clock.at(240), states(box("restarting")), "h1")
+    assert [s.at for s in down.signals if s.kind == "container_died"] == [
+        clock.now - timedelta(seconds=70)
+    ]
+    assert down.run is None

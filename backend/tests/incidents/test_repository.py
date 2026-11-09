@@ -9,7 +9,7 @@ import pytest
 from bleep.guard.quote_lookalikes import QUOTE_LOOKALIKES
 from bleep.guard.titles import build_title, seen_note, title_name
 from bleep.hosts.discovery import group_services
-from bleep.incidents.repository import IncidentRepo, Repeats, fold_key
+from bleep.incidents.repository import IncidentRepo, Repeats, container_fold_keys, fold_key
 from bleep.llm.usage import CostLedger
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import RecoveryEvent, Signal, Subject
@@ -330,17 +330,18 @@ async def test_finished_since_counts_the_ended_incidents_of_the_same_kind_and_ta
     repo, clock, _ = folding
     url = Signal(subject=svc(), kind="url_failed", at=T0, detail={"url": "https://x/"})
     other = Signal(subject=svc(), kind="url_failed", at=T0, detail={"url": "https://y/"})
-    assert await repo.finished_since(svc(), T0, [url]) is None
+    same = [fold_key(svc(), [url])]
+    assert await repo.finished_since(svc(), T0, same) is None
     await again(repo, clock, url, 0)  # opened at T0, closed by the next `again`
     second = await again(repo, clock, url, 1)
     await again(repo, clock, other, 1)  # another URL: never counted
     await repo.close_unfinished(await repo.open_incident_id(svc()))
     await again(repo, clock, url, 1)  # still open: not counted
     ended_at = T0 + timedelta(hours=1)  # the second closed when the other URL's opened
-    assert await repo.finished_since(svc(), T0, [url]) == Repeats(2, ended_at, second.id)
+    assert await repo.finished_since(svc(), T0, same) == Repeats(2, ended_at, second.id)
     since_second = T0 + timedelta(hours=1)
-    assert await repo.finished_since(svc(), since_second, [url]) == Repeats(1, ended_at, second.id)
-    assert await repo.finished_since(svc(), since_second + timedelta(seconds=1), [url]) is None
+    assert await repo.finished_since(svc(), since_second, same) == Repeats(1, ended_at, second.id)
+    assert await repo.finished_since(svc(), since_second + timedelta(seconds=1), same) is None
 
 
 async def test_finished_since_without_signals_counts_every_kind_of_the_subject_only(folding):
@@ -356,7 +357,25 @@ async def test_finished_since_without_signals_counts_every_kind_of_the_subject_o
     third = (await repo.list(service_id="web"))[0]
     assert await repo.finished_since(svc(), T0) == Repeats(3, closed, third.id)
     url_closed = T0 + timedelta(hours=1)  # when the death after it opened
-    assert await repo.finished_since(svc(), T0, [url]) == Repeats(1, url_closed, last.id)
+    same = [fold_key(svc(), [url])]
+    assert await repo.finished_since(svc(), T0, same) == Repeats(1, url_closed, last.id)
+
+
+async def test_finished_since_a_containers_keys_counts_its_deaths_loops_and_unhealthy(folding):
+    repo, clock, _ = folding
+    loop = Signal(subject=svc(), kind="restart_loop", at=T0, container="web-1")
+    unhealthy = Signal(subject=svc(), kind="unhealthy", at=T0, container="web-1")
+    url = Signal(subject=svc(), kind="url_failed", at=T0, detail={"url": "https://x/"})
+    await again(repo, clock, died(), 0)
+    await again(repo, clock, loop, 1)
+    await again(repo, clock, died(kind="down_past_grace"), 1)
+    last = await again(repo, clock, unhealthy, 1)
+    await again(repo, clock, died(container="web-2"), 1)  # another container: never counted
+    await again(repo, clock, url, 1)  # the service's URL: not the container's own
+    await repo.close_unfinished(await repo.open_incident_id(svc()))
+    closed = T0 + timedelta(hours=3)  # closed before the other container's death opened
+    keys = container_fold_keys(svc(), "web-1")
+    assert await repo.finished_since(svc(), T0, keys) == Repeats(4, closed, last.id)
 
 
 async def test_a_new_kind_folds_into_the_incident_it_outlived_unless_its_own_kind_has_a_group(
