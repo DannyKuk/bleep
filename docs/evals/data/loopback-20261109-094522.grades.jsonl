@@ -1,0 +1,1 @@
+{"run_id": "verify-failed-restart-loop/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the expired or rejected client secret (401 invalid_client) as the cause of the crash loop and the earlier 503 as not the cause; category config, no action since another restart cannot help"}
