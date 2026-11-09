@@ -75,6 +75,20 @@ The fixtures (`backend/tests/fixtures/coolify/`) were rewritten by hand from a r
 
 **`PATCH /applications/{uuid}/envs` `{key, value}` answered 201, not 200, and updated only the normal row**; the preview copy kept its value. Bleep's client takes any 2xx as success (`_call`), so `set_env` reports "updated", and a production deploy reads the normal row, so this is right for Bleep.
 
+### Round 2 (11:31-11:48 UTC), with #356 and #357 merged
+
+The setup changed in two ways. The app's configuration is documented the way a real app's would be: a README in a linked repo (`DannyKuk/bleep-shop-live`, `testapp/README.md`; `repo` and `docs_paths: [testapp]` on the service in the hosts file) says `TESTAPP_FAIL_AFTER_S` "`0` turns it off. Production must run with `0`". It was in knowledge search as 3 chunks 3 s after the backend restarted. The app's log line stayed as in round 1.
+
+1. **Deployed with `TESTAPP_FAIL_AFTER_S=180`** at 11:31:02; `finished` at 11:31:53 (51 s). The container started at 11:31:06.
+2. **The watcher opened the incident at 11:34:40** (`inc_01M701DHAF1JHXABXB`).
+3. **Investigate made 2 tool calls** (`list_containers`, `inspect_container`) and stopped: the logs in the context already explained the cause. It did not search the docs.
+4. **Diagnose named the key** (#357): "The bleep-testapp container has TESTAPP_FAIL_AFTER_S=180, which makes its /health endpoint return HTTP 500 after 180 seconds", `config`, confidence 0.99.
+5. **Propose still answered no action:** "The available Coolify action can set a value but cannot remove the variable, and no safe replacement value is established by the diagnosis." Its instruction to the human named the key: "remove the TESTAPP_FAIL_AFTER_S environment variable (currently 180), then redeploy". The safe value was in the README, which no step read (#364). The incident closed at 11:35:05 without asking the person, though the fix was within the enabled actions (#365).
+6. **The URL check opened one more incident** at 11:35:52 (`url failed …`, a different signal kind, so not held), which ended the same way at 11:36:35. **Then nothing more opened**: the URL kept failing until the app was set back at 11:48, and #356's hold kept it from opening again. One broken service still cost two runs and three Telegram messages (#366).
+7. **Diagnose flagged `planted_in: ["memory"]`** though the remembered incidents (this morning's, with causes and "nothing ran") held no orders. The report did not pass it on (`planted_in: []`), so the person was not told of planted text that was not there.
+
+The two incidents cost $0.0077: the first 6 model calls and $0.0027, the URL incident 9 calls and $0.0050.
+
 ## Cost
 
 | | |
