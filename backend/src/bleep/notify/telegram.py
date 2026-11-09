@@ -111,9 +111,11 @@ class TelegramClient:
         buttons: list[tuple[str, str]] | None = None,
         reply_to: int | None = None,
         markdown: bool = True,
+        silent: bool = False,
     ) -> int:
         """Send `text` (MarkdownV2 unless `markdown` is False); returns the message id. A reply
-        whose message was deleted is sent anyway, as a message of its own."""
+        whose message was deleted is sent anyway, as a message of its own. A `silent` message
+        arrives without a sound or a ping."""
         params: dict[str, Any] = {
             "chat_id": chat_id,
             "text": text,
@@ -121,6 +123,8 @@ class TelegramClient:
         }
         if markdown:
             params["parse_mode"] = "MarkdownV2"
+        if silent:
+            params["disable_notification"] = True
         if buttons:
             params["reply_markup"] = {
                 "inline_keyboard": [[{"text": t, "callback_data": d} for t, d in buttons]]
@@ -159,13 +163,14 @@ class MessageLog:
         approval_id: str,
         at: datetime,
         buttons: bool = True,
+        end: bool = False,
     ) -> None:
         conn = await self.db.connect()
         try:
             await conn.execute(
                 "INSERT OR REPLACE INTO telegram_messages (message_id, incident_id, approval_id,"
-                " sent_at, buttons) VALUES (?, ?, ?, ?, ?)",
-                (message_id, incident_id, approval_id, at.isoformat(), int(buttons)),
+                " sent_at, buttons, is_end) VALUES (?, ?, ?, ?, ?, ?)",
+                (message_id, incident_id, approval_id, at.isoformat(), int(buttons), int(end)),
             )
             await conn.commit()
         finally:
@@ -179,6 +184,10 @@ class MessageLog:
         """The incident's opener: the first of its messages that reached the chat."""
         ids = await self._ids("incident_id = ?", incident_id, "MIN")
         return ids[0] if ids else None
+
+    async def ended(self, incident_id: str) -> bool:
+        """Whether a message that ended the incident was sent."""
+        return bool(await self._ids("incident_id = ? AND is_end", incident_id, "MAX"))
 
     async def last_for(self, incident_id: str) -> int | None:
         ids = await self._ids("incident_id = ?", incident_id, "MAX")

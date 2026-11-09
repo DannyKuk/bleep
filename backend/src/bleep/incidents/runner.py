@@ -205,8 +205,7 @@ class IncidentRunner:
         if await self.repo.close_unfinished(incident.id, spare=NOT_WAITING) is None:
             return
         await self.bus.publish(incident.id, "notice", {"text": BACK_NOTICE})
-        if incident.fold_of is None:  # a repeat told of its wait once; its end stays here
-            await self._tell(incident.id, BACK_NOTICE, ending="back")
+        await self._tell(incident.id, BACK_NOTICE, ending="back")
 
     async def end(
         self,

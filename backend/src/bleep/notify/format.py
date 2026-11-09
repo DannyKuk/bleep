@@ -77,14 +77,19 @@ def duration(span: timedelta) -> str:
     """A span as a person says it in a chat: "4 min", "2 h", "3 days"."""
     minutes = max(int(span.total_seconds() // 60), 1)
     if minutes < 60:
-        return f"{minutes} min"
+        return phrase("duration_min", n=str(minutes))
     if minutes < 48 * 60:
-        return f"{minutes // 60} h"
-    return f"{minutes // (24 * 60)} days"
+        return phrase("duration_h", n=str(minutes // 60))
+    return phrase("duration_days", n=str(minutes // (24 * 60)))
 
 
 def answer(name: str, **values: str) -> str:
     """A short plain-text answer (a pop-up), not escaped."""
+    return prompts.load(f"notify/{name}", **values).strip()
+
+
+def phrase(name: str, **values: str) -> str:
+    """A few words that go into a message as a value (`render` escapes them there)."""
     return prompts.load(f"notify/{name}", **values).strip()
 
 

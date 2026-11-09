@@ -43,6 +43,7 @@ from langchain_core.language_models import BaseChatModel
 from bleep.config import Settings
 from bleep.graph.deps import ModelFactory
 from bleep.guard.log import GuardLogger
+from bleep.guard.titles import title_name
 from bleep.hosts.dashboard import HostChange
 from bleep.hosts.registry import Registry
 from bleep.hosts.url_check import UrlCheck
@@ -539,7 +540,7 @@ class WatcherManager:
     def _quiet_name(self, state: QuietState) -> str:
         if state.scope == "service":
             service = self.registry.service(state.target_id)
-            return service.name if service else state.target_id
+            return title_name(service.name) if service else state.target_id
         host = self._host(state.target_id)
         return host.config.name if host else state.target_id
 

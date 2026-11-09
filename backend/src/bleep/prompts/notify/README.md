@@ -13,6 +13,8 @@ through `prompts.load`.
   lead its first message, every later one replies to it, and an `end_*` template leads its last.
   The end message is assembled from `end_report`, `end_checked`, `end_next` and `end_details`, each
   only when it has something to say.
+- `where_host`, `ran_nothing` and `duration_*` are the few words that go into a message as values
+  (`format.phrase`), so a translation changes files only.
 - Variables are plain `{name}` placeholders, as everywhere else.
 - `answer_*.md` are the short pop-ups shown when a button is tapped or an instruction is sent; they
   are sent as plain text, not escaped.

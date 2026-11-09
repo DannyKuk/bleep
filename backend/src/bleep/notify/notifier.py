@@ -104,10 +104,17 @@ class Notifier:
         self.incidents = incidents
         self.dashboard_url = dashboard_url
         self.clock = clock
+        # One lock per incident with a message on its way, so the check for its opener and the
+        # log of the message that becomes it are one step (`_send`).
+        self._threads: dict[str, asyncio.Lock] = {}
 
     async def incident_finished(self, incident_id: str) -> None:
         """Remove the buttons from every message logged for an incident that ended: a message
-        that still shows Approve, Reject or "It's expected" means the question is open."""
+        that still shows Approve, Reject or "It's expected" means the question is open. Its lock
+        goes too, unless a message holds it: its end message may still be on its way."""
+        lock = self._threads.get(incident_id)
+        if lock is not None and not lock.locked():
+            del self._threads[incident_id]
         if self.messages is not None:
             self._spawn(self.messages.ids_for_incident(incident_id))
 
@@ -256,9 +263,13 @@ class Notifier:
     async def report(self, incident: Incident, report: Report) -> None:
         """The end message: the outcome first, the cause, what ran, what was checked, what is
         left for the person and a link to the incident's page."""
-        if self.telegram is None:
-            return
+        if self.telegram is not None:
+            await self._safely(self._report(incident, report))
+
+    async def _report(self, incident: Incident, report: Report) -> None:
         name = _end_template(report.outcome)
+        if name == "end_no_action" and await self._let_go(incident.id):
+            name = "end_rejected"
         took = fmt.duration(self.clock() - incident.opened_at)
         values = {"end_fixed": {"took": took}, "end_healthy": {"took": took}}.get(name, {})
         if name == "end_stopped":
@@ -268,7 +279,7 @@ class Notifier:
             fmt.render(
                 "end_report",
                 cause=fmt.prose_line(report.cause),
-                action=fmt.prose_line(report.action_taken or "nothing"),
+                action=fmt.prose_line(report.action_taken or fmt.phrase("ran_nothing")),
             ),
         ]
         if name in _CHECKED and (checks := await self._checked(incident.id)):
@@ -280,7 +291,21 @@ class Notifier:
         if self.dashboard_url:
             url = f"{self.dashboard_url.rstrip('/')}/incidents/{incident.id}"
             parts.append(fmt.render("end_details", url=fmt.Redacted(url)))
-        await self._safely(self._send(incident, fmt.message(*parts)))
+        # Should the incident have ended already (a close that raced the report), the outcome
+        # goes out as a note.
+        note = fmt.message(fmt.render("notice", text=report.outcome), *parts[1:])
+        await self._send(incident, fmt.message(*parts), end=True, instead=note)
+
+    async def _let_go(self, incident_id: str) -> bool:
+        """Whether the person let a plan Bleep's own checks refused go: a no-action run that ends
+        as theirs, as a rejected plan does."""
+        current = await self.approvals.current(incident_id) if self.approvals else None
+        return (
+            current is not None
+            and current.proposal.refused
+            and current.decision is not None
+            and current.decision.kind == "reject"
+        )
 
     async def _checked(self, incident_id: str) -> fmt.Redacted | None:
         """The checks of the run's last verification, from its timeline, as one line."""
@@ -292,23 +317,29 @@ class Notifier:
 
     async def notice(self, incident_id: str, text: str, ending: Ending | None = None) -> None:
         """A note in the middle of a run, or, with `ending`, the end message of an incident that
-        closed outside its run's report."""
-        if self.telegram is None:
-            return
-        assert self.chat_id is not None
+        closed outside its run's report; one that comes after the end message is a note. A
+        folded repeat's return (`back`) arrives silently: its wait was told, the end is
+        only so the thread does not stop at "waits"."""
+        if self.telegram is not None:
+            await self._safely(self._notice(incident_id, fmt.prose_line(text), ending))
+
+    async def _notice(self, incident_id: str, text: str, ending: Ending | None) -> None:
+        assert self.telegram is not None and self.chat_id is not None
         incident = await self.incidents.get(incident_id) if self.incidents is not None else None
+        note = fmt.render("notice", text=text)
         if incident is None:  # no thread to put it in
-            rendered = fmt.render("notice", text=text)
-            await self._safely(self.telegram.send_message(self.chat_id, rendered))
+            await self.telegram.send_message(self.chat_id, note)
             return
         if ending is None:
-            rendered = fmt.render("notice", text=text)
-        elif ending == "back":
+            await self._send(incident, note)
+            return
+        if ending == "back":
             took = fmt.duration(self.clock() - incident.opened_at)
             rendered = fmt.bold_first_line(fmt.render("end_back", took=took, text=text))
         else:
             rendered = fmt.bold_first_line(fmt.render(f"end_{ending}", text=text))
-        await self._safely(self._send(incident, rendered))
+        silent = ending == "back" and incident.fold_of is not None
+        await self._send(incident, rendered, end=True, instead=note, silent=silent)
 
     async def _ask(
         self,
@@ -336,22 +367,32 @@ class Notifier:
         buttons: list[tuple[str, str]] | None = None,
         approval_id: str = "",
         says_what: bool = False,
+        end: bool = False,
+        instead: str = "",
+        silent: bool = False,
     ) -> None:
         """Send a message of the incident's thread and log it. The first one that reaches
         Telegram is the opener: it leads with the incident's head and what was seen (unless
         `says_what`: its text already does), and is not a reply, or replies to the previous
-        incident's last message for a repeat. Every later one is a reply to the opener."""
+        incident's last message for a repeat. Every later one is a reply to the opener. An `end`
+        message is sent as `instead` when the incident's end message went out already. One
+        message of an incident at a time, so two can never both become its opener."""
         assert self.telegram is not None and self.chat_id is not None
-        reply_to = await self.messages.first_for(incident.id) if self.messages else None
-        if reply_to is None:
-            head, reply_to = await self._opening(incident)
-            text = fmt.message(head, "" if says_what else await self._seen(incident), text)
-        message_id = await self.telegram.send_message(
-            self.chat_id, text, buttons, reply_to=reply_to
-        )
-        if self.messages is None:
-            return
-        await self.messages.add(message_id, incident.id, approval_id, utcnow(), bool(buttons))
+        async with self._threads.setdefault(incident.id, asyncio.Lock()):
+            if end and self.messages is not None and await self.messages.ended(incident.id):
+                text, end = instead, False
+            reply_to = await self.messages.first_for(incident.id) if self.messages else None
+            if reply_to is None:
+                head, reply_to = await self._opening(incident)
+                text = fmt.message(head, "" if says_what else await self._seen(incident), text)
+            message_id = await self.telegram.send_message(
+                self.chat_id, text, buttons, reply_to=reply_to, silent=silent
+            )
+            if self.messages is None:
+                return
+            await self.messages.add(
+                message_id, incident.id, approval_id, self.clock(), bool(buttons), end
+            )
         if buttons:
             await self._clear_if_finished(incident.id, message_id, approval_id)
 
@@ -371,7 +412,8 @@ class Notifier:
                 )
                 quoted = await self.messages.last_for(before.id) if self.messages else None
                 return fmt.bold_first_line(head), quoted
-        where = "host" if incident.subject.kind == "host" else incident.subject.host_id
+        host = incident.subject.kind == "host"
+        where = fmt.phrase("where_host") if host else incident.subject.host_id
         return fmt.bold_first_line(fmt.render("head_new", incident=name, where=where)), None
 
     async def _seen(self, incident: Incident) -> str:
@@ -391,10 +433,14 @@ class Notifier:
 
     @staticmethod
     async def _safely(sending) -> None:
+        """Await a send; Telegram failing, or the store its threads are kept in, is logged and
+        never reaches the run."""
         try:
             await sending
         except TelegramError as error:
             log.warning("telegram: could not send: %s", error)
+        except (sqlite3.Error, aiosqlite.Error, OSError) as error:
+            log.warning("telegram: could not keep the thread: %s", type(error).__name__)
 
 
 def _end_template(outcome: str) -> str:

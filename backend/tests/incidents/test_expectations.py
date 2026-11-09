@@ -77,6 +77,32 @@ async def test_a_jobs_clean_exit_is_recorded_in_exits_and_the_incident_closes(tm
     assert await rig.expectations.offered(incident.id) is None  # closed: offered no more
 
 
+class Endings:
+    """A channel that records how each incident it hears of ended."""
+
+    def __init__(self) -> None:
+        self.endings: list[str | None] = []
+
+    async def incident_opened(self, incident) -> None:
+        return None
+
+    async def notice(self, incident_id: str, text: str, ending: str | None = None) -> None:
+        self.endings.append(ending)
+
+
+async def test_an_incident_marked_expected_ends_as_expected_on_the_channels(tmp_path):
+    env = await graph_env(tmp_path)
+    late = Signal(subject=shop(env), kind="down_past_grace", at=T0, container="shop-web-1")
+    incident = await opened(env, death(shop(env), 0, compose_service="fetch"), late)
+    channel = Endings()
+    async with open_checkpointer(tmp_path / "c.sqlite") as saver:
+        graph = build_graph(env.deps, saver)
+        rig = Rig(env, IncidentRunner(graph, env.repo, env.bus, notifier=channel))
+        assert (await rig.expectations.expected(incident.id, "telegram")).done
+
+    assert channel.endings == ["expected"]
+
+
 async def test_a_crash_is_never_expected(tmp_path):
     env = await graph_env(tmp_path)
     for code in (1, None):

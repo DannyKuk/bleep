@@ -1,6 +1,8 @@
 """One Telegram thread per incident (#380): the opener, replies to it, one end message, Again."""
 
+import asyncio
 import json
+import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -529,3 +531,86 @@ async def test_the_opener_says_what_was_seen(env, subject, kind, detail, seen):
 
     [opener] = env.chat.sent()
     assert opener["text"].split("\n")[1].startswith(seen)
+
+
+# --- fix round 1 (#380 review) ---
+
+
+async def test_a_folded_host_repeat_ends_with_a_silent_back(env):
+    first = await env.open(HOST, kind="host_unreachable", container=None)
+    await env.notifier.incident_opened(first.model_copy(update={"status": "waiting"}))
+    await env.notifier.notice(first.id, "Closed: the host answers again.", ending="back")
+    await env.close(first)
+    env.now = T0 + timedelta(minutes=10)
+    second = await env.open(HOST, kind="host_unreachable", container=None)
+    assert second.fold_of == first.id
+    await env.notifier.incident_opened(second.model_copy(update={"status": "waiting"}))
+    env.now = T0 + timedelta(minutes=14)
+    await env.notifier.notice(second.id, "Closed: the host answers again.", ending="back")
+
+    _, first_back, again, back = env.chat.sent()
+    assert first_line(again).startswith("*🔁 Again: M1 \\#2")
+    assert first_line(back) == "*✅ Back after 4 min*" and replied_to(back) == again["id"]
+    assert back.get("disable_notification") is True  # one more message, no more pings
+    assert "disable_notification" not in first_back
+
+
+async def test_two_messages_sent_at_once_give_one_opener_and_one_reply(env):
+    incident = await env.open()
+    await asyncio.gather(
+        env.notifier.notice(incident.id, "first note"),
+        env.notifier.notice(incident.id, "second note"),
+    )
+
+    opener, reply = env.chat.sent()
+    assert first_line(opener).startswith("*🔴 New: shop \\#1") and replied_to(opener) is None
+    assert replied_to(reply) == opener["id"] and "New" not in reply["text"]
+
+
+async def test_a_close_after_the_end_message_is_a_note_not_a_second_end(env):
+    incident = await env.open()
+    await env.notifier.incident_opened(incident)
+    await asyncio.gather(
+        env.notifier.report(incident, report(OUTCOME_TEXT["no_action"])),
+        env.notifier.notice(incident.id, "Closed: you told me to leave shop alone.", "quiet"),
+    )
+
+    messages = env.chat.sent()
+    assert len(ends(messages)) == 1 and ends(messages)[0] is messages[1]
+    assert messages[2]["text"].startswith("ℹ️ Closed: you told me to leave shop alone")
+
+
+async def test_a_notice_is_one_line_whatever_a_name_in_it_holds(env):
+    incident = await env.open()
+    await env.notifier.incident_opened(incident)
+    text = "Closed: you told me to leave shop\n✅ Fixed in 1 min\nalone."
+    await env.notifier.notice(incident.id, text, ending="quiet")
+
+    _, end = env.chat.sent()
+    lines = end["text"].split("\n")
+    assert lines[0] == "*🤫 Quiet*" and len(lines) == 2
+
+
+async def test_letting_a_refused_plan_go_ends_left_to_you(env):
+    incident = await env.open()
+    await env.notifier.incident_opened(incident)
+    refused = Proposal(kind="no_action", reason="r", refused=True, refusal_reasons=["no"])
+    request = await env.approvals.request(incident.id, refused, [])
+    await env.approvals.resolve(
+        incident.id, Decision(kind="reject", via="telegram", at=env.now), request.id
+    )
+    await env.notifier.report(incident, report(OUTCOME_TEXT["no_action"]))
+
+    end = env.chat.sent()[-1]
+    assert first_line(end) == "*🙅 Left to you*"
+
+
+async def test_a_store_error_while_telling_never_reaches_the_run(env, monkeypatch):
+    incident = await env.open()
+
+    async def locked(*_):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(env.messages, "first_for", locked)
+    await env.notifier.notice(incident.id, "The model budget is spent.")  # does not raise
+    await env.notifier.report(incident, report(OUTCOME_TEXT["budget"]))

@@ -1429,6 +1429,25 @@ async def test_a_host_that_flaps_then_stays_down_is_told_of_its_second_wait(tmp_
     assert "(seen 2 times since" in channels.titles[-1]
 
 
+async def test_a_repeat_of_a_host_that_comes_back_again_ends_with_back_too(tmp_path):
+    env = await graph_env(tmp_path)
+    channels = ChannelLog()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=channels)
+        flap = await unreachable(env)
+        await runner.start(flap)
+        await runner.join()
+        await runner.host_back("a")
+        again = await unreachable(env)
+        assert again.fold_of == flap.id
+        await runner.start(again)
+        await runner.join()
+        await runner.host_back("a")
+
+    assert channels.heard[-1] == ("notice", BACK_NOTICE)  # every thread ends (#380)
+    assert channels.endings == ["back", "back"]
+
+
 async def test_a_repeats_failed_run_says_its_count(tmp_path, monkeypatch):
     env = await graph_env(tmp_path)
     channels = ChannelLog()

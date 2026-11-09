@@ -149,7 +149,12 @@ def make(deps: GraphDeps) -> Node:
                 text = _budget_text(spent, deps.settings_store.budgets())
                 record("budget", f"{spent.kind} budget spent in investigate round {rounds}")
                 await deps.bus.publish(incident_id, "notice", {"text": text})
-                await deps.notifier.notice(incident_id, text)
+                try:
+                    await deps.notifier.notice(incident_id, text)
+                except Exception as error:  # a channel outage must not lose the budget's report
+                    log.warning(
+                        "investigate: telling %s failed: %s", incident_id, type(error).__name__
+                    )
                 return update(outcome="budget")
             if model is None:
                 model = deps.models("main").bind_tools(list(tools.values()))

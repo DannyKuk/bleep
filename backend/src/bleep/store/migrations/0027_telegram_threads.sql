@@ -4,3 +4,6 @@ ALTER TABLE incidents ADD COLUMN short_name TEXT;
 -- Every message about an incident is logged now, so a reply to any of them finds it; only those
 -- with buttons are cleared when the incident ends. Every older row was logged for its buttons.
 ALTER TABLE telegram_messages ADD COLUMN buttons INTEGER NOT NULL DEFAULT 1;
+-- The message that ended its incident, so a close that comes after it is told as a note, never as
+-- a second end.
+ALTER TABLE telegram_messages ADD COLUMN is_end INTEGER NOT NULL DEFAULT 0;
