@@ -1936,24 +1936,45 @@ def exits_host(exits: list[str]):
     return shop_host(services=services)
 
 
+ONE_SHOT_NOTE = "migrate-web0uuid-3 exited 0 with no restart policy, a job that finished"
+
+
 @pytest.mark.parametrize(
-    ("exits", "exit_code", "with_web", "ok", "detail"),
+    ("exits", "exit_code", "policy", "with_web", "ok", "detail"),
     [
-        (["migrate"], 0, True, True, f"1 running; {FINISHED_NOTE}"),
-        (["*"], 0, True, True, f"1 running; {FINISHED_NOTE}"),
-        (["migrate"], 1, True, False, "migrate-web0uuid-3 is exited"),  # a crash still fails
-        ([], 0, True, False, "migrate-web0uuid-3 is exited"),  # no automatic rule
-        (["migrate"], 0, False, False, f"no container made by the redeploy runs; {FINISHED_NOTE}"),
+        (["migrate"], 0, "unless-stopped", True, True, f"1 running; {FINISHED_NOTE}"),
+        (["*"], 0, "always", True, True, f"1 running; {FINISHED_NOTE}"),
+        ([], 0, "no", True, True, f"1 running; {ONE_SHOT_NOTE}"),  # P9, unlisted
+        ([], 0, "", True, True, f"1 running; {ONE_SHOT_NOTE}"),
+        (["migrate"], 1, "no", True, False, "migrate-web0uuid-3 is exited"),  # a crash fails
+        ([], 1, "no", True, False, "migrate-web0uuid-3 is exited"),
+        ([], 0, "unless-stopped", True, False, "migrate-web0uuid-3 is exited"),  # not a job
+        (
+            ["migrate"],
+            0,
+            "unless-stopped",
+            False,
+            False,
+            f"no container made by the redeploy runs; {FINISHED_NOTE}",
+        ),
+        ([], 0, "no", False, False, f"no container made by the redeploy runs; {ONE_SHOT_NOTE}"),
     ],
 )
-async def test_a_job_its_service_lists_in_exits_may_finish(
-    tmp_path, exits, exit_code, with_web, ok, detail
+async def test_a_job_that_finished_as_the_watcher_reads_it_counts_neither_way(
+    tmp_path, exits, exit_code, policy, with_web, ok, detail
 ):
-    """A one-off migration service of a Compose app, named in its service's `exits` as the
-    watcher reads them (#84): exited 0, it counts neither for nor against the app, which still
-    needs another new container that passes."""
-    job = web("migrate-web0uuid-3", labels=MIGRATE, state="exited", exit_code=exit_code)
-    others = [web(health="healthy")] if with_web else []
+    """A one-off migration service of a Compose app, judged as the watcher judges it: exited 0
+    and named in its service's `exits` (#84), or exited 0 with no restart policy (a one-shot).
+    It counts neither for nor against the app, which still needs another new container that
+    passes."""
+    job = web(
+        "migrate-web0uuid-3",
+        labels=MIGRATE,
+        state="exited",
+        exit_code=exit_code,
+        restart_policy=policy,
+    )
+    others = [web(health="healthy", restart_policy="unless-stopped")] if with_web else []
     engine = FakeEngine("a", [*others, job, box("shop-db-1", "shop")])
     env, state = await setup(tmp_path, Replies(200), engine=engine, host=exits_host(exits))
 
@@ -1962,3 +1983,41 @@ async def test_a_job_its_service_lists_in_exits_may_finish(
     app = update["verification"].checks[0]
     assert (app.ok, app.detail) == (ok, detail)
     assert (update.get("outcome") == "resolved") is ok
+
+
+EVIL = {
+    "coolify.type": "application",
+    "coolify.applicationUuid": "other9uuid",
+    "coolify.resourceName": "evil",
+}
+
+
+async def test_another_apps_container_named_like_this_one_does_not_count_for_it(tmp_path):
+    """`evil-web0uuid-1` has Coolify's name for a container of web0uuid, but its own uuid label
+    says it is another app's: the 4.1.x name rule is only for containers with no uuid label."""
+    old = web("web0uuid-1", created=DEPLOYED_AT - timedelta(days=1), state="exited")
+    impostor = web("evil-web0uuid-1", labels=EVIL, health="healthy")
+    engine = FakeEngine("a", [old, impostor, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state, containers=["shop-db-1"]))
+
+    app = update["verification"].checks[0]
+    assert (app.ok, app.detail) == (False, "no container made by the redeploy")
+
+
+async def test_another_apps_container_named_like_this_one_is_not_replaced(tmp_path):
+    """The signal names `evil-web0uuid-1`, another app's container; redeploying web0uuid does
+    not take it out of the name checks."""
+    impostor = web("evil-web0uuid-1", labels=EVIL, state="exited", exit_code=1)
+    engine = FakeEngine("a", [web(health="healthy"), impostor, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+    died = Signal(
+        subject=state["subject"], kind="container_died", at=T0, container="evil-web0uuid-1"
+    )
+    state = redeployed(state, containers=["shop-db-1"]) | {"signals": [died]}
+
+    update, _ = await run(env, state)
+
+    checks = {c.target: (c.ok, c.detail) for c in update["verification"].checks}
+    assert checks["evil-web0uuid-1"] == (False, "is exited")

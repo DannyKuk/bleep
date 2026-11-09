@@ -51,7 +51,7 @@ from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.plan_check import coolify_members, host_urls
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.coolify_names import COOLIFY_UUID, coolify_container_name
-from bleep.hosts.discovery import expects_exit, service_key
+from bleep.hosts.discovery import expects_exit, is_finished, service_key
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.hosts.readings import past_threshold, readings
 from bleep.hosts.shell import HostUnreadable, host_basics
@@ -218,20 +218,35 @@ def _replaced(deps: GraphDeps, state: IncidentState, uuids: set[str]) -> Callabl
 
     By Verify the registry may list only the new containers, so a container counts as replaced
     when Gather's listing (taken before the plan ran) or the registry shows it as one of those
-    uuids', or when its name is Coolify's for one: `<uuid>-<timestamp>` or
-    `<service>-<uuid>-<timestamp>`. A preview container (`coolify.pullRequestId` set) is never
-    replaced: a redeploy of the main application leaves the previews as they are."""
+    uuids', or, when neither shows it with a uuid label (Coolify 4.1.x wrote none), when its
+    name is Coolify's for one: `<uuid>-<timestamp>` or `<service>-<uuid>-<timestamp>`; one
+    labelled as another app's is not replaced, whatever its name. A preview container
+    (`coolify.pullRequestId` set) is never replaced: a redeploy of the main application leaves
+    the previews as they are."""
     if not uuids:
         return lambda _name: False
     context = state.get("context")
     gathered = list(context.containers) if context is not None else []
     now = deps.registry.snapshot(state["subject"].host_id) or []
+    listed = [*gathered, *now]
     members = {
-        c.name
-        for c in [*gathered, *now]
-        if c.labels.get(COOLIFY_UUID) in uuids and _not_preview(c.labels)
+        c.name for c in listed if c.labels.get(COOLIFY_UUID) in uuids and _not_preview(c.labels)
     }
-    return lambda name: name in members or any(coolify_container_name(name, u) for u in uuids)
+    labelled = {c.name for c in listed if c.labels.get(COOLIFY_UUID)}
+    return lambda name: (
+        name in members
+        or (name not in labelled and any(coolify_container_name(name, u) for u in uuids))
+    )
+
+
+def _of_app(name: str, label: str | None, uuid: str) -> bool:
+    """Whether a container named `name` whose uuid label is `label` is one of application
+    `uuid`'s: by that label, or, only when it carries none (Coolify 4.1.x wrote none), by
+    Coolify's name for it. A container labelled as another app's is that app's, whatever its
+    name."""
+    if label:
+        return label == uuid
+    return coolify_container_name(name, uuid)
 
 
 def _app_uuid(
@@ -413,7 +428,7 @@ def _made(listed: list[ContainerSummary], redeploy: _Redeploy) -> list[Container
     return [
         c
         for c in listed
-        if (c.labels.get(COOLIFY_UUID) == uuid or coolify_container_name(c.name, uuid))
+        if _of_app(c.name, c.labels.get(COOLIFY_UUID), uuid)
         and _not_preview(c.labels)
         and (c.created_at is None or c.created_at >= floor)
     ]
@@ -436,14 +451,18 @@ async def _first_app_reads(deps: GraphDeps, host_id: str, redeploys: list[_Redep
                 redeploy.first_running[c.id] = c
 
 
-def _finished_job(deps: GraphDeps, host_id: str, container: ContainerSummary) -> bool:
-    """Whether `container` is a job that ended as its service expects: exited 0, and named in
-    its service's `exits` as the watcher reads them (`expects_exit`, #84)."""
+def _finished_job(deps: GraphDeps, host_id: str, container: ContainerSummary) -> str | None:
+    """The line for `container` when it is a job that finished as the watcher reads one, else
+    None: exited 0, and named in its service's `exits` (`expects_exit`, #84) or a one-shot with
+    no restart policy to bring it back (`is_finished`)."""
     if container.state != "exited" or container.exit_code != 0:
-        return False
+        return None
     service = deps.registry.service(f"{host_id}/{service_key(container.name, container.labels)}")
-    exits = service.exits if service is not None else []
-    return expects_exit(exits, container.name, container.labels)
+    if expects_exit(service.exits if service is not None else [], container.name, container.labels):
+        return f"{container.name} exited 0, as its service's exits allow"
+    if is_finished(container):
+        return f"{container.name} exited 0 with no restart policy, a job that finished"
+    return None
 
 
 async def _check_application(deps: GraphDeps, host_id: str, redeploy: _Redeploy) -> Check:
@@ -477,13 +496,13 @@ async def _check_application(deps: GraphDeps, host_id: str, redeploy: _Redeploy)
     gone = [name for cid, name in redeploy.seen.items() if cid not in present]
     for c in made:
         redeploy.seen.setdefault(c.id, c.name)
-    finished = [c for c in made if _finished_job(deps, host_id, c)]
-    judged = [c for c in made if c not in finished]
+    jobs = {c.id: _finished_job(deps, host_id, c) for c in made}
+    notes = [note for note in jobs.values() if note is not None]
+    judged = [c for c in made if jobs[c.id] is None]
     came_up = [c for c in judged if c.state == "running" and c.id not in redeploy.first_running]
     for c in came_up:
         redeploy.first_running[c.id] = c
-    notes = [f"{c.name} exited 0, as its service's exits allow" for c in finished]
-    failure = _redeploy_failure(judged, gone, came_up, redeploy.first_running, bool(finished))
+    failure = _redeploy_failure(judged, gone, came_up, redeploy.first_running, bool(notes))
     if failure is not None:
         return Check(kind="container", target=target, ok=False, detail="; ".join([failure, *notes]))
     detail = "; ".join([f"{len(judged)} running", *notes])

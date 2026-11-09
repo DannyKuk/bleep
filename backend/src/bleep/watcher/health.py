@@ -7,7 +7,7 @@ ends.
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
-from bleep.hosts.discovery import expects_exit
+from bleep.hosts.discovery import expects_exit, is_finished
 from bleep.schemas.api import Health, UrlStatus
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.services import HostState
@@ -30,15 +30,6 @@ CLEAN_EXITS = (0, 143)
 
 def _worst(healths: Iterable[Health]) -> Health:
     return max(healths, key=_RANK.__getitem__, default="unknown")
-
-
-def is_finished(container: ContainerSummary) -> bool:
-    """A one-shot that ran to the end: exited 0 and no restart policy to bring it back."""
-    return (
-        container.state == "exited"
-        and container.exit_code == 0
-        and container.restart_policy in ("", "no")
-    )
 
 
 def is_stopped(container: ContainerSummary) -> bool:
