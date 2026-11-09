@@ -5,6 +5,7 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import { isRefused } from "@/components/incident/headline";
 import { useKeyboardInset } from "@/components/incident/use-phone";
+import { useTimeZone } from "@/components/time-zone";
 import { Button } from "@/components/ui/button";
 import { ApiError, apiFetch } from "@/lib/api";
 import type {
@@ -16,6 +17,7 @@ import type {
 } from "@/lib/api-types";
 import { CHANNEL, formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import type { Zone } from "@/lib/zone";
 
 const MAX_INSTRUCTION = 2000;
 
@@ -49,8 +51,9 @@ function answerLine(
   refused: boolean,
   status: IncidentStatus | undefined,
   nothingRanBefore: boolean,
+  zone: Zone,
 ): AnswerLine {
-  const where = `on ${CHANNEL[decision.via]}, ${formatDateTime(decision.at)}`;
+  const where = `on ${CHANNEL[decision.via]}, ${formatDateTime(decision.at, zone)}`;
   if (decision.kind === "approve") {
     const after = status ? AFTER_YES[status] : undefined;
     return {
@@ -103,6 +106,7 @@ export function DecisionBar({
   nothingRanBefore?: boolean;
 }) {
   const [sending, setSending] = useState<DecisionKind | null>(null);
+  const zone = useTimeZone();
   const [mine, setMine] = useState<Decision | null>(null);
   const [conflict, setConflict] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -254,7 +258,7 @@ export function DecisionBar({
       Not sent: {failure}
     </p>
   );
-  const answer = decision && answerLine(decision, refused, status, nothingRanBefore);
+  const answer = decision && answerLine(decision, refused, status, nothingRanBefore, zone);
   const answerText = answer && (
     <p
       role="status"

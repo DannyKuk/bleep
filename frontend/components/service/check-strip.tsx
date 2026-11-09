@@ -2,14 +2,16 @@
 
 import { useRef, useState } from "react";
 
+import { useTimeZone } from "@/components/time-zone";
 import type { UrlCheckPoint } from "@/lib/api-types";
 import { formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import type { Zone } from "@/lib/zone";
 
 /** "Passed at 14:02:30, 200, 42 ms"; a check with no reply has no status code. */
-export function checkWords(check: UrlCheckPoint): string {
+export function checkWords(check: UrlCheckPoint, zone?: Zone): string {
   const parts = [
-    `${check.ok ? "Passed" : "Failed"} at ${formatTime(check.checked_at)}`,
+    `${check.ok ? "Passed" : "Failed"} at ${formatTime(check.checked_at, zone)}`,
     check.status_code != null ? String(check.status_code) : "no reply",
     `${check.latency_ms} ms`,
   ];
@@ -40,6 +42,7 @@ function target(key: string, from: number, count: number): number | null {
  */
 export function CheckStrip({ url, checks }: { url: string; checks: UrlCheckPoint[] }) {
   const [active, setActive] = useState<number | null>(null);
+  const zone = useTimeZone();
   const [tabStop, setTabStop] = useState<number | null>(null); // null: the newest
   const ticks = useRef<(HTMLSpanElement | null)[]>([]);
   if (checks.length === 0) return null;
@@ -71,7 +74,7 @@ export function CheckStrip({ url, checks }: { url: string; checks: UrlCheckPoint
                 ticks.current[index] = node;
               }}
               role="img"
-              aria-label={checkWords(check)}
+              aria-label={checkWords(check, zone)}
               data-ok={check.ok}
               tabIndex={index === stop ? 0 : -1}
               onMouseEnter={() => setActive(index)}
@@ -90,7 +93,7 @@ export function CheckStrip({ url, checks }: { url: string; checks: UrlCheckPoint
           </li>
         ))}
       </ol>
-      <p className="text-xs text-ink-2">{shown ? checkWords(shown) : summary(checks)}</p>
+      <p className="text-xs text-ink-2">{shown ? checkWords(shown, zone) : summary(checks)}</p>
     </div>
   );
 }

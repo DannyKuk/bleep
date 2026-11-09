@@ -18,6 +18,7 @@ import {
   matchesSearch,
 } from "@/components/incident/incident-groups";
 import { useOverall } from "@/components/overall-state";
+import { useTimeZone } from "@/components/time-zone";
 import { Input } from "@/components/ui/input";
 import { usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
@@ -45,6 +46,7 @@ function Row({
   now: number;
   hosts: readonly QuietHost[];
 }) {
+  const zone = useTimeZone();
   const repeats = incident.repeats ?? 1;
   const waiting = groupOf(incident, now, hosts) === "needs_you";
   const duration = formatDuration(incident.opened_at, incident.closed_at);
@@ -76,7 +78,7 @@ function Row({
           {subjectText(incident)}
         </span>
         <span className="text-xs text-ink-2">
-          <time dateTime={incident.opened_at}>{formatDateTime(incident.opened_at)}</time>
+          <time dateTime={incident.opened_at}>{formatDateTime(incident.opened_at, zone)}</time>
           {duration && ` · ${duration}`}
         </span>
       </Link>

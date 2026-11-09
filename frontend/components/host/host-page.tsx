@@ -14,6 +14,7 @@ import { QuietPill } from "@/components/quiet/quiet-pill";
 import { SaveLockProvider } from "@/components/save-lock";
 import { HostSettings } from "@/components/settings/hosts";
 import { Alert, Status, useLoaded, useStaleSaving } from "@/components/settings/loaded";
+import { useTimeZone } from "@/components/time-zone";
 import { type Poll, usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
 import type { HostView, IncidentListItem, QuietView, ServiceView } from "@/lib/api-types";
@@ -24,6 +25,7 @@ import { serviceHref } from "@/lib/routes";
 import { putSettings } from "@/lib/settings-api";
 import type { SettingsUpdate, SettingsView } from "@/lib/settings-types";
 import { cn } from "@/lib/utils";
+import type { Zone } from "@/lib/zone";
 
 const POLL_MS = 10_000;
 const LINK =
@@ -34,12 +36,12 @@ const fetchServices = (signal: AbortSignal) => apiFetch<ServiceView[]>("/api/ser
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 /** The line under a quiet host's title: since or until when Bleep is silent about it. */
-function quietNote(quiet: QuietView): string {
+function quietNote(quiet: QuietView, zone: Zone): string {
   const now = new Date();
   if (quiet.mode === "leave_alone" || quiet.until === null) {
-    return `Since ${sinceWords(new Date(quiet.since), now)} Bleep opens no incidents for it or its services.`;
+    return `Since ${sinceWords(new Date(quiet.since), now, zone)} Bleep opens no incidents for it or its services.`;
   }
-  const until = quietLabel(quiet, now).replace(/^Host snoozed until /, "");
+  const until = quietLabel(quiet, now, zone).replace(/^Host snoozed until /, "");
   return `Bleep opens no incidents for it or its services until ${until}.`;
 }
 
@@ -151,6 +153,7 @@ export function StillFailing({
   host: HostView;
   last: IncidentListItem | undefined;
 }) {
+  const zone = useTimeZone();
   if (host.quiet || host.reachable || isAsleep(host)) return null;
   if (!last || last.kind !== "host_unreachable" || !ENDED.has(last.status)) return null;
   if (host.last_seen !== null && new Date(host.last_seen) > new Date(last.opened_at)) return null;
@@ -158,8 +161,8 @@ export function StillFailing({
   return (
     <p role="note" aria-label="Still failing" className="text-sm text-ink-2">
       Still unreachable after its last incident ended{" "}
-      <time dateTime={ended} title={formatDateTime(ended)}>
-        {formatSince(ended)}
+      <time dateTime={ended} title={formatDateTime(ended, zone)}>
+        {formatSince(ended, undefined, zone)}
       </time>
       :{" "}
       <Link href={`/incidents/${last.id}`} className={LINK}>
@@ -181,7 +184,8 @@ function Header({
   last: IncidentListItem | undefined;
   onChanged: () => void;
 }) {
-  const basics = basicsLine(host);
+  const zone = useTimeZone();
+  const basics = basicsLine(host, zone);
   return (
     <header className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -195,7 +199,7 @@ function Header({
       </div>
       {host.quiet && (
         <p role="note" className="text-sm text-ink-2">
-          {quietNote(host.quiet)}
+          {quietNote(host.quiet, zone)}
         </p>
       )}
       <StillFailing host={host} last={last} />

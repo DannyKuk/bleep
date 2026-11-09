@@ -83,6 +83,9 @@ class QuietStore:
     async def set(
         self, scope: QuietScope, target_id: str, mode: QuietMode, until: datetime | None
     ) -> QuietState:
+        """Stored in UTC whatever offset `until` came with; it is shown in a zone only when
+        read (#400)."""
+        until = until.astimezone(UTC) if until is not None else None
         state = QuietState(
             scope=scope, target_id=target_id, mode=mode, until=until, since=self.clock()
         )

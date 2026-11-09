@@ -3,6 +3,7 @@ incident) and the overrides a person may set from the dashboard."""
 
 import re
 from typing import Annotated, Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
     AfterValidator,
@@ -182,6 +183,26 @@ class HostSettings(_Overrides):
     services: dict[ServiceKey, ServiceSettings] = Field(default_factory=dict, max_length=200)
 
 
+def _known_zone(name: str) -> str:
+    """An IANA time zone this machine knows; UTC needs no zone data."""
+    if name != "UTC":
+        try:
+            ZoneInfo(name)
+        except ZoneInfoNotFoundError, ValueError, OSError:
+            raise ValueError("must be an IANA time zone, e.g. Europe/Vienna") from None
+    return name
+
+
+TimeZoneName = Annotated[
+    str, StringConstraints(min_length=1, max_length=64), AfterValidator(_known_zone)
+]
+
+
+class GeneralOverrides(_Overrides):
+    # The zone every time is shown in, on Telegram and the dashboard (#400); stored times stay UTC.
+    timezone: TimeZoneName | None = None
+
+
 class SettingsUpdate(_Overrides):
     """`PUT /api/settings`. A section given replaces that section's overrides, and under `hosts`
     each host given replaces that host's; `{}` clears one. Sections left out stay as they are."""
@@ -189,6 +210,7 @@ class SettingsUpdate(_Overrides):
     models: ModelOverrides | None = None
     budgets: BudgetOverrides | None = None
     thresholds: ThresholdOverrides | None = None
+    general: GeneralOverrides | None = None
     hosts: dict[str, HostSettings] | None = None
 
 
@@ -255,5 +277,8 @@ class SettingsView(BaseModel):
     thresholds: Thresholds
     hosts: list[HostSettingsView]
     plugins: dict[str, bool]
+    # The zone times are shown in: the dashboard's choice, else BLEEP_TIMEZONE; None shows the
+    # dashboard in the browser's zone and Telegram in UTC.
+    timezone: str | None = None
     overrides: dict[str, Any]  # a `SettingsUpdate` without the fields left at the layers below
     version: str  # of `overrides`; a `PUT /api/settings` sends it back in `If-Match`

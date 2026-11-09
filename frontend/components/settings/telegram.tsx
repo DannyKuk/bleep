@@ -1,4 +1,5 @@
 import { Fact, SecretBadge } from "@/components/settings/secret";
+import { useTimeZone } from "@/components/time-zone";
 import { Badge } from "@/components/ui/badge";
 import { formatDateTime } from "@/lib/format";
 import type { TelegramStatus } from "@/lib/settings-types";
@@ -12,6 +13,7 @@ export function TelegramSettings({
   /** Where the token is kept, from `GET /api/secrets`. */
   tokenSource?: "env" | "dashboard" | null;
 }) {
+  const zone = useTimeZone();
   return (
     <div className="flex flex-col gap-3">
       <dl className="flex flex-col gap-1.5">
@@ -33,7 +35,7 @@ export function TelegramSettings({
         {status.configured && (
           <Fact label="Last poll">
             {status.last_poll ? (
-              <time dateTime={status.last_poll}>{formatDateTime(status.last_poll)}</time>
+              <time dateTime={status.last_poll}>{formatDateTime(status.last_poll, zone)}</time>
             ) : (
               <span className="text-muted-foreground">Not yet</span>
             )}

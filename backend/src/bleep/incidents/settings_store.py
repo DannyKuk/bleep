@@ -16,9 +16,10 @@ import json
 import logging
 import os
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ValidationError
 
@@ -36,6 +37,7 @@ from bleep.schemas.settings import (
     MODEL_KEY_ENV,
     BudgetOverrides,
     Budgets,
+    GeneralOverrides,
     HostConnectionView,
     HostSettings,
     HostSettingsView,
@@ -55,6 +57,7 @@ from bleep.store.secrets import SecretStore
 log = logging.getLogger(__name__)
 
 HOST_PREFIX = "host:"
+SECTIONS = ("models", "budgets", "thresholds", "general")  # one stored row each
 PLUGIN_PREFIX = "plugin:"
 
 
@@ -83,6 +86,7 @@ def settings_field_names() -> set[str]:
         ModelOverrides,
         BudgetOverrides,
         ThresholdOverrides,
+        GeneralOverrides,
         HostSettings,
         ServiceSettings,
         UrlCheckConfig,
@@ -96,7 +100,8 @@ class SettingsStore:
 
     `models` is the model choice from the env (`ModelSettings()` by default); the store only
     changes the fields a person may change. The model key is the env's, or with `secrets` the one
-    in force there (the env's, else the dashboard's), read at every call.
+    in force there (the env's, else the dashboard's), read at every call. `timezone` is
+    BLEEP_TIMEZONE, the zone until one is chosen on the dashboard.
     """
 
     def __init__(
@@ -109,6 +114,7 @@ class SettingsStore:
         secrets: SecretStore | None = None,
         dashboard: DashboardHosts | None = None,
         clock: Callable[[], datetime] = utcnow,
+        timezone: str | None = None,
     ) -> None:
         self._db = db
         self._dashboard = dashboard
@@ -117,6 +123,7 @@ class SettingsStore:
         self._env_models = models if models is not None else ModelSettings()
         self._secrets = secrets
         self._clock = clock
+        self._env_timezone = timezone
         # The layer under every host override: the hosts file as read at boot, and the hosts
         # added on the dashboard, which come and go (`host_changed`).
         self._base: dict[str, HostConfig] = {h.config.id: h.config for h in registry.hosts()}
@@ -129,6 +136,21 @@ class SettingsStore:
 
     def thresholds(self) -> Thresholds:
         return _layer(Thresholds(), self._overrides.thresholds)
+
+    def timezone(self) -> str | None:
+        """The IANA name times are shown in: the dashboard's choice, else the env's; None for
+        neither."""
+        general = self._overrides.general
+        chosen = general.timezone if general is not None else None
+        return chosen or self._env_timezone
+
+    def zone(self) -> tzinfo | None:
+        """`timezone()` as a zone, read by Telegram at each message so a change applies at once.
+        UTC needs no zone data."""
+        name = self.timezone()
+        if name is None:
+            return None
+        return UTC if name == "UTC" else ZoneInfo(name)
 
     def models(self) -> ModelSettings:
         models = _layer(self._env_models, self._overrides.models)
@@ -148,7 +170,7 @@ class SettingsStore:
         content, so it holds across a restart and needs no counter of its own; plugins are not
         part of it."""
         sections: dict[str, BaseModel | None] = {
-            name: getattr(self._overrides, name) for name in ("models", "budgets", "thresholds")
+            name: getattr(self._overrides, name) for name in SECTIONS
         }
         for host_id, host in (self._overrides.hosts or {}).items():
             sections[f"{HOST_PREFIX}{host_id}"] = host
@@ -238,7 +260,7 @@ class SettingsStore:
                 raise SettingsStale(self.version())
             merged = self._overrides.model_copy(deep=True)
             writes: dict[str, BaseModel] = {}
-            for section in ("models", "budgets", "thresholds"):
+            for section in SECTIONS:
                 given = getattr(update, section)
                 if given is not None:
                     setattr(merged, section, given)
@@ -407,6 +429,8 @@ class SettingsStore:
             self._overrides.budgets = BudgetOverrides.model_validate(value)
         elif key == "thresholds":
             self._overrides.thresholds = ThresholdOverrides.model_validate(value)
+        elif key == "general":
+            self._overrides.general = GeneralOverrides.model_validate(value)
         elif key.startswith(HOST_PREFIX):
             host_id = key.removeprefix(HOST_PREFIX)
             if host_id not in self._base:

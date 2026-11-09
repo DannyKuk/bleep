@@ -88,16 +88,26 @@ SNOOZE_AHEAD_MAX = timedelta(days=2)  # no button carries a later morning
 Row = list[tuple[str, str]]  # (label, callback data) buttons side by side
 
 
+def _no_zone() -> tzinfo | None:
+    return None
+
+
 @dataclass(frozen=True)
 class OnIt:
     """What "🤫 I'm on it" needs: the incidents, the quiet store that snoozes an incident's
-    subject (its listener, the watcher, then ends the incident as Quiet), the timeline, and the
-    time zone "until 08:00" is in; None when none was configured: UTC, and the times say so."""
+    subject (its listener, the watcher, then ends the incident as Quiet), the timeline, and
+    `current_zone`, which gives the time zone "until 08:00" is in. It is asked at each use, so a
+    zone chosen on the settings page applies to the next message (#400); None when none is
+    chosen: UTC, and the times say so."""
 
     incidents: IncidentRepo
     quiet: QuietStore
     bus: EventBus
-    zone: tzinfo | None = None
+    current_zone: Callable[[], tzinfo | None] = _no_zone
+
+    @property
+    def zone(self) -> tzinfo | None:
+        return self.current_zone()
 
 
 def snooze_buttons(now: datetime, zone: tzinfo | None) -> Row:

@@ -73,6 +73,7 @@ export function settingsView(overrides: Partial<SettingsView> = {}): SettingsVie
     thresholds: THRESHOLD_VALUES,
     hosts: [sshHost()],
     plugins: { coolify: false },
+    timezone: null,
     overrides: {
       hosts: {
         m1: { services: { "compose:shop": { protected_containers: ["shop-cache-1"] } } },

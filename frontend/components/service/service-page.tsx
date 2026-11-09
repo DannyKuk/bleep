@@ -21,6 +21,7 @@ import {
   ExpectedExits,
   useServiceSettings,
 } from "@/components/service/settings-cards";
+import { useTimeZone } from "@/components/time-zone";
 import { ApiError, apiFetch } from "@/lib/api";
 import type {
   ContainerView,
@@ -34,6 +35,7 @@ import { formatDateTime, formatSince } from "@/lib/format";
 import { quietLabel, sinceWords } from "@/lib/quiet-api";
 import { hostHref } from "@/lib/routes";
 import { cn } from "@/lib/utils";
+import type { Zone } from "@/lib/zone";
 
 const PAST_INCIDENTS = 20;
 
@@ -144,6 +146,7 @@ function Votes({ votes }: { votes: IncidentVotes }) {
 }
 
 function PastIncidents({ incidents }: { incidents: IncidentListItem[] }) {
+  const zone = useTimeZone();
   if (incidents.length === 0) {
     return (
       <p className="text-sm text-ink-2">
@@ -164,7 +167,7 @@ function PastIncidents({ incidents }: { incidents: IncidentListItem[] }) {
             <Votes votes={incident.votes} />
             <span className="font-mono text-xs text-ink-2">{subjectText(incident)}</span>
             <time dateTime={incident.opened_at} className="text-xs text-ink-2">
-              {formatDateTime(incident.opened_at)}
+              {formatDateTime(incident.opened_at, zone)}
             </time>
           </Link>
         </li>
@@ -174,14 +177,14 @@ function PastIncidents({ incidents }: { incidents: IncidentListItem[] }) {
 }
 
 /** The one line under a quiet service's title: why Bleep is silent about it, and since or until when. */
-function quietNote(quiet: QuietView): string {
+function quietNote(quiet: QuietView, zone: Zone): string {
   const now = new Date();
-  const label = quietLabel(quiet, now);
+  const label = quietLabel(quiet, now, zone);
   if (quiet.scope === "host") {
     return `Its host is ${label.replace(/^Host /, "")}, so Bleep opens no incidents for it.`;
   }
   if (quiet.mode === "leave_alone") {
-    return `Since ${sinceWords(new Date(quiet.since), now)} Bleep opens no incidents for it.`;
+    return `Since ${sinceWords(new Date(quiet.since), now, zone)} Bleep opens no incidents for it.`;
   }
   return `Bleep opens no incidents for it until ${label.replace(/^Snoozed until /, "")}.`;
 }
@@ -197,6 +200,7 @@ function StillFailing({
   service: ServiceView;
   last: IncidentListItem | undefined;
 }) {
+  const zone = useTimeZone();
   if (service.quiet || service.health !== "down" || service.open_incident_id !== null) return null;
   if (!last || !ENDED.has(last.status)) return null;
   const ended = last.closed_at ?? last.opened_at;
@@ -204,8 +208,8 @@ function StillFailing({
   return (
     <p role="note" aria-label="Still failing" className="text-sm text-ink-2">
       Still down after its last incident ended{" "}
-      <time dateTime={ended} title={formatDateTime(ended)}>
-        {formatSince(ended)}
+      <time dateTime={ended} title={formatDateTime(ended, zone)}>
+        {formatSince(ended, undefined, zone)}
       </time>
       :{" "}
       <Link
@@ -236,6 +240,7 @@ export function ServicePage({ id }: { id: string }) {
 }
 
 function Service({ id }: { id: string }) {
+  const zone = useTimeZone();
   const encoded = encodeURIComponent(id);
   const [reloads, setReloads] = useState(0);
   const overall = useOverall();
@@ -296,7 +301,7 @@ function Service({ id }: { id: string }) {
         </div>
         {service?.quiet && (
           <p role="note" className="text-sm text-ink-2">
-            {quietNote(service.quiet)}
+            {quietNote(service.quiet, zone)}
           </p>
         )}
         {service && incidents.data && <StillFailing service={service} last={incidents.data[0]} />}
@@ -308,8 +313,8 @@ function Service({ id }: { id: string }) {
             {service.health === "ok" && data?.health_since && (
               <>
                 {" · healthy since "}
-                <time dateTime={data.health_since} title={formatDateTime(data.health_since)}>
-                  {formatSince(data.health_since)}
+                <time dateTime={data.health_since} title={formatDateTime(data.health_since, zone)}>
+                  {formatSince(data.health_since, undefined, zone)}
                 </time>
               </>
             )}

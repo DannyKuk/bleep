@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
+import { useTimeZone } from "@/components/time-zone";
 import { apiFetch } from "@/lib/api";
 import type { Incident, IncidentListItem } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
@@ -17,6 +18,7 @@ const LINK =
  */
 export function Repeats({ incident, repeats }: { incident: Incident; repeats: number }) {
   const [list, setList] = useState<IncidentListItem[] | null>(null);
+  const zone = useTimeZone();
   const first = incident.fold_of === null && repeats > 1;
 
   useEffect(() => {
@@ -47,7 +49,9 @@ export function Repeats({ incident, repeats }: { incident: Incident; repeats: nu
     <section aria-label="Repeats" className="flex flex-col gap-2">
       <p className="text-sm font-bold">
         Seen {repeats} times
-        {last && <span className="font-normal text-ink-2"> · last {formatDateTime(last)}</span>}
+        {last && (
+          <span className="font-normal text-ink-2"> · last {formatDateTime(last, zone)}</span>
+        )}
       </p>
       {list && list.length > 0 && (
         <ul className="flex flex-col gap-1.5">
@@ -59,7 +63,7 @@ export function Repeats({ incident, repeats }: { incident: Incident; repeats: nu
               >
                 <IncidentStatusBadge status={repeat.status} />
                 <time dateTime={repeat.opened_at} className="text-xs text-ink-2">
-                  {formatDateTime(repeat.opened_at)}
+                  {formatDateTime(repeat.opened_at, zone)}
                 </time>
               </Link>
             </li>

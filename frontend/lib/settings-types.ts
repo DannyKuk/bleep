@@ -101,6 +101,7 @@ export interface HostOverrides {
 /** What the database changed, section by section; a field left out shows the layer below. */
 export interface SettingsOverrides {
   thresholds?: Partial<Thresholds>;
+  general?: GeneralOverrides;
   hosts?: Record<string, HostOverrides>;
   [section: string]: unknown; // models and budgets, which the dev panel edits
 }
@@ -113,14 +114,21 @@ export interface SettingsView {
   thresholds: Thresholds;
   hosts: HostSettingsView[];
   plugins: Record<string, boolean>;
+  /** The IANA zone times are shown in: the one chosen here, else BLEEP_TIMEZONE; null for none. */
+  timezone: string | null;
   overrides: SettingsOverrides;
   /** Of `overrides`; a `PUT /api/settings` built from this view sends it back (`putSettings`). */
   version: string;
 }
 
+export interface GeneralOverrides {
+  timezone?: string;
+}
+
 /** The sections of `PUT /api/settings` this page writes. Each one given replaces its overrides. */
 export interface SettingsUpdate {
   thresholds?: Partial<Thresholds>;
+  general?: GeneralOverrides;
   hosts?: Record<string, HostOverrides>;
 }
 

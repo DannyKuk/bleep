@@ -6,6 +6,7 @@ import { headline } from "@/components/incident/headline";
 import { subjectText } from "@/components/incident/incident-list";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { useTimeZone } from "@/components/time-zone";
 import { Badge } from "@/components/ui/badge";
 import type { IncidentDetail } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
@@ -38,6 +39,7 @@ function StreamBadge({ status }: { status: StreamStatus }) {
 export function IncidentHero({ detail, stream }: { detail: IncidentDetail; stream: StreamStatus }) {
   const { incident, diagnosis, outcome } = detail;
   const mood = incidentMood(incident.status, diagnosis?.unsure ?? false);
+  const zone = useTimeZone();
   return (
     <section
       aria-labelledby="incident-headline"
@@ -54,7 +56,8 @@ export function IncidentHero({ detail, stream }: { detail: IncidentDetail; strea
           </Link>
           <Subject detail={detail} />
           <span className="font-mono">
-            · opened <time dateTime={incident.opened_at}>{formatDateTime(incident.opened_at)}</time>
+            · opened{" "}
+            <time dateTime={incident.opened_at}>{formatDateTime(incident.opened_at, zone)}</time>
           </span>
           {incident.tokens > 0 && (
             <span className="font-mono">· {incident.tokens.toLocaleString("en-US")} tokens</span>
@@ -126,6 +129,7 @@ function Subject({ detail }: { detail: IncidentDetail }) {
  * pill and the headline. Nothing else, so the plan and its pinned bar come soon.
  */
 export function PhoneIncidentHero({ detail }: { detail: IncidentDetail }) {
+  const zone = useTimeZone();
   const { incident, diagnosis } = detail;
   return (
     <>
@@ -140,7 +144,7 @@ export function PhoneIncidentHero({ detail }: { detail: IncidentDetail }) {
         <p className="flex min-w-0 flex-1 flex-wrap gap-x-1.5 text-xs text-ink-2">
           <Subject detail={detail} />
           <span className="font-mono">
-            · <time dateTime={incident.opened_at}>{formatDateTime(incident.opened_at)}</time>
+            · <time dateTime={incident.opened_at}>{formatDateTime(incident.opened_at, zone)}</time>
           </span>
         </p>
         <ThemeToggle />

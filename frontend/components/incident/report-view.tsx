@@ -3,6 +3,7 @@ import { Check, Minus, TriangleAlert, X } from "lucide-react";
 import { Bleep } from "@/components/bleep/bleep";
 import { LOOK } from "@/components/incident/colour-code";
 import { subjectText } from "@/components/incident/incident-list";
+import { useTimeZone } from "@/components/time-zone";
 import type { Incident, Outcome, Report } from "@/lib/api-types";
 import { formatDateTime, formatTime } from "@/lib/format";
 import { reportMood } from "@/lib/mood";
@@ -87,6 +88,7 @@ export function ReportView({
   incident?: Incident;
 }) {
   const noAction = outcome === "no_action";
+  const zone = useTimeZone();
   return (
     <article
       aria-label="Report"
@@ -116,11 +118,15 @@ export function ReportView({
             <p className="flex flex-wrap gap-x-3 gap-y-1 font-mono text-xs text-ink-2">
               <span>{subjectText(incident)}</span>
               <span>
-                <time dateTime={incident.opened_at}>{formatDateTime(incident.opened_at)}</time>
+                <time dateTime={incident.opened_at}>
+                  {formatDateTime(incident.opened_at, zone)}
+                </time>
                 {incident.closed_at && (
                   <>
                     {" to "}
-                    <time dateTime={incident.closed_at}>{formatTime(incident.closed_at)}</time>
+                    <time dateTime={incident.closed_at}>
+                      {formatTime(incident.closed_at, zone)}
+                    </time>
                   </>
                 )}
               </span>
@@ -160,7 +166,7 @@ export function ReportView({
             {report.timeline.map(({ at, text }, index) => (
               <li key={index} className="flex items-baseline gap-3">
                 <time dateTime={at} className="shrink-0 font-mono text-xs text-ink-2 tabular-nums">
-                  {formatTime(at)}
+                  {formatTime(at, zone)}
                 </time>
                 <span className="min-w-0">{text}</span>
               </li>

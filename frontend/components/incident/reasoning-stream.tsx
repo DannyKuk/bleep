@@ -1,6 +1,7 @@
 import { ChevronRight, Loader2 } from "lucide-react";
 
 import { toolSentence } from "@/components/incident/tool-sentences";
+import { useTimeZone } from "@/components/time-zone";
 import type { IncidentEvent } from "@/lib/api-types";
 import { formatTime } from "@/lib/format";
 
@@ -49,11 +50,12 @@ function argText(value: unknown): string {
 }
 
 function Step({ step }: { step: ToolStep }) {
+  const zone = useTimeZone();
   const args = Object.entries(step.args);
   const sentence = toolSentence(step.name);
   const time = (
     <time dateTime={step.at} className="font-mono text-xs text-ink-2">
-      {formatTime(step.at)}
+      {formatTime(step.at, zone)}
     </time>
   );
   return (

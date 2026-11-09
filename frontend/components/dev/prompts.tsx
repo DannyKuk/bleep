@@ -5,6 +5,7 @@ import { useEffect, useId, useState } from "react";
 
 import { useDraft } from "@/components/dev/models";
 import { Failed, Loading, why } from "@/components/dev/status";
+import { useTimeZone } from "@/components/time-zone";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
@@ -37,6 +38,7 @@ export function PromptEditor({
   /** Read the prompts again; throws when that read fails. */
   onStale: () => Promise<void>;
 }) {
+  const zone = useTimeZone();
   const inForce = prompt.override ?? prompt.file_text;
   const [draft, setDraft] = useDraft({ text: inForce });
   const text = draft.text;
@@ -83,7 +85,9 @@ export function PromptEditor({
         {prompt.override !== null && prompt.overridden_at ? (
           <span>
             Overridden{" "}
-            <time dateTime={prompt.overridden_at}>{formatDateTime(prompt.overridden_at)}</time>
+            <time dateTime={prompt.overridden_at}>
+              {formatDateTime(prompt.overridden_at, zone)}
+            </time>
           </span>
         ) : (
           <span className="flex items-center gap-1">

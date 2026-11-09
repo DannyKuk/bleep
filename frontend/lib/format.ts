@@ -1,42 +1,46 @@
 import type { Channel } from "@/lib/api-types";
 import ranges from "@/lib/invisible-ranges.json";
+import { clockIn, dayIn, weekdayIn, type Zone } from "@/lib/zone";
 
-/** "18:01:05" in the viewer's locale and time zone. */
-export function formatTime(iso: string): string {
+/** "18:01:05" in the viewer's locale, in `zone` (the browser's when none is chosen). */
+export function formatTime(iso: string, zone?: Zone): string {
   return new Date(iso).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
+    timeZone: zone,
   });
 }
 
-/** "2 Nov 2026, 18:01" in the viewer's locale and time zone. */
-export function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+/** "2 Nov 2026, 18:01" in the viewer's locale, in `zone`. */
+export function formatDateTime(iso: string, zone?: Zone): string {
+  return new Date(iso).toLocaleString([], {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: zone,
+  });
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const clock = (at: Date) => `${at.getHours()}:${String(at.getMinutes()).padStart(2, "0")}`;
 
 /**
- * When something began, short and in local time: "14:02" today, "yesterday 14:02", "Tue 14:02"
+ * When something began, short and in `zone`: "14:02" today, "yesterday 14:02", "Tue 14:02"
  * within the last week, else "2 Nov 14:02" (with the year when it is not this one).
  */
-export function formatSince(iso: string, now: Date = new Date()): string {
+export function formatSince(iso: string, now: Date = new Date(), zone?: Zone): string {
   const at = new Date(iso);
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  if (at.toDateString() === now.toDateString()) return clock(at);
-  if (at.toDateString() === yesterday.toDateString()) return `yesterday ${clock(at)}`;
-  if (now.getTime() - at.getTime() < 6 * DAY_MS) {
-    return `${at.toLocaleDateString("en-GB", { weekday: "short" })} ${clock(at)}`;
-  }
+  const day = dayIn(at, zone);
+  const clock = clockIn(at, zone);
+  if (day === dayIn(now, zone)) return clock;
+  if (day === dayIn(now, zone, -1)) return `yesterday ${clock}`;
+  if (now.getTime() - at.getTime() < 6 * DAY_MS) return `${weekdayIn(at, zone)} ${clock}`;
   const date = at.toLocaleDateString("en-GB", {
     day: "numeric",
     month: "short",
-    year: at.getFullYear() === now.getFullYear() ? undefined : "numeric",
+    year: day.slice(0, 4) === dayIn(now, zone).slice(0, 4) ? undefined : "numeric",
+    timeZone: zone,
   });
-  return `${date} ${clock(at)}`;
+  return `${date} ${clock}`;
 }
 
 /** How a channel is named in a sentence: "on Telegram", "on the dashboard". */

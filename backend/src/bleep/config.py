@@ -30,9 +30,9 @@ class Settings(BaseSettings):
     # Where a person's browser reaches the dashboard; the end of an incident on Telegram links to
     # its page there. Unset, the message has no link (docs/design/notify.md, #380).
     dashboard_url: AnyHttpUrl | None = None
-    # The IANA time zone Telegram's times are in: "until tomorrow 08:00" and "Quiet until 14:30"
-    # (docs/design/notify.md, #389). Unset, they are UTC and say so. The dashboard uses the
-    # browser's own.
+    # The IANA time zone times are shown in until one is chosen on the settings page, which wins
+    # (#400): Telegram's "until tomorrow 08:00" and "Quiet until 14:30" (#389) and the dashboard.
+    # Unset everywhere, Telegram's times are UTC and say so and the dashboard uses the browser's.
     timezone: str | None = None
     # Telegram is optional and has its own names in .env (no BLEEP_ prefix). Only this chat is
     # answered. The token is a secret: it stays out of the database, the bus and the logs.

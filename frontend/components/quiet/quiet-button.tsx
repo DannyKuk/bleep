@@ -3,6 +3,7 @@
 import { ChevronDown, Moon } from "lucide-react";
 
 import { QuietMenu } from "@/components/quiet/quiet-menu";
+import { useTimeZone } from "@/components/time-zone";
 import { Button } from "@/components/ui/button";
 import type { QuietView } from "@/lib/api-types";
 import { quietLabel } from "@/lib/quiet-api";
@@ -23,7 +24,8 @@ export function QuietButton({
   quiet: QuietView | null;
   onChanged: () => void;
 }) {
-  const label = quiet ? quietLabel(quiet, new Date()) : null;
+  const zone = useTimeZone();
+  const label = quiet ? quietLabel(quiet, new Date(), zone) : null;
   return (
     <QuietMenu
       target={target}
