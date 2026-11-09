@@ -104,7 +104,7 @@ Secrets inside the hosts file are references, `{env: NAME}` or `{file: PATH}`, n
 
 ## Network and cookies
 
-The dashboard (port 3000) is for a trusted LAN only. It has one admin password, a limit of 5 failed logins a minute per address, and nothing more; it is not hardened for the internet. The backend's port 8000 is published on `127.0.0.1` only, so other machines reach Bleep through the dashboard, which forwards `/api` to the backend.
+The dashboard (port 3000) is for a trusted LAN only. It has one admin password, a limit of 5 failed logins a minute shared by every browser ([app](design/app.md)), and nothing more; it is not hardened for the internet. The backend's port 8000 is published on `127.0.0.1` only, so other machines reach Bleep through the dashboard, which forwards `/api` to the backend.
 
 The watcher checks every host every 15 s; `BLEEP_WATCH_INTERVAL_S` in `.env` changes that. When the machine Bleep runs on wakes from sleep, a host that does not answer is not counted for the next 4 checks (`BLEEP_WAKE_GRACE_TICKS`), so the network can come back first.
 
