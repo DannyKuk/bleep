@@ -36,7 +36,10 @@ class _Strict(BaseModel):
 
 class After(_Strict):
     """A container once the plan has run: the fields given replace its own, and `logs` is
-    appended to its log."""
+    appended to its log. With `restarts_per_inspect`, its restart policy keeps restarting it: each
+    inspect from then on finds it running again with that many more restarts and a new start
+    time, as a container that crashes within seconds of every start looks to anyone reading it
+    at intervals."""
 
     state: str | None = None
     health: Health | None = None
@@ -46,6 +49,7 @@ class After(_Strict):
     mem_usage_mib: float | None = None
     logs: str = ""
     events: list[str] = Field(default_factory=list)  # Docker event actions, as `die`, `oom`
+    restarts_per_inspect: int = Field(0, ge=0)
 
 
 class ScriptedContainer(_Strict):
@@ -91,7 +95,8 @@ class ScriptedEvent(_Strict):
 class ScriptedEngine:
     """An `Engine` over a case's containers. The first act (restart, stop or start) does what
     Docker would do to its target, then turns every container with an `after` into it; the
-    act and the after's events are added to the event history."""
+    act and the after's events are added to the event history. A container whose `after` has
+    `restarts_per_inspect` is restarted by its policy before each inspect of it from then on."""
 
     def __init__(
         self,
@@ -116,6 +121,7 @@ class ScriptedEngine:
             for e in events
         ]
         self.acts: list[tuple[str, str]] = []  # (action, container name), in order
+        self.crash_looping: dict[str, int] = {}  # name: restarts per inspect, once the plan ran
         self._after_applied = False
         self._stopped = asyncio.Event()
 
@@ -130,6 +136,8 @@ class ScriptedEngine:
 
     async def inspect(self, container: str) -> ContainerDetail:
         name = self._name(container)
+        if self.crash_looping.get(name):
+            self._policy_restart(name, self.crash_looping[name])
         summary, script = self.summaries[name], self.scripts[name]
         limit = script.mem_limit_mib * MIB if script.mem_limit_mib is not None else None
         return ContainerDetail(
@@ -213,6 +221,13 @@ class ScriptedEngine:
                 if script.after is not None:
                     self._apply(script.name, script.after, now)
 
+    def _policy_restart(self, name: str, restarts: int) -> None:
+        now = self.clock()
+        summary = self.summaries[name]
+        update = {"restart_count": summary.restart_count + restarts, "started_at": now}
+        self.summaries[name] = summary.model_copy(update=update)
+        self.history += [_event(action, self.summaries[name], now) for action in ("die", "start")]
+
     def _apply(self, name: str, after: After, now: datetime) -> None:
         fields = after.model_dump(
             exclude_none=True, include={"state", "health", "restart_count", "exit_code"}
@@ -227,6 +242,8 @@ class ScriptedEngine:
             self.log_text[name] = text + ("" if not text or text.endswith("\n") else "\n")
             self.log_text[name] += after.logs
         self.history += [_event(action, self.summaries[name], now) for action in after.events]
+        if after.restarts_per_inspect:
+            self.crash_looping[name] = after.restarts_per_inspect
 
 
 def _summary(c: ScriptedContainer, project: str, now: datetime) -> ContainerSummary:
