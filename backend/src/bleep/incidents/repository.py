@@ -93,6 +93,14 @@ class FoldGroup:
     since: datetime
 
 
+@dataclass(frozen=True)
+class Repeats:
+    """Finished incidents of one fold key: how many, and when the latest of them ended."""
+
+    count: int
+    last_closed: datetime
+
+
 # Tokens and cost are the usage ledger's sums, so an incident and the ledger never disagree.
 _COLUMNS = (
     "id, kind, host_id, service_id, status, title, opened_at, closed_at, trace_url,"
@@ -256,6 +264,25 @@ class IncidentRepo:
             )
             for row in rows
         }
+
+    async def finished_since(
+        self, subject: Subject, signals: list[Signal], since: datetime
+    ) -> Repeats | None:
+        """The finished incidents that an incident for `subject` and `signals` would repeat (the
+        same fold key) opened at or after `since`; None when there is none."""
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                "SELECT COUNT(*) AS n, MAX(COALESCE(closed_at, opened_at)) AS last FROM incidents"
+                f" WHERE fold_key = ? AND NOT {_OPEN} AND opened_at >= ?",
+                (fold_key(subject, signals), since.isoformat()),
+            ) as cursor:
+                row = await cursor.fetchone()
+        finally:
+            await conn.close()
+        if row is None or not row["n"]:
+            return None
+        return Repeats(row["n"], datetime.fromisoformat(row["last"]))
 
     async def groups(self, incidents: Collection[Incident]) -> dict[str, FoldGroup]:
         """Each incident's group by its id; one that is not in a group (alone) is left out."""

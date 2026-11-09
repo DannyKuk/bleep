@@ -31,6 +31,7 @@ from bleep.watcher.manager import (
     REMOVED_NOTICE,
     WatcherManager,
     quiet_notice,
+    repeat_hold,
 )
 from fakes import FakeChatModel, FakeEngine, compose_labels, socket_host
 
@@ -142,11 +143,14 @@ class Rig:
         self.runner = FakeRunner(self.repo)
         self.quiet = QuietStore(self.db, self.clock)
         self.web_up = True
+        self.not_found: set[str] = set()  # projects whose URL answers 404 while the host is up
         self.roles: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             if not self.web_up:
                 raise httpx.ConnectError("no route to host", request=request)
+            if request.url.host.split(".")[0] in self.not_found:
+                return httpx.Response(404, text="no such page")
             return httpx.Response(200, text="ok")
 
         async def connect(_host):
@@ -514,6 +518,9 @@ async def test_a_new_incident_after_the_old_one_closed_starts_a_run_again(tmp_pa
     await r.manager.sink(signal)
     await r.repo.set_status(r.runner.started[0].id, "resolved")
     r.clock.advance(31)
+    freed = {"at": r.clock(), "detail": {"percent": 50}}  # the fix held for a reading (#356)
+    await r.manager.sink(signal.model_copy(update=freed))
+    r.clock.advance(60)
     await r.manager.sink(signal.model_copy(update={"at": r.clock()}))
     assert len(r.runner.started) == 2
 
@@ -1318,3 +1325,105 @@ async def test_a_host_whose_events_fail_while_its_listing_works_has_not_answered
         await r.pulse(urls=False)
     assert r.registry.hosts()[0].reachable  # what the quiet close used to trust
     assert r.manager.answered("h") is None
+
+
+# --- a failure that outlives its incident (#356) ---
+
+
+async def close_open(r: Rig, subject: Subject) -> Incident:
+    """End the subject's open incident as a run that proposed no action does."""
+    incident_id = await r.repo.open_incident_id(subject)
+    assert incident_id is not None
+    await r.repo.set_status(incident_id, "closed")
+    incident = await r.repo.get(incident_id)
+    assert incident is not None
+    return incident
+
+
+async def minutes(r: Rig, n: int) -> None:
+    """A watcher tick and a URL round once a minute, as the live backend ran on 2026-11-09."""
+    for _ in range(n):
+        await r.pulse(60)
+
+
+async def test_a_url_failure_that_outlives_its_incident_opens_again_only_after_a_growing_hold(
+    tmp_path,
+):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()  # the URL answers: Bleep has seen it pass
+    r.not_found.add("shop")
+    await minutes(r, 2)
+    assert len(r.runner.started) == 1
+    first = await close_open(r, Subject(kind="service", host_id="h", service_id=SHOP))
+
+    await minutes(r, 59)  # it was one new incident a minute
+    assert [i.id for i in await r.incidents()] == [first.id]
+    await minutes(r, 2)  # an hour after the close
+    assert len(r.runner.started) == 2
+    second = r.runner.started[-1]
+    assert "seen 2 times" in second.title  # the one message about it says it is a repeat
+
+    await close_open(r, second.subject)
+    await minutes(r, 118)  # the second hold is two hours
+    assert len(r.runner.started) == 2
+    await minutes(r, 3)
+    assert len(r.runner.started) == 3
+    assert {i.subject.service_id for i in r.runner.started} == {SHOP}
+
+
+async def test_a_url_that_passed_once_since_its_incident_opens_again_at_once(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    r.not_found.add("shop")
+    await minutes(r, 2)
+    await close_open(r, Subject(kind="service", host_id="h", service_id=SHOP))
+    r.not_found.clear()
+    await minutes(r, 1)  # one passing check: it recovered
+    r.not_found.add("shop")
+    await minutes(r, 2)
+    assert len(r.runner.started) == 2
+    assert r.runner.started[-1].subject.service_id == SHOP
+
+
+async def test_an_open_incident_still_takes_the_failures_that_go_on(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    r.not_found.add("shop")
+    await minutes(r, 6)
+    [incident] = await r.incidents()
+    failures = [s for s in await r.repo.signals(incident.id) if s.kind == "url_failed"]
+    assert len(failures) == 6
+    assert len(r.runner.started) == 1
+
+
+async def test_a_failure_bleep_never_saw_pass_since_its_restart_waits_for_the_last_hold(
+    tmp_path,
+):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    r.not_found.add("shop")
+    await minutes(r, 2)
+    await close_open(r, Subject(kind="service", host_id="h", service_id=SHOP))
+    r.manager.detector = Detector(Thresholds(), r.clock)  # the backend restarted
+    await minutes(r, 59)
+    assert len(r.runner.started) == 1
+    await minutes(r, 2)
+    assert len(r.runner.started) == 2
+
+
+async def test_a_host_still_unreachable_after_its_incident_ended_waits_for_the_hold(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    await r.lose_host()
+    await minutes(r, 6)
+    assert [i.subject for i in r.runner.started] == [HOST]
+    closed = await close_open(r, HOST)  # closed by the person while the host is still down
+    await minutes(r, 59)
+    assert [i.id for i in await r.incidents()] == [closed.id]
+    await minutes(r, 6)  # the hold is over, and five more minutes down open the repeat
+    assert [i.subject for i in r.runner.started] == [HOST, HOST]
+
+
+def test_the_hold_doubles_from_an_hour_up_to_a_day():
+    hours = [repeat_hold(n) / timedelta(hours=1) for n in (1, 2, 3, 4, 5, 6, 7, 500)]
+    assert hours == [1, 2, 4, 8, 16, 24, 24, 24]

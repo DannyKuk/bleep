@@ -40,9 +40,20 @@ PASS_THROUGH = ("unhealthy", "restart_loop", "down_past_grace")
 
 
 @dataclass(frozen=True)
+class FailingRun:
+    """How long the reading behind an outcome has failed with no pass in between: `since` is its
+    first failed reading. `seen_pass` is False when no reading of it has passed since Bleep
+    started, so the failure may be older than Bleep's memory."""
+
+    since: datetime
+    seen_pass: bool
+
+
+@dataclass(frozen=True)
 class OpenIncident:
     subject: Subject
     signals: list[Signal]
+    run: FailingRun | None = None  # None for events (a death, `unhealthy`): they have no pass
 
 
 @dataclass(frozen=True)
@@ -51,6 +62,7 @@ class AttachSignals:
 
     subject: Subject
     signals: list[Signal]
+    run: FailingRun | None = None
 
 
 @dataclass(frozen=True)
@@ -65,6 +77,7 @@ class Ignored:
 
 
 ContainerKey = tuple[str, str]
+ReadingKey = tuple[str, str, str]  # (subject key, kind, URL or "None")
 
 Outcome = OpenIncident | AttachSignals | Recovered | Ignored
 
@@ -79,7 +92,9 @@ class Detector:
         # Keyed by (host id, container name): hosts often run same-named containers.
         self._pending: dict[ContainerKey, Signal] = {}  # first death not yet resolved
         self._deaths: dict[ContainerKey, deque[Signal]] = defaultdict(deque)
-        self._streaks: dict[tuple[str, ...], list[Signal]] = {}
+        self._streaks: dict[ReadingKey, list[Signal]] = {}
+        self._failing: dict[ReadingKey, FailingRun] = {}
+        self._passed: set[ReadingKey] = set()  # readings seen passing since Bleep started
         self._down_since: dict[str, datetime] = {}  # host key -> first failed probe
         self._window_start: dict[str, datetime] = {}  # subject key -> when its incident opened
 
@@ -98,15 +113,19 @@ class Detector:
             del self._pending[key]
         for key in [k for k in self._deaths if k[0] == host_id]:
             del self._deaths[key]
-        for key in [k for k in self._streaks if on_host(k[0])]:
-            del self._streaks[key]
+        for readings in (self._streaks, self._failing):
+            for key in [k for k in readings if on_host(k[0])]:
+                del readings[key]
+        self._passed = {k for k in self._passed if not on_host(k[0])}
         for timers in (self._down_since, self._window_start):
             for key in [k for k in timers if on_host(k)]:
                 del timers[key]
 
     def woke(self) -> None:
         """Bleep itself was suspended: forget every host's outage timer and every unreachable and
-        URL streak, so the time Bleep was not watching never counts as an outage."""
+        URL streak, so the time Bleep was not watching never counts as an outage. Failing runs
+        are kept: no pass was seen while asleep, so a failure that outlived its incident is not
+        new."""
         self._down_since.clear()
         for key in [k for k in self._streaks if k[1] in ("host_unreachable", "url_failed")]:
             del self._streaks[key]
@@ -133,9 +152,9 @@ class Detector:
             case "url_failed":
                 return self._url(signal, now)
             case "disk":
-                if past_threshold("disk", signal.detail, self.t):
-                    return self._emit(signal.subject, [signal], now)
-                return []
+                breach = past_threshold("disk", signal.detail, self.t)
+                run = self._reading(_reading_key(signal), breach, now)
+                return [] if run is None else self._emit(signal.subject, [signal], now, run)
             case "memory":
                 breach = past_threshold("memory", signal.detail, self.t)
                 return self._streak(signal, breach, self.t.memory_polls, now)
@@ -260,8 +279,9 @@ class Detector:
     def _streak(
         self, signal: Signal, breach: bool, needed: int, now: datetime, extra: object = None
     ) -> list[Outcome]:
-        key = (signal.subject.key, signal.kind, str(extra))
-        if not breach:
+        key = _reading_key(signal, extra)
+        failing = self._reading(key, breach, now)
+        if failing is None:
             self._streaks.pop(key, None)
             return []
         run = self._streaks.setdefault(key, [])
@@ -269,26 +289,42 @@ class Detector:
         if len(run) < needed:
             return []
         del self._streaks[key]
-        return self._emit(signal.subject, run, now)
+        return self._emit(signal.subject, run, now, failing)
 
     def _unreachable(self, signal: Signal, now: datetime) -> list[Outcome]:
         key = signal.subject.key
-        if signal.detail.get("ok", False):
+        reading = _reading_key(signal)
+        failing = self._reading(reading, not signal.detail.get("ok", False), now)
+        if failing is None:
             self._down_since.pop(key, None)
-            self._streaks.pop((key, "host_unreachable", "None"), None)
+            self._streaks.pop(reading, None)
             return []
         since = self._down_since.setdefault(key, now)
-        run = self._streaks.setdefault((key, "host_unreachable", "None"), [])
+        run = self._streaks.setdefault(reading, [])
         run.append(signal)
         if now - since < timedelta(seconds=self.t.host_unreachable_s):
             return []
         del self._down_since[key]
-        del self._streaks[(key, "host_unreachable", "None")]
-        return self._emit(signal.subject, run, now)
+        del self._streaks[reading]
+        return self._emit(signal.subject, run, now, failing)
+
+    def _reading(self, key: ReadingKey, failed: bool, now: datetime) -> FailingRun | None:
+        """The failing run this reading belongs to; None, and the run ends, when it passed."""
+        if not failed:
+            self._passed.add(key)
+            self._failing.pop(key, None)
+            return None
+        return self._failing.setdefault(key, FailingRun(now, key in self._passed))
 
     # -- debounce -----------------------------------------------------------------------------
 
-    def _emit(self, subject: Subject, signals: list[Signal], now: datetime) -> list[Outcome]:
+    def _emit(
+        self,
+        subject: Subject,
+        signals: list[Signal],
+        now: datetime,
+        run: FailingRun | None = None,
+    ) -> list[Outcome]:
         """The first qualifying signals open at once; later ones inside the window attach.
 
         Opening immediately keeps the latency of a real outage low and lets the manager treat
@@ -296,13 +332,17 @@ class Detector:
         """
         started = self._window_start.get(subject.key)
         if started is not None and now - started < timedelta(seconds=self.t.debounce_s):
-            return [AttachSignals(subject, signals)]
+            return [AttachSignals(subject, signals, run)]
         self._window_start[subject.key] = now
-        return [OpenIncident(subject, signals)]
+        return [OpenIncident(subject, signals, run)]
 
 
 def _key(signal: Signal) -> ContainerKey:
     return (signal.subject.host_id, signal.container or "")
+
+
+def _reading_key(signal: Signal, extra: object = None) -> ReadingKey:
+    return (signal.subject.key, signal.kind, str(extra))
 
 
 def _num(signal: Signal, key: str, default: float = 0) -> float:

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { HealthBadge } from "@/components/overview/health-badge";
+import { ENDED } from "@/components/incident/proposal-card";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import { subjectText } from "@/components/incident/incident-list";
 import { useOverall } from "@/components/overall-state";
@@ -27,6 +28,7 @@ import type {
   IncidentVotes,
   QuietView,
   ServiceDetail,
+  ServiceView,
 } from "@/lib/api-types";
 import { formatDateTime, formatSince } from "@/lib/format";
 import { quietLabel, sinceWords } from "@/lib/quiet-api";
@@ -184,6 +186,41 @@ function quietNote(quiet: QuietView): string {
   return `Bleep opens no incidents for it until ${label.replace(/^Snoozed until /, "")}.`;
 }
 
+/**
+ * The line under a service that is still down after its last incident ended: Bleep opens no new
+ * incident a minute for a failure it could not fix, so the page says the failure is still there.
+ */
+function StillFailing({
+  service,
+  last,
+}: {
+  service: ServiceView;
+  last: IncidentListItem | undefined;
+}) {
+  if (service.quiet || service.health !== "down" || service.open_incident_id !== null) return null;
+  if (!last || !ENDED.has(last.status)) return null;
+  const ended = last.closed_at ?? last.opened_at;
+  const checkFails = service.urls.some((url) => url.status === "failing");
+  return (
+    <p role="note" aria-label="Still failing" className="text-sm text-ink-2">
+      Still down after its last incident ended{" "}
+      <time dateTime={ended} title={formatDateTime(ended)}>
+        {formatSince(ended)}
+      </time>
+      :{" "}
+      <Link
+        href={`/incidents/${last.id}`}
+        className="font-bold text-accent hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      >
+        {last.title}
+      </Link>
+      .
+      {checkFails &&
+        " Bleep opens a new one once a check has passed, or after a wait that grows with each repeat, from an hour to a day."}
+    </p>
+  );
+}
+
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 /**
@@ -262,6 +299,7 @@ function Service({ id }: { id: string }) {
             {quietNote(service.quiet)}
           </p>
         )}
+        {service && incidents.data && <StillFailing service={service} last={incidents.data[0]} />}
         {service ? (
           <p className="text-sm text-ink-2">
             {service.source} service on <span className="font-mono">{service.host_id}</span>
