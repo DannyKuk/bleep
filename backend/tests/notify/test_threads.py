@@ -1,6 +1,7 @@
 """One Telegram thread per incident (#380): the opener, replies to it, one end message, Again."""
 
 import asyncio
+import gc
 import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
@@ -614,3 +615,15 @@ async def test_a_store_error_while_telling_never_reaches_the_run(env, monkeypatc
     monkeypatch.setattr(env.messages, "first_for", locked)
     await env.notifier.notice(incident.id, "The model budget is spent.")  # does not raise
     await env.notifier.report(incident, report(OUTCOME_TEXT["budget"]))
+
+
+async def test_an_incident_closed_outside_its_report_leaves_no_lock_behind(env):
+    env.repo.on_finished(env.notifier.incident_finished)
+    incident = await env.open()
+    await env.notifier.incident_opened(incident)
+    await env.repo.close_unfinished(incident.id)  # as `IncidentRunner.end` does, before it tells
+    await env.notifier.notice(incident.id, "Closed: the host was removed.", ending="removed")
+    await env.notifier.drain()
+    gc.collect()
+
+    assert len(env.chat.sent()) == 2 and len(env.notifier._threads) == 0

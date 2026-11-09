@@ -11,6 +11,7 @@ Approval node tells the dashboard when a plan could not be sent.
 import asyncio
 import logging
 import sqlite3
+import weakref
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -105,16 +106,15 @@ class Notifier:
         self.dashboard_url = dashboard_url
         self.clock = clock
         # One lock per incident with a message on its way, so the check for its opener and the
-        # log of the message that becomes it are one step (`_send`).
-        self._threads: dict[str, asyncio.Lock] = {}
+        # log of the message that becomes it are one step (`_send`). Weak: a lock lives as long
+        # as a send holds or waits for it, so finished incidents leave none behind.
+        self._threads: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
 
     async def incident_finished(self, incident_id: str) -> None:
         """Remove the buttons from every message logged for an incident that ended: a message
-        that still shows Approve, Reject or "It's expected" means the question is open. Its lock
-        goes too, unless a message holds it: its end message may still be on its way."""
-        lock = self._threads.get(incident_id)
-        if lock is not None and not lock.locked():
-            del self._threads[incident_id]
+        that still shows Approve, Reject or "It's expected" means the question is open."""
         if self.messages is not None:
             self._spawn(self.messages.ids_for_incident(incident_id))
 
@@ -378,7 +378,8 @@ class Notifier:
         message is sent as `instead` when the incident's end message went out already. One
         message of an incident at a time, so two can never both become its opener."""
         assert self.telegram is not None and self.chat_id is not None
-        async with self._threads.setdefault(incident.id, asyncio.Lock()):
+        lock = self._threads.setdefault(incident.id, asyncio.Lock())
+        async with lock:
             if end and self.messages is not None and await self.messages.ended(incident.id):
                 text, end = instead, False
             reply_to = await self.messages.first_for(incident.id) if self.messages else None
@@ -440,7 +441,7 @@ class Notifier:
         except TelegramError as error:
             log.warning("telegram: could not send: %s", error)
         except (sqlite3.Error, aiosqlite.Error, OSError) as error:
-            log.warning("telegram: could not keep the thread: %s", type(error).__name__)
+            log.warning("telegram: could not keep the thread: %s", error, exc_info=True)
 
 
 def _end_template(outcome: str) -> str:
