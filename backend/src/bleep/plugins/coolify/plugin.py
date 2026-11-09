@@ -27,6 +27,7 @@ See docs/design/plugins.md.
 """
 
 import asyncio
+import json
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -65,6 +66,8 @@ log = logging.getLogger(__name__)
 URL_ENV = "COOLIFY_URL"
 TOKEN_ENV = "COOLIFY_TOKEN"
 MESSAGE_CHARS = 200  # of one commit message in the deployments list
+COMPOSE_DOMAINS_MAX = 16_000  # chars of docker_compose_domains Bleep parses at all
+DOMAINS_CHARS = 500  # of one Compose application's domains in the list
 POLL_S = 10  # between reads of a running deployment
 DONE = {"finished"}
 ENDED = {"finished", "failed", "cancelled-by-user"}
@@ -77,6 +80,16 @@ _SHA = re.compile(r"[0-9a-fA-F]{7,64}")
 # What Coolify writes into the git fields of an application built without git: a Docker image,
 # or a Dockerfile typed into Coolify.
 PLACEHOLDER_REPO = "coollabsio/coolify"
+_SERVICE = re.compile(r"[\w.-]{1,64}", re.ASCII)  # a Compose service name
+_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+# One domain as Bleep takes it: scheme://[userinfo@]host[:port][/path, ?query or #fragment],
+# the host a DNS-style name or a bracketed IPv6 address, the rest printable ASCII without `,` or
+# `;`. Nothing in it can end a line, start another item or name another service.
+_URL = re.compile(
+    r"(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)(?P<userinfo>[^\s/?#@,;]*@)?"
+    rf"(?P<rest>(?:{_LABEL}(?:\.{_LABEL})*\.?|\[[0-9A-Fa-f:.]+\])"
+    r"(?::[0-9]{1,5})?(?:[/?#][\x21-\x2b\x2d-\x3a\x3c-\x7e]*)?)"
+)
 APPLICATIONS = (
     "List the Coolify applications: name, uuid, status (running:healthy, exited:unhealthy, ...),"
     " domains, git repo and branch, deployed commit and build pack. The ones whose containers"
@@ -185,6 +198,69 @@ def _source(a: CoolifyApplication) -> str:
     return repo + (f" commit={commit}" if commit else "")
 
 
+def _trimmed(text: str) -> str:
+    """`text` without the spaces and commas Coolify trims off a domain list's ends on save. A loop,
+    since a regex anchored at the end is quadratic on a long run of spaces inside the text."""
+    start, stop = 0, len(text)
+    while start < stop and (text[start] == "," or text[start].isspace()):
+        start += 1
+    while stop > start and (text[stop - 1] == "," or text[stop - 1].isspace()):
+        stop -= 1
+    return text[start:stop]
+
+
+def _url_list(text: str) -> str:
+    """`text` as Coolify trims it and without the userinfo `_URL` finds before each host, when
+    each comma item is a plain URL; an `@` in a path or query stays."""
+    urls = [_URL.fullmatch(item.strip()) for item in _trimmed(text).split(",")]
+    return ",".join(_without_userinfo(url) for url in urls)
+
+
+def _without_userinfo(url: re.Match[str] | None) -> str:
+    if url is None:
+        raise ValueError("not a list of URLs")
+    return url["scheme"] + url["rest"]
+
+
+def _service_domains(name: str, service: object) -> str | None:
+    """`name: domains` for one Compose service, None when it has no domain."""
+    if not _SERVICE.fullmatch(name) or not isinstance(service, dict):
+        raise ValueError("not a Compose service")
+    domain = service.get("domain")
+    if domain is not None and not isinstance(domain, str):
+        raise ValueError("not a domain list")
+    return f"{name}: {_url_list(domain)}" if domain else None
+
+
+def _compose_domains(raw: str) -> str:
+    """A Compose application's domains per service, `web: https://a,https://b; api: …`: `none`
+    when no service has one, `?` when `raw` is not what Coolify writes there."""
+    if len(raw) > COMPOSE_DOMAINS_MAX:
+        return "?"
+    try:
+        services = json.loads(raw) if raw.strip() else None
+        if services is None or services == {} or services == []:
+            return "none"
+        if not isinstance(services, dict):
+            return "?"
+        shown = [s for name, svc in services.items() if (s := _service_domains(name, svc))]
+    except ValueError, RecursionError:
+        return "?"
+    text = "; ".join(shown) or "none"
+    return text if len(text) <= DOMAINS_CHARS else text[: DOMAINS_CHARS - 1] + "…"
+
+
+def _domains(a: CoolifyApplication) -> str:
+    if a.fqdn:
+        try:
+            return _url_list(a.fqdn)
+        except ValueError:
+            return "?"
+    if a.docker_compose_domains is not None:
+        return _compose_domains(a.docker_compose_domains)
+    return "none"
+
+
 def _failed(error: CoolifyError) -> str:
     return f"Coolify could not be read: {error}."
 
@@ -195,10 +271,9 @@ def describe_applications(apps: list[CoolifyApplication], here: set[str]) -> str
     lines = ["Coolify applications:"]
     for a in sorted(apps, key=lambda a: (a.uuid not in here, a.name or "")):
         mark = " (on this host)" if a.uuid in here else ""
-        domains = _no_userinfo(a.fqdn) if a.fqdn else "none"
         lines.append(
             f"- {a.name or '?'} uuid={a.uuid}{mark} status={a.status or '?'} "
-            f"domains={domains}{_source(a)} build={a.build_pack or '?'}"
+            f"domains={_domains(a)}{_source(a)} build={a.build_pack or '?'}"
         )
     return "\n".join(lines)
 

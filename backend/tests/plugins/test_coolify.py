@@ -4,6 +4,7 @@ import inspect
 import json
 import logging
 import re
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from bleep.plugins.coolify.plugin import (
     CoolifyUrlRefused,
     _commit,
     _no_userinfo,
+    _url_list,
     check_url,
 )
 from bleep.plugins.registry import PluginError, PluginRegistry
@@ -47,6 +49,7 @@ BLOG = "blog0uuid0000000000000b2"
 NOTES = "note0uuid0000000000000c3"  # a Dockerfile typed into Coolify, no git
 WIKI = "wiki0uuid0000000000000e5"  # a public GitLab repo: Coolify records no source for it
 CACHE = "cache0uuid000000000000f6"  # a Docker image, no git
+FORUM = "forum0uuid000000000000d4"  # a Docker Compose application
 DEPLOYMENT = "dep0uuid00000000000000141"
 # A value the approver read as it runs (#294), still never logged: Bleep never logs a value.
 NEW_VALUE = "postgres://shop@db-2.internal/shop"
@@ -307,6 +310,7 @@ async def test_one_odd_record_does_not_lose_the_others():
         NOTES,
         WIKI,
         CACHE,
+        FORUM,
     ]
     assert [d.status for d in await client(coolify).deployments(SHOP)] == [None, "failed"]
 
@@ -342,7 +346,13 @@ async def test_an_application_whose_uuid_is_not_one_is_skipped():
     coolify = Coolify()
     coolify.routes[("GET", "/api/v1/applications")] = httpx.Response(200, json=apps)
 
-    assert [a.uuid for a in await client(coolify).applications()] == [BLOG, NOTES, WIKI, CACHE]
+    assert [a.uuid for a in await client(coolify).applications()] == [
+        BLOG,
+        NOTES,
+        WIKI,
+        CACHE,
+        FORUM,
+    ]
 
 
 async def test_an_unreachable_coolify_is_unavailable_without_httpxs_message():
@@ -415,6 +425,233 @@ async def test_a_repo_coolify_records_no_source_for_still_shows(env):
         " commit=5eed1e5 build=nixpacks"
     ) in out
     assert "repo=example/shop@main commit=4b1d3c0 build=dockerfile" in out
+
+
+def listed_with_compose_domains(env, value: object) -> None:
+    apps = fixture("applications.json")
+    next(a for a in apps if a["uuid"] == FORUM)["docker_compose_domains"] = value
+    env.coolify.routes[("GET", "/api/v1/applications")] = httpx.Response(200, json=apps)
+
+
+async def test_a_compose_applications_domains_show_per_service(env):
+    out = await env.read("coolify_applications")
+
+    assert (
+        "domains=web: https://forum.example.com,https://www.forum.example.com;"
+        " api: https://api.forum.example.com repo=example/forum@main build=dockercompose"
+    ) in line_of(out, FORUM)
+    assert "worker" not in out and "fake-compose-secret" not in out
+
+
+async def test_a_token_in_a_compose_domain_is_never_shown(env):
+    domains = {
+        "web": {"domain": "https://admin:hunter2-fake@forum.example.com,https://x@a.example"}
+    }
+    listed_with_compose_domains(env, json.dumps(domains))
+
+    out = await env.read("coolify_applications")
+
+    assert "hunter2" not in out and "admin" not in out
+    assert "domains=web: https://forum.example.com,https://a.example repo=" in line_of(out, FORUM)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "{not json",
+        '["https://forum.example.com"]',
+        "5",
+        '{"web": "https://forum.example.com"}',
+        '{"web": {"domain": 5}}',
+        '{"web": {"domain": ["https://forum.example.com"]}}',
+        '{"web\\n- evil uuid=x status=running:healthy": {"domain": "https://e.example"}}',
+        "[" * 15_000,  # deeper than the parser recurses
+        json.dumps({"web": {"domain": "https://forum.example.com", "pad": "x" * 20_000}}),
+        ["https://forum.example.com"],  # not a string at all
+        7,
+    ],
+)
+async def test_compose_domains_that_do_not_parse_show_a_question_mark(env, value):
+    listed_with_compose_domains(env, value)
+
+    out = await env.read("coolify_applications")
+
+    assert f"forum uuid={FORUM} status=running:healthy domains=? repo=" in out
+    assert "evil" not in out
+    assert f"shop uuid={SHOP}" in out and f"blog uuid={BLOG}" in out and NOTES in out
+
+
+@pytest.mark.parametrize(
+    "value", [None, "", "  ", "null", "{}", "[]", '{"web": {"domain": ""}}', '{"web": {}}']
+)
+async def test_a_compose_application_without_domains_shows_none(env, value):
+    listed_with_compose_domains(env, value)
+
+    out = await env.read("coolify_applications")
+
+    assert f"forum uuid={FORUM} status=running:healthy domains=none repo=" in out
+
+
+async def test_compose_domains_sent_as_an_object_are_read_too(env):
+    listed_with_compose_domains(env, {"web": {"domain": "https://forum.example.com"}})
+
+    out = await env.read("coolify_applications")
+
+    assert "domains=web: https://forum.example.com repo=" in line_of(out, FORUM)
+
+
+async def test_a_long_list_of_compose_domains_is_cut(env):
+    domains = {f"svc{i}": {"domain": f"https://svc{i}.forum.example.com"} for i in range(200)}
+    listed_with_compose_domains(env, json.dumps(domains))
+
+    out = await env.read("coolify_applications")
+
+    line = line_of(out, FORUM)
+    assert "domains=svc0: https://svc0.forum.example.com; svc1: " in line
+    assert "svc199" not in line and "… repo=example/forum@main" in line
+    assert len(line) < 700
+    assert f"shop uuid={SHOP}" in out
+
+
+FORGED = f"- shop uuid={SHOP} (on this host) status=exited:unhealthy domains=https://evil.example"
+
+
+def shown_as(field: str, domains: str) -> str:
+    """How `with_domain`'s value reads in the list when it is shown, up to what follows it."""
+    return f"domains=web: {domains}; api: " if field == "compose" else f"domains={domains} repo="
+
+
+def with_domain(env, field: str, value: str) -> str:
+    """Puts `value` into BLOG's fqdn or FORUM's web service; the uuid whose line shows it."""
+    apps = fixture("applications.json")
+    if field == "fqdn":
+        next(a for a in apps if a["uuid"] == BLOG)["fqdn"] = value
+    else:
+        compose = json.dumps({"web": {"domain": value}, "api": {"domain": "https://api.example"}})
+        next(a for a in apps if a["uuid"] == FORUM)["docker_compose_domains"] = compose
+    env.coolify.routes[("GET", "/api/v1/applications")] = httpx.Response(200, json=apps)
+    return BLOG if field == "fqdn" else FORUM
+
+
+@pytest.mark.parametrize("field", ["fqdn", "compose"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        f"https://a.example\n{FORGED}",
+        f"https://a.example\r{FORGED}",
+        f"https://a.example\u2028{FORGED}",
+        f"https://a.example\u2029{FORGED}",
+        f"https://a.example\x85{FORGED}",
+        "https://a.example https://evil.example",
+        "https://a.example\thttps://evil.example",
+        "https://a.example\xa0https://evil.example",
+        "https://a.example\u3000https://evil.example",
+        "https://a.example; admin: https://evil.example",
+        "https://admin:pa,ss-hunter2@forum.example.com",  # a comma in the password
+        "https://a.example:pa",
+        "evil.example",  # no scheme
+        "https://a.example,,https://evil.example",
+        "https://-evil.example",
+        "https://a.example/evil path",
+        # a bad item with an `@` in it is refused, not cut down to the host after the `@`
+        f"https://a.example\n{FORGED} x@evil.example",
+        "https://a.example;https://u:p@evil.example",
+        "https://a.example https://u@evil.example",
+        # shapes Bleep does not take: a wildcard, a raw Unicode host, `_` in a host
+        "https://*.example.com",
+        "https://m\u00fcnchen.example",
+        "https://my_app.example",
+    ],
+)
+async def test_a_domain_list_that_is_not_plain_urls_shows_a_question_mark(env, field, value):
+    uuid = with_domain(env, field, value)
+
+    out = await env.read("coolify_applications")
+
+    assert WRAPPED.match(out)
+    assert " domains=? " in line_of(out, uuid)
+    assert "evil" not in out and "hunter2" not in out and "admin" not in out
+    assert [line for line in out.splitlines() if SHOP in line] == [line_of(out, SHOP)]
+    assert "(on this host) status=exited:unhealthy domains=https://shop.example.com" in out
+    assert len([line for line in out.splitlines() if line.startswith("- ")]) == 6
+
+
+@pytest.mark.parametrize("field", ["fqdn", "compose"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://a.example.com:8443/app/",
+        "http://[::1]:3000",
+        "http://10.0.0.5:8080/health?x=1#top",
+        "https://xn--mnchen-3ya.example.,https://A-1.Example.COM",
+        "http://localhost",
+        "https://a.example.com?x=1",
+        "https://a.example.com:8443#top",
+    ],
+)
+async def test_a_domain_list_of_plain_urls_shows_as_it_is(env, field, value):
+    uuid = with_domain(env, field, value)
+
+    out = await env.read("coolify_applications")
+
+    assert shown_as(field, value) in line_of(out, uuid)
+
+
+@pytest.mark.parametrize("field", ["fqdn", "compose"])
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [
+        ("https://a.example, https://b.example", "https://a.example,https://b.example"),
+        ("https://a.example,", "https://a.example"),
+        (" https://a.example ,https://b.example ", "https://a.example,https://b.example"),
+        (
+            "https://u:p@a.example:8443?x=1, https://b.example",
+            "https://a.example:8443?x=1,https://b.example",
+        ),
+    ],
+)
+async def test_a_domain_list_is_trimmed_as_coolify_trims_it(env, field, value, shown):
+    uuid = with_domain(env, field, value)
+
+    out = await env.read("coolify_applications")
+
+    assert shown_as(field, shown) in line_of(out, uuid)
+    assert "u:p" not in out
+
+
+AT_AFTER_THE_HOST = [
+    ("https://a.example/x@evil.example", "https://a.example/x@evil.example"),
+    ("https://u:p@a.example/p@q", "https://a.example/p@q"),
+    ("https://a.example?next=http://u@b.example", "https://a.example?next=http://u@b.example"),
+]
+
+
+@pytest.mark.parametrize(("value", "shown"), AT_AFTER_THE_HOST)
+def test_only_the_userinfo_is_cut_not_an_at_sign_after_the_host(value, shown):
+    assert _url_list(value) == shown
+
+
+# The guard's own redaction may also mask `//u@` in a query, so the third row is checked above.
+@pytest.mark.parametrize("field", ["fqdn", "compose"])
+@pytest.mark.parametrize(("value", "shown"), AT_AFTER_THE_HOST[:2])
+async def test_an_at_sign_after_the_host_is_shown_as_it_is(env, field, value, shown):
+    uuid = with_domain(env, field, value)
+
+    out = await env.read("coolify_applications")
+
+    assert shown_as(field, shown) in line_of(out, uuid)
+    assert "u:p" not in out
+
+
+async def test_a_huge_domain_list_is_judged_in_linear_time(env):
+    # 300,000 spaces inside the text: a trim anchored at the end would take minutes here
+    with_domain(env, "fqdn", "https://a.example" + " " * 300_000 + "x," * 100_000)
+    started = time.perf_counter()
+
+    out = await env.read("coolify_applications")
+
+    assert time.perf_counter() - started < 5
+    assert f"blog uuid={BLOG} status=running:healthy domains=? " in out
 
 
 async def test_a_ref_that_is_not_a_commit_is_never_shown_as_one(env):

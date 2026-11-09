@@ -6,13 +6,21 @@ uuid or key may be null, so one odd record reads as unknowns. Text fields are se
 by a commit, so they are untrusted wherever they go next.
 """
 
+import json
 import re
+from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 
 # What Bleep accepts as a Coolify uuid; it goes into request paths. Coolify's are 24 [a-z0-9].
 UUID = re.compile(r"[A-Za-z0-9-]{1,64}")
 _UUID_FIELD = rf"^{UUID.pattern}$"
+
+
+def _as_json(value: object) -> object:
+    """A JSON field Coolify may one day send decoded, written back as the text it sends now, so
+    an odd value reads as unparsable instead of losing the whole application."""
+    return value if value is None or isinstance(value, str) else json.dumps(value)
 
 
 class CoolifyApplication(BaseModel):
@@ -20,6 +28,9 @@ class CoolifyApplication(BaseModel):
     name: str | None = None
     status: str | None = None  # "running:healthy", "exited:unhealthy", ...
     fqdn: str | None = None  # the application's domains, comma separated
+    # A Compose application's domains instead of fqdn, per service, as a JSON string:
+    # {"web": {"domain": "https://a.example.com,https://www.a.example.com", ...}, ...}
+    docker_compose_domains: Annotated[str | None, BeforeValidator(_as_json)] = None
     git_repository: str | None = None
     git_branch: str | None = None
     git_commit_sha: str | None = None
