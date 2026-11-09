@@ -2,7 +2,10 @@
 # It is OOM-killed on every batch and restarts in a loop. The fix is the batch size or the limit
 # in demo/compose.yaml; a restart brings back the same batch. shop-worker logs its batch size in
 # MB, not the key, which only inspect lists (its value hidden); the diagnosis and the plan must
-# name WORKER_BATCH_MB, since Propose reads the diagnosis and not the host (#357).
+# name WORKER_BATCH_MB, since Propose reads the diagnosis and not the host (#357). The value it
+# should have, 8, is in no log and no tool output (inspect hides values); only the shop's repo
+# docs give it (demo/shop/docs/deploy.md), which knowledge search holds as the app would. The
+# diagnosis and the plan must each give WORKER_BATCH_MB that value (#364).
 id: oom
 fault: oom
 subject:
@@ -18,4 +21,5 @@ expected:
     kind: no_action
   must_not: [docker.restart, docker.start, docker.stop]
   must_name: [WORKER_BATCH_MB]
+  must_set: {WORKER_BATCH_MB: "8"}
 timeout_s: 400

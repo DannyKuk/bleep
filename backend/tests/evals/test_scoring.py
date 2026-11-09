@@ -12,6 +12,7 @@ from evals.scenarios import (
     score_category,
     score_names,
     unnamed,
+    unset,
     word_hits,
 )
 
@@ -334,3 +335,73 @@ def test_a_name_in_the_instructions_the_reason_or_a_steps_params_counts_for_the_
 )
 def test_a_name_counts_only_whole_and_in_its_own_case(text, name, found):
     assert (unnamed(text, [name]) == []) is found
+
+
+def oom(**settings: str) -> Expected:
+    return expected("no_action", category="resource", must_set=settings)
+
+
+def test_a_setting_counts_only_with_its_value_in_the_same_sentence():
+    """The live miss of #364: the key was named, but no step looked up the value it should
+    have, so the plan had none to give."""
+    batch = oom(WORKER_BATCH_MB="8")
+    looked_up = diagnosed(
+        "shop-worker's WORKER_BATCH_MB=256 is past its 64 MB limit.",
+        "The shop's deploy docs give WORKER_BATCH_MB a default of 8.",
+    )
+    guessed = diagnosed("shop-worker's WORKER_BATCH_MB=256 is past its 64 MB limit.")
+    assert score_names(batch, looked_up, None).diagnosis_unnamed == []
+    assert score_names(batch, guessed, None).diagnosis_unnamed == ["WORKER_BATCH_MB=8"]
+    told_value = told("Set WORKER_BATCH_MB to 8 in demo/compose.yaml, then docker compose up -d.")
+    no_value = told("Lower WORKER_BATCH_MB in demo/compose.yaml. No safe value is documented.")
+    assert score_names(batch, None, told_value).plan_unnamed == []
+    assert score_names(batch, None, no_value).plan_unnamed == ["WORKER_BATCH_MB=8"]
+
+
+def test_a_scenario_with_settings_only_is_scored_and_names_and_settings_add_up():
+    both = expected(
+        "no_action", category="resource", must_name=["WORKER_BATCH_MB"],
+        must_set={"WORKER_BATCH_MB": "8"},
+    )  # fmt: skip
+    only = score_names(oom(WORKER_BATCH_MB="8"), diagnosed("anything"), None)
+    assert only.diagnosis_unnamed == ["WORKER_BATCH_MB=8"]
+    left_out = score_names(both, diagnosed("The batch is too big."), nothing())
+    assert left_out.diagnosis_unnamed == ["WORKER_BATCH_MB", "WORKER_BATCH_MB=8"]
+    assert left_out.plan_unnamed == ["WORKER_BATCH_MB", "WORKER_BATCH_MB=8"]
+
+
+def test_a_set_env_step_with_the_key_and_value_gives_the_setting():
+    timer = oom(TESTAPP_FAIL_AFTER_S="0")
+
+    def set_env(value: str) -> PlanStep:
+        params = {"key": "TESTAPP_FAIL_AFTER_S", "value": value}
+        return PlanStep(action="coolify.set_env", host_id="demo", target="testapp", params=params)
+
+    right = Proposal(kind="act", steps=[set_env("0")], reason="Turn the timer off.")
+    wrong = Proposal(kind="act", steps=[set_env("600")], reason="Give it longer.")
+    assert score_names(timer, None, right).plan_unnamed == []
+    assert score_names(timer, None, wrong).plan_unnamed == ["TESTAPP_FAIL_AFTER_S=0"]
+
+
+@pytest.mark.parametrize(
+    ("text", "found"),
+    [
+        ("Set WORKER_BATCH_MB=8.", True),
+        ("Set `WORKER_BATCH_MB` back to `8` and recreate shop-worker.", True),
+        ("WORKER_BATCH_MB: 8MB per batch, its documented default.", True),
+        ("Use 8, the documented default of WORKER_BATCH_MB.", True),
+        ("Set WORKER_BATCH_MB=80.", False),
+        ("WORKER_BATCH_MB=256 is past the 64 MB limit.", False),
+        ("Set WORKER_BATCH_MB=8.5 in the file.", False),
+        ("Set worker_batch_mb to 8.", False),
+        ("Lower WORKER_BATCH_MB. Its docs give 8.", False),
+        ("Lower WORKER_BATCH_MB\nto 8.", False),
+    ],
+)
+def test_a_value_counts_only_whole_and_beside_its_key(text, found):
+    assert (unset(text, {"WORKER_BATCH_MB": "8"}) == []) is found
+
+
+def test_a_word_value_ends_where_a_word_would_go_on():
+    assert unset("Set APP_MODE=safe.", {"APP_MODE": "safe"}) == []
+    assert unset("Set APP_MODE=safer.", {"APP_MODE": "safe"}) == ["APP_MODE=safe"]

@@ -35,7 +35,9 @@ class RunInfo(BaseModel):
     once grades by hand are applied: who graded, and the grades file as the report links it.
     `reset_shop` says the shop's containers were recreated before every run (#104); batches
     from before the reset have it false. `knowledge` says the model was offered
-    `knowledge_search` over the Docker docs snapshot (#39); batches from before it have it false."""
+    `knowledge_search` over the Docker docs snapshot (#39); batches from before it have it false.
+    `repo_docs` names the linked repo docs it searched as well, read from this checkout (#364);
+    batches from before them have none."""
 
     started_at: datetime
     finished_at: datetime
@@ -48,6 +50,7 @@ class RunInfo(BaseModel):
     command: str
     reset_shop: bool = False
     knowledge: bool = False
+    repo_docs: list[str] = Field(default_factory=list)
     raw: str
     report: str | None = None
     grader: str | None = None
@@ -280,8 +283,8 @@ def _scenario_section(scenario: Scenario, results: list[ScenarioResult]) -> list
         f"- Expected category `{expected.category}`, plan {_expected_plan(scenario)}"
         + (f", never {never}" if never else ""),
         *(
-            [f"- Must name {_names(expected.must_name)}, in the diagnosis and in the plan"]
-            if expected.must_name
+            [f"- Must name {_names(must)}, in the diagnosis and in the plan"]
+            if (must := [*expected.must_name, *(f"{k}={v}" for k, v in expected.must_set.items())])
             else []
         ),
         "",
@@ -475,7 +478,12 @@ def render(info: RunInfo, results: list[ScenarioResult], regrade: str | None = N
             else ""
         )
         + (
-            " Knowledge search was offered over the shipped Docker docs snapshot, as in the app."
+            " Knowledge search was offered over the shipped Docker docs snapshot, as in the app"
+            + (
+                f", and the linked repo docs {_names(info.repo_docs)}, read from this checkout."
+                if info.repo_docs
+                else "."
+            )
             if info.knowledge
             else ""
         ),
