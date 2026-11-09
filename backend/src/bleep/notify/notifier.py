@@ -57,6 +57,7 @@ from bleep.schemas.settings import SecretStatus
 from bleep.schemas.telegram import TelegramStatus
 from bleep.store.db import Database
 from bleep.store.secrets import SecretStore, Source
+from bleep.talk.conversation import Talk
 
 log = logging.getLogger(__name__)
 
@@ -556,7 +557,10 @@ class NotifySetup:
             self._task = asyncio.create_task(self.bot.poll_forever(), name="telegram poller")
 
     async def stop(self) -> None:
-        """Stop polling. The client stays open: runs and reminders still send until they stop."""
+        """Stop polling and answering. The client stays open: runs and reminders still send
+        until they stop."""
+        if self.bot is not None:
+            await self.bot.stop_talking()
         if self._task is not None:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
@@ -580,11 +584,13 @@ def setup(
     incidents: IncidentRepo | None = None,
     quiet: QuietStore | None = None,
     zone: Callable[[], tzinfo | None] | None = None,
+    talk: Talk | None = None,
 ) -> NotifySetup:
     """Build the notifier, and the bot too when a token and a chat id are configured: from
     `secrets` when given (the env, else the dashboard), else from `settings`. With `incidents`
     and `quiet` an incident's opener offers "🤫 I'm on it", its times in the zone `zone` gives at
-    each message (the settings page's choice), else in `settings.zone`.
+    each message (the settings page's choice), else in `settings.zone`. With `talk` the bot
+    answers what the person writes (#401); without it, a text is only a plan's instruction.
 
     The runner does not exist yet when the graph's dependencies are built, so `start(runner)`
     gives it to the bot later; `reload()` builds the bot again after a change on the dashboard.
@@ -611,6 +617,7 @@ def setup(
             incidents=incidents,
             quiet=quiet,
             zone=zone,
+            talk=talk,
         )
 
     if token is None or chat_id is None:
@@ -636,6 +643,7 @@ def setup(
         messages=messages,
         guard_log=guard_log,
         on_it=on_it,
+        talk=talk,
     )
     notifier = Notifier(
         bus,

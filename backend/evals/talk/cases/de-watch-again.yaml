@@ -1,0 +1,12 @@
+id: de-watch-again
+lang: de
+about: End a service's quiet, in German.
+state: busy
+text: pass wieder auf backup-job auf
+expect:
+  kind: action
+  action:
+    kind: watch_again
+    subject:
+    - backup-job
+    - m1/compose:backup-job

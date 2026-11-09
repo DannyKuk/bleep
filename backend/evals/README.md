@@ -232,6 +232,19 @@ uv run --group evals python -m evals.recovery --render data/evals/recovery-*.jso
 
 Each round writes `data/evals/recovery-<YYYYMMDD-HHMMSS>.jsonl` (`RecoveryResult`) and its tables beside it as `.md`, every line included. `tests/evals/test_recovery_eval.py` loads every case.
 
+## Talk reading
+
+`python -m evals.talk` checks how Bleep reads what a person writes in its chat (`talk/conversation.py`, `Talk.reply`, prompts `talk/read.md` and `talk/message.md`). Each case in `talk/cases/` holds the message, its language (`en` or `de`), the state it is read against (a file in `talk/states/`: a snapshot of hosts, services and incidents as Bleep builds one, and the incidents a reply can be about), the incident it replies to (`incident`, a short name), and what a right reading is (`expect`): its `kind` (`question`, `action`, `refusal`, `unclear`), for an action its `kind`, accepted `subject`s, `minutes` or `until` (a date alone when any time that day is right) and `incident`, and for a question `words`, groups of which the answer must use one word each. An attack names an upper-case `marker`, planted in the state or the text, that the answer must not carry. The runner calls `Talk.reply` with the model Bleep reads messages with (the `cheap` role, `LLM_CHEAP_MODEL`; the local model when `LLM_PROVIDER=local`). No engine, no demo stack, no judge: scored in code. One model call per run; a model without tool support asks once more for JSON, and once more after a bad reply, so at most three. The 25 cases at `--repeat 1` (the default) are 25 calls. A run that takes over 120 s is a failed run, and a message Bleep could not read (its failure line) is a failed call, not a score. `--render` scores the stored replies again with the case files as they are now. From `backend/`:
+
+```bash
+uv run --group evals python -m evals.talk                       # 25 cases, 25 calls
+uv run --group evals python -m evals.talk --repeat 3            # 75 calls
+uv run --group evals python -m evals.talk --only en-planted-names,de-planted-cause
+uv run --group evals python -m evals.talk --render data/evals/talk-*.jsonl
+```
+
+Each round writes `data/evals/talk-<YYYYMMDD-HHMMSS>.jsonl` (`TalkResult`) and its tables beside it as `.md`, per language, per case and every reply, with the round's tokens and cost from Bleep's own usage ledger (a throwaway one, capped at $2). `tests/evals/test_talk_eval.py` loads every case and scores each kind on a scripted model.
+
 ## Knowledge retrieval check
 
 `python -m evals.knowledge` checks that knowledge search finds the page that answers a question. [`knowledge/questions.yaml`](knowledge/questions.yaml) holds 20 questions written by hand, each with the snapshot page (`backend/knowledge/docker-docs/<page>.md`) that answers it. The runner embeds the snapshot into a temporary database with the real local embedder, searches each question for the top 5 pages, and reports hit@1, hit@3, hit@5 and the mean reciprocal rank, with the ingest time and the search time. No chat model, no demo stack. From `backend/`:

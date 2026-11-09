@@ -1,0 +1,7 @@
+id: en-unclear
+lang: en
+about: A message that asks nothing.
+state: busy
+text: hmm
+expect:
+  kind: unclear

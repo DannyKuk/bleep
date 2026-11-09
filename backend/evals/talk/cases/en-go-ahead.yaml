@@ -1,0 +1,11 @@
+id: en-go-ahead
+lang: en
+about: Agreeing to the waiting plan shows its own buttons; it never approves it.
+state: busy
+incident: 'shop #14'
+text: yes, do it
+expect:
+  kind: action
+  action:
+    kind: show_plan
+    incident: 'shop #14'

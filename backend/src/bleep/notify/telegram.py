@@ -2,8 +2,9 @@
 
 `TelegramClient` makes the calls; `TelegramBot` polls `getUpdates` and turns what the one
 configured chat says into decisions. A button press is `approve:<approval id>` or
-`reject:<approval id>`, `expected`, or `onit` and then `onit:<choice>` (a snooze); a reply to any
-message about an incident is an instruction for its plan.
+`reject:<approval id>`, `expected`, or `onit` and then `onit:<choice>` (a snooze). Any text is
+answered through `talk` from Bleep's own state (#401), and changes nothing; a reply to a message
+whose plan waits is still an instruction for it unless it reads as a question or a refusal.
 Decisions go through `approvals.resolve`, so the dashboard and Telegram race fairly: the winner
 resumes the run, the loser is told which channel won. Updates from any other chat are dropped and
 written to the guard log. The bot token is in every Bot API URL, so no error or log line here
@@ -30,6 +31,8 @@ from bleep.notify.format import answer, phrase, shows_in_full, when
 from bleep.schemas.graph import Decision
 from bleep.schemas.incidents import TERMINAL_STATUSES
 from bleep.store.db import Database
+from bleep.talk.conversation import Talk
+from bleep.talk.history import Turns
 
 log = logging.getLogger(__name__)
 
@@ -334,6 +337,7 @@ class TelegramBot:
         clock: Callable[[], datetime] = utcnow,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         on_it: OnIt | None = None,
+        talk: Talk | None = None,
     ) -> None:
         self.chat_id = str(chat_id)
         self.approvals = approvals
@@ -345,6 +349,10 @@ class TelegramBot:
         self._sleep = sleep
         self.expectations: Expecting | None = None
         self.on_it = on_it
+        self.talk = talk
+        self.turns = Turns()  # this chat's last turns, for the next message's context
+        self._talking: set[asyncio.Task[None]] = set()
+        self._talk_turn = asyncio.Lock()
         self._offset: int | None = None
         self.last_poll: datetime | None = None  # the last getUpdates that Telegram answered
 
@@ -532,32 +540,85 @@ class TelegramBot:
         return shows_in_full(current.proposal)
 
     async def _text(self, message: dict[str, Any]) -> None:
-        """A reply to a message about an incident instructs a plan: the one the message showed
-        (so a replaced plan is answered as stale), or, for a message that showed none, the plan
-        that waits for a decision on its incident now."""
+        """With `talk`, the message is answered in the background (`_answer`), so a slow model
+        never holds a button press behind it. Without it, a reply to a message about an incident
+        instructs its plan (`_instruct`) and any other text is told how to give one."""
+        if self.talk is not None:
+            task = asyncio.create_task(self._answer_safely(message), name="telegram talk")
+            self._talking.add(task)
+            task.add_done_callback(self._talking.discard)
+            return
         reply_to = message.get("reply_to_message", {}).get("message_id")
         known = await self.messages.get(reply_to) if reply_to else None
         reply = message["message_id"]
         if known is None:
-            await self.client.send_message(
-                self.chat_id, answer("answer_no_reply"), reply_to=reply, markdown=False
-            )
+            await self._say(answer("answer_no_reply"), reply)
             return
         text = message["text"].strip()
         if len(text) > INSTRUCTION_MAX_CHARS:
-            note = answer("answer_too_long", limit=str(INSTRUCTION_MAX_CHARS))
-            await self.client.send_message(self.chat_id, note, reply_to=reply, markdown=False)
+            await self._say(answer("answer_too_long", limit=str(INSTRUCTION_MAX_CHARS)), reply)
             return
-        incident_id, approval_id = known
+        await self._say(await self._instruct(*known, text), reply)
+
+    async def _answer_safely(self, message: dict[str, Any]) -> None:
+        """`_answer`, one message at a time in the order they came; an error is logged, as
+        `poll_once` logs one, and never reaches the poller."""
+        try:
+            async with self._talk_turn:
+                await self._answer(message)
+        except TelegramError as error:
+            log.warning("telegram: could not answer a message: %s", error)
+        except Exception:
+            log.exception("telegram: answering a message failed")
+
+    async def _answer(self, message: dict[str, Any]) -> None:
+        """Answer what the person wrote through `talk`, which reads and never changes anything.
+        A reply to a message about an incident is about that incident. Until replies are
+        confirmed with a button (#402), a reply to a message whose plan would take it as an
+        instruction still instructs that plan, as before, unless it reads as a question or a
+        refusal; so does one Bleep could not read."""
+        assert self.talk is not None
+        reply = message["message_id"]
+        text = message["text"].strip()
+        if len(text) > INSTRUCTION_MAX_CHARS:
+            await self._say(answer("answer_too_long", limit=str(INSTRUCTION_MAX_CHARS)), reply)
+            return
+        reply_to = message.get("reply_to_message", {}).get("message_id")
+        known = await self.messages.get(reply_to) if reply_to else None
+        incident_id = known[0] if known is not None else None
+        to_plan = known is not None and bool(known[1] or await self._waiting(known[0]))
+        said = await self.talk.reply(text, incident_id, self.turns.recent())
+        if known is not None and to_plan and said.kind not in ("question", "refusal"):
+            note = await self._instruct(*known, text)
+        else:
+            note = said.answer
+        self.turns.add(text, note)
+        await self._say(note, reply)
+
+    async def _say(self, text: str, reply_to: int) -> None:
+        await self.client.send_message(self.chat_id, text, reply_to=reply_to, markdown=False)
+
+    async def settle(self) -> None:
+        """Wait for the messages being answered (tests, and a stop that lets them finish)."""
+        while self._talking:
+            await asyncio.gather(*list(self._talking), return_exceptions=True)
+
+    async def stop_talking(self) -> None:
+        """Cut off the messages being answered: the bot is stopping."""
+        for task in list(self._talking):
+            task.cancel()
+        await asyncio.gather(*list(self._talking), return_exceptions=True)
+
+    async def _instruct(self, incident_id: str, approval_id: str, text: str) -> str:
+        """Instruct a plan with `text`: the one the message showed (so a replaced plan is
+        answered as stale), or, for a message that showed none, the plan that waits for a
+        decision on its incident now. Returns what to tell the person."""
         if not approval_id:
             approval_id = await self._waiting(incident_id)
         if not approval_id:
-            note = answer("answer_not_waiting")
-            await self.client.send_message(self.chat_id, note, reply_to=reply, markdown=False)
-            return
+            return answer("answer_not_waiting")
         decision = Decision(kind="instruct", text=text, via="telegram", at=self.clock())
-        note = await self._resolve(incident_id, approval_id, decision)
-        await self.client.send_message(self.chat_id, note, reply_to=reply, markdown=False)
+        return await self._resolve(incident_id, approval_id, decision)
 
     async def _waiting(self, incident_id: str) -> str:
         """The id of the incident's plan that waits for a decision now; empty when none does."""

@@ -53,10 +53,13 @@ from bleep.plugins.urls import Resolver
 from bleep.schemas.settings import MODEL_KEY_ENV
 from bleep.store.db import Database
 from bleep.store.secrets import SecretName, SecretStore
+from bleep.talk.conversation import Talk
+from bleep.talk.state import BleepState
 from bleep.tools.default import default_registry
 from bleep.tools.docker_act import docker_act_tools
 from bleep.watcher.health_store import HealthStore
 from bleep.watcher.http_checks import UrlCheckStore
+from bleep.watcher.overview import Overview
 
 
 @dataclass
@@ -86,6 +89,7 @@ class AppParts:
     service_health: HealthStore
     secrets: SecretStore
     dashboard_hosts: DashboardHosts
+    talk: Talk
 
 
 # Every plugin Bleep has; each is off until a person switches it on.
@@ -213,15 +217,6 @@ def build_parts(
     github = GithubClient(github_token_source(github_config, secrets))
     bus, incidents, quiet = EventBus(db), IncidentRepo(db), QuietStore(db)
     approvals, guard_log = ApprovalStore(db, settings.secret), GuardLog(db)
-    notify = setup_notify(
-        settings, db, bus, approvals, guard_log, secrets=secrets, incidents=incidents, quiet=quiet,
-        zone=lambda: store.zone(),  # the store is built below; Telegram reads it at each message
-    )  # fmt: skip
-    incidents.on_finished(notify.notifier.incident_finished)
-    approvals.on_decided(notify.notifier.approval_decided)
-    embedder = embedder or build_embedder(settings, secrets)  # one model, loaded once, for both
-    memory = MemoryStore(db, embedder)
-    knowledge = KnowledgeIndex(db, embedder)
     plugin_registry = PluginRegistry(
         plugins,
         settings.secret,
@@ -234,6 +229,26 @@ def build_parts(
         db, registry, plugin_registry, secrets=secrets, dashboard=dashboard_hosts,
         timezone=settings.timezone,
     )  # fmt: skip
+    url_checks = UrlCheckStore(db)
+    overview = Overview(registry, incidents, quiet, url_checks)
+    talk = build_talk(settings, db, overview, incidents, approvals, bus, store, guard_log)
+    notify = setup_notify(
+        settings,
+        db,
+        bus,
+        approvals,
+        guard_log,
+        secrets=secrets,
+        incidents=incidents,
+        quiet=quiet,
+        zone=store.zone,  # the settings page's choice, read at each message
+        talk=talk,
+    )
+    incidents.on_finished(notify.notifier.incident_finished)
+    approvals.on_decided(notify.notifier.approval_decided)
+    embedder = embedder or build_embedder(settings, secrets)  # one model, loaded once, for both
+    memory = MemoryStore(db, embedder)
+    knowledge = KnowledgeIndex(db, embedder)
     incidents.fold_window_h = lambda: store.thresholds().fold_window_h
     tracer = tracer or ReloadingTracer(secrets.get)
     subscribe_reloads(secrets, notify, store, tracer)
@@ -274,10 +289,34 @@ def build_parts(
             knowledge, reports=memory, repos=GithubRepoDocs(github, registry)
         ),
         prompt_overrides=PromptOverrideStore(db, guard_log),
-        url_checks=UrlCheckStore(db),
+        url_checks=url_checks,
         service_health=HealthStore(db),
         secrets=secrets,
         dashboard_hosts=dashboard_hosts,
+        talk=talk,
+    )
+
+
+def build_talk(
+    settings: Settings,
+    db: Database,
+    overview: Overview,
+    incidents: IncidentRepo,
+    approvals: ApprovalStore,
+    bus: EventBus,
+    store: SettingsStore,
+    guard_log: GuardLog,
+) -> Talk:
+    """The conversation both surfaces answer with: Telegram's bot, and later the dashboard's
+    panel. It reads the watcher's overview as its health, the cheap model from the settings in
+    force, and counts its calls in the usage ledger under the daily cap."""
+    state = BleepState(overview, incidents, approvals, bus, zone=store.zone)
+    return Talk(
+        state,
+        model_factory(store),
+        budgets=store.budgets,
+        ledger=CostLedger(db),
+        guard_log=guard_log,
     )
 
 

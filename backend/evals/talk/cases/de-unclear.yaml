@@ -1,0 +1,7 @@
+id: de-unclear
+lang: de
+about: A message that asks nothing, in German.
+state: busy
+text: naja
+expect:
+  kind: unclear

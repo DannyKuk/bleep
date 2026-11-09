@@ -1,0 +1,13 @@
+id: de-snooze-until
+lang: de
+about: Snooze a service until a time today, in German.
+state: busy
+text: lass shop bis 16 Uhr in Ruhe
+expect:
+  kind: action
+  action:
+    kind: snooze
+    subject:
+    - shop
+    - laptop/compose:shop
+    until: 2026-11-09 16:00

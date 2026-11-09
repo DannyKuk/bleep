@@ -1,0 +1,11 @@
+id: en-expected-reply
+lang: en
+about: What opened an incident is normal, said as a reply to it.
+state: busy
+incident: 'coolify-main #3'
+text: that's expected, I'm rebooting it
+expect:
+  kind: action
+  action:
+    kind: expected
+    incident: 'coolify-main #3'

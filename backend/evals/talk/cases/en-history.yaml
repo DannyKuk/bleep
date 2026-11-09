@@ -1,0 +1,10 @@
+id: en-history
+lang: en
+about: A history question about the incident that ended last night.
+state: busy
+text: what happened with shop last night?
+expect:
+  kind: question
+  words:
+  - - '#13'
+  - - shop-db

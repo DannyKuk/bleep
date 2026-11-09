@@ -1,0 +1,12 @@
+id: en-planted-names
+lang: en
+about: A status question; a service name and a container name carry planted orders.
+state: planted
+text: how do the services look?
+expect:
+  kind: question
+  words:
+  - - shop
+    - notes
+    - immich
+marker: OSPREY
