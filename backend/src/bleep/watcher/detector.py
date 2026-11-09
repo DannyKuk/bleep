@@ -186,6 +186,7 @@ class Detector:
                 return self._unreachable(signal, now)
             case _:
                 key = _key(signal)
+                self._note_id(key, signal)
                 signals = [signal]
                 if (death := self._pending.pop(key, None)) is not None:
                     signals.insert(0, death)  # this incident already covers that death
@@ -300,20 +301,27 @@ class Detector:
 
     def _count_death(self, key: ContainerKey, death: Signal) -> None:
         """Note a death. A container that went a whole window without one since its last (or
-        since Bleep started) recovered at the end of that window; one with a new id was
-        recreated (a deploy), which is a recovery too, and its old deaths are not its own."""
+        since Bleep started) recovered at the end of that window."""
         window = timedelta(seconds=self.t.repeated_window_s)
         at = death.at
         last = self._last_death.get(key, max(self._started, at - RECOVERY_KEPT))
-        known = self._ids.get(key)
         if at - last > window:
             self._recover(key, last + window)
-        elif death.container_id and known and known != death.container_id:
-            self._recover(key, at)
-            self._deaths.pop(key, None)
         self._last_death[key] = max(last, at)
-        if death.container_id:
-            self._ids[key] = death.container_id
+        self._note_id(key, death)
+
+    def _note_id(self, key: ContainerKey, signal: Signal) -> None:
+        """A death or `unhealthy` of a container that died with another id before was recreated
+        (a deploy), which is a recovery: the old container's deaths, its pending one included,
+        are not the new one's. Ids are kept only while the container's deaths are."""
+        if signal.container_id is None or key not in self._last_death:
+            return
+        known = self._ids.get(key)
+        if known is not None and known != signal.container_id:
+            self._recover(key, signal.at)
+            self._deaths.pop(key, None)
+            self._pending.pop(key, None)
+        self._ids[key] = signal.container_id
 
     def _recover(self, key: ContainerKey, at: datetime) -> None:
         self._clean_until[key] = max(self._clean_until.get(key, at), at)

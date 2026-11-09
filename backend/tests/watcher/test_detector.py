@@ -720,3 +720,28 @@ def test_a_window_without_a_death_ends_the_loop_on_the_hosts_tick_and_drops_its_
 
     det.tick(clock.at(2000 + 86_400 + 1200), states(box()), "h1")  # a day after it recovered
     assert not det._last_death and not det._loops and not det._clean_until
+
+
+def test_an_unhealthy_redeployed_container_is_not_held_by_the_old_ones_loop():
+    det, clock = make()
+    crash_loop(det, clock, 0)  # the container "abc" loops; then a deploy replaces it
+    clock.at(300)
+    new = Signal(subject=SVC, kind="unhealthy", at=clock.now, container="web-1", container_id="new")
+    [sick] = det.feed(new)
+    assert sick.run is None  # Docker says `unhealthy` once: held, it would be lost
+    clock.at(400)
+    assert det.feed(died(clock, container_id="new")) == []  # its own deaths start anew
+
+
+def test_a_new_container_drops_the_old_ones_pending_death():
+    det, clock = make()
+    crash_loop(det, clock, 0)
+    clock.at(150)
+    assert det.feed(died(clock)) == []  # the old container's death, waiting for its grace
+    clock.at(170)
+    assert det.feed(died(clock, container_id="new")) == []
+    [down] = det.tick(clock.at(240), states(box("restarting")), "h1")
+    assert [s.at for s in down.signals if s.kind == "container_died"] == [
+        clock.now - timedelta(seconds=70)
+    ]
+    assert down.run is None
