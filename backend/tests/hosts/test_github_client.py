@@ -138,6 +138,17 @@ async def test_a_403_that_is_not_a_rate_limit_is_a_plain_error():
     assert not isinstance(caught.value, RateLimited)
 
 
+async def test_a_refused_token_is_a_plain_error_in_bleeps_words():
+    github, _ = client(
+        {"/repos/encode/httpx/commits": respond(401, "unauthorized.json")}, token="wrong"
+    )
+    with pytest.raises(GithubError) as caught:
+        await github.commits(REPO, SINCE)
+    assert type(caught.value) is GithubError
+    assert "401" in str(caught.value)
+    assert "Bad credentials" not in str(caught.value)
+
+
 async def test_network_errors_and_5xx_are_unavailable():
     def down(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("no route to host", request=request)

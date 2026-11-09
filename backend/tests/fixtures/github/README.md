@@ -12,5 +12,8 @@ Recorded from the GitHub REST API (`api.github.com`, version 2022-11-28) on 2026
 | `readme.json` | `GET /repos/encode/httpx/readme` |
 | `contents-docs.json`, `contents-docs-advanced.json` | `GET /repos/encode/httpx/contents/docs`, `.../contents/docs/advanced` |
 | `contents-docs-http2.json` | `GET /repos/encode/httpx/contents/docs/http2.md` |
+| `unauthorized.json` | `GET /repos/DannyKuk/bleep/commits` with a made-up token, answered 401 with no `x-ratelimit-*` headers; recorded on 2026-11-09 in the [GitHub live spike](../../../../docs/spikes/github-live/report.md) |
 
 `rate-limited.json` is not recorded: triggering the limit would have spent this machine's unauthenticated hour. It is the body GitHub documents for a spent primary rate limit, with a documentation address for the IP; the tests add the `x-ratelimit-*` or `retry-after` headers that GitHub sends with it.
+
+On 2026-11-09 the [GitHub live spike](../../../../docs/spikes/github-live/report.md) compared these shapes with real answers for a private repo read with a token: every field Bleep reads is there with the same type, and the real answers only add fields Bleep ignores (`node_id`, `parents`, `commit.tree`, `commit.verification`, emails, the files' `sha`, `blob_url`, `raw_url` and `contents_url`). One case the trimmed files do not show: GitHub sends no `patch` for an empty file, as for a binary one (#345).
