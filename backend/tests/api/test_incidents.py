@@ -128,6 +128,28 @@ def test_list_is_newest_first_with_status_filter_limit_and_offset(app_client, pa
     assert [i["id"] for i in page] == [second.id]
 
 
+def open_host_incident(client: TestClient, parts, host_id: str) -> Incident:
+    subject = Subject(kind="host", host_id=host_id)
+    signal = Signal(subject=subject, kind="host_unreachable", at=T0, detail={"ok": False})
+    incident, _ = call(client, parts.incidents.open_or_attach, subject, [signal])
+    return incident
+
+
+def test_list_keeps_a_hosts_own_incidents_with_host_id_not_its_services(app_client, parts, clock):
+    first = open_host_incident(app_client, parts, "a")
+    call(app_client, parts.incidents.set_status, first.id, "closed")
+    clock.now = T0 + timedelta(minutes=1)
+    second = open_host_incident(app_client, parts, "a")
+    open_incident(app_client, parts, "a/shop")  # a service on the host: not the host's own
+    open_host_incident(app_client, parts, "b")  # another host
+
+    own = app_client.get("/api/incidents", params={"host_id": "a"}).json()
+    assert [i["id"] for i in own] == [second.id, first.id]
+    newest = app_client.get("/api/incidents", params={"host_id": "a", "limit": 1}).json()
+    assert [i["id"] for i in newest] == [second.id]
+    assert app_client.get("/api/incidents", params={"host_id": "c"}).json() == []
+
+
 def test_list_items_carry_the_humans_votes_without_the_note(app_client, parts):
     rated = open_incident(app_client, parts, "a/one")
     half = open_incident(app_client, parts, "a/two")

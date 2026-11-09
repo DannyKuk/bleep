@@ -430,10 +430,17 @@ class IncidentRepo:
         offset: int = 0,
         service_id: str | None = None,
         fold_of: str | None = None,
+        host_id: str | None = None,
     ) -> list[Incident]:
-        """Newest first, optionally only those with `status`, of the service `service_id`, or the
-        repeats of `fold_of`."""
-        filters = {"status": status, "service_id": service_id, "fold_of": fold_of}
+        """Newest first, optionally only those with `status`, of the service `service_id`, the
+        repeats of `fold_of`, or the host `host_id`'s own (its subject, not its services')."""
+        filters = {
+            "status": status,
+            "service_id": service_id,
+            "fold_of": fold_of,
+            "kind": None if host_id is None else "host",
+            "host_id": host_id,
+        }
         given = {column: value for column, value in filters.items() if value is not None}
         where = " AND ".join(f"{column} = ?" for column in given)
         args: list[object] = list(given.values())

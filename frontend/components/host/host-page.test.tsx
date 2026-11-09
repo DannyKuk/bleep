@@ -1,8 +1,9 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { HostPage } from "@/components/host/host-page";
+import { incident } from "@/components/incident/fixtures";
 import { OverallProvider } from "@/components/overall-state";
 import {
   json,
@@ -11,7 +12,7 @@ import {
   sshHost,
   stubBackend as stubSettingsBackend,
 } from "@/components/settings/fixtures";
-import type { HostView, ServiceView } from "@/lib/api-types";
+import type { HostView, IncidentListItem, ServiceView } from "@/lib/api-types";
 
 const HOST: HostView = {
   id: "m1",
@@ -71,13 +72,46 @@ function stubBackend(routes: Parameters<typeof stubSettingsBackend>[0]) {
 const hostReads = (fetchMock: ReturnType<typeof stubBackend>) =>
   fetchMock.mock.calls.filter(([input]) => String(input) === "/api/hosts").length;
 
-function backend(put: Response[] = [], view = settingsView()) {
+const HOST_INCIDENTS = "GET /api/incidents?host_id=m1&limit=1";
+
+function backend(
+  put: Response[] = [],
+  view = settingsView(),
+  hostIncidents: IncidentListItem[] = [],
+) {
   return stubBackend({
     "GET /api/settings": json(view),
     "GET /api/services": json([SHOP, WORKER, ELSEWHERE]),
     "PUT /api/settings": put,
+    [HOST_INCIDENTS]: json(hostIncidents),
   });
 }
+
+/** The host's own last incident, closed by the person at 12:05 while the host was still down. */
+function hostIncident(overrides: Partial<IncidentListItem> = {}): IncidentListItem {
+  return {
+    ...incident({
+      id: "inc-7",
+      subject: { kind: "host", host_id: "m1", service_id: null },
+      status: "closed",
+      title: "host unreachable on m1",
+      opened_at: "2026-11-05T11:05:00Z",
+      closed_at: "2026-11-05T12:05:00Z",
+    }),
+    votes: { diagnosis: null, proposal: null },
+    repeats: 1,
+    ...overrides,
+  };
+}
+
+/** Down since 11:00: the host has not answered since before its incident ended. */
+const DOWN: HostView = {
+  ...HOST,
+  reachable: false,
+  health: "down",
+  last_seen: "2026-11-05T11:00:00Z",
+  error: "ssh: connection refused",
+};
 
 function renderPage(id = "m1", hosts: HostView[] = [HOST]) {
   hostList = hosts;
@@ -87,6 +121,46 @@ function renderPage(id = "m1", hosts: HostView[] = [HOST]) {
     </OverallProvider>,
   );
 }
+
+describe("HostPage, still unreachable after its last incident (#362)", () => {
+  it("says the host is still unreachable after its last incident ended, and links it", async () => {
+    backend([], settingsView(), [hostIncident()]);
+    renderPage("m1", [DOWN]);
+
+    const note = await screen.findByRole("note", { name: "Still failing" });
+    expect(note).toHaveTextContent("Still unreachable after its last incident ended");
+    expect(within(note).getByRole("link", { name: "host unreachable on m1" })).toHaveAttribute(
+      "href",
+      "/incidents/inc-7",
+    );
+    expect(note).toHaveTextContent("a wait that grows with each repeat, from an hour to a day");
+  });
+
+  it("says nothing while one is open, once it answers, when quiet or asleep, or with none", async () => {
+    const quiet = { scope: "host", mode: "leave_alone", until: null } as const;
+    const cases: [HostView, IncidentListItem[]][] = [
+      [DOWN, [hostIncident({ status: "waiting", closed_at: null })]],
+      [{ ...DOWN, reachable: true, health: "ok" }, [hostIncident()]],
+      [{ ...DOWN, last_seen: "2026-11-05T12:10:00Z" }, [hostIncident()]],
+      [{ ...DOWN, quiet: { ...quiet, since: "2026-11-05T10:00:00Z" } }, [hostIncident()]],
+      [{ ...DOWN, may_sleep: true, health: "asleep" }, [hostIncident()]],
+      [DOWN, []],
+    ];
+    for (const [host, incidents] of cases) {
+      const fetchMock = backend([], settingsView(), incidents);
+      const { unmount } = renderPage("m1", [host]);
+      await screen.findByRole("heading", { level: 1, name: "M1" });
+      await waitFor(() =>
+        expect(fetchMock.mock.calls.some(([input]) => String(input).includes("host_id="))).toBe(
+          true,
+        ),
+      );
+      await act(() => new Promise((settle) => setTimeout(settle, 20))); // its answer is in
+      expect(screen.queryByRole("note", { name: "Still failing" })).toBeNull();
+      unmount();
+    }
+  });
+});
 
 describe("HostPage", () => {
   it("shows the host's state and links its own services to their pages", async () => {
