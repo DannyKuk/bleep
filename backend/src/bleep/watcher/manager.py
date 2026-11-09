@@ -5,7 +5,10 @@ probe (disk, memory, load) and the URL checks. Every signal goes through the one
 `Detector`; what comes out becomes an incident, a logged recovery or nothing:
 
 - `OpenIncident` and `AttachSignals` go to `IncidentRepo.open_or_attach`; the incident runner
-  starts only when that call newly opened the incident.
+  starts only when that call newly opened the incident. A failing reading (a URL check, the host
+  not answering, disk, memory, load) that outlived its last incident with no pass since opens no
+  new one until a hold has passed (`repeat_hold`), so a failure Bleep could not fix costs one run
+  and one message, not one a minute.
 - `Recovered` is logged with a one-line explanation from the cheap model, off the watcher's
   tick so a slow model never delays the next pull. The call is in the usage ledger under
   `RECOVERY_USAGE` and is skipped once the day's cost cap is spent.
@@ -31,7 +34,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import httpx
 from langchain_core.language_models import BaseChatModel
@@ -57,6 +60,7 @@ from bleep.watcher import host_probe, http_checks, poller
 from bleep.watcher.detector import (
     AttachSignals,
     Detector,
+    FailingRun,
     Ignored,
     OpenIncident,
     Outcome,
@@ -92,6 +96,14 @@ RUNNING_STATUSES: tuple[IncidentStatus, ...] = (
     "executing",
     "verifying",
 )  # a run mid-step is left to finish
+REPEAT_HOLD = timedelta(hours=1)
+REPEAT_HOLD_MAX = timedelta(hours=24)
+
+
+def repeat_hold(repeats: int) -> timedelta:
+    """How long a failure that outlived `repeats` incidents waits before it opens the next: an
+    hour after the first, doubling with each repeat, at most a day."""
+    return min(REPEAT_HOLD * 2 ** min(repeats - 1, 5), REPEAT_HOLD_MAX)
 
 
 def quiet_notice(name: str, state: QuietState) -> str:
@@ -606,7 +618,7 @@ class WatcherManager:
             try:
                 match outcome:
                     case OpenIncident() | AttachSignals():
-                        await self._open(outcome.subject, outcome.signals)
+                        await self._open(outcome.subject, outcome.signals, outcome.run)
                     case Recovered():
                         self._explain_later(outcome)
                     case Ignored():
@@ -614,7 +626,9 @@ class WatcherManager:
             except Exception:  # one failed outcome must not drop the others
                 log.exception("handling detector outcome %r failed", outcome)
 
-    async def _open(self, subject: Subject, signals: list[Signal]) -> None:
+    async def _open(
+        self, subject: Subject, signals: list[Signal], run: FailingRun | None = None
+    ) -> None:
         """Open or attach; start the run only for a newly opened incident.
 
         `AttachSignals` takes the same path: it normally attaches, but if the incident was
@@ -626,12 +640,37 @@ class WatcherManager:
         if self._asleep(subject, signals):
             log.debug("%s may sleep: not answering opens no incident", subject.key)
             return
+        if run is not None and await self._held_repeat(subject, signals, run):
+            return
         incident, created = await self.repo.open_or_attach(subject, signals)
         if not created:
             return
         await self.runner.start(incident)
         if subject.kind == "host":
             await self._attach_held(subject.host_id)
+
+    async def _held_repeat(self, subject: Subject, signals: list[Signal], run: FailingRun) -> bool:
+        """Whether a failing reading that has not passed since its last incident opened must wait
+        for that incident's hold to end. While the subject has an incident open, its failures
+        attach to it as before.
+
+        A failure Bleep has not seen pass since it started may be older than Bleep's memory, so
+        the incidents of the longest hold before count too: a restart costs no new run either.
+        """
+        if await self.repo.open_incident_id(subject) is not None:
+            return False
+        now = self._clock()
+        since = run.since if run.seen_pass else min(run.since, now - REPEAT_HOLD_MAX)
+        repeats = await self.repo.finished_since(subject, signals, since)
+        if repeats is None:
+            return False
+        until = repeats.last_closed + repeat_hold(repeats.count)
+        if now >= until:
+            return False
+        log.debug(
+            "%s still fails after its last incident: none opens before %s", subject.key, until
+        )
+        return True
 
     def _explain_later(self, recovered: Recovered) -> None:
         task = asyncio.create_task(

@@ -394,6 +394,55 @@ const CHECKS: UrlCheckPoint[] = [
 ];
 
 describe("ServicePage history", () => {
+  it("says a service is still down after its last incident ended, and links that incident", async () => {
+    const urls = [{ ...SERVICE.service.urls[0], status: "failing" as const, status_code: 404 }];
+    const down = { ...SERVICE.service, health: "down" as const, urls };
+    const last = pastIncident({
+      id: "inc-9",
+      title: "url failed on shop",
+      closed_at: "2026-11-02T18:05:00Z",
+    });
+    stubBackend(json({ ...SERVICE, service: down }), [last, pastIncident()]);
+    renderPage("demo/compose:shop");
+
+    const note = await screen.findByRole("note", { name: "Still failing" });
+    expect(within(note).getByRole("link", { name: "url failed on shop" })).toHaveAttribute(
+      "href",
+      "/incidents/inc-9",
+    );
+    expect(note).toHaveTextContent("Still down after its last incident ended");
+    expect(note).toHaveTextContent("a wait that grows with each repeat, from an hour to a day");
+  });
+
+  it("says nothing of a last incident while one is open, the service is up or none ended", async () => {
+    const down = { ...SERVICE.service, health: "down" as const };
+    const cases: [ServiceDetail["service"], IncidentListItem[]][] = [
+      [{ ...down, open_incident_id: "inc-2" }, [pastIncident()]],
+      [SERVICE.service, [pastIncident()]],
+      [down, [pastIncident({ status: "investigating" })]],
+      [down, []],
+    ];
+    for (const [service, incidents] of cases) {
+      stubBackend(json({ ...SERVICE, service }), incidents);
+      const { unmount } = renderPage("demo/compose:shop");
+      await waitFor(() => {
+        expect(screen.queryByText("Loading the service")).toBeNull();
+        expect(screen.queryByText("Loading the incidents")).toBeNull();
+      });
+      expect(screen.queryByRole("note", { name: "Still failing" })).toBeNull();
+      unmount();
+    }
+  });
+
+  it("says nothing of a wait when no check fails, as for a dead container", async () => {
+    const down = { ...SERVICE.service, health: "down" as const };
+    stubBackend(json({ ...SERVICE, service: down }), [pastIncident()]);
+    renderPage("demo/compose:shop");
+
+    const note = await screen.findByRole("note", { name: "Still failing" });
+    expect(note).not.toHaveTextContent("wait");
+  });
+
   it("says since when a healthy service has been healthy", async () => {
     const since = todayAt(9, 5);
     stubBackend(serviceWith({ health_since: since }));

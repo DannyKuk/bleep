@@ -9,7 +9,7 @@ import pytest
 from bleep.guard.quote_lookalikes import QUOTE_LOOKALIKES
 from bleep.guard.titles import build_title, seen_note, title_name
 from bleep.hosts.discovery import group_services
-from bleep.incidents.repository import IncidentRepo, fold_key
+from bleep.incidents.repository import IncidentRepo, Repeats, fold_key
 from bleep.llm.usage import CostLedger
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import RecoveryEvent, Signal, Subject
@@ -324,6 +324,23 @@ async def test_the_window_slides_from_the_latest_repeat_and_0_turns_folding_off(
     assert (await again(repo, clock, died(), 25)).fold_of is None  # more than a day later
     window["h"] = 0
     assert (await again(repo, clock, died(), 1)).fold_of is None
+
+
+async def test_finished_since_counts_the_ended_incidents_of_the_same_kind_and_target(folding):
+    repo, clock, _ = folding
+    url = Signal(subject=svc(), kind="url_failed", at=T0, detail={"url": "https://x/"})
+    other = Signal(subject=svc(), kind="url_failed", at=T0, detail={"url": "https://y/"})
+    assert await repo.finished_since(svc(), [url], T0) is None
+    await again(repo, clock, url, 0)  # opened at T0, closed by the next `again`
+    await again(repo, clock, url, 1)
+    await again(repo, clock, other, 1)  # another URL: never counted
+    await repo.close_unfinished(await repo.open_incident_id(svc()))
+    await again(repo, clock, url, 1)  # still open: not counted
+    ended_at = T0 + timedelta(hours=1)  # the second closed when the other URL's opened
+    assert await repo.finished_since(svc(), [url], T0) == Repeats(count=2, last_closed=ended_at)
+    since_second = T0 + timedelta(hours=1)
+    assert await repo.finished_since(svc(), [url], since_second) == Repeats(1, ended_at)
+    assert await repo.finished_since(svc(), [url], since_second + timedelta(seconds=1)) is None
 
 
 # --- a service name that is not plain, shown as host text in the title (#311) ---

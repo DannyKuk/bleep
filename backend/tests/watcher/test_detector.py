@@ -13,6 +13,7 @@ from bleep.watcher.detector import (
     MODEL_DOWN_LINE,
     AttachSignals,
     Detector,
+    FailingRun,
     Ignored,
     OpenIncident,
     Recovered,
@@ -281,6 +282,83 @@ def test_after_bleeps_own_wake_an_outage_and_a_url_streak_count_from_zero():
     assert det.feed(sig(SVC, "url_failed", clock, url="https://x/")) == []  # one failure, not two
     clock.at(8 * 3600 + 300)
     assert isinstance(det.feed(sig(HOST, "host_unreachable", clock))[0], OpenIncident)
+
+
+def test_an_open_for_a_failing_reading_says_since_when_it_failed_without_a_pass():
+    det, clock = make()
+    url = {"url": "https://x/"}
+    det.feed(sig(SVC, "url_failed", clock, ok=True, latency_ms=10, **url))
+    clock.at(30)
+    det.feed(sig(SVC, "url_failed", clock, **url))
+    clock.at(60)
+    [first] = det.feed(sig(SVC, "url_failed", clock, **url))
+    assert first.run == FailingRun(since=T0 + timedelta(seconds=30), seen_pass=True)
+    clock.at(90)
+    det.feed(sig(SVC, "url_failed", clock, **url))
+    clock.at(120)
+    [again] = det.feed(sig(SVC, "url_failed", clock, **url))
+    assert isinstance(again, OpenIncident)
+    assert again.run == first.run  # still the same failure: no pass in between
+
+
+def test_a_pass_starts_a_new_failing_run():
+    det, clock = make()
+    det.feed(sig(SVC, "url_failed", clock))
+    det.feed(sig(SVC, "url_failed", clock))
+    clock.at(60)
+    det.feed(sig(SVC, "url_failed", clock, ok=True, latency_ms=10))
+    clock.at(90)
+    det.feed(sig(SVC, "url_failed", clock))
+    clock.at(120)
+    [out] = det.feed(sig(SVC, "url_failed", clock))
+    assert out.run == FailingRun(since=T0 + timedelta(seconds=90), seen_pass=True)
+
+
+def test_a_reading_failing_since_bleep_started_says_it_never_saw_a_pass():
+    det, clock = make()
+    det.feed(sig(SVC, "url_failed", clock))
+    clock.at(30)
+    [out] = det.feed(sig(SVC, "url_failed", clock))
+    assert out.run == FailingRun(since=T0, seen_pass=False)
+
+
+def test_host_readings_carry_their_failing_run_and_events_carry_none():
+    det, clock = make()
+    det.feed(sig(HOST, "host_unreachable", clock, ok=True))
+    clock.at(10)
+    det.feed(sig(HOST, "host_unreachable", clock))
+    clock.at(310)
+    [down] = det.feed(sig(HOST, "host_unreachable", clock))
+    assert down.run == FailingRun(since=T0 + timedelta(seconds=10), seen_pass=True)
+    clock.at(400)
+    [disk] = det.feed(sig(HOST, "disk", clock, percent=95))
+    assert disk.run == FailingRun(since=clock.now, seen_pass=False)
+    clock.at(500)
+    det.feed(sig(HOST, "memory", clock, available_percent=3))
+    det.feed(sig(HOST, "memory", clock, available_percent=3))
+    [memory] = det.feed(sig(HOST, "memory", clock, available_percent=3))
+    assert memory.run == FailingRun(since=clock.now, seen_pass=False)
+    [event] = det.feed(sig(SVC, "unhealthy", clock, container="web-1"))
+    assert event.run is None
+
+
+def test_a_wake_keeps_the_failing_run_and_forgetting_the_host_drops_it():
+    det, clock = make()
+    det.feed(sig(SVC, "url_failed", clock, ok=True, latency_ms=10))
+    clock.at(30)
+    det.feed(sig(SVC, "url_failed", clock))
+    det.woke()  # Bleep did not see a pass while it slept, so the failure is not new
+    clock.at(60)
+    det.feed(sig(SVC, "url_failed", clock))
+    clock.at(90)
+    [out] = det.feed(sig(SVC, "url_failed", clock))
+    assert out.run == FailingRun(since=T0 + timedelta(seconds=30), seen_pass=True)
+    det.forget_host("h1")
+    clock.at(200)
+    det.feed(sig(SVC, "url_failed", clock))
+    clock.at(230)
+    [fresh] = det.feed(sig(SVC, "url_failed", clock))
+    assert fresh.run == FailingRun(since=T0 + timedelta(seconds=200), seen_pass=False)
 
 
 def test_debounce_merges_signals_within_30s_into_one_open():
