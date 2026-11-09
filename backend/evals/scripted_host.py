@@ -61,7 +61,7 @@ class ScriptedContainer(_Strict):
     restart_count: int = 0
     exit_code: int | None = None
     started_minutes_ago: float = 600
-    env: list[str] = Field(default_factory=list)  # names only matter: the tools hide values
+    env: list[str] = Field(default_factory=list)  # values hidden but a URL's scheme, host, port
     mem_limit_mib: int | None = None
     mem_usage_mib: float = 50
     oom_killed: bool = False

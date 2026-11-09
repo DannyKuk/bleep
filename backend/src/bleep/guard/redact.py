@@ -5,6 +5,7 @@ guard first cuts the input (see `guard.pipeline`), `redact_with_count` cuts ever
 characters, and each pattern below is written to run in linear time on what is left.
 """
 
+import ipaddress
 import re
 import string
 from collections.abc import Callable
@@ -26,8 +27,87 @@ REDACTED = "<redacted>"
 
 
 def redact_env(env: list[str]) -> list[str]:
-    """`KEY=value` becomes `KEY=<redacted>` for every entry; a bare `KEY` stays as it is."""
-    return [f"{item.partition('=')[0]}={REDACTED}" if "=" in item else item for item in env]
+    """`KEY=value` becomes `KEY=<redacted>`, except that a URL keeps its scheme, host and port
+    (`KEY=postgresql://<redacted>@db:5432/<redacted>`); a bare `KEY` stays as it is."""
+    return [_redact_env_entry(item) if "=" in item else item for item in env]
+
+
+def _redact_env_entry(item: str) -> str:
+    """The URL's place is kept only when `redact_text` would keep the whole entry as it is, so a
+    host that looks like a token, or a value under a secret key (`REDIS_PASSWORD=redis://…`), is
+    hidden here as well and not only by the pipeline later."""
+    key, _, value = item.partition("=")
+    place = _url_place(value)
+    entry = f"{key}={place}"
+    return entry if place is not None and redact_text(entry) == entry else f"{key}={REDACTED}"
+
+
+_URL_SCHEME = re.compile(r"([A-Za-z][A-Za-z0-9+.-]{0,31})://")
+_DNS_LABEL = r"[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?"
+_HOST_NAME = re.compile(rf"{_DNS_LABEL}(?:\.{_DNS_LABEL})*")
+_IPV6 = re.compile(r"\[([0-9A-Fa-f:.]{2,45})\]")
+_PORT = re.compile(r"[0-9]{1,5}")
+_PRINTABLE = re.compile(r"[!-~]*")
+MAX_HOST = 253
+
+
+def _url_place(value: str) -> str | None:
+    """`scheme://host:port` of a URL with every other part present shown as `<redacted>`, or None
+    when the value is not plainly such a URL.
+
+    Clients disagree on where the userinfo ends (libpq stops at the first `/`, urllib takes
+    the last `@`, browsers read `\\` as `/`), and a wrong guess would show part of a
+    password as the host. So any value the readings could disagree on is refused: anything
+    outside printable ASCII, a backslash, more than one `@` or an `@` after the authority, and
+    a host or port outside a strict allowlist.
+    """
+    scheme = _URL_SCHEME.match(value)
+    if scheme is None or "\\" in value or not _PRINTABLE.fullmatch(value):
+        return None
+    rest = value[scheme.end() :]
+    end = min((i for i in map(rest.find, "/?#") if i >= 0), default=len(rest))
+    authority, tail = rest[:end], rest[end:]
+    if "@" in tail or authority.count("@") > 1:
+        return None
+    _, at, host_port = authority.rpartition("@")
+    place = _host_port(host_port)
+    if place is None:
+        return None
+    return f"{scheme.group(0)}{REDACTED + '@' if at else ''}{place}{_hidden_tail(tail)}"
+
+
+def _host_port(text: str) -> str | None:
+    """`host` or `host:port` when the host is a DNS name, an IPv4 address or a bracketed IPv6
+    address and the port is a number up to 65535; otherwise None."""
+    ipv6 = _IPV6.match(text)
+    if ipv6 is not None:
+        host, after = ipv6.group(0), text[ipv6.end() :]
+        if after and not after.startswith(":"):
+            return None
+        port = after[1:] if after else None
+        try:
+            ipaddress.IPv6Address(ipv6.group(1))
+        except ValueError:
+            return None
+    else:
+        host, colon, port = text.partition(":")
+        if not colon:
+            port = None
+        if len(host) > MAX_HOST or not _HOST_NAME.fullmatch(host):
+            return None
+    if port is None:
+        return host
+    if not _PORT.fullmatch(port) or int(port) > 65535:
+        return None
+    return f"{host}:{port}"
+
+
+def _hidden_tail(tail: str) -> str:
+    """Path, query and fragment, each as its delimiter plus `<redacted>` when it holds more."""
+    before_fragment, hash_sign, fragment = tail.partition("#")
+    path, question_mark, query = before_fragment.partition("?")
+    parts = ((path[:1], path[1:]), (question_mark, query), (hash_sign, fragment))
+    return "".join(delimiter + (REDACTED if text else "") for delimiter, text in parts)
 
 
 _FLAGS = re.IGNORECASE
