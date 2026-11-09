@@ -42,11 +42,12 @@ PASS_THROUGH = ("unhealthy", "restart_loop", "down_past_grace")
 @dataclass(frozen=True)
 class FailingRun:
     """How long the reading behind an outcome has failed with no pass in between: `since` is its
-    first failed reading. `seen_pass` is False when no reading of it has passed since Bleep
-    started, so the failure may be older than Bleep's memory."""
+    first failed reading, `passed` the last reading of it that passed before that. `passed` is
+    None when no reading of it has passed since Bleep started, so the failure may be older than
+    Bleep's memory."""
 
     since: datetime
-    seen_pass: bool
+    passed: datetime | None
 
 
 @dataclass(frozen=True)
@@ -94,7 +95,7 @@ class Detector:
         self._deaths: dict[ContainerKey, deque[Signal]] = defaultdict(deque)
         self._streaks: dict[ReadingKey, list[Signal]] = {}
         self._failing: dict[ReadingKey, FailingRun] = {}
-        self._passed: set[ReadingKey] = set()  # readings seen passing since Bleep started
+        self._passed: dict[ReadingKey, datetime] = {}  # each reading's last pass since start
         self._down_since: dict[str, datetime] = {}  # host key -> first failed probe
         self._window_start: dict[str, datetime] = {}  # subject key -> when its incident opened
 
@@ -116,7 +117,7 @@ class Detector:
         for readings in (self._streaks, self._failing):
             for key in [k for k in readings if on_host(k[0])]:
                 del readings[key]
-        self._passed = {k for k in self._passed if not on_host(k[0])}
+        self._passed = {k: at for k, at in self._passed.items() if not on_host(k[0])}
         for timers in (self._down_since, self._window_start):
             for key in [k for k in timers if on_host(k)]:
                 del timers[key]
@@ -311,10 +312,10 @@ class Detector:
     def _reading(self, key: ReadingKey, failed: bool, now: datetime) -> FailingRun | None:
         """The failing run this reading belongs to; None, and the run ends, when it passed."""
         if not failed:
-            self._passed.add(key)
+            self._passed[key] = now
             self._failing.pop(key, None)
             return None
-        return self._failing.setdefault(key, FailingRun(now, key in self._passed))
+        return self._failing.setdefault(key, FailingRun(now, self._passed.get(key)))
 
     # -- debounce -----------------------------------------------------------------------------
 

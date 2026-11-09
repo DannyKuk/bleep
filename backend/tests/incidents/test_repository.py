@@ -330,17 +330,63 @@ async def test_finished_since_counts_the_ended_incidents_of_the_same_kind_and_ta
     repo, clock, _ = folding
     url = Signal(subject=svc(), kind="url_failed", at=T0, detail={"url": "https://x/"})
     other = Signal(subject=svc(), kind="url_failed", at=T0, detail={"url": "https://y/"})
-    assert await repo.finished_since(svc(), [url], T0) is None
+    assert await repo.finished_since(svc(), T0, [url]) is None
     await again(repo, clock, url, 0)  # opened at T0, closed by the next `again`
-    await again(repo, clock, url, 1)
+    second = await again(repo, clock, url, 1)
     await again(repo, clock, other, 1)  # another URL: never counted
     await repo.close_unfinished(await repo.open_incident_id(svc()))
     await again(repo, clock, url, 1)  # still open: not counted
     ended_at = T0 + timedelta(hours=1)  # the second closed when the other URL's opened
-    assert await repo.finished_since(svc(), [url], T0) == Repeats(count=2, last_closed=ended_at)
+    assert await repo.finished_since(svc(), T0, [url]) == Repeats(2, ended_at, second.id)
     since_second = T0 + timedelta(hours=1)
-    assert await repo.finished_since(svc(), [url], since_second) == Repeats(1, ended_at)
-    assert await repo.finished_since(svc(), [url], since_second + timedelta(seconds=1)) is None
+    assert await repo.finished_since(svc(), since_second, [url]) == Repeats(1, ended_at, second.id)
+    assert await repo.finished_since(svc(), since_second + timedelta(seconds=1), [url]) is None
+
+
+async def test_finished_since_without_signals_counts_every_kind_of_the_subject_only(folding):
+    repo, clock, _ = folding
+    url = Signal(subject=svc(), kind="url_failed", at=T0, detail={"url": "https://x/"})
+    await again(repo, clock, died(), 0)
+    last = await again(repo, clock, url, 1)
+    await again(repo, clock, died(), 1)
+    await repo.close_unfinished(await repo.open_incident_id(svc()))
+    neighbour = Signal(subject=svc("api"), kind="url_failed", at=T0, detail={"url": "https://y/"})
+    await again(repo, clock, neighbour, 1)  # another service on the host: never counted
+    closed = T0 + timedelta(hours=2)
+    third = (await repo.list(service_id="web"))[0]
+    assert await repo.finished_since(svc(), T0) == Repeats(3, closed, third.id)
+    url_closed = T0 + timedelta(hours=1)  # when the death after it opened
+    assert await repo.finished_since(svc(), T0, [url]) == Repeats(1, url_closed, last.id)
+
+
+async def test_a_new_kind_folds_into_the_incident_it_outlived_unless_its_own_kind_has_a_group(
+    folding,
+):
+    repo, clock, window = folding
+    url = Signal(subject=svc(), kind="url_failed", at=T0, detail={"url": "https://x/"})
+    unhealthy = await again(repo, clock, died(kind="unhealthy"), 0)
+    await repo.close_unfinished(unhealthy.id)
+    clock.later(1)
+    repeat, _ = await repo.open_or_attach(svc(), [url], repeat_of=unhealthy.id)
+    assert repeat.fold_of == unhealthy.id
+    assert repeat.title == "url failed on web (seen 2 times since 02 Nov 12:00 UTC)"
+
+    await repo.close_unfinished(repeat.id)
+    clock.later(1)
+    other = await again(repo, clock, died(), 0)
+    await repo.close_unfinished(other.id)
+    clock.later(1)
+    again_url, _ = await repo.open_or_attach(svc(), [url], repeat_of=other.id)
+    assert again_url.fold_of == unhealthy.id  # its own kind's group comes first
+
+    await repo.close_unfinished(again_url.id)
+    clock.later(30)  # past the window
+    late, _ = await repo.open_or_attach(svc(), [died(kind="oom")], repeat_of=other.id)
+    assert late.fold_of is None
+    await repo.close_unfinished(late.id)
+    window["h"] = 0
+    off, _ = await repo.open_or_attach(svc(), [url], repeat_of=late.id)
+    assert off.fold_of is None
 
 
 # --- a service name that is not plain, shown as host text in the title (#311) ---

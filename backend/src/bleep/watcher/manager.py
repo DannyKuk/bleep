@@ -8,7 +8,7 @@ probe (disk, memory, load) and the URL checks. Every signal goes through the one
   starts only when that call newly opened the incident. A failing reading (a URL check, the host
   not answering, disk, memory, load) that outlived its last incident with no pass since opens no
   new one until a hold has passed (`repeat_hold`), so a failure Bleep could not fix costs one run
-  and one message, not one a minute.
+  and one message, not one a minute. A service's URL waits for its last incident of any kind.
 - `Recovered` is logged with a one-line explanation from the cheap model, off the watcher's
   tick so a slow model never delays the next pull. The call is in the usage ledger under
   `RECOVERY_USAGE` and is skipped once the day's cost cap is spent.
@@ -47,7 +47,7 @@ from bleep.hosts.registry import Registry
 from bleep.hosts.url_check import UrlCheck
 from bleep.incidents.bus import EventBus
 from bleep.incidents.quiet import QuietStore
-from bleep.incidents.repository import IncidentRepo, utcnow
+from bleep.incidents.repository import IncidentRepo, Repeats, utcnow
 from bleep.incidents.runner import IncidentRunner
 from bleep.llm.guard import ModelGuard
 from bleep.llm.usage import BudgetExceeded, CostLedger, UsageTracker, check_daily_cap
@@ -640,32 +640,42 @@ class WatcherManager:
         if self._asleep(subject, signals):
             log.debug("%s may sleep: not answering opens no incident", subject.key)
             return
-        if run is not None and await self._held_repeat(subject, signals, run):
+        outlived = None if run is None else await self._outlived(subject, signals, run)
+        if outlived is not None and self._still_held(subject, outlived):
             return
-        incident, created = await self.repo.open_or_attach(subject, signals)
+        repeat_of = outlived.last_id if outlived is not None else None
+        incident, created = await self.repo.open_or_attach(subject, signals, repeat_of)
         if not created:
             return
         await self.runner.start(incident)
         if subject.kind == "host":
             await self._attach_held(subject.host_id)
 
-    async def _held_repeat(self, subject: Subject, signals: list[Signal], run: FailingRun) -> bool:
-        """Whether a failing reading that has not passed since its last incident opened must wait
-        for that incident's hold to end. While the subject has an incident open, its failures
-        attach to it as before.
+    async def _outlived(
+        self, subject: Subject, signals: list[Signal], run: FailingRun
+    ) -> Repeats | None:
+        """The finished incidents a failing reading outlived: opened since it last passed. None
+        while the subject has an incident open, so its failures attach to it as before.
+
+        For a service that is any incident of it: its URL failing after an `unhealthy` incident
+        is the same broken service. A host's readings measure apart (a full disk says nothing of
+        memory), so for a host only incidents of the same kind count.
 
         A failure Bleep has not seen pass since it started may be older than Bleep's memory, so
         the incidents of the longest hold before count too: a restart costs no new run either.
         """
         if await self.repo.open_incident_id(subject) is not None:
-            return False
-        now = self._clock()
-        since = run.since if run.seen_pass else min(run.since, now - REPEAT_HOLD_MAX)
-        repeats = await self.repo.finished_since(subject, signals, since)
-        if repeats is None:
-            return False
-        until = repeats.last_closed + repeat_hold(repeats.count)
-        if now >= until:
+            return None
+        since = run.passed
+        if since is None:
+            since = min(run.since, self._clock() - REPEAT_HOLD_MAX)
+        same_kind = signals if subject.kind == "host" else None
+        return await self.repo.finished_since(subject, since, same_kind)
+
+    def _still_held(self, subject: Subject, outlived: Repeats) -> bool:
+        """Whether the failure must still wait for the hold of the incidents it outlived."""
+        until = outlived.last_closed + repeat_hold(outlived.count)
+        if self._clock() >= until:
             return False
         log.debug(
             "%s still fails after its last incident: none opens before %s", subject.key, until

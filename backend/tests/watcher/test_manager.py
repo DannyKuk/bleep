@@ -1427,3 +1427,100 @@ async def test_a_host_still_unreachable_after_its_incident_ended_waits_for_the_h
 def test_the_hold_doubles_from_an_hour_up_to_a_day():
     hours = [repeat_hold(n) / timedelta(hours=1) for n in (1, 2, 3, 4, 5, 6, 7, 500)]
     assert hours == [1, 2, 4, 8, 16, 24, 24, 24]
+
+
+# --- one broken service, one run: a reading held by an incident of another kind (#366) ---
+
+
+def turn_unhealthy(r: Rig, project: str) -> None:
+    """The container's healthcheck runs out of retries, and the proxy, which routes only to
+    healthy containers, answers its URL with a 404 from then on (Coolify on 2026-11-09)."""
+    name = f"{project}-web-1"
+    r.engine.history.append(
+        DockerEvent(
+            time=r.clock.now + timedelta(seconds=1),
+            type="container",
+            action="health_status: unhealthy",
+            container_id=f"id-{name}",
+            container_name=name,
+            attributes={"name": name},
+        )
+    )
+    r.not_found.add(project)
+
+
+async def unhealthy_incident_ended(r: Rig, project: str) -> Incident:
+    await r.pulse()  # every URL answers: Bleep has seen them pass
+    turn_unhealthy(r, project)
+    await r.pulse(urls=False)
+    [opened] = r.runner.started
+    assert opened.title.startswith("unhealthy on")
+    return await close_open(r, opened.subject)
+
+
+async def test_a_url_failure_after_its_services_unhealthy_incident_ended_waits_for_its_hold(
+    tmp_path,
+):
+    r = await Rig(tmp_path).boot()
+    first = await unhealthy_incident_ended(r, "shop")
+
+    await minutes(r, 59)  # the URL fails every check, for the same reason
+    assert [i.id for i in await r.incidents()] == [first.id]
+    await minutes(r, 2)  # an hour after the close
+    assert len(r.runner.started) == 2
+    second = r.runner.started[-1]
+    assert second.title.startswith("url failed on")
+    assert second.fold_of == first.id  # a repeat of the failure: no second "opened" message
+    assert "seen 2 times" in second.title
+
+    await close_open(r, second.subject)
+    await minutes(r, 118)  # two incidents of it ended: the next hold is two hours
+    assert len(r.runner.started) == 2
+    await minutes(r, 3)
+    assert len(r.runner.started) == 3
+
+
+async def test_a_url_failure_attached_to_the_unhealthy_incident_is_held_after_it_too(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    turn_unhealthy(r, "shop")
+    await r.pulse(urls=False)
+    await minutes(r, 2)  # the URL fails while the incident is open: its failures attach to it
+    first = await close_open(r, Subject(kind="service", host_id="h", service_id=SHOP))
+    assert any(s.kind == "url_failed" for s in await r.repo.signals(first.id))
+    await minutes(r, 59)
+    assert [i.id for i in await r.incidents()] == [first.id]
+
+
+async def test_another_service_on_the_host_is_not_held_by_its_neighbours_incident(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await unhealthy_incident_ended(r, "shop")
+    r.not_found.add("blog")
+    await minutes(r, 2)
+    [_, blog] = r.runner.started
+    assert blog.subject.service_id == "h/compose:blog"
+    assert blog.fold_of is None
+
+
+async def test_a_url_that_passed_after_the_unhealthy_incident_is_a_new_failure(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await unhealthy_incident_ended(r, "shop")
+    r.not_found.clear()
+    await minutes(r, 1)  # one passing check: the service recovered
+    r.not_found.add("shop")
+    await minutes(r, 2)
+    [_, again] = r.runner.started
+    assert again.title.startswith("url failed on")
+    assert again.fold_of is None
+
+
+async def test_a_hosts_reading_of_another_kind_is_not_held_by_its_ended_incident(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.manager.sink(Signal(subject=HOST, kind="disk", at=r.clock(), detail={"percent": 95}))
+    await close_open(r, HOST)
+    for _ in range(3):  # a full disk says nothing about memory: that is a failure of its own
+        r.clock.advance(60)
+        low = {"available_percent": 2}
+        await r.manager.sink(Signal(subject=HOST, kind="memory", at=r.clock(), detail=low))
+    [_, memory] = r.runner.started
+    assert memory.title.startswith("memory on")

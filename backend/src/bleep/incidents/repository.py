@@ -95,10 +95,11 @@ class FoldGroup:
 
 @dataclass(frozen=True)
 class Repeats:
-    """Finished incidents of one fold key: how many, and when the latest of them ended."""
+    """Finished incidents a new one would repeat: how many, and the latest of them."""
 
     count: int
     last_closed: datetime
+    last_id: str
 
 
 # Tokens and cost are the usage ledger's sums, so an incident and the ledger never disagree.
@@ -141,9 +142,13 @@ class IncidentRepo:
                 log.exception("incident %s: a listener for its end failed", incident_id)
 
     async def open_or_attach(
-        self, subject: Subject, signals: list[Signal]
+        self, subject: Subject, signals: list[Signal], repeat_of: str | None = None
     ) -> tuple[Incident, bool]:
         """Attach `signals` to the subject's open incident, or open one; True when opened.
+
+        A new incident folds into the group of the latest finished one with its fold key, else
+        into the group of `repeat_of` (a finished incident of another kind that the same failure
+        outlived), either only within the fold window.
 
         A service signal on a host whose open incident has a `host_unreachable` signal attaches
         to that host incident. The write transaction is taken up front and the unique index is
@@ -157,7 +162,7 @@ class IncidentRepo:
                     target = await self._open_target(conn, subject)
                     created = target is None
                     if target is None:
-                        target = await self._insert(conn, subject, signals)
+                        target = await self._insert(conn, subject, signals, repeat_of)
                     for signal in signals:
                         await conn.execute(
                             "INSERT INTO incident_signals (incident_id, signal, at)"
@@ -200,13 +205,17 @@ class IncidentRepo:
         return row["id"] if row is not None else None
 
     async def _insert(
-        self, conn: aiosqlite.Connection, subject: Subject, signals: list[Signal]
+        self,
+        conn: aiosqlite.Connection,
+        subject: Subject,
+        signals: list[Signal],
+        repeat_of: str | None,
     ) -> str:
         now = self.clock()
         incident_id = new_incident_id(now)
         key = fold_key(subject, signals)
         title = build_title(subject, signals)
-        group = await self._group_to_join(conn, key, now)
+        group = await self._group_to_join(conn, key, now, repeat_of)
         if group is not None:
             # The title carries the count, so every message about the repeat says it.
             title += f" (seen {group.count + 1} times since {group.since:%d %b %H:%M} UTC)"
@@ -228,23 +237,27 @@ class IncidentRepo:
         return incident_id
 
     async def _group_to_join(
-        self, conn: aiosqlite.Connection, key: str, now: datetime
+        self, conn: aiosqlite.Connection, key: str, now: datetime, repeat_of: str | None
     ) -> FoldGroup | None:
         """The group a new incident with `key` repeats: the latest finished one with that key
-        opened within the window; the window slides with each repeat."""
+        opened within the window, else `repeat_of` when it opened within it; the window slides
+        with each repeat."""
         window_h = self.fold_window_h()
         if window_h <= 0:
             return None
-        async with conn.execute(
-            f"SELECT id, fold_of FROM incidents WHERE fold_key = ? AND NOT {_OPEN}"
-            " AND opened_at >= ? ORDER BY opened_at DESC LIMIT 1",
-            (key, (now - timedelta(hours=window_h)).isoformat()),
-        ) as cursor:
-            row = await cursor.fetchone()
-        if row is None:
-            return None
-        groups = await self._groups(conn, [row["fold_of"] or row["id"]])
-        return next(iter(groups.values()))
+        start = (now - timedelta(hours=window_h)).isoformat()
+        repeated = [("fold_key", key)] + ([("id", repeat_of)] if repeat_of is not None else [])
+        for column, value in repeated:
+            async with conn.execute(
+                f"SELECT id, fold_of FROM incidents WHERE {column} = ? AND NOT {_OPEN}"
+                " AND opened_at >= ? ORDER BY opened_at DESC LIMIT 1",
+                (value, start),
+            ) as cursor:
+                row = await cursor.fetchone()
+            if row is not None:
+                groups = await self._groups(conn, [row["fold_of"] or row["id"]])
+                return next(iter(groups.values()))
+        return None
 
     async def _groups(
         self, conn: aiosqlite.Connection, roots: Collection[str]
@@ -266,23 +279,29 @@ class IncidentRepo:
         }
 
     async def finished_since(
-        self, subject: Subject, signals: list[Signal], since: datetime
+        self, subject: Subject, since: datetime, signals: list[Signal] | None = None
     ) -> Repeats | None:
-        """The finished incidents that an incident for `subject` and `signals` would repeat (the
-        same fold key) opened at or after `since`; None when there is none."""
+        """The subject's finished incidents opened at or after `since`: those an incident for
+        `signals` would repeat (the same fold key), or of any kind when `signals` is None; None
+        when there is none."""
+        column, value = ("subject_key", subject.key)
+        if signals is not None:
+            column, value = ("fold_key", fold_key(subject, signals))
         conn = await self.db.connect()
         try:
             async with conn.execute(
-                "SELECT COUNT(*) AS n, MAX(COALESCE(closed_at, opened_at)) AS last FROM incidents"
-                f" WHERE fold_key = ? AND NOT {_OPEN} AND opened_at >= ?",
-                (fold_key(subject, signals), since.isoformat()),
+                "SELECT id, COUNT(*) OVER () AS n,"
+                " MAX(COALESCE(closed_at, opened_at)) OVER () AS last FROM incidents"
+                f" WHERE {column} = ? AND NOT {_OPEN} AND opened_at >= ?"
+                " ORDER BY opened_at DESC, id DESC LIMIT 1",
+                (value, since.isoformat()),
             ) as cursor:
                 row = await cursor.fetchone()
         finally:
             await conn.close()
-        if row is None or not row["n"]:
+        if row is None:
             return None
-        return Repeats(row["n"], datetime.fromisoformat(row["last"]))
+        return Repeats(row["n"], datetime.fromisoformat(row["last"]), row["id"])
 
     async def groups(self, incidents: Collection[Incident]) -> dict[str, FoldGroup]:
         """Each incident's group by its id; one that is not in a group (alone) is left out."""
