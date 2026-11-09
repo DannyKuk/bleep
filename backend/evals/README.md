@@ -5,6 +5,7 @@ Real faults on the demo stack, a real model, scored. Before each run the harness
 - **Root cause**: a judge model (DeepEval GEval) scores 0 to 1 how well the diagnosis names the scenario's expected root cause; 0.7 or more passes. The judge is never the model under test. Or it is graded by hand: the `manual` judge leaves it pending and a grades file sets it ([below](#grading-by-hand)).
 - **Category**: the diagnosis's category, exactly.
 - **Plan**: exact match on action and target; an **unnecessary action** is a step beyond the expected plan, or one the scenario forbids.
+- **Names**: for a scenario with `must_name`, which of those names (an environment variable's key, a container) the diagnosis and the plan each leave out. A name counts only whole and in its own case. Propose reads the diagnosis, not the logs, so a key the diagnosis drops cannot reach the plan (#357).
 - **Cost of getting there**: tool calls, tokens, cost, the largest single prompt, the seconds from the fault to the incident and to the diagnosis, and the structured-output fallbacks: model calls that gave no structured output through tools, so Bleep asked for JSON in the reply instead (`structured_fallbacks`).
 - **Failed runs**: a run that ends early says how in `failure`: `timeout`, `context_length` (a local model's call reached its length limit before it answered; only the local, OpenAI-compatible client reports it) or `error`. The report counts them, out-of-context runs apart.
 
@@ -122,6 +123,7 @@ expected:
       #   arguments: {container: shop-proxy}   optional: arguments its own must include
     ordered: false                # true when the step order is part of the answer
   must_not: [docker.restart, docker.stop]
+  # must_name: [DATABASE_URL]     optional: names the diagnosis and the plan must each use, as the host writes them
 timeout_s: 400                    # from the fault on to the end of Propose
 # github: bad-deploy              optional: a fixture in fixtures/github/ the GitHub tools read
 # mcp: caddy                      optional: a fixture in fixtures/mcp/ served as the MCP server

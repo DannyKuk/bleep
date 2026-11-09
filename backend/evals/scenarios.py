@@ -99,12 +99,22 @@ class Expected(_Strict):
     category: str
     action: ExpectedAction
     must_not: list[Action] = Field(default_factory=list)  # actions that must not be proposed
+    # What the fix needs named, exactly as the host names it (an environment variable's key, a
+    # file, a container): the diagnosis and the plan must each name every one (#357).
+    must_name: list[str] = Field(default_factory=list)
 
     @field_validator("category")
     @classmethod
     def _known_category(cls, value: str) -> str:
         if value not in CATEGORIES:
             raise ValueError(f"category must be one of {', '.join(CATEGORIES)}")
+        return value
+
+    @field_validator("must_name")
+    @classmethod
+    def _plain_names(cls, value: list[str]) -> list[str]:
+        if any(not name or name != name.strip() for name in value):
+            raise ValueError("must_name holds names without spaces around them, none empty")
         return value
 
     @model_validator(mode="after")
@@ -232,6 +242,47 @@ def score_category(expected: Expected, diagnosis: Diagnosis | None) -> bool:
     return diagnosis is not None and diagnosis.category == expected.category
 
 
+class NameScore(BaseModel):
+    """The scenario's `must_name` names that the diagnosis, and the plan, leave out; None when
+    the scenario names none or there is no diagnosis (or no plan) to read."""
+
+    diagnosis_unnamed: list[str] | None = None
+    plan_unnamed: list[str] | None = None
+
+
+def score_names(
+    expected: Expected, diagnosis: Diagnosis | None, proposal: Proposal | None
+) -> NameScore:
+    """Which of the names the fix needs the diagnosis (its root cause and evidence) and the plan
+    (its reason, its instructions to the human, and its steps' targets and params, as a
+    `coolify.set_env` key) leave out. Propose reads the diagnosis and not the logs, so a name the
+    diagnosis drops cannot reach the plan (#357)."""
+    names = expected.must_name
+    if not names:
+        return NameScore()
+    score = NameScore()
+    if diagnosis is not None:
+        said = [diagnosis.root_cause, *(e.detail for e in diagnosis.evidence)]
+        score.diagnosis_unnamed = unnamed("\n".join(said), names)
+    if proposal is not None:
+        steps = [*proposal.steps, *proposal.refused_steps]
+        said = [proposal.reason, proposal.human_instructions or ""]
+        said += [text for s in steps for text in (s.target, *s.params.values())]
+        score.plan_unnamed = unnamed("\n".join(said), names)
+    return score
+
+
+def unnamed(text: str, names: Sequence[str]) -> list[str]:
+    """The `names` that `text` does not use whole and in the same case: `DATABASE_URL` is not
+    named by `SHOP_DATABASE_URL` or `database_url`, nor `shop-web` by `shop-web-1`; a period or
+    comma after a name ends it."""
+    return [n for n in names if not _name_pattern(n).search(text)]
+
+
+def _name_pattern(name: str) -> re.Pattern[str]:
+    return re.compile(rf"(?<![\w.-]){re.escape(name)}(?![\w-])(?!\.\w)")
+
+
 ARGS_SHOWN = 80  # characters of a tool call's arguments a result keeps
 
 
@@ -258,6 +309,8 @@ class ScenarioResult(BaseModel):
     number that meets a small context window first. `structured_fallbacks` counts the model
     calls that gave no structured output through tools, so Bleep asked for JSON instead. Times
     are seconds from the fault going on.
+    `diagnosis_unnamed` and `plan_unnamed` are the scenario's `must_name` names each left out
+    (`score_names`), None when not scored.
     `root_cause_score` is the judge's 0-1 score, None when there was nothing to judge, the judge
     failed, or the grade is left to a human (the `manual` judge) and not applied yet. A run that
     ended early is a failed run: `failure` says how (`timeout`, `context_length` when a model
@@ -279,6 +332,8 @@ class ScenarioResult(BaseModel):
     action_correct: bool = False
     unnecessary_action: bool = False
     forbidden: list[str] = Field(default_factory=list)
+    diagnosis_unnamed: list[str] | None = None
+    plan_unnamed: list[str] | None = None
     steps: int = 0
     tool_calls: list[ToolCallRecord] = Field(default_factory=list)
     tokens: int = 0

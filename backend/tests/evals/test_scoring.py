@@ -6,7 +6,14 @@ from typing import Any
 import pytest
 
 from bleep.schemas.graph import Diagnosis, PlanStep, Proposal
-from evals.scenarios import Expected, score_action, score_category, word_hits
+from evals.scenarios import (
+    Expected,
+    score_action,
+    score_category,
+    score_names,
+    unnamed,
+    word_hits,
+)
 
 
 def expected(kind: str, steps: list[tuple[str, str]] | None = None, **extra: Any) -> Expected:
@@ -245,3 +252,85 @@ def test_expected_arguments_belong_to_an_mcp_call_only():
 )
 def test_word_hits_matches_whole_words_and_phrases(text, word, found):
     assert bool(word_hits(text, [word])) is found
+
+
+def bad_env(*names: str) -> Expected:
+    return expected("no_action", category="config", must_name=list(names))
+
+
+def diagnosed(root_cause: str, *details: str) -> Diagnosis:
+    evidence = [{"source": "gather", "detail": d} for d in details]
+    return Diagnosis.model_validate(
+        {"root_cause": root_cause, "category": "config", "confidence": 0.9, "evidence": evidence}
+    )
+
+
+def told(instructions: str, reason: str = "No action fixes a setting.") -> Proposal:
+    return Proposal(kind="no_action", reason=reason, human_instructions=instructions)
+
+
+def test_a_scenario_without_names_scores_none():
+    score = score_names(expected("no_action"), diagnosed("anything"), nothing())
+    assert (score.diagnosis_unnamed, score.plan_unnamed) == (None, None)
+
+
+def test_a_diagnosis_that_says_what_the_setting_means_but_not_its_key_leaves_it_out():
+    """The live miss of #357: right cause, no key, so Propose had nothing to plan with."""
+    score = score_names(
+        bad_env("TESTAPP_FAIL_AFTER_S"),
+        diagnosed(
+            "The app is set to fail after 180 seconds.",
+            "The app reports a 180-second fail-after setting.",
+        ),
+        told("The diagnosis does not identify the setting's name."),
+    )
+    assert score.diagnosis_unnamed == ["TESTAPP_FAIL_AFTER_S"]
+    assert score.plan_unnamed == ["TESTAPP_FAIL_AFTER_S"]
+
+
+def test_a_name_in_the_root_cause_or_in_the_evidence_counts_for_the_diagnosis():
+    names = bad_env("DATABASE_URL", "shop-db")
+    in_root = diagnosed("shop-web's DATABASE_URL names the host db, not shop-db.")
+    in_evidence = diagnosed("A wrong host.", "DATABASE_URL points at db.", "shop-db runs.")
+    half = diagnosed("The database URL names the host db, not shop-db.")
+    assert score_names(names, in_root, None).diagnosis_unnamed == []
+    assert score_names(names, in_evidence, None).diagnosis_unnamed == []
+    assert score_names(names, half, None).diagnosis_unnamed == ["DATABASE_URL"]
+    assert score_names(names, None, None).diagnosis_unnamed is None
+
+
+def test_a_name_in_the_instructions_the_reason_or_a_steps_params_counts_for_the_plan():
+    names = bad_env("TESTAPP_FAIL_AFTER_S")
+    set_env = PlanStep(
+        action="coolify.set_env",
+        host_id="demo",
+        target="testapp",
+        params={"key": "TESTAPP_FAIL_AFTER_S", "value": "0"},
+    )
+    plans = [
+        told("Set TESTAPP_FAIL_AFTER_S=0 and redeploy."),
+        told("Change the setting.", reason="TESTAPP_FAIL_AFTER_S stops the app."),
+        Proposal(kind="act", steps=[set_env], reason="Turn the timer off."),
+        Proposal(kind="no_action", refused=True, refused_steps=[set_env], reason="Refused."),
+    ]
+    for plan in plans:
+        assert score_names(names, None, plan).plan_unnamed == [], plan
+    assert score_names(names, None, None).plan_unnamed is None
+
+
+@pytest.mark.parametrize(
+    ("text", "name", "found"),
+    [
+        ("Set DATABASE_URL=postgresql://shop-db/shop.", "DATABASE_URL", True),
+        ("`DATABASE_URL` names the host db.", "DATABASE_URL", True),
+        ("It needs DATABASE_URL.", "DATABASE_URL", True),
+        ("SHOP_DATABASE_URL names the host db.", "DATABASE_URL", False),
+        ("Its database_url names the host db.", "DATABASE_URL", False),
+        ("DATABASE_URLS is wrong.", "DATABASE_URL", False),
+        ("Restart shop-web, then check it.", "shop-web", True),
+        ("Restart shop-web-1.", "shop-web", False),
+        ("Open shop-web.local.", "shop-web", False),
+    ],
+)
+def test_a_name_counts_only_whole_and_in_its_own_case(text, name, found):
+    assert (unnamed(text, [name]) == []) is found

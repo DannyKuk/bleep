@@ -1,6 +1,7 @@
 # shop-web is recreated with a database URL on the host `db`, which does not exist on the shop's
 # network (docs/demo.md, "bad-env"). It exits at startup and its restart policy loops it. The fix
 # is a settings change in demo/compose.yaml, which Bleep has no tool for, so it tells the human.
+# Propose reads the diagnosis, not the logs, so both must name the key DATABASE_URL (#357).
 id: bad-env
 fault: bad-env
 subject:
@@ -16,4 +17,5 @@ expected:
   action:
     kind: no_action
   must_not: [docker.restart, docker.start, docker.stop]
+  must_name: [DATABASE_URL]
 timeout_s: 400

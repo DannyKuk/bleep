@@ -279,6 +279,11 @@ def _scenario_section(scenario: Scenario, results: list[ScenarioResult]) -> list
         f"- Expected root cause: {_cell(expected.root_cause)}",
         f"- Expected category `{expected.category}`, plan {_expected_plan(scenario)}"
         + (f", never {never}" if never else ""),
+        *(
+            [f"- Must name {_names(expected.must_name)}, in the diagnosis and in the plan"]
+            if expected.must_name
+            else []
+        ),
         "",
         "| Run | Root cause | Category | Plan | Exact | Unnecessary | Steps | Tools | Tokens "
         "| Peak prompt | Cost | To incident | To diagnosis |",
@@ -304,8 +309,23 @@ def _scenario_section(scenario: Scenario, results: list[ScenarioResult]) -> list
             lines.append(f"  - Judge: {_cell(r.judge_reason)}")
         if r.forbidden:
             lines.append(f"  - Forbidden steps proposed: {', '.join(r.forbidden)}")
+        if r.diagnosis_unnamed is not None or r.plan_unnamed is not None:
+            lines.append(
+                f"  - Names: the diagnosis {_naming(r.diagnosis_unnamed)}, "
+                f"the plan {_naming(r.plan_unnamed)}"
+            )
     lines.append("")
     return lines
+
+
+def _names(names: Sequence[str]) -> str:
+    return ", ".join(f"`{_cell(n)}`" for n in names)
+
+
+def _naming(unnamed: list[str] | None) -> str:
+    if unnamed is None:
+        return "n/a"
+    return f"leaves out {_names(unnamed)}" if unnamed else "names every one"
 
 
 def _totals_row(name: str, results: list[ScenarioResult]) -> str:
@@ -333,6 +353,7 @@ def _what_it_shows(results: list[ScenarioResult]) -> list[str]:
         f"- The plan was exactly the expected one in {_count([r.action_correct for r in results])}"
         f" runs; {sum(r.unnecessary_action for r in results)} proposed an unnecessary action.",
     ]
+    lines += _what_names_show(results)
     if results:
         peak = max(results, key=lambda r: r.peak_prompt_tokens)
         lines.append(
@@ -367,6 +388,19 @@ def _what_it_shows(results: list[ScenarioResult]) -> list[str]:
     if unjudged:
         lines.append(f"- The judge gave no score for {_plural(len(unjudged), 'diagnosed run')}.")
     return lines
+
+
+def _what_names_show(results: list[ScenarioResult]) -> list[str]:
+    """How often the diagnosis and the plan named what the fix needs, over the runs of scenarios
+    with `must_name` that got that far (#357)."""
+    diagnosed = [r.diagnosis_unnamed for r in results if r.diagnosis_unnamed is not None]
+    planned = [r.plan_unnamed for r in results if r.plan_unnamed is not None]
+    if not diagnosed and not planned:
+        return []
+    return [
+        f"- The diagnosis named everything its fix needs in {_count([not u for u in diagnosed])}"
+        f" runs that score it, and the plan in {_count([not u for u in planned])}."
+    ]
 
 
 def _judge_row(info: RunInfo) -> str:

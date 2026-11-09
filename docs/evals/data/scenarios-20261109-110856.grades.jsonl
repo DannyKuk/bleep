@@ -1,0 +1,6 @@
+{"run_id": "bad-env/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "DATABASE_URL names host db, which does not resolve; shop-db is the database"}
+{"run_id": "bad-env/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "DATABASE_URL points to host db; the database container is shop-db; startup fails and loops"}
+{"run_id": "bad-env/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "DATABASE_URL points to host db, the database is shop-db; startup fails"}
+{"run_id": "oom/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "WORKER_BATCH_MB 256 past the 64 MiB limit, OOM kills and restart loop"}
+{"run_id": "oom/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "WORKER_BATCH_MB 256 far above the 64 MiB limit, OOM kills and restarts"}
+{"run_id": "oom/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "WORKER_BATCH_MB 256 against a 64 MiB limit, OOM-killed"}
