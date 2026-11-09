@@ -81,6 +81,14 @@ _SHA = re.compile(r"[0-9a-fA-F]{7,64}")
 # or a Dockerfile typed into Coolify.
 PLACEHOLDER_REPO = "coollabsio/coolify"
 _SERVICE = re.compile(r"[\w.-]{1,64}", re.ASCII)  # a Compose service name
+_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+# One domain as Bleep shows it: scheme://host[:port][/path], the host a DNS-style name or a
+# bracketed IPv6 address, the path printable ASCII without `,` or `;`. Nothing in it can end a
+# line, start another item or name another service.
+_URL = re.compile(
+    rf"[A-Za-z][A-Za-z0-9+.-]*://(?:{_LABEL}(?:\.{_LABEL})*\.?|\[[0-9A-Fa-f:.]+\])"
+    r"(?::[0-9]{1,5})?(?:/[\x21-\x2b\x2d-\x3a\x3c-\x7e]*)?"
+)
 APPLICATIONS = (
     "List the Coolify applications: name, uuid, status (running:healthy, exited:unhealthy, ...),"
     " domains, git repo and branch, deployed commit and build pack. The ones whose containers"
@@ -189,6 +197,14 @@ def _source(a: CoolifyApplication) -> str:
     return repo + (f" commit={commit}" if commit else "")
 
 
+def _url_list(text: str) -> str:
+    """`text` without userinfo, when each of its comma items is then a plain URL (`_URL`)."""
+    cut = _no_userinfo(text)
+    if not all(_URL.fullmatch(item) for item in cut.split(",")):
+        raise ValueError("not a list of URLs")
+    return cut
+
+
 def _service_domains(name: str, service: object) -> str | None:
     """`name: domains` for one Compose service, None when it has no domain."""
     if not _SERVICE.fullmatch(name) or not isinstance(service, dict):
@@ -196,7 +212,7 @@ def _service_domains(name: str, service: object) -> str | None:
     domain = service.get("domain")
     if domain is not None and not isinstance(domain, str):
         raise ValueError("not a domain list")
-    return f"{name}: {_no_userinfo(domain.strip())}" if domain and domain.strip() else None
+    return f"{name}: {_url_list(domain)}" if domain else None
 
 
 def _compose_domains(raw: str) -> str:
@@ -219,7 +235,10 @@ def _compose_domains(raw: str) -> str:
 
 def _domains(a: CoolifyApplication) -> str:
     if a.fqdn:
-        return _no_userinfo(a.fqdn)
+        try:
+            return _url_list(a.fqdn)
+        except ValueError:
+            return "?"
     if a.docker_compose_domains is not None:
         return _compose_domains(a.docker_compose_domains)
     return "none"
