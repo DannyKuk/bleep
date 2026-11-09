@@ -1,0 +1,19 @@
+id: de-followup-turns
+lang: de
+about: A follow-up question in German that leans on the earlier turn.
+state: busy
+turns:
+- said: wie geht's shop?
+  answered: 'shop ist seit 14:02 down; shop #14 wartet auf dein Ja.'
+text: und was ist mit M1?
+expect:
+  kind: question
+  words:
+  - - m1
+  - - läuft
+    - laufen
+    - gesund
+    - ok
+    - in Ordnung
+    - alle
+    - alles

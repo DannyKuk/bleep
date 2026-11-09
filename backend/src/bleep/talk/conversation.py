@@ -11,6 +11,7 @@ last built from the structured action, never from the model's words (docs/design
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable, Sequence
 
 from langchain_core.language_models import BaseChatModel
@@ -27,7 +28,13 @@ from bleep.guard.titles import title_name
 from bleep.llm.factory import Role
 from bleep.llm.guard import ModelGuard
 from bleep.llm.structured import invoke_structured
-from bleep.llm.usage import CostLedger, UsageTracker, check_daily_cap
+from bleep.llm.usage import (
+    CHAT_USAGE,
+    BudgetExceeded,
+    CostLedger,
+    UsageTracker,
+    check_chat_cap,
+)
 from bleep.schemas.settings import Budgets
 from bleep.schemas.talk import (
     IncidentFacts,
@@ -42,16 +49,23 @@ from bleep.talk.state import StateReader
 
 log = logging.getLogger(__name__)
 
-TALK_USAGE = "talk"  # the usage ledger's key for chat answers, which have no incident
+TALK_USAGE = CHAT_USAGE  # the usage ledger's key for chat answers, with a daily cap of its own
 TEXT_CHARS = 1000  # the person's message, as the model reads it
 TURN_CHARS = 600  # each side of an earlier turn
 STATE_CHARS = 16_000  # the snapshot; its tail is kept if a large setup outgrows it
 INCIDENT_CHARS = 4000
 HISTORY_CHARS = 8000  # the turns a surface keeps (`talk.history.TURNS_KEPT`), each side capped
 ANSWER_CHARS = 1500  # an answer Bleep sends, well under Telegram's 4,096
-# A chat answer must not hold the person for long: one call of at most this long, one retry.
+# A chat answer must not hold the person for long: one call of at most this long, one retry,
+# and the whole reading (a JSON fallback and its retry included) cut off after REPLY_TIMEOUT_S.
 TIMEOUT_S = 30
 RETRIES = 1
+REPLY_TIMEOUT_S = 60
+# A link in an answer: a scheme, `www.`, or a host name followed by a path. Telegram makes them
+# clickable, and a name or a cause from a host could carry one.
+_LINK = re.compile(
+    r"\b(?:[a-z][a-z0-9+.-]*://|www\.)\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)+/\S*", re.IGNORECASE
+)
 _SUBJECT_KINDS = ("snooze", "leave_alone", "watch_again", "look_again")
 
 ModelFactory = Callable[[Role], BaseChatModel]
@@ -62,7 +76,9 @@ def _json(value: BaseModel | list[Turn] | None) -> str:
         return json.dumps([t.model_dump() for t in value], ensure_ascii=False, indent=1)
     if value is None:
         return "null"
-    return value.model_dump_json(indent=1, exclude_none=True)
+    # Compact, and without the fields that only say their default: the snapshot of a large setup
+    # stays well inside STATE_CHARS.
+    return value.model_dump_json(exclude_none=True, exclude_defaults=True)
 
 
 def _fixed(name: str, **values: str) -> str:
@@ -70,15 +86,16 @@ def _fixed(name: str, **values: str) -> str:
 
 
 def clean_answer(text: str) -> str:
-    """The model's answer as a chat may show it: no control characters, secrets redacted,
-    capped."""
+    """The model's answer as a chat may show it: no control characters, secrets redacted, no
+    links, capped."""
     clean = redact_text(strip_control(text)).strip()
+    clean = _LINK.sub(_fixed("link_removed"), clean)
     return clean if len(clean) <= ANSWER_CHARS else clean[: ANSWER_CHARS - 1].rstrip() + "…"
 
 
 class Talk:
     """`models` builds the chat model for a role (the `cheap` one is used); `budgets` gives the
-    day's cost cap and the model timeout, `ledger` records what each call cost."""
+    chat's own daily cost cap and the model timeout, `ledger` records what each call cost."""
 
     def __init__(
         self,
@@ -104,9 +121,12 @@ class Talk:
         of this conversation, and say what Bleep answers. Never raises for a model that fails:
         that is the `failed` reply."""
         try:
-            snapshot = await self.state.snapshot()
-            facts = await self.state.incident(incident_id) if incident_id else None
-            reading = await self._read(text, snapshot, facts, list(turns))
+            async with asyncio.timeout(REPLY_TIMEOUT_S):
+                snapshot = await self.state.snapshot()
+                facts = await self.state.incident(incident_id) if incident_id else None
+                reading = await self._read(text, snapshot, facts, list(turns))
+        except BudgetExceeded:
+            return TalkReply(kind="failed", answer=_fixed("spent"), incident_id=incident_id)
         except Exception as error:  # the type only: a provider's message may quote its key
             log.warning("talk: could not read a message (%s)", type(error).__name__)
             return TalkReply(kind="failed", answer=_fixed("failed"), incident_id=incident_id)
@@ -122,6 +142,8 @@ class Talk:
         history = [Turn(said=t.said[:TURN_CHARS], answered=t.answered[:TURN_CHARS]) for t in turns]
         message = prompts.load(
             "talk/message",
+            now=snapshot.now,
+            zone=snapshot.zone,
             state=self._guarded("bleep_state", _json(snapshot), STATE_CHARS),
             incident=self._guarded("incident", _json(facts), INCIDENT_CHARS),
             history=self._guarded("conversation", _json(history), HISTORY_CHARS),
@@ -130,7 +152,7 @@ class Talk:
         messages = [SystemMessage(prompts.load("talk/read")), HumanMessage(message)]
         config: RunnableConfig | None = None
         if self.ledger is not None:
-            await check_daily_cap(self.ledger, self.budgets())
+            await check_chat_cap(self.ledger, self.budgets())
             config = {"callbacks": [UsageTracker(TALK_USAGE, self.ledger)]}
         timeout = min(TIMEOUT_S, self.budgets().model_timeout_s)
         guard = ModelGuard(timeout, retries=RETRIES, sleep=self.sleep)

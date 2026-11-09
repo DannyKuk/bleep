@@ -1,0 +1,16 @@
+id: en-followup-turns
+lang: en
+about: An action whose subject is only in the earlier turns.
+state: busy
+turns:
+- said: what's up with grafana?
+  answered: grafana on laptop is fine.
+text: ok, leave it alone for an hour anyway
+expect:
+  kind: action
+  action:
+    kind: snooze
+    subject:
+    - grafana
+    - laptop/compose:grafana
+    minutes: 60

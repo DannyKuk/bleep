@@ -10,5 +10,8 @@ How Bleep reads what a person writes in its chat, and the fixed lines it answers
   `unclear`, `failed`, and `not_yet` with an `understood_*` line for the action Bleep read
   (`unknown_subject` and `unknown_incident` stand in for a name Bleep does not know). Only a
   question's answer is the model's own text.
+- `unclear` offers only what this part can do, answers; when the confirmed actions land (#402) it
+  offers snooze and watch again again. `spent` answers once chat's own daily cap is spent, and
+  `link_removed` stands in for a link taken out of an answer.
 - None of these can be overridden from the dev panel: they read the person's words and refuse
   them.

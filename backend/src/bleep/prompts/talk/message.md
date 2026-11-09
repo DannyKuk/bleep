@@ -1,3 +1,5 @@
+Now: {now} ({zone}).
+
 Bleep's state now, built by Bleep:
 
 {state}
@@ -10,6 +12,6 @@ The last turns of this conversation, oldest first:
 
 {history}
 
-The person's message:
+The person's message, sent at {now} ({zone}):
 
 {message}

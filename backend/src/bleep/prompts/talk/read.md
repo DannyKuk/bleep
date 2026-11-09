@@ -22,10 +22,10 @@ Pick one `kind`:
   - `leave_alone`: leave a service or host alone with no end ("leave shop alone"). `subject`.
   - `watch_again`: end a service's or host's quiet ("watch shop again"). `subject`.
   - `expected`: what opened an incident is normal ("that's expected", "I'm deploying"). `incident`.
-  - `instruct`: words for the plan that waits on an incident, so Bleep plans again with them ("don't restart, I'll fix the batch size myself"). `incident`.
+  - `instruct`: words for the plan that waits on an incident, so Bleep plans again with them ("don't restart, I'll fix the batch size myself"). `incident`. When the message is about an incident whose plan waits (`plan_waiting`), a request to change what that plan does is an `instruct`, never a refusal: "restart the db first, then shop", "stop the worker instead", "don't touch the database". The plan is made again with those words and still needs a yes.
   - `show_plan`: the person agrees to a waiting plan ("yes, do it", "go ahead"). `incident`. They still approve it with the plan's own button.
   - `look_again`: look at a service now, without an incident ("look at shop-web again"). `subject`.
-- `refusal`: the person asks you to run a command, to restart, stop, start or change a container directly, to change a setting or a limit, to approve a plan for them, or to show a secret, a password, a token or an env value. Set `refusal` to `secret` for a secret or an env value, else to `change`. Leave `answer` empty.
+- `refusal`: the person asks you to show a secret, a password, a token or an env value, to change a setting or a limit, or to approve a plan for them; or, in a message that is not about an incident whose plan waits, to run a command or to restart, stop, start or change a container directly. Set `refusal` to `secret` for a secret or an env value, else to `change`. Leave `answer` empty.
 - `unclear`: anything else, or a message you cannot read as one of the above. Leave `answer` empty.
 
 ## The fields of an action

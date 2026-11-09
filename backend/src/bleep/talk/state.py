@@ -33,6 +33,17 @@ CAUSE_CHARS = 200
 NOTE_CHARS = 200
 NOTES_KEPT = 5
 SIGNALS_KEPT = 5
+# Names and titles came from hosts and labels; each is cut so one long label cannot crowd out
+# the rest, and the lists are cut so a large setup still fits (`Snapshot.left_out` counts the
+# rest). Services that need attention are listed first, so they are the last to go.
+NAME_CHARS = 80
+TITLE_CHARS = 120
+HOSTS_KEPT = 20
+SERVICES_KEPT = 60
+CONTAINERS_KEPT = 6
+OPEN_KEPT = 20
+ENDED_KEPT = 15
+_CALM = ("ok", "done", "stopped", "asleep")
 
 
 class HealthSource(Protocol):
@@ -55,6 +66,11 @@ class StateReader(Protocol):
     async def snapshot(self) -> Snapshot: ...
 
     async def incident(self, incident_id: str) -> IncidentFacts | None: ...
+
+
+def _calm(service: ServiceView) -> bool:
+    """Whether a service needs no attention: it sorts after those that do."""
+    return service.health in _CALM and service.quiet is None and not service.open_incident_id
 
 
 def _line(text: str, limit: int) -> str:
@@ -108,19 +124,28 @@ class BleepState:
             if i.status in TERMINAL_STATUSES and (i.closed_at or i.opened_at) >= now - RECENT
         ]
         names = {i.id: i.short_name or i.id for i in open_incidents}
+        services = sorted(services, key=_calm)
+        left_out = {
+            "hosts": len(hosts) - HOSTS_KEPT,
+            "services": len(services) - SERVICES_KEPT,
+            "containers": sum(max(len(s.containers) - CONTAINERS_KEPT, 0) for s in services),
+            "open_incidents": len(open_incidents) - OPEN_KEPT,
+            "ended_last_24h": len(recent) - ENDED_KEPT,
+        }
         return Snapshot(
             now=self._at(now) or "",
             zone=str(self.zone() or "UTC"),
-            hosts=[self._host(h) for h in hosts],
-            services=[self._service(s, names) for s in services],
-            open_incidents=[await self._incident_line(i) for i in open_incidents],
-            ended_last_24h=[await self._incident_line(i) for i in recent],
+            hosts=[self._host(h) for h in hosts[:HOSTS_KEPT]],
+            services=[self._service(s, names) for s in services[:SERVICES_KEPT]],
+            open_incidents=[await self._incident_line(i) for i in open_incidents[-OPEN_KEPT:]],
+            ended_last_24h=[await self._incident_line(i) for i in recent[:ENDED_KEPT]],
+            left_out={part: n for part, n in left_out.items() if n > 0},
         )
 
     def _host(self, host: HostView) -> HostLine:
         return HostLine(
             id=host.id,
-            name=host.name,
+            name=_line(host.name, NAME_CHARS),
             health=host.health,
             reachable=host.reachable,
             last_seen=self._at(host.last_seen),
@@ -129,19 +154,19 @@ class BleepState:
 
     def _service(self, service: ServiceView, names: dict[str, str]) -> ServiceLine:
         return ServiceLine(
-            id=service.id,
-            name=service.name,
+            id=_line(service.id, NAME_CHARS),
+            name=_line(service.name, NAME_CHARS),
             host=service.host_id,
             health=service.health,
             containers=[
                 ContainerLine(
-                    name=c.name,
+                    name=_line(c.name, NAME_CHARS),
                     state=c.state,
                     health=c.health,
                     exit_code=c.exit_code,
                     restarts=c.restart_count,
                 )
-                for c in service.containers
+                for c in service.containers[:CONTAINERS_KEPT]
             ],
             quiet=self._quiet(service.quiet, "service"),
             open_incident=names.get(service.open_incident_id or ""),
@@ -169,8 +194,8 @@ class BleepState:
         facts = IncidentFacts(
             id=incident.id,
             name=incident.short_name,
-            title=incident.title,
-            subject=incident.subject.service_id or incident.subject.host_id,
+            title=_line(incident.title, TITLE_CHARS),
+            subject=_line(incident.subject.service_id or incident.subject.host_id, NAME_CHARS),
             status=incident.status,
             opened=self._at(incident.opened_at) or "",
             ended=self._at(incident.closed_at) if ended else None,
@@ -181,13 +206,18 @@ class BleepState:
         if detail:
             signals = await self.incidents.signals(incident.id)
             facts.signals = [
-                SignalLine(kind=s.kind, container=s.container, at=self._at(s.at) or "")
+                SignalLine(
+                    kind=s.kind,
+                    container=_line(s.container, NAME_CHARS) if s.container else None,
+                    at=self._at(s.at) or "",
+                )
                 for s in signals[:SIGNALS_KEPT]
             ]
             if waiting and record is not None:
                 shown = redacted_proposal(record.proposal)
                 facts.plan = [
-                    StepLine(action=s.action, target=s.target, host=s.host_id) for s in shown.steps
+                    StepLine(action=s.action, target=_line(s.target, NAME_CHARS), host=s.host_id)
+                    for s in shown.steps
                 ]
             facts.notes = notes[-NOTES_KEPT:]
             summary = _text(report, "summary")

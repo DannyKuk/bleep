@@ -4,7 +4,7 @@
 configured chat says into decisions. A button press is `approve:<approval id>` or
 `reject:<approval id>`, `expected`, or `onit` and then `onit:<choice>` (a snooze). Any text is
 answered through `talk` from Bleep's own state (#401), and changes nothing; a reply to a message
-whose plan waits is still an instruction for it unless it reads as a question or a refusal.
+whose plan waits is still an instruction for it unless it reads as a question.
 Decisions go through `approvals.resolve`, so the dashboard and Telegram race fairly: the winner
 resumes the run, the loser is told which channel won. Updates from any other chat are dropped and
 written to the guard log. The bot token is in every Bot API URL, so no error or log line here
@@ -43,6 +43,7 @@ REQUEST_TIMEOUT_S = 10  # every other call: a hung send must not hold the Approv
 BACKOFF_START_S = 1.0
 BACKOFF_MAX_S = 60.0
 INSTRUCTION_MAX_CHARS = 1000
+TALK_WAITING_MAX = 3  # messages being answered at once; one more is told Bleep is busy
 GUARD_INCIDENT = "telegram"  # guard_log rows that belong to no incident
 _CHANNEL_NAMES = {"dashboard": "the dashboard", "telegram": "Telegram"}
 
@@ -540,55 +541,59 @@ class TelegramBot:
         return shows_in_full(current.proposal)
 
     async def _text(self, message: dict[str, Any]) -> None:
-        """With `talk`, the message is answered in the background (`_answer`), so a slow model
-        never holds a button press behind it. Without it, a reply to a message about an incident
-        instructs its plan (`_instruct`) and any other text is told how to give one."""
-        if self.talk is not None:
-            task = asyncio.create_task(self._answer_safely(message), name="telegram talk")
-            self._talking.add(task)
-            task.add_done_callback(self._talking.discard)
-            return
+        """With `talk`, what the person wrote is answered (`_answer`). Without it, a reply to a
+        message about an incident instructs its plan (`_instruct`) and any other text is told
+        how to give one."""
+        reply = message["message_id"]
+        text = message["text"].strip()
         reply_to = message.get("reply_to_message", {}).get("message_id")
         known = await self.messages.get(reply_to) if reply_to else None
-        reply = message["message_id"]
-        if known is None:
+        if self.talk is None and known is None:
             await self._say(answer("answer_no_reply"), reply)
             return
-        text = message["text"].strip()
         if len(text) > INSTRUCTION_MAX_CHARS:
             await self._say(answer("answer_too_long", limit=str(INSTRUCTION_MAX_CHARS)), reply)
             return
-        await self._say(await self._instruct(*known, text), reply)
+        if self.talk is None:
+            assert known is not None
+            await self._say(await self._instruct(*known, text), reply)
+            return
+        if known is not None and (known[1] or await self._waiting(known[0])):
+            # A reply a plan may take is handled here, in order, so a press that came after it
+            # (an Approve) waits behind it, as it did before the reply was read by a model.
+            await self._answer(text, reply, known, to_plan=True)
+            return
+        if len(self._talking) >= TALK_WAITING_MAX:
+            await self._say(answer("answer_talk_busy"), reply)
+            return
+        task = asyncio.create_task(self._answer_safely(text, reply, known), name="telegram talk")
+        self._talking.add(task)
+        task.add_done_callback(self._talking.discard)
 
-    async def _answer_safely(self, message: dict[str, Any]) -> None:
-        """`_answer`, one message at a time in the order they came; an error is logged, as
-        `poll_once` logs one, and never reaches the poller."""
+    async def _answer_safely(self, text: str, reply: int, known: tuple[str, str] | None) -> None:
+        """`_answer` in the background, so a slow model never holds a button press behind a
+        message that can change nothing; one at a time in the order they came. An error is
+        logged, as `poll_once` logs one, and never reaches the poller."""
         try:
             async with self._talk_turn:
-                await self._answer(message)
+                await self._answer(text, reply, known, to_plan=False)
         except TelegramError as error:
             log.warning("telegram: could not answer a message: %s", error)
         except Exception:
             log.exception("telegram: answering a message failed")
 
-    async def _answer(self, message: dict[str, Any]) -> None:
-        """Answer what the person wrote through `talk`, which reads and never changes anything.
-        A reply to a message about an incident is about that incident. Until replies are
-        confirmed with a button (#402), a reply to a message whose plan would take it as an
-        instruction still instructs that plan, as before, unless it reads as a question or a
-        refusal; so does one Bleep could not read."""
+    async def _answer(
+        self, text: str, reply: int, known: tuple[str, str] | None, to_plan: bool
+    ) -> None:
+        """Answer what the person wrote through `talk`, which reads and never changes anything;
+        a reply to a message about an incident is about that incident. Until replies are
+        confirmed with a button (#402), a reply a plan would take (`to_plan`: the plan its
+        message showed, or the one waiting on its incident) still instructs that plan, as
+        before, unless it reads as a question; so does one Bleep could not read."""
         assert self.talk is not None
-        reply = message["message_id"]
-        text = message["text"].strip()
-        if len(text) > INSTRUCTION_MAX_CHARS:
-            await self._say(answer("answer_too_long", limit=str(INSTRUCTION_MAX_CHARS)), reply)
-            return
-        reply_to = message.get("reply_to_message", {}).get("message_id")
-        known = await self.messages.get(reply_to) if reply_to else None
         incident_id = known[0] if known is not None else None
-        to_plan = known is not None and bool(known[1] or await self._waiting(known[0]))
         said = await self.talk.reply(text, incident_id, self.turns.recent())
-        if known is not None and to_plan and said.kind not in ("question", "refusal"):
+        if known is not None and to_plan and said.kind != "question":
             note = await self._instruct(*known, text)
         else:
             note = said.answer

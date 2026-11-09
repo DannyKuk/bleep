@@ -146,3 +146,5 @@ class Snapshot(BaseModel):
     services: list[ServiceLine] = Field(default_factory=list)
     open_incidents: list[IncidentLine] = Field(default_factory=list)
     ended_last_24h: list[IncidentLine] = Field(default_factory=list)
+    # How many of each list were left out to keep the snapshot small; only parts that lost some.
+    left_out: dict[str, int] = Field(default_factory=dict)
