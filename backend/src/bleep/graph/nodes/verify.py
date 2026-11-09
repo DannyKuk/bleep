@@ -29,7 +29,6 @@ Each check publishes a `verification` event; the notifier hears the round's fina
 """
 
 import logging
-import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -43,6 +42,7 @@ from bleep.graph.deps import GraphDeps
 from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.plan_check import COOLIFY_UUID, coolify_members, host_urls
 from bleep.hosts.config import UrlCheckConfig
+from bleep.hosts.coolify_names import coolify_container_name
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.hosts.readings import past_threshold, readings
 from bleep.hosts.shell import HostUnreadable, host_basics
@@ -213,8 +213,7 @@ def _replaced(deps: GraphDeps, state: IncidentState) -> Callable[[str], bool]:
         for c in [*gathered, *now]
         if c.labels.get(COOLIFY_UUID) in uuids and _not_preview(c.labels)
     }
-    named = [re.compile(rf"(?:^|-){re.escape(u)}-\d+$") for u in uuids]
-    return lambda name: name in members or any(p.search(name) for p in named)
+    return lambda name: name in members or any(coolify_container_name(name, u) for u in uuids)
 
 
 def _app_uuids(containers: list[ContainerSummary], target: str) -> set[str]:

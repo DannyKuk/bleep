@@ -17,7 +17,7 @@ from typing import Any, Literal
 from bleep.guard.redact import hides_head, hides_params, pads_step
 from bleep.guard.sanitize import INVISIBLE_CHARS, strip_control
 from bleep.hosts.config import UrlCheckConfig
-from bleep.hosts.coolify_names import name_matches
+from bleep.hosts.coolify_names import coolify_container_name, name_matches
 from bleep.hosts.discovery import is_self
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
@@ -29,6 +29,12 @@ KNOWN_ACTIONS: frozenset[str] = frozenset(typing.get_args(Action))
 # shows an application's id, and a bare number could match another application's name.
 COOLIFY_UUID, COOLIFY_NAME = "coolify.applicationUuid", "coolify.resourceName"
 COOLIFY_APP_LABELS = (COOLIFY_UUID, COOLIFY_NAME)
+# Coolify 4.1.x wrote no application uuid label; its uuid is in these and in the container name.
+COOLIFY_MANAGED, COOLIFY_TYPE, COOLIFY_SHORT_NAME = (
+    "coolify.managed",
+    "coolify.type",
+    "coolify.name",
+)
 # The params each action takes; an action not listed here takes whatever it is given.
 ACTION_PARAMS: dict[str, frozenset[str]] = {
     "coolify.redeploy": frozenset(),
@@ -382,10 +388,12 @@ def check_target(number: int, step: PlanStep, registry: Registry) -> list[Violat
     """Every reason `step`'s target may not be acted on now, read from the registry as it stands.
 
     Refused: a host not in the hosts file, unreachable or carrying a configuration error, a target
-    not found on it, a protected container and a Bleep container. A Coolify target must name one
-    application by uuid or resource name, and is refused when its uuid, its name or any of its
-    containers is protected, or any of its containers is Bleep's own. The plan check runs it
-    before a human is asked and every act tool again right before its engine call (#24).
+    not found on it, a protected container and a Bleep container. A container is protected by its
+    name or by the uuid or name of the Coolify application its labels say it belongs to
+    (`protected_by`), whatever the action. A Coolify target must name one application by uuid or
+    resource name, and is refused when its uuid, its name or any of its containers is protected,
+    or any of its containers is Bleep's own. The plan check runs it before a human is asked and
+    every act tool again right before its engine call (#24, #319).
     """
     what = f"step {number} ({step.action} {step.target} on {step.host_id})"
 
@@ -419,15 +427,10 @@ def check_target(number: int, step: PlanStep, registry: Registry) -> list[Violat
                 " once"
             )
             return refuse("not_found", why)
-        # Coolify names an app's containers anew at every deploy, so its uuid and its name
-        # protect it too, not only a container name that lasts until the next deploy. The name
-        # label is Coolify's slug of the app's name, so a protected name is compared slugged, and
-        # also exactly and in any case, for a label an older Coolify wrote that is not a slug.
-        names = {n for c in members if (n := c.labels.get(COOLIFY_NAME))}
-        held = sorted(uuids & protected) + sorted(p for p in protected if name_matches(p, names))
-        if held:
+        held = next((e for c in members if (e := app_protected_by(c, protected))), None)
+        if held is not None:
             return refuse(
-                "protected", f"the Coolify application {held[0]} is protected in the hosts file"
+                "protected", f"the Coolify application {held} is protected in the hosts file"
             )
     else:
         container = registry.container(step.host_id, step.target)
@@ -439,9 +442,67 @@ def check_target(number: int, step: PlanStep, registry: Registry) -> list[Violat
     for c in members:
         if is_self(c.labels):
             found += refuse("self", f"{c.name} is one of Bleep's own containers")
-        elif c.name in protected:
-            found += refuse("protected", f"{c.name} is protected in the hosts file")
+        elif (entry := protected_by(c, protected)) is not None:
+            found += refuse("protected", protected_reason(c, entry))
     return found
+
+
+def protected_reason(container: ContainerSummary, entry: str) -> str:
+    """Why `container` is refused, given the protected entry that covers it (`protected_by`)."""
+    if entry == container.name:
+        return f"{container.name} is protected in the hosts file"
+    return (
+        f"{container.name} belongs to the Coolify application {entry}, which is protected in the"
+        " hosts file"
+    )
+
+
+def app_protected_by(container: ContainerSummary, protected: Collection[str]) -> str | None:
+    """The entry of `protected` that names the Coolify application `container` belongs to, by
+    the uuid or resource name label the engine reports on it, or None.
+
+    Coolify names an app's containers anew at every deploy, so its uuid and its name protect it
+    too, not only a container name that lasts until the next deploy. A uuid compares exactly. The
+    name label is Coolify's slug of the app's name, so a protected name is compared slugged, and
+    also exactly and in any case, for a label an older Coolify wrote that is not a slug
+    (`name_matches`). A Coolify 4.1.x container carries no uuid label, so on a container with
+    Coolify labels an entry also counts when it is the `coolify.name` label or the uuid in
+    Coolify's container name (`coolify_container_name`). The labels count without the Coolify
+    plugin: Bleep can watch a Coolify host with the plugin off."""
+    labels = container.labels
+    uuid = labels.get(COOLIFY_UUID)
+    if uuid and uuid in protected:
+        return uuid
+    name = labels.get(COOLIFY_NAME)
+    by_name = next((p for p in sorted(protected) if name and name_matches(p, {name})), None)
+    if by_name is not None or not _coolify_labelled(labels):
+        return by_name
+    return next(
+        (
+            p
+            for p in sorted(protected)
+            if p == labels.get(COOLIFY_SHORT_NAME) or coolify_container_name(container.name, p)
+        ),
+        None,
+    )
+
+
+def _coolify_labelled(labels: Mapping[str, str]) -> bool:
+    """Whether `labels` mark a Coolify container; `coolify.applicationId` alone counts, as it
+    does for discovery."""
+    return (
+        labels.get(COOLIFY_MANAGED) == "true"
+        or COOLIFY_TYPE in labels
+        or bool(labels.get("coolify.applicationId"))
+    )
+
+
+def protected_by(container: ContainerSummary, protected: Collection[str]) -> str | None:
+    """The entry of `protected` that protects `container`: its own name, else the entry that
+    names its Coolify application (`app_protected_by`); None when it is not protected."""
+    if container.name in protected:
+        return container.name
+    return app_protected_by(container, protected)
 
 
 def mcp_arguments(step: PlanStep) -> dict[str, Any] | None:
@@ -519,22 +580,32 @@ def named_off_limits(
     arguments: Any, registry: Registry, host_id: str, *, protected: bool = True
 ) -> tuple[Rule, str] | None:
     """Which off-limits container decoded JSON `arguments` name, and the rule it breaks: one of
-    Bleep's own containers on `host_id` (by name, id or short id) or, with `protected`, one
-    protected there. A mention anywhere counts, in any case; a container on another host, or one
+    Bleep's own containers on `host_id` (by name, id or short id) or, with `protected`, a
+    protected entry there, or a container on the host it protects (`protected_by`, by name, id
+    or short id). A mention anywhere counts, in any case; a container on another host, or one
     named some other way, is not recognised. Before matching, every string is also read with
     invisible characters removed, in NFKC, case-folded and URL-decoded (`_spellings`)."""
     texts = [t for s in _strings(arguments) for t in _spellings(s)]
-    for c in registry.snapshot(host_id) or []:
-        refs = {c.name, c.id, c.id[:12]} - {""}
-        if is_self(c.labels) and any(_in(ref, texts) for ref in refs):
+    containers = registry.snapshot(host_id) or []
+    for c in containers:
+        if is_self(c.labels) and any(_in(ref, texts) for ref in _refs(c)):
             return "self", f"{c.name}, one of Bleep's own containers"
     host = next((h for h in registry.hosts() if h.config.id == host_id), None)
     if not protected or host is None:
         return None
-    for name in sorted(protected_names(host)):
+    entries = protected_names(host)
+    for name in sorted(entries):
         if _in(name, texts):
             return "protected", f"{name}, a container protected in the hosts file"
+    for c in containers:
+        if protected_by(c, entries) is not None and any(_in(ref, texts) for ref in _refs(c)):
+            return "protected", f"{c.name}, a container protected in the hosts file"
     return None
+
+
+def _refs(container: ContainerSummary) -> set[str]:
+    """The ways a step can name `container`: its name, its id and its 12-character short id."""
+    return {container.name, container.id, container.id[:12]} - {""}
 
 
 def coolify_members(containers: list[ContainerSummary], target: str) -> list[ContainerSummary]:

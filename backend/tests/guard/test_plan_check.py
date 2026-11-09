@@ -1,9 +1,11 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from bleep.graph.deps import CORE_ACTIONS
 from bleep.guard.plan_check import (
+    COOLIFY_UUID,
     NoCoolifyApp,
     Violation,
     check_plan,
@@ -12,6 +14,7 @@ from bleep.guard.plan_check import (
 )
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.coolify_names import coolify_slug
+from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import PlanStep, Proposal, VerificationPlan
 from fakes import FakeEngine
 from graph_env import box, graph_env, shop_host
@@ -919,3 +922,246 @@ async def test_a_padded_target_is_refused(tmp_path):
     [found] = check_plan(act(restart(name)), env.registry, CORE, "a", incident_containers=[name])
 
     assert found.rule == "hidden_param" and "padded with blank lines or spaces" in found.text
+
+
+# --- a Coolify app's containers under docker.* steps (#319) -----------------------------------
+
+DB_APP = coolify_app("k8s0db1x", "billing-db")
+DB = "k8s0db1x-104512093422"  # Coolify names a container <uuid>-<deploy time>
+
+
+async def docker_checked(
+    tmp_path,
+    step: PlanStep,
+    labels: dict[str, str],
+    protected: list[str],
+    enabled=WITH_MCP,
+    name: str = DB,
+) -> list[Violation]:
+    """The plan check of one step on host a, whose exited container `name` carries `labels` and
+    is the incident's own, so only the protection rules can refuse it."""
+    engine = FakeEngine(
+        "a", [box(name, labels=labels, state="exited", exit_code=1), box("shop-web-1", "shop")]
+    )
+    host = shop_host(services={"billing": ServiceOverrides(protected_containers=protected)})
+    env = await graph_env(tmp_path, engine=engine, host=host)
+    return check_plan(
+        act(step), env.registry, enabled, "a", incident_containers=[name], step_rules=ANY_TOOL
+    )
+
+
+def docker(action: str, target: str = DB) -> PlanStep:
+    return PlanStep(action=action, host_id="a", target=target)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("action", ["docker.restart", "docker.stop", "docker.start"])
+@pytest.mark.parametrize("protected", ["k8s0db1x", "billing-db", "Billing DB", "BILLING-DB"])
+async def test_a_docker_step_on_a_protected_coolify_apps_container_is_refused(
+    tmp_path, action, protected
+):
+    found = await docker_checked(tmp_path, docker(action), DB_APP, [protected])
+
+    assert [(v.rule, v.step) for v in found] == [("protected", 1)]
+    assert f"{DB} belongs to the Coolify application {protected}" in found[0].text
+
+
+@pytest.mark.parametrize("target", [DB, f"id-{DB}", f"id-{DB}"[:12]])
+async def test_every_name_of_the_container_is_refused(tmp_path, target):
+    found = await docker_checked(tmp_path, docker("docker.restart", target), DB_APP, ["k8s0db1x"])
+
+    assert [v.rule for v in found] == ["protected"]
+
+
+async def test_a_uuid_protects_the_app_whatever_its_resource_name(tmp_path):
+    renamed = coolify_app("k8s0db1x", "ledger")
+    other_uuid = coolify_app("p0zz9w2q", "billing-db")
+
+    stop = docker("docker.stop")
+    by_uuid = await docker_checked(tmp_path / "1", stop, renamed, ["k8s0db1x"])
+    by_name = await docker_checked(tmp_path / "2", stop, other_uuid, ["billing-db"])
+
+    assert [v.rule for v in by_uuid] == ["protected"]
+    assert [v.rule for v in by_name] == ["protected"]
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        coolify_app("k8s0db1x2", "billing-db-2"),  # one character more on each
+        coolify_app("k8s0db1", "billing-d"),  # one character less
+        coolify_app("K8S0DB1X", "billingdb"),  # a uuid compares exactly; the name slugs apart
+        coolify_app("x-k8s0db1x", "old-billing-db"),
+        {"coolify.applicationuuid": "k8s0db1x", "coolify.resourcename": "billing-db"},
+        {"coolify.applicationId": "k8s0db1x", "coolify.name": "billing-db-2"},
+        {"com.docker.compose.project": "k8s0db1x", "app": "billing-db"},
+        coolify_app("", ""),
+    ],
+)
+async def test_a_label_that_only_resembles_a_protected_entry_protects_nothing(tmp_path, labels):
+    plain = "billing-104512093422"  # a name that holds no protected entry
+    found = await docker_checked(
+        tmp_path, docker("docker.restart", plain), labels, ["k8s0db1x", "billing-db"], name=plain
+    )
+
+    assert found == []
+
+
+async def test_coolify_labels_protect_a_container_with_the_coolify_plugin_off(tmp_path):
+    # Bleep without a Coolify token can still watch a Coolify host; the labels are the engine's.
+    found = await docker_checked(
+        tmp_path, docker("docker.restart"), DB_APP, ["billing-db"], enabled=CORE
+    )
+
+    assert [v.rule for v in found] == ["protected"]
+
+
+async def test_an_mcp_call_on_a_protected_coolify_apps_container_is_refused(tmp_path):
+    on_it = PlanStep(
+        action="mcp.call",
+        host_id="a",
+        target=DB,
+        params={"tool": "run_command", "arguments": "{}"},
+    )
+    naming_it = mcp_raw(json.dumps({"container": f"id-{DB}"[:12]}))
+
+    for number, step in enumerate((on_it, naming_it)):
+        found = await docker_checked(tmp_path / str(number), step, DB_APP, ["billing-db"])
+
+        assert [v.rule for v in found] == ["protected"]
+
+
+async def test_the_container_name_still_gets_its_own_refusal_text(tmp_path):
+    found = await docker_checked(tmp_path, docker("docker.restart"), DB_APP, [DB, "k8s0db1x"])
+
+    assert [v.rule for v in found] == ["protected"]
+    assert found[0].text.endswith(f"{DB} is protected in the hosts file")
+
+
+LABEL_CAPTURES = Path(__file__).parent.parent / "fixtures" / "labels"
+
+
+def captured(fixture: str) -> ContainerSummary:
+    """An exited container carrying the labels captured from a real Coolify host."""
+    data = json.loads((LABEL_CAPTURES / f"{fixture}.json").read_text())
+    return box(data["container"], labels=data["labels"], state="exited", exit_code=1)
+
+
+async def captured_checked(tmp_path, container: ContainerSummary, action: str, protected: str):
+    engine = FakeEngine("a", [container, box("shop-web-1", "shop")])
+    host = shop_host(services={"other": ServiceOverrides(protected_containers=[protected])})
+    env = await graph_env(tmp_path, engine=engine, host=host)
+    step = docker(action, container.name)
+    return check_plan(act(step), env.registry, CORE, "a", incident_containers=[container.name])
+
+
+OLD_UUID = "cr2hzhk4nvabtad0zinjw1ev"  # Coolify 4.1.2 wrote no coolify.applicationUuid for it
+
+
+@pytest.mark.parametrize("action", ["docker.restart", "docker.stop"])
+@pytest.mark.parametrize(
+    ("fixture", "protected"),
+    [
+        ("coolify-4.1.2-applicationid", OLD_UUID),
+        ("coolify-4.1.2-applicationid", f"easy-pointment-static:main-{OLD_UUID}"),
+        ("coolify-4.5.0-dkwebsite", "vclhwoxxy60z4vk70g0vpesq"),
+        ("coolify-4.5.0-dkwebsite", "dkwebsite"),
+        ("coolify-4.5.3-molecula-backend", "hfys2nogpz7wrhcoqxymnfkt"),
+        ("coolify-4.5.3-molecula-backend", "Molecula"),
+    ],
+)
+async def test_a_captured_coolify_container_is_protected_by_its_apps_uuid_or_name(
+    tmp_path, fixture, protected, action
+):
+    container = captured(fixture)
+    assert fixture != "coolify-4.1.2-applicationid" or COOLIFY_UUID not in container.labels
+
+    found = await captured_checked(tmp_path, container, action, protected)
+
+    assert [v.rule for v in found] == ["protected"]
+    assert f"belongs to the Coolify application {protected}," in found[0].text
+
+
+async def test_an_old_coolify_container_renamed_keeps_its_uuid_protection(tmp_path):
+    # Its coolify.name label still holds the uuid when the container name no longer does.
+    renamed = captured("coolify-4.1.2-applicationid").model_copy(update={"name": "static-site"})
+
+    found = await captured_checked(tmp_path, renamed, "docker.stop", OLD_UUID)
+
+    assert [v.rule for v in found] == ["protected"]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        f"x{OLD_UUID}-000205002169",  # the uuid is not a whole part
+        f"{OLD_UUID}x-000205002169",
+        f"{OLD_UUID}-000205002169-old",  # not anchored at the end
+        f"{OLD_UUID}-pr-3",
+    ],
+)
+async def test_a_coolify_name_that_only_holds_the_uuid_protects_nothing(tmp_path, name):
+    labels = captured("coolify-4.1.2-applicationid").labels | {"coolify.name": "static-site"}
+    container = box(name, labels=labels, state="exited", exit_code=1)
+
+    assert await captured_checked(tmp_path, container, "docker.stop", OLD_UUID) == []
+
+
+async def test_an_application_id_label_alone_marks_a_coolify_container(tmp_path):
+    labels = {"coolify.applicationId": "4"}  # discovery reads this label alone as a Coolify app
+    container = box(f"{OLD_UUID}-000205002169", labels=labels, state="exited", exit_code=1)
+
+    found = await captured_checked(tmp_path, container, "docker.stop", OLD_UUID)
+
+    assert [v.rule for v in found] == ["protected"]
+
+
+async def test_a_container_with_no_coolify_labels_is_not_protected_by_its_name_alone(tmp_path):
+    plain = box(f"{OLD_UUID}-000205002169", "static", state="exited", exit_code=1)
+
+    assert await captured_checked(tmp_path, plain, "docker.stop", OLD_UUID) == []
+
+
+async def test_any_entry_matching_a_coolify_containers_name_protects_it(tmp_path):
+    # An entry meant for a plain container also reads as a uuid on a Coolify container: it can
+    # only refuse more, and a Coolify name holds a 24-character uuid that an entry rarely spells.
+    labels = {"coolify.managed": "true", "coolify.type": "application"}
+    container = box("worker-shop-104512093422", labels=labels, state="exited", exit_code=1)
+
+    found = await captured_checked(tmp_path, container, "docker.restart", "shop")
+
+    assert [v.rule for v in found] == ["protected"]
+
+
+def hex_id(seed: str) -> str:
+    return (seed.encode().hex() * 64)[:64]
+
+
+@pytest.mark.parametrize("form", ["full", "short", "upper short", "upper full"])
+async def test_mcp_arguments_naming_an_off_limits_container_by_id_are_refused(tmp_path, form):
+    db = box("billing-db-1").model_copy(update={"id": hex_id("db")})
+    app = box(DB, labels=DB_APP).model_copy(update={"id": hex_id("app")})
+    own = box("bleep-backend-1", labels={"bleep.self": "true"}).model_copy(
+        update={"id": hex_id("own")}
+    )
+    engine = FakeEngine("a", [db, app, own, box("shop-web-1", "shop")])
+    host = shop_host(
+        services={"x": ServiceOverrides(protected_containers=["billing-db-1", "k8s0db1x"])}
+    )
+    env = await graph_env(tmp_path, engine=engine, host=host)
+
+    def spelled(c: ContainerSummary) -> str:
+        text = c.id if "full" in form else c.id[:12]
+        return text.upper() if "upper" in form else text
+
+    found = {
+        c.name: named_off_limits({"container": f"run on {spelled(c)}"}, env.registry, "a")
+        for c in (db, app, own)
+    }
+
+    assert found["billing-db-1"] == (
+        "protected",
+        "billing-db-1, a container protected in the hosts file",
+    )
+    assert found[DB] is not None and found[DB][0] == "protected"
+    assert found["bleep-backend-1"] is not None and found["bleep-backend-1"][0] == "self"
+    assert named_off_limits({"container": hex_id("other")[:12]}, env.registry, "a") is None

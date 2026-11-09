@@ -26,3 +26,9 @@ def name_matches(name: str, labels: Collection[str]) -> bool:
     folded = {label.casefold() for label in labels if label}
     slug = coolify_slug(name)
     return name.casefold() in folded or (bool(slug) and slug in folded)
+
+
+def coolify_container_name(name: str, uuid: str) -> bool:
+    """Whether `name` is a name Coolify gives a container of the application `uuid`:
+    `<uuid>-<digits>` or `<service>-<uuid>-<digits>`, anchored at both ends."""
+    return bool(uuid) and re.search(rf"(?:^|-){re.escape(uuid)}-\d+$", name) is not None
