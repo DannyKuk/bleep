@@ -36,6 +36,7 @@ CHAT = "4242"
 SHOP = Subject(kind="service", host_id="laptop", service_id="laptop/compose:shop")
 HOST = Subject(kind="host", host_id="M1")
 VIENNA = ZoneInfo("Europe/Vienna")
+NEW_YORK = ZoneInfo("America/New_York")
 PLAN = Proposal(
     kind="act",
     steps=[PlanStep(action="docker.restart", host_id="laptop", target="shop-web")],
@@ -115,7 +116,7 @@ class Env:
         self.guard = GuardLog(self.db)
         self.messages = MessageLog(self.db)
         http = httpx.AsyncClient(transport=httpx.MockTransport(self.chat))
-        on_it = OnIt(self.repo, self.quiet, self.bus, self.zone)
+        on_it = OnIt(self.repo, self.quiet, self.bus, lambda: self.zone)
         self.resumer = Runner()
         self.bot = TelegramBot(
             "7001:token", CHAT, self.approvals, self.resumer, http, messages=self.messages,
@@ -387,6 +388,23 @@ async def test_a_morning_that_passed_since_the_menu_showed_snoozes_nothing(tmp_p
     assert env.shows(501)[0][2] == ("Until tomorrow 08:00", "onit:morning:20261110")
 
 
+async def test_a_zone_chosen_while_bleep_runs_applies_to_the_next_message(tmp_path):
+    """The zone is read when a message is written: no restart (#400)."""
+    env = await Env(tmp_path, zone=VIENNA).start()
+    await env.open()
+    await env.press(501)  # 13:00 in Vienna
+    assert env.shows(501)[0][2] == ("Until tomorrow 08:00", "onit:morning:20261110")
+
+    env.zone = NEW_YORK  # 07:00 there
+    await env.press(501, "1h")
+
+    [state] = await env.quiet.active()
+    assert state.until == T0 + timedelta(hours=1)  # the stored time is the same instant, in UTC
+    assert env.answers()[-1] == "Snoozed until 08:00. Bleep leaves it alone until then."
+    _, end = env.chat.sent("sendMessage")
+    assert first_line(end) == fmt.bold_first_line(fmt.escape("🤫 Quiet until 08:00"))
+
+
 async def test_without_a_configured_zone_the_times_are_utc_and_say_so(tmp_path):
     env = await Env(tmp_path, zone=None).start()
     await env.open()
@@ -561,8 +579,31 @@ async def test_setup_gives_the_notifier_and_the_bot_the_button_in_the_configured
     )  # fmt: skip
 
     assert built.bot is not None and built.bot.on_it is built.notifier.on_it
-    assert built.notifier.on_it == OnIt(repo, quiet, bus, VIENNA)
+    on_it = built.notifier.on_it
+    assert on_it is not None and (on_it.incidents, on_it.quiet, on_it.bus) == (repo, quiet, bus)
+    assert on_it.zone == VIENNA
     assert built.notifier.incidents is repo
+    await built.close()
+
+
+async def test_setup_reads_the_zone_from_the_settings_page_at_each_use(tmp_path):
+    db = Database(tmp_path / "bleep.sqlite")
+    await db.migrate()
+    chosen: list[ZoneInfo | None] = [None]
+
+    built = setup(
+        settings(tmp_path, timezone="Europe/Vienna"), db, EventBus(db), ApprovalStore(db, "s"),
+        incidents=IncidentRepo(db), quiet=QuietStore(db), zone=lambda: chosen[0],
+    )  # fmt: skip
+
+    assert built.bot is not None and built.bot.on_it is not None
+    assert built.bot.on_it.zone is None  # the page's choice wins, even none
+    chosen[0] = NEW_YORK
+    assert built.bot.on_it.zone == NEW_YORK
+    await built.reload()  # a new bot token keeps the source
+    chosen[0] = VIENNA
+    assert built.bot is not None and built.bot.on_it is not None
+    assert built.bot.on_it.zone == VIENNA
     await built.close()
 
 

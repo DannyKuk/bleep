@@ -3,6 +3,7 @@
 import { Loader2, RotateCcw, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 
+import { useTimeZone } from "@/components/time-zone";
 import { usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
 import type { RecoveryEvent } from "@/lib/api-types";
@@ -25,6 +26,7 @@ function Container({ recovery }: { recovery: RecoveryEvent }) {
 }
 
 export function RecoveriesView({ recoveries }: { recoveries: RecoveryEvent[] }) {
+  const zone = useTimeZone();
   if (recoveries.length === 0) {
     return (
       <p className="rounded-row border border-dashed border-line px-4 py-3 text-[15px] text-ink-2">
@@ -56,7 +58,7 @@ export function RecoveriesView({ recoveries }: { recoveries: RecoveryEvent[] }) 
                 dateTime={recovery.at}
                 className="ml-auto text-[13px] font-bold whitespace-nowrap text-ink-2"
               >
-                {formatDateTime(recovery.at)}
+                {formatDateTime(recovery.at, zone)}
               </time>
             </div>
             <p className="text-[15px] wrap-anywhere text-ink-2">{recovery.explanation}</p>

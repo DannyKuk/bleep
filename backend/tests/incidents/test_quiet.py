@@ -1,5 +1,5 @@
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -54,6 +54,17 @@ async def test_a_snooze_is_quiet_until_its_time_and_then_not(store, clock):
     assert not await store.is_quiet(SHOP)
     assert await store.of("service", "h/compose:shop") is None
     assert await store.active() == []
+
+
+async def test_an_until_with_an_offset_is_kept_in_utc(store):
+    vienna = timezone(timedelta(hours=1))
+    state = await store.set(
+        "service", SHOP.service_id, "snooze", datetime(2026, 11, 5, 8, 0, tzinfo=vienna)
+    )
+    assert state.until == datetime(2026, 11, 5, 7, 0, tzinfo=UTC)
+    assert state.until.utcoffset() == timedelta(0)
+    [stored] = await store.active()
+    assert stored.until is not None and stored.until.isoformat() == "2026-11-05T07:00:00+00:00"
 
 
 async def test_leave_alone_has_no_end(store, clock):

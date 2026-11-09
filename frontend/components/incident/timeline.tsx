@@ -2,6 +2,7 @@ import { CircleAlert, X } from "lucide-react";
 
 import { LOOK, type Mark } from "@/components/incident/colour-code";
 import { RunSoFar } from "@/components/incident/progress";
+import { useTimeZone } from "@/components/time-zone";
 import type { Incident, IncidentEvent } from "@/lib/api-types";
 import { CHANNEL, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -201,6 +202,7 @@ function Marker({ mark }: { mark: Mark }) {
  */
 export function Timeline({ events, incident }: { events: IncidentEvent[]; incident?: Incident }) {
   const steps = timelineEntries(events);
+  const zone = useTimeZone();
   if (steps.length === 0 && !incident) {
     return <p className="text-sm text-ink-2">Nothing has happened yet.</p>;
   }
@@ -221,7 +223,7 @@ export function Timeline({ events, incident }: { events: IncidentEvent[]; incide
           </span>
           <span className="sr-only">, {LOOK[mark].word}</span>
           <time dateTime={at} className="shrink-0 font-mono text-xs text-ink-2">
-            {formatTime(at)}
+            {formatTime(at, zone)}
           </time>
         </li>
       ))}

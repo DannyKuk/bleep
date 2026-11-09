@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import SecretStr, ValidationError
@@ -735,3 +736,40 @@ async def test_this_is_expected_never_writes_a_star_a_bad_name_or_past_the_cap(d
     with pytest.raises(SettingsRefused):
         await store.expect_exits(registry.service(SHOP), ["one-too-many"])
     assert len(registry.service(SHOP).exits) == 100
+
+
+async def test_the_time_zone_chosen_on_the_dashboard_wins_over_the_env_and_survives_a_restart(db):
+    registry = hosts_file_registry()
+    _, plugins = make_store(db, registry)
+    store = SettingsStore(db, registry, plugins, timezone="Europe/London")
+    assert (store.timezone(), store.zone()) == ("Europe/London", ZoneInfo("Europe/London"))
+
+    await save(store, {"general": {"timezone": "Europe/Vienna"}})
+    assert (store.timezone(), store.zone()) == ("Europe/Vienna", ZoneInfo("Europe/Vienna"))
+
+    again = SettingsStore(db, registry, plugins, timezone="Europe/London")
+    await again.load()
+    assert again.zone() == ZoneInfo("Europe/Vienna")
+    await save(again, {"general": {}})  # cleared: the env's starting value again
+    assert again.zone() == ZoneInfo("Europe/London")
+
+
+async def test_without_a_time_zone_anywhere_there_is_none_and_utc_needs_no_zone_data(db):
+    store, _ = make_store(db, hosts_file_registry())
+    assert (store.timezone(), store.zone()) == (None, None)
+    await save(store, {"general": {"timezone": "UTC"}})
+    assert store.zone() is UTC
+
+
+@pytest.mark.parametrize("name", ["Mars/Olympus", "../etc/passwd", "Europe", "", "x" * 100])
+def test_a_time_zone_that_is_not_an_iana_name_is_refused(name):
+    with pytest.raises(ValidationError):
+        SettingsUpdate.model_validate({"general": {"timezone": name}})
+
+
+async def test_a_time_zone_change_makes_a_page_read_before_it_stale(db):
+    store, _ = make_store(db, hosts_file_registry())
+    before = store.version()
+    await save(store, {"general": {"timezone": "Europe/Vienna"}})
+    with pytest.raises(SettingsStale):
+        await store.update(SettingsUpdate.model_validate({"thresholds": {}}), version=before)

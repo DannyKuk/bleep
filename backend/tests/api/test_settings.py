@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -188,6 +189,35 @@ def test_with_the_dev_panel_off_a_secret_is_still_refused_as_one(settings, app):
     settings.dev_panel = False
     response = put_settings(app, {"models": {"openrouter_api_key": "abc"}})
     assert response.status_code == 422
+
+
+def test_the_time_zone_is_chosen_with_the_dev_panel_off_and_cleared_back_to_none(settings, app):
+    settings.dev_panel = False
+    assert app.get("/api/settings").json()["timezone"] is None
+
+    response = put_settings(app, {"general": {"timezone": "Europe/Vienna"}})
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["timezone"], body["overrides"]["general"]) == (
+        "Europe/Vienna",
+        {"timezone": "Europe/Vienna"},
+    )
+    assert app.parts.settings_store.zone() == ZoneInfo("Europe/Vienna")
+
+    cleared = put_settings(app, {"general": {}}).json()
+    assert cleared["timezone"] is None and not cleared["overrides"].get("general")
+
+
+@pytest.mark.parametrize("name", ["Mars/Olympus", "../../etc/passwd", "Europe", "CET+5"])
+def test_an_unknown_time_zone_is_refused_and_nothing_changes(app, name):
+    before = app.get("/api/settings").json()
+    response = put_settings(app, {"general": {"timezone": name}})
+    assert response.status_code == 422
+    [problem] = response.json()["detail"]
+    assert problem["loc"] == ["general", "timezone"]
+    assert "IANA time zone" in problem["msg"] and f'"{name}"' not in response.text
+    after = app.get("/api/settings").json()
+    assert (after["timezone"], after["version"]) == (None, before["version"])
 
 
 def test_an_unknown_host_is_refused(app):

@@ -14,7 +14,7 @@ import sqlite3
 import weakref
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 from typing import Any
 
 import aiosqlite
@@ -579,10 +579,12 @@ def setup(
     secrets: SecretStore | None = None,
     incidents: IncidentRepo | None = None,
     quiet: QuietStore | None = None,
+    zone: Callable[[], tzinfo | None] | None = None,
 ) -> NotifySetup:
     """Build the notifier, and the bot too when a token and a chat id are configured: from
     `secrets` when given (the env, else the dashboard), else from `settings`. With `incidents`
-    and `quiet` an incident's opener offers "🤫 I'm on it", in `settings.zone`.
+    and `quiet` an incident's opener offers "🤫 I'm on it", its times in the zone `zone` gives at
+    each message (the settings page's choice), else in `settings.zone`.
 
     The runner does not exist yet when the graph's dependencies are built, so `start(runner)`
     gives it to the bot later; `reload()` builds the bot again after a change on the dashboard.
@@ -596,7 +598,7 @@ def setup(
     dashboard_url = str(settings.dashboard_url) if settings.dashboard_url else None
     on_it = None
     if incidents is not None and quiet is not None:
-        on_it = OnIt(incidents, quiet, bus, settings.zone)
+        on_it = OnIt(incidents, quiet, bus, zone or (lambda: settings.zone))
 
     def rebuild() -> NotifySetup:
         return setup(
@@ -608,6 +610,7 @@ def setup(
             secrets=secrets,
             incidents=incidents,
             quiet=quiet,
+            zone=zone,
         )
 
     if token is None or chat_id is None:

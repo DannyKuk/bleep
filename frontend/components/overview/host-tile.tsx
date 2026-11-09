@@ -5,18 +5,20 @@ import { HealthBadge } from "@/components/overview/health-badge";
 import { isHurting } from "@/components/overview/situation";
 import { QuietMenu } from "@/components/quiet/quiet-menu";
 import { QuietPill } from "@/components/quiet/quiet-pill";
+import { useTimeZone } from "@/components/time-zone";
 import type { HostView, ServiceView } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
 import { isAsleep } from "@/lib/mood";
 import { hostHref, serviceHref } from "@/lib/routes";
 import { cn } from "@/lib/utils";
+import type { Zone } from "@/lib/zone";
 
 const FOCUS = "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
 
 /** "load 0.3 · mem 75% · disk 58%" (the fullest disk), or when an unreachable host was last seen. */
-export function basicsLine(host: HostView): string | null {
+export function basicsLine(host: HostView, zone?: Zone): string | null {
   if (!host.reachable) {
-    return host.last_seen ? `last seen ${formatDateTime(host.last_seen)}` : "never reached";
+    return host.last_seen ? `last seen ${formatDateTime(host.last_seen, zone)}` : "never reached";
   }
   const basics = host.basics;
   if (!basics) return null;
@@ -101,7 +103,8 @@ export function HostTile({
 }) {
   const titleId = `host-${host.id}`;
   const hurting = isHurting(host, services);
-  const basics = basicsLine(host);
+  const zone = useTimeZone();
+  const basics = basicsLine(host, zone);
   return (
     <section
       aria-labelledby={titleId}

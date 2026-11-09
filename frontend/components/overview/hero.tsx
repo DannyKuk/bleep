@@ -7,6 +7,7 @@ import { isRefused } from "@/components/incident/headline";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import { HealthBadge } from "@/components/overview/health-badge";
 import { joinNames, type Situation } from "@/components/overview/situation";
+import { useTimeZone } from "@/components/time-zone";
 import type {
   Action,
   HostHealth,
@@ -18,6 +19,7 @@ import type {
 } from "@/lib/api-types";
 import { formatDateTime, showInvisible } from "@/lib/format";
 import type { Mood } from "@/lib/mood";
+import type { Zone } from "@/lib/zone";
 
 const TROUBLE: Record<HostHealth, string> = {
   down: "is down",
@@ -145,11 +147,12 @@ function incidentWords(
 function unreachableWords(
   situation: Extract<Situation, { kind: "unreachable" }>,
   services: readonly ServiceView[],
+  zone: Zone,
 ): Words {
   const { host, incident } = situation;
   const names = services.filter((service) => service.host_id === host.id).map((s) => s.name);
   const since = host.last_seen
-    ? `I last heard from it at ${formatDateTime(host.last_seen)}`
+    ? `I last heard from it at ${formatDateTime(host.last_seen, zone)}`
     : "I have not reached it yet";
   const blind = names.length > 0 ? `, so I cannot see ${joinNames(names)}` : "";
   return {
@@ -165,12 +168,13 @@ function wordsFor(
   situation: Situation,
   hosts: readonly HostView[],
   services: readonly ServiceView[],
+  zone: Zone,
 ): Words {
   switch (situation.kind) {
     case "incident":
       return incidentWords(situation, hosts, services);
     case "unreachable":
-      return unreachableWords(situation, services);
+      return unreachableWords(situation, services, zone);
     case "quiet":
       return {
         tag: <HealthBadge health="ok" label="All quiet" />,
@@ -201,7 +205,8 @@ export function OverviewHero({
   hosts: readonly HostView[];
   services: readonly ServiceView[];
 }) {
-  const words = wordsFor(situation, hosts, services);
+  const zone = useTimeZone();
+  const words = wordsFor(situation, hosts, services, zone);
   const others = situation.kind === "incident" ? situation.others : 0;
   return (
     <section

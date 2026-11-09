@@ -4,6 +4,7 @@ import { Moon } from "lucide-react";
 import { useRef, useState, type ReactElement } from "react";
 
 import { SaveError, problemsOf } from "@/components/settings/save-error";
+import { useTimeZone } from "@/components/time-zone";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -16,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { QuietView } from "@/lib/api-types";
+import type { Zone } from "@/lib/zone";
 import {
   clearQuiet,
   morningLabel,
@@ -27,10 +29,10 @@ import {
   type SnoozeChoice,
 } from "@/lib/quiet-api";
 
-const snoozes = (now: Date): { choice: SnoozeChoice; label: string }[] => [
+const snoozes = (now: Date, zone: Zone): { choice: SnoozeChoice; label: string }[] => [
   { choice: "1h", label: "For 1 hour" },
   { choice: "4h", label: "For 4 hours" },
-  { choice: "morning", label: morningLabel(now) },
+  { choice: "morning", label: morningLabel(now, zone) },
 ];
 
 interface QuietMenuProps {
@@ -55,6 +57,7 @@ export function QuietMenu({ target, quiet, onChanged, trigger, className }: Quie
   const [problems, setProblems] = useState<string[]>([]);
   const own = quiet !== null && quiet.scope === target.scope;
   const throughHost = quiet !== null && !own;
+  const zone = useTimeZone();
 
   async function apply(change: () => Promise<unknown>) {
     if (busy.current) return;
@@ -99,7 +102,7 @@ export function QuietMenu({ target, quiet, onChanged, trigger, className }: Quie
       <DropdownMenuContent>
         <DropdownMenuGroup>
           <DropdownMenuLabel>
-            {quiet ? quietLabel(quiet, new Date()) : `Snooze ${target.name}`}
+            {quiet ? quietLabel(quiet, new Date(), zone) : `Snooze ${target.name}`}
             {throughHost && " (set on its host)"}
           </DropdownMenuLabel>
         </DropdownMenuGroup>
@@ -109,12 +112,12 @@ export function QuietMenu({ target, quiet, onChanged, trigger, className }: Quie
           </DropdownMenuItem>
         )}
         {quiet && <DropdownMenuSeparator />}
-        {snoozes(new Date()).map(({ choice, label }) => (
+        {snoozes(new Date(), zone).map(({ choice, label }) => (
           <DropdownMenuItem
             key={choice}
             closeOnClick={false}
             onClick={() =>
-              put({ mode: "snooze", until: snoozeUntil(choice, new Date()).toISOString() })
+              put({ mode: "snooze", until: snoozeUntil(choice, new Date(), zone).toISOString() })
             }
           >
             {label}

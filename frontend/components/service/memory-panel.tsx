@@ -4,6 +4,7 @@ import { Brain, Loader2, Plus, Trash2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 
+import { useTimeZone } from "@/components/time-zone";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiFetch } from "@/lib/api";
@@ -20,7 +21,8 @@ function factsPath(serviceId: string): string {
 
 /** Where a fact came from: a person, or the report of an incident (linked). */
 function FactOrigin({ fact }: { fact: ServiceFact }) {
-  const when = <time dateTime={fact.created_at}>{formatDateTime(fact.created_at)}</time>;
+  const zone = useTimeZone();
+  const when = <time dateTime={fact.created_at}>{formatDateTime(fact.created_at, zone)}</time>;
   if (fact.source === "human") return <>Added by you, {when}</>;
   return (
     <>

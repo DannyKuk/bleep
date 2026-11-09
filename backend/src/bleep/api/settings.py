@@ -1,5 +1,5 @@
-"""The settings a person may change: model choice, budgets, thresholds, hosts' and services'
-rules, URLs and protected containers. Never a secret, in either direction.
+"""The settings a person may change: model choice, budgets, thresholds, the time zone, hosts' and
+services' rules, URLs and protected containers. Never a secret, in either direction.
 
 The body is read as plain JSON and checked for secrets before it is validated, so a refusal names
 where the secret was without sending its value back, as a validation error would.
@@ -63,6 +63,7 @@ def settings_view(parts: AppParts) -> SettingsView:
         thresholds=store.thresholds(),
         hosts=store.host_views(),
         plugins=store.plugin_toggles(),
+        timezone=store.timezone(),
         overrides=store.overrides().model_dump(mode="json", exclude_none=True),
         version=store.version(),
     )

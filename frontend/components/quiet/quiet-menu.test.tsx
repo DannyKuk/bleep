@@ -3,8 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { QuietMenu } from "@/components/quiet/quiet-menu";
-import { json, sentBody, stubBackend } from "@/components/settings/fixtures";
+import { json, sentBody, settingsView, stubBackend } from "@/components/settings/fixtures";
+import { TimeZoneProvider, useTimeZone } from "@/components/time-zone";
 import type { QuietView } from "@/lib/api-types";
+import { morningLabel, snoozeUntil } from "@/lib/quiet-api";
 
 const service = { scope: "service", id: "demo/compose:shop", name: "shop" } as const;
 const PATH = "/api/quiet/services/demo/compose%3Ashop";
@@ -96,5 +98,50 @@ describe("QuietMenu", () => {
     await userEvent.dblClick(choice);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     release(json(view));
+  });
+});
+
+function ZoneShown() {
+  return <p>zone: {useTimeZone() ?? "browser"}</p>;
+}
+
+describe("QuietMenu in Bleep's time zone", () => {
+  /** The menu under the app's time zone, read from the settings, at noon UTC on 9 Nov 2026. */
+  async function inZone(timezone: string | null) {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-09T12:00:00Z"));
+    const fetchMock = stubBackend({
+      "GET /api/settings": json(settingsView({ timezone })),
+      [`PUT ${PATH}`]: json({ ...view, mode: "snooze", until: "x" }),
+    });
+    render(
+      <TimeZoneProvider>
+        <ZoneShown />
+        <QuietMenu target={service} quiet={null} onChanged={() => {}} />
+      </TimeZoneProvider>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings", expect.anything()));
+    await screen.findByText(`zone: ${timezone ?? "browser"}`);
+    return fetchMock;
+  }
+
+  it("makes until 8:00 the next 08:00 in the chosen zone, not the browser's", async () => {
+    const fetchMock = await inZone("America/New_York"); // 07:00 there
+    await openMenu();
+    await userEvent.click(await item("Until 8:00"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(sentBody(fetchMock, "PUT").until).toBe("2026-11-09T13:00:00.000Z");
+  });
+
+  it("uses the browser's own zone when none is chosen", async () => {
+    const fetchMock = await inZone(null);
+    await openMenu();
+    const morning = snoozeUntil("morning", new Date());
+    await userEvent.click(await item(morningLabel(new Date())));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(sentBody(fetchMock, "PUT").until).toBe(morning.toISOString());
+    expect(morning.getHours()).toBe(8);
   });
 });

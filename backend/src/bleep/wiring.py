@@ -214,8 +214,9 @@ def build_parts(
     bus, incidents, quiet = EventBus(db), IncidentRepo(db), QuietStore(db)
     approvals, guard_log = ApprovalStore(db, settings.secret), GuardLog(db)
     notify = setup_notify(
-        settings, db, bus, approvals, guard_log, secrets=secrets, incidents=incidents, quiet=quiet
-    )
+        settings, db, bus, approvals, guard_log, secrets=secrets, incidents=incidents, quiet=quiet,
+        zone=lambda: store.zone(),  # the store is built below; Telegram reads it at each message
+    )  # fmt: skip
     incidents.on_finished(notify.notifier.incident_finished)
     approvals.on_decided(notify.notifier.approval_decided)
     embedder = embedder or build_embedder(settings, secrets)  # one model, loaded once, for both
@@ -229,7 +230,10 @@ def build_parts(
         from_dashboard=lambda name: secrets.state(name).source == "dashboard",
         resolver=resolver,
     )
-    store = SettingsStore(db, registry, plugin_registry, secrets=secrets, dashboard=dashboard_hosts)
+    store = SettingsStore(
+        db, registry, plugin_registry, secrets=secrets, dashboard=dashboard_hosts,
+        timezone=settings.timezone,
+    )  # fmt: skip
     incidents.fold_window_h = lambda: store.thresholds().fold_window_h
     tracer = tracer or ReloadingTracer(secrets.get)
     subscribe_reloads(secrets, notify, store, tracer)

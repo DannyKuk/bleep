@@ -2,7 +2,7 @@
 
 import { ChevronRight, KeyRound } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Panel } from "@/components/panel";
 import { SaveLockProvider } from "@/components/save-lock";
@@ -13,6 +13,8 @@ import { PluginList } from "@/components/settings/plugins";
 import { TelegramSettings } from "@/components/settings/telegram";
 import { SecretFields } from "@/components/settings/secret-field";
 import { ThresholdsForm } from "@/components/settings/thresholds";
+import { TimeZoneForm } from "@/components/settings/time-zone-form";
+import { useSetTimeZone } from "@/components/time-zone";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
 import {
@@ -107,6 +109,11 @@ function Settings() {
   const telegram = useLoaded<TelegramStatus>("/api/telegram/status");
   const secrets = useLoaded<SecretView[]>("/api/secrets");
   const { notice, setNotice, saving } = useStaleSaving();
+  const setZone = useSetTimeZone();
+  const zoneInForce = settings.data?.timezone;
+  useEffect(() => {
+    if (zoneInForce !== undefined) setZone(zoneInForce);
+  }, [zoneInForce, setZone]);
 
   const saveSettings = (update: SettingsUpdate, version: string) =>
     saving(
@@ -187,6 +194,14 @@ function Settings() {
         {(view) => (
           <>
             <Hosts hosts={view.hosts} onChanged={readSettings} />
+            <Panel title="Time zone">
+              <TimeZoneForm
+                key={`${view.timezone}/${view.overrides.general?.timezone}`}
+                timezone={view.timezone}
+                chosen={view.overrides.general?.timezone}
+                onSave={(general) => saveSettings({ general }, view.version)}
+              />
+            </Panel>
             <Panel title="Thresholds">
               <ThresholdsForm
                 key={JSON.stringify(view.thresholds)}
