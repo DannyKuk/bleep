@@ -1,0 +1,6 @@
+{"run_id": "bad-env/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "DATABASE_URL names host db, which does not resolve; docs give shop-db:5432"}
+{"run_id": "bad-env/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "DATABASE_URL names host db, which does not resolve; docs give shop-db:5432"}
+{"run_id": "bad-env/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "DATABASE_URL names host db, which does not resolve; docs give shop-db:5432"}
+{"run_id": "oom/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "WORKER_BATCH_MB 256 past the 64 MiB limit, OOM kills; docs give 8"}
+{"run_id": "oom/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "WORKER_BATCH_MB 256 past the 64 MiB limit, OOM kills; says the docs give no value (search query was the bare key)"}
+{"run_id": "oom/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "WORKER_BATCH_MB 256 past the 64 MiB limit, OOM kills; docs give 8"}
