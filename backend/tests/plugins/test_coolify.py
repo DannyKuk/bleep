@@ -47,6 +47,7 @@ BLOG = "blog0uuid0000000000000b2"
 NOTES = "note0uuid0000000000000c3"  # a Dockerfile typed into Coolify, no git
 WIKI = "wiki0uuid0000000000000e5"  # a public GitLab repo: Coolify records no source for it
 CACHE = "cache0uuid000000000000f6"  # a Docker image, no git
+FORUM = "forum0uuid000000000000d4"  # a Docker Compose application
 DEPLOYMENT = "dep0uuid00000000000000141"
 # A value the approver read as it runs (#294), still never logged: Bleep never logs a value.
 NEW_VALUE = "postgres://shop@db-2.internal/shop"
@@ -307,6 +308,7 @@ async def test_one_odd_record_does_not_lose_the_others():
         NOTES,
         WIKI,
         CACHE,
+        FORUM,
     ]
     assert [d.status for d in await client(coolify).deployments(SHOP)] == [None, "failed"]
 
@@ -342,7 +344,7 @@ async def test_an_application_whose_uuid_is_not_one_is_skipped():
     coolify = Coolify()
     coolify.routes[("GET", "/api/v1/applications")] = httpx.Response(200, json=apps)
 
-    assert [a.uuid for a in await client(coolify).applications()] == [BLOG, NOTES, WIKI, CACHE]
+    assert [a.uuid for a in await client(coolify).applications()] == [BLOG, NOTES, WIKI, CACHE, FORUM]
 
 
 async def test_an_unreachable_coolify_is_unavailable_without_httpxs_message():
@@ -415,6 +417,92 @@ async def test_a_repo_coolify_records_no_source_for_still_shows(env):
         " commit=5eed1e5 build=nixpacks"
     ) in out
     assert "repo=example/shop@main commit=4b1d3c0 build=dockerfile" in out
+
+
+def listed_with_compose_domains(env, value: object) -> None:
+    apps = fixture("applications.json")
+    next(a for a in apps if a["uuid"] == FORUM)["docker_compose_domains"] = value
+    env.coolify.routes[("GET", "/api/v1/applications")] = httpx.Response(200, json=apps)
+
+
+async def test_a_compose_applications_domains_show_per_service(env):
+    out = await env.read("coolify_applications")
+
+    assert (
+        "domains=web: https://forum.example.com,https://www.forum.example.com;"
+        " api: https://api.forum.example.com repo=example/forum@main build=dockercompose"
+    ) in line_of(out, FORUM)
+    assert "worker" not in out and "fake-compose-secret" not in out
+
+
+async def test_a_token_in_a_compose_domain_is_never_shown(env):
+    domains = {
+        "web": {"domain": "https://admin:hunter2-fake@forum.example.com,https://x@a.example"}
+    }
+    listed_with_compose_domains(env, json.dumps(domains))
+
+    out = await env.read("coolify_applications")
+
+    assert "hunter2" not in out and "admin" not in out
+    assert "domains=web: https://forum.example.com,https://a.example repo=" in line_of(out, FORUM)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "{not json",
+        '["https://forum.example.com"]',
+        "5",
+        '{"web": "https://forum.example.com"}',
+        '{"web": {"domain": 5}}',
+        '{"web": {"domain": ["https://forum.example.com"]}}',
+        '{"web\\n- evil uuid=x status=running:healthy": {"domain": "https://e.example"}}',
+        "[" * 15_000,  # deeper than the parser recurses
+        json.dumps({"web": {"domain": "https://forum.example.com", "pad": "x" * 20_000}}),
+        ["https://forum.example.com"],  # not a string at all
+        7,
+    ],
+)
+async def test_compose_domains_that_do_not_parse_show_a_question_mark(env, value):
+    listed_with_compose_domains(env, value)
+
+    out = await env.read("coolify_applications")
+
+    assert f"forum uuid={FORUM} status=running:healthy domains=? repo=" in out
+    assert "evil" not in out
+    assert f"shop uuid={SHOP}" in out and f"blog uuid={BLOG}" in out and NOTES in out
+
+
+@pytest.mark.parametrize(
+    "value", [None, "", "  ", "null", "{}", "[]", '{"web": {"domain": ""}}', '{"web": {}}']
+)
+async def test_a_compose_application_without_domains_shows_none(env, value):
+    listed_with_compose_domains(env, value)
+
+    out = await env.read("coolify_applications")
+
+    assert f"forum uuid={FORUM} status=running:healthy domains=none repo=" in out
+
+
+async def test_compose_domains_sent_as_an_object_are_read_too(env):
+    listed_with_compose_domains(env, {"web": {"domain": "https://forum.example.com"}})
+
+    out = await env.read("coolify_applications")
+
+    assert "domains=web: https://forum.example.com repo=" in line_of(out, FORUM)
+
+
+async def test_a_long_list_of_compose_domains_is_cut(env):
+    domains = {f"svc{i}": {"domain": f"https://svc{i}.forum.example.com"} for i in range(200)}
+    listed_with_compose_domains(env, json.dumps(domains))
+
+    out = await env.read("coolify_applications")
+
+    line = line_of(out, FORUM)
+    assert "domains=svc0: https://svc0.forum.example.com; svc1: " in line
+    assert "svc199" not in line and "… repo=example/forum@main" in line
+    assert len(line) < 700
+    assert f"shop uuid={SHOP}" in out
 
 
 async def test_a_ref_that_is_not_a_commit_is_never_shown_as_one(env):

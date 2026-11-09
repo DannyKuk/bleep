@@ -27,6 +27,7 @@ See docs/design/plugins.md.
 """
 
 import asyncio
+import json
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -65,6 +66,8 @@ log = logging.getLogger(__name__)
 URL_ENV = "COOLIFY_URL"
 TOKEN_ENV = "COOLIFY_TOKEN"
 MESSAGE_CHARS = 200  # of one commit message in the deployments list
+COMPOSE_DOMAINS_MAX = 16_000  # chars of docker_compose_domains Bleep parses at all
+DOMAINS_CHARS = 500  # of one Compose application's domains in the list
 POLL_S = 10  # between reads of a running deployment
 DONE = {"finished"}
 ENDED = {"finished", "failed", "cancelled-by-user"}
@@ -77,6 +80,7 @@ _SHA = re.compile(r"[0-9a-fA-F]{7,64}")
 # What Coolify writes into the git fields of an application built without git: a Docker image,
 # or a Dockerfile typed into Coolify.
 PLACEHOLDER_REPO = "coollabsio/coolify"
+_SERVICE = re.compile(r"[\w.-]{1,64}", re.ASCII)  # a Compose service name
 APPLICATIONS = (
     "List the Coolify applications: name, uuid, status (running:healthy, exited:unhealthy, ...),"
     " domains, git repo and branch, deployed commit and build pack. The ones whose containers"
@@ -185,6 +189,42 @@ def _source(a: CoolifyApplication) -> str:
     return repo + (f" commit={commit}" if commit else "")
 
 
+def _service_domains(name: str, service: object) -> str | None:
+    """`name: domains` for one Compose service, None when it has no domain."""
+    if not _SERVICE.fullmatch(name) or not isinstance(service, dict):
+        raise ValueError("not a Compose service")
+    domain = service.get("domain")
+    if domain is not None and not isinstance(domain, str):
+        raise ValueError("not a domain list")
+    return f"{name}: {_no_userinfo(domain.strip())}" if domain and domain.strip() else None
+
+
+def _compose_domains(raw: str) -> str:
+    """A Compose application's domains per service, `web: https://a,https://b; api: …`: `none`
+    when no service has one, `?` when `raw` is not what Coolify writes there."""
+    if len(raw) > COMPOSE_DOMAINS_MAX:
+        return "?"
+    try:
+        services = json.loads(raw) if raw.strip() else None
+        if services is None or services == {} or services == []:
+            return "none"
+        if not isinstance(services, dict):
+            return "?"
+        shown = [s for name, svc in services.items() if (s := _service_domains(name, svc))]
+    except ValueError, RecursionError:
+        return "?"
+    text = "; ".join(shown) or "none"
+    return text if len(text) <= DOMAINS_CHARS else text[: DOMAINS_CHARS - 1] + "…"
+
+
+def _domains(a: CoolifyApplication) -> str:
+    if a.fqdn:
+        return _no_userinfo(a.fqdn)
+    if a.docker_compose_domains is not None:
+        return _compose_domains(a.docker_compose_domains)
+    return "none"
+
+
 def _failed(error: CoolifyError) -> str:
     return f"Coolify could not be read: {error}."
 
@@ -195,10 +235,9 @@ def describe_applications(apps: list[CoolifyApplication], here: set[str]) -> str
     lines = ["Coolify applications:"]
     for a in sorted(apps, key=lambda a: (a.uuid not in here, a.name or "")):
         mark = " (on this host)" if a.uuid in here else ""
-        domains = _no_userinfo(a.fqdn) if a.fqdn else "none"
         lines.append(
             f"- {a.name or '?'} uuid={a.uuid}{mark} status={a.status or '?'} "
-            f"domains={domains}{_source(a)} build={a.build_pack or '?'}"
+            f"domains={_domains(a)}{_source(a)} build={a.build_pack or '?'}"
         )
     return "\n".join(lines)
 
