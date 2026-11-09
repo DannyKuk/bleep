@@ -21,7 +21,7 @@ from bleep.schemas.quiet import QuietState
 from bleep.schemas.settings import Budgets, Thresholds
 from bleep.store.db import Database
 from bleep.watcher import manager as manager_module
-from bleep.watcher.detector import NO_LOGS_LINE, Detector
+from bleep.watcher.detector import NO_LOGS_LINE, AttachSignals, Detector, OpenIncident
 from bleep.watcher.health_store import HealthStore
 from bleep.watcher.http_checks import UrlCheckStore
 from bleep.watcher.manager import (
@@ -1524,3 +1524,97 @@ async def test_a_hosts_reading_of_another_kind_is_not_held_by_its_ended_incident
         await r.manager.sink(Signal(subject=HOST, kind="memory", at=r.clock(), detail=low))
     [_, memory] = r.runner.started
     assert memory.title.startswith("memory on")
+
+
+# --- a restart loop that outlives its incident (#361) ---
+
+
+def crash(r: Rig, name: str = "shop-web-1", back: bool = False) -> None:
+    """The container dies under `always`: running again two seconds later when `back`, else
+    Docker is still waiting to restart it, as the demo shop's bad env was on 2026-11-09."""
+    died = r.clock.now + timedelta(seconds=1)
+    r.engine.history.append(die(name, died))
+    fields = {"started_at": died + timedelta(seconds=2)} if back else {"state": "restarting"}
+    index = next(i for i, c in enumerate(r.engine.container_list) if c.name == name)
+    r.engine.container_list[index] = box(name, "shop", restart_policy="always", **fields)
+
+
+async def crashing(r: Rig, deaths: int, every_min: int = 1, **how) -> None:
+    for _ in range(deaths):
+        crash(r, **how)
+        await minutes(r, every_min)
+
+
+async def kinds_of(r: Rig, incident: Incident) -> set[str]:
+    return {s.kind for s in await r.repo.signals(incident.id)}
+
+
+async def loop_incident_ended(r: Rig) -> Incident:
+    """shop-web-1 dies three times in three minutes, back each time: a restart loop, which ends
+    with no action while the container goes on crashing."""
+    r.engine.container_list[0] = box("shop-web-1", "shop", restart_policy="always")
+    await r.pulse(urls=False)
+    await crashing(r, 3, back=True)
+    [loop] = r.runner.started
+    assert "restart_loop" in await kinds_of(r, loop)
+    return await close_open(r, loop.subject)
+
+
+def opened_kinds(r: Rig) -> list[str]:
+    """The kind of every open the detector asks the manager for, held or not."""
+    kinds: list[str] = []
+    handle = r.manager._handle
+
+    async def spy(outcomes: list) -> None:
+        opens = [o for o in outcomes if isinstance(o, OpenIncident | AttachSignals)]
+        kinds.extend(o.signals[-1].kind for o in opens)
+        await handle(outcomes)
+
+    r.manager._handle = spy  # type: ignore[method-assign]
+    return kinds
+
+
+async def test_a_container_still_crash_looping_after_its_loop_incident_waits_for_the_hold(
+    tmp_path,
+):
+    r = await Rig(tmp_path).boot()
+    first = await loop_incident_ended(r)
+    kinds = opened_kinds(r)
+
+    # A death every two minutes for 58 minutes: each is judged down past grace (the repeat came
+    # 58 s after the close on 2026-11-09), and every third adds up to a new restart loop.
+    await crashing(r, 29, every_min=2)
+    assert {"down_past_grace", "restart_loop"} <= set(kinds)
+    assert [i.id for i in await r.incidents()] == [first.id]
+
+    await crashing(r, 3, every_min=2)  # an hour after the close
+    assert len(r.runner.started) == 2
+    second = r.runner.started[-1]
+    assert second.fold_of == first.id
+    assert "seen 2 times" in second.title
+
+    await close_open(r, second.subject)
+    await crashing(r, 58, every_min=2)  # two incidents of it ended: the next hold is two hours
+    assert len(r.runner.started) == 2
+    await crashing(r, 4, every_min=2)
+    assert len(r.runner.started) == 3
+
+
+async def test_a_loop_of_another_container_of_the_service_opens_at_once(tmp_path):
+    r = await Rig(tmp_path).boot()
+    r.engine.container_list.append(box("shop-web-2", "shop", restart_policy="always"))
+    first = await loop_incident_ended(r)
+    await crashing(r, 3, name="shop-web-2", back=True)
+    [_, other] = r.runner.started
+    assert other.subject == first.subject
+    assert {s.container for s in await r.repo.signals(other.id)} == {"shop-web-2"}
+
+
+async def test_a_loop_after_the_container_ran_a_window_without_a_death_opens_at_once(tmp_path):
+    r = await Rig(tmp_path).boot()
+    first = await loop_incident_ended(r)
+    await minutes(r, 11)  # it runs for longer than the window (600 s) without a death
+    await crashing(r, 3, back=True)
+    [_, again] = r.runner.started
+    assert "restart_loop" in await kinds_of(r, again)
+    assert again.fold_of == first.id  # a repeat of the same loop: one message, with the count

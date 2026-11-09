@@ -568,3 +568,78 @@ def test_an_expected_job_exiting_0_is_ignored_and_never_adds_up_to_a_loop():
     assert det.tick(clock(), states(box("exited")), "h1") == []
     crash = det.feed(died(clock, exit_code=1, restart_policy="always", expected_exit=True))
     assert crash == []  # a crash is a death as any other: pending, judged by the grace window
+
+
+# --- a restart loop that outlives its incident (#361) ---
+
+
+def crash_loop(det: Detector, clock: Clock, start_s: float, container="web-1") -> OpenIncident:
+    """Three deaths a minute apart from `start_s`: the third is a restart loop."""
+    out: list = []
+    for minute in range(3):
+        clock.at(start_s + minute * 60)
+        out = det.feed(died(clock, container=container))
+    [loop] = out
+    assert isinstance(loop, OpenIncident)
+    assert loop.signals[-1].kind == "restart_loop"
+    return loop
+
+
+def still_restarting(det: Detector, clock: Clock, at_s: float, container="web-1") -> OpenIncident:
+    """One more death, judged down past grace: Docker is still waiting to restart it."""
+    clock.at(at_s)
+    assert det.feed(died(clock, container=container)) == []
+    [down] = det.tick(clock.at(at_s + 65), states(box("restarting", name=container)), "h1")
+    assert isinstance(down, OpenIncident)
+    assert down.signals[-1].kind == "down_past_grace"
+    return down
+
+
+def two_more_deaths(det: Detector, clock: Clock, start_s: float) -> OpenIncident:
+    """With the death before them, two more a minute apart are a restart loop."""
+    clock.at(start_s)
+    assert det.feed(died(clock)) == []
+    clock.at(start_s + 60)
+    [loop] = det.feed(died(clock))
+    assert isinstance(loop, OpenIncident)
+    assert loop.signals[-1].kind == "restart_loop"
+    return loop
+
+
+def test_a_loop_and_the_deaths_after_it_carry_the_loops_run_until_a_window_without_a_death():
+    det, clock = make()
+    loop = crash_loop(det, clock, 0)
+    assert loop.run == FailingRun(since=T0, passed=None, container="web-1")
+
+    assert still_restarting(det, clock, 180).run == loop.run  # the loop goes on
+    assert two_more_deaths(det, clock, 300).run == loop.run
+
+    # No death for more than the window (600 s) after the last one at 360 s: it recovered.
+    assert still_restarting(det, clock, 1100).run is None
+    again = two_more_deaths(det, clock, 1200)
+    assert again.run == FailingRun(
+        since=T0 + timedelta(seconds=1100), passed=T0 + timedelta(seconds=960), container="web-1"
+    )
+
+
+def test_a_container_that_ran_a_window_since_bleep_started_has_passed():
+    det, clock = make()
+    loop = crash_loop(det, clock, 700)
+    assert loop.run == FailingRun(
+        since=T0 + timedelta(seconds=700), passed=T0 + timedelta(seconds=600), container="web-1"
+    )
+
+
+def test_a_death_outside_a_loop_and_another_containers_loop_carry_no_run_of_it():
+    det, clock = make()
+    crash_loop(det, clock, 0, container="web-1")
+    assert still_restarting(det, clock, 200, container="web-2").run is None
+    other = crash_loop(det, clock, 1000, container="web-2")
+    assert other.run is not None and other.run.container == "web-2"
+
+
+def test_forgetting_the_host_ends_its_loops():
+    det, clock = make()
+    crash_loop(det, clock, 0)
+    det.forget_host("h1")
+    assert still_restarting(det, clock, 180).run is None

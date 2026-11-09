@@ -8,7 +8,8 @@ probe (disk, memory, load) and the URL checks. Every signal goes through the one
   starts only when that call newly opened the incident. A failing reading (a URL check, the host
   not answering, disk, memory, load) that outlived its last incident with no pass since opens no
   new one until a hold has passed (`repeat_hold`), so a failure Bleep could not fix costs one run
-  and one message, not one a minute. A service's URL waits for its last incident of any kind.
+  and one message, not one a minute. A service's URL waits for its last incident of any kind; a
+  container still in a restart loop waits for its last death or loop incident.
 - `Recovered` is logged with a one-line explanation from the cheap model, off the watcher's
   tick so a slow model never delays the next pull. The call is in the usage ledger under
   `RECOVERY_USAGE` and is skipped once the day's cost cap is spent.
@@ -47,7 +48,13 @@ from bleep.hosts.registry import Registry
 from bleep.hosts.url_check import UrlCheck
 from bleep.incidents.bus import EventBus
 from bleep.incidents.quiet import QuietStore
-from bleep.incidents.repository import IncidentRepo, Repeats, utcnow
+from bleep.incidents.repository import (
+    IncidentRepo,
+    Repeats,
+    container_fold_keys,
+    fold_key,
+    utcnow,
+)
 from bleep.incidents.runner import IncidentRunner
 from bleep.llm.guard import ModelGuard
 from bleep.llm.usage import BudgetExceeded, CostLedger, UsageTracker, check_daily_cap
@@ -659,7 +666,8 @@ class WatcherManager:
 
         For a service that is any incident of it: its URL failing after an `unhealthy` incident
         is the same broken service. A host's readings measure apart (a full disk says nothing of
-        memory), so for a host only incidents of the same kind count.
+        memory), so for a host only incidents of the same kind count. A container still in a
+        restart loop outlived its own deaths and loops, never another container's.
 
         A failure Bleep has not seen pass since it started may be older than Bleep's memory, so
         the incidents of the longest hold before count too: a restart costs no new run either.
@@ -669,8 +677,12 @@ class WatcherManager:
         since = run.passed
         if since is None:
             since = min(run.since, self._clock() - REPEAT_HOLD_MAX)
-        same_kind = signals if subject.kind == "host" else None
-        return await self.repo.finished_since(subject, since, same_kind)
+        keys = None
+        if run.container is not None:
+            keys = container_fold_keys(subject, run.container)
+        elif subject.kind == "host":
+            keys = [fold_key(subject, signals)]
+        return await self.repo.finished_since(subject, since, keys)
 
     def _still_held(self, subject: Subject, outlived: Repeats) -> bool:
         """Whether the failure must still wait for the hold of the incidents it outlived."""

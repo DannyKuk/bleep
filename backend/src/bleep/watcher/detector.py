@@ -44,10 +44,14 @@ class FailingRun:
     """How long the reading behind an outcome has failed with no pass in between: `since` is its
     first failed reading, `passed` the last reading of it that passed before that. `passed` is
     None when no reading of it has passed since Bleep started, so the failure may be older than
-    Bleep's memory."""
+    Bleep's memory.
+
+    For a restart loop the reading is the `container`'s deaths: `since` is the loop's first
+    death and `passed` the end of the last window it ran without one."""
 
     since: datetime
     passed: datetime | None
+    container: str | None = None
 
 
 @dataclass(frozen=True)
@@ -90,9 +94,13 @@ class Detector:
         # A callable is read on every signal, so a threshold changed in the settings holds at once.
         self._thresholds = thresholds
         self._clock = clock
+        self._started = clock()
         # Keyed by (host id, container name): hosts often run same-named containers.
         self._pending: dict[ContainerKey, Signal] = {}  # first death not yet resolved
         self._deaths: dict[ContainerKey, deque[Signal]] = defaultdict(deque)
+        self._last_death: dict[ContainerKey, datetime] = {}
+        self._clean_until: dict[ContainerKey, datetime] = {}  # end of the last window, no death
+        self._loops: dict[ContainerKey, FailingRun] = {}  # looping, not recovered since
         self._streaks: dict[ReadingKey, list[Signal]] = {}
         self._failing: dict[ReadingKey, FailingRun] = {}
         self._passed: dict[ReadingKey, datetime] = {}  # each reading's last pass since start
@@ -110,10 +118,15 @@ class Detector:
         def on_host(subject_key: str) -> bool:
             return subject_key.partition(":")[2].startswith(f"{host_id}:")
 
-        for key in [k for k in self._pending if k[0] == host_id]:
-            del self._pending[key]
-        for key in [k for k in self._deaths if k[0] == host_id]:
-            del self._deaths[key]
+        for containers in (
+            self._pending,
+            self._deaths,
+            self._last_death,
+            self._clean_until,
+            self._loops,
+        ):
+            for key in [k for k in containers if k[0] == host_id]:
+                del containers[key]
         for readings in (self._streaks, self._failing):
             for key in [k for k in readings if on_host(k[0])]:
                 del readings[key]
@@ -234,7 +247,7 @@ class Detector:
                     },
                     container=container,
                 )
-                out.extend(self._emit(death.subject, [death, late], now))
+                out.extend(self._emit(death.subject, [death, late], now, self._loops.get(key)))
         return out
 
     # -- containers -------------------------------------------------------------------------
@@ -247,6 +260,7 @@ class Detector:
                 return [Ignored("expected exit 0")]
             if signal.detail.get("restart_policy", "") in ("", "no"):
                 return [Ignored("one-shot exit 0")]
+        self._count_death(key, signal.at)
         deaths = self._deaths[key]
         deaths.append(signal)
         cutoff = signal.at - timedelta(seconds=self.t.repeated_window_s)
@@ -261,11 +275,23 @@ class Detector:
                 container=signal.container,
             )
             signals = [*deaths, loop]
+            run = FailingRun(deaths[0].at, self._clean_until.get(key), signal.container)
+            run = self._loops.setdefault(key, run)
             deaths.clear()
             self._pending.pop(key, None)
-            return self._emit(signal.subject, signals, now)
+            return self._emit(signal.subject, signals, now, run)
         self._pending.setdefault(key, signal)
         return []
+
+    def _count_death(self, key: ContainerKey, at: datetime) -> None:
+        """Note a death; a container that went a whole window without one since its last (or
+        since Bleep started) recovered at the end of that window, and its loop is over."""
+        window = timedelta(seconds=self.t.repeated_window_s)
+        last = self._last_death.get(key, self._started)
+        if at - last > window:
+            self._clean_until[key] = last + window
+            self._loops.pop(key, None)
+        self._last_death[key] = max(last, at)
 
     # -- checks and host probes ---------------------------------------------------------------
 
