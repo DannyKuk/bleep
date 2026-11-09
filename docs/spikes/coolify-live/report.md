@@ -4,7 +4,7 @@ Measured on 2026-11-09 (#337). Step 2 ran with [`spike.py`](spike.py) inside the
 
 **Every number below comes from the one saved run of the script (before 10:29 UTC), Coolify's own answers, `docker` on the server over SSH (read only), or the incidents' records (events, usage rows, checkpoints).** Latencies are single calls, not a spread.
 
-> Draft: steps 3 (second round) and 4 are still to run.
+> **Answer:** yes, after three fixes the spike found. The read tools parse the real answers and drop nothing secret, because a least-privilege token is shown none. Bleep found a runtime fault in a Coolify app, read the app's README for the safe value, planned `coolify.set_env TESTAPP_FAIL_AFTER_S=0` and `coolify.redeploy`, ran them after the person's yes, waited for the deployment (61 s), and verified the app and its URL: fixed and verified, 2 min 9 s from the incident to the report, $0.0033. A plan naming a protected application, by name or by uuid, is refused before approval. On the way, two live rounds proposed no action and one looped: Diagnose dropped the variable's name (#357), Investigate never read the docs for the value (#364), and a failure that outlived a no-action incident opened a new incident every minute (#356) or a second one by another signal (#366). All four are fixed and merged. Open: #354, #355, #365.
 
 ## Setup
 
@@ -71,7 +71,7 @@ The fixtures (`backend/tests/fixtures/coolify/`) were rewritten by hand from a r
 
 **From outside, the URL answered 404, not the app's 500.** Traefik stops routing to a container Docker marks unhealthy, so the public URL said "404 page not found". The app's own 500 is only seen inside the container.
 
-**Then Bleep looped (#356).** A URL check on the test app's `/health` was added on the dashboard at about 10:35. From 10:36 to 10:43 a new incident opened every minute for the same failure, 7 in all (`url failed on coolify/… (seen 7 times since 09 Nov 10:36 UTC)`), each running the whole graph, proposing no action, closing after about 50 s and sending a Telegram message. The detector opens an incident after `url_failures_to_open` failures in a row and forgets the incident that just ended; the fold counts the repeats but does not stop them. The diagnoses varied: four named `TESTAPP_FAIL_AFTER_S=180` (confidence 0.48-0.55, unsure because the URL said 404 and the logs 500), two blamed Coolify's Caddy labels on a Traefik server (0.76, 0.77, wrong). Each proposed no action. The loop cost about $0.033 and 10 Telegram messages; it stopped when the backend was stopped at 10:43:41. The test app was then set back to `TESTAPP_FAIL_AFTER_S=0` and redeployed by hand.
+**Then Bleep looped (#356).** A URL check on the test app's `/health` was added on the dashboard at about 10:35. From 10:36 to 10:43 a new incident opened every minute for the same failure, 7 in all (`url failed on coolify/… (seen 7 times since 09 Nov 10:36 UTC)`), each running the whole graph, proposing no action, closing after about 50 s and sending a Telegram message. The detector opens an incident after `url_failures_to_open` failures in a row and forgets the incident that just ended; the fold counts the repeats but does not stop them. The diagnoses varied: four named `TESTAPP_FAIL_AFTER_S=180` (confidence 0.48-0.55, unsure because the URL said 404 and the logs 500), two blamed Coolify's Caddy labels on a Traefik server (0.76, 0.77, wrong). Each proposed no action. The loop cost $0.0348 and 10 Telegram messages; it stopped when the backend was stopped at 10:43:41. The test app was then set back to `TESTAPP_FAIL_AFTER_S=0` and redeployed by hand.
 
 **`PATCH /applications/{uuid}/envs` `{key, value}` answered 201, not 200, and updated only the normal row**; the preview copy kept its value. Bleep's client takes any 2xx as success (`_call`), so `set_env` reports "updated", and a production deploy reads the normal row, so this is right for Bleep.
 
@@ -89,9 +89,48 @@ The setup changed in two ways. The app's configuration is documented the way a r
 
 The two incidents cost $0.0077: the first 6 model calls and $0.0027, the URL incident 9 calls and $0.0050.
 
+### Round 3 (12:23-12:32 UTC), with #364 and #366 merged
+
+1. **Deployed with `TESTAPP_FAIL_AFTER_S=180`** at 12:23:35, `finished` at 12:24:27. The URL check had passed after the backend restarted, so the failure counted as new.
+2. **The incident opened at 12:27:10** (`inc_01M704DNQCK5DRWSFP`).
+3. **Investigate made 6 tool calls:** `list_containers`, `inspect_container`, `recent_events`, `coolify_applications`, **`knowledge_search("TESTAPP_FAIL_AFTER_S", sources: repo)`** and `coolify_deployments`. The search returned the README.
+4. **Propose planned the fix** (12:27:41): `coolify.set_env bleep-testapp TESTAPP_FAIL_AFTER_S=0`, then `coolify.redeploy bleep-testapp`, "Set the documented health-check setting to 0 and redeploy so the running container receives the corrected environment. A restart alone would preserve the failing value." Verification: the URL only; Propose drops the containers of an application it redeploys, since their names change.
+5. **The person approved it on the dashboard** at 12:27:54.
+6. **Execute:** `set_env` done in 1 s (Coolify answered 201 and updated the normal row). `redeploy` queued deployment `vyx6rxfkske5gyxycxwlvkwg` and **waited for it: done at 12:28:56, 61 s**; Coolify records it as created 12:27:55 and finished 12:28:50.
+7. **Verify passed on its first check** at 12:29:17, 20 s after: "bleep-testapp (Coolify application): 1 running" and the URL "answering 200". It checked the application as a whole, so the new container's new name did not matter.
+8. **Report** at 12:29:19: "fixed and verified".
+9. **Checked from outside at 12:32:30**, past the old 3-minute mark: the new container `8jmqebrstxvyypkrteclkd2r-20261109T122755` (started 12:27:59) healthy for 4 minutes, its log saying `TESTAPP_FAIL_AFTER_S=0`, the URL answering 200.
+10. **One incident and no second one:** the URL failed while the incident was open and attached to it (#366).
+
+7 model calls, 34,102 tokens in, 2,084 out, **$0.0033**.
+
+## Step 4: protected applications
+
+[`protect.py`](protect.py) ran in the backend container after round 3. It read the Coolify server over SSH (read only, 11 containers, 0.9-1.3 s to connect and read) into a registry built from the hosts file, added a protection for the real application `molecula` (uuid `hfys2nogpz7wrhcoqxymnfkt`, a Docker Compose app with three containers) in memory, and ran `check_plan` on plans naming it. No model was called and nothing was sent to Coolify.
+
+| Plan | Not protected | Protected by name `molecula` | Protected by uuid |
+|---|---|---|---|
+| `coolify.redeploy molecula` | passes | refused, `protected` | refused, `protected` |
+| `coolify.redeploy hfys2nogpz7wrhcoqxymnfkt` | passes | refused, `protected` | refused, `protected` |
+| `coolify.set_env molecula` + `coolify.redeploy molecula` | refused, `hidden_param` (see below) | both steps refused, `protected` | both steps refused, `protected` |
+| `docker.restart` of one of its containers | refused, `healthy_target` | refused, `protected`: "belongs to the Coolify application molecula, which is protected" | refused, `protected` |
+| `coolify.redeploy bleep-testapp` (control) | passes | passes | passes |
+
+- The refusal names the application as the entry protects it ("the Coolify application molecula" or "… hfys2nogpz7wrhcoqxymnfkt").
+- The unprotected set_env was refused because the spike's made-up key `SPIKE_KEY` names a secret, so its value would be shown redacted and the person could not read what they approve (`check_shown`, #294). That is the rule working.
+- **#140 was not tested:** Bleep is not deployed through Coolify here, so there is no `bleep.self=true` container of a Coolify application to hide.
+
 ## Cost
 
 | | |
 |---|---|
-| OpenRouter usage before | $7.6272 |
-| After round 1 and the loop | $7.6629 |
+| Spike incidents (11, from the usage ledger) | $0.0486 |
+| of which the round-1 loop (#356) | $0.0348 |
+| Round 3, the fix | $0.0033 |
+| Steps 1, 2 and 4 | no model calls |
+
+The eval rounds of the fixes found here (#357 $0.0299, #364 $0.0266) are in their own reports.
+
+## What changed on the server
+
+Only the test application and its project `bleep-spike`, both made for this spike the same morning: its Dockerfile (a PATCH), the env var `TESTAPP_FAIL_AFTER_S` (two rows, the normal one and Coolify's preview copy) and six deployments (five by hand at 10:31, 10:44, 11:31, 11:48 and 12:23, one by Bleep at 12:27). The other applications' containers were only read. The test application stays for the walkthrough, healthy with `TESTAPP_FAIL_AFTER_S=0`; how to delete it is in the setup notes kept outside the repo.
