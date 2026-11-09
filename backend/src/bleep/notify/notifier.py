@@ -26,13 +26,17 @@ from bleep.graph.nodes.report import HEALTHY_ANYWAY, OUTCOME_TEXT
 from bleep.guard.log import GuardLogger
 from bleep.guard.titles import split_service_id, title_name
 from bleep.incidents.bus import EventBus
+from bleep.incidents.quiet import QuietStore, quiet_target
 from bleep.incidents.repository import IncidentRepo, primary_signal, utcnow
 from bleep.notify import format as fmt
 from bleep.notify.telegram import (
     EXPECTED_LABEL,
     EXPECTED_VERB,
+    ON_IT_LABEL,
+    ON_IT_VERB,
     Expecting,
     MessageLog,
+    OnIt,
     Resumer,
     TelegramBot,
     TelegramClient,
@@ -80,8 +84,8 @@ class Notifier:
 
     Every incident is one thread in the chat: its first message (the opener) says it is new or
     again, every later one replies to it, and the last one leads with the outcome (#380).
-    `incidents` gives the short names, the signals and the previous incident; `wiring.py` sets it
-    once the repository exists."""
+    `incidents` gives the short names, the signals and the previous incident. With `on_it` the
+    opener carries "🤫 I'm on it" (#389), and a quiet end says until when."""
 
     def __init__(
         self,
@@ -94,6 +98,7 @@ class Notifier:
         incidents: IncidentRepo | None = None,
         dashboard_url: str | None = None,
         clock: Callable[[], datetime] = utcnow,
+        on_it: OnIt | None = None,
     ) -> None:
         self.bus = bus
         self.telegram = telegram
@@ -105,6 +110,7 @@ class Notifier:
         self.incidents = incidents
         self.dashboard_url = dashboard_url
         self.clock = clock
+        self.on_it = on_it
         # One lock per incident with a message on its way, so the check for its opener and the
         # log of the message that becomes it are one step (`_send`). Weak: a lock lives as long
         # as a send holds or waits for it, so finished incidents leave none behind.
@@ -114,7 +120,8 @@ class Notifier:
 
     async def incident_finished(self, incident_id: str) -> None:
         """Remove the buttons from every message logged for an incident that ended: a message
-        that still shows Approve, Reject or "It's expected" means the question is open."""
+        that still shows Approve, Reject, "It's expected" or "🤫 I'm on it" means the question is
+        open."""
         if self.messages is not None:
             self._spawn(self.messages.ids_for_incident(incident_id))
 
@@ -333,13 +340,26 @@ class Notifier:
         if ending is None:
             await self._send(incident, note)
             return
+        until = await self._quiet_until(incident) if ending == "quiet" else None
         if ending == "back":
             took = fmt.duration(self.clock() - incident.opened_at)
             rendered = fmt.bold_first_line(fmt.render("end_back", took=took, text=text))
+        elif until is not None:
+            rendered = fmt.bold_first_line(fmt.render("end_quiet_until", until=until, text=text))
         else:
             rendered = fmt.bold_first_line(fmt.render(f"end_{ending}", text=text))
         silent = ending == "back" and incident.fold_of is not None
         await self._send(incident, rendered, end=True, instead=note, silent=silent)
+
+    async def _quiet_until(self, incident: Incident) -> str | None:
+        """Until when the incident's subject is snoozed, as the chat says it; None when it is
+        left alone or the quiet store is not known here."""
+        if self.on_it is None:
+            return None
+        state = await self.on_it.quiet.for_subject(incident.subject)
+        if state is None or state.until is None:
+            return None
+        return fmt.when(state.until, self.clock(), self.on_it.zone)
 
     async def _ask(
         self,
@@ -374,28 +394,39 @@ class Notifier:
         """Send a message of the incident's thread and log it. The first one that reaches
         Telegram is the opener: it leads with the incident's head and what was seen (unless
         `says_what`: its text already does), and is not a reply, or replies to the previous
-        incident's last message for a repeat. Every later one is a reply to the opener. An `end`
-        message is sent as `instead` when the incident's end message went out already. One
-        message of an incident at a time, so two can never both become its opener."""
+        incident's last message for a repeat; unless it ends the incident, it carries
+        "🤫 I'm on it" (`_on_it_button`) on a row of its own under the message's buttons. Every
+        later one is a reply to the opener. An `end` message is sent as `instead` when the
+        incident's end message went out already. One message of an incident at a time, so two
+        can never both become its opener."""
         assert self.telegram is not None and self.chat_id is not None
         lock = self._threads.setdefault(incident.id, asyncio.Lock())
         async with lock:
             if end and self.messages is not None and await self.messages.ended(incident.id):
                 text, end = instead, False
             reply_to = await self.messages.first_for(incident.id) if self.messages else None
+            on_it: list[tuple[str, str]] = []
             if reply_to is None:
                 head, reply_to = await self._opening(incident)
                 text = fmt.message(head, "" if says_what else await self._seen(incident), text)
+                on_it = [] if end else self._on_it_button(incident)
             message_id = await self.telegram.send_message(
-                self.chat_id, text, buttons, reply_to=reply_to, silent=silent
+                self.chat_id, text, buttons, reply_to=reply_to, silent=silent, more=[on_it]
             )
             if self.messages is None:
                 return
+            has_buttons = bool(buttons or on_it)
             await self.messages.add(
-                message_id, incident.id, approval_id, self.clock(), bool(buttons), end
+                message_id, incident.id, approval_id, self.clock(), has_buttons, end
             )
-        if buttons:
+        if has_buttons:
             await self._clear_if_finished(incident.id, message_id, approval_id)
+
+    def _on_it_button(self, incident: Incident) -> list[tuple[str, str]]:
+        """ "🤫 I'm on it" for an opener, when there is a service or a host to snooze."""
+        if self.on_it is None or quiet_target(incident.subject) is None:
+            return []
+        return [(ON_IT_LABEL, ON_IT_VERB)]
 
     async def _opening(self, incident: Incident) -> tuple[str, int | None]:
         """The opener's head line, and the message it replies to: none for a new incident, the
@@ -546,9 +577,12 @@ def setup(
     guard_log: GuardLogger | None = None,
     *,
     secrets: SecretStore | None = None,
+    incidents: IncidentRepo | None = None,
+    quiet: QuietStore | None = None,
 ) -> NotifySetup:
     """Build the notifier, and the bot too when a token and a chat id are configured: from
-    `secrets` when given (the env, else the dashboard), else from `settings`.
+    `secrets` when given (the env, else the dashboard), else from `settings`. With `incidents`
+    and `quiet` an incident's opener offers "🤫 I'm on it", in `settings.zone`.
 
     The runner does not exist yet when the graph's dependencies are built, so `start(runner)`
     gives it to the bot later; `reload()` builds the bot again after a change on the dashboard.
@@ -560,15 +594,27 @@ def setup(
         chat_id = chat.get_secret_value() if chat is not None else None
 
     dashboard_url = str(settings.dashboard_url) if settings.dashboard_url else None
+    on_it = None
+    if incidents is not None and quiet is not None:
+        on_it = OnIt(incidents, quiet, bus, settings.zone)
 
     def rebuild() -> NotifySetup:
-        return setup(settings, db, bus, approvals, guard_log, secrets=secrets)
+        return setup(
+            settings,
+            db,
+            bus,
+            approvals,
+            guard_log,
+            secrets=secrets,
+            incidents=incidents,
+            quiet=quiet,
+        )
 
     if token is None or chat_id is None:
         if token is not None:
             log.warning("telegram: a bot token is set but TELEGRAM_CHAT_ID is not; Telegram is off")
         return NotifySetup(
-            Notifier(bus, dashboard_url=dashboard_url),
+            Notifier(bus, incidents=incidents, dashboard_url=dashboard_url, on_it=on_it),
             chat_id=chat_id,
             token_set=token is not None,
             token_source=source,
@@ -586,8 +632,18 @@ def setup(
         http,
         messages=messages,
         guard_log=guard_log,
+        on_it=on_it,
     )
-    notifier = Notifier(bus, bot.client, chat_id, messages, approvals, dashboard_url=dashboard_url)
+    notifier = Notifier(
+        bus,
+        bot.client,
+        chat_id,
+        messages,
+        approvals,
+        incidents=incidents,
+        dashboard_url=dashboard_url,
+        on_it=on_it,
+    )
     return NotifySetup(
         notifier,
         bot,

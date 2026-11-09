@@ -1,7 +1,9 @@
+from datetime import UTC, tzinfo
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import AliasChoices, AnyHttpUrl, Field, SecretStr
+from pydantic import AliasChoices, AnyHttpUrl, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 MIN_ADMIN_PASSWORD = 12
@@ -28,6 +30,10 @@ class Settings(BaseSettings):
     # Where a person's browser reaches the dashboard; the end of an incident on Telegram links to
     # its page there. Unset, the message has no link (docs/design/notify.md, #380).
     dashboard_url: AnyHttpUrl | None = None
+    # The IANA time zone Telegram's times are in: "until tomorrow 08:00" and "Quiet until 14:30"
+    # (docs/design/notify.md, #389). Unset, they are UTC and say so. The dashboard uses the
+    # browser's own.
+    timezone: str | None = None
     # Telegram is optional and has its own names in .env (no BLEEP_ prefix). Only this chat is
     # answered. The token is a secret: it stays out of the database, the bus and the logs.
     telegram_bot_token: SecretStr | None = Field(
@@ -55,6 +61,27 @@ class Settings(BaseSettings):
         le=1,
         validation_alias=AliasChoices("EMBEDDINGS_MIN_SCORE", "embeddings_min_score"),
     )
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_zone(cls, name: str | None) -> str | None:
+        if name is None or name == "UTC":
+            return name
+        try:
+            ZoneInfo(name)
+        except ZoneInfoNotFoundError, ValueError:
+            raise ValueError(
+                "BLEEP_TIMEZONE must be an IANA time zone, e.g. Europe/Vienna"
+            ) from None
+        return name
+
+    @property
+    def zone(self) -> tzinfo | None:
+        """The configured zone; None when unset (times are UTC then, and say so). UTC needs no
+        zone data, so an image without it still starts."""
+        if self.timezone is None:
+            return None
+        return UTC if self.timezone == "UTC" else ZoneInfo(self.timezone)
 
 
 def check_settings(settings: Settings) -> None:
