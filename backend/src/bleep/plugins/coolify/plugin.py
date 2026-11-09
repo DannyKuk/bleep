@@ -86,9 +86,9 @@ _LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 # the host a DNS-style name or a bracketed IPv6 address, the rest printable ASCII without `,` or
 # `;`. Nothing in it can end a line, start another item or name another service.
 _URL = re.compile(
-    r"[A-Za-z][A-Za-z0-9+.-]*://(?:[^\s/?#@,;]*@)?"
-    rf"(?:{_LABEL}(?:\.{_LABEL})*\.?|\[[0-9A-Fa-f:.]+\])"
-    r"(?::[0-9]{1,5})?(?:[/?#][\x21-\x2b\x2d-\x3a\x3c-\x7e]*)?"
+    r"(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)(?P<userinfo>[^\s/?#@,;]*@)?"
+    rf"(?P<rest>(?:{_LABEL}(?:\.{_LABEL})*\.?|\[[0-9A-Fa-f:.]+\])"
+    r"(?::[0-9]{1,5})?(?:[/?#][\x21-\x2b\x2d-\x3a\x3c-\x7e]*)?)"
 )
 APPLICATIONS = (
     "List the Coolify applications: name, uuid, status (running:healthy, exited:unhealthy, ...),"
@@ -210,12 +210,16 @@ def _trimmed(text: str) -> str:
 
 
 def _url_list(text: str) -> str:
-    """`text` as Coolify trims it and without userinfo, when each comma item is a plain URL
-    (`_URL`) as it stands, before anything is cut from it."""
-    items = [item.strip() for item in _trimmed(text).split(",")]
-    if not all(_URL.fullmatch(item) for item in items):
+    """`text` as Coolify trims it and without the userinfo `_URL` finds before each host, when
+    each comma item is a plain URL; an `@` in a path or query stays."""
+    urls = [_URL.fullmatch(item.strip()) for item in _trimmed(text).split(",")]
+    return ",".join(_without_userinfo(url) for url in urls)
+
+
+def _without_userinfo(url: re.Match[str] | None) -> str:
+    if url is None:
         raise ValueError("not a list of URLs")
-    return ",".join(_no_userinfo(item) for item in items)
+    return url["scheme"] + url["rest"]
 
 
 def _service_domains(name: str, service: object) -> str | None:

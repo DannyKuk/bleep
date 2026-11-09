@@ -24,6 +24,7 @@ from bleep.plugins.coolify.plugin import (
     CoolifyUrlRefused,
     _commit,
     _no_userinfo,
+    _url_list,
     check_url,
 )
 from bleep.plugins.registry import PluginError, PluginRegistry
@@ -610,6 +611,30 @@ async def test_a_domain_list_of_plain_urls_shows_as_it_is(env, field, value):
     ],
 )
 async def test_a_domain_list_is_trimmed_as_coolify_trims_it(env, field, value, shown):
+    uuid = with_domain(env, field, value)
+
+    out = await env.read("coolify_applications")
+
+    assert shown_as(field, shown) in line_of(out, uuid)
+    assert "u:p" not in out
+
+
+AT_AFTER_THE_HOST = [
+    ("https://a.example/x@evil.example", "https://a.example/x@evil.example"),
+    ("https://u:p@a.example/p@q", "https://a.example/p@q"),
+    ("https://a.example?next=http://u@b.example", "https://a.example?next=http://u@b.example"),
+]
+
+
+@pytest.mark.parametrize(("value", "shown"), AT_AFTER_THE_HOST)
+def test_only_the_userinfo_is_cut_not_an_at_sign_after_the_host(value, shown):
+    assert _url_list(value) == shown
+
+
+# The guard's own redaction may also mask `//u@` in a query, so the third row is checked above.
+@pytest.mark.parametrize("field", ["fqdn", "compose"])
+@pytest.mark.parametrize(("value", "shown"), AT_AFTER_THE_HOST[:2])
+async def test_an_at_sign_after_the_host_is_shown_as_it_is(env, field, value, shown):
     uuid = with_domain(env, field, value)
 
     out = await env.read("coolify_applications")
