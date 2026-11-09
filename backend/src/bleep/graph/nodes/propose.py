@@ -21,12 +21,12 @@ from bleep.guard.grant import binds_app
 from bleep.guard.plan_check import (
     StepRule,
     Violation,
-    app_protected_by,
     check_plan,
     coolify_members,
     protected_names,
 )
 from bleep.guard.redact import redacted_proposal, redacted_step
+from bleep.hosts.coolify_names import app_protected_by
 from bleep.hosts.discovery import is_self
 from bleep.hosts.registry import MIN_ID_PREFIX, Registry
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured

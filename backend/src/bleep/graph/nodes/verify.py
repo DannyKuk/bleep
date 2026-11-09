@@ -47,9 +47,9 @@ from langchain_core.messages import HumanMessage
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.state import IncidentState, Node, plan_results
-from bleep.guard.plan_check import COOLIFY_UUID, coolify_members, host_urls
+from bleep.guard.plan_check import coolify_members, host_urls
 from bleep.hosts.config import UrlCheckConfig
-from bleep.hosts.coolify_names import coolify_container_name
+from bleep.hosts.coolify_names import COOLIFY_UUID, coolify_container_name
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.hosts.readings import past_threshold, readings
 from bleep.hosts.shell import HostUnreadable, host_basics

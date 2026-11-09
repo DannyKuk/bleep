@@ -107,6 +107,20 @@ describe("ServicePage", () => {
     expect(within(crumbs).getByText(name)).toHaveClass("wrap-anywhere");
   });
 
+  it("shows a lock on each container Bleep refuses to act on", async () => {
+    const db = { ...SERVICE.service.containers[0], id: "c2", name: "shop-db-1", protected: true };
+    const containers = [...SERVICE.service.containers, db];
+    stubBackend(json({ ...SERVICE, service: { ...SERVICE.service, containers } }));
+    renderPage("demo/compose:shop");
+
+    const list = await screen.findByRole("list", { name: "Containers" });
+    const [web, locked] = within(list).getAllByRole("listitem");
+    expect(locked).toHaveTextContent("shop-db-1 (protected: Bleep never acts on it)");
+    expect(locked.querySelector("svg.lucide-lock")).not.toBeNull();
+    expect(web).not.toHaveTextContent("protected");
+    expect(web.querySelector("svg.lucide-lock")).toBeNull();
+  });
+
   it("shows a finished job as done", async () => {
     stubBackend(json({ ...SERVICE, service: { ...SERVICE.service, health: "done" } }));
     renderPage("demo/compose:shop");

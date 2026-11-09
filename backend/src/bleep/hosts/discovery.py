@@ -1,6 +1,9 @@
 """Group a host's containers into services (docs/design/hosts.md, "Service discovery")."""
 
+from collections.abc import Collection
+
 from bleep.hosts.config import EVERY_CONTAINER, ServiceOverrides
+from bleep.hosts.coolify_names import app_protected_by
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.services import Service
 
@@ -13,6 +16,15 @@ COMPOSE_CONFIG_HASH = "com.docker.compose.config-hash"
 def is_self(labels: dict[str, str]) -> bool:
     """Whether these labels mark a container as Bleep's own."""
     return labels.get(SELF_LABEL) == "true"
+
+
+def protected_by(container: ContainerSummary, protected: Collection[str]) -> str | None:
+    """The entry of `protected` that protects `container`: its own name, else the entry that
+    names its Coolify application (`app_protected_by`); None when it is not protected. The plan
+    check refuses by it and discovery shows the lock by it, so the two cannot disagree."""
+    if container.name in protected:
+        return container.name
+    return app_protected_by(container, protected)
 
 
 def expects_exit(entries: list[str], name: str, labels: dict[str, str]) -> bool:
@@ -108,8 +120,8 @@ def group_services(
                 f"services ({', '.join(unclaimed)}); use one of those keys instead"
             )
 
-    # The guard refuses a protected name whichever override lists it, so a member another
-    # service's override protects is shown protected too.
+    # The guard refuses a member any override's entry protects (`protected_by`), by its name or
+    # its Coolify application's, so it is shown protected whichever override lists the entry.
     anywhere = {c for o in overrides.values() for c in o.protected_containers}
     services = []
     for key, (name, source, members) in groups.items():
@@ -117,7 +129,7 @@ def group_services(
         by_name = overrides.get(name) if name not in groups else None
         over = by_key or by_name or ServiceOverrides()
         protected = {c for o in (by_key, by_name) if o is not None for c in o.protected_containers}
-        protected |= {c.name for c in members if c.name in anywhere}
+        protected |= {c.name for c in members if protected_by(c, anywhere) is not None}
         services.append(
             Service(
                 id=f"{host_id}/{key}",

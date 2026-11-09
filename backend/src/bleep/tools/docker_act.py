@@ -27,11 +27,10 @@ from bleep.guard.grant import GrantInvalid, step_snapshot, verify_step
 from bleep.guard.log import GuardLogger
 from bleep.guard.plan_check import (
     check_target,
-    protected_by,
     protected_names,
     protected_reason,
 )
-from bleep.hosts.discovery import is_self
+from bleep.hosts.discovery import is_self, protected_by
 from bleep.hosts.engine import ContainerNotFound, EngineError, EngineUnavailable
 from bleep.hosts.registry import Registry
 from bleep.schemas.graph import Action, ApprovalGrant, ApprovalRecord, PlanStep, StepResult

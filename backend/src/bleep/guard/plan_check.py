@@ -17,24 +17,14 @@ from typing import Any, Literal
 from bleep.guard.redact import hides_head, hides_params, pads_step
 from bleep.guard.sanitize import INVISIBLE_CHARS, strip_control
 from bleep.hosts.config import UrlCheckConfig
-from bleep.hosts.coolify_names import coolify_container_name, name_matches
-from bleep.hosts.discovery import is_self
+from bleep.hosts.coolify_names import COOLIFY_APP_LABELS, COOLIFY_UUID, app_protected_by
+from bleep.hosts.discovery import is_self, protected_by
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import Action, PlanStep, Proposal
 
 MAX_STEPS = 3
 KNOWN_ACTIONS: frozenset[str] = frozenset(typing.get_args(Action))
-# The labels a coolify.* target is matched on. Not `coolify.applicationId`: Coolify's API never
-# shows an application's id, and a bare number could match another application's name.
-COOLIFY_UUID, COOLIFY_NAME = "coolify.applicationUuid", "coolify.resourceName"
-COOLIFY_APP_LABELS = (COOLIFY_UUID, COOLIFY_NAME)
-# Coolify 4.1.x wrote no application uuid label; its uuid is in these and in the container name.
-COOLIFY_MANAGED, COOLIFY_TYPE, COOLIFY_SHORT_NAME = (
-    "coolify.managed",
-    "coolify.type",
-    "coolify.name",
-)
 # The params each action takes; an action not listed here takes whatever it is given.
 ACTION_PARAMS: dict[str, frozenset[str]] = {
     "coolify.redeploy": frozenset(),
@@ -455,54 +445,6 @@ def protected_reason(container: ContainerSummary, entry: str) -> str:
         f"{container.name} belongs to the Coolify application {entry}, which is protected in the"
         " hosts file"
     )
-
-
-def app_protected_by(container: ContainerSummary, protected: Collection[str]) -> str | None:
-    """The entry of `protected` that names the Coolify application `container` belongs to, by
-    the uuid or resource name label the engine reports on it, or None.
-
-    Coolify names an app's containers anew at every deploy, so its uuid and its name protect it
-    too, not only a container name that lasts until the next deploy. A uuid compares exactly. The
-    name label is Coolify's slug of the app's name, so a protected name is compared slugged, and
-    also exactly and in any case, for a label an older Coolify wrote that is not a slug
-    (`name_matches`). A Coolify 4.1.x container carries no uuid label, so on a container with
-    Coolify labels an entry also counts when it is the `coolify.name` label or the uuid in
-    Coolify's container name (`coolify_container_name`). The labels count without the Coolify
-    plugin: Bleep can watch a Coolify host with the plugin off."""
-    labels = container.labels
-    uuid = labels.get(COOLIFY_UUID)
-    if uuid and uuid in protected:
-        return uuid
-    name = labels.get(COOLIFY_NAME)
-    by_name = next((p for p in sorted(protected) if name and name_matches(p, {name})), None)
-    if by_name is not None or not _coolify_labelled(labels):
-        return by_name
-    return next(
-        (
-            p
-            for p in sorted(protected)
-            if p == labels.get(COOLIFY_SHORT_NAME) or coolify_container_name(container.name, p)
-        ),
-        None,
-    )
-
-
-def _coolify_labelled(labels: Mapping[str, str]) -> bool:
-    """Whether `labels` mark a Coolify container; `coolify.applicationId` alone counts, as it
-    does for discovery."""
-    return (
-        labels.get(COOLIFY_MANAGED) == "true"
-        or COOLIFY_TYPE in labels
-        or bool(labels.get("coolify.applicationId"))
-    )
-
-
-def protected_by(container: ContainerSummary, protected: Collection[str]) -> str | None:
-    """The entry of `protected` that protects `container`: its own name, else the entry that
-    names its Coolify application (`app_protected_by`); None when it is not protected."""
-    if container.name in protected:
-        return container.name
-    return app_protected_by(container, protected)
 
 
 def mcp_arguments(step: PlanStep) -> dict[str, Any] | None:

@@ -6,7 +6,8 @@ than the watcher's last one, so an application recreated a moment ago already sh
 See docs/design/graph.md.
 """
 
-from bleep.guard.plan_check import COOLIFY_UUID, coolify_members
+from bleep.guard.plan_check import coolify_members
+from bleep.hosts.coolify_names import COOLIFY_UUID
 from bleep.hosts.engine import EngineError, EngineUnavailable
 from bleep.hosts.registry import Registry
 

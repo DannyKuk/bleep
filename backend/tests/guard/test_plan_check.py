@@ -5,7 +5,6 @@ import pytest
 
 from bleep.graph.deps import CORE_ACTIONS
 from bleep.guard.plan_check import (
-    COOLIFY_UUID,
     NoCoolifyApp,
     Violation,
     check_plan,
@@ -13,7 +12,7 @@ from bleep.guard.plan_check import (
     named_off_limits,
 )
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
-from bleep.hosts.coolify_names import coolify_slug
+from bleep.hosts.coolify_names import COOLIFY_UUID, coolify_slug
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import PlanStep, Proposal, VerificationPlan
 from fakes import FakeEngine

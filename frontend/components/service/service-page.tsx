@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, ThumbsDown, ThumbsUp, TriangleAlert } from "lucide-react";
+import { Loader2, Lock, ThumbsDown, ThumbsUp, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -95,7 +95,13 @@ function ContainerRow({ container }: { container: ContainerView }) {
       title={`${container.image} (${container.id.slice(0, 12)})`}
       className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-row bg-soft px-3 py-2 text-sm"
     >
-      <span className="font-mono break-all">{container.name}</span>
+      <span className="flex items-center gap-1.5 font-mono break-all">
+        {container.protected && <Lock aria-hidden className="size-3 shrink-0 text-ink-2" />}
+        {container.name}
+        {container.protected && (
+          <span className="sr-only"> (protected: Bleep never acts on it)</span>
+        )}
+      </span>
       <span className={cn("font-bold", containerTone(container))}>{detail}</span>
     </li>
   );
