@@ -3,11 +3,13 @@
 Messages are sent as MarkdownV2, where an unescaped `.`, `-` or `_` makes Telegram refuse the
 whole message. So everything is escaped, the template's own text and every value alike, and the
 templates hold plain text. Values are redacted first: a diagnosis is model text that may echo a
-log line.
+log line. The only markup is bold, which `bold_first_line` adds to the line that says what kind of
+message it is (#380).
 """
 
 import re
 import unicodedata
+from datetime import timedelta
 
 from bleep import prompts
 from bleep.guard.plan_check import MAX_STEPS
@@ -49,7 +51,10 @@ def render(name: str, **values: str) -> str:
         out.append(escape(_cap(values[match.group(1)])))
         last = match.end()
     out.append(escape(marked[last:]))
-    text = "".join(out)
+    return _fit("".join(out))
+
+
+def _fit(text: str) -> str:
     if len(text) > TELEGRAM_LIMIT:
         text = text[: TELEGRAM_LIMIT - 1]
         # Never end on a lone backslash: it would escape nothing and Telegram would refuse it.
@@ -57,8 +62,34 @@ def render(name: str, **values: str) -> str:
     return text
 
 
+def bold_first_line(rendered: str) -> str:
+    """`rendered` (escaped by `render`) with its first line in bold."""
+    head, _, rest = rendered.partition("\n")
+    return f"*{head}*" + ("\n" + rest if rest else "")
+
+
+def message(*parts: str) -> str:
+    """Rendered parts as one message, one under the other, cut to Telegram's limit."""
+    return _fit("\n".join(part for part in parts if part))
+
+
+def duration(span: timedelta) -> str:
+    """A span as a person says it in a chat: "4 min", "2 h", "3 days"."""
+    minutes = max(int(span.total_seconds() // 60), 1)
+    if minutes < 60:
+        return phrase("duration_min", n=str(minutes))
+    if minutes < 48 * 60:
+        return phrase("duration_h", n=str(minutes // 60))
+    return phrase("duration_days", n=str(minutes // (24 * 60)))
+
+
 def answer(name: str, **values: str) -> str:
     """A short plain-text answer (a pop-up), not escaped."""
+    return prompts.load(f"notify/{name}", **values).strip()
+
+
+def phrase(name: str, **values: str) -> str:
+    """A few words that go into a message as a value (`render` escapes them there)."""
     return prompts.load(f"notify/{name}", **values).strip()
 
 

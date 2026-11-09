@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from functools import partial
 
 import pytest
 from fastapi.testclient import TestClient
@@ -294,7 +295,8 @@ def test_an_approval_its_incident_was_closed_under_is_reported_closed_not_pendin
     approval_id = ask(app_client, parts, incident.id)
     call(app_client, parts.incidents.set_status, incident.id, "awaiting_approval")
     runner = app_client.app.state.runner
-    assert call(app_client, runner.end, incident.id, "Closed: you told me to leave shop alone.")
+    end = partial(runner.end, ending="quiet")
+    assert call(app_client, end, incident.id, "Closed: you told me to leave shop alone.")
 
     body = app_client.get(f"/api/incidents/{incident.id}").json()
     assert body["incident"]["status"] == "closed"
@@ -607,3 +609,17 @@ def test_the_list_and_the_detail_carry_a_groups_size_and_its_repeats(app_client,
     repeats = app_client.get("/api/incidents", params={"fold_of": first.id}).json()
     assert [i["id"] for i in repeats] == [repeat.id]
     assert app_client.get(f"/api/incidents/{first.id}").json()["repeats"] == 2
+
+
+def test_the_list_and_the_detail_carry_each_incidents_short_name(app_client, parts):
+    first = open_incident(app_client, parts)
+    call(app_client, parts.incidents.close_unfinished, first.id)
+    second = open_incident(app_client, parts)
+
+    listed = {i["id"]: i for i in app_client.get("/api/incidents").json()}
+    assert (listed[first.id]["short_name"], listed[second.id]["short_name"]) == (
+        "shop #1",
+        "shop #2",
+    )
+    detail = app_client.get(f"/api/incidents/{second.id}").json()
+    assert detail["incident"]["short_name"] == "shop #2"

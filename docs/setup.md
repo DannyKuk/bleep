@@ -118,7 +118,10 @@ Without it everything works from the dashboard. To also get incidents and approv
 
 1. Create a bot with BotFather and set its token as `TELEGRAM_BOT_TOKEN`, on the dashboard or in `.env` ([how](#keys-and-tokens-from-the-dashboard-or-env)).
 2. Send the bot any message, then read your chat id from `https://api.telegram.org/bot<token>/getUpdates` (`result[0].message.chat.id`) and set it as `TELEGRAM_CHAT_ID` the same way.
-3. Set on the dashboard, the bot starts polling at once; in `.env`, restart Bleep. A proposal arrives with Approve and Reject buttons; reply to the message to give an instruction instead.
+3. Set on the dashboard, the bot starts polling at once; in `.env`, restart Bleep. A proposal arrives with Approve and Reject buttons; reply to it, or to any message of the incident, to give an instruction instead.
+4. Optional: set `BLEEP_DASHBOARD_URL` in `.env` to the address your browser uses for the dashboard (`http://192.168.1.5:3000`), and restart; the last message of every incident then links to its page. A `localhost` address works only on the machine Bleep runs on.
+
+Each incident is one thread: its first message says 🔴 New (or 🔁 Again for a repeat) with a short name such as `shop #14`, every later one replies to it, and the last one leads with how it ended.
 
 Only that chat is answered. Messages and button taps from any other chat are ignored and recorded in the guard log. The first answer wins, from Telegram or the dashboard; the other is told who won. Details: [Notifications](design/notify.md).
 

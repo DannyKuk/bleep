@@ -167,7 +167,7 @@ class Expectations:
         elif pending is not None:  # a decision won while the settings were written
             return await self._lost(incident_id, text, via)
         await self.bus.publish(incident_id, "expected", {"text": text, "via": via})
-        if not await self.runner.end(incident_id, CLOSED_NOTICE, spare=RUNNING):
+        if not await self.runner.end(incident_id, CLOSED_NOTICE, ending="expected", spare=RUNNING):
             # A plan started running on the host meanwhile, or the incident closed on its own.
             return Answer(False, f"{text} The incident was not closed here; see its page.")
         log.info("incident %s: marked expected on %s", incident_id, via)

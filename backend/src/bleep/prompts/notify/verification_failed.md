@@ -1,3 +1,2 @@
-Incident {id}: the fix did not hold.
-
+❌ Didn't hold
 {detail}

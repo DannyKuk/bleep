@@ -50,6 +50,10 @@ EventKind = Literal[
 ]
 
 
+# How an incident closed outside its run's report, for the channel's end message (#380).
+Ending = Literal["back", "quiet", "expected", "removed", "error"]
+
+
 class Subject(BaseModel):
     kind: Literal["service", "host"]
     host_id: str
@@ -85,6 +89,9 @@ class Incident(BaseModel):
     prompt_overrides: dict[str, str] | None = None
     # The first incident of its group when this one repeats it (docs/design/watcher.md, folding).
     fold_of: str | None = None
+    # The subject's name and a running number per subject, as people read it ("shop #14"); None
+    # for incidents from before it (docs/design/notify.md, #380).
+    short_name: str | None = None
 
 
 class IncidentEvent(BaseModel):

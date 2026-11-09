@@ -1,1 +1,1 @@
-Incident {id}: {text}
+ℹ️ {text}

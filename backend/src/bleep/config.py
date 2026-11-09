@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, Field, SecretStr
+from pydantic import AliasChoices, AnyHttpUrl, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 MIN_ADMIN_PASSWORD = 12
@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     wake_grace_ticks: int = Field(default=4, ge=0, le=40)
     cookie_secure: bool = False  # true once the dashboard is served over https
     dev_panel: bool = False  # the dev panel's routes and nav entry (docs/design/dev-panel.md)
+    # Where a person's browser reaches the dashboard; the end of an incident on Telegram links to
+    # its page there. Unset, the message has no link (docs/design/notify.md, #380).
+    dashboard_url: AnyHttpUrl | None = None
     # Telegram is optional and has its own names in .env (no BLEEP_ prefix). Only this chat is
     # answered. The token is a secret: it stays out of the database, the bus and the logs.
     telegram_bot_token: SecretStr | None = Field(

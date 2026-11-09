@@ -2,7 +2,7 @@
 
 `TelegramClient` makes the calls; `TelegramBot` polls `getUpdates` and turns what the one
 configured chat says into decisions. A button press is `approve:<approval id>` or
-`reject:<approval id>`; a reply to a proposal message is an instruction for that incident.
+`reject:<approval id>`; a reply to any message about an incident is an instruction for its plan.
 Decisions go through `approvals.resolve`, so the dashboard and Telegram race fairly: the winner
 resumes the run, the loser is told which channel won. Updates from any other chat are dropped and
 written to the guard log. The bot token is in every Bot API URL, so no error or log line here
@@ -111,17 +111,29 @@ class TelegramClient:
         buttons: list[tuple[str, str]] | None = None,
         reply_to: int | None = None,
         markdown: bool = True,
+        silent: bool = False,
     ) -> int:
-        """Send `text` (MarkdownV2 unless `markdown` is False); returns the message id."""
-        params: dict[str, Any] = {"chat_id": chat_id, "text": text}
+        """Send `text` (MarkdownV2 unless `markdown` is False); returns the message id. A reply
+        whose message was deleted is sent anyway, as a message of its own. A `silent` message
+        arrives without a sound or a ping."""
+        params: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": text,
+            "link_preview_options": {"is_disabled": True},
+        }
         if markdown:
             params["parse_mode"] = "MarkdownV2"
+        if silent:
+            params["disable_notification"] = True
         if buttons:
             params["reply_markup"] = {
                 "inline_keyboard": [[{"text": t, "callback_data": d} for t, d in buttons]]
             }
         if reply_to is not None:
-            params["reply_parameters"] = {"message_id": reply_to}
+            params["reply_parameters"] = {
+                "message_id": reply_to,
+                "allow_sending_without_reply": True,
+            }
         return (await self.call("sendMessage", **params))["message_id"]
 
     async def answer_callback(self, callback_id: str, text: str) -> None:
@@ -137,40 +149,65 @@ class TelegramClient:
 
 
 class MessageLog:
-    """`telegram_messages`: which incident and plan each proposal message is about. An
-    incident-opened message with an "It's expected" button is logged with an empty approval id:
-    it asks about no plan."""
+    """`telegram_messages`: which incident each message sent about one is about, the plan for a
+    proposal or a reminder (an empty approval id for every other message: it asks about no plan),
+    and whether it carries buttons. An incident's lowest message id is its opener."""
 
     def __init__(self, db: Database) -> None:
         self.db = db
 
-    async def add(self, message_id: int, incident_id: str, approval_id: str, at: datetime) -> None:
+    async def add(
+        self,
+        message_id: int,
+        incident_id: str,
+        approval_id: str,
+        at: datetime,
+        buttons: bool = True,
+        end: bool = False,
+    ) -> None:
         conn = await self.db.connect()
         try:
             await conn.execute(
                 "INSERT OR REPLACE INTO telegram_messages (message_id, incident_id, approval_id,"
-                " sent_at) VALUES (?, ?, ?, ?)",
-                (message_id, incident_id, approval_id, at.isoformat()),
+                " sent_at, buttons, is_end) VALUES (?, ?, ?, ?, ?, ?)",
+                (message_id, incident_id, approval_id, at.isoformat(), int(buttons), int(end)),
             )
             await conn.commit()
         finally:
             await conn.close()
 
     async def ids_for_incident(self, incident_id: str) -> list[int]:
-        return await self._ids("incident_id = ?", incident_id)
+        """The incident's messages that carry buttons."""
+        return await self._ids("incident_id = ? AND buttons", incident_id)
+
+    async def first_for(self, incident_id: str) -> int | None:
+        """The incident's opener: the first of its messages that reached the chat."""
+        ids = await self._ids("incident_id = ?", incident_id, "MIN")
+        return ids[0] if ids else None
+
+    async def ended(self, incident_id: str) -> bool:
+        """Whether a message that ended the incident was sent."""
+        return bool(await self._ids("incident_id = ? AND is_end", incident_id, "MAX"))
+
+    async def last_for(self, incident_id: str) -> int | None:
+        ids = await self._ids("incident_id = ?", incident_id, "MAX")
+        return ids[0] if ids else None
 
     async def ids_for_approval(self, approval_id: str) -> list[int]:
         return await self._ids("approval_id = ?", approval_id)
 
-    async def _ids(self, where: str, value: str) -> list[int]:
+    async def _ids(self, where: str, value: str, pick: str = "") -> list[int]:
+        """The ids of the matching rows; with `pick` (MIN or MAX) only that one, if any."""
+        column = f"{pick}(message_id)" if pick else "message_id"
         conn = await self.db.connect()
         try:
             async with conn.execute(
-                f"SELECT message_id FROM telegram_messages WHERE {where}", (value,)
+                f"SELECT {column} AS message_id FROM telegram_messages WHERE {where}", (value,)
             ) as cursor:
-                return [row["message_id"] for row in await cursor.fetchall()]
+                rows = await cursor.fetchall()
         finally:
             await conn.close()
+        return [row["message_id"] for row in rows if row["message_id"] is not None]
 
     async def get(self, message_id: int) -> tuple[str, str] | None:
         """(incident id, approval id) the message asked about."""
@@ -321,10 +358,13 @@ class TelegramBot:
         return shows_in_full(current.proposal)
 
     async def _text(self, message: dict[str, Any]) -> None:
+        """A reply to a message about an incident instructs a plan: the one the message showed
+        (so a replaced plan is answered as stale), or, for a message that showed none, the plan
+        that waits for a decision on its incident now."""
         reply_to = message.get("reply_to_message", {}).get("message_id")
         known = await self.messages.get(reply_to) if reply_to else None
         reply = message["message_id"]
-        if known is None or not known[1]:  # no message, or one that asks about no plan
+        if known is None:
             await self.client.send_message(
                 self.chat_id, answer("answer_no_reply"), reply_to=reply, markdown=False
             )
@@ -335,9 +375,22 @@ class TelegramBot:
             await self.client.send_message(self.chat_id, note, reply_to=reply, markdown=False)
             return
         incident_id, approval_id = known
+        if not approval_id:
+            approval_id = await self._waiting(incident_id)
+        if not approval_id:
+            note = answer("answer_not_waiting")
+            await self.client.send_message(self.chat_id, note, reply_to=reply, markdown=False)
+            return
         decision = Decision(kind="instruct", text=text, via="telegram", at=self.clock())
         note = await self._resolve(incident_id, approval_id, decision)
         await self.client.send_message(self.chat_id, note, reply_to=reply, markdown=False)
+
+    async def _waiting(self, incident_id: str) -> str:
+        """The id of the incident's plan that waits for a decision now; empty when none does."""
+        current = await self.approvals.current(incident_id)
+        if current is None or current.decision is not None or current.closed:
+            return ""
+        return current.id
 
     async def _decide(
         self, callback_id: str, message_id: int, incident_id: str, approval_id: str, d: Decision

@@ -30,7 +30,14 @@ from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.llm.guard import ModelUnavailable
 from bleep.schemas.graph import Decision
-from bleep.schemas.incidents import TERMINAL_STATUSES, Incident, IncidentStatus, Signal, Subject
+from bleep.schemas.incidents import (
+    TERMINAL_STATUSES,
+    Ending,
+    Incident,
+    IncidentStatus,
+    Signal,
+    Subject,
+)
 
 log = logging.getLogger(__name__)
 
@@ -198,15 +205,19 @@ class IncidentRunner:
         if await self.repo.close_unfinished(incident.id, spare=NOT_WAITING) is None:
             return
         await self.bus.publish(incident.id, "notice", {"text": BACK_NOTICE})
-        if incident.fold_of is None:  # a repeat told of its wait once; its end stays here
-            await self._tell(incident.id, BACK_NOTICE)
+        await self._tell(incident.id, BACK_NOTICE, ending="back")
 
     async def end(
-        self, incident_id: str, text: str, *, spare: tuple[IncidentStatus, ...] = ()
+        self,
+        incident_id: str,
+        text: str,
+        *,
+        ending: Ending,
+        spare: tuple[IncidentStatus, ...] = (),
     ) -> bool:
         """Close an incident from outside its run (its host was removed) and say why, on its
-        timeline and to the channels; one that is finished already is left as it is. Returns
-        whether this call closed it.
+        timeline and to the channels, where `ending` says how it ended; one that is finished
+        already is left as it is. Returns whether this call closed it.
 
         Without `spare` it is marked ended before the first await, so no run of it is driven
         from here on; then it is closed, which shuts `ApprovalStore.resolve` for it on every
@@ -235,7 +246,7 @@ class IncidentRunner:
         if before in ("executing", "verifying"):
             text += " A step of the approved plan may already have run; see the actions above."
         await self.bus.publish(incident_id, "notice", {"text": text})
-        await self._tell(incident_id, text)
+        await self._tell(incident_id, text, ending=ending)
         return True
 
     def _finished(self, incident_id: str, status: IncidentStatus | None) -> bool:
@@ -322,13 +333,14 @@ class IncidentRunner:
         except Exception as error:
             log.warning("incident %s: announcing it failed: %s", incident.id, type(error).__name__)
 
-    async def _tell(self, incident_id: str, text: str) -> None:
+    async def _tell(self, incident_id: str, text: str, ending: Ending | None = None) -> None:
         """Send a notice to the channels: a human who approved on Telegram hears of a run that
-        died there too. A channel outage is logged and changes nothing."""
+        died there too. With `ending` it is the incident's end message. A channel outage is
+        logged and changes nothing."""
         if self.notifier is None:
             return
         try:
-            await self.notifier.notice(incident_id, text)
+            await self.notifier.notice(incident_id, text, ending=ending)
         except Exception as error:
             log.warning(
                 "incident %s: telling the channels failed: %s", incident_id, type(error).__name__
@@ -392,7 +404,7 @@ class IncidentRunner:
                 await self.bus.publish(incident_id, "notice", {"text": text})
             except Exception:
                 log.exception("incident %s: recording the failure failed", incident_id)
-            await self._tell(incident_id, text)
+            await self._tell(incident_id, text, ending="error")
             return
         self._forget_pauses(incident_id)
         snapshot = await self.graph.aget_state(config)
@@ -411,7 +423,7 @@ class IncidentRunner:
         is_host = incident is not None and incident.subject.kind == "host"
         text = QUIET_RUN_NOTICE_HOST if is_host else QUIET_RUN_NOTICE
         await self.bus.publish(incident_id, "notice", {"text": text})
-        await self._tell(incident_id, text)
+        await self._tell(incident_id, text, ending="quiet")
 
     async def _pause(
         self, incident_id: str, unavailable: ModelUnavailable, *, announce: bool

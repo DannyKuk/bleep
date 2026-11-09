@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 
 import aiosqlite
 
-from bleep.guard.titles import build_title
+from bleep.guard.titles import build_title, split_service_id, title_name
 from bleep.schemas.incidents import (
     TERMINAL_STATUSES,
     Incident,
@@ -50,6 +50,7 @@ def _incident(row: aiosqlite.Row) -> Incident:
         trace_url=row["trace_url"],
         prompt_overrides=json.loads(row["prompt_overrides"]) if row["prompt_overrides"] else None,
         fold_of=row["fold_of"],
+        short_name=row["short_name"],
     )
 
 
@@ -63,7 +64,9 @@ _DEATHS = ("container_died", "oom", "down_past_grace")
 _PRECEDENCE = ("restart_loop", "unhealthy")
 
 
-def _primary(signals: list[Signal]) -> Signal | None:
+def primary_signal(signals: list[Signal]) -> Signal | None:
+    """The incident's most telling signal: a restart loop, then `unhealthy`, then any other kind,
+    then a death."""
     for kind in _PRECEDENCE:
         if found := next((s for s in signals if s.kind == kind), None):
             return found
@@ -75,7 +78,7 @@ def fold_key(subject: Subject, signals: list[Signal]) -> str:
     """What makes an incident a repeat of another: its subject, its primary kind (a restart
     loop, then `unhealthy`, then any other kind, then a death) and that signal's target (the
     container, or the URL)."""
-    primary = _primary(signals)
+    primary = primary_signal(signals)
     kind = "death" if primary is None or primary.kind in _DEATHS else primary.kind
     target = ""
     if primary is not None:
@@ -114,7 +117,7 @@ class Repeats:
 # Tokens and cost are the usage ledger's sums, so an incident and the ledger never disagree.
 _COLUMNS = (
     "id, kind, host_id, service_id, status, title, opened_at, closed_at, trace_url,"
-    " prompt_overrides, fold_of,"
+    " prompt_overrides, fold_of, short_name,"
     " (SELECT COALESCE(SUM(tokens_in + tokens_out), 0) FROM usage"
     "  WHERE usage.incident_id = incidents.id) AS tokens,"
     " (SELECT SUM(usd) FROM usage WHERE usage.incident_id = incidents.id) AS cost_usd"
@@ -151,9 +154,16 @@ class IncidentRepo:
                 log.exception("incident %s: a listener for its end failed", incident_id)
 
     async def open_or_attach(
-        self, subject: Subject, signals: list[Signal], repeat_of: str | None = None
+        self,
+        subject: Subject,
+        signals: list[Signal],
+        repeat_of: str | None = None,
+        name: str | None = None,
     ) -> tuple[Incident, bool]:
         """Attach `signals` to the subject's open incident, or open one; True when opened.
+
+        A new incident gets its short name (`short_name`) from `name`, the service's name as the
+        dashboard shows it, when given.
 
         A new incident folds into the group of the latest finished one with its fold key, else
         into the group of `repeat_of` (a finished incident of another kind that the same failure
@@ -171,7 +181,7 @@ class IncidentRepo:
                     target = await self._open_target(conn, subject)
                     created = target is None
                     if target is None:
-                        target = await self._insert(conn, subject, signals, repeat_of)
+                        target = await self._insert(conn, subject, signals, repeat_of, name)
                     for signal in signals:
                         await conn.execute(
                             "INSERT INTO incident_signals (incident_id, signal, at)"
@@ -219,6 +229,7 @@ class IncidentRepo:
         subject: Subject,
         signals: list[Signal],
         repeat_of: str | None,
+        name: str | None,
     ) -> str:
         now = self.clock()
         incident_id = new_incident_id(now)
@@ -230,7 +241,8 @@ class IncidentRepo:
             title += f" (seen {group.count + 1} times since {group.since:%d %b %H:%M} UTC)"
         await conn.execute(
             "INSERT INTO incidents (id, kind, host_id, service_id, subject_key, status, title,"
-            " opened_at, fold_key, fold_of) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)",
+            " opened_at, fold_key, fold_of, short_name)"
+            " VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)",
             (
                 incident_id,
                 subject.kind,
@@ -241,9 +253,25 @@ class IncidentRepo:
                 now.isoformat(),
                 key,
                 group.root if group is not None else None,
+                await self._short_name(conn, subject, name),
             ),
         )
         return incident_id
+
+    async def _short_name(
+        self, conn: aiosqlite.Connection, subject: Subject, name: str | None
+    ) -> str:
+        """`<name> #<n>`, n counting every incident of the subject: the hosts file's id for a
+        host, a service's name through `title_name` (#311), since a label chose it."""
+        async with conn.execute(
+            "SELECT COUNT(*) AS n FROM incidents WHERE subject_key = ?", (subject.key,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        if subject.kind == "host":
+            shown = subject.host_id
+        else:
+            shown = title_name(name or split_service_id(subject)[1])
+        return f"{shown} #{row['n'] + 1}"
 
     async def _group_to_join(
         self, conn: aiosqlite.Connection, key: str, now: datetime, repeat_of: str | None
@@ -334,6 +362,21 @@ class IncidentRepo:
             subject_key = by_id[row["id"]].subject.key
             kinds[row["id"]] = row["fold_key"][len(subject_key) + 1 :].split("|", 1)[0]
         return kinds
+
+    async def previous(self, incident: Incident) -> Incident | None:
+        """The subject's incident that closed last before `incident` opened, if any."""
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                f"SELECT {_COLUMNS} FROM incidents WHERE subject_key = ? AND id != ?"
+                f" AND NOT {_OPEN} AND closed_at IS NOT NULL AND opened_at <= ?"
+                " ORDER BY closed_at DESC, id DESC LIMIT 1",
+                (incident.subject.key, incident.id, incident.opened_at.isoformat()),
+            ) as cursor:
+                row = await cursor.fetchone()
+        finally:
+            await conn.close()
+        return _incident(row) if row is not None else None
 
     async def groups(self, incidents: Collection[Incident]) -> dict[str, FoldGroup]:
         """Each incident's group by its id; one that is not in a group (alone) is left out."""
