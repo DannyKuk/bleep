@@ -195,6 +195,7 @@ class WatcherManager:
         self.hosts: dict[str, _HostTasks] = {
             state.config.id: self._host_tasks(state.config.id) for state in registry.hosts()
         }
+        repo.on_finished(self._fixed)
 
     def _host_tasks(self, host_id: str) -> _HostTasks:
         watch_s, probe_s, url_s, store = self._intervals
@@ -683,6 +684,17 @@ class WatcherManager:
         elif subject.kind == "host":
             keys = [fold_key(subject, signals)]
         return await self.repo.finished_since(subject, since, keys)
+
+    async def _fixed(self, incident_id: str) -> None:
+        """A fix Bleep verified (`resolved`) is the pass the detector cannot see for a container:
+        its loop ends there, so a relapse opens at once."""
+        incident = await self.repo.get(incident_id)
+        if incident is None or incident.status != "resolved" or incident.subject.kind != "service":
+            return
+        at = incident.closed_at or self._clock()
+        for container in {s.container for s in await self.repo.signals(incident_id)}:
+            if container is not None:
+                self.detector.recovered(incident.subject.host_id, container, at)
 
     def _still_held(self, subject: Subject, outlived: Repeats) -> bool:
         """Whether the failure must still wait for the hold of the incidents it outlived."""

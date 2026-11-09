@@ -38,6 +38,10 @@ SENTENCE_END = re.compile(r"(?<=[.!?])\s")
 # unhealthy after the healthcheck retries ran out) or the detector produced them.
 PASS_THROUGH = ("unhealthy", "restart_loop", "down_past_grace")
 
+# A container's last recovery is kept this long, the longest hold (`REPEAT_HOLD_MAX` in the
+# manager): an incident that ended before it can hold nothing back any more.
+RECOVERY_KEPT = timedelta(hours=24)
+
 
 @dataclass(frozen=True)
 class FailingRun:
@@ -98,9 +102,11 @@ class Detector:
         # Keyed by (host id, container name): hosts often run same-named containers.
         self._pending: dict[ContainerKey, Signal] = {}  # first death not yet resolved
         self._deaths: dict[ContainerKey, deque[Signal]] = defaultdict(deque)
+        # Only while it died within the window; then it has recovered (`_clean_until`).
         self._last_death: dict[ContainerKey, datetime] = {}
-        self._clean_until: dict[ContainerKey, datetime] = {}  # end of the last window, no death
-        self._loops: dict[ContainerKey, FailingRun] = {}  # looping, not recovered since
+        self._ids: dict[ContainerKey, str] = {}  # the container's Docker id at its last death
+        self._clean_until: dict[ContainerKey, datetime] = {}  # when it last recovered
+        self._loops: dict[ContainerKey, tuple[str, FailingRun]] = {}  # subject key, loop's run
         self._streaks: dict[ReadingKey, list[Signal]] = {}
         self._failing: dict[ReadingKey, FailingRun] = {}
         self._passed: dict[ReadingKey, datetime] = {}  # each reading's last pass since start
@@ -122,6 +128,7 @@ class Detector:
             self._pending,
             self._deaths,
             self._last_death,
+            self._ids,
             self._clean_until,
             self._loops,
         ):
@@ -178,10 +185,17 @@ class Detector:
             case "host_unreachable":
                 return self._unreachable(signal, now)
             case _:
+                key = _key(signal)
                 signals = [signal]
-                if (death := self._pending.pop(_key(signal), None)) is not None:
+                if (death := self._pending.pop(key, None)) is not None:
                     signals.insert(0, death)  # this incident already covers that death
-                return self._emit(signal.subject, signals, now)
+                # A looping container turns unhealthy before each crash: one more sign of it.
+                run = self._loop_run(key) if signal.kind == "unhealthy" else None
+                return self._emit(signal.subject, signals, now, run)
+
+    def recovered(self, host_id: str, container: str, at: datetime) -> None:
+        """The container was seen healthy at `at` (a fix Bleep verified): its loop is over."""
+        self._recover((host_id, container), at)
 
     def tick(
         self,
@@ -209,6 +223,7 @@ class Detector:
         window = timedelta(seconds=self.t.repeated_window_s)
         for key in [k for k, d in self._deaths.items() if not d or now - d[-1].at > window]:
             del self._deaths[key]
+        self._forget_recovered(now, host_id, window)
         debounce = timedelta(seconds=self.t.debounce_s)
         for key in [k for k, at in self._window_start.items() if now - at >= debounce]:
             del self._window_start[key]
@@ -247,7 +262,7 @@ class Detector:
                     },
                     container=container,
                 )
-                out.extend(self._emit(death.subject, [death, late], now, self._loops.get(key)))
+                out.extend(self._emit(death.subject, [death, late], now, self._loop_run(key)))
         return out
 
     # -- containers -------------------------------------------------------------------------
@@ -260,7 +275,7 @@ class Detector:
                 return [Ignored("expected exit 0")]
             if signal.detail.get("restart_policy", "") in ("", "no"):
                 return [Ignored("one-shot exit 0")]
-        self._count_death(key, signal.at)
+        self._count_death(key, signal)
         deaths = self._deaths[key]
         deaths.append(signal)
         cutoff = signal.at - timedelta(seconds=self.t.repeated_window_s)
@@ -276,22 +291,59 @@ class Detector:
             )
             signals = [*deaths, loop]
             run = FailingRun(deaths[0].at, self._clean_until.get(key), signal.container)
-            run = self._loops.setdefault(key, run)
+            run = self._loops.setdefault(key, (signal.subject.key, run))[1]
             deaths.clear()
             self._pending.pop(key, None)
             return self._emit(signal.subject, signals, now, run)
         self._pending.setdefault(key, signal)
         return []
 
-    def _count_death(self, key: ContainerKey, at: datetime) -> None:
-        """Note a death; a container that went a whole window without one since its last (or
-        since Bleep started) recovered at the end of that window, and its loop is over."""
+    def _count_death(self, key: ContainerKey, death: Signal) -> None:
+        """Note a death. A container that went a whole window without one since its last (or
+        since Bleep started) recovered at the end of that window; one with a new id was
+        recreated (a deploy), which is a recovery too, and its old deaths are not its own."""
         window = timedelta(seconds=self.t.repeated_window_s)
-        last = self._last_death.get(key, self._started)
+        at = death.at
+        last = self._last_death.get(key, max(self._started, at - RECOVERY_KEPT))
+        known = self._ids.get(key)
         if at - last > window:
-            self._clean_until[key] = last + window
-            self._loops.pop(key, None)
+            self._recover(key, last + window)
+        elif death.container_id and known and known != death.container_id:
+            self._recover(key, at)
+            self._deaths.pop(key, None)
         self._last_death[key] = max(last, at)
+        if death.container_id:
+            self._ids[key] = death.container_id
+
+    def _recover(self, key: ContainerKey, at: datetime) -> None:
+        self._clean_until[key] = max(self._clean_until.get(key, at), at)
+        self._loops.pop(key, None)
+
+    def _forget_recovered(self, now: datetime, host_id: str, window: timedelta) -> None:
+        """End the loops of the host's containers that went a window without a death, and drop
+        what is kept of each container once its last recovery is a day old. Only the host whose
+        listing this is: a host out of contact may be dying unseen."""
+        for key, last in list(self._last_death.items()):
+            if key[0] == host_id and now - last > window:
+                self._recover(key, last + window)
+                del self._last_death[key]
+                self._ids.pop(key, None)
+        for key in [k for k, at in self._clean_until.items() if now - at > RECOVERY_KEPT]:
+            del self._clean_until[key]
+
+    def _loop_run(self, key: ContainerKey) -> FailingRun | None:
+        loop = self._loops.get(key)
+        return loop[1] if loop else None
+
+    def _with_loops(self, subject: Subject, run: FailingRun) -> FailingRun:
+        """A service's reading while one of its containers is still in a loop is a sign of that
+        loop: it has passed only as long ago as the loop last recovered."""
+        loops = [loop for owner, loop in self._loops.values() if owner == subject.key]
+        if not loops:
+            return run
+        passes = [run.passed, *(loop.passed for loop in loops)]
+        passed = None if None in passes else min(p for p in passes if p is not None)
+        return FailingRun(min(run.since, *(loop.since for loop in loops)), passed)
 
     # -- checks and host probes ---------------------------------------------------------------
 
@@ -316,7 +368,7 @@ class Detector:
         if len(run) < needed:
             return []
         del self._streaks[key]
-        return self._emit(signal.subject, run, now, failing)
+        return self._emit(signal.subject, run, now, self._with_loops(signal.subject, failing))
 
     def _unreachable(self, signal: Signal, now: datetime) -> list[Outcome]:
         key = signal.subject.key

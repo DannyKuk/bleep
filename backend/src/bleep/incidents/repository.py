@@ -85,8 +85,8 @@ def fold_key(subject: Subject, signals: list[Signal]) -> str:
 
 
 def container_fold_keys(subject: Subject, container: str) -> list[str]:
-    """The fold keys of a container's deaths and of its restart loops."""
-    return [_fold_key(subject, kind, container) for kind in ("death", "restart_loop")]
+    """The fold keys of a container's deaths, its restart loops and its turns unhealthy."""
+    return [_fold_key(subject, kind, container) for kind in ("death", "restart_loop", "unhealthy")]
 
 
 def _fold_key(subject: Subject, kind: str, target: str) -> str:

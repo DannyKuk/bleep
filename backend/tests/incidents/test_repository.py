@@ -361,19 +361,21 @@ async def test_finished_since_without_signals_counts_every_kind_of_the_subject_o
     assert await repo.finished_since(svc(), T0, same) == Repeats(1, url_closed, last.id)
 
 
-async def test_finished_since_a_containers_keys_counts_its_deaths_and_loops_only(folding):
+async def test_finished_since_a_containers_keys_counts_its_deaths_loops_and_unhealthy(folding):
     repo, clock, _ = folding
     loop = Signal(subject=svc(), kind="restart_loop", at=T0, container="web-1")
+    unhealthy = Signal(subject=svc(), kind="unhealthy", at=T0, container="web-1")
+    url = Signal(subject=svc(), kind="url_failed", at=T0, detail={"url": "https://x/"})
     await again(repo, clock, died(), 0)
     await again(repo, clock, loop, 1)
-    last = await again(repo, clock, died(kind="down_past_grace"), 1)
+    await again(repo, clock, died(kind="down_past_grace"), 1)
+    last = await again(repo, clock, unhealthy, 1)
     await again(repo, clock, died(container="web-2"), 1)  # another container: never counted
-    unhealthy = Signal(subject=svc(), kind="unhealthy", at=T0, container="web-1")
-    await again(repo, clock, unhealthy, 1)  # not a death: never counted
+    await again(repo, clock, url, 1)  # the service's URL: not the container's own
     await repo.close_unfinished(await repo.open_incident_id(svc()))
-    closed = T0 + timedelta(hours=2)  # closed before the other container's death opened
+    closed = T0 + timedelta(hours=3)  # closed before the other container's death opened
     keys = container_fold_keys(svc(), "web-1")
-    assert await repo.finished_since(svc(), T0, keys) == Repeats(3, closed, last.id)
+    assert await repo.finished_since(svc(), T0, keys) == Repeats(4, closed, last.id)
 
 
 async def test_a_new_kind_folds_into_the_incident_it_outlived_unless_its_own_kind_has_a_group(

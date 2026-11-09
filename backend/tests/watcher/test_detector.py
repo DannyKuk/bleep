@@ -43,10 +43,17 @@ def make() -> tuple[Detector, Clock]:
     return Detector(Thresholds(), clock), clock
 
 
-def died(clock: Clock, container="web-1", subject: Subject = SVC, **detail) -> Signal:
+def died(
+    clock: Clock, container="web-1", subject: Subject = SVC, container_id="abc", **detail
+) -> Signal:
     detail = {"exit_code": 1, "restart_policy": "always", **detail}
     return Signal(
-        subject=subject, kind="container_died", at=clock.now, detail=detail, container=container
+        subject=subject,
+        kind="container_died",
+        at=clock.now,
+        detail=detail,
+        container=container,
+        container_id=container_id,
     )
 
 
@@ -643,3 +650,73 @@ def test_forgetting_the_host_ends_its_loops():
     crash_loop(det, clock, 0)
     det.forget_host("h1")
     assert still_restarting(det, clock, 180).run is None
+
+
+def test_a_verified_fix_ends_the_loop_at_once():
+    det, clock = make()
+    crash_loop(det, clock, 0)
+    det.recovered("h1", "web-1", T0 + timedelta(seconds=200))  # its incident was resolved
+    assert still_restarting(det, clock, 240).run is None  # a relapse opens as on any death
+    again = two_more_deaths(det, clock, 360)
+    assert again.run is not None and again.run.passed == T0 + timedelta(seconds=200)
+
+
+def test_a_recreated_container_starts_a_new_loop():
+    det, clock = make()
+    crash_loop(det, clock, 0)
+    clock.at(200)
+    assert det.feed(died(clock, container_id="new")) == []  # a redeploy: the same name
+    [down] = det.tick(clock.at(265), states(box("restarting")), "h1")
+    assert down.run is None
+    clock.at(300)
+    assert det.feed(died(clock, container_id="new")) == []  # the old deaths do not add up
+
+
+def test_unhealthy_of_a_looping_container_carries_the_loops_run():
+    det, clock = make()
+    loop = crash_loop(det, clock, 0)
+    clock.at(180)
+    det.feed(died(clock))
+    clock.at(210)
+    [sick] = det.feed(sig(SVC, "unhealthy", clock, container="web-1"))
+    assert [s.kind for s in sick.signals] == ["container_died", "unhealthy"]
+    assert sick.run == loop.run
+    clock.at(300)
+    [other] = det.feed(sig(SVC, "unhealthy", clock, container="web-2"))
+    assert other.run is None
+
+
+def test_a_services_url_failing_while_its_container_loops_has_passed_only_before_the_loop():
+    det, clock = make()
+    url = {"url": "https://x/"}
+    clock.at(700)
+    loop = crash_loop(det, clock, 700)  # it ran a window first: it last recovered at 600 s
+    clock.at(900)
+    det.feed(sig(SVC, "url_failed", clock, ok=True, latency_ms=10, **url))  # up between crashes
+    clock.at(930)
+    det.feed(sig(SVC, "url_failed", clock, **url))
+    clock.at(960)
+    [down] = det.feed(sig(SVC, "url_failed", clock, **url))
+    assert down.run == FailingRun(since=T0 + timedelta(seconds=700), passed=loop.run.passed)
+    host = sig(HOST, "memory", clock, available_percent=3)
+    det.feed(host)
+    det.feed(host)
+    [memory] = det.feed(host)
+    assert memory.run == FailingRun(since=clock.now, passed=None)  # a host is not its services
+
+
+def test_a_window_without_a_death_ends_the_loop_on_the_hosts_tick_and_drops_its_state():
+    det, clock = make()
+    url = {"url": "https://x/"}
+    crash_loop(det, clock, 700)
+    det.tick(clock.at(1000), states(box()), "h2")  # another host's listing judges nothing here
+    det.tick(clock.at(1500), states(box()), "h1")  # no death since 820 s: recovered at 1420 s
+    det.feed(sig(SVC, "url_failed", clock, **url))
+    clock.at(1530)
+    [down] = det.feed(sig(SVC, "url_failed", clock, **url))
+    assert down.run == FailingRun(since=T0 + timedelta(seconds=1500), passed=None)
+    again = crash_loop(det, clock, 2000)
+    assert again.run is not None and again.run.passed == T0 + timedelta(seconds=1420)
+
+    det.tick(clock.at(2000 + 86_400 + 1200), states(box()), "h1")  # a day after it recovered
+    assert not det._last_death and not det._loops and not det._clean_until

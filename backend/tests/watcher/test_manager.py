@@ -1533,10 +1533,12 @@ def crash(r: Rig, name: str = "shop-web-1", back: bool = False) -> None:
     """The container dies under `always`: running again two seconds later when `back`, else
     Docker is still waiting to restart it, as the demo shop's bad env was on 2026-11-09."""
     died = r.clock.now + timedelta(seconds=1)
-    r.engine.history.append(die(name, died))
-    fields = {"started_at": died + timedelta(seconds=2)} if back else {"state": "restarting"}
     index = next(i for i, c in enumerate(r.engine.container_list) if c.name == name)
-    r.engine.container_list[index] = box(name, "shop", restart_policy="always", **fields)
+    container_id = r.engine.container_list[index].id
+    r.engine.history.append(die(name, died).model_copy(update={"container_id": container_id}))
+    fields = {"started_at": died + timedelta(seconds=2)} if back else {"state": "restarting"}
+    again = box(name, "shop", restart_policy="always", **fields)
+    r.engine.container_list[index] = again.model_copy(update={"id": container_id})
 
 
 async def crashing(r: Rig, deaths: int, every_min: int = 1, **how) -> None:
@@ -1618,3 +1620,74 @@ async def test_a_loop_after_the_container_ran_a_window_without_a_death_opens_at_
     [_, again] = r.runner.started
     assert "restart_loop" in await kinds_of(r, again)
     assert again.fold_of == first.id  # a repeat of the same loop: one message, with the count
+
+
+async def test_a_relapse_after_a_verified_fix_opens_at_once(tmp_path):
+    r = await Rig(tmp_path).boot()
+    r.engine.container_list[0] = box("shop-web-1", "shop", restart_policy="always")
+    await r.pulse(urls=False)
+    await crashing(r, 3, back=True)
+    [loop] = r.runner.started
+    await r.repo.set_status(loop.id, "resolved")  # the fix ran and Verify saw it healthy
+    await minutes(r, 4)  # less than a window after the last crash before the fix
+    crash(r)
+    await minutes(r, 2)
+    [_, relapse] = r.runner.started
+    assert "down_past_grace" in await kinds_of(r, relapse)
+
+
+async def test_a_looping_services_url_that_answers_between_crashes_waits_with_the_loop(tmp_path):
+    """The container runs a minute and crashes, Docker waits three to restart it, and its URL
+    answers while it runs and fails while it is down."""
+    r = await Rig(tmp_path).boot()
+    first = await loop_incident_ended(r)
+    for _ in range(6):
+        crash(r)
+        r.not_found.add("shop")
+        await minutes(r, 3)
+        up = box("shop-web-1", "shop", restart_policy="always", started_at=r.clock.now)
+        r.engine.container_list[0] = up
+        r.not_found.discard("shop")
+        await minutes(r, 1)
+    assert [i.id for i in r.runner.started] == [first.id]  # one broken service, one run
+
+    await minutes(r, 11)  # it runs a whole window without a crash: the loop is over
+    r.not_found.add("shop")
+    await minutes(r, 2)
+    [_, url] = r.runner.started
+    assert url.title.startswith("url failed on")
+
+
+async def test_a_looping_container_that_turns_unhealthy_before_each_crash_waits_too(tmp_path):
+    r = await Rig(tmp_path).boot()
+    first = await loop_incident_ended(r)
+    for _ in range(3):
+        crash(r)
+        r.engine.history.append(
+            DockerEvent(
+                time=r.clock.now + timedelta(seconds=30),
+                type="container",
+                action="health_status: unhealthy",
+                container_id="id-shop-web-1",
+                container_name="shop-web-1",
+                attributes={"name": "shop-web-1"},
+            )
+        )
+        await minutes(r, 3)
+    assert [i.id for i in r.runner.started] == [first.id]
+
+
+async def test_a_redeployed_container_that_crashes_opens_at_once(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await loop_incident_ended(r)
+    for action in ("stop", "destroy"):  # the deploy replaces the container: a new id
+        event = die("shop-web-1", r.clock.now + timedelta(seconds=1))
+        r.engine.history.append(event.model_copy(update={"action": action}))
+    new = box("shop-web-1", "shop", restart_policy="always", started_at=r.clock.now)
+    r.engine.container_list[0] = new.model_copy(update={"id": "id-shop-web-1-new"})
+    await minutes(r, 2)
+    crash(r)
+    await minutes(r, 2)
+    [_, again] = r.runner.started
+    deaths = [s for s in await r.repo.signals(again.id) if s.kind == "container_died"]
+    assert {s.container_id for s in deaths} == {"id-shop-web-1-new"}
