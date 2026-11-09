@@ -32,6 +32,7 @@ function incident(
     trace_url: null,
     prompt_overrides: null,
     fold_of: null,
+    short_name: null,
   };
 }
 

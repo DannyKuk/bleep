@@ -120,6 +120,9 @@ export interface Incident {
   prompt_overrides: Record<string, string> | null;
   /** The first incident of its group when this one repeats it. */
   fold_of: string | null;
+  /** The name people read, as Telegram shows it ("shop #14"). `null` for an incident opened
+   * before short names existed. */
+  short_name: string | null;
 }
 
 /** One entry of an incident's timeline. `kind` is free-form on the wire; `payload` depends on it. */

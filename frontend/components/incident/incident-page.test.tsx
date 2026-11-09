@@ -187,6 +187,32 @@ describe("IncidentPage", () => {
     expect(screen.getByRole("button", { name: "Yes, go ahead" })).toBeDisabled();
   });
 
+  it("leads the heading with the incident's short name, in mono", async () => {
+    stubBackend(detail({ incident: incident({ short_name: "shop #14" }) }));
+    renderPage();
+    const heading = await screen.findByRole("heading", {
+      level: 1,
+      name: "shop #14 shop is in trouble. Can I fix it?",
+    });
+    expect(within(heading).getByText("shop #14")).toHaveClass("font-mono");
+  });
+
+  it("heads an incident without a short name with the headline alone", async () => {
+    stubBackend(detail());
+    renderPage();
+    const heading = await screen.findByRole("heading", { level: 1 });
+    expect(heading).toHaveTextContent(/^shop is in trouble\. Can I fix it\?$/);
+  });
+
+  it("shows a short name that looks like markup as text", async () => {
+    const name = '"<img src=x onerror=alert(1)>" #2';
+    stubBackend(detail({ incident: incident({ short_name: name }) }));
+    const { container } = renderPage();
+    const heading = await screen.findByRole("heading", { level: 1 });
+    expect(within(heading).getByText(name)).toBeInTheDocument();
+    expect(container.querySelector("img")).toBeNull();
+  });
+
   it("reads the incident again on an interval, for status changes that publish no event", async () => {
     vi.useFakeTimers();
     const fetchMock = stubBackend(
@@ -266,6 +292,16 @@ describe("IncidentPage", () => {
       );
       expect(folded).toHaveLength(2);
       for (const fold of folded) expect(fold).not.toHaveAttribute("open");
+    });
+
+    it("leads the heading with the short name too", async () => {
+      stubBackend(detail({ incident: incident({ short_name: "shop #14" }) }));
+      renderPage();
+      const heading = await screen.findByRole("heading", {
+        level: 1,
+        name: "shop #14 shop is in trouble. Can I fix it?",
+      });
+      expect(within(heading).getByText("shop #14")).toHaveClass("font-mono");
     });
 
     it.each(["closed", "pending"] as const)(

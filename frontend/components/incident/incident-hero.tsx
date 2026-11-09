@@ -67,6 +67,7 @@ export function IncidentHero({ detail, stream }: { detail: IncidentDetail; strea
           id="incident-headline"
           className="text-[32px] leading-tight font-extrabold text-balance wrap-anywhere md:text-4xl"
         >
+          <ShortName name={incident.short_name} className="text-base" />
           <HeadlineWords detail={detail} />
         </h1>
         <p className="text-[17px] text-ink-2">{incident.title}</p>
@@ -88,6 +89,19 @@ function HeadlineWords({ detail }: { detail: IncidentDetail }) {
       {lead}
       {name && <code className="font-mono font-medium">{name}</code>}
       {text}
+    </>
+  );
+}
+
+/**
+ * The incident's short name ("shop #14", as Telegram shows it) on its own line above the
+ * headline. The space after it keeps the heading's spoken name two phrases.
+ */
+function ShortName({ name, className }: { name: string | null; className: string }) {
+  if (!name) return null;
+  return (
+    <>
+      <span className={cn("block font-mono font-semibold text-ink-2", className)}>{name}</span>{" "}
     </>
   );
 }
@@ -139,6 +153,7 @@ export function PhoneIncidentHero({ detail }: { detail: IncidentDetail }) {
             id="incident-headline"
             className="text-[22px] leading-tight font-extrabold wrap-anywhere"
           >
+            <ShortName name={incident.short_name} className="text-sm" />
             <HeadlineWords detail={detail} />
           </h1>
         </div>

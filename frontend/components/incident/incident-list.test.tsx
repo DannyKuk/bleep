@@ -33,6 +33,29 @@ describe("IncidentListView", () => {
     expect(screen.getByText("host spare")).toBeInTheDocument();
   });
 
+  it("puts the short name in front of the title, in mono", () => {
+    render(<IncidentListView incidents={[incident({ short_name: "shop #14" })]} now={NOW} />);
+    const row = screen.getByRole("link", { name: /shop-web-1 died/ });
+    expect(row).toHaveTextContent("shop #14 · shop-web-1 died");
+    expect(within(row).getByText("shop #14")).toHaveClass("font-mono");
+  });
+
+  it("shows only the title for an incident without a short name", () => {
+    render(<IncidentListView incidents={[incident()]} now={NOW} />);
+    const row = screen.getByRole("link", { name: /shop-web-1 died/ });
+    expect(within(row).getByText("shop-web-1 died")).toHaveTextContent(/^shop-web-1 died$/);
+    expect(row).not.toHaveTextContent("·");
+  });
+
+  it("shows a short name that looks like markup as text", () => {
+    const name = '"<img src=x onerror=alert(1)>" #2';
+    const { container } = render(
+      <IncidentListView incidents={[incident({ short_name: name })]} now={NOW} />,
+    );
+    expect(screen.getByText(name)).toBeInTheDocument();
+    expect(container.querySelector("img")).toBeNull();
+  });
+
   it("shows the empty state", () => {
     render(<IncidentListView incidents={[]} now={NOW} />);
     expect(screen.getByText(/No incidents yet/)).toBeInTheDocument();

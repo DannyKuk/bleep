@@ -59,6 +59,12 @@ function Row({
       >
         <IncidentStatusBadge status={incident.status} />
         <span className="min-w-0 flex-1 basis-56 text-[15px] font-bold wrap-anywhere">
+          {incident.short_name && (
+            <>
+              <span className="font-mono font-semibold text-ink-2">{incident.short_name}</span>
+              {" · "}
+            </>
+          )}
           {incident.title}
         </span>
         {repeats > 1 && (
