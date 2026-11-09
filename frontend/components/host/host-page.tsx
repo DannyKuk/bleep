@@ -139,15 +139,22 @@ function ServiceList({
 }
 
 /**
- * The line under a host that is still unreachable after its own last incident ended: Bleep holds
- * the next one back for a failure it could not fix, so the page says the failure is still there.
- * A host that answered after that incident ended is down anew, and opens its own.
+ * The line under a host that is still unreachable after its own last unreachable incident ended:
+ * Bleep holds the next one back for a failure it could not fix, so the page says it is still
+ * there. It follows the watcher's rule: a host that answered after that incident opened is down
+ * anew, and opens its own. Exported for its tests.
  */
-function StillFailing({ host, last }: { host: HostView; last: IncidentListItem | undefined }) {
+export function StillFailing({
+  host,
+  last,
+}: {
+  host: HostView;
+  last: IncidentListItem | undefined;
+}) {
   if (host.quiet || host.reachable || isAsleep(host)) return null;
-  if (!last || !ENDED.has(last.status)) return null;
+  if (!last || last.kind !== "host_unreachable" || !ENDED.has(last.status)) return null;
+  if (host.last_seen !== null && new Date(host.last_seen) > new Date(last.opened_at)) return null;
   const ended = last.closed_at ?? last.opened_at;
-  if (host.last_seen !== null && new Date(host.last_seen) > new Date(ended)) return null;
   return (
     <p role="note" aria-label="Still failing" className="text-sm text-ink-2">
       Still unreachable after its last incident ended{" "}

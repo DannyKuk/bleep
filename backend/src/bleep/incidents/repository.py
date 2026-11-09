@@ -312,6 +312,29 @@ class IncidentRepo:
             return None
         return Repeats(row["n"], datetime.fromisoformat(row["last"]), row["id"])
 
+    async def kinds(self, incidents: Collection[Incident]) -> dict[str, str]:
+        """Each incident's kind by its id, as its fold key holds it (`host_unreachable`, `disk`,
+        `restart_loop`, `death` for any death, ...); one from before fold keys is left out."""
+        by_id = {i.id: i for i in incidents}
+        if not by_id:
+            return {}
+        marks = ", ".join("?" for _ in by_id)
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                "SELECT id, fold_key FROM incidents"
+                f" WHERE id IN ({marks}) AND fold_key IS NOT NULL",
+                list(by_id),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        finally:
+            await conn.close()
+        kinds = {}
+        for row in rows:
+            subject_key = by_id[row["id"]].subject.key
+            kinds[row["id"]] = row["fold_key"][len(subject_key) + 1 :].split("|", 1)[0]
+        return kinds
+
     async def groups(self, incidents: Collection[Incident]) -> dict[str, FoldGroup]:
         """Each incident's group by its id; one that is not in a group (alone) is left out."""
         roots = {i.id: i.fold_of or i.id for i in incidents}

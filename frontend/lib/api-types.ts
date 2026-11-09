@@ -284,6 +284,8 @@ export interface IncidentListItem extends Incident {
   votes: IncidentVotes;
   /** How many incidents its group of repeats holds, itself included. */
   repeats: number;
+  /** Its kind as its fold key holds it (`host_unreachable`, `disk`, `death` for any death, …). */
+  kind: string | null;
 }
 
 export interface FeedbackBody {

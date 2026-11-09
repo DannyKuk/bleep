@@ -1,8 +1,8 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { HostPage } from "@/components/host/host-page";
+import { HostPage, StillFailing } from "@/components/host/host-page";
 import { incident } from "@/components/incident/fixtures";
 import { OverallProvider } from "@/components/overall-state";
 import {
@@ -100,6 +100,7 @@ function hostIncident(overrides: Partial<IncidentListItem> = {}): IncidentListIt
     }),
     votes: { diagnosis: null, proposal: null },
     repeats: 1,
+    kind: "host_unreachable",
     ...overrides,
   };
 }
@@ -136,29 +137,25 @@ describe("HostPage, still unreachable after its last incident (#362)", () => {
     expect(note).toHaveTextContent("a wait that grows with each repeat, from an hour to a day");
   });
 
-  it("says nothing while one is open, once it answers, when quiet or asleep, or with none", async () => {
+  it("says nothing while one is open, once it answers, when quiet or asleep, or with none", () => {
     const quiet = { scope: "host", mode: "leave_alone", until: null } as const;
-    const cases: [HostView, IncidentListItem[]][] = [
-      [DOWN, [hostIncident({ status: "waiting", closed_at: null })]],
-      [{ ...DOWN, reachable: true, health: "ok" }, [hostIncident()]],
-      [{ ...DOWN, last_seen: "2026-11-05T12:10:00Z" }, [hostIncident()]],
-      [{ ...DOWN, quiet: { ...quiet, since: "2026-11-05T10:00:00Z" } }, [hostIncident()]],
-      [{ ...DOWN, may_sleep: true, health: "asleep" }, [hostIncident()]],
-      [DOWN, []],
+    const cases: [string, HostView, IncidentListItem | undefined][] = [
+      ["open", DOWN, hostIncident({ status: "waiting", closed_at: null })],
+      ["answering", { ...DOWN, reachable: true, health: "ok" }, hostIncident()],
+      // It answered after the incident opened: the watcher saw it pass, so this is a new outage.
+      ["answered since", { ...DOWN, last_seen: "2026-11-05T11:30:00Z" }, hostIncident()],
+      ["another kind", DOWN, hostIncident({ kind: "disk", title: "disk on m1" })],
+      ["quiet", { ...DOWN, quiet: { ...quiet, since: "2026-11-05T10:00:00Z" } }, hostIncident()],
+      ["asleep", { ...DOWN, may_sleep: true, health: "asleep" }, hostIncident()],
+      ["none", DOWN, undefined],
     ];
-    for (const [host, incidents] of cases) {
-      const fetchMock = backend([], settingsView(), incidents);
-      const { unmount } = renderPage("m1", [host]);
-      await screen.findByRole("heading", { level: 1, name: "M1" });
-      await waitFor(() =>
-        expect(fetchMock.mock.calls.some(([input]) => String(input).includes("host_id="))).toBe(
-          true,
-        ),
-      );
-      await act(() => new Promise((settle) => setTimeout(settle, 20))); // its answer is in
-      expect(screen.queryByRole("note", { name: "Still failing" })).toBeNull();
+    for (const [why, host, last] of cases) {
+      const { container, unmount } = render(<StillFailing host={host} last={last} />);
+      expect(container, why).toBeEmptyDOMElement();
       unmount();
     }
+    const { container } = render(<StillFailing host={DOWN} last={hostIncident()} />);
+    expect(container).not.toBeEmptyDOMElement(); // the cases above differ from it in one thing
   });
 });
 

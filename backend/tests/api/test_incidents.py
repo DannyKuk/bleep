@@ -146,7 +146,7 @@ def test_list_keeps_a_hosts_own_incidents_with_host_id_not_its_services(app_clie
     own = app_client.get("/api/incidents", params={"host_id": "a"}).json()
     assert [i["id"] for i in own] == [second.id, first.id]
     newest = app_client.get("/api/incidents", params={"host_id": "a", "limit": 1}).json()
-    assert [i["id"] for i in newest] == [second.id]
+    assert [(i["id"], i["kind"]) for i in newest] == [(second.id, "host_unreachable")]
     assert app_client.get("/api/incidents", params={"host_id": "c"}).json() == []
 
 
@@ -163,6 +163,12 @@ def test_list_items_carry_the_humans_votes_without_the_note(app_client, parts):
     assert votes[rated.id] == {"diagnosis": "up", "proposal": "down"}
     assert votes[half.id] == {"diagnosis": None, "proposal": "up"}
     assert "hunter2" not in response.text
+
+
+def test_list_items_carry_their_kind_as_the_fold_key_holds_it(app_client, parts):
+    open_incident(app_client, parts, "a/one|two")  # a label may hold the key's separator
+    [item] = app_client.get("/api/incidents").json()
+    assert item["kind"] == "death"
 
 
 def test_an_incident_with_no_feedback_has_no_votes(app_client, parts):

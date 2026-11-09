@@ -101,11 +101,13 @@ async def list_incidents(
     )
     votes = await parts.memory.votes([i.id for i in incidents])
     groups = await parts.incidents.groups(incidents)
+    kinds = await parts.incidents.kinds(incidents)
     return [
         IncidentListItem(
             **incident.model_dump(),
             votes=IncidentVotes(**votes.get(incident.id, {})),
             repeats=groups[incident.id].count if incident.id in groups else 1,
+            kind=kinds.get(incident.id),
         )
         for incident in incidents
     ]
