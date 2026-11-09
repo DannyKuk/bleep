@@ -247,7 +247,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 | [Embeddings](decisions/embeddings.md) | bge-small through fastembed, in-process on two threads: 11 ms and 22 ms of CPU per text, +268 MB of image. bge-m3 finds German text better and English worse at 14 times the CPU and 3.5 GB more image, so it is the multilingual option behind the endpoint. |
 | [Knowledge chunks](decisions/knowledge-chunks.md) | Cut at headings, then at 300 estimated tokens with 50 of overlap, one hit per page: 20 of 20 questions found first, against 18 at 400 and 600. |
 | [Chat model](decisions/chat-model.md) | `openai/gpt-6-luna` for both cloud roles, `openai/gpt-oss-20b` as the local model; the local model never says unsure and can be steered, so its safety is the plan check and the approval gate. |
-| [Compose set_env](decisions/compose-set-env.md) | Proposed, not yet decided: no file edits on a host. A socket host cannot recreate a service at all, the demo's config faults live in the shell that ran `compose up`, 1 of 14 labelled containers named a plain file that exists, and a URL with a password is refused as a hidden param; the options and their costs are listed. |
+| [Compose set_env](decisions/compose-set-env.md) | No, for now: no file edits on a host. A socket host cannot recreate a service at all, the demo's config faults live in the shell that ran `compose up`, 1 of 14 labelled containers named a plain file that exists, and a URL with a password is refused as a hidden param; the options and their costs are listed. |
 
 ## Eval reports
 
