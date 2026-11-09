@@ -72,6 +72,8 @@ def test_the_id_must_be_the_file_name(tmp_path):
         (changed(action={"kind": "act", "steps": [{"action": "docker.start", "target": "x",
                                                    "tool": "t"}]}), "names its tool"),
         (GOOD | {"mcp": "no-such-fixture"}, "no-such-fixture"),
+        (changed(must_name=[""]), "must_name"),
+        (changed(must_name=["DATABASE_URL "]), "must_name"),
     ],
 )  # fmt: skip
 def test_a_malformed_scenario_is_refused(tmp_path, body, why):
@@ -124,6 +126,19 @@ def test_every_shipped_scenario_fits_the_demo_shop():
         assert scenario.fault in _demo_faults(), scenario.id
         assert services.get(scenario.subject.service_id) == scenario.subject.host_id, scenario.id
         assert {t for _, t, _ in scenario.expected.action.keys} <= containers, scenario.id
+
+
+def test_what_a_shipped_scenario_must_name_is_a_key_or_container_of_the_demo_shop():
+    """A `must_name` that is no environment key the shop's Compose file sets and no container of
+    it could never be named from what Bleep reads, so it would fail every run (#357)."""
+    compose = yaml.safe_load((REPO / "demo" / "compose.yaml").read_text(encoding="utf-8"))
+    services = compose["services"].values()
+    known = {s["container_name"] for s in services}
+    known |= {key for s in services for key in s.get("environment", {})}
+    named = {s.id: s.expected.must_name for s in load_scenarios() if s.expected.must_name}
+    assert named == {"bad-env": ["DATABASE_URL"], "oom": ["WORKER_BATCH_MB"]}
+    for scenario_id, names in named.items():
+        assert set(names) <= known, scenario_id
 
 
 def test_a_scenario_with_an_mcp_fixture_expects_the_tool_its_server_offers():

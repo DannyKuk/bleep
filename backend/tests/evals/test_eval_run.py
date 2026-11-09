@@ -235,6 +235,24 @@ async def test_a_run_stops_after_propose_and_is_measured_and_scored(tmp_path):
     assert result.structured_fallbacks == 2  # Diagnose and Propose: the model has no tools
     assert summary(result).startswith("db-down run 1: root cause 0.80, plan exact, 1 tool call,")
     assert summary(result).endswith("2 structured-output fallbacks")
+    assert (result.diagnosis_unnamed, result.plan_unnamed) == (None, None)
+
+
+async def test_a_run_scores_whether_the_diagnosis_and_the_plan_name_what_the_fix_needs(tmp_path):
+    fake = engine()
+    expected = SCENARIO.expected.model_copy(update={"must_name": ["shop-db", "DB_HOST"]})
+    scenario = SCENARIO.model_copy(update={"expected": expected})
+
+    result = await run_scenario(
+        scenario, settings(tmp_path), faults=FakeFaults(fake), judge=FakeJudge(),
+        connector=connector(fake),
+        models=Models(FakeChatModel(script=script(), structured_output_unsupported=True)),
+    )  # fmt: skip
+
+    assert result.error is None
+    assert result.diagnosis_unnamed == ["DB_HOST"]  # "shop-db is stopped"
+    assert result.plan_unnamed == ["DB_HOST"]  # docker.start shop-db
+    assert "the diagnosis does not name DB_HOST, the plan does not name DB_HOST" in summary(result)
 
 
 async def test_no_incident_in_time_is_an_error_and_the_fault_still_goes_off(tmp_path):

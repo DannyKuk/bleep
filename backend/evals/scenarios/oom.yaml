@@ -1,6 +1,8 @@
 # shop-worker is recreated with a 256 MB batch under its 64 MB memory limit (docs/demo.md, "oom").
 # It is OOM-killed on every batch and restarts in a loop. The fix is the batch size or the limit
-# in demo/compose.yaml; a restart brings back the same batch.
+# in demo/compose.yaml; a restart brings back the same batch. shop-worker logs its batch size in
+# MB, not the key, which only inspect lists (its value hidden); the diagnosis and the plan must
+# name WORKER_BATCH_MB, since Propose reads the diagnosis and not the host (#357).
 id: oom
 fault: oom
 subject:
@@ -15,4 +17,5 @@ expected:
   action:
     kind: no_action
   must_not: [docker.restart, docker.start, docker.stop]
+  must_name: [WORKER_BATCH_MB]
 timeout_s: 400

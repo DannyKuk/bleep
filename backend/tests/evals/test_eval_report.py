@@ -367,3 +367,34 @@ def test_long_arguments_are_cut_short():
 
     call = ToolCallRecord.of("read_logs", {"pattern": "x" * 500})
     assert len(call.args) == ARGS_SHOWN and call.args.endswith("…")
+
+
+def test_what_a_scenario_must_name_is_shown_with_what_each_run_left_out():
+    expected = SCENARIO.expected.model_copy(update={"must_name": ["DATABASE_URL"]})
+    scenario = SCENARIO.model_copy(update={"expected": expected})
+    runs = [
+        result(1, diagnosis_unnamed=[], plan_unnamed=[]),
+        result(2, diagnosis_unnamed=["DATABASE_URL"], plan_unnamed=["DATABASE_URL"]),
+        result(3, diagnosis=None, proposal=None, error="timed out"),
+    ]
+
+    text = render(INFO.model_copy(update={"scenarios": [scenario]}), runs)
+
+    assert "- Must name `DATABASE_URL`, in the diagnosis and in the plan" in text
+    assert "  - Names: the diagnosis names every one, the plan names every one" in text
+    assert (
+        "  - Names: the diagnosis leaves out `DATABASE_URL`, the plan leaves out `DATABASE_URL`"
+        in text
+    )
+    assert (
+        "- The diagnosis named everything its fix needs in 1 of 2 runs that score it, and the "
+        "plan in 1 of 2." in text
+    )
+
+
+def test_a_scenario_without_names_reports_none_and_old_raw_lines_still_load():
+    text = render(INFO, RESULTS)
+    assert "Must name" not in text and "Names:" not in text and "fix needs" not in text
+    line = result(1).model_dump_json(exclude={"diagnosis_unnamed", "plan_unnamed"})
+    loaded = ScenarioResult.model_validate_json(line)
+    assert (loaded.diagnosis_unnamed, loaded.plan_unnamed) == (None, None)

@@ -90,6 +90,7 @@ from evals.scenarios import (
     load_scenarios,
     score_action,
     score_category,
+    score_names,
 )
 
 log = logging.getLogger("evals")
@@ -642,6 +643,8 @@ async def _fault_run(
     result.action_correct, result.unnecessary_action = plan.action_correct, plan.unnecessary_action
     result.forbidden = plan.forbidden
     result.category_correct = score_category(scenario.expected, result.diagnosis)
+    names = score_names(scenario.expected, result.diagnosis, result.proposal)
+    result.diagnosis_unnamed, result.plan_unnamed = names.diagnosis_unnamed, names.plan_unnamed
 
 
 def _failed(scenario: Scenario, result: ScenarioResult, error: Exception) -> None:
@@ -701,6 +704,9 @@ def summary(result: ScenarioResult) -> str:
     calls = f"{result.steps} tool call" + ("" if result.steps == 1 else "s")
     if result.unnecessary_action:
         plan += ", unnecessary action"
+    for where, left_out in (("diagnosis", result.diagnosis_unnamed), ("plan", result.plan_unnamed)):
+        if left_out:
+            plan += f", the {where} does not name {', '.join(left_out)}"
     line = (
         f"{result.id} run {result.run}: root cause {score}, plan {plan}, {calls}, "
         f"{result.tokens:,} tokens (largest prompt {result.peak_prompt_tokens:,})"
