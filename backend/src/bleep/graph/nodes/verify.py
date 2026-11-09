@@ -21,11 +21,11 @@ thresholds that opened it (`hosts/readings.past_threshold`, load over the last m
 incident about anything else has nothing to read again, so it ends `unverified` without a
 loop-back.
 A Coolify application the plan redeployed is checked as a whole, read from the engine each time:
-the redeploy replaced its containers under new names, so they are left out of the name checks,
-and every one of its new containers must pass, not just one: one whose restart count is above 0
-was restarted by its policy after the fix (#332). The redeploy step ends only once Coolify
-reports its deployment over (`plugins/coolify`), so the wait here starts after the new
-containers are up.
+the redeploy replaced its containers under new names, so they are left out of the name checks.
+Its redeploy step must have succeeded, and every container the redeploy made must pass a
+container check's rules, not just one (#332). The redeploy step ends only once Coolify reports
+its deployment over (`plugins/coolify`), so the wait here starts after the new containers are
+up; a step that timed out fails the check, since Coolify may still be deploying.
 
 Passing sets the outcome `resolved`. A failure with fewer than `verify_loops` (2) loop-backs so
 far hands the failed checks to Investigate as the next round's instruction (an appended message,
@@ -51,6 +51,7 @@ from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.plan_check import coolify_members, host_urls
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.coolify_names import COOLIFY_UUID, coolify_container_name
+from bleep.hosts.discovery import expects_exit, service_key
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.hosts.readings import past_threshold, readings
 from bleep.hosts.shell import HostUnreadable, host_basics
@@ -93,6 +94,9 @@ CAME_UP = "first seen running at this check; it has to stay up until the next on
 REDEPLOY_RESTARTED = (
     STARTED_AFTER_FIX[0] + " ({name}, a container the redeploy made, restart count {now})"
 )
+REDEPLOY_STARTED_AGAIN = STARTED_AFTER_FIX[1] + " ({name}, a later start time than " + SEEN + ")"
+NOT_FINISHED = "the redeploy did not succeed (Coolify reported it failed, or Bleep stopped waiting)"
+NO_SINGLE_APP = "names no single Coolify application"
 RECREATED = STARTED_AFTER_FIX[2] + ", then restarted by its restart policy (restart count {now})"
 
 
@@ -118,7 +122,7 @@ class _Plan:
         return not (self.containers or self.urls or self.stopped or self.readings)
 
 
-def _plan(deps: GraphDeps, state: IncidentState) -> _Plan:
+def _plan(deps: GraphDeps, state: IncidentState, redeploys: list[_Redeploy]) -> _Plan:
     """The containers and URLs to check: the plan's, or else what it acted on, and always the
     incident's own symptoms (`_symptoms`) and its service's URLs. A signalled container the plan
     stopped (its last Docker step is a stop) is checked to be down, unless a redeploy of the plan
@@ -139,7 +143,7 @@ def _plan(deps: GraphDeps, state: IncidentState) -> _Plan:
     known = host_urls(deps.registry, subject.host_id)
     if service is not None:
         known |= {cfg.url: cfg for cfg in service.urls}
-    replaced = _replaced(deps, state)
+    replaced = _replaced(deps, state, {r.uuid for r in redeploys if r.uuid is not None})
     containers = list(planned.containers) if planned is not None else []
     urls = list(planned.urls) if planned is not None else []
     service_urls = [cfg.url for cfg in service.urls] if service is not None else []
@@ -207,35 +211,45 @@ def _stopped(proposal: Proposal | None) -> set[str]:
     return {target for target, action in last.items() if action == "docker.stop"}
 
 
-def _replaced(deps: GraphDeps, state: IncidentState) -> Callable[[str], bool]:
+def _replaced(deps: GraphDeps, state: IncidentState, uuids: set[str]) -> Callable[[str], bool]:
     """Whether a container name is one a redeploy of this plan replaced; the application's own
-    check covers those.
+    check covers those. `uuids` are the redeployed applications as `_app_uuid` resolved them; a
+    target that resolved to none replaces nothing, so its containers are still checked by name.
 
-    Each redeployed target is first resolved to its one application uuid, from the registry as
-    it is now (the new containers carry the same labels); only when the registry shows no
-    application by that name is Gather's listing read. A target that names several uuids
-    replaces nothing, so its containers are still checked by name. By
-    Verify the registry may list only the new containers, so a container counts as replaced when
-    Gather's listing (taken before the plan ran) shows it as one of that uuid's, or when its
-    name is Coolify's for it: `<uuid>-<timestamp>` or `<service>-<uuid>-<timestamp>`. A preview
-    container (`coolify.pullRequestId` set) is never replaced: a redeploy of the main application
-    leaves the previews as they are."""
-    apps = _redeployed(state.get("proposal"))
-    if not apps:
+    By Verify the registry may list only the new containers, so a container counts as replaced
+    when Gather's listing (taken before the plan ran) or the registry shows it as one of those
+    uuids', or when its name is Coolify's for one: `<uuid>-<timestamp>` or
+    `<service>-<uuid>-<timestamp>`. A preview container (`coolify.pullRequestId` set) is never
+    replaced: a redeploy of the main application leaves the previews as they are."""
+    if not uuids:
         return lambda _name: False
     context = state.get("context")
     gathered = list(context.containers) if context is not None else []
     now = deps.registry.snapshot(state["subject"].host_id) or []
-    uuids: set[str] = set()
-    for app in apps:
-        found = _app_uuids(now, app) or _app_uuids(gathered, app)
-        uuids |= found if len(found) == 1 else set()
     members = {
         c.name
         for c in [*gathered, *now]
         if c.labels.get(COOLIFY_UUID) in uuids and _not_preview(c.labels)
     }
     return lambda name: name in members or any(coolify_container_name(name, u) for u in uuids)
+
+
+def _app_uuid(
+    app: str,
+    approved: str | None,
+    now: list[ContainerSummary],
+    gathered: list[ContainerSummary],
+) -> str | None:
+    """The one application uuid the redeployed target `app` stands for, or None.
+
+    The uuid the approval bound (`approved`) is the one Coolify was asked to redeploy. Without
+    it, the registry as it is now is read (the new containers carry the same labels), and only
+    when it shows no application by that name is Gather's listing; a name with several uuids
+    there resolves to none."""
+    if approved is not None:
+        return approved
+    found = _app_uuids(now, app) or _app_uuids(gathered, app)
+    return next(iter(found)) if len(found) == 1 else None
 
 
 def _app_uuids(containers: list[ContainerSummary], target: str) -> set[str]:
@@ -327,74 +341,193 @@ async def _check_container(
     )
 
 
-def _deploy_starts(
+def _deploy_results(
     proposal: Proposal | None, results: list[StepResult] | None
-) -> dict[str, datetime]:
-    """When each application this plan redeployed had its redeploy step start, on Bleep's clock.
+) -> dict[str, StepResult]:
+    """The result of each application's redeploy step in this plan, for those that started.
 
     Only this plan's results count (`plan_results`). A redeploy that never started (skipped, or
-    refused at run time) has no start and its app no entry. When a plan redeploys an application
-    twice, the last start wins: the later redeploy is the one whose containers must be newer."""
+    refused at run time) has no entry. When a plan redeploys an application twice, the last
+    start wins: the later redeploy is the one whose containers must be newer, and whose result
+    counts."""
     steps = proposal.steps if proposal is not None else []
-    starts: dict[str, datetime] = {}
+    found: dict[str, StepResult] = {}
     for r in plan_results(proposal, results):
         if not 0 <= r.step_index < len(steps):
             continue
         step = steps[r.step_index]
         if step.action == "coolify.redeploy" and r.target == step.target and r.started_at:
-            starts[step.target] = r.started_at
-    return starts
+            found[step.target] = r
+    return found
 
 
-async def _check_application(
-    deps: GraphDeps, host_id: str, app: str, since: datetime | None
-) -> Check:
-    """A redeployed Coolify application, read from the engine now: every container of it
-    (previews aside) created after its redeploy began, and at least one, must be running, not
-    restarted by its restart policy (a restart count above 0: a new container starts at 0, so
-    that restart came after the fix, #320) and not unhealthy or still starting, the rules of a
-    container check, in that order (#332). `since` None (the redeploy never started) fails the
-    check.
+@dataclass
+class _Redeploy:
+    """A Coolify application the plan redeployed, followed through Verify's round.
 
-    The creation time is the host's and `since` is Bleep's, so `CLOCK_SLACK_S` of skew is
-    allowed. A host clock further behind makes new containers look old and the check fail, the
-    safe side; a host clock ahead widens the window by as much, so a container created within
-    the slack plus that lead before the deploy counts. A restart keeps a container's creation
-    time, so an old container restarting after the deploy does not count, nor does one still
-    shutting down, for or against the app. One with no creation time does not count either."""
-    target = f"{app} (Coolify application)"
-    if since is None:
+    `uuid` pins the application (`_app_uuid`); `result` is its redeploy step's, None when it
+    never started. `seen` names every container of the redeploy Verify saw this round, by id, so
+    one that vanishes is noticed; `first_running` holds each one's first read running, as
+    `_check_container`'s `first_running` does for a container checked by name."""
+
+    target: str
+    uuid: str | None
+    result: StepResult | None
+    seen: dict[str, str] = field(default_factory=dict)
+    first_running: dict[str, ContainerSummary] = field(default_factory=dict)
+
+    @property
+    def since(self) -> datetime | None:
+        return self.result.started_at if self.result is not None else None
+
+
+async def _redeploys(deps: GraphDeps, state: IncidentState) -> list[_Redeploy]:
+    """Each application the plan redeployed, with its uuid and its step's result. The uuid is
+    the approval's for that step when the incident's latest approval is this plan's."""
+    proposal = state.get("proposal")
+    apps = _redeployed(proposal)
+    if not apps:
+        return []
+    record = await deps.approvals.current(state["incident_id"])
+    snapshots = record.snapshots if record is not None and record.proposal == proposal else []
+    approved = {s.target: s.app_uuid for s in snapshots if s.app_uuid is not None}
+    context = state.get("context")
+    gathered = list(context.containers) if context is not None else []
+    now = deps.registry.snapshot(state["subject"].host_id) or []
+    results = _deploy_results(proposal, state.get("step_results"))
+    return [
+        _Redeploy(app, _app_uuid(app, approved.get(app), now, gathered), results.get(app))
+        for app in apps
+    ]
+
+
+def _made(listed: list[ContainerSummary], redeploy: _Redeploy) -> list[ContainerSummary]:
+    """The containers of the application its redeploy made: those that carry its uuid, or have
+    Coolify's name for it (Coolify 4.1.x wrote no uuid label), previews aside, created after the
+    redeploy began less `CLOCK_SLACK_S`. One with no creation time counts too, so it can fail
+    the app; `_redeploy_failure` never lets it be the one that passes it."""
+    uuid, since = redeploy.uuid, redeploy.since
+    if uuid is None or since is None:
+        return []
+    floor = since - timedelta(seconds=CLOCK_SLACK_S)
+    return [
+        c
+        for c in listed
+        if (c.labels.get(COOLIFY_UUID) == uuid or coolify_container_name(c.name, uuid))
+        and _not_preview(c.labels)
+        and (c.created_at is None or c.created_at >= floor)
+    ]
+
+
+async def _first_app_reads(deps: GraphDeps, host_id: str, redeploys: list[_Redeploy]) -> None:
+    """Before the settle wait, what each redeploy made, read once: every container is `seen`,
+    and each running one gets its first read. One not running then gets it at the first check
+    that finds it running, which fails, as for a container checked by name."""
+    if not redeploys:
+        return
+    try:
+        listed = await deps.registry.engine(host_id).containers()
+    except EngineUnavailable, KeyError:
+        return
+    for redeploy in redeploys:
+        for c in _made(listed, redeploy):
+            redeploy.seen[c.id] = c.name
+            if c.state == "running":
+                redeploy.first_running[c.id] = c
+
+
+def _finished_job(deps: GraphDeps, host_id: str, container: ContainerSummary) -> bool:
+    """Whether `container` is a job that ended as its service expects: exited 0, and named in
+    its service's `exits` as the watcher reads them (`expects_exit`, #84)."""
+    if container.state != "exited" or container.exit_code != 0:
+        return False
+    service = deps.registry.service(f"{host_id}/{service_key(container.name, container.labels)}")
+    exits = service.exits if service is not None else []
+    return expects_exit(exits, container.name, container.labels)
+
+
+async def _check_application(deps: GraphDeps, host_id: str, redeploy: _Redeploy) -> Check:
+    """A redeployed Coolify application, read from the engine now (#332).
+
+    It fails when its redeploy step never started ("not redeployed") or did not succeed
+    (Coolify reported it failed, or Bleep stopped waiting while it may still run), and when the
+    target resolves to no single application. Otherwise every container the redeploy made
+    (`_made`) is judged by `_redeploy_failure`. A job its service names in `exits` that exited 0
+    counts neither for nor against the app, and its line is added to the detail.
+
+    The creation time is the host's and the redeploy's start is Bleep's, so `CLOCK_SLACK_S` of
+    skew is allowed. A host clock further behind makes new containers look old and the check
+    fail, the safe side; a host clock ahead widens the window by as much, so a container created
+    within the slack plus that lead before the deploy counts. A restart keeps a container's
+    creation time, so an old container (created before that floor) restarting or shutting down
+    after the deploy counts neither for nor against the app."""
+    target = f"{redeploy.target} (Coolify application)"
+    if redeploy.since is None:
         return Check(kind="container", target=target, ok=False, detail="not redeployed")
+    if redeploy.result is not None and not redeploy.result.ok:
+        return Check(kind="container", target=target, ok=False, detail=NOT_FINISHED)
+    if redeploy.uuid is None:
+        return Check(kind="container", target=target, ok=False, detail=NO_SINGLE_APP)
     try:
         listed = await deps.registry.engine(host_id).containers()
     except EngineUnavailable, KeyError:
         return Check(kind="container", target=target, ok=False, detail="host not reachable")
-    floor = since - timedelta(seconds=CLOCK_SLACK_S)
-    made = [
-        c
-        for c in coolify_members(listed, app)
-        if _not_preview(c.labels) and c.created_at is not None and c.created_at >= floor
-    ]
-    failure = _redeploy_failure(made)
+    made = _made(listed, redeploy)
+    present = {c.id for c in made}
+    gone = [name for cid, name in redeploy.seen.items() if cid not in present]
+    for c in made:
+        redeploy.seen.setdefault(c.id, c.name)
+    finished = [c for c in made if _finished_job(deps, host_id, c)]
+    judged = [c for c in made if c not in finished]
+    came_up = [c for c in judged if c.state == "running" and c.id not in redeploy.first_running]
+    for c in came_up:
+        redeploy.first_running[c.id] = c
+    notes = [f"{c.name} exited 0, as its service's exits allow" for c in finished]
+    failure = _redeploy_failure(judged, gone, came_up, redeploy.first_running, bool(finished))
     if failure is not None:
-        return Check(kind="container", target=target, ok=False, detail=failure)
-    return Check(kind="container", target=target, ok=True, detail=f"{len(made)} running")
+        return Check(kind="container", target=target, ok=False, detail="; ".join([failure, *notes]))
+    detail = "; ".join([f"{len(judged)} running", *notes])
+    return Check(kind="container", target=target, ok=True, detail=detail)
 
 
-def _redeploy_failure(made: list[ContainerSummary]) -> str | None:
-    """Why the containers a redeploy made do not verify their application, or None."""
-    if not made:
-        return "no container made by the redeploy"
-    down = next((c for c in made if c.state != "running"), None)
+def _redeploy_failure(
+    judged: list[ContainerSummary],
+    gone: list[str],
+    came_up: list[ContainerSummary],
+    first_running: dict[str, ContainerSummary],
+    finished_jobs: bool,
+) -> str | None:
+    """Why the containers a redeploy made do not verify their application, or None.
+
+    The rules of a container check, each across all of them: one seen earlier this round is
+    gone; one is not running; one was restarted by its restart policy (a new container starts
+    at restart count 0, so any count came after the fix, #320); one is first seen running at
+    this check (`came_up`), or started again since its first read; one is unhealthy or still
+    starting. At least one with a creation time must be among them: one with none counts
+    against the app, never for it."""
+    if gone:
+        return f"{gone[0]} is gone since an earlier check"
+    if not any(c.created_at is not None for c in judged):
+        return "no container made by the redeploy" + (" runs" if finished_jobs else "")
+    down = next((c for c in judged if c.state != "running"), None)
     if down is not None:
         return f"{down.name} is {down.state}"
-    restarted = next((c for c in made if c.restart_count > 0), None)
+    restarted = next((c for c in judged if c.restart_count > 0), None)
     if restarted is not None:
         return REDEPLOY_RESTARTED.format(name=restarted.name, now=restarted.restart_count)
-    bad = next((c for c in made if c.health in ("unhealthy", "starting")), None)
+    if came_up:
+        return f"{came_up[0].name} {CAME_UP}"
+    again = next((c for c in judged if _started_since(first_running[c.id], c)), None)
+    if again is not None:
+        return REDEPLOY_STARTED_AGAIN.format(name=again.name)
+    bad = next((c for c in judged if c.health in ("unhealthy", "starting")), None)
     if bad is not None:
         return f"{bad.name} is {bad.health}"
     return None
+
+
+def _started_since(first: ContainerSummary, now: ContainerSummary) -> bool:
+    return bool(first.started_at and now.started_at and now.started_at > first.started_at)
 
 
 async def _check_url(client: httpx.AsyncClient, cfg: UrlCheckConfig) -> Check:
@@ -491,8 +624,7 @@ def make(deps: GraphDeps) -> Node:
     async def one_check(
         host_id: str,
         plan: _Plan,
-        apps: list[str],
-        starts: dict[str, datetime],
+        redeploys: list[_Redeploy],
         first_running: dict[str, ContainerSummary],
         attempt: int,
         calm: set[str],
@@ -500,7 +632,7 @@ def make(deps: GraphDeps) -> Node:
         owned = deps.http is None
         client = deps.http or httpx.AsyncClient()
         try:
-            checks = [await _check_application(deps, host_id, app, starts.get(app)) for app in apps]
+            checks = [await _check_application(deps, host_id, r) for r in redeploys]
             checks += [
                 await _check_container(deps, host_id, name, first_running)
                 for name in plan.containers
@@ -524,22 +656,21 @@ def make(deps: GraphDeps) -> Node:
     async def verify(state: IncidentState) -> dict:
         incident_id = state["incident_id"]
         subject = state["subject"]
-        proposal = state.get("proposal")
-        plan = _plan(deps, state)
-        apps = _redeployed(proposal)
-        starts = _deploy_starts(proposal, state.get("step_results"))
+        redeploys = await _redeploys(deps, state)
+        plan = _plan(deps, state, redeploys)
 
         result = VerificationResult(ok=False)
-        if plan.empty() and not apps:
+        if plan.empty() and not redeploys:
             # Nothing to look at is not a pass, and another look at nothing would not help either.
             await deps.bus.publish(incident_id, "verification", _payload(result))
         else:
             first_running = await _first_reads(deps, subject.host_id, plan.containers)
+            await _first_app_reads(deps, subject.host_id, redeploys)
             await deps.sleep(SETTLE_S)
             calm: set[str] = set()
             for attempt in range(1, CHECKS + 1):
                 result = await one_check(
-                    subject.host_id, plan, apps, starts, first_running, attempt, calm
+                    subject.host_id, plan, redeploys, first_running, attempt, calm
                 )
                 await deps.bus.publish(incident_id, "verification", _payload(result))
                 if result.ok or attempt == CHECKS:
