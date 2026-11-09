@@ -41,14 +41,13 @@ from bleep.guard.grant import GrantInvalid, step_snapshot, verify_step
 from bleep.guard.log import GuardLogger
 from bleep.guard.pipeline import guard_text
 from bleep.guard.plan_check import (
-    COOLIFY_NAME,
     NoCoolifyApp,
     check_params,
     check_shown,
     check_target,
     coolify_app_uuid,
 )
-from bleep.hosts.coolify_names import name_matches
+from bleep.hosts.coolify_names import COOLIFY_NAME, name_matches
 from bleep.hosts.discovery import is_self
 from bleep.hosts.registry import Registry
 from bleep.plugins import urls

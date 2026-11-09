@@ -250,6 +250,61 @@ def test_preview_does_not_inherit_the_apps_override():
     assert svc.protected == set()
 
 
+OLD_UUID = "cr2hzhk4nvabtad0zinjw1ev"  # Coolify 4.1.2 wrote no coolify.applicationUuid for it
+
+
+def old_coolify(name: str) -> ContainerSummary:
+    """A Coolify 4.1.2 container called `name` whose `coolify.name` label no longer holds the
+    uuid, so only its container name can tie it to the uuid."""
+    container = captured("coolify-4.1.2-applicationid", name=name)
+    container.labels = container.labels | {"coolify.name": "static-site"}
+    return container
+
+
+@pytest.mark.parametrize(
+    ("fixture", "entry"),
+    [
+        ("coolify-4.5.0-dkwebsite", "vclhwoxxy60z4vk70g0vpesq"),  # by uuid
+        ("coolify-4.5.0-dkwebsite", "dkwebsite"),  # by resource name
+        ("coolify-4.5.3-molecula-backend", "Molecula"),  # by the name as a person writes it
+        ("coolify-4.1.2-applicationid", OLD_UUID),  # by the uuid in the 4.1.x container name
+    ],
+)
+def test_a_coolify_apps_containers_show_protected_when_its_uuid_or_name_is(fixture, entry):
+    container = captured(fixture)
+    # An override key no service has: its list protects the host, as the plan check reads it.
+    (svc,) = group_services(
+        "h", [container], {"other": ServiceOverrides(protected_containers=[entry])}
+    )
+    assert container.name in svc.protected
+
+
+def test_a_coolify_4_1_container_shows_protected_by_the_uuid_in_its_anchored_name():
+    container = old_coolify(f"{OLD_UUID}-000205002169")
+    (svc,) = group_services(
+        "h", [container], {"other": ServiceOverrides(protected_containers=[OLD_UUID])}
+    )
+    assert container.name in svc.protected
+
+
+@pytest.mark.parametrize(
+    ("container", "entry"),
+    [
+        (captured("coolify-4.5.0-dkwebsite"), "vclhwoxxy60z4vk70g0vpes"),  # a uuid prefix
+        (captured("coolify-4.5.0-dkwebsite"), "VCLHWOXXY60Z4VK70G0VPESQ"),  # exact case
+        (captured("coolify-4.5.0-dkwebsite"), "dkwebsit"),
+        (old_coolify(f"{OLD_UUID}-000205002169-old"), OLD_UUID),  # the name is not anchored
+        (old_coolify(f"x{OLD_UUID}-000205002169"), OLD_UUID),  # the uuid is not a whole part
+        (box(f"{OLD_UUID}-000205002169"), OLD_UUID),  # no Coolify labels
+    ],
+)
+def test_a_container_that_only_resembles_an_entry_is_not_shown_protected(container, entry):
+    (svc,) = group_services(
+        "h", [container], {"other": ServiceOverrides(protected_containers=[entry])}
+    )
+    assert container.name not in svc.protected
+
+
 def test_single_container_and_compose_project_with_one_name_stay_separate():
     svcs = group_services("h", [box("app"), compose("app-web-1", "app")], {})
     assert sorted(s.id for s in svcs) == ["h/compose:app", "h/container:app"]

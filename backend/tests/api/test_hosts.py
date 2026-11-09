@@ -521,6 +521,29 @@ def test_services_follow_the_engine_after_a_watcher_tick(settings, parts):
     assert names == ["web", "worker"]
 
 
+@pytest.mark.parametrize("entry", ["u-shop", "Shop API"])
+def test_a_coolify_apps_containers_carry_the_lock_when_it_is_protected(settings, parts, entry):
+    labels = {
+        "coolify.type": "application",
+        "coolify.applicationUuid": "u-shop",
+        "coolify.resourceName": "shop-api",
+    }
+    app = ContainerSummary(
+        id="1", name="u-shop-104512", image="shop", state="running", labels=labels
+    )
+    host = ssh_host(id="a", services={"other": ServiceOverrides(protected_containers=[entry])})
+
+    async def connect(host):
+        return None, FakeEngine("a", [app, c(name="redis")])
+
+    parts.registry = Registry([host], connect, clock=lambda: T0)
+    with TestClient(create_app(settings, parts)) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        services = client.get("/api/services").json()
+    locks = {k["name"]: k["protected"] for s in services for k in s["containers"]}
+    assert locks == {"u-shop-104512": True, "redis": False}
+
+
 def test_hosts_carry_basics_when_known(stocked, parts):
     from bleep.schemas.docker import DiskUsage, HostBasics
 
