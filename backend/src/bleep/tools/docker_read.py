@@ -151,7 +151,9 @@ def _describe(detail: ContainerDetail) -> str:
             shown = shown[:LABEL_CHARS] + "…"
         lines.append(f"  {key}={shown}")
     lines.append(
-        "env (values hidden, a URL shows scheme, host and port):" + ("" if detail.env else " none")
+        "env (values hidden; a service URL keeps scheme, host and port, but one with another"
+        " scheme or a token-like host is hidden whole, so a bare <redacted> may still be a URL):"
+        + ("" if detail.env else " none")
     )
     lines += [f"  {item}" for item in redact_env(detail.env)]
     return "\n".join(lines)
@@ -233,10 +235,13 @@ SPECS = [
             "Get a compact summary of one container: image, state, health, restart policy and "
             "count, exit code, OOMKilled, start and finish times, ports, mounts, memory limit, "
             "labels. Use it to learn why a container stopped or keeps restarting. Environment "
-            "variable values are hidden and only their names are shown, except that a URL value "
-            "keeps its scheme, host and port, so you can see where a setting points (for "
-            "example DATABASE_URL=postgresql://<redacted>@db:5432/<redacted>); its user, "
-            "password, path, query and fragment stay hidden." + UNTRUSTED,
+            "variable values are hidden and only their names are shown, except that a URL to a "
+            "common network service (http, postgres, redis, amqp and the like) keeps its scheme, "
+            "host and port, so you can see where a setting points (for example "
+            "REDIS_URL=redis://<redacted>@cache.internal:6379/<redacted>); its user, password, "
+            "path, query and fragment stay hidden. A URL is hidden whole when it cannot be read "
+            "unambiguously, its scheme is not such a service or its host looks like a token, so "
+            "a bare <redacted> says nothing about the value's shape." + UNTRUSTED,
             ContainerArgs,
             _inspect,
         ),

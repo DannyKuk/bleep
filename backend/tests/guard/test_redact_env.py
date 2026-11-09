@@ -53,7 +53,6 @@ def shown(value: str) -> str:
         ("postgres://u%40x:p%3A%2F@db/x", "postgres://<redacted>@db/<redacted>"),
         ("http://@db", "http://<redacted>@db"),
         (f"https://{GITHUB}@github.com/acme/app.git", "https://<redacted>@github.com/<redacted>"),
-        (f"https://{HEX40}.example.com/x", f"https://{HEX40}.example.com/<redacted>"),
         ("http://db:0080", "http://db:0080"),
     ],
 )
@@ -154,6 +153,73 @@ def test_a_value_the_readings_disagree_on_is_hidden_whole(value):
     out = redact_env([f"URL={value}"])
     assert out == ["URL=<redacted>"]
     assert "SECRET" not in out[0]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "pushbullet://o.gn5kj6nfhv736I7jC3cj3QLRiyhgl98b",
+        "ifttt://bL7xQ2ab9TzK1mPq3RwYv8/?events=event1",
+        "pushover://shoutrrr:apptoken42@uQiRzpo4DXghDmr9QzzfQu27cmVRsG/",
+        "pover://userkey42@azGDORePK8gMaC0QOYAMyEEuzJnyUi",
+        "prowl://4f2a9c0d1e4f2a9c0d1e4f2a9c0d1e4f2a9c0d1e",
+        "opsgenie://3a7f9c2e-1b4d-4e8a-9f6c-2d5b8e1a7c3f",
+        "fcm://myproj@AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI",
+        "splunk://routingkey@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
+        "pagerduty://integrationkey@apikey1234567890abcdefghij",
+        "join://abcdef0123456789abcdef0123456789/device",
+        "serverchan://SCT123456Tabcdefghijklmnop",
+        "wecombot://3a7f9c2e-1b4d-4e8a-9f6c-2d5b8e1a7c3f",
+        "ntfy://my-private-topic",
+        "ftp://u:p@files.example.com/x",
+        "ssh://git@github.com",
+        "tcp://db:5432",
+        "s3://bucket/key",
+        "postgresql+psycopg@x://db",
+        "https://k3j4h5g6f7d8s9a0q1w2e3r4t5y6u7i8.lambda-url.us-east-1.on.aws/",
+        "https://sk_live_4eC39HqLyjWDarjtT1zdp7dc.example.com",
+        "https://glpat-9aBcD3fGh1JkLmN0pQrS.example.com",
+        "https://npm_a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8.example.com",
+        "https://AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI.example.com",
+        "https://3a7f9c2e-1b4d-4e8a-9f6c-2d5b8e1a7c3f.example.com",
+        "https://hooks.3A7F9C2E-1B4D-4E8A-9F6C-2D5B8E1A7C3F.example.com:443",
+        f"https://{HEX40}.example.com/x",
+        "https://sk_live_abcdefghijklMNOPqrstuvwx.example.com",
+    ],
+)
+def test_a_token_where_the_host_goes_is_hidden_whole(value):
+    assert redact_env([f"URL={value}"]) == ["URL=<redacted>"]
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "db",
+        "shop-db",
+        "postgres.internal",
+        "10.0.0.5",
+        "[::1]",
+        "3f2a9c0d1e4b",
+        "myproject_db_1",
+        "cluster0.ab1cd.mongodb.net",
+        "mydb.c9akciq32.us-east-1.rds.amazonaws.com",
+        "db.abcdefghijklmnopqrst.supabase.co",
+        "ep-cool-darkness-123456.us-east-2.aws.neon.tech",
+        "o450123.ingest.sentry.io",
+        "SHOP-DATABASE-PRIMARY.INTERNAL",
+    ],
+)
+def test_a_real_service_host_is_shown(host):
+    assert shown(f"postgresql+psycopg://u:p@{host}:5432/x") == (
+        f"postgresql+psycopg://<redacted>@{host}:5432/<redacted>"
+    )
+
+
+def test_a_password_written_where_the_host_and_port_go_is_shown_as_a_known_limit():
+    """With no `@`, every client reads these as host and port, and so does Bleep; nothing tells
+    them apart from a real host and port (guard.md, Known limits)."""
+    assert shown("postgres://admin:31337") == "postgres://admin:31337"
+    assert shown("redis://hunter2:6379") == "redis://hunter2:6379"
 
 
 def test_hosts_that_secret_patterns_recognise_are_hidden():

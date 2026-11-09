@@ -43,6 +43,18 @@ def _redact_env_entry(item: str) -> str:
 
 
 _URL_SCHEME = re.compile(r"([A-Za-z][A-Za-z0-9+.-]{0,31})://")
+# Schemes that name a network service, whose host is where it runs. Notification URLs
+# (`pushbullet://<token>`, `pover://<user>@<token>`) put a token where the host goes.
+_SERVICE_SCHEMES = frozenset({
+    "http", "https", "ws", "wss", "postgres", "postgresql", "mysql", "mariadb", "redis", "rediss",
+    "mongodb", "amqp", "amqps", "nats", "kafka", "mqtt", "mqtts", "smtp", "smtps", "ldap", "ldaps",
+})  # fmt: skip
+_DRIVER = re.compile(r"[a-z0-9]{1,24}")  # postgresql+psycopg, mongodb+srv
+_TOKEN_SEGMENT = re.compile(
+    r"(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{16,}"
+    r"|(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*[A-Z])[A-Za-z0-9]{16,}"
+)
+_UUID = re.compile(r"[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}")
 _DNS_LABEL = r"[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?"
 _HOST_NAME = re.compile(rf"{_DNS_LABEL}(?:\.{_DNS_LABEL})*")
 _IPV6 = re.compile(r"\[([0-9A-Fa-f:.]{2,45})\]")
@@ -59,10 +71,13 @@ def _url_place(value: str) -> str | None:
     the last `@`, browsers read `\\` as `/`), and a wrong guess would show part of a
     password as the host. So any value the readings could disagree on is refused: anything
     outside printable ASCII, a backslash, more than one `@` or an `@` after the authority, and
-    a host or port outside a strict allowlist.
+    a host or port outside a strict allowlist. So is a scheme that is not a network service and
+    a host that looks like a token.
     """
     scheme = _URL_SCHEME.match(value)
     if scheme is None or "\\" in value or not _PRINTABLE.fullmatch(value):
+        return None
+    if not _is_service_scheme(scheme.group(1)):
         return None
     rest = value[scheme.end() :]
     end = min((i for i in map(rest.find, "/?#") if i >= 0), default=len(rest))
@@ -71,9 +86,28 @@ def _url_place(value: str) -> str | None:
         return None
     _, at, host_port = authority.rpartition("@")
     place = _host_port(host_port)
+    if place is not None and _looks_like_token(place):
+        return None
     if place is None:
         return None
     return f"{scheme.group(0)}{REDACTED + '@' if at else ''}{place}{_hidden_tail(tail)}"
+
+
+def _is_service_scheme(scheme: str) -> bool:
+    base, plus, driver = scheme.lower().partition("+")
+    return base in _SERVICE_SCHEMES and (not plus or bool(_DRIVER.fullmatch(driver)))
+
+
+def _looks_like_token(place: str) -> bool:
+    """A host segment of 16 or more letters and digits that mixes letters with digits or lower
+    with upper case, or a UUID, is read as a key (a Lambda function URL id, `sk_live_…`,
+    `glpat-…`); a 12-hex container id is shorter, and a host name is written in one case."""
+    if place.startswith("["):
+        return False
+    host = place.partition(":")[0]
+    return bool(_UUID.search(host)) or any(
+        _TOKEN_SEGMENT.fullmatch(segment) for segment in re.split(r"[._-]", host)
+    )
 
 
 def _host_port(text: str) -> str | None:
