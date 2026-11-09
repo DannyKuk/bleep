@@ -71,8 +71,12 @@ ENDED = {"finished", "failed", "cancelled-by-user"}
 _VERSION = re.compile(r"v?\d+(\.\d+){1,3}[\w.-]{0,20}")
 _UUID_LABEL, _ID_LABEL = "coolify.applicationUuid", "coolify.applicationId"
 _ITEM = re.compile(r"[^,]+")  # an item of a comma list; a space does not end it
-# Coolify keeps the ref it deploys ("HEAD") in its commit fields too; only a hex sha is a commit.
-_SHA = re.compile(r"[0-9a-fA-F]{7,40}")
+# Coolify keeps the ref it deploys ("HEAD") in its commit fields too; only a hex sha (SHA-1 or
+# SHA-256, or a short one) is a commit.
+_SHA = re.compile(r"[0-9a-fA-F]{7,64}")
+# What Coolify writes into the git fields of an application built without git: a Docker image,
+# or a Dockerfile typed into Coolify.
+PLACEHOLDER_REPO = "coollabsio/coolify"
 APPLICATIONS = (
     "List the Coolify applications: name, uuid, status (running:healthy, exited:unhealthy, ...),"
     " domains, git repo and branch, deployed commit and build pack. The ones whose containers"
@@ -163,10 +167,18 @@ def _commit(sha: str | None) -> str | None:
     return sha[:7] if sha and _SHA.fullmatch(sha) else None
 
 
+def _built_from_git(a: CoolifyApplication) -> bool:
+    if a.build_pack == "dockerimage":
+        return False
+    return bool(a.git_repository) and not (
+        a.build_pack == "dockerfile" and a.git_repository == PLACEHOLDER_REPO
+    )
+
+
 def _source(a: CoolifyApplication) -> str:
-    """Where `a` is built from, as ` repo=…@branch commit=…`. An application with no git source
-    shows nothing: Coolify fills its git fields with its own repo, `main` and `HEAD`."""
-    if a.source_type is None or not a.git_repository:
+    """Where `a` is built from, as ` repo=…@branch commit=…`; nothing for an application built
+    without git, whose git fields hold Coolify's own repo, `main` and `HEAD`."""
+    if not _built_from_git(a):
         return ""
     commit = _commit(a.git_commit_sha)
     repo = f" repo={_no_userinfo(a.git_repository)}@{a.git_branch or '?'}"

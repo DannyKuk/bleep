@@ -9,4 +9,4 @@ Shaped after a real Coolify v4.6.0 server on 2026-11-04 (`GET /api/v1/applicatio
 
 Not read on the real server, so shaped after the v4.6.0 OpenAPI spec and the controller code instead: `envs.json` (`GET /api/v1/applications/{uuid}/envs`; no env values were fetched), `deploy.json` (`POST /api/v1/deploy`; nothing was deployed) and `unauthenticated.json` (the spec's 401 body).
 
-`notes` in `applications.json` has no git source (`source_type` null, built from a Dockerfile); its `coollabsio/coolify`, `main` and `HEAD` are the placeholders Coolify v4.6.0 fills an application's git fields with then, as read on a real server on 2026-11-09 (#354).
+`notes` (a Dockerfile typed into Coolify's UI) and `cache` (a Docker image) in `applications.json` are built without git: their `coollabsio/coolify`, `main` and `HEAD` are the placeholders Coolify v4.6.0 writes into an application's git fields then (read on a real server on 2026-11-09 and in Coolify's `SimpleDockerfile` and `DockerImage`), and `notes` carries the GitHub source with id 0 the UI records. `wiki` is a public repo on a host other than github.com, for which Coolify records no source (`source_type` null) (#354).

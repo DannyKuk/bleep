@@ -20,9 +20,6 @@ class CoolifyApplication(BaseModel):
     name: str | None = None
     status: str | None = None  # "running:healthy", "exited:unhealthy", ...
     fqdn: str | None = None  # the application's domains, comma separated
-    # Null for an application with no git source (a Dockerfile, a Docker image); Coolify still
-    # fills the git fields below with its own placeholder repo for it.
-    source_type: str | None = None
     git_repository: str | None = None
     git_branch: str | None = None
     git_commit_sha: str | None = None
