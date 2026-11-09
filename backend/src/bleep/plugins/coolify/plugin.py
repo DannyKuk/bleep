@@ -82,12 +82,13 @@ _SHA = re.compile(r"[0-9a-fA-F]{7,64}")
 PLACEHOLDER_REPO = "coollabsio/coolify"
 _SERVICE = re.compile(r"[\w.-]{1,64}", re.ASCII)  # a Compose service name
 _LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
-# One domain as Bleep shows it: scheme://host[:port][/path], the host a DNS-style name or a
-# bracketed IPv6 address, the path printable ASCII without `,` or `;`. Nothing in it can end a
-# line, start another item or name another service.
+# One domain as Bleep takes it: scheme://[userinfo@]host[:port][/path, ?query or #fragment],
+# the host a DNS-style name or a bracketed IPv6 address, the rest printable ASCII without `,` or
+# `;`. Nothing in it can end a line, start another item or name another service.
 _URL = re.compile(
-    rf"[A-Za-z][A-Za-z0-9+.-]*://(?:{_LABEL}(?:\.{_LABEL})*\.?|\[[0-9A-Fa-f:.]+\])"
-    r"(?::[0-9]{1,5})?(?:/[\x21-\x2b\x2d-\x3a\x3c-\x7e]*)?"
+    r"[A-Za-z][A-Za-z0-9+.-]*://(?:[^\s/?#@,;]*@)?"
+    rf"(?:{_LABEL}(?:\.{_LABEL})*\.?|\[[0-9A-Fa-f:.]+\])"
+    r"(?::[0-9]{1,5})?(?:[/?#][\x21-\x2b\x2d-\x3a\x3c-\x7e]*)?"
 )
 APPLICATIONS = (
     "List the Coolify applications: name, uuid, status (running:healthy, exited:unhealthy, ...),"
@@ -197,12 +198,24 @@ def _source(a: CoolifyApplication) -> str:
     return repo + (f" commit={commit}" if commit else "")
 
 
+def _trimmed(text: str) -> str:
+    """`text` without the spaces and commas Coolify trims off a domain list's ends on save. A loop,
+    since a regex anchored at the end is quadratic on a long run of spaces inside the text."""
+    start, stop = 0, len(text)
+    while start < stop and (text[start] == "," or text[start].isspace()):
+        start += 1
+    while stop > start and (text[stop - 1] == "," or text[stop - 1].isspace()):
+        stop -= 1
+    return text[start:stop]
+
+
 def _url_list(text: str) -> str:
-    """`text` without userinfo, when each of its comma items is then a plain URL (`_URL`)."""
-    cut = _no_userinfo(text)
-    if not all(_URL.fullmatch(item) for item in cut.split(",")):
+    """`text` as Coolify trims it and without userinfo, when each comma item is a plain URL
+    (`_URL`) as it stands, before anything is cut from it."""
+    items = [item.strip() for item in _trimmed(text).split(",")]
+    if not all(_URL.fullmatch(item) for item in items):
         raise ValueError("not a list of URLs")
-    return cut
+    return ",".join(_no_userinfo(item) for item in items)
 
 
 def _service_domains(name: str, service: object) -> str | None:
