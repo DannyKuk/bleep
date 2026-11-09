@@ -2,7 +2,8 @@
 
 `TelegramClient` makes the calls; `TelegramBot` polls `getUpdates` and turns what the one
 configured chat says into decisions. A button press is `approve:<approval id>` or
-`reject:<approval id>`; a reply to any message about an incident is an instruction for its plan.
+`reject:<approval id>`, `expected`, or `onit` and then `onit:<choice>` (a snooze); a reply to any
+message about an incident is an instruction for its plan.
 Decisions go through `approvals.resolve`, so the dashboard and Telegram race fairly: the winner
 resumes the run, the loser is told which channel won. Updates from any other chat are dropped and
 written to the guard log. The bot token is in every Bot API URL, so no error or log line here
@@ -13,16 +14,21 @@ import asyncio
 import hmac
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, tzinfo
 from typing import Any, Literal, Protocol
 
 import httpx
 
 from bleep.graph.deps import Approvals
 from bleep.guard.log import GuardLogger
-from bleep.incidents.repository import utcnow
-from bleep.notify.format import answer, shows_in_full
+from bleep.incidents.bus import EventBus
+from bleep.incidents.expectations import RUNNING
+from bleep.incidents.quiet import SNOOZE_CHOICES, QuietStore, quiet_target, snooze_until
+from bleep.incidents.repository import IncidentRepo, utcnow
+from bleep.notify.format import answer, phrase, shows_in_full, when
 from bleep.schemas.graph import Decision
+from bleep.schemas.incidents import TERMINAL_STATUSES
 from bleep.store.db import Database
 
 log = logging.getLogger(__name__)
@@ -72,6 +78,31 @@ class Expecting(Protocol):
 EXPECTED_VERB = "expected"  # the "It's expected" button's data; the incident is the message's
 EXPECTED_LABEL = "It's expected"
 CALLBACK_TEXT_MAX = 200  # Telegram's limit for a button's answer
+ON_IT_VERB = "onit"  # "🤫 I'm on it"; `onit:<choice>` is a snooze, the incident the message's
+ON_IT_LABEL = "🤫 I'm on it"
+ON_IT_NOTICE = "Snoozed from Telegram: you said you are on it."
+
+
+@dataclass(frozen=True)
+class OnIt:
+    """What "🤫 I'm on it" needs: the incidents, the quiet store that snoozes an incident's
+    subject (its listener, the watcher, then ends the incident as Quiet), the timeline, and the
+    time zone "until 08:00" is in."""
+
+    incidents: IncidentRepo
+    quiet: QuietStore
+    bus: EventBus
+    zone: tzinfo = UTC
+
+
+def snooze_buttons(now: datetime, zone: tzinfo) -> list[tuple[str, str]]:
+    """The choices a press of "🤫 I'm on it" shows: 1 h, 4 h, until 08:00."""
+    morning = phrase("on_it_morning", when=when(snooze_until("morning", now, zone), now, zone))
+    return [
+        (phrase("duration_h", n="1"), f"{ON_IT_VERB}:1h"),
+        (phrase("duration_h", n="4"), f"{ON_IT_VERB}:4h"),
+        (morning, f"{ON_IT_VERB}:morning"),
+    ]
 
 
 class TelegramClient:
@@ -126,9 +157,7 @@ class TelegramClient:
         if silent:
             params["disable_notification"] = True
         if buttons:
-            params["reply_markup"] = {
-                "inline_keyboard": [[{"text": t, "callback_data": d} for t, d in buttons]]
-            }
+            params["reply_markup"] = _keyboard(buttons)
         if reply_to is not None:
             params["reply_parameters"] = {
                 "message_id": reply_to,
@@ -140,12 +169,24 @@ class TelegramClient:
         await self.call("answerCallbackQuery", callback_query_id=callback_id, text=text)
 
     async def clear_buttons(self, chat_id: str, message_id: int) -> None:
+        await self.set_buttons(chat_id, message_id, [])
+
+    async def set_buttons(
+        self, chat_id: str, message_id: int, buttons: list[tuple[str, str]]
+    ) -> None:
+        """Replace a message's buttons; none removes them."""
         await self.call(
             "editMessageReplyMarkup",
             chat_id=chat_id,
             message_id=message_id,
-            reply_markup={"inline_keyboard": []},
+            reply_markup=_keyboard(buttons),
         )
+
+
+def _keyboard(buttons: list[tuple[str, str]]) -> dict[str, Any]:
+    """One row of (label, callback data) buttons; none for an empty list."""
+    row = [{"text": text, "callback_data": data} for text, data in buttons]
+    return {"inline_keyboard": [row] if row else []}
 
 
 class MessageLog:
@@ -238,6 +279,7 @@ class TelegramBot:
         guard_log: GuardLogger | None = None,
         clock: Callable[[], datetime] = utcnow,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        on_it: OnIt | None = None,
     ) -> None:
         self.chat_id = str(chat_id)
         self.approvals = approvals
@@ -248,6 +290,7 @@ class TelegramBot:
         self.clock = clock
         self._sleep = sleep
         self.expectations: Expecting | None = None
+        self.on_it = on_it
         self._offset: int | None = None
         self.last_poll: datetime | None = None  # the last getUpdates that Telegram answered
 
@@ -313,6 +356,9 @@ class TelegramBot:
         if verb == EXPECTED_VERB and known is not None and self.expectations is not None:
             await self._expected(callback_id, message_id, known[0])
             return
+        if verb == ON_IT_VERB and known is not None and self.on_it is not None:
+            await self._on_it(callback_id, message_id, known[0], choice=approval_id)
+            return
         if verb not in ("approve", "reject") or not approval_id or known is None:
             await self.client.answer_callback(callback_id, answer("answer_unknown"))
             return
@@ -342,6 +388,38 @@ class TelegramBot:
         await self.client.answer_callback(callback_id, text)
         if result.done:  # a failed press leaves Approve and Reject to a plan that still waits
             await self.client.clear_buttons(self.chat_id, message_id)
+
+    async def _on_it(
+        self, callback_id: str, message_id: int, incident_id: str, choice: str
+    ) -> None:
+        """A press shows the choices in place of the message's buttons; a choice snoozes the
+        incident's subject, as the dashboard's "I'm on it" does, and the quiet store's listener
+        ends the incident as Quiet. Not on a finished incident, nor while a step of an approved
+        plan runs on the host, which is never cut short."""
+        assert self.on_it is not None
+        incident = await self.on_it.incidents.get(incident_id)
+        target = quiet_target(incident.subject) if incident is not None else None
+        chosen = next((c for c in SNOOZE_CHOICES if c == choice), None)
+        if incident is None or target is None or (choice and chosen is None):
+            await self.client.answer_callback(callback_id, answer("answer_unknown"))
+            return
+        if incident.status in TERMINAL_STATUSES:
+            await self.client.answer_callback(callback_id, answer("answer_on_it_ended"))
+            await self.client.clear_buttons(self.chat_id, message_id)
+            return
+        if incident.status in RUNNING:
+            await self.client.answer_callback(callback_id, answer("answer_on_it_running"))
+            return
+        now, zone = self.clock(), self.on_it.zone
+        if chosen is None:
+            await self.client.set_buttons(self.chat_id, message_id, snooze_buttons(now, zone))
+            await self.client.answer_callback(callback_id, answer("answer_on_it_how_long"))
+            return
+        until = snooze_until(chosen, now, zone)
+        await self.on_it.bus.publish(incident_id, "notice", {"text": ON_IT_NOTICE})
+        await self.on_it.quiet.set(*target, "snooze", until)
+        said = answer("answer_on_it", until=when(until, now, zone))
+        await self.client.answer_callback(callback_id, said)
 
     async def _closed(self, incident_id: str, approval_id: str) -> bool:
         current = await self.approvals.current(incident_id)

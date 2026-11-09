@@ -3,8 +3,8 @@
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime
-from typing import Literal
+from datetime import UTC, datetime, timedelta, tzinfo
+from typing import Literal, get_args
 
 import aiosqlite
 
@@ -16,8 +16,38 @@ from bleep.store.db import Database
 log = logging.getLogger(__name__)
 
 QUIET_TICK_S = 30.0
+MORNING_HOUR = 8
 
 Listener = Callable[[QuietChange], Awaitable[None]]
+SnoozeChoice = Literal["1h", "4h", "morning"]
+SNOOZE_CHOICES: tuple[SnoozeChoice, ...] = get_args(SnoozeChoice)
+
+
+def snooze_until(choice: SnoozeChoice, now: datetime, zone: tzinfo) -> datetime:
+    """When a snooze chosen at `now` ends, as the dashboard's menu has it: in 1 h, in 4 h, or at
+    the next 08:00 in `zone` after `now` (this morning in the small hours)."""
+    if choice == "1h":
+        return now + timedelta(hours=1)
+    if choice == "4h":
+        return now + timedelta(hours=4)
+    local = now.astimezone(zone)
+    morning = local.replace(hour=MORNING_HOUR, minute=0, second=0, microsecond=0)
+    if morning <= local:
+        # Wall-clock arithmetic: across a clock change the next morning is still 08:00 local.
+        morning = (local + timedelta(days=1)).replace(
+            hour=MORNING_HOUR, minute=0, second=0, microsecond=0
+        )
+    return morning.astimezone(UTC)
+
+
+def quiet_target(subject: Subject) -> tuple[QuietScope, str] | None:
+    """What a snooze of an incident's subject quiets: the host, or the service; None for a
+    service incident that names no service."""
+    if subject.kind == "host":
+        return "host", subject.host_id
+    if subject.service_id is None:
+        return None
+    return "service", subject.service_id
 
 
 def _state(row: aiosqlite.Row) -> QuietState:

@@ -121,7 +121,7 @@ Without it everything works from the dashboard. To also get incidents and approv
 3. Set on the dashboard, the bot starts polling at once; in `.env`, restart Bleep. A proposal arrives with Approve and Reject buttons; reply to it, or to any message of the incident, to give an instruction instead.
 4. Optional: set `BLEEP_DASHBOARD_URL` in `.env` to the address your browser uses for the dashboard (`http://192.168.1.5:3000`), and restart; the last message of every incident then links to its page. A `localhost` address works only on the machine Bleep runs on.
 
-Each incident is one thread: its first message says 🔴 New (or 🔁 Again for a repeat) with a short name such as `shop #14`, every later one replies to it, and the last one leads with how it ended.
+Each incident is one thread: its first message says 🔴 New (or 🔁 Again for a repeat) with a short name such as `shop #14`, every later one replies to it, and the last one leads with how it ended. The first message has a 🤫 I'm on it button: it snoozes the service (or the host) for 1 h, 4 h or until 08:00 and ends the incident. Set `BLEEP_TIMEZONE` in `.env` to your time zone (`Europe/Vienna`; UTC when unset) so that 08:00 and the times in messages are yours.
 
 Only that chat is answered. Messages and button taps from any other chat are ignored and recorded in the guard log. The first answer wins, from Telegram or the dashboard; the other is told who won. Details: [Notifications](design/notify.md).
 

@@ -211,6 +211,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **A decision from either channel goes through the same first-wins `resolve`**, and the loser is told who won.
 - **A plan Telegram cannot show whole, a cut `set_env` value or a plugin step's params, gets no Approve button there**; it is approved on the dashboard.
 - **Each incident is one Telegram thread**: its short name (`shop #14`), an opener, replies to it, an emoji per kind of message, one end message that leads with the outcome, and "Again" for a repeat.
+- **"🤫 I'm on it" on the opener snoozes the service or host for 1 h, 4 h or until 08:00** through the dashboard's quiet path, and the incident ends as Quiet.
 
 **Observability** ([details](design/observability.md))
 - **Tracing is off unless `TRACING` names Langfuse or LangSmith**, and off adds no callbacks at all.
