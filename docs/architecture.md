@@ -135,7 +135,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **Open at once, attach within the 30 s debounce**, so there is never a second incident for one cause.
 - **A snoozed or left-alone service or host is still watched but opens nothing**; when the quiet ends it is judged once more.
 - **A job named in `exits` is done when it exits 0, and "This is expected" teaches that (or that a host sleeps) in one tap** from the dashboard or Telegram; a crash is still an incident.
-- **A failing check or host reading that outlived its incident opens no new one until it passed once, or after a hold of an hour that doubles up to a day**, so a failure Bleep could not fix costs one run and one message, not one a minute.
+- **A failing check or host reading that outlived its incident opens no new one until it passed once, or after a hold of an hour that doubles up to a day**; for a service, any of its ended incidents holds its URL, so a failure Bleep could not fix costs one run and one message, not one a minute or one per symptom.
 - **Bleep's own sleep is no outage**: after a wake an outage counts from zero and failed contact waits out a grace window; a host marked `may_sleep` shows `asleep` and opens nothing, and a host-unreachable incident waits without a model call and closes itself when the host answers.
 
 **Incidents** ([details](design/incidents.md))

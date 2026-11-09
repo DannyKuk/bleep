@@ -292,7 +292,7 @@ def test_an_open_for_a_failing_reading_says_since_when_it_failed_without_a_pass(
     det.feed(sig(SVC, "url_failed", clock, **url))
     clock.at(60)
     [first] = det.feed(sig(SVC, "url_failed", clock, **url))
-    assert first.run == FailingRun(since=T0 + timedelta(seconds=30), seen_pass=True)
+    assert first.run == FailingRun(since=T0 + timedelta(seconds=30), passed=T0)
     clock.at(90)
     det.feed(sig(SVC, "url_failed", clock, **url))
     clock.at(120)
@@ -311,7 +311,9 @@ def test_a_pass_starts_a_new_failing_run():
     det.feed(sig(SVC, "url_failed", clock))
     clock.at(120)
     [out] = det.feed(sig(SVC, "url_failed", clock))
-    assert out.run == FailingRun(since=T0 + timedelta(seconds=90), seen_pass=True)
+    assert out.run == FailingRun(
+        since=T0 + timedelta(seconds=90), passed=T0 + timedelta(seconds=60)
+    )
 
 
 def test_a_reading_failing_since_bleep_started_says_it_never_saw_a_pass():
@@ -319,7 +321,7 @@ def test_a_reading_failing_since_bleep_started_says_it_never_saw_a_pass():
     det.feed(sig(SVC, "url_failed", clock))
     clock.at(30)
     [out] = det.feed(sig(SVC, "url_failed", clock))
-    assert out.run == FailingRun(since=T0, seen_pass=False)
+    assert out.run == FailingRun(since=T0, passed=None)
 
 
 def test_host_readings_carry_their_failing_run_and_events_carry_none():
@@ -329,15 +331,15 @@ def test_host_readings_carry_their_failing_run_and_events_carry_none():
     det.feed(sig(HOST, "host_unreachable", clock))
     clock.at(310)
     [down] = det.feed(sig(HOST, "host_unreachable", clock))
-    assert down.run == FailingRun(since=T0 + timedelta(seconds=10), seen_pass=True)
+    assert down.run == FailingRun(since=T0 + timedelta(seconds=10), passed=T0)
     clock.at(400)
     [disk] = det.feed(sig(HOST, "disk", clock, percent=95))
-    assert disk.run == FailingRun(since=clock.now, seen_pass=False)
+    assert disk.run == FailingRun(since=clock.now, passed=None)
     clock.at(500)
     det.feed(sig(HOST, "memory", clock, available_percent=3))
     det.feed(sig(HOST, "memory", clock, available_percent=3))
     [memory] = det.feed(sig(HOST, "memory", clock, available_percent=3))
-    assert memory.run == FailingRun(since=clock.now, seen_pass=False)
+    assert memory.run == FailingRun(since=clock.now, passed=None)
     [event] = det.feed(sig(SVC, "unhealthy", clock, container="web-1"))
     assert event.run is None
 
@@ -352,13 +354,13 @@ def test_a_wake_keeps_the_failing_run_and_forgetting_the_host_drops_it():
     det.feed(sig(SVC, "url_failed", clock))
     clock.at(90)
     [out] = det.feed(sig(SVC, "url_failed", clock))
-    assert out.run == FailingRun(since=T0 + timedelta(seconds=30), seen_pass=True)
+    assert out.run == FailingRun(since=T0 + timedelta(seconds=30), passed=T0)
     det.forget_host("h1")
     clock.at(200)
     det.feed(sig(SVC, "url_failed", clock))
     clock.at(230)
     [fresh] = det.feed(sig(SVC, "url_failed", clock))
-    assert fresh.run == FailingRun(since=T0 + timedelta(seconds=200), seen_pass=False)
+    assert fresh.run == FailingRun(since=T0 + timedelta(seconds=200), passed=None)
 
 
 def test_debounce_merges_signals_within_30s_into_one_open():
