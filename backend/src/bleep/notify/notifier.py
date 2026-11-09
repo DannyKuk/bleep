@@ -395,29 +395,31 @@ class Notifier:
         Telegram is the opener: it leads with the incident's head and what was seen (unless
         `says_what`: its text already does), and is not a reply, or replies to the previous
         incident's last message for a repeat; unless it ends the incident, it carries
-        "🤫 I'm on it" (`_on_it_button`). Every later one is a reply to the opener. An `end`
-        message is sent as `instead` when the incident's end message went out already. One
-        message of an incident at a time, so two can never both become its opener."""
+        "🤫 I'm on it" (`_on_it_button`) on a row of its own under the message's buttons. Every
+        later one is a reply to the opener. An `end` message is sent as `instead` when the
+        incident's end message went out already. One message of an incident at a time, so two
+        can never both become its opener."""
         assert self.telegram is not None and self.chat_id is not None
         lock = self._threads.setdefault(incident.id, asyncio.Lock())
         async with lock:
             if end and self.messages is not None and await self.messages.ended(incident.id):
                 text, end = instead, False
             reply_to = await self.messages.first_for(incident.id) if self.messages else None
+            on_it: list[tuple[str, str]] = []
             if reply_to is None:
                 head, reply_to = await self._opening(incident)
                 text = fmt.message(head, "" if says_what else await self._seen(incident), text)
-                if not end:
-                    buttons = [*(buttons or []), *self._on_it_button(incident)]
+                on_it = [] if end else self._on_it_button(incident)
             message_id = await self.telegram.send_message(
-                self.chat_id, text, buttons, reply_to=reply_to, silent=silent
+                self.chat_id, text, buttons, reply_to=reply_to, silent=silent, more=[on_it]
             )
             if self.messages is None:
                 return
+            has_buttons = bool(buttons or on_it)
             await self.messages.add(
-                message_id, incident.id, approval_id, self.clock(), bool(buttons), end
+                message_id, incident.id, approval_id, self.clock(), has_buttons, end
             )
-        if buttons:
+        if has_buttons:
             await self._clear_if_finished(incident.id, message_id, approval_id)
 
     def _on_it_button(self, incident: Incident) -> list[tuple[str, str]]:

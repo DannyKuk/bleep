@@ -15,7 +15,7 @@ import hmac
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, tzinfo
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import Any, Literal, Protocol
 
 import httpx
@@ -24,7 +24,7 @@ from bleep.graph.deps import Approvals
 from bleep.guard.log import GuardLogger
 from bleep.incidents.bus import EventBus
 from bleep.incidents.expectations import RUNNING
-from bleep.incidents.quiet import SNOOZE_CHOICES, QuietStore, quiet_target, snooze_until
+from bleep.incidents.quiet import QuietStore, morning_of, quiet_target, snooze_until
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.notify.format import answer, phrase, shows_in_full, when
 from bleep.schemas.graph import Decision
@@ -78,31 +78,72 @@ class Expecting(Protocol):
 EXPECTED_VERB = "expected"  # the "It's expected" button's data; the incident is the message's
 EXPECTED_LABEL = "It's expected"
 CALLBACK_TEXT_MAX = 200  # Telegram's limit for a button's answer
-ON_IT_VERB = "onit"  # "🤫 I'm on it"; `onit:<choice>` is a snooze, the incident the message's
+# "🤫 I'm on it" is `onit`; its choices are `onit:1h`, `onit:4h` and `onit:morning:YYYYMMDD`,
+# the morning the menu showed. The incident is the message's.
+ON_IT_VERB = "onit"
 ON_IT_LABEL = "🤫 I'm on it"
 ON_IT_NOTICE = "Snoozed from Telegram: you said you are on it."
+SNOOZE_AHEAD_MAX = timedelta(days=2)  # no button carries a later morning
+
+Row = list[tuple[str, str]]  # (label, callback data) buttons side by side
 
 
 @dataclass(frozen=True)
 class OnIt:
     """What "🤫 I'm on it" needs: the incidents, the quiet store that snoozes an incident's
     subject (its listener, the watcher, then ends the incident as Quiet), the timeline, and the
-    time zone "until 08:00" is in."""
+    time zone "until 08:00" is in; None when none was configured: UTC, and the times say so."""
 
     incidents: IncidentRepo
     quiet: QuietStore
     bus: EventBus
-    zone: tzinfo = UTC
+    zone: tzinfo | None = None
 
 
-def snooze_buttons(now: datetime, zone: tzinfo) -> list[tuple[str, str]]:
-    """The choices a press of "🤫 I'm on it" shows: 1 h, 4 h, until 08:00."""
-    morning = phrase("on_it_morning", when=when(snooze_until("morning", now, zone), now, zone))
+def snooze_buttons(now: datetime, zone: tzinfo | None) -> Row:
+    """The choices a press of "🤫 I'm on it" shows: 1 h, 4 h, until 08:00. The morning's
+    button carries its date, so a press after it has passed snoozes nothing."""
+    morning = snooze_until("morning", now, zone or UTC)
+    day = morning.astimezone(zone or UTC).date()
     return [
         (phrase("duration_h", n="1"), f"{ON_IT_VERB}:1h"),
         (phrase("duration_h", n="4"), f"{ON_IT_VERB}:4h"),
-        (morning, f"{ON_IT_VERB}:morning"),
+        (
+            phrase("on_it_morning", when=when(morning, now, zone)),
+            f"{ON_IT_VERB}:morning:{day:%Y%m%d}",
+        ),
     ]
+
+
+def chosen_until(choice: str, now: datetime, zone: tzinfo | None) -> datetime | None:
+    """When the snooze a choice's data asks for ends; None for data no button carries."""
+    if choice in ("1h", "4h"):
+        return snooze_until("1h" if choice == "1h" else "4h", now, zone or UTC)
+    kind, _, day = choice.partition(":")
+    if kind != "morning" or len(day) != 8 or not day.isdigit():
+        return None
+    try:
+        morning = date(int(day[:4]), int(day[4:6]), int(day[6:]))
+    except ValueError:
+        return None
+    return morning_of(morning, zone or UTC)
+
+
+def _kept_rows(markup: Any) -> list[Row]:
+    """The rows of a pressed message's buttons, as Telegram sent them back with the press,
+    without the "🤫 I'm on it" row (its button or its choices)."""
+    rows: list[Row] = []
+    for row in (markup or {}).get("inline_keyboard", []) if isinstance(markup, dict) else []:
+        kept = [
+            (button["text"], button["callback_data"])
+            for button in row
+            if isinstance(button, dict)
+            and isinstance(button.get("text"), str)
+            and isinstance(button.get("callback_data"), str)
+        ]
+        if kept and not any(data.partition(":")[0] == ON_IT_VERB for _, data in kept):
+            rows.append(kept)
+    return rows
 
 
 class TelegramClient:
@@ -139,14 +180,15 @@ class TelegramClient:
         self,
         chat_id: str,
         text: str,
-        buttons: list[tuple[str, str]] | None = None,
+        buttons: Row | None = None,
         reply_to: int | None = None,
         markdown: bool = True,
         silent: bool = False,
+        more: list[Row] | None = None,
     ) -> int:
         """Send `text` (MarkdownV2 unless `markdown` is False); returns the message id. A reply
         whose message was deleted is sent anyway, as a message of its own. A `silent` message
-        arrives without a sound or a ping."""
+        arrives without a sound or a ping. `buttons` is a row; `more` are rows under it."""
         params: dict[str, Any] = {
             "chat_id": chat_id,
             "text": text,
@@ -156,8 +198,9 @@ class TelegramClient:
             params["parse_mode"] = "MarkdownV2"
         if silent:
             params["disable_notification"] = True
-        if buttons:
-            params["reply_markup"] = _keyboard(buttons)
+        rows = [buttons or [], *(more or [])]
+        if any(rows):
+            params["reply_markup"] = _keyboard(rows)
         if reply_to is not None:
             params["reply_parameters"] = {
                 "message_id": reply_to,
@@ -171,22 +214,23 @@ class TelegramClient:
     async def clear_buttons(self, chat_id: str, message_id: int) -> None:
         await self.set_buttons(chat_id, message_id, [])
 
-    async def set_buttons(
-        self, chat_id: str, message_id: int, buttons: list[tuple[str, str]]
-    ) -> None:
-        """Replace a message's buttons; none removes them."""
+    async def set_buttons(self, chat_id: str, message_id: int, rows: list[Row]) -> None:
+        """Replace a message's buttons with `rows`; none removes them."""
         await self.call(
             "editMessageReplyMarkup",
             chat_id=chat_id,
             message_id=message_id,
-            reply_markup=_keyboard(buttons),
+            reply_markup=_keyboard(rows),
         )
 
 
-def _keyboard(buttons: list[tuple[str, str]]) -> dict[str, Any]:
-    """One row of (label, callback data) buttons; none for an empty list."""
-    row = [{"text": text, "callback_data": data} for text, data in buttons]
-    return {"inline_keyboard": [row] if row else []}
+def _keyboard(rows: list[Row]) -> dict[str, Any]:
+    """Rows of (label, callback data) buttons; an empty row is left out."""
+    return {
+        "inline_keyboard": [
+            [{"text": text, "callback_data": data} for text, data in row] for row in rows if row
+        ]
+    }
 
 
 class MessageLog:
@@ -357,7 +401,7 @@ class TelegramBot:
             await self._expected(callback_id, message_id, known[0])
             return
         if verb == ON_IT_VERB and known is not None and self.on_it is not None:
-            await self._on_it(callback_id, message_id, known[0], choice=approval_id)
+            await self._on_it(callback, *known, choice=approval_id)
             return
         if verb not in ("approve", "reject") or not approval_id or known is None:
             await self.client.answer_callback(callback_id, answer("answer_unknown"))
@@ -390,36 +434,78 @@ class TelegramBot:
             await self.client.clear_buttons(self.chat_id, message_id)
 
     async def _on_it(
-        self, callback_id: str, message_id: int, incident_id: str, choice: str
+        self, callback: dict[str, Any], incident_id: str, approval_id: str, choice: str
     ) -> None:
-        """A press shows the choices in place of the message's buttons; a choice snoozes the
+        """A press shows the choices in place of the "🤫 I'm on it" row; a choice snoozes the
         incident's subject, as the dashboard's "I'm on it" does, and the quiet store's listener
         ends the incident as Quiet. Not on a finished incident, nor while a step of an approved
         plan runs on the host, which is never cut short."""
         assert self.on_it is not None
+        callback_id, message = callback["id"], callback["message"]
         incident = await self.on_it.incidents.get(incident_id)
         target = quiet_target(incident.subject) if incident is not None else None
-        chosen = next((c for c in SNOOZE_CHOICES if c == choice), None)
-        if incident is None or target is None or (choice and chosen is None):
+        now, zone = self.clock(), self.on_it.zone
+        until = chosen_until(choice, now, zone) if choice else None
+        unknown = choice and (until is None or until > now + SNOOZE_AHEAD_MAX)
+        if incident is None or target is None or unknown:
             await self.client.answer_callback(callback_id, answer("answer_unknown"))
             return
         if incident.status in TERMINAL_STATUSES:
             await self.client.answer_callback(callback_id, answer("answer_on_it_ended"))
-            await self.client.clear_buttons(self.chat_id, message_id)
+            await self._edit(message["message_id"], [])
             return
         if incident.status in RUNNING:
             await self.client.answer_callback(callback_id, answer("answer_on_it_running"))
             return
-        now, zone = self.clock(), self.on_it.zone
-        if chosen is None:
-            await self.client.set_buttons(self.chat_id, message_id, snooze_buttons(now, zone))
-            await self.client.answer_callback(callback_id, answer("answer_on_it_how_long"))
+        if until is None or until <= now:  # the first press, or a morning that has passed
+            said = "answer_on_it_how_long" if until is None else "answer_on_it_passed"
+            await self.client.answer_callback(callback_id, answer(said))
+            await self._show_choices(message, incident_id, approval_id, now)
             return
-        until = snooze_until(chosen, now, zone)
-        await self.on_it.bus.publish(incident_id, "notice", {"text": ON_IT_NOTICE})
         await self.on_it.quiet.set(*target, "snooze", until)
+        await self.on_it.bus.publish(incident_id, "notice", {"text": ON_IT_NOTICE})
         said = answer("answer_on_it", until=when(until, now, zone))
         await self.client.answer_callback(callback_id, said)
+
+    async def _show_choices(
+        self, message: dict[str, Any], incident_id: str, approval_id: str, now: datetime
+    ) -> None:
+        """The choices in place of the "🤫 I'm on it" row; the rows above it (a plan's Approve
+        and Reject, "It's expected") stay while their question is open."""
+        assert self.on_it is not None
+        message_id = message["message_id"]
+        choices = snooze_buttons(now, self.on_it.zone)
+        kept = _kept_rows(message.get("reply_markup"))
+        open_plan = await self._plan_open(incident_id, approval_id)
+        await self._edit(message_id, [*kept, choices] if open_plan else [choices])
+        # The incident can end, or its plan be decided, while the edit is on its way; their
+        # clearing may have come first, and the edit must not put buttons back.
+        incident = await self.on_it.incidents.get(incident_id)
+        if incident is None or incident.status in TERMINAL_STATUSES:
+            await self._edit(message_id, [])
+        elif kept and open_plan and not await self._plan_open(incident_id, approval_id):
+            await self._edit(message_id, [choices])
+
+    async def _plan_open(self, incident_id: str, approval_id: str) -> bool:
+        """Whether the plan a message asks about still waits; a message about none asks
+        nothing that closes before its incident ends."""
+        if not approval_id:
+            return True
+        current = await self.approvals.current(incident_id)
+        return (
+            current is not None
+            and current.id == approval_id
+            and current.decision is None
+            and not current.closed
+        )
+
+    async def _edit(self, message_id: int, rows: list[Row]) -> None:
+        """Set a message's buttons; a message that shows them already (a second tap) is fine."""
+        try:
+            await self.client.set_buttons(self.chat_id, message_id, rows)
+        except TelegramError as error:
+            if "message is not modified" not in str(error):
+                raise
 
     async def _closed(self, incident_id: str, approval_id: str) -> bool:
         current = await self.approvals.current(incident_id)

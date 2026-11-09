@@ -3,8 +3,8 @@
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta, tzinfo
-from typing import Literal, get_args
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
+from typing import Literal
 
 import aiosqlite
 
@@ -20,7 +20,6 @@ MORNING_HOUR = 8
 
 Listener = Callable[[QuietChange], Awaitable[None]]
 SnoozeChoice = Literal["1h", "4h", "morning"]
-SNOOZE_CHOICES: tuple[SnoozeChoice, ...] = get_args(SnoozeChoice)
 
 
 def snooze_until(choice: SnoozeChoice, now: datetime, zone: tzinfo) -> datetime:
@@ -30,14 +29,14 @@ def snooze_until(choice: SnoozeChoice, now: datetime, zone: tzinfo) -> datetime:
         return now + timedelta(hours=1)
     if choice == "4h":
         return now + timedelta(hours=4)
-    local = now.astimezone(zone)
-    morning = local.replace(hour=MORNING_HOUR, minute=0, second=0, microsecond=0)
-    if morning <= local:
-        # Wall-clock arithmetic: across a clock change the next morning is still 08:00 local.
-        morning = (local + timedelta(days=1)).replace(
-            hour=MORNING_HOUR, minute=0, second=0, microsecond=0
-        )
-    return morning.astimezone(UTC)
+    today = now.astimezone(zone).date()
+    morning = morning_of(today, zone)
+    return morning if morning > now else morning_of(today + timedelta(days=1), zone)
+
+
+def morning_of(day: date, zone: tzinfo) -> datetime:
+    """08:00 on `day` in `zone`, as a UTC time; across a clock change it is still 08:00 local."""
+    return datetime.combine(day, time(MORNING_HOUR), tzinfo=zone).astimezone(UTC)
 
 
 def quiet_target(subject: Subject) -> tuple[QuietScope, str] | None:

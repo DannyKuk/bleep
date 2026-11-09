@@ -2,14 +2,16 @@
 incident's subject through the quiet store, and the watcher's quiet listener ends it as Quiet."""
 
 import json
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 import pytest
 from pydantic import SecretStr, ValidationError
 
+from bleep import config
 from bleep.config import Settings
 from bleep.guard.log import GuardLog
 from bleep.hosts.registry import Registry
@@ -20,7 +22,8 @@ from bleep.incidents.repository import IncidentRepo
 from bleep.incidents.runner import IncidentRunner
 from bleep.notify import format as fmt
 from bleep.notify.notifier import Notifier, setup
-from bleep.notify.telegram import MessageLog, OnIt, TelegramBot
+from bleep.notify.telegram import MessageLog, OnIt, TelegramBot, chosen_until, snooze_buttons
+from bleep.schemas.graph import Decision, PlanStep, Proposal
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Thresholds
 from bleep.store.db import Database
@@ -33,6 +36,16 @@ CHAT = "4242"
 SHOP = Subject(kind="service", host_id="laptop", service_id="laptop/compose:shop")
 HOST = Subject(kind="host", host_id="M1")
 VIENNA = ZoneInfo("Europe/Vienna")
+PLAN = Proposal(
+    kind="act",
+    steps=[PlanStep(action="docker.restart", host_id="laptop", target="shop-web")],
+    reason="it exited.",
+)
+CHOICES = [
+    ("1 h", "onit:1h"),
+    ("4 h", "onit:4h"),
+    ("Until tomorrow 08:00", "onit:morning:20261110"),
+]
 
 
 def fixture(name: str, **values: str) -> list[dict]:
@@ -49,6 +62,7 @@ class Chat:
         self.calls: list[tuple[str, dict]] = []
         self.next_id = 500
         self.updates: list[list[dict]] = []
+        self.markup: dict[int, dict] = {}  # what each message shows now
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         method = request.url.path.rsplit("/", 1)[1]
@@ -59,16 +73,25 @@ class Chat:
             return httpx.Response(200, json={"ok": True, "result": result})
         if method == "sendMessage":
             self.next_id += 1
+            self.markup[self.next_id] = body.get("reply_markup", {"inline_keyboard": []})
             return httpx.Response(200, json={"ok": True, "result": {"message_id": self.next_id}})
+        if method == "editMessageReplyMarkup":
+            if self.markup.get(body["message_id"]) == body["reply_markup"]:
+                description = "Bad Request: message is not modified"
+                return httpx.Response(400, json={"ok": False, "description": description})
+            self.markup[body["message_id"]] = body["reply_markup"]
         return httpx.Response(200, json={"ok": True, "result": True})
 
     def sent(self, method: str) -> list[dict]:
         return [body for name, body in self.calls if name == method]
 
 
-class NoResume:
+class Runner:
+    def __init__(self) -> None:
+        self.resumed: list[tuple[str, Decision]] = []
+
     async def resume(self, incident_id, decision, approval_id) -> None:
-        raise AssertionError("a snooze resumes no plan")
+        self.resumed.append((incident_id, decision))
 
 
 class Env:
@@ -93,8 +116,9 @@ class Env:
         self.messages = MessageLog(self.db)
         http = httpx.AsyncClient(transport=httpx.MockTransport(self.chat))
         on_it = OnIt(self.repo, self.quiet, self.bus, self.zone)
+        self.resumer = Runner()
         self.bot = TelegramBot(
-            "7001:token", CHAT, self.approvals, NoResume(), http, messages=self.messages,
+            "7001:token", CHAT, self.approvals, self.resumer, http, messages=self.messages,
             guard_log=self.guard, clock=clock, on_it=on_it,
         )  # fmt: skip
         self.notifier = Notifier(
@@ -133,6 +157,11 @@ class Env:
 
     def answers(self) -> list[str]:
         return [body["text"] for body in self.chat.sent("answerCallbackQuery")]
+
+    def shows(self, message_id: int) -> list[list[tuple[str, str]]]:
+        """The rows of buttons a message shows now."""
+        rows = self.chat.markup[message_id]["inline_keyboard"]
+        return [[(b["text"], b["callback_data"]) for b in row] for row in rows]
 
     def keyboards(self) -> list[tuple[int, list[tuple[str, str]]]]:
         """Each edit of a message's buttons: the message and the buttons it shows now."""
@@ -193,11 +222,62 @@ async def test_a_press_shows_the_three_choices_in_place_of_the_button(env):
 
     await env.press(501)
 
-    assert env.keyboards() == [
-        (501, [("1 h", "onit:1h"), ("4 h", "onit:4h"), ("Until tomorrow 08:00", "onit:morning")])
-    ]
+    assert env.keyboards() == [(501, CHOICES)]
     assert env.answers() == ["How long should Bleep leave it alone?"]
     assert await env.quiet.active() == []  # nothing is snoozed before a choice
+
+
+async def test_a_plans_opener_keeps_approve_and_reject_and_the_plan_can_still_be_approved(env):
+    """A folded repeat's plan, or one sent while the opener never reached Telegram, is the
+    opener: "🤫 I'm on it" sits on its own row, and only that row turns into the choices."""
+    signal = Signal(subject=SHOP, kind="container_died", at=env.now, container="shop-web")
+    incident, _ = await env.repo.open_or_attach(SHOP, [signal], name="shop")
+    request = await env.approvals.request(incident.id, PLAN, [])
+    await env.notifier.proposal(incident, None, PLAN, request)
+    plan_row = [("Approve", f"approve:{request.id}"), ("Reject", f"reject:{request.id}")]
+    assert env.shows(501) == [plan_row, [("🤫 I'm on it", "onit")]]
+
+    env.chat.updates.append(
+        fixture("callback_on_it_plan", MESSAGE_ID="501", APPROVAL_ID=request.id, DATA="onit")
+    )
+    await env.bot.poll_once()
+    assert env.shows(501) == [plan_row, CHOICES]
+
+    approve = f"approve:{request.id}"
+    env.chat.updates.append(
+        fixture("callback_on_it_plan", MESSAGE_ID="501", APPROVAL_ID=request.id, DATA=approve)
+    )
+    await env.bot.poll_once()
+    [(resumed, decision)] = env.resumer.resumed
+    assert resumed == incident.id and decision.kind == "approve"
+    assert await env.quiet.active() == []
+
+
+async def test_a_double_tap_is_answered_twice_and_shows_the_choices_once(env):
+    await env.open()
+
+    await env.press(501)
+    await env.press(501)  # Telegram: "message is not modified"
+
+    assert env.answers() == ["How long should Bleep leave it alone?"] * 2
+    assert env.shows(501) == [CHOICES]
+
+
+async def test_an_incident_that_ends_while_the_choices_go_out_keeps_no_buttons(env, monkeypatch):
+    incident = await env.open()
+    set_buttons = env.bot.client.set_buttons
+
+    async def ended_meanwhile(chat_id, message_id, rows):
+        if rows:  # the choices: the incident ends and its buttons are cleared first
+            await env.repo.set_status(incident.id, "resolved")
+            await env.notifier.drain()
+        await set_buttons(chat_id, message_id, rows)
+
+    monkeypatch.setattr(env.bot.client, "set_buttons", ended_meanwhile)
+
+    await env.press(501)
+
+    assert env.shows(501) == []
 
 
 # --- a choice ---
@@ -208,7 +288,7 @@ async def test_a_press_shows_the_three_choices_in_place_of_the_button(env):
     [
         ("1h", T0 + timedelta(hours=1), "13:00"),
         ("4h", T0 + timedelta(hours=4), "16:00"),
-        ("morning", datetime(2026, 11, 10, 8, 0, tzinfo=UTC), "tomorrow 08:00"),
+        ("morning:20261110", datetime(2026, 11, 10, 8, 0, tzinfo=UTC), "tomorrow 08:00"),
     ],
 )
 async def test_each_choice_snoozes_the_service_and_ends_the_incident_as_quiet(
@@ -237,8 +317,21 @@ async def test_a_snooze_from_telegram_says_so_on_the_incidents_timeline(env):
     await env.press(501, "1h")
 
     notices = [e.payload["text"] for e in await env.bus.history(incident.id) if e.kind == "notice"]
-    assert notices[0] == "Snoozed from Telegram: you said you are on it."
-    assert notices[1].startswith("Closed: you snoozed")
+    assert notices[0].startswith("Closed: you snoozed")
+    assert notices[1] == "Snoozed from Telegram: you said you are on it."
+
+
+async def test_a_snooze_that_fails_leaves_no_note_on_the_timeline(env, monkeypatch):
+    incident = await env.open()
+
+    async def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(env.quiet, "set", locked)
+    await env.press(501, "1h")
+
+    assert [e for e in await env.bus.history(incident.id) if e.kind == "notice"] == []
+    assert (await env.repo.get(incident.id)).status == "open"
 
 
 async def test_a_host_incident_snoozes_the_host(env):
@@ -258,7 +351,7 @@ async def test_until_08_00_is_in_the_configured_time_zone(tmp_path):
     await env.open()
     await env.press(501)  # 13:00 in Vienna
 
-    await env.press(501, "morning")
+    await env.press(501, "morning:20261110")
 
     [state] = await env.quiet.active()
     assert state.until == datetime(2026, 11, 10, 7, 0, tzinfo=UTC)  # 08:00 CET
@@ -272,11 +365,39 @@ async def test_in_the_small_hours_until_08_00_is_this_morning(tmp_path):
     await env.open()
 
     await env.press(501)
-    await env.press(501, "morning")
+    await env.press(501, "morning:20261109")
 
-    assert env.keyboards()[0][1][2] == ("Until 08:00", "onit:morning")
+    assert env.keyboards()[0][1][2] == ("Until 08:00", "onit:morning:20261109")
     [state] = await env.quiet.active()
     assert state.until == datetime(2026, 11, 9, 7, 0, tzinfo=UTC)
+
+
+async def test_a_morning_that_passed_since_the_menu_showed_snoozes_nothing(tmp_path):
+    env = await Env(tmp_path, zone=VIENNA).start()
+    env.now = datetime(2026, 11, 9, 6, 50, tzinfo=UTC)  # 07:50 in Vienna
+    await env.open()
+    await env.press(501)
+    assert env.shows(501)[0][2] == ("Until 08:00", "onit:morning:20261109")
+
+    env.now = datetime(2026, 11, 9, 7, 5, tzinfo=UTC)  # 08:05
+    await env.press(501, "morning:20261109")
+
+    assert await env.quiet.active() == []
+    assert env.answers()[-1] == "That morning has passed; choose again."
+    assert env.shows(501)[0][2] == ("Until tomorrow 08:00", "onit:morning:20261110")
+
+
+async def test_without_a_configured_zone_the_times_are_utc_and_say_so(tmp_path):
+    env = await Env(tmp_path, zone=None).start()
+    await env.open()
+
+    await env.press(501)
+    assert env.shows(501)[0][2] == ("Until tomorrow 08:00 UTC", "onit:morning:20261110")
+    await env.press(501, "1h")
+
+    assert env.answers()[-1] == "Snoozed until 13:00 UTC. Bleep leaves it alone until then."
+    _, end = env.chat.sent("sendMessage")
+    assert first_line(end) == fmt.bold_first_line(fmt.escape("🤫 Quiet until 13:00 UTC"))
 
 
 # --- presses that change nothing ---
@@ -334,10 +455,13 @@ async def test_a_press_while_a_step_runs_on_the_host_snoozes_nothing(env):
     assert (await env.repo.get(incident.id)).status == "executing"
 
 
-async def test_an_unknown_choice_snoozes_nothing(env):
+@pytest.mark.parametrize(
+    "choice", ["forever", "morning", "morning:2026111", "morning:20261340", "morning:20261201"]
+)
+async def test_an_unknown_choice_or_a_far_morning_snoozes_nothing(env, choice):
     await env.open()
 
-    await env.press(501, "forever")
+    await env.press(501, choice)
 
     assert await env.quiet.active() == []
     assert env.answers() == ["Bleep does not know that message any more."]
@@ -402,6 +526,18 @@ def test_a_time_reads_as_today_tomorrow_or_a_weekday():
     assert fmt.when(datetime(2026, 11, 12, 8, 0, tzinfo=UTC), now, UTC) == "Thu 08:00"
     late = datetime(2026, 11, 9, 23, 30, tzinfo=UTC)  # 00:30 on Tuesday in Vienna
     assert fmt.when(late, now, VIENNA) == "tomorrow 00:30"
+    assert fmt.when(datetime(2026, 11, 10, 8, 0, tzinfo=UTC), now, None) == "tomorrow 08:00 UTC"
+
+
+def test_a_choices_data_says_when_its_snooze_ends():
+    now = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
+    assert chosen_until("1h", now, None) == now + timedelta(hours=1)
+    assert chosen_until("morning:20261110", now, VIENNA) == datetime(2026, 11, 10, 7, 0, tzinfo=UTC)
+    assert chosen_until("morning:20261110", now, None) == datetime(2026, 11, 10, 8, 0, tzinfo=UTC)
+    for wrong in ("2h", "morning", "morning:2026-11-10", "morning:20261310", "morning:x"):
+        assert chosen_until(wrong, now, None) is None
+    for _, data in snooze_buttons(now, VIENNA):  # Telegram's limit for callback data
+        assert len(data.encode()) <= 64 and chosen_until(data[len("onit:") :], now, VIENNA)
 
 
 # --- set up from the settings ---
@@ -430,9 +566,20 @@ async def test_setup_gives_the_notifier_and_the_bot_the_button_in_the_configured
     await built.close()
 
 
-def test_the_time_zone_is_utc_unless_set_and_must_be_a_real_one(tmp_path):
-    assert str(settings(tmp_path).zone) == "UTC"
+def test_the_time_zone_is_unset_unless_set_and_must_be_a_real_one(tmp_path):
+    assert settings(tmp_path).zone is None  # UTC, and the times say so
     assert settings(tmp_path, timezone="Europe/Vienna").zone == VIENNA
     for wrong in ("Mars/Olympus", "../etc/passwd", "Europe"):
         with pytest.raises(ValidationError, match="IANA time zone"):
             settings(tmp_path, timezone=wrong)
+
+
+def test_utc_needs_no_zone_data(tmp_path, monkeypatch):
+    """An image without tzdata still starts with the setting unset or UTC."""
+
+    def no_zone_data(name: str):
+        raise ZoneInfoNotFoundError(name)
+
+    monkeypatch.setattr(config, "ZoneInfo", no_zone_data)
+    assert settings(tmp_path).zone is None
+    assert settings(tmp_path, timezone="UTC").zone is UTC
