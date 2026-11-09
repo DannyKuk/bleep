@@ -6,6 +6,7 @@ characters, and each pattern below is written to run in linear time on what is l
 """
 
 import ipaddress
+import itertools
 import re
 import string
 from collections.abc import Callable
@@ -50,10 +51,11 @@ _SERVICE_SCHEMES = frozenset({
     "mongodb", "amqp", "amqps", "nats", "kafka", "mqtt", "mqtts", "smtp", "smtps", "ldap", "ldaps",
 })  # fmt: skip
 _DRIVER = re.compile(r"[a-z0-9]{1,24}")  # postgresql+psycopg, mongodb+srv
-_TOKEN_SEGMENT = re.compile(
-    r"(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{16,}"
-    r"|(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*[A-Z])[A-Za-z0-9]{16,}"
-)
+_TOKEN_SEGMENT = re.compile(r"(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{16,}")
+_LETTERS_SEGMENT = re.compile(r"[A-Za-z]{16,}")
+# A random 20-letter token switches case about 10 times; a CamelCase service name such as
+# `PaymentGatewayService` switches once per word boundary, 5 times.
+MIN_CASE_SWITCHES = 6
 _UUID = re.compile(r"[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}")
 _DNS_LABEL = r"[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?"
 _HOST_NAME = re.compile(rf"{_DNS_LABEL}(?:\.{_DNS_LABEL})*")
@@ -99,15 +101,25 @@ def _is_service_scheme(scheme: str) -> bool:
 
 
 def _looks_like_token(place: str) -> bool:
-    """A host segment of 16 or more letters and digits that mixes letters with digits or lower
-    with upper case, or a UUID, is read as a key (a Lambda function URL id, `sk_live_…`,
-    `glpat-…`); a 12-hex container id is shorter, and a host name is written in one case."""
+    """A UUID, or a host segment of 16 or more characters that mixes letters with digits or is
+    letters switching case at least 6 times, is read as a key (a Lambda function URL id,
+    `sk_live_…`, `glpat-…`); a 12-hex container id is shorter, and a CamelCase service name
+    switches case less often."""
     if place.startswith("["):
         return False
     host = place.partition(":")[0]
     return bool(_UUID.search(host)) or any(
-        _TOKEN_SEGMENT.fullmatch(segment) for segment in re.split(r"[._-]", host)
+        _is_token_segment(segment) for segment in re.split(r"[._-]", host)
     )
+
+
+def _is_token_segment(segment: str) -> bool:
+    if _TOKEN_SEGMENT.fullmatch(segment):
+        return True
+    if not _LETTERS_SEGMENT.fullmatch(segment):
+        return False
+    switches = sum(a.isupper() != b.isupper() for a, b in itertools.pairwise(segment))
+    return switches >= MIN_CASE_SWITCHES
 
 
 def _host_port(text: str) -> str | None:

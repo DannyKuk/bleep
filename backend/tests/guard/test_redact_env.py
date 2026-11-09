@@ -184,7 +184,8 @@ def test_a_value_the_readings_disagree_on_is_hidden_whole(value):
         "https://3a7f9c2e-1b4d-4e8a-9f6c-2d5b8e1a7c3f.example.com",
         "https://hooks.3A7F9C2E-1B4D-4E8A-9F6C-2D5B8E1A7C3F.example.com:443",
         f"https://{HEX40}.example.com/x",
-        "https://sk_live_abcdefghijklMNOPqrstuvwx.example.com",
+        "https://sk_live_aBcDeFgHiJkLmNoPqRsTuVwX.example.com",
+        "https://gnKjNfhvIjCcjQLRiyhgPzWb.example.com",
     ],
 )
 def test_a_token_where_the_host_goes_is_hidden_whole(value):
@@ -207,12 +208,23 @@ def test_a_token_where_the_host_goes_is_hidden_whole(value):
         "ep-cool-darkness-123456.us-east-2.aws.neon.tech",
         "o450123.ingest.sentry.io",
         "SHOP-DATABASE-PRIMARY.INTERNAL",
+        "PaymentGatewayService",
+        "KafkaBrokerPrimary",
+        "PostgreSQLPrimary",
+        "OrderProcessingService",
+        "MyProductionDatabase.corp.local",
     ],
 )
 def test_a_real_service_host_is_shown(host):
     assert shown(f"postgresql+psycopg://u:p@{host}:5432/x") == (
         f"postgresql+psycopg://<redacted>@{host}:5432/<redacted>"
     )
+
+
+def test_a_name_joining_words_and_digits_is_hidden_as_a_known_cost():
+    """The digit rule cannot tell `postgres14primary` from a token; it costs evidence, never a
+    secret (guard.md, Known limits)."""
+    assert shown("postgres://postgres14primary:5432") == "<redacted>"
 
 
 def test_a_password_written_where_the_host_and_port_go_is_shown_as_a_known_limit():
