@@ -27,7 +27,9 @@ export function ProgressBar({ steps }: { steps: ProgressStep[] }) {
           >
             <span aria-hidden className={cn("h-2 rounded-full", look.fill)} />
             <span className="flex items-center gap-1">
-              {look.cross && <X aria-hidden className="size-3.5 shrink-0" strokeWidth={3} />}
+              {look.icon === "cross" && (
+                <X aria-hidden className="size-3.5 shrink-0" strokeWidth={3} />
+              )}
               {label}
               <span className="sr-only">, {look.word}</span>
             </span>

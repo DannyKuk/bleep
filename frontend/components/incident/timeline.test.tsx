@@ -158,7 +158,7 @@ describe("Timeline", () => {
       const look = LOOK[item.getAttribute("data-state") as Mark];
       expect(item.querySelector(".sr-only")).toHaveTextContent(`, ${look.word}`);
       const marker = item.querySelector("[aria-hidden]")!;
-      if (look.cross) expect(marker.querySelector("svg")).toHaveClass(look.ink);
+      if (look.icon !== "dot") expect(marker.querySelector("svg")).toHaveClass(look.ink);
       else expect(marker.firstElementChild!.className).toContain(look.fill);
     }
   });
@@ -171,10 +171,10 @@ describe("Timeline", () => {
     expect(screen.getByText("Waiting for your answer")).toHaveClass("font-extrabold");
   });
 
-  it("starts with what opened the incident as a marker of its own, not as a failure", () => {
+  it("starts with what broke and opened the incident, marked apart from a failed step", () => {
     render(<Timeline events={[]} incident={incident({ status: "investigating" })} />);
     const [opened] = timelineItems();
-    expect(opened).toHaveTextContent("shop-web-1 died, opened the incident");
+    expect(opened).toHaveTextContent("shop-web-1 died, what broke");
     expect(opened).toHaveAttribute("data-state", "opened");
   });
 

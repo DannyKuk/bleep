@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { CircleAlert, X } from "lucide-react";
 
 import { LOOK, type Mark } from "@/components/incident/colour-code";
 import { RunSoFar } from "@/components/incident/progress";
@@ -170,22 +170,25 @@ function withEnds(entries: Entry[], incident: Incident): Entry[] {
   return [opened, ...entries, ...closed];
 }
 
-/** The line's dot, a cross for a line that went wrong or a no, or the opener's ring. */
+/** The line's dot, a cross for a line that went wrong or a no, or an alert for what broke. */
 function Marker({ mark }: { mark: Mark }) {
   const look = LOOK[mark];
+  const icon = {
+    cross: <X className={cn("size-3.5", look.ink)} strokeWidth={3} />,
+    alert: <CircleAlert className={cn("size-3.5", look.ink)} strokeWidth={2.5} />,
+    dot: (
+      <span
+        className={cn(
+          "size-2.5 rounded-full",
+          look.fill,
+          mark === "current" && "motion-safe:animate-pulse",
+        )}
+      />
+    ),
+  }[look.icon];
   return (
     <span aria-hidden className="mt-[3px] flex size-3.5 shrink-0 items-center justify-center">
-      {look.cross ? (
-        <X className={cn("size-3.5", look.ink)} strokeWidth={3} />
-      ) : (
-        <span
-          className={cn(
-            "size-2.5 rounded-full",
-            look.fill,
-            mark === "current" && "motion-safe:animate-pulse",
-          )}
-        />
-      )}
+      {icon}
     </span>
   );
 }

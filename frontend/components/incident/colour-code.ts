@@ -16,35 +16,32 @@ export interface Look {
   tone?: string;
   /** Said to a screen reader after the label, so the colour is never the only cue. */
   word: string;
-  /** Drawn with a cross: a step that went wrong, where a run stopped, a no. */
-  cross: boolean;
+  /** The marker: a cross for a step that went wrong, where a run stopped or a no; an alert for
+   * what broke and opened the incident; a plain dot otherwise. */
+  icon: "dot" | "cross" | "alert";
 }
 
 /**
  * The incident page's one colour code: green done, accent happening now, red failed or stopped
  * there and nothing else, amber a warning that does not end the run, grey not reached (`line`) or
- * neutral (`stop`). What opened the incident is a hollow ring, not a state colour. Class names are
- * written out in full so Tailwind sees them.
+ * neutral (`stop`). What opened the incident is red too, since something broke, but with an alert
+ * rather than a cross, which is kept for Bleep's own steps. Class names are written out in full so
+ * Tailwind sees them.
  */
 export const LOOK: Record<Mark, Look> = {
-  done: { fill: "bg-ok", ink: "text-ok", word: "done", cross: false },
-  current: { fill: "bg-accent", ink: "text-accent", word: "now", cross: false },
-  failed: { fill: "bg-down", ink: "text-down", tone: "text-down", word: "failed", cross: true },
+  done: { fill: "bg-ok", ink: "text-ok", word: "done", icon: "dot" },
+  current: { fill: "bg-accent", ink: "text-accent", word: "now", icon: "dot" },
+  failed: { fill: "bg-down", ink: "text-down", tone: "text-down", word: "failed", icon: "cross" },
   stopped: {
     fill: "bg-down",
     ink: "text-down",
     tone: "text-down",
     word: "stopped here",
-    cross: true,
+    icon: "cross",
   },
-  warning: { fill: "bg-warn", ink: "text-warn", tone: "text-warn", word: "warning", cross: false },
-  todo: { fill: "bg-line", ink: "text-ink-2", tone: "text-ink-2", word: "not done", cross: false },
-  declined: { fill: "bg-stop", ink: "text-stop", word: "you said no", cross: true },
-  info: { fill: "bg-stop", ink: "text-stop", word: "note", cross: false },
-  opened: {
-    fill: "border-2 border-ink-2",
-    ink: "text-ink-2",
-    word: "opened the incident",
-    cross: false,
-  },
+  warning: { fill: "bg-warn", ink: "text-warn", tone: "text-warn", word: "warning", icon: "dot" },
+  todo: { fill: "bg-line", ink: "text-ink-2", tone: "text-ink-2", word: "not done", icon: "dot" },
+  declined: { fill: "bg-stop", ink: "text-stop", word: "you said no", icon: "cross" },
+  info: { fill: "bg-stop", ink: "text-stop", word: "note", icon: "dot" },
+  opened: { fill: "bg-down", ink: "text-down", word: "what broke", icon: "alert" },
 };

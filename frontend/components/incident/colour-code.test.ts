@@ -5,9 +5,9 @@ import { LOOK, type Mark } from "@/components/incident/colour-code";
 const marks = Object.keys(LOOK) as Mark[];
 
 describe("LOOK", () => {
-  it("keeps red for a step that failed or where a run stopped, and nothing else", () => {
+  it("keeps red for something that failed: a step, where a run stopped, what broke", () => {
     const red = marks.filter((mark) => /\bdown\b/.test(LOOK[mark].fill + LOOK[mark].ink));
-    expect(red.sort()).toEqual(["failed", "stopped"]);
+    expect(red.sort()).toEqual(["failed", "opened", "stopped"]);
   });
 
   it("gives one colour per meaning: green done, accent now, amber a warning", () => {
@@ -25,10 +25,15 @@ describe("LOOK", () => {
   });
 
   it("draws a cross for what went wrong and for a no, so colour is not the only cue there", () => {
-    expect(marks.filter((mark) => LOOK[mark].cross).sort()).toEqual([
+    expect(marks.filter((mark) => LOOK[mark].icon === "cross").sort()).toEqual([
       "declined",
       "failed",
       "stopped",
     ]);
+  });
+
+  it("marks what broke with an alert, so it never reads as a step of Bleep's that failed", () => {
+    expect(LOOK.opened.icon).toBe("alert");
+    expect(LOOK.opened.word).toBe("what broke");
   });
 });
