@@ -21,6 +21,7 @@ export function incident(overrides: Partial<Incident> = {}): Incident {
     trace_url: null,
     prompt_overrides: null,
     fold_of: null,
+    short_name: null,
     ...overrides,
   };
 }
