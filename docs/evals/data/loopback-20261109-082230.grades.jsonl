@@ -1,0 +1,2 @@
+{"run_id": "verify-failed-oom/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the 128 MiB limit too small for the larger catalogue after the nightly import, OOM-killed while loading, so a restart cannot help"}
+{"run_id": "verify-failed-url/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-web's database host shop-db-old, which does not resolve, so /api/items answers 503 while the container is healthy"}
