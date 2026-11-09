@@ -1,8 +1,8 @@
 # Spike: the GitHub read tools and the repo docs ingest on github.com
 
-Measured on 2026-11-09 with [`spike.py`](spike.py), run inside the live backend container (#338). Steps 1-4 of the issue are below; step 5, the live incident with a real model, is to come.
+Measured on 2026-11-09 (#338). Steps 1-4 ran with [`spike.py`](spike.py) inside the live backend container. Step 5 was one live incident on the running Bleep with a real model.
 
-**Every number below comes from the one saved run of the script (09:19 UTC) or from the backend's own start (09:15 UTC).** Latencies are single calls, not a spread. No model was called in steps 1-4.
+**Every number below comes from the one saved run of the script (09:19 UTC), the backend's own start (09:15 UTC), or the step-5 incident's record (its events, usage rows and report, read from the API).** Latencies are single calls, not a spread. No model was called in steps 1-4.
 
 ## Setup
 
@@ -91,14 +91,67 @@ What was added: the recorded 401 body (`unauthorized.json`) and a client test th
 
 ## Step 5: a live incident whose cause is a recent commit
 
-To come.
+**The model found the commit and the change, and named the change exactly, but not the commit.**
+
+### Setup
+
+`recent_commits` reads only a repo's default branch, and the bad commit could not go on Bleep's own `main`. So a private copy of the shop was made, [`DannyKuk/bleep-shop-live`](https://github.com/DannyKuk/bleep-shop-live). It has Bleep's `demo/` folder at `eb46b75` without the fault script, so no commit names the faults. Its history is two commits:
+
+| sha | Message | Change |
+|---|---|---|
+| `a0659d2` | Add the shop at version 1: web, database, worker and proxy in one Compose project, with its docs | the whole shop |
+| `3f204d3` | Deploy shop 2 | `demo/compose.yaml`, one line: `SHOP_VERSION: ${SHOP_VERSION:-1}` becomes `${SHOP_VERSION:-2}` |
+
+That one line is what `demo/fault.sh bad-deploy on` puts on the host: shop-web recreated with `SHOP_VERSION=2`, which reads the column `price_cents` that the database lacks ([demo](../../demo.md#bad-deploy)). Before the run, one request with the token listed both commits. For the run, the shop's service in the hosts file linked the copy (`docs_paths: [demo/shop/docs]`, `readme: false`) and got the demo's two URL checks and two rules, as in [`config/hosts.demo.yaml`](../../../config/hosts.demo.yaml). bad-deploy's only signal is a failed URL check. Then the backend was restarted.
+
+### What happened
+
+Incident `inc_01M6ZVFTXJPM41G1EY` on `laptop/compose:shop`, model `openai/gpt-6-luna`:
+
+| UTC | |
+|---|---|
+| 09:50:31 | `fault.sh bad-deploy on` |
+| 09:50:34 | first `url_failed` (`/api/items`) |
+| 09:51:04 | second `url_failed`; the incident opens |
+| 09:51:04-09:51:25 | Investigate, 8 tool calls (21 s) |
+| 09:51:28 | Diagnose |
+| 09:51:34 | Propose: no action |
+| 09:51:36 | Report; the incident closes, 32 s after it opened |
+
+Investigate's calls in order:
+
+1. `list_containers`
+2. `recent_commits(since_hours=168)`: 350 chars, 0.41 s, both commits
+3. `recent_events(minutes=60)`
+4. `inspect_container` shop-web
+5. `inspect_container` shop-db
+6. `commit_diff(sha="3f204d3")`: 715 chars, 0.45 s, the whole one-line diff
+7. `commit_diff(sha="a0659d2")`: 7,882 chars, 0.52 s, cut with its note
+8. `knowledge_search("shop version 2 price_cents database migration existing items schema demo shop", sources=["repo"])`: 1,591 chars, 11 ms
+
+It never called `container_logs`: Gather had already given it the last 200 log lines of the shop's containers, which is where its "logs" evidence came from.
+
+- **Diagnosis** (category `code`, confidence 0.99): "Deploying shop-web version 2 made it query `price_cents`, but the existing shop-db schema still has `price`; requests to `/api/items` therefore fail with database undefined-column errors." The evidence included `commits`: "A deployment changed the default SHOP_VERSION from 1 to 2 shortly before the failures", and `docs`: the documented schema has `price`.
+- **Proposal:** no action, since a restart would bring version 2 back. Instructions: set `SHOP_VERSION` to 1 in `demo/compose.yaml` and apply it with `docker compose -f demo/compose.yaml up -d shop-web`. That matches the expected proposal in [demo](../../demo.md#bad-deploy).
+- **Report's cause:** "A deployment changed the default SHOP_VERSION from 1 to 2, and version 2 queries price_cents while the documented schema has price."
+- **The commit is described, not named.** Neither the diagnosis nor the report gives the sha `3f204d3` or the title "Deploy shop 2". A human can find the commit from the cause, since it is the only change to `SHOP_VERSION`, but the report does not point at it. Nothing in Diagnose's or Report's prompts asks for a commit's sha when a commit is the cause.
+- Diagnose's measured `planted_in` (never shown) said `memory`: the model judged that something recalled from memory spoke to it. The report's `planted_in` is empty. The run had nothing planted, so this is a false reading by the model; the spike did not dig into which recalled text set it off.
+
+### Cost
+
+7 model calls, 46,364 tokens in and 1,486 out (47,850 in all). Bleep's usage ledger priced every call from OpenRouter's own per-call cost: **$0.0039** for the incident, the `cost_usd` that `GET /api/incidents/{id}` and the dev panel show. The OpenRouter key's usage went from $7.6227 to $7.6248 ($0.0021) when read just after the run. The key's counter may lag; the ledger's per-call figures are the record. The issue's estimate was $0.004-0.006, from the 2026-11-09 bad-deploy scenario on the same model with the GitHub fixture ($0.0035, 49,018 tokens in). The live run cost about the same.
+
+### Afterwards
+
+The fault is off, the hosts file is back to the step 1-4 link (`DannyKuk/bleep`, no URL checks), and the backend restarted. **`DannyKuk/bleep-shop-live` still exists**, kept for a live walkthrough. To delete it: `gh auth refresh -h github.com -s delete_repo`, then `gh repo delete DannyKuk/bleep-shop-live --yes`. Its commits stop showing in `recent_commits`' default 48 hours after 2026-11-11 09:45 UTC.
 
 ## Limits
 
 - One run, from one machine, at one time of day; the latencies are single calls.
 - The repos were the account's own. A repo the token cannot see was simulated by one that does not exist: GitHub answers both with 404, and the tool's sentence covers both.
 - Secondary rate limits and a spent primary limit were not triggered.
-- The whole run was a script inside the container, not the dashboard: the dev panel has no route that calls a tool. The tools ran on a stand-in registry and incident id; the live graph, which builds the same tools from the same specs, is step 5.
+- Steps 2-4 were a script inside the container, not the dashboard: the dev panel has no route that calls a tool. The tools ran on a stand-in registry and incident id; step 5 ran them in the live graph.
+- Step 5 is one incident and one run of the model, on a two-commit repo made for it. A real repo's history is longer and noisier, and a run may read the commits differently another time.
 
 ## Reproduce
 
