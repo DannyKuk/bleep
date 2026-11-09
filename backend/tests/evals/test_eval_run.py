@@ -835,6 +835,62 @@ async def test_the_suite_offers_knowledge_search_over_the_snapshot_when_given_an
     assert len(await index.document_ids("docker:")) >= 20
 
 
+def test_the_demo_shops_linked_docs_are_read_from_the_checkout_as_the_app_reads_them(tmp_path):
+    """The demo hosts file links the shop to this repo with `docs_paths: [demo/shop/docs]` and
+    no README, so a scenario run searches the same two pages the app's refresher reads (#364)."""
+    from evals.run import checkout_repo_docs
+
+    shipped = eval_host(settings(tmp_path, hosts_file=REPO / "config" / "hosts.demo.yaml"))
+    docs = checkout_repo_docs(shipped)
+
+    assert [d.id for d in docs] == [
+        "repo:DannyKuk/bleep:demo/shop/docs/deploy.md",
+        "repo:DannyKuk/bleep:demo/shop/docs/services.md",
+    ]
+    assert {d.source for d in docs} == {"repo"}
+    assert docs[0].url == "https://github.com/DannyKuk/bleep/blob/HEAD/demo/shop/docs/deploy.md"
+    assert "| `WORKER_BATCH_MB` | shop-worker | `8` |" in docs[0].text
+
+
+def test_only_this_checkouts_repo_is_read_with_its_readme_and_doc_paths(tmp_path):
+    from bleep.hosts.config import ServiceOverrides
+    from evals.run import checkout_repo_docs
+    from fakes import socket_host as linked_host
+
+    (tmp_path / "README.md").write_text("# Read me", encoding="utf-8")
+    (tmp_path / "docs" / "ops").mkdir(parents=True)
+    (tmp_path / "docs" / "ops" / "run.md").write_text("Run it.", encoding="utf-8")
+    (tmp_path / "docs" / "logo.png").write_bytes(b"png")
+    (tmp_path / "notes.md").write_text("A note.", encoding="utf-8")
+    host = linked_host(
+        services={
+            "app": ServiceOverrides(repo="DannyKuk/bleep"),
+            "notes": ServiceOverrides(repo="DannyKuk/bleep", docs_paths=["notes.md", "gone"]),
+            "elsewhere": ServiceOverrides(repo="acme/blog"),
+            "unlinked": ServiceOverrides(),
+        }
+    )
+
+    docs = checkout_repo_docs(host, root=tmp_path)
+
+    assert [d.id.rsplit(":", 1)[1] for d in docs] == ["README.md", "docs/ops/run.md", "notes.md"]
+
+
+async def test_the_knowledge_index_holds_the_repo_docs_it_is_given(tmp_path):
+    from bleep.memory.embeddings import FakeEmbedder
+    from evals.run import checkout_repo_docs, snapshot_index
+
+    shipped = eval_host(settings(tmp_path, hosts_file=REPO / "config" / "hosts.demo.yaml"))
+    index = await snapshot_index(tmp_path, FakeEmbedder(), checkout_repo_docs(shipped))
+
+    hits = await index.search("WORKER_BATCH_MB default", k=5, sources={"repo"})
+    assert {h.title for h in hits} == {
+        "DannyKuk/bleep: demo/shop/docs/deploy.md",
+        "DannyKuk/bleep: demo/shop/docs/services.md",
+    }
+    assert len(await index.document_ids("docker:")) >= 20
+
+
 def test_the_reproduce_command_keeps_the_knowledge_switch():
     from evals.run import _command, _parser
 

@@ -289,6 +289,16 @@ def test_the_setup_says_whether_knowledge_search_was_offered():
     assert "Knowledge search was offered" not in render(INFO, RESULTS)
 
 
+def test_the_setup_names_the_repo_docs_knowledge_search_held():
+    page = "DannyKuk/bleep: demo/shop/docs/deploy.md"
+    with_docs = INFO.model_copy(update={"knowledge": True, "repo_docs": [page]})
+    assert f"and the linked repo docs `{page}`, read from this checkout." in render(
+        with_docs, RESULTS
+    )
+    snapshot_only = render(INFO.model_copy(update={"knowledge": True}), RESULTS)
+    assert "snapshot, as in the app." in snapshot_only  # batches from before #364
+
+
 def test_a_grade_for_a_run_a_judge_model_scored_is_refused(tmp_path):
     """Grading by hand is for a `manual` batch: a judge's score must not be overwritten."""
     grade = {"run_id": "db-down/1", "root_cause_pass": True, "root_cause_score": 1.0, "note": ""}
@@ -389,6 +399,22 @@ def test_what_a_scenario_must_name_is_shown_with_what_each_run_left_out():
     assert (
         "- The diagnosis named everything its fix needs in 1 of 2 runs that score it, and the "
         "plan in 1 of 2." in text
+    )
+
+
+def test_what_a_scenario_must_set_is_listed_as_key_and_value_with_its_names():
+    update = {"must_name": ["WORKER_BATCH_MB"], "must_set": {"WORKER_BATCH_MB": "8"}}
+    scenario = SCENARIO.model_copy(update={"expected": SCENARIO.expected.model_copy(update=update)})
+    runs = [result(1, diagnosis_unnamed=["WORKER_BATCH_MB=8"], plan_unnamed=[])]
+
+    text = render(INFO.model_copy(update={"scenarios": [scenario]}), runs)
+
+    assert (
+        "- Must name `WORKER_BATCH_MB`, `WORKER_BATCH_MB=8`, in the diagnosis and in the plan"
+        in text
+    )
+    assert "  - Names: the diagnosis leaves out `WORKER_BATCH_MB=8`, the plan names every one" in (
+        text
     )
 
 

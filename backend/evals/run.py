@@ -55,12 +55,15 @@ from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.incidents.runner import IncidentRunner
 from bleep.knowledge.index import KnowledgeIndex
-from bleep.knowledge.ingest import load_snapshot
+from bleep.knowledge.ingest import load_snapshot, repo_documents
+from bleep.knowledge.repos import DEFAULT_DOCS, MARKDOWN
 from bleep.llm import structured
 from bleep.llm.usage import CostLedger
 from bleep.memory.embeddings import Embedder, FastEmbedEmbedder
 from bleep.schemas.docker import ContainerSummary
+from bleep.schemas.github import RepoFile
 from bleep.schemas.incidents import Incident, Subject
+from bleep.schemas.knowledge import KnowledgeDocument
 from bleep.schemas.settings import ModelSettings, Thresholds
 from bleep.store.db import Database
 from bleep.tools.default import default_registry
@@ -108,6 +111,9 @@ DOCKER_DESKTOP_SOCKET = Path.home() / ".docker" / "run" / "docker.sock"
 LOCAL_NAMES = ("localhost", "127.0.0.1")
 DEMO_COMPOSE = REPO / "demo" / "compose.yaml"
 SHOP_PROJECT = "shop"  # demo/compose.yaml's `name:`
+# The GitHub repo this checkout is. The demo hosts file links the shop to it, so the harness reads
+# the shop's docs from here, at the paths the hosts file names, and asks GitHub for nothing.
+CHECKOUT_REPO = "DannyKuk/bleep"
 # The shop's containers with a health check; the reset waits until both are healthy.
 SHOP_HEALTHY = ("shop-web", "shop-db")
 ITEMS_PATH = "/api/items"
@@ -719,14 +725,49 @@ def summary(result: ScenarioResult) -> str:
     return line + (f"; {result.error}" if result.error else "")
 
 
-async def snapshot_index(folder: Path, embedder: Embedder) -> KnowledgeIndex:
-    """Knowledge search as a fresh install has it: the shipped Docker docs snapshot, embedded
-    into a database in `folder`, with no repo docs and no past incidents."""
+async def snapshot_index(
+    folder: Path, embedder: Embedder, repo_docs: Sequence[KnowledgeDocument] = ()
+) -> KnowledgeIndex:
+    """Knowledge search as a fresh install has it once its repos are read: the shipped Docker
+    docs snapshot and `repo_docs`, embedded into a database in `folder`, with no past
+    incidents."""
     db = Database(folder / "knowledge.db")
     await db.migrate()
     index = KnowledgeIndex(db, embedder)
     await index.sync("docker", load_snapshot())
+    if repo_docs:
+        await index.sync("repo", repo_docs)
     return index
+
+
+def checkout_repo_docs(host: HostConfig, root: Path = REPO) -> list[KnowledgeDocument]:
+    """The repo docs the app would read for the services of `host` that link this checkout's
+    repo (`CHECKOUT_REPO`), read from `root`: the README when a service wants it, then the
+    markdown under each service's `docs_paths` (`docs` when it names none). A service linking
+    another repo gets none, since the harness reads no GitHub; a path missing here is skipped,
+    as GitHub's 404 is."""
+    paths: list[str] = []
+    for name, service in host.services.items():
+        if service.repo is None:
+            continue
+        if service.repo != CHECKOUT_REPO:
+            log.info("service %s links %s; its docs are not read", name, service.repo)
+            continue
+        if service.readme:
+            paths.append("README.md")
+        for path in service.docs_paths or DEFAULT_DOCS:
+            where = root / path
+            if where.is_dir():
+                found = (p for p in where.rglob("*") if p.suffix.lower() in MARKDOWN)
+                paths += sorted(p.relative_to(root).as_posix() for p in found)
+            elif path.lower().endswith(MARKDOWN):
+                paths.append(path)
+    files = [
+        RepoFile(path=path, sha="checkout", text=(root / path).read_text(encoding="utf-8"))
+        for path in dict.fromkeys(paths)
+        if (root / path).is_file()
+    ]
+    return repo_documents(CHECKOUT_REPO, files)
 
 
 async def run_suite(
@@ -873,7 +914,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--only", help="run one scenario, by id")
     parser.add_argument(
         "--no-knowledge", action="store_true",
-        help="do not offer knowledge_search (the app offers it over the Docker docs snapshot)",
+        help="do not offer knowledge_search (the app offers it over the Docker docs snapshot "
+        "and the linked repo docs)",
     )  # fmt: skip
     parser.add_argument("--repeat", type=int, default=1, help="runs per scenario (default 1)")
     parser.add_argument(
@@ -919,9 +961,13 @@ async def _run(
     )  # fmt: skip
     with tempfile.TemporaryDirectory(prefix="bleep-knowledge-") as folder:
         knowledge = None
+        repo_docs = [] if args.no_knowledge else checkout_repo_docs(host)
         if not args.no_knowledge:
-            log.info("embedding the Docker docs snapshot for knowledge search")
-            knowledge = await snapshot_index(Path(folder), FastEmbedEmbedder())
+            log.info(
+                "embedding the Docker docs snapshot and %d repo docs for knowledge search",
+                len(repo_docs),
+            )
+            knowledge = await snapshot_index(Path(folder), FastEmbedEmbedder(), repo_docs)
         results = await run_suite(
             scenarios,
             settings,
@@ -948,6 +994,7 @@ async def _run(
         command=_command(args),
         reset_shop=reset is not None,
         knowledge=not args.no_knowledge,
+        repo_docs=[d.title for d in repo_docs],
         raw=os.path.relpath(raw, report.parent),
         report=str(report.relative_to(REPO)) if report.is_relative_to(REPO) else str(report),
     )

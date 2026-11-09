@@ -102,6 +102,9 @@ class Expected(_Strict):
     # What the fix needs named, exactly as the host names it (an environment variable's key, a
     # file, a container): the diagnosis and the plan must each name every one (#357).
     must_name: list[str] = Field(default_factory=list)
+    # Settings the fix gives a value, key to value, exactly as the service's docs write them: the
+    # diagnosis and the plan must each give the key that value (#364).
+    must_set: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("category")
     @classmethod
@@ -115,6 +118,13 @@ class Expected(_Strict):
     def _plain_names(cls, value: list[str]) -> list[str]:
         if any(not name or name != name.strip() for name in value):
             raise ValueError("must_name holds names without spaces around them, none empty")
+        return value
+
+    @field_validator("must_set")
+    @classmethod
+    def _plain_settings(cls, value: dict[str, str]) -> dict[str, str]:
+        if any(not part or part != part.strip() for pair in value.items() for part in pair):
+            raise ValueError("must_set holds keys and values without spaces around them")
         return value
 
     @model_validator(mode="after")
@@ -243,8 +253,9 @@ def score_category(expected: Expected, diagnosis: Diagnosis | None) -> bool:
 
 
 class NameScore(BaseModel):
-    """The scenario's `must_name` names that the diagnosis, and the plan, leave out; None when
-    the scenario names none or there is no diagnosis (or no plan) to read."""
+    """The scenario's `must_name` names, and its `must_set` settings as `KEY=VALUE`, that the
+    diagnosis, and the plan, leave out; None when the scenario lists none or there is no
+    diagnosis (or no plan) to read."""
 
     diagnosis_unnamed: list[str] | None = None
     plan_unnamed: list[str] | None = None
@@ -255,20 +266,24 @@ def score_names(
 ) -> NameScore:
     """Which of the names the fix needs the diagnosis (its root cause and evidence) and the plan
     (its reason, its instructions to the human, and its steps' targets and params, as a
-    `coolify.set_env` key) leave out. Propose reads the diagnosis and not the logs, so a name the
-    diagnosis drops cannot reach the plan (#357)."""
-    names = expected.must_name
-    if not names:
+    `coolify.set_env` key) leave out, and which `must_set` settings they do not give their value
+    (`unset`; a `coolify.set_env` step with that key and value gives it too). Propose reads the
+    diagnosis and not the logs, so a name or a value the diagnosis drops cannot reach the plan
+    (#357, #364)."""
+    names, settings = expected.must_name, expected.must_set
+    if not names and not settings:
         return NameScore()
     score = NameScore()
     if diagnosis is not None:
-        said = [diagnosis.root_cause, *(e.detail for e in diagnosis.evidence)]
-        score.diagnosis_unnamed = unnamed("\n".join(said), names)
+        said = "\n".join([diagnosis.root_cause, *(e.detail for e in diagnosis.evidence)])
+        score.diagnosis_unnamed = unnamed(said, names) + unset(said, settings)
     if proposal is not None:
         steps = [*proposal.steps, *proposal.refused_steps]
-        said = [proposal.reason, proposal.human_instructions or ""]
-        said += [text for s in steps for text in (s.target, *s.params.values())]
-        score.plan_unnamed = unnamed("\n".join(said), names)
+        said = "\n".join([proposal.reason, proposal.human_instructions or ""])
+        targets = "\n".join(text for s in steps for text in (s.target, *s.params.values()))
+        set_env = {(s.params.get("key"), s.params.get("value")) for s in steps}
+        wanted = {k: v for k, v in settings.items() if (k, v) not in set_env}
+        score.plan_unnamed = unnamed(f"{said}\n{targets}", names) + unset(said, wanted)
     return score
 
 
@@ -281,6 +296,30 @@ def unnamed(text: str, names: Sequence[str]) -> list[str]:
 
 def _name_pattern(name: str) -> re.Pattern[str]:
     return re.compile(rf"(?<![\w.-]){re.escape(name)}(?![\w-])(?!\.\w)")
+
+
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n")
+
+
+def unset(text: str, settings: dict[str, str]) -> list[str]:
+    """The `settings`, as `KEY=VALUE`, that no sentence of `text` gives: one that names the key
+    (as `unnamed` reads a name) and the value whole, in either order (`WORKER_BATCH_MB=8`, "set
+    WORKER_BATCH_MB back to 8 MB", "8, the documented default of WORKER_BATCH_MB"). `8` is not in
+    `80`, `256` or `8.5`. A value in the sentence after the key does not count."""
+    sentences = _SENTENCE_END.split(text)
+    return [
+        f"{key}={value}"
+        for key, value in settings.items()
+        if not any(
+            _name_pattern(key).search(s) and _value_pattern(value).search(s) for s in sentences
+        )
+    ]
+
+
+def _value_pattern(value: str) -> re.Pattern[str]:
+    # A number may carry its unit (`8MB`); anything else ends where a word would go on.
+    after = r"(?!\d)(?!\.\d)" if value[-1].isdigit() else r"(?![\w-])"
+    return re.compile(rf"(?<![\w.]){re.escape(value)}{after}")
 
 
 ARGS_SHOWN = 80  # characters of a tool call's arguments a result keeps
@@ -309,8 +348,8 @@ class ScenarioResult(BaseModel):
     number that meets a small context window first. `structured_fallbacks` counts the model
     calls that gave no structured output through tools, so Bleep asked for JSON instead. Times
     are seconds from the fault going on.
-    `diagnosis_unnamed` and `plan_unnamed` are the scenario's `must_name` names each left out
-    (`score_names`), None when not scored.
+    `diagnosis_unnamed` and `plan_unnamed` are the scenario's `must_name` names, and its
+    `must_set` settings as `KEY=VALUE`, each left out (`score_names`), None when not scored.
     `root_cause_score` is the judge's 0-1 score, None when there was nothing to judge, the judge
     failed, or the grade is left to a human (the `manual` judge) and not applied yet. A run that
     ended early is a failed run: `failure` says how (`timeout`, `context_length` when a model

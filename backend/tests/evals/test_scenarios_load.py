@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from bleep.hosts.config import load_hosts_file
 from evals.mcp_server import load_mcp_fixture
+from evals.run import checkout_repo_docs
 from evals.scenarios import SCENARIOS_DIR, ScenarioError, load_scenario, load_scenarios
 
 GOOD = {
@@ -74,6 +76,8 @@ def test_the_id_must_be_the_file_name(tmp_path):
         (GOOD | {"mcp": "no-such-fixture"}, "no-such-fixture"),
         (changed(must_name=[""]), "must_name"),
         (changed(must_name=["DATABASE_URL "]), "must_name"),
+        (changed(must_set={"WORKER_BATCH_MB": ""}), "must_set"),
+        (changed(must_set={" WORKER_BATCH_MB": "8"}), "must_set"),
     ],
 )  # fmt: skip
 def test_a_malformed_scenario_is_refused(tmp_path, body, why):
@@ -139,6 +143,19 @@ def test_what_a_shipped_scenario_must_name_is_a_key_or_container_of_the_demo_sho
     assert named == {"bad-env": ["DATABASE_URL"], "oom": ["WORKER_BATCH_MB"]}
     for scenario_id, names in named.items():
         assert set(names) <= known, scenario_id
+
+
+def test_what_a_shipped_scenario_must_set_is_what_the_shops_repo_docs_give():
+    """A `must_set` value is the one the shop's linked docs give the key, which knowledge search
+    holds in a scenario run as in the app; inspect hides the running value (#364)."""
+    host = next(h for h in load_hosts_file(REPO / "config" / "hosts.demo.yaml").hosts)
+    docs = "\n".join(d.text for d in checkout_repo_docs(host))
+    wanted = {s.id: s.expected.must_set for s in load_scenarios() if s.expected.must_set}
+    assert wanted == {"oom": {"WORKER_BATCH_MB": "8"}}
+    for scenario_id, values in wanted.items():
+        for key, value in values.items():
+            row = next(line for line in docs.splitlines() if line.startswith(f"| `{key}`"))
+            assert row.split(" | ")[2] == f"`{value}`", scenario_id
 
 
 def test_a_scenario_with_an_mcp_fixture_expects_the_tool_its_server_offers():
