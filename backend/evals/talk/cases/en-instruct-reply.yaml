@@ -1,0 +1,11 @@
+id: en-instruct-reply
+lang: en
+about: An instruction for the waiting plan, sent as a reply.
+state: busy
+incident: 'shop #14'
+text: dont restart, ill fix the batch size myself
+expect:
+  kind: action
+  action:
+    kind: instruct
+    incident: 'shop #14'

@@ -5,6 +5,7 @@ from pydantic import SecretStr
 from bleep.hosts.registry import Registry
 from bleep.schemas.graph import Decision, PlanStep, Proposal
 from bleep.schemas.incidents import Signal, Subject
+from bleep.schemas.settings import SettingsUpdate
 from bleep.wiring import build_parts
 
 T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
@@ -43,4 +44,19 @@ async def test_the_app_clears_telegram_buttons_when_an_incident_ends_or_a_plan_i
     await parts.incidents.close_unfinished(first.id)
     await notifier.drain()
     assert sorted(cleared[1:]) == [1, 2]
+    await parts.notify.close()
+
+
+async def test_the_time_zone_chosen_on_the_settings_page_reaches_the_chat_snapshot(settings):
+    parts = build_parts(settings.model_copy(update={"timezone": "Europe/London"}), Registry([]))
+    await parts.db.migrate()
+    await parts.settings_store.load()
+    parts.talk.state.clock = lambda: T0
+    assert (await parts.talk.state.snapshot()).now == "2026-11-02 12:00"  # London is UTC then
+
+    update = SettingsUpdate.model_validate({"general": {"timezone": "Asia/Tokyo"}})
+    await parts.settings_store.update(update, version=parts.settings_store.version())
+
+    snapshot = await parts.talk.state.snapshot()
+    assert (snapshot.zone, snapshot.now) == ("Asia/Tokyo", "2026-11-02 21:00")
     await parts.notify.close()

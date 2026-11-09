@@ -1,0 +1,14 @@
+id: de-status-calm
+lang: de
+about: A status question in German while everything runs.
+state: calm
+text: wie sieht's aus?
+expect:
+  kind: question
+  words:
+  - - alles
+    - alle
+    - gesund
+    - läuft
+    - laufen
+    - in Ordnung

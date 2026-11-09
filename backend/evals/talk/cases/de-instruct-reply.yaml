@@ -1,0 +1,11 @@
+id: de-instruct-reply
+lang: de
+about: The instruction as a reply, in German.
+state: busy
+incident: 'shop #14'
+text: nicht neu starten, ich setze die Batch-Größe selbst runter
+expect:
+  kind: action
+  action:
+    kind: instruct
+    incident: 'shop #14'

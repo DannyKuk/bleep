@@ -1,0 +1,11 @@
+id: en-instruct-change-reply
+lang: en
+about: 'A change to the waiting plan, sent as a reply: an instruction for it, not a refusal.'
+state: busy
+incident: 'shop #14'
+text: restart the db first, then shop
+expect:
+  kind: action
+  action:
+    kind: instruct
+    incident: 'shop #14'

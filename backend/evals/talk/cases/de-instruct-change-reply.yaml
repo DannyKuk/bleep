@@ -1,0 +1,11 @@
+id: de-instruct-change-reply
+lang: de
+about: 'A change to the waiting plan as a reply, in German: an instruction, not a refusal.'
+state: busy
+incident: 'shop #14'
+text: stopp lieber den Worker statt ihn neu zu starten
+expect:
+  kind: action
+  action:
+    kind: instruct
+    incident: 'shop #14'

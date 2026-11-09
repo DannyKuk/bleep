@@ -42,6 +42,7 @@ backend/
     knowledge/     chunking, index, ingest of the curated docs
     plugins/       plugin base and registry; coolify, mcp_url
     notify/        Telegram and message formatting
+    talk/          answering what the person writes to Bleep, from its own state
     auth/          sessions
     api/           HTTP routes only: validate, call, return a schema
   knowledge/       curated Docker/Compose doc pages
@@ -64,12 +65,15 @@ may import besides itself; `backend/tests/test_dependency_direction.py` checks e
 against it, including imports inside functions and under `if TYPE_CHECKING:`.
 
 - `main` → `api`, `wiring`, `watcher`, `incidents`, `graph`, `hosts`, `config`.
-- `api` → `watcher`, `notify`, `incidents`, `plugins`, `auth`, `llm`, `guard`, `hosts`, `store`,
-  `schemas`, `config`, `prompts`, and only the `AppParts` type from `wiring`.
+- `api` → `watcher`, `notify`, `talk`, `incidents`, `plugins`, `auth`, `llm`, `guard`, `hosts`,
+  `store`, `schemas`, `config`, `prompts`, and only the `AppParts` type from `wiring`.
 - `wiring` → every part below it. It builds the parts from the settings; only `main` calls it.
 - `watcher` → `incidents`, `graph`, `llm`, `guard`, `hosts`, `store`, `schemas`, `config`,
   `prompts`.
-- `notify` → `incidents`, `graph`, `guard`, `store`, `schemas`, `config`, `prompts`.
+- `notify` → `talk`, `incidents`, `graph`, `guard`, `store`, `schemas`, `config`, `prompts`.
+- `talk` → `incidents`, `llm`, `guard`, `hosts`, `store`, `schemas`, `config`, `prompts`. It reads
+  the watcher's health through a Protocol (`talk/state.py`) that `wiring` fills, so it never
+  imports `watcher`.
 - `incidents` → `graph`, `plugins`, `llm`, `guard`, `hosts`, `store`, `schemas`, `prompts`.
 - `graph` → `tools`, `memory`, `llm`, `guard`, `hosts`, `schemas`, `prompts`. It takes the
   incident store, bus and action log as Protocols (`graph/deps.py`), so it never imports

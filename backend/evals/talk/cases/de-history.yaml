@@ -1,0 +1,10 @@
+id: de-history
+lang: de
+about: The history question in German.
+state: busy
+text: was war heute Nacht mit shop los?
+expect:
+  kind: question
+  words:
+  - - '#13'
+  - - shop-db

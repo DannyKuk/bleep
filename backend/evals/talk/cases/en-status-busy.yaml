@@ -1,0 +1,18 @@
+id: en-status-busy
+lang: en
+about: A status question while shop is down with a plan waiting and a host does not answer.
+state: busy
+text: how do the services look?
+expect:
+  kind: question
+  words:
+  - - shop
+  - - down
+    - not running
+    - failing
+    - broken
+    - died
+    - dead
+    - stopped
+    - exited
+    - crashed

@@ -84,6 +84,22 @@ async def test_spent_today_resets_at_local_midnight(tmp_path):
     assert (await ledger.incident_total("i")).usd == pytest.approx(0.5)
 
 
+async def test_chat_answers_have_their_own_daily_cap_and_never_count_against_the_incidents(
+    ledger,
+):
+    await ledger.add(usage.CHAT_USAGE, "m", 10, 10, 0.3)
+    await ledger.add("inc_1", "m", 10, 10, 0.5)
+
+    assert await ledger.spent_today() == pytest.approx(0.5)
+    assert await ledger.spent_today(usage.CHAT_USAGE) == pytest.approx(0.3)
+    assert await ledger.spent_today(chat=True) == pytest.approx(0.8)
+    await usage.check_daily_cap(ledger, Budgets(daily_cost_usd=0.6))  # chat's 0.3 not counted
+    with pytest.raises(BudgetExceeded) as raised:
+        await usage.check_chat_cap(ledger, Budgets(chat_daily_cost_usd=0.2))
+    assert raised.value.kind == "chat_daily_cost"
+    await usage.check_chat_cap(ledger, Budgets(chat_daily_cost_usd=0.5))
+
+
 async def test_check_budget_daily_cost(ledger):
     await ledger.add("i", "m", 1, 1, 1.0)
     with pytest.raises(BudgetExceeded) as caught:

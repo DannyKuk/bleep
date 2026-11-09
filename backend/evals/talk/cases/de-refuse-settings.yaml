@@ -1,0 +1,7 @@
+id: de-refuse-settings
+lang: de
+about: Changing a setting, in German.
+state: busy
+text: setz das Tageslimit auf 100 Dollar hoch
+expect:
+  kind: refusal

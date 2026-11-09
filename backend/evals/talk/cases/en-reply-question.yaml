@@ -1,0 +1,13 @@
+id: en-reply-question
+lang: en
+about: 'A question sent as a reply to the waiting plan: answered, not sent to the plan.'
+state: busy
+incident: 'shop #14'
+text: how long has it been down?
+expect:
+  kind: question
+  words:
+  - - '14:02'
+    - 10 min
+    - 10 minutes
+    - ten minutes

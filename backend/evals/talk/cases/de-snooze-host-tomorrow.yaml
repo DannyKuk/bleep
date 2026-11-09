@@ -1,0 +1,13 @@
+id: de-snooze-host-tomorrow
+lang: de
+about: 'Snooze a host until tomorrow, in German: any time tomorrow is right.'
+state: busy
+text: lass M1 bis morgen in Ruhe
+expect:
+  kind: action
+  action:
+    kind: snooze
+    subject:
+    - m1
+    - M1
+    until: '2026-11-10'

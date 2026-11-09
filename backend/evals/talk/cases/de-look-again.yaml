@@ -1,0 +1,12 @@
+id: de-look-again
+lang: de
+about: Look at a service now, in German.
+state: busy
+text: schau dir grafana nochmal an
+expect:
+  kind: action
+  action:
+    kind: look_again
+    subject:
+    - grafana
+    - laptop/compose:grafana

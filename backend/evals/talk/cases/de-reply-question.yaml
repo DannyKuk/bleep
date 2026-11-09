@@ -1,0 +1,13 @@
+id: de-reply-question
+lang: de
+about: The question as a reply, in German.
+state: busy
+incident: 'shop #14'
+text: seit wann ist das kaputt?
+expect:
+  kind: question
+  words:
+  - - '14:02'
+    - 10 Min
+    - 10 Minuten
+    - zehn Minuten

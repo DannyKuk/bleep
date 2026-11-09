@@ -26,7 +26,7 @@ _warned: set[str] = set()
 
 
 class BudgetExceeded(Exception):
-    def __init__(self, kind: Literal["incident_tokens", "daily_cost"]) -> None:
+    def __init__(self, kind: Literal["incident_tokens", "daily_cost", "chat_daily_cost"]) -> None:
         super().__init__(kind)
         self.kind = kind
 
@@ -59,6 +59,11 @@ _SUMS = (
     "COUNT(*) AS calls, SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out,"
     " SUM(usd) AS usd, COUNT(*) - COUNT(usd) AS unpriced"
 )
+
+
+# The ledger's key for chat answers (`talk`), which have no incident and a daily cap of their own
+# (`Budgets.chat_daily_cost_usd`): what a chat spends never stops an investigation.
+CHAT_USAGE = "talk"
 
 
 class CostLedger:
@@ -106,13 +111,18 @@ class CostLedger:
         usd = row["usd"] if row["priced"] else None
         return IncidentTotal(row["i"], row["o"], usd)
 
-    async def spent_today(self) -> float:
-        """Dollars recorded since local midnight."""
+    async def spent_today(self, key: str | None = None, chat: bool = False) -> float:
+        """Dollars recorded since local midnight: under `key` alone when given, else for the
+        incidents and the recovery lines, without chat answers (`CHAT_USAGE`) unless `chat`."""
+        where, args = "day = ?", [self.clock().date().isoformat()]
+        if key is not None:
+            where, args = where + " AND incident_id = ?", [*args, key]
+        elif not chat:
+            where, args = where + " AND incident_id != ?", [*args, CHAT_USAGE]
         conn = await self.db.connect()
         try:
             async with conn.execute(
-                "SELECT COALESCE(SUM(usd), 0) AS usd FROM usage WHERE day = ?",
-                (self.clock().date().isoformat(),),
+                f"SELECT COALESCE(SUM(usd), 0) AS usd FROM usage WHERE {where}", args
             ) as cursor:
                 row = await cursor.fetchone()
         finally:
@@ -193,9 +203,16 @@ class UsageTracker(AsyncCallbackHandler):
 
 
 async def check_daily_cap(ledger: CostLedger, budgets: Budgets) -> None:
-    """Raises when the day's cap is spent; for a model call that belongs to no incident."""
+    """Raises when the day's cap is spent; for a model call that belongs to no incident. Chat
+    answers are not counted: they have their own cap (`check_chat_cap`)."""
     if await ledger.spent_today() >= budgets.daily_cost_usd:
         raise BudgetExceeded("daily_cost")
+
+
+async def check_chat_cap(ledger: CostLedger, budgets: Budgets) -> None:
+    """Raises when the day's chat answers have spent their own cap."""
+    if await ledger.spent_today(CHAT_USAGE) >= budgets.chat_daily_cost_usd:
+        raise BudgetExceeded("chat_daily_cost")
 
 
 async def check_budget(ledger: CostLedger, incident_id: str, budgets: Budgets) -> None:

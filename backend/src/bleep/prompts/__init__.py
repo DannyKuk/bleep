@@ -40,7 +40,8 @@ OVERRIDABLE = frozenset(
 # untrusted-data rule with no placeholder to check an override against. `graph/propose_mcp` tells
 # the model how to write an `mcp.call` step around the server's wrapped tool schemas, and
 # `graph/verify_unproven` tells it not to start again a container a human approved stopping.
-NOT_OVERRIDABLE_AREAS = ("evals/", "notify/", "untrusted/")
+# `talk/` reads what the person writes and holds the fixed lines that refuse it (#401).
+NOT_OVERRIDABLE_AREAS = ("evals/", "notify/", "talk/", "untrusted/")
 NOT_OVERRIDABLE = frozenset({"graph/propose_mcp", "graph/system", "graph/verify_unproven"})
 # C0 and C1 controls but tab and line breaks; the bidi overrides, isolates and marks (U+200E,
 # U+200F, U+061C), which reorder what a reader of the panel sees without changing what the model

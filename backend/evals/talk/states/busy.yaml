@@ -1,0 +1,104 @@
+# Two of three hosts answer. shop on the laptop is down with a plan waiting (shop #14), a host
+# does not answer (coolify-main #3), backup-job on m1 is left alone, and shop #13 ended last night.
+snapshot:
+  now: "2026-11-09 14:12"
+  zone: Europe/Vienna
+  hosts:
+    - {id: laptop, name: laptop, health: down, reachable: true, last_seen: "2026-11-09 14:12"}
+    - {id: m1, name: M1, health: ok, reachable: true, last_seen: "2026-11-09 14:12"}
+    - {id: coolify-main, name: coolify-main, health: down, reachable: false, last_seen: "2026-11-09 13:40"}
+  services:
+    - id: laptop/compose:shop
+      name: shop
+      host: laptop
+      health: down
+      open_incident: "shop #14"
+      containers:
+        - {name: shop-web-1, state: running, health: healthy}
+        - {name: shop-db-1, state: running, health: healthy}
+        - {name: shop-worker-1, state: exited, health: none, exit_code: 137}
+    - id: laptop/compose:grafana
+      name: grafana
+      host: laptop
+      health: ok
+      containers:
+        - {name: grafana-1, state: running, health: none}
+    - id: m1/compose:immich
+      name: immich
+      host: m1
+      health: ok
+      containers:
+        - {name: immich-server-1, state: running, health: healthy}
+    - id: m1/compose:vaultwarden
+      name: vaultwarden
+      host: m1
+      health: ok
+      containers:
+        - {name: vaultwarden-1, state: running, health: healthy}
+    - id: m1/compose:backup-job
+      name: backup-job
+      host: m1
+      health: ok
+      quiet: {mode: leave_alone, since: "2026-11-02 09:30"}
+      containers:
+        - {name: backup-job-1, state: exited, health: none, exit_code: 0}
+  open_incidents:
+    - id: inc_14
+      name: "shop #14"
+      title: "shop: shop-worker-1 died (exit 137)"
+      subject: laptop/compose:shop
+      status: awaiting_approval
+      opened: "2026-11-09 14:02"
+      plan_waiting: true
+    - id: inc_c3
+      name: "coolify-main #3"
+      title: "coolify-main does not answer"
+      subject: coolify-main
+      status: waiting
+      opened: "2026-11-09 13:41"
+  ended_last_24h:
+    - id: inc_13
+      name: "shop #13"
+      title: "shop: shop-web-1 died"
+      subject: laptop/compose:shop
+      status: resolved
+      opened: "2026-11-09 02:14"
+      ended: "2026-11-09 02:21"
+      outcome: Fixed and verified
+      cause: shop-web died because shop-db was stopped.
+incidents:
+  - id: inc_14
+    name: "shop #14"
+    title: "shop: shop-worker-1 died (exit 137)"
+    subject: laptop/compose:shop
+    status: awaiting_approval
+    opened: "2026-11-09 14:02"
+    plan_waiting: true
+    signals:
+      - {kind: container_died, container: shop-worker-1, at: "2026-11-09 14:02"}
+    plan:
+      - {action: docker.restart, target: shop-worker-1, host: laptop}
+    notes:
+      - "Likely cause (resource, medium): WORKER_BATCH_MB is 256; the docs give 8."
+  - id: inc_c3
+    name: "coolify-main #3"
+    title: "coolify-main does not answer"
+    subject: coolify-main
+    status: waiting
+    opened: "2026-11-09 13:41"
+    signals:
+      - {kind: host_unreachable, at: "2026-11-09 13:41"}
+    notes:
+      - Waiting for the host to answer again.
+  - id: inc_13
+    name: "shop #13"
+    title: "shop: shop-web-1 died"
+    subject: laptop/compose:shop
+    status: resolved
+    opened: "2026-11-09 02:14"
+    ended: "2026-11-09 02:21"
+    outcome: Fixed and verified
+    cause: shop-web died because shop-db was stopped.
+    summary: >-
+      shop-web died because shop-db was stopped. The person approved starting shop-db and
+      restarting shop-web at 02:19; both ran and the shop answered again.

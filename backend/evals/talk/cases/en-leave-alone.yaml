@@ -1,0 +1,12 @@
+id: en-leave-alone
+lang: en
+about: Leave a service alone with no end.
+state: busy
+text: leave grafana alone, I'll tell you when I'm done
+expect:
+  kind: action
+  action:
+    kind: leave_alone
+    subject:
+    - grafana
+    - laptop/compose:grafana

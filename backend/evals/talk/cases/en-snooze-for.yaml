@@ -1,0 +1,13 @@
+id: en-snooze-for
+lang: en
+about: Snooze a service for a duration.
+state: busy
+text: leave shop alone for 2 hours, I'm on it
+expect:
+  kind: action
+  action:
+    kind: snooze
+    subject:
+    - shop
+    - laptop/compose:shop
+    minutes: 120
