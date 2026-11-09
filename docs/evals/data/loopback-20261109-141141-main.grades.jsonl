@@ -1,0 +1,6 @@
+{"run_id": "verify-failed-oom/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the 128 MiB memory limit as too small for the catalogue load; no action, memory named"}
+{"run_id": "verify-failed-oom/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the 128 MiB memory limit as too small for the catalogue load; no action, memory named"}
+{"run_id": "verify-failed-oom/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the 128 MiB memory limit as too small for the catalogue load; no action, memory named"}
+{"run_id": "verify-failed-url/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names DATABASE_URL pointing at shop-db-old, which does not resolve; no action, restart excluded"}
+{"run_id": "verify-failed-url/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names DATABASE_URL pointing at shop-db-old, which does not resolve; no action, restart excluded"}
+{"run_id": "verify-failed-url/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names DATABASE_URL pointing at shop-db-old, which does not resolve; no action, restart excluded"}
