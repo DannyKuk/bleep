@@ -2,9 +2,15 @@
 
 After Execute the node waits 20 s, then checks up to 3 times, 10 s apart, and stops at the first
 check where everything passes. A check passes only when every planned container is running and
-healthy (or running with no healthcheck) and every planned URL passes `check_url`. The plan is
-the proposal's verification plan; when that is empty it falls back to the affected service's
-containers (protected ones too), and then to the containers the plan's steps acted on.
+healthy (or running with no healthcheck) and every planned URL passes `check_url`. Every
+container checked to run must not have been started again since Verify first saw it running
+(`_after_fix`): read once before the wait, or at the first check that finds it running when it
+was not then (still in its restart backoff, or unreadable); that check fails, so such a
+container can pass only at a later check, against that read. Once Execute is done nothing Bleep
+does restarts a container, so a restart policy that restarted it then is the failure repeating,
+however it looks at the check (#320). The plan is the proposal's verification plan; when that
+is empty it falls back to the affected service's containers (protected ones too), and then to
+the containers the plan's steps acted on.
 Whatever the plan names, the incident's own symptoms are checked too: every container its signals
 name and every URL they report failing, so a plan that checks something else cannot pass while
 the failure that opened the incident goes on. So is every URL the hosts file gives the incident's
@@ -15,9 +21,10 @@ thresholds that opened it (`hosts/readings.past_threshold`, load over the last m
 incident about anything else has nothing to read again, so it ends `unverified` without a
 loop-back.
 A Coolify application the plan redeployed is checked as a whole, read from the engine each time:
-the redeploy replaced its containers under new names, so they are left out of the name checks.
-The redeploy step ends only once Coolify reports its deployment over (`plugins/coolify`), so the
-wait here starts after the new containers are up.
+the redeploy replaced its containers under new names, so they are left out of the name checks,
+and one of its new containers whose restart count is above 0 was restarted by its policy after
+the fix. The redeploy step ends only once Coolify reports its deployment over
+(`plugins/coolify`), so the wait here starts after the new containers are up.
 
 Passing sets the outcome `resolved`. A failure with fewer than `verify_loops` (2) loop-backs so
 far hands the failed checks to Investigate as the next round's instruction (an appended message,
@@ -48,7 +55,13 @@ from bleep.hosts.readings import past_threshold, readings
 from bleep.hosts.shell import HostUnreadable, host_basics
 from bleep.hosts.ssh import SshUnavailable
 from bleep.schemas.docker import ContainerSummary
-from bleep.schemas.graph import Check, Proposal, StepResult, VerificationResult
+from bleep.schemas.graph import (
+    STARTED_AFTER_FIX,
+    Check,
+    Proposal,
+    StepResult,
+    VerificationResult,
+)
 from bleep.schemas.incidents import Signal
 from bleep.schemas.settings import Thresholds
 from bleep.watcher.http_checks import check_url
@@ -72,6 +85,12 @@ NOT_REREAD = (
     "only disk, memory and load can be read again; nothing shows this host's problem is over"
 )
 HOST_READINGS = ("disk", "memory", "load")
+SEEN = "when Verify first saw it running"
+RESTARTED = STARTED_AFTER_FIX[0] + " (restart count {now}, {then} " + SEEN + ")"
+STARTED_AGAIN = STARTED_AFTER_FIX[1] + " (a later start time than " + SEEN + ")"
+CAME_UP = "first seen running at this check; it has to stay up until the next one"
+REDEPLOY_RESTARTED = STARTED_AFTER_FIX[0] + " (a container the redeploy made, restart count {now})"
+RECREATED = STARTED_AFTER_FIX[2] + ", then restarted by its restart policy (restart count {now})"
 
 
 @dataclass(frozen=True)
@@ -238,7 +257,48 @@ def _symptoms(signals: list[Signal]) -> tuple[list[str], list[str]]:
     return list(dict.fromkeys(containers)), urls
 
 
-async def _check_container(deps: GraphDeps, host_id: str, name: str) -> Check:
+async def _first_reads(
+    deps: GraphDeps, host_id: str, names: list[str]
+) -> dict[str, ContainerSummary]:
+    """The containers to check that are running before the settle wait, read once. One not
+    running then (in its restart backoff, say) or that Bleep cannot read (gone, or the host
+    unreachable) has no entry; `_check_container` adds it at the first check that finds it
+    running, since the start it was waiting for is not a crash after the fix."""
+    reads: dict[str, ContainerSummary] = {}
+    for name in names:
+        try:
+            summary = (await deps.registry.engine(host_id).inspect(name)).summary
+        except ContainerNotFound, EngineUnavailable, KeyError:
+            continue
+        if summary.state == "running":
+            reads[name] = summary
+    return reads
+
+
+def _after_fix(first: ContainerSummary, now: ContainerSummary) -> str | None:
+    """Why `now` was started again since `first`, Verify's first read of it running, or None.
+
+    Docker raises the restart count only for its restart policy's restarts, and resets it only on
+    a start or restart through its API, which nothing does once Execute is done; so a higher
+    count is the policy restarting the container after the fix, whether a step of the plan acted
+    on it or not. Both start times are the host's, so clock skew does not matter. A container
+    with another id was recreated since (by Compose or Coolify): it counts its restarts from 0."""
+    if now.id != first.id:
+        return RECREATED.format(now=now.restart_count) if now.restart_count > 0 else None
+    if now.restart_count > first.restart_count:
+        return RESTARTED.format(now=now.restart_count, then=first.restart_count)
+    if first.started_at and now.started_at and now.started_at > first.started_at:
+        return STARTED_AGAIN
+    return None
+
+
+async def _check_container(
+    deps: GraphDeps, host_id: str, name: str, first_running: dict[str, ContainerSummary]
+) -> Check:
+    """A container that must run: running, not started again since Verify first saw it running
+    (`first_running`), and not unhealthy or starting. The check that first sees it running adds
+    it there and fails: a read compared with itself proves nothing, and a crash-looper caught in
+    its few seconds up would pass after one look."""
     try:
         summary = (await deps.registry.engine(host_id).inspect(name)).summary
     except ContainerNotFound:
@@ -247,6 +307,13 @@ async def _check_container(deps: GraphDeps, host_id: str, name: str) -> Check:
         return Check(kind="container", target=name, ok=False, detail="host not reachable")
     if summary.state != "running":
         return Check(kind="container", target=name, ok=False, detail=f"is {summary.state}")
+    first = first_running.get(name)
+    if first is None:
+        first_running[name] = summary
+        return Check(kind="container", target=name, ok=False, detail=CAME_UP)
+    started_again = _after_fix(first, summary)
+    if started_again is not None:
+        return Check(kind="container", target=name, ok=False, detail=started_again)
     if summary.health in ("unhealthy", "starting"):
         return Check(kind="container", target=name, ok=False, detail=f"is {summary.health}")
     return Check(
@@ -281,7 +348,9 @@ async def _check_application(
 ) -> Check:
     """A redeployed Coolify application, read from the engine now: at least one container of
     it (previews aside) running that was created after its redeploy began, and none of those
-    unhealthy or still starting. `since` None (the redeploy never started) fails the check.
+    unhealthy, still starting or restarted by its restart policy (a restart count above 0: a
+    new container starts at 0, so that restart came after the fix, #320). `since` None (the
+    redeploy never started) fails the check.
 
     The creation time is the host's and `since` is Bleep's, so `CLOCK_SLACK_S` of skew is
     allowed. A host clock further behind makes new containers look old and the check fail, the
@@ -313,6 +382,15 @@ async def _check_application(
     if bad is not None:
         return Check(
             kind="container", target=target, ok=False, detail=f"{bad.name} is {bad.health}"
+        )
+    # A container the redeploy made started at count 0: any count is its policy restarting it.
+    restarted = max((c.restart_count for c in running), default=0)
+    if restarted > 0:
+        return Check(
+            kind="container",
+            target=target,
+            ok=False,
+            detail=REDEPLOY_RESTARTED.format(now=restarted),
         )
     return Check(kind="container", target=target, ok=True, detail=f"{len(running)} running")
 
@@ -413,6 +491,7 @@ def make(deps: GraphDeps) -> Node:
         plan: _Plan,
         apps: list[str],
         starts: dict[str, datetime],
+        first_running: dict[str, ContainerSummary],
         attempt: int,
         calm: set[str],
     ) -> VerificationResult:
@@ -420,7 +499,10 @@ def make(deps: GraphDeps) -> Node:
         client = deps.http or httpx.AsyncClient()
         try:
             checks = [await _check_application(deps, host_id, app, starts.get(app)) for app in apps]
-            checks += [await _check_container(deps, host_id, name) for name in plan.containers]
+            checks += [
+                await _check_container(deps, host_id, name, first_running)
+                for name in plan.containers
+            ]
             checks += [await _check_stopped(deps, host_id, name) for name in plan.stopped]
             if plan.unproven:
                 checks += [
@@ -450,10 +532,13 @@ def make(deps: GraphDeps) -> Node:
             # Nothing to look at is not a pass, and another look at nothing would not help either.
             await deps.bus.publish(incident_id, "verification", _payload(result))
         else:
+            first_running = await _first_reads(deps, subject.host_id, plan.containers)
             await deps.sleep(SETTLE_S)
             calm: set[str] = set()
             for attempt in range(1, CHECKS + 1):
-                result = await one_check(subject.host_id, plan, apps, starts, attempt, calm)
+                result = await one_check(
+                    subject.host_id, plan, apps, starts, first_running, attempt, calm
+                )
                 await deps.bus.publish(incident_id, "verification", _payload(result))
                 if result.ok or attempt == CHECKS:
                     break

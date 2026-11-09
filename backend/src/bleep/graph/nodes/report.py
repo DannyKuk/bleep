@@ -45,6 +45,7 @@ from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.schemas.graph import (
     FACT_CHARS,
+    STARTED_AFTER_FIX,
     Decision,
     Diagnosis,
     Outcome,
@@ -202,12 +203,24 @@ def _event_text(event: IncidentEvent, tool_calls: int) -> str | None:
 def _verification_text(payload: dict) -> str:
     """A check's line, such as "Check 2 passed", with "; no URL was checked" when it passed on
     containers alone (a service with no health URL): a running container does not show that the
-    service answers."""
+    service answers. A check failed by a container started again after the fix says so (#320),
+    without its name, which is host text."""
     line = f"Check {payload.get('attempt', 1)} {'passed' if payload.get('ok') else 'failed'}"
-    kinds = {check.get("kind") for check in payload.get("checks") or []}
+    checks = payload.get("checks") or []
+    kinds = {check.get("kind") for check in checks}
     if payload.get("ok") and "container" in kinds and "url" not in kinds:
         return f"{line}; no URL was checked"
+    if any(_started_after_fix(check) for check in checks):
+        return f"{line}; a container was started again after the fix"
     return line
+
+
+def _started_after_fix(check: dict) -> bool:
+    return (
+        check.get("kind") == "container"
+        and not check.get("ok")
+        and str(check.get("detail", "")).startswith(STARTED_AFTER_FIX)
+    )
 
 
 def timeline(signals: list[Signal], events: list[IncidentEvent]) -> list[Entry]:

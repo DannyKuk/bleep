@@ -296,6 +296,15 @@ class LoggedStep(BaseModel):
     result: StepResult
 
 
+# How Verify's failed container check begins when the container was started again after the
+# fix (#320); the report's timeline reads it.
+STARTED_AFTER_FIX = (
+    "restarted by its restart policy after the fix",
+    "started again after the fix",
+    "recreated after the fix",
+)
+
+
 class Check(BaseModel):
     """One thing Verify looked at: a container's state, a URL's answer, a `host` reading (disk,
     memory or load) against its threshold, or a `symptom` it could not see answered (a stopped

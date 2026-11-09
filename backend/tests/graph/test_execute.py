@@ -7,7 +7,7 @@ import pytest
 from pydantic import SecretStr
 
 from bleep.graph.deps import StaticSettings
-from bleep.graph.nodes import approval, execute
+from bleep.graph.nodes import approval, execute, verify
 from bleep.hosts.engine import EngineError
 from bleep.plugins.base import PluginContext
 from bleep.plugins.coolify.plugin import CoolifyPlugin, CoolifySettings
@@ -611,3 +611,62 @@ async def test_an_mcp_step_whose_container_is_as_approved_runs(env):
     _, route = await env.run(state)
 
     assert mcp.ran == [mcp_call("shop-web-1")] and route == "verify"
+
+
+class DockerEngine(FakeEngine):
+    """Resets the restart count on a start or restart, as Docker does for a start through its
+    API (moby `daemon/start.go`, `ResetRestartManager(true)`)."""
+
+    def _act(self, action: str, container: str, state: str) -> None:
+        super()._act(action, container, state)
+        if state == "running":
+            index = self._find(container)
+            reset = self.container_list[index].model_copy(update={"restart_count": 0})
+            self.container_list[index] = reset
+
+
+async def run_then_verify(tmp_path, *steps: PlanStep, crash: bool) -> dict:
+    """Approve and run `steps` on a crash-looping worker with no URL (restart count 3, policy
+    `always`), then Verify; with `crash` it dies during the settle and its policy starts it
+    again (count up by one, a later start)."""
+    worker = box(
+        "shop-worker-1", "shop", restart_policy="always", restart_count=3, started_at=APPROVED_AT
+    )
+    docker = DockerEngine("a", [worker], clock=lambda: LATER)
+    env = Env(await graph_env(tmp_path, engine=docker))
+    state = await env.approve(*steps)
+    update, _ = await env.run(state)
+    state |= update
+
+    async def settle(seconds: float) -> None:
+        if crash and seconds == verify.SETTLE_S:
+            now = next(c for c in docker.container_list if c.name == "shop-worker-1")
+            env.replace(
+                "shop-worker-1",
+                restart_count=now.restart_count + 1,
+                started_at=LATER + timedelta(seconds=14),
+            )
+
+    env.deps.sleep = settle
+    return await verify.make(env.deps)(state)
+
+
+@pytest.mark.parametrize(("crash", "outcome"), [(True, None), (False, "resolved")])
+async def test_a_restart_policy_restart_after_the_approved_restart_is_not_verified(
+    tmp_path, crash, outcome
+):
+    """#320 through Execute and Verify: the approved restart resets the worker's count to 0.
+    Crashing again during Verify's settle, its policy starts it again; at every check it is
+    running, and the run is not resolved. When it stays up, it is."""
+    verified = await run_then_verify(tmp_path, restart("shop-worker-1"), crash=crash)
+
+    assert verified.get("outcome") == outcome
+    assert verified["verification"].ok is (not crash)
+
+
+async def test_a_plan_that_restarts_the_container_twice_is_not_read_as_a_crash(tmp_path):
+    verified = await run_then_verify(
+        tmp_path, restart("shop-worker-1"), restart("shop-worker-1"), crash=False
+    )
+
+    assert verified.get("outcome") == "resolved"
