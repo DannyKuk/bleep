@@ -1,0 +1,1 @@
+{"run_id": "357-names/control-db-down-restart/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "shop-db stopped, so shop-web cannot reach its database; plan docker.start shop-db"}
