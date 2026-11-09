@@ -34,6 +34,15 @@ def expects_exit(entries: list[str], name: str, labels: dict[str, str]) -> bool:
     return any(e in (EVERY_CONTAINER, name) or e == service for e in entries)
 
 
+def is_finished(container: ContainerSummary) -> bool:
+    """A one-shot that ran to the end: exited 0 and no restart policy to bring it back."""
+    return (
+        container.state == "exited"
+        and container.exit_code == 0
+        and container.restart_policy in ("", "no")
+    )
+
+
 def service_key(name: str, labels: dict[str, str]) -> str:
     """The key of the service a container with these labels belongs to."""
     return _classify(name, labels)[0]

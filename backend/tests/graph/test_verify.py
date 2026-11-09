@@ -9,10 +9,12 @@ from bleep.graph.nodes import verify
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.ssh import CommandResult, SshUnavailable
 from bleep.schemas.graph import (
+    ApprovalRecord,
     GatherContext,
     PlanStep,
     Proposal,
     StepResult,
+    TargetSnapshot,
     VerificationPlan,
     VerificationResult,
 )
@@ -737,8 +739,8 @@ async def test_a_redeployed_application_is_checked_by_its_new_containers(tmp_pat
 @pytest.mark.parametrize(
     ("containers", "detail"),
     [
-        ([], "no container made by the redeploy"),
-        ([web(state="exited")], "no container made by the redeploy"),
+        ([], "names no single Coolify application"),  # nothing carries its uuid
+        ([web(state="exited")], "web0uuid-2 is exited"),
         ([web(health="unhealthy")], "web0uuid-2 is unhealthy"),
         (
             [web("web0uuid-pr", labels=WEB_APP | {"coolify.pullRequestId": "7"})],
@@ -1663,7 +1665,359 @@ async def test_a_redeployed_container_its_policy_restarted_is_not_resolved(tmp_p
     app = update["verification"].checks[0]
     assert (app.target, app.ok) == ("web (Coolify application)", False)
     assert app.detail == (
-        "restarted by its restart policy after the fix (a container the redeploy made, "
-        "restart count 1)"
+        "restarted by its restart policy after the fix (web0uuid-2, a container the redeploy "
+        "made, restart count 1)"
     )
     assert update.get("outcome") != "resolved"
+
+
+async def test_a_redeploy_with_one_new_container_stuck_restarting_is_not_resolved(tmp_path):
+    """The app runs two containers; the redeploy made both, one runs and the other is stuck in
+    `restarting` at every check. One running container does not verify the app."""
+    stuck = web("web0uuid-3", state="restarting", restart_count=3)
+    engine = FakeEngine("a", [web(health="healthy"), stuck, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state, containers=["shop-db-1"]) | {"verify_loops": 2})
+
+    app = update["verification"].checks[0]
+    assert (app.target, app.ok, app.detail) == (
+        "web (Coolify application)",
+        False,
+        "web0uuid-3 is restarting",
+    )
+    assert update["outcome"] == "unverified"
+
+
+@pytest.mark.parametrize(
+    ("second", "detail"),
+    [
+        (web("web0uuid-3", health="unhealthy"), "web0uuid-3 is unhealthy"),
+        (web("web0uuid-3", health="starting"), "web0uuid-3 is starting"),
+        (web("web0uuid-3", state="exited"), "web0uuid-3 is exited"),
+        (
+            web("web0uuid-3", restart_count=2),
+            "restarted by its restart policy after the fix (web0uuid-3, a container the "
+            "redeploy made, restart count 2)",
+        ),
+    ],
+)
+async def test_every_container_the_redeploy_made_is_checked(tmp_path, second, detail):
+    engine = FakeEngine("a", [web(health="healthy"), second, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state, containers=["shop-db-1"]))
+
+    app = update["verification"].checks[0]
+    assert (app.ok, app.detail) == (False, detail)
+    assert update.get("outcome") != "resolved"
+
+
+async def test_a_redeploy_with_two_healthy_new_containers_is_resolved(tmp_path):
+    second = web("web0uuid-3")  # no healthcheck: running is enough
+    engine = FakeEngine("a", [web(health="healthy"), second, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state, containers=["shop-db-1"]))
+
+    app = update["verification"].checks[0]
+    assert (app.ok, app.detail) == (True, "2 running")
+    assert update["outcome"] == "resolved"
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"state": "running", "health": "unhealthy"},  # stopping, not yet past its grace period
+        {"state": "removing"},
+        {"state": "exited"},
+        {"state": "restarting", "restart_count": 4},
+    ],
+)
+async def test_an_old_container_still_shutting_down_does_not_count_against_the_app(
+    tmp_path, fields
+):
+    old = web("web0uuid-1", created=DEPLOYED_AT - timedelta(days=1), **fields)
+    engine = FakeEngine("a", [old, web(health="healthy"), box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state, containers=["shop-db-1"]))
+
+    app = update["verification"].checks[0]
+    assert (app.ok, app.detail) == (True, "1 running")
+    assert update["outcome"] == "resolved"
+
+
+APP = "web (Coolify application)"
+
+
+def change_web(engine: FakeEngine, name: str, after_wait: int, **update):
+    """A settle hook that changes (or, with `gone=True`, removes) the container `name` after
+    wait `after_wait`: 1 is the settle, 2 and 3 the waits before checks 2 and 3. With `add`,
+    that container is added instead."""
+
+    def hook(waits: int) -> None:
+        if waits != after_wait:
+            return
+        if "add" in update:
+            engine.container_list.append(update["add"])
+            return
+        i = next(i for i, c in enumerate(engine.container_list) if c.name == name)
+        if update.get("gone"):
+            del engine.container_list[i]
+        else:
+            engine.container_list[i] = engine.container_list[i].model_copy(update=update)
+
+    return hook
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "redeploy of web failed (deployment d1)",
+        "redeploy of web had not finished after 900 s; Bleep stopped waiting, it may still run",
+    ],
+)
+async def test_a_redeploy_whose_step_did_not_succeed_is_not_resolved(tmp_path, detail):
+    """Coolify reported the deployment failed, or Bleep stopped waiting for it: whatever runs
+    now does not show the redeploy worked."""
+    failed = deploy_result().model_copy(update={"ok": False, "detail": detail})
+    engine = FakeEngine("a", [web(health="healthy"), box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state, containers=["shop-db-1"], results=[failed]))
+
+    app = update["verification"].checks[0]
+    assert (app.target, app.ok, app.detail) == (APP, False, verify.NOT_FINISHED)
+    assert update.get("outcome") != "resolved"
+
+
+async def test_a_timed_out_redeploy_still_creating_containers_is_not_resolved(tmp_path):
+    """Coolify was still deploying when Verify checked: only the first container existed at
+    check 1, and the second came up stuck after it."""
+    timed_out = deploy_result().model_copy(update={"ok": False, "detail": "had not finished"})
+    engine = FakeEngine("a", [web(health="healthy"), box("shop-db-1", "shop")])
+    stuck = web("web0uuid-3", state="restarting", restart_count=3)
+    sleeps = Sleeps(change_web(engine, "web0uuid-3", 2, add=stuck))
+    env, state = await setup(tmp_path, Replies(200), engine=engine, sleeps=sleeps)
+    state = redeployed(state, containers=["shop-db-1"], results=[timed_out]) | {"verify_loops": 2}
+
+    update, _ = await run(env, state)
+
+    assert update["outcome"] == "unverified"
+
+
+@pytest.mark.parametrize(("up_after_wait", "resolved_at"), [(1, 2), (2, 3), (3, None)])
+async def test_a_new_container_that_comes_up_between_checks_fails_that_check(
+    tmp_path, up_after_wait, resolved_at
+):
+    """As a container check's late first read (#320): the check that first sees a new container
+    running fails, and only a later one can pass it."""
+    engine = FakeEngine(
+        "a", [web(health="healthy"), web("web0uuid-3", state="created"), box("shop-db-1", "shop")]
+    )
+    sleeps = Sleeps(change_web(engine, "web0uuid-3", up_after_wait, state="running"))
+    env, state = await setup(tmp_path, Replies(200), engine=engine, sleeps=sleeps)
+    state = redeployed(state, containers=["shop-db-1"]) | {"verify_loops": 2}
+
+    update, _ = await run(env, state)
+
+    details = await check_details(env, state, APP)
+    first_up = up_after_wait - 1  # the index of the check that first sees it running
+    assert details[first_up] == f"web0uuid-3 {verify.CAME_UP}"
+    if resolved_at is None:
+        assert update["outcome"] == "unverified"
+    else:
+        assert update["outcome"] == "resolved"
+        assert update["verification"].attempt == resolved_at
+        assert details[-1] == "2 running"
+
+
+@pytest.mark.parametrize("gone_after_wait", [1, 2])
+async def test_a_new_container_that_vanishes_during_the_round_fails_the_check(
+    tmp_path, gone_after_wait
+):
+    """Seen before the settle or at check 1, then removed: the app is short of a container,
+    whatever the others show."""
+    stuck = web("web0uuid-3", state="restarting", restart_count=3)
+    engine = FakeEngine("a", [web(health="healthy"), stuck, box("shop-db-1", "shop")])
+    sleeps = Sleeps(change_web(engine, "web0uuid-3", gone_after_wait, gone=True))
+    env, state = await setup(tmp_path, Replies(200), engine=engine, sleeps=sleeps)
+    state = redeployed(state, containers=["shop-db-1"]) | {"verify_loops": 2}
+
+    update, _ = await run(env, state)
+
+    assert update["outcome"] == "unverified"
+    assert (await check_details(env, state, APP))[-1] == "web0uuid-3 is gone since an earlier check"
+
+
+async def test_a_new_container_known_only_by_its_coolify_4_1_name_is_checked(tmp_path):
+    """Coolify 4.1.x wrote no uuid label; the container's anchored name `<uuid>-<digits>` makes
+    it the app's, as it does for the name checks."""
+    old_style = box(
+        "web0uuid-000205002169",
+        labels={"coolify.managed": "true", "coolify.type": "application"},
+        created_at=NEW,
+        state="restarting",
+        restart_count=3,
+    )
+    engine = FakeEngine("a", [web(health="healthy"), old_style, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+    step = PlanStep(action="coolify.redeploy", host_id="a", target="web0uuid")
+    results = [deploy_result(target="web0uuid")]
+
+    update, _ = await run(env, redeployed(state, step, containers=["shop-db-1"], results=results))
+
+    app = update["verification"].checks[0]
+    assert (app.ok, app.detail) == (False, "web0uuid-000205002169 is restarting")
+
+
+OTHER_WEB = {**WEB_APP, "coolify.applicationUuid": "other9uuid"}
+
+
+async def test_another_app_of_the_same_name_does_not_verify_the_redeployed_one(tmp_path):
+    """The approval bound `web` to web0uuid; another app named web, appeared since, has a new
+    healthy container. It says nothing about web0uuid, whose only container is old and down."""
+    old = web("web0uuid-1", created=DEPLOYED_AT - timedelta(days=1), state="exited")
+    engine = FakeEngine("a", [old, web("other9uuid-2", labels=OTHER_WEB), box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+    state = redeployed(state, containers=["shop-db-1"])
+    env.deps.approvals.records[state["incident_id"]] = ApprovalRecord(
+        id="ap1",
+        incident_id=state["incident_id"],
+        plan_hash="h",
+        proposal=state["proposal"],
+        snapshots=[TargetSnapshot(host_id="a", target="web", app_uuid="web0uuid")],
+        requested_at=DEPLOYED_AT,
+    )
+
+    update, _ = await run(env, state)
+
+    app = update["verification"].checks[0]
+    assert (app.ok, app.detail) == (False, "no container made by the redeploy")
+
+
+async def test_a_name_two_apps_share_now_verifies_neither_without_the_approvals_uuid(tmp_path):
+    engine = FakeEngine(
+        "a",
+        [web(health="healthy"), web("other9uuid-2", labels=OTHER_WEB), box("shop-db-1", "shop")],
+    )
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state, containers=["shop-db-1"]))
+
+    app = update["verification"].checks[0]
+    assert (app.ok, app.detail) == (False, verify.NO_SINGLE_APP)
+
+
+async def test_a_new_container_with_no_creation_time_can_fail_the_app(tmp_path):
+    undated = web("web0uuid-3", created=None, state="restarting", restart_count=5)
+    engine = FakeEngine("a", [web(health="healthy"), undated, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state, containers=["shop-db-1"]))
+
+    app = update["verification"].checks[0]
+    assert (app.ok, app.detail) == (False, "web0uuid-3 is restarting")
+
+
+MIGRATE = WEB_APP | {
+    "com.docker.compose.project": "web0uuid",
+    "com.docker.compose.service": "migrate",
+    "com.docker.compose.config-hash": "c0ffee",
+}
+FINISHED_NOTE = "migrate-web0uuid-3 exited 0, as its service's exits allow"
+
+
+def exits_host(exits: list[str]):
+    services = {"shop": ServiceOverrides(urls=[UrlCheckConfig(url=URL)])}
+    if exits:
+        services["web0uuid"] = ServiceOverrides(exits=exits)
+    return shop_host(services=services)
+
+
+ONE_SHOT_NOTE = "migrate-web0uuid-3 exited 0 with no restart policy, a job that finished"
+
+
+@pytest.mark.parametrize(
+    ("exits", "exit_code", "policy", "with_web", "ok", "detail"),
+    [
+        (["migrate"], 0, "unless-stopped", True, True, f"1 running; {FINISHED_NOTE}"),
+        (["*"], 0, "always", True, True, f"1 running; {FINISHED_NOTE}"),
+        ([], 0, "no", True, True, f"1 running; {ONE_SHOT_NOTE}"),  # P9, unlisted
+        ([], 0, "", True, True, f"1 running; {ONE_SHOT_NOTE}"),
+        (["migrate"], 1, "no", True, False, "migrate-web0uuid-3 is exited"),  # a crash fails
+        ([], 1, "no", True, False, "migrate-web0uuid-3 is exited"),
+        ([], 0, "unless-stopped", True, False, "migrate-web0uuid-3 is exited"),  # not a job
+        (
+            ["migrate"],
+            0,
+            "unless-stopped",
+            False,
+            False,
+            f"no container made by the redeploy runs; {FINISHED_NOTE}",
+        ),
+        ([], 0, "no", False, False, f"no container made by the redeploy runs; {ONE_SHOT_NOTE}"),
+    ],
+)
+async def test_a_job_that_finished_as_the_watcher_reads_it_counts_neither_way(
+    tmp_path, exits, exit_code, policy, with_web, ok, detail
+):
+    """A one-off migration service of a Compose app, judged as the watcher judges it: exited 0
+    and named in its service's `exits` (#84), or exited 0 with no restart policy (a one-shot).
+    It counts neither for nor against the app, which still needs another new container that
+    passes."""
+    job = web(
+        "migrate-web0uuid-3",
+        labels=MIGRATE,
+        state="exited",
+        exit_code=exit_code,
+        restart_policy=policy,
+    )
+    others = [web(health="healthy", restart_policy="unless-stopped")] if with_web else []
+    engine = FakeEngine("a", [*others, job, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine, host=exits_host(exits))
+
+    update, _ = await run(env, redeployed(state, containers=["shop-db-1"]))
+
+    app = update["verification"].checks[0]
+    assert (app.ok, app.detail) == (ok, detail)
+    assert (update.get("outcome") == "resolved") is ok
+
+
+EVIL = {
+    "coolify.type": "application",
+    "coolify.applicationUuid": "other9uuid",
+    "coolify.resourceName": "evil",
+}
+
+
+async def test_another_apps_container_named_like_this_one_does_not_count_for_it(tmp_path):
+    """`evil-web0uuid-1` has Coolify's name for a container of web0uuid, but its own uuid label
+    says it is another app's: the 4.1.x name rule is only for containers with no uuid label."""
+    old = web("web0uuid-1", created=DEPLOYED_AT - timedelta(days=1), state="exited")
+    impostor = web("evil-web0uuid-1", labels=EVIL, health="healthy")
+    engine = FakeEngine("a", [old, impostor, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state, containers=["shop-db-1"]))
+
+    app = update["verification"].checks[0]
+    assert (app.ok, app.detail) == (False, "no container made by the redeploy")
+
+
+async def test_another_apps_container_named_like_this_one_is_not_replaced(tmp_path):
+    """The signal names `evil-web0uuid-1`, another app's container; redeploying web0uuid does
+    not take it out of the name checks."""
+    impostor = web("evil-web0uuid-1", labels=EVIL, state="exited", exit_code=1)
+    engine = FakeEngine("a", [web(health="healthy"), impostor, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+    died = Signal(
+        subject=state["subject"], kind="container_died", at=T0, container="evil-web0uuid-1"
+    )
+    state = redeployed(state, containers=["shop-db-1"]) | {"signals": [died]}
+
+    update, _ = await run(env, state)
+
+    checks = {c.target: (c.ok, c.detail) for c in update["verification"].checks}
+    assert checks["evil-web0uuid-1"] == (False, "is exited")
