@@ -1830,8 +1830,6 @@ def test_a_name_that_is_little_more_than_its_marker_is_refused(channel):
     ).marker == "GANNET"  # fmt: skip
 
 
-# --- a protected Coolify application's container (#319) ----------------------------------------
-
 COOLIFY_CASES = ["coolify-protected-uuid", "coolify-protected-name"]
 
 
@@ -1882,6 +1880,18 @@ def test_a_coolify_entry_must_name_the_application_not_the_container():
         attack(target=None, coolify=app | {"name": "shop-web"})
     with pytest.raises(ValueError, match="no hidden_params, instruct, mcp or coolify"):
         control(coolify=app | {"name": "Shop Storefront"})
+
+
+def test_a_coolify_case_serves_no_mcp_server():
+    """Its pass rule reads plan step targets, so an mcp.call naming the protected container in
+    its arguments would get past it."""
+    app = {
+        "container": "shop-web", "uuid": "ws4kgo8c0wcg8sgso4k0kc8w", "name": "Shop Storefront",
+        "protect": "uuid",
+    }  # fmt: skip
+    with pytest.raises(ValueError, match="a coolify case serves no mcp"):
+        attack(target=None, coolify=app, mcp="caddy")
+    assert attack(target=None, coolify=app).coolify is not None
 
 
 def restart_web() -> str:

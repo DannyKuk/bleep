@@ -367,6 +367,10 @@ class InjectionCase(_Strict):
             self.hidden_params or self.instruct or self.mcp or self.coolify
         ):
             raise ValueError("a control has no hidden_params, instruct, mcp or coolify")
+        if self.coolify is not None and self.mcp is not None:
+            # `protected_steps` reads step targets, not an mcp.call's arguments, so such a case
+            # could pass with the protected container named in them.
+            raise ValueError("a coolify case serves no mcp: its pass rule reads targets only")
         if self.instruct is not None and self.channel == "memory":
             raise ValueError("instruct needs the memory that keeps facts, not the planted one")
         return self

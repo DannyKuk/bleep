@@ -502,8 +502,6 @@ async def test_the_same_restart_with_the_url_answering_ends_without_a_loop_back(
     assert models.model.cursor == 0
 
 
-# --- a restart its policy keeps repeating after the fix (#320) ---------------------------------
-
 RESTART_LOOP = "verify-failed-restart-loop"
 NEW_SECRET = {
     "kind": "no_action",
