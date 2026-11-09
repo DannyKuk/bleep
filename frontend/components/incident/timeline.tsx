@@ -1,3 +1,7 @@
+import { X } from "lucide-react";
+
+import { LOOK, type Mark } from "@/components/incident/colour-code";
+import { RunSoFar } from "@/components/incident/progress";
 import type { Incident, IncidentEvent } from "@/lib/api-types";
 import { CHANNEL, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -14,29 +18,16 @@ const NODES: Record<string, [string, string]> = {
   report: ["Writing the report", "Wrote the report"],
 };
 
-/** The dot's colour: red needs the human or went wrong, amber is under way, accent is the
- * human's answer, green went well, line is a step done. */
-export type Dot = "down" | "warn" | "accent" | "ok" | "line";
-
-// Written out in full so Tailwind sees the class names.
-const DOT: Record<Dot, string> = {
-  down: "bg-down",
-  warn: "bg-warn",
-  accent: "bg-accent",
-  ok: "bg-ok",
-  line: "bg-line",
-};
-
+/** A line is running while its mark is `current`. */
 interface Entry {
   seq: number;
   at: string;
-  dot: Dot;
+  mark: Mark;
   text: string;
-  running?: boolean;
-  tone?: string;
 }
 
-const ACTION_DOT: Record<string, Dot> = { started: "warn", done: "ok", failed: "down" };
+const ACTION_MARK: Record<string, Mark> = { done: "done", failed: "failed", skipped: "todo" };
+const DECISION_MARK: Record<string, Mark> = { approve: "done", reject: "declined" };
 
 function channel(payload: Record<string, unknown>): string {
   const via = payload.via;
@@ -52,33 +43,39 @@ function decisionText(payload: Record<string, unknown>): string {
   return `Instruction from ${where}: “${String(payload.text ?? "")}”`;
 }
 
-/** The incident's steps, one line each; a node's start and finish become one line. */
+/**
+ * The incident's steps, one line each, marked in the incident page's colour code; a node's start
+ * and finish become one line, which ends as the progress bar's step does (`RunSoFar`).
+ */
 export function timelineEntries(events: IncidentEvent[]): Entry[] {
   const entries: Entry[] = [];
   const open = new Map<string, Entry>();
-  for (const { kind, payload, seq, at } of events) {
+  const openSteps = new Map<string, Entry>();
+  const run = new RunSoFar();
+  for (const event of events) {
+    run.follow(event);
+    const { kind, payload, seq, at } = event;
     const node = String(payload.node ?? "");
     const [running, done] = NODES[node] ?? [`Running ${node}`, `Finished ${node}`];
     switch (kind) {
       case "node_started": {
-        // The approval node runs for as long as the plan waits for the human.
-        const dot = node === "approval" ? "down" : "warn";
-        const entry: Entry = { seq, at, dot, text: running, running: true };
-        // A node that stopped at an interrupt (Approval waiting for the human) starts again on
-        // resume without having finished, so its earlier line is no longer running.
+        const entry: Entry = { seq, at, mark: "current", text: running };
+        // A node that stopped at an interrupt starts again on resume without having finished, so
+        // its earlier line is no longer running.
         const interrupted = open.get(node);
-        if (interrupted) Object.assign(interrupted, { dot: "line", running: false });
+        if (interrupted) interrupted.mark = "info";
         open.set(node, entry);
         entries.push(entry);
         break;
       }
       case "node_finished": {
+        const mark = run.finished(node);
         const entry = open.get(node);
         if (entry) {
-          Object.assign(entry, { dot: "line", text: done, running: false });
+          Object.assign(entry, { mark, text: done });
           open.delete(node);
         } else {
-          entries.push({ seq, at, dot: "line", text: done });
+          entries.push({ seq, at, mark, text: done });
         }
         break;
       }
@@ -91,77 +88,79 @@ export function timelineEntries(events: IncidentEvent[]): Entry[] {
         entries.push({
           seq,
           at,
-          dot: "line",
+          mark: "info",
           text: payload.kind === "no_action" ? "Proposed no action" : "Proposed a plan",
         });
         break;
       case "approval_requested":
-        entries.push({ seq, at, dot: "line", text: "Asked for approval" });
+        entries.push({ seq, at, mark: "info", text: "Asked for approval" });
         break;
       case "decision": {
         // The wait ends with the answer, before Approval resumes and finishes.
         const waiting = open.get("approval");
-        if (waiting) Object.assign(waiting, { dot: "line", running: false });
+        if (waiting) waiting.mark = "done";
         open.delete("approval");
         entries.push({
           seq,
           at,
-          dot: "accent",
+          mark: DECISION_MARK[String(payload.kind)] ?? "info",
           text: decisionText(payload),
         });
         break;
       }
-      case "action": // Execute, one per step status change
-        entries.push({
+      case "action": {
+        // Execute, one per step status change: a started step runs until its next status.
+        const step = `${String(payload.action ?? "")} ${String(payload.target ?? "")}`;
+        const status = String(payload.status ?? "");
+        const started = openSteps.get(step);
+        if (started) started.mark = "info";
+        openSteps.delete(step);
+        const entry: Entry = {
           seq,
           at,
-          dot: ACTION_DOT[String(payload.status)] ?? "line",
-          text: `${String(payload.action ?? "")} ${String(payload.target ?? "")}: ${String(payload.status ?? "")}`,
-          tone: payload.status === "failed" ? "text-down" : undefined,
-        });
+          mark: status === "started" ? "current" : (ACTION_MARK[status] ?? "info"),
+          text: `${step}: ${status}`,
+        };
+        if (status === "started") openSteps.set(step, entry);
+        entries.push(entry);
         break;
+      }
       case "verification":
         entries.push({
           seq,
           at,
-          dot: payload.ok ? "ok" : "warn",
+          mark: payload.ok ? "done" : "warning",
           text: `Check ${String(payload.attempt ?? 1)} ${payload.ok ? "passed" : "failed"}`,
-          tone: payload.ok ? undefined : "text-warn",
         });
         break;
       case "expected":
-        entries.push({ seq, at, dot: "ok", text: String(payload.text ?? "") });
+        entries.push({ seq, at, mark: "info", text: String(payload.text ?? "") });
         break;
       case "notice":
-        entries.push({
-          seq,
-          at,
-          dot: "warn",
-          text: String(payload.text ?? ""),
-          tone: "text-warn",
-        });
+        entries.push({ seq, at, mark: "warning", text: String(payload.text ?? "") });
         break;
       default:
-        entries.push({ seq, at, dot: "line", text: kind.replaceAll("_", " ") });
+        entries.push({ seq, at, mark: "info", text: kind.replaceAll("_", " ") });
     }
   }
   return entries;
 }
 
-const END: Partial<Record<Incident["status"], { text: string; dot: Dot }>> = {
-  resolved: { text: "Resolved", dot: "ok" },
-  closed: { text: "Closed", dot: "line" },
-  failed: { text: "Failed", dot: "down" },
+const END: Partial<Record<Incident["status"], { text: string; mark: Mark }>> = {
+  resolved: { text: "Resolved", mark: "done" },
+  closed: { text: "Closed", mark: "info" },
+  failed: { text: "Failed", mark: "failed" },
 };
 
 /** The incident's own start and end around its events: what opened it, and how it ended. */
 function withEnds(entries: Entry[], incident: Incident): Entry[] {
-  const opened: Entry = { seq: -1, at: incident.opened_at, dot: "down", text: incident.title };
+  const opened: Entry = { seq: -1, at: incident.opened_at, mark: "opened", text: incident.title };
   const end = END[incident.status];
   if (end) {
-    // An ended incident has nothing running; a node that never finished is where it stopped.
-    for (const entry of entries.filter(({ running }) => running)) {
-      Object.assign(entry, { running: false, dot: incident.status === "failed" ? "down" : "line" });
+    // An ended incident has nothing running: a failed run stopped at what still ran, and
+    // anything else never finished it, as the progress bar shows.
+    for (const entry of entries.filter(({ mark }) => mark === "current")) {
+      entry.mark = incident.status === "failed" ? "stopped" : "todo";
     }
   }
   const closed: Entry[] =
@@ -171,10 +170,31 @@ function withEnds(entries: Entry[], incident: Incident): Entry[] {
   return [opened, ...entries, ...closed];
 }
 
+/** The line's dot, a cross for a line that went wrong or a no, or the opener's ring. */
+function Marker({ mark }: { mark: Mark }) {
+  const look = LOOK[mark];
+  return (
+    <span aria-hidden className="mt-[3px] flex size-3.5 shrink-0 items-center justify-center">
+      {look.cross ? (
+        <X className={cn("size-3.5", look.ink)} strokeWidth={3} />
+      ) : (
+        <span
+          className={cn(
+            "size-2.5 rounded-full",
+            look.fill,
+            mark === "current" && "motion-safe:animate-pulse",
+          )}
+        />
+      )}
+    </span>
+  );
+}
+
 /**
  * What happened to the incident, in order: steps, the question, the answer, notices. Each line
- * has a coloured dot; the words say the same, so the colour is never the only cue. With the
- * incident, the first line is what opened it and the last how it ended.
+ * is marked in the colour code the progress bar uses, and says its state to a screen reader, so
+ * the colour is never the only cue. With the incident, the first line is what opened it and the
+ * last how it ended.
  */
 export function Timeline({ events, incident }: { events: IncidentEvent[]; incident?: Incident }) {
   const steps = timelineEntries(events);
@@ -184,19 +204,19 @@ export function Timeline({ events, incident }: { events: IncidentEvent[]; incide
   const entries = incident ? withEnds(steps, incident) : steps;
   return (
     <ol aria-label="Timeline" className="flex flex-col gap-3">
-      {entries.map(({ seq, at, dot, text, running, tone }) => (
-        <li key={seq} className="flex items-start gap-2.5 text-sm">
+      {entries.map(({ seq, at, mark, text }) => (
+        <li key={seq} data-state={mark} className="flex items-start gap-2.5 text-sm">
+          <Marker mark={mark} />
           <span
-            aria-hidden
             className={cn(
-              "mt-[5px] size-2.5 shrink-0 rounded-full",
-              DOT[dot],
-              running && "motion-safe:animate-pulse",
+              "min-w-0 flex-1 break-words",
+              mark === "current" && "font-extrabold",
+              LOOK[mark].tone,
             )}
-          />
-          <span className={cn("min-w-0 flex-1 break-words", running && "font-extrabold", tone)}>
+          >
             {text}
           </span>
+          <span className="sr-only">, {LOOK[mark].word}</span>
           <time dateTime={at} className="shrink-0 font-mono text-xs text-ink-2">
             {formatTime(at)}
           </time>

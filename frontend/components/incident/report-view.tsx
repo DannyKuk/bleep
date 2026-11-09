@@ -1,6 +1,7 @@
 import { Check, Minus, TriangleAlert, X } from "lucide-react";
 
 import { Bleep } from "@/components/bleep/bleep";
+import { LOOK } from "@/components/incident/colour-code";
 import { subjectText } from "@/components/incident/incident-list";
 import type { Incident, Outcome, Report } from "@/lib/api-types";
 import { formatDateTime, formatTime } from "@/lib/format";
@@ -36,13 +37,17 @@ function Section({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-/** The mark before a step: a check only when it says done, a cross when it failed or was refused. */
+/** The mark before a step, in the incident page's colour code: a check only when it says done, a
+ * cross when it failed or was refused, a dash for one that never ran. The step's words say the
+ * same. */
 function StepMark({ step }: { step: string }) {
-  if (/: done$/.test(step)) return <Check aria-hidden className="mt-1 size-4 shrink-0 text-ok" />;
-  if (/: (failed|refused)$/.test(step)) {
-    return <X aria-hidden className="mt-1 size-4 shrink-0 text-down" />;
+  if (/: done$/.test(step)) {
+    return <Check aria-hidden className={cn("mt-1 size-4 shrink-0", LOOK.done.ink)} />;
   }
-  return <Minus aria-hidden className="mt-1 size-4 shrink-0 text-ink-2" />;
+  if (/: (failed|refused)$/.test(step)) {
+    return <X aria-hidden className={cn("mt-1 size-4 shrink-0", LOOK.failed.ink)} />;
+  }
+  return <Minus aria-hidden className={cn("mt-1 size-4 shrink-0", LOOK.todo.ink)} />;
 }
 
 /** One row per step: the backend joins the steps with "; " (`action_taken` in the Report node). */

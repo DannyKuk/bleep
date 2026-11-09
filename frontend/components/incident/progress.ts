@@ -24,11 +24,36 @@ export interface ProgressStep {
   state: StepState;
 }
 
+/**
+ * What the run did so far that decides how a step ended once its node finished: whether a step of
+ * the plan failed, whether the latest check passed, and whether the human said no. Execute and
+ * Verify starting again start their record afresh. The progress bar and the timeline both use it,
+ * so a finished step reads the same in each.
+ */
+export class RunSoFar {
+  private stepFailed = false;
+  private checkPassed = false;
+  private declined = false;
+
+  follow({ kind, payload }: IncidentEvent): void {
+    if (kind === "action" && payload.status === "failed") this.stepFailed = true;
+    if (kind === "verification") this.checkPassed = payload.ok === true;
+    if (kind === "decision") this.declined = payload.kind === "reject";
+    if (kind === "node_started" && payload.node === "execute") this.stepFailed = false;
+    if (kind === "node_started" && payload.node === "verify") this.checkPassed = false;
+  }
+
+  /** The state of `node`'s step as it finishes now. */
+  finished(node: string): StepState {
+    if (node === "execute" && this.stepFailed) return "failed";
+    if (node === "verify" && !this.checkPassed) return "failed";
+    if (node === "approval" && this.declined) return "declined";
+    return "done";
+  }
+}
+
 const INDEX = new Map<string, number>(PROGRESS_STEPS.map(({ node }, index) => [node, index]));
 const REPORT = INDEX.get("report")!;
-const APPROVAL = INDEX.get("approval")!;
-const EXECUTE = INDEX.get("execute")!;
-const VERIFY = INDEX.get("verify")!;
 // Where a run that has published nothing yet (or whose history is still loading) must be.
 const BY_STATUS: Partial<Record<IncidentStatus, number>> = {
   awaiting_approval: INDEX.get("approval"),
@@ -49,24 +74,20 @@ export function progressSteps(events: IncidentEvent[], status: IncidentStatus): 
   const ended = new Map<number, StepState>();
   let current: number | null = null;
   let last: number | null = null;
-  let stepFailed = false;
-  let checkPassed = false;
-  let declined = false;
-  for (const { kind, payload } of events) {
-    if (kind === "action" && payload.status === "failed") stepFailed = true;
-    if (kind === "verification") checkPassed = payload.ok === true;
-    if (kind === "decision") declined = payload.kind === "reject";
+  const run = new RunSoFar();
+  for (const event of events) {
+    run.follow(event);
+    const { kind, payload } = event;
     if (kind !== "node_started" && kind !== "node_finished") continue;
-    const index = INDEX.get(String(payload.node ?? ""));
+    const node = String(payload.node ?? "");
+    const index = INDEX.get(node);
     if (index === undefined) continue;
     if (kind === "node_started") {
       for (const step of ended.keys()) if (step >= index) ended.delete(step);
-      if (index === EXECUTE) stepFailed = false;
-      if (index === VERIFY) checkPassed = false;
       current = index;
       last = index;
     } else {
-      ended.set(index, endState(index, { stepFailed, checkPassed, declined }));
+      ended.set(index, run.finished(node));
       if (current === index) current = null;
     }
   }
@@ -89,14 +110,4 @@ export function progressSteps(events: IncidentEvent[], status: IncidentStatus): 
     state:
       index === stopped ? "stopped" : index === current ? "current" : (ended.get(index) ?? "todo"),
   }));
-}
-
-function endState(
-  index: number,
-  run: { stepFailed: boolean; checkPassed: boolean; declined: boolean },
-): StepState {
-  if (index === EXECUTE && run.stepFailed) return "failed";
-  if (index === VERIFY && !run.checkPassed) return "failed";
-  if (index === APPROVAL && run.declined) return "declined";
-  return "done";
 }
