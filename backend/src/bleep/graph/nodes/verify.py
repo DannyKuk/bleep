@@ -22,9 +22,10 @@ incident about anything else has nothing to read again, so it ends `unverified` 
 loop-back.
 A Coolify application the plan redeployed is checked as a whole, read from the engine each time:
 the redeploy replaced its containers under new names, so they are left out of the name checks,
-and one of its new containers whose restart count is above 0 was restarted by its policy after
-the fix. The redeploy step ends only once Coolify reports its deployment over
-(`plugins/coolify`), so the wait here starts after the new containers are up.
+and every one of its new containers must pass, not just one: one whose restart count is above 0
+was restarted by its policy after the fix (#332). The redeploy step ends only once Coolify
+reports its deployment over (`plugins/coolify`), so the wait here starts after the new
+containers are up.
 
 Passing sets the outcome `resolved`. A failure with fewer than `verify_loops` (2) loop-backs so
 far hands the failed checks to Investigate as the next round's instruction (an appended message,
@@ -89,7 +90,9 @@ SEEN = "when Verify first saw it running"
 RESTARTED = STARTED_AFTER_FIX[0] + " (restart count {now}, {then} " + SEEN + ")"
 STARTED_AGAIN = STARTED_AFTER_FIX[1] + " (a later start time than " + SEEN + ")"
 CAME_UP = "first seen running at this check; it has to stay up until the next one"
-REDEPLOY_RESTARTED = STARTED_AFTER_FIX[0] + " (a container the redeploy made, restart count {now})"
+REDEPLOY_RESTARTED = (
+    STARTED_AFTER_FIX[0] + " ({name}, a container the redeploy made, restart count {now})"
+)
 RECREATED = STARTED_AFTER_FIX[2] + ", then restarted by its restart policy (restart count {now})"
 
 
@@ -346,18 +349,19 @@ def _deploy_starts(
 async def _check_application(
     deps: GraphDeps, host_id: str, app: str, since: datetime | None
 ) -> Check:
-    """A redeployed Coolify application, read from the engine now: at least one container of
-    it (previews aside) running that was created after its redeploy began, and none of those
-    unhealthy, still starting or restarted by its restart policy (a restart count above 0: a
-    new container starts at 0, so that restart came after the fix, #320). `since` None (the
-    redeploy never started) fails the check.
+    """A redeployed Coolify application, read from the engine now: every container of it
+    (previews aside) created after its redeploy began, and at least one, must be running, not
+    restarted by its restart policy (a restart count above 0: a new container starts at 0, so
+    that restart came after the fix, #320) and not unhealthy or still starting, the rules of a
+    container check, in that order (#332). `since` None (the redeploy never started) fails the
+    check.
 
     The creation time is the host's and `since` is Bleep's, so `CLOCK_SLACK_S` of skew is
     allowed. A host clock further behind makes new containers look old and the check fail, the
     safe side; a host clock ahead widens the window by as much, so a container created within
     the slack plus that lead before the deploy counts. A restart keeps a container's creation
-    time, so an old container restarting after the deploy does not count. One with no creation
-    time does not count either."""
+    time, so an old container restarting after the deploy does not count, nor does one still
+    shutting down, for or against the app. One with no creation time does not count either."""
     target = f"{app} (Coolify application)"
     if since is None:
         return Check(kind="container", target=target, ok=False, detail="not redeployed")
@@ -366,33 +370,31 @@ async def _check_application(
     except EngineUnavailable, KeyError:
         return Check(kind="container", target=target, ok=False, detail="host not reachable")
     floor = since - timedelta(seconds=CLOCK_SLACK_S)
-    running = [
+    made = [
         c
         for c in coolify_members(listed, app)
-        if c.state == "running"
-        and _not_preview(c.labels)
-        and c.created_at is not None
-        and c.created_at >= floor
+        if _not_preview(c.labels) and c.created_at is not None and c.created_at >= floor
     ]
-    if not running:
-        return Check(
-            kind="container", target=target, ok=False, detail="no container made by the redeploy"
-        )
-    bad = next((c for c in running if c.health in ("unhealthy", "starting")), None)
+    failure = _redeploy_failure(made)
+    if failure is not None:
+        return Check(kind="container", target=target, ok=False, detail=failure)
+    return Check(kind="container", target=target, ok=True, detail=f"{len(made)} running")
+
+
+def _redeploy_failure(made: list[ContainerSummary]) -> str | None:
+    """Why the containers a redeploy made do not verify their application, or None."""
+    if not made:
+        return "no container made by the redeploy"
+    down = next((c for c in made if c.state != "running"), None)
+    if down is not None:
+        return f"{down.name} is {down.state}"
+    restarted = next((c for c in made if c.restart_count > 0), None)
+    if restarted is not None:
+        return REDEPLOY_RESTARTED.format(name=restarted.name, now=restarted.restart_count)
+    bad = next((c for c in made if c.health in ("unhealthy", "starting")), None)
     if bad is not None:
-        return Check(
-            kind="container", target=target, ok=False, detail=f"{bad.name} is {bad.health}"
-        )
-    # A container the redeploy made started at count 0: any count is its policy restarting it.
-    restarted = max((c.restart_count for c in running), default=0)
-    if restarted > 0:
-        return Check(
-            kind="container",
-            target=target,
-            ok=False,
-            detail=REDEPLOY_RESTARTED.format(now=restarted),
-        )
-    return Check(kind="container", target=target, ok=True, detail=f"{len(running)} running")
+        return f"{bad.name} is {bad.health}"
+    return None
 
 
 async def _check_url(client: httpx.AsyncClient, cfg: UrlCheckConfig) -> Check:

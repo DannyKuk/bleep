@@ -738,7 +738,7 @@ async def test_a_redeployed_application_is_checked_by_its_new_containers(tmp_pat
     ("containers", "detail"),
     [
         ([], "no container made by the redeploy"),
-        ([web(state="exited")], "no container made by the redeploy"),
+        ([web(state="exited")], "web0uuid-2 is exited"),
         ([web(health="unhealthy")], "web0uuid-2 is unhealthy"),
         (
             [web("web0uuid-pr", labels=WEB_APP | {"coolify.pullRequestId": "7"})],
@@ -1663,7 +1663,84 @@ async def test_a_redeployed_container_its_policy_restarted_is_not_resolved(tmp_p
     app = update["verification"].checks[0]
     assert (app.target, app.ok) == ("web (Coolify application)", False)
     assert app.detail == (
-        "restarted by its restart policy after the fix (a container the redeploy made, "
-        "restart count 1)"
+        "restarted by its restart policy after the fix (web0uuid-2, a container the redeploy "
+        "made, restart count 1)"
     )
     assert update.get("outcome") != "resolved"
+
+
+async def test_a_redeploy_with_one_new_container_stuck_restarting_is_not_resolved(tmp_path):
+    """The app runs two containers; the redeploy made both, one runs and the other is stuck in
+    `restarting` at every check. One running container does not verify the app."""
+    stuck = web("web0uuid-3", state="restarting", restart_count=3)
+    engine = FakeEngine("a", [web(health="healthy"), stuck, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state, containers=["shop-db-1"]) | {"verify_loops": 2})
+
+    app = update["verification"].checks[0]
+    assert (app.target, app.ok, app.detail) == (
+        "web (Coolify application)",
+        False,
+        "web0uuid-3 is restarting",
+    )
+    assert update["outcome"] == "unverified"
+
+
+@pytest.mark.parametrize(
+    ("second", "detail"),
+    [
+        (web("web0uuid-3", health="unhealthy"), "web0uuid-3 is unhealthy"),
+        (web("web0uuid-3", health="starting"), "web0uuid-3 is starting"),
+        (web("web0uuid-3", state="exited"), "web0uuid-3 is exited"),
+        (
+            web("web0uuid-3", restart_count=2),
+            "restarted by its restart policy after the fix (web0uuid-3, a container the "
+            "redeploy made, restart count 2)",
+        ),
+    ],
+)
+async def test_every_container_the_redeploy_made_is_checked(tmp_path, second, detail):
+    engine = FakeEngine("a", [web(health="healthy"), second, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state, containers=["shop-db-1"]))
+
+    app = update["verification"].checks[0]
+    assert (app.ok, app.detail) == (False, detail)
+    assert update.get("outcome") != "resolved"
+
+
+async def test_a_redeploy_with_two_healthy_new_containers_is_resolved(tmp_path):
+    second = web("web0uuid-3")  # no healthcheck: running is enough
+    engine = FakeEngine("a", [web(health="healthy"), second, box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state, containers=["shop-db-1"]))
+
+    app = update["verification"].checks[0]
+    assert (app.ok, app.detail) == (True, "2 running")
+    assert update["outcome"] == "resolved"
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"state": "running", "health": "unhealthy"},  # stopping, not yet past its grace period
+        {"state": "removing"},
+        {"state": "exited"},
+        {"state": "restarting", "restart_count": 4},
+    ],
+)
+async def test_an_old_container_still_shutting_down_does_not_count_against_the_app(
+    tmp_path, fields
+):
+    old = web("web0uuid-1", created=DEPLOYED_AT - timedelta(days=1), **fields)
+    engine = FakeEngine("a", [old, web(health="healthy"), box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+
+    update, _ = await run(env, redeployed(state, containers=["shop-db-1"]))
+
+    app = update["verification"].checks[0]
+    assert (app.ok, app.detail) == (True, "1 running")
+    assert update["outcome"] == "resolved"
