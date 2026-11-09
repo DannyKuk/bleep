@@ -13,6 +13,7 @@ import logging
 import sqlite3
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any
 
 import aiosqlite
@@ -20,9 +21,11 @@ import httpx
 
 from bleep.config import Settings
 from bleep.graph.deps import Approvals
+from bleep.graph.nodes.report import HEALTHY_ANYWAY, OUTCOME_TEXT
 from bleep.guard.log import GuardLogger
+from bleep.guard.titles import split_service_id, title_name
 from bleep.incidents.bus import EventBus
-from bleep.incidents.repository import IncidentRepo, utcnow
+from bleep.incidents.repository import IncidentRepo, primary_signal, utcnow
 from bleep.notify import format as fmt
 from bleep.notify.telegram import (
     EXPECTED_LABEL,
@@ -37,13 +40,14 @@ from bleep.notify.telegram import (
 )
 from bleep.schemas.graph import (
     ApprovalRequest,
+    Check,
     Decision,
     Diagnosis,
     Proposal,
     Report,
     VerificationResult,
 )
-from bleep.schemas.incidents import TERMINAL_STATUSES, Incident
+from bleep.schemas.incidents import TERMINAL_STATUSES, Ending, Incident
 from bleep.schemas.settings import SecretStatus
 from bleep.schemas.telegram import TelegramStatus
 from bleep.store.db import Database
@@ -54,10 +58,29 @@ log = logging.getLogger(__name__)
 TOKEN_ENV = "TELEGRAM_BOT_TOKEN"  # `Settings.telegram_bot_token`
 CHAT_ID_ENV = "TELEGRAM_CHAT_ID"  # `Settings.telegram_chat_id`
 DRAIN_TIMEOUT_S = 5.0  # how long a shutdown waits for buttons still being cleared
+# A new incident on a subject whose last one ended this recently is "Again": the longest repeat
+# hold (#356). A folded repeat is "Again" whenever (#380).
+AGAIN_WITHIN = timedelta(hours=24)
+MAX_NEXT = 3  # follow-ups in the end message; the dashboard keeps them all
+_HOST_KINDS = ("disk", "memory", "load", "host_unreachable")
+_END_OF = {
+    "resolved": "end_fixed",
+    "unverified": "end_unverified",
+    "rejected": "end_rejected",
+    "no_action": "end_no_action",
+    "budget": "end_stopped",
+    "replan_limit": "end_stopped",
+}
+_CHECKED = ("end_fixed", "end_healthy", "end_unverified")  # ends that come after a check
 
 
 class Notifier:
-    """Fans each call out to the bus and to Telegram. `telegram` is None without a token."""
+    """Fans each call out to the bus and to Telegram. `telegram` is None without a token.
+
+    Every incident is one thread in the chat: its first message (the opener) says it is new or
+    again, every later one replies to it, and the last one leads with the outcome (#380).
+    `incidents` gives the short names, the signals and the previous incident; `wiring.py` sets it
+    once the repository exists."""
 
     def __init__(
         self,
@@ -66,6 +89,10 @@ class Notifier:
         chat_id: str | None = None,
         messages: MessageLog | None = None,
         approvals: Approvals | None = None,
+        *,
+        incidents: IncidentRepo | None = None,
+        dashboard_url: str | None = None,
+        clock: Callable[[], datetime] = utcnow,
     ) -> None:
         self.bus = bus
         self.telegram = telegram
@@ -74,7 +101,9 @@ class Notifier:
         self.approvals = approvals
         self.expectations: Expecting | None = None
         self._clearing: set[asyncio.Task[None]] = set()
-        self.incidents: IncidentRepo | None = None
+        self.incidents = incidents
+        self.dashboard_url = dashboard_url
+        self.clock = clock
 
     async def incident_finished(self, incident_id: str) -> None:
         """Remove the buttons from every message logged for an incident that ended: a message
@@ -149,24 +178,15 @@ class Notifier:
         return False
 
     async def incident_opened(self, incident: Incident) -> None:
-        """A host-unreachable incident that waits for its host says so instead of promising a
-        plan. When "This is expected" applies, the message carries its button and is logged, so
-        the press finds the incident."""
+        """The incident's opener: what was seen, and that Bleep looks into it, or, for a
+        host-unreachable incident that waits for its host, that it waits. When "This is expected"
+        applies, the message carries its button."""
+        if self.telegram is None:
+            return
         name = "incident_waiting" if incident.status == "waiting" else "incident_opened"
+        body = f"{await self._seen(incident)} {fmt.render(name)}".strip()
         buttons = await self._expect_button(incident.id)
-        if not buttons:
-            await self._plain(name, id=incident.id, title=incident.title)
-            return
-        assert self.telegram is not None and self.chat_id is not None
-        text = fmt.render(name, id=incident.id, title=incident.title)
-        try:
-            message_id = await self.telegram.send_message(self.chat_id, text, buttons)
-        except TelegramError as error:
-            log.warning("telegram: could not send: %s", error)
-            return
-        if self.messages is not None:
-            await self.messages.add(message_id, incident.id, "", utcnow())
-            await self._clear_if_finished(incident.id, message_id, "")
+        await self._safely(self._send(incident, body, buttons=buttons, says_what=True))
 
     async def _expect_button(self, incident_id: str) -> list[tuple[str, str]]:
         """The "It's expected" button when it applies to the incident, else none."""
@@ -192,8 +212,6 @@ class Notifier:
         if proposal.refused:
             text = fmt.render(
                 "refused",
-                id=incident.id,
-                title=fmt.prose_line(incident.title),
                 root_cause=fmt.prose_line(cause),
                 reasons=_reasons(proposal),
                 steps=_refused_steps(proposal),
@@ -202,8 +220,6 @@ class Notifier:
             return
         text = fmt.render(
             "proposal",
-            id=incident.id,
-            title=fmt.prose_line(incident.title),
             category=category,
             confidence=confidence,
             root_cause=fmt.prose_line(cause),
@@ -219,42 +235,80 @@ class Notifier:
         current = await self.approvals.current(incident.id) if self.approvals else None
         if current is None or current.id != approval.id:
             return  # no plan to show
+        waited = fmt.duration(self.clock() - current.requested_at)
         if current.proposal.refused:
-            text = fmt.render(
-                "refused_reminder", id=incident.id, title=fmt.prose_line(incident.title)
-            )
+            text = fmt.render("refused_reminder", waited=waited)
             await self._safely(
                 self._ask(incident, approval, text, approvable=False, reject_label="Let it go")
             )
             return
-        text = fmt.render(
-            "reminder",
-            id=incident.id,
-            title=fmt.prose_line(incident.title),
-            steps=fmt.steps_text(current.proposal),
-        )
+        text = fmt.render("reminder", waited=waited, steps=fmt.steps_text(current.proposal))
         approvable = fmt.shows_in_full(current.proposal)
         await self._safely(self._ask(incident, approval, text, approvable=approvable))
 
     async def verification(self, incident: Incident, result: VerificationResult) -> None:
-        name = "verification_ok" if result.ok else "verification_failed"
-        await self._plain(name, id=incident.id, detail=result.detail)
+        """A check that failed says so; one that passed is told in the end message."""
+        if self.telegram is None or result.ok:
+            return
+        text = fmt.bold_first_line(fmt.render("verification_failed", detail=result.detail))
+        await self._safely(self._send(incident, text))
 
     async def report(self, incident: Incident, report: Report) -> None:
-        await self._plain(
-            "report",
-            id=incident.id,
-            title=report.title,
-            outcome=report.outcome,
-            summary=report.summary,
-            cause=report.cause,
-            action=report.action_taken or "nothing ran",
-            decision=report.human_decision or "you were not asked",
-            follow_ups="\n".join(f"- {item}" for item in report.follow_ups) or "nothing",
-        )
+        """The end message: the outcome first, the cause, what ran, what was checked, what is
+        left for the person and a link to the incident's page."""
+        if self.telegram is None:
+            return
+        name = _end_template(report.outcome)
+        took = fmt.duration(self.clock() - incident.opened_at)
+        values = {"end_fixed": {"took": took}, "end_healthy": {"took": took}}.get(name, {})
+        if name == "end_stopped":
+            values = {"outcome": report.outcome}
+        parts = [
+            fmt.bold_first_line(fmt.render(name, **values)),
+            fmt.render(
+                "end_report",
+                cause=fmt.prose_line(report.cause),
+                action=fmt.prose_line(report.action_taken or "nothing"),
+            ),
+        ]
+        if name in _CHECKED and (checks := await self._checked(incident.id)):
+            parts.append(fmt.render("end_checked", checks=checks))
+        if report.follow_ups:
+            items = report.follow_ups[:MAX_NEXT]
+            listed = fmt.Redacted("\n".join(f"- {fmt.prose_line(item)}" for item in items))
+            parts.append(fmt.render("end_next", follow_ups=listed))
+        if self.dashboard_url:
+            url = f"{self.dashboard_url.rstrip('/')}/incidents/{incident.id}"
+            parts.append(fmt.render("end_details", url=fmt.Redacted(url)))
+        await self._safely(self._send(incident, fmt.message(*parts)))
 
-    async def notice(self, incident_id: str, text: str) -> None:
-        await self._plain("notice", id=incident_id, text=text)
+    async def _checked(self, incident_id: str) -> fmt.Redacted | None:
+        """The checks of the run's last verification, from its timeline, as one line."""
+        events = [e for e in await self.bus.history(incident_id) if e.kind == "verification"]
+        if not events:
+            return None
+        checks = [Check.model_validate(c) for c in events[-1].payload.get("checks", [])]
+        return fmt.prose_line("; ".join(f"{c.target} {c.detail}".strip() for c in checks)) or None
+
+    async def notice(self, incident_id: str, text: str, ending: Ending | None = None) -> None:
+        """A note in the middle of a run, or, with `ending`, the end message of an incident that
+        closed outside its run's report."""
+        if self.telegram is None:
+            return
+        assert self.chat_id is not None
+        incident = await self.incidents.get(incident_id) if self.incidents is not None else None
+        if incident is None:  # no thread to put it in
+            rendered = fmt.render("notice", text=text)
+            await self._safely(self.telegram.send_message(self.chat_id, rendered))
+            return
+        if ending is None:
+            rendered = fmt.render("notice", text=text)
+        elif ending == "back":
+            took = fmt.duration(self.clock() - incident.opened_at)
+            rendered = fmt.bold_first_line(fmt.render("end_back", took=took, text=text))
+        else:
+            rendered = fmt.bold_first_line(fmt.render(f"end_{ending}", text=text))
+        await self._safely(self._send(incident, rendered))
 
     async def _ask(
         self,
@@ -265,22 +319,75 @@ class Notifier:
         approvable: bool = True,
         reject_label: str = "Reject",
     ) -> None:
-        """Send a plan with its buttons and remember which incident the message is about. A plan
-        the message cannot show in full (`fmt.shows_in_full`) gets Reject only."""
-        assert self.telegram is not None and self.chat_id is not None
+        """Send a plan with its buttons and remember which incident and plan the message is
+        about. A plan the message cannot show in full (`fmt.shows_in_full`) gets Reject only."""
         buttons = [("Approve", f"approve:{approval.id}")] if approvable else []
         buttons.append((reject_label, f"reject:{approval.id}"))
         buttons += await self._expect_button(incident.id)
-        message_id = await self.telegram.send_message(self.chat_id, text, buttons)
-        if self.messages is not None:
-            await self.messages.add(message_id, incident.id, approval.id, utcnow())
-            await self._clear_if_finished(incident.id, message_id, approval.id)
+        await self._send(
+            incident, fmt.bold_first_line(text), buttons=buttons, approval_id=approval.id
+        )
 
-    async def _plain(self, template: str, **values: str) -> None:
-        if self.telegram is None:
+    async def _send(
+        self,
+        incident: Incident,
+        text: str,
+        *,
+        buttons: list[tuple[str, str]] | None = None,
+        approval_id: str = "",
+        says_what: bool = False,
+    ) -> None:
+        """Send a message of the incident's thread and log it. The first one that reaches
+        Telegram is the opener: it leads with the incident's head and what was seen (unless
+        `says_what`: its text already does), and is not a reply, or replies to the previous
+        incident's last message for a repeat. Every later one is a reply to the opener."""
+        assert self.telegram is not None and self.chat_id is not None
+        reply_to = await self.messages.first_for(incident.id) if self.messages else None
+        if reply_to is None:
+            head, reply_to = await self._opening(incident)
+            text = fmt.message(head, "" if says_what else await self._seen(incident), text)
+        message_id = await self.telegram.send_message(
+            self.chat_id, text, buttons, reply_to=reply_to
+        )
+        if self.messages is None:
             return
-        assert self.chat_id is not None
-        await self._safely(self.telegram.send_message(self.chat_id, fmt.render(template, **values)))
+        await self.messages.add(message_id, incident.id, approval_id, utcnow(), bool(buttons))
+        if buttons:
+            await self._clear_if_finished(incident.id, message_id, approval_id)
+
+    async def _opening(self, incident: Incident) -> tuple[str, int | None]:
+        """The opener's head line, and the message it replies to: none for a new incident, the
+        previous incident's last message for a repeat (`Again`)."""
+        name = incident.short_name or incident.id
+        before = await self.incidents.previous(incident) if self.incidents is not None else None
+        if before is not None and before.closed_at is not None:
+            gap = incident.opened_at - before.closed_at
+            if incident.fold_of is not None or gap < AGAIN_WITHIN:
+                head = fmt.render(
+                    "head_again",
+                    incident=name,
+                    after=fmt.duration(gap),
+                    earlier=before.short_name or before.id,
+                )
+                quoted = await self.messages.last_for(before.id) if self.messages else None
+                return fmt.bold_first_line(head), quoted
+        where = "host" if incident.subject.kind == "host" else incident.subject.host_id
+        return fmt.bold_first_line(fmt.render("head_new", incident=name, where=where)), None
+
+    async def _seen(self, incident: Incident) -> str:
+        """One line of what opened the incident, from its most telling signal."""
+        signals = await self.incidents.signals(incident.id) if self.incidents is not None else []
+        signal = primary_signal(signals)
+        if signal is None:
+            return ""
+        if signal.kind in _HOST_KINDS:
+            return fmt.render(f"seen/{signal.kind}", host=incident.subject.host_id)
+        service = split_service_id(incident.subject)[1]
+        if signal.kind == "url_failed":
+            url = str(signal.detail.get("url") or service)
+            return fmt.render("seen/url_failed", url=title_name(url))
+        container = signal.container or service
+        return fmt.render(f"seen/{signal.kind}", container=title_name(container))
 
     @staticmethod
     async def _safely(sending) -> None:
@@ -288,6 +395,16 @@ class Notifier:
             await sending
         except TelegramError as error:
             log.warning("telegram: could not send: %s", error)
+
+
+def _end_template(outcome: str) -> str:
+    """The end message's template for the report's fixed outcome text."""
+    if outcome == HEALTHY_ANYWAY:
+        return "end_healthy"
+    for kind, text in OUTCOME_TEXT.items():
+        if outcome.startswith(text):
+            return _END_OF[kind]
+    return "end_stopped"
 
 
 def _refused_steps(proposal: Proposal) -> fmt.Redacted:
@@ -395,6 +512,8 @@ def setup(
         chat = secrets.get(CHAT_ID_ENV)
         chat_id = chat.get_secret_value() if chat is not None else None
 
+    dashboard_url = str(settings.dashboard_url) if settings.dashboard_url else None
+
     def rebuild() -> NotifySetup:
         return setup(settings, db, bus, approvals, guard_log, secrets=secrets)
 
@@ -402,7 +521,7 @@ def setup(
         if token is not None:
             log.warning("telegram: a bot token is set but TELEGRAM_CHAT_ID is not; Telegram is off")
         return NotifySetup(
-            Notifier(bus),
+            Notifier(bus, dashboard_url=dashboard_url),
             chat_id=chat_id,
             token_set=token is not None,
             token_source=source,
@@ -421,7 +540,7 @@ def setup(
         messages=messages,
         guard_log=guard_log,
     )
-    notifier = Notifier(bus, bot.client, chat_id, messages, approvals)
+    notifier = Notifier(bus, bot.client, chat_id, messages, approvals, dashboard_url=dashboard_url)
     return NotifySetup(
         notifier,
         bot,

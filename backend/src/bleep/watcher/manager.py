@@ -268,7 +268,7 @@ class WatcherManager:
         if change.config is None:
             try:
                 for incident in await self.repo.open_on_host(host_id):
-                    await self.runner.end(incident.id, REMOVED_NOTICE)
+                    await self.runner.end(incident.id, REMOVED_NOTICE, ending="removed")
             finally:  # the host goes whatever happened above, so it can be added again
                 await self.registry.remove(host_id)
                 self._forget(host_id)
@@ -438,7 +438,7 @@ class WatcherManager:
         notice = quiet_notice(self._quiet_name(state), state)
         for incident in await self._incidents_of(state):
             try:
-                await self.runner.end(incident.id, notice, spare=RUNNING_STATUSES)
+                await self.runner.end(incident.id, notice, ending="quiet", spare=RUNNING_STATUSES)
             except Exception:  # one incident that cannot be closed must not keep the others open
                 log.exception("closing incident %s for a quiet failed", incident.id)
 
@@ -601,7 +601,10 @@ class WatcherManager:
             return
         held = {sid: f for sid, f in held.items() if not await self._quiet_now(f[0].subject)}
         for failures in held.values():
-            incident, created = await self.repo.open_or_attach(failures[0].subject, failures)
+            subject = failures[0].subject
+            incident, created = await self.repo.open_or_attach(
+                subject, failures, name=self._service_name(subject)
+            )
             if created:  # the host incident closed between the checks: this one is new
                 await self.runner.start(incident)
         urls = {str(s.detail.get("url")) for failures in held.values() for s in failures}
@@ -652,12 +655,19 @@ class WatcherManager:
         if outlived is not None and self._still_held(subject, outlived):
             return
         repeat_of = outlived.last_id if outlived is not None else None
-        incident, created = await self.repo.open_or_attach(subject, signals, repeat_of)
+        incident, created = await self.repo.open_or_attach(
+            subject, signals, repeat_of, self._service_name(subject)
+        )
         if not created:
             return
         await self.runner.start(incident)
         if subject.kind == "host":
             await self._attach_held(subject.host_id)
+
+    def _service_name(self, subject: Subject) -> str | None:
+        """The service's name as the dashboard shows it, for the incident's short name."""
+        service = self.registry.service(subject.service_id) if subject.service_id else None
+        return service.name if service is not None else None
 
     async def _outlived(
         self, subject: Subject, signals: list[Signal], run: FailingRun

@@ -76,6 +76,7 @@ class FakeRunner:
         self.started: list[Incident] = []
         self.recovered = 0
         self.ended: list[tuple[str, str]] = []
+        self.endings: list[str] = []
         self.back: list[str] = []
         self.repo = repo
 
@@ -89,10 +90,13 @@ class FakeRunner:
     async def host_back(self, host_id: str) -> None:
         self.back.append(host_id)
 
-    async def end(self, incident_id: str, text: str, *, spare: tuple[str, ...] = ()) -> None:
+    async def end(
+        self, incident_id: str, text: str, *, ending: str = "", spare: tuple[str, ...] = ()
+    ) -> None:
         if self.repo is not None and await self.repo.close_unfinished(incident_id, spare) is None:
             return
         self.ended.append((incident_id, text))
+        self.endings.append(ending)
 
     async def close(self) -> None:
         return None
@@ -790,6 +794,7 @@ async def test_a_removed_host_stops_being_watched_and_its_open_incidents_are_end
     assert [h.config.id for h in r.registry.hosts()] == ["h"]
     assert machines.machines["box.lan"].closed
     assert r.runner.ended == [(incident.id, REMOVED_NOTICE)]  # host h's incident stays
+    assert r.runner.endings == ["removed"]
     assert other.id not in [i for i, _ in r.runner.ended]
     await r.manager.stop()
 
@@ -890,7 +895,7 @@ async def test_a_removal_that_fails_halfway_still_drops_the_host(tmp_path):
         subject, [Signal(subject=subject, kind="unhealthy", at=T0, container="blog-web-1")]
     )
 
-    async def broken(incident_id, text):
+    async def broken(incident_id, text, ending):
         raise RuntimeError("the database is locked")
 
     r.runner.end = broken
@@ -980,6 +985,7 @@ async def test_quieting_a_service_closes_its_open_incident_with_a_notice(tmp_pat
     incident = await open_shop_incident(r)
     await r.quiet.set("service", SHOP, "leave_alone", None)
     assert r.runner.ended == [(incident.id, "Closed: you told me to leave shop alone.")]
+    assert r.runner.endings == ["quiet"]
     assert (await r.repo.get(incident.id)).status == "closed"
 
 
@@ -1236,12 +1242,14 @@ async def test_one_failing_end_does_not_keep_a_quiet_host_from_closing_the_other
     await r.kill("shop")
     await r.kill("blog")
     first, second = sorted(await r.incidents(), key=lambda i: i.opened_at)
-    ending = r.runner.end
+    original = r.runner.end
 
-    async def end(incident_id: str, text: str, *, spare: tuple[str, ...] = ()) -> None:
+    async def end(
+        incident_id: str, text: str, *, ending: str = "", spare: tuple[str, ...] = ()
+    ) -> None:
         if incident_id == first.id:
             raise RuntimeError("the database is locked")
-        await ending(incident_id, text, spare=spare)
+        await original(incident_id, text, ending=ending, spare=spare)
 
     r.runner.end = end
     await r.quiet.set("host", "h", "leave_alone", None)

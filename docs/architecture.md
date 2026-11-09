@@ -62,7 +62,7 @@ flowchart LR
 | **Quiet store** | `incidents/quiet.py`, `api/quiet.py` | One quiet state per service or host, snooze or leave alone. Its listeners close the subject's incidents when a quiet starts and judge it again when one ends; a 30 s loop ends snoozes whose time has passed. |
 | **Runner** | `incidents/runner.py` | Runs each incident's graph in the background, started by the watcher manager for each newly opened incident, resumed after a decision or a restart (`recover_on_boot` at startup), and keeps the incident's status in step. |
 | **Approvals** | `incidents/approvals.py`, `incidents/reminders.py` | Pending approvals in SQLite, decided once by whichever channel answers first; HMAC grants for approved plans; reminders that never approve. |
-| **Notifier and Telegram bot** | `notify/`, `prompts/notify/` | The notifier the graph and the reminder loop call: it tells the dashboard bus and, when a bot token is set, Telegram. The bot long-polls Telegram; a button or a reply to a proposal becomes a decision, raced fairly against the dashboard. |
+| **Notifier and Telegram bot** | `notify/`, `prompts/notify/` | The notifier the graph and the reminder loop call: it tells the dashboard bus and, when a bot token is set, Telegram. Each incident is one Telegram thread: an opener, replies to it, one end message that leads with the outcome. The bot long-polls Telegram; a button or a reply becomes a decision, raced fairly against the dashboard. |
 | **Incident graph** | `graph/` | LangGraph state, nodes and wiring, checkpointed per incident in `checkpoints.sqlite`. |
 | **Read tools** | `tools/` | Docker reads and the host command tool for the model, each scoped to the incident's host, `recall_incidents` over memory, `recent_commits` and `commit_diff` for a service with a linked repo, and `knowledge_search`. |
 | **GitHub client** | `hosts/github.py` | Read-only GitHub REST: a repo's commits and diffs, its README and docs files; works without a token on public repos. |
@@ -210,6 +210,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **Only the configured chat is answered**; anything else is dropped and logged.
 - **A decision from either channel goes through the same first-wins `resolve`**, and the loser is told who won.
 - **A plan Telegram cannot show whole, a cut `set_env` value or a plugin step's params, gets no Approve button there**; it is approved on the dashboard.
+- **Each incident is one Telegram thread**: its short name (`shop #14`), an opener, replies to it, an emoji per kind of message, one end message that leads with the outcome, and "Again" for a repeat.
 
 **Observability** ([details](design/observability.md))
 - **Tracing is off unless `TRACING` names Langfuse or LangSmith**, and off adds no callbacks at all.

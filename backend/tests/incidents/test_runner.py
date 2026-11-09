@@ -323,15 +323,17 @@ class NoticeNotifier:
 
     def __init__(self, fail: bool = False) -> None:
         self.notices: list[tuple[str, str]] = []
+        self.endings: list[str | None] = []
         self.fail = fail
 
     async def incident_opened(self, incident) -> None:
         return None
 
-    async def notice(self, incident_id: str, text: str) -> None:
+    async def notice(self, incident_id: str, text: str, ending: str | None = None) -> None:
         if self.fail:
             raise RuntimeError("telegram is down")
         self.notices.append((incident_id, text))
+        self.endings.append(ending)
 
 
 @pytest.mark.parametrize("fail", [False, True])
@@ -360,6 +362,7 @@ async def test_a_failing_run_tells_the_channels_too(tmp_path, monkeypatch, fail,
         assert "telling the channels" in caplog.text
     else:
         assert notifier.notices == [(incident.id, notice)] and "RuntimeError" in notice
+        assert notifier.endings == ["error"]
 
 
 async def test_a_status_write_that_fails_is_logged_and_fails_the_run(tmp_path, caplog):
@@ -873,7 +876,7 @@ async def test_end_cancels_a_run_in_flight_closes_the_incident_and_says_why(tmp_
         runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
         await runner.start(incident)
         await asyncio.wait_for(env.deps.bus.reached.wait(), 5)
-        await runner.end(incident.id, "Closed: the host was removed.")
+        await runner.end(incident.id, "Closed: the host was removed.", ending="removed")
         await runner.join()
 
         assert (await env.repo.get(incident.id)).status == "closed"
@@ -881,6 +884,7 @@ async def test_end_cancels_a_run_in_flight_closes_the_incident_and_says_why(tmp_
     events = await env.bus.history(incident.id)
     assert events[-1].kind == "notice" and events[-1].payload["text"].endswith("removed.")
     assert notifier.notices == [(incident.id, "Closed: the host was removed.")]
+    assert notifier.endings == ["removed"]
 
 
 async def test_end_with_spare_leaves_an_executing_incident_and_its_run_alone(tmp_path):
@@ -893,7 +897,9 @@ async def test_end_with_spare_leaves_an_executing_incident_and_its_run_alone(tmp
         await runner.start(incident)
         await asyncio.wait_for(env.deps.bus.reached.wait(), 5)
         await env.repo.set_status(incident.id, "executing")
-        await runner.end(incident.id, "Closed: quiet.", spare=("executing", "verifying"))
+        await runner.end(
+            incident.id, "Closed: quiet.", ending="quiet", spare=("executing", "verifying")
+        )
         assert incident.id not in runner._ended
         assert not runner._runs[incident.id].cancelled()
         assert (await env.repo.get(incident.id)).status == "executing"
@@ -930,7 +936,7 @@ async def test_an_approve_landing_while_end_closes_the_incident_never_runs_execu
             return await real(incident_id)
 
         env.repo.close_unfinished = close_unfinished
-        await runner.end(incident.id, "Closed: the host was removed.")
+        await runner.end(incident.id, "Closed: the host was removed.", ending="removed")
         await runner.join()
 
     assert landed == [True]
@@ -975,7 +981,7 @@ async def test_a_yes_racing_end_with_the_stored_approvals_never_runs_and_leaves_
             return closed
 
         env.repo.close_unfinished = close_unfinished
-        await runner.end(incident.id, "Closed: you told me to leave shop alone.")
+        await runner.end(incident.id, "Closed: you told me to leave shop alone.", ending="quiet")
         await runner.join()
         record = await approvals.current(incident.id)
 
@@ -1003,7 +1009,7 @@ async def test_a_resume_that_arrives_after_end_is_not_driven(tmp_path, acting):
         await runner.join()
         approval_id = await runner.waiting_for(incident.id)
         won = await approvals.resolve(incident.id, decide("approve"), approval_id)
-        await runner.end(incident.id, "Closed: the host was removed.")
+        await runner.end(incident.id, "Closed: the host was removed.", ending="removed")
         await runner.resume(incident.id, won, approval_id)
         await runner.join()
 
@@ -1053,7 +1059,7 @@ async def test_end_leaves_a_finished_incident_as_it_is_and_says_nothing(tmp_path
     async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
         runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
         await env.repo.set_status(incident.id, "resolved")
-        await runner.end(incident.id, "Closed: the host was removed.")
+        await runner.end(incident.id, "Closed: the host was removed.", ending="removed")
     assert (await env.repo.get(incident.id)).status == "resolved"
     assert notifier.notices == []
 
@@ -1065,7 +1071,7 @@ async def test_end_says_when_a_step_may_already_have_run(tmp_path):
     async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
         runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
         await env.repo.set_status(incident.id, "executing")
-        await runner.end(incident.id, "Closed: the host was removed.")
+        await runner.end(incident.id, "Closed: the host was removed.", ending="removed")
     ((_, text),) = notifier.notices
     assert "may already have run" in text
 
@@ -1116,6 +1122,7 @@ async def test_a_failed_check_on_a_quiet_service_closes_the_incident_instead_of_
     events = await env.bus.history(incident.id)
     assert [e.payload["text"] for e in events if e.kind == "notice"] == [QUIET_RUN_NOTICE]
     assert notifier.notices == [(incident.id, QUIET_RUN_NOTICE)]
+    assert notifier.endings == ["quiet"]
     assert (await env.nodes(incident.id))[-2:] == ["execute", "verify"]
     assert (await env.nodes(incident.id)).count("propose") == 1
 
@@ -1200,13 +1207,15 @@ class ChannelLog:
     def __init__(self) -> None:
         self.heard: list[tuple[str, str]] = []
         self.titles: list[str] = []  # the incident title of each opening and report
+        self.endings: list[str | None] = []  # how each notice ended its incident, if it did
 
     async def incident_opened(self, incident) -> None:
         self.heard.append(("opened", incident.status))
         self.titles.append(incident.title)
 
-    async def notice(self, incident_id: str, text: str) -> None:
+    async def notice(self, incident_id: str, text: str, ending: str | None = None) -> None:
         self.heard.append(("notice", text))
+        self.endings.append(ending)
 
     async def report(self, incident, report) -> None:
         self.heard.append(("report", incident.id))
@@ -1243,6 +1252,7 @@ async def test_a_host_unreachable_incident_calls_no_model_and_closes_when_the_ho
     assert env.models.calls == [] and await env.nodes(incident.id) == []
     assert await notices(env, incident.id) == [WAITING_NOTICE, BACK_NOTICE]
     assert channels.heard == [("opened", "waiting"), ("notice", BACK_NOTICE)]
+    assert channels.endings == ["back"]
 
 
 async def test_a_waiting_incident_stays_waiting_across_a_restart_and_closes_after_it(tmp_path):

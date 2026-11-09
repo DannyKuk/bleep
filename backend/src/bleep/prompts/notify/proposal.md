@@ -1,10 +1,6 @@
-Incident {id}: {title}
-
+🙋 Your call
 Likely cause ({category}, {confidence} sure): {root_cause}
-
-Proposed plan:
+Plan:
 {steps}
-
 Why: {reason}
-
-Tap a button, or reply to this message to give Bleep an instruction instead.
+Tap a button, or reply to give Bleep an instruction instead.

@@ -1,6 +1,4 @@
-Still waiting for your decision on incident {id}: {title}
-
-Proposed plan:
+⏰ Still waiting for you · {waited}
+Plan:
 {steps}
-
-Tap a button, or reply to this message to give Bleep an instruction instead.
+Tap a button, or reply to give Bleep an instruction instead.

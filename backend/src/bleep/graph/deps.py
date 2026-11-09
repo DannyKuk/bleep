@@ -42,6 +42,7 @@ from bleep.schemas.graph import (
 )
 from bleep.schemas.incidents import (
     TERMINAL_STATUSES,
+    Ending,
     Incident,
     IncidentEvent,
     IncidentStatus,
@@ -212,7 +213,10 @@ class Notifier(Protocol):
 
     async def report(self, incident: Incident, report: Report) -> None: ...
 
-    async def notice(self, incident_id: str, text: str) -> None: ...
+    async def notice(self, incident_id: str, text: str, ending: Ending | None = None) -> None:
+        """A note on the incident; with `ending`, the end of one closed outside its run's
+        report (its host came back, it went quiet, it was expected, its host was removed, its
+        run failed)."""
 
 
 class NullNotifier:
@@ -239,7 +243,7 @@ class NullNotifier:
     async def report(self, incident: Incident, report: Report) -> None:
         return None
 
-    async def notice(self, incident_id: str, text: str) -> None:
+    async def notice(self, incident_id: str, text: str, ending: Ending | None = None) -> None:
         return None
 
 
