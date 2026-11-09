@@ -7,13 +7,14 @@ from fastapi.testclient import TestClient
 
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.registry import Registry
+from bleep.hosts.url_check import UrlCheck
 from bleep.incidents.repository import IncidentRepo
 from bleep.main import create_app
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
 from bleep.watcher.health import container_health, host_health, service_health
 from bleep.watcher.health_store import HealthStore
-from bleep.watcher.http_checks import HISTORY_PER_URL, UrlCheck
+from bleep.watcher.http_checks import HISTORY_PER_URL
 from fakes import FakeEngine, compose_labels, ssh_host
 
 T0 = datetime(2026, 11, 2, 10, 0, tzinfo=UTC)

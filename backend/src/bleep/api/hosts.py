@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 
 from bleep.api.deps import get_parts
+from bleep.hosts.url_check import UrlCheck
 from bleep.incidents.repository import utcnow
 from bleep.schemas.api import (
     BasicsView,
@@ -22,7 +23,6 @@ from bleep.schemas.incidents import Subject
 from bleep.schemas.quiet import QuietState
 from bleep.schemas.services import Service
 from bleep.watcher.health import host_health, is_asleep, service_health, url_status
-from bleep.watcher.http_checks import UrlCheck
 from bleep.wiring import AppParts
 
 router = APIRouter(tags=["hosts"])

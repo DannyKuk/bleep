@@ -6,15 +6,9 @@ import pytest
 
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.registry import Registry
+from bleep.hosts.url_check import MAX_BODY_BYTES, UrlCheck, check_url
 from bleep.store.db import Database
-from bleep.watcher.http_checks import (
-    HISTORY_PER_URL,
-    MAX_BODY_BYTES,
-    UrlCheck,
-    UrlCheckStore,
-    UrlWatcher,
-    check_url,
-)
+from bleep.watcher.http_checks import HISTORY_PER_URL, UrlCheckStore, UrlWatcher
 from fakes import FakeEngine, socket_host
 from graph_env import box
 

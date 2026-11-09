@@ -8,10 +8,11 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta
 
 from bleep.hosts.discovery import expects_exit, is_finished
+from bleep.hosts.url_check import UrlCheck
 from bleep.schemas.api import Health, UrlStatus
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.services import HostState
-from bleep.watcher.http_checks import INTERVAL_S, UrlCheck
+from bleep.watcher.http_checks import INTERVAL_S
 
 _RANK: dict[Health, int] = {
     "unknown": 0,
