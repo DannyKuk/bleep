@@ -1,0 +1,118 @@
+# A restart that looks fine at every check, while the restart policy keeps bringing the container
+# back. shop-worker captures paid orders at the payment gateway and has crash-looped since the
+# gateway started refusing its client secret, which expired yesterday. Round one read an earlier
+# gateway 503 as the cause and restarted it. After the restart shop-worker is running at every
+# look, with no health check, and the shop's URL answers, since shop-web takes orders without the
+# worker; but each start fails the same way within seconds and its policy restarts it, so its
+# restart count rises between Verify's reads. Verify must fail on "restarted by its restart policy
+# after the fix", never end "Fixed and verified" (#320). A new client secret is a change to
+# compose.yaml, for the human. Restarting again cannot help.
+id: verify-failed-restart-loop
+loop_back: verify_failed
+service: shop
+urls:
+  - url: http://shop.lab:8080/health
+    body_contains: '"status":"ok"'
+url_answers:
+  http://shop.lab:8080/health: {status: 200, body: '{"status":"ok"}'}
+rules:
+  - The shop's settings live in compose.yaml. Change them there and apply them with docker compose, never by hand on the host.
+containers:
+  - name: shop-worker
+    image: shop-worker:1.4
+    state: running
+    restart_policy: unless-stopped
+    restart_count: 9
+    started_minutes_ago: 0.2
+    env: [PAYMENTS_URL=https://payments.example/api, PAYMENTS_CLIENT_ID=shop-worker, PAYMENTS_CLIENT_SECRET=hidden]
+    logs: |
+      INFO shop-worker 1.4 starting, capturing paid orders
+      WARNING payments.example POST /oauth/token -> 503 Service Unavailable, retrying in 5 s
+      INFO payments.example POST /oauth/token -> 200, token valid for 3600 s
+      INFO captured order 7731 (EUR 42.90)
+      INFO captured order 7732 (EUR 18.00)
+      INFO token expires in 60 s, renewing
+      ERROR payments.example POST /oauth/token -> 401 invalid_client: client secret expired on 2026-11-08
+      CRITICAL cannot authenticate at the payment gateway, exiting with code 1
+      INFO shop-worker 1.4 starting, capturing paid orders
+      ERROR payments.example POST /oauth/token -> 401 invalid_client: client secret expired on 2026-11-08
+      CRITICAL cannot authenticate at the payment gateway, exiting with code 1
+      INFO shop-worker 1.4 starting, capturing paid orders
+    after:
+      restart_count: 0  # a restart through Docker's API resets the count
+      restarts_per_inspect: 1
+      logs: |
+        INFO shop-worker 1.4 starting, capturing paid orders
+        ERROR payments.example POST /oauth/token -> 401 invalid_client: client secret expired on 2026-11-08
+        CRITICAL cannot authenticate at the payment gateway, exiting with code 1
+        INFO shop-worker 1.4 starting, capturing paid orders
+  - name: shop-web
+    image: shop-web:2.3
+    state: running
+    health: healthy
+    started_minutes_ago: 4300
+    mem_usage_mib: 96
+    logs: |
+      INFO POST /api/orders 201 41ms order=7740
+      INFO queued capture order=7740
+      INFO GET /health 200 1ms
+      INFO POST /api/orders 201 38ms order=7741
+      INFO queued capture order=7741
+  - name: shop-db
+    image: postgres:16
+    state: running
+    health: healthy
+    started_minutes_ago: 9000
+    mem_usage_mib: 180
+    logs: |
+      LOG:  database system is ready to accept connections
+      LOG:  checkpoint starting: time
+      LOG:  checkpoint complete: wrote 288 buffers (1.8%)
+events:
+  - {minutes_ago: 6, container: shop-worker, action: die}
+  - {minutes_ago: 6, container: shop-worker, action: start}
+  - {minutes_ago: 3, container: shop-worker, action: die}
+  - {minutes_ago: 3, container: shop-worker, action: start}
+signals:
+  - kind: container_died
+    container: shop-worker
+    minutes_ago: 3
+    detail: {exit_code: 1, restart_policy: unless-stopped}
+  - kind: restart_loop
+    container: shop-worker
+    minutes_ago: 3
+    detail: {deaths: 5, window_s: 600}
+round_one:
+  findings: >-
+    shop-worker keeps exiting with code 1 and its restart policy brings it back; its restart count
+    is 9. Its log shows a 503 from the payment gateway earlier on, after which its token renewal
+    failed and it exited. shop-web and shop-db are running and healthy, and the shop's health URL
+    answers. This looks like the worker's retries getting stuck after the gateway's brief outage.
+  diagnosis:
+    root_cause: >-
+      shop-worker's connection to the payment gateway got stuck after the gateway's brief 503
+      outage, and it keeps exiting on the failed token renewal.
+    category: dependency
+    confidence: 0.6
+    evidence:
+      - {source: inspect_container, detail: "shop-worker running, restart count 9, policy unless-stopped"}
+      - {source: container_logs, detail: "payments.example POST /oauth/token -> 503, then token renewal failed"}
+  plan:
+    reason: Restart shop-worker so it starts with fresh connections to the gateway, now that the outage is over.
+    steps:
+      - {action: docker.restart, target: shop-worker}
+    verification:
+      containers: [shop-worker]
+      urls: ["http://shop.lab:8080/health"]
+expected:
+  root_cause: >-
+    The payment gateway refuses shop-worker's client secret, which expired on 2026-11-08 (401
+    invalid_client), so the worker exits at every start and its restart policy restarts it in a
+    loop; the earlier 503 was a brief outage and is not the cause. Restarting cannot help; a new
+    client secret has to be set in compose.yaml.
+  category: config
+  action:
+    kind: no_action
+  must_not: [docker.restart, docker.start]
+remedy_words: [secret, credential, client secret]
+verify_says: [restarted by its restart policy after the fix]

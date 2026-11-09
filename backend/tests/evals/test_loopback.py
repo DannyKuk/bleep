@@ -17,6 +17,7 @@ from evals.loopback import (
     LoopBackError,
     LoopBackResult,
     apply_grades,
+    line,
     load_case,
     load_cases,
     main,
@@ -366,6 +367,7 @@ async def test_the_hostile_loop_back_fails_on_the_marker_or_the_start(plan, mark
         ({"evidence": []}, "names its evidence"),
         ({"marker": "PELICAN"}, "marker"),
         ({"remedy_words": ["memory limit"]}, "no action"),
+        ({"verify_says": ["restarted by its restart policy"]}, "verify_failed case"),
     ],
 )
 def test_a_case_that_cannot_be_scored_is_refused(tmp_path, change, error):
@@ -498,3 +500,115 @@ async def test_the_same_restart_with_the_url_answering_ends_without_a_loop_back(
 
     assert "did not make Verify loop back" in (result.run.error or "")
     assert models.model.cursor == 0
+
+
+RESTART_LOOP = "verify-failed-restart-loop"
+NEW_SECRET = {
+    "kind": "no_action",
+    "reason": "a restart cannot renew an expired client secret",
+    "human_instructions": "Set a new PAYMENTS_CLIENT_SECRET in compose.yaml and apply it.",
+}
+
+
+def worker_after(c: LoopBackCase, **fields) -> LoopBackCase:
+    """`c` with shop-worker's state after the plan changed."""
+    data = c.model_dump(mode="json")
+    worker = next(x for x in data["containers"] if x["name"] == "shop-worker")
+    worker["after"] |= fields
+    return LoopBackCase.model_validate(data)
+
+
+async def test_the_scripted_host_restarts_a_crash_looper_at_each_inspect_once_the_plan_ran():
+    c = case(RESTART_LOOP)
+    engine = engine_for(c)
+    before = await engine.inspect("shop-worker")
+    assert (await engine.inspect("shop-worker")).restart_count == before.restart_count == 9
+
+    await engine.restart("shop-worker")
+    first = await engine.inspect("shop-worker")
+    second = await engine.inspect("shop-worker")
+
+    assert (first.restart_count, second.restart_count) == (1, 2)
+    assert first.summary.state == second.summary.state == "running"
+    assert first.summary.started_at and second.summary.started_at
+    assert second.summary.started_at >= first.summary.started_at
+    assert [e.action for e in engine.history[-2:]] == ["die", "start"]
+    assert (await engine.inspect("shop-web")).restart_count == 0  # no after: left alone
+
+
+async def test_a_restart_its_policy_keeps_repeating_loops_back_with_the_restart_line():
+    """shop-worker runs at every check and the shop's URL answers, but its restart count rises
+    between Verify's reads: Verify fails on that line alone and loops back."""
+    c = case(RESTART_LOOP)
+    engine = engine_for(c)
+    models = Models(round_two("shop-worker", "the client secret expired", NEW_SECRET))
+
+    result = await run_case(c, settings(), judge=FakeJudge(), models=models, engine=engine)
+
+    assert result.run.error is None, result.run.error
+    assert engine.acts == [("restart", "shop-worker")]
+    assert result.loop_back == "verify_failed" and not result.verified
+    assert len(result.checks) == 1
+    assert result.checks[0].startswith(
+        "container shop-worker: restarted by its restart policy after the fix (restart count"
+    )
+    assert result.verify_said is True and result.remedy_given is True
+    assert result.repeated_fix == [] and result.passed is True
+    assert "| 1 of 1 | 0 |" in render([c], [result])  # Verify said it, nothing unscored
+
+
+async def test_a_verify_that_ends_fixed_fails_the_restart_loop_case_not_the_harness(monkeypatch):
+    """With Verify's check from before #320, which compared nothing with its first read, the
+    crash-looper passes and the run would end "Fixed and verified": the case fails, as a score,
+    and round two never runs."""
+    monkeypatch.setattr("bleep.graph.nodes.verify._after_fix", lambda _first, _now: None)
+    c = case(RESTART_LOOP)
+    models = Models([])
+
+    result = await run_case(c, settings(), judge=FakeJudge(), models=models, engine=engine_for(c))
+
+    assert result.run.failure is None, result.run.error
+    assert result.verified is True and result.checks == []
+    assert result.verify_said is False and result.passed is False
+    assert models.model.cursor == 0
+    assert "Verify passed: Fixed and verified" in line(result)
+    assert "| 0 of 1 | 0 |" in render([c], [result])
+
+
+async def test_a_crash_looper_that_stays_up_ends_fixed_and_fails_the_case():
+    c = worker_after(case(RESTART_LOOP), restarts_per_inspect=0)
+
+    result = await run_case(
+        c, settings(), judge=FakeJudge(), models=Models([]), engine=engine_for(c)
+    )
+
+    assert result.verified is True and result.passed is False
+
+
+async def test_a_loop_back_without_the_restart_line_fails_however_good_round_two_is():
+    """The URL fails and the worker stays up: Verify loops back, but not on the restart, so the
+    case did not test what it is for and the run fails."""
+    answers = {"http://shop.lab:8080/health": {"status": 503, "body": ""}}
+    c = worker_after(case(RESTART_LOOP), restarts_per_inspect=0)
+    c = LoopBackCase.model_validate(c.model_dump() | {"url_answers": answers})
+    models = Models(round_two("shop-worker", "the client secret expired", NEW_SECRET))
+
+    result = await run_case(c, settings(), judge=FakeJudge(), models=models, engine=engine_for(c))
+
+    assert result.run.error is None, result.run.error
+    assert result.loop_back == "verify_failed" and not result.verified
+    assert [check.split(":")[0] for check in result.checks] == ["url http"]
+    assert result.verify_said is False and result.passed is False
+    assert "Verify's failed checks lack the case's line" in line(result)
+
+
+async def test_a_stored_restart_loop_run_is_scored_again_from_its_checks(tmp_path, capsys):
+    c = case(RESTART_LOOP)
+    models = Models(round_two("shop-worker", "the client secret expired", NEW_SECRET))
+    result = await run_case(c, settings(), judge=FakeJudge(), models=models, engine=engine_for(c))
+    stale = result.model_copy(update={"checks": ["url http://shop.lab:8080/health: 503"]})
+    raw = tmp_path / "loopback.jsonl"
+    raw.write_text(stale.model_dump_json() + "\n", encoding="utf-8")
+
+    assert main(["--only", RESTART_LOOP, "--render", str(raw)]) == 0
+    assert f"| `{RESTART_LOOP}` | verify_failed | 0 of 1 |" in capsys.readouterr().out
