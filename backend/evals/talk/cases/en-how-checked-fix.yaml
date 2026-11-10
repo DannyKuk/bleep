@@ -12,6 +12,10 @@ expect:
   - - '200'
     - url
   - - running
+    - run
+    - ran
+    - is up
+    - was up
     - container
     - containers
   absent:

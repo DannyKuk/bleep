@@ -18,6 +18,9 @@ expect:
     - URL
   - - läuft
     - laufen
+    - lief
+    - liefen
+    - gelaufen
     - Container
   absent:
   - Festplatte

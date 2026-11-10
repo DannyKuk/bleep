@@ -302,6 +302,17 @@ async def test_a_how_answer_that_invents_a_check_or_names_none_fails(ledger, ans
             "Nach dem Fix habe ich geprüft, dass shop-db-1 und shop-web-1 laufen und die URL "
             "mit 200 antwortet.",
         ),
+        (  # the eval of 2026-11-10, run de-how-checked-fix/2: "lief" is a running container
+            "de-how-checked-fix",
+            "Ich habe geprüft, dass shop-db-1 wieder lief und shop-web-1 lief und gesund war. "
+            "Danach habe ich geprüft, dass die Seite mit Status 200 antwortete.",
+        ),
+        (  # checks without a result, told as what was looked at
+            "en-how-checked-fix",
+            "I listed the containers and read the last 30 minutes of shop-web-1's logs. After "
+            "the fix I checked that shop-db-1 was running, shop-web-1 was running and healthy, "
+            "and its URL answered with 200.",
+        ),
     ],
 )
 async def test_a_how_answer_from_the_listed_checks_passes(ledger, case_id, answer):
@@ -395,3 +406,27 @@ async def test_the_fixs_checks_in_the_checked_state_are_what_its_tools_return(tm
     found = await run_checks(tmp_path, engine, "shop", "shop-web-1", calls)
 
     assert found == state_checks("shop #13")
+
+
+@pytest.mark.parametrize(
+    ("case_id", "answer"),
+    [
+        (  # the eval of 2026-11-10, run en-how-checked-fix/1
+            "en-how-checked-fix",
+            "I checked that shop-db-1 was running, shop-web-1 was running and healthy, and the "
+            "URL was answering with 200. I don\u2019t know how the initial checks were done; the "
+            "incident lists no details for them.",
+        ),
+        (  # run de-how-checked-fix/1
+            "de-how-checked-fix",
+            "Ich habe geprüft, ob shop-db-1 läuft und ob shop-web-1 läuft und gesund ist. Die URL "
+            "antwortete mit Status 200. Wie die Container aufgelistet wurden und was die Logs "
+            "zeigten, weiß ich nicht.",
+        ),
+    ],
+)
+async def test_a_fix_answer_that_says_it_does_not_know_how_a_listed_check_was_made_fails(
+    ledger, case_id, answer
+):
+    result = await run(case_id, ledger, model(kind="question", answer=answer))
+    assert result.passed is False and result.words_unwanted
