@@ -1,0 +1,1 @@
+The person reads German: write the sentence in German. Names, keys and values from the logs stay exactly as they are, never translated. If the logs do not say, answer "In den Logs ist keine Ursache zu sehen."

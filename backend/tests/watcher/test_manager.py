@@ -5,6 +5,7 @@ import httpx
 import pytest
 from langchain_core.messages import AIMessage
 
+from bleep import prompts
 from bleep.hosts.config import HostConfig, ServiceOverrides, UrlCheckConfig
 from bleep.hosts.dashboard import HostChange
 from bleep.hosts.engine import EngineError
@@ -19,7 +20,7 @@ from bleep.schemas.docker import ContainerSummary, DockerEvent
 from bleep.schemas.graph import PlanStep, Proposal
 from bleep.schemas.incidents import Incident, Signal, Subject
 from bleep.schemas.quiet import QuietState
-from bleep.schemas.settings import Budgets, Thresholds
+from bleep.schemas.settings import Budgets, Language, Thresholds
 from bleep.store.db import Database
 from bleep.watcher import manager as manager_module
 from bleep.watcher.detector import NO_LOGS_LINE, AttachSignals, Detector, OpenIncident
@@ -145,6 +146,7 @@ class Rig:
         self.repo = IncidentRepo(self.db, self.clock)
         self.ledger = CostLedger(self.db, self.clock)
         self.budgets = budgets or Budgets()
+        self.language: Language = "en"
         self.bus = EventBus(self.db, self.clock)
         self.runner = FakeRunner(self.repo)
         self.quiet = QuietStore(self.db, self.clock)
@@ -189,6 +191,7 @@ class Rig:
             store=self.store,
             ledger=self.ledger,
             budgets=lambda: self.budgets,
+            language=lambda: self.language,
             quiet=self.quiet,
             health=self.health,
         )
@@ -554,6 +557,26 @@ async def test_a_self_recovered_container_is_logged_with_a_one_line_explanation(
     assert "OOM killed" in str(model.seen[0][0].content)
     assert await r.incidents() == []
     assert r.runner.started == []
+
+
+async def test_the_recovery_line_is_asked_for_in_the_language_in_force_at_the_time(tmp_path):
+    """#374: the manager reads the language at each line, so a change applies to the next."""
+    model = FakeChatModel(
+        script=[AIMessage("It ran out of memory."), AIMessage("Der Speicher war voll.")]
+    )
+    r = await Rig(tmp_path, model).boot()
+    await recover_shop(r)
+    r.language = "de"
+    r.clock.advance(60)
+    await recover_shop(r)
+
+    rule = prompts.load("watcher/recovery_line_de").strip()
+    assert [rule in str(seen[0].content) for seen in model.seen] == [False, True]
+    newest, first = await r.repo.recoveries()
+    assert (first.explanation, newest.explanation) == (
+        "It ran out of memory.",
+        "Der Speicher war voll.",
+    )
 
 
 async def recover_shop(r: Rig) -> None:

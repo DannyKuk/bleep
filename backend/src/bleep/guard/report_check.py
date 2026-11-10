@@ -75,8 +75,8 @@ def _cut(text: str, windows: set[int]) -> tuple[str, int]:
 def check_report(report: Report, raw_logs: Iterable[str], record: Record | None = None) -> Report:
     """The report with every stretch copied from `raw_logs` replaced by `MARKER`.
 
-    Checks `summary`, `cause`, `action_taken` and each follow-up. A replacement is recorded as
-    `redacted` in the guard log, once per report.
+    Checks `summary`, `cause`, `cause_en`, `action_taken` and each follow-up. A replacement is
+    recorded as `redacted` in the guard log, once per report.
     """
     windows = _windows(raw_logs)
     if not windows:
@@ -93,6 +93,7 @@ def check_report(report: Report, raw_logs: Iterable[str], record: Record | None 
         update={
             "summary": cut(report.summary),
             "cause": cut(report.cause),
+            "cause_en": None if report.cause_en is None else cut(report.cause_en),
             "action_taken": None if report.action_taken is None else cut(report.action_taken),
             "follow_ups": [cut(item) for item in report.follow_ups],
         }

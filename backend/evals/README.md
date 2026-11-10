@@ -37,6 +37,7 @@ uv run --group evals python -m evals.run --only db-down    # one scenario
 uv run --group evals python -m evals.run --model other-model
 uv run --group evals python -m evals.run --judge manual    # root causes graded by hand later
 uv run --group evals python -m evals.run --no-knowledge    # without knowledge_search (on by default: the Docker docs snapshot and the shop's repo docs)
+uv run --group evals python -m evals.run --language de     # the report, diagnosis and plan written in German, as with the settings page's Language
 uv run --group evals python -m evals.run --append data/evals/scenarios-20261103-104336.jsonl
 ```
 

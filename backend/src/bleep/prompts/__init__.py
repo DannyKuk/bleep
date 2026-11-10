@@ -18,6 +18,7 @@ NAME = re.compile(r"^[a-z0-9_]+(?:/[a-z0-9_]+)*$")
 OVERRIDABLE = frozenset(
     {
         "graph/diagnose",
+        "graph/diagnose_de",
         "graph/diagnose_missing",
         "graph/investigate",
         "graph/investigate_again",
@@ -25,14 +26,17 @@ OVERRIDABLE = frozenset(
         "graph/look_investigate",
         "graph/look_report",
         "graph/propose",
+        "graph/propose_de",
         "graph/propose_retry",
         "graph/propose_unsure",
         "graph/report",
+        "graph/report_de",
         "graph/report_facts",
         "graph/verify_failed",
         "llm/json_fallback",
         "llm/json_retry",
         "watcher/recovery_line",
+        "watcher/recovery_line_de",
     }
 )
 # Never overridable. The eval prompts are loaded by the eval runner, a process of its own that never

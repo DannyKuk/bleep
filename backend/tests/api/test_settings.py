@@ -220,6 +220,31 @@ def test_an_unknown_time_zone_is_refused_and_nothing_changes(app, name):
     assert (after["timezone"], after["version"]) == (None, before["version"])
 
 
+def test_the_language_is_english_by_default_and_german_is_saved_beside_the_time_zone(app):
+    assert app.get("/api/settings").json()["language"] == "en"
+
+    response = put_settings(app, {"general": {"timezone": "Europe/Vienna", "language": "de"}})
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["language"], body["timezone"]) == ("de", "Europe/Vienna")
+    assert body["overrides"]["general"] == {"timezone": "Europe/Vienna", "language": "de"}
+    assert app.parts.graph_deps.settings_store.language() == "de"  # what the graph reads
+
+    cleared = put_settings(app, {"general": {"timezone": "Europe/Vienna"}}).json()
+    assert (cleared["language"], cleared["timezone"]) == ("en", "Europe/Vienna")
+
+
+@pytest.mark.parametrize("language", ["fr", "DE", "", "deutsch"])
+def test_a_language_other_than_english_or_german_is_refused_and_nothing_changes(app, language):
+    before = app.get("/api/settings").json()
+    response = put_settings(app, {"general": {"language": language}})
+    assert response.status_code == 422
+    [problem] = response.json()["detail"]
+    assert problem["loc"] == ["general", "language"]
+    after = app.get("/api/settings").json()
+    assert (after["language"], after["version"]) == ("en", before["version"])
+
+
 def test_an_unknown_host_is_refused(app):
     response = put_settings(app, {"hosts": {"ghost": {"rules": ["x"]}}})
     assert response.status_code == 422

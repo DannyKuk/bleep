@@ -48,7 +48,13 @@ from bleep.schemas.incidents import (
     IncidentStatus,
     Subject,
 )
-from bleep.schemas.settings import Budgets, ModelSettings, Thresholds
+from bleep.schemas.settings import (
+    DEFAULT_LANGUAGE,
+    Budgets,
+    Language,
+    ModelSettings,
+    Thresholds,
+)
 from bleep.tools.registry import ActHandler, ToolRegistry
 
 # The actions Bleep can take without a plugin; plugins add theirs (coolify.*) when enabled.
@@ -345,6 +351,10 @@ class SettingsSource(Protocol):
 
     def enabled_actions(self) -> set[str]: ...
 
+    def language(self) -> Language:
+        """The language the person reads Bleep in (#374)."""
+        ...
+
 
 @dataclass
 class StaticSettings:
@@ -355,6 +365,7 @@ class StaticSettings:
     threshold_limits: Thresholds = field(default_factory=Thresholds)
     model_settings: ModelSettings = field(default_factory=ModelSettings)
     actions: frozenset[str] = CORE_ACTIONS
+    written_in: Language = DEFAULT_LANGUAGE
 
     def budgets(self) -> Budgets:
         return self.budget_limits
@@ -367,6 +378,9 @@ class StaticSettings:
 
     def enabled_actions(self) -> set[str]:
         return set(self.actions)
+
+    def language(self) -> Language:
+        return self.written_in
 
 
 def model_factory(settings: SettingsSource) -> ModelFactory:

@@ -34,6 +34,7 @@ from bleep.plugins.registry import PluginError, PluginRegistry, UnknownPlugin
 from bleep.schemas.plugins import PluginUpdate, PluginView
 from bleep.schemas.services import Service
 from bleep.schemas.settings import (
+    DEFAULT_LANGUAGE,
     MODEL_KEY_ENV,
     BudgetOverrides,
     Budgets,
@@ -41,6 +42,7 @@ from bleep.schemas.settings import (
     HostConnectionView,
     HostSettings,
     HostSettingsView,
+    Language,
     ModelChoice,
     ModelOverrides,
     ModelSettings,
@@ -143,6 +145,13 @@ class SettingsStore:
         general = self._overrides.general
         chosen = general.timezone if general is not None else None
         return chosen or self._env_timezone
+
+    def language(self) -> Language:
+        """The language Bleep writes for the person in: the dashboard's choice, else English. Read
+        at each use, so a change applies to the next text written."""
+        general = self._overrides.general
+        chosen = general.language if general is not None else None
+        return chosen or DEFAULT_LANGUAGE
 
     def zone(self) -> tzinfo | None:
         """`timezone()` as a zone, read by Telegram at each message so a change applies at once.

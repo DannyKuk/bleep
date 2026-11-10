@@ -773,3 +773,30 @@ async def test_a_time_zone_change_makes_a_page_read_before_it_stale(db):
     await save(store, {"general": {"timezone": "Europe/Vienna"}})
     with pytest.raises(SettingsStale):
         await store.update(SettingsUpdate.model_validate({"thresholds": {}}), version=before)
+
+
+async def test_the_language_is_english_until_german_is_chosen_and_survives_a_restart(db):
+    registry = hosts_file_registry()
+    store, plugins = make_store(db, registry)
+    assert store.language() == "en"
+
+    await save(store, {"general": {"language": "de"}})
+    assert store.language() == "de"
+
+    again = SettingsStore(db, registry, plugins)
+    await again.load()
+    assert again.language() == "de"
+    await save(again, {"general": {}})  # cleared: English again
+    assert again.language() == "en"
+
+
+async def test_the_language_and_the_time_zone_are_kept_side_by_side(db):
+    store, _ = make_store(db, hosts_file_registry())
+    await save(store, {"general": {"timezone": "Europe/Vienna", "language": "de"}})
+    assert (store.timezone(), store.language()) == ("Europe/Vienna", "de")
+
+
+@pytest.mark.parametrize("language", ["fr", "DE", "", "german", "en-US", 1])
+def test_a_language_other_than_english_or_german_is_refused(language):
+    with pytest.raises(ValidationError):
+        SettingsUpdate.model_validate({"general": {"language": language}})

@@ -992,6 +992,37 @@ def test_the_reproduce_command_keeps_the_knowledge_switch():
     assert "--no-knowledge" not in _command(_parser().parse_args([]))
 
 
+def test_the_reproduce_command_keeps_the_language():
+    from evals.run import _command, _parser
+
+    assert _command(_parser().parse_args(["--language", "de"])).endswith("--language de")
+    assert "--language" not in _command(_parser().parse_args([]))
+    with pytest.raises(SystemExit):
+        _parser().parse_args(["--language", "fr"])
+
+
+async def test_a_run_in_german_asks_diagnose_and_propose_for_german(tmp_path):
+    """`--language de` (#374): the graph reads the language from the run's settings."""
+    from bleep import prompts
+
+    fake = engine()
+    model = FakeChatModel(script=script(), structured_output_unsupported=True)
+
+    result = await run_scenario(
+        SCENARIO,
+        settings(tmp_path, language="de"),
+        faults=FakeFaults(fake),
+        judge=FakeJudge(),
+        connector=connector(fake),
+        models=Models(model),
+    )
+
+    assert result.error is None
+    sent = ["\n".join(m.text for m in call) for call in model.seen]
+    for rule in ("graph/diagnose_de", "graph/propose_de"):
+        assert sum(prompts.load(rule).strip() in text for text in sent) == 1, rule
+
+
 async def test_a_scenario_with_an_mcp_fixture_serves_it_and_proposes_with_its_act_tool(tmp_path):
     """The MCP plugin on the fixture's server: Investigate gets its tools, Propose is told how to
     write an mcp.call, and the plan passes the plan check; nothing is called or executed."""

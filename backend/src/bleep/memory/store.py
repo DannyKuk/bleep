@@ -96,7 +96,9 @@ class MemoryStore:
         The human's feedback is read from the incident's votes in the same write, so a vote cast
         while the record is written is never lost (`set_feedback` updates the record after it).
         """
-        title, cause = clean(report.title), clean(report.cause)
+        # A report in another language carries its cause in English too: memory is kept and
+        # searched in English (#374).
+        title, cause = clean(report.title), clean(report.cause_en or report.cause)
         action = clean(report.action_taken or NOTHING_RAN)
         human = decision_memory(decision, proposal)
         text = _embedded_text(title, cause, action)

@@ -1,9 +1,12 @@
+import re
 from pathlib import Path
 
 import pytest
 
 from bleep import prompts
-from bleep.prompts import PromptError, all_prompt_files, load, placeholders
+from bleep.graph.language import language_rule
+from bleep.prompts import PromptError, all_prompt_files, file_text, load, placeholders
+from bleep.schemas.settings import Language
 
 
 def test_load_fills_placeholders(tmp_prompts):
@@ -115,6 +118,7 @@ def test_the_untrusted_data_rule_and_the_texts_an_approver_reads_cannot_be_overr
 
 OVERRIDABLE = [
     "graph/diagnose",
+    "graph/diagnose_de",
     "graph/diagnose_missing",
     "graph/investigate",
     "graph/investigate_again",
@@ -122,14 +126,17 @@ OVERRIDABLE = [
     "graph/look_investigate",
     "graph/look_report",
     "graph/propose",
+    "graph/propose_de",
     "graph/propose_retry",
     "graph/propose_unsure",
     "graph/report",
+    "graph/report_de",
     "graph/report_facts",
     "graph/verify_failed",
     "llm/json_fallback",
     "llm/json_retry",
     "watcher/recovery_line",
+    "watcher/recovery_line_de",
 ]
 UNTRUSTED_RULES = {
     "graph/investigate": "untrusted/investigate",
@@ -216,8 +223,9 @@ def test_the_prompts_with_a_fixed_part_render_as_they_did_before_it_moved_out(na
     when #105 narrowed the `planted_in` bullet, when #357 asked for exact names and when #364
     asked for a setting's documented value, `graph-investigate.txt` when #364 asked for that
     docs search, and `graph-propose.txt` when #276 kept Propose's plan to the steps the
-    diagnosis needs. `{look}` (#410) is filled as it is for a run no look opened, so the
-    fixtures also show that such a run's prompt did not change."""
+    diagnosis needs. `{look}` (#410) is filled as it is for a run no look opened, and
+    `{language}` (#374) as it is in English, so the fixtures also show that such a run's prompt
+    did not change."""
     extra = {field: load(rule).strip() for field, rule in FIXED_PARTS.get(name, {}).items()}
     fields = placeholders(prompts.file_text(name)) - {"untrusted_rule"} - set(extra)
     values = {field: f"<{field}>" for field in fields}
@@ -225,6 +233,8 @@ def test_the_prompts_with_a_fixed_part_render_as_they_did_before_it_moved_out(na
         values["mcp"] = ""  # the MCP plugin off (#118): the fixture predates `{mcp}`
     if "look" in values:
         values["look"] = ""  # a run no look opened (#410): its prompt is the one before `{look}`
+    if "language" in values:
+        values["language"] = language_rule(name, "en")  # empty (#374)
     rendered = load(
         name,
         **values,
@@ -233,3 +243,97 @@ def test_the_prompts_with_a_fixed_part_render_as_they_did_before_it_moved_out(na
     )
     expected = (FIXTURES / f"{name.replace('/', '-')}.txt").read_text(encoding="utf-8")
     assert rendered.encode() == expected.encode()
+
+
+# The prompts that write text the person reads, each with a `{language}` placeholder (#374).
+WRITTEN_FOR_THE_PERSON = [
+    "graph/diagnose",
+    "graph/propose",
+    "graph/report",
+    "watcher/recovery_line",
+]
+# Each graph prompt's German rule: the fields its "Write ... in German" sentence names (only the
+# ones the person reads), and those its "exactly as described above" sentence keeps. Diagnose's
+# `missing` only steers Investigate's next round and `planted_in` is a closed list, so both stay.
+GERMAN_FIELDS = {
+    "graph/diagnose": {"root_cause", "detail"},
+    "graph/propose": {"reason", "human_instructions"},
+    "graph/report": {"summary", "cause", "follow_ups"},
+}
+KEPT_FIELDS = {
+    "graph/diagnose": {"category", "source", "affected_services", "planted_in", "missing"},
+    "graph/propose": {"kind", "action", "target", "host_id", "params", "verification"},
+}
+
+
+def _sentence(rule: str, words: str) -> str:
+    return next(s for s in re.split(r"(?<=\.) ", rule) if words in s)
+
+
+def _fields(sentence: str) -> set[str]:
+    return set(re.findall(r"`([a-z_]+)`", sentence))
+
+
+def _rendered(name: str, language: Language) -> str:
+    """`name` with every placeholder filled as `<name>`, as for a run no look opened with the
+    MCP plugin off, its fixed parts and `{language}` filled as the code fills them."""
+    fields = placeholders(file_text(name))
+    values = {field: f"<{field}>" for field in fields}
+    values |= {field: "" for field in ("look", "mcp") if field in fields}
+    if name in UNTRUSTED_RULES:
+        values["untrusted_rule"] = load(UNTRUSTED_RULES[name]).strip()
+    for field, rule in FIXED_PARTS.get(name, {}).items():
+        values[field] = load(rule).strip()
+    values["language"] = language_rule(name, language)
+    return load(name, **values)
+
+
+def test_the_prompts_written_for_the_person_have_a_language_placeholder_and_a_german_rule():
+    with_placeholder = [n for n in prompt_names() if "language" in placeholders(file_text(n))]
+    assert with_placeholder == WRITTEN_FOR_THE_PERSON
+    german = [n.removesuffix("_de") for n in prompt_names() if n.endswith("_de")]
+    assert german == WRITTEN_FOR_THE_PERSON
+    for name in WRITTEN_FOR_THE_PERSON:
+        assert placeholders(file_text(f"{name}_de")) == set(), name
+
+
+def test_in_english_the_report_prompt_renders_as_it_did_before_the_language_placeholder():
+    """`graph-report.txt` was rendered from `graph/report.md` before #374 added `{language}`,
+    with every placeholder filled as `<name>` and `{look}` empty."""
+    expected = (FIXTURES / "graph-report.txt").read_text(encoding="utf-8")
+    assert _rendered("graph/report", "en").encode() == expected.encode()
+
+
+@pytest.mark.parametrize("name", WRITTEN_FOR_THE_PERSON)
+def test_in_german_a_prompt_is_the_english_one_with_its_german_rule_at_the_placeholder(name):
+    english, german = _rendered(name, "en"), _rendered(name, "de")
+    rule = load(f"{name}_de").strip()
+    assert language_rule(name, "de") == "\n\n" + rule
+    assert german.count(rule) == 1
+    assert german.replace("\n\n" + rule, "", 1) == english
+    # The placeholder ends a line, so the rule is a paragraph of its own.
+    assert file_text(name).split("{language}")[1].startswith("\n")
+    assert "German" in rule
+
+
+@pytest.mark.parametrize("name", list(GERMAN_FIELDS))
+def test_a_german_rule_names_exactly_the_fields_the_person_reads(name):
+    rule = load(f"{name}_de").strip()
+    written = _fields(_sentence(rule, "in German"))
+    assert written == GERMAN_FIELDS[name]
+    if name in KEPT_FIELDS:
+        assert _fields(_sentence(rule, "exactly as described above")) == KEPT_FIELDS[name]
+
+
+def test_the_german_report_asks_for_the_cause_in_english_too():
+    rule = load("graph/report_de")
+    assert "`cause_en`: the same root cause as `cause`, written in English" in rule
+
+
+def test_the_german_recovery_rule_asks_for_the_sentence_in_german():
+    assert "write the sentence in German" in load("watcher/recovery_line_de")
+
+
+def test_in_english_no_prompt_written_for_the_person_names_a_language():
+    for name in WRITTEN_FOR_THE_PERSON:
+        assert "German" not in _rendered(name, "en"), name

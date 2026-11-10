@@ -14,6 +14,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import SecretStr
 
+from bleep import prompts
 from bleep.graph.deps import CORE_ACTIONS, StaticSettings
 from bleep.graph.nodes import gather, propose
 from bleep.guard.plan_check import check_plan
@@ -161,6 +162,75 @@ async def test_bad_env_on_plain_compose_gives_no_action_with_exact_instructions(
     assert HEALTH in sent
     events = [e for e in await env.bus.history(state["incident_id"]) if e.kind == "proposal"]
     assert events[-1].payload["human_instructions"] == FIX_ENV
+
+
+# What a German plan says (#374); every name, command and key in it is the host's.
+GERMAN_REASON = "shop-web-1 startet immer neu; ein Neustart allein behebt DATABASE_URL nicht."
+GERMAN_FIX = (
+    "Setze in der Compose-Datei des Shops DATABASE_URL von shop-web wieder auf den Host shop-db "
+    "(postgresql://shop@shop-db:5432/shop statt wrong-db) und führe dann "
+    "`docker compose up -d shop-web` aus."
+)
+
+
+def _passes_the_plan_check(env, proposal: Proposal) -> bool:
+    enabled = env.deps.settings_store.enabled_actions()
+    found = check_plan(proposal, env.registry, enabled, "a", incident_containers=["shop-web-1"])
+    return found == []
+
+
+async def test_in_german_no_action_is_written_in_german_and_still_passes_the_plan_check(tmp_path):
+    answer = reply(
+        kind="no_action",
+        steps=[],
+        reason=GERMAN_REASON,
+        verification={"containers": ["shop-web-1"], "urls": [HEALTH]},
+        human_instructions=GERMAN_FIX,
+    )
+    env, state = await setup(tmp_path, answer)
+    env.deps.settings_store = StaticSettings(written_in="de")
+
+    proposal = (await propose.make(env.deps)(state))["proposal"]
+
+    assert (proposal.kind, proposal.reason, proposal.human_instructions) == (
+        "no_action",
+        GERMAN_REASON,
+        GERMAN_FIX,
+    )
+    assert proposal.verification.containers == ["shop-web-1"]
+    assert _passes_the_plan_check(env, proposal)
+    assert env.models.model.cursor == 1 and blocked(env) == []  # no retry, nothing refused
+    rule = prompts.load("graph/propose_de").strip()
+    assert prompt(env).count(rule) == 1
+
+
+async def test_in_german_a_plan_keeps_its_actions_targets_and_params_and_passes(tmp_path):
+    answer = reply(
+        kind="act",
+        steps=[restart("shop-web-1")],
+        reason="Ich bin nicht sicher: shop-web-1 hängt, ein Neustart sollte ihn zurückbringen.",
+        verification={"containers": ["shop-web-1"], "urls": [HEALTH]},
+    )
+    env, state = await setup(tmp_path, answer)
+    env.deps.settings_store = StaticSettings(written_in="de")
+
+    proposal = (await propose.make(env.deps)(state))["proposal"]
+
+    assert proposal.kind == "act"
+    assert [s.model_dump() for s in proposal.steps] == [
+        PlanStep(**restart("shop-web-1")).model_dump()
+    ]
+    assert proposal.reason.startswith("Ich bin nicht sicher")
+    assert _passes_the_plan_check(env, proposal)
+    assert env.models.model.cursor == 1 and blocked(env) == []
+
+
+async def test_in_english_the_propose_prompt_names_no_language(tmp_path):
+    env, state = await setup(tmp_path, acting(restart("shop-web-1")))
+
+    await propose.make(env.deps)(state)
+
+    assert "German" not in prompt(env)
 
 
 async def test_a_protected_container_is_refused_in_code_and_logged(tmp_path):

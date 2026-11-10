@@ -116,13 +116,19 @@ export interface SettingsView {
   plugins: Record<string, boolean>;
   /** The IANA zone times are shown in: the one chosen here, else BLEEP_TIMEZONE; null for none. */
   timezone: string | null;
+  /** The language Bleep writes for the person in: the one chosen here, else English. */
+  language: Language;
   overrides: SettingsOverrides;
   /** Of `overrides`; a `PUT /api/settings` built from this view sends it back (`putSettings`). */
   version: string;
 }
 
+export type Language = "en" | "de";
+
+/** One section: a save replaces it whole, so every field kept is sent again (`withGeneral`). */
 export interface GeneralOverrides {
   timezone?: string;
+  language?: Language;
 }
 
 /** The sections of `PUT /api/settings` this page writes. Each one given replaces its overrides. */

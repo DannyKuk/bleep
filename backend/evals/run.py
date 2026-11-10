@@ -67,7 +67,7 @@ from bleep.schemas.github import RepoFile
 from bleep.schemas.incidents import Incident, Subject
 from bleep.schemas.knowledge import KnowledgeDocument
 from bleep.schemas.services import Service
-from bleep.schemas.settings import ModelSettings, Thresholds
+from bleep.schemas.settings import DEFAULT_LANGUAGE, Language, ModelSettings, Thresholds
 from bleep.store.db import Database
 from bleep.tools.default import default_registry
 from bleep.tools.knowledge import Searcher
@@ -162,6 +162,7 @@ class EvalSettings(BaseSettings):
     fault_script: Path = REPO / "demo" / "fault.sh"
     settle_s: float = 30  # wait between runs, so the stack is back to normal before the next
     watch_interval_s: float = 15  # Bleep's default, so the time to an incident is the real one
+    language: Language = DEFAULT_LANGUAGE  # what the model writes the person-facing fields in
     models: ModelSettings = Field(default_factory=lambda: ModelSettings(_env_file=ENV_FILE))
 
     @model_validator(mode="after")
@@ -464,7 +465,9 @@ def _graph_deps(
     guard_log = GuardLog(db)
     plugins = mcp.plugins(guard_log) if mcp is not None else None
     actions = CORE_ACTIONS | (plugins.actions() if plugins is not None else set())
-    store = StaticSettings(model_settings=settings.models, actions=actions)
+    store = StaticSettings(
+        model_settings=settings.models, actions=actions, written_in=settings.language
+    )
     return GraphDeps(
         registry=registry,
         tools=default_registry(plugins=plugins, github=github, knowledge=knowledge),
@@ -956,6 +959,8 @@ def _command(args: argparse.Namespace) -> str:
         parts.append("--no-reset")
     if args.no_knowledge:
         parts.append("--no-knowledge")
+    if args.language:
+        parts.append(f"--language {args.language}")
     return " ".join(parts)
 
 
@@ -968,6 +973,12 @@ def _parser() -> argparse.ArgumentParser:
         "claude-code[:<model>], or manual (graded by hand afterwards with evals.report)",
     )
     parser.add_argument("--only", help="run one scenario, by id")
+    parser.add_argument(
+        "--language",
+        choices=["en", "de"],
+        help="the language the model writes the report, diagnosis and plan in, as the settings "
+        "page's Language (default: EVAL_LANGUAGE, else en)",
+    )
     parser.add_argument(
         "--no-knowledge", action="store_true",
         help="do not offer knowledge_search (the app offers it over the Docker docs snapshot "
@@ -1070,6 +1081,8 @@ def main(argv: Sequence[str] | None = None, settings: EvalSettings | None = None
         settings = settings.with_model(args.model)
     if args.judge:
         settings = settings.model_copy(update={"judge_model": args.judge})
+    if args.language:
+        settings = settings.model_copy(update={"language": args.language})
     try:
         if args.repeat < 1:
             raise EvalError("--repeat must be 1 or more")

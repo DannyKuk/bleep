@@ -36,11 +36,12 @@ from pydantic import BaseModel, Field
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.host_text import incident_title, service_name
+from bleep.graph.language import language_rule
 from bleep.graph.look import look_rule
 from bleep.graph.planted import HINT_END, planted_places, planted_sentence
 from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.log import GuardKind
-from bleep.guard.report_check import check_report
+from bleep.guard.report_check import MARKER, check_report
 from bleep.guard.titles import build_title
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
@@ -57,6 +58,7 @@ from bleep.schemas.graph import (
 )
 from bleep.schemas.graph import TimelineEntry as Entry
 from bleep.schemas.incidents import Incident, IncidentEvent, Signal
+from bleep.schemas.settings import DEFAULT_LANGUAGE
 
 log = logging.getLogger(__name__)
 
@@ -84,7 +86,8 @@ ENTRY_CHARS = 200
 NOT_DETERMINED = "Not determined."
 MAX_FACTS = 2
 
-_FIXED = re.compile(r"\bfixed\b", re.IGNORECASE)
+# "fixed" in each language a report can be written in (#374).
+_FIXED = re.compile(r"\b(?:fixed|behoben|repariert)\b", re.IGNORECASE)
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -94,6 +97,15 @@ class _Draft(BaseModel):
     summary: str = ""
     cause: str = ""
     follow_ups: list[str] = Field(default_factory=list)
+
+
+# The draft in a language other than English (#374). Its docstring and the field's description
+# reach the model as the schema's. `cause_en` stays optional: a required one would turn a reply
+# without it into a report written from the record alone, losing the summary for a memory field.
+class _DraftWithEnglishCause(_Draft):
+    """What the model writes, with its cause in English as well."""
+
+    cause_en: str = Field("", description="The same root cause as `cause`, in English.")
 
 
 class _Facts(BaseModel):
@@ -319,10 +331,12 @@ async def _ask[T: BaseModel](deps: GraphDeps, incident_id: str, schema: type[T],
     )
 
 
-async def _write(deps: GraphDeps, incident_id: str, prompt: str) -> _Draft:
+async def _write(
+    deps: GraphDeps, incident_id: str, prompt: str, schema: type[_Draft] = _Draft
+) -> _Draft:
     """The model's draft; an empty one when the budget is spent or the model fails."""
     try:
-        return await _ask(deps, incident_id, _Draft, prompt)
+        return await _ask(deps, incident_id, schema, prompt)
     except (BudgetExceeded, StructuredOutputFailed) as error:  # expected: the type says it all
         log.warning("report: writing from the record only (%s)", type(error).__name__)
     except Exception as error:  # the run must end with a report whatever the model does
@@ -379,6 +393,16 @@ async def _notify(deps: GraphDeps, incident: Incident, written: Report) -> None:
         log.warning("report: notifying %s failed: %s", incident.id, type(error).__name__)
 
 
+def _usable_english_cause(written: Report, incident_id: str) -> Report:
+    """A report in another language whose English cause is missing, or was only a "fixed" claim or
+    a copied log line, keeps none, so memory keeps the cause as written; that is logged, since
+    recall then compares an English query with it (#374)."""
+    if written.cause_en is not None and written.cause_en.strip() != MARKER:
+        return written
+    log.warning("report: %s has no English cause; memory keeps the cause as written", incident_id)
+    return written.model_copy(update={"cause_en": None})
+
+
 def make(deps: GraphDeps) -> Node:
     async def report(state: IncidentState) -> dict:
         incident_id = state["incident_id"]
@@ -399,6 +423,7 @@ def make(deps: GraphDeps) -> Node:
         )
         taken = action_taken(results, proposal, state["subject"].host_id)
         entries = timeline(signals, await deps.bus.history(incident_id))
+        language = deps.settings_store.language()
 
         prompt = prompts.load(
             "graph/report",
@@ -410,8 +435,10 @@ def make(deps: GraphDeps) -> Node:
             decision=human or "(the human was not asked)",
             action=taken or "(nothing ran)",
             timeline="\n".join(f"- {e.at:%H:%M:%S} {e.text}" for e in entries) or "(empty)",
+            language=language_rule("graph/report", language),
         )
-        draft = await _write(deps, incident_id, prompt)
+        schema = _Draft if language == DEFAULT_LANGUAGE else _DraftWithEnglishCause
+        draft = await _write(deps, incident_id, prompt, schema)
 
         def own(text: str, limit: int) -> str:
             text = _clip(text, limit)
@@ -422,10 +449,12 @@ def make(deps: GraphDeps) -> Node:
         if not follow_ups and proposal is not None and proposal.human_instructions:
             follow_ups = [own(proposal.human_instructions, FOLLOW_UP_CHARS)]
         root_cause = diagnosis.root_cause if diagnosis is not None else ""
+        english = draft.cause_en if isinstance(draft, _DraftWithEnglishCause) else ""
         written = Report(
             title=title,
             summary=own(draft.summary, SUMMARY_CHARS) or f"{title}: {said[0].lower()}{said[1:]}.",
             cause=own(draft.cause, CAUSE_CHARS) or own(root_cause, CAUSE_CHARS) or NOT_DETERMINED,
+            cause_en=own(english, CAUSE_CHARS) or None,
             action_taken=taken,
             outcome=said,
             timeline=entries,
@@ -438,6 +467,8 @@ def make(deps: GraphDeps) -> Node:
                 deps.guard_log.record(incident_id, kind, detail)
 
         written = check_report(written, _raw_logs(state), record)
+        if language != DEFAULT_LANGUAGE:
+            written = _usable_english_cause(written, incident_id)
         places, planted = await asyncio.to_thread(planted_follow_up, state)
         if planted is not None:  # after the check: Bleep's own text, never cut or removed
             follow_ups = [*written.follow_ups, planted]

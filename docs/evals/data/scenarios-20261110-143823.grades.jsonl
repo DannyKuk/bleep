@@ -1,0 +1,5 @@
+{"run_id": "db-down/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "Names shop-db stopped (exit 0) as the cause of shop-web failing to resolve it; German, names intact."}
+{"run_id": "bad-env/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "Names DATABASE_URL pointing at host db instead of shop-db:5432; German, key and command intact."}
+{"run_id": "oom/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "Names WORKER_BATCH_MB=256 past the 64 MB limit; German. Missed the documented value 8 (scored by must_set)."}
+{"run_id": "oom/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "Names WORKER_BATCH_MB=256 past the 64 MiB limit and the documented 8 from deploy.md; German, names intact."}
+{"run_id": "oom/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "Names WORKER_BATCH_MB=256 past the 64 MiB limit and the documented default 8; German, names intact."}

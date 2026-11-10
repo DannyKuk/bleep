@@ -74,6 +74,7 @@ export function settingsView(overrides: Partial<SettingsView> = {}): SettingsVie
     hosts: [sshHost()],
     plugins: { coolify: false },
     timezone: null,
+    language: "en",
     overrides: {
       hosts: {
         m1: { services: { "compose:shop": { protected_containers: ["shop-cache-1"] } } },

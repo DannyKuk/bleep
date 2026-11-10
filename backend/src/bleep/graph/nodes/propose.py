@@ -15,6 +15,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.host_text import service_name
+from bleep.graph.language import language_rule
 from bleep.graph.replan import replans_left
 from bleep.graph.state import IncidentState, Node
 from bleep.guard.grant import binds_app
@@ -348,6 +349,7 @@ def _prompt(
         previous=_previous(state.get("proposal")),
         unsure=prompts.load("graph/propose_unsure") if diagnosis.unsure else "",
         untrusted_rule=prompts.load("untrusted/propose").strip(),
+        language=language_rule("graph/propose", deps.settings_store.language()),
     )
 
 
