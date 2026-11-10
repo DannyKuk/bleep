@@ -21,7 +21,7 @@ Acts = Annotated[Actions, Depends(get_actions)]
 async def send_message(body: ChatMessage, parts: Parts, actions: Acts) -> ChatAnswer:
     if body.incident_id is not None and await parts.incidents.get(body.incident_id) is None:
         raise HTTPException(404, "no such incident")
-    return await parts.panel.say(body.text.strip(), body.incident_id, actions)
+    return await parts.panel.say(body.text, body.incident_id, actions)
 
 
 @router.post("/confirms/{confirm_id}")

@@ -2,6 +2,7 @@
 turns and offers. A message never changes anything; only a press of an offer's Yes runs it,
 once, within ten minutes and while its incident is open."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -17,7 +18,7 @@ from bleep.incidents.repository import IncidentRepo
 from bleep.schemas.api import HostView, QuietView, ServiceView
 from bleep.schemas.graph import Decision, PlanStep, Proposal
 from bleep.schemas.incidents import Signal, Subject
-from bleep.schemas.talk import TalkLink
+from bleep.schemas.talk import TalkLink, TalkReply
 from bleep.store.db import Database
 from bleep.talk.actions import Actions
 from bleep.talk.confirms import CONFIRM_TTL
@@ -286,12 +287,47 @@ async def test_the_panel_keeps_its_own_turns(env):
     assert [t.said for t in other.turns.recent()] == ["since when?"]
 
 
-async def test_too_many_messages_at_once_are_told_bleep_is_busy(env):
-    env.panel._waiting = WAITING_MAX
+class SlowTalk:
+    """Answers each message only once `go` is set, so messages pile up behind the first."""
 
-    reply = await env.panel.say("how is shop?", None, env.actions)
+    def __init__(self) -> None:
+        self.go = asyncio.Event()
+        self.read: list[str] = []
 
-    assert reply.answer == said("answer_talk_busy") and env.model.seen == []
+    async def reply(self, text: str, incident_id: str | None, turns) -> TalkReply:
+        self.read.append(text)
+        await self.go.wait()
+        return TalkReply(kind="question", answer=f"about {text}")
+
+
+async def test_a_message_beyond_three_at_once_is_told_bleep_is_busy(env):
+    talk = SlowTalk()
+    panel = Panel(talk, clock=env.clock)  # type: ignore[arg-type]
+    first = [asyncio.create_task(panel.say(f"q{i}", None, env.actions)) for i in range(WAITING_MAX)]
+    await asyncio.sleep(0)
+    assert panel.waiting == WAITING_MAX and talk.read == ["q0"]  # the rest wait their turn
+
+    busy = await panel.say("one more", None, env.actions)
+
+    assert busy.answer == prompts.load("talk/busy").strip() and busy.confirm is None
+    talk.go.set()
+    answers = await asyncio.gather(*first)
+    assert [a.answer for a in answers] == ["about q0", "about q1", "about q2"]
+    assert panel.waiting == 0 and "one more" not in talk.read
+    assert (await panel.say("again", None, env.actions)).answer == "about again"
+
+
+async def test_a_yes_to_a_plan_bleeps_checks_refused_says_it_cannot_be_approved(env):
+    decision = Decision(kind="instruct", text="x", via="dashboard", at=T0)
+    await env.approvals.resolve(env.incident.id, decision)
+    await env.approvals.request(env.incident.id, PLAN.model_copy(update={"refused": True}), [])
+    action = {"kind": "show_plan", "incident": "shop #1"}
+
+    reply = await say(env, "go ahead", reading(kind="action", action=action))
+
+    assert reply.confirm is None
+    assert reply.answer == prompts.load("talk/plan_refused", incident="shop #1").strip()
+    assert reply.links == [TalkLink(kind="incident", id=env.incident.id, label="shop #1")]
 
 
 class FakeLooks:

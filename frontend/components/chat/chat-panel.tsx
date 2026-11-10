@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { Bleep } from "@/components/bleep/bleep";
 import { useOverall } from "@/components/overall-state";
+import { usePinnedBarSpace } from "@/components/pinned-bar";
 import { ApiError } from "@/lib/api";
 import { stateMood } from "@/lib/mood";
 import { idFromSegment } from "@/lib/routes";
@@ -20,10 +21,10 @@ import {
   type ChatConfirm,
   type TalkLink,
 } from "@/lib/talk-api";
-import { cn } from "@/lib/utils";
 
 const INCIDENT_PAGE = /^\/incidents\/([^/]+)$/;
 const TICK_MS = 15_000; // how often an open offer is checked for its expiry
+const BAR_GAP_PX = 12;
 
 type Offer = ChatConfirm & { line?: string; pressing?: boolean; failed?: string };
 
@@ -50,6 +51,7 @@ function failure(error: unknown): string {
 export function ChatPanel() {
   const { state, incidents } = useOverall();
   const pathname = usePathname();
+  const barSpace = usePinnedBarSpace();
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState("");
@@ -140,10 +142,8 @@ export function ChatPanel() {
         type="button"
         aria-label={waiting ? "Talk to Bleep (Bleep asked you something)" : "Talk to Bleep"}
         onClick={() => setOpen(true)}
-        className={cn(
-          "fixed right-5 bottom-5 z-40 grid size-14 place-items-center rounded-full border border-line bg-surface shadow-[0_8px_28px_-8px_rgba(40,30,120,0.35)] hover:bg-soft focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none print:hidden",
-          incidentId && "max-lg:bottom-56", // above an incident page's pinned answer bar
-        )}
+        style={barSpace ? { bottom: barSpace + BAR_GAP_PX } : undefined}
+        className="fixed right-5 bottom-5 z-40 grid size-14 place-items-center rounded-full border border-line bg-surface shadow-[0_8px_28px_-8px_rgba(40,30,120,0.35)] hover:bg-soft focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none print:hidden"
       >
         <Bleep mood={mood} size={44} />
         {waiting && (

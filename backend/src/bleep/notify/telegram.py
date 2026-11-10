@@ -627,18 +627,18 @@ class TelegramBot:
         incident would become the thread's opener (#380), so for an incident with no message in
         the chat yet the plan is left to the dashboard. Once an opener is logged it stays the
         lowest id, so the check needs no lock."""
-        current = await self.approvals.current(offer.incident_id or "")
-        if current is None or current.id != offer.plan_id or current.proposal.refused:
-            refused = current is not None and current.proposal.refused
-            why_not = answer("answer_refused_plan" if refused else "answer_not_waiting")
+        current = await self.actions.plan_to_show(offer)
+        if current == "refused":
+            why_not = answer("answer_refused_plan")
+        elif current == "gone":
+            why_not = answer("answer_not_waiting")
         elif await self.messages.first_for(current.incident_id) is None:
             why_not = answer("answer_plan_on_dashboard")
         else:
             why_not = ""
-        if why_not:
+        if why_not or isinstance(current, str):
             await self._say(why_not, reply)
             return why_not
-        assert current is not None
         text = render(
             "plan_again", incident=offer.incident or "", steps=steps_text(current.proposal)
         )

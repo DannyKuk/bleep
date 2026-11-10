@@ -1,4 +1,5 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { useRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -7,6 +8,7 @@ import { json } from "@/components/dev/fixtures";
 import { incident } from "@/components/incident/fixtures";
 import { OverallProvider } from "@/components/overall-state";
 import { host } from "@/components/overview/fixtures";
+import { PinnedBarProvider, useReportPinnedBar } from "@/components/pinned-bar";
 import type { Incident } from "@/lib/api-types";
 import type { ChatAnswer } from "@/lib/talk-api";
 
@@ -231,5 +233,30 @@ describe("ChatPanel", () => {
 
     expect(screen.getByRole("region", { name: "Chat with Bleep" })).toBeInTheDocument();
     expect(screen.getByText("All good.")).toBeInTheDocument();
+  });
+
+  it("sits above a bar pinned to the screen's bottom, and goes back down once it is gone", () => {
+    stubBackend(() => json(answer()));
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      top: window.innerHeight - 200,
+    } as DOMRect);
+    function Bar() {
+      const ref = useRef<HTMLDivElement>(null);
+      useReportPinnedBar(ref, true, 0);
+      return <div ref={ref}>answer bar</div>;
+    }
+    const page = (bar: boolean) => (
+      <OverallProvider>
+        <PinnedBarProvider>
+          {bar && <Bar />}
+          <ChatPanel />
+        </PinnedBarProvider>
+      </OverallProvider>
+    );
+    const { rerender } = render(page(true));
+    expect(screen.getByRole("button", { name: "Talk to Bleep" })).toHaveStyle({ bottom: "212px" });
+
+    rerender(page(false));
+    expect(screen.getByRole("button", { name: "Talk to Bleep" }).style.bottom).toBe("");
   });
 });

@@ -107,6 +107,16 @@ class Actions:
             return said("answer_cannot_expect", incident=offer.incident or "")
         return offer
 
+    async def plan_to_show(self, offer: Offer) -> ApprovalRecord | Literal["refused", "gone"]:
+        """The plan a yes (`show_plan`) points to, or why there is none to approve: Bleep's own
+        checks refused it, or it no longer waits."""
+        current = await self.approvals.current(offer.incident_id or "")
+        if current is not None and current.proposal.refused:
+            return "refused"
+        if current is None or current.id != offer.plan_id:
+            return "gone"
+        return current
+
     async def run(self, offer: Offer) -> str:
         """Run a confirmed offer; what the person is told."""
         now = self.clock()

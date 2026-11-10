@@ -5,6 +5,7 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import { isRefused } from "@/components/incident/headline";
 import { useKeyboardInset } from "@/components/incident/use-phone";
+import { useReportPinnedBar } from "@/components/pinned-bar";
 import { useTimeZone } from "@/components/time-zone";
 import { Button } from "@/components/ui/button";
 import { ApiError, apiFetch } from "@/lib/api";
@@ -145,6 +146,8 @@ export function DecisionBar({
   }
 
   const keyboard = useKeyboardInset(pinned);
+  const barRef = useRef<HTMLDivElement>(null);
+  useReportPinnedBar(barRef, pinned, keyboard);
   const answered = decision !== null || conflict !== null;
   // The pinned bar drops its buttons once answered; focus moves to the line that replaced them
   // instead of falling back to the page, when the answer was given here.
@@ -288,6 +291,7 @@ export function DecisionBar({
 
   return (
     <div
+      ref={barRef}
       data-pinned
       role="region"
       aria-label="Your answer"

@@ -4,7 +4,7 @@ snapshot of Bleep's own state the answer comes from (docs/design/notify.md)."""
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from bleep.schemas.api import Health
 from bleep.schemas.quiet import QuietMode, QuietScope
@@ -112,6 +112,12 @@ class ChatMessage(BaseModel):
 
     text: str = Field(min_length=1, max_length=MESSAGE_MAX_CHARS)
     incident_id: str | None = None
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def _stripped(cls, text: object) -> object:
+        """Spaces alone are no message: the length is checked on the words."""
+        return text.strip() if isinstance(text, str) else text
 
 
 class ChatConfirm(BaseModel):

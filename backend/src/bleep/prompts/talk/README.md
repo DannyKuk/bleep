@@ -20,7 +20,9 @@ How Bleep reads what a person writes in its chat, and the fixed lines it answers
   `look_started` once a press opened the incident. `confirm_look_again` is its confirm line, and
   says that a look costs a model run.
 - `plan_on_page` answers a yes to a waiting plan in the dashboard's panel, which points to the
-  incident's page instead of showing the plan's buttons (#391).
+  incident's page instead of showing the plan's buttons, and `plan_refused` one to a plan
+  Bleep's own checks refused, which cannot be approved (#391). `busy` tells the panel that
+  three messages are being answered already.
 - A press of an offer's button is answered with the lines a Telegram button gets
   (`notify/answer_*`), on both surfaces (`talk/actions.py`).
 - `when_*` are the words of a time in a chat (`talk/times.py`), shared with Telegram's messages.

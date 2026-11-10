@@ -126,6 +126,7 @@ def test_a_hostile_message_gets_the_fixed_refusal_and_no_button(client, model):
     ("body", "status"),
     [
         ({"text": ""}, 422),
+        ({"text": "   \n "}, 422),
         ({"text": "x" * 1001}, 422),
         ({"text": "hi", "incident_id": "inc_nope"}, 404),
     ],

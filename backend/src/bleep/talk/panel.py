@@ -32,10 +32,15 @@ class Panel:
         self._turn = asyncio.Lock()  # one message at a time, in the order they came
         self._waiting = 0
 
+    @property
+    def waiting(self) -> int:
+        """Messages being answered or waiting for their turn now."""
+        return self._waiting
+
     async def say(self, text: str, incident_id: str | None, actions: Actions) -> ChatAnswer:
         """Answer `text`, written on the page of `incident_id` if any. Changes nothing."""
         if self._waiting >= WAITING_MAX:
-            return ChatAnswer(answer=said("answer_talk_busy"))
+            return ChatAnswer(answer=_fixed("busy"))
         self._waiting += 1
         try:
             async with self._turn:
@@ -54,7 +59,7 @@ class Panel:
         if isinstance(bound, str):
             return self._line(bound, reply.offer)
         if bound.kind == "show_plan":
-            return self._line(_plan_on_page(bound), bound)
+            return self._line(await _plan_line(bound, actions), bound)
         confirm_id = self.confirms.add(bound)
         expires = self.confirms.expires(confirm_id)
         assert expires is not None
@@ -83,5 +88,15 @@ class Panel:
         return ConfirmResult(line=await actions.run(taken))
 
 
-def _plan_on_page(offer: Offer) -> str:
-    return prompts.load("talk/plan_on_page", incident=offer.incident or "").strip()
+async def _plan_line(offer: Offer, actions: Actions) -> str:
+    """A yes to a waiting plan points to its page; a plan Bleep's own checks refused cannot be
+    approved there either, and one that no longer waits is said so."""
+    plan = await actions.plan_to_show(offer)
+    if plan == "gone":
+        return said("answer_not_waiting")
+    name = "plan_refused" if plan == "refused" else "plan_on_page"
+    return _fixed(name, incident=offer.incident or "")
+
+
+def _fixed(name: str, **values: str) -> str:
+    return prompts.load(f"talk/{name}", **values).strip()
