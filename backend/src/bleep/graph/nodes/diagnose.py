@@ -124,6 +124,8 @@ def _describe_context(context: GatherContext, with_urls: bool = True) -> str:
     if context.urls and with_urls:
         checks = describe_urls(context.urls)
         parts.append(prompts.load("graph/url_checks_diagnose", checks=checks).strip())
+    elif context.no_urls and with_urls:
+        parts.append(prompts.load("graph/url_checks_none_diagnose").strip())
     if context.basics is not None:
         parts.append("Host basics:\n" + "\n".join(describe_basics(context.basics)))
     if context.top_memory:
