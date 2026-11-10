@@ -979,6 +979,39 @@ def test_a_token_after_a_percent_encoded_byte_is_redacted(token, escape):
     assert token not in out and f"{escape}<redacted>" in out
 
 
+@pytest.mark.parametrize("token", ON_SIGHT)
+@pytest.mark.parametrize("escape", ["%253D", "%253d", "%2520", "%25253D", "%2525253A"])
+def test_a_token_after_a_double_encoded_byte_is_redacted(token, escape):
+    text = f"GET /login?r=%2Fcb%253Fk{escape}{token}&state=1 302"
+
+    out = redact_text(text)
+
+    assert token not in out and f"{escape}<redacted>" in out
+
+
+@pytest.mark.parametrize("token", ON_SIGHT)
+@pytest.mark.parametrize("escape", ["\\n", "\\r", "\\t", "\\r\\n"])
+def test_a_token_after_an_escaped_line_break_or_tab_is_redacted(token, escape):
+    text = '{"level": "info", "msg": "started' + escape + token + '"}'
+
+    out = redact_text(text)
+
+    assert token not in out and f"started{escape}<redacted>" in out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"msg": "line one\\nline two\\tskipped\\r\\nAKIA rotation docs"}',
+        '"C:\\\\new\\\\sk-folder" and "\\nnpm_install"',
+        "GET /search?q=%2525sk-test-mode&page=2",
+        "build 2525ab sk-short rk_test_x",
+    ],
+)
+def test_text_after_an_escape_that_holds_no_token_stays(text):
+    assert redact_with_count(text) == (text, 0)
+
+
 def test_the_literal_first_patterns_match_what_the_start_first_ones_did():
     """Each token prefix is written before its start check (`_starting`) so `re` can scan for it;
     the same module with every prefix written after its start must find the same spans."""
@@ -1005,6 +1038,7 @@ def test_the_literal_first_patterns_match_what_the_start_first_ones_did():
     prefixes += ["lsv2_pt_", "glpat-", "glrt-", "glptt-", "gliamrt-", "GR1348941", "npm_", "o."]
     prefixes += ["AKIA", "ASIA", "123456789:", "pbkdf2_sha256$1$"]
     fillers = ["%3D", "%", "%2", "x", "_", "-", ".", " ", "é", "٣", "0", "\n", B24, HEX40, JWT]
+    fillers += ["%25", "%253D", "25", "2525", "3D", "\\", "\\n", "\\r", "\\t", "n", "\\\\"]
     rng = random.Random(416)
     for _ in range(4000):
         text = "".join(rng.choice(prefixes + fillers) for _ in range(rng.randrange(1, 10)))
@@ -1046,6 +1080,13 @@ def test_a_vendor_token_under_a_secret_key_is_one_redaction():
         "xoxd-%",
         "%3D",
         "%3Dghp_",
+        "%25",
+        "%253Dsk-",
+        "%2525252525252525",
+        "2525absk_live_",
+        "\\n",
+        "\\nsk-",
+        "\\\\nAQ.",
         "glrt-",
         "glagent-",
         "xghp_",
