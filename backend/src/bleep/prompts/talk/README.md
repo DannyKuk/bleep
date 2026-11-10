@@ -14,6 +14,10 @@ How Bleep reads what a person writes in its chat, and the fixed lines it answers
   `quiet_through_host`, `snooze_how_long`, `snooze_limit`, `no_incident`, `which_incident`,
   `incident_ended`, `no_plan`. `subject_on_host` names a service with its host when another
   service or a host has its name.
+- `plan_on_page` answers a yes to a waiting plan in the dashboard's panel, which points to the
+  incident's page instead of showing the plan's buttons (#391).
+- A press of an offer's button is answered with the lines a Telegram button gets
+  (`notify/answer_*`), on both surfaces (`talk/actions.py`).
 - `not_yet` with `understood_look_again` (and `unknown_subject` for a name Bleep does not know)
   answers a look on request, which comes with #403.
 - `when_*` are the words of a time in a chat (`talk/times.py`), shared with Telegram's messages.
