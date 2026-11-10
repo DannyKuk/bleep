@@ -70,11 +70,16 @@ def _join_surrogates(text: str) -> str:
     return text.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "ignore")
 
 
+# Line breaks to `str.splitlines` and many terminals: dropping them would join two lines, and a
+# secret on the second could then read as part of the first (`password: |` and its block, #417)
+_LINE_BREAKS = str.maketrans({"\x0b": "\n", "\x0c": "\n", "\x85": "\n"})
+
+
 def strip_control(text: str | bytes) -> str:
-    """Normalise newlines, drop lone surrogates, ANSI sequences, control and invisible
-    characters."""
+    """Normalise newlines (VT, FF and NEL become line breaks), drop lone surrogates, ANSI
+    sequences, other control characters and invisible characters."""
     text = _ANSI.sub("", _join_surrogates(normalise_newlines(text)))
-    return _INVISIBLE.sub("", _CONTROL.sub("", text))
+    return _INVISIBLE.sub("", _CONTROL.sub("", text.translate(_LINE_BREAKS)))
 
 
 _SPACE = re.compile(r"\s")

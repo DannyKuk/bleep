@@ -863,6 +863,17 @@ TOKEN_SHAPES |= {
     ),
     "gitlab_ci_job": ("CI_JOB_TOKEN glcbt-64_" + B24[:20], B24[:20], "glcbt-64_" + B24[:19]),
     "gitlab_trigger": ("trigger glptt-" + HEX40 + " sent", HEX40, "glptt-" + HEX40[:30]),
+    "gitlab_trigger_short": ("trigger glptt-" + B24[:20] + " sent", B24[:20], "glptt-" + B24[:21]),
+    "langsmith_personal": (
+        "LangSmith: using lsv2_" + "pt_" + HEX40[:32] + "_" + HEX40[:10] + " for traces",
+        HEX40[:32],
+        "lsv2_pt_" + HEX40[:31] + "_" + HEX40[:10] + " lsv2_pt_settings",
+    ),
+    "langsmith_service": (
+        "key lsv2_" + "sk_" + HEX40[8:40] + "_" + HEX40[:10],
+        HEX40[8:40],
+        "lsv2_sk_" + HEX40[8:40] + "_" + HEX40[:11],
+    ),
     "gitlab_feed": ("feed glft-" + B24[:20], "glft-" + B24[:20], "glft-feed-token-docs-v2"),
     "gitlab_feed_path": ("glft-" + HEX40 + HEX40[:24] + "-42", HEX40, "glft-" + HEX40[:24] + "-42"),
     "gitlab_incoming_mail": (
@@ -948,6 +959,7 @@ ON_SIGHT = [
     "glrt-" + B24[:20],
     "gldt-" + ROUTABLE,
     "GR1348941" + B24[:20],
+    "lsv2_" + "sk_" + HEX40[:32] + "_" + HEX40[:10],
     "gliamrt-" + B43 + "." + B43,
     "npm_" + B36,
     "o." + B32,
@@ -965,6 +977,41 @@ def test_a_token_after_a_percent_encoded_byte_is_redacted(token, escape):
     out = redact_text(text)
 
     assert token not in out and f"{escape}<redacted>" in out
+
+
+def test_the_literal_first_patterns_match_what_the_start_first_ones_did():
+    """Each token prefix is written before its start check (`_starting`) so `re` can scan for it;
+    the same module with every prefix written after its start must find the same spans."""
+    import inspect
+    import random
+    import types
+
+    from bleep.guard import redact
+
+    source = inspect.getsource(redact)
+    written = 'return rf"{prefix}(?<={start}{prefix})"'
+    assert written in source
+    module = types.ModuleType("start_first")
+    exec(
+        compile(source.replace(written, 'return rf"{start}{prefix}"'), "start_first", "exec"),
+        module.__dict__,
+    )
+    names = ["_JWT", "_JWT_START", "_GITLAB"]
+    pairs = [(getattr(redact, n), getattr(module, n)) for n in names]
+    pairs += [(a, b) for (a, _), (b, _) in zip(redact._PATTERNS, module._PATTERNS, strict=True)]
+    assert all(a.pattern != b.pattern for a, b in pairs[:2])
+    prefixes = ["ghp_", "github_pat_", "sk-", "sk-or-", "xoxb-", "xoxd-", "xoxe-1-", "xapp-1-"]
+    prefixes += ["eyJ", "ya29.", "AIza", "AQ.", "sk_live_", "rk_test_", "sk_org_", "sk_org_live_"]
+    prefixes += ["lsv2_pt_", "glpat-", "glrt-", "glptt-", "gliamrt-", "GR1348941", "npm_", "o."]
+    prefixes += ["AKIA", "ASIA", "123456789:", "pbkdf2_sha256$1$"]
+    fillers = ["%3D", "%", "%2", "x", "_", "-", ".", " ", "é", "٣", "0", "\n", B24, HEX40, JWT]
+    rng = random.Random(416)
+    for _ in range(4000):
+        text = "".join(rng.choice(prefixes + fillers) for _ in range(rng.randrange(1, 10)))
+        for new, old in pairs:
+            assert [m.span() for m in new.finditer(text)] == [
+                m.span() for m in old.finditer(text)
+            ], (new.pattern, text)
 
 
 def test_a_vendor_token_at_the_end_of_a_sentence_is_redacted():
@@ -1016,13 +1063,99 @@ def test_lines_of_vendor_token_prefixes_are_fast(unit):
     assert len(out) <= 8300
 
 
-# A YAML block header with its value on the same line (#417): stripping U+0085, VT or FF joins
-# them, or the text is written so.
+# A YAML block header with its value on the same line (#417): VT, FF and NEL are line breaks
+# now, so they no longer join the two, and text written so is handled too.
 @pytest.mark.parametrize("separator", ["\x85", "\x0b", "\x0c"])
-def test_a_block_value_joined_to_its_header_by_a_stripped_separator_is_redacted(separator):
+def test_a_block_value_after_a_vt_ff_or_nel_is_redacted(separator):
     out, _ = guard_text("logs", f"password: |{separator}  hunter2hunter2")
 
     assert "hunter2hunter2" not in out and "password: |" in out
+
+
+@pytest.mark.parametrize("separator", ["\x85", "\x0b", "\x0c"])
+def test_vt_ff_and_nel_become_line_breaks(separator):
+    from bleep.guard.sanitize import strip_control
+
+    assert strip_control(f"a{separator}b\x07c") == "a\nbc"
+
+
+def test_a_secret_glued_by_a_vt_no_longer_reads_as_part_of_the_word_before_it():
+    out, _ = guard_text("logs", "export\x0bsk_" + "live_" + B24)
+
+    assert B24 not in out
+
+
+@pytest.mark.parametrize("separator", ["\n", "\x85"])
+def test_a_joined_line_ending_in_another_header_still_hides_the_value_and_its_block(separator):
+    text = f"password: |  hunter2hunter2 token: |{separator}  abc123secret\nhost: db"
+
+    out, _ = guard_text("logs", text)
+
+    assert "hunter2hunter2" not in out and "abc123secret" not in out and "host: db" in out
+
+
+def test_a_header_digit_run_is_a_value_not_an_indentation_indicator():
+    assert redact_text("password: |4242") == "password: <redacted>"
+    assert redact_text("password: |2-\n    hunter2") == "password: |2-\n    <redacted>"
+
+
+@pytest.mark.parametrize("separator", ["\x0b", "\x0c", "\x85", ""])
+def test_a_value_right_after_a_header_at_the_keys_indentation_is_redacted(separator):
+    out, _ = guard_text("logs", f"password: |{separator}4242")
+
+    assert "4242" not in out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "password: |\nuser: bob",
+        "password: |\n- item",
+        "password: |\n# a comment",
+        "api_key: >\n2026-11-02T10:00:00Z INFO next record",
+        "detoxoxc-something-very-long-name",
+    ],
+)
+def test_a_line_after_a_header_that_is_structure_or_a_new_record_stays(text):
+    assert redact_with_count(text) == (text, 0)
+
+
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        (
+            "Error: auth: > 3 failures\n  at Login.check (login.js:12)\n  at main (app.js:3)",
+            "Error: auth: > <redacted>\n  at Login.check (login.js:12)\n  at main (app.js:3)",
+        ),
+        (
+            "$ echo token: > /tmp/out\n  done in 3s",
+            "$ echo token: > <redacted>\n  done in 3s",
+        ),
+        (
+            "| Token: | Description |\n  | api | the API's key |",
+            "| Token: | <redacted>\n  | api | the API's key |",
+        ),
+    ],
+)
+def test_a_header_after_other_text_hides_its_value_but_no_lines_below(text, shown):
+    assert redact_text(text) == shown
+
+
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        (
+            "- password: |  hunter2hunter2\n  user: bob\n- name: x",
+            "- password: |  <redacted>\n  user: bob\n- name: x",
+        ),
+        (
+            "- password: |\n    hunter2hunter2\n  user: bob",
+            "- password: |\n    <redacted>\n  user: bob",
+        ),
+    ],
+)
+def test_a_list_items_block_ends_at_its_sibling_keys(text, shown):
+    assert redact_text(text) == shown
 
 
 @pytest.mark.parametrize(
@@ -1074,6 +1207,30 @@ GLUED = [
     ("runner_glrt-" + B24[:20], B24[:20]),
     ("hashpbkdf2_sha256$600000$" + B24, B24),
 ]
+
+
+@pytest.mark.parametrize(
+    ("text", "secrets"),
+    [
+        ("glrt-" + B24[:20] + ".glrt-" + B32[:20], [B24[:20], B32[:20]]),
+        ("x-gldt-foo-glrt-" + B24[:20], [B24[:20]]),
+        (
+            "id=glimt-" + "a1b2c3d4e5f6g7h8i9j0k1l" + "-glrt-" + B24[:20],
+            ["a1b2c3d4e5f6g7h8i9j0k1l", B24[:20]],
+        ),
+    ],
+)
+def test_every_gitlab_token_in_one_run_is_redacted(text, secrets):
+    out = redact_text(text)
+
+    assert not any(secret in out for secret in secrets), out
+
+
+@pytest.mark.parametrize("word", ["laughs_", "highs_", "x_gho_"])
+def test_a_word_ending_in_a_github_prefix_keeps_what_follows_unless_it_is_a_full_token(word):
+    name = word + "AndCriesAtTheEndOfTheParty"
+
+    assert redact_text(name) == name
 
 
 @pytest.mark.parametrize(("text", "secret"), GLUED)

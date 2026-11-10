@@ -233,7 +233,10 @@ _SMALL_INT = re.compile(r"[0-9]{1,6}")
 _LOOKS_LIKE_PAIR = re.compile(r"[A-Za-z_][\w.-]*=[^=\s]")
 _PAIR_FOLLOWS = re.compile(r"[^\S\n]+[A-Za-z_][\w.-]*=\S")
 _NOT_SET = re.compile(r"not set\b", re.IGNORECASE)
-_BLOCK_HEADER = re.compile(r"[|>][-+0-9]*")
+# YAML's block indicator: `|` or `>`, an indentation digit and a chomping sign in either order,
+# so `|4242` is a value, not a header (#417)
+_BLOCK_INDICATOR = r"[|>](?:[1-9][-+]?|[-+][1-9]?)?"
+_BLOCK_HEADER = re.compile(_BLOCK_INDICATOR)
 
 
 @lru_cache(maxsize=4096)
@@ -543,23 +546,33 @@ def _redact_jwt(match: re.Match[str]) -> str:
 # (`?next=%3Fk%3Dsk_live_…`), whose last hex digit `\b` takes for the end of a word (#416).
 _AFTER_ESCAPE = r"(?<=%[0-9A-Fa-f]{2})"
 _TOKEN_START = rf"(?:(?<!\w)|{_AFTER_ESCAPE})"
+
+
+def _starting(prefix: str, start: str = _TOKEN_START) -> str:
+    """`prefix` (of fixed width) where a token may start: written prefix first, with the start
+    checked behind it, because a pattern that begins with a lookbehind loses `re`'s fast scan for
+    its literal start, which slowed all redaction about 1.7 times (#416)."""
+    return rf"{prefix}(?<={start}{prefix})"
+
+
 _JWT = re.compile(
-    rf"{_TOKEN_START}eyJ[A-Za-z0-9_-]{{5,}}+(?:\.[A-Za-z0-9_-]{{5,}}+\.[A-Za-z0-9_-]{{5,}}+)?"
+    _starting("eyJ") + r"[A-Za-z0-9_-]{5,}+(?:\.[A-Za-z0-9_-]{5,}+\.[A-Za-z0-9_-]{5,}+)?"
 )
 # GitLab's other tokens, in the lengths GitLab's own secret detection rules give: most are the
 # prefix and 20 of `A-Za-z0-9_-`, a routable one 27 or more and the suffix `glpat-` has too.
 # `_GITLAB` takes a prefix and its whole run of token characters with the `.` parts after it, and
 # `_redact_gitlab` judges that run by `_GITLAB_SHAPE`, so each run is read once however its
 # prefixes repeat (`glrt-glrt-…`).
-_GITLAB = re.compile(
+_GITLAB_PREFIX = (
     r"(?:gl(?:rtr?|rct|dt|ft|soat|ffct|ptt|imt|agent|oas|cbt|wt|iam(?:rt|ac))-|GR1348941)"
-    r"[A-Za-z0-9_-]{20,}+(?:\.[A-Za-z0-9_-]++)*+"
 )
+_GITLAB_PREFIX_AT = re.compile(_GITLAB_PREFIX)
+_GITLAB = re.compile(rf"{_GITLAB_PREFIX}[A-Za-z0-9_-]{{20,}}+(?:\.[A-Za-z0-9_-]++)*+")
 _GITLAB_SHAPE = re.compile(
-    r"gl(?:rtr?|dt|agent|wt)-[A-Za-z0-9_-]{27,300}\.[0-9a-z]{2}\.[0-9a-z]{9}"
+    r"gl(?:rtr?|dt|agent|wt)-[A-Za-z0-9_-]{27,300}+\.[0-9a-z]{2}\.[0-9a-z]{9}"
     r"|glft-[0-9a-f]{64}-[0-9]{1,20}"  # before the 20-character `glft-`, which it starts with
     r"|gl(?:rtr?-(?:t[1-3]_)?|rct-|dt-|ft-|soat-|ffct-)[A-Za-z0-9_-]{20}"
-    r"|glptt-[A-Za-z0-9_-]{40}"
+    r"|glptt-(?:[A-Za-z0-9_-]{40}|[A-Za-z0-9_-]{20})"
     r"|glimt-[0-9a-z]{20,25}"
     r"|glagent-[A-Za-z0-9_-]{50}"
     r"|gloas-[A-Za-z0-9_-]{64}"
@@ -567,16 +580,33 @@ _GITLAB_SHAPE = re.compile(
     r"|gliam(?:rt|ac)-[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}"
     r"|GR1348941[A-Za-z0-9_-]{20}"
 )
+# the next prefix inside a run, after a character that is no letter or digit (`x-gldt-foo-glrt-…`)
+_NEXT_GITLAB = re.compile(rf"(?<![A-Za-z0-9]){_GITLAB_PREFIX}")
 
 
 def _redact_gitlab(match: re.Match[str]) -> str:
-    """The run hidden when it starts with one of GitLab's shapes that ends where the run's token
-    characters end, or before one of its `.` parts (`glrt-<20>.` at the end of a sentence)."""
-    run = match.group(0)
-    shape = _GITLAB_SHAPE.match(run)
-    if shape is None or run[shape.end() : shape.end() + 1] not in ("", "."):
-        return run
-    return REDACTED + run[shape.end() :]
+    """Every token in the run that is one of GitLab's shapes and ends where the run's token
+    characters end, before one of its `.` parts (`glrt-<20>.` at the end of a sentence), or
+    before `-` or `_` and the next prefix (`glimt-<23>-glrt-<20>`). Each try starts at a prefix
+    the one before did not take, and a shape is at most about 300 characters, so a run costs a
+    bounded amount of work per character."""
+    run, out, kept, at = match.group(0), [], 0, 0
+    while at < len(run):
+        shape = _GITLAB_SHAPE.match(run, at)
+        end = shape.end() if shape else at
+        if shape and (
+            end == len(run)
+            or run[end] == "."
+            or (run[end] in "-_" and _GITLAB_PREFIX_AT.match(run, end + 1))
+        ):
+            out.append(run[kept:at] + REDACTED)
+            kept = at = end
+            continue
+        following = _NEXT_GITLAB.search(run, at + 1)
+        if following is None:
+            break
+        at = following.start()
+    return "".join(out) + run[kept:]
 
 
 # Cookie and Set-Cookie, as a header, JSON or logfmt (request_Cookie, "cookie": "..."): the cookie
@@ -642,36 +672,43 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
         ),
         rf"\1\2{REDACTED}",
     ),
-    (re.compile(rf"{_TOKEN_START}sk-(?:or-)?[A-Za-z0-9_-]{{16,}}"), REDACTED),
+    (re.compile(_starting("gh[pousr]_") + r"[A-Za-z0-9]{20,}"), REDACTED),
+    (re.compile(_starting("sk-") + r"(?:or-)?[A-Za-z0-9_-]{16,}"), REDACTED),
+    (re.compile(_starting("xox[abcprs]-") + r"[A-Za-z0-9-]{10,}"), REDACTED),
     # Slack's refresh and legacy tokens and app-level tokens: "xoxo" is also a word, so a number
     # must follow the prefix as it does in every one of these tokens
-    (re.compile(rf"{_TOKEN_START}(?:xox[eo]|xapp)-[0-9]{{1,16}}-[A-Za-z0-9-]{{8,}}+"), REDACTED),
+    (re.compile(_starting("x(?:ox[eo]|app)-") + r"[0-9]{1,16}-[A-Za-z0-9-]{8,}+"), REDACTED),
     (_JWT, _redact_jwt),
-    (re.compile(rf"{_TOKEN_START}ya29\.[A-Za-z0-9_.-]{{20,}}+"), REDACTED),  # Google OAuth
-    (re.compile(rf"{_TOKEN_START}AQ\.[A-Za-z0-9_-]{{40,}}+"), REDACTED),  # Google auth keys
+    (re.compile(_starting(r"ya29\.") + r"[A-Za-z0-9_.-]{20,}+"), REDACTED),  # Google OAuth
+    (re.compile(_starting(r"AQ\.") + r"[A-Za-z0-9_-]{40,}+"), REDACTED),  # Google auth keys
     (
         re.compile(
-            rf"{_TOKEN_START}(?:[rs]k_(?:live|test)|sk_org(?:_live|_test)?)_[A-Za-z0-9]{{20,}}+"
+            _starting("[rs]k_") + r"(?:live|test|(?<=sk_)org(?:_live|_test)?)_[A-Za-z0-9]{20,}+"
         ),
         REDACTED,
     ),
-    (re.compile(rf"{_TOKEN_START}npm_[A-Za-z0-9]{{36}}(?![A-Za-z0-9])"), REDACTED),
+    # LangSmith personal access tokens and service keys, as TruffleHog's detector reads them
+    (re.compile(_starting("lsv2_") + r"(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}(?!\w)"), REDACTED),
+    (re.compile(_starting("npm_") + r"[A-Za-z0-9]{36}(?![A-Za-z0-9])"), REDACTED),
     # Pushbullet: `o.` and 32 letters and digits of both cases, on their own, so a domain such as
     # `cdn.o.example` and a hex digest after `o.` stay
     (
         re.compile(
-            rf"(?:(?<![A-Za-z0-9_.-])|{_AFTER_ESCAPE})"
-            r"o\.(?=[A-Za-z0-9]{0,31}[A-Z])(?=[A-Za-z0-9]{0,31}[a-z])"
+            _starting(r"o\.", rf"(?:(?<![A-Za-z0-9_.-])|{_AFTER_ESCAPE})")
+            + r"(?=[A-Za-z0-9]{0,31}[A-Z])(?=[A-Za-z0-9]{0,31}[a-z])"
             r"[A-Za-z0-9]{32}(?![A-Za-z0-9_-])(?!\.[A-Za-z0-9])"
         ),
         REDACTED,
     ),
-    # Tokens whose prefix no word ends in, so they are taken glued to the word before them too
-    # (`tokenghp_…`, `x_glrt-…`; #417). They come after the tokens with a start of their own, so
-    # one of those whose characters happen to hold such a prefix is hidden whole first.
-    (re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"), REDACTED),
+    # Tokens taken glued to the word before them too (`tokenghp_…`, `x_glrt-…`; #417), where the
+    # prefix with the rest of the shape is no word's ending: a word ends in `ghs_` (`highs_`), so
+    # glued GitHub tokens need GitHub's full 36 characters. They come after the tokens with a
+    # start of their own, so one of those whose characters happen to hold such a prefix is hidden
+    # whole first.
+    (re.compile(r"gh[pousr]_[A-Za-z0-9]{36}(?![A-Za-z0-9])"), REDACTED),
     (re.compile(r"github_pat_[A-Za-z0-9_]{20,}"), REDACTED),
-    (re.compile(r"xox[abcprs]-[A-Za-z0-9-]{10,}"), REDACTED),
+    # glued, a Slack token needs the number its id starts with (`detoxoxc-…` is a word)
+    (re.compile(r"xox[abcprs]-[0-9][A-Za-z0-9-]{9,}"), REDACTED),
     (re.compile(r"xoxd-[A-Za-z0-9%+/=_-]{20,}+"), REDACTED),  # Slack's browser cookie `d`
     (re.compile(r"AIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"), REDACTED),
     # GitLab PATs; a routable one ends in `.`, a 2-character version, `.` and 9 more characters
@@ -695,10 +732,11 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
         ),
         rf"\1{REDACTED}\2",
     ),
-    (re.compile(rf"{_TOKEN_START}(?:AKIA|ASIA)[0-9A-Z]{{16,}}\b"), REDACTED),
+    (re.compile(_starting("A[KS]IA") + r"[0-9A-Z]{16,}\b"), REDACTED),
     (
         re.compile(
-            rf"(?:(?<![0-9])|{_AFTER_ESCAPE})\d{{8,10}}:[A-Za-z0-9_-]{{35}}(?![A-Za-z0-9_-])"
+            _starting(r"\d", rf"(?:(?<![0-9])|{_AFTER_ESCAPE})")
+            + r"\d{7,9}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"
         ),
         REDACTED,
     ),
@@ -727,15 +765,35 @@ def _lead(line: str) -> str:
     return line[: len(line) - len(rest.lstrip(" \t"))]
 
 
+_HEADER_END = re.compile(rf"{_BLOCK_INDICATOR}\Z")
+_LIST_ITEM = re.compile(r"-[ \t]+")
+
+
+def _key_column(line: str, key_start: int) -> int | None:
+    """The column of a key at `key_start` that starts the line's content, after the log prefix,
+    the indentation and a list item's `- ` (`- password: |`, whose siblings sit at that column);
+    None for a key after other text (`Error: auth: >`, `echo token: >`)."""
+    column = len(_lead(line))
+    item = _LIST_ITEM.match(line, column)
+    if item:
+        column = item.end()
+    quoted = line[column : column + 1] in ('"', "'")
+    if key_start != column + quoted:
+        return None
+    return column - _LOG_PREFIX.match(line).end()
+
+
 def _block_indent(line: str) -> int | None:
     """If `line` ends in `<secret key>: |` (or `>`, any prefix before it), the indentation a
-    block line must exceed; otherwise None. Read from the end so it costs one pass."""
+    block line must exceed: the key's column when it starts the line's content, else the line's
+    indentation; otherwise None. Read from the end so it costs one pass."""
     if len(line) > 400 or ("|" not in line and ">" not in line):
         return None
-    text = line.split(" #", 1)[0].rstrip().rstrip("-+0123456789")
-    if not text.endswith(("|", ">")):
+    text = line.split(" #", 1)[0].rstrip()
+    header = _HEADER_END.search(text)
+    if header is None:
         return None
-    text = text[:-1].rstrip(" \t")
+    text = text[: header.start()].rstrip(" \t")
     if not text.endswith(":"):
         return None
     text = text[:-1].rstrip(" \t").removesuffix('"').removesuffix("'")
@@ -745,7 +803,8 @@ def _block_indent(line: str) -> int | None:
     before = text[: len(text) - key.end()]
     if before and not before[-1].isspace() and before[-1] not in "\"'":
         return None
-    return len(_lead(line)) - _LOG_PREFIX.match(line).end()
+    column = _key_column(line, len(before))
+    return len(_lead(line)) - _LOG_PREFIX.match(line).end() if column is None else column
 
 
 # `password: |  hunter2`: a block header with more than a comment after it on its line, as when
@@ -753,14 +812,16 @@ def _block_indent(line: str) -> int | None:
 _INLINE_BLOCK = re.compile(
     r"(?<![A-Za-z0-9_.-])"
     rf"(?=[A-Za-z0-9_.-]{{0,96}}?{_SECRET_HINT})"
-    r"([A-Za-z0-9_.-]{1,96})[\"']?[ \t]*+:[ \t]*+[|>][-+0-9]{0,4}+[ \t]++(?=[^\s#])",
+    rf"([A-Za-z0-9_.-]{{1,96}})[\"']?[ \t]*+:[ \t]*+{_BLOCK_INDICATOR}+[ \t]++(?=[^\s#])",
     _FLAGS,
 )
 
 
-def _inline_block(line: str) -> tuple[str, int] | None:
+def _inline_block(line: str) -> tuple[str, int | None] | None:
     """If `line` holds `<secret key>: |` (or `>`) and a value after it, the line with the rest
-    after the header hidden and the indentation a block line must exceed; otherwise None. Each
+    after the header hidden, and the indentation a block line must exceed when the key starts
+    the line's content (`_key_column`); a header after other text (`echo token: > /tmp/out`,
+    `| Token: | Description |`) has no block under it. None when there is no such header. Each
     search starts after the last header, so the line is read once."""
     if ":" not in line:
         return None
@@ -773,27 +834,51 @@ def _inline_block(line: str) -> tuple[str, int] | None:
             and not _is_plain(value)
             and not _NOT_SET.match(value)
         ):
-            indent = len(_lead(line)) - _LOG_PREFIX.match(line).end()
-            return line[: header.end()] + REDACTED, indent
+            key_start = header.start(1)
+            return line[: header.end()] + REDACTED, _key_column(line, key_start)
         start = header.end()
     return None
+
+
+# What a line right after a block header can be other than its value: a key, a list item, a
+# comment or a document marker
+_YAML_STRUCTURE = re.compile(
+    r"[ \t]*+(?:-(?:[ \t]|\Z)|#|---|\.\.\.|[\"']?[A-Za-z0-9_.-]{1,96}[\"']?[ \t]*+:(?:[ \t]|\Z))"
+)
+
+
+def _bare_value_follows(lines: list[str], header: int) -> bool:
+    """Whether the line after a block header with no deeper lines is its value written at the
+    key's indentation, as a VT or FF that was a line break leaves it (`password: |` and then
+    `4242`): it has text, no log prefix of its own, and is no YAML structure."""
+    if header + 1 >= len(lines):
+        return False
+    body = lines[header + 1]
+    return (
+        bool(body.strip())
+        and _LOG_PREFIX.match(body).end() == 0
+        and body.strip() != REDACTED
+        and _YAML_STRUCTURE.match(body) is None
+    )
 
 
 def _redact_blocks(text: str) -> tuple[str, int]:
     """YAML block scalars under a secret key (`password: |`): every line of the block, blank lines
     kept, up to the first line that is not indented deeper than the key (at most 200 lines), and
-    a value on the header's own line."""
+    a value on the header's own line. That value is judged first, so a joined line that ends in
+    another header (`password: |  x token: |`) still hides it."""
     if "|" not in text and ">" not in text:
         return text, 0
     lines, count = text.split("\n"), 0
     for i, line in enumerate(lines):
-        indent = _block_indent(line)
-        if indent is None:
-            inline = _inline_block(line)
-            if inline is None:
-                continue
+        inline = _inline_block(line)
+        if inline is None:
+            indent = _block_indent(line)
+        else:
             lines[i], indent = inline
             count += 1
+        if indent is None:
+            continue
         end, last = i + 1, i
         while end < min(len(lines), i + 1 + BLOCK_MAX_LINES):
             body = lines[end]
@@ -802,6 +887,8 @@ def _redact_blocks(text: str) -> tuple[str, int]:
                     break
                 last = end
             end += 1
+        if inline is None and last == i and _bare_value_follows(lines, i):
+            last = i + 1
         changed = False
         for j in range(i + 1, last + 1):
             body = lines[j]
@@ -1084,7 +1171,7 @@ def _open_cookie(line: str, start: int) -> str | None:
 
 
 _SEGMENT = string.ascii_letters + string.digits + "_-"
-_JWT_START = re.compile(rf"{_TOKEN_START}eyJ")
+_JWT_START = re.compile(_starting("eyJ"))
 
 
 def _hide_cut_jwt(text: str) -> str:
