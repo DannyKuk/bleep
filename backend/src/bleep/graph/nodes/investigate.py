@@ -21,7 +21,7 @@ from langchain_core.tools import BaseTool
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
-from bleep.graph.host_text import describe_basics, gib, service_name
+from bleep.graph.host_text import describe_basics, describe_urls, gib, service_name
 from bleep.graph.look import look_rule
 from bleep.graph.planted import result_holds_tag
 from bleep.graph.state import IncidentState, Node
@@ -284,6 +284,7 @@ def _task(state: IncidentState, limit: int, clock: Callable[[], datetime], mcp: 
         mcp=mcp,
         containers=_containers(context),
         logs=_logs(context),
+        url_checks=_url_checks(context),
         host=_host(context),
         host_rules=_bullets(context.host_rules),
         service_rules=_bullets(context.service_rules),
@@ -325,6 +326,13 @@ def _containers(context: GatherContext) -> str:
 def _logs(context: GatherContext) -> str:
     # Gather guarded each excerpt already (`guard_text`), so it goes in as it is.
     return "\n\n".join(f"{name}:\n{text}" for name, text in context.logs.items()) or "(none)"
+
+
+def _url_checks(context: GatherContext) -> str:
+    """Gather's URL checks as a section of their own; empty, and the prompt as it was, without."""
+    if not context.urls:
+        return ""
+    return "\n\n" + prompts.load("graph/url_checks", checks=describe_urls(context.urls)).strip()
 
 
 def _host(context: GatherContext) -> str:

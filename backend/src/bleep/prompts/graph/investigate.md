@@ -12,7 +12,7 @@
 
 ## Recent logs
 
-{logs}
+{logs}{url_checks}
 
 ## Host
 
