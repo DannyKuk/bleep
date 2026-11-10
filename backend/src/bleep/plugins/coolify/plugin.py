@@ -66,8 +66,9 @@ log = logging.getLogger(__name__)
 URL_ENV = "COOLIFY_URL"
 TOKEN_ENV = "COOLIFY_TOKEN"
 MESSAGE_CHARS = 200  # of one commit message in the deployments list
+FIELD_CHARS = 200  # of any other one field in a list line
 COMPOSE_DOMAINS_MAX = 16_000  # chars of docker_compose_domains Bleep parses at all
-DOMAINS_CHARS = 500  # of one Compose application's domains in the list
+DOMAINS_CHARS = 500  # of one application's domains in the list
 POLL_S = 10  # between reads of a running deployment
 DONE = {"finished"}
 ENDED = {"finished", "failed", "cancelled-by-user"}
@@ -188,13 +189,23 @@ def _built_from_git(a: CoolifyApplication) -> bool:
     )
 
 
+def _one_line(text: str | None, limit: int = FIELD_CHARS) -> str:
+    """`text` as it may stand in one line of a list: every run of whitespace, a line break of any
+    kind among them (`\\n`, `\\r`, U+0085, U+2028, U+2029, VT, FF), is one space, and it is cut to
+    `limit`. Empty for None. A field from Coolify with a line break would otherwise print a second
+    line that reads as another application or deployment, and the cut keeps a line under the
+    guard's 4,000-char line cap, which would split a longer one in two."""
+    flat = " ".join((text or "").split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
 def _source(a: CoolifyApplication) -> str:
     """Where `a` is built from, as ` repo=…@branch commit=…`; nothing for an application built
     without git, whose git fields hold Coolify's own repo, `main` and `HEAD`."""
     if not _built_from_git(a):
         return ""
     commit = _commit(a.git_commit_sha)
-    repo = f" repo={_no_userinfo(a.git_repository)}@{a.git_branch or '?'}"
+    repo = f" repo={_one_line(_no_userinfo(a.git_repository))}@{_one_line(a.git_branch) or '?'}"
     return repo + (f" commit={commit}" if commit else "")
 
 
@@ -246,8 +257,7 @@ def _compose_domains(raw: str) -> str:
         shown = [s for name, svc in services.items() if (s := _service_domains(name, svc))]
     except ValueError, RecursionError:
         return "?"
-    text = "; ".join(shown) or "none"
-    return text if len(text) <= DOMAINS_CHARS else text[: DOMAINS_CHARS - 1] + "…"
+    return "; ".join(shown) or "none"
 
 
 def _domains(a: CoolifyApplication) -> str:
@@ -272,8 +282,10 @@ def describe_applications(apps: list[CoolifyApplication], here: set[str]) -> str
     for a in sorted(apps, key=lambda a: (a.uuid not in here, a.name or "")):
         mark = " (on this host)" if a.uuid in here else ""
         lines.append(
-            f"- {a.name or '?'} uuid={a.uuid}{mark} status={a.status or '?'} "
-            f"domains={_domains(a)}{_source(a)} build={a.build_pack or '?'}"
+            f"- {_one_line(a.name) or '?'} uuid={_one_line(a.uuid)}{mark}"
+            f" status={_one_line(a.status) or '?'}"
+            f" domains={_one_line(_domains(a), DOMAINS_CHARS)}{_source(a)}"
+            f" build={_one_line(a.build_pack) or '?'}"
         )
     return "\n".join(lines)
 
@@ -287,30 +299,37 @@ def _via(d: CoolifyDeployment) -> str:
     return how
 
 
+def _first_line(text: str | None) -> str:
+    """The first line of `text` that is not blank, a line ending at a line break of any kind."""
+    return next(iter((text or "").strip().splitlines()), "")
+
+
 def describe_deployments(app: CoolifyApplication, found: list[CoolifyDeployment]) -> str:
+    name = _one_line(app.name) or "?"
     if not found:
-        return f"{app.name} has no deployments."
-    lines = [f"Latest deployments of {app.name} ({app.uuid}), newest first:"]
+        return f"{name} has no deployments."
+    lines = [f"Latest deployments of {name} ({_one_line(app.uuid)}), newest first:"]
     for d in found:
-        message = (d.commit_message or "").strip().split("\n", 1)[0][:MESSAGE_CHARS]
+        message = _one_line(_first_line(d.commit_message), MESSAGE_CHARS)
         commit = _commit(d.commit)
         commit = f" commit={commit}" if commit else ""
         lines.append(
-            f"- {d.created_at or '?'} {d.status or '?'}{commit} ({_via(d)}) "
-            f"finished={d.finished_at or 'not yet'}: {message or 'no message'}"
+            f"- {_one_line(d.created_at) or '?'} {_one_line(d.status) or '?'}{commit} ({_via(d)})"
+            f" finished={_one_line(d.finished_at) or 'not yet'}: {message or 'no message'}"
         )
     return "\n".join(lines)
 
 
 def describe_env_keys(app: CoolifyApplication, keys: list[CoolifyEnvKey]) -> str:
+    name = _one_line(app.name) or "?"
     if not keys:
-        return f"{app.name} has no environment variables."
-    lines = [f"Environment variables of {app.name} (keys only; values are never read):"]
+        return f"{name} has no environment variables."
+    lines = [f"Environment variables of {name} (keys only; values are never read):"]
     for k in sorted(keys, key=lambda k: (bool(k.is_preview), k.key)):
         used = [w for w, on in (("build", k.is_buildtime), ("runtime", k.is_runtime)) if on]
         if k.is_preview:
             used.append("preview")
-        lines.append(f"- {k.key}" + (f" ({', '.join(used)})" if used else ""))
+        lines.append(f"- {_one_line(k.key)}" + (f" ({', '.join(used)})" if used else ""))
     return "\n".join(lines)
 
 
