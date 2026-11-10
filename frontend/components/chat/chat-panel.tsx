@@ -13,7 +13,7 @@ import { stateMood } from "@/lib/mood";
 import { idFromSegment } from "@/lib/routes";
 import {
   MESSAGE_MAX_CHARS,
-  TALK_LOG_MARKDOWN,
+  fetchTalkLog,
   isFinished,
   linkHref,
   pressConfirm,
@@ -40,6 +40,13 @@ function failure(error: unknown): string {
   if (error instanceof ApiError && error.status === 422) return "That message is too long.";
   if (error instanceof ApiError && error.detail) return `Bleep could not answer: ${error.detail}.`;
   return "Bleep could not be reached. Try again.";
+}
+
+function exportFailure(error: unknown): string {
+  if (error instanceof ApiError && error.status === 401) {
+    return "Your session has ended. Log in again to export the chat.";
+  }
+  return "The chat could not be exported. Try again.";
 }
 
 /**
@@ -137,6 +144,20 @@ export function ChatPanel() {
     }
   }
 
+  async function exportChat() {
+    try {
+      const { blob, name } = await fetchTalkLog();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (error) {
+      add({ who: "error", text: exportFailure(error) });
+    }
+  }
+
   if (!open) {
     return (
       <button
@@ -169,15 +190,15 @@ export function ChatPanel() {
           <h2 className="text-lg leading-tight font-extrabold">Bleep</h2>
           <p className="text-[13px] text-ink-2">Asks before it changes anything</p>
         </div>
-        <a
-          href={TALK_LOG_MARKDOWN}
-          download
+        <button
+          type="button"
           aria-label="Export chat"
           title="Export chat"
+          onClick={exportChat}
           className="grid size-9 place-items-center rounded-full hover:bg-soft focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           <Download className="size-5" />
-        </a>
+        </button>
         <button
           type="button"
           aria-label="Close chat"

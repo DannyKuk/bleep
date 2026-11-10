@@ -2,7 +2,7 @@
 // (schemas/talk.py). Written by hand like `api-types.ts`. The panel sends the person's words and
 // renders what comes back; every word Bleep says is the backend's.
 
-import { apiFetch } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
 import type { IncidentStatus } from "@/lib/api-types";
 import { serviceHref } from "@/lib/routes";
 
@@ -34,9 +34,20 @@ export interface ConfirmResult {
 
 /**
  * The talk log as a Markdown transcript (#411): both chats' last messages with how Bleep read
- * each. The backend sends it as an attachment, so a plain link with the session cookie saves it.
+ * each, with the file name the backend gave it. Fetched first, so a lost session is an error
+ * the panel can show rather than a saved 401.
  */
 export const TALK_LOG_MARKDOWN = "/api/talk/log?format=md";
+
+export async function fetchTalkLog(): Promise<{ blob: Blob; name: string }> {
+  const response = await fetch(TALK_LOG_MARKDOWN, { credentials: "same-origin" });
+  if (!response.ok) {
+    throw new ApiError(response.status, response.statusText || `HTTP ${response.status}`);
+  }
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? "bleep-chat.md";
+  return { blob: await response.blob(), name };
+}
 
 /** As `schemas/talk.py` `MESSAGE_MAX_CHARS`. */
 export const MESSAGE_MAX_CHARS = 1000;

@@ -98,21 +98,55 @@ describe("ChatPanel", () => {
   });
 
   it("exports the chat as the backend's Markdown transcript from its header", async () => {
-    const fetchMock = stubBackend(() => json(answer()));
+    const fetchMock = stubBackend(
+      () =>
+        new Response("# Chat with Bleep\n", {
+          headers: {
+            "content-type": "text/markdown",
+            "content-disposition": 'attachment; filename="bleep-chat-20261110-1402.md"',
+          },
+        }),
+    );
+    // jsdom has no object URLs; a browser turns the fetched file into one to save it.
+    Object.assign(URL, { createObjectURL: vi.fn(() => "blob:chat"), revokeObjectURL: vi.fn() });
+    const saved: { href: string; download: string }[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      saved.push({ href: this.href, download: this.download });
+    });
     const user = userEvent.setup();
     renderPanel();
     await user.click(screen.getByRole("button", { name: "Talk to Bleep" }));
 
     const panel = screen.getByRole("region", { name: "Chat with Bleep" });
-    const exported = within(within(panel).getByRole("banner")).getByRole("link", {
-      name: "Export chat",
-    });
-
-    expect(exported).toHaveAttribute("href", "/api/talk/log?format=md");
-    expect(exported).toHaveAttribute("download");
-    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/talk/log"))).toEqual(
-      [],
+    await user.click(
+      within(within(panel).getByRole("banner")).getByRole("button", { name: "Export chat" }),
     );
+
+    await waitFor(() =>
+      expect(saved).toEqual([{ href: "blob:chat", download: "bleep-chat-20261110-1402.md" }]),
+    );
+    expect(fetchMock).toHaveBeenCalledWith("/api/talk/log?format=md", {
+      credentials: "same-origin",
+    });
+    click.mockRestore();
+  });
+
+  it("says so when the session ended instead of saving the error as the chat", async () => {
+    stubBackend(() => json({ detail: "not authenticated" }, 401));
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click");
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("button", { name: "Talk to Bleep" }));
+
+    await user.click(screen.getByRole("button", { name: "Export chat" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your session has ended. Log in again to export the chat.",
+    );
+    expect(click).not.toHaveBeenCalled();
+    click.mockRestore();
   });
 
   it("shows a status answer with in-app links built from the ids the backend sent", async () => {
