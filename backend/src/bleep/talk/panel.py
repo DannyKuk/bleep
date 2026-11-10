@@ -55,7 +55,7 @@ class Panel:
                 self.talk.log.shown(
                     "panel", reply.exchange_id, answer.answer, answer.links, confirm_id
                 )
-                self.turns.add(text, answer.answer, reply.incident_id)
+                self.turns.add(text, answer.answer, reply.incident_id, incident_id is not None)
                 return answer
         finally:
             self._waiting -= 1

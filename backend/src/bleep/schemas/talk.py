@@ -51,14 +51,15 @@ class TalkReading(BaseModel):
 
 
 class Turn(BaseModel):
-    """One exchange of a conversation: what the person said and what Bleep answered, the
-    incident it was about if any and when it was (#422). The model reads `said` and `answered`
-    only."""
+    """One exchange of a conversation: what the person said and what Bleep answered, and the
+    incident it was about if any (#422), with `incident_at`, when the conversation took that
+    incident up: a reply about it, or a look's press that opened it; a follow-up carries the
+    time on. The model reads `said` and `answered` only."""
 
     said: str
     answered: str
     incident_id: str | None = None
-    at: datetime | None = None
+    incident_at: datetime | None = None
 
 
 # The actions a chat can offer to confirm: all of them, a look on request (#403) included.
@@ -274,7 +275,9 @@ class CheckLine(BaseModel):
     called, on what (`target`: a container, an app, a command, a query; `minutes`: how far back)
     and the first line of what came back, or one of Verify's checks after a fix (`verify_url`,
     `verify_container`, ...) and whether it passed. `result` is None while a call has no
-    answer."""
+    answer, or when its first line says nothing about what was found (a guard's note, a tool's
+    fixed head). `target` and `minutes` are the arguments the model chose; `result` is host
+    text."""
 
     tool: str
     target: str | None = None
@@ -291,6 +294,8 @@ class IncidentFacts(IncidentLine):
     plan: list[StepLine] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     summary: str | None = None
+    # How many of its run's oldest checks were left out to keep the incident small (#422).
+    left_out: dict[str, int] = Field(default_factory=dict)
 
 
 class Snapshot(BaseModel):

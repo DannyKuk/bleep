@@ -246,10 +246,10 @@ async def test_tool_calls_and_results_stream_to_the_bus(tmp_path):
     update = await run(env, state)
 
     assert await events(env, state, "tool_call") == [
-        {"name": "container_logs", "args": {"container": "shop-web-1", "tail": 50}}
+        {"name": "container_logs", "args": {"container": "shop-web-1", "tail": 50}, "id": "call-1"}
     ]
     (result,) = await events(env, state, "tool_result")
-    assert result["name"] == "container_logs"
+    assert (result["name"], result["id"]) == ("container_logs", "call-1")
     assert result["chars"] == len(tool_messages(update)[0].content)
     assert result["summary_first_line"] == "first line"
 

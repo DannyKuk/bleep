@@ -395,6 +395,50 @@ async def test_a_question_right_after_a_look_is_read_with_what_the_look_checked(
     assert "null" in incident_read(env, 2)  # twenty minutes on, it is about nothing
 
 
+async def test_a_chat_that_goes_on_does_not_keep_the_incident_and_never_reaches_its_plan(env):
+    """The window starts at the message on the incident's page and does not slide: 25 minutes of
+    chat in gaps under 10 minutes, then "restart grafana" on its own is refused, not offered to
+    shop #1's waiting plan."""
+    question = reading(kind="question", answer="shop is down; its plan waits for your yes.")
+    await say(env, "what about shop?", question, incident_id=env.incident.id)
+    for minutes in (8, 16, 24):
+        env.clock.now = T0 + timedelta(minutes=minutes)
+        await say(env, "and now?", reading(kind="question", answer="Still the same."))
+    env.clock.now = T0 + timedelta(minutes=25)
+
+    reply = await say(env, "restart grafana", reading(kind="refusal", refusal="change"))
+
+    assert reply.answer == prompts.load("talk/refused_change").strip() and reply.confirm is None
+    # the last four turns: 8 minutes on still read shop #1, from 16 on none
+    assert [t.incident_at for t in env.panel.turns.recent()] == [T0, None, None, None]
+    await nothing_changed(env)
+
+
+@pytest.mark.parametrize(
+    ("text", "read", "offered"),
+    [
+        ("hm, not sure", {"kind": "unclear"}, False),
+        ("restart it", {"kind": "refusal", "refusal": "change"}, False),
+        ("don't restart", {"kind": "action", "action": ASKED["instruct"]}, False),
+        ("tell shop #1 not to restart", {"kind": "action", "action": ASKED["instruct"]}, True),
+    ],
+)
+async def test_a_follow_up_reads_the_incident_but_only_a_reply_or_its_name_reaches_the_plan(
+    env, text, read, offered
+):
+    question = reading(kind="question", answer="shop is down; its plan waits for your yes.")
+    await say(env, "what about shop?", question, incident_id=env.incident.id)
+    env.clock.now = T0 + timedelta(minutes=5)
+
+    reply = await say(env, text, reading(**read))
+
+    assert '"name":"shop #1"' in incident_read(env, 1)  # read with the incident's facts
+    assert (reply.confirm is not None) == offered
+    if offered:
+        assert reply.confirm is not None and reply.confirm.yes_label == "Send"
+    await nothing_changed(env)
+
+
 # --- the talk log (#411) ---
 
 

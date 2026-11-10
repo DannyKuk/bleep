@@ -271,6 +271,8 @@ async def test_a_turn_about_an_incident_minutes_ago_makes_the_message_about_it(l
         "I read its logs, checked its memory and the container runs.",  # a check it never made
         "I don't know how it was checked; its container runs and its logs look fine.",
         "It is healthy.",  # names no check
+        "I read its logs and checked that its URL answers with HTTP 200.",  # a look checks none
+        "I'm not sure how; its container runs and its logs look fine.",
     ],
 )
 async def test_a_how_answer_that_invents_a_check_or_names_none_fails(ledger, answer):

@@ -26,3 +26,8 @@ expect:
   - stats
   - github
   - I don't know
+  - do not know
+  - not sure
+  - URL
+  - HTTP
+  - curl

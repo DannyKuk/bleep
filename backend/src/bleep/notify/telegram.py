@@ -610,7 +610,7 @@ class TelegramBot:
             note = said.answer
             await self._say(note, reply)
         self.talk.log.shown("telegram", said.exchange_id, note, confirm_id=confirm_id)
-        self.turns.add(text, note, said.incident_id)
+        self.turns.add(text, note, said.incident_id, incident_id is not None)
 
     async def _offer(
         self, offer: Offer, line: str, reply: int, known: tuple[str, str] | None

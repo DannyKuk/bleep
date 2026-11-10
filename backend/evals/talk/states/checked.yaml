@@ -1,6 +1,10 @@
 # Everything runs again. A look the person asked for at dkwebsite on coolify found it healthy
 # (dkwebsite #3), and shop #13 on the laptop was fixed and verified last night; each lists what
-# its run checked (#422). A look runs no URL check, so dkwebsite #3 lists none.
+# its run checked (#422). A look runs no URL check, so dkwebsite #3 lists none. The checks are
+# what `talk.state.checks` makes of Investigate's real tools run on a fake engine: a result is the
+# first line of the guarded output, and none where that line says nothing (the column names of
+# `list_containers`, the `name:` line of `inspect_container`, the cut note of a long log); the
+# `verify_*` lines use Verify's own details (`graph/nodes/verify.py`).
 snapshot:
   now: "2026-11-10 10:20"
   zone: Europe/Vienna
@@ -51,9 +55,9 @@ incidents:
     signals:
       - {kind: look_requested, at: "2026-11-10 10:14"}
     checks:
-      - {tool: list_containers, result: "dkwebsite-web-1  running (healthy)  up 3 days  restarts 0"}
-      - {tool: container_logs, target: dkwebsite-web-1, minutes: 60, result: "GET / 200 12ms"}
-      - {tool: inspect_container, target: dkwebsite-web-1, result: "dkwebsite-web-1: running, healthy, exit code 0"}
+      - {tool: list_containers}
+      - {tool: container_logs, target: dkwebsite-web-1, minutes: 60, result: "> dkwebsite@1.4.0 start"}
+      - {tool: inspect_container, target: dkwebsite-web-1}
     summary: >-
       A look on request found dkwebsite healthy: its container runs and its logs show no
       errors. Nothing was proposed or changed.
@@ -69,8 +73,8 @@ incidents:
     signals:
       - {kind: container_died, container: shop-web-1, at: "2026-11-10 02:14"}
     checks:
-      - {tool: list_containers, result: "shop-db-1  exited (0)  2 hours ago"}
-      - {tool: container_logs, target: shop-web-1, minutes: 30, result: "Error: connect ECONNREFUSED shop-db:5432"}
+      - {tool: list_containers}
+      - {tool: container_logs, target: shop-web-1, minutes: 30}
       - {tool: verify_container, target: shop-db-1, result: "passed: running"}
       - {tool: verify_container, target: shop-web-1, result: "passed: running, healthy"}
       - {tool: verify_url, target: "https://shop.example.com/", result: "passed: answering 200"}

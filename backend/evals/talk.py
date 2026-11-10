@@ -429,7 +429,7 @@ def turns_of(case: TalkCase, state: EvalState, now: datetime) -> list[Turn]:
                 said=turn.said,
                 answered=turn.answered,
                 incident_id=facts.id if facts is not None else None,
-                at=now - timedelta(minutes=turn.minutes_ago),
+                incident_at=now - timedelta(minutes=turn.minutes_ago) if facts else None,
             )
         )
     return turns
