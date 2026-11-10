@@ -220,6 +220,8 @@ async def test_a_container_that_came_up_since_gather_ends_as_no_action(tmp_path)
     update = await run(env, state)
 
     assert update["outcome"] == "no_action"
+    [web] = [c for c in await checks(env, state) if c["target"] == "shop-web-1"]
+    assert web["detail"] == "not running when Bleep gathered the context"  # no "next check"
 
 
 async def test_a_look_whose_host_stops_answering_during_the_check_ends_as_no_action(tmp_path):
@@ -277,6 +279,29 @@ async def test_a_look_the_model_did_not_find_healthy_is_not_checked(tmp_path):
     ):
         update = await run(env, state | changed)
         assert update["outcome"] == "no_action", changed
+    assert await checks(env, state) == []
+
+
+async def test_an_unsure_diagnosis_keeps_no_action_and_its_advice(tmp_path):
+    env, state, _ = await setup(tmp_path)
+    env.models.model = FakeChatModel(
+        script=[written(follow_ups=[], summary="shop was healthy.")] * 2,
+        structured_output_unsupported=True,
+    )
+    unsure = Diagnosis(
+        root_cause="The worker logs repeated job failures; the cause is unclear.",
+        category="unknown",
+        confidence=0.4,
+        unsure=True,
+    )
+    advice = "Check the worker's SMTP settings."
+    plan = LOOKED.model_copy(update={"reason": "No allowed action fixes this."})
+    plan = plan.model_copy(update={"human_instructions": advice})
+
+    update = await run(env, state | {"diagnosis": unsure, "proposal": plan})
+
+    assert update["outcome"] == "no_action"
+    assert update["report"].follow_ups == [advice]
     assert await checks(env, state) == []
 
 

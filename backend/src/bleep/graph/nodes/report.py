@@ -142,7 +142,7 @@ def _healthy_look(state: IncidentState) -> bool:
     """Whether the run may end `healthy` once its checks pass (#421): a bare look whose model
     found nothing wrong and planned no action, with nothing decided or planned again since.
 
-    The diagnosis must be the model's and say `category` `unknown`, which is what a look's
+    The diagnosis must be the model's, sure, and say `category` `unknown`, which is what a look's
     Diagnose writes for a healthy service (`prompts/graph/look_diagnose.md`); the plan must be
     the model's, not a fallback of code (no diagnosis, no usable plan, a spent budget) or a
     refusal. A decision, or a trip back to Propose (an instruction, a stale plan), says the run
@@ -152,6 +152,7 @@ def _healthy_look(state: IncidentState) -> bool:
         bare_look(state.get("signals", []))
         and diagnosis is not None
         and diagnosis.category == "unknown"
+        and not diagnosis.unsure
         and diagnosis.root_cause != FALLBACK_CAUSE
         and proposal is not None
         and proposal.kind == "no_action"

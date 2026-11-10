@@ -2050,7 +2050,7 @@ async def test_a_looks_check_without_gathers_reading_proves_no_container_ran(tmp
 
     assert not result.ok
     containers = [c for c in result.checks if c.kind == "container"]
-    assert {c.detail for c in containers} == {verify.CAME_UP}
+    assert {c.detail for c in containers} == {verify.NOT_GATHERED_RUNNING}
 
 
 async def test_a_looks_check_of_a_service_bleep_no_longer_knows_is_no_pass(tmp_path):

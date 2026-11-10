@@ -93,6 +93,7 @@ SEEN = "when Verify first saw it running"
 RESTARTED = STARTED_AFTER_FIX[0] + " (restart count {now}, {then} " + SEEN + ")"
 STARTED_AGAIN = STARTED_AFTER_FIX[1] + " (a later start time than " + SEEN + ")"
 CAME_UP = "first seen running at this check; it has to stay up until the next one"
+NOT_GATHERED_RUNNING = "not running when Bleep gathered the context"  # a look's one check, #421
 REDEPLOY_RESTARTED = (
     STARTED_AFTER_FIX[0] + " ({name}, a container the redeploy made, restart count {now})"
 )
@@ -704,7 +705,13 @@ async def check_look(deps: GraphDeps, state: IncidentState) -> VerificationResul
     context = state.get("context")
     gathered = context.containers if context is not None else []
     first_running = {c.name: c for c in gathered if c.state == "running"}
-    return await _one_check(deps, host_id, plan, [], first_running, 1, set())
+    result = await _one_check(deps, host_id, plan, [], first_running, 1, set())
+    # There is no next check to stay up until: say what the look knows instead.
+    checks = [
+        c.model_copy(update={"detail": NOT_GATHERED_RUNNING}) if c.detail == CAME_UP else c
+        for c in result.checks
+    ]
+    return result.model_copy(update={"checks": checks})
 
 
 def make(deps: GraphDeps) -> Node:

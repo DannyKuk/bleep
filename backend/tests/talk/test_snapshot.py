@@ -156,7 +156,9 @@ async def test_the_snapshot_lists_hosts_services_and_incidents_in_the_local_zone
 async def test_a_look_that_found_the_service_healthy_is_listed_as_healthy_by_name(world):
     world.clock_at = NOW - timedelta(minutes=5)
     look = Signal(subject=SHOP, kind=LOOK_REQUESTED, at=world.clock_at, detail={"via": "telegram"})
-    incident, _ = await world.repo.open_or_attach(SHOP, [look], name="shop", attach=False)
+    incident, _ = await world.repo.open_or_attach(
+        SHOP, [look], name="shop", attach=False, title="look requested on shop"
+    )
     healthy = OUTCOME_TEXT["healthy"]
     await world.bus.publish(incident.id, "report", {"outcome": healthy, "cause": "None found."})
     await world.repo.set_status(incident.id, "closed")

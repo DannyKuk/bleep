@@ -105,6 +105,26 @@ async def test_a_look_names_the_host_when_another_hosts_service_has_the_same_nam
     assert blog.incident is not None and blog.incident.title == "look requested on blog"
 
 
+async def test_two_services_named_alike_on_one_host_keep_their_ids_in_a_looks_title(tmp_path):
+    engine = FakeEngine(
+        "a",
+        [box("shop-web-1", "shop"), box("shop", labels={}), box("blog-1", "blog")],
+    )
+    env, looks, _, _ = await rig(tmp_path, engine=engine)
+    compose, single = sorted(
+        (s for s in env.registry.services("a") if s.name == "shop"), key=lambda s: s.id
+    )
+    assert compose.id != single.id
+
+    first = await looks.look(compose.id, "telegram")
+    second = await looks.look(single.id, "telegram")
+
+    assert first.incident is not None and second.incident is not None
+    assert first.incident.title == f"look requested on {compose.id}"
+    assert second.incident.title == f"look requested on {single.id}"
+    assert first.incident.title != second.incident.title
+
+
 async def test_a_watcher_incident_keeps_its_title_by_service_id(tmp_path):
     env, _, _, _ = await rig(tmp_path)
     subject = shop(env)

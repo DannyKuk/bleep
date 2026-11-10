@@ -7,6 +7,7 @@ sees it. A refused plan goes back to the model once with the reasons; refused ag
 found"; only a missing diagnosis or a spent budget skips the model. See docs/design/graph.md.
 """
 
+import logging
 import re
 from typing import Literal
 
@@ -24,6 +25,7 @@ from bleep.guard.plan_check import (
     Violation,
     check_plan,
     coolify_members,
+    host_urls,
     protected_names,
 )
 from bleep.guard.redact import redacted_proposal, redacted_step
@@ -44,13 +46,13 @@ from bleep.schemas.graph import (
 from bleep.schemas.incidents import Subject
 from bleep.tools.registry import ActCatalog, PlanRules
 
+log = logging.getLogger(__name__)
+
 NO_DIAGNOSIS = "Bleep has no diagnosis to act on, so it proposes no action."
 NO_PLAN = "The model gave no usable plan, so Bleep proposes no action."
 BUDGET = "The incident's token budget or the day's cost cap is spent, so Bleep proposes no action."
 REFUSED = "Bleep's own checks refused the proposed plan twice, so nothing will run."
 MCP_CALL = "mcp.call"
-# The plan check's rules about a plan's verification checks, not its steps.
-_CHECK_RULES = frozenset({"unknown_url", "unknown_container"})
 INSTRUCT = (
     "You can tell Bleep what to do instead and it will plan again with that; it can also let "
     "this go. Nothing can be approved from a refused plan."
@@ -137,7 +139,7 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
 
     mcp = await _mcp_section(deps, incident_id, enabled)
     messages: list[BaseMessage] = [HumanMessage(_prompt(deps, state, diagnosis, enabled, mcp))]
-    proposal = _read(await _ask(deps, incident_id, messages), deps.registry)
+    proposal = _read(await _ask(deps, incident_id, messages), deps.registry, host_id)
     violations = check(proposal)
     if not violations:
         return proposal
@@ -146,14 +148,11 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
         AIMessage(proposal.model_dump_json(include=set(ProposalDraft.model_fields))),
         HumanMessage(prompts.load("graph/propose_retry", violations=_bullets(violations))),
     ]
-    retry = _read(await _ask(deps, incident_id, messages), deps.registry)
+    retry = _read(await _ask(deps, incident_id, messages), deps.registry, host_id)
     again = check(retry)
     if not again:
         return retry
     _record(deps, incident_id, again)
-    if retry.kind == "no_action" and all(v.rule in _CHECK_RULES for v in again):
-        # Nothing would run, so there is nothing to refuse: only the checks go (#421).
-        return retry.model_copy(update={"verification": VerificationPlan()})
     unclear = any(v in again for v in _unclear_names(retry, deps.registry))
     return _refused(retry, again, can_instruct=replans_left(deps, state), unclear=unclear)
 
@@ -181,9 +180,28 @@ async def _mcp_section(deps: GraphDeps, incident_id: str, enabled: set[str]) -> 
     )
 
 
-def _read(proposal: Proposal, registry: Registry) -> Proposal:
+def _read(proposal: Proposal, registry: Registry, host_id: str) -> Proposal:
     """The model's plan as Bleep checks it and the human approves it."""
-    return _without_replaced(_by_name(proposal, registry), registry)
+    read = _without_replaced(_by_name(proposal, registry), registry)
+    return _known_checks(read, registry, host_id) if read.kind == "no_action" else read
+
+
+def _known_checks(proposal: Proposal, registry: Registry, host_id: str) -> Proposal:
+    """A plan of no action without the checks a plan that acts could not name: a URL that is
+    not one of the host's health checks, a container not on the host. Nothing runs such a
+    plan's checks but a look's, which reads only its own service (`verify.check_look`, #421);
+    they are dropped in code rather than sent back to the model, so a retry that fails cannot
+    cost the plan its advice."""
+    planned = proposal.verification
+    configured = host_urls(registry, host_id)
+    kept = VerificationPlan(
+        urls=[url for url in planned.urls if url in configured],
+        containers=[c for c in planned.containers if registry.container(host_id, c) is not None],
+    )
+    if kept == planned:
+        return proposal
+    log.info("propose: dropped the unknown checks of a plan of no action on %s", host_id)
+    return proposal.model_copy(update={"verification": kept})
 
 
 def _by_name(proposal: Proposal, registry: Registry) -> Proposal:

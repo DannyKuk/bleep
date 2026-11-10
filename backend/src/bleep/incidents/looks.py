@@ -14,6 +14,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
+from bleep.guard.titles import build_title
 from bleep.hosts.discovery import is_self
 from bleep.hosts.registry import Registry
 from bleep.incidents.quiet import QuietStore
@@ -21,6 +22,7 @@ from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.llm.usage import CostLedger
 from bleep.schemas.incidents import LOOK_REQUESTED, Incident, Signal, Subject
 from bleep.schemas.quiet import QuietState
+from bleep.schemas.services import Service
 from bleep.schemas.settings import Budgets
 
 Channel = Literal["telegram", "dashboard"]
@@ -85,18 +87,31 @@ class Looks:
         if await self._spent():
             return replace(seen, outcome="spent")
         signal = Signal(subject=subject, kind=LOOK_REQUESTED, at=self.clock(), detail={"via": via})
-        # A name another host's service has too is said with its host in the title (#421).
-        shared = any(
-            s.host_id != service.host_id and s.name.casefold() == service.name.casefold()
-            for s in self.registry.services()
-        )
         incident, created = await self.repo.open_or_attach(
-            subject, [signal], name=service.name, attach=False, name_shared=shared
+            subject,
+            [signal],
+            name=service.name,
+            attach=False,
+            title=self._title(service, subject, signal),
         )
         if not created:  # the watcher opened one in the meantime
             return replace(seen, outcome="open", incident=incident)
         await self.runner.start(incident)
         return replace(seen, outcome="opened", incident=incident)
+
+    def _title(self, service: Service, subject: Subject, signal: Signal) -> str:
+        """The look's title, naming the service as the dashboard does (#421): "look requested on
+        dkwebsite", not by a Coolify app's uuid. A name another host's service has too gets its
+        host ("… on shop on laptop"); one another service on the same host has too keeps the
+        service id, whose kind tells the two apart ("… on a/compose:shop")."""
+        alike = [
+            s
+            for s in self.registry.services()
+            if s.id != service.id and s.name.casefold() == service.name.casefold()
+        ]
+        if any(s.host_id == service.host_id for s in alike):
+            return build_title(subject, [signal])
+        return build_title(subject, [signal], service.name, on_host=bool(alike))
 
     def _reachable(self, host_id: str) -> bool:
         host = next((h for h in self.registry.hosts() if h.config.id == host_id), None)
