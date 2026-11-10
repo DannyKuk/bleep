@@ -1,4 +1,5 @@
 import json
+import uuid
 
 import pytest
 from langchain_core.tracers.langchain import LangChainTracer
@@ -16,6 +17,7 @@ from bleep.llm.tracing import (
     build_tracer,
 )
 from bleep.schemas.incidents import Incident, Subject
+from bleep.schemas.settings import TracingChoice
 
 PUBLIC, SECRET = "pk-lf-test-public", "sk-lf-test-secret"
 
@@ -153,7 +155,7 @@ async def test_a_reloading_tracer_takes_a_key_changed_on_the_dashboard(no_tracin
     monkeypatch.setenv("TRACING", "langsmith")
     keys = {"LANGSMITH_API_KEY": SecretStr("lsv2_first")}
     tracer = ReloadingTracer(keys.get)
-    first = tracer._tracer
+    first = tracer.current()
     closed = []
 
     async def close() -> None:
@@ -163,7 +165,7 @@ async def test_a_reloading_tracer_takes_a_key_changed_on_the_dashboard(no_tracin
     keys["LANGSMITH_API_KEY"] = SecretStr("lsv2_second")
     await tracer.reload()
 
-    assert closed == [True] and tracer._tracer is not first
+    assert closed == [True] and tracer.current() is not first
     (callback,) = tracer.run_config(incident())["callbacks"]
     assert callback.client.api_key == "lsv2_second"
 
@@ -196,7 +198,7 @@ async def test_a_tracer_that_fails_to_build_on_reload_stops_tracing_with_the_old
     async def close() -> None:
         closed.append(True)
 
-    tracer._tracer.close = close  # type: ignore[method-assign]
+    tracer.current().close = close  # type: ignore[method-assign]
 
     def broken(settings):
         raise RuntimeError("client constructor failed")
@@ -244,3 +246,62 @@ def test_no_key_appears_in_what_a_chat_reading_carries(langfuse):
 def test_a_reloading_tracer_traces_chat_readings_with_the_tracer_in_force(no_tracing_env):
     tracer = ReloadingTracer(lambda name: None)
     assert tracer.talk_config("panel") == {}
+
+
+def _langfuse(public: str, base_url: str) -> TracingSettings:
+    return settings(
+        TRACING="langfuse",
+        LANGFUSE_PUBLIC_KEY=public,
+        LANGFUSE_SECRET_KEY=f"sk-lf-{uuid.uuid4().hex}",
+        LANGFUSE_BASE_URL=base_url,
+    )
+
+
+def test_langfuse_keeps_one_client_per_public_key_whatever_address_a_second_names(
+    no_tracing_env,
+):
+    """Why a running Langfuse tracer is never built again (#372): the second client for the same
+    public key is the first one, with the first one's address and secret key."""
+    public = f"pk-lf-{uuid.uuid4().hex}"
+    first = LangfuseTracing(_langfuse(public, "http://langfuse-web:3000"))
+    second = LangfuseTracing(_langfuse(public, "https://cloud.example.test"))
+    assert second._client._resources is first._client._resources
+    assert second._client._resources.base_url == "http://langfuse-web:3000"
+
+
+async def test_a_running_langfuse_tracer_is_kept_and_a_change_waits_for_a_restart(
+    no_tracing_env,
+):
+    public = f"pk-lf-{uuid.uuid4().hex}"
+    chosen = TracingChoice(tracing="langfuse")
+    keys = {"LANGFUSE_PUBLIC_KEY": SecretStr(public), "LANGFUSE_SECRET_KEY": SecretStr("sk-lf-1")}
+    tracer = ReloadingTracer(keys.get, lambda: chosen)
+    running = tracer.current()
+    closed = []
+
+    async def close() -> None:
+        closed.append(True)
+
+    running.close = close  # type: ignore[method-assign]
+    chosen = TracingChoice(tracing="langfuse", langfuse_base_url="https://cloud.example.test")
+    await tracer.reload()
+    assert tracer.current() is running and closed == [] and tracer.restart_needed()
+
+    chosen = TracingChoice(tracing="langfuse")
+    await tracer.reload()
+    assert tracer.current() is running and not tracer.restart_needed()
+
+
+def test_a_reloading_tracer_builds_no_client_before_its_first_use(no_tracing_env, monkeypatch):
+    """Built before the stored settings load, it only checks the keys: a Langfuse client made then
+    would keep the default address for the whole process."""
+    from bleep.llm import tracing
+
+    built = []
+    monkeypatch.setattr(tracing, "build_tracer", lambda s: built.append(s) or NoTracing())
+    tracer = ReloadingTracer(
+        lambda name: SecretStr("lsv2_k"), lambda: TracingChoice(tracing="langsmith")
+    )
+    assert built == []
+    tracer.current()
+    assert len(built) == 1

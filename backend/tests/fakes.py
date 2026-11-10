@@ -1,6 +1,7 @@
 """Fakes for engines, shells and chat models land here, so no test touches a real host or model."""
 
 import asyncio
+import contextlib
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -533,3 +534,14 @@ class LowScoringEmbedder(FakeEmbedder):
             column = self._own.setdefault(text, len(self._own)) % self.OWN_DIMS
             own[row, column] = np.sqrt(1 - self.factor)
         return np.hstack([shared, own])
+
+
+def database_bytes(data_dir: Path) -> bytes:
+    """Every byte of `bleep.db` as written so far: the file and its write-ahead log, where a
+    write sits until a checkpoint, so a value that reached the database is found in either. The
+    log is removed when the last connection closes, after it was checkpointed into the file."""
+    found = b""
+    for name in ("bleep.db-wal", "bleep.db"):  # the log first: a checkpoint moves it to the file
+        with contextlib.suppress(FileNotFoundError):
+            found += (data_dir / name).read_bytes()
+    return found

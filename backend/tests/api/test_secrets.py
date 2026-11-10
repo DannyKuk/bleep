@@ -15,6 +15,7 @@ from bleep.plugins.base import Plugin, PluginContext
 from bleep.schemas.plugins import PluginHealth
 from bleep.tools.registry import ToolSpec
 from bleep.wiring import build_parts
+from fakes import database_bytes
 
 TOKEN = "fk_dashboard-token-0123456789abcdef"
 NEW_TOKEN = "fk_second-token-0123456789abcdef"
@@ -152,7 +153,7 @@ def test_a_secret_set_is_shown_only_as_set_and_lands_in_a_private_file_not_the_d
     assert MODEL_KEY in file.read_text()
     for page in ("/api/secrets", "/api/settings", "/api/plugins", "/api/telegram/status"):
         assert MODEL_KEY not in app.get(page).text
-    assert MODEL_KEY.encode() not in (settings.data_dir / "bleep.db").read_bytes()
+    assert MODEL_KEY.encode() not in database_bytes(settings.data_dir)
     assert MODEL_KEY not in caplog.text
 
 

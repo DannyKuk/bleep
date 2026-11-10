@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pydantic import SecretStr
 
 from bleep.auth.sessions import LoginLimiter, SessionStore
-from bleep.config import Settings
+from bleep.config import Settings, SettingsError
 from bleep.graph.deps import (
     GraphDeps,
     NeverQuiet,
@@ -54,11 +54,14 @@ from bleep.plugins.registry import PluginRegistry
 from bleep.plugins.urls import Resolver
 from bleep.schemas.settings import (
     EMBEDDINGS_URL_ENV,
+    ENV_NAMES,
     LOCAL_URL_ENV,
     MODEL_KEY_ENV,
+    TRACING_URLS,
     EmbeddingsChoice,
     EmbeddingsOverrides,
     TracingOverrides,
+    has_userinfo,
 )
 from bleep.store.db import Database
 from bleep.store.secrets import SecretName, SecretStore
@@ -187,9 +190,17 @@ def embeddings_env(settings: Settings) -> EmbeddingsOverrides:
 
 
 def tracing_env() -> TracingOverrides:
-    """The tracing fields the env sets (`TRACING`, the addresses, the projects), which win."""
+    """The tracing fields the env sets (`TRACING`, the addresses, the projects), which win. An
+    address with a user or password in it stops Bleep, without quoting it: the API would show it,
+    and the clients would send it on."""
     env = TracingSettings()
     fields = env.model_fields_set & set(TracingOverrides.model_fields)
+    for field in sorted(fields & set(TRACING_URLS)):
+        if has_userinfo(getattr(env, field) or ""):
+            raise SettingsError(
+                f"{ENV_NAMES['tracing'][field]} must have no user or password in it; "
+                "remove them from .env"
+            )
     return TracingOverrides.model_construct(**{field: getattr(env, field) for field in fields})
 
 
@@ -220,13 +231,14 @@ def _value(secret: SecretStr | None) -> str | None:
 
 def start_embedder(store: SettingsStore, secrets: SecretStore) -> Embedder:
     """The embedder the settings in force name, recorded in the store so a change saved later
-    shows as needing a restart. An endpoint that is not complete counts as the local model."""
-    choice = store.embeddings()
-    embedder = build_embedder(choice, secrets)
-    if isinstance(embedder, FastEmbedEmbedder):
-        choice = choice.model_copy(update={"provider": "local"})
-    store.start_embeddings(choice)
-    return embedder
+    shows as needing a restart. An endpoint that is not complete is the local model."""
+    choice = store.start_embeddings()
+    if choice.provider == "local" and store.embeddings().provider == "openai":
+        log.warning(
+            "embeddings: an endpoint needs EMBEDDINGS_BASE_URL and EMBEDDINGS_MODEL; the local "
+            "model embeds until both are set and Bleep is restarted"
+        )
+    return build_embedder(choice, secrets)
 
 
 def build_parts(
@@ -414,6 +426,8 @@ def subscribe_reloads(
     for listener in (reload_telegram, reload_tracer, store.secrets_changed):
         secrets.subscribe(listener)
     store.subscribe(tracing_changed)
+    if isinstance(tracer, ReloadingTracer):
+        store.restart_when("tracing", tracer.restart_needed)
 
 
 def graph_deps(

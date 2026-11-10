@@ -28,6 +28,8 @@ NEARBY = tuple(
         "fc00::/7",
     )
 )
+# The names cloud metadata services answer at; a model server's address may never be one.
+METADATA_NAMES = frozenset({"metadata", "metadata.google.internal"})
 # A single-label name, such as a Docker service; one starting with a digit could be an address.
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,62}")
 
@@ -46,6 +48,17 @@ def _nearby(host: str) -> bool:
     except ValueError:
         return bool(_NAME.fullmatch(host)) and not _inet_aton(host)
     return any(ip in net for net in NEARBY if net.version == ip.version)
+
+
+def _metadata(host: str) -> bool:
+    """A cloud metadata service: one of its names (Google's sits under `.internal`) or a
+    link-local address, where they answer (169.254.169.254)."""
+    if host.lower().rstrip(".") in METADATA_NAMES:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_link_local
+    except ValueError:
+        return False
 
 
 def _inet_aton(host: str) -> bool:
@@ -78,6 +91,8 @@ def check_url(
         raise refused(f"{env} must be an http(s) URL with a host and no password")
     if url.query or url.fragment or "?" in raw or "#" in raw:
         raise refused(f"{env} must have no query or fragment")
+    if internal and _metadata(url.host):
+        raise refused(f"{env} must not be a cloud metadata service")
     is_internal = internal and url.host.lower().endswith(".internal")
     if url.scheme == "http" and not (_nearby(url.host) or is_internal):
         raise refused(

@@ -205,11 +205,32 @@ TRACING_KEYS: dict[str, tuple[str, ...]] = {
 }
 
 
+AnyTracer = NoTracing | LangfuseTracing | LangSmithTracing
+
+
+def _langfuse_view(settings: TracingSettings) -> tuple[str | None, ...]:
+    """What a Langfuse client is built from, to tell whether it changed."""
+    keys = (settings.langfuse_public_key, settings.langfuse_secret_key)
+    return (
+        settings.tracing,
+        *(key.get_secret_value() if key is not None else None for key in keys),
+        settings.langfuse_base_url,
+        settings.langfuse_ui_url,
+        settings.langfuse_project_id,
+    )
+
+
 class ReloadingTracer:
     """The tracer `TRACING` names, built with the keys `key` reads (the env, else the
-    dashboard) and the rest as `choice` gives it (the env, else the settings page), and built
-    again by `reload` after one of them changed on the dashboard. The first build refuses a
-    tracer whose keys are missing; a reload turns tracing off instead."""
+    dashboard) and the rest as `choice` gives it (the env, else the settings page).
+
+    Building it here only checks that the env's `TRACING` has its keys (Bleep refuses to start
+    otherwise); the tracer itself is built at its first use, after the stored settings are
+    loaded, so its first client already has the settings page's address. `reload` builds it
+    again after a change, except a running Langfuse tracer: Langfuse keeps one client per public
+    key for the whole process (`LangfuseResourceManager`), so a second one would reuse the first
+    one's address and secret key, and closing the first would shut down what the second shares.
+    A change to it applies at the next start, and `restart_needed` says so."""
 
     def __init__(
         self,
@@ -218,44 +239,74 @@ class ReloadingTracer:
     ) -> None:
         self._key = key
         self._choice = choice
-        self._tracer = build_tracer(self._settings())
+        check_tracer(self._settings())
+        self._tracer: AnyTracer | None = None
+        self._running: TracingSettings | None = None
+        self._pending = False
 
     def _settings(self) -> TracingSettings:
         keys = {name.lower(): self._key(name) for names in TRACING_KEYS.values() for name in names}
         chosen = self._choice().model_dump() if self._choice is not None else {}
         return TracingSettings(**keys, **chosen)
 
+    def current(self) -> AnyTracer:
+        """The tracer in force, built at the first use."""
+        if self._tracer is None:
+            self._running = self._settings()
+            self._tracer = _built(self._running)
+        return self._tracer
+
+    def restart_needed(self) -> bool:
+        """A change to a running Langfuse tracer waits for the next start."""
+        return self._pending
+
     def run_config(self, incident: Incident) -> RunnableConfig:
-        return self._tracer.run_config(incident)
+        return self.current().run_config(incident)
 
     def talk_config(self, surface: TalkSurface) -> RunnableConfig:
-        return self._tracer.talk_config(surface)
+        return self.current().talk_config(surface)
 
     def trace_url(self, incident: Incident) -> str | None:
-        return self._tracer.trace_url(incident)
+        return self.current().trace_url(incident)
 
     async def reload(self) -> None:
-        """Build the tracer with the keys in force now, then close the old one, which sends what
-        it still holds. A run already going keeps the callbacks it was given."""
+        """Build the tracer with the settings in force now, then close the old one, which sends
+        what it still holds. A run already going keeps the callbacks it was given. Not built yet,
+        nothing to do: the first use builds it. A running Langfuse tracer stays as it is."""
         old = self._tracer
-        try:
-            self._tracer = build_tracer(self._settings())
-        except SettingsError as missing:
-            log.warning("tracing: %s; tracing is off until they are set", missing)
-            self._tracer = NoTracing()
-        except Exception as error:  # never trace on with a key that was replaced or cleared
-            log.warning(
-                "tracing: the tracer could not be built (%s); tracing is off", type(error).__name__
-            )
-            self._tracer = NoTracing()
+        if old is None:
+            return
+        settings = self._settings()
+        if isinstance(old, LangfuseTracing):
+            assert self._running is not None
+            self._pending = _langfuse_view(settings) != _langfuse_view(self._running)
+            if self._pending:
+                log.info("tracing: the Langfuse change applies at the next start")
+            return
+        self._running, self._tracer = settings, _built(settings)
         await old.close()
 
     async def close(self) -> None:
-        await self._tracer.close()
+        if self._tracer is not None:
+            await self._tracer.close()
 
 
-def build_tracer(settings: TracingSettings) -> NoTracing | LangfuseTracing | LangSmithTracing:
-    """The tracer `TRACING` names; refuses to start with its keys missing."""
+def _built(settings: TracingSettings) -> AnyTracer:
+    """`build_tracer`, or tracing off when it fails: never trace on with a key that was replaced
+    or cleared."""
+    try:
+        return build_tracer(settings)
+    except SettingsError as missing:
+        log.warning("tracing: %s; tracing is off until they are set", missing)
+    except Exception as error:
+        log.warning(
+            "tracing: the tracer could not be built (%s); tracing is off", type(error).__name__
+        )
+    return NoTracing()
+
+
+def check_tracer(settings: TracingSettings) -> None:
+    """Refuse a `TRACING` whose keys are missing."""
     if settings.tracing == "langfuse":
         missing = [
             name
@@ -269,11 +320,17 @@ def build_tracer(settings: TracingSettings) -> NoTracing | LangfuseTracing | Lan
             raise SettingsError(
                 f"TRACING=langfuse needs {' and '.join(missing)} set, in .env or on the dashboard"
             )
+    if settings.tracing == "langsmith" and settings.langsmith_api_key is None:
+        raise SettingsError(
+            "TRACING=langsmith needs LANGSMITH_API_KEY set, in .env or on the dashboard"
+        )
+
+
+def build_tracer(settings: TracingSettings) -> AnyTracer:
+    """The tracer `TRACING` names; refuses to start with its keys missing."""
+    check_tracer(settings)
+    if settings.tracing == "langfuse":
         return LangfuseTracing(settings)
     if settings.tracing == "langsmith":
-        if settings.langsmith_api_key is None:
-            raise SettingsError(
-                "TRACING=langsmith needs LANGSMITH_API_KEY set, in .env or on the dashboard"
-            )
         return LangSmithTracing(settings)
     return NoTracing()

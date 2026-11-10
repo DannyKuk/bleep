@@ -217,12 +217,40 @@ EmbeddingsProvider = Literal["local", "openai"]
 TracingKind = Literal["off", "langfuse", "langsmith"]
 
 
+def has_userinfo(url: str) -> bool:
+    """Whether `url` names a user or password before its host."""
+    return "@" in url.split("://", 1)[-1].split("/", 1)[0]
+
+
+def url_origin(url: str) -> str:
+    """`scheme://host[:port]` of `url`, without what follows: a path or a query can hold a
+    credential, so an address from the env is shown only this far."""
+    authority = url.split("://", 1)[-1].split("/", 1)[0].rpartition("@")[2]
+    scheme = url.split("://", 1)[0] if "://" in url else "https"
+    return f"{scheme}://{authority}"
+
+
 def _plain_url(url: str) -> str:
     """An http(s) URL with a host and no user or password; where it may point is the API's to
     check (`api/settings.py`)."""
-    if check_url_syntax(url) is not None or "@" in url.split("://", 1)[-1].split("/", 1)[0]:
+    if check_url_syntax(url) is not None or has_userinfo(url):
         raise ValueError("must be an http:// or https:// URL with a host and no password")
     return url.rstrip("/")
+
+
+# The prefixes of the tracers' and OpenAI-style keys, and a long unbroken run of letters and
+# digits, as a token has: a key pasted into a project field must not be stored (#372).
+_KEY_PREFIXES = ("lsv2_", "sk-", "pk-lf-", "sk-lf-")
+_TOKEN_RUN = re.compile(r"[A-Za-z0-9]{32,}")
+
+
+def _not_a_key(name: str) -> str:
+    run = _TOKEN_RUN.search(name)
+    token = run[0] if run is not None else ""
+    mixed = any(c.isdigit() for c in token) and any(c.isalpha() for c in token)
+    if name.lower().startswith(_KEY_PREFIXES) or mixed:
+        raise ValueError("looks like a key, not a project; keys go in the secrets")
+    return name
 
 
 SettingsUrl = Annotated[
@@ -230,7 +258,13 @@ SettingsUrl = Annotated[
     StringConstraints(strip_whitespace=True, min_length=1, max_length=2048),
     AfterValidator(_plain_url),
 ]
-ProjectName = Annotated[str, StringConstraints(min_length=1, max_length=200, pattern=r"^[\w.:-]+$")]
+ProjectName = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=200, pattern=r"^[\w.:-]+$"),
+    AfterValidator(_not_a_key),
+]
+# The tracing fields that are addresses; one from the env is shown as its origin only.
+TRACING_URLS = ("langfuse_base_url", "langfuse_ui_url", "langsmith_endpoint")
 
 # The env variable behind each field the env can decide; the env wins over the dashboard (#372).
 ENV_NAMES: dict[str, dict[str, str]] = {

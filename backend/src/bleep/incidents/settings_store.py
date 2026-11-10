@@ -144,6 +144,7 @@ class SettingsStore:
         self._env_embeddings = embeddings or EmbeddingsOverrides()
         self._env_tracing = tracing or TracingOverrides()
         self._started_embeddings: EmbeddingsChoice | None = None
+        self._restart_checks: dict[str, Callable[[], bool]] = {}
         self._listeners: list[Callable[[frozenset[str]], Awaitable[None]]] = []
         # The layer under every host override: the hosts file as read at boot, and the hosts
         # added on the dashboard, which come and go (`host_changed`).
@@ -196,10 +197,36 @@ class SettingsStore:
         first use after `load` (`start_embeddings`), so a change applies at the next start."""
         return _layer(_layer(EmbeddingsChoice(), self._chosen("embeddings")), self._env_embeddings)
 
-    def start_embeddings(self, choice: EmbeddingsChoice) -> None:
-        """Record the choice the running embedder was built with, so the view can say a change
+    def embedder_choice(self) -> EmbeddingsChoice:
+        """The embedder `embeddings()` builds: an endpoint only with its model and address set,
+        else the local model, whose model is the image's."""
+        chosen = self.embeddings()
+        address = self._secrets.get(EMBEDDINGS_URL_ENV) if self._secrets is not None else None
+        if chosen.provider == "openai" and chosen.model and address is not None:
+            return chosen
+        return EmbeddingsChoice(min_score=chosen.min_score)
+
+    def start_embeddings(self) -> EmbeddingsChoice:
+        """The embedder to build now, recorded as the running one, so the view can say a change
         saved since needs a restart."""
-        self._started_embeddings = choice
+        self._started_embeddings = self.embedder_choice()
+        return self._started_embeddings
+
+    def clear_refused(self, name: str) -> str | None:
+        """Why a secret cannot be cleared now: the endpoint's address while the running embedder
+        is that endpoint, which would fail every embed until a restart."""
+        started = self._started_embeddings
+        if name == EMBEDDINGS_URL_ENV and started is not None and started.provider == "openai":
+            return (
+                f"{EMBEDDINGS_URL_ENV} cannot be cleared while the endpoint embeds the memory; "
+                "choose the local model, restart Bleep, then clear it"
+            )
+        return None
+
+    def restart_when(self, section: str, needed: Callable[[], bool]) -> None:
+        """`section` is listed in `restart_needed` while `needed()` holds (a running Langfuse
+        tracer that a change waits for)."""
+        self._restart_checks[section] = needed
 
     def tracing(self) -> TracingChoice:
         """The tracer in force without its keys: the env's fields, else the dashboard's. A tracer
@@ -212,8 +239,11 @@ class SettingsStore:
         return sorted(f"{section}.{field}" for section in ENV_NAMES for field in self._env(section))
 
     def restart_needed(self) -> list[str]:
+        """The sections saved here whose change waits for the next start."""
         started = self._started_embeddings
-        return ["embeddings"] if started is not None and started != self.embeddings() else []
+        embeddings = started is not None and started != self.embedder_choice()
+        waiting = [section for section, needed in self._restart_checks.items() if needed()]
+        return (["embeddings"] if embeddings else []) + waiting
 
     def subscribe(self, listener: Callable[[frozenset[str]], Awaitable[None]]) -> None:
         """`listener` is awaited with the sections an update changed, and after `load` with the
@@ -337,6 +367,7 @@ class SettingsStore:
                 except Exception as problem:  # a plugin's own code failed: Bleep starts anyway
                     log.warning("settings: stored %s left out: %s", key, type(problem).__name__)
             self._apply_hosts()
+            self._warn_shadowed()
         await self._tell(frozenset(s for s in SECTIONS if getattr(self._overrides, s) is not None))
 
     async def update(self, update: SettingsUpdate, *, version: str) -> None:
@@ -391,10 +422,26 @@ class SettingsStore:
                 from_env = [k for k in keys if self._key_from_env(k)]
                 if from_env:
                     raise SettingsRefused(
-                        f"{from_env[0]} is set in .env, so {names[field]} is read from .env too; "
-                        "change it there"
+                        f"{from_env[0]} is set in the environment (.env or Compose), so "
+                        f"{names[field]} is read from there too; change it there"
                     )
-                raise SettingsRefused(f"{names[field]} is set in .env, which wins; change it there")
+                raise SettingsRefused(
+                    f"{names[field]} is set in the environment (.env or Compose), which wins; "
+                    "change it there"
+                )
+
+    def _warn_shadowed(self) -> None:
+        """Log each stored override the env now decides: it stays stored but is not in force."""
+        for section, names in ENV_NAMES.items():
+            stored = getattr(self._overrides, section)
+            if stored is None:
+                continue
+            given = stored.model_dump(exclude_none=True)
+            for field in sorted(self._env(section) & set(given)):
+                log.warning(
+                    "settings: the dashboard's %s is not in force: it is set in the environment",
+                    names[field],
+                )
 
     def _check_in_force(
         self, merged: SettingsUpdate, embeddings_before: EmbeddingsChoice, before: TracingChoice

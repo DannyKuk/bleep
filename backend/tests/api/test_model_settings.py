@@ -3,16 +3,18 @@ says so, each change applies at once or the view says a restart is needed, and a
 here stays bound to the keys sent to it."""
 
 import logging
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
 
-from bleep.config import Settings
+from bleep.config import Settings, SettingsError
 from bleep.hosts.registry import Registry
-from bleep.llm.tracing import LangSmithTracing, NoTracing, ReloadingTracer
+from bleep.llm.tracing import LangfuseTracing, LangSmithTracing, NoTracing, ReloadingTracer
 from bleep.main import create_app
 from bleep.memory.embeddings import FakeEmbedder
 from bleep.wiring import build_parts
+from fakes import database_bytes
 
 ENV_NAMES = (
     "LLM_PROVIDER",
@@ -105,7 +107,7 @@ def secrets(client: TestClient) -> dict[str, dict]:
 def inner_tracer(client: TestClient):
     tracer = client.parts.tracer
     assert isinstance(tracer, ReloadingTracer)
-    return tracer._tracer
+    return tracer.current()
 
 
 def test_the_view_shows_embeddings_and_tracing_in_force_and_nothing_from_the_env(app):
@@ -132,7 +134,7 @@ def test_a_model_the_env_sets_wins_and_the_page_cannot_change_it(start, monkeypa
 
     refused = put_settings(app, {"models": {"model": "openai/other"}})
     assert refused.status_code == 422
-    assert "LLM_MODEL is set in .env" in refused.json()["detail"]
+    assert "LLM_MODEL is set in the environment" in refused.json()["detail"]
     assert put_settings(app, {"models": {"cheap_model": "openai/cheap"}}).status_code == 200
     models = app.parts.settings_store.models()
     assert (models.model, models.cheap_model) == ("openai/env-model", "openai/cheap")
@@ -212,7 +214,7 @@ def test_an_embeddings_endpoint_needs_its_address_and_model_first(app):
 
 def test_a_changed_embedder_says_a_restart_is_needed(app):
     store = app.parts.settings_store
-    store.start_embeddings(store.embeddings())  # what the running embedder was built with
+    store.start_embeddings()  # what the running embedder was built with
     response = put_settings(app, {"embeddings": {"min_score": 0.4}})
     assert response.json()["restart_needed"] == ["embeddings"]
     assert put_settings(app, {"embeddings": {}}).json()["restart_needed"] == []
@@ -238,11 +240,14 @@ def test_tracing_is_switched_on_from_the_page_at_once_and_needs_its_key_first(ap
     assert isinstance(inner_tracer(app), NoTracing)
 
     assert put_secret(app, "LANGSMITH_API_KEY", LANGSMITH_KEY).is_success
-    response = put_settings(app, {"tracing": {"tracing": "langsmith", "langsmith_project": "ops"}})
+    project = {"tracing": "langsmith", "langsmith_project": "ops-tracing-project"}
+    response = put_settings(app, {"tracing": project})
     assert response.status_code == 200
     tracer = inner_tracer(app)
-    assert isinstance(tracer, LangSmithTracing) and tracer._project == "ops"
-    assert LANGSMITH_KEY.encode() not in (settings.data_dir / "bleep.db").read_bytes()
+    assert isinstance(tracer, LangSmithTracing) and tracer._project == "ops-tracing-project"
+    stored = database_bytes(settings.data_dir)
+    assert b"ops-tracing-project" in stored  # the check reads what was written
+    assert LANGSMITH_KEY.encode() not in stored
     assert LANGSMITH_KEY not in app.get("/api/settings").text
 
     assert put_settings(app, {"tracing": {}}).status_code == 200
@@ -274,7 +279,10 @@ def test_tracing_the_env_sets_wins(start, monkeypatch):
     app = start()
     assert "tracing.tracing" in app.get("/api/settings").json()["from_env"]
     refused = put_settings(app, {"tracing": {"tracing": "langsmith"}})
-    assert refused.status_code == 422 and "TRACING is set in .env" in refused.json()["detail"]
+    assert (
+        refused.status_code == 422
+        and "TRACING is set in the environment" in refused.json()["detail"]
+    )
 
 
 def test_a_tracer_address_is_https_to_public_addresses_only(app, resolver):
@@ -309,7 +317,7 @@ def test_a_key_from_the_env_keeps_its_tracer_address_in_the_env(start, monkeypat
     assert body["tracing"]["langsmith_endpoint"] is None  # the env's: the default, not the page's
     refused = put_settings(again, {"tracing": {"langsmith_endpoint": "https://us.example.test"}})
     assert refused.status_code == 422
-    assert "LANGSMITH_API_KEY is set in .env" in refused.json()["detail"]
+    assert "LANGSMITH_API_KEY is set in the environment" in refused.json()["detail"]
 
 
 def test_a_tracer_address_with_a_password_is_refused_without_echoing_it(app):
@@ -317,3 +325,116 @@ def test_a_tracer_address_with_a_password_is_refused_without_echoing_it(app):
     response = put_settings(app, {"tracing": {"langsmith_endpoint": url}})
     assert response.status_code == 422
     assert "hunter2" not in response.text
+
+
+def test_langfuse_from_the_env_sends_to_the_address_set_on_the_page_after_a_restart(
+    start, monkeypatch
+):
+    """The tracer is built only after the stored settings load: Langfuse keeps one client per
+    public key, so one built before with the default address would be the one used after."""
+    public = f"pk-lf-{uuid.uuid4().hex}"
+    app = start()
+    put_settings(app, {"tracing": {"langfuse_base_url": "https://cloud.example.test"}})
+    assert put_secret(app, "LANGFUSE_PUBLIC_KEY", public).is_success
+    assert put_secret(app, "LANGFUSE_SECRET_KEY", f"sk-lf-{uuid.uuid4().hex}").is_success
+
+    monkeypatch.setenv("TRACING", "langfuse")
+    again = start()
+    tracer = inner_tracer(again)
+    assert isinstance(tracer, LangfuseTracing)
+    assert tracer._client._resources.base_url == "https://cloud.example.test"
+    assert again.get("/api/settings").json()["restart_needed"] == []
+
+
+def test_a_change_to_a_running_langfuse_tracer_waits_for_a_restart(start, monkeypatch):
+    public = f"pk-lf-{uuid.uuid4().hex}"
+    monkeypatch.setenv("TRACING", "langfuse")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", public)
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", f"sk-lf-{uuid.uuid4().hex}")
+    app = start()
+    running = inner_tracer(app)
+    assert isinstance(running, LangfuseTracing)
+
+    assert put_settings(app, {"tracing": {"langfuse_ui_url": "https://lf.example.test"}}).is_success
+    assert inner_tracer(app) is running  # never a second client for the same public key
+    assert app.get("/api/settings").json()["restart_needed"] == ["tracing"]
+    assert put_settings(app, {"tracing": {}}).json()["restart_needed"] == []
+
+
+def test_a_tracer_address_with_a_password_in_the_env_stops_bleep_without_quoting_it(
+    start, monkeypatch
+):
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "https://probeuser:probe-password-123@lf.example.test")
+    with pytest.raises(SettingsError) as refused:
+        start()
+    assert "LANGFUSE_BASE_URL" in str(refused.value)
+    assert "probe-password-123" not in str(refused.value)
+
+
+def test_a_tracer_address_from_the_env_is_shown_as_its_origin_only(start, monkeypatch):
+    monkeypatch.setenv("LANGSMITH_ENDPOINT", "https://eu.example.test/tenant-a1b2/api")
+    app = start()
+    response = app.get("/api/settings")
+    assert response.json()["tracing"]["langsmith_endpoint"] == "https://eu.example.test"
+    assert "tenant-a1b2" not in response.text
+
+
+@pytest.mark.parametrize(
+    "project",
+    [
+        "lsv2_pt_0123456789abcdef0123456789abcdef_0123456789",
+        "sk-lf-1234",
+        "pk-lf-1234",
+        "sk-proj-abc",
+        "a" * 8 + "0123456789abcdef0123456789abcdef",
+    ],
+)
+def test_a_key_pasted_as_a_project_is_refused_and_never_stored(app, settings, project):
+    for field in ("langsmith_project", "langfuse_project_id"):
+        response = put_settings(app, {"tracing": {field: project}})
+        assert response.status_code == 422
+        assert project not in response.text
+    assert project.encode() not in database_bytes(settings.data_dir)
+
+
+@pytest.mark.parametrize("project", ["bleep-prod-2026-eu-west-1", "cm1a2b3c4d5e6f7g8h9i0j1k2"])
+def test_a_project_name_or_a_langfuse_project_id_is_kept(app, project):
+    response = put_settings(app, {"tracing": {"langfuse_project_id": project}})
+    assert response.status_code == 200
+
+
+def test_the_embeddings_address_is_not_cleared_while_the_endpoint_embeds(app):
+    store = app.parts.settings_store
+    put_secret(app, "EMBEDDINGS_BASE_URL", "http://host.docker.internal:1234/v1")
+    put_settings(app, {"embeddings": {"provider": "openai", "model": "bge-m3"}})
+    store.start_embeddings()  # the boot: the endpoint is the running embedder
+
+    refused = app.delete("/api/secrets/EMBEDDINGS_BASE_URL")
+    assert refused.status_code == 409 and "restart" in refused.json()["detail"]
+    assert secrets(app)["EMBEDDINGS_BASE_URL"]["set"]
+
+
+def test_the_embeddings_address_is_cleared_while_the_local_model_embeds(app):
+    app.parts.settings_store.start_embeddings()
+    put_secret(app, "EMBEDDINGS_BASE_URL", "http://host.docker.internal:1234/v1")
+    assert app.delete("/api/secrets/EMBEDDINGS_BASE_URL").status_code == 200
+
+
+def test_a_model_name_the_local_embedder_ignores_needs_no_restart(app):
+    app.parts.settings_store.start_embeddings()
+    response = put_settings(app, {"embeddings": {"model": "bge-m3"}})
+    assert response.json()["restart_needed"] == []
+
+
+def test_the_log_names_dashboard_values_the_env_now_decides(start, monkeypatch, caplog):
+    app = start()
+    put_settings(app, {"models": {"model": "openai/dashboard"}})
+    put_secret(app, "EMBEDDINGS_BASE_URL", "http://host.docker.internal:1234/v1")
+    put_secret(app, "EMBEDDINGS_API_KEY", EMBEDDINGS_KEY, address="EMBEDDINGS_BASE_URL")
+    monkeypatch.setenv("LLM_MODEL", "openai/env-model")
+    monkeypatch.setenv("EMBEDDINGS_BASE_URL", "http://192.168.1.20:11434/v1")
+    caplog.set_level(logging.WARNING)
+    start()
+    assert "the dashboard's LLM_MODEL is not in force" in caplog.text
+    assert "EMBEDDINGS_API_KEY in the secret file is not used" in caplog.text
+    assert EMBEDDINGS_KEY not in caplog.text

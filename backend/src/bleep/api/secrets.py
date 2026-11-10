@@ -71,8 +71,11 @@ async def put_secret(name: str, body: Annotated[Any, Body()], parts: Parts) -> l
 
 @router.delete("/secrets/{name}")
 async def delete_secret(name: str, parts: Parts) -> list[SecretView]:
-    """Clear one value set from the dashboard; one the env sets is a 409."""
+    """Clear one value set from the dashboard; one the env sets is a 409, and so is the
+    embeddings endpoint's address while the running embedder is that endpoint."""
     _entry(parts.secrets, name)
+    if (refused := parts.settings_store.clear_refused(name)) is not None:
+        raise HTTPException(409, refused)
     await _change(parts.secrets.clear(name))
     return secret_views(parts.secrets)
 

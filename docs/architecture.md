@@ -202,7 +202,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **A settings or plugin change must send the version it was read at (`If-Match`)**; a stale one is a 409 and changes nothing, so no page silently reverts another's change.
 - **Every secret is set or cleared write-only on the settings page** and shown only as set or missing; a hosts file host's connection is read-only.
 - **Secrets set from the dashboard go to `secrets.json` on the data volume, never the database**, and the env wins; a plugin address set there must be https to a public address, and the admin password and `BLEEP_SECRET` stay env-only.
-- **The model, embeddings and tracing settings can be set from the dashboard too, and a line in `.env` wins**; only a model server's address set there may be private, still bound to its key, and an embeddings change applies at the next start, which re-embeds the memory.
+- **The model, embeddings and tracing settings can be set from the dashboard too, and a value in the environment wins**; only a model server's address set there may be private, still bound to its key, and an embeddings change (or one to a running Langfuse tracer) applies at the next start, where a provider or model change re-embeds the memory.
 
 **Dev panel** ([details](design/dev-panel.md))
 - **Off unless `BLEEP_DEV_PANEL=true`, and then behind the admin session**; off, every `/api/dev` path is a 404 and Settings shows no link to it.

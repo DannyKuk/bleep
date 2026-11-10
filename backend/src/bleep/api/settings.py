@@ -28,9 +28,12 @@ from bleep.schemas.settings import (
     ENV_NAMES,
     MODEL_KEY_ENV,
     TRACING_ENDPOINTS,
+    TRACING_URLS,
     SecretStatus,
     SettingsUpdate,
     SettingsView,
+    TracingChoice,
+    url_origin,
 )
 from bleep.wiring import AppParts
 
@@ -76,12 +79,24 @@ def settings_view(parts: AppParts) -> SettingsView:
         timezone=store.timezone(),
         language=store.language(),
         embeddings=store.embeddings(),
-        tracing=store.tracing(),
+        tracing=shown_tracing(store.tracing(), store.from_env()),
         from_env=store.from_env(),
         restart_needed=store.restart_needed(),
         overrides=store.overrides().model_dump(mode="json", exclude_none=True),
         version=store.version(),
     )
+
+
+def shown_tracing(tracing: TracingChoice, from_env: list[str]) -> TracingChoice:
+    """The tracing in force with an address the env decides cut to its origin, as
+    `api/secrets.py` shows an address: its path or query can hold a credential, and the env's
+    address was never the API's to show."""
+    cut = {
+        field: url_origin(value)
+        for field in TRACING_URLS
+        if f"tracing.{field}" in from_env and (value := getattr(tracing, field))
+    }
+    return tracing.model_copy(update=cut)
 
 
 @router.get("/settings")
