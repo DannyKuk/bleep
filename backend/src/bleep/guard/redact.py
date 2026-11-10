@@ -616,7 +616,12 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
     (re.compile(r"\bya29\.[A-Za-z0-9_.-]{20,}+"), REDACTED),  # Google OAuth access tokens
     (re.compile(r"\bAIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"), REDACTED),  # Google API keys
     (re.compile(r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{20,}+"), REDACTED),  # Stripe secret keys
-    (re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}+(?:\.[0-9a-z]{9})?"), REDACTED),  # GitLab PATs
+    # GitLab PATs; a routable one ends in `.`, a 2-character version, `.` and 9 more characters
+    # (an earlier build: `.` and 9 characters)
+    (
+        re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}+(?:\.[0-9a-z]{2}\.[0-9a-z]{9}|\.[0-9a-z]{9})?"),
+        REDACTED,
+    ),
     (re.compile(r"\bnpm_[A-Za-z0-9]{36}(?![A-Za-z0-9])"), REDACTED),
     # Pushbullet: `o.` and 32 letters and digits of both cases, on their own, so a domain such as
     # `cdn.o.example` and a hex digest after `o.` stay

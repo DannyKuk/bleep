@@ -783,6 +783,11 @@ TOKEN_SHAPES = {
         "see glpat-tokens in the docs, glpat-" + B24[:19],
     ),
     "gitlab_routable": (
+        "token glpat-" + "YzowCm86MQp1OjFSDdqkLmVS337oi4qlKHnlEA" + ".01.0r1ajj2i3 in use",
+        "0r1ajj2i3",
+        "glpat-" + "YzowCm86MQp1" + ".01.0r1ajj2i3",
+    ),
+    "gitlab_routable_one_dot": (
         "token glpat-" + "YzowCm86MQp1OjFSDdqkLmVS337oi4qlKHnlEA" + ".121e8269o in use",
         "121e8269o",
         "glpat-" + "YzowCm86MQp1" + ".121e8269o",
