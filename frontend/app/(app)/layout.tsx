@@ -1,5 +1,6 @@
 import { AppHeader } from "@/components/app-header";
 import { AppNav } from "@/components/app-nav";
+import { ChatPanel } from "@/components/chat/chat-panel";
 import { HomeLogo } from "@/components/home-logo";
 import { LogoutButton } from "@/components/logout-button";
 import { OverallProvider } from "@/components/overall-state";
@@ -24,6 +25,7 @@ export default function AppLayout({ children }: LayoutProps<"/">) {
             </div>
           </AppHeader>
           <main className="mx-auto w-full max-w-[1120px] flex-1 px-4 py-6 sm:px-6">{children}</main>
+          <ChatPanel />
         </div>
       </OverallProvider>
     </TimeZoneProvider>
