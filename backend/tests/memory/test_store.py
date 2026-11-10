@@ -10,6 +10,7 @@ from pydantic import SecretStr
 
 from bleep.incidents.repository import IncidentRepo
 from bleep.memory.embeddings import (
+    DeferredEmbedder,
     EmbedderError,
     FakeEmbedder,
     FastEmbedEmbedder,
@@ -463,6 +464,44 @@ def test_the_openai_compatible_embedder_reads_a_key_source_at_every_call():
 
     assert "authorization" not in seen[0].headers
     assert seen[1].headers["authorization"] == "Bearer sk-dashboard"
+
+
+def test_the_openai_compatible_embedder_reads_its_address_at_every_call():
+    """An address changed on the dashboard is used from the next call, so the key entered for
+    the new address never goes to the old one (#372); with none set the call fails."""
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0, 0.0]}]})
+
+    urls: dict[str, str] = {"url": "http://old.local/v1"}
+    embedder = OpenAICompatEmbedder(lambda: urls.get("url"), "m", None, httpx.MockTransport(answer))
+    embedder.embed(["a"])
+    urls["url"] = "http://new.local/v1/"
+    embedder.embed(["a"])
+    urls.clear()
+    with pytest.raises(EmbedderError, match="EMBEDDINGS_BASE_URL"):
+        embedder.embed(["a"])
+
+    assert [str(r.url) for r in seen] == [
+        "http://old.local/v1/embeddings",
+        "http://new.local/v1/embeddings",
+    ]
+
+
+def test_a_deferred_embedder_is_built_at_its_first_use_and_kept():
+    built: list[FakeEmbedder] = []
+
+    def build() -> FakeEmbedder:
+        built.append(FakeEmbedder(name="fake:chosen", min_score=0.4))
+        return built[-1]
+
+    embedder = DeferredEmbedder(build)
+    assert built == []
+    assert (embedder.name, embedder.min_score) == ("fake:chosen", 0.4)
+    embedder.embed(["disk full"])
+    assert len(built) == 1 and built[0].calls == [["disk full"]]
 
 
 def test_the_openai_compatible_embedder_fails_with_its_own_words():

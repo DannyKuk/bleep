@@ -489,10 +489,15 @@ def _strings(value: Any) -> list[str]:
 MAX_DECODE_ROUNDS = 5
 
 
+# `strip_control` turns these into line breaks (#417); in a name they are dropped like any other
+# control character, so `ble\x0bep` still reads `bleep`
+_NAME_BREAKS = str.maketrans("", "", "\x0b\x0c\x85")
+
+
 def _fold(text: str) -> str:
     """`text` as a reader sees a name in it: control and invisible characters gone, NFKC (so a
     fullwidth `ｓｈｏｐ` is `shop`) and case-folded."""
-    text = strip_control(text)
+    text = strip_control(text.translate(_NAME_BREAKS))
     text = "".join(c for c in text if unicodedata.category(c) != "Cf")
     return unicodedata.normalize("NFKC", text).casefold()
 

@@ -85,3 +85,31 @@ def test_a_tracer_that_traces_incidents_only_leaves_the_conversation_untraced(se
     parts = build_parts(settings, Registry([]), tracer=IncidentsOnly())
 
     assert parts.talk.tracer is None
+
+
+async def test_the_embedder_is_built_from_the_settings_in_force_at_its_first_use(settings):
+    """Built after the stored settings load, so it follows the settings page; a change saved
+    later shows as needing a restart (#372)."""
+    parts = build_parts(settings, Registry([]))
+    await parts.db.migrate()
+    store = parts.settings_store
+    await store.load()
+    chosen = SettingsUpdate.model_validate({"embeddings": {"min_score": 0.42}})
+    await store.update(chosen, version=store.version())
+
+    assert parts.memory.embedder.min_score == 0.42
+    assert parts.knowledge.embedder is parts.memory.embedder
+    assert store.restart_needed() == []
+    later = SettingsUpdate.model_validate({"embeddings": {"min_score": 0.3}})
+    await store.update(later, version=store.version())
+    assert parts.memory.embedder.min_score == 0.42
+    assert store.restart_needed() == ["embeddings"]
+    await parts.notify.close()
+
+
+def test_the_model_servers_addresses_may_be_set_from_the_dashboard_bound_to_their_keys(settings):
+    names = {entry.name: entry for entry in build_parts(settings, Registry([])).secrets.names()}
+    assert names["LOCAL_BASE_URL"].kind == "address" and names["LOCAL_BASE_URL"].private
+    embeddings = names["EMBEDDINGS_BASE_URL"]
+    assert embeddings.private and embeddings.carries == "EMBEDDINGS_API_KEY"
+    assert not {"LANGSMITH_ENDPOINT", "LANGFUSE_BASE_URL"} & set(names)  # settings, not secrets

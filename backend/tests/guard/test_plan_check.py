@@ -643,6 +643,10 @@ async def off_limits(tmp_path, arguments):
         "shop%E2%80%8B-db-1",  # an encoded zero-width space
         "%EF%BD%93hop-db-1",  # an encoded fullwidth s
         "shop\x00-db-1",  # a control byte
+        "shop\x0b-db-1",  # VT, FF and NEL, which other text reads as line breaks
+        "shop\x0c-db-1",
+        "shop\x85-db-1",
+        "shop%0B-db-1",
     ],
 )
 async def test_a_protected_name_is_found_however_it_is_spelled(tmp_path, spelling):
@@ -653,7 +657,8 @@ async def test_a_protected_name_is_found_however_it_is_spelled(tmp_path, spellin
 
 
 @pytest.mark.parametrize(
-    "spelling", ["bleep\u200d-backend-1", "ＢＬＥＥＰ-backend-1", "bleep%2Dbackend-1"]
+    "spelling",
+    ["bleep\u200d-backend-1", "ＢＬＥＥＰ-backend-1", "bleep%2Dbackend-1", "ble\x0bep-backend-1"],
 )
 async def test_one_of_bleeps_own_containers_is_found_however_it_is_spelled(tmp_path, spelling):
     found = await off_limits(tmp_path, {"c": spelling})

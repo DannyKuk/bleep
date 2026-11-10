@@ -57,6 +57,26 @@ describe("SecretField", () => {
     expect(document.body).not.toHaveTextContent(TOKEN);
   });
 
+  it("tells a model server's address it may be private, and a plugin's that it may not", () => {
+    const model = secretView("EMBEDDINGS_BASE_URL", {
+      kind: "address",
+      carries: "EMBEDDINGS_API_KEY",
+      private: true,
+    });
+    const { unmount } = render(<SecretField view={model} actions={actions()} />);
+    expect(screen.getByText(/may be private/)).toHaveTextContent(
+      "A new or cleared address clears EMBEDDINGS_API_KEY.",
+    );
+    expect(screen.queryByText(/switches the plugin off/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Value for EMBEDDINGS_BASE_URL")).toHaveAttribute(
+      "placeholder",
+      "http://",
+    );
+    unmount();
+    render(<SecretField view={address()} actions={actions()} />);
+    expect(screen.getByText(/must be https/)).toHaveTextContent("switches the plugin off");
+  });
+
   it("never fills the input of a secret that is set, and clears it on request", async () => {
     const a = actions();
     const set = secretView("GITHUB_TOKEN", { set: true, source: "dashboard" });
