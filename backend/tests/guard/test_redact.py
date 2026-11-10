@@ -996,10 +996,10 @@ def test_the_literal_first_patterns_match_what_the_start_first_ones_did():
         compile(source.replace(written, 'return rf"{start}{prefix}"'), "start_first", "exec"),
         module.__dict__,
     )
-    names = ["_JWT", "_GITLAB", "_JWT_START"]
+    names = ["_JWT", "_JWT_START", "_GITLAB"]
     pairs = [(getattr(redact, n), getattr(module, n)) for n in names]
     pairs += [(a, b) for (a, _), (b, _) in zip(redact._PATTERNS, module._PATTERNS, strict=True)]
-    assert all(a.pattern != b.pattern for a, b in pairs[:3])
+    assert all(a.pattern != b.pattern for a, b in pairs[:2])
     prefixes = ["ghp_", "github_pat_", "sk-", "sk-or-", "xoxb-", "xoxd-", "xoxe-1-", "xapp-1-"]
     prefixes += ["eyJ", "ya29.", "AIza", "AQ.", "sk_live_", "rk_test_", "sk_org_", "sk_org_live_"]
     prefixes += ["lsv2_pt_", "glpat-", "glrt-", "glptt-", "gliamrt-", "GR1348941", "npm_", "o."]
@@ -1046,6 +1046,13 @@ def test_a_vendor_token_under_a_secret_key_is_one_redaction():
         "xoxd-%",
         "%3D",
         "%3Dghp_",
+        "glrt-",
+        "glagent-",
+        "xghp_",
+        "AIzaAIza",
+        "token: | x ",
+        "password: |  ",
+        "xhttps://a:b",
     ],
 )
 def test_lines_of_vendor_token_prefixes_are_fast(unit):
@@ -1054,3 +1061,215 @@ def test_lines_of_vendor_token_prefixes_are_fast(unit):
     assert_no_slower_than_benign(text)
     out, _ = guard_text("logs", text)
     assert len(out) <= 8300
+
+
+# A YAML block header with its value on the same line (#417): VT, FF and NEL are line breaks
+# now, so they no longer join the two, and text written so is handled too.
+@pytest.mark.parametrize("separator", ["\x85", "\x0b", "\x0c"])
+def test_a_block_value_after_a_vt_ff_or_nel_is_redacted(separator):
+    out, _ = guard_text("logs", f"password: |{separator}  hunter2hunter2")
+
+    assert "hunter2hunter2" not in out and "password: |" in out
+
+
+@pytest.mark.parametrize("separator", ["\x85", "\x0b", "\x0c"])
+def test_vt_ff_and_nel_become_line_breaks(separator):
+    from bleep.guard.sanitize import strip_control
+
+    assert strip_control(f"a{separator}b\x07c") == "a\nbc"
+
+
+def test_a_secret_glued_by_a_vt_no_longer_reads_as_part_of_the_word_before_it():
+    out, _ = guard_text("logs", "export\x0bsk_" + "live_" + B24)
+
+    assert B24 not in out
+
+
+@pytest.mark.parametrize("separator", ["\n", "\x85"])
+def test_a_joined_line_ending_in_another_header_still_hides_the_value_and_its_block(separator):
+    text = f"password: |  hunter2hunter2 token: |{separator}  abc123secret\nhost: db"
+
+    out, _ = guard_text("logs", text)
+
+    assert "hunter2hunter2" not in out and "abc123secret" not in out and "host: db" in out
+
+
+def test_a_header_digit_run_is_a_value_not_an_indentation_indicator():
+    assert redact_text("password: |4242") == "password: <redacted>"
+    assert redact_text("password: |2-\n    hunter2") == "password: |2-\n    <redacted>"
+
+
+@pytest.mark.parametrize("separator", ["\x0b", "\x0c", "\x85", ""])
+def test_a_value_right_after_a_header_at_the_keys_indentation_is_redacted(separator):
+    out, _ = guard_text("logs", f"password: |{separator}4242")
+
+    assert "4242" not in out
+
+
+@pytest.mark.parametrize(
+    ("text", "secret"),
+    [
+        ("password: |\x0c\x0c4242", "4242"),
+        ("password: |\n---Pa55", "---Pa55"),
+        ("password: |\n...Pa55", "...Pa55"),
+    ],
+)
+def test_a_value_past_one_blank_line_or_glued_to_a_document_marker_is_redacted(text, secret):
+    out, _ = guard_text("logs", text)
+
+    assert secret not in out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "password: |\nuser: bob",
+        "password: |\n- item",
+        "password: |\n# a comment",
+        "password: |\n---\nuser: bob",
+        "api_key: >\n2026-11-02T10:00:00Z INFO next record",
+        "detoxoxc-something-very-long-name",
+        "Usage: set password: |\nthen type it below",
+        "secret: >\nINFO server started on :8080",
+        "echo secret: >\nserver started on :8080",
+    ],
+)
+def test_a_line_after_a_header_that_is_structure_or_a_new_record_stays(text):
+    assert redact_with_count(text) == (text, 0)
+
+
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        (
+            "Error: auth: > 3 failures\n  at Login.check (login.js:12)\n  at main (app.js:3)",
+            "Error: auth: > <redacted>\n  at Login.check (login.js:12)\n  at main (app.js:3)",
+        ),
+        (
+            "$ echo token: > /tmp/out\n  done in 3s",
+            "$ echo token: > <redacted>\n  done in 3s",
+        ),
+        (
+            "| Token: | Description |\n  | api | the API's key |",
+            "| Token: | <redacted>\n  | api | the API's key |",
+        ),
+    ],
+)
+def test_a_header_after_other_text_hides_its_value_but_no_lines_below(text, shown):
+    assert redact_text(text) == shown
+
+
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        (
+            "- password: |  hunter2hunter2\n  user: bob\n- name: x",
+            "- password: |  <redacted>\n  user: bob\n- name: x",
+        ),
+        (
+            "- password: |\n    hunter2hunter2\n  user: bob",
+            "- password: |\n    <redacted>\n  user: bob",
+        ),
+    ],
+)
+def test_a_list_items_block_ends_at_its_sibling_keys(text, shown):
+    assert redact_text(text) == shown
+
+
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        ("password: |  hunter2hunter2", "password: |  <redacted>"),
+        ("password: >-  correct horse battery", "password: >-  <redacted>"),
+        ('"api_key": |2 aB3dE5fG7h', '"api_key": |2 <redacted>'),
+        (
+            "db:\n  password: |  line1\n    line2\n  host: db",
+            "db:\n  password: |  <redacted>\n    <redacted>\n  host: db",
+        ),
+        ("name: |  token: |  s3cr3tvalue", "name: |  token: |  <redacted>"),
+    ],
+)
+def test_a_block_header_with_its_value_on_the_same_line_hides_the_value(text, shown):
+    out, count = redact_with_count(text)
+
+    assert out == shown
+    assert count == shown.count("<redacted>")
+    assert redact_with_count(out) == (out, 0)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "password: |",
+        "password: | # set below",
+        "description: |  hello world",
+        "password: |  not set",
+        "token: |  <redacted>",
+    ],
+)
+def test_a_block_header_without_a_secret_on_its_line_stays(text):
+    assert redact_with_count(text) == (text, 0)
+
+
+GLUED = [
+    ("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxhttps://admin:pw@db.example.com", "pw@"),
+    ("default:-postgresql://shop:shop@shop-db/shop", "shop@shop-db"),
+    ("1https://admin:pw@db.example.com", "pw@"),
+    ("tokenghp_" + B36, B36),
+    ("x_ghp_" + B36, B36),
+    ("idxgithub_pat_" + B36, B36),
+    ("idxoxb-" + "2493846294-" + B24, B24),
+    ("cookie_dxoxd-" + B36, B36),
+    ("keyAIza" + B35, B35),
+    ("ciglpat-" + B24[:20], B24[:20]),
+    ("runner_glrt-" + B24[:20], B24[:20]),
+    ("hashpbkdf2_sha256$600000$" + B24, B24),
+]
+
+
+@pytest.mark.parametrize(
+    ("text", "secrets"),
+    [
+        ("glrt-" + B24[:20] + ".glrt-" + B32[:20], [B24[:20], B32[:20]]),
+        ("x-gldt-foo-glrt-" + B24[:20], [B24[:20]]),
+        (
+            "id=glimt-" + "a1b2c3d4e5f6g7h8i9j0k1l" + "-glrt-" + B24[:20],
+            ["a1b2c3d4e5f6g7h8i9j0k1l", B24[:20]],
+        ),
+    ],
+)
+def test_every_gitlab_token_in_one_run_is_redacted(text, secrets):
+    out = redact_text(text)
+
+    assert not any(secret in out for secret in secrets), out
+
+
+@pytest.mark.parametrize("word", ["laughs_", "highs_", "x_gho_"])
+def test_a_word_ending_in_a_github_prefix_keeps_what_follows_unless_it_is_a_full_token(word):
+    name = word + "AndCriesAtTheEndOfTheParty"
+
+    assert redact_text(name) == name
+
+
+@pytest.mark.parametrize(("text", "secret"), GLUED)
+def test_a_secret_glued_to_a_preceding_word_is_redacted(text, secret):
+    out, count = redact_with_count(text)
+
+    assert secret not in out and count == 1
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "disk-utilization-monitor-for-node",
+        "disk_live_" + B24,
+        "heyJohnny.hello.world",
+        "see FAQ." + B36 + B24[:14],
+        "EURASIA" + "FOUNDATION2024XYZW",
+        "maya29.example.internal.zone.local",
+        "foxapp-1-release-build-for-staging",
+        "pnpm_" + B36,
+    ],
+)
+def test_a_token_pattern_left_anchored_keeps_a_glued_look_alike(text):
+    assert redact_with_count(text) == (text, 0)
