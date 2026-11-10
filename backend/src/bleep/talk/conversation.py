@@ -144,7 +144,11 @@ class Talk:
         except Exception as error:  # the type only: a provider's message may quote its key
             log.warning("talk: could not read a message (%s)", type(error).__name__)
             return self._fallback("failed", _fixed("failed"), text, facts, incident_id)
-        return self._answer(reading, text, snapshot, facts, incident_id)
+        try:
+            return self._answer(reading, text, snapshot, facts, incident_id)
+        except Exception:  # a bug checking a reading must still answer, and keep its traceback
+            log.exception("talk: could not answer a reading")
+            return TalkReply(kind="failed", answer=_fixed("failed"), incident_id=incident_id)
 
     async def _read(
         self,

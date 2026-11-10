@@ -18,7 +18,7 @@ from bleep.incidents.repository import utcnow
 from bleep.schemas.talk import Offer
 
 CONFIRM_TTL = timedelta(minutes=10)
-KEPT = 100  # offers kept at once; the oldest goes first
+KEPT = 100  # offers kept at once; answered ones go first, then the oldest
 # A taken or expired offer is remembered this long after it ended, so a late press is told so.
 REMEMBERED = timedelta(hours=1)
 
@@ -38,12 +38,13 @@ class Confirms:
         self.clock = clock
         self.ttl = ttl
         self._entries: dict[str, _Entry] = {}
+        self._dropped: list[str] = []  # unanswered offers dropped for room, whose buttons stay
 
     def add(self, offer: Offer) -> str:
         """Keep `offer` until it is answered or expires; the id its buttons carry."""
         self._forget_old()
         while len(self._entries) >= KEPT:
-            del self._entries[next(iter(self._entries))]
+            self._make_room()
         confirm_id = secrets.token_urlsafe(9)
         self._entries[confirm_id] = _Entry(offer, self.clock() + self.ttl)
         return confirm_id
@@ -62,16 +63,31 @@ class Confirms:
         return entry.offer
 
     def expired(self) -> list[str]:
-        """The ids of the offers that expired unanswered since the last call, once each, so
-        their buttons can be removed."""
+        """The ids of the offers that expired unanswered since the last call, or were dropped
+        to make room, once each, so their buttons can be removed."""
         now = self.clock()
         ids = [i for i, e in self._entries.items() if not (e.taken or e.swept) and now >= e.expires]
         for confirm_id in ids:
             self._entries[confirm_id].swept = True
+        ids, self._dropped = [*self._dropped, *ids], []
         self._forget_old()
         return ids
 
+    def _make_room(self) -> None:
+        """Drop the oldest offer whose buttons are gone already (answered, or reported as
+        expired); with none, the oldest of all, reported by `expired` so its buttons go too."""
+        gone = next((i for i, e in self._entries.items() if e.taken or e.swept), None)
+        if gone is None:
+            gone = next(iter(self._entries))
+            self._dropped.append(gone)
+        del self._entries[gone]
+
     def _forget_old(self) -> None:
         now = self.clock()
-        for confirm_id in [i for i, e in self._entries.items() if now >= e.expires + REMEMBERED]:
+        old = [
+            i
+            for i, e in self._entries.items()
+            if (e.taken or e.swept) and now >= e.expires + REMEMBERED
+        ]
+        for confirm_id in old:  # an unswept one waits for `expired`, so its buttons still go
             del self._entries[confirm_id]

@@ -467,3 +467,29 @@ def test_an_incident_is_named_by_its_short_name_or_the_one_the_message_is_about(
     assert find_incident(SNAPSHOT, FACTS, None) == FACTS
     assert find_incident(SNAPSHOT, None, "shop #99") is None
     assert find_incident(SNAPSHOT, None, None) is None
+
+
+@pytest.mark.parametrize(
+    "when", [{"minutes": 10**13}, {"until": "9999-12-31 23:59"}], ids=["minutes", "until"]
+)
+async def test_an_absurd_snooze_from_the_model_is_answered_never_raised(when):
+    action = {"kind": "snooze", "subject": "shop", **when}
+    models = Models(reading(kind="action", action=action))
+    new_york = ZoneInfo("America/New_York")
+
+    reply = await talk(models, clock=lambda: NOW, zone=lambda: new_york).reply("snooze shop")
+
+    assert (reply.kind, reply.offer) == ("action", None)
+    assert reply.answer == fixed("snooze_limit", subject="shop", days="7")
+
+
+async def test_a_bug_while_answering_a_reading_still_answers(monkeypatch):
+    def broken(*args, **kwargs):
+        raise OverflowError("a reading nothing expected")
+
+    monkeypatch.setattr("bleep.talk.conversation.check", broken)
+    models = Models(reading(kind="action", action={"kind": "leave_alone", "subject": "shop"}))
+
+    reply = await talk(models).reply("leave shop alone")
+
+    assert (reply.kind, reply.answer, reply.offer) == ("failed", fixed("failed"), None)

@@ -32,6 +32,7 @@ LOCAL_TIME = "%Y-%m-%d %H:%M"
 LOCAL_DAY = "%Y-%m-%d"
 CUT = "…"  # how the snapshot ends a name it cut: such an id names no service exactly
 QUIET_KINDS = ("snooze", "leave_alone", "watch_again")
+NEVER = datetime.max.replace(tzinfo=UTC)  # an end beyond any limit
 PLAN_KINDS = ("instruct", "show_plan")
 
 
@@ -55,24 +56,34 @@ def _same(a: str, b: str) -> bool:
 
 
 def find_subject(snapshot: Snapshot, said: str | None) -> Subject | str | None:
-    """The service or host `said` names: by a service's id, else a service's name, else a host's
-    id or name. None when Bleep knows none; the `ambiguous_subject` line when two services share
-    the name."""
+    """The service or host `said` names: by a service's id, else by a service's name or a
+    host's id or name. None when Bleep knows none; the `ambiguous_subject` line when the name
+    fits more than one, two services or a service and a host. A service whose name another
+    service or a host also has is named with its host ("web on laptop"), so the line the person
+    confirms can only mean that one."""
     if not said:
         return None
     services = [s for s in snapshot.services if not s.id.endswith(CUT)]
-    found = [s for s in services if _same(said, s.id)]
-    found = found or [s for s in services if _same(said, s.name)]
-    if len(found) > 1:
-        return line("ambiguous_subject", subject=title_name(found[0].name))
-    if found:
-        service = found[0]
-        name = title_name(service.name)
-        return Subject("service", service.id, name, service.quiet, service.host)
-    for host in snapshot.hosts:
-        if _same(said, host.id) or _same(said, host.name):
-            return Subject("host", host.id, host.id, host.quiet, host.id)
-    return None
+    by_id = [s for s in services if _same(said, s.id)]
+    named = by_id or [s for s in services if _same(said, s.name)]
+    hosts = [] if by_id else [h for h in snapshot.hosts if _same(said, h.id) or _same(said, h.name)]
+    if len(named) + len(hosts) > 1:
+        known = title_name(named[0].name) if named else hosts[0].id  # never the model's words
+        return line("ambiguous_subject", subject=known)
+    if hosts:
+        host = hosts[0]
+        return Subject("host", host.id, host.id, host.quiet, host.id)
+    if not named:
+        return None
+    service = named[0]
+    name = title_name(service.name)
+    shared = [s for s in snapshot.services if s.id != service.id and _same(s.name, service.name)]
+    shared += [
+        h for h in snapshot.hosts if _same(service.name, h.id) or _same(service.name, h.name)
+    ]
+    if shared:
+        name = line("subject_on_host", subject=name, host=service.host)
+    return Subject("service", service.id, name, service.quiet, service.host)
 
 
 def find_incident(
@@ -90,20 +101,28 @@ def find_incident(
 
 def snooze_end(action: TalkAction, now: datetime, zone: tzinfo | None) -> datetime | None:
     """When the snooze asked for ends, in UTC: `minutes` from now, else `until` read as a local
-    time in `zone` (a day alone is its 08:00). None when the action gives no end Bleep can
-    read."""
+    time in `zone`, a day alone as its 08:00. None when the action gives no end Bleep can read,
+    or a day alone whose 08:00 has passed (which "until today" may mean); `NEVER` for an end too
+    far off to reckon, so it fails the limit as any end beyond it does."""
+    try:
+        return _snooze_end(action, now, zone or UTC)
+    except OverflowError:
+        return NEVER
+
+
+def _snooze_end(action: TalkAction, now: datetime, zone: tzinfo) -> datetime | None:
     if action.minutes is not None:
         return now + timedelta(minutes=action.minutes) if action.minutes > 0 else None
     said = (action.until or "").strip()
-    local = zone or UTC
     try:
-        return datetime.strptime(said, LOCAL_TIME).replace(tzinfo=local).astimezone(UTC)
+        return datetime.strptime(said, LOCAL_TIME).replace(tzinfo=zone).astimezone(UTC)
     except ValueError:
         pass
     try:
-        return morning_of(datetime.strptime(said, LOCAL_DAY).date(), local)
+        morning = morning_of(datetime.strptime(said, LOCAL_DAY).date(), zone)
     except ValueError:
         return None
+    return morning if morning > now else None
 
 
 def check(

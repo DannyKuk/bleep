@@ -12,7 +12,8 @@ How Bleep reads what a person writes in its chat, and the fixed lines it answers
   names and times from Bleep's own state, never with the model's words. The lines for an action
   that fails a check say why: `no_subject`, `ambiguous_subject`, `not_quiet`,
   `quiet_through_host`, `snooze_how_long`, `snooze_limit`, `no_incident`, `which_incident`,
-  `incident_ended`, `no_plan`.
+  `incident_ended`, `no_plan`. `subject_on_host` names a service with its host when another
+  service or a host has its name.
 - `not_yet` with `understood_look_again` (and `unknown_subject` for a name Bleep does not know)
   answers a look on request, which comes with #403.
 - `when_*` are the words of a time in a chat (`talk/times.py`), shared with Telegram's messages.

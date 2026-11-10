@@ -16,7 +16,7 @@ from bleep.schemas.talk import (
     Snapshot,
     TalkAction,
 )
-from bleep.talk.confirms import CONFIRM_TTL, Confirms
+from bleep.talk.confirms import CONFIRM_TTL, KEPT, Confirms
 from bleep.talk.offers import check, confirm_line, find_subject, instruction
 
 NOW = datetime(2026, 11, 9, 13, 12, tzinfo=UTC)  # 14:12 in Vienna
@@ -110,6 +110,25 @@ def test_a_day_alone_is_its_morning():
     assert not isinstance(checked, str) and checked.until == datetime(2026, 11, 10, 7, tzinfo=UTC)
 
 
+def test_today_alone_after_its_morning_asks_how_long():
+    checked = offer(kind="snooze", subject="shop", until="2026-11-09")  # it is 14:12 there
+    assert checked == line("snooze_how_long", subject="shop")
+
+
+@pytest.mark.parametrize(
+    "when",
+    [{"minutes": 10**13}, {"until": "9999-12-31 23:59"}, {"until": "9999-12-31"}],
+    ids=["minutes", "until", "day"],
+)
+def test_an_end_too_far_to_reckon_is_over_the_limit_and_never_raises(when):
+    action = TalkAction(kind="snooze", subject="shop", **when)
+    new_york = ZoneInfo("America/New_York")
+
+    checked = check(action, SNAPSHOT, None, NOW, new_york)
+
+    assert checked == line("snooze_limit", subject="shop", days="7")
+
+
 @pytest.mark.parametrize(
     "when",
     [
@@ -147,6 +166,24 @@ def test_two_services_with_one_name_are_not_guessed():
     )
     checked = offer(kind="snooze", subject="m1/compose:web", minutes=60)
     assert not isinstance(checked, str) and checked.target_id == "m1/compose:web"
+    assert checked.subject == "web on m1"  # the line can only mean that one
+    assert confirm_line(checked, NOW, VIENNA) == "🤫 Snooze web on m1 until 15:12?"
+
+
+def test_a_host_and_a_service_with_one_name_are_not_guessed():
+    host = HostLine(id="shop", name="Shop box", health="ok", reachable=True)
+    both = SNAPSHOT.model_copy(update={"hosts": [*SNAPSHOT.hosts, host]})
+
+    found = find_subject(both, "shop")
+
+    assert found == line("ambiguous_subject", subject="shop")
+    by_id = find_subject(both, "laptop/compose:shop")
+    assert not isinstance(by_id, str) and by_id is not None
+    assert (by_id.target_id, by_id.name) == ("laptop/compose:shop", "shop on laptop")
+
+
+def test_an_ambiguous_name_is_said_as_bleep_knows_it_never_as_the_model_wrote_it():
+    assert offer(kind="leave_alone", subject="  WEB ") == line("ambiguous_subject", subject="web")
 
 
 def test_a_service_whose_id_the_snapshot_cut_is_never_a_target():
@@ -237,3 +274,39 @@ def test_an_offer_expires_after_ten_minutes_and_is_swept_once():
 def test_a_button_carries_only_an_id_that_fits_telegrams_64_bytes():
     confirm_id = Confirms(Clock()).add(instruction("inc_17", "shop #17", "x" * 1000))
     assert len(f"yes:{confirm_id}".encode()) <= 64
+
+
+def test_room_is_made_from_answered_offers_before_an_open_one_goes():
+    confirms = Confirms(Clock())
+    first = confirms.add(instruction("inc_17", "shop #17", "x"))
+    answered = [confirms.add(instruction("inc_17", "shop #17", str(n))) for n in range(KEPT - 1)]
+    for confirm_id in answered:
+        confirms.take(confirm_id)
+
+    confirms.add(instruction("inc_17", "shop #17", "new"))
+
+    assert confirms.take(answered[0]) == "unknown"  # an answered one went
+    assert not isinstance(confirms.take(first), str)  # the open one is still there
+    assert confirms.expired() == []
+
+
+def test_an_open_offer_dropped_for_room_is_reported_so_its_buttons_go():
+    confirms = Confirms(Clock())
+    ids = [confirms.add(instruction("inc_17", "shop #17", str(n))) for n in range(KEPT)]
+
+    confirms.add(instruction("inc_17", "shop #17", "one too many"))
+
+    assert confirms.take(ids[0]) == "unknown"
+    assert confirms.expired() == [ids[0]]
+    assert confirms.expired() == []
+
+
+def test_an_offer_nobody_swept_is_never_forgotten_unreported():
+    clock = Clock()
+    confirms = Confirms(clock)
+    confirm_id = confirms.add(instruction("inc_17", "shop #17", "x"))
+    clock.now += timedelta(days=1)
+
+    confirms.add(instruction("inc_17", "shop #17", "later"))  # tidies up old offers
+
+    assert confirms.expired() == [confirm_id]
