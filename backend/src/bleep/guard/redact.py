@@ -539,7 +539,39 @@ def _redact_jwt(match: re.Match[str]) -> str:
     return REDACTED if match.group(0).count(".") == 2 else match.group(0)
 
 
-_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{5,}+(?:\.[A-Za-z0-9_-]{5,}+\.[A-Za-z0-9_-]{5,}+)?")
+# A token starts where no word does, or right after a percent-encoded byte
+# (`?next=%3Fk%3Dsk_live_…`), whose last hex digit `\b` takes for the end of a word (#416).
+_AFTER_ESCAPE = r"(?<=%[0-9A-Fa-f]{2})"
+_TOKEN_START = rf"(?:(?<!\w)|{_AFTER_ESCAPE})"
+
+
+def _starting(prefix: str, start: str = _TOKEN_START) -> str:
+    """`prefix` (of fixed width) where a token may start: written prefix first, with the start
+    checked behind it, because a pattern that begins with a lookbehind loses `re`'s fast scan for
+    its literal start, which slowed all redaction about 1.7 times (#416)."""
+    return rf"{prefix}(?<={start}{prefix})"
+
+
+_JWT = re.compile(
+    _starting("eyJ") + r"[A-Za-z0-9_-]{5,}+(?:\.[A-Za-z0-9_-]{5,}+\.[A-Za-z0-9_-]{5,}+)?"
+)
+_TOKEN_END = r"(?![A-Za-z0-9_-])"
+_ROUTABLE_SUFFIX = r"\.[0-9a-z]{2}\.[0-9a-z]{9}(?![A-Za-z0-9])"
+# GitLab's other tokens, in the lengths GitLab's own secret detection rules give: most are the
+# prefix and 20 of `A-Za-z0-9_-`, a routable one 27 or more and the suffix `glpat-` has too
+_GITLAB = re.compile(
+    rf"{_starting('gl')}(?:"
+    rf"(?:rtr?|dt|agent|wt)-[A-Za-z0-9_-]{{27,300}}+{_ROUTABLE_SUFFIX}"
+    rf"|(?:rtr?-(?:t[1-3]_)?|rct-|dt-|ft-|soat-|ffct-)[A-Za-z0-9_-]{{20}}{_TOKEN_END}"
+    rf"|ptt-(?:[A-Za-z0-9_-]{{40}}|[A-Za-z0-9_-]{{20}}){_TOKEN_END}"
+    rf"|ft-[0-9a-f]{{64}}-[0-9]{{1,20}}(?![0-9])"
+    rf"|imt-[0-9a-z]{{20,25}}{_TOKEN_END}"
+    rf"|agent-[A-Za-z0-9_-]{{50}}{_TOKEN_END}"
+    rf"|oas-[A-Za-z0-9_-]{{64}}{_TOKEN_END}"
+    rf"|cbt-[0-9a-zA-Z]{{1,5}}_[A-Za-z0-9_-]{{20}}{_TOKEN_END}"
+    rf"|iam(?:rt|ac)-[A-Za-z0-9_-]{{43}}\.[A-Za-z0-9_-]{{43}}{_TOKEN_END}"
+    rf")|{_starting('GR1348941')}[A-Za-z0-9_-]{{20}}{_TOKEN_END}"
+)
 
 
 # Cookie and Set-Cookie, as a header, JSON or logfmt (request_Cookie, "cookie": "..."): the cookie
@@ -605,29 +637,44 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
         ),
         rf"\1\2{REDACTED}",
     ),
-    (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"), REDACTED),
-    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), REDACTED),
-    (re.compile(r"\bsk-(?:or-)?[A-Za-z0-9_-]{16,}"), REDACTED),
-    (re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"), REDACTED),
+    (re.compile(_starting("gh[pousr]_") + r"[A-Za-z0-9]{20,}"), REDACTED),
+    (re.compile(_starting("github_pat_") + r"[A-Za-z0-9_]{20,}"), REDACTED),
+    (re.compile(_starting("sk-") + r"(?:or-)?[A-Za-z0-9_-]{16,}"), REDACTED),
+    (re.compile(_starting("xox[abcprs]-") + r"[A-Za-z0-9-]{10,}"), REDACTED),
+    # Slack's browser cookie `d`, URL-encoded base64
+    (re.compile(_starting("xoxd-") + r"[A-Za-z0-9%+/=_-]{20,}+"), REDACTED),
     # Slack's refresh and legacy tokens and app-level tokens: "xoxo" is also a word, so a number
     # must follow the prefix as it does in every one of these tokens
-    (re.compile(r"\b(?:xox[eo]|xapp)-[0-9]{1,16}-[A-Za-z0-9-]{8,}+"), REDACTED),
+    (re.compile(_starting("x(?:ox[eo]|app)-") + r"[0-9]{1,16}-[A-Za-z0-9-]{8,}+"), REDACTED),
     (_JWT, _redact_jwt),
-    (re.compile(r"\bya29\.[A-Za-z0-9_.-]{20,}+"), REDACTED),  # Google OAuth access tokens
-    (re.compile(r"\bAIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"), REDACTED),  # Google API keys
-    (re.compile(r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{20,}+"), REDACTED),  # Stripe secret keys
+    (re.compile(_starting(r"ya29\.") + r"[A-Za-z0-9_.-]{20,}+"), REDACTED),  # Google OAuth
+    (re.compile(_starting("AIza") + r"[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"), REDACTED),
+    (re.compile(_starting(r"AQ\.") + r"[A-Za-z0-9_-]{40,}+"), REDACTED),  # Google auth keys
+    (
+        re.compile(
+            _starting("[rs]k_") + r"(?:live|test|(?<=sk_)org(?:_live|_test)?)_[A-Za-z0-9]{20,}+"
+        ),
+        REDACTED,
+    ),
+    # LangSmith personal access tokens and service keys, as TruffleHog's detector reads them
+    (re.compile(_starting("lsv2_") + r"(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}(?!\w)"), REDACTED),
     # GitLab PATs; a routable one ends in `.`, a 2-character version, `.` and 9 more characters
     # (an earlier build: `.` and 9 characters)
     (
-        re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}+(?:\.[0-9a-z]{2}\.[0-9a-z]{9}|\.[0-9a-z]{9})?"),
+        re.compile(
+            _starting("glpat-")
+            + r"[A-Za-z0-9_-]{20,}+(?:\.[0-9a-z]{2}\.[0-9a-z]{9}|\.[0-9a-z]{9})?"
+        ),
         REDACTED,
     ),
-    (re.compile(r"\bnpm_[A-Za-z0-9]{36}(?![A-Za-z0-9])"), REDACTED),
+    (_GITLAB, REDACTED),
+    (re.compile(_starting("npm_") + r"[A-Za-z0-9]{36}(?![A-Za-z0-9])"), REDACTED),
     # Pushbullet: `o.` and 32 letters and digits of both cases, on their own, so a domain such as
     # `cdn.o.example` and a hex digest after `o.` stay
     (
         re.compile(
-            r"(?<![A-Za-z0-9_.-])o\.(?=[A-Za-z0-9]{0,31}[A-Z])(?=[A-Za-z0-9]{0,31}[a-z])"
+            _starting(r"o\.", rf"(?:(?<![A-Za-z0-9_.-])|{_AFTER_ESCAPE})")
+            + r"(?=[A-Za-z0-9]{0,31}[A-Z])(?=[A-Za-z0-9]{0,31}[a-z])"
             r"[A-Za-z0-9]{32}(?![A-Za-z0-9_-])(?!\.[A-Za-z0-9])"
         ),
         REDACTED,
@@ -643,13 +690,19 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
         ),
         rf"\1{REDACTED}\2",
     ),
-    (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16,}\b"), REDACTED),
-    (re.compile(r"(?<![0-9])\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"), REDACTED),
+    (re.compile(_starting("A[KS]IA") + r"[0-9A-Z]{16,}\b"), REDACTED),
+    (
+        re.compile(
+            _starting(r"\d", rf"(?:(?<![0-9])|{_AFTER_ESCAPE})")
+            + r"\d{7,9}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"
+        ),
+        REDACTED,
+    ),
     # crypt hashes: htpasswd/basic-auth ($apr1$, $2y$, $5$, $6$, $y$, $argon2id$)
     (re.compile(r"\$(?:apr1|2[aby]|5|6|y|argon2(?:id|i|d))\$[^\s\"']+"), REDACTED),
     # md5crypt `$1$salt$hash` (its full shape, so `$1$2` in a script stays) and Django's PBKDF2
     (re.compile(r"\$1\$[./0-9A-Za-z]{1,8}\$[./0-9A-Za-z]{22,}+"), REDACTED),
-    (re.compile(r"\bpbkdf2_sha(?:1|256|512)\$[0-9]{1,8}\$[^\s\"']+"), REDACTED),
+    (re.compile(_starting("pbkdf2_sha") + r"(?:1|256|512)\$[0-9]{1,8}\$[^\s\"']+"), REDACTED),
 ]
 
 BLOCK_MAX_LINES = 200
@@ -992,7 +1045,7 @@ def _open_cookie(line: str, start: int) -> str | None:
 
 
 _SEGMENT = string.ascii_letters + string.digits + "_-"
-_JWT_START = re.compile(r"\beyJ")
+_JWT_START = re.compile(_starting("eyJ"))
 
 
 def _hide_cut_jwt(text: str) -> str:

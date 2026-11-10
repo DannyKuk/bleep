@@ -750,9 +750,10 @@ def test_the_jwt_patterns_match_what_the_plain_regexes_matched():
 
     from bleep.guard.redact import _JWT, _hide_cut_jwt, _redact_jwt
 
-    plain = re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}")
-    plain_cut = re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*\Z")
-    parts = ["eyJ", ".", "-", "_", "a", "ab", "abcde", "x9Z", " ", "é", "eyJab.", JWT]
+    start = r"(?:(?<!\w)|(?<=%[0-9A-Fa-f]{2}))"
+    plain = re.compile(start + r"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}")
+    plain_cut = re.compile(start + r"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*\Z")
+    parts = ["eyJ", ".", "-", "_", "a", "ab", "abcde", "x9Z", " ", "é", "eyJab.", JWT, "%3D", "%"]
     rng = random.Random(58)
     for _ in range(50_000):
         text = "".join(rng.choice(parts) for _ in range(rng.randrange(1, 14)))
@@ -824,6 +825,101 @@ TOKEN_SHAPES = {
     ),
 }
 
+# More shapes (#416): GitLab's other prefixes in the lengths GitLab's own secret detection rules
+# give, Google `AQ.` keys, Stripe organization keys and Slack's browser tokens.
+HEX40 = "0f3a9c2e1d" * 4
+B64 = B32 * 2
+B50 = B36 + B24[:14]
+B43 = B36 + "aB3dE5f"
+ROUTABLE = "YzowCm86MQp1OjFSDdqkLmVS337oi4qlKHnlEA" + ".01.0r1ajj2i3"
+TOKEN_SHAPES |= {
+    "gitlab_runner": (
+        "runner token glrt-" + B24[:20] + " registered",
+        "glrt-" + B24[:20],
+        "glrt-" + B24[:19] + " glrt-" + B24 + " glrt-runner-registration",
+    ),
+    "gitlab_runner_partition": ("token glrt-t1_" + B24[:20], B24[:20], "glrt-t4_" + B24[:20]),
+    "gitlab_runner_registered": (
+        "glrtr-" + B24[:20] + " ok",
+        "glrtr-" + B24[:20],
+        "glrtr-" + B24[:18],
+    ),
+    "gitlab_runner_routable": (
+        "token glrt-" + ROUTABLE + " in use",
+        "0r1ajj2i3",
+        "glrt-x.01.0r1ajj2i3",
+    ),
+    "gitlab_runner_controller": ("glrct-" + B24[:20], "glrct-" + B24[:20], "glrct-" + B24[:21]),
+    "gitlab_runner_registration": (
+        "register with GR1348941" + B24[:20],
+        B24[:20],
+        "GR1348941" + B24[:10],
+    ),
+    "gitlab_deploy": ("clone with gldt-" + B24[:20], "gldt-" + B24[:20], "gldt-" + B24[:16]),
+    "gitlab_deploy_routable": (
+        "gldt-" + ROUTABLE,
+        "0r1ajj2i3",
+        "gldt-" + B24[:12] + ".01.0r1ajj2i3",
+    ),
+    "gitlab_ci_job": ("CI_JOB_TOKEN glcbt-64_" + B24[:20], B24[:20], "glcbt-64_" + B24[:19]),
+    "gitlab_trigger": ("trigger glptt-" + HEX40 + " sent", HEX40, "glptt-" + HEX40[:30]),
+    "gitlab_trigger_short": ("trigger glptt-" + B24[:20] + " sent", B24[:20], "glptt-" + B24[:21]),
+    "langsmith_personal": (
+        "LangSmith: using lsv2_" + "pt_" + HEX40[:32] + "_" + HEX40[:10] + " for traces",
+        HEX40[:32],
+        "lsv2_pt_" + HEX40[:31] + "_" + HEX40[:10] + " lsv2_pt_settings",
+    ),
+    "langsmith_service": (
+        "key lsv2_" + "sk_" + HEX40[8:40] + "_" + HEX40[:10],
+        HEX40[8:40],
+        "lsv2_sk_" + HEX40[8:40] + "_" + HEX40[:11],
+    ),
+    "gitlab_feed": ("feed glft-" + B24[:20], "glft-" + B24[:20], "glft-feed-token-docs-v2"),
+    "gitlab_feed_path": ("glft-" + HEX40 + HEX40[:24] + "-42", HEX40, "glft-" + HEX40[:24] + "-42"),
+    "gitlab_incoming_mail": (
+        "incoming+glimt-" + "a1b2c3d4e5f6g7h8i9j0k1l2m" + "@example.com",
+        "a1b2c3d4e5f6g7h8i9j0",
+        "glimt-" + "a1b2c3d4e5f6",
+    ),
+    "gitlab_agent": (
+        "agent token glagent-" + B50,
+        B50,
+        "glagent-configuration-repository-for-the-cluster",
+    ),
+    "gitlab_agent_routable": ("glagent-" + ROUTABLE, "0r1ajj2i3", "glagent-" + B24 + ".01"),
+    "gitlab_workspace": ("glwt-" + ROUTABLE + " ok", "0r1ajj2i3", "glwt-" + B24[:20]),
+    "gitlab_scim": ("glsoat-" + B24[:20], "glsoat-" + B24[:20], "glsoat-" + B24[:12]),
+    "gitlab_feature_flags": ("glffct-" + B24[:20], "glffct-" + B24[:20], "glffct-client"),
+    "gitlab_oauth_secret": ("secret gloas-" + B64, B64, "gloas-" + B32),
+    "gitlab_iam_refresh": ("gliamrt-" + B43 + "." + B43, B43, "gliamrt-" + B43),
+    "gitlab_iam_code": ("code=gliamac-" + B43 + "." + B43, B43, "gliamac-" + B32 + "." + B32),
+    "google_auth_key": (
+        "gemini call with AQ." + B36 + B24[:14],
+        "AQ." + B36,
+        "see FAQ." + B36 + B24[:14] + " AQ." + B24,
+    ),
+    "stripe_organization": (
+        "org key sk_" + "org_" + B24 + " used",
+        "sk_" + "org_" + B24,
+        "sk_org_settings sk_org_live_mode",
+    ),
+    "stripe_organization_live": (
+        "sk_" + "org_live_" + B24,
+        "sk_" + "org_live_" + B24,
+        "rk_org_live_" + B24,
+    ),
+    "slack_client": (
+        "slack client token xoxc-" + "2493846294-9283746592-3826372821-" + HEX40,
+        "9283746592",
+        "xoxc-short",
+    ),
+    "slack_cookie": (
+        "d=xoxd-" + B36 + "%2F" + B24 + "%3D%3D; path=/",
+        B36,
+        "xoxd-" + "abc%2F",
+    ),
+}
+
 
 @pytest.mark.parametrize("shape", list(TOKEN_SHAPES))
 def test_a_vendor_token_is_redacted_wherever_it_appears(shape):
@@ -843,6 +939,81 @@ def test_a_near_miss_of_a_vendor_token_stays(shape):
     assert redact_with_count(near_miss) == (near_miss, 0)
 
 
+ON_SIGHT = [
+    "ghp_" + B36,
+    "github_pat_" + B36,
+    "sk-" + B24,
+    "sk-or-" + B24,
+    "xoxb-" + "2493846294-" + B24,
+    "xoxc-" + "2493846294-" + B24,
+    "xoxd-" + B36,
+    "xoxe-1-" + B24,
+    "xapp-1-" + B24,
+    JWT,
+    "ya29." + B36,
+    "AIza" + B35,
+    "AQ." + B36 + B24[:14],
+    "sk_" + "live_" + B24,
+    "sk_" + "org_" + B24,
+    "glpat-" + B24[:20],
+    "glrt-" + B24[:20],
+    "gldt-" + ROUTABLE,
+    "GR1348941" + B24[:20],
+    "lsv2_" + "sk_" + HEX40[:32] + "_" + HEX40[:10],
+    "gliamrt-" + B43 + "." + B43,
+    "npm_" + B36,
+    "o." + B32,
+    "AKIA" + "IOSFODNN7EXAMPLE",
+    TELEGRAM,
+    "pbkdf2_sha256$600000$" + B24,
+]
+
+
+@pytest.mark.parametrize("token", ON_SIGHT)
+@pytest.mark.parametrize("escape", ["%3D", "%3d", "%20", "%3A"])
+def test_a_token_after_a_percent_encoded_byte_is_redacted(token, escape):
+    text = f"GET /login?next=%2Fcb%3Fk{escape}{token}&state=1 302"
+
+    out = redact_text(text)
+
+    assert token not in out and f"{escape}<redacted>" in out
+
+
+def test_the_literal_first_patterns_match_what_the_start_first_ones_did():
+    """Each token prefix is written before its start check (`_starting`) so `re` can scan for it;
+    the same module with every prefix written after its start must find the same spans."""
+    import inspect
+    import random
+    import types
+
+    from bleep.guard import redact
+
+    source = inspect.getsource(redact)
+    written = 'return rf"{prefix}(?<={start}{prefix})"'
+    assert written in source
+    module = types.ModuleType("start_first")
+    exec(
+        compile(source.replace(written, 'return rf"{start}{prefix}"'), "start_first", "exec"),
+        module.__dict__,
+    )
+    names = ["_JWT", "_GITLAB", "_JWT_START"]
+    pairs = [(getattr(redact, n), getattr(module, n)) for n in names]
+    pairs += [(a, b) for (a, _), (b, _) in zip(redact._PATTERNS, module._PATTERNS, strict=True)]
+    assert all(a.pattern != b.pattern for a, b in pairs[:3])
+    prefixes = ["ghp_", "github_pat_", "sk-", "sk-or-", "xoxb-", "xoxd-", "xoxe-1-", "xapp-1-"]
+    prefixes += ["eyJ", "ya29.", "AIza", "AQ.", "sk_live_", "rk_test_", "sk_org_", "sk_org_live_"]
+    prefixes += ["lsv2_pt_", "glpat-", "glrt-", "glptt-", "gliamrt-", "GR1348941", "npm_", "o."]
+    prefixes += ["AKIA", "ASIA", "123456789:", "pbkdf2_sha256$1$"]
+    fillers = ["%3D", "%", "%2", "x", "_", "-", ".", " ", "é", "٣", "0", "\n", B24, HEX40, JWT]
+    rng = random.Random(416)
+    for _ in range(4000):
+        text = "".join(rng.choice(prefixes + fillers) for _ in range(rng.randrange(1, 10)))
+        for new, old in pairs:
+            assert [m.span() for m in new.finditer(text)] == [
+                m.span() for m in old.finditer(text)
+            ], (new.pattern, text)
+
+
 def test_a_vendor_token_at_the_end_of_a_sentence_is_redacted():
     for token in ("o." + B32, "AIza" + B35, "npm_" + B36, "glpat-" + B24[:20]):
         assert redact_text(f"the key was {token}.") == "the key was <redacted>."
@@ -856,7 +1027,26 @@ def test_a_vendor_token_under_a_secret_key_is_one_redaction():
 
 
 @pytest.mark.parametrize(
-    "unit", ["o.Aa", "o.", "AIza", "sk_live_", "glpat-", "npm_a", "xoxo-1-", "xapp-1"]
+    "unit",
+    [
+        "o.Aa",
+        "o.",
+        "AIza",
+        "sk_live_",
+        "glpat-",
+        "npm_a",
+        "xoxo-1-",
+        "xapp-1",
+        "glrt-a",
+        "glcbt-1_",
+        "gliamrt-a.",
+        "GR1348941",
+        "AQ.a",
+        "sk_org_",
+        "xoxd-%",
+        "%3D",
+        "%3Dghp_",
+    ],
 )
 def test_lines_of_vendor_token_prefixes_are_fast(unit):
     line = (unit * 4001)[:4001]
