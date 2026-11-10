@@ -546,24 +546,37 @@ _TOKEN_START = rf"(?:(?<!\w)|{_AFTER_ESCAPE})"
 _JWT = re.compile(
     rf"{_TOKEN_START}eyJ[A-Za-z0-9_-]{{5,}}+(?:\.[A-Za-z0-9_-]{{5,}}+\.[A-Za-z0-9_-]{{5,}}+)?"
 )
-_TOKEN_END = r"(?![A-Za-z0-9_-])"
-_ROUTABLE_SUFFIX = r"\.[0-9a-z]{2}\.[0-9a-z]{9}(?![A-Za-z0-9])"
 # GitLab's other tokens, in the lengths GitLab's own secret detection rules give: most are the
-# prefix and 20 of `A-Za-z0-9_-`, a routable one 27 or more and the suffix `glpat-` has too
+# prefix and 20 of `A-Za-z0-9_-`, a routable one 27 or more and the suffix `glpat-` has too.
+# `_GITLAB` takes a prefix and its whole run of token characters with the `.` parts after it, and
+# `_redact_gitlab` judges that run by `_GITLAB_SHAPE`, so each run is read once however its
+# prefixes repeat (`glrt-glrt-…`).
 _GITLAB = re.compile(
-    rf"{_TOKEN_START}(?:"
-    rf"gl(?:rtr?|dt|agent|wt)-[A-Za-z0-9_-]{{27,300}}+{_ROUTABLE_SUFFIX}"
-    rf"|gl(?:rtr?-(?:t[1-3]_)?|rct-|dt-|ft-|soat-|ffct-)[A-Za-z0-9_-]{{20}}{_TOKEN_END}"
-    rf"|glptt-[A-Za-z0-9_-]{{40}}{_TOKEN_END}"
-    rf"|glft-[0-9a-f]{{64}}-[0-9]{{1,20}}(?![0-9])"
-    rf"|glimt-[0-9a-z]{{20,25}}{_TOKEN_END}"
-    rf"|glagent-[A-Za-z0-9_-]{{50}}{_TOKEN_END}"
-    rf"|gloas-[A-Za-z0-9_-]{{64}}{_TOKEN_END}"
-    rf"|glcbt-[0-9a-zA-Z]{{1,5}}_[A-Za-z0-9_-]{{20}}{_TOKEN_END}"
-    rf"|gliam(?:rt|ac)-[A-Za-z0-9_-]{{43}}\.[A-Za-z0-9_-]{{43}}{_TOKEN_END}"
-    rf"|GR1348941[A-Za-z0-9_-]{{20}}{_TOKEN_END}"
-    r")"
+    r"(?:gl(?:rtr?|rct|dt|ft|soat|ffct|ptt|imt|agent|oas|cbt|wt|iam(?:rt|ac))-|GR1348941)"
+    r"[A-Za-z0-9_-]{20,}+(?:\.[A-Za-z0-9_-]++)*+"
 )
+_GITLAB_SHAPE = re.compile(
+    r"gl(?:rtr?|dt|agent|wt)-[A-Za-z0-9_-]{27,300}\.[0-9a-z]{2}\.[0-9a-z]{9}"
+    r"|glft-[0-9a-f]{64}-[0-9]{1,20}"  # before the 20-character `glft-`, which it starts with
+    r"|gl(?:rtr?-(?:t[1-3]_)?|rct-|dt-|ft-|soat-|ffct-)[A-Za-z0-9_-]{20}"
+    r"|glptt-[A-Za-z0-9_-]{40}"
+    r"|glimt-[0-9a-z]{20,25}"
+    r"|glagent-[A-Za-z0-9_-]{50}"
+    r"|gloas-[A-Za-z0-9_-]{64}"
+    r"|glcbt-[0-9a-zA-Z]{1,5}_[A-Za-z0-9_-]{20}"
+    r"|gliam(?:rt|ac)-[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}"
+    r"|GR1348941[A-Za-z0-9_-]{20}"
+)
+
+
+def _redact_gitlab(match: re.Match[str]) -> str:
+    """The run hidden when it starts with one of GitLab's shapes that ends where the run's token
+    characters end, or before one of its `.` parts (`glrt-<20>.` at the end of a sentence)."""
+    run = match.group(0)
+    shape = _GITLAB_SHAPE.match(run)
+    if shape is None or run[shape.end() : shape.end() + 1] not in ("", "."):
+        return run
+    return REDACTED + run[shape.end() :]
 
 
 # Cookie and Set-Cookie, as a header, JSON or logfmt (request_Cookie, "cookie": "..."): the cookie
@@ -629,18 +642,12 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
         ),
         rf"\1\2{REDACTED}",
     ),
-    (re.compile(rf"{_TOKEN_START}gh[pousr]_[A-Za-z0-9]{{20,}}"), REDACTED),
-    (re.compile(rf"{_TOKEN_START}github_pat_[A-Za-z0-9_]{{20,}}"), REDACTED),
     (re.compile(rf"{_TOKEN_START}sk-(?:or-)?[A-Za-z0-9_-]{{16,}}"), REDACTED),
-    (re.compile(rf"{_TOKEN_START}xox[abcprs]-[A-Za-z0-9-]{{10,}}"), REDACTED),
-    # Slack's browser cookie `d`, URL-encoded base64
-    (re.compile(rf"{_TOKEN_START}xoxd-[A-Za-z0-9%+/=_-]{{20,}}+"), REDACTED),
     # Slack's refresh and legacy tokens and app-level tokens: "xoxo" is also a word, so a number
     # must follow the prefix as it does in every one of these tokens
     (re.compile(rf"{_TOKEN_START}(?:xox[eo]|xapp)-[0-9]{{1,16}}-[A-Za-z0-9-]{{8,}}+"), REDACTED),
     (_JWT, _redact_jwt),
     (re.compile(rf"{_TOKEN_START}ya29\.[A-Za-z0-9_.-]{{20,}}+"), REDACTED),  # Google OAuth
-    (re.compile(rf"{_TOKEN_START}AIza[A-Za-z0-9_-]{{35}}(?![A-Za-z0-9_-])"), REDACTED),
     (re.compile(rf"{_TOKEN_START}AQ\.[A-Za-z0-9_-]{{40,}}+"), REDACTED),  # Google auth keys
     (
         re.compile(
@@ -648,16 +655,6 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
         ),
         REDACTED,
     ),
-    # GitLab PATs; a routable one ends in `.`, a 2-character version, `.` and 9 more characters
-    # (an earlier build: `.` and 9 characters)
-    (
-        re.compile(
-            rf"{_TOKEN_START}glpat-[A-Za-z0-9_-]{{20,}}+"
-            r"(?:\.[0-9a-z]{2}\.[0-9a-z]{9}|\.[0-9a-z]{9})?"
-        ),
-        REDACTED,
-    ),
-    (_GITLAB, REDACTED),
     (re.compile(rf"{_TOKEN_START}npm_[A-Za-z0-9]{{36}}(?![A-Za-z0-9])"), REDACTED),
     # Pushbullet: `o.` and 32 letters and digits of both cases, on their own, so a domain such as
     # `cdn.o.example` and a hex digest after `o.` stay
@@ -669,12 +666,30 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
         ),
         REDACTED,
     ),
+    # Tokens whose prefix no word ends in, so they are taken glued to the word before them too
+    # (`tokenghp_…`, `x_glrt-…`; #417). They come after the tokens with a start of their own, so
+    # one of those whose characters happen to hold such a prefix is hidden whole first.
+    (re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"), REDACTED),
+    (re.compile(r"github_pat_[A-Za-z0-9_]{20,}"), REDACTED),
+    (re.compile(r"xox[abcprs]-[A-Za-z0-9-]{10,}"), REDACTED),
+    (re.compile(r"xoxd-[A-Za-z0-9%+/=_-]{20,}+"), REDACTED),  # Slack's browser cookie `d`
+    (re.compile(r"AIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"), REDACTED),
+    # GitLab PATs; a routable one ends in `.`, a 2-character version, `.` and 9 more characters
+    # (an earlier build: `.` and 9 characters)
+    (
+        re.compile(r"glpat-[A-Za-z0-9_-]{20,}+(?:\.[0-9a-z]{2}\.[0-9a-z]{9}|\.[0-9a-z]{9})?"),
+        REDACTED,
+    ),
+    (_GITLAB, _redact_gitlab),
+    (re.compile(r"pbkdf2_sha(?:1|256|512)\$[0-9]{1,8}\$[^\s\"']+"), REDACTED),
     # scheme://user:password@host: keep the user. The password may hold `@` and `/`; it ends at
-    # the first `@` that is followed by a host and then `/`, `?`, `#`, whitespace or the end. The
-    # lookbehind lets only the start of a scheme begin a match, so starts cannot overlap.
+    # the first `@` that is followed by a host and then `/`, `?`, `#`, whitespace or the end. A
+    # match starts at the `://`, after any character a scheme ends in, so a scheme glued to the
+    # word before it counts too (`xxxxhttps://`, `:-postgresql://`; #417) and starts cannot
+    # overlap.
     (
         re.compile(
-            r"((?<![a-z0-9+.-])[a-z][a-z0-9+.-]{0,31}://[^\s:/@]{0,64}:)(?!<redacted>@)\S{1,128}?(@)"
+            r"((?<=[a-z0-9+.-])://[^\s:/@]{0,64}:)(?!<redacted>@)\S{1,128}?(@)"
             r"(?=[A-Za-z0-9._\[\]:-]+(?:[/?#\s]|$))",
             _FLAGS,
         ),
@@ -689,9 +704,8 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
     ),
     # crypt hashes: htpasswd/basic-auth ($apr1$, $2y$, $5$, $6$, $y$, $argon2id$)
     (re.compile(r"\$(?:apr1|2[aby]|5|6|y|argon2(?:id|i|d))\$[^\s\"']+"), REDACTED),
-    # md5crypt `$1$salt$hash` (its full shape, so `$1$2` in a script stays) and Django's PBKDF2
+    # md5crypt `$1$salt$hash`, its full shape, so `$1$2` in a script stays
     (re.compile(r"\$1\$[./0-9A-Za-z]{1,8}\$[./0-9A-Za-z]{22,}+"), REDACTED),
-    (re.compile(rf"{_TOKEN_START}pbkdf2_sha(?:1|256|512)\$[0-9]{{1,8}}\$[^\s\"']+"), REDACTED),
 ]
 
 BLOCK_MAX_LINES = 200
@@ -734,16 +748,52 @@ def _block_indent(line: str) -> int | None:
     return len(_lead(line)) - _LOG_PREFIX.match(line).end()
 
 
+# `password: |  hunter2`: a block header with more than a comment after it on its line, as when
+# stripping U+0085, VT or FF joined the header and its first block line (#417)
+_INLINE_BLOCK = re.compile(
+    r"(?<![A-Za-z0-9_.-])"
+    rf"(?=[A-Za-z0-9_.-]{{0,96}}?{_SECRET_HINT})"
+    r"([A-Za-z0-9_.-]{1,96})[\"']?[ \t]*+:[ \t]*+[|>][-+0-9]{0,4}+[ \t]++(?=[^\s#])",
+    _FLAGS,
+)
+
+
+def _inline_block(line: str) -> tuple[str, int] | None:
+    """If `line` holds `<secret key>: |` (or `>`) and a value after it, the line with the rest
+    after the header hidden and the indentation a block line must exceed; otherwise None. Each
+    search starts after the last header, so the line is read once."""
+    if ":" not in line:
+        return None
+    start = 0
+    while (header := _INLINE_BLOCK.search(line, start)) is not None:
+        value = line[header.end() :].rstrip()
+        if (
+            _is_secret_key(header.group(1))
+            and value != REDACTED
+            and not _is_plain(value)
+            and not _NOT_SET.match(value)
+        ):
+            indent = len(_lead(line)) - _LOG_PREFIX.match(line).end()
+            return line[: header.end()] + REDACTED, indent
+        start = header.end()
+    return None
+
+
 def _redact_blocks(text: str) -> tuple[str, int]:
     """YAML block scalars under a secret key (`password: |`): every line of the block, blank lines
-    kept, up to the first line that is not indented deeper than the key (at most 200 lines)."""
+    kept, up to the first line that is not indented deeper than the key (at most 200 lines), and
+    a value on the header's own line."""
     if "|" not in text and ">" not in text:
         return text, 0
     lines, count = text.split("\n"), 0
     for i, line in enumerate(lines):
         indent = _block_indent(line)
         if indent is None:
-            continue
+            inline = _inline_block(line)
+            if inline is None:
+                continue
+            lines[i], indent = inline
+            count += 1
         end, last = i + 1, i
         while end < min(len(lines), i + 1 + BLOCK_MAX_LINES):
             body = lines[end]

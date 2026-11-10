@@ -999,6 +999,13 @@ def test_a_vendor_token_under_a_secret_key_is_one_redaction():
         "xoxd-%",
         "%3D",
         "%3Dghp_",
+        "glrt-",
+        "glagent-",
+        "xghp_",
+        "AIzaAIza",
+        "token: | x ",
+        "password: |  ",
+        "xhttps://a:b",
     ],
 )
 def test_lines_of_vendor_token_prefixes_are_fast(unit):
@@ -1007,3 +1014,87 @@ def test_lines_of_vendor_token_prefixes_are_fast(unit):
     assert_no_slower_than_benign(text)
     out, _ = guard_text("logs", text)
     assert len(out) <= 8300
+
+
+# A YAML block header with its value on the same line (#417): stripping U+0085, VT or FF joins
+# them, or the text is written so.
+@pytest.mark.parametrize("separator", ["\x85", "\x0b", "\x0c"])
+def test_a_block_value_joined_to_its_header_by_a_stripped_separator_is_redacted(separator):
+    out, _ = guard_text("logs", f"password: |{separator}  hunter2hunter2")
+
+    assert "hunter2hunter2" not in out and "password: |" in out
+
+
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        ("password: |  hunter2hunter2", "password: |  <redacted>"),
+        ("password: >-  correct horse battery", "password: >-  <redacted>"),
+        ('"api_key": |2 aB3dE5fG7h', '"api_key": |2 <redacted>'),
+        (
+            "db:\n  password: |  line1\n    line2\n  host: db",
+            "db:\n  password: |  <redacted>\n    <redacted>\n  host: db",
+        ),
+        ("name: |  token: |  s3cr3tvalue", "name: |  token: |  <redacted>"),
+    ],
+)
+def test_a_block_header_with_its_value_on_the_same_line_hides_the_value(text, shown):
+    out, count = redact_with_count(text)
+
+    assert out == shown
+    assert count == shown.count("<redacted>")
+    assert redact_with_count(out) == (out, 0)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "password: |",
+        "password: | # set below",
+        "description: |  hello world",
+        "password: |  not set",
+        "token: |  <redacted>",
+    ],
+)
+def test_a_block_header_without_a_secret_on_its_line_stays(text):
+    assert redact_with_count(text) == (text, 0)
+
+
+GLUED = [
+    ("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxhttps://admin:pw@db.example.com", "pw@"),
+    ("default:-postgresql://shop:shop@shop-db/shop", "shop@shop-db"),
+    ("1https://admin:pw@db.example.com", "pw@"),
+    ("tokenghp_" + B36, B36),
+    ("x_ghp_" + B36, B36),
+    ("idxgithub_pat_" + B36, B36),
+    ("idxoxb-" + "2493846294-" + B24, B24),
+    ("cookie_dxoxd-" + B36, B36),
+    ("keyAIza" + B35, B35),
+    ("ciglpat-" + B24[:20], B24[:20]),
+    ("runner_glrt-" + B24[:20], B24[:20]),
+    ("hashpbkdf2_sha256$600000$" + B24, B24),
+]
+
+
+@pytest.mark.parametrize(("text", "secret"), GLUED)
+def test_a_secret_glued_to_a_preceding_word_is_redacted(text, secret):
+    out, count = redact_with_count(text)
+
+    assert secret not in out and count == 1
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "disk-utilization-monitor-for-node",
+        "disk_live_" + B24,
+        "heyJohnny.hello.world",
+        "see FAQ." + B36 + B24[:14],
+        "EURASIA" + "FOUNDATION2024XYZW",
+        "maya29.example.internal.zone.local",
+        "foxapp-1-release-build-for-staging",
+        "pnpm_" + B36,
+    ],
+)
+def test_a_token_pattern_left_anchored_keeps_a_glued_look_alike(text):
+    assert redact_with_count(text) == (text, 0)
