@@ -1,4 +1,5 @@
 import functools
+import logging
 import os
 from collections import ChainMap
 from collections.abc import Callable, Mapping, Sequence
@@ -7,7 +8,7 @@ from dataclasses import dataclass
 from pydantic import SecretStr
 
 from bleep.auth.sessions import LoginLimiter, SessionStore
-from bleep.config import Settings
+from bleep.config import Settings, SettingsError
 from bleep.graph.deps import (
     GraphDeps,
     NeverQuiet,
@@ -37,6 +38,7 @@ from bleep.llm.tracing import TRACING_KEYS, ReloadingTracer, TracingSettings
 from bleep.llm.usage import CostLedger
 from bleep.memory.embeddings import (
     DEFAULT_LOCAL_MODEL,
+    DeferredEmbedder,
     Embedder,
     FastEmbedEmbedder,
     OpenAICompatEmbedder,
@@ -50,7 +52,17 @@ from bleep.plugins.coolify.plugin import CoolifyPlugin
 from bleep.plugins.mcp_url import McpUrlPlugin
 from bleep.plugins.registry import PluginRegistry
 from bleep.plugins.urls import Resolver
-from bleep.schemas.settings import MODEL_KEY_ENV
+from bleep.schemas.settings import (
+    EMBEDDINGS_URL_ENV,
+    ENV_NAMES,
+    LOCAL_URL_ENV,
+    MODEL_KEY_ENV,
+    TRACING_URLS,
+    EmbeddingsChoice,
+    EmbeddingsOverrides,
+    TracingOverrides,
+    has_userinfo,
+)
 from bleep.store.db import Database
 from bleep.store.secrets import SecretName, SecretStore
 from bleep.talk.conversation import Talk, Tracing
@@ -94,6 +106,8 @@ class AppParts:
     panel: Panel  # the dashboard's own conversation, read with `talk`
 
 
+log = logging.getLogger(__name__)
+
 # Every plugin Bleep has; each is off until a person switches it on.
 PLUGINS: tuple[type[Plugin], ...] = (CoolifyPlugin, McpUrlPlugin)
 GITHUB_TOKEN_ENV = "GITHUB_TOKEN"
@@ -103,15 +117,19 @@ SECRET_FILE = "secrets.json"
 
 def secret_names(plugins: Sequence[Plugin], tracing: str) -> list[SecretName]:
     """Every value the dashboard may set. `BLEEP_ADMIN_PASSWORD` and `BLEEP_SECRET` are not
-    among them: the dashboard is behind them. Nor is any address but a plugin's: an address that
-    could be changed from the dashboard decides where its token goes, and only a plugin's is
-    bound to its token."""
+    among them: the dashboard is behind them. An address here is bound to the token it carries:
+    a plugin's, and a model server's (#372). The tracers' addresses are settings, held to their
+    keys by the settings store."""
     needed = TRACING_KEYS.get(tracing, ())
     names = [
         SecretName(MODEL_KEY_ENV),
         SecretName(TELEGRAM_TOKEN_ENV),
         SecretName(CHAT_ID_ENV, kind="id"),
         SecretName(GITHUB_TOKEN_ENV),
+        # A model server's addresses may be private (a local model, #372); the embeddings
+        # endpoint's carries its key, cleared when it changes. The local model takes no key.
+        SecretName(LOCAL_URL_ENV, kind="address", private=True),
+        SecretName(EMBEDDINGS_URL_ENV, kind="address", carries=EMBEDDINGS_KEY_ENV, private=True),
         SecretName(EMBEDDINGS_KEY_ENV),
         *(
             SecretName(key, required=f"TRACING={tracing} needs it" if key in needed else None)
@@ -137,6 +155,7 @@ def secret_env(settings: Settings) -> Mapping[str, str]:
         TELEGRAM_TOKEN_ENV: settings.telegram_bot_token,
         CHAT_ID_ENV: settings.telegram_chat_id,
         EMBEDDINGS_KEY_ENV: settings.embeddings_api_key,
+        EMBEDDINGS_URL_ENV: settings.embeddings_base_url,
     }
     shown = {
         name: value if isinstance(value, str) else value.get_secret_value()
@@ -156,22 +175,70 @@ def github_token_source(
     return github_token(config)
 
 
-def build_embedder(settings: Settings, secrets: SecretStore | None = None) -> Embedder:
-    """The local model unless the settings name an OpenAI-compatible endpoint (checked complete
-    by `check_settings`). `EMBEDDINGS_MODEL` names the endpoint's model only: the local model is
-    the one baked into the image, and another could not be downloaded there. With `secrets`, the
-    endpoint's key is read from there at each call. `EMBEDDINGS_MIN_SCORE` sets recall's cut-off
-    for either; unset, the model's own applies."""
-    min_score = settings.embeddings_min_score
-    if settings.embeddings_provider == "openai":
-        key = settings.embeddings_api_key
-        return OpenAICompatEmbedder(
-            settings.embeddings_base_url or "",
-            settings.embeddings_model or "",
-            (lambda: secrets.get(EMBEDDINGS_KEY_ENV)) if secrets is not None else key,
-            min_score=min_score,
+def embeddings_env(settings: Settings) -> EmbeddingsOverrides:
+    """The embeddings fields the env sets, which win over the settings page."""
+    given = {
+        "provider": settings.embeddings_provider,
+        "model": settings.embeddings_model,
+        "min_score": settings.embeddings_min_score,
+    }
+    chosen = {f"embeddings_{field}" for field in given} & settings.model_fields_set
+    # Not validated as a page's body is: the env's model name is the operator's, whatever it is.
+    return EmbeddingsOverrides.model_construct(
+        **{field: value for field, value in given.items() if f"embeddings_{field}" in chosen}
+    )
+
+
+def tracing_env() -> TracingOverrides:
+    """The tracing fields the env sets (`TRACING`, the addresses, the projects), which win. An
+    address with a user or password in it stops Bleep, without quoting it: the API would show it,
+    and the clients would send it on."""
+    env = TracingSettings()
+    fields = env.model_fields_set & set(TracingOverrides.model_fields)
+    for field in sorted(fields & set(TRACING_URLS)):
+        if has_userinfo(getattr(env, field) or ""):
+            raise SettingsError(
+                f"{ENV_NAMES['tracing'][field]} must have no user or password in it; "
+                "remove them from .env"
+            )
+    return TracingOverrides.model_construct(**{field: getattr(env, field) for field in fields})
+
+
+def build_embedder(choice: EmbeddingsChoice, secrets: SecretStore) -> Embedder:
+    """The local model unless the choice names an OpenAI-compatible endpoint whose model and base
+    URL are set; an endpoint without them falls back to the local model, with a warning. The
+    model names the endpoint's model only: the local model is the one baked into the image, and
+    another could not be downloaded there. The endpoint's address and key are read from the
+    secret store at each call. `min_score` sets recall's cut-off; unset, the model's own."""
+    if choice.provider == "openai":
+        if choice.model and secrets.get(EMBEDDINGS_URL_ENV) is not None:
+            return OpenAICompatEmbedder(
+                lambda: _value(secrets.get(EMBEDDINGS_URL_ENV)),
+                choice.model,
+                lambda: secrets.get(EMBEDDINGS_KEY_ENV),
+                min_score=choice.min_score,
+            )
+        log.warning(
+            "embeddings: an endpoint needs EMBEDDINGS_BASE_URL and EMBEDDINGS_MODEL; the local "
+            "model embeds until both are set and Bleep is restarted"
         )
-    return FastEmbedEmbedder(DEFAULT_LOCAL_MODEL, min_score=min_score)
+    return FastEmbedEmbedder(DEFAULT_LOCAL_MODEL, min_score=choice.min_score)
+
+
+def _value(secret: SecretStr | None) -> str | None:
+    return secret.get_secret_value() if secret is not None else None
+
+
+def start_embedder(store: SettingsStore, secrets: SecretStore) -> Embedder:
+    """The embedder the settings in force name, recorded in the store so a change saved later
+    shows as needing a restart. An endpoint that is not complete is the local model."""
+    choice = store.start_embeddings()
+    if choice.provider == "local" and store.embeddings().provider == "openai":
+        log.warning(
+            "embeddings: an endpoint needs EMBEDDINGS_BASE_URL and EMBEDDINGS_MODEL; the local "
+            "model embeds until both are set and Bleep is restarted"
+        )
+    return build_embedder(choice, secrets)
 
 
 def build_parts(
@@ -229,11 +296,13 @@ def build_parts(
     )
     store = SettingsStore(
         db, registry, plugin_registry, secrets=secrets, dashboard=dashboard_hosts,
-        timezone=settings.timezone,
+        timezone=settings.timezone, embeddings=embeddings_env(settings), tracing=tracing_env(),
     )  # fmt: skip
     url_checks = UrlCheckStore(db)
     overview = Overview(registry, incidents, quiet, url_checks)
-    tracer = tracer or ReloadingTracer(secrets.get)  # before `talk`, which traces its readings
+    # Before `talk`, which traces its readings. Built from the env here, and again once the
+    # stored settings are loaded (`subscribe_reloads`).
+    tracer = tracer or ReloadingTracer(secrets.get, store.tracing)
     reads = tracer if isinstance(tracer, Tracing) else None  # a tracer may trace incidents only
     talk = build_talk(settings, db, overview, incidents, approvals, bus, store, guard_log, reads)
     notify = setup_notify(
@@ -251,7 +320,8 @@ def build_parts(
     )
     incidents.on_finished(notify.notifier.incident_finished)
     approvals.on_decided(notify.notifier.approval_decided)
-    embedder = embedder or build_embedder(settings, secrets)  # one model, loaded once, for both
+    # One model, loaded once, for both; built at its first use, after the stored settings load.
+    embedder = embedder or DeferredEmbedder(lambda: start_embedder(store, secrets))
     memory = MemoryStore(db, embedder)
     knowledge = KnowledgeIndex(db, embedder)
     incidents.fold_window_h = lambda: store.thresholds().fold_window_h
@@ -334,8 +404,9 @@ def subscribe_reloads(
     secrets: SecretStore, notify: NotifySetup, store: SettingsStore, tracer: Tracer
 ) -> None:
     """After a change on the dashboard, restart only the part that holds the value: the Telegram
-    poller, a plugin, the tracer. The model key, the GitHub token and the embeddings key need
-    nothing: they are read from the store at each use."""
+    poller, a plugin, the tracer (also after a change of the tracing settings, and once they are
+    loaded). The model key and base URL, the GitHub token and the embeddings key and address
+    need nothing: they are read from the store at each use."""
     telegram = {TELEGRAM_TOKEN_ENV, CHAT_ID_ENV}
     tracing = {key for keys in TRACING_KEYS.values() for key in keys}
 
@@ -347,9 +418,16 @@ def subscribe_reloads(
         if changed & tracing and isinstance(tracer, ReloadingTracer):
             await tracer.reload()
 
+    async def tracing_changed(sections: frozenset[str]) -> None:
+        if "tracing" in sections and isinstance(tracer, ReloadingTracer):
+            await tracer.reload()
+
     secrets.subscribe(store.secrets_changing, before_write=True)
     for listener in (reload_telegram, reload_tracer, store.secrets_changed):
         secrets.subscribe(listener)
+    store.subscribe(tracing_changed)
+    if isinstance(tracer, ReloadingTracer):
+        store.restart_when("tracing", tracer.restart_needed)
 
 
 def graph_deps(

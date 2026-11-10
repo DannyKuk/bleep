@@ -293,7 +293,10 @@ def test_the_tracing_keys_tracing_needs_are_marked_required_and_the_login_is_not
     assert names["LANGSMITH_API_KEY"].required is None
     assert names["COOLIFY_URL"].carries == "COOLIFY_TOKEN"
     assert names["MCP_URL"].carries == "MCP_TOKEN" and names["MCP_TOKEN"].kind == "secret"
-    assert not {"BLEEP_ADMIN_PASSWORD", "BLEEP_SECRET", "LOCAL_BASE_URL"} & set(names)
+    assert not {"BLEEP_ADMIN_PASSWORD", "BLEEP_SECRET"} & set(names)
+    # A model server's address is on the list since #372, the embeddings one bound to its key.
+    assert names["LOCAL_BASE_URL"].kind == "address" and names["LOCAL_BASE_URL"].carries is None
+    assert names["EMBEDDINGS_BASE_URL"].carries == "EMBEDDINGS_API_KEY"
 
 
 def test_a_link_at_the_file_is_refused_and_its_target_left_alone(tmp_path):

@@ -90,7 +90,15 @@ export function SecretField({
               autoCapitalize="off"
               spellCheck={false}
               value={value}
-              placeholder={isAddress ? "https://" : view.set ? "Type a new value" : "Type a value"}
+              placeholder={
+                isAddress
+                  ? view.private
+                    ? "http://"
+                    : "https://"
+                  : view.set
+                    ? "Type a new value"
+                    : "Type a value"
+              }
               onChange={(changed) => setValue(changed.target.value)}
               className="max-w-sm min-w-48 flex-1 font-mono"
             />
@@ -110,7 +118,13 @@ export function SecretField({
               </Button>
             )}
           </div>
-          {isAddress && (
+          {isAddress && view.private && (
+            <p className="text-xs text-muted-foreground">
+              {view.carries && `A new or cleared address clears ${view.carries}. `}A model
+              server&apos;s address may be private, such as http://host.docker.internal:1234/v1.
+            </p>
+          )}
+          {isAddress && !view.private && (
             <p className="text-xs text-muted-foreground">
               {view.carries &&
                 `A new or cleared address clears ${view.carries} and switches the plugin off. `}

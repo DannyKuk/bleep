@@ -173,48 +173,62 @@ def test_a_failing_re_embed_does_not_stop_the_app(settings, parts, monkeypatch, 
     assert "re-embedding failed" in caplog.text
 
 
-def test_the_embedder_follows_the_settings(settings):
-    from bleep.config import SettingsError, check_settings
+def _secrets(tmp_path, env: dict[str, str]):
+    from bleep.store.secrets import SecretName, SecretStore
+
+    names = [
+        SecretName("EMBEDDINGS_BASE_URL", kind="address", carries="EMBEDDINGS_API_KEY"),
+        SecretName("EMBEDDINGS_API_KEY"),
+    ]
+    return SecretStore(tmp_path / "secrets.json", names, env=env)
+
+
+def test_the_embedder_follows_the_settings(tmp_path, caplog):
     from bleep.memory.embeddings import FastEmbedEmbedder, OpenAICompatEmbedder
+    from bleep.schemas.settings import EmbeddingsChoice
     from bleep.wiring import build_embedder
 
-    assert build_embedder(settings).name == "fastembed:BAAI/bge-small-en-v1.5"
-    remote = settings.model_copy(
-        update={
-            "embeddings_provider": "openai",
-            "embeddings_base_url": "http://host.docker.internal:1234/v1",
-            "embeddings_model": "text-embedding-nomic-embed-text-v1.5",
-            "embeddings_api_key": SecretStr("sk-x"),
-        }
+    secrets = _secrets(
+        tmp_path,
+        {"EMBEDDINGS_BASE_URL": "http://host.docker.internal:1234/v1", "EMBEDDINGS_API_KEY": "k"},
     )
-    check_settings(remote)
-    embedder = build_embedder(remote)
+    assert build_embedder(EmbeddingsChoice(), secrets).name == "fastembed:BAAI/bge-small-en-v1.5"
+    remote = EmbeddingsChoice(provider="openai", model="text-embedding-nomic-embed-text-v1.5")
+    embedder = build_embedder(remote, secrets)
     assert isinstance(embedder, OpenAICompatEmbedder)
     assert embedder.name == "openai:text-embedding-nomic-embed-text-v1.5"
-    # EMBEDDINGS_MODEL is the endpoint's model: the local one is the model baked into the image.
-    local = build_embedder(settings.model_copy(update={"embeddings_model": "x/y"}))
+    # The model is the endpoint's: the local one is the model baked into the image.
+    local = build_embedder(EmbeddingsChoice(model="x/y"), secrets)
     assert isinstance(local, FastEmbedEmbedder)
     assert local.name == "fastembed:BAAI/bge-small-en-v1.5"
-    half = settings.model_copy(update={"embeddings_provider": "openai"})
-    with pytest.raises(SettingsError, match="EMBEDDINGS_BASE_URL"):
-        check_settings(half)
+    # An endpoint without its base URL is not refused at start (the dashboard may set it): the
+    # local model embeds until it is set, and the log says so.
+    assert isinstance(build_embedder(remote, _secrets(tmp_path, {})), FastEmbedEmbedder)
+    assert "EMBEDDINGS_BASE_URL" in caplog.text
 
 
-def test_recalls_min_score_is_the_models_unless_the_settings_name_one(settings):
+def test_a_half_configured_embeddings_endpoint_no_longer_stops_bleep(settings):
+    from bleep.config import check_settings
+
+    check_settings(settings.model_copy(update={"embeddings_provider": "openai"}))
+
+
+def test_recalls_min_score_is_the_models_unless_the_settings_name_one(tmp_path):
     """bge-small keeps 0.5, a known endpoint model brings its own, EMBEDDINGS_MIN_SCORE wins
     (#306)."""
+    from bleep.schemas.settings import EmbeddingsChoice
     from bleep.wiring import build_embedder
 
-    endpoint = {"embeddings_provider": "openai", "embeddings_base_url": "http://x/v1"}
-    m3 = settings.model_copy(update={**endpoint, "embeddings_model": "bge-m3"})
-    other = settings.model_copy(update={**endpoint, "embeddings_model": "nomic-embed-text"})
+    secrets = _secrets(tmp_path, {"EMBEDDINGS_BASE_URL": "http://x/v1"})
+    m3 = EmbeddingsChoice(provider="openai", model="bge-m3")
+    other = EmbeddingsChoice(provider="openai", model="nomic-embed-text")
 
-    assert build_embedder(settings).min_score == 0.5
-    assert build_embedder(m3).min_score == 0.35
-    assert build_embedder(other).min_score == 0.5
-    for chosen in (m3, other, settings):
-        told = chosen.model_copy(update={"embeddings_min_score": 0.42})
-        assert build_embedder(told).min_score == 0.42
+    assert build_embedder(EmbeddingsChoice(), secrets).min_score == 0.5
+    assert build_embedder(m3, secrets).min_score == 0.35
+    assert build_embedder(other, secrets).min_score == 0.5
+    for chosen in (m3, other, EmbeddingsChoice()):
+        told = chosen.model_copy(update={"min_score": 0.42})
+        assert build_embedder(told, secrets).min_score == 0.42
 
 
 def test_the_embeddings_settings_are_read_from_their_env_names(monkeypatch, tmp_path):
