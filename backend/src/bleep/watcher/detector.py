@@ -76,8 +76,12 @@ class AttachSignals:
 
 @dataclass(frozen=True)
 class Recovered:
+    """A death its restart policy brought back in time. `run` is the container's loop while it is
+    in one, so the manager can tell a death inside a held loop (#393)."""
+
     container: str
     signals: list[Signal]
+    run: FailingRun | None = None
 
 
 @dataclass(frozen=True)
@@ -250,7 +254,7 @@ class Detector:
             in_time = started <= death.at + grace if started else elapsed <= grace
             if back and fresh and in_time:
                 del self._pending[key]
-                out.append(Recovered(container, [death]))
+                out.append(Recovered(container, [death], self._loop_run(key)))
             elif elapsed > grace:
                 del self._pending[key]
                 late = Signal(

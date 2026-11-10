@@ -27,6 +27,7 @@ from bleep.watcher.health_store import HealthStore
 from bleep.watcher.http_checks import UrlCheckStore
 from bleep.watcher.manager import (
     CAP_SPENT_EXPLANATION,
+    HELD_LOOP_EXPLANATION,
     NO_EXPLANATION,
     RECOVERY_USAGE,
     REMOVED_NOTICE,
@@ -1684,6 +1685,75 @@ async def test_a_looping_container_that_turns_unhealthy_before_each_crash_waits_
         )
         await minutes(r, 3)
     assert [i.id for i in r.runner.started] == [first.id]
+
+
+async def held_loop_asking(r: Rig, model: FakeChatModel) -> int:
+    """shop-web-1's loop incident ended and it goes on crashing, back each time: nine deaths
+    in 18 minutes, well inside the hour's hold. The model calls asked before the hold."""
+    await loop_incident_ended(r)
+    await r.manager.drain()
+    asked = len(model.seen)
+    await crashing(r, 9, every_min=2, back=True)
+    await r.manager.drain()
+    return asked
+
+
+def lines(count: int) -> FakeChatModel:
+    return FakeChatModel(script=[AIMessage("It ran out of memory.")] * count)
+
+
+async def test_a_death_inside_a_held_loop_asks_the_model_for_no_recovery_line(tmp_path):
+    model = lines(10)
+    r = await Rig(tmp_path, model).boot()
+    asked = await held_loop_asking(r, model)
+    assert asked == 2  # the two deaths before the first loop, which was in no loop yet
+    assert len(model.seen) == asked
+    recoveries = await r.repo.recoveries()
+    held = recoveries[: len(recoveries) - asked]  # newest first
+    assert len(held) == 6  # every third death adds up to a restart loop, held as well
+    assert {recovery.explanation for recovery in held} == {HELD_LOOP_EXPLANATION}
+    assert len(r.runner.started) == 1
+
+
+async def test_a_death_after_the_held_loop_recovered_gets_its_recovery_line_again(tmp_path):
+    model = lines(10)
+    r = await Rig(tmp_path, model).boot()
+    asked = await held_loop_asking(r, model)
+    await minutes(r, 11)  # it runs a whole window without a death: the loop is over
+    crash(r, back=True)
+    await minutes(r, 1)
+    await r.manager.drain()
+    assert len(model.seen) == asked + 1
+    newest = (await r.repo.recoveries())[0]
+    assert newest.explanation == "It ran out of memory."
+
+
+async def test_another_containers_death_beside_a_held_loop_gets_its_recovery_line(tmp_path):
+    model = lines(10)
+    r = await Rig(tmp_path, model).boot()
+    r.engine.container_list.append(box("shop-web-2", "shop", restart_policy="always"))
+    r.engine.log_text["shop-web-2"] = "connection reset\n"
+    asked = await held_loop_asking(r, model)
+    crash(r, name="shop-web-2", back=True)
+    await minutes(r, 1)
+    await r.manager.drain()
+    assert len(model.seen) == asked + 1
+    newest = (await r.repo.recoveries())[0]
+    assert (newest.container, newest.explanation) == ("shop-web-2", "It ran out of memory.")
+
+
+async def test_a_death_while_the_loops_incident_is_open_gets_its_recovery_line(tmp_path):
+    model = lines(10)
+    r = await Rig(tmp_path, model).boot()
+    r.engine.container_list[0] = box("shop-web-1", "shop", restart_policy="always")
+    await r.pulse(urls=False)
+    await crashing(r, 3, back=True)  # the loop's incident opens and waits for its run
+    await r.manager.drain()
+    asked = len(model.seen)
+    crash(r, back=True)
+    await minutes(r, 1)
+    await r.manager.drain()
+    assert len(model.seen) == asked + 1
 
 
 async def test_a_redeployed_container_that_crashes_opens_at_once(tmp_path):

@@ -12,7 +12,8 @@ probe (disk, memory, load) and the URL checks. Every signal goes through the one
   container still in a restart loop waits for its last death or loop incident.
 - `Recovered` is logged with a one-line explanation from the cheap model, off the watcher's
   tick so a slow model never delays the next pull. The call is in the usage ledger under
-  `RECOVERY_USAGE` and is skipped once the day's cost cap is spent.
+  `RECOVERY_USAGE` and is skipped once the day's cost cap is spent, and for a death inside a
+  crash loop whose repeat is held, which gets a fixed line.
 
 After every poll tick and every round of URL checks each of the host's services is judged
 (`watcher/health.service_health`, from the same inputs the services API uses) and kept in the
@@ -91,6 +92,7 @@ RESTART_BACKOFF_S = (1, 2, 5, 15, 60)
 LOG_TAIL_LINES = 50
 NO_EXPLANATION = "No explanation could be generated for this restart."
 CAP_SPENT_EXPLANATION = "No explanation: the daily cost cap is spent."
+HELD_LOOP_EXPLANATION = "It died again in its crash loop, and its restart policy brought it back."
 RECOVERY_USAGE = "recoveries"  # the usage ledger's key for recovery lines, which have no incident
 REMOVED_NOTICE = "Closed: the host was removed from Bleep on the dashboard, so it is not watched."
 MOVED_NOTICE = (
@@ -739,24 +741,14 @@ class WatcherManager:
 
     async def _log_recovery(self, recovered: Recovered) -> None:
         death = recovered.signals[0]
-        host_id = death.subject.host_id
-        logs = ""
-        try:
-            logs = await self.registry.engine(host_id).logs(recovered.container, LOG_TAIL_LINES)
-        except Exception as error:  # the explanation is a nicety: the recovery is still logged
-            log.warning("no logs for recovered container %s: %s", recovered.container, error)
-        explanation = NO_EXPLANATION
-        if self._models is not None:
-            try:
-                explanation = await self._explain(self._models("cheap"), logs)
-            except BudgetExceeded:
-                explanation = CAP_SPENT_EXPLANATION
-            except Exception:
-                log.exception("explaining the recovery of %s failed", recovered.container)
+        if await self._in_held_loop(recovered):
+            explanation = HELD_LOOP_EXPLANATION
+        else:
+            explanation = await self._recovery_line(recovered)
         try:
             await self.repo.log_recovery(
                 RecoveryEvent(
-                    host_id=host_id,
+                    host_id=death.subject.host_id,
                     service_id=death.subject.service_id,
                     container=recovered.container,
                     at=death.at,
@@ -765,3 +757,33 @@ class WatcherManager:
             )
         except Exception:
             log.exception("logging the recovery of %s failed", recovered.container)
+
+    async def _in_held_loop(self, recovered: Recovered) -> bool:
+        """Whether the death is one more of a crash loop whose repeat is held: it opens nothing,
+        so a line from the model would cost a call per death for as long as the hold lasts."""
+        if recovered.run is None:
+            return False
+        subject = recovered.signals[0].subject
+        try:
+            outlived = await self._outlived(subject, recovered.signals, recovered.run)
+        except Exception:
+            log.exception("checking the loop of recovered container %s failed", recovered.container)
+            return False
+        return outlived is not None and self._still_held(subject, outlived)
+
+    async def _recovery_line(self, recovered: Recovered) -> str:
+        logs = ""
+        try:
+            engine = self.registry.engine(recovered.signals[0].subject.host_id)
+            logs = await engine.logs(recovered.container, LOG_TAIL_LINES)
+        except Exception as error:  # the explanation is a nicety: the recovery is still logged
+            log.warning("no logs for recovered container %s: %s", recovered.container, error)
+        if self._models is None:
+            return NO_EXPLANATION
+        try:
+            return await self._explain(self._models("cheap"), logs)
+        except BudgetExceeded:
+            return CAP_SPENT_EXPLANATION
+        except Exception:
+            log.exception("explaining the recovery of %s failed", recovered.container)
+            return NO_EXPLANATION
