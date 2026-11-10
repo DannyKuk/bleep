@@ -48,6 +48,8 @@ from bleep.guard.plan_check import (
     check_target,
     coolify_app_uuid,
 )
+from bleep.guard.redact import redact_with_count
+from bleep.guard.sanitize import strip_control
 from bleep.hosts.coolify_names import COOLIFY_NAME, name_matches
 from bleep.hosts.discovery import is_self
 from bleep.hosts.registry import Registry
@@ -189,23 +191,54 @@ def _built_from_git(a: CoolifyApplication) -> bool:
     )
 
 
-def _one_line(text: str | None, limit: int = FIELD_CHARS) -> str:
-    """`text` as it may stand in one line of a list: every run of whitespace, a line break of any
-    kind among them (`\\n`, `\\r`, U+0085, U+2028, U+2029, VT, FF), is one space, and it is cut to
-    `limit`. Empty for None. A field from Coolify with a line break would otherwise print a second
-    line that reads as another application or deployment, and the cut keeps a line under the
-    guard's 4,000-char line cap, which would split a longer one in two."""
-    flat = " ".join((text or "").split())
-    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+def _flat(text: str) -> str:
+    """`text` cleaned as the guard cleans it, every run of whitespace one space."""
+    return " ".join(strip_control(text).split())
 
 
-def _source(a: CoolifyApplication) -> str:
+def _cut(text: str, limit: int, at: str = "") -> str:
+    """`text` cut to `limit`, `…` included; with `at`, right after the last of those characters
+    in the kept part, when it holds one."""
+    if len(text) <= limit:
+        return text
+    head = text[: limit - 1]
+    end = max((head.rfind(char) for char in at), default=-1)
+    return (head[: end + 1] if end > 0 else head) + "…"
+
+
+class _Shown:
+    """Fields from Coolify as they may stand in one line of a list, and the number of secrets
+    redacted from them so far.
+
+    A field is cleaned and redacted whole first, as the guard does with a whole text, so a
+    secret on the cut point cannot leave half of itself and a YAML block (`password: |` with the
+    value on the lines below) is still read as one. Then every run of whitespace is one space,
+    the line breaks the guard keeps or makes (`\\n`, `\\r`, U+2028, U+2029) among them, and the
+    field is cut to `limit`. A field with a line break would otherwise print a second line that
+    reads as another application or deployment, and the cut keeps a line under the guard's
+    4,000-char line cap, which would split a longer one in two.
+    """
+
+    def __init__(self) -> None:
+        self.redacted = 0
+
+    def __call__(
+        self, text: str | None, limit: int = FIELD_CHARS, first_line: bool = False, at: str = ""
+    ) -> str:
+        cleaned, count = redact_with_count(strip_control(text or ""))
+        self.redacted += count
+        if first_line:
+            cleaned = next(iter(cleaned.strip().splitlines()), "")
+        return _cut(" ".join(cleaned.split()), limit, at)
+
+
+def _source(a: CoolifyApplication, shown: _Shown) -> str:
     """Where `a` is built from, as ` repo=…@branch commit=…`; nothing for an application built
     without git, whose git fields hold Coolify's own repo, `main` and `HEAD`."""
     if not _built_from_git(a):
         return ""
     commit = _commit(a.git_commit_sha)
-    repo = f" repo={_one_line(_no_userinfo(a.git_repository))}@{_one_line(a.git_branch) or '?'}"
+    repo = f" repo={shown(_no_userinfo(a.git_repository))}@{shown(a.git_branch) or '?'}"
     return repo + (f" commit={commit}" if commit else "")
 
 
@@ -275,19 +308,22 @@ def _failed(error: CoolifyError) -> str:
     return f"Coolify could not be read: {error}."
 
 
-def describe_applications(apps: list[CoolifyApplication], here: set[str]) -> str:
+def describe_applications(apps: list[CoolifyApplication], here: set[str]) -> tuple[str, int]:
+    """The list `coolify_applications` shows, one line each, and the number of secrets redacted
+    from it."""
     if not apps:
-        return "Coolify has no applications this token can see."
+        return "Coolify has no applications this token can see.", 0
+    shown = _Shown()
     lines = ["Coolify applications:"]
     for a in sorted(apps, key=lambda a: (a.uuid not in here, a.name or "")):
         mark = " (on this host)" if a.uuid in here else ""
         lines.append(
-            f"- {_one_line(a.name) or '?'} uuid={_one_line(a.uuid)}{mark}"
-            f" status={_one_line(a.status) or '?'}"
-            f" domains={_one_line(_domains(a), DOMAINS_CHARS)}{_source(a)}"
-            f" build={_one_line(a.build_pack) or '?'}"
+            f"- {shown(a.name) or '?'} uuid={shown(a.uuid)}{mark}"
+            f" status={shown(a.status) or '?'}"
+            f" domains={shown(_domains(a), DOMAINS_CHARS, at=',;')}{_source(a, shown)}"
+            f" build={shown(a.build_pack) or '?'}"
         )
-    return "\n".join(lines)
+    return "\n".join(lines), shown.redacted
 
 
 def _via(d: CoolifyDeployment) -> str:
@@ -299,46 +335,52 @@ def _via(d: CoolifyDeployment) -> str:
     return how
 
 
-def _first_line(text: str | None) -> str:
-    """The first line of `text` that is not blank, a line ending at a line break of any kind."""
-    return next(iter((text or "").strip().splitlines()), "")
-
-
-def describe_deployments(app: CoolifyApplication, found: list[CoolifyDeployment]) -> str:
-    name = _one_line(app.name) or "?"
+def describe_deployments(
+    app: CoolifyApplication, found: list[CoolifyDeployment]
+) -> tuple[str, int]:
+    """The list `coolify_deployments` shows, one line each with the first line of its commit
+    message, and the number of secrets redacted from it."""
+    shown = _Shown()
+    name = shown(app.name) or "?"
     if not found:
-        return f"{name} has no deployments."
-    lines = [f"Latest deployments of {name} ({_one_line(app.uuid)}), newest first:"]
+        return f"{name} has no deployments.", shown.redacted
+    lines = [f"Latest deployments of {name} ({shown(app.uuid)}), newest first:"]
     for d in found:
-        message = _one_line(_first_line(d.commit_message), MESSAGE_CHARS)
+        message = shown(d.commit_message, MESSAGE_CHARS, first_line=True)
         commit = _commit(d.commit)
         commit = f" commit={commit}" if commit else ""
         lines.append(
-            f"- {_one_line(d.created_at) or '?'} {_one_line(d.status) or '?'}{commit} ({_via(d)})"
-            f" finished={_one_line(d.finished_at) or 'not yet'}: {message or 'no message'}"
+            f"- {shown(d.created_at) or '?'} {shown(d.status) or '?'}{commit} ({_via(d)})"
+            f" finished={shown(d.finished_at) or 'not yet'}: {message or 'no message'}"
         )
-    return "\n".join(lines)
+    return "\n".join(lines), shown.redacted
 
 
-def describe_env_keys(app: CoolifyApplication, keys: list[CoolifyEnvKey]) -> str:
-    name = _one_line(app.name) or "?"
+def describe_env_keys(app: CoolifyApplication, keys: list[CoolifyEnvKey]) -> tuple[str, int]:
+    """The keys `coolify_env_keys` shows, one line each, and the number of secrets redacted from
+    them."""
+    shown = _Shown()
+    name = shown(app.name) or "?"
     if not keys:
-        return f"{name} has no environment variables."
+        return f"{name} has no environment variables.", shown.redacted
     lines = [f"Environment variables of {name} (keys only; values are never read):"]
     for k in sorted(keys, key=lambda k: (bool(k.is_preview), k.key)):
         used = [w for w, on in (("build", k.is_buildtime), ("runtime", k.is_runtime)) if on]
         if k.is_preview:
             used.append("preview")
-        lines.append(f"- {_one_line(k.key)}" + (f" ({', '.join(used)})" if used else ""))
-    return "\n".join(lines)
+        lines.append(f"- {shown(k.key)}" + (f" ({', '.join(used)})" if used else ""))
+    return "\n".join(lines), shown.redacted
 
 
 def _pick(apps: list[CoolifyApplication], ref: str) -> CoolifyApplication | str:
-    """The application `ref` names by uuid, else by name; a sentence when none or several do."""
+    """The application `ref` names by uuid, else by name, as Coolify holds it or as the list
+    shows it on one line; a sentence when none or several do."""
     by_uuid = [a for a in apps if a.uuid == ref]
     if by_uuid:
         return by_uuid[0]
-    named = [a for a in apps if a.name is not None and a.name == ref]
+    named = [
+        a for a in apps if a.name is not None and (a.name == ref or _flat(a.name) == _flat(ref))
+    ]
     if len(named) == 1:
         return named[0]
     if named:
@@ -346,9 +388,11 @@ def _pick(apps: list[CoolifyApplication], ref: str) -> CoolifyApplication | str:
     return f"Coolify has no application {ref}; coolify_applications lists them."
 
 
-async def _guard(ctx: ToolContext, text: str) -> str:
-    """Redact, clean and wrap `text` off the event loop, as every tool's output is."""
+async def _guard(ctx: ToolContext, text: str, redacted: int = 0) -> str:
+    """Redact, clean and wrap `text` off the event loop, as every tool's output is. `redacted`
+    counts the secrets already redacted from its fields, which the guard finds no more."""
     wrapped, redactions = await asyncio.to_thread(guard_text, "coolify", text)
+    redactions += redacted
     if redactions and ctx.guard_log is not None:
         ctx.guard_log.record(
             ctx.incident_id, "redacted", f"{redactions} secret(s) redacted from coolify output"
@@ -378,30 +422,34 @@ def read_specs(client: CoolifyClient) -> list[ToolSpec]:
     def applications_tool(ctx: ToolContext) -> BaseTool:
         async def run() -> str:
             apps = _not_own(await client.applications(), ctx.registry)
-            text = describe_applications(apps, _host_apps(ctx.registry, ctx.host_id))
-            return await _guard(ctx, text)
+            here = _host_apps(ctx.registry, ctx.host_id)
+            return await _guard(ctx, *await asyncio.to_thread(describe_applications, apps, here))
 
         return _tool("coolify_applications", APPLICATIONS, NoArgs, run)
 
     def per_app(
-        name: str, description: str, read: Callable[[CoolifyApplication], Awaitable[str]]
+        name: str,
+        description: str,
+        read: Callable[[CoolifyApplication], Awaitable[tuple[str, int]]],
     ) -> Callable[[ToolContext], BaseTool]:
         def build(ctx: ToolContext) -> BaseTool:
             async def run(app: str) -> str:
                 picked = _pick(_not_own(await client.applications(), ctx.registry), app.strip())
                 if isinstance(picked, str):
                     return await _guard(ctx, picked)
-                return await _guard(ctx, await read(picked))
+                return await _guard(ctx, *await read(picked))
 
             return _tool(name, description, AppArgs, run)
 
         return build
 
-    async def deployments(app: CoolifyApplication) -> str:
-        return describe_deployments(app, await client.deployments(app.uuid))
+    async def deployments(app: CoolifyApplication) -> tuple[str, int]:
+        found = await client.deployments(app.uuid)
+        return await asyncio.to_thread(describe_deployments, app, found)
 
-    async def env_keys(app: CoolifyApplication) -> str:
-        return describe_env_keys(app, await client.env_keys(app.uuid))
+    async def env_keys(app: CoolifyApplication) -> tuple[str, int]:
+        keys = await client.env_keys(app.uuid)
+        return await asyncio.to_thread(describe_env_keys, app, keys)
 
     def offered(ctx: ToolContext) -> bool:
         return bool(_host_apps(ctx.registry, ctx.host_id))
