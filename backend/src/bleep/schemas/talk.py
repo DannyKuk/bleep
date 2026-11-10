@@ -57,8 +57,8 @@ class Turn(BaseModel):
     answered: str
 
 
-# The actions a chat can offer to confirm; a look on request (`look_again`) comes with #403.
-OfferKind = Literal["snooze", "leave_alone", "watch_again", "expected", "instruct", "show_plan"]
+# The actions a chat can offer to confirm: all of them, a look on request (#403) included.
+OfferKind = ActionKind
 
 
 class Offer(BaseModel):

@@ -11,6 +11,7 @@ from bleep.hosts.engine import EngineError
 from bleep.hosts.registry import Registry
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
+from bleep.incidents.looks import Looks
 from bleep.incidents.quiet import QuietStore
 from bleep.incidents.repository import IncidentRepo
 from bleep.llm.usage import CostLedger
@@ -1699,3 +1700,56 @@ async def test_a_redeployed_container_that_crashes_opens_at_once(tmp_path):
     [_, again] = r.runner.started
     deaths = [s for s in await r.repo.signals(again.id) if s.kind == "container_died"]
     assert {s.container_id for s in deaths} == {"id-shop-web-1-new"}
+
+
+# --- a look on request and the repeat holds (#403) ---
+
+
+async def look_at_shop(r: Rig) -> Incident:
+    looks = Looks(r.repo, r.runner, r.quiet, r.registry, clock=r.clock)  # type: ignore[arg-type]
+    look = await looks.look(SHOP, "telegram")
+    assert look.outcome == "opened" and look.incident is not None
+    return look.incident
+
+
+async def test_a_url_failure_a_look_took_waits_for_its_hold_after_the_look(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()  # the URL answers: Bleep has seen it pass
+    look = await look_at_shop(r)
+    r.not_found.add("shop")
+    await minutes(r, 2)  # the URL fails while the look is open: its failures attach to it
+    assert any(s.kind == "url_failed" for s in await r.repo.signals(look.id))
+    await close_open(r, look.subject)
+
+    await minutes(r, 59)  # as after any incident that took the failure: no new run
+    assert [i.id for i in await r.incidents()] == [look.id]
+    await minutes(r, 2)  # an hour after the look closed
+    assert len(r.runner.started) == 2 and r.runner.started[-1].title.startswith("url failed")
+
+
+async def test_a_bare_look_neither_starts_a_hold_nor_waits_for_one(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    r.not_found.add("shop")
+    await minutes(r, 2)
+    first = await close_open(r, Subject(kind="service", host_id="h", service_id=SHOP))
+    look = await look_at_shop(r)  # during the hold: the person asked
+    await close_open(r, look.subject)  # ended before the watcher fed it anything
+    assert [s.kind for s in await r.repo.signals(look.id)] == ["look_requested"]
+
+    await minutes(r, 57)  # the hold runs from the first incident, not from the look
+    assert {i.id for i in await r.incidents()} == {first.id, look.id}
+    await minutes(r, 4)
+    assert len(r.runner.started) == 3
+
+
+async def test_a_failure_after_a_bare_look_opens_at_once(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()  # the URL last passed before the look opened
+    look = await look_at_shop(r)
+    await close_open(r, look.subject)
+
+    r.not_found.add("shop")
+    await minutes(r, 2)
+
+    assert len(r.runner.started) == 2 and r.runner.started[-1].title.startswith("url failed")

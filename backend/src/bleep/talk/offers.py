@@ -32,6 +32,7 @@ LOCAL_TIME = "%Y-%m-%d %H:%M"
 LOCAL_DAY = "%Y-%m-%d"
 CUT = "…"  # how the snapshot ends a name it cut: such an id names no service exactly
 QUIET_KINDS = ("snooze", "leave_alone", "watch_again")
+SUBJECT_KINDS = (*QUIET_KINDS, "look_again")  # the offers about a service or host
 NEVER = datetime.max.replace(tzinfo=UTC)  # an end beyond any limit
 PLAN_KINDS = ("instruct", "show_plan")
 
@@ -193,6 +194,6 @@ def confirm_line(offer: Offer, now: datetime, zone: tzinfo | None) -> str:
     if offer.kind == "snooze" and offer.until is not None:
         until = when(offer.until, now, zone)
         return line("confirm_snooze", subject=offer.subject or "", until=until)
-    if offer.kind in QUIET_KINDS:
+    if offer.kind in SUBJECT_KINDS:
         return line(f"confirm_{offer.kind}", subject=offer.subject or "")
     return line(f"confirm_{offer.kind}", incident=offer.incident or "")

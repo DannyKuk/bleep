@@ -12,6 +12,7 @@ import aiosqlite
 
 from bleep.guard.titles import build_title, split_service_id, title_name
 from bleep.schemas.incidents import (
+    LOOK_REQUESTED,
     TERMINAL_STATUSES,
     Incident,
     IncidentStatus,
@@ -87,6 +88,12 @@ def fold_key(subject: Subject, signals: list[Signal]) -> str:
     return _fold_key(subject, kind, target)
 
 
+def is_look(signals: list[Signal]) -> bool:
+    """An incident a person asked for (#403): its signals are one look on request."""
+    primary = primary_signal(signals)
+    return primary is not None and primary.kind == LOOK_REQUESTED
+
+
 def container_fold_keys(subject: Subject, container: str) -> list[str]:
     """The fold keys of a container's deaths, its restart loops and its turns unhealthy."""
     return [_fold_key(subject, kind, container) for kind in ("death", "restart_loop", "unhealthy")]
@@ -124,6 +131,13 @@ _COLUMNS = (
 )
 
 _OPEN = f"status NOT IN ({', '.join(repr(s) for s in TERMINAL_STATUSES)})"
+# Not a look on request (#403) that saw nothing but the look: its fold key is its subject's key,
+# its kind and no target, and no watcher signal attached to it while it was open.
+_NOT_A_BARE_LOOK = (
+    f"NOT (COALESCE(fold_key, '') = subject_key || '|{LOOK_REQUESTED}|'"
+    " AND NOT EXISTS (SELECT 1 FROM incident_signals s WHERE s.incident_id = incidents.id"
+    f" AND json_extract(s.signal, '$.kind') != '{LOOK_REQUESTED}'))"
+)
 
 
 class IncidentRepo:
@@ -159,8 +173,12 @@ class IncidentRepo:
         signals: list[Signal],
         repeat_of: str | None = None,
         name: str | None = None,
+        *,
+        attach: bool = True,
     ) -> tuple[Incident, bool]:
         """Attach `signals` to the subject's open incident, or open one; True when opened.
+        With `attach` False an open incident takes nothing: it is returned as it is, and only a
+        new one gets `signals` (a look on request, #403).
 
         A new incident gets its short name (`short_name`) from `name`, the service's name as the
         dashboard shows it, when given.
@@ -182,7 +200,7 @@ class IncidentRepo:
                     created = target is None
                     if target is None:
                         target = await self._insert(conn, subject, signals, repeat_of, name)
-                    for signal in signals:
+                    for signal in signals if created or attach else []:
                         await conn.execute(
                             "INSERT INTO incident_signals (incident_id, signal, at)"
                             " VALUES (?, ?, ?)",
@@ -235,7 +253,8 @@ class IncidentRepo:
         incident_id = new_incident_id(now)
         key = fold_key(subject, signals)
         title = build_title(subject, signals)
-        group = await self._group_to_join(conn, key, now, repeat_of)
+        # A look is asked for, never a repeat: its opener always reaches the chat (#403).
+        group = None if is_look(signals) else await self._group_to_join(conn, key, now, repeat_of)
         if group is not None:
             # The title carries the count, so every message about the repeat says it.
             title += f" (seen {group.count + 1} times since {group.since:%d %b %H:%M} UTC)"
@@ -319,7 +338,10 @@ class IncidentRepo:
         self, subject: Subject, since: datetime, keys: Collection[str] | None = None
     ) -> Repeats | None:
         """The subject's finished incidents opened at or after `since`: those with one of the
-        fold `keys`, or of any kind when `keys` is None; None when there is none."""
+        fold `keys`, or of any kind when `keys` is None; None when there is none. A look on
+        request (#403) that took no watcher signal is not one: what the watcher holds back must
+        not depend on whether someone asked. One that took a failure while open is, as any
+        incident that took it would be."""
         column, values = ("subject_key", [subject.key])
         if keys is not None:
             column, values = ("fold_key", list(keys))
@@ -329,7 +351,8 @@ class IncidentRepo:
             async with conn.execute(
                 "SELECT id, COUNT(*) OVER () AS n,"
                 " MAX(COALESCE(closed_at, opened_at)) OVER () AS last FROM incidents"
-                f" WHERE {column} IN ({marks}) AND NOT {_OPEN} AND opened_at >= ?"
+                f" WHERE {column} IN ({marks}) AND NOT {_OPEN} AND {_NOT_A_BARE_LOOK}"
+                " AND opened_at >= ?"
                 " ORDER BY opened_at DESC, id DESC LIMIT 1",
                 (*values, since.isoformat()),
             ) as cursor:
@@ -364,12 +387,15 @@ class IncidentRepo:
         return kinds
 
     async def previous(self, incident: Incident) -> Incident | None:
-        """The subject's incident that closed last before `incident` opened, if any."""
+        """The subject's incident that closed last before `incident` opened, if any; a look on
+        request that took no watcher signal (#403) is not one: it saw no problem that could come
+        back."""
         conn = await self.db.connect()
         try:
             async with conn.execute(
                 f"SELECT {_COLUMNS} FROM incidents WHERE subject_key = ? AND id != ?"
                 f" AND NOT {_OPEN} AND closed_at IS NOT NULL AND opened_at <= ?"
+                f" AND {_NOT_A_BARE_LOOK}"
                 " ORDER BY closed_at DESC, id DESC LIMIT 1",
                 (incident.subject.key, incident.id, incident.opened_at.isoformat()),
             ) as cursor:
@@ -542,6 +568,16 @@ class IncidentRepo:
                 (host_id,),
             ) as cursor:
                 return [_incident(row) for row in await cursor.fetchall()]
+        finally:
+            await conn.close()
+
+    async def open_target(self, subject: Subject) -> Incident | None:
+        """The open incident a signal of `subject` would attach to: its own, or for a service
+        its host's open incident when that one has a `host_unreachable` signal."""
+        conn = await self.db.connect()
+        try:
+            target = await self._open_target(conn, subject)
+            return await self._get(conn, target) if target is not None else None
         finally:
             await conn.close()
 

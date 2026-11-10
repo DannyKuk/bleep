@@ -49,7 +49,8 @@ from bleep.schemas.talk import (
     Turn,
 )
 from bleep.talk.links import known_links, links_in, offer_links
-from bleep.talk.offers import check, confirm_line, find_subject, instruction
+from bleep.talk.looks import look_offer
+from bleep.talk.offers import check, confirm_line, instruction
 from bleep.talk.state import StateReader
 
 log = logging.getLogger(__name__)
@@ -140,13 +141,14 @@ class Talk:
                 snapshot = await self.state.snapshot()
                 facts = await self.state.incident(incident_id) if incident_id else None
                 reading = await self._read(text, snapshot, facts, list(turns))
+                spent = _asks_look(reading) and await self._runs_spent()
         except BudgetExceeded:
             return self._fallback("failed", _fixed("spent"), text, facts, incident_id)
         except Exception as error:  # the type only: a provider's message may quote its key
             log.warning("talk: could not read a message (%s)", type(error).__name__)
             return self._fallback("failed", _fixed("failed"), text, facts, incident_id)
         try:
-            said = self._answer(reading, text, snapshot, facts, incident_id)
+            said = self._answer(reading, text, snapshot, facts, incident_id, spent)
             named = offer_links(said.offer) if said.offer else []
             candidates = [*named, *known_links(snapshot, facts)]
             return said.model_copy(update={"links": links_in(said.answer, candidates)})
@@ -181,6 +183,12 @@ class Talk:
         model = self.models("cheap")
         return await invoke_structured(model, TalkReading, messages, config=config, guard=guard)
 
+    async def _runs_spent(self) -> bool:
+        """Whether the day's cost cap of the incident runs is spent, so a look cannot start."""
+        if self.ledger is None:
+            return False
+        return await self.ledger.spent_today() >= self.budgets().daily_cost_usd
+
     def _guarded(self, source: str, text: str, limit: int) -> str:
         wrapped, redactions = guard_text(source, text, limit)
         if redactions and self.guard_log is not None:
@@ -196,6 +204,7 @@ class Talk:
         snapshot: Snapshot,
         facts: IncidentFacts | None,
         incident_id: str | None,
+        spent: bool = False,
     ) -> TalkReply:
         def reply(kind: ReplyKind, answer: str, offer: Offer | None = None) -> TalkReply:
             return TalkReply(
@@ -212,10 +221,11 @@ class Talk:
             return reply("refusal", _fixed("refused_secret"))
         if reading.kind == "action" and reading.action is not None:
             action = reading.action
-            if action.kind == "look_again":  # a look on request comes with #403
-                return reply("action", _not_yet(snapshot, action.subject))
             now, zone = self.clock(), self.zone()
-            checked = check(action, snapshot, facts, now, zone, text.strip()[:TEXT_CHARS])
+            if action.kind == "look_again":
+                checked = look_offer(action, snapshot, now, zone, spent)
+            else:
+                checked = check(action, snapshot, facts, now, zone, text.strip()[:TEXT_CHARS])
             if isinstance(checked, str):
                 return reply("action", checked)
             return reply("action", confirm_line(checked, now, zone), checked)
@@ -246,10 +256,6 @@ class Talk:
         return TalkReply(kind=kind, answer=answer, incident_id=incident_id, offer=offer)
 
 
-def _not_yet(snapshot: Snapshot, said: str | None) -> str:
-    """A look on request, said back in Bleep's own words: the subject only as Bleep's state
-    names it, never as the model wrote it."""
-    found = find_subject(snapshot, said)
-    name = found.name if found is not None and not isinstance(found, str) else None
-    understood = _fixed("understood_look_again", subject=name or _fixed("unknown_subject"))
-    return _fixed("not_yet", understood=understood)
+def _asks_look(reading: TalkReading) -> bool:
+    action = reading.action if reading.kind == "action" else None
+    return action is not None and action.kind == "look_again"

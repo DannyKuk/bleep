@@ -283,13 +283,34 @@ async def test_an_instruction_as_a_reply_is_offered_for_that_incidents_plan():
     assert reply.answer == fixed("confirm_instruct", incident="shop #14")
 
 
-async def test_a_look_on_request_is_not_offered_yet():
+async def test_a_look_on_request_is_offered_for_a_service_with_no_open_incident():
+    models = Models(reading(kind="action", action={"kind": "look_again", "subject": "grafana"}))
+
+    reply = await talk(models).reply("look at grafana again")
+
+    assert reply.offer is not None
+    assert (reply.offer.kind, reply.offer.target_id) == ("look_again", "laptop/compose:grafana")
+    assert reply.answer == fixed("confirm_look_again", subject="grafana")
+    assert len(models.model.seen) == 1  # the reading only: a look costs nothing before the tap
+
+
+async def test_a_look_at_a_service_with_an_open_incident_names_it():
     models = Models(reading(kind="action", action={"kind": "look_again", "subject": "shop"}))
 
     reply = await talk(models).reply("look at shop again")
 
-    understood = fixed("understood_look_again", subject="shop")
-    assert (reply.answer, reply.offer) == (fixed("not_yet", understood=understood), None)
+    assert reply.offer is None
+    assert reply.answer == fixed("look_open", incident="shop #14", subject="shop")
+
+
+async def test_a_look_once_the_days_cap_for_incidents_is_spent_is_not_offered(tmp_path):
+    ledger = await ledger_at(tmp_path)
+    await ledger.add("inc_1", "m", 1000, 1000, 1.5)  # over the daily cap, not the chat's
+    models = Models(reading(kind="action", action={"kind": "look_again", "subject": "grafana"}))
+
+    reply = await talk(models, ledger=ledger).reply("look at grafana again")
+
+    assert (reply.answer, reply.offer) == (fixed("look_spent"), None)
 
 
 @pytest.mark.parametrize(

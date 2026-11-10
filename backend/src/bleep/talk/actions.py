@@ -3,7 +3,8 @@
 A surface offers an action with a button (`talk.confirms`); the press comes here. Every action
 goes through the code the dashboard's own buttons and Telegram's use (`QuietStore.set` and
 `clear`, `Expectations.expected`, `approvals.resolve` + `runner.resume`), so first-wins, a
-replaced plan and a closed incident are answered as they are there. The answers are the lines a
+replaced plan and a closed incident are answered as they are there. A look on request
+(#403) starts through `incidents.looks.Looks`. The answers are the lines a
 Telegram button gets (`prompts/notify/answer_*.md`), shared now by both surfaces.
 """
 
@@ -13,11 +14,13 @@ from datetime import datetime, tzinfo
 from typing import Any, Literal, Protocol
 
 from bleep import prompts
+from bleep.incidents.looks import Look
 from bleep.incidents.quiet import QuietStore
 from bleep.incidents.repository import IncidentRepo
 from bleep.schemas.graph import ApprovalRecord, Decision
 from bleep.schemas.incidents import TERMINAL_STATUSES
 from bleep.schemas.talk import Offer
+from bleep.talk.looks import look_said
 from bleep.talk.times import when
 
 Channel = Literal["telegram", "dashboard"]
@@ -59,6 +62,12 @@ class Expecting(Protocol):
     async def expected(self, incident_id: str, via: Channel) -> ExpectAnswer: ...
 
 
+class Looking(Protocol):
+    """The part of `incidents.looks.Looks` a chat uses (#403)."""
+
+    async def look(self, service_id: str, via: Channel) -> Look: ...
+
+
 def _no_zone() -> tzinfo | None:
     return None
 
@@ -77,6 +86,7 @@ class Actions:
     incidents: IncidentRepo | None = None
     quiet: QuietStore | None = None
     expectations: Expecting | None = None
+    looks: Looking | None = None
     zone: Callable[[], tzinfo | None] = _no_zone
 
     async def bind(self, offer: Offer, shown_plan: str = "") -> Offer | str:
@@ -107,6 +117,11 @@ class Actions:
         if offer.kind == "instruct" and offer.plan_id:
             decision = Decision(kind="instruct", text=offer.text, via=self.via, at=now)
             return await self.resolve(offer.incident_id or "", offer.plan_id, decision)
+        if offer.kind == "look_again":
+            if self.looks is None or offer.target_id is None:
+                return said("answer_unknown")
+            look = await self.looks.look(offer.target_id, self.via)
+            return look_said(look, now, self.zone())
         if self.quiet is None or offer.scope is None or offer.target_id is None:
             return said("answer_unknown")
         subject = offer.subject or offer.target_id

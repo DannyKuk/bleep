@@ -38,6 +38,7 @@ def get_actions(request: Request) -> Actions:
         incidents=parts.incidents,
         quiet=parts.quiet,
         expectations=get_expectations(request),
+        looks=request.app.state.looks,
         zone=parts.settings_store.zone,
     )
 

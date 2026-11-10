@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage
 from bleep import prompts
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
+from bleep.incidents.looks import Look
 from bleep.incidents.quiet import QuietStore
 from bleep.incidents.repository import IncidentRepo
 from bleep.schemas.api import HostView, QuietView, ServiceView
@@ -291,3 +292,27 @@ async def test_too_many_messages_at_once_are_told_bleep_is_busy(env):
     reply = await env.panel.say("how is shop?", None, env.actions)
 
     assert reply.answer == said("answer_talk_busy") and env.model.seen == []
+
+
+class FakeLooks:
+    def __init__(self, incident) -> None:
+        self.incident = incident
+        self.asked: list[tuple[str, str]] = []
+
+    async def look(self, service_id: str, via: str) -> Look:
+        self.asked.append((service_id, via))
+        return Look("opened", service_id, "shop", "demo", incident=self.incident)
+
+
+async def test_yes_to_a_look_opens_it_from_the_dashboard_and_only_then(env):
+    env.actions.looks = looks = FakeLooks(env.incident)
+    action = {"kind": "look_again", "subject": "shop"}
+    reply = await say(env, "look at shop again", reading(kind="action", action=action))
+    assert reply.confirm is not None and reply.confirm.yes_label == "Yes"
+    assert looks.asked == []
+
+    result = await env.panel.press(reply.confirm.id, True, env.actions)
+
+    assert looks.asked == [(SHOP, "dashboard")]
+    started = prompts.load("talk/look_started", subject="shop", incident="shop #1").strip()
+    assert result.line == started

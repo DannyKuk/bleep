@@ -26,19 +26,23 @@ from bleep.config import Settings
 from bleep.guard.log import GuardLog
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
+from bleep.incidents.looks import Looks
 from bleep.incidents.quiet import QuietStore
 from bleep.incidents.repository import IncidentRepo
+from bleep.llm.usage import CostLedger
 from bleep.notify.notifier import Notifier, NotifySetup, setup
 from bleep.notify.telegram import MessageLog, OnIt, TelegramBot
 from bleep.schemas.api import HostView, QuietView, ServiceView
 from bleep.schemas.graph import Decision, Proposal
-from bleep.schemas.incidents import Signal, Subject
+from bleep.schemas.incidents import Incident, Signal, Subject
+from bleep.schemas.services import HostState, Service
+from bleep.schemas.settings import Budgets
 from bleep.schemas.talk import TalkReply
 from bleep.store.db import Database
 from bleep.talk.confirms import CONFIRM_TTL
 from bleep.talk.conversation import Talk
 from bleep.talk.state import BleepState
-from fakes import FakeChatModel
+from fakes import FakeChatModel, ssh_host
 
 SHOP = "demo/shop"
 
@@ -731,3 +735,203 @@ async def test_setup_gives_the_bot_the_conversation(tmp_path):
 
     assert built.bot is not None and built.bot.talk is talk
     await built.close()
+
+
+# --- a look on request (#403) ---
+
+
+class LookRegistry:
+    """The host `demo` and its one service, shop, as the registry lists them."""
+
+    def __init__(self) -> None:
+        self.reachable = True
+
+    def service(self, service_id: str) -> Service | None:
+        if service_id != SHOP:
+            return None
+        return Service(id=SHOP, host_id="demo", name="shop", source="compose", containers=[])
+
+    def hosts(self) -> list[HostState]:
+        return [HostState(config=ssh_host(id="demo"), reachable=self.reachable, last_seen=None)]
+
+
+class Opener:
+    """The runner a look starts: it announces the incident as the real one does first."""
+
+    def __init__(self, notifier: Notifier) -> None:
+        self.notifier = notifier
+        self.started: list[str] = []
+
+    async def start(self, incident: Incident) -> None:
+        self.started.append(incident.id)
+        await self.notifier.incident_opened(incident)
+
+
+@pytest.fixture
+def looks(env) -> Opener:
+    notifier = Notifier(
+        env.bus, env.bot.client, CHAT, env.messages, env.approvals, incidents=env.repo
+    )
+    opener = Opener(notifier)
+    env.registry = LookRegistry()
+    env.bot.looks = Looks(env.repo, opener, env.quiet, env.registry, clock=env.clock)  # type: ignore[arg-type]
+    return opener
+
+
+LOOK = reading(kind="action", action={"kind": "look_again", "subject": "shop"})
+
+
+async def look_offered(env: Env) -> str:
+    [sent] = await say(env, "look at shop again", None, LOOK)
+    label, confirm_id = offer_of(sent)
+    assert (label, sent["text"]) == ("Yes", fixed("confirm_look_again", subject="shop"))
+    env.api.calls.clear()
+    return confirm_id
+
+
+async def test_a_look_message_alone_opens_nothing_and_the_tap_opens_one_incident(env, looks):
+    await env.repo.set_status(env.incident.id, "closed")
+    confirm_id = await look_offered(env)
+    assert looks.started == [] and len(await env.repo.list()) == 1  # the message opened none
+
+    pop_up = await press(env, confirm_id)
+
+    [incident] = [i for i in await env.repo.list() if i.id != env.incident.id]
+    assert (incident.short_name, incident.status) == ("shop #2", "open")
+    assert [s.kind for s in await env.repo.signals(incident.id)] == ["look_requested"]
+    assert looks.started == [incident.id]
+    assert pop_up == fixed("look_started", subject="shop", incident="shop #2")
+    [opener] = env.api.sent("sendMessage")
+    text = opener["text"].replace("\\", "")
+    assert text.startswith("*🔴 New: shop #2 · demo*")  # new: asked for, not shop #1 again
+    assert prompts.load("notify/seen/look_requested", service="shop").strip() in text
+    assert "reply_parameters" not in opener
+
+
+async def test_a_second_or_an_expired_press_of_a_look_opens_nothing(env, looks):
+    await env.repo.set_status(env.incident.id, "closed")
+    confirm_id = await look_offered(env)
+    await press(env, confirm_id)
+    env.api.calls.clear()  # the press sent shop #2's opener
+    stale = await look_offered(env)  # shop #2 is open now, but the snapshot here does not say
+    env.clock.now += CONFIRM_TTL
+    await env.repo.set_status(looks.started[0], "closed")
+
+    assert await press(env, confirm_id) == said("answer_confirm_used")
+    assert await press(env, stale) == said("answer_confirm_expired")
+    assert len(looks.started) == 1 and len(await env.repo.list()) == 2
+
+
+async def test_a_look_pressed_while_an_incident_is_open_names_it_and_opens_nothing(env, looks):
+    confirm_id = await look_offered(env)  # the snapshot here does not know of shop #1
+
+    pop_up = await press(env, confirm_id)
+
+    assert pop_up == fixed("look_open", incident="shop #1", subject="shop")
+    assert looks.started == [] and [i.id for i in await env.repo.list()] == [env.incident.id]
+    assert [s.kind for s in await env.repo.signals(env.incident.id)] == ["container_died"]
+
+
+async def test_a_look_pressed_once_the_service_went_quiet_opens_nothing(env, looks):
+    await env.repo.set_status(env.incident.id, "closed")
+    confirm_id = await look_offered(env)
+    await env.quiet.set("service", SHOP, "snooze", T0 + timedelta(hours=2))
+
+    pop_up = await press(env, confirm_id)
+
+    assert pop_up == fixed("look_snoozed", subject="shop", until="14:00 UTC")
+    assert looks.started == [] and len(await env.repo.list()) == 1
+
+
+async def test_a_look_pressed_while_the_host_does_not_answer_opens_nothing(env, looks):
+    await env.repo.set_status(env.incident.id, "closed")
+    confirm_id = await look_offered(env)
+    env.registry.reachable = False
+
+    pop_up = await press(env, confirm_id)
+
+    assert pop_up == fixed("look_unreachable", subject="shop", host="demo")
+    assert looks.started == [] and len(await env.repo.list()) == 1
+
+
+async def test_a_look_pressed_once_the_days_cap_is_spent_opens_nothing(env, looks):
+    ledger = CostLedger(env.db)
+    budgets = Budgets(daily_cost_usd=0.5)
+    env.bot.looks = Looks(
+        env.repo, looks, env.quiet, env.registry, ledger=ledger, budgets=lambda: budgets
+    )  # type: ignore[arg-type]
+    await env.repo.set_status(env.incident.id, "closed")
+    confirm_id = await look_offered(env)  # this chat's Talk reads no ledger: the offer is made
+    await ledger.add("inc_other", "m", 1000, 1000, 0.6)
+
+    pop_up = await press(env, confirm_id)
+
+    assert pop_up == fixed("look_spent")
+    assert looks.started == [] and len(await env.repo.list()) == 1
+
+
+class Unannounced:
+    """A runner that starts nothing yet: the test announces the incident when it chooses."""
+
+    async def start(self, incident: Incident) -> None:
+        return None
+
+
+async def opener_of(env: Env, incident: Incident) -> str:
+    env.api.calls.clear()
+    await looks_notifier(env).incident_opened(incident)
+    [opener] = env.api.sent("sendMessage")
+    return opener["text"].replace("\\", "")
+
+
+def looks_notifier(env: Env) -> Notifier:
+    return Notifier(env.bus, env.bot.client, CHAT, env.messages, env.approvals, incidents=env.repo)
+
+
+async def test_a_watcher_signal_that_attached_first_never_changes_a_looks_opener(env):
+    await env.repo.set_status(env.incident.id, "closed")
+    subject = Subject(kind="service", host_id="demo", service_id=SHOP)
+    looks = Looks(env.repo, Unannounced(), env.quiet, LookRegistry())  # type: ignore[arg-type]
+    look = await looks.look(SHOP, "telegram")
+    unhealthy = Signal(subject=subject, kind="unhealthy", at=T0, container="shop-web-1")
+    await env.repo.open_or_attach(subject, [unhealthy])  # attaches between open and announce
+
+    text = await opener_of(env, look.incident)
+
+    assert text.startswith("*🔴 New: shop #2 · demo*")
+    assert prompts.load("notify/seen/look_requested", service="shop").strip() in text
+    assert "unhealthy" not in text
+
+
+async def test_a_bare_look_is_no_earlier_incident_for_the_next_ones_again(env, looks):
+    await env.repo.set_status(env.incident.id, "closed")
+    await press(env, await look_offered(env))
+    [look_id] = looks.started
+    await env.repo.set_status(look_id, "closed")
+    subject = Subject(kind="service", host_id="demo", service_id=SHOP)
+    died = Signal(subject=subject, kind="container_died", at=T0, container="shop-web-1")
+    incident, _ = await env.repo.open_or_attach(subject, [died])
+
+    text = await opener_of(env, incident)
+
+    assert text.startswith("*🔁 Again: shop #3 ·") and text.split("*")[1].endswith("shop #1")
+    assert "shop #2" not in text
+
+
+async def test_a_look_pressed_without_looks_wired_opens_nothing(env):
+    await env.repo.set_status(env.incident.id, "closed")
+    confirm_id = await look_offered(env)
+
+    assert await press(env, confirm_id) == said("answer_unknown")
+    assert len(await env.repo.list()) == 1
+
+
+async def test_the_setup_gives_the_bot_its_looks_when_it_starts(env):
+    built = NotifySetup(Notifier(env.bus), env.bot)
+    sentinel = object()
+    built.use_looks(sentinel)  # type: ignore[arg-type]
+
+    built.start(env.runner)
+
+    assert env.bot.looks is sentinel
+    await built.stop()

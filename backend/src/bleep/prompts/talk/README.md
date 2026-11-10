@@ -14,12 +14,15 @@ How Bleep reads what a person writes in its chat, and the fixed lines it answers
   `quiet_through_host`, `snooze_how_long`, `snooze_limit`, `no_incident`, `which_incident`,
   `incident_ended`, `no_plan`. `subject_on_host` names a service with its host when another
   service or a host has its name.
+- `look_*` answer a look on request (#403, `talk/looks.py`), filled only with names from Bleep's
+  state: why none is offered or opened (`look_host`, `look_open`, `look_snoozed`,
+  `look_left_alone`, `look_quiet_host`, `look_unreachable`, `look_spent`, `look_unknown`), and
+  `look_started` once a press opened the incident. `confirm_look_again` is its confirm line, and
+  says that a look costs a model run.
 - `plan_on_page` answers a yes to a waiting plan in the dashboard's panel, which points to the
   incident's page instead of showing the plan's buttons (#391).
 - A press of an offer's button is answered with the lines a Telegram button gets
   (`notify/answer_*`), on both surfaces (`talk/actions.py`).
-- `not_yet` with `understood_look_again` (and `unknown_subject` for a name Bleep does not know)
-  answers a look on request, which comes with #403.
 - `when_*` are the words of a time in a chat (`talk/times.py`), shared with Telegram's messages.
 - `link_removed` stands in for a link taken out of an answer.
 - None of these can be overridden from the dev panel: they read the person's words and refuse

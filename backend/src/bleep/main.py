@@ -26,6 +26,7 @@ from bleep.config import Settings, check_settings
 from bleep.graph.build import build_graph, open_checkpointer
 from bleep.hosts.dashboard import HostChange
 from bleep.incidents.expectations import Expectations
+from bleep.incidents.looks import Looks
 from bleep.incidents.reminders import ReminderLoop
 from bleep.incidents.repository import utcnow
 from bleep.incidents.runner import IncidentRunner
@@ -132,6 +133,14 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 parts.registry,
                 parts.bus,
             )
+            app.state.looks = Looks(
+                parts.incidents,
+                runner,
+                parts.quiet,
+                parts.registry,
+                ledger=parts.graph_deps.ledger,
+                budgets=parts.settings_store.budgets,
+            )
             # The manager first: a removed host stops being watched before its settings go.
             parts.dashboard_hosts.subscribe(manager.host_changed)
             parts.dashboard_hosts.subscribe(parts.settings_store.host_changed)
@@ -148,6 +157,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
             stack.push_async_callback(_cancel, knowledge)
             stack.push_async_callback(parts.notify.stop)
             parts.notify.use_expectations(app.state.expectations)
+            parts.notify.use_looks(app.state.looks)
             parts.notify.start(runner)  # polls Telegram only when a token is configured
             yield
 

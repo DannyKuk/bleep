@@ -33,7 +33,7 @@ from bleep.schemas.graph import Decision
 from bleep.schemas.incidents import TERMINAL_STATUSES
 from bleep.schemas.talk import Offer
 from bleep.store.db import Database
-from bleep.talk.actions import Actions, Expecting, Resumer
+from bleep.talk.actions import Actions, Expecting, Looking, Resumer
 from bleep.talk.confirms import NO_LABEL, Confirms, yes_label
 from bleep.talk.conversation import Talk
 from bleep.talk.history import Turns
@@ -336,6 +336,7 @@ class TelegramBot:
         self.clock = clock
         self._sleep = sleep
         self.expectations: Expecting | None = None
+        self.looks: Looking | None = None  # given with the runner, which a look starts
         self.on_it = on_it
         self.talk = talk
         self.turns = Turns()  # this chat's last turns, for the next message's context
@@ -358,6 +359,7 @@ class TelegramBot:
             incidents=self.on_it.incidents if self.on_it is not None else None,
             quiet=self.on_it.quiet if self.on_it is not None else None,
             expectations=self.expectations,
+            looks=self.looks,
             zone=self._zone,
         )
 
