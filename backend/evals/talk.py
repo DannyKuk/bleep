@@ -356,7 +356,8 @@ async def run_case(
     started = time.monotonic()
     try:
         async with asyncio.timeout(RUN_TIMEOUT_S):
-            reply = await talk.reply(case.text, facts.id if facts is not None else None, case.turns)
+            incident_id = facts.id if facts is not None else None
+            reply = await talk.reply(case.text, incident_id, case.turns, surface="panel")
         result.kind, result.answer = reply.kind, reply.answer
         result.action = reply.action.model_dump(exclude_none=True) if reply.action else None
         if reply.kind == "failed":

@@ -579,7 +579,7 @@ class TelegramBot:
         log (#411)."""
         assert self.talk is not None
         incident_id = known[0] if known is not None else None
-        said = await self.talk.reply(text, incident_id, self.turns.recent(), "telegram")
+        said = await self.talk.reply(text, incident_id, self.turns.recent(), surface="telegram")
         confirm_id = None
         if said.offer is not None:
             note, confirm_id = await self._offer(said.offer, said.answer, reply, known)
@@ -667,14 +667,15 @@ class TelegramBot:
         nothing and are told so; the buttons go either way."""
         shown = self._shown.get(confirm_id)
         taken = self.confirms.take(confirm_id) if shown in (None, message_id) else "unknown"
-        no = verb == DECLINE_VERB
         if isinstance(taken, str):
             said = answer("answer_confirm_used" if taken == "used" else "answer_confirm_expired")
         else:
             self._shown.pop(confirm_id, None)
-            said = answer("answer_confirm_no") if no else await self.actions.run(taken)
-        if self.talk is not None and taken != "unknown":  # a press on another message is not it
-            self.talk.log.pressed("telegram", confirm_id, not no, said)
+            yes = verb != DECLINE_VERB
+            press = self.talk.log.pressed("telegram", confirm_id, yes) if self.talk else None
+            said = await self.actions.run(taken) if yes else answer("answer_confirm_no")
+            if press is not None:
+                press.line = said
         await self.client.answer_callback(callback_id, _cut(said))
         await self._edit(message_id, [])
 

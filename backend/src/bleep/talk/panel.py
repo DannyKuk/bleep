@@ -46,7 +46,9 @@ class Panel:
         try:
             async with self._turn:
                 self.confirms.expired()  # forgets the offers nobody answered in time
-                reply = await self.talk.reply(text, incident_id, self.turns.recent(), "panel")
+                reply = await self.talk.reply(
+                    text, incident_id, self.turns.recent(), surface="panel"
+                )
                 answer = await self._answer(reply, actions)
                 confirm_id = answer.confirm.id if answer.confirm is not None else None
                 self.talk.log.shown(
@@ -83,19 +85,17 @@ class Panel:
     async def press(self, confirm_id: str, yes: bool, actions: Actions) -> ConfirmResult:
         """Run the offer `confirm_id` on yes, once; no drops it. A second press, an expired and
         an unknown offer run nothing."""
-        line = await self._press(confirm_id, yes, actions)
-        self.talk.log.pressed("panel", confirm_id, yes, line)
-        return ConfirmResult(line=line)
-
-    async def _press(self, confirm_id: str, yes: bool, actions: Actions) -> str:
         taken = self.confirms.take(confirm_id)
         if taken == "used":
-            return said("answer_confirm_used")
+            return ConfirmResult(line=said("answer_confirm_used"))
         if isinstance(taken, str):
-            return said("answer_confirm_expired")
-        if not yes:
-            return said("answer_confirm_no")
-        return await actions.run(taken)
+            return ConfirmResult(line=said("answer_confirm_expired"))
+        # Logged as it takes the offer: a second press, answered while this one runs, is not it.
+        press = self.talk.log.pressed("panel", confirm_id, yes)
+        line = await actions.run(taken) if yes else said("answer_confirm_no")
+        if press is not None:
+            press.line = line
+        return ConfirmResult(line=line)
 
 
 async def _plan_line(offer: Offer, actions: Actions) -> str:

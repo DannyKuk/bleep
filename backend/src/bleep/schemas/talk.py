@@ -119,11 +119,12 @@ class TalkUsage(BaseModel):
 
 
 class TalkPress(BaseModel):
-    """The first press of an offer's buttons and the line it was answered with."""
+    """The press that took an offer and the line it was answered with; `line` stays empty
+    while what it runs is still running, or if that failed."""
 
     at: datetime
     yes: bool
-    line: str
+    line: str = ""
 
 
 class TalkExchange(BaseModel):
@@ -152,6 +153,7 @@ class TalkExchange(BaseModel):
 
 
 MESSAGE_MAX_CHARS = 1000  # what a person may write in one message, on either surface
+INCIDENT_ID_MAX_CHARS = 64
 
 
 class ChatMessage(BaseModel):
@@ -159,7 +161,11 @@ class ChatMessage(BaseModel):
     written on, while its chip is kept."""
 
     text: str = Field(min_length=1, max_length=MESSAGE_MAX_CHARS)
-    incident_id: str | None = None
+    # An incident id is `inc_` and 18 letters and digits; anything far off is refused before it
+    # is looked up or kept in the talk log.
+    incident_id: str | None = Field(
+        default=None, min_length=1, max_length=INCIDENT_ID_MAX_CHARS, pattern=r"^[A-Za-z0-9_-]+$"
+    )
 
     @field_validator("text", mode="before")
     @classmethod

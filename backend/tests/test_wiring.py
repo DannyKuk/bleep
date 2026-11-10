@@ -69,3 +69,19 @@ def test_the_conversation_traces_its_readings_with_the_parts_tracer(settings):
 
     assert parts.talk.tracer is parts.tracer is tracer
     assert parts.panel.talk is parts.talk
+
+
+def test_a_tracer_that_traces_incidents_only_leaves_the_conversation_untraced(settings):
+    class IncidentsOnly:
+        def run_config(self, incident):
+            return {}
+
+        def trace_url(self, incident):
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    parts = build_parts(settings, Registry([]), tracer=IncidentsOnly())
+
+    assert parts.talk.tracer is None

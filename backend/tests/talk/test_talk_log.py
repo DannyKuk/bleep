@@ -51,9 +51,11 @@ def test_what_the_surface_showed_and_the_first_press_are_kept_with_the_message()
 
     log.shown("panel", entry.id, "🤫 Snooze shop until 16:04?", [link], "c1")
     clock[0] = T0 + timedelta(minutes=1)
-    log.pressed("panel", "c1", True, "Snoozed until 16:04.")
-    log.pressed("panel", "c1", True, "Already answered; this press changed nothing.")
-    log.pressed("telegram", "c1", False, "a press on the other surface is not this one")
+    press = log.pressed("panel", "c1", True)
+    assert press is not None
+    assert log.pressed("panel", "c1", True) is None  # the slot is taken
+    assert log.pressed("telegram", "c1", False) is None  # another surface's offer
+    press.line = "Snoozed until 16:04."
 
     [kept] = log.exchanges()
     assert (kept.answer, kept.links) == ("🤫 Snooze shop until 16:04?", [link])
@@ -92,7 +94,9 @@ def test_the_transcript_shows_each_surface_with_how_each_message_was_read():
         ),
     )
     log.shown("panel", entry.id, "🤫 Snooze shop until 16:04?", confirm_id="c1")
-    log.pressed("panel", "c1", True, "Snoozed until 16:04.")
+    press = log.pressed("panel", "c1", True)
+    assert press is not None
+    press.line = "Snoozed until 16:04."
     exchange(log, kind="refusal", reading=TalkReading(kind="refusal", refusal="change"),
              refused=None, answer="I can't do that from chat.")  # fmt: skip
     exchange(log, kind="failed", error="TimeoutError", answer="I couldn't read that just now.")
@@ -122,3 +126,16 @@ def test_a_check_that_refused_an_action_says_why_in_the_transcript():
 
     assert line("log_refused", line=why) in md
     assert line("log_empty") in md.split(line("log_telegram"))[0]
+
+
+def test_backticks_in_a_reading_cannot_close_its_code_span():
+    log = TalkLog(lambda: T0)
+    answer = "run ``rm -rf`` and `ls`"
+    exchange(log, reading=TalkReading(kind="question", answer=answer))
+
+    md = transcript(log.exchanges(), T0)
+
+    [read_as] = [row for row in md.splitlines() if row.startswith(line("log_reading", reading=""))]
+    span = read_as.removeprefix(line("log_reading", reading="")).strip()
+    assert span.startswith("``` ") and span.endswith(" ```")
+    assert answer in span

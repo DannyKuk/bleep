@@ -660,7 +660,7 @@ class SlowTalk:
         self.asked: list[str] = []
         self.log = TalkLog()
 
-    async def reply(self, text, incident_id=None, turns=(), surface="telegram"):
+    async def reply(self, text, incident_id=None, turns=(), *, surface):
         self.asked.append(text)
         await self.go.wait()
         return TalkReply(kind="question", answer="late answer")

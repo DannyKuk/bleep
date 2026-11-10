@@ -18,11 +18,11 @@ import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, tzinfo
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langchain_core.runnables.config import merge_configs
 from pydantic import BaseModel
 
@@ -117,6 +117,7 @@ def _no_zone() -> tzinfo | None:
     return None
 
 
+@runtime_checkable
 class Tracing(Protocol):
     """Traces a reading (`llm.tracing`): each is its own trace, in its surface's session."""
 
@@ -168,7 +169,8 @@ class Talk:
         text: str,
         incident_id: str | None = None,
         turns: Sequence[Turn] = (),
-        surface: TalkSurface = "panel",
+        *,
+        surface: TalkSurface,
     ) -> TalkReply:
         """Read `text`, said about the incident `incident_id` if any after the earlier `turns`
         of this conversation on `surface`, and say what Bleep answers. Never raises for a model
@@ -258,7 +260,14 @@ class Talk:
         timeout = min(TIMEOUT_S, self.budgets().model_timeout_s)
         guard = ModelGuard(timeout, retries=RETRIES, sleep=self.sleep)
         model = self.models("cheap")
-        return await invoke_structured(model, TalkReading, messages, config=config, guard=guard)
+
+        async def structured(asked: list[BaseMessage], config: RunnableConfig) -> TalkReading:
+            return await invoke_structured(model, TalkReading, asked, config=config, guard=guard)
+
+        # One parent run, so the tool attempt, a retry and the JSON fallback nest under one trace
+        # instead of each starting its own.
+        reading = RunnableLambda(structured, name=f"talk-{surface}")
+        return await reading.ainvoke(messages, config)
 
     def _traced(self, surface: TalkSurface) -> RunnableConfig:
         """The tracer's part of the call's config; a tracer that fails leaves the call untraced."""

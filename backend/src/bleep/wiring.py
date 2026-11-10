@@ -53,7 +53,7 @@ from bleep.plugins.urls import Resolver
 from bleep.schemas.settings import MODEL_KEY_ENV
 from bleep.store.db import Database
 from bleep.store.secrets import SecretName, SecretStore
-from bleep.talk.conversation import Talk
+from bleep.talk.conversation import Talk, Tracing
 from bleep.talk.panel import Panel
 from bleep.talk.state import BleepState
 from bleep.tools.default import default_registry
@@ -234,7 +234,8 @@ def build_parts(
     url_checks = UrlCheckStore(db)
     overview = Overview(registry, incidents, quiet, url_checks)
     tracer = tracer or ReloadingTracer(secrets.get)  # before `talk`, which traces its readings
-    talk = build_talk(settings, db, overview, incidents, approvals, bus, store, guard_log, tracer)
+    reads = tracer if isinstance(tracer, Tracing) else None  # a tracer may trace incidents only
+    talk = build_talk(settings, db, overview, incidents, approvals, bus, store, guard_log, reads)
     notify = setup_notify(
         settings,
         db,
@@ -309,7 +310,7 @@ def build_talk(
     bus: EventBus,
     store: SettingsStore,
     guard_log: GuardLog,
-    tracer: Tracer | None = None,
+    tracer: Tracing | None = None,
 ) -> Talk:
     """The conversation both surfaces answer with: Telegram's bot and the dashboard's
     panel. It reads the watcher's overview as its health, the cheap model from the settings in

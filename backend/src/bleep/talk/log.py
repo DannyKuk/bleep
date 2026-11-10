@@ -10,6 +10,7 @@ JSON or as the Markdown transcript `transcript` builds (docs/design/app.md).
 """
 
 import itertools
+import re
 from collections import deque
 from collections.abc import Callable, Sequence
 from datetime import datetime
@@ -51,11 +52,15 @@ class TalkLog:
         if entry is not None:
             entry.answer, entry.links, entry.confirm_id = answer, list(links), confirm_id
 
-    def pressed(self, surface: TalkSurface, confirm_id: str, yes: bool, line: str) -> None:
-        """The first press of an offer's buttons and its answer; a later press ran nothing."""
+    def pressed(self, surface: TalkSurface, confirm_id: str, yes: bool) -> TalkPress | None:
+        """Record the press that took the offer, before what it runs is awaited, so a second
+        press answered meanwhile can never take its place; the surface fills in `line` once
+        the press is answered. Only a press that took its offer is recorded."""
         entry = next((e for e in self._rings[surface] if e.confirm_id == confirm_id), None)
-        if entry is not None and entry.press is None:
-            entry.press = TalkPress(at=self.clock(), yes=yes, line=line)
+        if entry is None or entry.press is not None:
+            return None
+        entry.press = TalkPress(at=self.clock(), yes=yes)
+        return entry.press
 
     def exchanges(self) -> list[TalkExchange]:
         """Each surface's entries, oldest first, the panel's before Telegram's."""
@@ -71,7 +76,10 @@ def _quoted(text: str) -> str:
 
 
 def _code(json: str) -> str:
-    return f"`` {json} ``"
+    """`json` as inline code, fenced by more backticks than any run inside it."""
+    longest = max((len(run) for run in re.findall(r"`+", json)), default=0)
+    fence = "`" * (longest + 1)
+    return f"{fence} {json} {fence}"
 
 
 def _cost(exchange: TalkExchange) -> str:

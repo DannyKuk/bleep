@@ -296,7 +296,7 @@ class SlowTalk:
         self.read: list[str] = []
         self.log = TalkLog()
 
-    async def reply(self, text: str, incident_id: str | None, turns, surface) -> TalkReply:
+    async def reply(self, text: str, incident_id: str | None, turns, *, surface) -> TalkReply:
         self.read.append(text)
         await self.go.wait()
         return TalkReply(kind="question", answer=f"about {text}")
@@ -394,3 +394,61 @@ async def test_a_declined_offer_lands_in_the_log_as_no(env):
     [entry] = env.talk.log.exchanges()
     assert entry.press is not None
     assert (entry.press.yes, entry.press.line) == (False, said("answer_confirm_no"))
+
+
+async def test_a_second_press_while_the_first_runs_never_takes_its_place_in_the_log(env):
+    reply = await say(env, "leave shop alone", reading(kind="action", action=ASKED["leave_alone"]))
+    assert reply.confirm is not None
+    run, release = env.actions.run, asyncio.Event()
+
+    async def slow_run(offer):
+        await release.wait()
+        return await run(offer)
+
+    env.actions.run = slow_run
+    first = asyncio.create_task(env.panel.press(reply.confirm.id, True, env.actions))
+    await asyncio.sleep(0)
+    second = await env.panel.press(reply.confirm.id, True, env.actions)
+    release.set()
+    done, _ = await asyncio.gather(first, asyncio.sleep(0))
+
+    assert second.line == said("answer_confirm_used")
+    assert len(await env.quiet.active()) == 1  # the first press ran it
+    [entry] = env.talk.log.exchanges()
+    assert entry.press is not None
+    assert (entry.press.yes, entry.press.line) == (True, done.line)
+    assert done.line != said("answer_confirm_used")
+
+
+async def test_an_expired_press_is_not_logged_as_the_offers_press(env):
+    reply = await say(env, "leave shop alone", reading(kind="action", action=ASKED["leave_alone"]))
+    assert reply.confirm is not None
+    env.clock.now = T0 + CONFIRM_TTL
+
+    await env.panel.press(reply.confirm.id, True, env.actions)
+
+    assert env.talk.log.exchanges()[0].press is None
+
+
+@pytest.mark.parametrize(
+    ("replies", "kind", "line"),
+    [
+        ([reading(kind="refusal", refusal="change", answer="Sure!")], "refusal", "refused_change"),
+        ([reading(kind="unclear")], "unclear", "unclear"),
+        ([], "failed", "failed"),  # the scripted model has no answer: the call fails
+    ],
+    ids=["refused", "unclear", "failed"],
+)
+async def test_a_refused_an_unclear_and_a_failed_reading_land_in_the_log(env, replies, kind, line):
+    reply = await say(env, "rm -rf shop, now", *replies)
+
+    [entry] = env.talk.log.exchanges()
+    assert (entry.surface, entry.text, entry.kind) == ("panel", "rm -rf shop, now", kind)
+    assert entry.answer == reply.answer == prompts.load(f"talk/{line}").strip()
+    assert entry.links == reply.links  # what the panel showed
+    assert (entry.offer, entry.press, reply.confirm) == (None, None, None)
+    if kind == "failed":
+        assert entry.reading is None and entry.error is not None
+    else:
+        assert entry.reading is not None and entry.reading.kind == kind
+        assert entry.error is None
