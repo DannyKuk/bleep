@@ -6,7 +6,9 @@ and the snapshot all reach the model as untrusted data (`guard_text`), and the m
 a kind and, for a question, writes the answer. An action comes back as an offer, checked by code
 against Bleep's state (`talk.offers`), that the surface confirms with a button; a refusal, an
 unclear message, a failure and an offer that fails a check are answered with fixed lines from
-`prompts/talk/`, never with the model's words (docs/design/notify.md).
+`prompts/talk/`, never with the model's words (docs/design/notify.md). Every message lands in the
+talk log (`talk.log`, #411) with how it was read, and with tracing on each reading is its own
+trace, in the session of its surface.
 """
 
 import asyncio
@@ -14,11 +16,14 @@ import json
 import logging
 import re
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, tzinfo
+from typing import Any, Protocol, runtime_checkable
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig, RunnableLambda
+from langchain_core.runnables.config import merge_configs
 from pydantic import BaseModel
 
 from bleep import prompts
@@ -33,6 +38,8 @@ from bleep.llm.structured import invoke_structured
 from bleep.llm.usage import (
     CHAT_USAGE,
     BudgetExceeded,
+    CallCost,
+    CallCosts,
     CostLedger,
     UsageTracker,
     check_chat_cap,
@@ -44,11 +51,15 @@ from bleep.schemas.talk import (
     Offer,
     ReplyKind,
     Snapshot,
+    TalkExchange,
     TalkReading,
     TalkReply,
+    TalkSurface,
+    TalkUsage,
     Turn,
 )
 from bleep.talk.links import known_links, links_in, offer_links
+from bleep.talk.log import TalkLog
 from bleep.talk.looks import look_offer
 from bleep.talk.offers import check, confirm_line, instruction
 from bleep.talk.state import StateReader
@@ -97,15 +108,36 @@ def clean_answer(text: str) -> str:
     return clean if len(clean) <= ANSWER_CHARS else clean[: ANSWER_CHARS - 1].rstrip() + "…"
 
 
+def logged_text(text: str) -> str:
+    """The person's words as the talk log keeps them: as the model read them, never raw."""
+    return _logged_words(text, TEXT_CHARS)
+
+
 def _no_zone() -> tzinfo | None:
     return None
+
+
+@runtime_checkable
+class Tracing(Protocol):
+    """Traces a reading (`llm.tracing`): each is its own trace, in its surface's session."""
+
+    def talk_config(self, surface: TalkSurface) -> RunnableConfig: ...
+
+
+@dataclass
+class _Seen:
+    """What happened inside one reply, for its entry in the log."""
+
+    reading: TalkReading | None = None
+    error: str | None = None
+    checked: Offer | str | None = None
 
 
 class Talk:
     """`models` builds the chat model for a role (the `cheap` one is used); `budgets` gives the
     chat's own daily cost cap and the model timeout, `ledger` records what each call cost.
     `zone` gives Bleep's time zone at each message (None: UTC), in which a snooze's time is read
-    and said."""
+    and said. Each message is kept in `log`; `tracer` traces each reading."""
 
     def __init__(
         self,
@@ -118,6 +150,8 @@ class Talk:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         zone: Callable[[], tzinfo | None] = _no_zone,
         clock: Callable[[], datetime] = utcnow,
+        log: TalkLog | None = None,
+        tracer: Tracing | None = None,
     ) -> None:
         self.state = state
         self.models = models
@@ -127,32 +161,74 @@ class Talk:
         self.sleep = sleep
         self.zone = zone
         self.clock = clock
+        self.log = log if log is not None else TalkLog(clock)
+        self.tracer = tracer
 
     async def reply(
-        self, text: str, incident_id: str | None = None, turns: Sequence[Turn] = ()
+        self,
+        text: str,
+        incident_id: str | None = None,
+        turns: Sequence[Turn] = (),
+        *,
+        surface: TalkSurface,
     ) -> TalkReply:
         """Read `text`, said about the incident `incident_id` if any after the earlier `turns`
-        of this conversation, and say what Bleep answers. Never raises for a model that fails:
-        that is the `failed` reply, which still offers to send the words to a plan that waits
-        on the incident, as a reply to it could before."""
+        of this conversation on `surface`, and say what Bleep answers. Never raises for a model
+        that fails: that is the `failed` reply, which still offers to send the words to a plan
+        that waits on the incident, as a reply to it could before. The message and its reading
+        go into the log; the reply carries the entry's id, for the surface to add what it
+        showed (`TalkLog.shown`)."""
+        at, seen, costs = self.clock(), _Seen(), CallCosts()
+        said = await self._reply(text, incident_id, turns, surface, seen, costs)
+        exchange = TalkExchange(
+            id=self.log.next_id(),
+            at=at,
+            surface=surface,
+            text=logged_text(text),
+            incident_id=incident_id,
+            kind=said.kind,
+            reading=_logged_reading(seen.reading),
+            error=seen.error,
+            offer=_logged_offer(said.offer),
+            refused=seen.checked if isinstance(seen.checked, str) else None,
+            answer=said.answer,
+            links=said.links,
+            usage=_usage(costs.calls),
+        )
+        self.log.add(exchange)
+        return said.model_copy(update={"exchange_id": exchange.id})
+
+    async def _reply(
+        self,
+        text: str,
+        incident_id: str | None,
+        turns: Sequence[Turn],
+        surface: TalkSurface,
+        seen: _Seen,
+        costs: CallCosts,
+    ) -> TalkReply:
         facts: IncidentFacts | None = None
         try:
             async with asyncio.timeout(REPLY_TIMEOUT_S):
                 snapshot = await self.state.snapshot()
                 facts = await self.state.incident(incident_id) if incident_id else None
-                reading = await self._read(text, snapshot, facts, list(turns))
+                reading = await self._read(text, snapshot, facts, list(turns), surface, costs)
+                seen.reading = reading
                 spent = _asks_look(reading) and await self._runs_spent()
-        except BudgetExceeded:
+        except BudgetExceeded as error:
+            seen.error = type(error).__name__
             return self._fallback("failed", _fixed("spent"), text, facts, incident_id)
         except Exception as error:  # the type only: a provider's message may quote its key
-            log.warning("talk: could not read a message (%s)", type(error).__name__)
+            seen.error = type(error).__name__
+            log.warning("talk: could not read a message (%s)", seen.error)
             return self._fallback("failed", _fixed("failed"), text, facts, incident_id)
         try:
-            said = self._answer(reading, text, snapshot, facts, incident_id, spent)
+            said = self._answer(reading, text, snapshot, facts, incident_id, spent, seen)
             named = offer_links(said.offer) if said.offer else []
             candidates = [*named, *known_links(snapshot, facts)]
             return said.model_copy(update={"links": links_in(said.answer, candidates)})
-        except Exception:  # a bug checking a reading must still answer, and keep its traceback
+        except Exception as error:  # a bug checking a reading must still answer, and its trace
+            seen.error = type(error).__name__
             log.exception("talk: could not answer a reading")
             return TalkReply(kind="failed", answer=_fixed("failed"), incident_id=incident_id)
 
@@ -162,6 +238,8 @@ class Talk:
         snapshot: Snapshot,
         facts: IncidentFacts | None,
         turns: list[Turn],
+        surface: TalkSurface,
+        costs: CallCosts,
     ) -> TalkReading:
         history = [Turn(said=t.said[:TURN_CHARS], answered=t.answered[:TURN_CHARS]) for t in turns]
         message = prompts.load(
@@ -174,14 +252,32 @@ class Talk:
             message=self._guarded("person", text.strip(), TEXT_CHARS),
         )
         messages = [SystemMessage(prompts.load("talk/read")), HumanMessage(message)]
-        config: RunnableConfig | None = None
+        callbacks: list[Any] = [costs]
         if self.ledger is not None:
             await check_chat_cap(self.ledger, self.budgets())
-            config = {"callbacks": [UsageTracker(TALK_USAGE, self.ledger)]}
+            callbacks.append(UsageTracker(TALK_USAGE, self.ledger))
+        config = merge_configs(self._traced(surface), {"callbacks": callbacks})
         timeout = min(TIMEOUT_S, self.budgets().model_timeout_s)
         guard = ModelGuard(timeout, retries=RETRIES, sleep=self.sleep)
         model = self.models("cheap")
-        return await invoke_structured(model, TalkReading, messages, config=config, guard=guard)
+
+        async def structured(asked: list[BaseMessage], config: RunnableConfig) -> TalkReading:
+            return await invoke_structured(model, TalkReading, asked, config=config, guard=guard)
+
+        # One parent run, so the tool attempt, a retry and the JSON fallback nest under one trace
+        # instead of each starting its own.
+        reading = RunnableLambda(structured, name=f"talk-{surface}")
+        return await reading.ainvoke(messages, config)
+
+    def _traced(self, surface: TalkSurface) -> RunnableConfig:
+        """The tracer's part of the call's config; a tracer that fails leaves the call untraced."""
+        if self.tracer is None:
+            return {}
+        try:
+            return self.tracer.talk_config(surface)
+        except Exception as error:  # by type only: its message may quote an endpoint or a key
+            log.warning("talk: tracing failed (%s); reading untraced", type(error).__name__)
+            return {}
 
     async def _runs_spent(self) -> bool:
         """Whether the day's cost cap of the incident runs is spent, so a look cannot start."""
@@ -205,6 +301,7 @@ class Talk:
         facts: IncidentFacts | None,
         incident_id: str | None,
         spent: bool = False,
+        seen: _Seen | None = None,
     ) -> TalkReply:
         def reply(kind: ReplyKind, answer: str, offer: Offer | None = None) -> TalkReply:
             return TalkReply(
@@ -226,6 +323,8 @@ class Talk:
                 checked = look_offer(action, snapshot, now, zone, spent)
             else:
                 checked = check(action, snapshot, facts, now, zone, text.strip()[:TEXT_CHARS])
+            if seen is not None:
+                seen.checked = checked
             if isinstance(checked, str):
                 return reply("action", checked)
             return reply("action", confirm_line(checked, now, zone), checked)
@@ -254,6 +353,44 @@ class Talk:
         if kind == "failed":  # the person learns their words were not read before sending them
             answer = f"{line}\n{answer}"
         return TalkReply(kind=kind, answer=answer, incident_id=incident_id, offer=offer)
+
+
+def _logged_reading(reading: TalkReading | None) -> TalkReading | None:
+    """The reading as the log keeps it: the model's own words cleaned as an answer is, the
+    links left in, since they may be what went wrong."""
+    if reading is None:
+        return None
+    action = reading.action
+    if action is not None:
+        said = {"subject": action.subject, "until": action.until, "incident": action.incident}
+        cleaned = {k: _logged_words(v, TURN_CHARS) for k, v in said.items() if v is not None}
+        action = action.model_copy(update=cleaned)
+    answer = _logged_words(reading.answer, ANSWER_CHARS)
+    return reading.model_copy(update={"answer": answer, "action": action})
+
+
+def _logged_words(text: str, limit: int) -> str:
+    return redact_text(strip_control(text)).strip()[:limit]
+
+
+def _logged_offer(offer: Offer | None) -> Offer | None:
+    """The offer as the log keeps it: an instruction's words as the person's text is kept."""
+    if offer is None or offer.text is None:
+        return offer
+    return offer.model_copy(update={"text": logged_text(offer.text)})
+
+
+def _usage(calls: list[CallCost]) -> TalkUsage | None:
+    if not calls:
+        return None
+    priced = [c.usd for c in calls if c.usd is not None]
+    return TalkUsage(
+        model=calls[-1].model,
+        calls=len(calls),
+        tokens_in=sum(c.tokens_in for c in calls),
+        tokens_out=sum(c.tokens_out for c in calls),
+        usd=sum(priced) if priced else None,
+    )
 
 
 def _asks_look(reading: TalkReading) -> bool:

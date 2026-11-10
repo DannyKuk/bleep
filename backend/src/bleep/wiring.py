@@ -53,7 +53,7 @@ from bleep.plugins.urls import Resolver
 from bleep.schemas.settings import MODEL_KEY_ENV
 from bleep.store.db import Database
 from bleep.store.secrets import SecretName, SecretStore
-from bleep.talk.conversation import Talk
+from bleep.talk.conversation import Talk, Tracing
 from bleep.talk.panel import Panel
 from bleep.talk.state import BleepState
 from bleep.tools.default import default_registry
@@ -233,7 +233,9 @@ def build_parts(
     )  # fmt: skip
     url_checks = UrlCheckStore(db)
     overview = Overview(registry, incidents, quiet, url_checks)
-    talk = build_talk(settings, db, overview, incidents, approvals, bus, store, guard_log)
+    tracer = tracer or ReloadingTracer(secrets.get)  # before `talk`, which traces its readings
+    reads = tracer if isinstance(tracer, Tracing) else None  # a tracer may trace incidents only
+    talk = build_talk(settings, db, overview, incidents, approvals, bus, store, guard_log, reads)
     notify = setup_notify(
         settings,
         db,
@@ -252,7 +254,6 @@ def build_parts(
     memory = MemoryStore(db, embedder)
     knowledge = KnowledgeIndex(db, embedder)
     incidents.fold_window_h = lambda: store.thresholds().fold_window_h
-    tracer = tracer or ReloadingTracer(secrets.get)
     subscribe_reloads(secrets, notify, store, tracer)
     return AppParts(
         db=db,
@@ -309,10 +310,12 @@ def build_talk(
     bus: EventBus,
     store: SettingsStore,
     guard_log: GuardLog,
+    tracer: Tracing | None = None,
 ) -> Talk:
     """The conversation both surfaces answer with: Telegram's bot and the dashboard's
     panel. It reads the watcher's overview as its health, the cheap model from the settings in
-    force, and counts its calls in the usage ledger under the daily cap."""
+    force, and counts its calls in the usage ledger under the daily cap. `tracer` traces each
+    reading, in its surface's session."""
     state = BleepState(overview, incidents, approvals, bus, zone=store.zone)
     return Talk(
         state,
@@ -321,6 +324,7 @@ def build_talk(
         ledger=CostLedger(db),
         guard_log=guard_log,
         zone=store.zone,
+        tracer=tracer,
     )
 
 

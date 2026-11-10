@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from pydantic import SecretStr
 
 from bleep.hosts.registry import Registry
+from bleep.llm.tracing import NoTracing
 from bleep.schemas.graph import Decision, PlanStep, Proposal
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import SettingsUpdate
@@ -60,3 +61,27 @@ async def test_the_time_zone_chosen_on_the_settings_page_reaches_the_chat_snapsh
     snapshot = await parts.talk.state.snapshot()
     assert (snapshot.zone, snapshot.now) == ("Asia/Tokyo", "2026-11-02 21:00")
     await parts.notify.close()
+
+
+def test_the_conversation_traces_its_readings_with_the_parts_tracer(settings):
+    tracer = NoTracing()
+    parts = build_parts(settings, Registry([]), tracer=tracer)
+
+    assert parts.talk.tracer is parts.tracer is tracer
+    assert parts.panel.talk is parts.talk
+
+
+def test_a_tracer_that_traces_incidents_only_leaves_the_conversation_untraced(settings):
+    class IncidentsOnly:
+        def run_config(self, incident):
+            return {}
+
+        def trace_url(self, incident):
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    parts = build_parts(settings, Registry([]), tracer=IncidentsOnly())
+
+    assert parts.talk.tracer is None

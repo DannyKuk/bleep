@@ -37,6 +37,7 @@ from bleep.talk.actions import Actions, Expecting, Looking, Resumer
 from bleep.talk.confirms import NO_LABEL, Confirms, yes_label
 from bleep.talk.conversation import Talk
 from bleep.talk.history import Turns
+from bleep.talk.log import answered
 from bleep.talk.offers import confirm_line, instruction
 from bleep.talk.times import when
 
@@ -575,33 +576,37 @@ class TelegramBot:
     async def _answer(self, text: str, reply: int, known: tuple[str, str] | None) -> None:
         """Answer what the person wrote through `talk`, which reads and never changes anything;
         a reply to a message about an incident is about that incident. An action Bleep checked
-        comes back as an offer with its buttons (`_offer`)."""
+        comes back as an offer with its buttons (`_offer`). What was said goes into the talk
+        log (#411)."""
         assert self.talk is not None
         incident_id = known[0] if known is not None else None
-        said = await self.talk.reply(text, incident_id, self.turns.recent())
+        said = await self.talk.reply(text, incident_id, self.turns.recent(), surface="telegram")
+        confirm_id = None
         if said.offer is not None:
-            note = await self._offer(said.offer, said.answer, reply, known)
+            note, confirm_id = await self._offer(said.offer, said.answer, reply, known)
         else:
             note = said.answer
             await self._say(note, reply)
+        self.talk.log.shown("telegram", said.exchange_id, note, confirm_id=confirm_id)
         self.turns.add(text, note)
 
     async def _offer(
         self, offer: Offer, line: str, reply: int, known: tuple[str, str] | None
-    ) -> str:
+    ) -> tuple[str, str | None]:
         """Show `line` with the buttons that confirm `offer`, and keep the offer for the press;
-        returns what was said. An instruction is bound to the plan the replied-to message
-        showed, else to the one that waits now; a yes to a plan shows that plan's own buttons
-        again. An offer about an incident is logged with it, so its buttons go when the
-        incident ends or, for an instruction, when its plan is decided."""
+        returns what was said and the offer's id, if its buttons were sent. An instruction is
+        bound to the plan the replied-to message showed, else to the one that waits now; a yes
+        to a plan shows that plan's own buttons again. An offer about an incident is logged with
+        it, so its buttons go when the incident ends or, for an instruction, when its plan is
+        decided."""
         shown = known[1] if known is not None and known[0] == offer.incident_id else ""
         bound = await self.actions.bind(offer, shown)
         if isinstance(bound, str):
             await self._say(bound, reply)
-            return bound
+            return bound, None
         offer = bound
         if offer.kind == "show_plan":
-            return await self._show_plan(offer, line, reply)
+            return await self._show_plan(offer, line, reply), None
         confirm_id = self.confirms.add(offer)
         buttons = [
             (yes_label(offer), f"{CONFIRM_VERB}:{confirm_id}"),
@@ -612,7 +617,7 @@ class TelegramBot:
         )
         self._shown[confirm_id] = message_id
         await self._log_offer(message_id, offer.incident_id, offer.plan_id or "")
-        return line
+        return line, confirm_id
 
     async def _log_offer(self, message_id: int, incident_id: str | None, plan_id: str) -> None:
         """Log a message with buttons the bot sent about an incident, so they are cleared with
@@ -667,8 +672,10 @@ class TelegramBot:
             said = answer("answer_confirm_used" if taken == "used" else "answer_confirm_expired")
         else:
             self._shown.pop(confirm_id, None)
-            no = verb == DECLINE_VERB
-            said = answer("answer_confirm_no") if no else await self.actions.run(taken)
+            yes = verb != DECLINE_VERB
+            press = self.talk.log.pressed("telegram", confirm_id, yes) if self.talk else None
+            run = self.actions.run(taken) if yes else answer("answer_confirm_no")
+            said = await answered(press, run)
         await self.client.answer_callback(callback_id, _cut(said))
         await self._edit(message_id, [])
 

@@ -5,7 +5,8 @@ It reads a message with the same `Talk` as Telegram and runs a confirmed offer t
 prompts and the actions, not the transcript (docs/design/app.md). A message never changes
 anything; an offer comes back with two buttons, and only a press of Yes (or Send) runs it, once,
 within `talk.confirms.CONFIRM_TTL` and while its incident is open. A "yes" to a waiting plan
-points to the incident's page, where the plan is shown in full with its own buttons.
+points to the incident's page, where the plan is shown in full with its own buttons. What it
+showed and each press go into the talk log (#411).
 """
 
 import asyncio
@@ -20,6 +21,7 @@ from bleep.talk.confirms import NO_LABEL, Confirms, yes_label
 from bleep.talk.conversation import Talk
 from bleep.talk.history import Turns
 from bleep.talk.links import links_in, offer_links
+from bleep.talk.log import answered
 
 WAITING_MAX = 3  # messages being answered at once; one more is told Bleep is busy
 
@@ -45,8 +47,14 @@ class Panel:
         try:
             async with self._turn:
                 self.confirms.expired()  # forgets the offers nobody answered in time
-                reply = await self.talk.reply(text, incident_id, self.turns.recent())
+                reply = await self.talk.reply(
+                    text, incident_id, self.turns.recent(), surface="panel"
+                )
                 answer = await self._answer(reply, actions)
+                confirm_id = answer.confirm.id if answer.confirm is not None else None
+                self.talk.log.shown(
+                    "panel", reply.exchange_id, answer.answer, answer.links, confirm_id
+                )
                 self.turns.add(text, answer.answer)
                 return answer
         finally:
@@ -83,9 +91,10 @@ class Panel:
             return ConfirmResult(line=said("answer_confirm_used"))
         if isinstance(taken, str):
             return ConfirmResult(line=said("answer_confirm_expired"))
-        if not yes:
-            return ConfirmResult(line=said("answer_confirm_no"))
-        return ConfirmResult(line=await actions.run(taken))
+        # Logged as it takes the offer: a second press, answered while this one runs, is not it.
+        press = self.talk.log.pressed("panel", confirm_id, yes)
+        line = await answered(press, actions.run(taken) if yes else said("answer_confirm_no"))
+        return ConfirmResult(line=line)
 
 
 async def _plan_line(offer: Offer, actions: Actions) -> str:

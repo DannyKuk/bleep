@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, X } from "lucide-react";
+import { ArrowUp, Download, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -13,6 +13,7 @@ import { stateMood } from "@/lib/mood";
 import { idFromSegment } from "@/lib/routes";
 import {
   MESSAGE_MAX_CHARS,
+  fetchTalkLog,
   isFinished,
   linkHref,
   pressConfirm,
@@ -25,6 +26,9 @@ import {
 const INCIDENT_PAGE = /^\/incidents\/([^/]+)$/;
 const TICK_MS = 15_000; // how often an open offer is checked for its expiry
 const BAR_GAP_PX = 12;
+const REVOKE_AFTER_MS = 40_000; // as FileSaver.js waits before freeing a saved file's URL
+// As `schemas/talk.py` `ChatMessage.incident_id`: a page path that is no incident id gets no chip.
+const INCIDENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 type Offer = ChatConfirm & { line?: string; pressing?: boolean; failed?: string };
 
@@ -35,10 +39,28 @@ type Turn =
 
 type NewTurn = Turn extends infer T ? (T extends Turn ? Omit<T, "key"> : never) : never;
 
+/** Whether a 422 is about the message's words (FastAPI names the field in `loc`). */
+function aboutText(error: ApiError): boolean {
+  const detail = (error.body as { detail?: unknown } | null)?.detail;
+  return (
+    Array.isArray(detail) &&
+    detail.some((item) => Array.isArray(item?.loc) && item.loc.includes("text"))
+  );
+}
+
 function failure(error: unknown): string {
-  if (error instanceof ApiError && error.status === 422) return "That message is too long.";
+  if (error instanceof ApiError && error.status === 422) {
+    return aboutText(error) ? "That message is too long." : "Bleep could not take that message.";
+  }
   if (error instanceof ApiError && error.detail) return `Bleep could not answer: ${error.detail}.`;
   return "Bleep could not be reached. Try again.";
+}
+
+function exportFailure(error: unknown): string {
+  if (error instanceof ApiError && error.status === 401) {
+    return "Your session has ended. Log in again to export the chat.";
+  }
+  return "The chat could not be exported. Try again.";
 }
 
 /**
@@ -56,6 +78,7 @@ export function ChatPanel() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const nextKey = useRef(0);
@@ -63,7 +86,8 @@ export function ChatPanel() {
   const input = useRef<HTMLInputElement>(null);
 
   const pageIncident = pathname.match(INCIDENT_PAGE)?.[1];
-  const incidentId = pageIncident ? idFromSegment(pageIncident) : null;
+  const segment = pageIncident ? idFromSegment(pageIncident) : null;
+  const incidentId = segment && INCIDENT_ID.test(segment) ? segment : null;
   const about = incidentId && dismissed !== incidentId ? incidentId : null;
   const aboutName = incidents?.find((i) => i.id === about)?.short_name ?? "this incident";
   const mood = state ? stateMood(state) : "not_sure";
@@ -136,6 +160,25 @@ export function ChatPanel() {
     }
   }
 
+  async function exportChat() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const { blob, name } = await fetchTalkLog();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      link.click();
+      // Some browsers read the file after `click` returns; revoking at once can cut the save.
+      window.setTimeout(() => URL.revokeObjectURL(url), REVOKE_AFTER_MS);
+    } catch (error) {
+      add({ who: "error", text: exportFailure(error) });
+    } finally {
+      setExporting(false);
+    }
+  }
+
   if (!open) {
     return (
       <button
@@ -168,6 +211,17 @@ export function ChatPanel() {
           <h2 className="text-lg leading-tight font-extrabold">Bleep</h2>
           <p className="text-[13px] text-ink-2">Asks before it changes anything</p>
         </div>
+        <button
+          type="button"
+          aria-label="Export chat"
+          title="Export chat"
+          onClick={exportChat}
+          disabled={exporting}
+          aria-busy={exporting}
+          className="grid size-9 place-items-center rounded-full hover:bg-soft focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-50"
+        >
+          <Download className="size-5" />
+        </button>
         <button
           type="button"
           aria-label="Close chat"

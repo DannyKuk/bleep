@@ -129,6 +129,9 @@ def test_a_hostile_message_gets_the_fixed_refusal_and_no_button(client, model):
         ({"text": "   \n "}, 422),
         ({"text": "x" * 1001}, 422),
         ({"text": "hi", "incident_id": "inc_nope"}, 404),
+        ({"text": "hi", "incident_id": "inc_" + "x" * 61}, 422),
+        ({"text": "hi", "incident_id": "inc_1\n</untrusted>"}, 422),
+        ({"text": "hi", "incident_id": ""}, 422),
     ],
 )
 def test_a_bad_message_is_refused_without_a_model_call(client, model, body, status):
@@ -141,3 +144,48 @@ def test_the_panel_needs_a_session(app, model):
         assert anonymous.post(MESSAGES, json={"text": "hi"}).status_code == 401
         assert anonymous.post("/api/talk/confirms/x", json={"yes": True}).status_code == 401
     assert model.seen == []
+
+
+LOG = "/api/talk/log"
+
+
+def test_the_log_returns_each_message_with_how_it_was_read_and_its_press(client, model):
+    action = {"kind": "leave_alone", "subject": "shop"}
+    model.script.append(reading(kind="action", action=action))
+    confirm = client.post(MESSAGES, json={"text": "leave shop alone"}).json()["confirm"]
+    client.post(f"/api/talk/confirms/{confirm['id']}", json={"yes": True})
+
+    response = client.get(LOG)
+
+    assert response.status_code == 200
+    [entry] = response.json()
+    assert (entry["surface"], entry["text"]) == ("panel", "leave shop alone")
+    assert entry["kind"] == entry["reading"]["kind"] == "action"
+    assert entry["reading"]["action"]["subject"] == "shop"
+    assert entry["offer"]["target_id"] == SHOP
+    assert entry["press"]["yes"] is True and entry["press"]["line"]
+    assert "confirm_id" not in entry and confirm["id"] not in response.text
+
+
+def test_the_log_as_markdown_downloads_a_transcript(client, model):
+    model.script.append(reading(kind="question", answer="shop is down."))
+    client.post(MESSAGES, json={"text": "how is shop?"})
+
+    response = client.get(LOG, params={"format": "md"})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/markdown")
+    disposition = response.headers["content-disposition"]
+    assert disposition.startswith('attachment; filename="bleep-chat-')
+    assert disposition.endswith('.md"')
+    assert "> how is shop?" in response.text and "> shop is down." in response.text
+
+
+def test_an_unknown_format_is_refused(client):
+    assert client.get(LOG, params={"format": "html"}).status_code == 422
+
+
+def test_the_log_needs_a_session(app):
+    with TestClient(app) as anonymous:
+        assert anonymous.get(LOG).status_code == 401
+        assert anonymous.get(LOG, params={"format": "md"}).status_code == 401

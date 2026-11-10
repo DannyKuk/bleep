@@ -101,9 +101,59 @@ class TalkReply(BaseModel):
     incident_id: str | None = None
     offer: Offer | None = None
     links: list[TalkLink] = Field(default_factory=list)
+    exchange_id: int | None = None  # its entry in the talk log (`talk.log.TalkLog`, #411)
+
+
+TalkSurface = Literal["panel", "telegram"]
+
+
+class TalkUsage(BaseModel):
+    """What reading one message cost, summed over its model calls (a retry or the JSON fallback
+    adds one); `usd` is None when no call's cost is known."""
+
+    model: str
+    calls: int
+    tokens_in: int
+    tokens_out: int
+    usd: float | None = None
+
+
+class TalkPress(BaseModel):
+    """The press that took an offer and the line it was answered with; `line` stays empty
+    while what it runs is still running, or if that failed."""
+
+    at: datetime
+    yes: bool
+    line: str = ""
+
+
+class TalkExchange(BaseModel):
+    """One message in a chat and what came of it, as the talk log keeps it (#411). `text` is the
+    person's message as Bleep read it: control characters stripped, secrets redacted, capped.
+    `reading` is what the model read, None when it could not read it (`error` names the error's
+    type). `offer` is what code made of an action, or `refused` the fixed line a check answered
+    with instead. `answer` and `links` are what the surface showed, `press` the first press of
+    the offer's buttons, `usage` what the reading cost."""
+
+    id: int
+    at: datetime
+    surface: TalkSurface
+    text: str
+    incident_id: str | None = None
+    kind: ReplyKind
+    reading: TalkReading | None = None
+    error: str | None = None
+    offer: Offer | None = None
+    refused: str | None = None
+    answer: str
+    links: list[TalkLink] = Field(default_factory=list)
+    confirm_id: str | None = Field(default=None, exclude=True)  # how a press finds its entry
+    press: TalkPress | None = None
+    usage: TalkUsage | None = None
 
 
 MESSAGE_MAX_CHARS = 1000  # what a person may write in one message, on either surface
+INCIDENT_ID_MAX_CHARS = 64
 
 
 class ChatMessage(BaseModel):
@@ -111,7 +161,11 @@ class ChatMessage(BaseModel):
     written on, while its chip is kept."""
 
     text: str = Field(min_length=1, max_length=MESSAGE_MAX_CHARS)
-    incident_id: str | None = None
+    # An incident id is `inc_` and 18 letters and digits; anything far off is refused before it
+    # is looked up or kept in the talk log.
+    incident_id: str | None = Field(
+        default=None, min_length=1, max_length=INCIDENT_ID_MAX_CHARS, pattern=r"^[A-Za-z0-9_-]+$"
+    )
 
     @field_validator("text", mode="before")
     @classmethod

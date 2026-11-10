@@ -27,5 +27,11 @@ How Bleep reads what a person writes in its chat, and the fixed lines it answers
   (`notify/answer_*`), on both surfaces (`talk/actions.py`).
 - `when_*` are the words of a time in a chat (`talk/times.py`), shared with Telegram's messages.
 - `link_removed` stands in for a link taken out of an answer.
+- `log_*` build the Markdown transcript of the talk log (#411, `talk/log.py`), which the person
+  exports to review answers: the heading (`log_head`), a heading per surface (`log_panel`,
+  `log_telegram`, `log_empty`), each message (`log_exchange`, `log_about`) and the lines under
+  it (`log_reading`, `log_unread`, `log_offer`, `log_refused`, `log_links`, `log_press`,
+  `log_usage`, `log_cost_unknown`, `log_no_call`; `log_press_running` for a press still running,
+  `log_press_failed` for one whose run failed, by the error's type). No model reads them.
 - None of these can be overridden from the dev panel: they read the person's words and refuse
   them.

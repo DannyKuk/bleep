@@ -125,6 +125,15 @@ Each incident is one thread: its first message says 🔴 New (or 🔁 Again for 
 
 Only that chat is answered. Messages and button taps from any other chat are ignored and recorded in the guard log. The first answer wins, from Telegram or the dashboard; the other is told who won. Details: [Notifications](design/notify.md).
 
+## Exporting the chat
+
+What was said to Bleep, in the dashboard's chat panel and in Telegram, can be saved with how Bleep read each message: "Export chat" (the arrow in the panel's header) downloads it as Markdown. It holds the last 100 messages of each chat since Bleep last started, the person's words as Bleep read them, with secrets redacted ([what is in it](design/notify.md#talking-to-bleep-390)). From a shell, log in for a session cookie and fetch the same file (`format=md`; without it, JSON):
+
+```bash
+curl -c bleep-cookies -H 'content-type: application/json' -d '{"password": "<BLEEP_ADMIN_PASSWORD>"}' http://localhost:3000/api/auth/login
+curl -b bleep-cookies -OJ 'http://localhost:3000/api/talk/log?format=md'
+```
+
 ## GitHub token (optional)
 
 Bleep reads each service's repo (the `repo` of a service in the hosts file): its recent commits and their diffs while it investigates, and, for knowledge search, its README (unless the service sets `readme: false`) and the markdown under the paths in `docs_paths` (the `docs` folder when it names none). Without a token it reads public repos only, at 60 requests an hour.

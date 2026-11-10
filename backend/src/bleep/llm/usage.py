@@ -171,6 +171,38 @@ def _cost(model: str, metadata: dict[str, Any], tokens_in: int, tokens_out: int)
     return None
 
 
+@dataclass(frozen=True)
+class CallCost:
+    model: str
+    tokens_in: int
+    tokens_out: int
+    usd: float | None
+
+
+def call_costs(response: LLMResult) -> list[CallCost]:
+    """What each generation of a model call cost, for those that report their tokens."""
+    costs: list[CallCost] = []
+    for generations in response.generations:
+        for generation in generations:
+            if not isinstance(generation, ChatGeneration):
+                continue
+            message = generation.message
+            tokens = getattr(message, "usage_metadata", None)
+            if not tokens:
+                continue
+            metadata = message.response_metadata or {}
+            model = str(metadata.get("model_name") or metadata.get("model") or "unknown")
+            tokens_in, tokens_out = tokens["input_tokens"], tokens["output_tokens"]
+            reasoning = (tokens.get("output_token_details") or {}).get("reasoning") or 0
+            if reasoning > tokens_out:
+                # Some servers report reasoning beside the completion, not inside it; more
+                # reasoning than output cannot be a part of it.
+                tokens_out += reasoning
+            usd = _cost(model, metadata, tokens_in, tokens_out)
+            costs.append(CallCost(model, tokens_in, tokens_out, usd))
+    return costs
+
+
 class UsageTracker(AsyncCallbackHandler):
     """Pass in `config={"callbacks": [tracker]}`; records each model call to the ledger."""
 
@@ -182,24 +214,20 @@ class UsageTracker(AsyncCallbackHandler):
         self.ledger = ledger
 
     async def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
-        for generations in response.generations:
-            for generation in generations:
-                if not isinstance(generation, ChatGeneration):
-                    continue
-                message = generation.message
-                tokens = getattr(message, "usage_metadata", None)
-                if not tokens:
-                    continue
-                metadata = message.response_metadata or {}
-                model = str(metadata.get("model_name") or metadata.get("model") or "unknown")
-                tokens_in, tokens_out = tokens["input_tokens"], tokens["output_tokens"]
-                reasoning = (tokens.get("output_token_details") or {}).get("reasoning") or 0
-                if reasoning > tokens_out:
-                    # Some servers report reasoning beside the completion, not inside it; more
-                    # reasoning than output cannot be a part of it.
-                    tokens_out += reasoning
-                usd = _cost(model, metadata, tokens_in, tokens_out)
-                await self.ledger.add(self.incident_id, model, tokens_in, tokens_out, usd)
+        for call in call_costs(response):
+            await self.ledger.add(
+                self.incident_id, call.model, call.tokens_in, call.tokens_out, call.usd
+            )
+
+
+class CallCosts(AsyncCallbackHandler):
+    """Keeps what each model call it sees cost, so a log can show it beside the call."""
+
+    def __init__(self) -> None:
+        self.calls: list[CallCost] = []
+
+    async def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
+        self.calls.extend(call_costs(response))
 
 
 async def check_daily_cap(ledger: CostLedger, budgets: Budgets) -> None:

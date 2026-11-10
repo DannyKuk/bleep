@@ -205,3 +205,42 @@ async def test_a_tracer_that_fails_to_build_on_reload_stops_tracing_with_the_old
     keys["LANGSMITH_API_KEY"] = SecretStr("lsv2_second")
     await tracer.reload()
     assert tracer.run_config(incident()) == {} and closed == [True]
+
+
+def test_off_adds_nothing_to_a_chat_reading():
+    assert NoTracing().talk_config("panel") == {}
+
+
+@pytest.mark.parametrize("surface", ["panel", "telegram"])
+def test_langfuse_traces_each_chat_reading_on_its_own_in_its_surfaces_session(langfuse, surface):
+    config = langfuse.talk_config(surface)
+
+    assert config["run_name"] == f"talk-{surface}"
+    assert config["metadata"] == {
+        "langfuse_session_id": f"talk-{surface}",
+        "langfuse_trace_name": f"talk-{surface}",
+    }
+    assert config["tags"] == ["talk", f"surface:{surface}"]
+    [handler] = config["callbacks"]
+    assert isinstance(handler, CallbackHandler)
+    assert not handler._trace_context  # a trace of its own, not an incident's
+
+
+def test_langsmith_groups_the_chat_readings_of_a_surface(no_tracing_env):
+    tracer = build_tracer(settings(TRACING="langsmith", LANGSMITH_API_KEY="lsv2_test_key"))
+    config = tracer.talk_config("telegram")
+    assert config["metadata"] == {"session_id": "talk-telegram"}
+    assert config["run_name"] == "talk-telegram"
+    [handler] = config["callbacks"]
+    assert isinstance(handler, LangChainTracer)
+
+
+def test_no_key_appears_in_what_a_chat_reading_carries(langfuse):
+    config = langfuse.talk_config("panel")
+    carried = json.dumps({k: v for k, v in config.items() if k != "callbacks"})
+    assert PUBLIC not in carried and SECRET not in carried
+
+
+def test_a_reloading_tracer_traces_chat_readings_with_the_tracer_in_force(no_tracing_env):
+    tracer = ReloadingTracer(lambda name: None)
+    assert tracer.talk_config("panel") == {}
