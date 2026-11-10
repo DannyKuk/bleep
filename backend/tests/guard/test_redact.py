@@ -758,3 +758,109 @@ def test_the_jwt_patterns_match_what_the_plain_regexes_matched():
         text = "".join(rng.choice(parts) for _ in range(rng.randrange(1, 14)))
         assert _JWT.sub(_redact_jwt, text) == plain.sub("<redacted>", text), text
         assert _hide_cut_jwt(text) == plain_cut.sub("<redacted>", text), text
+
+
+# Vendor token shapes (#388). Each is built from parts, so no complete token sits in the source.
+B24 = "4eC39HqLyjWDarjtT1zdp7dc"
+B36 = "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
+B35 = "SyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY"
+B32 = "RUe7IZgC6384GrI1x9QpL2mN4vB8kT0z"
+TOKEN_SHAPES = {
+    "stripe_secret": (
+        "charge failed with sk_" + "live_" + B24,
+        "sk_" + "live_" + B24,
+        "pk_live_" + B24 + " sk_live_mode",
+    ),
+    "stripe_restricted": (
+        "client=rk_" + "live_" + B24 + "&retry=1",
+        "rk_" + "live_" + B24,
+        "rk_live_" + B24[:12] + " disk_live_" + B24,
+    ),
+    "stripe_sandbox": ("key sk_" + "test_" + B24, "sk_" + "test_" + B24, "sk_test_suite passed"),
+    "gitlab": (
+        "remote: glpat-" + B24[:20] + " expired",
+        "glpat-" + B24[:20],
+        "see glpat-tokens in the docs, glpat-" + B24[:19],
+    ),
+    "gitlab_routable": (
+        "token glpat-" + "YzowCm86MQp1OjFSDdqkLmVS337oi4qlKHnlEA" + ".01.0r1ajj2i3 in use",
+        "0r1ajj2i3",
+        "glpat-" + "YzowCm86MQp1" + ".01.0r1ajj2i3",
+    ),
+    "gitlab_routable_one_dot": (
+        "token glpat-" + "YzowCm86MQp1OjFSDdqkLmVS337oi4qlKHnlEA" + ".121e8269o in use",
+        "121e8269o",
+        "glpat-" + "YzowCm86MQp1" + ".121e8269o",
+    ),
+    "npm": (
+        "npm notice publishing with npm_" + B36 + " as ci",
+        "npm_" + B36,
+        "npm_config_registry=https://registry.npmjs.org/ npm_" + B36[:35],
+    ),
+    "google_api_key": (
+        "GET https://maps.googleapis.com/maps/api/js?key=AIza" + B35 + "&callback=init",
+        "AIza" + B35,
+        "AIzawesome AIza" + B35[:34] + " AIza" + B35 + "X",
+    ),
+    "pushbullet": (
+        "pushbullet push failed for o." + B32 + ": 401",
+        "o." + B32,
+        "cdn.o.example.com o.d41d8cd98f00b204e9800998ecf8427e x.o." + B32 + " o." + B32 + ".com",
+    ),
+    "slack_legacy": (
+        "slack: xoxo-" + "2493846294-9283746592-3826372821-0f3a9c2e1d",
+        "9283746592",
+        "xoxo-best-wishes-from-everyone",
+    ),
+    "slack_refresh": (
+        "refresh_with=xoxe-1-" + "My0xLTIxMjM0NTY3ODkwLTE",
+        "My0xLTIxMjM0",
+        "xoxe-reply-to-all-of-us",
+    ),
+    "slack_app": (
+        "SLACK_APP=xapp-1-" + "A0123ABCDEF-1234567890123-abc123def456",
+        "A0123ABCDEF",
+        "xapp-config-loaded",
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", list(TOKEN_SHAPES))
+def test_a_vendor_token_is_redacted_wherever_it_appears(shape):
+    text, secret, _ = TOKEN_SHAPES[shape]
+
+    out, count = redact_with_count(text)
+
+    assert secret not in out and "<redacted>" in out
+    assert count == 1
+    assert secret not in guard_text("logs", text)[0]
+
+
+@pytest.mark.parametrize("shape", list(TOKEN_SHAPES))
+def test_a_near_miss_of_a_vendor_token_stays(shape):
+    _, _, near_miss = TOKEN_SHAPES[shape]
+
+    assert redact_with_count(near_miss) == (near_miss, 0)
+
+
+def test_a_vendor_token_at_the_end_of_a_sentence_is_redacted():
+    for token in ("o." + B32, "AIza" + B35, "npm_" + B36, "glpat-" + B24[:20]):
+        assert redact_text(f"the key was {token}.") == "the key was <redacted>."
+
+
+def test_a_vendor_token_under_a_secret_key_is_one_redaction():
+    assert redact_with_count("STRIPE_SECRET_KEY=sk_" + "live_" + B24) == (
+        "STRIPE_SECRET_KEY=<redacted>",
+        1,
+    )
+
+
+@pytest.mark.parametrize(
+    "unit", ["o.Aa", "o.", "AIza", "sk_live_", "glpat-", "npm_a", "xoxo-1-", "xapp-1"]
+)
+def test_lines_of_vendor_token_prefixes_are_fast(unit):
+    line = (unit * 4001)[:4001]
+    text = "\n".join([line] * 1000)
+    assert_no_slower_than_benign(text)
+    out, _ = guard_text("logs", text)
+    assert len(out) <= 8300

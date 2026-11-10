@@ -609,8 +609,29 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), REDACTED),
     (re.compile(r"\bsk-(?:or-)?[A-Za-z0-9_-]{16,}"), REDACTED),
     (re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"), REDACTED),
+    # Slack's refresh and legacy tokens and app-level tokens: "xoxo" is also a word, so a number
+    # must follow the prefix as it does in every one of these tokens
+    (re.compile(r"\b(?:xox[eo]|xapp)-[0-9]{1,16}-[A-Za-z0-9-]{8,}+"), REDACTED),
     (_JWT, _redact_jwt),
     (re.compile(r"\bya29\.[A-Za-z0-9_.-]{20,}+"), REDACTED),  # Google OAuth access tokens
+    (re.compile(r"\bAIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"), REDACTED),  # Google API keys
+    (re.compile(r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{20,}+"), REDACTED),  # Stripe secret keys
+    # GitLab PATs; a routable one ends in `.`, a 2-character version, `.` and 9 more characters
+    # (an earlier build: `.` and 9 characters)
+    (
+        re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}+(?:\.[0-9a-z]{2}\.[0-9a-z]{9}|\.[0-9a-z]{9})?"),
+        REDACTED,
+    ),
+    (re.compile(r"\bnpm_[A-Za-z0-9]{36}(?![A-Za-z0-9])"), REDACTED),
+    # Pushbullet: `o.` and 32 letters and digits of both cases, on their own, so a domain such as
+    # `cdn.o.example` and a hex digest after `o.` stay
+    (
+        re.compile(
+            r"(?<![A-Za-z0-9_.-])o\.(?=[A-Za-z0-9]{0,31}[A-Z])(?=[A-Za-z0-9]{0,31}[a-z])"
+            r"[A-Za-z0-9]{32}(?![A-Za-z0-9_-])(?!\.[A-Za-z0-9])"
+        ),
+        REDACTED,
+    ),
     # scheme://user:password@host: keep the user. The password may hold `@` and `/`; it ends at
     # the first `@` that is followed by a host and then `/`, `?`, `#`, whitespace or the end. The
     # lookbehind lets only the start of a scheme begin a match, so starts cannot overlap.
