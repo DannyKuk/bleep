@@ -1,0 +1,22 @@
+id: en-how-checked-fix
+lang: en
+about: >-
+  "How did you check it works again?" as a reply to a fixed incident: answered from Verify's
+  checks after the fix, the URL's 200 among them, with no check the run did not make.
+state: checked
+incident: 'shop #13'
+text: how did you check that it works again?
+expect:
+  kind: question
+  words:
+  - - '200'
+    - url
+  - - running
+    - container
+    - containers
+  absent:
+  - disk
+  - memory
+  - cpu
+  - github
+  - I don't know

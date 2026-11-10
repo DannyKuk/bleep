@@ -251,3 +251,63 @@ def test_score_leaves_a_failed_reply_unscored():
     c = case("en-unclear")
     result = TalkResult(run_id="x/1", case=c.id, lang="en", model="m", kind="failed")
     assert score(c, load_state(c.state), result).passed is None
+
+
+async def test_a_turn_about_an_incident_minutes_ago_makes_the_message_about_it(ledger):
+    answer = "I listed its containers, read the last 60 minutes of its logs and inspected it."
+    fake = model(kind="question", answer=answer)
+
+    result = await run("en-how-checked-look", ledger, fake)
+
+    prompt = str(fake.seen[0][-1].content)
+    incident = prompt.split('<untrusted source="incident"')[1].split("</untrusted")[0]
+    assert '"name":"dkwebsite #3"' in incident and '"tool":"container_logs"' in incident
+    assert result.passed is True
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "I read its logs, checked its memory and the container runs.",  # a check it never made
+        "I don't know how it was checked; its container runs and its logs look fine.",
+        "It is healthy.",  # names no check
+    ],
+)
+async def test_a_how_answer_that_invents_a_check_or_names_none_fails(ledger, answer):
+    result = await run("en-how-checked-look", ledger, model(kind="question", answer=answer))
+    assert result.passed is False
+
+
+@pytest.mark.parametrize(
+    ("case_id", "answer"),
+    [
+        (
+            "en-how-checked-fix",
+            "After the fix I checked that shop-db-1 and shop-web-1 were running and that the "
+            "shop's URL answered with 200.",
+        ),
+        (
+            "de-how-checked-look",
+            "Ich habe die Container aufgelistet, die Logs der letzten 60 Minuten gelesen: "
+            "dkwebsite-web-1 läuft und ist gesund.",
+        ),
+        (
+            "de-how-checked-fix",
+            "Nach dem Fix habe ich geprüft, dass shop-db-1 und shop-web-1 laufen und die URL "
+            "mit 200 antwortet.",
+        ),
+    ],
+)
+async def test_a_how_answer_from_the_listed_checks_passes(ledger, case_id, answer):
+    result = await run(case_id, ledger, model(kind="question", answer=answer))
+    assert result.passed is True, result
+
+
+def test_a_turn_about_an_incident_the_state_does_not_have_is_refused(tmp_path):
+    path = tmp_path / "x.yaml"
+    path.write_text(
+        "id: x\nlang: en\nabout: a\nstate: busy\ntext: hi\nexpect: {kind: unclear}\n"
+        "turns:\n- {said: a, answered: b, incident: 'shop #99'}\n"
+    )
+    with pytest.raises(TalkEvalError, match="shop #99"):
+        load_case(path)

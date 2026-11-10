@@ -8,7 +8,8 @@ against Bleep's state (`talk.offers`), that the surface confirms with a button; 
 unclear message, a failure and an offer that fails a check are answered with fixed lines from
 `prompts/talk/`, never with the model's words (docs/design/notify.md). Every message lands in the
 talk log (`talk.log`, #411) with how it was read, and with tracing on each reading is its own
-trace, in the session of its surface.
+trace, in the session of its surface. A message about no incident, sent within `FOLLOW_UP` of
+a turn about one, is read as about that one (#422).
 """
 
 import asyncio
@@ -17,7 +18,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, tzinfo
+from datetime import datetime, timedelta, tzinfo
 from typing import Any, Protocol, runtime_checkable
 
 from langchain_core.language_models import BaseChatModel
@@ -70,7 +71,7 @@ TALK_USAGE = CHAT_USAGE  # the usage ledger's key for chat answers, with a daily
 TEXT_CHARS = 1000  # the person's message, as the model reads it
 TURN_CHARS = 600  # each side of an earlier turn
 STATE_CHARS = 16_000  # the snapshot; its tail is kept if a large setup outgrows it
-INCIDENT_CHARS = 4000
+INCIDENT_CHARS = 8000  # the incident in detail, its run's checks included (#422)
 HISTORY_CHARS = 8000  # the turns a surface keeps (`talk.history.TURNS_KEPT`), each side capped
 ANSWER_CHARS = 1500  # an answer Bleep sends, well under Telegram's 4,096
 # A chat answer must not hold the person for long: one call of at most this long, one retry,
@@ -78,6 +79,9 @@ ANSWER_CHARS = 1500  # an answer Bleep sends, well under Telegram's 4,096
 TIMEOUT_S = 30
 RETRIES = 1
 REPLY_TIMEOUT_S = 60
+# A message that is not a reply goes on about the incident the conversation's last turn was
+# about while that turn is this recent: "how did you check it?" after a look (#422).
+FOLLOW_UP = timedelta(minutes=10)
 # A link in an answer: a scheme, `www.`, or a host name followed by a path. Telegram makes them
 # clickable, and a name or a cause from a host could carry one.
 _LINK = re.compile(
@@ -88,7 +92,8 @@ ModelFactory = Callable[[Role], BaseChatModel]
 
 def _json(value: BaseModel | list[Turn] | None) -> str:
     if isinstance(value, list):
-        return json.dumps([t.model_dump() for t in value], ensure_ascii=False, indent=1)
+        said = [t.model_dump(include={"said", "answered"}) for t in value]
+        return json.dumps(said, ensure_ascii=False, indent=1)
     if value is None:
         return "null"
     # Compact, and without the fields that only say their default: the snapshot of a large setup
@@ -125,6 +130,16 @@ def clean_answer(text: str, language: str = "en") -> str:
 def logged_text(text: str) -> str:
     """The person's words as the talk log keeps them: as the model read them, never raw."""
     return _logged_words(text, TEXT_CHARS)
+
+
+def follow_up(turns: Sequence[Turn], now: datetime) -> str | None:
+    """The incident a message that names none goes on about: the one the conversation's last
+    turn was about, while that turn is at most `FOLLOW_UP` old. Only the last turn counts, so a
+    turn about nothing, or about another incident, ends it."""
+    last = turns[-1] if turns else None
+    if last is None or last.incident_id is None or last.at is None:
+        return None
+    return last.incident_id if now - last.at <= FOLLOW_UP else None
 
 
 def _no_zone() -> tzinfo | None:
@@ -199,8 +214,11 @@ class Talk:
         that fails: that is the `failed` reply, which still offers to send the words to a plan
         that waits on the incident, as a reply to it could before. The message and its reading
         go into the log; the reply carries the entry's id, for the surface to add what it
-        showed (`TalkLog.shown`)."""
+        showed (`TalkLog.shown`). Without `incident_id`, a message right after a turn about an
+        incident is about that one (`follow_up`); the reply's `incident_id` says which, for the
+        surface to keep with the turn."""
         at, seen, costs = self.clock(), _Seen(), CallCosts()
+        incident_id = incident_id or follow_up(turns, at)
         said = await self._reply(text, incident_id, turns, surface, seen, costs)
         exchange = TalkExchange(
             id=self.log.next_id(),

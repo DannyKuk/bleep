@@ -16,6 +16,7 @@ from bleep.schemas.api import HostView, QuietView, ServiceView
 from bleep.schemas.graph import ApprovalRecord
 from bleep.schemas.incidents import TERMINAL_STATUSES, Incident, IncidentEvent
 from bleep.schemas.talk import (
+    CheckLine,
     ContainerLine,
     HostLine,
     IncidentFacts,
@@ -33,6 +34,15 @@ CAUSE_CHARS = 200
 NOTE_CHARS = 200
 NOTES_KEPT = 5
 SIGNALS_KEPT = 5
+# What the run checked (#422): the last calls and checks, each part cut. A result line is the
+# first line of the tool's guarded output as the event stores it, still host text.
+CHECKS_KEPT = 12
+TARGET_CHARS = 120
+RESULT_CHARS = 160
+# The argument that says what a read tool looked at: a container, a Coolify app, an allowed host
+# command, a search, a repository; and how far back it looked.
+_TARGET_ARGS = ("container", "app", "command", "query", "repo")
+_MINUTES_ARGS = ("minutes", "since_minutes")
 # Names and titles came from hosts and labels; each is cut so one long label cannot crowd out
 # the rest, and the lists are cut so a large setup still fits (`Snapshot.left_out` counts the
 # rest). Services that need attention are listed first, so they are the last to go.
@@ -213,6 +223,7 @@ class BleepState:
                 )
                 for s in signals[:SIGNALS_KEPT]
             ]
+            facts.checks = checks(events)[-CHECKS_KEPT:]
             if waiting and record is not None:
                 shown = redacted_proposal(record.proposal)
                 facts.plan = [
@@ -223,6 +234,57 @@ class BleepState:
             summary = _text(report, "summary")
             facts.summary = _line(summary, CAUSE_CHARS * 2) if summary else None
         return facts
+
+
+def checks(events: list[IncidentEvent]) -> list[CheckLine]:
+    """What the run looked at, in order: each tool call with the first line of its result, and
+    each of Verify's checks. A result goes to the oldest call of its tool still without one."""
+    found: list[CheckLine] = []
+    unanswered: dict[str, list[CheckLine]] = {}
+    for event in events:
+        payload = event.payload
+        if event.kind == "tool_call":
+            name = str(payload.get("name") or "?")
+            args = payload.get("args")
+            check = _call(name, args if isinstance(args, dict) else {})
+            found.append(check)
+            unanswered.setdefault(name, []).append(check)
+        elif event.kind == "tool_result":
+            waiting = unanswered.get(str(payload.get("name") or "?"))
+            if waiting:
+                result = payload.get("summary_first_line")
+                waiting.pop(0).result = _line(result, RESULT_CHARS) if _filled(result) else ""
+        elif event.kind == "verification":
+            found += [_verified(c) for c in payload.get("checks") or [] if isinstance(c, dict)]
+    return found
+
+
+def _call(name: str, args: dict[str, Any]) -> CheckLine:
+    target = next((args[k] for k in _TARGET_ARGS if _filled(args.get(k))), None)
+    minutes = next((args[k] for k in _MINUTES_ARGS if isinstance(args.get(k), int)), None)
+    return CheckLine(
+        tool=_line(name, NAME_CHARS),
+        target=_line(target, TARGET_CHARS) if target else None,
+        minutes=minutes,
+    )
+
+
+def _verified(check: dict[str, Any]) -> CheckLine:
+    """One of Verify's checks: its own short line (`schemas.graph.Check.detail`), never host
+    text; the target is a container name or a URL from the hosts file."""
+    target, detail = check.get("target"), check.get("detail")
+    said = "passed" if check.get("ok") else "failed"
+    if _filled(detail):
+        said = f"{said}: {detail}"
+    return CheckLine(
+        tool=f"verify_{check.get('kind') or 'check'}",
+        target=_line(target, TARGET_CHARS) if _filled(target) else None,
+        result=_line(said, RESULT_CHARS),
+    )
+
+
+def _filled(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 def _last(events: list[IncidentEvent], kind: str) -> dict[str, Any] | None:

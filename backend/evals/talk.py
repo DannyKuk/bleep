@@ -8,7 +8,9 @@ One YAML file per case in `evals/talk/cases/`: the person's message, its languag
 read against (a file in `evals/talk/states/`: a snapshot as `talk.state.BleepState` builds one,
 and the incidents in detail), the incident it replies to if any, and what a right reading is: its
 kind (question, action, refusal, unclear); for an action its kind, subject, duration or time and
-incident; for a question the words the answer must use. An attack names an upper-case marker the
+incident; for a question the words the answer must use and those it must not. An earlier turn
+may be about an incident, a few minutes before the message: a message that is not a reply goes
+on about it (#422). An attack names an upper-case marker the
 answer must not carry. Each run calls Bleep's own `talk.conversation.Talk.reply` with the model
 Bleep reads messages with (the `cheap` role), so the prompts, the wrapping and the fixed lines are
 Bleep's own; no host, no database of Bleep's, no judge model. Scored by code, so one model call
@@ -120,6 +122,18 @@ class Expected(BaseModel):
         return self
 
 
+class EvalTurn(BaseModel):
+    """An earlier turn: what was said, and the short name of the incident it was about, if
+    any, `minutes_ago` before the message."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    said: str
+    answered: str
+    incident: str | None = None
+    minutes_ago: int = Field(default=1, ge=0)
+
+
 class TalkCase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -129,7 +143,7 @@ class TalkCase(BaseModel):
     state: str
     text: str = Field(min_length=1)
     incident: str | None = None  # the short name of the incident the message replies to
-    turns: list[Turn] = Field(default_factory=list)  # the conversation before it, oldest first
+    turns: list[EvalTurn] = Field(default_factory=list)  # the conversation before it, oldest first
     expect: Expected
     marker: str | None = None  # an attack's upper-case word, written only if it was obeyed
 
@@ -163,8 +177,10 @@ def load_case(path: Path, states: Path = STATES_DIR) -> TalkCase:
     if case.id != path.stem:
         raise TalkEvalError(f"case {path}: its id {case.id!r} must be its file name")
     state = load_state(case.state, states)
-    if case.incident is not None and state.by_name(case.incident) is None:
-        raise TalkEvalError(f"case {path}: state {case.state} has no incident {case.incident}")
+    named = [case.incident, *(t.incident for t in case.turns)]
+    for name in [n for n in named if n is not None]:
+        if state.by_name(name) is None:
+            raise TalkEvalError(f"case {path}: state {case.state} has no incident {name}")
     if case.marker is not None:
         planted = state.model_dump_json() + case.text
         if case.marker not in planted:
@@ -387,7 +403,8 @@ async def run_case(
     try:
         async with asyncio.timeout(RUN_TIMEOUT_S):
             incident_id = facts.id if facts is not None else None
-            reply = await talk.reply(case.text, incident_id, case.turns, surface="panel")
+            turns = turns_of(case, state, utcnow())
+            reply = await talk.reply(case.text, incident_id, turns, surface="panel")
         result.kind, result.answer = reply.kind, reply.answer
         result.action = reply.action.model_dump(exclude_none=True) if reply.action else None
         if reply.kind == "failed":
@@ -400,6 +417,22 @@ async def run_case(
     if after.usd is not None:
         result.usd = round(after.usd - (before.usd or 0.0), 6)
     return score(case, state, result)
+
+
+def turns_of(case: TalkCase, state: EvalState, now: datetime) -> list[Turn]:
+    """The case's earlier turns as a surface keeps them, timed back from `now`."""
+    turns = []
+    for turn in case.turns:
+        facts = state.by_name(turn.incident) if turn.incident is not None else None
+        turns.append(
+            Turn(
+                said=turn.said,
+                answered=turn.answered,
+                incident_id=facts.id if facts is not None else None,
+                at=now - timedelta(minutes=turn.minutes_ago),
+            )
+        )
+    return turns
 
 
 def _cell(text: object) -> str:

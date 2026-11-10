@@ -1,0 +1,27 @@
+id: de-how-checked-fix
+lang: de
+about: >-
+  "Wie hast du geprüft, dass es wieder geht?" sent on its own, three minutes after a turn about a
+  fixed incident, in German: answered from Verify's checks after the fix, with no check the run
+  did not make.
+state: checked
+turns:
+- said: Was war mit shop heute Nacht?
+  answered: shop-web ist gestorben, weil shop-db gestoppt war (shop #13). Ich habe beide wieder gestartet.
+  incident: 'shop #13'
+  minutes_ago: 3
+text: Und wie hast du geprüft, dass es wieder geht?
+expect:
+  kind: question
+  words:
+  - - '200'
+    - URL
+  - - läuft
+    - laufen
+    - Container
+  absent:
+  - Festplatte
+  - Arbeitsspeicher
+  - CPU
+  - GitHub
+  - weiß nicht
