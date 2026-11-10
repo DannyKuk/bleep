@@ -34,6 +34,7 @@ _INVISIBLE = re.compile(INVISIBLE_CHARS)
 # They only switch a character between text and emoji look, so the plan's displays drop them
 # instead of marking them (`notify/format._one_line`, `showInvisible` on the dashboard).
 PRESENTATION_SELECTORS = "\ufe0e\ufe0f"
+_SURROGATE = re.compile("[\ud800-\udfff]")
 
 
 def normalise_newlines(text: str | bytes) -> str:
@@ -60,9 +61,19 @@ def tail_lines(text: str, limit: int) -> tuple[str, int]:
     return kept, len(text) - len(kept)
 
 
+def _join_surrogates(text: str) -> str:
+    """Join each high and low surrogate pair into the character it encodes and drop every lone
+    surrogate, so the text always encodes as UTF-8. A JSON escape such as `"\\ud800"` decodes
+    to one."""
+    if not _SURROGATE.search(text):
+        return text
+    return text.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "ignore")
+
+
 def strip_control(text: str | bytes) -> str:
-    """Normalise newlines, drop ANSI sequences, control and invisible characters."""
-    text = _ANSI.sub("", normalise_newlines(text))
+    """Normalise newlines, drop lone surrogates, ANSI sequences, control and invisible
+    characters."""
+    text = _ANSI.sub("", _join_surrogates(normalise_newlines(text)))
     return _INVISIBLE.sub("", _CONTROL.sub("", text))
 
 

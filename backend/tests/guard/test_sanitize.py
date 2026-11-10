@@ -3,6 +3,8 @@ import re
 import unicodedata
 from pathlib import Path
 
+import pytest
+
 from bleep.guard.sanitize import INVISIBLE_CHARS, sanitize, strip_control
 
 
@@ -107,3 +109,38 @@ def test_the_invisible_set_covers_every_format_character_of_the_running_python()
         f"{', '.join(f'U+{c:04X}' for c in missing)}. Add them to INVISIBLE_CHARS in "
         "guard/sanitize.py, then update frontend/lib/invisible-ranges.json to match."
     )
+
+
+HIGH, LOW = chr(0xD83D), chr(0xDE00)  # the UTF-16 pair of U+1F600
+TAG_HIGH, TAG_LOW = chr(0xDB40), chr(0xDC01)  # the UTF-16 pair of U+E0001, a tag character
+
+
+@pytest.mark.parametrize(
+    ("raw", "kept"),
+    [
+        ("a\ud800b", "ab"),
+        ("a\udfffb", "ab"),
+        (f"end {HIGH}", "end "),
+        ("\udc00start", "start"),
+        ("\udfff\ud800", ""),
+        (f"a{HIGH}{LOW}b", "a\U0001f600b"),
+        (f"\ud800{HIGH}{LOW}", "\U0001f600"),
+        ("a\U0001f600b", "a\U0001f600b"),
+        (f"{TAG_HIGH}{TAG_LOW}x", "x"),
+    ],
+)
+def test_lone_surrogates_are_dropped_and_pairs_kept_so_the_output_encodes(raw, kept):
+    out = strip_control(raw)
+
+    assert out == kept
+    out.encode("utf-8")
+
+
+def test_lone_surrogates_from_json_never_reach_the_sanitized_text():
+    escaped_pair = "".join(f"\\u{ord(c):04x}" for c in (HIGH, LOW))
+    field = json.loads(f'"\\ud800 a \\udfff b {escaped_pair} c \\ud83d"')
+
+    out = sanitize(field)
+
+    assert out == " a  b \U0001f600 c "
+    out.encode("utf-8")
