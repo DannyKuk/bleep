@@ -104,6 +104,53 @@ describe("OverviewView hero", () => {
     expect(screen.getByRole("link", { name: /Show me the plan/ })).toBeInTheDocument();
   });
 
+  it("puts the short name in front of the title it follows along (#397)", () => {
+    render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[service({ health: "down", open_incident_id: "inc-1" })]}
+        incidents={[incident({ status: "investigating", short_name: "shop #14" })]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("shop is down. I am on it.");
+    expect(hero()).toHaveTextContent("shop #14 · shop-web-1 died");
+    expect(within(hero()).getByText("shop #14")).toHaveClass("font-mono", "text-ink-2");
+    expect(screen.getByRole("link", { name: /Follow along/ })).toHaveAttribute(
+      "href",
+      "/incidents/inc-1",
+    );
+  });
+
+  it("shows the title alone it follows along when the incident has no short name", () => {
+    render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[service({ health: "down", open_incident_id: "inc-1" })]}
+        incidents={[incident({ status: "investigating" })]}
+        now={NOW}
+      />,
+    );
+    expect(screen.getByText("shop-web-1 died")).toHaveTextContent(/^shop-web-1 died$/);
+    expect(hero()).not.toHaveTextContent("·");
+    expect(screen.getByRole("link", { name: /Follow along/ })).toBeInTheDocument();
+  });
+
+  it("puts the short name in front of the title of a waiting or failed incident too", () => {
+    for (const status of ["awaiting_approval", "failed"] as const) {
+      const { unmount } = render(
+        <OverviewView
+          hosts={[host({ health: "down" })]}
+          services={[service({ health: "down" })]}
+          incidents={[incident({ status, short_name: "shop #14" })]}
+          now={NOW}
+        />,
+      );
+      expect(hero(), status).toHaveTextContent("shop #14 · shop-web-1 died");
+      unmount();
+    }
+  });
+
   it("says when Bleep is not sure, and wears that face", () => {
     const { container } = render(
       <OverviewView

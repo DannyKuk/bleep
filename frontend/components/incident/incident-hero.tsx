@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Bleep } from "@/components/bleep/bleep";
 import { headline } from "@/components/incident/headline";
 import { subjectText } from "@/components/incident/incident-list";
+import { ShortName } from "@/components/incident/short-name";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useTimeZone } from "@/components/time-zone";
@@ -70,7 +71,7 @@ export function IncidentHero({ detail, stream }: { detail: IncidentDetail; strea
           id="incident-headline"
           className="text-[32px] leading-tight font-extrabold text-balance wrap-anywhere md:text-4xl"
         >
-          <ShortName name={incident.short_name} className="text-base" />
+          <HeadingName name={incident.short_name} className="text-base" />
           <HeadlineWords detail={detail} />
         </h1>
         <p className="text-[17px] text-ink-2">{incident.title}</p>
@@ -100,11 +101,11 @@ function HeadlineWords({ detail }: { detail: IncidentDetail }) {
  * The incident's short name ("shop #14", as Telegram shows it) on its own line above the
  * headline. The space after it keeps the heading's spoken name two phrases.
  */
-function ShortName({ name, className }: { name: string | null; className: string }) {
+function HeadingName({ name, className }: { name: string | null; className: string }) {
   if (!name) return null;
   return (
     <>
-      <span className={cn("block font-mono font-semibold text-ink-2", className)}>{name}</span>{" "}
+      <ShortName name={name} className={cn("block", className)} />{" "}
     </>
   );
 }
@@ -157,7 +158,7 @@ export function PhoneIncidentHero({ detail }: { detail: IncidentDetail }) {
             id="incident-headline"
             className="text-[22px] leading-tight font-extrabold wrap-anywhere"
           >
-            <ShortName name={incident.short_name} className="text-sm" />
+            <HeadingName name={incident.short_name} className="text-sm" />
             <HeadlineWords detail={detail} />
           </h1>
         </div>

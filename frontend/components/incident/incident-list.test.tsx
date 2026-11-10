@@ -56,6 +56,20 @@ describe("IncidentListView", () => {
     expect(container.querySelector("img")).toBeNull();
   });
 
+  it("finds an incident by its short name, ignoring case (#397)", () => {
+    const incidents = [
+      incident({ short_name: "shop #14" }),
+      incident({ id: "inc-2", short_name: "shop #15", title: "Disk 93% full" }),
+      incident({ id: "inc-3", title: "Worker crashed" }),
+    ];
+    render(<IncidentListView incidents={incidents} now={NOW} />);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "shop #14" } });
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+    expect(screen.getByRole("link")).toHaveTextContent("shop #14 · shop-web-1 died");
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "SHOP #1" } });
+    expect(screen.getAllByRole("link")).toHaveLength(2);
+  });
+
   it("shows the empty state", () => {
     render(<IncidentListView incidents={[]} now={NOW} />);
     expect(screen.getByText(/No incidents yet/)).toBeInTheDocument();

@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import { Bleep } from "@/components/bleep/bleep";
 import { isRefused } from "@/components/incident/headline";
+import { ShortNamePrefix } from "@/components/incident/short-name";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import { HealthBadge } from "@/components/overview/health-badge";
 import { joinNames, type Situation } from "@/components/overview/situation";
@@ -93,11 +94,20 @@ function planOf(detail: IncidentDetail | undefined) {
   return detail.approval?.status === "pending" ? detail.approval.proposal : detail.proposal;
 }
 
+function TitleLine({ incident }: { incident: Incident }) {
+  return (
+    <>
+      <ShortNamePrefix name={incident.short_name} />
+      {incident.title}
+    </>
+  );
+}
+
 function waitingWords(incident: Incident, detail: IncidentDetail | undefined, trouble: string) {
   const plan = planOf(detail);
   const unsure = detail?.diagnosis?.unsure === true;
   let reason = "I need you.";
-  let body: ReactNode = incident.title;
+  let body: ReactNode = <TitleLine incident={incident} />;
   if (plan && isRefused(plan)) {
     reason = "My own checks stopped my plan, so I need you.";
   } else if (plan?.kind === "no_action") {
@@ -132,14 +142,14 @@ function incidentWords(
     return {
       tag,
       headline: `I could not finish with ${subject.name}.`,
-      body: incident.title,
+      body: <TitleLine incident={incident} />,
       link: { href, label: "Show me what happened" },
     };
   }
   return {
     tag,
     headline: `${trouble} I am on it.`,
-    body: incident.title,
+    body: <TitleLine incident={incident} />,
     link: { href, label: "Follow along" },
   };
 }

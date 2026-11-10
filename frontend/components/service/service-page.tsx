@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import { HealthBadge } from "@/components/overview/health-badge";
 import { ENDED } from "@/components/incident/proposal-card";
+import { ShortNamePrefix } from "@/components/incident/short-name";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import { subjectText } from "@/components/incident/incident-list";
 import { useOverall } from "@/components/overall-state";
@@ -162,7 +163,10 @@ function PastIncidents({ incidents }: { incidents: IncidentListItem[] }) {
             href={`/incidents/${incident.id}`}
             className="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1 rounded-row bg-soft px-3 py-2 hover:bg-line focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           >
-            <span className="min-w-0 flex-1 basis-60 text-sm font-bold">{incident.title}</span>
+            <span className="min-w-0 flex-1 basis-60 text-sm font-bold">
+              <ShortNamePrefix name={incident.short_name} />
+              {incident.title}
+            </span>
             <IncidentStatusBadge status={incident.status} />
             <Votes votes={incident.votes} />
             <span className="font-mono text-xs text-ink-2">{subjectText(incident)}</span>
@@ -216,6 +220,7 @@ function StillFailing({
         href={`/incidents/${last.id}`}
         className="font-bold text-accent hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
       >
+        <ShortNamePrefix name={last.short_name} />
         {last.title}
       </Link>
       .

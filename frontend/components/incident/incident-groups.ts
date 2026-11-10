@@ -66,7 +66,9 @@ export function matchesFilter(
 export function matchesSearch(incident: Incident, subject: string, query: string): boolean {
   const needle = query.trim().toLowerCase();
   if (!needle) return true;
-  return incident.title.toLowerCase().includes(needle) || subject.toLowerCase().includes(needle);
+  return [incident.short_name ?? "", incident.title, subject].some((text) =>
+    text.toLowerCase().includes(needle),
+  );
 }
 
 /**

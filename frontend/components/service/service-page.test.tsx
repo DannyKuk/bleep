@@ -393,6 +393,33 @@ const CHECKS: UrlCheckPoint[] = [
   { ok: false, status_code: null, latency_ms: 10000, checked_at: "2026-11-05T09:01:00Z" },
 ];
 
+describe("ServicePage short names (#397)", () => {
+  it("puts each past incident's short name in front of its title, in mono", async () => {
+    const named = pastIncident({ id: "inc-2", short_name: "shop #14", title: "shop-web-1 died" });
+    const old = pastIncident({ id: "inc-1", title: "url failed on shop" });
+    stubBackend(json(SERVICE), [named, old]);
+    renderPage("demo/compose:shop");
+
+    const past = await screen.findByRole("list", { name: "Incidents" });
+    const row = within(past).getByRole("link", { name: /shop-web-1 died/ });
+    expect(row).toHaveTextContent("shop #14 · shop-web-1 died");
+    expect(within(row).getByText("shop #14")).toHaveClass("font-mono", "text-ink-2");
+    const plain = within(past).getByRole("link", { name: /url failed on shop/ });
+    expect(within(plain).getByText("url failed on shop")).toHaveTextContent(/^url failed on shop$/);
+    expect(plain).not.toHaveTextContent("·");
+  });
+
+  it("names the last incident by its short name when the service is still down", async () => {
+    const down = { ...SERVICE.service, health: "down" as const };
+    const last = pastIncident({ id: "inc-9", short_name: "shop #9", title: "url failed on shop" });
+    stubBackend(json({ ...SERVICE, service: down }), [last]);
+    renderPage("demo/compose:shop");
+
+    const note = await screen.findByRole("note", { name: "Still failing" });
+    expect(within(note).getByRole("link")).toHaveTextContent(/^shop #9 · url failed on shop$/);
+  });
+});
+
 describe("ServicePage history", () => {
   it("says a service is still down after its last incident ended, and links that incident", async () => {
     const urls = [{ ...SERVICE.service.urls[0], status: "failing" as const, status_code: 404 }];

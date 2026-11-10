@@ -3,6 +3,7 @@ import { Check, Minus, TriangleAlert, X } from "lucide-react";
 import { Bleep } from "@/components/bleep/bleep";
 import { LOOK } from "@/components/incident/colour-code";
 import { subjectText } from "@/components/incident/incident-list";
+import { ShortNamePrefix } from "@/components/incident/short-name";
 import { useTimeZone } from "@/components/time-zone";
 import type { Incident, Outcome, Report } from "@/lib/api-types";
 import { formatDateTime, formatTime } from "@/lib/format";
@@ -113,7 +114,10 @@ export function ReportView({
             <OutcomeIcon outcome={outcome} />
             {report.outcome}
           </p>
-          <h2 className="text-xl font-extrabold">{report.title}</h2>
+          <h2 className="text-xl font-extrabold">
+            <ShortNamePrefix name={incident?.short_name ?? null} />
+            {report.title}
+          </h2>
           {incident && (
             <p className="flex flex-wrap gap-x-3 gap-y-1 font-mono text-xs text-ink-2">
               <span>{subjectText(incident)}</span>
