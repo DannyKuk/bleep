@@ -107,6 +107,16 @@ class Feedback(BaseModel):
     at: datetime
 
 
+class UrlReading(BaseModel):
+    """One of the service's URLs as Gather checked it, the watcher's check (`check_url`) run once:
+    `error` is Bleep's own text and never quotes the reply."""
+
+    url: str
+    ok: bool
+    status: int | None = None
+    error: str | None = None
+
+
 class GatherContext(BaseModel):
     """What Gather collected before any model ran.
 
@@ -114,13 +124,15 @@ class GatherContext(BaseModel):
     wrapped as untrusted data (`guard.pipeline.guard_text`), so it can go into a prompt as is.
     Everything else is Bleep's own data. `similar` and `facts` are Bleep's memory: trusted, except
     quoted text in them, which `memory.text` wraps as untrusted when it goes into a prompt.
-    `gaps` names what could not be read, one short line each.
+    `gaps` names what could not be read, one short line each. `urls` holds the service's URLs
+    checked when the run began, for a look on request only (#423).
     """
 
     at: datetime
     service_name: str | None = None
     containers: list[ContainerSummary] = Field(default_factory=list)
     logs: dict[str, str] = Field(default_factory=dict)
+    urls: list[UrlReading] = Field(default_factory=list)
     basics: HostBasics | None = None
     top_memory: list[ContainerMemory] = Field(default_factory=list)
     host_rules: list[str] = Field(default_factory=list)

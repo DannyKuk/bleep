@@ -813,6 +813,23 @@ async def test_a_look_message_alone_opens_nothing_and_the_tap_opens_one_incident
     assert "reply_parameters" not in opener
 
 
+async def test_a_message_right_after_a_look_is_about_the_incident_it_opened(env, looks):
+    """#422: "how did you check it?" sent on its own, not as a reply in the look's thread."""
+    await env.repo.set_status(env.incident.id, "closed")
+    await press(env, await look_offered(env))
+    [incident] = [i for i in await env.repo.list() if i.id != env.incident.id]
+    args = {"container": "shop-web-1", "since_minutes": 60}
+    await env.bus.publish(incident.id, "tool_call", {"name": "container_logs", "args": args})
+
+    answer = reading(kind="question", answer="I read its logs.")
+    await say(env, "how did you check it?", None, answer)
+
+    prompt = str(env.model.seen[-1][-1].content)
+    about = prompt.split('<untrusted source="incident"')[1].split("</untrusted")[0]
+    assert '"name":"shop #2"' in about and '"tool":"container_logs"' in about
+    assert env.bot.turns.recent()[-1].incident_id == incident.id
+
+
 async def test_a_second_or_an_expired_press_of_a_look_opens_nothing(env, looks):
     await env.repo.set_status(env.incident.id, "closed")
     confirm_id = await look_offered(env)

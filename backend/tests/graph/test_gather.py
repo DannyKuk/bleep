@@ -127,7 +127,7 @@ async def test_a_host_incident_leaves_bleeps_own_containers_out_of_the_readings(
 
     assert [m.name for m in ctx.top_memory] == ["shop-web-1"]
     assert engine.stats_read == ["shop-web-1"]
-    task = investigate._task(state | {"context": ctx}, 8, lambda: T0)
+    task = investigate._task(state | {"context": ctx}, 8, lambda: T0, "")
     assert "bleep-backend" not in task
 
     cause = Diagnosis(root_cause="the host ran out of memory", category="host", confidence=0.9)

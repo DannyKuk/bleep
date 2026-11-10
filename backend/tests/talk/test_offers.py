@@ -8,6 +8,7 @@ import pytest
 
 from bleep import prompts
 from bleep.schemas.talk import (
+    ContainerLine,
     HostLine,
     IncidentFacts,
     IncidentLine,
@@ -204,6 +205,78 @@ def test_a_service_whose_id_the_snapshot_cut_is_never_a_target():
         update={"services": [ServiceLine(id="laptop/x…", name="x", host="laptop", health="ok")]}
     )
     assert find_subject(cut, "x") is None
+
+
+def with_containers(**names: list[str]) -> Snapshot:
+    """SNAPSHOT where the named services (by name) list these containers."""
+    services = [
+        s.model_copy(
+            update={
+                "containers": [
+                    ContainerLine(name=n, state="running", health="none")
+                    for n in names.get(s.name, [])
+                ]
+            }
+        )
+        for s in SNAPSHOT.services
+    ]
+    return SNAPSHOT.model_copy(update={"services": services})
+
+
+@pytest.mark.parametrize(
+    ("service", "container"),
+    [
+        ("shop", "bleep-demo-shop-1"),
+        ("shop", "Shop-Web"),  # container_name, any case
+        ("shop", "x8k2o0cg4wk0-123456789012"),  # Coolify: <uuid>-<ts>
+    ],
+)
+def test_a_container_name_of_one_service_is_that_service(service, container):
+    snapshot = with_containers(**{service: [container]})
+
+    found = find_subject(snapshot, container.lower())
+
+    assert not isinstance(found, str) and found is not None
+    assert (found.scope, found.target_id, found.name) == (
+        "service",
+        "laptop/compose:shop",
+        "shop",
+    )
+
+
+def test_a_container_name_of_two_services_is_ambiguous_and_said_as_bleep_knows_it():
+    snapshot = with_containers(shop=["shared-1"], grafana=["Shared-1"])
+
+    assert find_subject(snapshot, "SHARED-1") == line("ambiguous_subject", subject="shared-1")
+
+
+def test_a_service_or_host_name_wins_over_a_container_with_that_name():
+    snapshot = with_containers(grafana=["shop", "m1"])
+
+    by_service = find_subject(snapshot, "shop")
+    by_host = find_subject(snapshot, "m1")
+
+    assert not isinstance(by_service, str) and by_service is not None
+    assert by_service.target_id == "laptop/compose:shop"
+    assert not isinstance(by_host, str) and by_host is not None
+    assert (by_host.scope, by_host.target_id) == ("host", "m1")
+
+
+def test_in_german_a_container_name_gives_the_service_and_the_german_ambiguous_line():
+    one = with_containers(shop=["shop-web"])
+    checked = check(
+        TalkAction(kind="leave_alone", subject="shop-web"), one, None, NOW, VIENNA, language="de"
+    )
+    assert not isinstance(checked, str) and checked.subject == "shop"
+    assert confirm_line(checked, NOW, VIENNA, "de") == line_de(
+        "confirm_leave_alone", subject="shop"
+    )
+
+    two = with_containers(shop=["web-1"], grafana=["web-1"])
+    said = check(
+        TalkAction(kind="leave_alone", subject="web-1"), two, None, NOW, VIENNA, language="de"
+    )
+    assert said == line_de("ambiguous_subject", subject="web-1")
 
 
 def test_watch_again_needs_a_quiet_of_its_own():

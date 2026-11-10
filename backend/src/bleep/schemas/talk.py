@@ -51,10 +51,15 @@ class TalkReading(BaseModel):
 
 
 class Turn(BaseModel):
-    """One exchange of a conversation: what the person said and what Bleep answered."""
+    """One exchange of a conversation: what the person said and what Bleep answered, and the
+    incident it was about if any (#422), with `incident_at`, when the conversation took that
+    incident up: a reply about it, or a look's press that opened it; a follow-up carries the
+    time on. The model reads `said` and `answered` only."""
 
     said: str
     answered: str
+    incident_id: str | None = None
+    incident_at: datetime | None = None
 
 
 # The actions a chat can offer to confirm: all of them, a look on request (#403) included.
@@ -265,14 +270,32 @@ class StepLine(BaseModel):
     host: str
 
 
+class CheckLine(BaseModel):
+    """One thing the incident's run looked at (#422), built by code from its events: a tool it
+    called, on what (`target`: a container, an app, a command, a query; `minutes`: how far back)
+    and the first line of what came back, or one of Verify's checks after a fix (`verify_url`,
+    `verify_container`, ...) and whether it passed. `result` is None while a call has no
+    answer, or when its first line says nothing about what was found (a guard's note, a tool's
+    fixed head). `target` and `minutes` are the arguments the model chose; `result` is host
+    text."""
+
+    tool: str
+    target: str | None = None
+    minutes: int | None = None
+    result: str | None = None
+
+
 class IncidentFacts(IncidentLine):
-    """The incident a message is about, in more detail: what opened it, the plan that waits,
-    what was said on its timeline and its report's summary."""
+    """The incident a message is about, in more detail: what opened it, what its run checked,
+    the plan that waits, what was said on its timeline and its report's summary."""
 
     signals: list[SignalLine] = Field(default_factory=list)
+    checks: list[CheckLine] = Field(default_factory=list)
     plan: list[StepLine] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     summary: str | None = None
+    # How many of its run's oldest checks were left out to keep the incident small (#422).
+    left_out: dict[str, int] = Field(default_factory=dict)
 
 
 class Snapshot(BaseModel):

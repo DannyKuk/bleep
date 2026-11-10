@@ -14,6 +14,7 @@ from bleep.hosts.registry import Registry
 from bleep.main import create_app
 from bleep.memory.embeddings import FakeEmbedder
 from bleep.plugins.base import Plugin, PluginContext
+from bleep.plugins.mcp_url import McpUrlPlugin
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import PlanStep, Proposal
 from bleep.schemas.plugins import PluginHealth
@@ -593,3 +594,32 @@ def test_a_settings_save_leaves_a_plugin_version_alone(app):
     version = app.get("/api/plugins").json()[0]["version"]
     put_settings(app, {"thresholds": {"disk_percent": 80}})
     assert app.get("/api/plugins").json()[0]["version"] == version
+
+
+def test_the_mcp_purpose_is_saved_shown_and_cleared_from_the_plugins_page(settings):
+    parts = build_parts(settings, Registry([]), FakeEmbedder(), plugins=[McpUrlPlugin()])
+    with TestClient(create_app(settings, parts)) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        purpose = "Manages the Coolify server: apps, deployments, env settings"
+
+        saved = put_plugin(client, "mcp", json={"settings": {"purpose": purpose}})
+        assert saved.status_code == 200
+        assert saved.json()["settings"]["purpose"] == purpose
+        (listed,) = client.get("/api/plugins").json()
+        assert listed["settings"]["purpose"] == purpose
+
+        cleared = put_plugin(client, "mcp", json={"settings": {"read_tools": ["uptime"]}})
+        assert cleared.json()["settings"]["purpose"] == ""
+
+
+@pytest.mark.parametrize("purpose", ["one\ntwo", "bell\x07", "x" * 201])
+def test_a_bad_mcp_purpose_is_refused_and_the_old_one_stays(settings, purpose):
+    parts = build_parts(settings, Registry([]), FakeEmbedder(), plugins=[McpUrlPlugin()])
+    with TestClient(create_app(settings, parts)) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        put_plugin(client, "mcp", json={"settings": {"purpose": "Manages Caddy"}})
+
+        refused = put_plugin(client, "mcp", json={"settings": {"purpose": purpose}})
+
+        assert refused.status_code == 422
+        assert client.get("/api/plugins").json()[0]["settings"]["purpose"] == "Manages Caddy"

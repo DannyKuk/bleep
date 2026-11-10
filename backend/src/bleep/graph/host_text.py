@@ -9,7 +9,7 @@ outside the wrapper.
 from bleep.guard.pipeline import NAME_CHARS, guard_name, guard_text, is_plain_name
 from bleep.guard.titles import build_title, seen_note, split_service_id
 from bleep.schemas.docker import HostBasics
-from bleep.schemas.graph import GatherContext
+from bleep.schemas.graph import GatherContext, UrlReading
 from bleep.schemas.incidents import Signal, Subject
 
 
@@ -47,6 +47,18 @@ def describe_basics(basics: HostBasics) -> list[str]:
     elif cpus:
         lines.append(f"CPUs: {basics.cpus}")
     return lines
+
+
+def describe_urls(readings: list[UrlReading]) -> str:
+    """Gather's URL checks, one a line, the result before the URL so a redaction inside the URL
+    cannot swallow it. The lines are Bleep's own, but wrapped as untrusted all the same, as host
+    text beside them is: defence in depth."""
+    lines = [
+        (f"passed, answered {r.status}" if r.ok else f"failed, {r.error or 'no answer'}")
+        + f": {r.url}"
+        for r in readings
+    ]
+    return guard_text("url_checks", "\n".join(lines))[0]
 
 
 def service_id_shown(subject: Subject) -> str:
