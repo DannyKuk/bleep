@@ -727,6 +727,23 @@ async def test_deployments_by_name_show_status_commit_and_trigger_but_never_logs
     assert "fake-db-password" not in out
 
 
+async def test_a_lone_surrogate_escaped_in_coolifys_json_never_reaches_the_tool_output(env):
+    rocket = "".join(f"\\u{u:04x}" for u in (0xD83D, 0xDE80))
+    body = (FIXTURES / "deployments.json").read_text(encoding="utf-8")
+    body = body.replace(
+        '"Read PORT from the environment',
+        f'"Read PORT\\ud800 from the \\udfff environment {rocket} now\\udbff',
+    )
+    route = ("GET", f"/api/v1/deployments/applications/{SHOP}")
+    env.coolify.routes[route] = httpx.Response(200, content=body.encode("utf-8"))
+
+    out = await env.read("coolify_deployments", app="shop")
+
+    assert WRAPPED.match(out)
+    assert "Read PORT from the environment \U0001f680 now" in out
+    out.encode("utf-8")
+
+
 async def test_env_keys_never_show_a_value(env):
     out = await env.read("coolify_env_keys", app=SHOP)
 

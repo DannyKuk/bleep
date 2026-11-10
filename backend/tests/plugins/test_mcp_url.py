@@ -218,21 +218,29 @@ def test_an_echoed_token_split_by_invisible_characters_is_scrubbed_too(sep):
     assert "<redacted>" in out and "(keep it safe)" in out
 
 
+# Its 5th character is one an ESC takes with it when stripped (`\x1b[@-Z\\-_]`).
+CAPITAL_TOKEN = "abcdEFGHqrst1234zz"
+
+
 @pytest.mark.parametrize(
-    "text",
+    ("token", "text"),
     [
-        f"{TOKEN[:4]}\x1b{TOKEN[4:]}",  # strip_control would take the character after the ESC
-        f"\x1b{TOKEN}",
-        f"\x1b[{TOKEN}",
+        (TOKEN, f"{TOKEN[:4]}\x1b{TOKEN[4:]}"),
+        (TOKEN, f"\x1b{TOKEN}"),
+        (TOKEN, f"\x1b[{TOKEN}"),
+        # strip_control would take the character after the ESC
+        (CAPITAL_TOKEN, f"{CAPITAL_TOKEN[:4]}\x1b{CAPITAL_TOKEN[4:]}"),
+        # ... and it drops the lone surrogate first, so the ESC reaches that character
+        (CAPITAL_TOKEN, f"{CAPITAL_TOKEN[:4]}\x1b\ud800{CAPITAL_TOKEN[4:]}"),
     ],
 )
-def test_an_escape_next_to_a_token_character_leaks_none_of_it(text):
+def test_an_escape_next_to_a_token_character_leaks_none_of_it(token, text):
     from bleep.plugins.mcp_url import _guarded, _Server
 
-    out, _ = _guarded(_Server(URL, McpSettings(), SecretStr(TOKEN)), f"key: {text} ok")
+    out, _ = _guarded(_Server(URL, McpSettings(), SecretStr(token)), f"key: {text} ok")
 
-    assert TOKEN[5:] not in out and TOKEN[:4] + TOKEN[5:] not in out
-    assert "cp-test" not in out
+    assert token[5:] not in out and token[:4] + token[5:] not in out
+    assert token[1:8] not in out
 
 
 def test_scrubbing_stays_fast_for_a_token_with_spaces_in_it():
