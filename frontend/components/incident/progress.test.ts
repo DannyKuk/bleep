@@ -160,6 +160,19 @@ describe("progressSteps", () => {
     expect(progressSteps(events(), status).map(({ state }) => state)).toEqual(expected);
   });
 
+  // A look on request is checked inside Report, not by Verify (#421).
+  it.each([
+    { ok: true, expected: "done" },
+    { ok: false, expected: "failed" },
+  ])("marks Check $expected for a look checked at Report", ({ ok, expected }) => {
+    const events = [...upToApproval(), ...step(ran("report"), verification(ok))];
+    const steps = states(events, "closed");
+    expect(steps["Check"]).toBe(expected);
+    expect(steps["Your yes"]).toBe("todo");
+    expect(steps["Fix"]).toBe("todo");
+    expect(steps["Report"]).toBe("done");
+  });
+
   it("marks no step as stopped for a failed run whose history has not loaded", () => {
     expect(Object.values(states([], "failed"))).not.toContain("stopped");
   });

@@ -188,6 +188,20 @@ class KnowledgeIndex:
         finally:
             await conn.close()
 
+    async def has_other_model(self, prefix: str) -> bool:
+        """Whether a document whose id starts with `prefix` was embedded by another embedder than
+        the one in force: search leaves it out until it is embedded again."""
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                "SELECT 1 FROM knowledge_documents WHERE substr(id, 1, ?) = ? AND model != ?"
+                " LIMIT 1",
+                (len(prefix), prefix, self.embedder.name),
+            ) as cursor:
+                return await cursor.fetchone() is not None
+        finally:
+            await conn.close()
+
     async def remove(self, ids: Iterable[str]) -> int:
         """Forget the documents with these ids; how many there were."""
         ids = list(ids)
