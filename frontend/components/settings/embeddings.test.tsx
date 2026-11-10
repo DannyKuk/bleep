@@ -74,7 +74,7 @@ describe("the Embeddings panel", () => {
     await userEvent.click(within(embeddings).getByRole("button", SAVE));
 
     expect(putsOf(fetchMock)).toHaveLength(0);
-    const confirm = within(embeddings).getByRole("group", { name: "Confirm the change" });
+    const confirm = within(embeddings).getByRole("status", { name: "Confirm the change" });
     expect(confirm).toHaveTextContent("applies at the next start");
     expect(confirm).toHaveTextContent("embed the memory and the knowledge index again");
 
@@ -91,11 +91,11 @@ describe("the Embeddings panel", () => {
 
     await userEvent.selectOptions(within(embeddings).getByLabelText("Embedder"), "openai");
     await userEvent.click(within(embeddings).getByRole("button", SAVE));
-    const confirm = within(embeddings).getByRole("group", { name: "Confirm the change" });
+    const confirm = within(embeddings).getByRole("status", { name: "Confirm the change" });
     expect(confirm).toHaveTextContent("embed the memory and the knowledge index again");
     await userEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
 
-    expect(within(embeddings).queryByRole("group", { name: "Confirm the change" })).toBeNull();
+    expect(within(embeddings).queryByRole("status", { name: "Confirm the change" })).toBeNull();
     expect(within(embeddings).getByLabelText("Embedder")).toHaveValue("openai");
     expect(putsOf(fetchMock)).toHaveLength(0);
   });
@@ -107,7 +107,7 @@ describe("the Embeddings panel", () => {
 
     await userEvent.type(within(embeddings).getByLabelText("Recall's minimum score"), "0.4");
     await userEvent.click(within(embeddings).getByRole("button", SAVE));
-    const confirm = within(embeddings).getByRole("group", { name: "Confirm the change" });
+    const confirm = within(embeddings).getByRole("status", { name: "Confirm the change" });
     expect(confirm).toHaveTextContent("applies at the next start");
     expect(confirm).not.toHaveTextContent("embed the memory");
     await userEvent.click(within(confirm).getByRole("button", { name: "Save for the next start" }));
@@ -122,7 +122,7 @@ describe("the Embeddings panel", () => {
     await userEvent.type(within(embeddings).getByLabelText("Endpoint model"), "x");
     await userEvent.click(within(embeddings).getByRole("button", SAVE));
     expect(
-      within(embeddings).getByRole("group", { name: "Confirm the change" }),
+      within(embeddings).getByRole("status", { name: "Confirm the change" }),
     ).not.toHaveTextContent("embed the memory");
   });
 
@@ -134,7 +134,7 @@ describe("the Embeddings panel", () => {
     await userEvent.click(within(embeddings).getByRole("button", SAVE));
     await userEvent.type(within(embeddings).getByLabelText("Recall's minimum score"), "5");
 
-    expect(within(embeddings).queryByRole("group", { name: "Confirm the change" })).toBeNull();
+    expect(within(embeddings).queryByRole("status", { name: "Confirm the change" })).toBeNull();
     expect(putsOf(fetchMock)).toHaveLength(0);
   });
 
@@ -214,5 +214,102 @@ describe("the Embeddings panel", () => {
     await userEvent.click(within(row).getByRole("button", { name: "Clear" }));
 
     expect(await within(row).findByRole("alert")).toHaveTextContent(refusal);
+  });
+
+  it("moves focus to the question's first button, names the question for it, and returns to Save on Cancel", async () => {
+    settingsBackend();
+    render(<SettingsPage />);
+    const embeddings = await panel();
+    await userEvent.type(within(embeddings).getByLabelText("Recall's minimum score"), "0.4");
+    await userEvent.click(within(embeddings).getByRole("button", SAVE));
+
+    const confirm = within(embeddings).getByRole("status", { name: "Confirm the change" });
+    const yes = within(confirm).getByRole("button", { name: "Save for the next start" });
+    expect(yes).toHaveFocus();
+    expect(yes).toHaveAccessibleDescription(/applies at the next start/);
+
+    await userEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    expect(within(embeddings).getByRole("button", SAVE)).toHaveFocus();
+  });
+
+  it("does not ask or enable Save for a cosmetic change: 0.30 is 0.3", async () => {
+    settingsBackend(
+      settingsView({
+        embeddings: { provider: "local", model: null, min_score: 0.3 },
+        overrides: { embeddings: { min_score: 0.3 } },
+      }),
+    );
+    render(<SettingsPage />);
+    const embeddings = await panel();
+    const score = within(embeddings).getByLabelText("Recall's minimum score");
+    await userEvent.clear(score);
+    await userEvent.type(score, "0.30");
+    expect(within(embeddings).getByRole("button", SAVE)).toBeDisabled();
+    await userEvent.clear(score);
+    await userEvent.type(score, "0.31");
+    expect(within(embeddings).getByRole("button", SAVE)).toBeEnabled();
+  });
+
+  it("treats emptying a field that no override sets as no change", async () => {
+    settingsBackend(
+      settingsView({ embeddings: { provider: "local", model: "m", min_score: 0.4 } }),
+    );
+    render(<SettingsPage />);
+    const embeddings = await panel();
+    await userEvent.clear(within(embeddings).getByLabelText("Endpoint model"));
+    expect(within(embeddings).getByRole("button", SAVE)).toBeDisabled();
+  });
+
+  it("asks before clearing an override by emptying its field, and sends the overrides without it", async () => {
+    const fetchMock = settingsBackend(
+      settingsView({
+        embeddings: { provider: "local", model: null, min_score: 0.4 },
+        overrides: { embeddings: { min_score: 0.4 } },
+      }),
+      [json(settingsView())],
+    );
+    render(<SettingsPage />);
+    const embeddings = await panel();
+    await userEvent.clear(within(embeddings).getByLabelText("Recall's minimum score"));
+    await userEvent.click(within(embeddings).getByRole("button", SAVE));
+    const confirm = within(embeddings).getByRole("status", { name: "Confirm the change" });
+    expect(confirm).toHaveTextContent("A minimum score does not embed anything again");
+    await userEvent.click(within(confirm).getByRole("button", { name: "Save for the next start" }));
+
+    expect(sentBody(fetchMock, "PUT")).toEqual({ embeddings: {} });
+  });
+
+  it("gives Back to the defaults the re-embed question, and sends {} only after it", async () => {
+    const fetchMock = settingsBackend(
+      settingsView({
+        embeddings: endpoint(),
+        overrides: { embeddings: { provider: "openai", model: "text-embedding-3-small" } },
+      }),
+      [json(settingsView())],
+    );
+    render(<SettingsPage />);
+    const embeddings = await panel();
+    await userEvent.click(within(embeddings).getByRole("button", { name: "Back to the defaults" }));
+
+    expect(putsOf(fetchMock)).toHaveLength(0);
+    const confirm = within(embeddings).getByRole("status", { name: "Confirm the change" });
+    expect(confirm).toHaveTextContent("embed the memory and the knowledge index again");
+    await userEvent.click(within(confirm).getByRole("button", { name: "Save for the next start" }));
+    expect(sentBody(fetchMock, "PUT")).toEqual({ embeddings: {} });
+  });
+
+  it("does not submit when Enter is pressed in a field while the question is shown, and saves once on the answer", async () => {
+    const fetchMock = settingsBackend(settingsView(), [json(settingsView())]);
+    render(<SettingsPage />);
+    const embeddings = await panel();
+    const score = within(embeddings).getByLabelText("Recall's minimum score");
+    await userEvent.type(score, "0.4");
+    await userEvent.click(within(embeddings).getByRole("button", SAVE));
+    await userEvent.type(score, "{Enter}");
+
+    expect(putsOf(fetchMock)).toHaveLength(0);
+    const confirm = within(embeddings).getByRole("status", { name: "Confirm the change" });
+    await userEvent.click(within(confirm).getByRole("button", { name: "Save for the next start" }));
+    expect(putsOf(fetchMock)).toHaveLength(1);
   });
 });

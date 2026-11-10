@@ -50,7 +50,7 @@ describe("the Tracing panel", () => {
     );
     await userEvent.click(within(tracing).getByRole("button", SAVE));
 
-    expect(within(tracing).queryByRole("group", { name: "Confirm the change" })).toBeNull();
+    expect(within(tracing).queryByRole("status", { name: "Confirm the change" })).toBeNull();
     expect(sentBody(fetchMock, "PUT")).toEqual({ tracing: { tracing: "langsmith" } });
   });
 
@@ -158,5 +158,17 @@ describe("the Tracing panel", () => {
     await userEvent.click(within(key).getByRole("button", { name: "Save" }));
 
     expect(await within(tracing).findByRole("status")).toHaveTextContent("A restart is needed");
+  });
+
+  it("links each hint to its input, so a screen reader reads the rule with the field", async () => {
+    settingsBackend();
+    render(<SettingsPage />);
+    const tracing = await panel();
+    expect(within(tracing).getByLabelText("Base URL")).toHaveAccessibleDescription(
+      /must be https and reach public addresses only/,
+    );
+    expect(within(tracing).getByLabelText("Trace incident runs with")).toHaveAccessibleDescription(
+      "Its keys must be set first.",
+    );
   });
 });

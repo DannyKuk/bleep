@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2, TriangleAlert } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { SaveError, useSaving } from "@/components/settings/save-error";
 import { SecretFields } from "@/components/settings/secret-field";
@@ -77,6 +77,17 @@ export function RestartNote({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Whether the draft of `field` is an edit. A number is compared as a number ("0.30" is "0.3"),
+ * and emptying a field no override sets changes nothing: there is nothing to put back.
+ */
+function isEdit(field: Field, draft: string, inForce: string, overridden: boolean): boolean {
+  const text = draft.trim();
+  if (text === inForce) return false;
+  if (text === "") return overridden;
+  return !(field.number && inForce !== "" && Number(text) === Number(inForce));
+}
+
 /** A typed value as a number; anything else goes as typed, for the API to refuse with why. */
 const parsed = (text: string): number | string => {
   const value = Number(text);
@@ -97,6 +108,7 @@ function FieldRow({
   onChange: (value: string) => void;
 }) {
   const id = useId();
+  const described = field.hint ? `${id}-hint` : undefined;
   const head = (
     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
       {fromEnv ? (
@@ -130,6 +142,7 @@ function FieldRow({
         <select
           id={id}
           value={draft}
+          aria-describedby={described}
           onChange={(changed) => onChange(changed.target.value)}
           className="h-11 w-full max-w-sm rounded-field border border-line bg-surface px-3 text-[15px] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
@@ -143,6 +156,7 @@ function FieldRow({
         <Input
           id={id}
           value={draft}
+          aria-describedby={described}
           inputMode={field.number ? "decimal" : undefined}
           autoComplete="off"
           spellCheck={false}
@@ -150,7 +164,11 @@ function FieldRow({
           onChange={(changed) => onChange(changed.target.value)}
         />
       )}
-      {field.hint && <p className="text-xs text-muted-foreground">{field.hint}</p>}
+      {field.hint && (
+        <p id={described} className="text-xs text-muted-foreground">
+          {field.hint}
+        </p>
+      )}
     </div>
   );
 }
@@ -190,8 +208,19 @@ export function SectionForm({
     null,
   );
   const { saving, busy, problems, run } = useSaving(labels);
+  const confirmButton = useRef<HTMLButtonElement>(null);
+  const saveButton = useRef<HTMLButtonElement>(null);
+  const cancelled = useRef(false);
+  const questionId = useId();
+  useEffect(() => {
+    if (asking) confirmButton.current?.focus();
+    else if (cancelled.current) saveButton.current?.focus();
+    cancelled.current = false;
+  }, [asking]);
   const editable = fields.filter((field) => !fromEnv.includes(field.name));
-  const changed = editable.filter((field) => draft[field.name].trim() !== values[field.name]);
+  const changed = editable.filter((field) =>
+    isEdit(field, draft[field.name], values[field.name], field.name in overrides),
+  );
   const overridden = Object.keys(overrides).length > 0;
 
   function body(): Record<string, unknown> {
@@ -250,13 +279,22 @@ export function SectionForm({
       })}
       {asking ? (
         <div
-          role="group"
+          role="status"
           aria-label="Confirm the change"
           className="flex flex-col gap-2 rounded-row bg-soft p-3"
         >
-          <p className="text-sm">{asking.text}</p>
+          <p id={questionId} className="text-sm">
+            {asking.text}
+          </p>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" disabled={busy} onClick={() => void save(asking.body)}>
+            <Button
+              ref={confirmButton}
+              type="button"
+              size="sm"
+              aria-describedby={questionId}
+              disabled={busy}
+              onClick={() => void save(asking.body)}
+            >
               {saving && <Loader2 aria-hidden className="animate-spin" />}
               {confirmLabel}
             </Button>
@@ -265,7 +303,10 @@ export function SectionForm({
               size="sm"
               variant="ghost"
               disabled={saving}
-              onClick={() => setAsking(null)}
+              onClick={() => {
+                cancelled.current = true;
+                setAsking(null);
+              }}
             >
               Cancel
             </Button>
@@ -273,7 +314,7 @@ export function SectionForm({
         </div>
       ) : (
         <div className="flex flex-wrap gap-2">
-          <Button type="submit" size="sm" disabled={busy || changed.length === 0}>
+          <Button ref={saveButton} type="submit" size="sm" disabled={busy || changed.length === 0}>
             {saving && <Loader2 aria-hidden className="animate-spin" />}
             {what}
           </Button>
