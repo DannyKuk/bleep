@@ -863,6 +863,17 @@ TOKEN_SHAPES |= {
     ),
     "gitlab_ci_job": ("CI_JOB_TOKEN glcbt-64_" + B24[:20], B24[:20], "glcbt-64_" + B24[:19]),
     "gitlab_trigger": ("trigger glptt-" + HEX40 + " sent", HEX40, "glptt-" + HEX40[:30]),
+    "gitlab_trigger_short": ("trigger glptt-" + B24[:20] + " sent", B24[:20], "glptt-" + B24[:21]),
+    "langsmith_personal": (
+        "LangSmith: using lsv2_" + "pt_" + HEX40[:32] + "_" + HEX40[:10] + " for traces",
+        HEX40[:32],
+        "lsv2_pt_" + HEX40[:31] + "_" + HEX40[:10] + " lsv2_pt_settings",
+    ),
+    "langsmith_service": (
+        "key lsv2_" + "sk_" + HEX40[8:40] + "_" + HEX40[:10],
+        HEX40[8:40],
+        "lsv2_sk_" + HEX40[8:40] + "_" + HEX40[:11],
+    ),
     "gitlab_feed": ("feed glft-" + B24[:20], "glft-" + B24[:20], "glft-feed-token-docs-v2"),
     "gitlab_feed_path": ("glft-" + HEX40 + HEX40[:24] + "-42", HEX40, "glft-" + HEX40[:24] + "-42"),
     "gitlab_incoming_mail": (
@@ -948,6 +959,7 @@ ON_SIGHT = [
     "glrt-" + B24[:20],
     "gldt-" + ROUTABLE,
     "GR1348941" + B24[:20],
+    "lsv2_" + "sk_" + HEX40[:32] + "_" + HEX40[:10],
     "gliamrt-" + B43 + "." + B43,
     "npm_" + B36,
     "o." + B32,
@@ -965,6 +977,41 @@ def test_a_token_after_a_percent_encoded_byte_is_redacted(token, escape):
     out = redact_text(text)
 
     assert token not in out and f"{escape}<redacted>" in out
+
+
+def test_the_literal_first_patterns_match_what_the_start_first_ones_did():
+    """Each token prefix is written before its start check (`_starting`) so `re` can scan for it;
+    the same module with every prefix written after its start must find the same spans."""
+    import inspect
+    import random
+    import types
+
+    from bleep.guard import redact
+
+    source = inspect.getsource(redact)
+    written = 'return rf"{prefix}(?<={start}{prefix})"'
+    assert written in source
+    module = types.ModuleType("start_first")
+    exec(
+        compile(source.replace(written, 'return rf"{start}{prefix}"'), "start_first", "exec"),
+        module.__dict__,
+    )
+    names = ["_JWT", "_GITLAB", "_JWT_START"]
+    pairs = [(getattr(redact, n), getattr(module, n)) for n in names]
+    pairs += [(a, b) for (a, _), (b, _) in zip(redact._PATTERNS, module._PATTERNS, strict=True)]
+    assert all(a.pattern != b.pattern for a, b in pairs[:3])
+    prefixes = ["ghp_", "github_pat_", "sk-", "sk-or-", "xoxb-", "xoxd-", "xoxe-1-", "xapp-1-"]
+    prefixes += ["eyJ", "ya29.", "AIza", "AQ.", "sk_live_", "rk_test_", "sk_org_", "sk_org_live_"]
+    prefixes += ["lsv2_pt_", "glpat-", "glrt-", "glptt-", "gliamrt-", "GR1348941", "npm_", "o."]
+    prefixes += ["AKIA", "ASIA", "123456789:", "pbkdf2_sha256$1$"]
+    fillers = ["%3D", "%", "%2", "x", "_", "-", ".", " ", "é", "٣", "0", "\n", B24, HEX40, JWT]
+    rng = random.Random(416)
+    for _ in range(4000):
+        text = "".join(rng.choice(prefixes + fillers) for _ in range(rng.randrange(1, 10)))
+        for new, old in pairs:
+            assert [m.span() for m in new.finditer(text)] == [
+                m.span() for m in old.finditer(text)
+            ], (new.pattern, text)
 
 
 def test_a_vendor_token_at_the_end_of_a_sentence_is_redacted():
