@@ -54,6 +54,7 @@ export class RunSoFar {
 
 const INDEX = new Map<string, number>(PROGRESS_STEPS.map(({ node }, index) => [node, index]));
 const REPORT = INDEX.get("report")!;
+const VERIFY = INDEX.get("verify")!;
 // Where a run that has published nothing yet (or whose history is still loading) must be.
 const BY_STATUS: Partial<Record<IncidentStatus, number>> = {
   awaiting_approval: INDEX.get("approval"),
@@ -67,7 +68,7 @@ const BY_STATUS: Partial<Record<IncidentStatus, number>> = {
  * clears the steps from there on, so a step the run has not reached again is never shown done.
  * Fix is failed when a step of the plan failed, and Check is failed unless its last check passed,
  * so a fix nobody confirmed never looks like one that was; a no on Your yes shows as declined.
- * Steps that never ran stay to do, a failed run marks the step it stopped at, and a closed or
+ * A look's check, which Report runs (#421), marks Check done or failed as Verify's would. Steps that never ran stay to do, a failed run marks the step it stopped at, and a closed or
  * resolved incident has its report done.
  */
 export function progressSteps(events: IncidentEvent[], status: IncidentStatus): ProgressStep[] {
@@ -78,6 +79,9 @@ export function progressSteps(events: IncidentEvent[], status: IncidentStatus): 
   for (const event of events) {
     run.follow(event);
     const { kind, payload } = event;
+    if (kind === "verification" && current === REPORT) {
+      ended.set(VERIFY, payload.ok === true ? "done" : "failed");
+    }
     if (kind !== "node_started" && kind !== "node_finished") continue;
     const node = String(payload.node ?? "");
     const index = INDEX.get(node);
