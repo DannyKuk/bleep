@@ -27,6 +27,7 @@ from fakes import FakeChatModel
 HEALTHY = "coolify-healthy"
 NO_URL = "coolify-healthy-no-url"
 FAILING = "coolify-url-500"
+NO_URL_FAILING = "coolify-nourl-log-errors"
 NO_ACTION = {"kind": "no_action", "reason": "nothing to change"}
 
 
@@ -65,7 +66,7 @@ def look(cause: str, plan: dict, read: str | None = None, category: str = "unkno
 
 def test_every_shipped_case_loads_with_a_healthy_and_a_failing_one():
     cases = load_cases()
-    assert {c.id for c in cases} >= {HEALTHY, NO_URL, FAILING}
+    assert {c.id for c in cases} >= {HEALTHY, NO_URL, FAILING, NO_URL_FAILING}
     assert {c.healthy for c in cases} == {True, False}
     for c in cases:
         assert "coolify-proxy" not in c.own()
@@ -230,3 +231,46 @@ async def test_a_failing_case_passes_a_right_answer_that_mentions_the_healthy_co
     models = look(cause, NO_ACTION, category="code")
     result = await run_case(case(FAILING), settings(), models=models)
     assert result.said_right and result.passed
+
+
+async def test_a_failing_look_without_urls_that_names_the_log_errors_passes():
+    c = case(NO_URL_FAILING)
+    assert c.urls == [] and not c.healthy
+    cause = "The container is healthy, but its own log shows an unhandled error reading 'slug'."
+    result = await run_case(c, settings(), models=look(cause, NO_ACTION, category="code"))
+    assert result.checked_urls == [] and result.unchecked_urls == []
+    assert result.gathered_logs == c.own()  # the own log is what shows the failure
+    assert result.said_right and result.passed
+
+
+@pytest.mark.parametrize(
+    ("cause", "category"),
+    [
+        # What the no-URL line must not cause: the containers run, so the service is called healthy.
+        ("Nothing is wrong: its containers run and it has no URL to check.", "unknown"),
+        ("The app is healthy: its container runs and its health rests on its logs.", "unknown"),
+        # Right category, wrong verdict.
+        ("The app is healthy and working normally; the unhandled errors are noise.", "code"),
+        # Right verdict in the wrong category.
+        ("Its own log shows an unhandled error reading 'slug' in the posts API.", "unknown"),
+    ],
+)
+async def test_a_failing_look_without_urls_called_healthy_on_its_containers_fails(cause, category):
+    models = look(cause, NO_ACTION, category=category)
+    result = await run_case(case(NO_URL_FAILING), settings(), models=models)
+    assert result.failure is None, result.error
+    assert result.said_right is False and result.passed is False
+
+
+async def test_a_failing_look_without_urls_that_restarts_the_container_fails():
+    c = case(NO_URL_FAILING)
+    target = c.own()[0]
+    restart = {
+        "kind": "act",
+        "steps": [{"action": "docker.restart", "host_id": "lab", "target": target}],
+        "reason": "restart it",
+        "verification": {"containers": [target]},
+    }
+    cause = "An unhandled error reading 'slug' in the posts API."
+    result = await run_case(c, settings(), models=look(cause, restart, category="code"))
+    assert result.forbidden == [f"docker.restart {target}"] and result.passed is False

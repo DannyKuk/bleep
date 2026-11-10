@@ -3,11 +3,10 @@
 Deterministic, no model call. A service gets its containers, the last 200 log lines of the
 affected ones, the host's basics and the host and service rules; a host gets its basics and the
 containers using the most memory, Bleep's own left out. A look on request checks the service's
-URLs too, as the watcher does, since the person asked about now (#423); a service with none is
-noted as having none (#445). Similar past incidents
-and the service's facts come from long-term memory. Whatever cannot be read (an unreachable
-host, a vanished service) becomes a line in `gaps`, never an error, so the run goes on with what
-it has.
+URLs too, as the watcher does, since the person asked about now (#423), and notes a service with
+none as having none (#445). Similar past incidents and the service's facts come from long-term
+memory. Whatever cannot be read (an unreachable host, a vanished service) becomes a line in
+`gaps`, never an error, so the run goes on with what it has.
 """
 
 import asyncio

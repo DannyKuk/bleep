@@ -97,3 +97,20 @@ async def test_a_run_a_failure_opened_is_not_told_about_urls(tmp_path, signals):
     task, sent = await rendered(env, subject, opened)
 
     assert "## URL checks" not in task and NO_URL not in task + sent
+
+
+async def test_diagnose_after_a_fix_leaves_the_no_url_line_out(tmp_path):
+    env, subject = await bare_shop(tmp_path)
+    env.models.model = FakeChatModel(
+        script=[reply(0.9), reply(0.9)], structured_output_unsupported=True
+    )
+    state: dict = {"incident_id": "inc-1", "subject": subject, "signals": [on(LOOK, subject)]}
+    state |= await gather.make(env.deps)(state)
+    assert state["context"].no_urls
+
+    await diagnose.make(env.deps)(state | {"investigate_rounds": 1})
+    before = "\n".join(str(m.content) for m in env.models.model.seen[0])
+    await diagnose.make(env.deps)(state | {"investigate_rounds": 1, "verify_loops": 1})
+    after = "\n".join(str(m.content) for m in env.models.model.seen[1])
+
+    assert NO_URL in before and NO_URL not in after
