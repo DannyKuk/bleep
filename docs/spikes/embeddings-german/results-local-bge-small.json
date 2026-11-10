@@ -1,0 +1,516 @@
+{
+ "embedder": "fastembed:BAAI/bge-small-en-v1.5",
+ "set": {
+  "chunks": 31,
+  "texts_embedded": 31,
+  "ingest_s": 0.6,
+  "all": {
+   "n": 22,
+   "first": 18,
+   "top5": 19
+  },
+  "en": {
+   "n": 15,
+   "first": 14,
+   "top5": 15
+  },
+  "de": {
+   "n": 7,
+   "first": 4,
+   "top5": 4
+  },
+  "rows": [
+   {
+    "lang": "en",
+    "chunk": "worker-README.md#1",
+    "query": "worker container exits immediately with exit code 1 after a deploy, log says an environment variable is missing",
+    "rank": 1,
+    "found": [
+     "worker-README.md#1",
+     "shop-README.de.md#4",
+     "proxy-runbook.md#3",
+     "cloud-betrieb.md#2",
+     "backup-README.md#4"
+    ]
+   },
+   {
+    "lang": "en",
+    "chunk": "proxy-runbook.md#1",
+    "query": "website shows an expired TLS certificate error, how is the certificate renewed",
+    "rank": 1,
+    "found": [
+     "proxy-runbook.md#1",
+     "worker-README.md#1",
+     "shop-README.de.md#2",
+     "cloud-betrieb.md#5",
+     "backup-README.md#4"
+    ]
+   },
+   {
+    "lang": "en",
+    "chunk": "proxy-runbook.md#2",
+    "query": "users get 502 Bad Gateway after a new release, what to check",
+    "rank": 1,
+    "found": [
+     "proxy-runbook.md#2",
+     "worker-README.md#1",
+     "cloud-betrieb.md#2",
+     "shop-README.de.md#2",
+     "backup-README.md#4"
+    ]
+   },
+   {
+    "lang": "en",
+    "chunk": "shop-README.de.md#3",
+    "query": "shop web container is unhealthy although the app itself is running, what does the health check depend on",
+    "rank": 1,
+    "found": [
+     "shop-README.de.md#3",
+     "worker-README.md#4",
+     "proxy-runbook.md#2",
+     "cloud-betrieb.md#2",
+     "backup-README.md#5"
+    ]
+   },
+   {
+    "lang": "en",
+    "chunk": "worker-README.md#3",
+    "query": "worker container killed by the kernel for using too much memory, restarted by docker",
+    "rank": 1,
+    "found": [
+     "worker-README.md#3",
+     "shop-README.de.md#1",
+     "proxy-runbook.md#3",
+     "backup-README.md#0",
+     "cloud-betrieb.md#1"
+    ]
+   },
+   {
+    "lang": "en",
+    "chunk": "backup-README.md#4",
+    "query": "restic backup fails with repository is already locked",
+    "rank": 1,
+    "found": [
+     "backup-README.md#4",
+     "cloud-betrieb.md#6",
+     "worker-README.md#1",
+     "proxy-runbook.md#1",
+     "shop-README.de.md#4"
+    ]
+   },
+   {
+    "lang": "en",
+    "chunk": "cloud-betrieb.md#6",
+    "query": "files in the cloud app are locked and uploads fail with 423, stale file locks",
+    "rank": 1,
+    "found": [
+     "cloud-betrieb.md#6",
+     "backup-README.md#4",
+     "proxy-runbook.md#4",
+     "shop-README.de.md#5",
+     "worker-README.md#1"
+    ]
+   },
+   {
+    "lang": "en",
+    "chunk": "cloud-betrieb.md#2",
+    "query": "everyone sees that the instance is in maintenance mode after a failed update",
+    "rank": 1,
+    "found": [
+     "cloud-betrieb.md#2",
+     "worker-README.md#1",
+     "backup-README.md#4",
+     "shop-README.de.md#1",
+     "proxy-runbook.md#3"
+    ]
+   },
+   {
+    "lang": "en",
+    "chunk": "proxy-runbook.md#4",
+    "query": "413 Request Entity Too Large on file upload",
+    "rank": 1,
+    "found": [
+     "proxy-runbook.md#4",
+     "cloud-betrieb.md#4",
+     "shop-README.de.md#5",
+     "backup-README.md#1",
+     "worker-README.md#3"
+    ]
+   },
+   {
+    "lang": "en",
+    "chunk": "cloud-betrieb.md#5",
+    "query": "disk is full on the nextcloud data volume, what takes the space and how to clean up",
+    "rank": 1,
+    "found": [
+     "cloud-betrieb.md#5",
+     "backup-README.md#1",
+     "proxy-runbook.md#4",
+     "worker-README.md#3",
+     "shop-README.de.md#5"
+    ]
+   },
+   {
+    "lang": "en",
+    "chunk": "worker-README.md#2",
+    "query": "failed jobs end up in a dead letter list, how to requeue them",
+    "rank": 1,
+    "found": [
+     "worker-README.md#2",
+     "backup-README.md#5",
+     "cloud-betrieb.md#1",
+     "shop-README.de.md#1",
+     "proxy-runbook.md#1"
+    ]
+   },
+   {
+    "lang": "en",
+    "chunk": "shop-README.de.md#1",
+    "query": "how to stop the shop without deleting the database volume, and do containers come back after a server reboot",
+    "rank": 1,
+    "found": [
+     "shop-README.de.md#1",
+     "worker-README.md#1",
+     "proxy-runbook.md#3",
+     "backup-README.md#1",
+     "cloud-betrieb.md#5"
+    ]
+   },
+   {
+    "lang": "en",
+    "chunk": "proxy-runbook.md#3",
+    "query": "nginx container will not start after a config change, how to test the config safely before reloading",
+    "rank": 1,
+    "found": [
+     "proxy-runbook.md#3",
+     "shop-README.de.md#1",
+     "worker-README.md#1",
+     "cloud-betrieb.md#2",
+     "backup-README.md#0"
+    ]
+   },
+   {
+    "lang": "en",
+    "chunk": "backup-README.md#3",
+    "query": "how do I restore the latest snapshot",
+    "rank": 1,
+    "found": [
+     "backup-README.md#3",
+     "cloud-betrieb.md#5",
+     "shop-README.de.md#4",
+     "worker-README.md#1",
+     "proxy-runbook.md#3"
+    ]
+   },
+   {
+    "lang": "en",
+    "chunk": "cloud-betrieb.md#3",
+    "query": "login redirect loop behind the reverse proxy and untrusted domain warning",
+    "rank": 2,
+    "found": [
+     "proxy-runbook.md#1",
+     "cloud-betrieb.md#3",
+     "worker-README.md#1",
+     "shop-README.de.md#2",
+     "backup-README.md#4"
+    ]
+   },
+   {
+    "lang": "de",
+    "chunk": "shop-README.de.md#2",
+    "query": "Kunden werden nach jedem Neustart aus dem Warenkorb geworfen, welche Einstellung fehlt",
+    "rank": null,
+    "found": [
+     "shop-README.de.md#3",
+     "worker-README.md#1",
+     "cloud-betrieb.md#5",
+     "backup-README.md#1",
+     "proxy-runbook.md#2"
+    ]
+   },
+   {
+    "lang": "de",
+    "chunk": "backup-README.md#2",
+    "query": "Wie lange werden die Backups aufbewahrt und wann wird aufgeräumt",
+    "rank": null,
+    "found": [
+     "backup-README.md#1",
+     "worker-README.md#3",
+     "shop-README.de.md#5",
+     "cloud-betrieb.md#5",
+     "proxy-runbook.md#3"
+    ]
+   },
+   {
+    "lang": "de",
+    "chunk": "worker-README.md#5",
+    "query": "Worker wird mitten im Job mit SIGKILL beendet, wie lange wartet Docker beim Stoppen",
+    "rank": null,
+    "found": [
+     "worker-README.md#3",
+     "cloud-betrieb.md#1",
+     "shop-README.de.md#1",
+     "backup-README.md#0",
+     "proxy-runbook.md#1"
+    ]
+   },
+   {
+    "lang": "de",
+    "chunk": "cloud-betrieb.md#1",
+    "query": "Die Admin-Seite zeigt Letzter Job vor Stunden, Hintergrundjobs laufen nicht",
+    "rank": 1,
+    "found": [
+     "cloud-betrieb.md#1",
+     "worker-README.md#5",
+     "shop-README.de.md#3",
+     "backup-README.md#5",
+     "proxy-runbook.md#1"
+    ]
+   },
+   {
+    "lang": "de",
+    "chunk": "proxy-runbook.md#5",
+    "query": "viele 429 Fehler, eine IP sperren, Request-Limit pro Sekunde",
+    "rank": 1,
+    "found": [
+     "proxy-runbook.md#5",
+     "shop-README.de.md#5",
+     "worker-README.md#1",
+     "cloud-betrieb.md#3",
+     "backup-README.md#1"
+    ]
+   },
+   {
+    "lang": "de",
+    "chunk": "shop-README.de.md#4",
+    "query": "Datenbank-Migration ist abgebrochen, wie starte ich sie nochmal",
+    "rank": 1,
+    "found": [
+     "shop-README.de.md#4",
+     "cloud-betrieb.md#5",
+     "worker-README.md#1",
+     "backup-README.md#3",
+     "proxy-runbook.md#1"
+    ]
+   },
+   {
+    "lang": "de",
+    "chunk": "backup-README.md#5",
+    "query": "Backup ist fehlgeschlagen aber niemand hat eine Mail bekommen",
+    "rank": 1,
+    "found": [
+     "backup-README.md#5",
+     "shop-README.de.md#5",
+     "worker-README.md#3",
+     "cloud-betrieb.md#4",
+     "proxy-runbook.md#1"
+    ]
+   }
+  ]
+ },
+ "knowledge": {
+  "snapshot": {
+   "pages": 27,
+   "texts": 444,
+   "chars": 330818,
+   "ingest_s": 19.9
+  },
+  "english": {
+   "n": 20,
+   "first": 20,
+   "top5": 20,
+   "search_ms_median": 5.95,
+   "misses": []
+  },
+  "german": {
+   "n": 11,
+   "first": 4,
+   "top5": 11,
+   "search_ms_median": 9.4,
+   "misses": []
+  }
+ },
+ "recall": {
+  "n": 18,
+  "first": 13,
+  "top5": 17,
+  "lowest_right": 0.636,
+  "mean_right": 0.746,
+  "highest_other": 0.816,
+  "mean_other": 0.617,
+  "others_total": 162,
+  "bleep_cutoff": 0.5,
+  "returned_at_cutoff": 17,
+  "others_over_cutoff": 158,
+  "highest_threshold_keeping_every_returnable": 0.625,
+  "sweep": [
+   {
+    "min_score": 0.3,
+    "right_returned": 17,
+    "others_passing": 162
+   },
+   {
+    "min_score": 0.325,
+    "right_returned": 17,
+    "others_passing": 162
+   },
+   {
+    "min_score": 0.35,
+    "right_returned": 17,
+    "others_passing": 162
+   },
+   {
+    "min_score": 0.375,
+    "right_returned": 17,
+    "others_passing": 162
+   },
+   {
+    "min_score": 0.4,
+    "right_returned": 17,
+    "others_passing": 162
+   },
+   {
+    "min_score": 0.425,
+    "right_returned": 17,
+    "others_passing": 162
+   },
+   {
+    "min_score": 0.45,
+    "right_returned": 17,
+    "others_passing": 162
+   },
+   {
+    "min_score": 0.475,
+    "right_returned": 17,
+    "others_passing": 162
+   },
+   {
+    "min_score": 0.5,
+    "right_returned": 17,
+    "others_passing": 158
+   },
+   {
+    "min_score": 0.525,
+    "right_returned": 17,
+    "others_passing": 150
+   },
+   {
+    "min_score": 0.55,
+    "right_returned": 17,
+    "others_passing": 139
+   },
+   {
+    "min_score": 0.575,
+    "right_returned": 17,
+    "others_passing": 114
+   },
+   {
+    "min_score": 0.6,
+    "right_returned": 17,
+    "others_passing": 92
+   },
+   {
+    "min_score": 0.625,
+    "right_returned": 17,
+    "others_passing": 71
+   },
+   {
+    "min_score": 0.65,
+    "right_returned": 15,
+    "others_passing": 48
+   },
+   {
+    "min_score": 0.675,
+    "right_returned": 15,
+    "others_passing": 29
+   },
+   {
+    "min_score": 0.7,
+    "right_returned": 15,
+    "others_passing": 21
+   },
+   {
+    "min_score": 0.725,
+    "right_returned": 14,
+    "others_passing": 11
+   },
+   {
+    "min_score": 0.75,
+    "right_returned": 10,
+    "others_passing": 4
+   },
+   {
+    "min_score": 0.775,
+    "right_returned": 5,
+    "others_passing": 3
+   },
+   {
+    "min_score": 0.8,
+    "right_returned": 2,
+    "others_passing": 2
+   },
+   {
+    "min_score": 0.825,
+    "right_returned": 1,
+    "others_passing": 0
+   },
+   {
+    "min_score": 0.85,
+    "right_returned": 1,
+    "others_passing": 0
+   },
+   {
+    "min_score": 0.875,
+    "right_returned": 0,
+    "others_passing": 0
+   },
+   {
+    "min_score": 0.9,
+    "right_returned": 0,
+    "others_passing": 0
+   },
+   {
+    "min_score": 0.925,
+    "right_returned": 0,
+    "others_passing": 0
+   },
+   {
+    "min_score": 0.95,
+    "right_returned": 0,
+    "others_passing": 0
+   }
+  ],
+  "texts": 28
+ },
+ "latency": {
+  "vector_size": 384,
+  "first_call_ms": 168.0,
+  "one_text_ms_median": 15.0,
+  "one_text_ms_max": 19.5,
+  "batch_of_31_ms": 648.4,
+  "batch_ms_per_text": 20.9,
+  "unit_length": true
+ },
+ "cost": {
+  "docker_snapshot": {
+   "texts": 444,
+   "chars": 330818
+  },
+  "repo_docs_this_set": {
+   "texts": 31,
+   "chars": 9690
+  },
+  "memory_per_incident": {
+   "texts": 1,
+   "note": "plus one query per recall"
+  },
+  "first_ingest_texts": 475,
+  "first_ingest_chars": 340508,
+  "estimated_tokens": 85127,
+  "whole_run_texts": 598,
+  "whole_run_chars": 360573,
+  "whole_run_estimated_tokens": 90143,
+  "whole_run_calls": 103,
+  "chars_per_token_assumed": 4
+ }
+}

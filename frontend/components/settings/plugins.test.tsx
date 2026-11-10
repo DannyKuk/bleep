@@ -166,6 +166,54 @@ describe("PluginList", () => {
     expect(screen.queryByText("Other")).toBeNull();
   });
 
+  it("edits the MCP server's purpose as one capped line with an example, and clears it", async () => {
+    const onSave = vi.fn(async () => undefined);
+    const example = "Manages the Coolify server: apps, deployments, env settings";
+    const mcp = plugin({
+      name: "mcp",
+      title: "MCP server by URL",
+      settings: { purpose: "Manages Caddy", read_tools: ["caddy_config"], act_tools: [] },
+      settings_schema: {
+        properties: {
+          purpose: {
+            type: "string",
+            title: "Purpose",
+            default: "",
+            maxLength: 200,
+            examples: [example],
+            description: "What the server is for, in a line.",
+          },
+          read_tools: { type: "array", title: "Read Tools", items: { type: "string" } },
+          act_tools: { type: "array", title: "Act Tools", items: { type: "string" } },
+        },
+      },
+    });
+    render(<PluginList plugins={[mcp]} onSave={onSave} />);
+
+    const purpose = screen.getByRole("textbox", { name: "Purpose" });
+    expect(purpose).toHaveValue("Manages Caddy");
+    expect(purpose).toHaveAttribute("maxLength", "200");
+    expect(screen.getByText("What the server is for, in a line.")).toBeInTheDocument();
+
+    await userEvent.clear(purpose);
+    expect(purpose).toHaveAttribute("placeholder", example);
+    await userEvent.type(purpose, "  Manages Coolify ");
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(onSave).toHaveBeenLastCalledWith(
+      "mcp",
+      { settings: { purpose: "Manages Coolify", read_tools: ["caddy_config"], act_tools: [] } },
+      "p1",
+    );
+
+    await userEvent.clear(screen.getByRole("textbox", { name: "Purpose" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(onSave).toHaveBeenLastCalledWith(
+      "mcp",
+      { settings: { read_tools: ["caddy_config"], act_tools: [] } },
+      "p1",
+    );
+  });
+
   it("says when Bleep has no plugins", () => {
     render(<PluginList plugins={[]} onSave={vi.fn()} />);
     expect(screen.getByText("This Bleep has no plugins.")).toBeInTheDocument();

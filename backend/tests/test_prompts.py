@@ -123,6 +123,7 @@ OVERRIDABLE = [
     "graph/diagnose_missing",
     "graph/investigate",
     "graph/investigate_again",
+    "graph/investigate_mcp",
     "graph/look_diagnose",
     "graph/look_investigate",
     "graph/look_report",

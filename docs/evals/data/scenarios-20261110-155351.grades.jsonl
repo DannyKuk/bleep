@@ -1,0 +1,3 @@
+{"run_id": "misroute-mcp/1", "root_cause_pass": true, "root_cause_score": 0.9, "note": "names the live config forwarding to shop-web:8001 while shop-web listens on 8000; does not say the proxy answers 502"}
+{"run_id": "misroute-mcp/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-web:8001 against 8000 and the 502s through the proxy"}
+{"run_id": "misroute-mcp/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-web:8001 against 8000, the refusals and the 502s"}

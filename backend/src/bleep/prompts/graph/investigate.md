@@ -42,7 +42,7 @@ Facts about this service:
 
 ## Your task
 
-Find out what went wrong and why. Your tools are read-only: the container list, inspect, logs, stats, Docker events, a few host commands and, when they are offered, a search of past incidents, the service repo's recent commits and their diffs, and a knowledge search of the Docker docs, the services' repo docs and past reports. Use them for what the context above does not settle yet: the containers involved, the ones they depend on, and the order things happened in. You have at most {budget} tool calls, so spend them on what matters most.
+Find out what went wrong and why. Your tools are read-only: the container list, inspect, logs, stats, Docker events, a few host commands and, when they are offered, a search of past incidents, the service repo's recent commits and their diffs, and a knowledge search of the Docker docs, the services' repo docs and past reports. Use them for what the context above does not settle yet: the containers involved, the ones they depend on, and the order things happened in. You have at most {budget} tool calls, so spend them on what matters most.{mcp}
 
 When the cause is a setting (an environment variable, a config value) and fixing it needs a value the context above does not give (the value it should have, not the one it has), search the service's docs for that setting by its exact name before you stop: `knowledge_search` with `sources` set to `repo`, when it is offered. The fix is planned from what you find.
 

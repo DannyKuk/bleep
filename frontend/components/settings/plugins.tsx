@@ -68,6 +68,11 @@ function settingsFrom(
   return settings;
 }
 
+function placeholderOf(property: JsonSchemaProperty): string | undefined {
+  if (property.default !== undefined && property.default !== "") return String(property.default);
+  return property.examples?.[0];
+}
+
 function Field({
   name,
   property,
@@ -114,7 +119,8 @@ function Field({
           value={value}
           readOnly={kind === "other"}
           inputMode={kind === "integer" || kind === "number" ? "decimal" : undefined}
-          placeholder={property.default !== undefined ? String(property.default) : undefined}
+          maxLength={kind === "string" ? property.maxLength : undefined}
+          placeholder={placeholderOf(property)}
           onChange={(changed) => onChange(changed.target.value)}
         />
       )}

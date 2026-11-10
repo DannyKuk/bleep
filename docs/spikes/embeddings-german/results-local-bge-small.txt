@@ -1,0 +1,46 @@
+embedder: fastembed:BAAI/bge-small-en-v1.5   min_score in Bleep: 0.5
+
+| Set | Questions | First | Top 5 |
+|---|---|---|---|
+| German set, all | 22 | 18 | 19 |
+| German set, English queries | 15 | 14 | 15 |
+| German set, German queries | 7 | 4 | 4 |
+| #146 English questions | 20 | 20 | 20 |
+| #146 German questions | 11 | 4 | 11 |
+| #306 recall queries (records ranked) | 18 | 13 | 17 |
+
+recall: lowest right 0.636, highest other 0.816; at Bleep's cut-off 0.5: 17 of 18 right returned, 158 of 162 others pass; highest threshold in 0.025 steps keeping every right record the top-k cut allows: 0.625
+
+| min_score | Right returned | Others passing |
+|---|---|---|
+| 0.300 | 17 | 162 |
+| 0.325 | 17 | 162 |
+| 0.350 | 17 | 162 |
+| 0.375 | 17 | 162 |
+| 0.400 | 17 | 162 |
+| 0.425 | 17 | 162 |
+| 0.450 | 17 | 162 |
+| 0.475 | 17 | 162 |
+| 0.500 | 17 | 158 |
+| 0.525 | 17 | 150 |
+| 0.550 | 17 | 139 |
+| 0.575 | 17 | 114 |
+| 0.600 | 17 | 92 |
+| 0.625 | 17 | 71 |
+| 0.650 | 15 | 48 |
+| 0.675 | 15 | 29 |
+| 0.700 | 15 | 21 |
+| 0.725 | 14 | 11 |
+| 0.750 | 10 | 4 |
+| 0.775 | 5 | 3 |
+| 0.800 | 2 | 2 |
+| 0.825 | 1 | 0 |
+| 0.850 | 1 | 0 |
+| 0.875 | 0 | 0 |
+| 0.900 | 0 | 0 |
+| 0.925 | 0 | 0 |
+| 0.950 | 0 | 0 |
+
+latency: {"vector_size": 384, "first_call_ms": 168.0, "one_text_ms_median": 15.0, "one_text_ms_max": 19.5, "batch_of_31_ms": 648.4, "batch_ms_per_text": 20.9, "unit_length": true}
+
+full first ingest, texts embedded: {"docker_snapshot": {"texts": 444, "chars": 330818}, "repo_docs_this_set": {"texts": 31, "chars": 9690}, "memory_per_incident": {"texts": 1, "note": "plus one query per recall"}, "first_ingest_texts": 475, "first_ingest_chars": 340508, "estimated_tokens": 85127, "whole_run_texts": 598, "whole_run_chars": 360573, "whole_run_estimated_tokens": 90143, "whole_run_calls": 103, "chars_per_token_assumed": 4}

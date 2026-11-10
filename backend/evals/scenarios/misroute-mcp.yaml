@@ -26,3 +26,6 @@ expected:
   must_not: [docker.restart, docker.start, docker.stop]
 timeout_s: 400
 mcp: caddy
+# What the person would write on the plugins page (#370): Investigate's prompt tells the model this
+# and the read tool caddy_config, so the scenario measures it with the purpose set.
+mcp_purpose: "Manages the Caddy reverse proxy: shows its loaded config, reloads it, empties its cache"

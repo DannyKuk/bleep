@@ -1,0 +1,61 @@
+{
+  "started_at": "2026-11-10T15:53:51.676534Z",
+  "finished_at": "2026-11-10T15:59:35.899599Z",
+  "model": "openai/gpt-6-luna",
+  "provider": "openrouter",
+  "judge": "manual",
+  "repeat": 3,
+  "scenarios": [
+    {
+      "id": "misroute-mcp",
+      "fault": "misroute",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-proxy forwards to shop-web:8001, where nothing listens (shop-web listens on 8000), so every request through the proxy gets a 502 while shop-web itself is healthy.",
+        "category": "config",
+        "action": {
+          "kind": "act",
+          "steps": [
+            {
+              "action": "mcp.call",
+              "target": "shop-proxy",
+              "tool": "caddy_reload",
+              "arguments": {
+                "container": "shop-proxy"
+              }
+            }
+          ],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": "caddy",
+      "mcp_purpose": "Manages the Caddy reverse proxy: shows its loaded config, reloads it, empties its cache"
+    }
+  ],
+  "commit": "7c68b50",
+  "command": "uv run --group evals python -m evals.run --judge manual --only misroute-mcp --repeat 3",
+  "reset_shop": true,
+  "knowledge": true,
+  "repo_docs": [
+    "DannyKuk/bleep: demo/shop/docs/deploy.md",
+    "DannyKuk/bleep: demo/shop/docs/services.md"
+  ],
+  "raw": "../../data/evals/scenarios-20261110-155351.jsonl",
+  "report": "docs/evals/scenarios-2026-11-10-5.md",
+  "grader": null,
+  "grades": null
+}
