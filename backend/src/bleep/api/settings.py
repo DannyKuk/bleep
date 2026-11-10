@@ -13,6 +13,7 @@ since, so a stale page or a second writer never silently reverts a change.
 import json
 from typing import Annotated, Any
 
+import httpx
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Response
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -22,7 +23,15 @@ from bleep.api.deps import get_settings as app_settings
 from bleep.config import Settings
 from bleep.hosts.coolify_names import coolify_slug
 from bleep.incidents.settings_store import SettingsRefused, SettingsStale, check_body
-from bleep.schemas.settings import MODEL_KEY_ENV, SecretStatus, SettingsUpdate, SettingsView
+from bleep.plugins.urls import UrlRefused, check_dashboard_url, check_public
+from bleep.schemas.settings import (
+    ENV_NAMES,
+    MODEL_KEY_ENV,
+    TRACING_ENDPOINTS,
+    SecretStatus,
+    SettingsUpdate,
+    SettingsView,
+)
 from bleep.wiring import AppParts
 
 router = APIRouter(tags=["settings"])
@@ -66,6 +75,10 @@ def settings_view(parts: AppParts) -> SettingsView:
         plugins=store.plugin_toggles(),
         timezone=store.timezone(),
         language=store.language(),
+        embeddings=store.embeddings(),
+        tracing=store.tracing(),
+        from_env=store.from_env(),
+        restart_needed=store.restart_needed(),
         overrides=store.overrides().model_dump(mode="json", exclude_none=True),
         version=store.version(),
     )
@@ -87,18 +100,19 @@ async def put_settings(
     if_match: Annotated[str | None, Header()] = None,
 ) -> SettingsView | JSONResponse:
     """Each section given replaces that section's overrides; see `SettingsUpdate`. `If-Match`
-    holds the version the body was built from. `models` and `budgets` are a 403 while the dev
-    panel, which edits them, is off."""
+    holds the version the body was built from. `budgets` are a 403 while the dev panel, which
+    edits them, is off; the models, embeddings and tracing are the settings page's (#372)."""
     if if_match is None or not if_match.strip():
         raise HTTPException(428, "send the settings version you read in If-Match")
     update = parse_body(body, SettingsUpdate)
     refuse_names_without_a_slug(update)
-    if not settings.dev_panel and (update.models is not None or update.budgets is not None):
+    if not settings.dev_panel and update.budgets is not None:
         raise HTTPException(
             403,
-            "the models and the budgets are changed in the dev panel, which is off; "
+            "the budgets are changed in the dev panel, which is off; "
             "set BLEEP_DEV_PANEL=true to change them",
         )
+    await check_tracing_addresses(update, parts)
     try:
         await parts.settings_store.update(update, version=version_of(if_match))
     except SettingsStale as stale:
@@ -108,6 +122,33 @@ async def put_settings(
     view = settings_view(parts)
     response.headers["ETag"] = f'"{view.version}"'
     return view
+
+
+async def check_tracing_addresses(update: SettingsUpdate, parts: AppParts) -> None:
+    """422 for a tracer's address that changes to one the dashboard may not set: like a
+    plugin's, it must be https and resolve to public addresses only, since the tracer's keys are
+    sent there; a private or plain http one is for `.env`. Only the two model servers' addresses
+    may be private (`api/secrets.py`)."""
+    if update.tracing is None:
+        return
+    in_force, from_env = parts.settings_store.tracing(), parts.settings_store.from_env()
+    for field in TRACING_ENDPOINTS:
+        url = getattr(update.tracing, field)
+        if url is None or url == getattr(in_force, field) or f"tracing.{field}" in from_env:
+            continue  # the store refuses a field the env decides, saying so
+        name = ENV_NAMES["tracing"][field]
+        try:
+            check_dashboard_url(url, name)
+            host = httpx.URL(url)
+            await check_public(host.host, host.port or 443, parts.plugins.resolver)
+        except UrlRefused as refused:
+            raise HTTPException(422, str(refused)) from None
+        except ValueError as refusal:
+            raise HTTPException(
+                422,
+                f"{name} set on the dashboard must reach public addresses only, and {refusal}; "
+                "an address on a private network can be set in .env",
+            ) from None
 
 
 def refuse_names_without_a_slug(update: SettingsUpdate) -> None:

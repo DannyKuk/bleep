@@ -17,11 +17,22 @@ Only `BLEEP_ADMIN_PASSWORD` and `BLEEP_SECRET` must be in `.env`: the dashboard 
 
 **Back up the volume like `.env`:** a copy of `bleep-data` holds these secrets in clear. Details: [Settings](design/settings.md#secrets-from-the-dashboard-135).
 
+### Models, embeddings and tracing: from the dashboard or `.env`
+
+The model (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_CHEAP_MODEL`, `LOCAL_MODEL`), the embeddings (`EMBEDDINGS_PROVIDER`, `EMBEDDINGS_MODEL`, `EMBEDDINGS_MIN_SCORE`) and tracing (`TRACING`, `LANGFUSE_BASE_URL`, `LANGFUSE_UI_URL`, `LANGFUSE_PROJECT_ID`, `LANGSMITH_ENDPOINT`, `LANGSMITH_PROJECT`) can be set through `PUT /api/settings` as well as in `.env`; the forms for them on the Settings page are #433 (until then the dev panel edits the model choice). `LOCAL_BASE_URL` and `EMBEDDINGS_BASE_URL` are set like the keys above, and from the dashboard they may be a private address or `host.docker.internal`, where a local model usually listens. As for keys, a line set in `.env` wins: leave it empty to choose it from the dashboard (`.env.example` leaves them all empty).
+
+- The model choice, `LOCAL_BASE_URL` and tracing apply at once.
+- The embeddings provider, model and min score apply at the next start, which re-embeds the memory; `GET /api/settings` lists `embeddings` in `restart_needed` until then.
+- `EMBEDDINGS_BASE_URL` and `EMBEDDINGS_API_KEY` come from one place: when one is in `.env`, so is the other. A new address set on the dashboard clears its key.
+- A tracer's address (`LANGFUSE_BASE_URL`, `LANGSMITH_ENDPOINT`) set on the dashboard must be https to a public address, and changes only while its keys are unset: clear the key, set the address, enter the key again.
+
+Details: [Settings](design/settings.md#models-embeddings-and-tracing-from-the-dashboard-372).
+
 ### A first incident, end to end
 
 This runs the whole path from a dead container to the approval question, on the dashboard and in Telegram. It needs a model key and, for the Telegram half, a bot.
 
-1. On the dashboard or in `.env` ([above](#keys-and-tokens-from-the-dashboard-or-env)): `OPENROUTER_API_KEY` (or, in `.env`, `LLM_PROVIDER=local` with `LOCAL_BASE_URL` and `LOCAL_MODEL`), and for Telegram `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (send the bot a message first, then read the chat id from `https://api.telegram.org/bot<token>/getUpdates`).
+1. On the dashboard or in `.env` ([above](#keys-and-tokens-from-the-dashboard-or-env)): `OPENROUTER_API_KEY` (or `LLM_PROVIDER=local` with `LOCAL_BASE_URL` and `LOCAL_MODEL`, [below](#models-embeddings-and-tracing-from-the-dashboard-or-env)), and for Telegram `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (send the bot a message first, then read the chat id from `https://api.telegram.org/bot<token>/getUpdates`).
 2. Start Bleep and a throwaway container for it to watch, with no restart policy:
    ```bash
    docker compose --profile demo up -d --build
@@ -169,7 +180,7 @@ In its settings, list the server's tools Bleep may run: `read_tools` without app
 
 ## Memory embeddings (optional)
 
-Bleep remembers every finished incident and recalls similar ones. By default it embeds them with a small local model that ships inside the backend image (bge-small, about 11 ms per incident on a laptop, no key and no network). To use an OpenAI-compatible endpoint instead (OpenAI, LM Studio, Ollama), set in `.env` (the key can be set on the dashboard instead; the endpoint stays in `.env`, since the key is sent there):
+Bleep remembers every finished incident and recalls similar ones. By default it embeds them with a small local model that ships inside the backend image (bge-small, about 11 ms per incident on a laptop, no key and no network). To use an OpenAI-compatible endpoint instead (OpenAI, LM Studio, Ollama), set in `.env`, or the same values from the dashboard ([above](#models-embeddings-and-tracing-from-the-dashboard-or-env)); the address and its key come from one place, since the key is sent there:
 
 ```bash
 EMBEDDINGS_PROVIDER=openai
@@ -179,7 +190,7 @@ EMBEDDINGS_API_KEY=                                        # only if the server 
 EMBEDDINGS_MIN_SCORE=                                      # recall's cut-off, 0 to 1; unset: the model's own
 ```
 
-Bleep refuses to start with the provider set and the URL or the model missing. After a model change, the next start embeds the stored incidents again; until that is done they are left out of recall. The same embedder indexes the docs for knowledge search. For logs and runbooks mostly in another language, a multilingual model behind the endpoint is the option: `BAAI/bge-m3` found German questions' pages first twice as often as bge-small, English ones less often, and is too heavy to ship in the image; Ollama offers it as `bge-m3` (not measured through Ollama; [bge-m3 against bge-small](evals/embeddings-multilingual-2026-11-06.md)). Its scores sit lower than bge-small's, so recall cuts off at 0.35 for a model named `bge-m3` instead of 0.5 ([min score](evals/embeddings-min-score-2026-11-06.md)). For any other model, or if recall misses past incidents you expect, set `EMBEDDINGS_MIN_SCORE`: past incidents scoring under it are never recalled, and unset it is 0.5 for a model Bleep has not measured. Embedding calls are not in the usage ledger: the dev panel's cost and the daily cap count only the chat models, so a paid embeddings endpoint is billed outside them. Details: [Memory](design/memory.md), [Embeddings](decisions/embeddings.md).
+With the provider set and the URL or the model missing, the local model embeds and the log says so. After a model change, the next start embeds the stored incidents again; until that is done they are left out of recall. The same embedder indexes the docs for knowledge search. For logs and runbooks mostly in another language, a multilingual model behind the endpoint is the option: `BAAI/bge-m3` found German questions' pages first twice as often as bge-small, English ones less often, and is too heavy to ship in the image; Ollama offers it as `bge-m3` (not measured through Ollama; [bge-m3 against bge-small](evals/embeddings-multilingual-2026-11-06.md)). Its scores sit lower than bge-small's, so recall cuts off at 0.35 for a model named `bge-m3` instead of 0.5 ([min score](evals/embeddings-min-score-2026-11-06.md)). For any other model, or if recall misses past incidents you expect, set `EMBEDDINGS_MIN_SCORE`: past incidents scoring under it are never recalled, and unset it is 0.5 for a model Bleep has not measured. Embedding calls are not in the usage ledger: the dev panel's cost and the daily cap count only the chat models, so a paid embeddings endpoint is billed outside them. Details: [Memory](design/memory.md), [Embeddings](decisions/embeddings.md).
 
 ## Tracing (optional)
 

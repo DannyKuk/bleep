@@ -134,6 +134,7 @@ def test_the_list_names_every_secret_and_never_the_login_or_the_session_secret(a
         "value": None,
         "version": None,
         "invalid": False,
+        "private": False,
     }
 
 

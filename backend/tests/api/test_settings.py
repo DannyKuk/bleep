@@ -162,13 +162,12 @@ def test_an_invalid_body_is_refused_with_reasons_and_without_its_values(app):
 @pytest.mark.parametrize(
     "body",
     [
-        {"models": {"model": "openai/other"}},
         {"budgets": {"daily_cost_usd": 50}},
         {"budgets": {}},
-        {"thresholds": {"disk_percent": 80}, "models": {}},
+        {"thresholds": {"disk_percent": 80}, "budgets": {}},
     ],
 )
-def test_with_the_dev_panel_off_the_models_and_budgets_are_refused(settings, app, body):
+def test_with_the_dev_panel_off_the_budgets_are_refused(settings, app, body):
     settings.dev_panel = False
     before = app.get("/api/settings").json()
     response = put_settings(app, body)
@@ -180,9 +179,17 @@ def test_with_the_dev_panel_off_the_models_and_budgets_are_refused(settings, app
 
 def test_with_the_dev_panel_off_the_other_sections_are_still_saved(settings, app):
     settings.dev_panel = False
-    response = put_settings(app, {"thresholds": {"disk_percent": 80}, "models": None})
+    response = put_settings(app, {"thresholds": {"disk_percent": 80}, "budgets": None})
     assert response.status_code == 200
     assert response.json()["thresholds"]["disk_percent"] == 80
+
+
+def test_with_the_dev_panel_off_the_models_are_saved_from_the_settings_page(settings, app):
+    """The model choice moved to the settings page (#372)."""
+    settings.dev_panel = False
+    response = put_settings(app, {"models": {"model": "openai/other"}})
+    assert response.status_code == 200
+    assert response.json()["models"]["model"] == "openai/other"
 
 
 def test_with_the_dev_panel_off_a_secret_is_still_refused_as_one(settings, app):

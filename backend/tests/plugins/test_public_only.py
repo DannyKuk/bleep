@@ -9,7 +9,7 @@ from bleep.hosts.registry import Registry
 from bleep.main import create_app
 from bleep.memory.embeddings import FakeEmbedder
 from bleep.plugins.coolify.plugin import CoolifyPlugin
-from bleep.plugins.urls import AddressRefused, PublicOnlyTransport, is_public
+from bleep.plugins.urls import AddressRefused, PublicOnlyTransport, UrlRefused, check_url, is_public
 from bleep.wiring import build_parts
 
 PUBLIC = "93.184.216.34"
@@ -197,3 +197,14 @@ def test_the_mcp_plugin_sends_through_the_guard_for_a_dashboard_address():
     assert isinstance(McpUrlPlugin()._server(ctx).transport, PublicOnlyTransport)
     from_env = PluginContext(McpSettings(), secrets, SecretStr("s"))
     assert McpUrlPlugin()._server(from_env).transport is None
+
+
+def test_a_model_servers_address_may_be_an_internal_name_over_plain_http():
+    """`host.docker.internal` is where a local model usually listens (#372); `.internal` is
+    reserved for private networks. Only a model server's address gets the exception."""
+    url = "http://host.docker.internal:1234/v1"
+    assert check_url(url, "LOCAL_BASE_URL", internal=True) == url
+    with pytest.raises(UrlRefused):
+        check_url(url, "COOLIFY_URL")
+    with pytest.raises(UrlRefused):
+        check_url("http://models.example.test/v1", "LOCAL_BASE_URL", internal=True)

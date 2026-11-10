@@ -58,10 +58,18 @@ def _inet_aton(host: str) -> bool:
 
 
 def check_url(
-    raw: str, env: str, refused: type[UrlRefused] = UrlRefused, *, https_hint: str = ""
+    raw: str,
+    env: str,
+    refused: type[UrlRefused] = UrlRefused,
+    *,
+    https_hint: str = "",
+    internal: bool = False,
 ) -> str:
     """`raw`, read from the variable `env`, as a URL Bleep may send a token to, or `refused`.
-    `https_hint` follows the plain-http refusal and says where the https address is."""
+    `https_hint` follows the plain-http refusal and says where the https address is. With
+    `internal`, a name under `.internal`, the top-level domain reserved for private networks, is
+    nearby too: Docker names this machine `host.docker.internal`, where a local model server
+    usually listens."""
     try:
         url = httpx.URL(raw.strip())
     except httpx.InvalidURL:
@@ -70,7 +78,8 @@ def check_url(
         raise refused(f"{env} must be an http(s) URL with a host and no password")
     if url.query or url.fragment or "?" in raw or "#" in raw:
         raise refused(f"{env} must have no query or fragment")
-    if url.scheme == "http" and not _nearby(url.host):
+    is_internal = internal and url.host.lower().endswith(".internal")
+    if url.scheme == "http" and not (_nearby(url.host) or is_internal):
         raise refused(
             f"{env} must use https unless it is a private address or a Docker service name"
             f"{https_hint}, since the token travels with every request"

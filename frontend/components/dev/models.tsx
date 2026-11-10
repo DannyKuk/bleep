@@ -96,8 +96,9 @@ export function useSectionSave(
 }
 
 /**
- * Which models Bleep calls. A saved choice overrides the env's (`LLM_PROVIDER`, `LLM_MODEL`, ...);
- * the local model's base URL and every key stay in the env.
+ * Which models Bleep calls. A field the env sets (`LLM_PROVIDER`, `LLM_MODEL`, ...) wins, and
+ * a save that changes it is refused with the API's reason (#372); the local model's base URL and
+ * every key are set with the secrets.
  */
 export function ModelsForm(props: SectionFormProps) {
   const { view } = props;

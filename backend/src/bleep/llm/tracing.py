@@ -21,6 +21,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from bleep.config import SettingsError
 from bleep.schemas.incidents import Incident
+from bleep.schemas.settings import TracingChoice
 from bleep.schemas.talk import TalkSurface
 
 log = logging.getLogger(__name__)
@@ -206,15 +207,23 @@ TRACING_KEYS: dict[str, tuple[str, ...]] = {
 
 class ReloadingTracer:
     """The tracer `TRACING` names, built with the keys `key` reads (the env, else the
-    dashboard) and built again by `reload` after one of them changed on the dashboard."""
+    dashboard) and the rest as `choice` gives it (the env, else the settings page), and built
+    again by `reload` after one of them changed on the dashboard. The first build refuses a
+    tracer whose keys are missing; a reload turns tracing off instead."""
 
-    def __init__(self, key: Callable[[str], SecretStr | None]) -> None:
+    def __init__(
+        self,
+        key: Callable[[str], SecretStr | None],
+        choice: Callable[[], TracingChoice] | None = None,
+    ) -> None:
         self._key = key
+        self._choice = choice
         self._tracer = build_tracer(self._settings())
 
     def _settings(self) -> TracingSettings:
         keys = {name.lower(): self._key(name) for names in TRACING_KEYS.values() for name in names}
-        return TracingSettings(**keys)
+        chosen = self._choice().model_dump() if self._choice is not None else {}
+        return TracingSettings(**keys, **chosen)
 
     def run_config(self, incident: Incident) -> RunnableConfig:
         return self._tracer.run_config(incident)

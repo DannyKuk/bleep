@@ -75,12 +75,14 @@ class SecretName:
     """One value the dashboard may set: a `secret`, an `address` a token is sent to (`carries`
     names that token), or an `id` that is not secret but lives with the secrets (a chat id).
     `required` says why it cannot be cleared from the dashboard, when something in force needs
-    it (the tracer `TRACING` names)."""
+    it (the tracer `TRACING` names). `private`: an address that may be on a private network or
+    a Docker name when set from the dashboard, a model server's (#372)."""
 
     name: str
     kind: Kind = "secret"
     carries: str | None = None
     required: str | None = None
+    private: bool = False
 
 
 @dataclass(frozen=True)

@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from bleep.api.deps import get_parts
 from bleep.api.settings import check_size
 from bleep.notify.telegram import mask_chat_id
-from bleep.plugins.urls import UrlRefused, check_dashboard_url, check_public
+from bleep.plugins.urls import UrlRefused, check_dashboard_url, check_public, check_url
 from bleep.schemas.secrets import SecretValue, SecretView
 from bleep.store.secrets import (
     AddressStale,
@@ -47,7 +47,7 @@ async def list_secrets(parts: Parts) -> list[SecretView]:
 @router.put("/secrets/{name}")
 async def put_secret(name: str, body: Annotated[Any, Body()], parts: Parts) -> list[SecretView]:
     """Set one value. An address must be one Bleep sends a token to (`check_url`); a new one
-    clears its token, and the plugin is switched off until it is switched on again."""
+    clears its token, and a plugin's is switched off until it is switched on again."""
     entry = _entry(parts.secrets, name)
     check_size(body)
     try:
@@ -57,7 +57,10 @@ async def put_secret(name: str, body: Annotated[Any, Body()], parts: Parts) -> l
         raise HTTPException(422, detail) from None
     value = sent.value
     if entry.kind == "address":
-        value = await _dashboard_address(parts, name, value)
+        if entry.private:
+            value = _model_address(name, value)
+        else:
+            value = await _dashboard_address(parts, name, value)
         current = parts.secrets.get(name)
         owned = parts.secrets.state(name).env_owned
         if not owned and current and _same_address(current.get_secret_value(), value):
@@ -89,6 +92,7 @@ def secret_views(store: SecretStore) -> list[SecretView]:
                 value=_shown(store, entry.name, entry.kind),
                 version=store.address_version(entry.name),
                 invalid=_invalid(store, entry.name, entry.kind),
+                private=entry.private,
             )
         )
     return views
@@ -136,13 +140,27 @@ async def _dashboard_address(parts: AppParts, name: str, value: str) -> str:
     return value
 
 
+def _model_address(name: str, value: str) -> str:
+    """`value` as a model server's address (`LOCAL_BASE_URL`, `EMBEDDINGS_BASE_URL`): held to
+    the rule of an address in `.env`, so it may be private, a Docker name or
+    `host.docker.internal`, where a local model usually listens. It is still bound to the key
+    it carries, cleared when it changes."""
+    try:
+        return check_url(value, name, internal=True)
+    except UrlRefused as refused:
+        raise HTTPException(422, str(refused)) from None
+
+
 def _invalid(store: SecretStore, name: str, kind: Kind) -> bool:
     """A dashboard address that the API would refuse now, as `PUT` checks it before resolving."""
     value = store.get(name)
     if kind != "address" or value is None or store.state(name).env_owned:
         return False
     try:
-        check_dashboard_url(value.get_secret_value(), name)
+        if store.entry(name).private:
+            check_url(value.get_secret_value(), name, internal=True)
+        else:
+            check_dashboard_url(value.get_secret_value(), name)
     except UrlRefused:
         return True
     return False

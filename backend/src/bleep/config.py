@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     telegram_chat_id: str | None = Field(default=None, validation_alias="TELEGRAM_CHAT_ID")
     # Embeddings for long-term memory, also without the prefix: the local model by default, or
     # any OpenAI-compatible `/embeddings` endpoint. A change re-embeds the memory on the next boot.
+    # Each one set here wins over the settings page, which can set them too (#372).
     embeddings_provider: Literal["local", "openai"] = Field(
         default="local", validation_alias=AliasChoices("EMBEDDINGS_PROVIDER", "embeddings_provider")
     )
@@ -85,16 +86,11 @@ class Settings(BaseSettings):
 
 
 def check_settings(settings: Settings) -> None:
-    """Refuse to start with a login password that is quick to guess, or with an embeddings
-    endpoint that is only half configured."""
+    """Refuse to start with a login password that is quick to guess. An embeddings endpoint
+    that is only half configured is not refused here: its base URL and model may come from the
+    dashboard (#372), and until both are set the local model embeds (`wiring.build_embedder`)."""
     if len(settings.admin_password.get_secret_value()) < MIN_ADMIN_PASSWORD:
         raise SettingsError(
             f"BLEEP_ADMIN_PASSWORD must be at least {MIN_ADMIN_PASSWORD} characters; "
             "set a longer one in .env"
-        )
-    if settings.embeddings_provider == "openai" and not (
-        settings.embeddings_base_url and settings.embeddings_model
-    ):
-        raise SettingsError(
-            "EMBEDDINGS_PROVIDER=openai needs EMBEDDINGS_BASE_URL and EMBEDDINGS_MODEL in .env"
         )

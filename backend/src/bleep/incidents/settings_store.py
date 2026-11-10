@@ -15,7 +15,7 @@ import hashlib
 import json
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 from typing import Any
@@ -35,9 +35,16 @@ from bleep.schemas.plugins import PluginUpdate, PluginView
 from bleep.schemas.services import Service
 from bleep.schemas.settings import (
     DEFAULT_LANGUAGE,
+    EMBEDDINGS_URL_ENV,
+    ENV_NAMES,
+    LOCAL_URL_ENV,
     MODEL_KEY_ENV,
+    TRACER_OF_ENDPOINT,
+    TRACING_ENDPOINTS,
     BudgetOverrides,
     Budgets,
+    EmbeddingsChoice,
+    EmbeddingsOverrides,
     GeneralOverrides,
     HostConnectionView,
     HostSettings,
@@ -52,14 +59,17 @@ from bleep.schemas.settings import (
     SettingsUpdate,
     ThresholdOverrides,
     Thresholds,
+    TracingChoice,
+    TracingOverrides,
 )
 from bleep.store.db import Database
-from bleep.store.secrets import SecretStore
+from bleep.store.secrets import SecretStore, UnknownSecret
 
 log = logging.getLogger(__name__)
 
 HOST_PREFIX = "host:"
-SECTIONS = ("models", "budgets", "thresholds", "general")  # one stored row each
+# One stored row each.
+SECTIONS = ("models", "budgets", "thresholds", "general", "embeddings", "tracing")
 PLUGIN_PREFIX = "plugin:"
 
 
@@ -89,6 +99,8 @@ def settings_field_names() -> set[str]:
         BudgetOverrides,
         ThresholdOverrides,
         GeneralOverrides,
+        EmbeddingsOverrides,
+        TracingOverrides,
         HostSettings,
         ServiceSettings,
         UrlCheckConfig,
@@ -103,7 +115,8 @@ class SettingsStore:
     `models` is the model choice from the env (`ModelSettings()` by default); the store only
     changes the fields a person may change. The model key is the env's, or with `secrets` the one
     in force there (the env's, else the dashboard's), read at every call. `timezone` is
-    BLEEP_TIMEZONE, the zone until one is chosen on the dashboard.
+    BLEEP_TIMEZONE, the zone until one is chosen on the dashboard. `embeddings` and `tracing` are
+    the fields of those sections the env sets; like the model choice's, they win (#372).
     """
 
     def __init__(
@@ -117,6 +130,8 @@ class SettingsStore:
         dashboard: DashboardHosts | None = None,
         clock: Callable[[], datetime] = utcnow,
         timezone: str | None = None,
+        embeddings: EmbeddingsOverrides | None = None,
+        tracing: TracingOverrides | None = None,
     ) -> None:
         self._db = db
         self._dashboard = dashboard
@@ -126,6 +141,10 @@ class SettingsStore:
         self._secrets = secrets
         self._clock = clock
         self._env_timezone = timezone
+        self._env_embeddings = embeddings or EmbeddingsOverrides()
+        self._env_tracing = tracing or TracingOverrides()
+        self._started_embeddings: EmbeddingsChoice | None = None
+        self._listeners: list[Callable[[frozenset[str]], Awaitable[None]]] = []
         # The layer under every host override: the hosts file as read at boot, and the hosts
         # added on the dashboard, which come and go (`host_changed`).
         self._base: dict[str, HostConfig] = {h.config.id: h.config for h in registry.hosts()}
@@ -162,10 +181,71 @@ class SettingsStore:
         return UTC if name == "UTC" else ZoneInfo(name)
 
     def models(self) -> ModelSettings:
-        models = _layer(self._env_models, self._overrides.models)
+        """The model choice in force: the env's fields, else the dashboard's, else the defaults;
+        the key and the local model's base URL as the secret store has them, read at each call."""
+        models = _layer(self._env_models, self._chosen("models"))
         if self._secrets is None:
             return models
-        return models.model_copy(update={"openrouter_api_key": self._secrets.get(MODEL_KEY_ENV)})
+        update: dict[str, Any] = {"openrouter_api_key": self._secrets.get(MODEL_KEY_ENV)}
+        if (local_url := self._secrets.get(LOCAL_URL_ENV)) is not None:
+            update["local_base_url"] = local_url.get_secret_value()
+        return models.model_copy(update=update)
+
+    def embeddings(self) -> EmbeddingsChoice:
+        """The embedder chosen: the env's fields, else the dashboard's. It is built once, at the
+        first use after `load` (`start_embeddings`), so a change applies at the next start."""
+        return _layer(_layer(EmbeddingsChoice(), self._chosen("embeddings")), self._env_embeddings)
+
+    def start_embeddings(self, choice: EmbeddingsChoice) -> None:
+        """Record the choice the running embedder was built with, so the view can say a change
+        saved since needs a restart."""
+        self._started_embeddings = choice
+
+    def tracing(self) -> TracingChoice:
+        """The tracer in force without its keys: the env's fields, else the dashboard's. A tracer
+        whose key the env sets reads its address from the env too, so a key from .env is never
+        sent to an address chosen on the dashboard."""
+        return _layer(_layer(TracingChoice(), self._chosen("tracing")), self._env_tracing)
+
+    def from_env(self) -> list[str]:
+        """Every field the env decides, as `section.field`."""
+        return sorted(f"{section}.{field}" for section in ENV_NAMES for field in self._env(section))
+
+    def restart_needed(self) -> list[str]:
+        started = self._started_embeddings
+        return ["embeddings"] if started is not None and started != self.embeddings() else []
+
+    def subscribe(self, listener: Callable[[frozenset[str]], Awaitable[None]]) -> None:
+        """`listener` is awaited with the sections an update changed, and after `load` with the
+        sections stored (the tracer is built again from them)."""
+        self._listeners.append(listener)
+
+    def _env(self, section: str) -> set[str]:
+        """The fields of `section` the env decides."""
+        if section == "models":
+            return self._env_models.model_fields_set & set(ENV_NAMES["models"])
+        if section == "embeddings":
+            return set(self._env_embeddings.model_dump(exclude_none=True))
+        fields = set(self._env_tracing.model_dump(exclude_none=True))
+        for endpoint, keys in TRACING_ENDPOINTS.items():
+            if any(self._key_from_env(key) for key in keys):
+                fields.add(endpoint)
+        return fields
+
+    def _key_from_env(self, name: str) -> bool:
+        if self._secrets is None:
+            return False
+        try:
+            return self._secrets.state(name).env_owned
+        except UnknownSecret:  # a store built without the tracers' keys (a test's)
+            return False
+
+    def _chosen(self, section: str) -> BaseModel | None:
+        """The dashboard's overrides of `section` without the fields the env decides."""
+        stored = getattr(self._overrides, section)
+        if stored is None:
+            return None
+        return stored.model_copy(update=dict.fromkeys(self._env(section)))
 
     def enabled_actions(self) -> set[str]:
         """The core Docker actions and those of every plugin switched on."""
@@ -257,6 +337,7 @@ class SettingsStore:
                 except Exception as problem:  # a plugin's own code failed: Bleep starts anyway
                     log.warning("settings: stored %s left out: %s", key, type(problem).__name__)
             self._apply_hosts()
+        await self._tell(frozenset(s for s in SECTIONS if getattr(self._overrides, s) is not None))
 
     async def update(self, update: SettingsUpdate, *, version: str) -> None:
         """Store and apply `update` (see `SettingsUpdate` for what replaces what), built from the
@@ -267,6 +348,8 @@ class SettingsStore:
         async with self._lock:
             if version != self.version():
                 raise SettingsStale(self.version())
+            self._refuse_env_changes(update)
+            before = (self.embeddings(), self.tracing())
             merged = self._overrides.model_copy(deep=True)
             writes: dict[str, BaseModel] = {}
             for section in SECTIONS:
@@ -286,9 +369,77 @@ class SettingsStore:
                     hosts.pop(host_id, None)
                 merged.hosts = hosts
                 writes[f"{HOST_PREFIX}{host_id}"] = host
+            self._check_in_force(merged, *before)
             await self._write(writes)
             self._overrides = merged
             self._apply_hosts()
+        await self._tell(frozenset(s for s in SECTIONS if s in writes))
+
+    def _refuse_env_changes(self, update: SettingsUpdate) -> None:
+        """`SettingsRefused` for a field the env decides that `update` changes. One stored before
+        the env set it may be sent again as it is, or left out to clear it."""
+        for section, names in ENV_NAMES.items():
+            given = getattr(update, section)
+            if given is None:
+                continue
+            stored = getattr(self._overrides, section)
+            for field in sorted(self._env(section)):
+                value = getattr(given, field)
+                if value is None or value == (getattr(stored, field) if stored else None):
+                    continue
+                keys = TRACING_ENDPOINTS.get(field, ()) if section == "tracing" else ()
+                from_env = [k for k in keys if self._key_from_env(k)]
+                if from_env:
+                    raise SettingsRefused(
+                        f"{from_env[0]} is set in .env, so {names[field]} is read from .env too; "
+                        "change it there"
+                    )
+                raise SettingsRefused(f"{names[field]} is set in .env, which wins; change it there")
+
+    def _check_in_force(
+        self, merged: SettingsUpdate, embeddings_before: EmbeddingsChoice, before: TracingChoice
+    ) -> None:
+        """`SettingsRefused` for an embedder or a tracer the merged overrides would put in force
+        without what it needs, and for a tracer's address changed while a key entered for the old
+        one is set."""
+        current = self._overrides
+        self._overrides = merged
+        try:
+            embeddings, tracing = self.embeddings(), self.tracing()
+        finally:
+            self._overrides = current
+        if embeddings != embeddings_before and embeddings.provider == "openai":
+            if not embeddings.model:
+                raise SettingsRefused("an embeddings endpoint needs its model (EMBEDDINGS_MODEL)")
+            if self._secrets is not None and self._secrets.get(EMBEDDINGS_URL_ENV) is None:
+                raise SettingsRefused(
+                    f"set {EMBEDDINGS_URL_ENV} first: the endpoint the embeddings are sent to"
+                )
+        if self._secrets is None:
+            return
+        for endpoint, keys in TRACING_ENDPOINTS.items():
+            if getattr(tracing, endpoint) == getattr(before, endpoint):
+                continue
+            if set_keys := [k for k in keys if self._secrets.get(k) is not None]:
+                raise SettingsRefused(
+                    f"clear {' and '.join(set_keys)} first: a key is sent only to the address it "
+                    f"was entered for; then set the new {ENV_NAMES['tracing'][endpoint]} and "
+                    "enter the key again"
+                )
+        if tracing.tracing not in ("off", before.tracing):
+            endpoint = next(e for e, t in TRACER_OF_ENDPOINT.items() if t == tracing.tracing)
+            missing = [k for k in TRACING_ENDPOINTS[endpoint] if self._secrets.get(k) is None]
+            if missing:
+                raise SettingsRefused(
+                    f"TRACING={tracing.tracing} needs {' and '.join(missing)}; set it first"
+                )
+
+    async def _tell(self, changed: frozenset[str]) -> None:
+        for listener in self._listeners if changed else []:
+            try:
+                await listener(changed)
+            except Exception as error:  # the type only: a message could quote a value
+                log.warning("settings: applying a change failed (%s)", type(error).__name__)
 
     async def expect_exits(self, service: Service, entries: list[str]) -> None:
         """Add `entries` to the service's `exits` as a dashboard override ("This is expected").
@@ -440,6 +591,10 @@ class SettingsStore:
             self._overrides.thresholds = ThresholdOverrides.model_validate(value)
         elif key == "general":
             self._overrides.general = GeneralOverrides.model_validate(value)
+        elif key == "embeddings":
+            self._overrides.embeddings = EmbeddingsOverrides.model_validate(value)
+        elif key == "tracing":
+            self._overrides.tracing = TracingOverrides.model_validate(value)
         elif key.startswith(HOST_PREFIX):
             host_id = key.removeprefix(HOST_PREFIX)
             if host_id not in self._base:
