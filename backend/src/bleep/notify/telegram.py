@@ -2,9 +2,10 @@
 
 `TelegramClient` makes the calls; `TelegramBot` polls `getUpdates` and turns what the one
 configured chat says into decisions. A button press is `approve:<approval id>` or
-`reject:<approval id>`, `expected`, or `onit` and then `onit:<choice>` (a snooze). Any text is
-answered through `talk` from Bleep's own state (#401), and changes nothing; a reply to a message
-whose plan waits is still an instruction for it unless it reads as a question.
+`reject:<approval id>`, `expected`, `onit` and then `onit:<choice>` (a snooze), or `yes:<id>` or
+`no:<id>` for an offer made in the chat. Any text is answered through `talk` from Bleep's own
+state (#401) and changes nothing: what the person asks for comes back as an offer with one button
+to confirm, and only the press runs it (#402), an instruction for a waiting plan included.
 Decisions go through `approvals.resolve`, so the dashboard and Telegram race fairly: the winner
 resumes the run, the loser is told which channel won. Updates from any other chat are dropped and
 written to the guard log. The bot token is in every Bot API URL, so no error or log line here
@@ -27,12 +28,16 @@ from bleep.incidents.bus import EventBus
 from bleep.incidents.expectations import RUNNING
 from bleep.incidents.quiet import QuietStore, morning_of, quiet_target, snooze_until
 from bleep.incidents.repository import IncidentRepo, utcnow
-from bleep.notify.format import answer, phrase, shows_in_full, when
+from bleep.notify.format import answer, bold_first_line, phrase, render, shows_in_full, steps_text
 from bleep.schemas.graph import Decision
 from bleep.schemas.incidents import TERMINAL_STATUSES
+from bleep.schemas.talk import Offer
 from bleep.store.db import Database
+from bleep.talk.confirms import Confirms
 from bleep.talk.conversation import Talk
 from bleep.talk.history import Turns
+from bleep.talk.offers import confirm_line, instruction
+from bleep.talk.times import when
 
 log = logging.getLogger(__name__)
 
@@ -88,6 +93,10 @@ ON_IT_VERB = "onit"
 ON_IT_LABEL = "🤫 I'm on it"
 ON_IT_NOTICE = "Snoozed from Telegram: you said you are on it."
 SNOOZE_AHEAD_MAX = timedelta(days=2)  # no button carries a later morning
+# An offer made in the chat is confirmed with `yes:<id>` or declined with `no:<id>`; the offer
+# itself is kept by the bot (`talk.confirms`), never carried by the button.
+CONFIRM_VERB, DECLINE_VERB = "yes", "no"
+YES_LABEL, SEND_LABEL, NO_LABEL = "Yes", "Send", "No"
 
 Row = list[tuple[str, str]]  # (label, callback data) buttons side by side
 
@@ -352,6 +361,8 @@ class TelegramBot:
         self.on_it = on_it
         self.talk = talk
         self.turns = Turns()  # this chat's last turns, for the next message's context
+        self.confirms = Confirms(clock)  # the offers waiting for their button
+        self._shown: dict[str, int] = {}  # an offer's id: the message its buttons are on
         self._talking: set[asyncio.Task[None]] = set()
         self._talk_turn = asyncio.Lock()
         self._offset: int | None = None
@@ -384,6 +395,7 @@ class TelegramBot:
         """One `getUpdates` call and the handling of what it returned."""
         updates = await self.client.get_updates(self._offset)
         self.last_poll = self.clock()
+        await self._clear_expired()
         for update in updates:
             self._offset = update["update_id"] + 1  # confirmed even if handling fails below
             try:
@@ -415,6 +427,9 @@ class TelegramBot:
         callback_id = callback["id"]
         message_id = callback["message"]["message_id"]
         verb, _, approval_id = str(callback.get("data", "")).partition(":")
+        if verb in (CONFIRM_VERB, DECLINE_VERB):
+            await self._confirm(callback_id, message_id, verb, approval_id)
+            return
         known = await self.messages.get(message_id)
         if verb == EXPECTED_VERB and known is not None and self.expectations is not None:
             await self._expected(callback_id, message_id, known[0])
@@ -445,10 +460,7 @@ class TelegramBot:
         """ "It's expected": record it and close the incident, as the dashboard's button does."""
         assert self.expectations is not None
         result = await self.expectations.expected(incident_id, "telegram")
-        text = result.text
-        if len(text) > CALLBACK_TEXT_MAX:
-            text = text[: CALLBACK_TEXT_MAX - 1] + "…"
-        await self.client.answer_callback(callback_id, text)
+        await self.client.answer_callback(callback_id, _cut(result.text))
         if result.done:  # a failed press leaves Approve and Reject to a plan that still waits
             await self.client.clear_buttons(self.chat_id, message_id)
 
@@ -541,9 +553,9 @@ class TelegramBot:
         return shows_in_full(current.proposal)
 
     async def _text(self, message: dict[str, Any]) -> None:
-        """With `talk`, what the person wrote is answered (`_answer`). Without it, a reply to a
-        message about an incident instructs its plan (`_instruct`) and any other text is told
-        how to give one."""
+        """With `talk`, what the person wrote is answered in the background (`_answer`). Without
+        it, a reply to a message about an incident offers to send it to the plan that waits, and
+        any other text is told how to give an instruction."""
         reply = message["message_id"]
         text = message["text"].strip()
         reply_to = message.get("reply_to_message", {}).get("message_id")
@@ -556,13 +568,10 @@ class TelegramBot:
             return
         if self.talk is None:
             assert known is not None
-            await self._say(await self._instruct(*known, text), reply)
+            offer = instruction(known[0], await self._incident_name(known[0]), text)
+            await self._offer(offer, confirm_line(offer, self.clock(), self._zone()), reply, known)
             return
-        if known is not None and (known[1] or await self._waiting(known[0])):
-            # A reply a plan may take is handled here, in order, so a press that came after it
-            # (an Approve) waits behind it, as it did before the reply was read by a model.
-            await self._answer(text, reply, known, to_plan=True)
-            return
+        # Text changes nothing on its own, so a slow model never holds a button press behind it.
         if len(self._talking) >= TALK_WAITING_MAX:
             await self._say(answer("answer_talk_busy"), reply)
             return
@@ -571,34 +580,169 @@ class TelegramBot:
         task.add_done_callback(self._talking.discard)
 
     async def _answer_safely(self, text: str, reply: int, known: tuple[str, str] | None) -> None:
-        """`_answer` in the background, so a slow model never holds a button press behind a
-        message that can change nothing; one at a time in the order they came. An error is
+        """`_answer` in the background, one at a time in the order they came. An error is
         logged, as `poll_once` logs one, and never reaches the poller."""
         try:
             async with self._talk_turn:
-                await self._answer(text, reply, known, to_plan=False)
+                await self._answer(text, reply, known)
         except TelegramError as error:
             log.warning("telegram: could not answer a message: %s", error)
         except Exception:
             log.exception("telegram: answering a message failed")
 
-    async def _answer(
-        self, text: str, reply: int, known: tuple[str, str] | None, to_plan: bool
-    ) -> None:
+    async def _answer(self, text: str, reply: int, known: tuple[str, str] | None) -> None:
         """Answer what the person wrote through `talk`, which reads and never changes anything;
-        a reply to a message about an incident is about that incident. Until replies are
-        confirmed with a button (#402), a reply a plan would take (`to_plan`: the plan its
-        message showed, or the one waiting on its incident) still instructs that plan, as
-        before, unless it reads as a question; so does one Bleep could not read."""
+        a reply to a message about an incident is about that incident. An action Bleep checked
+        comes back as an offer with its buttons (`_offer`)."""
         assert self.talk is not None
         incident_id = known[0] if known is not None else None
         said = await self.talk.reply(text, incident_id, self.turns.recent())
-        if known is not None and to_plan and said.kind != "question":
-            note = await self._instruct(*known, text)
+        if said.offer is not None:
+            note = await self._offer(said.offer, said.answer, reply, known)
         else:
             note = said.answer
+            await self._say(note, reply)
         self.turns.add(text, note)
-        await self._say(note, reply)
+
+    async def _offer(
+        self, offer: Offer, line: str, reply: int, known: tuple[str, str] | None
+    ) -> str:
+        """Show `line` with the buttons that confirm `offer`, and keep the offer for the press;
+        returns what was said. An instruction is bound to the plan the replied-to message
+        showed, else to the one that waits now; a yes to a plan shows that plan's own buttons
+        again. An offer about an incident is logged with it, so its buttons go when the
+        incident ends or, for an instruction, when its plan is decided."""
+        if offer.kind in ("instruct", "show_plan"):
+            plan_id, why_not = await self._bind_plan(offer.incident_id or "", known)
+            if not why_not:
+                offer = offer.model_copy(update={"plan_id": plan_id})
+        elif offer.kind == "expected" and not await self._expectable(offer.incident_id or ""):
+            why_not = answer("answer_cannot_expect", incident=offer.incident or "")
+        else:
+            why_not = ""
+        if why_not:
+            await self._say(why_not, reply)
+            return why_not
+        if offer.kind == "show_plan":
+            return await self._show_plan(offer, line, reply)
+        confirm_id = self.confirms.add(offer)
+        yes = SEND_LABEL if offer.kind == "instruct" else YES_LABEL
+        buttons = [
+            (yes, f"{CONFIRM_VERB}:{confirm_id}"),
+            (NO_LABEL, f"{DECLINE_VERB}:{confirm_id}"),
+        ]
+        message_id = await self.client.send_message(
+            self.chat_id, line, buttons, reply_to=reply, markdown=False
+        )
+        self._shown[confirm_id] = message_id
+        await self._log_offer(message_id, offer.incident_id, offer.plan_id or "")
+        return line
+
+    async def _log_offer(self, message_id: int, incident_id: str | None, plan_id: str) -> None:
+        """Log a message with buttons the bot sent about an incident, so they are cleared with
+        the incident's; never as its first message, which is the thread's opener (#380)."""
+        if incident_id and await self.messages.first_for(incident_id) is not None:
+            await self.messages.add(message_id, incident_id, plan_id, self.clock())
+
+    async def _bind_plan(self, incident_id: str, known: tuple[str, str] | None) -> tuple[str, str]:
+        """(the plan an instruction or a yes is for, why there is none): the plan the
+        replied-to message showed while it still waits, else the one waiting now."""
+        shown = known[1] if known is not None and known[0] == incident_id else ""
+        if shown:
+            if await self._plan_open(incident_id, shown):
+                return shown, ""
+            return "", await self._why_lost(incident_id, shown)
+        waiting = await self._waiting(incident_id)
+        return (waiting, "") if waiting else ("", answer("answer_not_waiting"))
+
+    async def _show_plan(self, offer: Offer, line: str, reply: int) -> str:
+        """A yes to a waiting plan shows the plan again with its own buttons: their press is
+        the approval, through the same path as on the plan's first message."""
+        current = await self.approvals.current(offer.incident_id or "")
+        if current is None or current.id != offer.plan_id or current.proposal.refused:
+            refused = current is not None and current.proposal.refused
+            why_not = answer("answer_refused_plan" if refused else "answer_not_waiting")
+            await self._say(why_not, reply)
+            return why_not
+        text = render(
+            "plan_again", incident=offer.incident or "", steps=steps_text(current.proposal)
+        )
+        buttons = [("Approve", f"approve:{current.id}")] if shows_in_full(current.proposal) else []
+        buttons.append(("Reject", f"reject:{current.id}"))
+        message_id = await self.client.send_message(
+            self.chat_id, bold_first_line(text), buttons, reply_to=reply
+        )
+        # Logged even as the incident's first message: its buttons find their plan through the log.
+        await self.messages.add(message_id, current.incident_id, current.id, self.clock())
+        return line
+
+    async def _expectable(self, incident_id: str) -> bool:
+        if self.expectations is None:
+            return False
+        return await self.expectations.offered(incident_id) is not None
+
+    async def _incident_name(self, incident_id: str) -> str:
+        incident = await self.on_it.incidents.get(incident_id) if self.on_it is not None else None
+        return (incident.short_name if incident is not None else None) or incident_id
+
+    def _zone(self) -> tzinfo | None:
+        return self.on_it.zone if self.on_it is not None else None
+
+    async def _confirm(self, callback_id: str, message_id: int, verb: str, confirm_id: str) -> None:
+        """A press of an offer's Yes (or Send) runs it, once; No drops it. A second press, an
+        expired or unknown offer and a press on another message than the offer's own run
+        nothing and are told so; the buttons go either way."""
+        shown = self._shown.get(confirm_id)
+        taken = self.confirms.take(confirm_id) if shown in (None, message_id) else "unknown"
+        if isinstance(taken, str):
+            said = answer("answer_confirm_used" if taken == "used" else "answer_confirm_expired")
+        else:
+            self._shown.pop(confirm_id, None)
+            said = answer("answer_confirm_no") if verb == DECLINE_VERB else await self._run(taken)
+        await self.client.answer_callback(callback_id, _cut(said))
+        await self._edit(message_id, [])
+
+    async def _run(self, offer: Offer) -> str:
+        """Run a confirmed offer through the code the dashboard and the other buttons use, so
+        first-wins, a replaced plan and a closed incident are answered as they are there."""
+        now = self.clock()
+        if offer.incident_id and await self._ended(offer.incident_id):
+            return answer("answer_confirm_ended")
+        if offer.kind == "expected" and self.expectations is not None:
+            return (await self.expectations.expected(offer.incident_id or "", "telegram")).text
+        if offer.kind == "instruct" and offer.plan_id:
+            decision = Decision(kind="instruct", text=offer.text, via="telegram", at=now)
+            return await self._resolve(offer.incident_id or "", offer.plan_id, decision)
+        if self.on_it is None or offer.scope is None or offer.target_id is None:
+            return answer("answer_unknown")
+        quiet, subject = self.on_it.quiet, offer.subject or offer.target_id
+        if offer.kind == "watch_again":
+            cleared = await quiet.clear(offer.scope, offer.target_id)
+            return answer("answer_watching" if cleared else "answer_not_quiet", subject=subject)
+        if offer.kind == "leave_alone":
+            await quiet.set(offer.scope, offer.target_id, "leave_alone", None)
+            return answer("answer_left_alone", subject=subject)
+        if offer.until is None or offer.until <= now:
+            return answer("answer_confirm_expired")
+        await quiet.set(offer.scope, offer.target_id, "snooze", offer.until)
+        return answer("answer_on_it", until=when(offer.until, now, self._zone()))
+
+    async def _ended(self, incident_id: str) -> bool:
+        if self.on_it is None:
+            return False  # an instruction or "It's expected" answers a closed incident itself
+        incident = await self.on_it.incidents.get(incident_id)
+        return incident is None or incident.status in TERMINAL_STATUSES
+
+    async def _clear_expired(self) -> None:
+        """Remove the buttons of the offers that expired unanswered."""
+        for confirm_id in self.confirms.expired():
+            message_id = self._shown.pop(confirm_id, None)
+            if message_id is None:
+                continue
+            try:
+                await self._edit(message_id, [])
+            except TelegramError as error:
+                log.warning("telegram: could not clear an expired offer: %s", error)
 
     async def _say(self, text: str, reply_to: int) -> None:
         await self.client.send_message(self.chat_id, text, reply_to=reply_to, markdown=False)
@@ -613,17 +757,6 @@ class TelegramBot:
         for task in list(self._talking):
             task.cancel()
         await asyncio.gather(*list(self._talking), return_exceptions=True)
-
-    async def _instruct(self, incident_id: str, approval_id: str, text: str) -> str:
-        """Instruct a plan with `text`: the one the message showed (so a replaced plan is
-        answered as stale), or, for a message that showed none, the plan that waits for a
-        decision on its incident now. Returns what to tell the person."""
-        if not approval_id:
-            approval_id = await self._waiting(incident_id)
-        if not approval_id:
-            return answer("answer_not_waiting")
-        decision = Decision(kind="instruct", text=text, via="telegram", at=self.clock())
-        return await self._resolve(incident_id, approval_id, decision)
 
     async def _waiting(self, incident_id: str) -> str:
         """The id of the incident's plan that waits for a decision now; empty when none does."""
@@ -649,6 +782,10 @@ class TelegramBot:
             if refused and decision.kind == "reject":
                 return answer("answer_let_go")
             return answer(f"answer_{_PAST[decision.kind]}")
+        return await self._why_lost(incident_id, approval_id)
+
+    async def _why_lost(self, incident_id: str, approval_id: str) -> str:
+        """Why the plan `approval_id` takes no decision now, as the person is told."""
         current = await self.approvals.current(incident_id)
         if current is not None and current.id == approval_id and current.decision is not None:
             via = current.decision.via
@@ -661,3 +798,8 @@ class TelegramBot:
 
 
 _PAST = {"approve": "approved", "reject": "rejected", "instruct": "instructed"}
+
+
+def _cut(text: str) -> str:
+    """A button's answer within Telegram's limit."""
+    return text if len(text) <= CALLBACK_TEXT_MAX else text[: CALLBACK_TEXT_MAX - 1] + "…"

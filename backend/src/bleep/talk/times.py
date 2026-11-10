@@ -1,0 +1,24 @@
+"""Times as a person reads them in a chat, the same on Telegram and in the dashboard's panel."""
+
+from datetime import UTC, datetime, timedelta, tzinfo
+
+from bleep import prompts
+
+
+def _phrase(name: str, **values: str) -> str:
+    return prompts.load(f"talk/{name}", **values).strip()
+
+
+def when(at: datetime, now: datetime, zone: tzinfo | None) -> str:
+    """A time as a person says it in a chat, in `zone`: "14:30" today, "tomorrow 08:00", else
+    the weekday ("Thu 08:00"), as the dashboard's quiet pill says it. Without a zone (none was
+    configured) it is UTC and says so: "14:30 UTC"."""
+    if zone is None:
+        return _phrase("when_utc", when=when(at, now, UTC))
+    local, today = at.astimezone(zone), now.astimezone(zone).date()
+    time = local.strftime("%H:%M")
+    if local.date() == today:
+        return time
+    if local.date() == today + timedelta(days=1):
+        return _phrase("when_tomorrow", time=time)
+    return _phrase("when_day", day=local.strftime("%a"), time=time)

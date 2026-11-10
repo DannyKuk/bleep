@@ -9,7 +9,7 @@ message it is (#380).
 
 import re
 import unicodedata
-from datetime import UTC, datetime, timedelta, tzinfo
+from datetime import timedelta
 
 from bleep import prompts
 from bleep.guard.plan_check import MAX_STEPS
@@ -81,21 +81,6 @@ def duration(span: timedelta) -> str:
     if minutes < 48 * 60:
         return phrase("duration_h", n=str(minutes // 60))
     return phrase("duration_days", n=str(minutes // (24 * 60)))
-
-
-def when(at: datetime, now: datetime, zone: tzinfo | None) -> str:
-    """A time as a person says it in a chat, in `zone`: "14:30" today, "tomorrow 08:00", else
-    the weekday ("Thu 08:00"), as the dashboard's quiet pill says it. Without a zone (none was
-    configured) it is UTC and says so: "14:30 UTC"."""
-    if zone is None:
-        return phrase("when_utc", when=when(at, now, UTC))
-    local, today = at.astimezone(zone), now.astimezone(zone).date()
-    time = local.strftime("%H:%M")
-    if local.date() == today:
-        return time
-    if local.date() == today + timedelta(days=1):
-        return phrase("when_tomorrow", time=time)
-    return phrase("when_day", day=local.strftime("%a"), time=time)
 
 
 def answer(name: str, **values: str) -> str:

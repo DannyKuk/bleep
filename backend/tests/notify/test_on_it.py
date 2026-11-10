@@ -27,6 +27,7 @@ from bleep.schemas.graph import Decision, PlanStep, Proposal
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Thresholds
 from bleep.store.db import Database
+from bleep.talk.times import when
 from bleep.watcher.detector import Detector
 from bleep.watcher.manager import WatcherManager
 
@@ -539,12 +540,12 @@ def test_the_quiet_target_is_the_service_or_the_host():
 
 def test_a_time_reads_as_today_tomorrow_or_a_weekday():
     now = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)  # a Monday
-    assert fmt.when(now + timedelta(hours=2), now, UTC) == "14:00"
-    assert fmt.when(datetime(2026, 11, 10, 8, 0, tzinfo=UTC), now, UTC) == "tomorrow 08:00"
-    assert fmt.when(datetime(2026, 11, 12, 8, 0, tzinfo=UTC), now, UTC) == "Thu 08:00"
+    assert when(now + timedelta(hours=2), now, UTC) == "14:00"
+    assert when(datetime(2026, 11, 10, 8, 0, tzinfo=UTC), now, UTC) == "tomorrow 08:00"
+    assert when(datetime(2026, 11, 12, 8, 0, tzinfo=UTC), now, UTC) == "Thu 08:00"
     late = datetime(2026, 11, 9, 23, 30, tzinfo=UTC)  # 00:30 on Tuesday in Vienna
-    assert fmt.when(late, now, VIENNA) == "tomorrow 00:30"
-    assert fmt.when(datetime(2026, 11, 10, 8, 0, tzinfo=UTC), now, None) == "tomorrow 08:00 UTC"
+    assert when(late, now, VIENNA) == "tomorrow 00:30"
+    assert when(datetime(2026, 11, 10, 8, 0, tzinfo=UTC), now, None) == "tomorrow 08:00 UTC"
 
 
 def test_a_choices_data_says_when_its_snooze_ends():

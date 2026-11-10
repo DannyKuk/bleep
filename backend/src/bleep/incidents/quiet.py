@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 
 QUIET_TICK_S = 30.0
 MORNING_HOUR = 8
+MAX_SNOOZE = timedelta(days=7)  # the longest snooze, from the dashboard or a chat
 
 Listener = Callable[[QuietChange], Awaitable[None]]
 SnoozeChoice = Literal["1h", "4h", "morning"]

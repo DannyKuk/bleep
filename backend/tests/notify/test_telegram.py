@@ -63,6 +63,7 @@ class FakeTelegram:
         self.calls: list[tuple[str, dict]] = []
         self.fail_clear = False
         self.not_modified = False
+        self.next_id: int | None = None  # set: every message sent gets the next id, else 311
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         assert request.url.host == "api.telegram.org"
@@ -74,6 +75,9 @@ class FakeTelegram:
             return (
                 queued if isinstance(queued, httpx.Response) else httpx.Response(200, json=queued)
             )
+        if method == "sendMessage" and self.next_id is not None:
+            self.next_id += 1
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": self.next_id}})
         if method == "sendMessage":
             return httpx.Response(200, json=fixture("send_message_ok"))
         if method == "editMessageReplyMarkup" and self.fail_clear:
@@ -153,6 +157,17 @@ async def poll(env: Env, name: str) -> None:
     await env.bot.poll_once()
 
 
+async def press_send(env: Env) -> None:
+    """Press Send on the offer the last reply got: a reply alone instructs nothing (#402)."""
+    offer = env.api.sent("sendMessage")[-1]
+    [[send, no]] = offer["reply_markup"]["inline_keyboard"]
+    assert (send["text"], no["text"]) == ("Send", "No")
+    confirm_id = send["callback_data"].removeprefix("yes:")
+    update = fixture("callback_confirm", MESSAGE_ID="311", CONFIRM_ID=confirm_id, VERB="yes")
+    env.api.updates.append(update)
+    await env.bot.poll_once()
+
+
 # --- decisions ---
 
 
@@ -175,8 +190,14 @@ async def test_reject_button(env):
     assert env.runner.resumed[0][1].kind == "reject"
 
 
-async def test_reply_to_a_proposal_becomes_an_instruction(env):
+async def test_reply_to_a_proposal_is_offered_as_an_instruction_and_sent_on_the_press(env):
     await poll(env, "reply_instruction")
+    [offer] = env.api.sent("sendMessage")
+    assert offer["reply_parameters"] == {"message_id": 320, "allow_sending_without_reply": True}
+    assert offer["text"].startswith(f"✍️ Send this to {env.incident_id}'s plan?")  # no repo here
+    assert env.runner.resumed == []  # the reply alone changes nothing
+
+    await press_send(env)
 
     [(incident_id, decision)] = env.runner.resumed
     assert incident_id == env.incident_id
@@ -186,8 +207,6 @@ async def test_reply_to_a_proposal_becomes_an_instruction(env):
         "Restart the database first, then the web container",
     )
     assert (await env.approvals.current(env.incident_id)).decision.kind == "instruct"
-    [reply] = env.api.sent("sendMessage")
-    assert reply["reply_parameters"] == {"message_id": 320, "allow_sending_without_reply": True}
 
 
 async def test_text_that_is_not_a_reply_is_explained_and_decides_nothing(env):
@@ -1265,11 +1284,12 @@ async def test_a_press_that_fails_leaves_the_plans_buttons_in_place(env):
     assert env.api.sent("editMessageReplyMarkup") == []
 
 
-async def test_a_reply_to_an_opened_message_instructs_the_plan_that_waits(env):
+async def test_a_reply_to_an_opened_message_is_offered_to_the_plan_that_waits(env):
     env.notifier.expectations = FakeExpectations()
     await env.notifier.incident_opened(env.incident)  # logged as message 311, no plan
     env.api.calls.clear()
     await poll(env, "reply_instruction")
+    await press_send(env)
     [(incident_id, decision)] = env.runner.resumed
     assert incident_id == env.incident_id and decision.kind == "instruct"
     assert env.runner.approval_ids == [env.approval_id]  # the plan that waits now
@@ -1386,8 +1406,9 @@ async def test_a_press_on_a_reminder_clears_the_original_proposal_too(env, closi
 
 async def test_a_telegram_reply_instruction_clears_the_plans_buttons(env, closing):
     await poll(env, "reply_instruction")
+    await press_send(env)
     assert env.runner.resumed[0][1].kind == "instruct"
-    assert await closing.cleared() == [311]
+    assert set(await closing.cleared()) == {311}  # the offer's own press, then the plan's
 
 
 async def test_a_plan_sent_after_its_incident_closed_is_cleared_as_it_is_logged(env, closing):
