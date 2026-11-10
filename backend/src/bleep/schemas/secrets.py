@@ -24,6 +24,8 @@ class SecretView(BaseModel):
     # A dashboard address in the file that Bleep would not accept now (the file was edited by
     # hand): set, but shown as invalid with no part of it, and the plugin is not switched on.
     invalid: bool = False
+    # A model server's address, which may be private or plain http to one (#372).
+    private: bool = False
 
 
 class SecretValue(BaseModel):

@@ -75,12 +75,14 @@ class SecretName:
     """One value the dashboard may set: a `secret`, an `address` a token is sent to (`carries`
     names that token), or an `id` that is not secret but lives with the secrets (a chat id).
     `required` says why it cannot be cleared from the dashboard, when something in force needs
-    it (the tracer `TRACING` names)."""
+    it (the tracer `TRACING` names). `private`: an address that may be on a private network or
+    a Docker name when set from the dashboard, a model server's (#372)."""
 
     name: str
     kind: Kind = "secret"
     carries: str | None = None
     required: str | None = None
+    private: bool = False
 
 
 @dataclass(frozen=True)
@@ -129,6 +131,7 @@ class SecretStore:
                 pair = frozenset({entry.name, entry.carries})
                 self._group[entry.name] = self._group[entry.carries] = pair
         self._values: dict[str, SecretStr] = self._load()
+        self._warn_shadowed()
         self._listeners: list[Listener] = []
         self._before: list[Listener] = []
         self._lock = asyncio.Lock()
@@ -257,6 +260,22 @@ class SecretStore:
             if entry.carries is not None:
                 values.pop(entry.carries, None)
             return await self._commit(values)
+
+    def _warn_shadowed(self) -> None:
+        """Log each value in the file the environment decides: it stays in the file but is not
+        used, such as a dashboard key whose address is set in the environment (#372)."""
+        for name in sorted(self._values):
+            if not self._env_owned(name):
+                continue
+            if self._env.get(name):
+                log.warning("secrets: %s in the secret file is not used: the env sets it", name)
+            else:
+                log.warning(
+                    "secrets: %s in the secret file is not used: %s is set in the env, so it is "
+                    "read from there too",
+                    name,
+                    " and ".join(sorted(n for n in self._group[name] if self._env.get(n))),
+                )
 
     def _family(self, name: str) -> SecretFamily | None:
         return next((family for family in self._families if family.owns(name)), None)

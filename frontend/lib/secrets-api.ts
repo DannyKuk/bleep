@@ -19,6 +19,8 @@ export interface SecretView {
   /** An address set on the dashboard that the API would refuse now (the file was edited by hand):
    * set, shown with no value, and its plugin cannot be switched on until it is entered again. */
   invalid: boolean;
+  /** A model server's address, which may be private or plain http to one (#372). */
+  private?: boolean;
 }
 
 export interface SecretActions {

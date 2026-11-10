@@ -28,6 +28,14 @@ NEARBY = tuple(
         "fc00::/7",
     )
 )
+# The names cloud metadata services answer at; a model server's address may never be one.
+METADATA_NAMES = frozenset(
+    {"metadata", "metadata.google.internal", "instance-data", "instance-data.ec2.internal"}
+)
+# Their addresses outside link-local: AWS's IPv6 endpoint and Alibaba Cloud's.
+METADATA_ADDRESSES = frozenset(
+    ipaddress.ip_address(a) for a in ("fd00:ec2::254", "100.100.100.200")
+)
 # A single-label name, such as a Docker service; one starting with a digit could be an address.
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,62}")
 
@@ -48,6 +56,18 @@ def _nearby(host: str) -> bool:
     return any(ip in net for net in NEARBY if net.version == ip.version)
 
 
+def _metadata(host: str) -> bool:
+    """A cloud metadata service: one of its names (Google's and AWS's sit under `.internal`), a
+    link-local address, where most answer (169.254.169.254), or one of `METADATA_ADDRESSES`."""
+    if host.lower().rstrip(".") in METADATA_NAMES:
+        return True
+    try:
+        ip = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return False
+    return ip.is_link_local or ip in METADATA_ADDRESSES
+
+
 def _inet_aton(host: str) -> bool:
     """Whether the C library would read `host` as an IPv4 address (`134744072`, `0x8080808`)."""
     try:
@@ -58,10 +78,18 @@ def _inet_aton(host: str) -> bool:
 
 
 def check_url(
-    raw: str, env: str, refused: type[UrlRefused] = UrlRefused, *, https_hint: str = ""
+    raw: str,
+    env: str,
+    refused: type[UrlRefused] = UrlRefused,
+    *,
+    https_hint: str = "",
+    internal: bool = False,
 ) -> str:
     """`raw`, read from the variable `env`, as a URL Bleep may send a token to, or `refused`.
-    `https_hint` follows the plain-http refusal and says where the https address is."""
+    `https_hint` follows the plain-http refusal and says where the https address is. With
+    `internal`, a name under `.internal`, the top-level domain reserved for private networks, is
+    nearby too: Docker names this machine `host.docker.internal`, where a local model server
+    usually listens."""
     try:
         url = httpx.URL(raw.strip())
     except httpx.InvalidURL:
@@ -70,7 +98,10 @@ def check_url(
         raise refused(f"{env} must be an http(s) URL with a host and no password")
     if url.query or url.fragment or "?" in raw or "#" in raw:
         raise refused(f"{env} must have no query or fragment")
-    if url.scheme == "http" and not _nearby(url.host):
+    if internal and _metadata(url.host):
+        raise refused(f"{env} must not be a cloud metadata service")
+    is_internal = internal and url.host.lower().endswith(".internal")
+    if url.scheme == "http" and not (_nearby(url.host) or is_internal):
         raise refused(
             f"{env} must use https unless it is a private address or a Docker service name"
             f"{https_hint}, since the token travels with every request"

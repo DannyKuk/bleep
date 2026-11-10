@@ -41,6 +41,7 @@ def get_actions(request: Request) -> Actions:
         looks=request.app.state.looks,
         zone=parts.settings_store.zone,
         language=parts.settings_store.language,
+        looked=parts.panel.turns.about,
     )
 
 

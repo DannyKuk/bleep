@@ -21,7 +21,7 @@ from langchain_core.tools import BaseTool
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
-from bleep.graph.host_text import describe_basics, gib, service_name
+from bleep.graph.host_text import describe_basics, describe_urls, gib, service_name
 from bleep.graph.look import look_rule
 from bleep.graph.planted import result_holds_tag
 from bleep.graph.state import IncidentState, Node
@@ -36,10 +36,11 @@ from bleep.memory.text import describe_fact, describe_past
 from bleep.schemas.graph import GatherContext
 from bleep.schemas.incidents import Signal
 from bleep.schemas.settings import Budgets
-from bleep.tools.registry import ToolContext
+from bleep.tools.registry import ToolBriefing, ToolContext
 
 log = logging.getLogger(__name__)
 
+MCP_TOOLS_SHOWN = 20  # read tools of the MCP server named in the prompt, at most
 SUMMARY_CHARS = 160  # the first line of a result, as the live view shows it
 CUT_NOTE_CHARS = 40  # room for the guard's "[… N chars cut]" line
 UNWRAP_CHARS = 4 * MAX_CHARS  # longer output is not a guarded one: guard it whole, no regex pass
@@ -115,7 +116,9 @@ def make(deps: GraphDeps) -> Node:
         async def run_tool(call: ToolCall) -> ToolMessage:
             name, args = call["name"], call["args"]
             source = _source(name)
-            await deps.bus.publish(incident_id, "tool_call", {"name": name, "args": args})
+            # The call's id pairs its result with it for a chat's "how did you check" (#422).
+            called = {"name": name, "args": args, "id": call["id"]}
+            await deps.bus.publish(incident_id, "tool_call", called)
             out = await _invoke(tools.get(name), name, args, act_tools, record)
             text, redactions, marked = await asyncio.to_thread(guard_result, source, out)
             if redactions:
@@ -125,11 +128,16 @@ def make(deps: GraphDeps) -> Node:
             await deps.bus.publish(
                 incident_id,
                 "tool_result",
-                {"name": name, "chars": len(text), "summary_first_line": first_line(text)},
+                {
+                    "name": name,
+                    "id": call["id"],
+                    "chars": len(text),
+                    "summary_first_line": first_line(text),
+                },
             )
             return ToolMessage(text, tool_call_id=call["id"], name=name)
 
-        new = _opening(state, limit, deps.clock)
+        new = _opening(state, limit, deps.clock, _mcp_section(deps.tools.briefings(ctx)))
         history = [*state.get("messages", []), *new]
         used = 0
         model = None
@@ -213,13 +221,15 @@ async def _invoke(
     return out if isinstance(out, str) else json.dumps(out, default=str)
 
 
-def _opening(state: IncidentState, limit: int, clock: Callable[[], datetime]) -> list[AnyMessage]:
+def _opening(
+    state: IncidentState, limit: int, clock: Callable[[], datetime], mcp: str
+) -> list[AnyMessage]:
     """The first round starts the conversation; a later one asks again about what was missing."""
     messages = state.get("messages", [])
     if not messages:
         return [
             SystemMessage(prompts.load("graph/system")),
-            HumanMessage(_task(state, limit, clock)),
+            HumanMessage(_task(state, limit, clock, mcp)),
         ]
     diagnosis = state.get("diagnosis")
     if isinstance(messages[-1], HumanMessage) or diagnosis is None:
@@ -233,7 +243,31 @@ def _opening(state: IncidentState, limit: int, clock: Callable[[], datetime]) ->
     return [HumanMessage(again)]
 
 
-def _task(state: IncidentState, limit: int, clock: Callable[[], datetime]) -> str:
+def _tool_names(names: tuple[str, ...]) -> str:
+    """The first `MCP_TOOLS_SHOWN` read tools by name, and how many more there are: all 50 a
+    person may list, at up to 128 characters, would add about 7 KB to every round, and
+    `mcp_tools` lists them all."""
+    shown = ", ".join(f"`{name}`" for name in names[:MCP_TOOLS_SHOWN])
+    left = len(names) - MCP_TOOLS_SHOWN
+    return f"{shown}, and {left} more" if left > 0 else shown
+
+
+def _mcp_section(briefings: list[ToolBriefing]) -> str:
+    """What the person wrote about the MCP server and the read tools it may run, set apart from
+    the text before it; empty without the plugin, so the prompt is then as it was before #370.
+    The purpose is the person's own text, validated when saved, so it goes in as it is."""
+    return "".join(
+        "\n\n"
+        + prompts.load(
+            "graph/investigate_mcp",
+            purpose=b.purpose,
+            tools=_tool_names(b.tools),
+        ).strip()
+        for b in briefings
+    )
+
+
+def _task(state: IncidentState, limit: int, clock: Callable[[], datetime], mcp: str) -> str:
     subject = state["subject"]
     context = state.get("context")
     if context is None:
@@ -247,8 +281,10 @@ def _task(state: IncidentState, limit: int, clock: Callable[[], datetime]) -> st
         subject=what,
         signals=_signals(state.get("signals", [])),
         look=look_rule("investigate", state.get("signals", [])),
+        mcp=mcp,
         containers=_containers(context),
         logs=_logs(context),
+        url_checks=_url_checks(context),
         host=_host(context),
         host_rules=_bullets(context.host_rules),
         service_rules=_bullets(context.service_rules),
@@ -290,6 +326,13 @@ def _containers(context: GatherContext) -> str:
 def _logs(context: GatherContext) -> str:
     # Gather guarded each excerpt already (`guard_text`), so it goes in as it is.
     return "\n\n".join(f"{name}:\n{text}" for name, text in context.logs.items()) or "(none)"
+
+
+def _url_checks(context: GatherContext) -> str:
+    """Gather's URL checks as a section of their own; empty, and the prompt as it was, without."""
+    if not context.urls:
+        return ""
+    return "\n\n" + prompts.load("graph/url_checks", checks=describe_urls(context.urls)).strip()
 
 
 def _host(context: GatherContext) -> str:

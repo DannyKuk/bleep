@@ -117,7 +117,8 @@ class _Overrides(BaseModel):
 
 
 class ModelOverrides(_Overrides):
-    """The model choice; the base URL of a local model and every API key stay in the env."""
+    """The model choice. The local model's base URL and every API key are kept in the secret
+    file, not here (`store/secrets.py`, #372)."""
 
     provider: Literal["openrouter", "local"] | None = None
     model: ModelName | None = None
@@ -212,6 +213,117 @@ class GeneralOverrides(_Overrides):
     language: Language | None = None
 
 
+EmbeddingsProvider = Literal["local", "openai"]
+TracingKind = Literal["off", "langfuse", "langsmith"]
+
+
+def has_userinfo(url: str) -> bool:
+    """Whether `url` names a user or password before its host."""
+    return "@" in url.split("://", 1)[-1].split("/", 1)[0]
+
+
+def url_origin(url: str) -> str:
+    """`scheme://host[:port]` of `url`, without what follows: a path or a query can hold a
+    credential, so an address from the env is shown only this far."""
+    authority = url.split("://", 1)[-1].split("/", 1)[0].rpartition("@")[2]
+    scheme = url.split("://", 1)[0] if "://" in url else "https"
+    return f"{scheme}://{authority}"
+
+
+def _plain_url(url: str) -> str:
+    """An http(s) URL with a host and no user or password; where it may point is the API's to
+    check (`api/settings.py`)."""
+    if check_url_syntax(url) is not None or has_userinfo(url):
+        raise ValueError("must be an http:// or https:// URL with a host and no password")
+    return url.rstrip("/")
+
+
+# The prefixes of the tracers' keys, an OpenAI-style `sk-` key (20 or more characters after it,
+# so `sk-team` is a name), and a long unbroken run of letters and digits mixed, as a token has,
+# though not a UUID's 32 hex digits: a key pasted into a project field must not be stored (#372).
+_KEY_PREFIXES = ("lsv2_", "pk-lf-", "sk-lf-")
+_OPENAI_KEY = re.compile(r"sk-[\w-]{20,}", re.IGNORECASE)
+_TOKEN_RUN = re.compile(r"[A-Za-z0-9]{32,}")
+_UUID_HEX = re.compile(r"[0-9a-fA-F]{32}")
+
+
+def _token(run: str) -> bool:
+    mixed = any(c.isdigit() for c in run) and any(c.isalpha() for c in run)
+    return mixed and not _UUID_HEX.fullmatch(run)
+
+
+def _not_a_key(name: str) -> str:
+    tokens = any(_token(run[0]) for run in _TOKEN_RUN.finditer(name))
+    if name.lower().startswith(_KEY_PREFIXES) or _OPENAI_KEY.match(name) or tokens:
+        raise ValueError("looks like a key, not a project; keys go in the secrets")
+    return name
+
+
+SettingsUrl = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=2048),
+    AfterValidator(_plain_url),
+]
+ProjectName = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=200, pattern=r"^[\w.:-]+$"),
+    AfterValidator(_not_a_key),
+]
+# The tracing fields that are addresses; one from the env is shown as its origin only.
+TRACING_URLS = ("langfuse_base_url", "langfuse_ui_url", "langsmith_endpoint")
+
+# The env variable behind each field the env can decide; the env wins over the dashboard (#372).
+ENV_NAMES: dict[str, dict[str, str]] = {
+    "models": {
+        "provider": "LLM_PROVIDER",
+        "model": "LLM_MODEL",
+        "cheap_model": "LLM_CHEAP_MODEL",
+        "local_model": "LOCAL_MODEL",
+    },
+    "embeddings": {
+        "provider": "EMBEDDINGS_PROVIDER",
+        "model": "EMBEDDINGS_MODEL",
+        "min_score": "EMBEDDINGS_MIN_SCORE",
+    },
+    "tracing": {
+        "tracing": "TRACING",
+        "langfuse_base_url": "LANGFUSE_BASE_URL",
+        "langfuse_ui_url": "LANGFUSE_UI_URL",
+        "langfuse_project_id": "LANGFUSE_PROJECT_ID",
+        "langsmith_endpoint": "LANGSMITH_ENDPOINT",
+        "langsmith_project": "LANGSMITH_PROJECT",
+    },
+}
+# A tracer's address and the keys sent to it: the address changes only while they are unset.
+TRACING_ENDPOINTS: dict[str, tuple[str, ...]] = {
+    "langfuse_base_url": ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"),
+    "langsmith_endpoint": ("LANGSMITH_API_KEY",),
+}
+TRACER_OF_ENDPOINT = {"langfuse_base_url": "langfuse", "langsmith_endpoint": "langsmith"}
+LOCAL_URL_ENV = "LOCAL_BASE_URL"
+EMBEDDINGS_URL_ENV = "EMBEDDINGS_BASE_URL"
+
+
+class EmbeddingsOverrides(_Overrides):
+    """The embedder for memory and knowledge search (#372). Its endpoint's base URL and key are
+    kept in the secret file. A change applies at the next start, which re-embeds the memory."""
+
+    provider: EmbeddingsProvider | None = None
+    model: ModelName | None = None  # the endpoint's model; the local one is baked into the image
+    min_score: float | None = Field(None, ge=0, le=1)
+
+
+class TracingOverrides(_Overrides):
+    """Where incident runs and chat readings are traced (#372); the keys are in the secret file."""
+
+    tracing: TracingKind | None = None
+    langfuse_base_url: SettingsUrl | None = None
+    langfuse_ui_url: SettingsUrl | None = None
+    langfuse_project_id: ProjectName | None = None
+    langsmith_endpoint: SettingsUrl | None = None
+    langsmith_project: ProjectName | None = None
+
+
 class SettingsUpdate(_Overrides):
     """`PUT /api/settings`. A section given replaces that section's overrides, and under `hosts`
     each host given replaces that host's; `{}` clears one. Sections left out stay as they are."""
@@ -220,6 +332,8 @@ class SettingsUpdate(_Overrides):
     budgets: BudgetOverrides | None = None
     thresholds: ThresholdOverrides | None = None
     general: GeneralOverrides | None = None
+    embeddings: EmbeddingsOverrides | None = None
+    tracing: TracingOverrides | None = None
     hosts: dict[str, HostSettings] | None = None
 
 
@@ -228,6 +342,26 @@ class ModelChoice(BaseModel):
     model: str
     cheap_model: str
     local_model: str
+
+
+class EmbeddingsChoice(BaseModel):
+    """The embedder in force. `model` is the endpoint's (None: the local model); `min_score` None
+    is the model's measured cut-off (`memory.embeddings.min_score_for`)."""
+
+    provider: EmbeddingsProvider = "local"
+    model: str | None = None
+    min_score: float | None = None
+
+
+class TracingChoice(BaseModel):
+    """The tracer in force, without its keys; the defaults are `llm.tracing.TracingSettings`'s."""
+
+    tracing: TracingKind = "off"
+    langfuse_base_url: str = "http://langfuse-web:3000"
+    langfuse_ui_url: str = "http://localhost:3001"
+    langfuse_project_id: str | None = None
+    langsmith_endpoint: str | None = None
+    langsmith_project: str = "bleep"
 
 
 class SecretStatus(BaseModel):
@@ -290,5 +424,12 @@ class SettingsView(BaseModel):
     # dashboard in the browser's zone and Telegram in UTC.
     timezone: str | None = None
     language: Language = DEFAULT_LANGUAGE  # the dashboard's choice, else English
+    embeddings: EmbeddingsChoice = EmbeddingsChoice()
+    tracing: TracingChoice = TracingChoice()
+    # Every field the env decides, as `section.field` ("models.provider"): it wins over the
+    # dashboard, which shows it as set in .env and cannot change it (#372).
+    from_env: list[str] = []
+    # Sections saved here that are in force only after a restart: `embeddings` (#372).
+    restart_needed: list[str] = []
     overrides: dict[str, Any]  # a `SettingsUpdate` without the fields left at the layers below
     version: str  # of `overrides`; a `PUT /api/settings` sends it back in `If-Match`

@@ -54,6 +54,9 @@ class After(_Strict):
 
 class ScriptedContainer(_Strict):
     name: str
+    # The Compose project it belongs to, when not the case's service: another service on the
+    # host, such as a proxy in front of it.
+    project: str | None = None
     image: str = "app:1"
     state: str = "running"
     health: Health = "none"
@@ -111,7 +114,7 @@ class ScriptedEngine:
         self.clock = clock
         start = clock()
         self.scripts = {c.name: c for c in containers}
-        self.summaries = {c.name: _summary(c, project, start) for c in containers}
+        self.summaries = {c.name: _summary(c, c.project or project, start) for c in containers}
         self.details = {
             c.name: {"oom_killed": c.oom_killed, "mem_usage_mib": c.mem_usage_mib}
             for c in containers

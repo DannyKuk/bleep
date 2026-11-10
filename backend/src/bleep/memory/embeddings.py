@@ -28,7 +28,9 @@ DEFAULT_MIN_SCORE = 0.5
 # Recall's cut-off per model. bge-small's is the one recall was built on; bge-m3's is one 0.025
 # step below the highest that still returned every right past incident in
 # docs/spikes/embeddings/recall.py (docs/evals/embeddings-min-score-2026-11-06.md, #306).
-MIN_SCORES = {"bge-small-en-v1.5": 0.5, "bge-m3": 0.35}
+# gemini-embedding-2 (through an endpoint): one step below 0.675, the highest that returned every
+# right record on the 18 queries (docs/evals/embeddings-german-docs-2026-11-10.md, #377).
+MIN_SCORES = {"bge-small-en-v1.5": 0.5, "bge-m3": 0.35, "gemini-embedding-2": 0.65}
 _WORD = re.compile(r"[a-z0-9]+")
 
 
@@ -111,13 +113,15 @@ class OpenAICompatEmbedder:
 
     def __init__(
         self,
-        base_url: str,
+        base_url: str | Callable[[], str | None],
         model: str,
         api_key: SecretStr | str | Callable[[], SecretStr | None] | None = None,
         transport: httpx.BaseTransport | None = None,
         min_score: float | None = None,
     ) -> None:
-        self.base_url = base_url.rstrip("/")
+        # A callable is read at every call, like the key: an address changed on the dashboard
+        # clears its key, and the key typed for the new one must never go to the old one.
+        self._base_url = base_url if callable(base_url) else lambda: base_url
         self.model = model
         self.min_score = min_score_for(model) if min_score is None else min_score
         key = SecretStr(api_key) if isinstance(api_key, str) else api_key
@@ -132,13 +136,16 @@ class OpenAICompatEmbedder:
     def embed(self, texts: list[str]) -> np.ndarray:
         if not texts:
             return np.zeros((0, 0), dtype=np.float32)
+        base_url = self._base_url()
+        if not base_url:
+            raise EmbedderError("no embeddings endpoint is set (EMBEDDINGS_BASE_URL)")
         headers = {}
         if (key := self._api_key()) is not None:
             headers["Authorization"] = f"Bearer {key.get_secret_value()}"
         try:
             with httpx.Client(transport=self._transport, timeout=HTTP_TIMEOUT_S) as client:
                 reply = client.post(
-                    f"{self.base_url}/embeddings",
+                    f"{base_url.rstrip('/')}/embeddings",
                     json={"model": self.model, "input": texts},
                     headers=headers,
                 )
@@ -154,6 +161,34 @@ class OpenAICompatEmbedder:
         if vectors.shape[0] != len(texts):
             raise EmbedderError(f"asked for {len(texts)} vectors, got {vectors.shape[0]}")
         return normalise(vectors)
+
+
+class DeferredEmbedder:
+    """The embedder `build` makes, made at its first use and then kept. Bleep's first use is the
+    re-embed at boot, after the stored settings are loaded, so the embedder follows the settings
+    page; a change saved later applies at the next start (docs/design/settings.md)."""
+
+    def __init__(self, build: Callable[[], Embedder]) -> None:
+        self._build = build
+        self._embedder: Embedder | None = None
+        self._lock = threading.Lock()
+
+    def _current(self) -> Embedder:
+        with self._lock:
+            if self._embedder is None:
+                self._embedder = self._build()
+            return self._embedder
+
+    @property
+    def name(self) -> str:
+        return self._current().name
+
+    @property
+    def min_score(self) -> float:
+        return self._current().min_score
+
+    def embed(self, texts: list[str]) -> np.ndarray:
+        return self._current().embed(texts)
 
 
 class FakeEmbedder:

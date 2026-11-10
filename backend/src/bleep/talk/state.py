@@ -5,6 +5,7 @@ Hosts and services come through `HealthSource`, which `wiring` fills with the wa
 reports come from the stores the dashboard reads. Nothing here reaches a host.
 """
 
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta, tzinfo
 from typing import Any, Protocol
@@ -16,6 +17,7 @@ from bleep.schemas.api import HostView, QuietView, ServiceView
 from bleep.schemas.graph import ApprovalRecord
 from bleep.schemas.incidents import TERMINAL_STATUSES, Incident, IncidentEvent
 from bleep.schemas.talk import (
+    CheckLine,
     ContainerLine,
     HostLine,
     IncidentFacts,
@@ -33,6 +35,24 @@ CAUSE_CHARS = 200
 NOTE_CHARS = 200
 NOTES_KEPT = 5
 SIGNALS_KEPT = 5
+# What the run checked (#422): the last calls and checks, each part cut. A result line is the
+# first line of the tool's guarded output as the event stores it, still host text.
+CHECKS_KEPT = 12
+TARGET_CHARS = 120
+RESULT_CHARS = 160
+# The argument that says what a read tool looked at: a container, a Coolify app, an allowed host
+# command, a search, a repository; and how far back it looked.
+_TARGET_ARGS = ("container", "app", "command", "query", "repo")
+_MINUTES_ARGS = ("minutes", "since_minutes")
+_GUARD_NOTE = re.compile(r"\[… (?:[0-9]+ chars cut|repeated [0-9]+ times)\]")
+# The first line of a tool's output that is the same whatever it found (`tools/docker_read.py`).
+_TOOL_HEADS = {
+    "list_containers": re.compile(r"name \| service \| state \| health \| image \| restarts"),
+    "inspect_container": re.compile(r"name: \S+"),
+}
+# Tools whose first line never tells what was found: most allowed host commands start with a
+# column header (`df -P`, `free -b`, `vm_stat`), so a host command keeps no result.
+_NO_RESULT = {"host_command"}
 # Names and titles came from hosts and labels; each is cut so one long label cannot crowd out
 # the rest, and the lists are cut so a large setup still fits (`Snapshot.left_out` counts the
 # rest). Services that need attention are listed first, so they are the last to go.
@@ -213,6 +233,10 @@ class BleepState:
                 )
                 for s in signals[:SIGNALS_KEPT]
             ]
+            found = checks(events)
+            facts.checks = found[-CHECKS_KEPT:]
+            if len(found) > CHECKS_KEPT:
+                facts.left_out["checks"] = len(found) - CHECKS_KEPT
             if waiting and record is not None:
                 shown = redacted_proposal(record.proposal)
                 facts.plan = [
@@ -223,6 +247,84 @@ class BleepState:
             summary = _text(report, "summary")
             facts.summary = _line(summary, CAUSE_CHARS * 2) if summary else None
         return facts
+
+
+def checks(events: list[IncidentEvent]) -> list[CheckLine]:
+    """What the run looked at, in order: each tool call with the first line of its result, and
+    each of Verify's checks. A result goes to the call with its id; an older result without one
+    only to the call just before it, when that is a call of its tool still without a result."""
+    found: list[CheckLine] = []
+    by_id: dict[str, CheckLine] = {}
+    last: tuple[str, CheckLine] | None = None
+    for event in events:
+        payload = event.payload
+        name = str(payload.get("name") or "?")
+        if event.kind == "tool_call":
+            args = payload.get("args")
+            check = _call(name, args if isinstance(args, dict) else {})
+            found.append(check)
+            if isinstance(call_id := payload.get("id"), str):
+                by_id[call_id] = check
+            last = (name, check)
+        elif event.kind == "tool_result":
+            call_id = payload.get("id")
+            if isinstance(call_id, str):
+                check = by_id.pop(call_id, None)
+            else:
+                check = last[1] if last is not None and last[0] == name else None
+            last = None
+            if check is not None:
+                check.result = _said(name, payload.get("summary_first_line"))
+        elif event.kind == "verification":
+            found += [_verified(c) for c in payload.get("checks") or [] if isinstance(c, dict)]
+    return found
+
+
+def _said(tool: str, line: object) -> str | None:
+    """A result's line, or None when it says nothing about what was found: a note of the guard's
+    (`[… N chars cut]` from a cut head, `[… repeated N times]`) or the head a tool always starts
+    with (`list_containers`' column names, `inspect_container`'s `name:` line); and always for
+    a host command (`_NO_RESULT`)."""
+    if tool in _NO_RESULT or not isinstance(line, str) or not line.strip():
+        return None
+    one = " ".join(line.split())
+    head = _TOOL_HEADS.get(tool)
+    if _GUARD_NOTE.fullmatch(one) or (head is not None and head.fullmatch(one)):
+        return None
+    return _line(one, RESULT_CHARS)
+
+
+def _call(name: str, args: dict[str, Any]) -> CheckLine:
+    target = next((args[k] for k in _TARGET_ARGS if _filled(args.get(k))), None)
+    minutes = next((args[k] for k in _MINUTES_ARGS if _whole(args.get(k))), None)
+    return CheckLine(
+        tool=_line(name, NAME_CHARS),
+        target=_line(target, TARGET_CHARS) if target else None,
+        minutes=minutes,
+    )
+
+
+def _whole(value: object) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int)
+
+
+def _verified(check: dict[str, Any]) -> CheckLine:
+    """One of Verify's checks: passed or failed, and its own short line
+    (`schemas.graph.Check.detail`), which may name a container; the target is a container name or
+    a URL from the hosts file. Both are guarded with the rest of the incident."""
+    target, detail = check.get("target"), check.get("detail")
+    said = "passed" if check.get("ok") else "failed"
+    if _filled(detail):
+        said = f"{said}: {detail}"
+    return CheckLine(
+        tool=f"verify_{check.get('kind') or 'check'}",
+        target=_line(target, TARGET_CHARS) if _filled(target) else None,
+        result=_line(said, RESULT_CHARS),
+    )
+
+
+def _filled(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 def _last(events: list[IncidentEvent], kind: str) -> dict[str, Any] | None:

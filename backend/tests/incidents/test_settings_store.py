@@ -13,6 +13,7 @@ from bleep.guard.plan_check import check_plan, check_target, host_urls, protecte
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.registry import Registry
 from bleep.incidents.settings_store import SettingsRefused, SettingsStale, SettingsStore
+from bleep.plugins.mcp_url import McpUrlPlugin
 from bleep.plugins.registry import PluginError, PluginRegistry
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import PlanStep, Proposal
@@ -800,3 +801,25 @@ async def test_the_language_and_the_time_zone_are_kept_side_by_side(db):
 def test_a_language_other_than_english_or_german_is_refused(language):
     with pytest.raises(ValidationError):
         SettingsUpdate.model_validate({"general": {"language": language}})
+
+
+@pytest.mark.parametrize("purpose", ["one\ntwo", "bell\x07", "x" * 201, 7])
+async def test_a_stored_mcp_purpose_that_no_longer_validates_is_left_out_and_bleep_starts(
+    db, caplog, purpose
+):
+    """A row edited by hand: the plugin keeps its defaults, switched off, and the log says so."""
+    await _store_raw(
+        db, "plugin:mcp", {"enabled": True, "settings": {"purpose": purpose, "read_tools": ["a"]}}
+    )
+    plugins = PluginRegistry(
+        [McpUrlPlugin()], SecretStr("s"), env={"MCP_URL": "https://mcp.example.test/mcp"}
+    )
+    models = ModelSettings(openrouter_api_key=SecretStr("sk-or-env-key"), model="openai/m1")
+    store = SettingsStore(db, hosts_file_registry(), plugins, models=models, clock=lambda: T0)
+
+    with caplog.at_level(logging.WARNING):
+        await store.load()
+
+    assert "stored plugin:mcp left out" in caplog.text
+    assert not plugins.is_enabled("mcp")
+    assert plugins.settings("mcp").purpose == "" and plugins.settings("mcp").read_tools == []

@@ -26,6 +26,16 @@ class ToolContext:
 
 
 @dataclass(frozen=True)
+class ToolBriefing:
+    """What a person wrote about a plugin's tools, and which of them Bleep may run, for the
+    model to read in Investigate's prompt while the tools are offered: the person's own text,
+    not a server's, so it is not untrusted data."""
+
+    purpose: str
+    tools: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ToolSpec:
     name: str
     kind: ToolKind
@@ -33,6 +43,7 @@ class ToolSpec:
     build: Callable[[ToolContext], BaseTool]
     # Offered only where this is true for the incident's host; None means everywhere.
     offered: Callable[[ToolContext], bool] | None = None
+    briefing: ToolBriefing | None = None
 
 
 class ToolSource(Protocol):
@@ -117,6 +128,14 @@ class ToolRegistry:
             s.build(ctx)
             for s in self.specs()
             if s.kind == "read" and (s.offered is None or s.offered(ctx))
+        ]
+
+    def briefings(self, ctx: ToolContext) -> list[ToolBriefing]:
+        """The briefings of the read tools offered on `ctx`'s host, as `read_tools` offers them."""
+        return [
+            s.briefing
+            for s in self.specs()
+            if s.kind == "read" and s.briefing is not None and (s.offered is None or s.offered(ctx))
         ]
 
 

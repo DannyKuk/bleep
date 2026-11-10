@@ -82,6 +82,8 @@ def test_the_id_must_be_the_file_name(tmp_path):
         (changed(action={"kind": "act", "steps": [{"action": "docker.start", "target": "x",
                                                    "tool": "t"}]}), "names its tool"),
         (GOOD | {"mcp": "no-such-fixture"}, "no-such-fixture"),
+        (GOOD | {"mcp_purpose": "Manages Caddy"}, "needs an mcp fixture"),
+        (GOOD | {"mcp": "caddy", "mcp_purpose": "one\ntwo"}, "mcp_purpose"),
         (changed(must_name=[""]), "must_name"),
         (changed(must_name=["DATABASE_URL "]), "must_name"),
         (changed(must_set={"WORKER_BATCH_MB": ""}), "must_set"),
@@ -178,3 +180,8 @@ def test_a_scenario_with_an_mcp_fixture_expects_the_tool_its_server_offers():
     assert scenario.expected.action.steps[0].arguments == {"container": "shop-proxy"}
     fixture = load_mcp_fixture(scenario.mcp)
     assert "caddy_reload" in fixture.act_tools
+
+
+def test_misroute_mcp_runs_with_a_purpose_for_the_server():
+    scenario = load_scenario(SCENARIOS_DIR / "misroute-mcp.yaml")
+    assert "Caddy" in scenario.mcp_purpose
