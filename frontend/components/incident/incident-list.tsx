@@ -4,6 +4,7 @@ import { Inbox, Loader2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
+import { ShortNamePrefix } from "@/components/incident/short-name";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import {
   FILTERS,
@@ -61,12 +62,7 @@ function Row({
       >
         <IncidentStatusBadge status={incident.status} />
         <span className="min-w-0 flex-1 basis-56 text-[15px] font-bold wrap-anywhere">
-          {incident.short_name && (
-            <>
-              <span className="font-mono font-semibold text-ink-2">{incident.short_name}</span>
-              {" · "}
-            </>
-          )}
+          <ShortNamePrefix name={incident.short_name} />
           {incident.title}
         </span>
         {repeats > 1 && (
@@ -121,7 +117,7 @@ export function IncidentListView({
         <Input
           type="search"
           aria-label="Search incidents"
-          placeholder="Search title or subject"
+          placeholder="Search name, title or subject"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           className="sm:max-w-xs"

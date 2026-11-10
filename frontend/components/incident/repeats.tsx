@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { ShortName } from "@/components/incident/short-name";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import { useTimeZone } from "@/components/time-zone";
 import { apiFetch } from "@/lib/api";
@@ -62,6 +63,7 @@ export function Repeats({ incident, repeats }: { incident: Incident; repeats: nu
                 className="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1 rounded-row bg-soft px-3 py-2 hover:bg-line focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
               >
                 <IncidentStatusBadge status={repeat.status} />
+                {repeat.short_name && <ShortName name={repeat.short_name} className="text-sm" />}
                 <time dateTime={repeat.opened_at} className="text-xs text-ink-2">
                   {formatDateTime(repeat.opened_at, zone)}
                 </time>

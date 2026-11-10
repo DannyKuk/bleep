@@ -137,6 +137,18 @@ describe("HostPage, still unreachable after its last incident (#362)", () => {
     expect(note).toHaveTextContent("a wait that grows with each repeat, from an hour to a day");
   });
 
+  it("names the last incident by its short name in front of its title (#397)", () => {
+    render(<StillFailing host={DOWN} last={hostIncident({ short_name: "M1 #3" })} />);
+    const link = screen.getByRole("link", { name: /host unreachable on m1/ });
+    expect(link).toHaveTextContent(/^M1 #3 · host unreachable on m1$/);
+    expect(within(link).getByText("M1 #3")).toHaveClass("font-mono", "text-ink-2");
+  });
+
+  it("links the last incident by its title alone when it has no short name", () => {
+    render(<StillFailing host={DOWN} last={hostIncident()} />);
+    expect(screen.getByRole("link")).toHaveTextContent(/^host unreachable on m1$/);
+  });
+
   it("says nothing while one is open, once it answers, when quiet or asleep, or with none", () => {
     const quiet = { scope: "host", mode: "leave_alone", until: null } as const;
     const cases: [string, HostView, IncidentListItem | undefined][] = [

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback } from "react";
 
 import { ENDED } from "@/components/incident/proposal-card";
+import { ShortNamePrefix } from "@/components/incident/short-name";
 import { useOverall } from "@/components/overall-state";
 import { basicsLine, errorTone, healthLabel } from "@/components/overview/host-tile";
 import { HealthBadge } from "@/components/overview/health-badge";
@@ -166,6 +167,7 @@ export function StillFailing({
       </time>
       :{" "}
       <Link href={`/incidents/${last.id}`} className={LINK}>
+        <ShortNamePrefix name={last.short_name} />
         {last.title}
       </Link>
       . Bleep opens a new one after a wait that grows with each repeat, from an hour to a day.

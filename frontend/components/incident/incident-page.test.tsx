@@ -498,6 +498,42 @@ describe("IncidentPage", () => {
         "/incidents/inc-2",
       ]);
     });
+
+    it("names each repeat by its short name, and one without by its status and time (#397)", async () => {
+      const fetchMock = vi.fn<typeof fetch>(async (input) => {
+        const overallReply = answerOverall(input);
+        if (overallReply) return overallReply;
+        const url = String(input);
+        if (url.includes("fold_of=inc-1")) {
+          return json([
+            {
+              ...incident({
+                id: "inc-3",
+                status: "closed",
+                fold_of: "inc-1",
+                short_name: "shop #16",
+              }),
+              votes: {},
+              repeats: 3,
+            },
+            {
+              ...incident({ id: "inc-2", status: "closed", fold_of: "inc-1" }),
+              votes: {},
+              repeats: 3,
+            },
+          ]);
+        }
+        if (url.includes("/events")) return json([]);
+        return json(detail({ repeats: 3 }));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      renderPage();
+      const repeats = await screen.findByRole("region", { name: "Repeats" });
+      const [named, plain] = await within(repeats).findAllByRole("link");
+      expect(within(named).getByText("shop #16")).toHaveClass("font-mono", "text-ink-2");
+      expect(plain).not.toHaveTextContent("#");
+      expect(plain.querySelector(".font-mono")).toBeNull();
+    });
   });
 
   describe("This is expected", () => {

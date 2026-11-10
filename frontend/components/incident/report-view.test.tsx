@@ -76,6 +76,31 @@ describe("ReportView", () => {
     expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("shop-web-1 died");
   });
 
+  it("puts the incident's short name in front of the report's title (#397)", () => {
+    render(
+      <ReportView
+        report={report()}
+        outcome="resolved"
+        incident={incident({ short_name: "shop #14" })}
+      />,
+    );
+    const title = screen.getByRole("heading", { level: 2 });
+    expect(title).toHaveTextContent(`shop #14 · ${report().title}`);
+    expect(within(title).getByText("shop #14")).toHaveClass("font-mono", "text-ink-2");
+  });
+
+  it("shows the report's title alone for an incident without a short name, or none", () => {
+    for (const given of [incident(), undefined]) {
+      const { unmount } = render(
+        <ReportView report={report()} outcome="resolved" incident={given} />,
+      );
+      expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(
+        new RegExp(`^${report().title}$`),
+      );
+      unmount();
+    }
+  });
+
   it("shows the subject, times and cost when the incident is given", () => {
     render(
       <ReportView
