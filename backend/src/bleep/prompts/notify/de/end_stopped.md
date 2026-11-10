@@ -1,0 +1,2 @@
+🛑 Gestoppt
+{outcome}.

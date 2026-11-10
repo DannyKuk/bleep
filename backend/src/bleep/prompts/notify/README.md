@@ -13,9 +13,15 @@ through `prompts.load`.
   `seen/look_requested` for a look the person asked for, #403) lead its first message, every later one replies to it, and an `end_*` template leads its last.
   The end message is assembled from `end_report`, `end_checked`, `end_next` and `end_details`, each
   only when it has something to say.
-- `where_host`, `ran_nothing`, `duration_*` and `on_it_morning` are the few words that go into a
-  message or a button as values (`format.phrase`), so a translation changes files only. The words
-  of a time are `prompts/talk/when_*`, shared with the chat's offers (`talk/times.py`).
+- `where_host`, `ran_nothing`, `duration_*`, `on_it_morning`, `no_steps`, `too_long_*`,
+  `channel_*`, `confidence*`, `cause_unknown` and `category_*` are the few words that go into a
+  message or a button as values (`format.phrase`), and `button_*` are the labels of the buttons, so
+  a translation changes files only. The words of a time are `prompts/talk/when_*` and
+  `prompts/talk/weekdays`, shared with the chat's offers (`talk/times.py`).
+- Every file has a German twin in `de/` (`de/proposal.md`, `de/seen/oom.md`) with the same
+  placeholders, chosen by the `language` setting (#375); `tests/test_prompts.py` fails on a file
+  in one language only. Names, step lines, emoji and anything in backticks are written as in
+  English.
 - Variables are plain `{name}` placeholders, as everywhere else.
 - `answer_*.md` are the short pop-ups shown when a button is tapped or an instruction is sent; they
   are sent as plain text, not escaped. `answer_confirm_*`, `answer_left_alone`, `answer_watching`,

@@ -499,7 +499,7 @@ def test_a_target_too_long_for_its_params_is_shown_whole():
         action="mcp.call", host_id="demo", target=target, params={"tool": "pause_monitor"}
     )
     proposal = Proposal(kind="act", steps=[step], reason="r")
-    assert fmt.steps_text(proposal) == f"1. mcp.call {target} on demo (…) {fmt.PARAMS_TOO_LONG}"
+    assert fmt.steps_text(proposal) == f"1. mcp.call {target} on demo (…) {fmt.params_too_long()}"
     assert not fmt.shows_in_full(proposal)
 
 
@@ -526,7 +526,7 @@ def test_an_mcp_step_cut_to_fit_shows_its_tool_first_and_cannot_be_approved_in_t
 
     assert len(line) <= fmt.STEP_CHARS
     assert line.startswith(f"1. mcp.call shop-web-1 on demo (tool={params['tool']}, arguments=")
-    assert line.endswith(f"…) {fmt.PARAMS_TOO_LONG}")
+    assert line.endswith(f"…) {fmt.params_too_long()}")
     assert not fmt.shows_in_full(plan)
 
 
@@ -600,7 +600,7 @@ def test_a_long_set_env_value_keeps_its_start_and_end_and_says_where_to_approve(
 
     assert len(line) <= fmt.STEP_CHARS
     assert "(WEBHOOK=https://attacker.example/" in line and "…" in line
-    assert line.endswith(f"x/end) {fmt.TOO_LONG}")
+    assert line.endswith(f"x/end) {fmt.too_long()}")
     assert not fmt.shows_in_full(plan)
     assert fmt.shows_in_full(set_env_plan("3000", "PORT"))
 
@@ -1552,3 +1552,120 @@ async def test_a_database_error_in_the_late_check_does_not_fail_the_send(env, cl
     await env.notifier.proposal(env.incident, None, PLAN, request)
     assert len(env.api.sent("sendMessage")) == 1
     assert "db down" in caplog.text
+
+
+# --- in German (#375) ---
+
+
+def speak(env: Env, language: str) -> None:
+    env.notifier.language = env.bot.language = lambda: language
+
+
+async def test_a_proposal_in_german_has_german_words_and_buttons_and_the_same_step_and_data(env):
+    speak(env, "de")
+    diagnosis = Diagnosis(
+        root_cause="shop-web ran out of memory", category="resource", confidence=0.8
+    )
+    request = (await env.approvals.current(env.incident_id)).request
+    await env.notifier.proposal(env.incident, diagnosis, PLAN, request)
+
+    [sent] = env.api.sent("sendMessage")
+    text = sent["text"].replace("\\", "")
+    assert text.splitlines()[0] == "*🙋 Deine Entscheidung*"
+    assert "Wahrscheinliche Ursache (Ressource, 80 % sicher): shop-web ran out of memory" in text
+    assert "1. docker.restart shop-web-1 on demo" in text  # what is approved reads as in English
+    assert "Tipp auf einen Button oder antworte" in text
+    buttons = sent["reply_markup"]["inline_keyboard"][0]
+    assert [(b["text"], b["callback_data"]) for b in buttons] == [
+        ("Freigeben", f"approve:{env.approval_id}"),
+        ("Ablehnen", f"reject:{env.approval_id}"),
+    ]
+
+
+async def test_a_press_in_german_is_answered_in_german_and_decides_as_in_english(env):
+    speak(env, "de")
+    await poll(env, "callback_approve")
+
+    [(_, decision)] = env.runner.resumed
+    assert decision.kind == "approve"
+    [pop_up] = env.api.sent("answerCallbackQuery")
+    assert pop_up["text"] == "Freigegeben. Bleep macht weiter."
+
+
+async def test_the_loser_of_a_race_is_told_in_german_where_it_was_decided(env):
+    speak(env, "de")
+    await env.approvals.resolve(
+        env.incident_id, Decision(kind="reject", via="dashboard", at=T0), env.approval_id
+    )
+    await poll(env, "callback_approve")
+    assert env.api.sent("answerCallbackQuery")[0]["text"] == "Bereits im Dashboard entschieden"
+
+
+async def test_a_reply_in_german_is_offered_with_german_buttons_and_sent_on_the_press(env):
+    speak(env, "de")
+    await poll(env, "reply_instruction")
+    [offer] = env.api.sent("sendMessage")
+    assert offer["text"].startswith(f"✍️ Das an den Plan von {env.incident_id} schicken?")
+    [[send, no]] = offer["reply_markup"]["inline_keyboard"]
+    assert (send["text"], no["text"]) == ("Senden", "Nein")
+
+    confirm_id = send["callback_data"].removeprefix("yes:")
+    shown = str(env.bot._shown[confirm_id])
+    update = fixture("callback_confirm", MESSAGE_ID=shown, CONFIRM_ID=confirm_id, VERB="yes")
+    env.api.updates.append(update)
+    await env.bot.poll_once()
+
+    [(_, decision)] = env.runner.resumed
+    assert (decision.kind, decision.text) == (
+        "instruct",
+        "Restart the database first, then the web container",
+    )
+    assert env.api.sent("answerCallbackQuery")[-1]["text"] == "Anweisung erhalten. Bleep plant neu."
+
+
+async def test_text_that_is_not_a_reply_is_explained_in_german(env):
+    speak(env, "de")
+    await poll(env, "plain_message")
+    [said] = env.api.sent("sendMessage")
+    assert said["text"] == "Um eine Anweisung zu geben, antworte auf eine Nachricht zum Vorfall."
+
+
+async def test_a_refused_plan_in_german_offers_verwerfen(env):
+    speak(env, "de")
+    incident, plan, request = await refused_incident(env)
+    await env.notifier.proposal(incident, None, plan, request)
+    await env.notifier.reminder(incident, request)
+
+    for message in env.api.sent("sendMessage"):
+        [button] = message["reply_markup"]["inline_keyboard"][0]
+        assert (button["text"], button["callback_data"]) == ("Verwerfen", f"reject:{request.id}")
+        assert "tipp auf Verwerfen" in message["text"]
+
+
+async def test_the_end_message_in_german(env):
+    speak(env, "de")
+    await env.notifier.report(env.incident, REPORT)
+
+    text = env.api.sent("sendMessage")[0]["text"].replace("\\", "")
+    assert text.splitlines()[0] == "*✅ Behoben in 1 Min.*"
+    assert "Ursache: Someone stopped shop-web and its restart policy is no." in text  # the model's
+    assert "Ausgeführt: docker.start shop-web-1 on demo: done" in text
+    assert "Als Nächstes:\n- Set restart: unless-stopped on shop-web." in text
+
+
+async def test_a_long_set_env_value_in_german_says_so_in_german_and_gets_no_approve(env):
+    speak(env, "de")
+    step = PlanStep(
+        action="coolify.set_env", host_id="demo", target="shop",
+        params={"key": "SHOP_URL", "value": "https://" + "x" * 400 + "/end"},
+    )  # fmt: skip
+    plan = Proposal(kind="act", steps=[step], reason="r")
+    request = (await env.approvals.current(env.incident_id)).request
+    await env.notifier.proposal(env.incident, None, plan, request)
+
+    [sent] = env.api.sent("sendMessage")
+    text = sent["text"].replace("\\", "")
+    assert fmt.too_long("de") in text and fmt.too_long() not in text
+    assert "(unbekannt, nicht sicher): nicht bestimmt" in text  # no diagnosis
+    assert [b["text"] for b in sent["reply_markup"]["inline_keyboard"][0]] == ["Ablehnen"]
+    assert not fmt.shows_in_full(plan)

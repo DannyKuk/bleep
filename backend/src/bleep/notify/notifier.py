@@ -30,9 +30,7 @@ from bleep.incidents.quiet import QuietStore, quiet_target
 from bleep.incidents.repository import IncidentRepo, primary_signal, utcnow
 from bleep.notify import format as fmt
 from bleep.notify.telegram import (
-    EXPECTED_LABEL,
     EXPECTED_VERB,
-    ON_IT_LABEL,
     ON_IT_VERB,
     MessageLog,
     OnIt,
@@ -80,13 +78,19 @@ _END_OF = {
 _CHECKED = ("end_fixed", "end_healthy", "end_unverified")  # ends that come after a check
 
 
+def _english() -> str:
+    return "en"
+
+
 class Notifier:
     """Fans each call out to the bus and to Telegram. `telegram` is None without a token.
 
     Every incident is one thread in the chat: its first message (the opener) says it is new or
     again, every later one replies to it, and the last one leads with the outcome (#380).
     `incidents` gives the short names, the signals and the previous incident. With `on_it` the
-    opener carries "🤫 I'm on it" (#389), and a quiet end says until when."""
+    opener carries "🤫 I'm on it" (#389), and a quiet end says until when. Each message is in
+    the language `language` gives as it is sent (#375); the values in it (names, the model's
+    text, the fixed texts other parts wrote) are as they came."""
 
     def __init__(
         self,
@@ -100,7 +104,9 @@ class Notifier:
         dashboard_url: str | None = None,
         clock: Callable[[], datetime] = utcnow,
         on_it: OnIt | None = None,
+        language: Callable[[], str] = _english,
     ) -> None:
+        self.language = language
         self.bus = bus
         self.telegram = telegram
         self.chat_id = chat_id
@@ -198,12 +204,15 @@ class Notifier:
         applies, the message carries its button."""
         if self.telegram is None:
             return
+        language = self.language()
         name = "incident_waiting" if incident.status == "waiting" else "incident_opened"
-        body = f"{await self._seen(incident)} {fmt.render(name)}".strip()
-        buttons = await self._expect_button(incident.id)
-        await self._safely(self._send(incident, body, buttons=buttons, says_what=True))
+        seen = await self._seen(incident, language)
+        body = f"{seen} {fmt.render(name, language=language)}".strip()
+        buttons = await self._expect_button(incident.id, language)
+        send = self._send(incident, body, language, buttons=buttons, says_what=True)
+        await self._safely(send)
 
-    async def _expect_button(self, incident_id: str) -> list[tuple[str, str]]:
+    async def _expect_button(self, incident_id: str, language: str) -> list[tuple[str, str]]:
         """The "It's expected" button when it applies to the incident, else none."""
         if self.telegram is None or self.expectations is None:
             return []
@@ -212,7 +221,8 @@ class Notifier:
         except Exception:  # the message goes out without the button
             log.exception("incident %s: could not tell whether it can be expected", incident_id)
             return []
-        return [(EXPECTED_LABEL, EXPECTED_VERB)] if offered is not None else []
+        label = fmt.phrase("button_expected", language=language)
+        return [(label, EXPECTED_VERB)] if offered is not None else []
 
     async def proposal(
         self,
@@ -223,25 +233,29 @@ class Notifier:
     ) -> None:
         if self.telegram is None:
             return
-        cause, category, confidence = fmt.confidence_text(diagnosis)
+        language = self.language()
+        cause, category, confidence = fmt.confidence_text(diagnosis, language)
         if proposal.refused:
             text = fmt.render(
                 "refused",
+                language=language,
                 root_cause=fmt.prose_line(cause),
                 reasons=_reasons(proposal),
-                steps=_refused_steps(proposal),
+                steps=_refused_steps(proposal, language),
             )
-            await self._ask(incident, approval, text, approvable=False, reject_label="Let it go")
+            await self._ask(incident, approval, text, language, approvable=False, refused=True)
             return
         text = fmt.render(
             "proposal",
+            language=language,
             category=category,
             confidence=confidence,
             root_cause=fmt.prose_line(cause),
-            steps=fmt.steps_text(proposal),
+            steps=fmt.steps_text(proposal, language),
             reason=fmt.prose_line(proposal.reason),
         )
-        await self._ask(incident, approval, text, approvable=fmt.shows_in_full(proposal))
+        approvable = fmt.shows_in_full(proposal)
+        await self._ask(incident, approval, text, language, approvable=approvable)
 
     async def reminder(self, incident: Incident, approval: ApprovalRequest) -> None:
         await self.bus.publish(incident.id, "reminder", {"approval_id": approval.id})
@@ -250,23 +264,26 @@ class Notifier:
         current = await self.approvals.current(incident.id) if self.approvals else None
         if current is None or current.id != approval.id:
             return  # no plan to show
-        waited = fmt.duration(self.clock() - current.requested_at)
+        language = self.language()
+        waited = fmt.duration(self.clock() - current.requested_at, language)
         if current.proposal.refused:
-            text = fmt.render("refused_reminder", waited=waited)
+            text = fmt.render("refused_reminder", language=language, waited=waited)
             await self._safely(
-                self._ask(incident, approval, text, approvable=False, reject_label="Let it go")
+                self._ask(incident, approval, text, language, approvable=False, refused=True)
             )
             return
-        text = fmt.render("reminder", waited=waited, steps=fmt.steps_text(current.proposal))
+        steps = fmt.steps_text(current.proposal, language)
+        text = fmt.render("reminder", language=language, waited=waited, steps=steps)
         approvable = fmt.shows_in_full(current.proposal)
-        await self._safely(self._ask(incident, approval, text, approvable=approvable))
+        await self._safely(self._ask(incident, approval, text, language, approvable=approvable))
 
     async def verification(self, incident: Incident, result: VerificationResult) -> None:
         """A check that failed says so; one that passed is told in the end message."""
         if self.telegram is None or result.ok:
             return
-        text = fmt.bold_first_line(fmt.render("verification_failed", detail=result.detail))
-        await self._safely(self._send(incident, text))
+        language = self.language()
+        failed = fmt.render("verification_failed", language=language, detail=result.detail)
+        await self._safely(self._send(incident, fmt.bold_first_line(failed), language))
 
     async def report(self, incident: Incident, report: Report) -> None:
         """The end message: the outcome first, the cause, what ran, what was checked, what is
@@ -278,31 +295,35 @@ class Notifier:
         name = _end_template(report.outcome)
         if name == "end_no_action" and await self._let_go(incident.id):
             name = "end_rejected"
-        took = fmt.duration(self.clock() - incident.opened_at)
+        language = self.language()
+        took = fmt.duration(self.clock() - incident.opened_at, language)
         values = {"end_fixed": {"took": took}, "end_healthy": {"took": took}}.get(name, {})
         if name == "end_stopped":
             values = {"outcome": report.outcome}
+        ran = report.action_taken or fmt.phrase("ran_nothing", language=language)
         parts = [
-            fmt.bold_first_line(fmt.render(name, **values)),
+            fmt.bold_first_line(fmt.render(name, language=language, **values)),
             fmt.render(
                 "end_report",
+                language=language,
                 cause=fmt.prose_line(report.cause),
-                action=fmt.prose_line(report.action_taken or fmt.phrase("ran_nothing")),
+                action=fmt.prose_line(ran),
             ),
         ]
         if name in _CHECKED and (checks := await self._checked(incident.id)):
-            parts.append(fmt.render("end_checked", checks=checks))
+            parts.append(fmt.render("end_checked", language=language, checks=checks))
         if report.follow_ups:
             items = report.follow_ups[:MAX_NEXT]
             listed = fmt.Redacted("\n".join(f"- {fmt.prose_line(item)}" for item in items))
-            parts.append(fmt.render("end_next", follow_ups=listed))
+            parts.append(fmt.render("end_next", language=language, follow_ups=listed))
         if self.dashboard_url:
             url = f"{self.dashboard_url.rstrip('/')}/incidents/{incident.id}"
-            parts.append(fmt.render("end_details", url=fmt.Redacted(url)))
+            parts.append(fmt.render("end_details", language=language, url=fmt.Redacted(url)))
         # Should the incident have ended already (a close that raced the report), the outcome
         # goes out as a note.
-        note = fmt.message(fmt.render("notice", text=report.outcome), *parts[1:])
-        await self._send(incident, fmt.message(*parts), end=True, instead=note)
+        outcome = fmt.render("notice", language=language, text=report.outcome)
+        note = fmt.message(outcome, *parts[1:])
+        await self._send(incident, fmt.message(*parts), language, end=True, instead=note)
 
     async def _let_go(self, incident_id: str) -> bool:
         """Whether the person let a plan Bleep's own checks refused go: a no-action run that ends
@@ -334,25 +355,27 @@ class Notifier:
     async def _notice(self, incident_id: str, text: str, ending: Ending | None) -> None:
         assert self.telegram is not None and self.chat_id is not None
         incident = await self.incidents.get(incident_id) if self.incidents is not None else None
-        note = fmt.render("notice", text=text)
+        language = self.language()
+        note = fmt.render("notice", language=language, text=text)
         if incident is None:  # no thread to put it in
             await self.telegram.send_message(self.chat_id, note)
             return
         if ending is None:
-            await self._send(incident, note)
+            await self._send(incident, note, language)
             return
-        until = await self._quiet_until(incident) if ending == "quiet" else None
+        until = await self._quiet_until(incident, language) if ending == "quiet" else None
         if ending == "back":
-            took = fmt.duration(self.clock() - incident.opened_at)
-            rendered = fmt.bold_first_line(fmt.render("end_back", took=took, text=text))
+            took = fmt.duration(self.clock() - incident.opened_at, language)
+            rendered = fmt.render("end_back", language=language, took=took, text=text)
         elif until is not None:
-            rendered = fmt.bold_first_line(fmt.render("end_quiet_until", until=until, text=text))
+            rendered = fmt.render("end_quiet_until", language=language, until=until, text=text)
         else:
-            rendered = fmt.bold_first_line(fmt.render(f"end_{ending}", text=text))
+            rendered = fmt.render(f"end_{ending}", language=language, text=text)
         silent = ending == "back" and incident.fold_of is not None
-        await self._send(incident, rendered, end=True, instead=note, silent=silent)
+        rendered = fmt.bold_first_line(rendered)
+        await self._send(incident, rendered, language, end=True, instead=note, silent=silent)
 
-    async def _quiet_until(self, incident: Incident) -> str | None:
+    async def _quiet_until(self, incident: Incident, language: str) -> str | None:
         """Until when the incident's subject is snoozed, as the chat says it; None when it is
         left alone or the quiet store is not known here."""
         if self.on_it is None:
@@ -360,30 +383,35 @@ class Notifier:
         state = await self.on_it.quiet.for_subject(incident.subject)
         if state is None or state.until is None:
             return None
-        return when(state.until, self.clock(), self.on_it.zone)
+        return when(state.until, self.clock(), self.on_it.zone, language)
 
     async def _ask(
         self,
         incident: Incident,
         approval: ApprovalRequest,
         text: str,
+        language: str,
         *,
         approvable: bool = True,
-        reject_label: str = "Reject",
+        refused: bool = False,
     ) -> None:
         """Send a plan with its buttons and remember which incident and plan the message is
-        about. A plan the message cannot show in full (`fmt.shows_in_full`) gets Reject only."""
-        buttons = [("Approve", f"approve:{approval.id}")] if approvable else []
-        buttons.append((reject_label, f"reject:{approval.id}"))
-        buttons += await self._expect_button(incident.id)
+        about. A plan the message cannot show in full (`fmt.shows_in_full`) gets Reject only, and
+        a plan Bleep's own checks `refused` gets "Let it go" in its place."""
+        approve = fmt.phrase("button_approve", language=language)
+        reject = fmt.phrase("button_let_go" if refused else "button_reject", language=language)
+        buttons = [(approve, f"approve:{approval.id}")] if approvable else []
+        buttons.append((reject, f"reject:{approval.id}"))
+        buttons += await self._expect_button(incident.id, language)
         await self._send(
-            incident, fmt.bold_first_line(text), buttons=buttons, approval_id=approval.id
+            incident, fmt.bold_first_line(text), language, buttons=buttons, approval_id=approval.id
         )
 
     async def _send(
         self,
         incident: Incident,
         text: str,
+        language: str,
         *,
         buttons: list[tuple[str, str]] | None = None,
         approval_id: str = "",
@@ -408,9 +436,10 @@ class Notifier:
             reply_to = await self.messages.first_for(incident.id) if self.messages else None
             on_it: list[tuple[str, str]] = []
             if reply_to is None:
-                head, reply_to = await self._opening(incident)
-                text = fmt.message(head, "" if says_what else await self._seen(incident), text)
-                on_it = [] if end else self._on_it_button(incident)
+                head, reply_to = await self._opening(incident, language)
+                seen = "" if says_what else await self._seen(incident, language)
+                text = fmt.message(head, seen, text)
+                on_it = [] if end else self._on_it_button(incident, language)
             message_id = await self.telegram.send_message(
                 self.chat_id, text, buttons, reply_to=reply_to, silent=silent, more=[on_it]
             )
@@ -423,13 +452,13 @@ class Notifier:
         if has_buttons:
             await self._clear_if_finished(incident.id, message_id, approval_id)
 
-    def _on_it_button(self, incident: Incident) -> list[tuple[str, str]]:
+    def _on_it_button(self, incident: Incident, language: str) -> list[tuple[str, str]]:
         """ "🤫 I'm on it" for an opener, when there is a service or a host to snooze."""
         if self.on_it is None or quiet_target(incident.subject) is None:
             return []
-        return [(ON_IT_LABEL, ON_IT_VERB)]
+        return [(fmt.phrase("button_on_it", language=language), ON_IT_VERB)]
 
-    async def _opening(self, incident: Incident) -> tuple[str, int | None]:
+    async def _opening(self, incident: Incident, language: str) -> tuple[str, int | None]:
         """The opener's head line, and the message it replies to: none for a new incident, the
         previous incident's last message for a repeat (`Again`). A look the person asked for
         (#403) is new, whatever came before it."""
@@ -440,15 +469,17 @@ class Notifier:
             if incident.fold_of is not None or gap < AGAIN_WITHIN:
                 head = fmt.render(
                     "head_again",
+                    language=language,
                     incident=name,
-                    after=fmt.duration(gap),
+                    after=fmt.duration(gap, language),
                     earlier=before.short_name or before.id,
                 )
                 quoted = await self.messages.last_for(before.id) if self.messages else None
                 return fmt.bold_first_line(head), quoted
         host = incident.subject.kind == "host"
-        where = fmt.phrase("where_host") if host else incident.subject.host_id
-        return fmt.bold_first_line(fmt.render("head_new", incident=name, where=where)), None
+        where = fmt.phrase("where_host", language=language) if host else incident.subject.host_id
+        head = fmt.render("head_new", language=language, incident=name, where=where)
+        return fmt.bold_first_line(head), None
 
     async def _asked(self, incident: Incident) -> bool:
         """Whether the person asked for the incident (#403), by the kind stored when it opened:
@@ -457,24 +488,25 @@ class Notifier:
             return False
         return (await self.incidents.kinds([incident])).get(incident.id) == LOOK_REQUESTED
 
-    async def _seen(self, incident: Incident) -> str:
+    async def _seen(self, incident: Incident, language: str) -> str:
         """One line of what opened the incident, from its most telling signal; for a look, that
         the person asked."""
         service = split_service_id(incident.subject)[1]
         if await self._asked(incident):  # named as its short name names it
-            named = (incident.short_name or "").rsplit(" #", 1)[0]
-            return fmt.render("seen/look_requested", service=named or title_name(service))
+            named = (incident.short_name or "").rsplit(" #", 1)[0] or title_name(service)
+            return fmt.render("seen/look_requested", language=language, service=named)
         signals = await self.incidents.signals(incident.id) if self.incidents is not None else []
         signal = primary_signal(signals)
         if signal is None:
             return ""
+        seen = f"seen/{signal.kind}"
         if signal.kind in _HOST_KINDS:
-            return fmt.render(f"seen/{signal.kind}", host=incident.subject.host_id)
+            return fmt.render(seen, language=language, host=incident.subject.host_id)
         if signal.kind == "url_failed":
             url = str(signal.detail.get("url") or service)
-            return fmt.render("seen/url_failed", url=title_name(url))
-        container = signal.container or service
-        return fmt.render(f"seen/{signal.kind}", container=title_name(container))
+            return fmt.render(seen, language=language, url=title_name(url))
+        container = title_name(signal.container or service)
+        return fmt.render(seen, language=language, container=container)
 
     @staticmethod
     async def _safely(sending) -> None:
@@ -498,10 +530,11 @@ def _end_template(outcome: str) -> str:
     return "end_stopped"
 
 
-def _refused_steps(proposal: Proposal) -> fmt.Redacted:
+def _refused_steps(proposal: Proposal, language: str) -> fmt.Redacted:
     """The steps the plan check refused, as `steps_text` shows a plan's steps."""
-    shown = fmt.steps_text(proposal.model_copy(update={"steps": proposal.refused_steps}))
-    return shown if shown.strip() else fmt.Redacted("no steps")
+    refused = proposal.model_copy(update={"steps": proposal.refused_steps})
+    shown = fmt.steps_text(refused, language)
+    return shown if shown.strip() else fmt.Redacted(fmt.phrase("no_steps", language=language))
 
 
 def _reasons(proposal: Proposal) -> fmt.Redacted:
@@ -604,12 +637,14 @@ def setup(
     quiet: QuietStore | None = None,
     zone: Callable[[], tzinfo | None] | None = None,
     talk: Talk | None = None,
+    language: Callable[[], str] = _english,
 ) -> NotifySetup:
     """Build the notifier, and the bot too when a token and a chat id are configured: from
     `secrets` when given (the env, else the dashboard), else from `settings`. With `incidents`
     and `quiet` an incident's opener offers "🤫 I'm on it", its times in the zone `zone` gives at
     each message (the settings page's choice), else in `settings.zone`. With `talk` the bot
     answers what the person writes (#401); without it, a text is only a plan's instruction.
+    Both speak the language `language` gives at each message (#375).
 
     The runner does not exist yet when the graph's dependencies are built, so `start(runner)`
     gives it to the bot later; `reload()` builds the bot again after a change on the dashboard.
@@ -637,13 +672,17 @@ def setup(
             quiet=quiet,
             zone=zone,
             talk=talk,
+            language=language,
         )
 
     if token is None or chat_id is None:
         if token is not None:
             log.warning("telegram: a bot token is set but TELEGRAM_CHAT_ID is not; Telegram is off")
+        notifier = Notifier(
+            bus, incidents=incidents, dashboard_url=dashboard_url, on_it=on_it, language=language
+        )
         return NotifySetup(
-            Notifier(bus, incidents=incidents, dashboard_url=dashboard_url, on_it=on_it),
+            notifier,
             chat_id=chat_id,
             token_set=token is not None,
             token_source=source,
@@ -663,6 +702,7 @@ def setup(
         guard_log=guard_log,
         on_it=on_it,
         talk=talk,
+        language=language,
     )
     notifier = Notifier(
         bus,
@@ -673,6 +713,7 @@ def setup(
         incidents=incidents,
         dashboard_url=dashboard_url,
         on_it=on_it,
+        language=language,
     )
     return NotifySetup(
         notifier,

@@ -5,7 +5,8 @@ goes through the code the dashboard's own buttons and Telegram's use (`QuietStor
 `clear`, `Expectations.expected`, `approvals.resolve` + `runner.resume`), so first-wins, a
 replaced plan and a closed incident are answered as they are there. A look on request
 (#403) starts through `incidents.looks.Looks`. The answers are the lines a
-Telegram button gets (`prompts/notify/answer_*.md`), shared now by both surfaces.
+Telegram button gets (`prompts/notify/answer_*.md`), shared now by both surfaces, in the
+language the person chose (#375).
 """
 
 from collections.abc import Callable
@@ -24,13 +25,16 @@ from bleep.talk.looks import look_said
 from bleep.talk.times import when
 
 Channel = Literal["telegram", "dashboard"]
-CHANNEL_NAMES: dict[str, str] = {"dashboard": "the dashboard", "telegram": "Telegram"}
 _PAST = {"approve": "approved", "reject": "rejected", "instruct": "instructed"}
 
 
-def said(name: str, **values: str) -> str:
-    """A short plain-text answer to a press, `prompts/notify/<name>.md`."""
-    return prompts.load(f"notify/{name}", **values).strip()
+def said(name: str, language: str, /, **values: str) -> str:
+    """A short plain-text answer to a press, `prompts/notify/<name>.md` in `language`."""
+    return prompts.load_in(language, f"notify/{name}", **values).strip()
+
+
+def _english() -> str:
+    return "en"
 
 
 class Approvals(Protocol):
@@ -77,7 +81,7 @@ class Actions:
     """What a surface `via` runs an offer with. `incidents` and `quiet` are None only where a
     surface has no quiet feature (a bot built without it): a quiet offer is then unknown, and an
     incident's end is left to the action's own answer. `zone` gives Bleep's time zone at each
-    answer."""
+    answer, and `language` the language it is said in."""
 
     approvals: Approvals
     runner: Resumer
@@ -88,6 +92,7 @@ class Actions:
     expectations: Expecting | None = None
     looks: Looking | None = None
     zone: Callable[[], tzinfo | None] = _no_zone
+    language: Callable[[], str] = _english
 
     async def bind(self, offer: Offer, shown_plan: str = "") -> Offer | str:
         """The offer ready to show, or why it cannot be offered now. An instruction and a yes
@@ -101,10 +106,10 @@ class Actions:
                 return await self.why_lost(incident_id, shown_plan)
             waiting = await self.waiting(incident_id)
             if not waiting:
-                return said("answer_not_waiting")
+                return said("answer_not_waiting", self.language())
             return offer.model_copy(update={"plan_id": waiting})
         if offer.kind == "expected" and not await self._expectable(offer.incident_id or ""):
-            return said("answer_cannot_expect", incident=offer.incident or "")
+            return said("answer_cannot_expect", self.language(), incident=offer.incident or "")
         return offer
 
     async def plan_to_show(self, offer: Offer) -> ApprovalRecord | Literal["refused", "gone"]:
@@ -119,9 +124,9 @@ class Actions:
 
     async def run(self, offer: Offer) -> str:
         """Run a confirmed offer; what the person is told."""
-        now = self.clock()
+        now, language = self.clock(), self.language()
         if offer.incident_id and await self._ended(offer.incident_id):
-            return said("answer_confirm_ended")
+            return said("answer_confirm_ended", language)
         if offer.kind == "expected" and self.expectations is not None:
             return (await self.expectations.expected(offer.incident_id or "", self.via)).text
         if offer.kind == "instruct" and offer.plan_id:
@@ -129,22 +134,23 @@ class Actions:
             return await self.resolve(offer.incident_id or "", offer.plan_id, decision)
         if offer.kind == "look_again":
             if self.looks is None or offer.target_id is None:
-                return said("answer_unknown")
+                return said("answer_unknown", language)
             look = await self.looks.look(offer.target_id, self.via)
-            return look_said(look, now, self.zone())
+            return look_said(look, now, self.zone(), language)
         if self.quiet is None or offer.scope is None or offer.target_id is None:
-            return said("answer_unknown")
+            return said("answer_unknown", language)
         subject = offer.subject or offer.target_id
         if offer.kind == "watch_again":
             cleared = await self.quiet.clear(offer.scope, offer.target_id)
-            return said("answer_watching" if cleared else "answer_not_quiet", subject=subject)
+            answer = "answer_watching" if cleared else "answer_not_quiet"
+            return said(answer, language, subject=subject)
         if offer.kind == "leave_alone":
             await self.quiet.set(offer.scope, offer.target_id, "leave_alone", None)
-            return said("answer_left_alone", subject=subject)
+            return said("answer_left_alone", language, subject=subject)
         if offer.until is None or offer.until <= now:
-            return said("answer_confirm_expired")
+            return said("answer_confirm_expired", language)
         await self.quiet.set(offer.scope, offer.target_id, "snooze", offer.until)
-        return said("answer_on_it", until=when(offer.until, now, self.zone()))
+        return said("answer_on_it", language, until=when(offer.until, now, self.zone(), language))
 
     async def resolve(self, incident_id: str, approval_id: str, decision: Decision) -> str:
         """Try to win the approval; the text to tell the person either way."""
@@ -154,21 +160,21 @@ class Actions:
             await self.runner.resume(incident_id, won, approval_id)
             refused = before is not None and before.id == approval_id and before.proposal.refused
             if refused and decision.kind == "reject":
-                return said("answer_let_go")
-            return said(f"answer_{_PAST[decision.kind]}")
+                return said("answer_let_go", self.language())
+            return said(f"answer_{_PAST[decision.kind]}", self.language())
         return await self.why_lost(incident_id, approval_id)
 
     async def why_lost(self, incident_id: str, approval_id: str) -> str:
         """Why the plan `approval_id` takes no decision now, as the person is told."""
-        current = await self.approvals.current(incident_id)
+        current, language = await self.approvals.current(incident_id), self.language()
         if current is not None and current.id == approval_id and current.decision is not None:
-            via = current.decision.via
-            return said("answer_already_decided", channel=CHANNEL_NAMES.get(via, via))
+            channel = said(f"channel_{current.decision.via}", language)
+            return said("answer_already_decided", language, channel=channel)
         if current is not None and current.id == approval_id and current.closed:
-            return said("answer_closed")
+            return said("answer_closed", language)
         if current is not None and current.id != approval_id:
-            return said("answer_stale")
-        return said("answer_not_waiting")
+            return said("answer_stale", language)
+        return said("answer_not_waiting", language)
 
     async def plan_open(self, incident_id: str, approval_id: str) -> bool:
         """Whether the plan `approval_id` still waits; no plan asks nothing that closes before

@@ -38,8 +38,9 @@ NEVER = datetime.max.replace(tzinfo=UTC)  # an end beyond any limit
 PLAN_KINDS = ("instruct", "show_plan")
 
 
-def line(name: str, **values: str) -> str:
-    return prompts.load(f"talk/{name}", **values).strip()
+def line(name: str, language: str, /, **values: str) -> str:
+    """The fixed line `talk/<name>` in `language`."""
+    return prompts.load_in(language, f"talk/{name}", **values).strip()
 
 
 @dataclass(frozen=True)
@@ -57,12 +58,14 @@ def _same(a: str, b: str) -> bool:
     return " ".join(a.lower().split()) == " ".join(b.lower().split())
 
 
-def find_subject(snapshot: Snapshot, said: str | None) -> Subject | str | None:
+def find_subject(
+    snapshot: Snapshot, said: str | None, language: str = "en"
+) -> Subject | str | None:
     """The service or host `said` names: by a service's id, else by a service's name or a
     host's id or name. None when Bleep knows none; the `ambiguous_subject` line when the name
     fits more than one, two services or a service and a host. A service whose name another
     service or a host also has is named with its host ("web on laptop"), so the line the person
-    confirms can only mean that one."""
+    confirms can only mean that one. The lines are in `language`."""
     if not said:
         return None
     services = [s for s in snapshot.services if not s.id.endswith(CUT)]
@@ -71,7 +74,7 @@ def find_subject(snapshot: Snapshot, said: str | None) -> Subject | str | None:
     hosts = [] if by_id else [h for h in snapshot.hosts if _same(said, h.id) or _same(said, h.name)]
     if len(named) + len(hosts) > 1:
         known = title_name(named[0].name) if named else hosts[0].id  # never the model's words
-        return line("ambiguous_subject", subject=known)
+        return line("ambiguous_subject", language, subject=known)
     if hosts:
         host = hosts[0]
         return Subject("host", host.id, host.id, host.quiet, host.id)
@@ -84,18 +87,28 @@ def find_subject(snapshot: Snapshot, said: str | None) -> Subject | str | None:
         h for h in snapshot.hosts if _same(service.name, h.id) or _same(service.name, h.name)
     ]
     if shared:
-        name = line("subject_on_host", subject=name, host=service.host)
+        name = line("subject_on_host", language, subject=name, host=service.host)
     return Subject("service", service.id, name, service.quiet, service.host)
 
 
 def _on_host(snapshot: Snapshot, services: list[ServiceLine], said: str) -> list[ServiceLine]:
     """The service `said` names as "<service name> on <host id or name>", as the confirm lines
-    write a shared name (#410); none when it is not written so or names no such service."""
-    name, on, host = said.rpartition(" on ")
-    if not on:
-        return []
-    hosts = {h.id for h in snapshot.hosts if _same(host, h.id) or _same(host, h.name)}
-    return [s for s in services if s.host in hosts and _same(name, s.name)]
+    write a shared name (#410), in any language: the model may take the name from a line it was
+    shown in another one. None when it is not written so or names no such service."""
+    for connector in _ON_HOST:
+        name, on, host = said.rpartition(connector)
+        hosts = {h.id for h in snapshot.hosts if _same(host, h.id) or _same(host, h.name)}
+        found = [s for s in services if s.host in hosts and _same(name, s.name)] if on else []
+        if found:
+            return found
+    return []
+
+
+# What stands between a service and its host in `subject_on_host`, in each language (" on ").
+_ON_HOST = tuple(
+    line("subject_on_host", language, subject="\x00", host="\x00").split("\x00")[1]
+    for language in prompts.LANGUAGES
+)
 
 
 def find_incident(
@@ -144,19 +157,20 @@ def check(
     now: datetime,
     zone: tzinfo | None,
     text: str = "",
+    language: str = "en",
 ) -> Offer | str:
-    """The offer for `action`, or the fixed line that says why there is none. `text` is the
-    person's message, the words an instruction sends to a plan."""
+    """The offer for `action`, or the fixed line in `language` that says why there is none.
+    `text` is the person's message, the words an instruction sends to a plan."""
     if action.kind in QUIET_KINDS:
-        return _quiet(action, snapshot, now, zone)
+        return _quiet(action, snapshot, now, zone, language)
     incident = find_incident(snapshot, facts, action.incident)
     if incident is None:
-        return line("no_incident" if action.incident else "which_incident")
+        return line("no_incident" if action.incident else "which_incident", language)
     name = incident.name or incident.id
     if incident.status in TERMINAL_STATUSES:
-        return line("incident_ended", incident=name)
+        return line("incident_ended", language, incident=name)
     if action.kind in PLAN_KINDS and not incident.plan_waiting:
-        return line("no_plan", incident=name)
+        return line("no_plan", language, incident=name)
     return Offer(
         kind=cast(OfferKind, action.kind),
         incident_id=incident.id,
@@ -166,11 +180,11 @@ def check(
 
 
 def _quiet(
-    action: TalkAction, snapshot: Snapshot, now: datetime, zone: tzinfo | None
+    action: TalkAction, snapshot: Snapshot, now: datetime, zone: tzinfo | None, language: str
 ) -> Offer | str:
-    found = find_subject(snapshot, action.subject)
+    found = find_subject(snapshot, action.subject, language)
     if found is None:
-        return line("no_subject")
+        return line("no_subject", language)
     if isinstance(found, str):
         return found
     offer = Offer(
@@ -181,17 +195,18 @@ def _quiet(
     )
     if action.kind == "watch_again":
         if found.quiet is None:
-            return line("not_quiet", subject=found.name)
+            return line("not_quiet", language, subject=found.name)
         if found.quiet.through_host:
-            return line("quiet_through_host", subject=found.name, host=found.host)
+            return line("quiet_through_host", language, subject=found.name, host=found.host)
         return offer
     if action.kind == "leave_alone":
         return offer
     until = snooze_end(action, now, zone)
     if until is None:
-        return line("snooze_how_long", subject=found.name)
+        return line("snooze_how_long", language, subject=found.name)
     if until <= now or until > now + MAX_SNOOZE:
-        return line("snooze_limit", subject=found.name, days=str(MAX_SNOOZE.days))
+        days = str(MAX_SNOOZE.days)
+        return line("snooze_limit", language, subject=found.name, days=days)
     return offer.model_copy(update={"until": until})
 
 
@@ -200,11 +215,11 @@ def instruction(incident_id: str, incident: str, text: str) -> Offer:
     return Offer(kind="instruct", incident_id=incident_id, incident=incident, text=text)
 
 
-def confirm_line(offer: Offer, now: datetime, zone: tzinfo | None) -> str:
-    """What the person confirms, from the offer's checked fields alone."""
+def confirm_line(offer: Offer, now: datetime, zone: tzinfo | None, language: str = "en") -> str:
+    """What the person confirms, in `language`, from the offer's checked fields alone."""
     if offer.kind == "snooze" and offer.until is not None:
-        until = when(offer.until, now, zone)
-        return line("confirm_snooze", subject=offer.subject or "", until=until)
+        until = when(offer.until, now, zone, language)
+        return line("confirm_snooze", language, subject=offer.subject or "", until=until)
     if offer.kind in SUBJECT_KINDS:
-        return line(f"confirm_{offer.kind}", subject=offer.subject or "")
-    return line(f"confirm_{offer.kind}", incident=offer.incident or "")
+        return line(f"confirm_{offer.kind}", language, subject=offer.subject or "")
+    return line(f"confirm_{offer.kind}", language, incident=offer.incident or "")

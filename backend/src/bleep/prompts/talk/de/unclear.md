@@ -1,0 +1,1 @@
+Ich kann dir sagen, wie es aussieht, einen Dienst oder Host stummschalten oder wieder beobachten und deine Worte an einen wartenden Plan schicken. Versuch „wie läuft shop?“ oder „lass shop 1 Stunde in Ruhe“.

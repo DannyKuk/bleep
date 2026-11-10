@@ -40,11 +40,16 @@ def _cap(text: str) -> str:
     return text if len(text) <= FIELD_CHARS else text[: FIELD_CHARS - 1] + "…"
 
 
-def render(name: str, **values: str) -> str:
-    """The `notify/<name>` template, filled and escaped, ready for `parse_mode=MarkdownV2`."""
+def _load(name: str, language: str, **values: str) -> str:
+    return prompts.load_in(language, f"notify/{name}", **values).strip()
+
+
+def render(name: str, /, *, language: str = "en", **values: str) -> str:
+    """The `notify/<name>` template in `language`, filled and escaped, ready for
+    `parse_mode=MarkdownV2`."""
     # Each value goes in as a marker the template's own text cannot contain; the text between
     # markers is escaped as the template's, the values as values.
-    marked = prompts.load(f"notify/{name}", **{key: f"\x00{key}\x00" for key in values}).strip()
+    marked = _load(name, language, **{key: f"\x00{key}\x00" for key in values})
     out, last = [], 0
     for match in _MARK.finditer(marked):
         out.append(escape(marked[last : match.start()]))
@@ -73,56 +78,66 @@ def message(*parts: str) -> str:
     return _fit("\n".join(part for part in parts if part))
 
 
-def duration(span: timedelta) -> str:
+def duration(span: timedelta, language: str = "en") -> str:
     """A span as a person says it in a chat: "4 min", "2 h", "3 days"."""
     minutes = max(int(span.total_seconds() // 60), 1)
     if minutes < 60:
-        return phrase("duration_min", n=str(minutes))
+        return phrase("duration_min", language=language, n=str(minutes))
     if minutes < 48 * 60:
-        return phrase("duration_h", n=str(minutes // 60))
-    return phrase("duration_days", n=str(minutes // (24 * 60)))
+        return phrase("duration_h", language=language, n=str(minutes // 60))
+    return phrase("duration_days", language=language, n=str(minutes // (24 * 60)))
 
 
-def answer(name: str, **values: str) -> str:
-    """A short plain-text answer (a pop-up), not escaped."""
-    return prompts.load(f"notify/{name}", **values).strip()
+def answer(name: str, /, *, language: str = "en", **values: str) -> str:
+    """A short plain-text answer (a pop-up) in `language`, not escaped."""
+    return _load(name, language, **values)
 
 
-def phrase(name: str, **values: str) -> str:
-    """A few words that go into a message as a value (`render` escapes them there)."""
-    return prompts.load(f"notify/{name}", **values).strip()
+def phrase(name: str, /, *, language: str = "en", **values: str) -> str:
+    """A few words that go into a message as a value (`render` escapes them there), or the
+    label of a button."""
+    return _load(name, language, **values)
 
 
-# Said after a set_env value, or a plugin step's params, cut to fit the line; that proposal gets
-# no Approve button.
-TOO_LONG = "(value too long to show here: approve on the dashboard)"
-PARAMS_TOO_LONG = "(too long to show here: approve on the dashboard)"
+def too_long(language: str = "en") -> str:
+    """Said after a set_env value cut to fit its line; that proposal gets no Approve button."""
+    return phrase("too_long_value", language=language)
+
+
+def params_too_long(language: str = "en") -> str:
+    """Said after a plugin step's params cut to fit the line; no Approve button either."""
+    return phrase("too_long_params", language=language)
+
+
 LINE_BREAK = "⏎"  # shown in place of a line break or control character inside a step
 HIDDEN_FORMAT = "�"  # shown in place of an invisible format character (bidi, zero-width)
 _BREAKS = re.compile(r"\r\n|[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 
 
-def steps_text(proposal: Proposal) -> Redacted:
-    """One line per step: `1. docker.restart shop-web-1 on demo`.
+def steps_text(proposal: Proposal, language: str = "en") -> Redacted:
+    """One line per step: `1. docker.restart shop-web-1 on demo`, the same in every language.
 
     A plugin step's params follow it (an MCP `tool` first, then its arguments), since the human
     approves those too; they are redacted, and when they do not fit the line within `STEP_CHARS`
-    they are cut and followed by `PARAMS_TOO_LONG`, also when a long head leaves them no room
+    they are cut and followed by `params_too_long`, also when a long head leaves them no room
     (`(…)`). A Docker step's params are never shown: its action ignores them, so they could only
     be model text in the approval. A line break or control character inside a step reads `⏎` and
     a format character `�`, so text in a param can never pose as another step or reorder what is
     shown. A `coolify.set_env` step shows `KEY=value`, redacted (`redacted_step`); a value too
-    long for the line keeps its start and end around "…" and is followed by `TOO_LONG`. A plan
-    with any cut gets no Approve button (`shows_in_full`)."""
-    return Redacted("\n".join(_step_line(n, step)[0] for n, step in enumerate(proposal.steps, 1)))
+    long for the line keeps its start and end around "…" and is followed by `too_long`. A plan
+    with any cut gets no Approve button (`shows_in_full`). The words after a cut are in
+    `language`."""
+    lines = (_step_line(n, step, language)[0] for n, step in enumerate(proposal.steps, 1))
+    return Redacted("\n".join(lines))
 
 
 def shows_in_full(proposal: Proposal) -> bool:
     """Whether the message shows every step whole: no set_env value or plugin param was cut, and
     the steps fit the field `render` caps them at (long heads can overflow it and lose a later
     step). When not, the proposal is approved on the dashboard only (Danny's decision, #38: never
-    approve blind)."""
-    if any(_step_line(n, step)[1] for n, step in enumerate(proposal.steps, 1)):
+    approve blind). The same in every language: whether a step is cut does not depend on the
+    words after a cut, and steps with none are the same text in every language."""
+    if any(_step_line(n, step, "en")[1] for n, step in enumerate(proposal.steps, 1)):
         return False
     return len(steps_text(proposal).strip()) <= FIELD_CHARS
 
@@ -156,7 +171,7 @@ def _one_line(text: str) -> str:
     return text.translate({ord(c): HIDDEN_FORMAT for c in hidden})
 
 
-def _step_line(number: int, step: PlanStep) -> tuple[str, bool]:
+def _step_line(number: int, step: PlanStep, language: str) -> tuple[str, bool]:
     """The step's line, and whether its params had to be cut to fit it."""
     head = _one_line(redact_text(step_head(number, step)))
     if not step.params or step.action.startswith("docker."):
@@ -169,15 +184,17 @@ def _step_line(number: int, step: PlanStep) -> tuple[str, bool]:
         key, value = _one_line(params["key"]), _one_line(params["value"])
         if len(key) + 1 + len(value) <= room:
             return f"{head} ({key}={value})", False
-        cut = _env_pair(key, value, max(room - len(TOO_LONG) - 1, 1))
-        return f"{head} ({cut}) {TOO_LONG}", True
+        said = too_long(language)
+        cut = _env_pair(key, value, max(room - len(said) - 1, 1))
+        return f"{head} ({cut}) {said}", True
     # The tool goes first: planted text could otherwise put long arguments before it and push
     # the name of what runs past the cut.
     shown = _one_line(redact_text(params_line(step)))
     if len(shown) <= room:
         return f"{head} ({shown})", False
-    keep = max(room - len(PARAMS_TOO_LONG) - 1, 1)
-    return f"{head} ({shown[: keep - 1]}…) {PARAMS_TOO_LONG}", True
+    said = params_too_long(language)
+    keep = max(room - len(said) - 1, 1)
+    return f"{head} ({shown[: keep - 1]}…) {said}", True
 
 
 def _env_pair(key: str, value: str, room: int) -> str:
@@ -190,8 +207,14 @@ def _env_pair(key: str, value: str, room: int) -> str:
     return f"{key}={value[:start]}…{value[-end:]}"
 
 
-def confidence_text(diagnosis: Diagnosis | None) -> tuple[str, str, str]:
-    """(root cause, category, confidence) as display text; unsure when there is no diagnosis."""
+def confidence_text(diagnosis: Diagnosis | None, language: str = "en") -> tuple[str, str, str]:
+    """(root cause, category, confidence) as display text; unsure when there is no diagnosis.
+    In English a category reads as its own word (`config`)."""
     if diagnosis is None:
-        return "not determined", "unknown", "not"
-    return diagnosis.root_cause, diagnosis.category, f"{round(diagnosis.confidence * 100)}%"
+        cause = phrase("cause_unknown", language=language)
+        category = phrase("category_unknown", language=language)
+        return cause, category, phrase("confidence_unknown", language=language)
+    category = phrase(f"category_{diagnosis.category}", language=language)
+    percent = str(round(diagnosis.confidence * 100))
+    confidence = phrase("confidence", language=language, percent=percent)
+    return diagnosis.root_cause, category, confidence

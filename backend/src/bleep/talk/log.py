@@ -6,7 +6,9 @@ it and what it cost; the surface then adds what it showed (`shown`) and the pres
 buttons (`pressed`), found by the offer's id. In memory, one ring per surface, like the turns
 (`talk.history`): a restart empties it, and the person's words, which may hold anything, are
 never written to disk, and are kept only as Bleep read them. `GET /api/talk/log` reads it, as
-JSON or as the Markdown transcript `transcript` builds (docs/design/app.md).
+JSON or as the Markdown transcript `transcript` builds (docs/design/app.md). The transcript is
+English in any language (#375): it is for reviewing answers, so it names the buttons in English
+too, whatever the person saw.
 """
 
 import itertools
@@ -18,7 +20,7 @@ from datetime import datetime
 from bleep import prompts
 from bleep.incidents.repository import utcnow
 from bleep.schemas.talk import TalkExchange, TalkLink, TalkPress, TalkSurface
-from bleep.talk.confirms import NO_LABEL, YES_LABEL, yes_label
+from bleep.talk.confirms import no_label, yes_label
 
 EXCHANGES_KEPT = 100  # per surface
 SURFACES: tuple[TalkSurface, ...] = ("panel", "telegram")
@@ -125,8 +127,7 @@ def _details(exchange: TalkExchange) -> list[str]:
     if exchange.links:
         lines.append(_line("log_links", links=", ".join(link.label for link in exchange.links)))
     if exchange.press is not None:
-        yes = yes_label(exchange.offer) if exchange.offer is not None else YES_LABEL
-        button = yes if exchange.press.yes else NO_LABEL
+        button = yes_label(exchange.offer) if exchange.press.yes else no_label()
         said = exchange.press.line or _line("log_press_running")
         lines.append(_line("log_press", button=button, line=said))
     lines.append(_cost(exchange))

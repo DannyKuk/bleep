@@ -1,1 +1,1 @@
-Already decided on {channel}
+Already decided {channel}

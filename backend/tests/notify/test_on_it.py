@@ -548,6 +548,38 @@ def test_a_time_reads_as_today_tomorrow_or_a_weekday():
     assert when(datetime(2026, 11, 10, 8, 0, tzinfo=UTC), now, None) == "tomorrow 08:00 UTC"
 
 
+def test_a_time_in_german_says_morgen_and_the_german_weekday():
+    now = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)  # a Monday
+    assert when(now + timedelta(hours=2), now, UTC, "de") == "14:00"
+    assert when(datetime(2026, 11, 10, 8, 0, tzinfo=UTC), now, UTC, "de") == "morgen 08:00"
+    assert when(datetime(2026, 11, 12, 8, 0, tzinfo=UTC), now, UTC, "de") == "Do 08:00"
+    assert when(datetime(2026, 11, 15, 8, 0, tzinfo=UTC), now, UTC, "de") == "So 08:00"
+    assert when(datetime(2026, 11, 10, 8, 0, tzinfo=UTC), now, None, "de") == "morgen 08:00 UTC"
+    for offset, name in enumerate(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]):
+        later = datetime(2026, 11, 16, 8, 0, tzinfo=UTC) + timedelta(days=offset)
+        assert when(later, now, UTC) == f"{name} 08:00"  # English as `%a` said it before
+
+
+async def test_in_german_the_button_its_choices_and_the_quiet_end_are_german(env):
+    env.notifier.language = env.bot.language = lambda: "de"
+    incident = await env.open()
+    [opener] = env.chat.sent("sendMessage")
+    assert buttons(opener)[-1] == ("🤫 Bin dran", "onit")
+
+    await env.press(501)
+    assert env.keyboards() == [
+        (501, [("1 Std.", "onit:1h"), ("4 Std.", "onit:4h"),
+               ("Bis morgen 08:00", "onit:morning:20261110")]),
+    ]  # fmt: skip
+    assert env.answers() == ["Wie lange soll Bleep es in Ruhe lassen?"]
+
+    await env.press(501, "morning:20261110")
+    assert (await env.repo.get(incident.id)).status == "closed"
+    end = env.chat.sent("sendMessage")[-1]
+    assert first_line(end) == fmt.bold_first_line(fmt.escape("🤫 Stumm bis morgen 08:00"))
+    assert env.answers()[-1] == "Stumm bis morgen 08:00. Bleep lässt es bis dahin in Ruhe."
+
+
 def test_a_choices_data_says_when_its_snooze_ends():
     now = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
     assert chosen_until("1h", now, None) == now + timedelta(hours=1)

@@ -1,5 +1,6 @@
 import re
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
@@ -337,3 +338,72 @@ def test_the_german_recovery_rule_asks_for_the_sentence_in_german():
 def test_in_english_no_prompt_written_for_the_person_names_a_language():
     for name in WRITTEN_FOR_THE_PERSON:
         assert "German" not in _rendered(name, "en"), name
+
+
+def test_english_is_the_file_itself_and_another_language_its_twin_in_the_areas_folder():
+    assert prompts.in_language("notify/proposal", "en") == "notify/proposal"
+    assert prompts.in_language("notify/proposal", "de") == "notify/de/proposal"
+    assert prompts.in_language("notify/seen/oom", "de") == "notify/de/seen/oom"
+    assert prompts.in_language("talk/busy", "de") == "talk/de/busy"
+
+
+@pytest.mark.parametrize("name", ["graph/propose", "talk/read", "talk/message", "talk/log_head"])
+def test_a_text_the_model_reads_or_the_talk_log_export_has_no_twin(name):
+    assert prompts.in_language(name, "en") == name
+    with pytest.raises(PromptError):
+        prompts.in_language(name, "de")
+
+
+def test_an_unknown_language_is_refused():
+    with pytest.raises(PromptError):
+        prompts.in_language("notify/proposal", "fr")
+
+
+def test_every_text_a_person_reads_has_a_twin_in_every_language_with_the_same_placeholders():
+    assert prompts.twin_problems() == []
+
+
+def _translated_area(root: Path) -> None:
+    (root / "notify" / "de").mkdir(parents=True)
+    (root / "notify" / "hi.md").write_text("Hi {name}", encoding="utf-8")
+    (root / "notify" / "de" / "hi.md").write_text("Hallo {name}", encoding="utf-8")
+
+
+def test_the_twin_check_passes_for_twins(tmp_prompts):
+    _translated_area(tmp_prompts)
+    assert prompts.twin_problems() == []
+
+
+def test_the_twin_check_fails_for_a_text_in_english_only(tmp_prompts):
+    _translated_area(tmp_prompts)
+    (tmp_prompts / "notify" / "bye.md").write_text("Bye", encoding="utf-8")
+    assert prompts.twin_problems() == ["notify/bye has no de twin"]
+
+
+def test_the_twin_check_fails_for_a_twin_with_no_english_file(tmp_prompts):
+    _translated_area(tmp_prompts)
+    (tmp_prompts / "notify" / "de" / "bye.md").write_text("Tschüss", encoding="utf-8")
+    assert prompts.twin_problems() == ["notify/de/bye has no English file"]
+
+
+def test_the_twin_check_fails_for_a_twin_with_other_placeholders(tmp_prompts):
+    _translated_area(tmp_prompts)
+    (tmp_prompts / "notify" / "de" / "hi.md").write_text("Hallo {who}", encoding="utf-8")
+    assert prompts.twin_problems() == ["notify/de/hi has {who}, notify/hi has {name}"]
+
+
+def test_the_twin_check_fails_for_a_twin_of_a_text_that_stays_english(tmp_prompts):
+    (tmp_prompts / "talk" / "de").mkdir(parents=True)
+    (tmp_prompts / "talk" / "read.md").write_text("Read this", encoding="utf-8")
+    (tmp_prompts / "talk" / "de" / "read.md").write_text("Lies das", encoding="utf-8")
+    assert prompts.twin_problems() == ["talk/de/read is a twin of a text that stays English"]
+
+
+def test_load_in_reads_the_twin(tmp_prompts):
+    _translated_area(tmp_prompts)
+    assert prompts.load_in("de", "notify/hi", name="Bleep") == "Hallo Bleep"
+    assert prompts.load_in("en", "notify/hi", name="Bleep") == "Hi Bleep"
+
+
+def test_the_languages_with_twins_are_the_ones_a_person_can_choose():
+    assert get_args(Language) == prompts.LANGUAGES
