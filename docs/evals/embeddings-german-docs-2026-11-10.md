@@ -35,7 +35,7 @@ bge-small's misses on the new set were the cloud "trusted domains" chunk (second
 | Highest threshold (0.025 steps) returning every right record the top 5 allows | 0.625 | 0.675 |
 | Right returned at 0.5 | 17 of 18 | 18 of 18 |
 | Unrelated records over 0.5 (of 162) | 158 | 161 |
-| Cut-off by #306's rule (one step below the highest) | 0.5 (unchanged) | **0.65** |
+| Cut-off by #306's rule (one step below the highest) | not re-applied; 0.5 is what recall was built and calibrated on (#306) | **0.65** |
 | Right returned, unrelated passing at that cut-off | 17, 158 | **18, 50** |
 
 gemini's scores sit higher and closer together than bge-small's (unrelated records 0.5 to 0.77), so 0.5 filters nothing (161 of 162 pass); at 0.65 it drops 112 of the 162 unrelated records and keeps all 18 right ones. Sweep for gemini-embedding-2, right returned and unrelated passing:
@@ -54,10 +54,10 @@ gemini's scores sit higher and closer together than bge-small's (unrelated recor
 | One text, median (max) | 15 ms (20 ms) | 420 ms (483 ms) |
 | Batch of 31 | 648 ms | 986 ms |
 | Per text in a batch | 21 ms | 32 ms |
-| Money | none | $0.20 per million input tokens |
+| Money | none | $0.20 per million input tokens (OpenRouter's models API, `GET https://openrouter.ai/api/v1/embeddings/models`, `pricing.prompt` 0.0000002 per token, read 2026-11-10) |
 
 - **The run**: 598 texts in 103 calls, about 360,000 characters, about 90,000 tokens (estimated at 4 characters per token, not a tokenizer count); measured key spend for the whole run about **$0.02**.
-- **A full first ingest**: the Docker docs snapshot (444 chunks, 331,000 characters) plus the new set's 31 chunks is 475 texts and about 85,000 tokens, about **$0.017**. A person's own linked repos (up to 40 files each) come on top, and each past incident is one text plus one for every recall.
+- **A full first ingest**: the Docker docs snapshot (444 chunks, 331,000 characters) plus the new set's 31 chunks is 475 texts and about 85,000 tokens, about **$0.017** at that rate (85,000 tokens x $0.20 per million). A person's own linked repos (up to 40 files each) come on top, and each past incident is one text plus one for every recall.
 - Re-embedding is skipped by content hash, so the cost is paid once per document and per model change.
 
 ## What it shows
@@ -70,8 +70,10 @@ gemini's scores sit higher and closer together than bge-small's (unrelated recor
 ## Limits
 
 - **One run each, from one laptop, on small sets written by one agent.** 22 queries over 31 chunks, 18 recall queries over 10 records. The threshold of 0.65 rests on the lowest right score (0.692) and one step of headroom.
-- **Token counts are estimates**; the $0.02 is the key's measured spend for the run, the $0.017 is estimated from the 4-characters-per-token rule.
-- **What happens when OpenRouter is unreachable was not tested live.** `OpenAICompatEmbedder` raises `EmbedderError` with the status or the error type; nothing in `backend/src` outside `memory/embeddings.py` names it, so whether recall and knowledge search fail as a gap with the incident run going on is not shown by this check and is not claimed.
+- **Token counts are estimates**; the $0.02 is the key's measured spend for the run, the $0.017 is estimated from the 4-characters-per-token rule and the rate above (OpenRouter's models API, `GET https://openrouter.ai/api/v1/embeddings/models`, `pricing.prompt` 0.0000002 per token, read 2026-11-10).
+- **"Top 5" on the German set means little**: it has five documents, so a top 5 holds every document and only a wrong chunk of the right one is a miss.
+- **Some English queries share distinctive tokens with their chunk** ("repository is already locked", "413"), which favours any model, bge-small included, over a query written as the model would phrase it from a symptom.
+- **OpenRouter being unreachable was read from the code, not run live.** `OpenAICompatEmbedder.embed` turns an HTTP error or a timeout into `EmbedderError`, after up to 30 s (`HTTP_TIMEOUT_S`) per failed call. (a) Gather's recall becomes a gap in the incident's context (`graph/nodes/gather.py`, `_recall`). (b) `knowledge_search` and `recall_incidents` answer the model "the tool failed (EmbedderError)" (`_invoke` in `graph/nodes/investigate.py`) and the run goes on. (c) Saving the finished incident to memory is logged and lost (`_remember` in `graph/nodes/report.py`; the embed happens before the database transaction, so nothing is half written), and the report is still sent. (d) Knowledge ingest runs in the background and tries again (`KnowledgeRefresher._safely` and `run` in `knowledge/ingest.py`), and a failed re-embed at boot is logged (`_reembed` in `main.py`), leaving old records out of recall until the next boot.
 - **The 8 times larger vectors** were not measured in the database or for search time; 475 chunks of 12 KB are 5.7 MB.
 - Translation at ingest was not tried, as the issue's plan drops it unless Gemini disappoints.
 - No other hosted multilingual model was run.

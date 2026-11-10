@@ -190,7 +190,7 @@ EMBEDDINGS_MODEL=google/gemini-embedding-2
 EMBEDDINGS_API_KEY=                                        # your OpenRouter key
 ```
 
-Each embed is then a network call of about 420 ms, and a first ingest of the Docker docs and a repo's docs is about 85,000 tokens, about $0.02. Installs without a key keep the local bge-small. If OpenRouter is unreachable, what recall and knowledge search do has not been tested.
+Each embed is then a network call of about 420 ms, and a first ingest of the Docker docs and a repo's docs is about 85,000 tokens, about $0.017 at OpenRouter's $0.20 per million input tokens (its models API, read 2026-11-10). Installs without a key keep the local bge-small. If OpenRouter is unreachable (read from the code, not run live), each embed fails after up to 30 s: Gather's recall is left out as a gap, `knowledge_search` and `recall_incidents` answer the model that the tool failed and the run goes on, saving the finished incident to memory is logged and lost while the report is still sent, and knowledge ingest tries again in the background.
 
 ## Tracing (optional)
 

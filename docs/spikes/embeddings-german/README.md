@@ -21,7 +21,7 @@ bge-small?
 - The chunks are cut by Bleep's own `chunk_markdown` and embedded with `embedded_text` through
   `KnowledgeIndex`, as a linked repo's docs are (`repo_documents`, source `repo`, redacted).
   Searches use `KnowledgeIndex.search` with `k=5`, so "top 5" means the best chunk of each of
-  the five closest documents, which is what `knowledge_search` returns to the model: with six
+  the five closest documents, which is what `knowledge_search` returns to the model: with five
   documents, a query that finds its document but the wrong chunk of it is a miss.
 
 ## The script
