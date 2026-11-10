@@ -1107,13 +1107,31 @@ def test_a_value_right_after_a_header_at_the_keys_indentation_is_redacted(separa
 
 
 @pytest.mark.parametrize(
+    ("text", "secret"),
+    [
+        ("password: |\x0c\x0c4242", "4242"),
+        ("password: |\n---Pa55", "---Pa55"),
+        ("password: |\n...Pa55", "...Pa55"),
+    ],
+)
+def test_a_value_past_one_blank_line_or_glued_to_a_document_marker_is_redacted(text, secret):
+    out, _ = guard_text("logs", text)
+
+    assert secret not in out
+
+
+@pytest.mark.parametrize(
     "text",
     [
         "password: |\nuser: bob",
         "password: |\n- item",
         "password: |\n# a comment",
+        "password: |\n---\nuser: bob",
         "api_key: >\n2026-11-02T10:00:00Z INFO next record",
         "detoxoxc-something-very-long-name",
+        "Usage: set password: |\nthen type it below",
+        "secret: >\nINFO server started on :8080",
+        "echo secret: >\nserver started on :8080",
     ],
 )
 def test_a_line_after_a_header_that_is_structure_or_a_new_record_stays(text):

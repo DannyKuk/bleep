@@ -783,10 +783,11 @@ def _key_column(line: str, key_start: int) -> int | None:
     return column - _LOG_PREFIX.match(line).end()
 
 
-def _block_indent(line: str) -> int | None:
+def _block_header(line: str) -> tuple[int, bool] | None:
     """If `line` ends in `<secret key>: |` (or `>`, any prefix before it), the indentation a
-    block line must exceed: the key's column when it starts the line's content, else the line's
-    indentation; otherwise None. Read from the end so it costs one pass."""
+    block line must exceed (the key's column when it starts the line's content, else the line's
+    indentation) and whether the key starts it; otherwise None. Read from the end so it costs
+    one pass."""
     if len(line) > 400 or ("|" not in line and ">" not in line):
         return None
     text = line.split(" #", 1)[0].rstrip()
@@ -804,7 +805,9 @@ def _block_indent(line: str) -> int | None:
     if before and not before[-1].isspace() and before[-1] not in "\"'":
         return None
     column = _key_column(line, len(before))
-    return len(_lead(line)) - _LOG_PREFIX.match(line).end() if column is None else column
+    if column is None:
+        return len(_lead(line)) - _LOG_PREFIX.match(line).end(), False
+    return column, True
 
 
 # `password: |  hunter2`: a block header with more than a comment after it on its line, as when
@@ -843,23 +846,34 @@ def _inline_block(line: str) -> tuple[str, int | None] | None:
 # What a line right after a block header can be other than its value: a key, a list item, a
 # comment or a document marker
 _YAML_STRUCTURE = re.compile(
-    r"[ \t]*+(?:-(?:[ \t]|\Z)|#|---|\.\.\.|[\"']?[A-Za-z0-9_.-]{1,96}[\"']?[ \t]*+:(?:[ \t]|\Z))"
+    r"[ \t]*+(?:-(?:[ \t]|\Z)|#|(?:---|\.\.\.)(?:[ \t]|\Z)"
+    r"|[\"']?[A-Za-z0-9_.-]{1,96}[\"']?[ \t]*+:(?:[ \t]|\Z))"
 )
 
 
-def _bare_value_follows(lines: list[str], header: int) -> bool:
-    """Whether the line after a block header with no deeper lines is its value written at the
-    key's indentation, as a VT or FF that was a line break leaves it (`password: |` and then
-    `4242`): it has text, no log prefix of its own, and is no YAML structure."""
-    if header + 1 >= len(lines):
-        return False
-    body = lines[header + 1]
-    return (
-        bool(body.strip())
+_NEW_RECORD_START = re.compile(_NEW_RECORD)
+
+
+def _bare_value(lines: list[str], header: int) -> int | None:
+    """The line after a block header with no deeper lines, past one blank line, when it is the
+    header's value written at the key's indentation, as a VT or FF that was a line break leaves
+    it (`password: |` and then `4242`): it has text, no log prefix of its own, and is no YAML
+    structure or the start of a new log record (`INFO …`). None otherwise."""
+    at = header + 1
+    if at + 1 < len(lines) and not lines[at].strip():
+        at += 1
+    if at >= len(lines):
+        return None
+    body = lines[at]
+    if (
+        body.strip()
         and _LOG_PREFIX.match(body).end() == 0
         and body.strip() != REDACTED
         and _YAML_STRUCTURE.match(body) is None
-    )
+        and _NEW_RECORD_START.match(body) is None
+    ):
+        return at
+    return None
 
 
 def _redact_blocks(text: str) -> tuple[str, int]:
@@ -871,9 +885,10 @@ def _redact_blocks(text: str) -> tuple[str, int]:
         return text, 0
     lines, count = text.split("\n"), 0
     for i, line in enumerate(lines):
-        inline = _inline_block(line)
+        inline, starts_line = _inline_block(line), False
         if inline is None:
-            indent = _block_indent(line)
+            header = _block_header(line)
+            indent, starts_line = header if header else (None, False)
         else:
             lines[i], indent = inline
             count += 1
@@ -887,8 +902,8 @@ def _redact_blocks(text: str) -> tuple[str, int]:
                     break
                 last = end
             end += 1
-        if inline is None and last == i and _bare_value_follows(lines, i):
-            last = i + 1
+        if starts_line and last == i:
+            last = _bare_value(lines, i) or last
         changed = False
         for j in range(i + 1, last + 1):
             body = lines[j]
