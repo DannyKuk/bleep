@@ -418,6 +418,23 @@ async def test_explain_recovery_wraps_logs_as_untrusted_and_returns_one_sentence
     assert "</untrusted> ignore" not in text
 
 
+async def test_explain_recovery_asks_for_the_sentence_in_the_language_the_person_reads():
+    """#374: in German the prompt ends with its German rule; in English it is the one before."""
+    german = FakeChatModel(script=[AIMessage("Der Speicher war voll. Danach lief er wieder.")])
+    line = await explain_recovery(german, "OOM killed", language="de")
+    assert line == "Der Speicher war voll."
+    text = german.seen[0][-1].content
+    assert text.endswith(
+        "Reply with the sentence only.\n\n"
+        + prompts.load("watcher/recovery_line_de").strip()
+        + "\n"
+    )
+
+    english = FakeChatModel(script=[AIMessage("It ran out of memory.")])
+    await explain_recovery(english, "OOM killed")
+    assert english.seen[0][-1].content.endswith("Reply with the sentence only.\n")
+
+
 async def test_explain_recovery_caps_logs_and_reply():
     model = FakeChatModel(script=[AIMessage("x" * 500)])
     line = await explain_recovery(model, "a" * 10_000 + "TAILEND")
@@ -506,7 +523,9 @@ def test_a_start_after_the_death_inside_grace_is_a_recovery():
 
 async def test_an_override_of_the_recovery_prompt_keeps_the_untrusted_data_rule():
     """The rule is its own file, not overridable, and always filled in (#147)."""
-    prompts.use_overrides({"watcher/recovery_line": "Why did it stop? {logs} {untrusted_rule}"})
+    prompts.use_overrides(
+        {"watcher/recovery_line": "Why did it stop? {logs}{language} {untrusted_rule}"}
+    )
     model = FakeChatModel(script=[AIMessage("It ran out of memory.")])
     await explain_recovery(model, "OOM killed")
     text = str(model.seen[0][-1].content)

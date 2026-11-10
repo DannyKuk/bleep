@@ -346,16 +346,19 @@ class TimelineEntry(BaseModel):
 class Report(BaseModel):
     """The incident write-up: what happened, why, what was done and whether it worked.
 
-    The model writes `summary`, `cause` and `follow_ups`, checked by `guard.report_check` before
-    they are stored or sent; everything else is Bleep's own. `outcome` is the fixed text for the
-    run's outcome ("Fixed and verified" only for `resolved`). `action_taken` is None when nothing
-    ran. `planted_in` names where host text tried to give Bleep orders (`graph/planted.py`), the
-    places its fixed follow-up names; code sets it, never the model.
+    The model writes `summary`, `cause`, `cause_en` and `follow_ups`, checked by
+    `guard.report_check` before they are stored or sent; everything else is Bleep's own. `outcome`
+    is the fixed text for the run's outcome ("Fixed and verified" only for `resolved`).
+    `action_taken` is None when nothing ran. `planted_in` names where host text tried to give
+    Bleep orders (`graph/planted.py`), the places its fixed follow-up names; code sets it, never
+    the model. `cause_en` is the cause in English when the report is written in another language
+    (#374), the one memory keeps; None in English.
     """
 
     title: str
     summary: str
     cause: str
+    cause_en: str | None = None
     action_taken: str | None = None
     outcome: str
     timeline: list[TimelineEntry] = Field(default_factory=list)

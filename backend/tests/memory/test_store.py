@@ -97,6 +97,31 @@ async def test_the_same_service_with_similar_text_ranks_first(env):
     assert first.date == same.opened_at
 
 
+async def test_a_german_report_is_kept_in_english_and_recalled_by_an_english_query(env):
+    """With `de` the report carries its cause in English too (#374): memory embeds and keeps
+    that, with the title and the action Bleep wrote in English, so recall still finds it."""
+    incident = await env.incident(SHOP)
+    german = Report(
+        title="container died",
+        summary="shop-web war gestoppt; Bleep hat ihn wieder gestartet.",
+        cause="Der Container shop-web konnte die Datenbank nicht erreichen.",
+        cause_en="web crashed: database connection refused at start",
+        outcome="Fixed and verified",
+    )
+    await env.store.add_report(incident, german)
+
+    [found] = await env.store.similar("container died: database connection refused", SHOP)
+
+    assert found.incident_id == incident.id
+    assert found.cause == "web crashed: database connection refused at start"
+    assert (found.title, found.action) == ("container died", "nothing ran")
+    assert env.embedder.calls[0] == [
+        "container died. Cause: web crashed: database connection refused at start"
+        " Action: nothing ran."
+    ]
+    assert await env.store.similar("Datenbank nicht erreichen", SHOP) == []  # nothing German
+
+
 async def test_another_service_is_found_when_the_same_one_has_nothing_like_it(env):
     other = await env.incident(BLOG)
     await env.store.add_report(other, report("worker crashed: database connection refused"))

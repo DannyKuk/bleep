@@ -201,9 +201,15 @@ TimeZoneName = Annotated[
 ]
 
 
+# The language Bleep writes for the person in (#373); English when none is chosen.
+Language = Literal["en", "de"]
+DEFAULT_LANGUAGE: Language = "en"
+
+
 class GeneralOverrides(_Overrides):
     # The zone every time is shown in, on Telegram and the dashboard (#400); stored times stay UTC.
     timezone: TimeZoneName | None = None
+    language: Language | None = None
 
 
 class SettingsUpdate(_Overrides):
@@ -283,5 +289,6 @@ class SettingsView(BaseModel):
     # The zone times are shown in: the dashboard's choice, else BLEEP_TIMEZONE; None shows the
     # dashboard in the browser's zone and Telegram in UTC.
     timezone: str | None = None
+    language: Language = DEFAULT_LANGUAGE  # the dashboard's choice, else English
     overrides: dict[str, Any]  # a `SettingsUpdate` without the fields left at the layers below
     version: str  # of `overrides`; a `PUT /api/settings` sends it back in `If-Match`

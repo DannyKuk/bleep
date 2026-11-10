@@ -64,7 +64,7 @@ from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Incident, IncidentStatus, RecoveryEvent, Signal, Subject
 from bleep.schemas.quiet import QuietChange, QuietState
 from bleep.schemas.services import HostState
-from bleep.schemas.settings import Budgets
+from bleep.schemas.settings import DEFAULT_LANGUAGE, Budgets, Language
 from bleep.watcher import host_probe, http_checks, poller
 from bleep.watcher.detector import (
     AttachSignals,
@@ -152,6 +152,7 @@ class WatcherManager:
         guard_log: GuardLogger | None = None,
         ledger: CostLedger | None = None,
         budgets: Callable[[], Budgets] | None = None,
+        language: Callable[[], Language] = lambda: DEFAULT_LANGUAGE,
         model_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         http: httpx.AsyncClient | None = None,
         store: UrlCheckStore | None = None,
@@ -175,6 +176,7 @@ class WatcherManager:
         self._guard_log = guard_log
         self._ledger = ledger
         self._budgets = budgets
+        self._language = language
         self._model_sleep = model_sleep
         self._http = http or httpx.AsyncClient()
         self._owns_http = http is None
@@ -737,7 +739,9 @@ class WatcherManager:
             config = {"callbacks": [UsageTracker(RECOVERY_USAGE, self._ledger)]}
         timeout_s = (self._budgets or Budgets)().model_timeout_s
         guard = ModelGuard(timeout_s, sleep=self._model_sleep)
-        return await explain_recovery(model, logs, self._guard_log, "", config, guard)
+        return await explain_recovery(
+            model, logs, self._guard_log, "", config, guard, self._language()
+        )
 
     async def _log_recovery(self, recovered: Recovered) -> None:
         death = recovered.signals[0]

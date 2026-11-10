@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Panel } from "@/components/panel";
 import { SaveLockProvider } from "@/components/save-lock";
 import { HostForm, SSH_ONLY } from "@/components/settings/host-form";
+import { LanguageForm } from "@/components/settings/language-form";
 import { Alert, Status, useLoaded, useStaleSaving } from "@/components/settings/loaded";
 import { ModelSettings } from "@/components/settings/models";
 import { PluginList } from "@/components/settings/plugins";
@@ -29,6 +30,7 @@ import {
 import { hostHref } from "@/lib/routes";
 import { putPlugin, putSettings } from "@/lib/settings-api";
 import type {
+  GeneralOverrides,
   HostSettingsView,
   PluginUpdate,
   PluginView,
@@ -36,6 +38,22 @@ import type {
   SettingsView,
   TelegramStatus,
 } from "@/lib/settings-types";
+
+/**
+ * The `general` section with one form's `fields` replaced by `change`: a save replaces the
+ * section whole, so the other forms' fields in it are sent again as they are. A field named in
+ * `fields` and left out of `change` is cleared.
+ */
+export function withGeneral(
+  current: GeneralOverrides | undefined,
+  fields: (keyof GeneralOverrides)[],
+  change: GeneralOverrides,
+): GeneralOverrides {
+  const kept = Object.entries(current ?? {}).filter(
+    ([field]) => !fields.includes(field as keyof GeneralOverrides),
+  );
+  return { ...Object.fromEntries(kept), ...change };
+}
 
 /** The hosts as links to their pages, where each is configured, and the add-a-host form. */
 function Hosts({
@@ -199,7 +217,24 @@ function Settings() {
                 key={`${view.timezone}/${view.overrides.general?.timezone}`}
                 timezone={view.timezone}
                 chosen={view.overrides.general?.timezone}
-                onSave={(general) => saveSettings({ general }, view.version)}
+                onSave={(zone) =>
+                  saveSettings(
+                    { general: withGeneral(view.overrides.general, ["timezone"], zone) },
+                    view.version,
+                  )
+                }
+              />
+            </Panel>
+            <Panel title="Language">
+              <LanguageForm
+                key={view.language}
+                language={view.language}
+                onSave={(language) =>
+                  saveSettings(
+                    { general: withGeneral(view.overrides.general, ["language"], { language }) },
+                    view.version,
+                  )
+                }
               />
             </Panel>
             <Panel title="Thresholds">

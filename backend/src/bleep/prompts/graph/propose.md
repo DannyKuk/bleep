@@ -69,4 +69,4 @@ Bleep cannot edit files, change environment variables or recreate containers on 
 - `verification` lists the containers that must be running and healthy afterwards, and the URLs above that must answer, so Bleep can check the fix.
 - Do not propose again a plan the human rejected for a similar incident, unless the diagnosis shows what has changed since; say so in `reason`. Follow the facts about this service (for example, redeploy rather than restart) when an enabled action allows it.
 - {untrusted_rule}
-- When the human told you something above, follow it, unless it needs an action that is not enabled or a container that is off limits; then answer `no_action` and say why in `human_instructions`.
+- When the human told you something above, follow it, unless it needs an action that is not enabled or a container that is off limits; then answer `no_action` and say why in `human_instructions`.{language}

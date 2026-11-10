@@ -104,6 +104,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 guard_log=parts.graph_deps.guard_log,
                 ledger=parts.graph_deps.ledger,
                 budgets=parts.settings_store.budgets,
+                language=parts.settings_store.language,
                 store=parts.url_checks,
                 watch_interval_s=settings.watch_interval_s,
                 quiet=parts.quiet,

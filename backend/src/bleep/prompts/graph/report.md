@@ -36,4 +36,4 @@ Reply with one JSON object and nothing else, with these fields:
 
 - `summary`: two to four plain sentences: what happened, what was done, and how it ended.
 - `cause`: one or two sentences naming the root cause, or saying it was not found.
-- `follow_ups`: up to five short things the human should do next (a config change, a check, a rule to add), each one sentence; an empty list when there are none.
+- `follow_ups`: up to five short things the human should do next (a config change, a check, a rule to add), each one sentence; an empty list when there are none.{language}

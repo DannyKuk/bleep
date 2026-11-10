@@ -6,7 +6,9 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
+from bleep import prompts
 from bleep.graph.build import build_graph
+from bleep.graph.deps import StaticSettings
 from bleep.graph.nodes import diagnose
 from bleep.graph.planted import planted_places
 from bleep.graph.state import checkpoint_serializer
@@ -229,7 +231,7 @@ async def test_an_override_of_the_diagnose_prompt_keeps_the_untrusted_data_rule(
 
     overridden = (
         "Name the cause. {untrusted_rule}\n{planted_in_rule}\n"
-        "{subject}\n{signals}{look}\n{context}\n{investigation}"
+        "{subject}\n{signals}{look}{language}\n{context}\n{investigation}"
     )
     prompts.use_overrides({"graph/diagnose": overridden})
     text = await sent_prompt(tmp_path)
@@ -245,7 +247,7 @@ async def test_an_override_of_the_diagnose_prompt_still_asks_for_planted_in(tmp_
 
     overridden = (
         "Name the cause. {untrusted_rule} {planted_in_rule}\n"
-        "{subject}{signals}{look}{context}{investigation}"
+        "{subject}{signals}{look}{language}{context}{investigation}"
     )
     prompts.use_overrides({"graph/diagnose": overridden})
     text = await sent_prompt(tmp_path)
@@ -426,3 +428,30 @@ async def test_a_null_or_bare_string_planted_in_does_not_cost_the_diagnosis(tmp_
 
     assert first.root_cause != diagnose.FALLBACK_CAUSE and first.planted_in == []
     assert second.root_cause != diagnose.FALLBACK_CAUSE and second.planted_in == ["memory"]
+
+
+async def test_in_german_the_diagnosis_is_asked_for_in_german_and_names_stay_as_they_are(
+    tmp_path,
+):
+    """#374: the German rule goes in after the field list; the fields the code reads stay."""
+    german = reply(
+        0.9,
+        root_cause="shop-web hat sich beendet, weil die Datenbank sein Passwort abgelehnt hat",
+        evidence=[{"source": "gather", "detail": "shop-web-1 hat mit Code 1 geendet"}],
+    )
+    env, state = await setup(tmp_path, [german])
+    env.deps.settings_store = StaticSettings(written_in="de")
+
+    d = (await diagnose.make(env.deps)(state))["diagnosis"]
+
+    sent = str(env.models.model.seen[0][0].content)
+    rule = prompts.load("graph/diagnose_de").strip()
+    assert f"otherwise an empty string.\n\n{rule}\n\nThe incident is about" in sent
+    assert d.root_cause.startswith("shop-web hat sich beendet")
+    assert (d.category, d.affected_services, d.evidence[0].source) == ("config", ["shop"], "gather")
+
+
+async def test_in_english_the_diagnose_prompt_names_no_language(tmp_path):
+    text = await sent_prompt(tmp_path)
+    assert "German" not in text
+    assert "otherwise an empty string.\n\nThe incident is about" in text

@@ -1,0 +1,1 @@
+The person reads German. Write `root_cause`, each evidence `detail` and `missing` in German. Every name stays exactly as the host writes it, never translated: environment variable keys, settings, files, containers, services, hosts, URLs, values and commands. `category`, each evidence `source` and `affected_services` stay exactly as described above.

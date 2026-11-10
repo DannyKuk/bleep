@@ -18,13 +18,14 @@ from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
 from bleep import prompts
+from bleep.graph.language import language_rule
 from bleep.guard.log import GuardLogger
 from bleep.guard.pipeline import guard_text
 from bleep.hosts.readings import past_threshold
 from bleep.llm.guard import ModelGuard, ModelUnavailable
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
-from bleep.schemas.settings import Budgets, Thresholds
+from bleep.schemas.settings import DEFAULT_LANGUAGE, Budgets, Language, Thresholds
 
 log = logging.getLogger(__name__)
 
@@ -448,11 +449,12 @@ async def explain_recovery(
     incident_id: str = "",
     config: RunnableConfig | None = None,
     guard: ModelGuard | None = None,
+    language: Language = DEFAULT_LANGUAGE,
 ) -> str:
-    """One plain sentence on why a self-recovered container stopped, from its last logs. `config`
-    goes to the model call (the caller's usage tracker). The call runs under `guard` (the default
-    timeout when none is given); a model that cannot be reached gives `MODEL_DOWN_LINE`, so a
-    hanging model never holds the caller."""
+    """One plain sentence on why a self-recovered container stopped, from its last logs, written
+    in `language` (#374). `config` goes to the model call (the caller's usage tracker). The call
+    runs under `guard` (the default timeout when none is given); a model that cannot be reached
+    gives `MODEL_DOWN_LINE`, so a hanging model never holds the caller."""
     if not logs_tail.strip():
         return NO_LOGS_LINE
     # Redact the whole text, then keep the tail: cutting first could leave half a secret.
@@ -465,6 +467,7 @@ async def explain_recovery(
         "watcher/recovery_line",
         logs=logs,
         untrusted_rule=prompts.load("untrusted/recovery_line").strip(),
+        language=language_rule("watcher/recovery_line", language),
     )
     guard = guard or ModelGuard(Budgets().model_timeout_s)
     try:
