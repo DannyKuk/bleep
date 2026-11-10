@@ -305,3 +305,45 @@ def test_a_reloading_tracer_builds_no_client_before_its_first_use(no_tracing_env
     assert built == []
     tracer.current()
     assert len(built) == 1
+
+
+@pytest.mark.parametrize("change", ["off", "key cleared"])
+async def test_langfuse_switched_off_or_without_a_key_stops_tracing_at_once(no_tracing_env, change):
+    """Never trace on with a key that was cleared, Langfuse or not (#372)."""
+    public = f"pk-lf-{uuid.uuid4().hex}"
+    chosen = TracingChoice(tracing="langfuse")
+    keys = {"LANGFUSE_PUBLIC_KEY": SecretStr(public), "LANGFUSE_SECRET_KEY": SecretStr("sk-1")}
+    tracer = ReloadingTracer(keys.get, lambda: chosen)
+    running = tracer.current()
+    closed = []
+
+    async def close() -> None:
+        closed.append(True)
+
+    running.close = close  # type: ignore[method-assign]
+    if change == "off":
+        chosen = TracingChoice(tracing="off")
+    else:
+        del keys["LANGFUSE_SECRET_KEY"]
+    await tracer.reload()
+    assert isinstance(tracer.current(), NoTracing) and closed == [True]
+    assert not tracer.restart_needed()
+
+
+async def test_langfuse_back_on_with_a_key_used_before_waits_for_a_restart(no_tracing_env):
+    """Its cached client would come back with the address it was first made for."""
+    public = f"pk-lf-{uuid.uuid4().hex}"
+    chosen = TracingChoice(tracing="langfuse")
+    keys = {"LANGFUSE_PUBLIC_KEY": SecretStr(public), "LANGFUSE_SECRET_KEY": SecretStr("sk-1")}
+    tracer = ReloadingTracer(keys.get, lambda: chosen)
+    tracer.current()
+    chosen = TracingChoice(tracing="off")
+    await tracer.reload()
+    chosen = TracingChoice(tracing="langfuse", langfuse_base_url="https://cloud.example.test")
+    await tracer.reload()
+    assert isinstance(tracer.current(), NoTracing) and tracer.restart_needed()
+
+    keys["LANGFUSE_PUBLIC_KEY"] = SecretStr(f"pk-lf-{uuid.uuid4().hex}")  # a key never used here
+    await tracer.reload()
+    assert isinstance(tracer.current(), LangfuseTracing) and not tracer.restart_needed()
+    assert tracer.current()._client._resources.base_url == "https://cloud.example.test"

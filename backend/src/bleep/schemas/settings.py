@@ -238,17 +238,23 @@ def _plain_url(url: str) -> str:
     return url.rstrip("/")
 
 
-# The prefixes of the tracers' and OpenAI-style keys, and a long unbroken run of letters and
-# digits, as a token has: a key pasted into a project field must not be stored (#372).
-_KEY_PREFIXES = ("lsv2_", "sk-", "pk-lf-", "sk-lf-")
+# The prefixes of the tracers' keys, an OpenAI-style `sk-` key (20 or more characters after it,
+# so `sk-team` is a name), and a long unbroken run of letters and digits mixed, as a token has,
+# though not a UUID's 32 hex digits: a key pasted into a project field must not be stored (#372).
+_KEY_PREFIXES = ("lsv2_", "pk-lf-", "sk-lf-")
+_OPENAI_KEY = re.compile(r"sk-[\w-]{20,}", re.IGNORECASE)
 _TOKEN_RUN = re.compile(r"[A-Za-z0-9]{32,}")
+_UUID_HEX = re.compile(r"[0-9a-fA-F]{32}")
+
+
+def _token(run: str) -> bool:
+    mixed = any(c.isdigit() for c in run) and any(c.isalpha() for c in run)
+    return mixed and not _UUID_HEX.fullmatch(run)
 
 
 def _not_a_key(name: str) -> str:
-    run = _TOKEN_RUN.search(name)
-    token = run[0] if run is not None else ""
-    mixed = any(c.isdigit() for c in token) and any(c.isalpha() for c in token)
-    if name.lower().startswith(_KEY_PREFIXES) or mixed:
+    tokens = any(_token(run[0]) for run in _TOKEN_RUN.finditer(name))
+    if name.lower().startswith(_KEY_PREFIXES) or _OPENAI_KEY.match(name) or tokens:
         raise ValueError("looks like a key, not a project; keys go in the secrets")
     return name
 

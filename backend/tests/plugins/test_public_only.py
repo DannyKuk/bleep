@@ -217,6 +217,10 @@ def test_a_model_servers_address_may_be_an_internal_name_over_plain_http():
         "http://metadata/computeMetadata/v1",
         "http://169.254.169.254/latest",
         "https://169.254.169.254/latest",
+        "http://instance-data/latest",
+        "http://instance-data.ec2.internal/latest",
+        "http://[fd00:ec2::254]/latest",
+        "http://100.100.100.200/latest",
     ],
 )
 def test_a_model_servers_address_is_never_a_cloud_metadata_service(url):

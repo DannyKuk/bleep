@@ -385,7 +385,7 @@ def test_a_tracer_address_from_the_env_is_shown_as_its_origin_only(start, monkey
         "lsv2_pt_0123456789abcdef0123456789abcdef_0123456789",
         "sk-lf-1234",
         "pk-lf-1234",
-        "sk-proj-abc",
+        "sk-proj-abcdefghij0123456789",
         "a" * 8 + "0123456789abcdef0123456789abcdef",
     ],
 )
@@ -397,10 +397,20 @@ def test_a_key_pasted_as_a_project_is_refused_and_never_stored(app, settings, pr
     assert project.encode() not in database_bytes(settings.data_dir)
 
 
-@pytest.mark.parametrize("project", ["bleep-prod-2026-eu-west-1", "cm1a2b3c4d5e6f7g8h9i0j1k2"])
+@pytest.mark.parametrize(
+    "project",
+    [
+        "bleep-prod-2026-eu-west-1",
+        "cm1a2b3c4d5e6f7g8h9i0j1k2",
+        "sk-team",
+        "8f14e45fceea167a5a36dedd4bea2543",
+    ],
+)
 def test_a_project_name_or_a_langfuse_project_id_is_kept(app, project):
-    response = put_settings(app, {"tracing": {"langfuse_project_id": project}})
-    assert response.status_code == 200
+    for field in ("langsmith_project", "langfuse_project_id"):
+        response = put_settings(app, {"tracing": {field: project}})
+        assert response.status_code == 200
+        assert response.json()["tracing"][field] == project
 
 
 def test_the_embeddings_address_is_not_cleared_while_the_endpoint_embeds(app):
@@ -438,3 +448,22 @@ def test_the_log_names_dashboard_values_the_env_now_decides(start, monkeypatch, 
     assert "the dashboard's LLM_MODEL is not in force" in caplog.text
     assert "EMBEDDINGS_API_KEY in the secret file is not used" in caplog.text
     assert EMBEDDINGS_KEY not in caplog.text
+
+
+def test_langfuse_switched_off_on_the_page_or_its_keys_cleared_stops_at_once(app):
+    put_settings(app, {"tracing": {"langfuse_base_url": "https://cloud.example.test"}})
+    put_secret(app, "LANGFUSE_PUBLIC_KEY", f"pk-lf-{uuid.uuid4().hex}")
+    put_secret(app, "LANGFUSE_SECRET_KEY", f"sk-lf-{uuid.uuid4().hex}")
+    on = {"langfuse_base_url": "https://cloud.example.test", "tracing": "langfuse"}
+    assert put_settings(app, {"tracing": on}).status_code == 200
+    assert isinstance(inner_tracer(app), LangfuseTracing)
+
+    off = put_settings(app, {"tracing": {**on, "tracing": "off"}})
+    assert off.json()["restart_needed"] == []
+    assert isinstance(inner_tracer(app), NoTracing)
+
+    assert put_settings(app, {"tracing": on}).json()["restart_needed"] == ["tracing"]
+    assert isinstance(inner_tracer(app), NoTracing)  # the same key: waits for a restart
+    assert app.delete("/api/secrets/LANGFUSE_SECRET_KEY").status_code == 200
+    assert isinstance(inner_tracer(app), NoTracing)
+    assert app.get("/api/settings").json()["restart_needed"] == []

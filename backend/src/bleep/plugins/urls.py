@@ -29,7 +29,13 @@ NEARBY = tuple(
     )
 )
 # The names cloud metadata services answer at; a model server's address may never be one.
-METADATA_NAMES = frozenset({"metadata", "metadata.google.internal"})
+METADATA_NAMES = frozenset(
+    {"metadata", "metadata.google.internal", "instance-data", "instance-data.ec2.internal"}
+)
+# Their addresses outside link-local: AWS's IPv6 endpoint and Alibaba Cloud's.
+METADATA_ADDRESSES = frozenset(
+    ipaddress.ip_address(a) for a in ("fd00:ec2::254", "100.100.100.200")
+)
 # A single-label name, such as a Docker service; one starting with a digit could be an address.
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,62}")
 
@@ -51,14 +57,15 @@ def _nearby(host: str) -> bool:
 
 
 def _metadata(host: str) -> bool:
-    """A cloud metadata service: one of its names (Google's sits under `.internal`) or a
-    link-local address, where they answer (169.254.169.254)."""
+    """A cloud metadata service: one of its names (Google's and AWS's sit under `.internal`), a
+    link-local address, where most answer (169.254.169.254), or one of `METADATA_ADDRESSES`."""
     if host.lower().rstrip(".") in METADATA_NAMES:
         return True
     try:
-        return ipaddress.ip_address(host).is_link_local
+        ip = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
         return False
+    return ip.is_link_local or ip in METADATA_ADDRESSES
 
 
 def _inet_aton(host: str) -> bool:

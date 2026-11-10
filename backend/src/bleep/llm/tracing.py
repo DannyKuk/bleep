@@ -220,6 +220,15 @@ def _langfuse_view(settings: TracingSettings) -> tuple[str | None, ...]:
     )
 
 
+def _langfuse_key(settings: TracingSettings) -> str | None:
+    """The public key a Langfuse tracer would be built with: `TRACING=langfuse` and both keys
+    set; else None."""
+    public, secret = settings.langfuse_public_key, settings.langfuse_secret_key
+    if settings.tracing != "langfuse" or public is None or secret is None:
+        return None
+    return public.get_secret_value()
+
+
 class ReloadingTracer:
     """The tracer `TRACING` names, built with the keys `key` reads (the env, else the
     dashboard) and the rest as `choice` gives it (the env, else the settings page).
@@ -230,7 +239,8 @@ class ReloadingTracer:
     again after a change, except a running Langfuse tracer: Langfuse keeps one client per public
     key for the whole process (`LangfuseResourceManager`), so a second one would reuse the first
     one's address and secret key, and closing the first would shut down what the second shares.
-    A change to it applies at the next start, and `restart_needed` says so."""
+    A change to its keys, address or project applies at the next start, and `restart_needed` says
+    so; switching it off, or clearing a key, applies at once (`reload`)."""
 
     def __init__(
         self,
@@ -243,6 +253,8 @@ class ReloadingTracer:
         self._tracer: AnyTracer | None = None
         self._running: TracingSettings | None = None
         self._pending = False
+        # Langfuse keeps a client per public key for the process: these have had one.
+        self._langfuse_keys: set[str] = set()
 
     def _settings(self) -> TracingSettings:
         keys = {name.lower(): self._key(name) for names in TRACING_KEYS.values() for name in names}
@@ -253,7 +265,7 @@ class ReloadingTracer:
         """The tracer in force, built at the first use."""
         if self._tracer is None:
             self._running = self._settings()
-            self._tracer = _built(self._running)
+            self._tracer = self._build(self._running)
         return self._tracer
 
     def restart_needed(self) -> bool:
@@ -272,19 +284,37 @@ class ReloadingTracer:
     async def reload(self) -> None:
         """Build the tracer with the settings in force now, then close the old one, which sends
         what it still holds. A run already going keeps the callbacks it was given. Not built yet,
-        nothing to do: the first use builds it. A running Langfuse tracer stays as it is."""
+        nothing to do: the first use builds it.
+
+        Langfuse off, or one of its keys gone, applies at once: never trace on with a key that
+        was cleared. A running Langfuse tracer whose keys, address or project changed stays as it
+        is until the next start, and so does tracing off when Langfuse would come back with a
+        public key a client was made for in this process: that client would come back with it."""
         old = self._tracer
         if old is None:
             return
         settings = self._settings()
-        if isinstance(old, LangfuseTracing):
+        wanted = _langfuse_key(settings)
+        if isinstance(old, LangfuseTracing) and wanted is not None:
             assert self._running is not None
             self._pending = _langfuse_view(settings) != _langfuse_view(self._running)
             if self._pending:
                 log.info("tracing: the Langfuse change applies at the next start")
             return
-        self._running, self._tracer = settings, _built(settings)
+        self._running = settings
+        self._pending = wanted is not None and wanted in self._langfuse_keys
+        if self._pending:
+            log.info("tracing: Langfuse with a key used before here applies at the next start")
+            self._tracer = NoTracing()
+        else:
+            self._tracer = self._build(settings)
         await old.close()
+
+    def _build(self, settings: TracingSettings) -> AnyTracer:
+        tracer = _built(settings)
+        if isinstance(tracer, LangfuseTracing) and (key := _langfuse_key(settings)) is not None:
+            self._langfuse_keys.add(key)
+        return tracer
 
     async def close(self) -> None:
         if self._tracer is not None:
