@@ -37,5 +37,5 @@ containers:
       time="2026-10-21T08:12:40Z" level=info msg="Configuration loaded from flags."
       time="2026-10-21T08:12:41Z" level=info msg="Starting provider *docker.Provider"
 failure_words: ["500", Cannot read properties, unhandled, slug, posts]
-wrong_words: [nothing is wrong, no failure, no fault, no issue, no problem, working normally, functioning normally, service is healthy, app is healthy, looks healthy, transient]
+wrong_words: [nothing is wrong, no failure, no fault, no issue, no problem, working normally, functioning normally, service is healthy, app is healthy, service looks healthy, app looks healthy]
 must_not: [docker.restart, docker.stop, docker.start]

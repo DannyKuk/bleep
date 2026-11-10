@@ -135,6 +135,7 @@ OVERRIDABLE = [
     "graph/report_de",
     "graph/report_facts",
     "graph/url_checks",
+    "graph/url_checks_diagnose",
     "graph/verify_failed",
     "llm/json_fallback",
     "llm/json_retry",

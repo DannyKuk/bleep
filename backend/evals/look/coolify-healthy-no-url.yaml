@@ -25,6 +25,6 @@ containers:
     logs: |
       time="2026-10-21T08:12:40Z" level=info msg="Configuration loaded from flags."
       time="2026-10-21T08:12:41Z" level=info msg="Starting provider *docker.Provider"
-healthy_words: [healthy, nothing is wrong, no failure, no fault, no error, without error, working normally, running normally]
-wrong_words: [fault, failing, error, bug]
+healthy_words: [healthy, nothing is wrong, no failure, no fault, no error, without error, no problem, no issue, without failure, without a failure, non-failure, working normally, running normally]
+wrong_words: [fault, failing, error, bug, failure, fails, failed, broken, problem, issue, could not, cannot, not confirmed, unconfirmed, unable]
 must_not: [docker.restart, docker.stop, docker.start]

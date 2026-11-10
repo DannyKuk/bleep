@@ -122,7 +122,8 @@ def _describe_context(context: GatherContext, with_urls: bool = True) -> str:
     for name, text in context.logs.items():
         parts.append(f"Recent log of {name}:\n{text}")
     if context.urls and with_urls:
-        parts.append(prompts.load("graph/url_checks", checks=describe_urls(context.urls)).strip())
+        checks = describe_urls(context.urls)
+        parts.append(prompts.load("graph/url_checks_diagnose", checks=checks).strip())
     if context.basics is not None:
         parts.append("Host basics:\n" + "\n".join(describe_basics(context.basics)))
     if context.top_memory:

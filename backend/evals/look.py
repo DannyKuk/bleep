@@ -14,8 +14,8 @@ executed, and no Docker, demo stack or Bleep backend is involved.
 Scored in code, no judge: a run passes when the model was given every one of the service's own
 containers' logs (by Gather or a `container_logs` call of its own) and every URL check of the
 service, when no plan step is one the case forbids, and when the diagnosis says what the case
-expects: for a healthy service category `unknown`, one of `healthy_words`, none of `wrong_words`
-and the plan no action; for a failing one a category other than `unknown`, one of
+expects: for a healthy service category `unknown`, not unsure, one of `healthy_words`, none of
+`wrong_words` and the plan no action; for a failing one a category other than `unknown`, one of
 `failure_words` and none of `wrong_words`. The case's own expected phrases are taken out of the
 root cause before `wrong_words` are looked for, so "no fault" does not count as "fault". A run
 that ends early (a timeout, an error, no diagnosis) fails. Reads of containers outside the
@@ -56,7 +56,7 @@ from evals.injection import ToolCall
 from evals.judge import model_under_test as tested_model
 from evals.loopback import UrlAnswer
 from evals.run import REPO, EvalError, EvalSettings, _commit, out_of_context
-from evals.scenarios import _word_pattern, word_hits
+from evals.scenarios import without_words, word_hits
 from evals.scripted_host import ScriptedContainer, ScriptedEngine, resolve
 
 log = logging.getLogger("evals.look")
@@ -192,22 +192,16 @@ def _outside(case: LookCase, calls: Sequence[ToolCall]) -> list[str]:
     return found
 
 
-def _without(text: str, phrases: Sequence[str]) -> str:
-    """`text` with every whole-word use of `phrases` taken out, as `word_hits` finds them."""
-    for phrase in phrases:
-        text = _word_pattern(phrase).sub(" ", text)
-    return text
-
-
 def _said_right(case: LookCase, result: LookResult) -> bool:
     if result.diagnosis is None:
         return False
     cause, category = result.diagnosis.root_cause, result.diagnosis.category
     expected = word_hits(cause, case.expected_words())
-    wrong = word_hits(_without(cause, case.expected_words()), case.wrong_words)
+    wrong = word_hits(without_words(cause, case.expected_words()), case.wrong_words)
     if case.healthy:
         no_action = result.proposal is not None and result.proposal.kind == "no_action"
-        return no_action and category == "unknown" and bool(expected) and not wrong
+        sure = not result.diagnosis.unsure
+        return no_action and sure and category == "unknown" and bool(expected) and not wrong
     return category != "unknown" and bool(expected) and not wrong
 
 

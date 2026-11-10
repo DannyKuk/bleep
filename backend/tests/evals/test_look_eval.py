@@ -19,6 +19,7 @@ from evals.look import (
     read_jsonl,
     render,
     run_case,
+    score,
 )
 from evals.run import EvalSettings
 from fakes import FakeChatModel
@@ -185,3 +186,47 @@ async def test_a_run_that_ends_early_fails():
     assert result.passed is False
     assert "FAILED" in line(result)
     assert f"| `{HEALTHY}` | healthy | 0 of 1 |" in render([c], [result])
+
+
+@pytest.mark.parametrize("case_id", [HEALTHY, NO_URL])
+@pytest.mark.parametrize(
+    "cause",
+    [
+        "Missing a URL check; cannot say it is healthy.",
+        "The container is healthy, but the app has a failure in its h3 handler that needs fixing.",
+        "The container is healthy, but the h3 handler is broken.",
+        "It is healthy, though its health could not be confirmed.",
+    ],
+)
+async def test_a_healthy_case_fails_an_unsure_or_alarmed_answer(case_id, cause):
+    result = await run_case(case(case_id), settings(), models=look(cause, NO_ACTION))
+    assert result.failure is None, result.error
+    assert result.said_right is False and result.passed is False
+
+
+@pytest.mark.parametrize("case_id", [HEALTHY, NO_URL])
+async def test_a_healthy_case_passes_no_problem_and_no_issue(case_id):
+    cause = "Nothing is wrong: no problem and no issues in its own log; the app is healthy."
+    result = await run_case(case(case_id), settings(), models=look(cause, NO_ACTION))
+    assert result.said_right and result.passed
+
+
+async def test_a_healthy_case_fails_a_diagnosis_marked_unsure():
+    c = case(NO_URL)
+    result = await run_case(c, settings(), models=look("It is healthy.", NO_ACTION))
+    assert result.passed and result.diagnosis is not None
+    diagnosis = result.diagnosis.model_copy(update={"unsure": True})
+    assert score(c, result.model_copy(update={"diagnosis": diagnosis})).passed is False
+
+
+@pytest.mark.parametrize(
+    "cause",
+    [
+        "The posts API fails with an unhandled error, though the container looks healthy.",
+        "Every page answers 500 on an unhandled error reading 'slug', not a transient blip.",
+    ],
+)
+async def test_a_failing_case_passes_a_right_answer_that_mentions_the_healthy_container(cause):
+    models = look(cause, NO_ACTION, category="code")
+    result = await run_case(case(FAILING), settings(), models=models)
+    assert result.said_right and result.passed

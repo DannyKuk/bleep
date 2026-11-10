@@ -102,7 +102,8 @@ async def test_investigate_and_diagnose_of_a_look_read_its_url_checks_as_untrust
 
     await diagnose.make(env.deps)(state | {"investigate_rounds": 1})
     sent = "\n".join(str(m.content) for m in env.models.model.seen[1])
-    assert "## URL checks" in sent and "got 502" in sent
+    assert "URL checks, which Bleep ran" in sent and "got 502" in sent
+    assert "## URL checks" not in sent  # a label line, not a heading, in Diagnose
     assert "a failed URL check or errors in its own logs is a failure" in sent
     assert "no URLs in Bleep's settings" in sent and "no URLs in Bleep's settings" in task
 
@@ -117,7 +118,7 @@ async def test_diagnose_after_a_fix_leaves_the_looks_url_checks_out(tmp_path):
 
     await diagnose.make(env.deps)(state | {"investigate_rounds": 1, "verify_loops": 1})
     sent = "\n".join(str(m.content) for m in env.models.model.seen[0])
-    assert "## URL checks" not in sent and "got 502" not in sent
+    assert "URL checks, which Bleep ran" not in sent and "got 502" not in sent
 
 
 async def test_investigate_of_a_failure_has_no_url_checks_section(tmp_path):

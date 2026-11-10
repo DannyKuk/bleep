@@ -268,6 +268,13 @@ def word_hits(text: str, words: Sequence[str]) -> list[str]:
     return [w for w in words if _word_pattern(w).search(text)]
 
 
+def without_words(text: str, words: Sequence[str]) -> str:
+    """`text` with every use of `words` that `word_hits` finds taken out."""
+    for word in words:
+        text = _word_pattern(word).sub(" ", text)
+    return text
+
+
 def _word_pattern(word: str) -> re.Pattern[str]:
     parts = [re.escape(part) for part in re.split(r"[\s_-]+", word.strip()) if part]
     body = r"[\s_-]+".join(parts)
