@@ -322,8 +322,8 @@ class ReloadingTracer:
 
 
 def _built(settings: TracingSettings) -> AnyTracer:
-    """`build_tracer`, or tracing off when it fails: never trace on with a key that was replaced
-    or cleared."""
+    """`build_tracer`, or tracing off when it fails: never trace on with a key that was
+    cleared."""
     try:
         return build_tracer(settings)
     except SettingsError as missing:
