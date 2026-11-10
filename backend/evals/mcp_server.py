@@ -76,7 +76,7 @@ class ServedMcp:
 
     fixture: McpFixture
     transport: httpx.AsyncBaseTransport
-    purpose: str = ""  # what the plugin's settings say the server is for (#370)
+    purpose: str = ""
     calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
     def plugins(self, guard_log: GuardLogger | None = None) -> PluginRegistry:

@@ -40,6 +40,7 @@ from bleep.tools.registry import ToolBriefing, ToolContext
 
 log = logging.getLogger(__name__)
 
+MCP_TOOLS_SHOWN = 20  # read tools of the MCP server named in the prompt, at most
 SUMMARY_CHARS = 160  # the first line of a result, as the live view shows it
 CUT_NOTE_CHARS = 40  # room for the guard's "[… N chars cut]" line
 UNWRAP_CHARS = 4 * MAX_CHARS  # longer output is not a guarded one: guard it whole, no regex pass
@@ -235,6 +236,15 @@ def _opening(
     return [HumanMessage(again)]
 
 
+def _tool_names(names: tuple[str, ...]) -> str:
+    """The first `MCP_TOOLS_SHOWN` read tools by name, and how many more there are: all 50 a
+    person may list, at up to 128 characters, would add about 7 KB to every round, and
+    `mcp_tools` lists them all."""
+    shown = ", ".join(f"`{name}`" for name in names[:MCP_TOOLS_SHOWN])
+    left = len(names) - MCP_TOOLS_SHOWN
+    return f"{shown}, and {left} more" if left > 0 else shown
+
+
 def _mcp_section(briefings: list[ToolBriefing]) -> str:
     """What the person wrote about the MCP server and the read tools it may run, set apart from
     the text before it; empty without the plugin, so the prompt is then as it was before #370.
@@ -244,13 +254,13 @@ def _mcp_section(briefings: list[ToolBriefing]) -> str:
         + prompts.load(
             "graph/investigate_mcp",
             purpose=b.purpose,
-            tools=", ".join(f"`{name}`" for name in b.tools),
+            tools=_tool_names(b.tools),
         ).strip()
         for b in briefings
     )
 
 
-def _task(state: IncidentState, limit: int, clock: Callable[[], datetime], mcp: str = "") -> str:
+def _task(state: IncidentState, limit: int, clock: Callable[[], datetime], mcp: str) -> str:
     subject = state["subject"]
     context = state.get("context")
     if context is None:

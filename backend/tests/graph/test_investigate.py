@@ -418,22 +418,60 @@ async def test_with_the_plugin_on_the_prompt_names_its_purpose_and_read_tools(tm
 
 
 @pytest.mark.parametrize(
-    "plugin",
+    ("settings", "on"),
     [
-        pytest.param(None, id="no plugin"),
-        pytest.param({**ON, "purpose": ""}, id="on without a purpose"),
-        pytest.param({"purpose": PURPOSE}, id="on without read tools"),
-        pytest.param(ON, id="switched off"),
+        pytest.param(None, True, id="no plugin"),
+        pytest.param({**ON, "purpose": ""}, True, id="on without a purpose"),
+        pytest.param({"purpose": PURPOSE}, True, id="on without read tools"),
+        pytest.param(ON, False, id="switched off"),
     ],
 )
-async def test_without_a_purpose_to_tell_the_prompt_is_byte_for_byte_as_before(tmp_path, plugin):
+async def test_without_a_purpose_to_tell_the_prompt_is_byte_for_byte_as_before(
+    tmp_path, settings, on
+):
     before, state = await setup(tmp_path / "before", [DONE])
     await run(before, state)
     env, state = await setup(tmp_path / "after", [DONE])
-    if plugin is not None:
-        with_mcp(env, plugin, on=plugin is not ON)
+    if settings is not None:
+        with_mcp(env, settings, on=on)
 
     await run(env, state)
 
     assert task(env) == task(before)
     assert "MCP" not in task(env)
+
+
+async def test_a_long_list_of_read_tools_names_the_first_twenty_and_counts_the_rest(tmp_path):
+    names = [f"tool_{n:02d}" for n in range(25)]
+    env, state = await setup(tmp_path, [DONE])
+    with_mcp(env, {"purpose": PURPOSE, "read_tools": names})
+
+    await run(env, state)
+
+    sent = task(env)
+    listed = ", ".join(f"`{name}`" for name in names[:20])
+    assert f"The read tools you may run: {listed}, and 5 more." in sent
+    assert "tool_20" not in sent
+
+
+async def test_twenty_read_tools_are_all_named_without_a_count(tmp_path):
+    names = [f"tool_{n:02d}" for n in range(20)]
+    env, state = await setup(tmp_path, [DONE])
+    with_mcp(env, {"purpose": PURPOSE, "read_tools": names})
+
+    await run(env, state)
+
+    listed = ", ".join(f"`{name}`" for name in names)
+    assert f"The read tools you may run: {listed}. `mcp_tools` lists" in task(env)
+
+
+@pytest.mark.parametrize(
+    "purpose", ["Runs {mcp} and {budget}", "Braces } { and {{double}}", "{mcp}"]
+)
+async def test_a_purpose_with_braces_reaches_the_prompt_as_written(tmp_path, purpose):
+    env, state = await setup(tmp_path, [DONE])
+    with_mcp(env, {"purpose": purpose, "read_tools": ["list_applications"]})
+
+    await run(env, state)
+
+    assert f"in the words of the person who set Bleep up: {purpose}\n" in task(env)

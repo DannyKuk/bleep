@@ -548,6 +548,7 @@ async def test_the_purpose_is_stored_and_shown_with_the_settings_and_its_cap_in_
     schema = view.settings_schema["properties"]["purpose"]
     assert (schema["type"], schema["maxLength"], schema["default"]) == ("string", 200, "")
     assert schema["examples"] == [PURPOSE]
+    assert "Only used once read tools are listed" in schema["description"]
     assert find_secrets({"purpose": PURPOSE}, allowed=McpSettings.model_fields) == []
 
 

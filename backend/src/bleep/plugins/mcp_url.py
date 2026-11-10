@@ -113,7 +113,8 @@ class McpSettings(BaseModel):
         examples=["Manages the Coolify server: apps, deployments, env settings"],
         description=(
             "What the server is for, in a line: Investigate tells the model, so it knows when"
-            " asking the server is worth a call. Your own words, not the server's."
+            " asking the server is worth a call. Your own words, not the server's. Only used once"
+            " read tools are listed: with none, Investigate is not told."
         ),
     )
 
