@@ -1,0 +1,25 @@
+# 22 queries over the chunks of docs/*.md (ids from `measure.py --list-chunks`): 15 in English, as
+# the model writes them while it investigates, and 7 in German, as a person would. Each names the
+# one chunk that answers it. Written before any embedder was run on them.
+- {lang: en, chunk: worker-README.md#1, query: "worker container exits immediately with exit code 1 after a deploy, log says an environment variable is missing"}
+- {lang: en, chunk: proxy-runbook.md#1, query: "website shows an expired TLS certificate error, how is the certificate renewed"}
+- {lang: en, chunk: proxy-runbook.md#2, query: "users get 502 Bad Gateway after a new release, what to check"}
+- {lang: en, chunk: shop-README.de.md#3, query: "shop web container is unhealthy although the app itself is running, what does the health check depend on"}
+- {lang: en, chunk: worker-README.md#3, query: "worker container killed by the kernel for using too much memory, restarted by docker"}
+- {lang: en, chunk: backup-README.md#4, query: "restic backup fails with repository is already locked"}
+- {lang: en, chunk: cloud-betrieb.md#6, query: "files in the cloud app are locked and uploads fail with 423, stale file locks"}
+- {lang: en, chunk: cloud-betrieb.md#2, query: "everyone sees that the instance is in maintenance mode after a failed update"}
+- {lang: en, chunk: proxy-runbook.md#4, query: "413 Request Entity Too Large on file upload"}
+- {lang: en, chunk: cloud-betrieb.md#5, query: "disk is full on the nextcloud data volume, what takes the space and how to clean up"}
+- {lang: en, chunk: worker-README.md#2, query: "failed jobs end up in a dead letter list, how to requeue them"}
+- {lang: en, chunk: shop-README.de.md#1, query: "how to stop the shop without deleting the database volume, and do containers come back after a server reboot"}
+- {lang: en, chunk: proxy-runbook.md#3, query: "nginx container will not start after a config change, how to test the config safely before reloading"}
+- {lang: en, chunk: backup-README.md#3, query: "how do I restore the latest snapshot"}
+- {lang: en, chunk: cloud-betrieb.md#3, query: "login redirect loop behind the reverse proxy and untrusted domain warning"}
+- {lang: de, chunk: shop-README.de.md#2, query: "Kunden werden nach jedem Neustart aus dem Warenkorb geworfen, welche Einstellung fehlt"}
+- {lang: de, chunk: backup-README.md#2, query: "Wie lange werden die Backups aufbewahrt und wann wird aufgeräumt"}
+- {lang: de, chunk: worker-README.md#5, query: "Worker wird mitten im Job mit SIGKILL beendet, wie lange wartet Docker beim Stoppen"}
+- {lang: de, chunk: cloud-betrieb.md#1, query: "Die Admin-Seite zeigt Letzter Job vor Stunden, Hintergrundjobs laufen nicht"}
+- {lang: de, chunk: proxy-runbook.md#5, query: "viele 429 Fehler, eine IP sperren, Request-Limit pro Sekunde"}
+- {lang: de, chunk: shop-README.de.md#4, query: "Datenbank-Migration ist abgebrochen, wie starte ich sie nochmal"}
+- {lang: de, chunk: backup-README.md#5, query: "Backup ist fehlgeschlagen aber niemand hat eine Mail bekommen"}
