@@ -183,8 +183,9 @@ describe("secrets on the settings page", () => {
       ...secretViews().slice(1),
     ]);
     render(<SettingsPage />);
-    const badge = (await screen.findByText("env OPENROUTER_API_KEY")).closest("span");
-    expect(badge).toHaveTextContent("Set on the dashboard: env OPENROUTER_API_KEY");
+    const key = await screen.findByRole("group", { name: "OPENROUTER_API_KEY" });
+    expect(key).toHaveTextContent("Set on the dashboard");
+    expect(key).not.toHaveTextContent("Set in .env");
   });
 
   it("sets a key, empties the input and shows it as set without ever holding the value", async () => {

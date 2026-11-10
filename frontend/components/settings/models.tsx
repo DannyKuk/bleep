@@ -1,57 +1,60 @@
-import Link from "next/link";
+"use client";
 
-import { Fact, SecretBadge } from "@/components/settings/secret";
-import type { ModelChoice, SecretStatus } from "@/lib/settings-types";
+import {
+  envFields,
+  type Field,
+  type PanelSecrets,
+  SecretRows,
+  SectionForm,
+} from "@/components/settings/section-form";
+import type { SettingsUpdate, SettingsView } from "@/lib/settings-types";
 
-const PROVIDERS: Record<ModelChoice["provider"], string> = {
-  openrouter: "OpenRouter",
-  local: "Local (OpenAI-compatible server)",
-};
+export const MODEL_KEYS = ["OPENROUTER_API_KEY", "LOCAL_BASE_URL"] as const;
 
-/** The models in force, read-only: the model choice and the budgets are changed in the dev panel. */
+const FIELDS: Field[] = [
+  {
+    name: "provider",
+    label: "Provider",
+    env: "LLM_PROVIDER",
+    options: [
+      { value: "openrouter", label: "OpenRouter" },
+      { value: "local", label: "Local (OpenAI-compatible server)" },
+    ],
+  },
+  { name: "model", label: "Model", env: "LLM_MODEL" },
+  {
+    name: "cheap_model",
+    label: "Cheap model",
+    env: "LLM_CHEAP_MODEL",
+    hint: "Writes the one-line recovery explanations.",
+  },
+  { name: "local_model", label: "Local model", env: "LOCAL_MODEL" },
+];
+
+/**
+ * Which models Bleep calls, and the key and address it reaches them with. A change applies at
+ * the next model call. A field the environment sets wins and has no input (#372).
+ */
 export function ModelSettings({
-  models,
-  apiKey,
-  keySource,
+  view,
+  onSave,
+  secrets,
 }: {
-  models: ModelChoice;
-  apiKey: SecretStatus;
-  /** Where the key is kept, from `GET /api/secrets`. */
-  keySource?: "env" | "dashboard" | null;
+  view: SettingsView;
+  onSave: (update: SettingsUpdate) => Promise<unknown>;
+  secrets?: PanelSecrets;
 }) {
-  const local = models.provider === "local";
   return (
-    <div className="flex flex-col gap-3">
-      <dl className="flex flex-col gap-1.5">
-        <Fact label="Provider">{PROVIDERS[models.provider]}</Fact>
-        {local ? (
-          <Fact label="Model">
-            <code className="font-mono">{models.local_model}</code>
-          </Fact>
-        ) : (
-          <>
-            <Fact label="Model">
-              <code className="font-mono">{models.model}</code>
-            </Fact>
-            <Fact label="Cheap model">
-              <code className="font-mono">{models.cheap_model}</code>
-            </Fact>
-          </>
-        )}
-        <Fact label="API key">
-          <SecretBadge secret={apiKey} source={keySource} />
-          {local && (
-            <span className="ml-2 text-xs text-muted-foreground">(not needed locally)</span>
-          )}
-        </Fact>
-      </dl>
-      <p className="text-xs text-muted-foreground">
-        Change the models and the budgets in the{" "}
-        <Link href="/dev" className="underline underline-offset-2 hover:text-foreground">
-          dev panel
-        </Link>
-        .
-      </p>
+    <div className="flex flex-col gap-4">
+      <SectionForm
+        groups={[{ fields: FIELDS }]}
+        values={{ ...view.models }}
+        overrides={{ ...view.overrides.models }}
+        fromEnv={envFields(view.from_env, "models")}
+        what="Save the models"
+        onSave={(models) => onSave({ models })}
+      />
+      <SecretRows secrets={secrets} names={MODEL_KEYS} />
     </div>
   );
 }

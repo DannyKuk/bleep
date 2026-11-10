@@ -35,45 +35,39 @@ describe("DevPanel", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the models, budgets, prompts, cost and guard log when it is on", async () => {
+  it("shows the budgets, prompts, cost and guard log, and no model choice, when it is on", async () => {
     stubRoutes(json({ enabled: true }));
     render(<DevPanel />);
-    for (const title of ["Models", "Budgets", "Prompts", "Cost", "Guard log"]) {
+    for (const title of ["Budgets", "Prompts", "Cost", "Guard log"]) {
       expect(await screen.findByRole("region", { name: title })).toBeInTheDocument();
     }
-    expect(await screen.findByLabelText("Model")).toHaveValue("openai/gpt-6-luna");
+    expect(screen.queryByRole("region", { name: "Models" })).toBeNull();
+    expect(screen.queryByLabelText("Provider")).toBeNull();
     expect(await screen.findByRole("textbox", { name: /Text of/ })).toBeInTheDocument();
   });
 
-  it("saves the budgets from the view the models' save returned, one save at a time", async () => {
+  it("builds each budget save from the view the one before returned", async () => {
     const fetchMock = stubRoutes(json({ enabled: true }));
-    const afterModels = settingsView({
+    const afterFirst = settingsView({
       version: "v2",
-      overrides: { models: { provider: "local" } },
+      budgets: { ...BUDGETS, replans: 1 },
+      overrides: { budgets: { replans: 1 } },
     });
     render(<DevPanel />);
-    const provider = await screen.findByLabelText("Provider");
+    const replans = await screen.findByLabelText("Trips back to Propose per run");
 
-    fetchMock.mockImplementation(async (input, init) => {
-      const path = String(input);
-      if (path === "/api/settings" && init?.method === "PUT") return json(afterModels);
-      if (path === "/api/settings") return json(settingsView());
-      if (path === "/api/dev/prompts") return json([prompt()]);
-      if (path.startsWith("/api/dev/costs"))
-        return json({
-          incidents: [],
-          days: [],
-          daily_cap_usd: 1,
-          spent_today_usd: 0,
-          unpriced_today: 0,
-        });
-      return json([]);
-    });
-    await userEvent.selectOptions(provider, "local");
-    await userEvent.click(screen.getByRole("button", { name: "Save the models" }));
-    const replans = screen.getByLabelText("Trips back to Propose per run");
+    const read = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (input, init) =>
+      String(input) === "/api/settings" && init?.method === "PUT"
+        ? json(afterFirst)
+        : (read as typeof fetch)(input, init),
+    );
     await userEvent.clear(replans);
     await userEvent.type(replans, "1");
+    await userEvent.click(screen.getByRole("button", { name: "Save the budgets" }));
+    const cap = screen.getByLabelText("Daily cost cap (USD)");
+    await userEvent.clear(cap);
+    await userEvent.type(cap, "2");
     await userEvent.click(screen.getByRole("button", { name: "Save the budgets" }));
 
     const puts = fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT");
@@ -81,6 +75,9 @@ describe("DevPanel", () => {
       { "if-match": '"v1"' },
       { "if-match": '"v2"' },
     ]);
+    expect(JSON.parse(String(puts[1][1]?.body))).toEqual({
+      budgets: { replans: 1, daily_cost_usd: 2 },
+    });
   });
 
   it("after a 409 keeps only the person's edits, so a re-save never puts back an old value", async () => {

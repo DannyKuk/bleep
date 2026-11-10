@@ -68,6 +68,26 @@ export interface ModelChoice {
   local_model: string;
 }
 
+export type EmbeddingsProvider = "local" | "openai";
+export type TracingKind = "off" | "langfuse" | "langsmith";
+
+/** The embedder in force: `model` is the endpoint's, `min_score` null the model's own cut-off. */
+export interface EmbeddingsChoice {
+  provider: EmbeddingsProvider;
+  model: string | null;
+  min_score: number | null;
+}
+
+/** The tracer in force, without its keys. An address the env decides is only its origin. */
+export interface TracingChoice {
+  tracing: TracingKind;
+  langfuse_base_url: string;
+  langfuse_ui_url: string;
+  langfuse_project_id: string | null;
+  langsmith_endpoint: string | null;
+  langsmith_project: string;
+}
+
 export interface Thresholds {
   container_grace_s: number;
   repeated_deaths: number;
@@ -103,7 +123,10 @@ export interface SettingsOverrides {
   thresholds?: Partial<Thresholds>;
   general?: GeneralOverrides;
   hosts?: Record<string, HostOverrides>;
-  [section: string]: unknown; // models and budgets, which the dev panel edits
+  models?: Partial<ModelChoice>;
+  embeddings?: Partial<EmbeddingsChoice>;
+  tracing?: Partial<TracingChoice>;
+  [section: string]: unknown; // budgets, which the dev panel edits
 }
 
 export interface SettingsView {
@@ -118,6 +141,12 @@ export interface SettingsView {
   timezone: string | null;
   /** The language Bleep writes for the person in: the one chosen here, else English. */
   language: Language;
+  embeddings: EmbeddingsChoice;
+  tracing: TracingChoice;
+  /** Every `section.field` the env decides (`models.provider`): it wins, and cannot be changed. */
+  from_env: string[];
+  /** Sections saved here that are in force only after a restart: `embeddings`, `tracing`. */
+  restart_needed: string[];
   overrides: SettingsOverrides;
   /** Of `overrides`; a `PUT /api/settings` built from this view sends it back (`putSettings`). */
   version: string;
@@ -135,6 +164,9 @@ export interface GeneralOverrides {
 export interface SettingsUpdate {
   thresholds?: Partial<Thresholds>;
   general?: GeneralOverrides;
+  models?: Partial<ModelChoice>;
+  embeddings?: Partial<EmbeddingsChoice>;
+  tracing?: Partial<TracingChoice>;
   hosts?: Record<string, HostOverrides>;
 }
 

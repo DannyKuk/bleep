@@ -3,7 +3,7 @@
 import { Loader2, RotateCcw, Save } from "lucide-react";
 import { useId } from "react";
 
-import { type SectionFormProps, useDraft, useSectionSave } from "@/components/dev/models";
+import { type SectionFormProps, useDraft, useSectionSave } from "@/components/dev/section";
 import { Failed } from "@/components/dev/status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

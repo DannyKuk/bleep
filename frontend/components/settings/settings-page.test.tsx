@@ -47,8 +47,8 @@ describe("SettingsPage", () => {
   it("shows a key set in .env as set there", async () => {
     backend();
     render(<SettingsPage />);
-    expect(await screen.findByText("Set in .env:")).toBeInTheDocument();
-    expect(screen.getByText("env OPENROUTER_API_KEY")).toBeInTheDocument();
+    const key = await screen.findByRole("group", { name: "OPENROUTER_API_KEY" });
+    expect(key).toHaveTextContent("Set in .env");
     expect(screen.getByText("env TELEGRAM_BOT_TOKEN").closest("span")).toHaveTextContent(
       "Set: env TELEGRAM_BOT_TOKEN",
     );
