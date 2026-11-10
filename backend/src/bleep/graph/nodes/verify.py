@@ -34,6 +34,8 @@ stop, it asks for that evidence, not for a new fix); otherwise the outcome is `u
 so it is at once when there was nothing to check. Nothing here says "fixed": that word needs a
 passing check. The clock that waits is `deps.sleep`, so tests never sleep.
 Each check publishes a `verification` event; the notifier hears the round's final result once.
+`check_look` checks a look's service once, with these checks, for a look on request that ended
+with no action (#421); Report decides with it whether the look ends `healthy`.
 """
 
 import logging
@@ -51,7 +53,7 @@ from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.plan_check import coolify_members, host_urls
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.coolify_names import COOLIFY_UUID, coolify_container_name
-from bleep.hosts.discovery import expects_exit, is_finished, service_key
+from bleep.hosts.discovery import expects_exit, is_finished, is_self, service_key
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.hosts.readings import past_threshold, readings
 from bleep.hosts.shell import HostUnreadable, host_basics
@@ -91,6 +93,7 @@ SEEN = "when Verify first saw it running"
 RESTARTED = STARTED_AFTER_FIX[0] + " (restart count {now}, {then} " + SEEN + ")"
 STARTED_AGAIN = STARTED_AFTER_FIX[1] + " (a later start time than " + SEEN + ")"
 CAME_UP = "first seen running at this check; it has to stay up until the next one"
+NOT_GATHERED_RUNNING = "not running when Bleep gathered the context"  # a look's one check, #421
 REDEPLOY_RESTARTED = (
     STARTED_AFTER_FIX[0] + " ({name}, a container the redeploy made, restart count {now})"
 )
@@ -639,39 +642,79 @@ def _describe(result: VerificationResult) -> str:
     return "\n".join(f"- {c.kind} {c.target}: {c.detail}" for c in result.checks if not c.ok)
 
 
-def make(deps: GraphDeps) -> Node:
-    async def one_check(
-        host_id: str,
-        plan: _Plan,
-        redeploys: list[_Redeploy],
-        first_running: dict[str, ContainerSummary],
-        attempt: int,
-        calm: set[str],
-    ) -> VerificationResult:
-        owned = deps.http is None
-        client = deps.http or httpx.AsyncClient()
-        try:
-            checks = [await _check_application(deps, host_id, r) for r in redeploys]
+async def _one_check(
+    deps: GraphDeps,
+    host_id: str,
+    plan: _Plan,
+    redeploys: list[_Redeploy],
+    first_running: dict[str, ContainerSummary],
+    attempt: int,
+    calm: set[str],
+) -> VerificationResult:
+    owned = deps.http is None
+    client = deps.http or httpx.AsyncClient()
+    try:
+        checks = [await _check_application(deps, host_id, r) for r in redeploys]
+        checks += [
+            await _check_container(deps, host_id, name, first_running) for name in plan.containers
+        ]
+        checks += [await _check_stopped(deps, host_id, name) for name in plan.stopped]
+        if plan.unproven:
             checks += [
-                await _check_container(deps, host_id, name, first_running)
-                for name in plan.containers
+                Check(kind="symptom", target=name, ok=False, detail=UNPROVEN)
+                for name in plan.stopped
             ]
-            checks += [await _check_stopped(deps, host_id, name) for name in plan.stopped]
-            if plan.unproven:
-                checks += [
-                    Check(kind="symptom", target=name, ok=False, detail=UNPROVEN)
-                    for name in plan.stopped
-                ]
-            checks += [await _check_url(client, cfg) for cfg in plan.urls]
-            if plan.readings:
-                checks += await _check_host(deps, host_id, plan.readings, calm)
-            if plan.blind:
-                checks.append(Check(kind="symptom", target=host_id, ok=False, detail=NOT_REREAD))
-        finally:
-            if owned:
-                await client.aclose()
-        return VerificationResult(ok=all(c.ok for c in checks), checks=checks, attempt=attempt)
+        checks += [await _check_url(client, cfg) for cfg in plan.urls]
+        if plan.readings:
+            checks += await _check_host(deps, host_id, plan.readings, calm)
+        if plan.blind:
+            checks.append(Check(kind="symptom", target=host_id, ok=False, detail=NOT_REREAD))
+    finally:
+        if owned:
+            await client.aclose()
+    return VerificationResult(ok=all(c.ok for c in checks), checks=checks, attempt=attempt)
 
+
+async def check_look(deps: GraphDeps, state: IncidentState) -> VerificationResult:
+    """One check of a look's service, for a look on request that ended with no action (#421):
+    at once, with no wait, no second check and no model call, by Verify's own checks.
+
+    Every container of the service is checked, never one the plan names instead: Bleep's own
+    are left out, and so is a job that finished as its service allows (`_finished_job`). Each
+    is judged against Gather's reading of it, so one that was not running then, or was
+    restarted or started again since (a crash-looper caught while it is up), fails as one
+    Verify first sees running does. The URLs are the service's from the hosts file, plus those
+    of the plan that are among the host's health checks; a model's URL is never requested.
+    Nothing to check is no pass."""
+    subject, proposal = state["subject"], state.get("proposal")
+    service = deps.registry.service(subject.service_id) if subject.service_id else None
+    if service is None:
+        return VerificationResult(ok=False)
+    host_id = subject.host_id
+    containers = [
+        c.name
+        for c in service.containers
+        if not is_self(c.labels) and _finished_job(deps, host_id, c) is None
+    ]
+    known = host_urls(deps.registry, host_id)
+    planned = [known[u] for u in proposal.verification.urls if u in known] if proposal else []
+    urls = {_url_key(cfg.url): cfg for cfg in [*service.urls, *planned]}
+    plan = _Plan(containers, list(urls.values()), [])
+    if plan.empty():
+        return VerificationResult(ok=False)
+    context = state.get("context")
+    gathered = context.containers if context is not None else []
+    first_running = {c.name: c for c in gathered if c.state == "running"}
+    result = await _one_check(deps, host_id, plan, [], first_running, 1, set())
+    # There is no next check to stay up until: say what the look knows instead.
+    checks = [
+        c.model_copy(update={"detail": NOT_GATHERED_RUNNING}) if c.detail == CAME_UP else c
+        for c in result.checks
+    ]
+    return result.model_copy(update={"checks": checks})
+
+
+def make(deps: GraphDeps) -> Node:
     async def verify(state: IncidentState) -> dict:
         incident_id = state["incident_id"]
         subject = state["subject"]
@@ -681,17 +724,17 @@ def make(deps: GraphDeps) -> Node:
         result = VerificationResult(ok=False)
         if plan.empty() and not redeploys:
             # Nothing to look at is not a pass, and another look at nothing would not help either.
-            await deps.bus.publish(incident_id, "verification", _payload(result))
+            await deps.bus.publish(incident_id, "verification", payload(result))
         else:
             first_running = await _first_reads(deps, subject.host_id, plan.containers)
             await _first_app_reads(deps, subject.host_id, redeploys)
             await deps.sleep(SETTLE_S)
             calm: set[str] = set()
             for attempt in range(1, CHECKS + 1):
-                result = await one_check(
-                    subject.host_id, plan, redeploys, first_running, attempt, calm
+                result = await _one_check(
+                    deps, subject.host_id, plan, redeploys, first_running, attempt, calm
                 )
-                await deps.bus.publish(incident_id, "verification", _payload(result))
+                await deps.bus.publish(incident_id, "verification", payload(result))
                 if result.ok or attempt == CHECKS:
                     break
                 await deps.sleep(RECHECK_S)
@@ -729,7 +772,8 @@ def make(deps: GraphDeps) -> Node:
     return verify
 
 
-def _payload(result: VerificationResult) -> dict:
+def payload(result: VerificationResult) -> dict:
+    """A check as its `verification` event carries it."""
     return {
         "ok": result.ok,
         "attempt": result.attempt,

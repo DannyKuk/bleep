@@ -46,6 +46,7 @@ from bleep.schemas.incidents import (
     Incident,
     IncidentEvent,
     IncidentStatus,
+    Signal,
     Subject,
 )
 from bleep.schemas.settings import (
@@ -73,6 +74,8 @@ class Incidents(Protocol):
     async def get(self, incident_id: str) -> Incident | None: ...
 
     async def set_status(self, incident_id: str, status: IncidentStatus) -> None: ...
+
+    async def signals(self, incident_id: str) -> list[Signal]: ...
 
 
 class IncidentEvents(Protocol):

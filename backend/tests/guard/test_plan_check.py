@@ -260,7 +260,7 @@ async def test_a_verification_url_must_be_a_health_check_of_the_host(tmp_path):
     )
     assert (
         check_plan(nothing_runs, env.registry, CORE, "a", incident_containers=SHOP_WEB) == []
-    )  # Verify never runs for it
+    )  # Verify never runs it, and Propose drops such a check in code (#421)
 
 
 async def test_a_verification_container_must_be_on_the_host(tmp_path):

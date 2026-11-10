@@ -6,6 +6,7 @@ import asyncio
 from datetime import timedelta
 from typing import Literal
 
+from bleep.hosts.registry import Registry
 from bleep.incidents.looks import Looks
 from bleep.incidents.quiet import QuietStore
 from bleep.incidents.repository import Repeats
@@ -13,8 +14,8 @@ from bleep.llm.usage import CostLedger
 from bleep.schemas.incidents import Incident, Signal, Subject
 from bleep.schemas.services import Service
 from bleep.schemas.settings import Budgets
-from fakes import compose_labels
-from graph_env import T0, box, graph_env
+from fakes import FakeEngine, FakeShell, compose_labels, ssh_host
+from graph_env import T0, box, graph_env, shop_host
 
 VIA: tuple[Literal["telegram", "dashboard"], ...] = ("telegram", "dashboard")
 
@@ -27,8 +28,8 @@ class Runs:
         self.started.append(incident.id)
 
 
-async def rig(tmp_path, *, budgets: Budgets | None = None):
-    env = await graph_env(tmp_path)
+async def rig(tmp_path, *, budgets: Budgets | None = None, engine: FakeEngine | None = None):
+    env = await graph_env(tmp_path, engine=engine)
     quiet, runs = QuietStore(env.db, clock=lambda: T0), Runs()
     looks = Looks(
         env.repo,
@@ -54,7 +55,7 @@ async def test_a_look_opens_one_incident_with_a_look_signal_and_starts_its_run(t
     assert look.outcome == "opened" and look.incident is not None
     assert (look.name, look.host_id) == ("shop", "a")
     assert look.incident.short_name == "shop #1"
-    assert look.incident.title == f"look requested on {env.service_id('shop')}"
+    assert look.incident.title == "look requested on shop"  # the name, not the id (#421)
     [signal] = await env.repo.signals(look.incident.id)
     assert (signal.kind, signal.detail, signal.container) == (
         "look_requested",
@@ -63,6 +64,75 @@ async def test_a_look_opens_one_incident_with_a_look_signal_and_starts_its_run(t
     )
     assert runs.started == [look.incident.id]
     assert len(await env.repo.list()) == 1
+
+
+async def test_a_look_at_a_coolify_app_is_titled_by_its_name_not_its_uuid(tmp_path):
+    uuid = "vclhwoxxy60z4vk70g0vpesq"
+    labels = {
+        "coolify.type": "application",
+        "coolify.applicationUuid": uuid,
+        "coolify.resourceName": "dkwebsite",
+    }
+    engine = FakeEngine("a", [box(f"{uuid}-120000000000", labels=labels)])
+    env, looks, _, _ = await rig(tmp_path, engine=engine)
+    [service] = env.registry.services("a")
+    assert service.id == f"a/{uuid}"
+
+    look = await looks.look(service.id, "telegram")
+
+    assert look.incident is not None
+    assert look.incident.title == "look requested on dkwebsite"
+    assert look.incident.short_name == "dkwebsite #1"
+
+
+async def test_a_look_names_the_host_when_another_hosts_service_has_the_same_name(tmp_path):
+    env, looks, _, _ = await rig(tmp_path)
+    other = FakeEngine("laptop", [box("shop-web-1", "shop")])
+
+    async def connect(host):
+        return (env.shell, env.engine) if host.id == "a" else (FakeShell("linux"), other)
+
+    env.registry = Registry([shop_host(), ssh_host(id="laptop", name="Laptop")], connect)
+    await env.registry.start()
+    looks.registry = env.registry
+
+    look = await looks.look(env.service_id("shop"), "telegram")
+
+    assert look.incident is not None
+    assert look.incident.title == "look requested on shop on a"
+    assert look.incident.short_name == "shop #1"
+    blog = await looks.look(env.service_id("blog"), "telegram")  # no other host has a blog
+    assert blog.incident is not None and blog.incident.title == "look requested on blog"
+
+
+async def test_two_services_named_alike_on_one_host_keep_their_ids_in_a_looks_title(tmp_path):
+    engine = FakeEngine(
+        "a",
+        [box("shop-web-1", "shop"), box("shop", labels={}), box("blog-1", "blog")],
+    )
+    env, looks, _, _ = await rig(tmp_path, engine=engine)
+    compose, single = sorted(
+        (s for s in env.registry.services("a") if s.name == "shop"), key=lambda s: s.id
+    )
+    assert compose.id != single.id
+
+    first = await looks.look(compose.id, "telegram")
+    second = await looks.look(single.id, "telegram")
+
+    assert first.incident is not None and second.incident is not None
+    assert first.incident.title == f"look requested on {compose.id}"
+    assert second.incident.title == f"look requested on {single.id}"
+    assert first.incident.title != second.incident.title
+
+
+async def test_a_watcher_incident_keeps_its_title_by_service_id(tmp_path):
+    env, _, _, _ = await rig(tmp_path)
+    subject = shop(env)
+    died = Signal(subject=subject, kind="container_died", at=T0, container="shop-web-1")
+
+    incident, _ = await env.repo.open_or_attach(subject, [died], name="shop")
+
+    assert incident.title == f"container died on {env.service_id('shop')}"
 
 
 async def test_a_second_look_opens_nothing_and_names_the_open_one(tmp_path):

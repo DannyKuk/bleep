@@ -214,6 +214,7 @@ export interface ApprovalView {
 
 export type Outcome =
   | "resolved"
+  | "healthy"
   | "rejected"
   | "no_action"
   | "unverified"

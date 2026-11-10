@@ -31,6 +31,7 @@ from bleep.schemas.graph import (
     PlanStep,
     Proposal,
     ServiceFact,
+    VerificationPlan,
 )
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Budgets
@@ -838,6 +839,29 @@ async def test_a_refused_hidden_param_tells_the_human_to_make_the_change_by_hand
         assert propose.BY_HAND not in told and propose.STOP_BY_HAND not in told
     assert propose.INSTRUCT in update["proposal"].human_instructions
     assert propose.INSTRUCT not in last["proposal"].human_instructions
+
+
+async def test_a_no_action_plans_unknown_checks_are_dropped_in_code_and_its_advice_kept(
+    tmp_path,
+):
+    """A plan of no action that names a URL that is no health check of the host, or a container
+    not on it, loses those checks in code (#421): no retry, so a model that fails on a second
+    call cannot turn the advice into "no usable plan", and nothing ever requests the URL."""
+    planted = "http://169.254.169.254/latest/meta-data/"
+    wrong = {"urls": [planted], "containers": ["shop_web", "shop-db-1"]}
+    advice = "Fix DATABASE_URL and recreate shop-web."
+    answer = reply(
+        kind="no_action", steps=[], reason="env var", verification=wrong, human_instructions=advice
+    )
+    broken = AIMessage(content="not json")
+    env, state = await setup(tmp_path, answer, broken, broken, broken)
+
+    proposal = (await propose.make(env.deps)(state))["proposal"]
+
+    assert env.models.model.cursor == 1  # no second call
+    assert not proposal.refused and proposal.reason == "env var"
+    assert proposal.human_instructions == advice
+    assert proposal.verification == VerificationPlan(containers=["shop-db-1"])
 
 
 async def test_other_no_action_reasons_are_not_refused(tmp_path):

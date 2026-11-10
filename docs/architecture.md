@@ -218,7 +218,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **Each incident is one Telegram thread**: its short name (`shop #14`), an opener, replies to it, an emoji per kind of message, one end message that leads with the outcome, and "Again" for a repeat.
 - **"🤫 I'm on it" on the opener snoozes the service or host for 1 h, 4 h or until 08:00** through the dashboard's quiet path, and the incident ends as Quiet.
 - **What the person asks for in the chat comes back as one confirm button**, built by code from the checked action, never from the model's words; only the press changes something, a reply to a plan included (#402).
-- **"Look at shop-web again" opens an incident only from its confirm button**, through the watcher's path, so its plan still waits for a yes; a service with an open incident, a quiet one, an unknown one or a spent budget is answered and opens none (#403).
+- **"Look at shop-web again" opens an incident only from its confirm button**, through the watcher's path, so its plan still waits for a yes; a service with an open incident, a quiet one, an unknown one or a spent budget is answered and opens none (#403). A look that finds nothing to do is checked by code as Verify checks and ends `healthy` when every check passes (#421).
 - **The chat can be exported with how each message was read**, from a log kept in memory only, the person's words redacted, never raw (#411).
 - **Telegram's messages, buttons and the chat's fixed lines come in the chosen language**, English or German, each a template with a twin in `prompts/<area>/de/`; names, step lines and button data are the same in both (#375).
 

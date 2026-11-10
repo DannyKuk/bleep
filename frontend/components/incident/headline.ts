@@ -1,4 +1,4 @@
-import type { IncidentDetail, Outcome, Proposal, Subject } from "@/lib/api-types";
+import type { Incident, IncidentDetail, Outcome, Proposal, Subject } from "@/lib/api-types";
 import { showInvisible } from "@/lib/format";
 
 // Longer names are cut, so a label set on a host cannot fill the headline.
@@ -38,6 +38,17 @@ export function subjectName(subject: Subject): SubjectName {
     : { lead: "This service", name: "" };
 }
 
+/**
+ * The service a look on request found healthy (#421): its own name where the id has one, else the
+ * name its short name gives ("dkwebsite #3" names dkwebsite, a Coolify app's uuid does not), else
+ * "This service".
+ */
+export function lookedAt(incident: Pick<Incident, "subject" | "short_name">): SubjectName {
+  const named = subjectName(incident.subject);
+  const short = incident.short_name?.replace(/ #\d+$/, "") ?? "";
+  return named.name || !short ? named : { lead: "", name: shown(short) };
+}
+
 function shown(name: string): string {
   const visible = showInvisible(name);
   return visible.length > NAME_MAX ? `${visible.slice(0, NAME_MAX - 1)}…` : visible;
@@ -53,8 +64,10 @@ export function headlineText({ lead = "", name = "", text }: Headline): string {
   return `${lead}${name}${text}`;
 }
 
+// A healthy look's text follows the service's name (`lookedAt`).
 const CLOSED: Record<Outcome, string> = {
   resolved: "Fixed and checked.",
+  healthy: " looks healthy. Nothing to do.",
   rejected: "Okay, I left it as it is.",
   no_action: "I cannot fix this one. Here is what to do.",
   unverified: "I ran the plan, but could not confirm the fix.",
@@ -99,6 +112,7 @@ export function headline({
     case "failed":
       return say("I got stuck. This needs a look.");
     case "closed":
+      if (outcome === "healthy") return { ...lookedAt(incident), text: CLOSED.healthy };
       return say(outcome ? CLOSED[outcome] : "Closed.");
   }
 }

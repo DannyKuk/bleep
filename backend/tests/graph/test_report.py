@@ -1,7 +1,7 @@
 import json
 import threading
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, get_args
 
 import httpx
 import pytest
@@ -19,6 +19,7 @@ from bleep.schemas.graph import (
     Diagnosis,
     Evidence,
     GatherContext,
+    Outcome,
     PlanStep,
     Proposal,
     Report,
@@ -324,6 +325,7 @@ async def test_no_action_keeps_the_humans_instructions_as_a_follow_up_without_a_
 
 OUTCOMES = {
     "resolved": "Fixed and verified",
+    "healthy": "Healthy when checked, nothing to do",
     "unverified": "Action taken, not verified",
     "rejected": "Rejected, nothing was done",
     "no_action": "No action proposed, nothing was done",
@@ -415,6 +417,7 @@ def test_outcome_rules_hold():
 
 def test_every_outcome_has_its_fixed_text():
     assert report.OUTCOME_TEXT == OUTCOMES
+    assert set(OUTCOMES) == set(get_args(Outcome))
 
 
 async def test_a_plan_that_ran_before_a_rejected_one_is_unverified_not_nothing_done(tmp_path):

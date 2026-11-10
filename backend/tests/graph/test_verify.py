@@ -2021,3 +2021,42 @@ async def test_another_apps_container_named_like_this_one_is_not_replaced(tmp_pa
 
     checks = {c.target: (c.ok, c.detail) for c in update["verification"].checks}
     assert checks["evil-web0uuid-1"] == (False, "is exited")
+
+
+# --- one check of a look's service (#421); the look's cases are in test_look_healthy.py ---
+
+
+def looked(state: dict, gathered: list | None = None) -> dict:
+    plan = Proposal(kind="no_action", reason="r", verification=VerificationPlan(urls=[URL]))
+    return state | {"proposal": plan, "context": GatherContext(at=T0, containers=gathered or [])}
+
+
+async def test_a_looks_check_waits_for_nothing_and_reads_against_gathers_reading(tmp_path):
+    sleeps = Sleeps()
+    env, state = await setup(tmp_path, Replies(200), sleeps=sleeps)
+    gathered = env.registry.service(state["subject"].service_id).containers
+
+    result = await verify.check_look(env.deps, looked(state, gathered))
+
+    assert result.ok and result.attempt == 1
+    assert {c.target for c in result.checks} == {"shop-web-1", "shop-db-1", URL}
+    assert sleeps.waits == []
+
+
+async def test_a_looks_check_without_gathers_reading_proves_no_container_ran(tmp_path):
+    env, state = await setup(tmp_path, Replies(200))
+
+    result = await verify.check_look(env.deps, looked(state))
+
+    assert not result.ok
+    containers = [c for c in result.checks if c.kind == "container"]
+    assert {c.detail for c in containers} == {verify.NOT_GATHERED_RUNNING}
+
+
+async def test_a_looks_check_of_a_service_bleep_no_longer_knows_is_no_pass(tmp_path):
+    env, state = await setup(tmp_path, Replies(200))
+    gone = Subject(kind="service", host_id="a", service_id="a/compose:gone")
+
+    result = await verify.check_look(env.deps, looked(state) | {"subject": gone})
+
+    assert not result.ok and result.checks == []

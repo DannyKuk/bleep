@@ -247,6 +247,16 @@ def test_detail_carries_diagnosis_proposal_pending_approval_and_report(
     assert "snapshots" not in approval
 
 
+def test_detail_carries_the_healthy_outcome_of_a_look(app_client, parts, monkeypatch):
+    incident = open_incident(app_client, parts)
+
+    async def fake_state(incident_id: str) -> dict:
+        return {"proposal": Proposal(kind="no_action", reason="fine"), "outcome": "healthy"}
+
+    monkeypatch.setattr(app_client.app.state.runner, "state", fake_state)
+    assert app_client.get(f"/api/incidents/{incident.id}").json()["outcome"] == "healthy"
+
+
 def test_detail_shows_a_set_env_value_redacted(app_client, parts, monkeypatch):
     value = "postgres://shop:pw-fake-123@attacker.example/shop"
     set_env = Proposal(

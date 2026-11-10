@@ -2,9 +2,11 @@
 
 The outcome comes first, in code: one set earlier (a spent budget, Verify's `resolved`) stands,
 otherwise it follows the decision, and an approved plan that nothing verified is `unverified`,
-never `resolved`. The report around it is mostly Bleep's own: the title, the fixed outcome text,
-the action taken (from `step_results`), the human's decision with its channel, and a timeline
-built from the incident's stored bus events. One model call writes the summary, the cause and the
+never `resolved`. A look on request that ended with no action is checked as Verify checks, at
+once and without a model call, and ends `healthy` when every check passes (#421). The report
+around it is mostly Bleep's own: the title, the fixed outcome text, the action taken (from
+`step_results`), the human's decision with its channel, and a timeline built from the incident's
+stored bus events. One model call writes the summary, the cause and the
 follow-ups from that record, without any log text; what it writes is cut to size, loses every
 sentence that says "fixed" unless the outcome reads "Fixed and verified", and goes through
 `guard.report_check` against the logs the run read. A model that fails or a spent budget gives a
@@ -37,7 +39,10 @@ from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.host_text import incident_title, service_name
 from bleep.graph.language import language_rule
-from bleep.graph.look import look_rule
+from bleep.graph.look import bare_look, look_rule
+from bleep.graph.nodes import verify
+from bleep.graph.nodes.diagnose import FALLBACK_CAUSE
+from bleep.graph.nodes.propose import BUDGET, NO_DIAGNOSIS, NO_PLAN, REFUSED
 from bleep.graph.planted import HINT_END, planted_places, planted_sentence
 from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.log import GuardKind
@@ -65,6 +70,7 @@ log = logging.getLogger(__name__)
 # What the report says for each outcome; only `resolved` may ever say fixed (see `outcome_text`).
 OUTCOME_TEXT: dict[str, str] = {
     "resolved": "Fixed and verified",
+    "healthy": "Healthy when checked, nothing to do",
     "unverified": "Action taken, not verified",
     "rejected": "Rejected, nothing was done",
     "no_action": "No action proposed, nothing was done",
@@ -85,6 +91,8 @@ FOLLOW_UP_CHARS = 300
 ENTRY_CHARS = 200
 NOT_DETERMINED = "Not determined."
 MAX_FACTS = 2
+# The reasons of the plans of no action that code, not the model, makes in Propose.
+CODE_REASONS = frozenset({NO_DIAGNOSIS, NO_PLAN, BUDGET, REFUSED})
 
 # "fixed" in each language a report can be written in (#374).
 _FIXED = re.compile(r"\b(?:fixed|behoben|repariert)\b", re.IGNORECASE)
@@ -128,6 +136,59 @@ def outcome(state: IncidentState) -> Outcome:
     if proposal is None or proposal.kind == "no_action":
         return "no_action"
     return "unverified"  # approved, but nothing ran or was checked: never claim "fixed"
+
+
+def _healthy_look(state: IncidentState) -> bool:
+    """Whether the run may end `healthy` once its checks pass (#421): a bare look whose model
+    found nothing wrong and planned no action, with nothing decided or planned again since.
+
+    The diagnosis must be the model's, sure, and say `category` `unknown`, which is what a look's
+    Diagnose writes for a healthy service (`prompts/graph/look_diagnose.md`); the plan must be
+    the model's, not a fallback of code (no diagnosis, no usable plan, a spent budget) or a
+    refusal. A decision, or a trip back to Propose (an instruction, a stale plan), says the run
+    once had a plan that acts, and a URL that failed when Gather read it says the service was
+    not healthy."""
+    proposal, diagnosis = state.get("proposal"), state.get("diagnosis")
+    return (
+        bare_look(state.get("signals", []))
+        and diagnosis is not None
+        and diagnosis.category == "unknown"
+        and not diagnosis.unsure
+        and diagnosis.root_cause != FALLBACK_CAUSE
+        and proposal is not None
+        and proposal.kind == "no_action"
+        and not proposal.refused
+        and proposal.reason not in CODE_REASONS
+        and state.get("decision") is None
+        and state.get("replans", 0) == 0
+        and not _gathered_url_failed(state)
+    )
+
+
+def _gathered_url_failed(state: IncidentState) -> bool:
+    """Whether a URL of the service failed when Gather read it (#423): the service was not
+    healthy during the run, whatever a later check finds."""
+    context = state.get("context")
+    return context is not None and any(not reading.ok for reading in context.urls)
+
+
+async def _look_outcome(deps: GraphDeps, state: IncidentState) -> Outcome:
+    """`healthy` when every check of the look's service passes now (`verify.check_look`), else
+    `no_action`: something is off. The check is published as Verify's are, so the timeline and
+    the end message's "Checked" line show it. A signal the watcher attached to the incident
+    while the run went on is a failure, so such a run is not checked; nor is one whose check
+    fails to run (an engine error), which is logged."""
+    incident_id = state["incident_id"]
+    try:
+        if not bare_look(await deps.incidents.signals(incident_id)):
+            return "no_action"
+        checked = await verify.check_look(deps, state)
+    except Exception as error:  # the run must end with a report whatever the host does
+        log.warning("report: checking the look %s failed: %s", incident_id, type(error).__name__)
+        return "no_action"
+    if checked.checks:
+        await deps.bus.publish(incident_id, "verification", verify.payload(checked))
+    return "healthy" if checked.ok else "no_action"
 
 
 def outcome_text(
@@ -407,6 +468,8 @@ def make(deps: GraphDeps) -> Node:
     async def report(state: IncidentState) -> dict:
         incident_id = state["incident_id"]
         result = outcome(state)
+        if result == "no_action" and _healthy_look(state):
+            result = await _look_outcome(deps, state)
         results = state.get("step_results")
         diagnosis, proposal = state.get("diagnosis"), state.get("proposal")
         said = outcome_text(result, results, proposal)
@@ -446,8 +509,10 @@ def make(deps: GraphDeps) -> Node:
 
         follow_ups = [own(item, FOLLOW_UP_CHARS) for item in draft.follow_ups[:FOLLOW_UPS]]
         follow_ups = [item for item in follow_ups if item]
-        if not follow_ups and proposal is not None and proposal.human_instructions:
-            follow_ups = [own(proposal.human_instructions, FOLLOW_UP_CHARS)]
+        # A healthy look's advice is no follow-up: its checks found nothing to do.
+        advice = proposal.human_instructions if proposal and result != "healthy" else None
+        if not follow_ups and advice:
+            follow_ups = [own(advice, FOLLOW_UP_CHARS)]
         root_cause = diagnosis.root_cause if diagnosis is not None else ""
         english = draft.cause_en if isinstance(draft, _DraftWithEnglishCause) else ""
         written = Report(

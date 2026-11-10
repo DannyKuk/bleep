@@ -1,0 +1,1 @@
+✅ Angeschaut: {service} ist gesund

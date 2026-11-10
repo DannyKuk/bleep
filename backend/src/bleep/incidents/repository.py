@@ -175,13 +175,15 @@ class IncidentRepo:
         name: str | None = None,
         *,
         attach: bool = True,
+        title: str | None = None,
     ) -> tuple[Incident, bool]:
         """Attach `signals` to the subject's open incident, or open one; True when opened.
         With `attach` False an open incident takes nothing: it is returned as it is, and only a
         new one gets `signals` (a look on request, #403).
 
         A new incident gets its short name (`short_name`) from `name`, the service's name as the
-        dashboard shows it, when given.
+        dashboard shows it, when given, and its title from `title` when given (a look names its
+        service as the person knows it, #421), else from `build_title`.
 
         A new incident folds into the group of the latest finished one with its fold key, else
         into the group of `repeat_of` (a finished incident of another kind that the same failure
@@ -199,7 +201,7 @@ class IncidentRepo:
                     target = await self._open_target(conn, subject)
                     created = target is None
                     if target is None:
-                        target = await self._insert(conn, subject, signals, repeat_of, name)
+                        target = await self._insert(conn, subject, signals, repeat_of, name, title)
                     for signal in signals if created or attach else []:
                         await conn.execute(
                             "INSERT INTO incident_signals (incident_id, signal, at)"
@@ -248,11 +250,12 @@ class IncidentRepo:
         signals: list[Signal],
         repeat_of: str | None,
         name: str | None,
+        title: str | None = None,
     ) -> str:
         now = self.clock()
         incident_id = new_incident_id(now)
         key = fold_key(subject, signals)
-        title = build_title(subject, signals)
+        title = title or build_title(subject, signals)
         # A look is asked for, never a repeat: its opener always reaches the chat (#403).
         group = None if is_look(signals) else await self._group_to_join(conn, key, now, repeat_of)
         if group is not None:

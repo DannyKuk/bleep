@@ -69,13 +69,16 @@ MAX_NEXT = 3  # follow-ups in the end message; the dashboard keeps them all
 _HOST_KINDS = ("disk", "memory", "load", "host_unreachable")
 _END_OF = {
     "resolved": "end_fixed",
+    "healthy": "end_looked",
     "unverified": "end_unverified",
     "rejected": "end_rejected",
     "no_action": "end_no_action",
     "budget": "end_stopped",
     "replan_limit": "end_stopped",
 }
-_CHECKED = ("end_fixed", "end_healthy", "end_unverified")  # ends that come after a check
+# The ends that come after a check; a look's plan of no action is checked too (#421), so its
+# end says which check failed.
+_CHECKED = ("end_fixed", "end_healthy", "end_looked", "end_unverified", "end_no_action")
 
 
 def _english() -> str:
@@ -300,6 +303,11 @@ class Notifier:
         values = {"end_fixed": {"took": took}, "end_healthy": {"took": took}}.get(name, {})
         if name == "end_stopped":
             values = {"outcome": report.outcome}
+        checks = await self._last_checks(incident.id) if name in _CHECKED else []
+        if name == "end_looked":
+            values = {"service": _service_named(incident)}
+            if not any(c.kind == "url" for c in checks):
+                name = "end_looked_no_url"  # its containers run; nothing showed it answers
         ran = report.action_taken or fmt.phrase("ran_nothing", language=language)
         parts = [
             fmt.bold_first_line(fmt.render(name, language=language, **values)),
@@ -310,8 +318,8 @@ class Notifier:
                 action=fmt.prose_line(ran),
             ),
         ]
-        if name in _CHECKED and (checks := await self._checked(incident.id)):
-            parts.append(fmt.render("end_checked", language=language, checks=checks))
+        if checked := _checked(checks):
+            parts.append(fmt.render("end_checked", language=language, checks=checked))
         if report.follow_ups:
             items = report.follow_ups[:MAX_NEXT]
             listed = fmt.Redacted("\n".join(f"- {fmt.prose_line(item)}" for item in items))
@@ -336,13 +344,12 @@ class Notifier:
             and current.decision.kind == "reject"
         )
 
-    async def _checked(self, incident_id: str) -> fmt.Redacted | None:
-        """The checks of the run's last verification, from its timeline, as one line."""
+    async def _last_checks(self, incident_id: str) -> list[Check]:
+        """The checks of the run's last verification, from its timeline; none without one."""
         events = [e for e in await self.bus.history(incident_id) if e.kind == "verification"]
         if not events:
-            return None
-        checks = [Check.model_validate(c) for c in events[-1].payload.get("checks", [])]
-        return fmt.prose_line("; ".join(f"{c.target} {c.detail}".strip() for c in checks)) or None
+            return []
+        return [Check.model_validate(c) for c in events[-1].payload.get("checks", [])]
 
     async def notice(self, incident_id: str, text: str, ending: Ending | None = None) -> None:
         """A note in the middle of a run, or, with `ending`, the end message of an incident that
@@ -492,8 +499,8 @@ class Notifier:
         """One line of what opened the incident, from its most telling signal; for a look, that
         the person asked."""
         service = split_service_id(incident.subject)[1]
-        if await self._asked(incident):  # named as its short name names it
-            named = (incident.short_name or "").rsplit(" #", 1)[0] or title_name(service)
+        if await self._asked(incident):
+            named = _service_named(incident)
             return fmt.render("seen/look_requested", language=language, service=named)
         signals = await self.incidents.signals(incident.id) if self.incidents is not None else []
         signal = primary_signal(signals)
@@ -518,6 +525,18 @@ class Notifier:
             log.warning("telegram: could not send: %s", error)
         except (sqlite3.Error, aiosqlite.Error, OSError) as error:
             log.warning("telegram: could not keep the thread: %s", error, exc_info=True)
+
+
+def _checked(checks: list[Check]) -> fmt.Redacted | None:
+    """The checks as one line, or None when there are none."""
+    return fmt.prose_line("; ".join(f"{c.target} {c.detail}".strip() for c in checks)) or None
+
+
+def _service_named(incident: Incident) -> str:
+    """The service as the incident's short name names it ("dkwebsite #3" names dkwebsite), or by
+    its key through `title_name` when it has none."""
+    named = (incident.short_name or "").rsplit(" #", 1)[0]
+    return named or title_name(split_service_id(incident.subject)[1])
 
 
 def _end_template(outcome: str) -> str:
