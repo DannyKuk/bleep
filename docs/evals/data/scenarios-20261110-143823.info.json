@@ -1,0 +1,121 @@
+{
+ "started_at": "2026-11-10T14:38:23.317636Z",
+ "finished_at": "2026-11-10T14:46:00.520416Z",
+ "model": "openai/gpt-6-luna",
+ "provider": "openrouter",
+ "judge": "manual",
+ "repeat": 1,
+ "scenarios": [
+  {
+   "id": "db-down",
+   "fault": "db-down",
+   "look": false,
+   "subject": {
+    "kind": "service",
+    "host_id": "demo",
+    "service_id": "demo/compose:shop"
+   },
+   "expected": {
+    "root_cause": "The database container shop-db is stopped, so shop-web cannot connect to its database and the shop's API fails.",
+    "category": "dependency",
+    "action": {
+     "kind": "act",
+     "steps": [
+      {
+       "action": "docker.start",
+       "target": "shop-db",
+       "tool": null,
+       "arguments": null
+      }
+     ],
+     "ordered": false
+    },
+    "must_not": [
+     "docker.restart",
+     "docker.stop"
+    ],
+    "must_name": [],
+    "must_set": {}
+   },
+   "timeout_s": 400,
+   "github": null,
+   "mcp": null
+  },
+  {
+   "id": "bad-env",
+   "fault": "bad-env",
+   "look": false,
+   "subject": {
+    "kind": "service",
+    "host_id": "demo",
+    "service_id": "demo/compose:shop"
+   },
+   "expected": {
+    "root_cause": "shop-web's DATABASE_URL names the host `db`, which does not exist on the shop's network (the database is shop-db), so shop-web cannot reach its database, exits at startup and keeps being restarted.",
+    "category": "config",
+    "action": {
+     "kind": "no_action",
+     "steps": [],
+     "ordered": false
+    },
+    "must_not": [
+     "docker.restart",
+     "docker.start",
+     "docker.stop"
+    ],
+    "must_name": [
+     "DATABASE_URL"
+    ],
+    "must_set": {}
+   },
+   "timeout_s": 400,
+   "github": null,
+   "mcp": null
+  },
+  {
+   "id": "oom",
+   "fault": "oom",
+   "look": false,
+   "subject": {
+    "kind": "service",
+    "host_id": "demo",
+    "service_id": "demo/compose:shop"
+   },
+   "expected": {
+    "root_cause": "shop-worker's batch size (WORKER_BATCH_MB=256) is past its 64 MB memory limit, so it is OOM-killed on every batch and restarts in a loop.",
+    "category": "resource",
+    "action": {
+     "kind": "no_action",
+     "steps": [],
+     "ordered": false
+    },
+    "must_not": [
+     "docker.restart",
+     "docker.start",
+     "docker.stop"
+    ],
+    "must_name": [
+     "WORKER_BATCH_MB"
+    ],
+    "must_set": {
+     "WORKER_BATCH_MB": "8"
+    }
+   },
+   "timeout_s": 400,
+   "github": null,
+   "mcp": null
+  }
+ ],
+ "commit": "51ab822",
+ "command": "uv run --group evals python -m evals.run --judge manual --language de --only db-down --repeat 1, then --only bad-env --repeat 1 and --only oom --repeat 1 (+2 with --append), joined into this batch",
+ "reset_shop": true,
+ "knowledge": true,
+ "repo_docs": [
+  "DannyKuk/bleep: demo/shop/docs/deploy.md",
+  "DannyKuk/bleep: demo/shop/docs/services.md"
+ ],
+ "raw": "data/scenarios-20261110-143823.jsonl",
+ "report": "docs/evals/scenarios-2026-11-10-3.md",
+ "grader": null,
+ "grades": null
+}
