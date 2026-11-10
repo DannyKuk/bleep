@@ -37,6 +37,7 @@ from bleep.talk.actions import Actions, Expecting, Looking, Resumer
 from bleep.talk.confirms import NO_LABEL, Confirms, yes_label
 from bleep.talk.conversation import Talk
 from bleep.talk.history import Turns
+from bleep.talk.log import answered
 from bleep.talk.offers import confirm_line, instruction
 from bleep.talk.times import when
 
@@ -673,9 +674,8 @@ class TelegramBot:
             self._shown.pop(confirm_id, None)
             yes = verb != DECLINE_VERB
             press = self.talk.log.pressed("telegram", confirm_id, yes) if self.talk else None
-            said = await self.actions.run(taken) if yes else answer("answer_confirm_no")
-            if press is not None:
-                press.line = said
+            run = self.actions.run(taken) if yes else answer("answer_confirm_no")
+            said = await answered(press, run)
         await self.client.answer_callback(callback_id, _cut(said))
         await self._edit(message_id, [])
 

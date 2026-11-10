@@ -31,6 +31,7 @@ How Bleep reads what a person writes in its chat, and the fixed lines it answers
   exports to review answers: the heading (`log_head`), a heading per surface (`log_panel`,
   `log_telegram`, `log_empty`), each message (`log_exchange`, `log_about`) and the lines under
   it (`log_reading`, `log_unread`, `log_offer`, `log_refused`, `log_links`, `log_press`,
-  `log_usage`, `log_cost_unknown`, `log_no_call`). No model reads them.
+  `log_usage`, `log_cost_unknown`, `log_no_call`; `log_press_running` for a press still running,
+  `log_press_failed` for one whose run failed, by the error's type). No model reads them.
 - None of these can be overridden from the dev panel: they read the person's words and refuse
   them.

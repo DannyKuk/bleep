@@ -12,7 +12,7 @@ JSON or as the Markdown transcript `transcript` builds (docs/design/app.md).
 import itertools
 import re
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 
 from bleep import prompts
@@ -67,6 +67,20 @@ class TalkLog:
         return [e.model_copy(deep=True) for s in SURFACES for e in self._rings[s]]
 
 
+async def answered(press: TalkPress | None, answer: str | Awaitable[str]) -> str:
+    """The line a press is answered with, awaited if it runs something, and kept on `press`. A
+    run that fails is kept as the fixed line naming the error's type, and raised again."""
+    try:
+        line = answer if isinstance(answer, str) else await answer
+    except Exception as error:
+        if press is not None:  # by type only: an error's message may quote a host or a key
+            press.line = _line("log_press_failed", error=type(error).__name__)
+        raise
+    if press is not None:
+        press.line = line
+    return line
+
+
 def _line(name: str, **values: str) -> str:
     return prompts.load(f"talk/{name}", **values).strip()
 
@@ -113,7 +127,8 @@ def _details(exchange: TalkExchange) -> list[str]:
     if exchange.press is not None:
         yes = yes_label(exchange.offer) if exchange.offer is not None else YES_LABEL
         button = yes if exchange.press.yes else NO_LABEL
-        lines.append(_line("log_press", button=button, line=exchange.press.line))
+        said = exchange.press.line or _line("log_press_running")
+        lines.append(_line("log_press", button=button, line=said))
     lines.append(_cost(exchange))
     return lines
 

@@ -452,3 +452,20 @@ async def test_a_refused_an_unclear_and_a_failed_reading_land_in_the_log(env, re
     else:
         assert entry.reading is not None and entry.reading.kind == kind
         assert entry.error is None
+
+
+async def test_a_press_whose_run_fails_is_logged_as_failed_by_the_errors_type(env):
+    reply = await say(env, "leave shop alone", reading(kind="action", action=ASKED["leave_alone"]))
+    assert reply.confirm is not None
+
+    async def broken(offer):
+        raise RuntimeError("database is locked at /data/bleep.db")
+
+    env.actions.run = broken
+    with pytest.raises(RuntimeError):
+        await env.panel.press(reply.confirm.id, True, env.actions)
+
+    [entry] = env.talk.log.exchanges()
+    assert entry.press is not None
+    failed = prompts.load("talk/log_press_failed", error="RuntimeError").strip()
+    assert entry.press.line == failed and "locked" not in entry.press.line

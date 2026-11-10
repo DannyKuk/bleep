@@ -21,6 +21,7 @@ from bleep.talk.confirms import NO_LABEL, Confirms, yes_label
 from bleep.talk.conversation import Talk
 from bleep.talk.history import Turns
 from bleep.talk.links import links_in, offer_links
+from bleep.talk.log import answered
 
 WAITING_MAX = 3  # messages being answered at once; one more is told Bleep is busy
 
@@ -92,9 +93,7 @@ class Panel:
             return ConfirmResult(line=said("answer_confirm_expired"))
         # Logged as it takes the offer: a second press, answered while this one runs, is not it.
         press = self.talk.log.pressed("panel", confirm_id, yes)
-        line = await actions.run(taken) if yes else said("answer_confirm_no")
-        if press is not None:
-            press.line = line
+        line = await answered(press, actions.run(taken) if yes else said("answer_confirm_no"))
         return ConfirmResult(line=line)
 
 

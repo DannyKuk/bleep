@@ -3,6 +3,8 @@ surface showed and the press of an offer, and the Markdown transcript the person
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from bleep import prompts
 from bleep.schemas.talk import (
     Offer,
@@ -13,7 +15,7 @@ from bleep.schemas.talk import (
     TalkSurface,
     TalkUsage,
 )
-from bleep.talk.log import EXCHANGES_KEPT, TalkLog, transcript
+from bleep.talk.log import EXCHANGES_KEPT, TalkLog, answered, transcript
 
 T0 = datetime(2026, 11, 10, 14, 2, tzinfo=UTC)
 
@@ -139,3 +141,34 @@ def test_backticks_in_a_reading_cannot_close_its_code_span():
     span = read_as.removeprefix(line("log_reading", reading="")).strip()
     assert span.startswith("``` ") and span.endswith(" ```")
     assert answer in span
+
+
+def test_a_press_still_running_when_exported_says_so():
+    log = TalkLog(lambda: T0)
+    entry = exchange(log, kind="action")
+    log.shown("panel", entry.id, "🤫 Leave shop alone until you say?", confirm_id="c1")
+    log.pressed("panel", "c1", True)
+
+    md = transcript(log.exchanges(), T0)
+
+    assert line("log_press", button="Yes", line=line("log_press_running")) in md
+
+
+async def test_a_press_answered_keeps_its_line_and_a_failed_run_its_errors_type():
+    log = TalkLog(lambda: T0)
+    for confirm_id in ("c1", "c2"):
+        log.shown("panel", exchange(log).id, "offer", confirm_id=confirm_id)
+
+    async def broken() -> str:
+        raise TimeoutError("http://10.0.0.5:2375 timed out")
+
+    assert (
+        await answered(log.pressed("panel", "c1", False), "Nothing changed.") == "Nothing changed."
+    )
+    with pytest.raises(TimeoutError):
+        await answered(log.pressed("panel", "c2", True), broken())
+
+    first, second = log.exchanges()
+    assert first.press is not None and first.press.line == "Nothing changed."
+    assert second.press is not None
+    assert second.press.line == line("log_press_failed", error="TimeoutError")

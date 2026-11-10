@@ -1004,3 +1004,21 @@ async def test_a_secret_typed_into_telegram_is_redacted_in_the_log(env):
     [entry] = logged(env)
     assert entry.text == "is <redacted> the right token?"
     assert token not in str(env.talk.log.exchanges())
+
+
+async def test_a_press_whose_run_fails_is_logged_as_failed_by_the_errors_type(env, monkeypatch):
+    confirm_id = await offered(env, "snooze")
+
+    async def broken(self, offer):
+        raise RuntimeError("database is locked at /data/bleep.db")
+
+    monkeypatch.setattr("bleep.talk.actions.Actions.run", broken)
+    env.api.updates.append(
+        fixture("callback_confirm", MESSAGE_ID=str(env.bot._shown[confirm_id]),
+                CONFIRM_ID=confirm_id, VERB="yes")
+    )  # fmt: skip
+    await env.bot.poll_once()  # the poller logs the error and goes on
+
+    [entry] = logged(env)
+    assert entry.press is not None
+    assert entry.press.line == fixed("log_press_failed", error="RuntimeError")

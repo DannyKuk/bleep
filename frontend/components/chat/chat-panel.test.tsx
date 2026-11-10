@@ -97,17 +97,23 @@ describe("ChatPanel", () => {
     expect(screen.queryByRole("region", { name: "Chat with Bleep" })).not.toBeInTheDocument();
   });
 
-  it("exports the chat as the backend's Markdown transcript from its header", async () => {
-    const fetchMock = stubBackend(
-      () =>
-        new Response("# Chat with Bleep\n", {
-          headers: {
-            "content-type": "text/markdown",
-            "content-disposition": 'attachment; filename="bleep-chat-20261110-1402.md"',
-          },
-        }),
-    );
+  it("exports the chat as the backend's Markdown transcript from its header, once at a time", async () => {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const fetchMock = stubBackend(async () => {
+      await held;
+      return new Response("# Chat with Bleep\n", {
+        headers: {
+          "content-type": "text/markdown",
+          "content-disposition": 'attachment; filename="bleep-chat-20261110-1402.md"',
+        },
+      });
+    });
     // jsdom has no object URLs; a browser turns the fetched file into one to save it.
+    const objectUrls = {
+      createObjectURL: URL.createObjectURL,
+      revokeObjectURL: URL.revokeObjectURL,
+    };
     Object.assign(URL, { createObjectURL: vi.fn(() => "blob:chat"), revokeObjectURL: vi.fn() });
     const saved: { href: string; download: string }[] = [];
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
@@ -115,22 +121,30 @@ describe("ChatPanel", () => {
     ) {
       saved.push({ href: this.href, download: this.download });
     });
-    const user = userEvent.setup();
-    renderPanel();
-    await user.click(screen.getByRole("button", { name: "Talk to Bleep" }));
+    try {
+      const user = userEvent.setup();
+      renderPanel();
+      await user.click(screen.getByRole("button", { name: "Talk to Bleep" }));
 
-    const panel = screen.getByRole("region", { name: "Chat with Bleep" });
-    await user.click(
-      within(within(panel).getByRole("banner")).getByRole("button", { name: "Export chat" }),
-    );
+      const panel = screen.getByRole("region", { name: "Chat with Bleep" });
+      const exportButton = within(within(panel).getByRole("banner")).getByRole("button", {
+        name: "Export chat",
+      });
+      await user.click(exportButton);
+      expect(exportButton).toBeDisabled(); // a second click while it fetches starts nothing
+      await user.click(exportButton);
+      release();
 
-    await waitFor(() =>
-      expect(saved).toEqual([{ href: "blob:chat", download: "bleep-chat-20261110-1402.md" }]),
-    );
-    expect(fetchMock).toHaveBeenCalledWith("/api/talk/log?format=md", {
-      credentials: "same-origin",
-    });
-    click.mockRestore();
+      await waitFor(() =>
+        expect(saved).toEqual([{ href: "blob:chat", download: "bleep-chat-20261110-1402.md" }]),
+      );
+      const logFetches = fetchMock.mock.calls.filter(([input]) => String(input).includes("/log"));
+      expect(logFetches).toEqual([["/api/talk/log?format=md", { credentials: "same-origin" }]]);
+      await waitFor(() => expect(exportButton).toBeEnabled());
+    } finally {
+      click.mockRestore();
+      Object.assign(URL, objectUrls);
+    }
   });
 
   it("says so when the session ended instead of saving the error as the chat", async () => {
@@ -270,6 +284,38 @@ describe("ChatPanel", () => {
 
     await waitFor(() => expect(posts(fetchMock)).toHaveLength(2));
     expect(posts(fetchMock).map(([, body]) => body.incident_id)).toEqual(["inc_14", null]);
+  });
+
+  it("on a page whose path is no incident id shows no chip and sends no incident", async () => {
+    pathname = `/incidents/${"x".repeat(65)}`;
+    const fetchMock = stubBackend(() => json(answer()));
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("button", { name: "Talk to Bleep" }));
+
+    await write(user, "how is it?");
+
+    await waitFor(() => expect(posts(fetchMock)).toHaveLength(1));
+    expect(posts(fetchMock)[0][1].incident_id).toBeNull();
+    expect(screen.queryByText(/^About/)).not.toBeInTheDocument();
+  });
+
+  it("says a message is too long only when the backend refused its words", async () => {
+    const invalid = (field: string) =>
+      json({ detail: [{ loc: ["body", field], msg: "too long", type: "string_too_long" }] }, 422);
+    const replies = [invalid("text"), invalid("incident_id")];
+    stubBackend(() => replies.shift()!);
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("button", { name: "Talk to Bleep" }));
+
+    await write(user, "first");
+    expect(await screen.findByText("That message is too long.")).toBeInTheDocument();
+    await user.clear(screen.getByRole("textbox", { name: "Message to Bleep" }));
+    await write(user, "second");
+
+    expect(await screen.findByText("Bleep could not take that message.")).toBeInTheDocument();
+    expect(screen.getAllByText("That message is too long.")).toHaveLength(1);
   });
 
   it("stays open with its conversation across page changes", async () => {
