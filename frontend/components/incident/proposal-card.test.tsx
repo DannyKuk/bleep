@@ -99,6 +99,59 @@ describe("ProposalCard", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
+  // A look on request is checked at Report (#421): its no-action plan shows that check.
+  it.each([
+    { ok: true, word: "passed", pill: "Passed:shop-web-1running" },
+    { ok: false, word: "failed", pill: "Failed:shop-web-1exited (1)" },
+  ])("shows a look's check that $word on its no-action plan", ({ ok, word, pill }) => {
+    const look = proposal({ kind: "no_action", steps: [], reason: "Nothing to fix" });
+    const run = planRun([
+      event("proposal", { ...look }),
+      event("verification", {
+        ok,
+        attempt: 1,
+        checks: [
+          {
+            kind: "container",
+            target: "shop-web-1",
+            ok,
+            detail: ok ? "running" : "exited (1)",
+          },
+        ],
+      }),
+    ]);
+    render(
+      <ProposalCard
+        incidentId="inc-1"
+        proposal={look}
+        approval={null}
+        onDecided={vi.fn()}
+        run={run}
+        status="closed"
+      />,
+    );
+    expect(screen.getByText(`Check 1: ${word}`)).toBeInTheDocument();
+    const pills = within(screen.getByRole("list", { name: "Checks" })).getAllByRole("listitem");
+    expect(pills.map((item) => item.textContent)).toEqual([pill]);
+    expect(screen.getByText(/No action proposed/)).toBeInTheDocument();
+  });
+
+  it("shows no checks on a no-action plan nothing checked", () => {
+    const look = proposal({ kind: "no_action", steps: [], reason: "Nothing to fix" });
+    render(
+      <ProposalCard
+        incidentId="inc-1"
+        proposal={look}
+        approval={null}
+        onDecided={vi.fn()}
+        run={planRun([event("proposal", { ...look })])}
+        status="verifying"
+      />,
+    );
+    expect(screen.queryByRole("list", { name: "Checks" })).toBeNull();
+    expect(screen.queryByText(/Afterwards I check/)).toBeNull();
+  });
+
   it("shows what the human should do for a no-action plan as Bleep's advice, not as a quote", () => {
     const fix = "Set DATABASE_URL to postgres://db:5432/shop and run `docker compose up -d web`";
     render(
