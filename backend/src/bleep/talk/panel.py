@@ -29,7 +29,7 @@ WAITING_MAX = 3  # messages being answered at once; one more is told Bleep is bu
 class Panel:
     def __init__(self, talk: Talk, clock: Callable[[], datetime] = utcnow) -> None:
         self.talk = talk
-        self.turns = Turns()
+        self.turns = Turns(clock=clock)
         self.confirms = Confirms(clock)
         self._turn = asyncio.Lock()  # one message at a time, in the order they came
         self._waiting = 0
@@ -55,7 +55,7 @@ class Panel:
                 self.talk.log.shown(
                     "panel", reply.exchange_id, answer.answer, answer.links, confirm_id
                 )
-                self.turns.add(text, answer.answer)
+                self.turns.add(text, answer.answer, reply.incident_id, incident_id is not None)
                 return answer
         finally:
             self._waiting -= 1

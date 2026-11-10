@@ -116,7 +116,9 @@ def make(deps: GraphDeps) -> Node:
         async def run_tool(call: ToolCall) -> ToolMessage:
             name, args = call["name"], call["args"]
             source = _source(name)
-            await deps.bus.publish(incident_id, "tool_call", {"name": name, "args": args})
+            # The call's id pairs its result with it for a chat's "how did you check" (#422).
+            called = {"name": name, "args": args, "id": call["id"]}
+            await deps.bus.publish(incident_id, "tool_call", called)
             out = await _invoke(tools.get(name), name, args, act_tools, record)
             text, redactions, marked = await asyncio.to_thread(guard_result, source, out)
             if redactions:
@@ -126,7 +128,12 @@ def make(deps: GraphDeps) -> Node:
             await deps.bus.publish(
                 incident_id,
                 "tool_result",
-                {"name": name, "chars": len(text), "summary_first_line": first_line(text)},
+                {
+                    "name": name,
+                    "id": call["id"],
+                    "chars": len(text),
+                    "summary_first_line": first_line(text),
+                },
             )
             return ToolMessage(text, tool_call_id=call["id"], name=name)
 

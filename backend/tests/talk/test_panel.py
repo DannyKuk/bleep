@@ -356,6 +356,90 @@ async def test_yes_to_a_look_opens_it_from_the_dashboard_and_only_then(env):
     assert result.line == started
 
 
+def incident_read(env, call: int) -> str:
+    prompt = str(env.model.seen[call][-1].content)
+    return prompt.split('<untrusted source="incident"')[1].split("</untrusted")[0]
+
+
+async def test_a_question_right_after_a_look_is_read_with_what_the_look_checked(env):
+    """#422: "how did you check it?" sent on its own, not on the incident's page."""
+    env.actions.looks = FakeLooks(env.incident)
+    env.actions.looked = env.panel.turns.about
+    args = {"container": "shop-web-1", "since_minutes": 60}
+    await env.bus.publish(env.incident.id, "tool_call", {"name": "container_logs", "args": args})
+    await env.bus.publish(
+        env.incident.id,
+        "tool_result",
+        {"name": "container_logs", "summary_first_line": "GET /health 200"},
+    )
+    action = {"kind": "look_again", "subject": "shop"}
+    offer = await say(env, "look at shop", reading(kind="action", action=action))
+    assert offer.confirm is not None
+    env.clock.now = T0 + timedelta(minutes=1)
+    await env.panel.press(offer.confirm.id, True, env.actions)
+
+    env.clock.now = T0 + timedelta(minutes=9)
+    answer = "I read the last 60 minutes of shop-web-1's logs: they answer 200."
+    await say(env, "how did you check it?", reading(kind="question", answer=answer))
+    env.clock.now = T0 + timedelta(minutes=30)
+    await say(env, "and how is grafana?", reading(kind="question", answer="Fine."))
+
+    checked = incident_read(env, 1)
+    assert '"tool":"container_logs"' in checked and "GET /health 200" in checked
+    assert '"target":"shop-web-1"' in checked and '"minutes":60' in checked
+    assert [t.incident_id for t in env.panel.turns.recent()] == [
+        env.incident.id,
+        env.incident.id,
+        None,
+    ]
+    assert "null" in incident_read(env, 2)  # twenty minutes on, it is about nothing
+
+
+async def test_a_chat_that_goes_on_does_not_keep_the_incident_and_never_reaches_its_plan(env):
+    """The window starts at the message on the incident's page and does not slide: 25 minutes of
+    chat in gaps under 10 minutes, then "restart grafana" on its own is refused, not offered to
+    shop #1's waiting plan."""
+    question = reading(kind="question", answer="shop is down; its plan waits for your yes.")
+    await say(env, "what about shop?", question, incident_id=env.incident.id)
+    for minutes in (8, 16, 24):
+        env.clock.now = T0 + timedelta(minutes=minutes)
+        await say(env, "and now?", reading(kind="question", answer="Still the same."))
+    env.clock.now = T0 + timedelta(minutes=25)
+
+    reply = await say(env, "restart grafana", reading(kind="refusal", refusal="change"))
+
+    assert reply.answer == prompts.load("talk/refused_change").strip() and reply.confirm is None
+    # the last four turns: 8 minutes on still read shop #1, from 16 on none
+    assert [t.incident_at for t in env.panel.turns.recent()] == [T0, None, None, None]
+    await nothing_changed(env)
+
+
+@pytest.mark.parametrize(
+    ("text", "read", "offered"),
+    [
+        ("hm, not sure", {"kind": "unclear"}, False),
+        ("restart it", {"kind": "refusal", "refusal": "change"}, False),
+        ("don't restart", {"kind": "action", "action": ASKED["instruct"]}, False),
+        ("tell shop #1 not to restart", {"kind": "action", "action": ASKED["instruct"]}, True),
+        ("tell shop #12 to wait", {"kind": "action", "action": ASKED["instruct"]}, False),
+    ],
+)
+async def test_a_follow_up_reads_the_incident_but_only_a_reply_or_its_name_reaches_the_plan(
+    env, text, read, offered
+):
+    question = reading(kind="question", answer="shop is down; its plan waits for your yes.")
+    await say(env, "what about shop?", question, incident_id=env.incident.id)
+    env.clock.now = T0 + timedelta(minutes=5)
+
+    reply = await say(env, text, reading(**read))
+
+    assert '"name":"shop #1"' in incident_read(env, 1)  # read with the incident's facts
+    assert (reply.confirm is not None) == offered
+    if offered:
+        assert reply.confirm is not None and reply.confirm.yes_label == "Send"
+    await nothing_changed(env)
+
+
 # --- the talk log (#411) ---
 
 
