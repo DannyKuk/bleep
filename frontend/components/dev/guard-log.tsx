@@ -4,12 +4,13 @@ import { Filter, RefreshCw, ShieldCheck, X } from "lucide-react";
 import { useId, useState } from "react";
 
 import { Failed, Loading, useGet } from "@/components/dev/status";
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { GuardEntry, GuardKind } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
+import { useLanguage } from "@/lib/i18n";
 
 export const KINDS: Record<GuardKind, string> = {
   refused_command: "Refused command",
@@ -37,6 +38,7 @@ export function GuardEntries({
   onIncident: (incidentId: string) => void;
 }) {
   const zone = useTimeZone();
+  const language = useLanguage();
   if (entries.length === 0) {
     return (
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -59,7 +61,7 @@ export function GuardEntries({
             >
               {entry.incident_id}
             </button>
-            <time dateTime={entry.at}>{formatDateTime(entry.at, zone)}</time>
+            <time dateTime={entry.at}>{formatDateTime(entry.at, zone, language)}</time>
           </div>
           <span className="font-mono text-xs break-words">{entry.detail}</span>
         </li>

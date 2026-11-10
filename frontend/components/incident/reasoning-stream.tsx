@@ -1,9 +1,10 @@
 import { ChevronRight, Loader2 } from "lucide-react";
 
 import { toolSentence } from "@/components/incident/tool-sentences";
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import type { IncidentEvent } from "@/lib/api-types";
-import { formatTime } from "@/lib/format";
+import { formatCount, formatTime } from "@/lib/format";
+import { useLanguage, useT } from "@/lib/i18n";
 
 interface ToolResult {
   chars: number;
@@ -51,11 +52,13 @@ function argText(value: unknown): string {
 
 function Step({ step }: { step: ToolStep }) {
   const zone = useTimeZone();
+  const language = useLanguage();
+  const t = useT();
   const args = Object.entries(step.args);
-  const sentence = toolSentence(step.name);
+  const sentence = toolSentence(step.name, t);
   const time = (
     <time dateTime={step.at} className="font-mono text-xs text-ink-2">
-      {formatTime(step.at, zone)}
+      {formatTime(step.at, zone, language)}
     </time>
   );
   return (
@@ -91,16 +94,16 @@ function Step({ step }: { step: ToolStep }) {
               aria-hidden
               className="size-3.5 transition-transform group-open:rotate-90 motion-reduce:transition-none"
             />
-            Result, {step.result.chars.toLocaleString("en-US")} characters
+            {t.reasoning.result(formatCount(step.result.chars, language))}
           </summary>
           <p className="mt-1 rounded-field bg-surface px-3 py-2 font-mono break-all whitespace-pre-wrap">
-            {step.result.firstLine || "(empty)"}
+            {step.result.firstLine || t.reasoning.emptyResult}
           </p>
         </details>
       ) : (
         <p className="flex items-center gap-1 text-xs text-ink-2">
           <Loader2 aria-hidden className="size-3.5 motion-safe:animate-spin" />
-          Running
+          {t.reasoning.running}
         </p>
       )}
     </li>
@@ -113,12 +116,13 @@ function Step({ step }: { step: ToolStep }) {
  * first line reach the dashboard; the full output stays with the run.
  */
 export function ReasoningStream({ events }: { events: IncidentEvent[] }) {
+  const t = useT();
   const steps = toolSteps(events);
   if (steps.length === 0) {
-    return <p className="text-sm text-ink-2">I have not looked at anything yet.</p>;
+    return <p className="text-sm text-ink-2">{t.reasoning.empty}</p>;
   }
   return (
-    <ol aria-label="Tool calls" className="flex flex-col gap-2">
+    <ol aria-label={t.reasoning.label} className="flex flex-col gap-2">
       {steps.map((step) => (
         <Step key={step.seq} step={step} />
       ))}

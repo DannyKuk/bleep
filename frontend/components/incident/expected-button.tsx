@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ApiError, apiFetch } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 /**
  * "This is expected": records what makes the next identical event quiet (`expectation` says what)
@@ -22,6 +23,7 @@ export function ExpectedButton({
 }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const t = useT();
 
   async function mark() {
     setBusy(true);
@@ -42,7 +44,7 @@ export function ExpectedButton({
   return (
     <div className="flex max-w-full min-w-0 flex-col items-end gap-1">
       <Button variant="outline" disabled={busy} onClick={() => void mark()} title={expectation}>
-        This is expected
+        {t.incidents.expected}
       </Button>
       <p className="max-w-md min-w-0 text-right text-xs wrap-anywhere text-ink-2">{expectation}</p>
       {problem && (

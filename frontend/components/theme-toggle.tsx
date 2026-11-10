@@ -3,10 +3,10 @@
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useSyncExternalStore } from "react";
 
+import { useT } from "@/lib/i18n";
 import { readTheme, setTheme, subscribeTheme, THEMES, type Theme } from "@/lib/theme";
 
 const ICONS = { system: Monitor, light: Sun, dark: Moon } as const;
-const NAMES = { system: "System", light: "Light", dark: "Dark" } as const;
 
 export function nextTheme(theme: Theme): Theme {
   return THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
@@ -17,13 +17,14 @@ export function nextTheme(theme: Theme): Theme {
  * first paint. */
 export function ThemeToggle() {
   const theme = useSyncExternalStore(subscribeTheme, readTheme, () => "system" as Theme);
+  const t = useT().shell;
 
   function step() {
     setTheme(nextTheme(theme));
   }
 
   const Icon = ICONS[theme];
-  const label = `Theme: ${NAMES[theme]}. Switch to ${NAMES[nextTheme(theme)]}`;
+  const label = t.theme(t.themes[theme], t.themes[nextTheme(theme)]);
   return (
     <button
       type="button"

@@ -4,12 +4,13 @@ import { Brain, Loader2, Plus, Trash2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiFetch } from "@/lib/api";
 import type { FactBody, ServiceFact } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
+import { useLanguage } from "@/lib/i18n";
 
 const MAX_FACT = 200; // the API's limit (FACT_CHARS)
 
@@ -22,7 +23,10 @@ function factsPath(serviceId: string): string {
 /** Where a fact came from: a person, or the report of an incident (linked). */
 function FactOrigin({ fact }: { fact: ServiceFact }) {
   const zone = useTimeZone();
-  const when = <time dateTime={fact.created_at}>{formatDateTime(fact.created_at, zone)}</time>;
+  const language = useLanguage();
+  const when = (
+    <time dateTime={fact.created_at}>{formatDateTime(fact.created_at, zone, language)}</time>
+  );
   if (fact.source === "human") return <>Added by you, {when}</>;
   return (
     <>

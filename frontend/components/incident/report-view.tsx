@@ -4,9 +4,10 @@ import { Bleep } from "@/components/bleep/bleep";
 import { LOOK } from "@/components/incident/colour-code";
 import { subjectText } from "@/components/incident/incident-list";
 import { ShortNamePrefix } from "@/components/incident/short-name";
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import type { Incident, Outcome, Report } from "@/lib/api-types";
 import { formatDateTime, formatTime } from "@/lib/format";
+import { useLanguage, useT } from "@/lib/i18n";
 import { reportMood } from "@/lib/mood";
 import { cn } from "@/lib/utils";
 
@@ -58,16 +59,17 @@ function StepMark({ step }: { step: string }) {
 
 /** One row per step: the backend joins the steps with "; " (`action_taken` in the Report node). */
 function Steps({ action }: { action: string | null }) {
+  const t = useT().report;
   if (action === null) {
     return (
       <p className="flex items-start gap-2">
         <Minus aria-hidden className="mt-1 size-4 shrink-0 text-ink-2" />
-        <span className="min-w-0">Nothing ran.</span>
+        <span className="min-w-0">{t.nothingRan}</span>
       </p>
     );
   }
   return (
-    <ul aria-label="Steps" className="flex flex-col gap-1">
+    <ul aria-label={t.steps} className="flex flex-col gap-1">
       {action.split("; ").map((step, index) => (
         <li key={index} className="flex items-start gap-2">
           <StepMark step={step} />
@@ -94,9 +96,12 @@ export function ReportView({
 }) {
   const noAction = outcome === "no_action";
   const zone = useTimeZone();
+  const language = useLanguage();
+  const t = useT();
+  const words = t.report;
   return (
     <article
-      aria-label="Report"
+      aria-label={words.label}
       className={cn(
         "flex flex-col gap-5 rounded-card border border-line bg-surface p-5 text-[15px] text-ink sm:p-7",
         PRINT_TOKENS,
@@ -124,16 +129,16 @@ export function ReportView({
           </h2>
           {incident && (
             <p className="flex flex-wrap gap-x-3 gap-y-1 font-mono text-xs text-ink-2">
-              <span>{subjectText(incident)}</span>
+              <span>{subjectText(incident, t)}</span>
               <span>
                 <time dateTime={incident.opened_at}>
-                  {formatDateTime(incident.opened_at, zone)}
+                  {formatDateTime(incident.opened_at, zone, language)}
                 </time>
                 {incident.closed_at && (
                   <>
-                    {" to "}
+                    {words.to}
                     <time dateTime={incident.closed_at}>
-                      {formatTime(incident.closed_at, zone)}
+                      {formatTime(incident.closed_at, zone, language)}
                     </time>
                   </>
                 )}
@@ -144,19 +149,19 @@ export function ReportView({
         </div>
       </header>
 
-      <Section label="In short">
+      <Section label={words.short}>
         <p>{report.summary}</p>
       </Section>
-      <Section label="Why it happened">
+      <Section label={words.why}>
         <p>{report.cause}</p>
       </Section>
-      <Section label="What I did">
+      <Section label={words.did}>
         <Steps action={report.action_taken} />
       </Section>
       {noAction && report.follow_ups.length > 0 && (
-        <Section label="What you can do">
+        <Section label={words.youCan}>
           <ul
-            aria-label="What you can do"
+            aria-label={words.youCan}
             className="flex list-disc flex-col gap-1 rounded-row bg-soft py-3 pr-4 pl-8"
           >
             {report.follow_ups.map((item, index) => (
@@ -165,16 +170,16 @@ export function ReportView({
           </ul>
         </Section>
       )}
-      <Section label="Your decision">
-        <p>{report.human_decision ?? "You were not asked."}</p>
+      <Section label={words.decision}>
+        <p>{report.human_decision ?? words.notAsked}</p>
       </Section>
       {report.timeline.length > 0 && (
-        <Section label="Timeline">
-          <ol aria-label="Report timeline" className="flex flex-col gap-1">
+        <Section label={words.timeline}>
+          <ol aria-label={words.timelineLabel} className="flex flex-col gap-1">
             {report.timeline.map(({ at, text }, index) => (
               <li key={index} className="flex items-baseline gap-3">
                 <time dateTime={at} className="shrink-0 font-mono text-xs text-ink-2 tabular-nums">
-                  {formatTime(at, zone)}
+                  {formatTime(at, zone, language)}
                 </time>
                 <span className="min-w-0">{text}</span>
               </li>
@@ -183,8 +188,8 @@ export function ReportView({
         </Section>
       )}
       {!noAction && report.follow_ups.length > 0 && (
-        <Section label="Follow-ups">
-          <ul aria-label="Follow-ups" className="flex list-disc flex-col gap-1 pl-5">
+        <Section label={words.followUps}>
+          <ul aria-label={words.followUps} className="flex list-disc flex-col gap-1 pl-5">
             {report.follow_ups.map((item, index) => (
               <li key={index}>{item}</li>
             ))}

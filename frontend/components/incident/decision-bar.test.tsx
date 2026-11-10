@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { DecisionBar } from "@/components/incident/decision-bar";
 import { approval, proposal } from "@/components/incident/fixtures";
+import { setLanguage } from "@/lib/i18n";
 
 function reply(status: number, body: unknown) {
   const fetchMock = vi.fn<typeof fetch>(
@@ -229,8 +230,8 @@ describe("DecisionBar pinned to a phone screen", () => {
     expect(screen.getByRole("region", { name: "Your answer" })).toBe(bar(container));
     const [yes, no, tell] = buttons();
     expect(yes).toHaveClass("h-14", "w-full");
-    expect(no).toHaveClass("h-12", "flex-1");
-    expect(tell).toHaveClass("h-12", "flex-1");
+    expect(no).toHaveClass("min-h-12", "flex-1");
+    expect(tell).toHaveClass("min-h-12", "flex-1");
     expect(no.parentElement).toBe(tell.parentElement);
     expect(tell).toHaveTextContent(/^Tell Bleep$/);
   });
@@ -357,5 +358,33 @@ describe("DecisionBar pinned to a phone screen", () => {
     viewport.height = 500;
     await act(async () => void viewport.dispatchEvent(new Event("resize")));
     expect(bar(container).style.bottom).toBe("344px");
+  });
+});
+
+describe("DecisionBar in German", () => {
+  it("uses the words Telegram's buttons use, and says the answer in German", async () => {
+    setLanguage("de");
+    reply(200, decided("reject", "telegram"));
+    render(<DecisionBar incidentId="inc-1" approval={approval()} onDecided={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Ja, freigeben" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Bleep etwas sagen" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Nein, ablehnen" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      /^Abgelehnt auf Telegram, .+\. Dieser Plan lief nicht\.$/,
+    );
+  });
+
+  // jsdom lays nothing out, so this holds what keeps a long word inside a phone's screen (#237).
+  it("lets the phone's two side-by-side buttons wrap a long word instead of overflowing", () => {
+    setLanguage("de");
+    render(<DecisionBar incidentId="inc-1" approval={approval()} onDecided={vi.fn()} pinned />);
+    for (const name of ["Nein, ablehnen", "Bleep etwas sagen"]) {
+      expect(screen.getByRole("button", { name })).toHaveClass(
+        "min-w-0",
+        "whitespace-normal",
+        "hyphens-auto",
+      );
+    }
+    expect(document.documentElement.lang).toBe("de");
   });
 });

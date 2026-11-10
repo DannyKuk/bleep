@@ -32,9 +32,7 @@ function segments(events: IncidentEvent[], status: IncidentStatus) {
 describe("ProgressBar", () => {
   it("says each step's state in words, never by colour alone", () => {
     render(
-      <ProgressBar
-        steps={PROGRESS_STEPS.map(({ label }, index) => ({ label, state: STATES[index] }))}
-      />,
+      <ProgressBar steps={PROGRESS_STEPS.map((node, index) => ({ node, state: STATES[index] }))} />,
     );
     const items = within(screen.getByRole("list", { name: "Progress" })).getAllByRole("listitem");
     expect(items[0]).toHaveTextContent("Gather, done");
@@ -51,9 +49,7 @@ describe("ProgressBar", () => {
 
   it("draws each segment from the shared colour code", () => {
     render(
-      <ProgressBar
-        steps={PROGRESS_STEPS.map(({ label }, index) => ({ label, state: STATES[index] }))}
-      />,
+      <ProgressBar steps={PROGRESS_STEPS.map((node, index) => ({ node, state: STATES[index] }))} />,
     );
     const items = within(screen.getByRole("list", { name: "Progress" })).getAllByRole("listitem");
     items.forEach((item, index) => {

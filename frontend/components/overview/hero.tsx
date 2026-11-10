@@ -8,7 +8,7 @@ import { ShortNamePrefix } from "@/components/incident/short-name";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import { HealthBadge } from "@/components/overview/health-badge";
 import { joinNames, type Situation } from "@/components/overview/situation";
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import type {
   Action,
   HostHealth,
@@ -162,7 +162,7 @@ function unreachableWords(
   const { host, incident } = situation;
   const names = services.filter((service) => service.host_id === host.id).map((s) => s.name);
   const since = host.last_seen
-    ? `I last heard from it at ${formatDateTime(host.last_seen, zone)}`
+    ? `I last heard from it at ${formatDateTime(host.last_seen, zone, "en")}`
     : "I have not reached it yet";
   const blind = names.length > 0 ? `, so I cannot see ${joinNames(names)}` : "";
   return {

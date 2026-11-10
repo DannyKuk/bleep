@@ -5,7 +5,7 @@ import { HealthBadge } from "@/components/overview/health-badge";
 import { isHurting } from "@/components/overview/situation";
 import { QuietMenu } from "@/components/quiet/quiet-menu";
 import { QuietPill } from "@/components/quiet/quiet-pill";
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import type { HostView, ServiceView } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
 import { isAsleep } from "@/lib/mood";
@@ -18,7 +18,9 @@ const FOCUS = "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outlin
 /** "load 0.3 · mem 75% · disk 58%" (the fullest disk), or when an unreachable host was last seen. */
 export function basicsLine(host: HostView, zone?: Zone): string | null {
   if (!host.reachable) {
-    return host.last_seen ? `last seen ${formatDateTime(host.last_seen, zone)}` : "never reached";
+    return host.last_seen
+      ? `last seen ${formatDateTime(host.last_seen, zone, "en")}`
+      : "never reached";
   }
   const basics = host.basics;
   if (!basics) return null;

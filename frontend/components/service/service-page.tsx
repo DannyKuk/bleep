@@ -22,7 +22,7 @@ import {
   ExpectedExits,
   useServiceSettings,
 } from "@/components/service/settings-cards";
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import { ApiError, apiFetch } from "@/lib/api";
 import type {
   ContainerView,
@@ -33,6 +33,7 @@ import type {
   ServiceView,
 } from "@/lib/api-types";
 import { formatDateTime, formatSince } from "@/lib/format";
+import { useLanguage, useT } from "@/lib/i18n";
 import { quietLabel, sinceWords } from "@/lib/quiet-api";
 import { hostHref } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -148,6 +149,8 @@ function Votes({ votes }: { votes: IncidentVotes }) {
 
 function PastIncidents({ incidents }: { incidents: IncidentListItem[] }) {
   const zone = useTimeZone();
+  const language = useLanguage();
+  const t = useT();
   if (incidents.length === 0) {
     return (
       <p className="text-sm text-ink-2">
@@ -169,9 +172,9 @@ function PastIncidents({ incidents }: { incidents: IncidentListItem[] }) {
             </span>
             <IncidentStatusBadge status={incident.status} />
             <Votes votes={incident.votes} />
-            <span className="font-mono text-xs text-ink-2">{subjectText(incident)}</span>
+            <span className="font-mono text-xs text-ink-2">{subjectText(incident, t)}</span>
             <time dateTime={incident.opened_at} className="text-xs text-ink-2">
-              {formatDateTime(incident.opened_at, zone)}
+              {formatDateTime(incident.opened_at, zone, language)}
             </time>
           </Link>
         </li>
@@ -183,12 +186,12 @@ function PastIncidents({ incidents }: { incidents: IncidentListItem[] }) {
 /** The one line under a quiet service's title: why Bleep is silent about it, and since or until when. */
 function quietNote(quiet: QuietView, zone: Zone): string {
   const now = new Date();
-  const label = quietLabel(quiet, now, zone);
+  const label = quietLabel(quiet, now, zone, "en");
   if (quiet.scope === "host") {
     return `Its host is ${label.replace(/^Host /, "")}, so Bleep opens no incidents for it.`;
   }
   if (quiet.mode === "leave_alone") {
-    return `Since ${sinceWords(new Date(quiet.since), now, zone)} Bleep opens no incidents for it.`;
+    return `Since ${sinceWords(new Date(quiet.since), now, zone, "en")} Bleep opens no incidents for it.`;
   }
   return `Bleep opens no incidents for it until ${label.replace(/^Snoozed until /, "")}.`;
 }
@@ -205,6 +208,7 @@ function StillFailing({
   last: IncidentListItem | undefined;
 }) {
   const zone = useTimeZone();
+  const language = useLanguage();
   if (service.quiet || service.health !== "down" || service.open_incident_id !== null) return null;
   if (!last || !ENDED.has(last.status)) return null;
   const ended = last.closed_at ?? last.opened_at;
@@ -212,8 +216,8 @@ function StillFailing({
   return (
     <p role="note" aria-label="Still failing" className="text-sm text-ink-2">
       Still down after its last incident ended{" "}
-      <time dateTime={ended} title={formatDateTime(ended, zone)}>
-        {formatSince(ended, undefined, zone)}
+      <time dateTime={ended} title={formatDateTime(ended, zone, language)}>
+        {formatSince(ended, undefined, zone, language)}
       </time>
       :{" "}
       <Link
@@ -246,6 +250,7 @@ export function ServicePage({ id }: { id: string }) {
 
 function Service({ id }: { id: string }) {
   const zone = useTimeZone();
+  const language = useLanguage();
   const encoded = encodeURIComponent(id);
   const [reloads, setReloads] = useState(0);
   const overall = useOverall();
@@ -318,8 +323,11 @@ function Service({ id }: { id: string }) {
             {service.health === "ok" && data?.health_since && (
               <>
                 {" · healthy since "}
-                <time dateTime={data.health_since} title={formatDateTime(data.health_since, zone)}>
-                  {formatSince(data.health_since, undefined, zone)}
+                <time
+                  dateTime={data.health_since}
+                  title={formatDateTime(data.health_since, zone, language)}
+                >
+                  {formatSince(data.health_since, undefined, zone, language)}
                 </time>
               </>
             )}

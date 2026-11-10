@@ -13,7 +13,7 @@ import {
   telegram,
 } from "@/components/settings/fixtures";
 import { SettingsPage } from "@/components/settings/settings-page";
-import { TimeZoneProvider } from "@/components/time-zone";
+import { PreferencesProvider } from "@/components/preferences";
 import type { SettingsView } from "@/lib/settings-types";
 
 const VIENNA = "Europe/Vienna";
@@ -30,9 +30,9 @@ function backend(view: SettingsView, put: Response[] = []) {
 
 function renderPage() {
   render(
-    <TimeZoneProvider>
+    <PreferencesProvider>
       <SettingsPage />
-    </TimeZoneProvider>,
+    </PreferencesProvider>,
   );
 }
 

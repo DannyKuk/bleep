@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { LOOK, type Mark } from "@/components/incident/colour-code";
+import { en } from "@/lib/i18n/en";
 
 const marks = Object.keys(LOOK) as Mark[];
 
@@ -19,7 +20,7 @@ describe("LOOK", () => {
   });
 
   it("says every state in words, distinct for each", () => {
-    const words = marks.map((mark) => LOOK[mark].word);
+    const words = marks.map((mark) => en.marks[mark]);
     expect(words.every((word) => word.length > 0)).toBe(true);
     expect(new Set(words).size).toBe(words.length);
   });
@@ -34,6 +35,6 @@ describe("LOOK", () => {
 
   it("marks what broke with an alert, so it never reads as a step of Bleep's that failed", () => {
     expect(LOOK.opened.icon).toBe("alert");
-    expect(LOOK.opened.word).toBe("what broke");
+    expect(en.marks.opened).toBe("what broke");
   });
 });

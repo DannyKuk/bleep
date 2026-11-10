@@ -1,22 +1,22 @@
 import { HealthBadge } from "@/components/overview/health-badge";
 import type { Health, IncidentStatus } from "@/lib/api-types";
+import { useT } from "@/lib/i18n";
 
 // An incident's status in the dashboard's health colours: red when it needs a human or failed,
 // amber while Bleep works on it or waits to try the model again, green when fixed, grey when closed.
-const STATUS: Record<IncidentStatus, { health: Health; label: string }> = {
-  open: { health: "degraded", label: "Open" },
-  investigating: { health: "degraded", label: "Investigating" },
-  awaiting_approval: { health: "down", label: "Needs your yes" },
-  executing: { health: "degraded", label: "Executing" },
-  verifying: { health: "degraded", label: "Verifying" },
-  paused: { health: "degraded", label: "Paused" },
-  waiting: { health: "degraded", label: "Waiting for the host" },
-  resolved: { health: "ok", label: "Resolved" },
-  closed: { health: "stopped", label: "Closed" },
-  failed: { health: "down", label: "Failed" },
+const HEALTH: Record<IncidentStatus, Health> = {
+  open: "degraded",
+  investigating: "degraded",
+  awaiting_approval: "down",
+  executing: "degraded",
+  verifying: "degraded",
+  paused: "degraded",
+  waiting: "degraded",
+  resolved: "ok",
+  closed: "stopped",
+  failed: "down",
 };
 
 export function IncidentStatusBadge({ status }: { status: IncidentStatus }) {
-  const { health, label } = STATUS[status];
-  return <HealthBadge health={health} label={label} />;
+  return <HealthBadge health={HEALTH[status]} label={useT().status[status]} />;
 }

@@ -8,7 +8,6 @@ import { ShortNamePrefix } from "@/components/incident/short-name";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import {
   FILTERS,
-  GROUP_TITLE,
   type Filter,
   foldRepeats,
   formatDuration,
@@ -19,20 +18,21 @@ import {
   matchesSearch,
 } from "@/components/incident/incident-groups";
 import { useOverall } from "@/components/overall-state";
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import { Input } from "@/components/ui/input";
 import { usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
 import type { HostView, Incident } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
+import { type Messages, useLanguage, useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 const LIMIT = 50;
 const POLL_MS = 10_000;
 
-export function subjectText({ subject }: Incident): string {
+export function subjectText({ subject }: Incident, t: Messages): string {
   return subject.kind === "host"
-    ? `host ${subject.host_id}`
+    ? t.incidents.host(subject.host_id)
     : (subject.service_id ?? subject.host_id);
 }
 
@@ -48,9 +48,11 @@ function Row({
   hosts: readonly QuietHost[];
 }) {
   const zone = useTimeZone();
+  const language = useLanguage();
+  const t = useT();
   const repeats = incident.repeats ?? 1;
   const waiting = groupOf(incident, now, hosts) === "needs_you";
-  const duration = formatDuration(incident.opened_at, incident.closed_at);
+  const duration = formatDuration(incident.opened_at, incident.closed_at, t);
   return (
     <li>
       <Link
@@ -67,14 +69,16 @@ function Row({
         </span>
         {repeats > 1 && (
           <span className="rounded-full bg-soft px-2 py-0.5 text-xs font-bold text-ink-2">
-            Seen {repeats} times
+            {t.list.seen(repeats)}
           </span>
         )}
         <span className="min-w-0 font-mono text-xs wrap-anywhere text-ink-2">
-          {subjectText(incident)}
+          {subjectText(incident, t)}
         </span>
         <span className="text-xs text-ink-2">
-          <time dateTime={incident.opened_at}>{formatDateTime(incident.opened_at, zone)}</time>
+          <time dateTime={incident.opened_at}>
+            {formatDateTime(incident.opened_at, zone, language)}
+          </time>
           {duration && ` · ${duration}`}
         </span>
       </Link>
@@ -95,35 +99,34 @@ export function IncidentListView({
 }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
+  const t = useT();
 
   if (incidents.length === 0) {
     return (
       <div className="flex flex-col items-center gap-2 rounded-card border border-dashed border-line px-6 py-12 text-center">
         <Inbox aria-hidden className="size-6 text-ink-2" />
-        <p className="text-sm font-medium">
-          No incidents yet. When a service breaks, it shows here.
-        </p>
+        <p className="text-sm font-medium">{t.list.empty}</p>
       </div>
     );
   }
 
   const shown = foldRepeats(incidents, now, hosts).filter(
-    (i) => matchesFilter(i, filter, now, hosts) && matchesSearch(i, subjectText(i), query),
+    (i) => matchesFilter(i, filter, now, hosts) && matchesSearch(i, subjectText(i, t), query),
   );
   return (
     <div className="flex flex-col gap-5">
-      <h2 className="text-xl font-extrabold">{headline(incidents, now, hosts)}</h2>
+      <h2 className="text-xl font-extrabold">{headline(incidents, now, hosts, t)}</h2>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <Input
           type="search"
-          aria-label="Search incidents"
-          placeholder="Search name, title or subject"
+          aria-label={t.list.search}
+          placeholder={t.list.searchHint}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           className="sm:max-w-xs"
         />
-        <div role="group" aria-label="Filter incidents" className="flex flex-wrap gap-2">
-          {FILTERS.map(({ id, label }) => (
+        <div role="group" aria-label={t.list.filter} className="flex flex-wrap gap-2">
+          {FILTERS.map((id) => (
             <button
               key={id}
               type="button"
@@ -136,22 +139,22 @@ export function IncidentListView({
                   : "border-line bg-surface text-ink-2 hover:bg-soft",
               )}
             >
-              {label}
+              {t.list.filters[id]}
             </button>
           ))}
         </div>
       </div>
       {shown.length === 0 ? (
         <p role="status" className="text-sm text-ink-2">
-          No incident matches.
+          {t.list.noMatch}
         </p>
       ) : (
         groupIncidents(shown, now, hosts).map(({ group, incidents: rows }) => (
           <section key={group} aria-labelledby={`group-${group}`} className="flex flex-col gap-2">
             <h3 id={`group-${group}`} className="text-sm font-extrabold text-ink-2">
-              {GROUP_TITLE[group]} ({rows.length})
+              {t.list.groups[group]} ({rows.length})
             </h3>
-            <ul aria-label={GROUP_TITLE[group]} className="flex flex-col gap-2">
+            <ul aria-label={t.list.groups[group]} className="flex flex-col gap-2">
               {rows.map((incident) => (
                 <Row key={incident.id} incident={incident} now={now} hosts={hosts} />
               ))}
@@ -172,16 +175,17 @@ async function fetchIncidents(signal: AbortSignal) {
 export function IncidentList() {
   const { data, error } = usePoll(fetchIncidents, POLL_MS);
   const { hosts } = useOverall();
+  const t = useT();
   if (!data) {
     return error ? (
       <p role="alert" className="flex items-center gap-2 text-sm text-down">
         <TriangleAlert aria-hidden className="size-4" />
-        Could not load incidents: {error.message}
+        {t.list.loadFailed(error.message)}
       </p>
     ) : (
       <p role="status" className="flex items-center gap-2 text-sm text-ink-2">
         <Loader2 aria-hidden className="size-4 animate-spin" />
-        Loading incidents
+        {t.list.loading}
       </p>
     );
   }
@@ -190,10 +194,21 @@ export function IncidentList() {
       {error && (
         <p role="alert" className="flex items-center gap-2 text-xs text-health-degraded">
           <TriangleAlert aria-hidden className="size-3.5" />
-          Refresh failed, showing the last data: {error.message}
+          {t.common.refreshFailed(error.message)}
         </p>
       )}
       <IncidentListView incidents={data.incidents} now={data.readAt} hosts={hosts} />
+    </div>
+  );
+}
+
+/** The incidents page: its title and the list. */
+export function IncidentsPage() {
+  const t = useT();
+  return (
+    <div className="flex flex-col gap-4">
+      <h1 className="text-2xl font-extrabold">{t.incidents.title}</h1>
+      <IncidentList />
     </div>
   );
 }

@@ -7,6 +7,8 @@ import { ProgressBar } from "@/components/incident/progress-bar";
 import { progressSteps } from "@/components/incident/progress";
 import { Timeline } from "@/components/incident/timeline";
 import type { Incident, IncidentEvent } from "@/lib/api-types";
+import { setLanguage } from "@/lib/i18n";
+import { en } from "@/lib/i18n/en";
 
 const started = (node: string) => event("node_started", { node });
 const finished = (node: string) => event("node_finished", { node });
@@ -83,6 +85,34 @@ describe("Timeline", () => {
     expect(screen.getByText(/could not be sent to a channel/)).toBeInTheDocument();
   });
 
+  it("tells the steps in German, keeping the human's words, step names and notices as they came", () => {
+    setLanguage("de");
+    render(
+      <Timeline
+        events={[
+          ...ran("gather"),
+          event("decision", { kind: "instruct", text: "Check the db", via: "dashboard" }),
+          step("failed"),
+          check(true),
+          event("notice", { text: "The plan could not be sent to a channel; answer it here." }),
+        ]}
+      />,
+    );
+    const list = screen.getByRole("list", { name: "Verlauf" });
+    const texts = within(list)
+      .getAllByRole("listitem")
+      .map(
+        (item) => item.querySelector(":scope > span:not([aria-hidden]):not(.sr-only)")!.textContent,
+      );
+    expect(texts).toEqual([
+      "Kontext gesammelt",
+      "Anweisung aus dem Dashboard: „Check the db“",
+      "docker.start shop-web-1: fehlgeschlagen",
+      "Prüfung 1 bestanden",
+      "The plan could not be sent to a channel; answer it here.",
+    ]);
+  });
+
   it("says what This is expected recorded", () => {
     render(
       <Timeline
@@ -156,7 +186,9 @@ describe("Timeline", () => {
     );
     for (const item of timelineItems()) {
       const look = LOOK[item.getAttribute("data-state") as Mark];
-      expect(item.querySelector(".sr-only")).toHaveTextContent(`, ${look.word}`);
+      expect(item.querySelector(".sr-only")).toHaveTextContent(
+        `, ${en.marks[item.getAttribute("data-state") as Mark]}`,
+      );
       const marker = item.querySelector("[aria-hidden]")!;
       if (look.icon !== "dot") expect(marker.querySelector("svg")).toHaveClass(look.ink);
       else expect(marker.firstElementChild!.className).toContain(look.fill);

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { QuietMenu } from "@/components/quiet/quiet-menu";
 import { json, sentBody, settingsView, stubBackend } from "@/components/settings/fixtures";
-import { TimeZoneProvider, useTimeZone } from "@/components/time-zone";
+import { PreferencesProvider, useTimeZone } from "@/components/preferences";
 import type { QuietView } from "@/lib/api-types";
 import { morningLabel, snoozeUntil } from "@/lib/quiet-api";
 
@@ -115,10 +115,10 @@ describe("QuietMenu in Bleep's time zone", () => {
       [`PUT ${PATH}`]: json({ ...view, mode: "snooze", until: "x" }),
     });
     render(
-      <TimeZoneProvider>
+      <PreferencesProvider>
         <ZoneShown />
         <QuietMenu target={service} quiet={null} onChanged={() => {}} />
-      </TimeZoneProvider>,
+      </PreferencesProvider>,
     );
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings", expect.anything()));
     await screen.findByText(`zone: ${timezone ?? "browser"}`);
@@ -138,7 +138,7 @@ describe("QuietMenu in Bleep's time zone", () => {
     const fetchMock = await inZone(null);
     await openMenu();
     const morning = snoozeUntil("morning", new Date());
-    await userEvent.click(await item(morningLabel(new Date())));
+    await userEvent.click(await item(morningLabel(new Date(), undefined, "en")));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(sentBody(fetchMock, "PUT").until).toBe(morning.toISOString());

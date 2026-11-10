@@ -238,6 +238,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **The live stream is SSE with `id:` = seq**, so a reconnect replays from `Last-Event-ID`; a ping every 15 s keeps proxies from closing it.
 - **The dashboard serves the stream from a route handler, not the rewrite**, because the rewrite gzips it and holds every event until the stream ends ([SSE through Next.js](decisions/sse-through-next.md)).
 - **The incident page reads the history, then streams after its last seq, and keeps each event once by seq**; a step event reloads the incident's findings.
+- **The dashboard speaks the install's language, English or German**, from a typed dictionary of its own that fails the checks on a key missing in one language; names and the backend's and the model's texts are shown as they came.
 
 **Evals** ([details](design/evals.md))
 - **A scenario runs Bleep's own watcher and graph in-process on a throwaway database and stops before Approval**: nothing is executed, sent or remembered.

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { event } from "@/components/incident/fixtures";
 import { progressSteps } from "@/components/incident/progress";
+import { en } from "@/lib/i18n/en";
 import type { IncidentEvent, IncidentStatus } from "@/lib/api-types";
 
 /** `node_started` and `node_finished` for each node, in order. */
@@ -16,7 +17,7 @@ const started = (node: string) => event("node_started", { node });
 
 function states(events: IncidentEvent[], status: IncidentStatus) {
   return Object.fromEntries(
-    progressSteps(events, status).map(({ label, state }) => [label, state]),
+    progressSteps(events, status).map(({ node, state }) => [en.progress.steps[node], state]),
   );
 }
 

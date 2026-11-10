@@ -2,6 +2,7 @@ import { ChevronRight, CircleHelp } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import type { Diagnosis } from "@/lib/api-types";
+import { useT } from "@/lib/i18n";
 
 /** The first `count` sentences of `text`, and the rest (empty when nothing was cut). */
 export function firstSentences(text: string, count: number): [string, string] {
@@ -21,14 +22,15 @@ export function DiagnosisCard({
   diagnosis: Diagnosis;
   short?: boolean;
 }) {
+  const t = useT();
   if (short) return <ShortDiagnosis diagnosis={diagnosis} />;
   return (
     <div className="flex flex-col gap-3.5">
       <div className="flex flex-wrap items-center gap-2">
         <Badge className="px-3 py-1 text-[13px] font-extrabold text-ink">
-          {Math.round(diagnosis.confidence * 100)}% sure
+          {t.diagnosis.sure(Math.round(diagnosis.confidence * 100))}
         </Badge>
-        <Badge className="px-3 py-1 text-[13px]">{diagnosis.category}</Badge>
+        <Badge className="px-3 py-1 text-[13px]">{t.category[diagnosis.category]}</Badge>
       </div>
       {diagnosis.unsure && (
         <p
@@ -37,14 +39,14 @@ export function DiagnosisCard({
         >
           <CircleHelp aria-hidden className="mt-0.5 size-4 shrink-0" />
           <span>
-            <strong className="font-extrabold">I am not sure.</strong> The evidence does not settle
-            the cause; read it before you decide.
+            <strong className="font-extrabold">{t.diagnosis.notSure}</strong>{" "}
+            {t.diagnosis.notSureWhy}
           </span>
         </p>
       )}
       <p className="text-[17px] leading-relaxed">{diagnosis.root_cause}</p>
       {diagnosis.evidence.length > 0 && (
-        <ul aria-label="Evidence" className="flex flex-col gap-2 text-[15px]">
+        <ul aria-label={t.diagnosis.evidence} className="flex flex-col gap-2 text-[15px]">
           {diagnosis.evidence.map((item, index) => (
             <li key={index} className="flex gap-2.5">
               <span aria-hidden className="font-extrabold text-accent">
@@ -60,7 +62,7 @@ export function DiagnosisCard({
       )}
       {diagnosis.affected_services.length > 0 && (
         <p className="text-sm text-ink-2">
-          Affects{" "}
+          {t.diagnosis.affects}{" "}
           {diagnosis.affected_services.map((service, index) => (
             <span key={service}>
               {index > 0 && ", "}
@@ -74,13 +76,15 @@ export function DiagnosisCard({
 }
 
 function ShortDiagnosis({ diagnosis }: { diagnosis: Diagnosis }) {
+  const t = useT();
   const [lead, rest] = firstSentences(diagnosis.root_cause, 2);
   const affected = diagnosis.affected_services;
   const more = rest !== "" || diagnosis.evidence.length > 0 || affected.length > 0;
   return (
     <div className="flex flex-col gap-2.5">
       <p className="text-sm font-extrabold text-ink-2">
-        {Math.round(diagnosis.confidence * 100)}% sure · {diagnosis.category}
+        {t.diagnosis.sure(Math.round(diagnosis.confidence * 100))} ·{" "}
+        {t.category[diagnosis.category]}
       </p>
       {diagnosis.unsure && (
         <p
@@ -89,8 +93,8 @@ function ShortDiagnosis({ diagnosis }: { diagnosis: Diagnosis }) {
         >
           <CircleHelp aria-hidden className="mt-0.5 size-4 shrink-0" />
           <span>
-            <strong className="font-extrabold">I am not sure.</strong> Read the evidence before you
-            decide.
+            <strong className="font-extrabold">{t.diagnosis.notSure}</strong>{" "}
+            {t.diagnosis.notSureShort}
           </span>
         </p>
       )}
@@ -102,12 +106,12 @@ function ShortDiagnosis({ diagnosis }: { diagnosis: Diagnosis }) {
               aria-hidden
               className="size-4 transition-transform group-open:rotate-90 motion-reduce:transition-none"
             />
-            More
+            {t.diagnosis.more}
           </summary>
           <div className="flex flex-col gap-2 pt-1 text-[15px]">
             {rest && <p>{rest}</p>}
             {diagnosis.evidence.length > 0 && (
-              <ul aria-label="Evidence" className="flex flex-col gap-1.5">
+              <ul aria-label={t.diagnosis.evidence} className="flex flex-col gap-1.5">
                 {diagnosis.evidence.map((item, index) => (
                   <li key={index} className="flex flex-wrap items-baseline gap-x-2">
                     <span>{item.detail}</span>
@@ -118,7 +122,7 @@ function ShortDiagnosis({ diagnosis }: { diagnosis: Diagnosis }) {
             )}
             {affected.length > 0 && (
               <p className="text-sm text-ink-2">
-                Affects <code className="font-mono">{affected.join(", ")}</code>
+                {t.diagnosis.affects} <code className="font-mono">{affected.join(", ")}</code>
               </p>
             )}
           </div>

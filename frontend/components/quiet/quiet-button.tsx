@@ -3,9 +3,10 @@
 import { ChevronDown, Moon } from "lucide-react";
 
 import { QuietMenu } from "@/components/quiet/quiet-menu";
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import { Button } from "@/components/ui/button";
 import type { QuietView } from "@/lib/api-types";
+import { useLanguage, useT } from "@/lib/i18n";
 import { quietLabel } from "@/lib/quiet-api";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +26,9 @@ export function QuietButton({
   onChanged: () => void;
 }) {
   const zone = useTimeZone();
-  const label = quiet ? quietLabel(quiet, new Date(), zone) : null;
+  const language = useLanguage();
+  const t = useT().quiet;
+  const label = quiet ? quietLabel(quiet, new Date(), zone, language) : null;
   return (
     <QuietMenu
       target={target}
@@ -35,7 +38,7 @@ export function QuietButton({
         label ? (
           <Button
             variant="ghost"
-            aria-label={`Quiet ${target.name}: ${label}`}
+            aria-label={t.quietNameLabel(target.name, label)}
             className={cn(CHIP, "bg-stop-bg text-stop hover:bg-stop-bg/70")}
           >
             <Moon aria-hidden />
@@ -43,9 +46,9 @@ export function QuietButton({
             <ChevronDown aria-hidden />
           </Button>
         ) : (
-          <Button variant="outline" aria-label={`Quiet ${target.name}`} className={CHIP}>
+          <Button variant="outline" aria-label={t.quietName(target.name)} className={CHIP}>
             <Moon aria-hidden />
-            Quiet
+            {t.quiet}
           </Button>
         )
       }

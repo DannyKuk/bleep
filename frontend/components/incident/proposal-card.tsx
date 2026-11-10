@@ -10,23 +10,15 @@ import {
   stepStatuses,
 } from "@/components/incident/plan-run";
 import type {
-  Action,
   ApprovalView,
   IncidentDetail,
   IncidentStatus,
   PlanStep,
   Proposal,
 } from "@/lib/api-types";
-import { CHANNEL, showInvisible } from "@/lib/format";
+import { showInvisible } from "@/lib/format";
+import { type Messages, useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-
-const STATUS_WORD: Record<ApprovalView["status"], string> = {
-  pending: "waiting",
-  approved: "approved",
-  rejected: "rejected",
-  instructed: "answered with an instruction",
-  closed: "closed before you answered",
-};
 
 /** The statuses an incident ends in; nothing can be decided for it from then on. */
 export const ENDED = new Set<IncidentStatus>(["resolved", "closed", "failed"]);
@@ -41,15 +33,6 @@ export function awaitsAnswer(approval: ApprovalView | null, status?: IncidentSta
 function closedUnanswered(approval: ApprovalView | null, status?: IncidentStatus): boolean {
   return approval !== null && approval.decision === null && !awaitsAnswer(approval, status);
 }
-
-const VERB: Record<Action, string> = {
-  "docker.restart": "Restart",
-  "docker.stop": "Stop",
-  "docker.start": "Start",
-  "coolify.redeploy": "Redeploy",
-  "coolify.set_env": "Set a variable on",
-  "mcp.call": "Call a tool for",
-};
 
 function samePlan(a: Proposal, b: Proposal): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
@@ -76,32 +59,37 @@ export function barApproval(
 }
 
 /** The plan card's title for where the run is. */
-export function planTitle({
-  incident,
-  proposal,
-  approval,
-  outcome,
-}: Pick<IncidentDetail, "incident" | "proposal" | "approval" | "outcome">): string {
+export function planTitle(
+  {
+    incident,
+    proposal,
+    approval,
+    outcome,
+  }: Pick<IncidentDetail, "incident" | "proposal" | "approval" | "outcome">,
+  t: Messages,
+): string {
+  const title = t.plan.title;
   const shown = shownPlan(proposal, approval);
-  if (!shown) return "My plan";
-  if (isRefused(shown)) return "No plan I may run";
-  if (shown.kind === "no_action") return "What I suggest";
-  if (awaitsAnswer(approval, incident.status)) return "Here is my plan";
-  if (incident.status === "executing" || incident.status === "verifying") return "Doing it now";
-  if (incident.status === "resolved") return "What I did";
-  if (outcome === "rejected") return "The plan you said no to";
-  return "My plan";
+  if (!shown) return title.mine;
+  if (isRefused(shown)) return title.refused;
+  if (shown.kind === "no_action") return title.suggest;
+  if (awaitsAnswer(approval, incident.status)) return title.asking;
+  if (incident.status === "executing" || incident.status === "verifying") return title.doing;
+  if (incident.status === "resolved") return title.did;
+  if (outcome === "rejected") return title.declined;
+  return title.mine;
 }
 
-const BADGE: Record<StepRun, { icon: typeof Check; word: string; className: string }> = {
-  started: { icon: Loader2, word: "running", className: "text-warn motion-safe:animate-spin" },
-  done: { icon: Check, word: "done", className: "text-ok" },
-  failed: { icon: X, word: "failed", className: "text-down" },
-  skipped: { icon: Minus, word: "skipped", className: "text-ink-2" },
+const BADGE: Record<StepRun, { icon: typeof Check; className: string }> = {
+  started: { icon: Loader2, className: "text-warn motion-safe:animate-spin" },
+  done: { icon: Check, className: "text-ok" },
+  failed: { icon: X, className: "text-down" },
+  skipped: { icon: Minus, className: "text-ink-2" },
 };
 
 /** The step's number until it runs, then a spinner, then a check (or a cross, or a dash). */
 function StepBadge({ number, status }: { number: number; status?: StepRun }) {
+  const t = useT();
   if (!status) {
     return (
       <span
@@ -112,29 +100,30 @@ function StepBadge({ number, status }: { number: number; status?: StepRun }) {
       </span>
     );
   }
-  const { icon: Icon, word, className } = BADGE[status];
+  const { icon: Icon, className } = BADGE[status];
   return (
     <span className="grid size-8 shrink-0 place-items-center rounded-full bg-surface">
       <Icon aria-hidden className={cn("size-4", className)} strokeWidth={2.75} />
-      <span className="sr-only">
-        Step {number}, {word}:
-      </span>
+      <span className="sr-only">{t.plan.stepState(number, t.plan.stepBadge[status])}</span>
     </span>
   );
 }
 
 function Step({ step, number, status }: { step: PlanStep; number: number; status?: StepRun }) {
+  const t = useT();
   return (
     <li className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 rounded-row bg-soft px-4 py-3.5">
       <StepBadge number={number} status={status} />
       <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="text-[17px] font-extrabold">{VERB[step.action] ?? step.action}</span>
+        <span className="text-[17px] font-extrabold">
+          {t.plan.verbs[step.action] ?? step.action}
+        </span>
         <code className="font-mono text-[15px] break-all">{showInvisible(step.target)}</code>
       </span>
       <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-sm text-ink-2">
         <code className="font-mono">{step.action}</code>
         <span>
-          on <code className="font-mono">{step.host_id}</code>
+          {t.plan.on} <code className="font-mono">{step.host_id}</code>
         </span>
         {Object.entries(step.params).map(([key, value]) => (
           <code key={key} className="font-mono text-xs break-all whitespace-pre-wrap">
@@ -147,6 +136,7 @@ function Step({ step, number, status }: { step: PlanStep; number: number; status
 }
 
 function CheckPill({ check }: { check: CheckView }) {
+  const t = useT();
   const Icon = check.ok ? Check : X;
   return (
     <li
@@ -156,7 +146,7 @@ function CheckPill({ check }: { check: CheckView }) {
       )}
     >
       <Icon aria-hidden className="size-3.5 shrink-0" strokeWidth={2.75} />
-      <span className="sr-only">{check.ok ? "Passed:" : "Failed:"}</span>
+      <span className="sr-only">{check.ok ? t.plan.passed : t.plan.failed}</span>
       <code className="font-mono font-medium break-all">{check.target}</code>
       {check.detail && <span className="font-semibold">{check.detail}</span>}
     </li>
@@ -164,10 +154,11 @@ function CheckPill({ check }: { check: CheckView }) {
 }
 
 function PendingPill({ target }: { target: string }) {
+  const t = useT();
   return (
     <li className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-soft px-3 py-1.5 text-sm font-bold">
       <Loader2 aria-hidden className="size-3.5 shrink-0 text-warn motion-safe:animate-spin" />
-      <span className="sr-only">Checking:</span>
+      <span className="sr-only">{t.plan.checkingPill}</span>
       <code className="font-mono font-medium break-all">{target}</code>
     </li>
   );
@@ -181,14 +172,13 @@ function Checks({
   planned: string[];
   verification: PlanRun["verification"];
 }) {
+  const t = useT();
   return (
     <div className="flex flex-col gap-2">
       <p className="text-sm font-bold text-ink-2">
-        {verification
-          ? `Check ${verification.attempt}: ${verification.ok ? "passed" : "failed"}`
-          : "Checking"}
+        {verification ? t.plan.check(verification.attempt, verification.ok) : t.plan.checking}
       </p>
-      <ul aria-label="Checks" className="flex flex-wrap gap-2">
+      <ul aria-label={t.plan.checks} className="flex flex-wrap gap-2">
         {verification
           ? verification.checks.map((check, index) => <CheckPill key={index} check={check} />)
           : planned.map((target) => <PendingPill key={target} target={target} />)}
@@ -206,6 +196,7 @@ function Plan({
   run?: PlanRun;
   status?: IncidentStatus;
 }) {
+  const t = useT();
   const planned = [...proposal.verification.containers, ...proposal.verification.urls];
   const statuses = run ? stepStatuses(proposal.steps, run) : [];
   const verification = run?.verification ?? null;
@@ -215,9 +206,9 @@ function Plan({
   return (
     <div className="flex flex-col gap-4 text-[15px]">
       {proposal.kind === "no_action" ? (
-        <p className="font-bold">No action proposed.</p>
+        <p className="font-bold">{t.plan.noAction}</p>
       ) : (
-        <ol aria-label="Steps" className="flex flex-col gap-2.5">
+        <ol aria-label={t.plan.steps} className="flex flex-col gap-2.5">
           {proposal.steps.map((step, index) => (
             <Step key={index} step={step} number={index + 1} status={statuses[index]} />
           ))}
@@ -227,7 +218,7 @@ function Plan({
       {showChecks && <Checks planned={planned} verification={verification} />}
       {proposal.kind === "act" && !checking && planned.length > 0 && (
         <p className="text-ink-2">
-          Afterwards I check{" "}
+          {t.plan.afterwards}{" "}
           {planned.map((item, index) => (
             <span key={item}>
               {index > 0 && ", "}
@@ -239,7 +230,7 @@ function Plan({
       )}
       {proposal.human_instructions && (
         <Advice
-          title={isRefused(proposal) ? "Why nothing will run" : "What to do"}
+          title={isRefused(proposal) ? t.plan.whyNothing : t.plan.whatToDo}
           text={proposal.human_instructions}
         />
       )}
@@ -290,6 +281,7 @@ export function ProposalCard({
   /** No step of any plan of this incident ran (see `DecisionBar`). */
   nothingRanBefore?: boolean;
 }) {
+  const t = useT();
   const shown = shownPlan(proposal, approval);
   if (!shown) return null;
   const forShown = barApproval(proposal, approval, status) !== null;
@@ -297,7 +289,7 @@ export function ProposalCard({
     <div className="flex flex-col gap-5">
       <Plan proposal={shown} run={run} status={status} />
       {closedUnanswered(approval, status) && (
-        <p className="text-sm text-ink-2">Closed before you answered. This plan did not run.</p>
+        <p className="text-sm text-ink-2">{t.plan.closedUnanswered}</p>
       )}
       {approval && forShown && (
         <DecisionBar
@@ -312,8 +304,11 @@ export function ProposalCard({
       )}
       {approval && !forShown && approval.decision && (
         <p className="text-sm text-ink-2">
-          Earlier plan {STATUS_WORD[approval.status]} on {CHANNEL[approval.decision.via]}
-          {approval.decision.text ? `: “${approval.decision.text}”` : ""}
+          {t.plan.earlier(
+            t.plan.approvalWord[approval.status],
+            t.channel.on[approval.decision.via],
+            approval.decision.text ?? null,
+          )}
         </p>
       )}
     </div>

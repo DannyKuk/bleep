@@ -6,13 +6,13 @@ import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
 import type { Feedback, FeedbackBody, FeedbackTarget, Vote } from "@/lib/api-types";
+import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 const MAX_NOTE = 200; // the API's limit (NOTE_CHARS)
-const FINDING: Record<FeedbackTarget, string> = { diagnosis: "diagnosis", proposal: "plan" };
-const VOTES: { vote: Vote; label: string; Icon: typeof ThumbsUp; pressed: string }[] = [
-  { vote: "up", label: "Right", Icon: ThumbsUp, pressed: "border-ok bg-ok-bg text-ok" },
-  { vote: "down", label: "Wrong", Icon: ThumbsDown, pressed: "border-down bg-down-bg text-down" },
+const VOTES: { vote: Vote; Icon: typeof ThumbsUp; pressed: string }[] = [
+  { vote: "up", Icon: ThumbsUp, pressed: "border-ok bg-ok-bg text-ok" },
+  { vote: "down", Icon: ThumbsDown, pressed: "border-down bg-down-bg text-down" },
 ];
 
 /**
@@ -41,7 +41,7 @@ export function FeedbackBar({
   const noteId = useId();
 
   const saved = mine ?? current ?? null;
-  const finding = FINDING[target];
+  const t = useT().feedback;
 
   async function send(vote: Vote) {
     const body: FeedbackBody = { target, vote };
@@ -67,8 +67,8 @@ export function FeedbackBar({
   return (
     <div className="flex flex-col gap-2 border-t border-line pt-3 print:hidden">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-bold text-ink-2">Was this {finding} right?</span>
-        {VOTES.map(({ vote, label, Icon, pressed }) => (
+        <span className="text-sm font-bold text-ink-2">{t.question[target]}</span>
+        {VOTES.map(({ vote, Icon, pressed }) => (
           <Button
             key={vote}
             size="sm"
@@ -83,7 +83,7 @@ export function FeedbackBar({
             ) : (
               <Icon aria-hidden />
             )}
-            {label}
+            {vote === "up" ? t.right : t.wrong}
           </Button>
         ))}
         <Button
@@ -92,14 +92,14 @@ export function FeedbackBar({
           aria-expanded={noting}
           onClick={() => setNoting((open) => !open)}
         >
-          Add a note
+          {t.addNote}
         </Button>
       </div>
 
       {noting && (
         <div className="flex flex-col gap-1">
           <label htmlFor={noteId} className="text-xs text-muted-foreground">
-            Your note goes with the vote you pick next.
+            {t.noteHint}
           </label>
           <textarea
             id={noteId}
@@ -114,14 +114,13 @@ export function FeedbackBar({
 
       {saved && (
         <p role="status" className="text-xs text-muted-foreground">
-          {saved.vote === "up" ? "Marked right" : "Marked wrong"}
-          {saved.note ? `: “${saved.note}”` : ""}. Bleep remembers this for similar incidents.
+          {t.saved(saved.vote === "up", saved.note ?? null)}
         </p>
       )}
       {failure && (
         <p role="alert" className="flex items-center gap-2 text-xs text-down">
           <TriangleAlert aria-hidden className="size-3.5" />
-          Could not save the vote: {failure}
+          {t.failed(failure)}
         </p>
       )}
     </div>

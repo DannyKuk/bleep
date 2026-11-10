@@ -15,11 +15,12 @@ import { QuietPill } from "@/components/quiet/quiet-pill";
 import { SaveLockProvider } from "@/components/save-lock";
 import { HostSettings } from "@/components/settings/hosts";
 import { Alert, Status, useLoaded, useStaleSaving } from "@/components/settings/loaded";
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import { type Poll, usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
 import type { HostView, IncidentListItem, QuietView, ServiceView } from "@/lib/api-types";
 import { formatDateTime, formatSince } from "@/lib/format";
+import { useLanguage } from "@/lib/i18n";
 import { isAsleep } from "@/lib/mood";
 import { quietLabel, sinceWords } from "@/lib/quiet-api";
 import { serviceHref } from "@/lib/routes";
@@ -40,9 +41,9 @@ const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 function quietNote(quiet: QuietView, zone: Zone): string {
   const now = new Date();
   if (quiet.mode === "leave_alone" || quiet.until === null) {
-    return `Since ${sinceWords(new Date(quiet.since), now, zone)} Bleep opens no incidents for it or its services.`;
+    return `Since ${sinceWords(new Date(quiet.since), now, zone, "en")} Bleep opens no incidents for it or its services.`;
   }
-  const until = quietLabel(quiet, now, zone).replace(/^Host snoozed until /, "");
+  const until = quietLabel(quiet, now, zone, "en").replace(/^Host snoozed until /, "");
   return `Bleep opens no incidents for it or its services until ${until}.`;
 }
 
@@ -155,6 +156,7 @@ export function StillFailing({
   last: IncidentListItem | undefined;
 }) {
   const zone = useTimeZone();
+  const language = useLanguage();
   if (host.quiet || host.reachable || isAsleep(host)) return null;
   if (!last || last.kind !== "host_unreachable" || !ENDED.has(last.status)) return null;
   if (host.last_seen !== null && new Date(host.last_seen) > new Date(last.opened_at)) return null;
@@ -162,8 +164,8 @@ export function StillFailing({
   return (
     <p role="note" aria-label="Still failing" className="text-sm text-ink-2">
       Still unreachable after its last incident ended{" "}
-      <time dateTime={ended} title={formatDateTime(ended, zone)}>
-        {formatSince(ended, undefined, zone)}
+      <time dateTime={ended} title={formatDateTime(ended, zone, language)}>
+        {formatSince(ended, undefined, zone, language)}
       </time>
       :{" "}
       <Link href={`/incidents/${last.id}`} className={LINK}>

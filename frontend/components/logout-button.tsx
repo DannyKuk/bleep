@@ -4,8 +4,10 @@ import { LogOut } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 export function LogoutButton() {
+  const label = useT().shell.logOut;
   async function logout() {
     try {
       await apiFetch("/api/auth/logout", { method: "POST", redirectOn401: false });
@@ -17,8 +19,8 @@ export function LogoutButton() {
   return (
     <Button variant="ghost" size="sm" onClick={logout}>
       <LogOut aria-hidden />
-      <span className="hidden sm:inline">Log out</span>
-      <span className="sr-only sm:hidden">Log out</span>
+      <span className="hidden sm:inline">{label}</span>
+      <span className="sr-only sm:hidden">{label}</span>
     </Button>
   );
 }

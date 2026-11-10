@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import { apiFetch } from "@/lib/api";
+import { setLanguage, useLanguage } from "@/lib/i18n";
 import type { SettingsView } from "@/lib/settings-types";
 import { usableZone, type Zone } from "@/lib/zone";
 
@@ -23,19 +24,27 @@ interface TimeZone {
 const TimeZoneContext = createContext<TimeZone>({ zone: undefined, setZone: () => {} });
 
 /**
- * Bleep's time zone for every time on the dashboard: the settings' `timezone`, read once when the
- * app loads and again when the settings page saves one. Until it is read, or when none is chosen,
- * times are in the browser's own zone.
+ * Bleep's time zone and language for the whole dashboard: the settings' `timezone` and `language`,
+ * read once when the app loads and again when the settings page saves one. Until the zone is
+ * read, or when none is chosen, times are in the browser's own zone; until the language is read,
+ * the page speaks the one it last knew (`readLanguage`), so the dashboard and Telegram match.
  */
-export function TimeZoneProvider({ children }: { children: ReactNode }) {
+export function PreferencesProvider({ children }: { children: ReactNode }) {
   const [zone, setZoneState] = useState<Zone>(undefined);
+  const language = useLanguage();
   useEffect(() => {
     const controller = new AbortController();
     apiFetch<SettingsView>("/api/settings", { signal: controller.signal })
-      .then((view) => setZoneState(usableZone(view.timezone)))
-      .catch(() => {}); // the browser's zone, as before one is chosen
+      .then((view) => {
+        setZoneState(usableZone(view.timezone));
+        if (view.language === "en" || view.language === "de") setLanguage(view.language);
+      })
+      .catch(() => {}); // the browser's zone and the last language known, as before
     return () => controller.abort();
   }, []);
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
   const setZone = useCallback((name: string | null) => setZoneState(usableZone(name)), []);
   const value = useMemo<TimeZone>(() => ({ zone, setZone }), [zone, setZone]);
   return <TimeZoneContext.Provider value={value}>{children}</TimeZoneContext.Provider>;

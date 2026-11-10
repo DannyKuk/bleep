@@ -1,3 +1,6 @@
+import { FIXED_LOCALE } from "@/lib/i18n";
+import type { Language } from "@/lib/settings-types";
+
 /**
  * The time zone every time is shown in: the IANA name chosen on the settings page, or undefined
  * for the browser's own. The API sends every time in UTC; it is turned into this zone only when
@@ -82,6 +85,6 @@ export function clockIn(at: Date, zone: Zone): string {
   return `${hour}:${String(minute).padStart(2, "0")}`;
 }
 
-/** "Tue" in `zone`. */
-export const weekdayIn = (at: Date, zone: Zone) =>
-  at.toLocaleDateString("en-GB", { weekday: "short", timeZone: zone });
+/** "Tue" (in German "Di.") in `zone`. */
+export const weekdayIn = (at: Date, zone: Zone, language: Language) =>
+  at.toLocaleDateString(FIXED_LOCALE[language], { weekday: "short", timeZone: zone });

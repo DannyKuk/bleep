@@ -6,11 +6,11 @@ import { LogoutButton } from "@/components/logout-button";
 import { OverallProvider } from "@/components/overall-state";
 import { PinnedBarProvider } from "@/components/pinned-bar";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { TimeZoneProvider } from "@/components/time-zone";
+import { PreferencesProvider } from "@/components/preferences";
 
 export default function AppLayout({ children }: LayoutProps<"/">) {
   return (
-    <TimeZoneProvider>
+    <PreferencesProvider>
       <OverallProvider>
         <PinnedBarProvider>
           <div className="flex min-h-dvh flex-col">
@@ -33,6 +33,6 @@ export default function AppLayout({ children }: LayoutProps<"/">) {
           </div>
         </PinnedBarProvider>
       </OverallProvider>
-    </TimeZoneProvider>
+    </PreferencesProvider>
   );
 }

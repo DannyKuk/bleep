@@ -18,8 +18,8 @@ describe("snoozeUntil", () => {
     const day = new Date(2026, 10, 5, 9, 0);
     expect(snoozeUntil("morning", night)).toEqual(new Date(2026, 10, 5, 8, 0));
     expect(snoozeUntil("morning", day)).toEqual(new Date(2026, 10, 6, 8, 0));
-    expect(morningLabel(night)).toBe("Until 8:00");
-    expect(morningLabel(day)).toBe("Until tomorrow 8:00");
+    expect(morningLabel(night, undefined, "en")).toBe("Until 8:00");
+    expect(morningLabel(day, undefined, "en")).toBe("Until tomorrow 8:00");
     const pill = (now: Date) =>
       quietLabel(
         {
@@ -29,6 +29,8 @@ describe("snoozeUntil", () => {
           since,
         },
         now,
+        undefined,
+        "en",
       );
     expect(pill(night)).toBe("Snoozed until 8:00");
     expect(pill(day)).toBe("Snoozed until tomorrow 8:00");
@@ -40,17 +42,24 @@ describe("quietLabel", () => {
     const at = (d: Date) => d.toISOString();
     const snooze = (until: Date, scope: "service" | "host" = "service") =>
       ({ scope, mode: "snooze", until: at(until), since }) as const;
-    expect(quietLabel({ scope: "service", mode: "leave_alone", until: null, since }, NOW)).toBe(
-      "Left alone",
+    expect(
+      quietLabel(
+        { scope: "service", mode: "leave_alone", until: null, since },
+        NOW,
+        undefined,
+        "en",
+      ),
+    ).toBe("Left alone");
+    expect(quietLabel(snooze(new Date(2026, 10, 4, 18, 0)), NOW, undefined, "en")).toBe(
+      "Snoozed until 18:00",
     );
-    expect(quietLabel(snooze(new Date(2026, 10, 4, 18, 0)), NOW)).toBe("Snoozed until 18:00");
-    expect(quietLabel(snooze(new Date(2026, 10, 5, 8, 0)), NOW)).toBe(
+    expect(quietLabel(snooze(new Date(2026, 10, 5, 8, 0)), NOW, undefined, "en")).toBe(
       "Snoozed until tomorrow 8:00",
     );
-    expect(quietLabel({ scope: "host", mode: "leave_alone", until: null, since }, NOW)).toBe(
-      "Host left alone",
-    );
-    expect(quietLabel(snooze(new Date(2026, 10, 4, 18, 0), "host"), NOW)).toBe(
+    expect(
+      quietLabel({ scope: "host", mode: "leave_alone", until: null, since }, NOW, undefined, "en"),
+    ).toBe("Host left alone");
+    expect(quietLabel(snooze(new Date(2026, 10, 4, 18, 0), "host"), NOW, undefined, "en")).toBe(
       "Host snoozed until 18:00",
     );
   });

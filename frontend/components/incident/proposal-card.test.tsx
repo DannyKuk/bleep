@@ -4,6 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import { approval, detail, event, incident, proposal } from "@/components/incident/fixtures";
 import { planRun } from "@/components/incident/plan-run";
 import { planTitle, ProposalCard } from "@/components/incident/proposal-card";
+import { en } from "@/lib/i18n/en";
+
+const titleOf = (detail: Parameters<typeof planTitle>[0]) => planTitle(detail, en);
 
 describe("ProposalCard", () => {
   it("shows the plan put to the human, with the decision bar while it waits", () => {
@@ -341,16 +344,16 @@ describe("ProposalCard", () => {
   });
 
   it("names the plan card for where the run is", () => {
-    expect(planTitle(detail())).toBe("Here is my plan");
+    expect(titleOf(detail())).toBe("Here is my plan");
     const approved = approval({ status: "approved" });
     expect(
-      planTitle(detail({ incident: incident({ status: "executing" }), approval: approved })),
+      titleOf(detail({ incident: incident({ status: "executing" }), approval: approved })),
     ).toBe("Doing it now");
     expect(
-      planTitle(detail({ incident: incident({ status: "resolved" }), approval: approved })),
+      titleOf(detail({ incident: incident({ status: "resolved" }), approval: approved })),
     ).toBe("What I did");
     expect(
-      planTitle(
+      titleOf(
         detail({
           incident: incident({ status: "closed" }),
           approval: approval({ status: "rejected" }),
@@ -358,10 +361,10 @@ describe("ProposalCard", () => {
         }),
       ),
     ).toBe("The plan you said no to");
-    expect(planTitle(detail({ proposal: null, approval: null }))).toBe("My plan");
-    expect(planTitle(detail({ incident: incident({ status: "closed" }) }))).toBe("My plan");
+    expect(titleOf(detail({ proposal: null, approval: null }))).toBe("My plan");
+    expect(titleOf(detail({ incident: incident({ status: "closed" }) }))).toBe("My plan");
     expect(
-      planTitle(
+      titleOf(
         detail({
           incident: incident({ status: "closed" }),
           approval: approval({ status: "closed" }),
@@ -369,7 +372,7 @@ describe("ProposalCard", () => {
       ),
     ).toBe("My plan");
     const refused = proposal({ kind: "no_action", steps: [], refused: true });
-    expect(planTitle(detail({ approval: approval({ proposal: refused }) }))).toBe(
+    expect(titleOf(detail({ approval: approval({ proposal: refused }) }))).toBe(
       "No plan I may run",
     );
   });

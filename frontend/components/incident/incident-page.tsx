@@ -34,6 +34,7 @@ import type {
   IncidentEvent,
   IncidentStatus,
 } from "@/lib/api-types";
+import { useT } from "@/lib/i18n";
 import { useIncidentStream } from "@/lib/use-incident-stream";
 import { cn } from "@/lib/utils";
 
@@ -93,6 +94,8 @@ export function IncidentPage({ id }: { id: string }) {
   const { events, status } = useIncidentStream(id);
   const overall = useOverall();
   const phone = usePhone();
+  const t = useT();
+  const words = t.incidents;
   const [reloads, setReloads] = useState(0);
   const { data, error } = useIncidentDetail(id, `${reloadKey(events)}:${reloads}`);
 
@@ -104,19 +107,19 @@ export function IncidentPage({ id }: { id: string }) {
           className="inline-flex w-fit items-center gap-1 rounded-full text-sm font-bold text-ink-2 hover:text-ink focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           <ArrowLeft aria-hidden className="size-4" />
-          Incidents
+          {words.title}
         </Link>
         {error ? (
           <p role="alert" className="flex items-center gap-2 text-sm font-bold text-down">
             <TriangleAlert aria-hidden className="size-4" />
             {error instanceof ApiError && error.status === 404
-              ? "There is no incident with this id."
-              : `Could not load the incident: ${error.message}`}
+              ? words.notFound
+              : words.loadFailed(error.message)}
           </p>
         ) : (
           <p role="status" className="flex items-center gap-2 text-sm text-ink-2">
             <Loader2 aria-hidden className="size-4 motion-safe:animate-spin" />
-            Loading the incident
+            {words.loading}
           </p>
         )}
       </div>
@@ -165,8 +168,8 @@ export function IncidentPage({ id }: { id: string }) {
           quiet={null}
           onChanged={quietChanged}
           trigger={
-            <Button variant="outline" aria-label="I'm on it">
-              I&apos;m on it ▾
+            <Button variant="outline" aria-label={words.onIt}>
+              {words.onItMenu}
             </Button>
           }
         />
@@ -177,7 +180,7 @@ export function IncidentPage({ id }: { id: string }) {
   const refreshFailed = error && (
     <p role="alert" className="flex items-center gap-2 text-sm font-bold text-warn">
       <TriangleAlert aria-hidden className="size-4" />
-      Refresh failed, showing the last data: {error.message}
+      {t.common.refreshFailed(error.message)}
     </p>
   );
   // The report is its own document card, so it sits on the page without a panel around it.
@@ -185,7 +188,11 @@ export function IncidentPage({ id }: { id: string }) {
     <ReportView report={report} outcome={data.outcome} incident={incident} />
   );
   const planPanel = (
-    <Panel key="plan" title={planTitle(data)} awaitingYou={awaitsAnswer(approval, incident.status)}>
+    <Panel
+      key="plan"
+      title={planTitle(data, t)}
+      awaitingYou={awaitsAnswer(approval, incident.status)}
+    >
       {proposal || approval ? (
         <div className="flex flex-col gap-4">
           <ProposalCard
@@ -208,12 +215,12 @@ export function IncidentPage({ id }: { id: string }) {
           )}
         </div>
       ) : (
-        <Waiting>{ended ? "I made no plan." : "I have no plan yet."}</Waiting>
+        <Waiting>{ended ? words.madeNoPlan : words.noPlanYet}</Waiting>
       )}
     </Panel>
   );
   const foundPanel = (
-    <Panel key="found" title="What I found">
+    <Panel key="found" title={words.found}>
       {diagnosis ? (
         <div className="flex flex-col gap-4">
           <DiagnosisCard diagnosis={diagnosis} short={phone} />
@@ -225,7 +232,7 @@ export function IncidentPage({ id }: { id: string }) {
           />
         </div>
       ) : (
-        <Waiting>{ended ? "I found no cause." : "I am still looking."}</Waiting>
+        <Waiting>{ended ? words.foundNoCause : words.stillLooking}</Waiting>
       )}
     </Panel>
   );
@@ -260,21 +267,21 @@ export function IncidentPage({ id }: { id: string }) {
           {reportPanel}
           {phone ? [foundPanel, planPanel] : [planPanel, foundPanel]}
           {phone ? (
-            <Folded title="How I got there" note={looks === 1 ? "1 look" : `${looks} looks`}>
+            <Folded title={words.howIGotThere} note={words.looks(looks)}>
               <ReasoningStream events={events} />
             </Folded>
           ) : (
-            <Panel title="How I got there">
+            <Panel title={words.howIGotThere}>
               <ReasoningStream events={events} />
             </Panel>
           )}
         </div>
         {phone ? (
-          <Folded title="Timeline">
+          <Folded title={words.timeline}>
             <Timeline events={events} incident={incident} />
           </Folded>
         ) : (
-          <Panel title="Timeline" className="sticky top-6">
+          <Panel title={words.timeline} className="sticky top-6">
             <Timeline events={events} incident={incident} />
           </Panel>
         )}

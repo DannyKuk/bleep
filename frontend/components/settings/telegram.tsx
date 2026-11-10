@@ -1,7 +1,8 @@
 import { Fact, SecretBadge } from "@/components/settings/secret";
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import { Badge } from "@/components/ui/badge";
 import { formatDateTime } from "@/lib/format";
+import { useLanguage } from "@/lib/i18n";
 import type { TelegramStatus } from "@/lib/settings-types";
 
 /** Whether Telegram is set up and polling. Its token and chat id are set under Secrets, or in `.env`. */
@@ -14,6 +15,7 @@ export function TelegramSettings({
   tokenSource?: "env" | "dashboard" | null;
 }) {
   const zone = useTimeZone();
+  const language = useLanguage();
   return (
     <div className="flex flex-col gap-3">
       <dl className="flex flex-col gap-1.5">
@@ -35,7 +37,9 @@ export function TelegramSettings({
         {status.configured && (
           <Fact label="Last poll">
             {status.last_poll ? (
-              <time dateTime={status.last_poll}>{formatDateTime(status.last_poll, zone)}</time>
+              <time dateTime={status.last_poll}>
+                {formatDateTime(status.last_poll, zone, language)}
+              </time>
             ) : (
               <span className="text-muted-foreground">Not yet</span>
             )}
