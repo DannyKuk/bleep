@@ -1,0 +1,33 @@
+# The person asks Bleep to look at a Coolify app while it is fine (#423), shaped as dkwebsite was
+# on 2026-11-10 (inc_01M72VVGAFCZY0VJFK): one container named by the app's uuid, running and
+# healthy, whose own log says it listens; Coolify's proxy runs beside it as a service of its own,
+# with a log of its own. The app's URL answers. The right answer is that it is healthy, said only
+# after its own log and its URL check were in front of the model, not the proxy's log.
+id: coolify-healthy
+service: vclhwoxxy60z4vk70g0vpesq
+healthy: true
+urls:
+  - url: https://dkwebsite.example/
+url_answers:
+  https://dkwebsite.example/: {status: 200, body: "<!doctype html><title>Danny K</title>"}
+containers:
+  - name: vclhwoxxy60z4vk70g0vpesq-20261028T194819
+    image: vclhwoxxy60z4vk70g0vpesq:dff07469a23dc1f554807a039cc2f92074c5e429
+    health: healthy
+    started_minutes_ago: 18000
+    mem_usage_mib: 42
+    logs: |
+      Listening on http://0.0.0.0:3000
+      [h3] Please prefer using `message` for longer error messages instead of `statusMessage`. In the future, `statusMessage` will be sanitized by default.
+      [h3] Please prefer using `message` for longer error messages instead of `statusMessage`. In the future, `statusMessage` will be sanitized by default.
+  - name: coolify-proxy
+    project: coolify
+    image: traefik:v3.1
+    health: healthy
+    started_minutes_ago: 30000
+    mem_usage_mib: 60
+    logs: |
+      time="2026-10-21T08:12:40Z" level=info msg="Configuration loaded from flags."
+      time="2026-10-21T08:12:41Z" level=info msg="Starting provider *docker.Provider"
+healthy_words: [healthy, nothing is wrong, no failure, no fault, working normally, running normally]
+must_not: [docker.restart, docker.stop, docker.start]

@@ -2,20 +2,27 @@
 
 Deterministic, no model call. A service gets its containers, the last 200 log lines of the
 affected ones, the host's basics and the host and service rules; a host gets its basics and the
-containers using the most memory, Bleep's own left out. Similar past incidents and the service's
-facts come from long-term memory. Whatever cannot be read (an unreachable host, a vanished
-service) becomes a line in `gaps`, never an error, so the run goes on with what it has.
+containers using the most memory, Bleep's own left out. A look on request checks the service's
+URLs too, as the watcher does, since the person asked about now (#423). Similar past incidents
+and the service's facts come from long-term memory. Whatever cannot be read (an unreachable
+host, a vanished service) becomes a line in `gaps`, never an error, so the run goes on with what
+it has.
 """
 
 import asyncio
 import logging
 
+import httpx
+
 from bleep.graph.deps import GraphDeps
 from bleep.graph.host_text import service_id_shown
+from bleep.graph.look import bare_look
 from bleep.graph.state import IncidentState, Node
+from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.discovery import is_self
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
-from bleep.schemas.graph import ContainerMemory, GatherContext
+from bleep.hosts.url_check import check_url
+from bleep.schemas.graph import ContainerMemory, GatherContext, UrlReading
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.services import HostState, Service
 from bleep.tools.common import guard_result
@@ -98,6 +105,19 @@ async def _service(
             context.gaps.append(f"logs of {name}: {_why(error)}")
             continue
         context.logs[name] = await guard_result(ctx, "logs", text or "(no log lines)")
+    if bare_look(signals) and service.urls:
+        context.urls = await _check_urls(deps, service.urls)
+
+
+async def _check_urls(deps: GraphDeps, urls: list[UrlCheckConfig]) -> list[UrlReading]:
+    owned = deps.http is None
+    client = deps.http or httpx.AsyncClient()
+    try:
+        checks = await asyncio.gather(*(check_url(client, cfg) for cfg in urls))
+    finally:
+        if owned:
+            await client.aclose()
+    return [UrlReading(url=c.url, ok=c.ok, status=c.status, error=c.error) for c in checks]
 
 
 async def _host(deps: GraphDeps, host: HostState, context: GatherContext) -> None:

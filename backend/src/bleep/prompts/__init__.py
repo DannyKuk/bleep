@@ -32,6 +32,7 @@ OVERRIDABLE = frozenset(
         "graph/report",
         "graph/report_de",
         "graph/report_facts",
+        "graph/url_checks",
         "graph/verify_failed",
         "llm/json_fallback",
         "llm/json_retry",

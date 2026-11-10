@@ -23,7 +23,7 @@ from pydantic import Field, field_validator
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
-from bleep.graph.host_text import describe_basics, service_name
+from bleep.graph.host_text import describe_basics, describe_urls, service_name
 from bleep.graph.language import language_rule
 from bleep.graph.look import look_rule
 from bleep.graph.planted import EVIDENCE_SOURCE, planted_places, planted_sentence, read_sources
@@ -119,6 +119,8 @@ def _describe_context(context: GatherContext) -> str:
         )
     for name, text in context.logs.items():
         parts.append(f"Recent log of {name}:\n{text}")
+    if context.urls:
+        parts.append(f"URL checks when the run began:\n{describe_urls(context.urls)}")
     if context.basics is not None:
         parts.append("Host basics:\n" + "\n".join(describe_basics(context.basics)))
     if context.top_memory:
