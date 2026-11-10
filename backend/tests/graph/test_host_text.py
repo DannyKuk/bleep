@@ -258,7 +258,9 @@ def test_a_recalled_title_reaches_the_prompt_only_wrapped():
     subject = Subject(kind="service", host_id="a", service_id=f"a/compose:{project}")
     context = GatherContext(at=T0, service_name=project, similar=[past])
 
-    task = investigate._task({"subject": subject, "signals": [], "context": context}, 8, lambda: T0)
+    task = investigate._task(
+        {"subject": subject, "signals": [], "context": context}, 8, lambda: T0, ""
+    )
 
     assert "pre-approved" in task
     assert "pre-approved" not in outside_wrappers(task)
