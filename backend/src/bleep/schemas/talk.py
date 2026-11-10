@@ -1,12 +1,13 @@
 """Talking to Bleep (#390): what the model reads from a message, what Bleep answers, and the
 snapshot of Bleep's own state the answer comes from (docs/design/notify.md)."""
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from bleep.schemas.api import Health
-from bleep.schemas.quiet import QuietMode
+from bleep.schemas.quiet import QuietMode, QuietScope
 
 TalkKind = Literal["question", "action", "refusal", "unclear"]
 # `failed`: the message could not be read (the model failed or the day's cost cap is spent).
@@ -56,14 +57,39 @@ class Turn(BaseModel):
     answered: str
 
 
+# The actions a chat can offer to confirm; a look on request (`look_again`) comes with #403.
+OfferKind = Literal["snooze", "leave_alone", "watch_again", "expected", "instruct", "show_plan"]
+
+
+class Offer(BaseModel):
+    """An action checked against Bleep's state, ready to be confirmed with one button: every
+    field comes from Bleep's state or from code, never from the model's words, except `text`,
+    the person's own words for a plan (`instruct`). `subject` and `incident` are names as Bleep
+    shows them; `until` is UTC. `plan_id` is the plan an instruction is for, bound by the
+    surface that offers it (the plan a replied-to message showed, else the one that waits)."""
+
+    kind: OfferKind
+    scope: QuietScope | None = None
+    target_id: str | None = None
+    subject: str | None = None
+    until: datetime | None = None
+    incident_id: str | None = None
+    incident: str | None = None
+    plan_id: str | None = None
+    text: str | None = None
+
+
 class TalkReply(BaseModel):
-    """What a surface shows for a message. `action` is what Bleep understood the person to ask
-    for; nothing has run. `incident_id` is the incident the message was about, if any."""
+    """What a surface shows for a message. `action` is what the model read the person to ask
+    for; nothing has run. `offer` is that action once code checked it, with `answer` its confirm
+    line: the surface offers it with a button, and only the press runs it. `incident_id` is the
+    incident the message was about, if any."""
 
     kind: ReplyKind
     answer: str
     action: TalkAction | None = None
     incident_id: str | None = None
+    offer: Offer | None = None
 
 
 class QuietLine(BaseModel):

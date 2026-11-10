@@ -317,6 +317,7 @@ def build_talk(
         budgets=store.budgets,
         ledger=CostLedger(db),
         guard_log=guard_log,
+        zone=store.zone,
     )
 
 

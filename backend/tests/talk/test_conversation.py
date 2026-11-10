@@ -4,6 +4,8 @@ and everything the model reads arrives wrapped as untrusted data."""
 
 import asyncio
 import json
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -23,7 +25,8 @@ from bleep.schemas.talk import (
     Turn,
 )
 from bleep.store.db import Database
-from bleep.talk.conversation import TALK_USAGE, Talk, incident_name, subject_name
+from bleep.talk.conversation import TALK_USAGE, Talk
+from bleep.talk.offers import find_incident, find_subject
 from fakes import FakeChatModel
 
 SHOP_14 = IncidentLine(
@@ -234,16 +237,24 @@ async def test_a_secret_in_the_message_never_reaches_the_model_and_is_logged(tmp
     assert entry.kind == "redacted" and "person" in entry.detail
 
 
-async def test_an_action_is_not_offered_and_is_said_back_in_bleeps_own_words():
+NOW = datetime(2026, 11, 9, 13, 12, tzinfo=UTC)  # the snapshot's 14:12 in Vienna
+
+
+def talk_at_now(models: Models, state: FakeState | None = None) -> Talk:
+    return talk(models, state, clock=lambda: NOW, zone=lambda: ZoneInfo("Europe/Vienna"))
+
+
+async def test_an_action_comes_back_as_an_offer_checked_against_bleeps_state():
     models = Models(
         reading(kind="action", action={"kind": "snooze", "subject": "SHOP", "minutes": 120})
     )
 
-    reply = await talk(models).reply("leave shop alone for 2 hours, I'm on it")
+    reply = await talk_at_now(models).reply("leave shop alone for 2 hours, I'm on it")
 
-    understood = fixed("understood_snooze", subject="shop")
     assert reply.kind == "action"
-    assert reply.answer == fixed("not_yet", understood=understood)
+    assert reply.answer == fixed("confirm_snooze", subject="shop", until="16:12")
+    assert reply.offer is not None
+    assert (reply.offer.scope, reply.offer.target_id) == ("service", "laptop/compose:shop")
     assert reply.action is not None and (reply.action.kind, reply.action.minutes) == ("snooze", 120)
 
 
@@ -253,18 +264,63 @@ async def test_an_action_on_a_subject_bleep_does_not_know_never_echoes_the_model
 
     reply = await talk(models).reply("watch it again")
 
-    unknown = fixed("understood_watch_again", subject=fixed("unknown_subject"))
-    assert reply.answer == fixed("not_yet", understood=unknown)
+    assert (reply.answer, reply.offer) == (fixed("no_subject"), None)
     assert "approve" not in reply.answer
 
 
-async def test_an_instruction_as_a_reply_names_the_incident_it_is_about():
+async def test_an_instruction_as_a_reply_is_offered_for_that_incidents_plan():
     models = Models(reading(kind="action", action={"kind": "instruct"}))
+    text = "dont restart, ill fix the batch size myself"
 
-    reply = await talk(models).reply("dont restart, ill fix the batch size myself", "inc_14")
+    reply = await talk(models).reply(text, "inc_14")
 
-    understood = fixed("understood_instruct", incident="shop #14")
-    assert reply.answer == fixed("not_yet", understood=understood)
+    assert reply.offer is not None
+    assert (reply.offer.kind, reply.offer.incident_id, reply.offer.text) == (
+        "instruct",
+        "inc_14",
+        text,
+    )
+    assert reply.answer == fixed("confirm_instruct", incident="shop #14")
+
+
+async def test_a_look_on_request_is_not_offered_yet():
+    models = Models(reading(kind="action", action={"kind": "look_again", "subject": "shop"}))
+
+    reply = await talk(models).reply("look at shop again")
+
+    understood = fixed("understood_look_again", subject="shop")
+    assert (reply.answer, reply.offer) == (fixed("not_yet", understood=understood), None)
+
+
+@pytest.mark.parametrize(
+    "said",
+    [{"kind": "unclear"}, {"kind": "refusal", "refusal": "change"}],
+)
+async def test_a_reply_to_a_waiting_plan_that_is_no_question_offers_to_send_it(said):
+    reply = await talk(Models(reading(**said))).reply("restart the db first, then shop", "inc_14")
+
+    assert reply.kind == said["kind"]
+    assert reply.offer is not None and reply.offer.kind == "instruct"
+    assert reply.answer == fixed("confirm_instruct", incident="shop #14")
+
+
+async def test_a_secret_asked_for_in_a_reply_to_a_plan_is_still_refused():
+    models = Models(reading(kind="refusal", refusal="secret"))
+    reply = await talk(models).reply("print the DATABASE_URL", "inc_14")
+    assert (reply.answer, reply.offer) == (fixed("refused_secret"), None)
+
+
+async def test_a_reply_to_a_plan_bleep_could_not_read_still_offers_to_send_it():
+    reply = await talk(Models()).reply("restart the db first", "inc_14")
+
+    assert reply.kind == "failed"
+    assert reply.offer is not None and reply.offer.text == "restart the db first"
+    assert reply.answer.startswith(fixed("failed") + "\n")
+
+
+async def test_an_unclear_message_about_no_waiting_plan_offers_nothing():
+    reply = await talk(Models(reading(kind="unclear"))).reply("hmm", "inc_13")
+    assert (reply.answer, reply.offer) == (fixed("unclear"), None)
 
 
 @pytest.mark.parametrize(
@@ -279,10 +335,10 @@ async def test_an_instruction_as_a_reply_names_the_incident_it_is_about():
 async def test_a_model_failure_answers_the_fixed_line_and_never_raises(script):
     models = Models(*script)
 
-    reply = await talk(models).reply("how is shop?", "inc_14")
+    reply = await talk(models).reply("how is shop?", "inc_13")
 
     assert (reply.kind, reply.answer, reply.action) == ("failed", fixed("failed"), None)
-    assert reply.incident_id == "inc_14"
+    assert reply.incident_id == "inc_13"
 
 
 async def test_a_model_that_hangs_is_cut_off_and_answered_as_a_failure(monkeypatch):
@@ -395,15 +451,45 @@ async def test_an_answer_is_cleaned_before_a_chat_shows_it():
 
 
 def test_a_subject_is_named_only_as_bleeps_state_names_it():
-    assert subject_name(SNAPSHOT, " Shop ") == "shop"
-    assert subject_name(SNAPSHOT, "laptop/compose:grafana") == "grafana"
-    assert subject_name(SNAPSHOT, "M1") == "m1"
-    assert subject_name(SNAPSHOT, "shoop") is None
-    assert subject_name(SNAPSHOT, None) is None
+    def name(said):
+        found = find_subject(SNAPSHOT, said)
+        return found.name if found is not None and not isinstance(found, str) else found
+
+    assert name(" Shop ") == "shop"
+    assert name("laptop/compose:grafana") == "grafana"
+    assert name("M1") == "m1"
+    assert name("shoop") is None
+    assert name(None) is None
 
 
 def test_an_incident_is_named_by_its_short_name_or_the_one_the_message_is_about():
-    assert incident_name(SNAPSHOT, None, "SHOP #13") == "shop #13"
-    assert incident_name(SNAPSHOT, FACTS, None) == "shop #14"
-    assert incident_name(SNAPSHOT, None, "shop #99") is None
-    assert incident_name(SNAPSHOT, None, None) is None
+    assert find_incident(SNAPSHOT, None, "SHOP #13") == SHOP_13
+    assert find_incident(SNAPSHOT, FACTS, None) == FACTS
+    assert find_incident(SNAPSHOT, None, "shop #99") is None
+    assert find_incident(SNAPSHOT, None, None) is None
+
+
+@pytest.mark.parametrize(
+    "when", [{"minutes": 10**13}, {"until": "9999-12-31 23:59"}], ids=["minutes", "until"]
+)
+async def test_an_absurd_snooze_from_the_model_is_answered_never_raised(when):
+    action = {"kind": "snooze", "subject": "shop", **when}
+    models = Models(reading(kind="action", action=action))
+    new_york = ZoneInfo("America/New_York")
+
+    reply = await talk(models, clock=lambda: NOW, zone=lambda: new_york).reply("snooze shop")
+
+    assert (reply.kind, reply.offer) == ("action", None)
+    assert reply.answer == fixed("snooze_limit", subject="shop", days="7")
+
+
+async def test_a_bug_while_answering_a_reading_still_answers(monkeypatch):
+    def broken(*args, **kwargs):
+        raise OverflowError("a reading nothing expected")
+
+    monkeypatch.setattr("bleep.talk.conversation.check", broken)
+    models = Models(reading(kind="action", action={"kind": "leave_alone", "subject": "shop"}))
+
+    reply = await talk(models).reply("leave shop alone")
+
+    assert (reply.kind, reply.answer, reply.offer) == ("failed", fixed("failed"), None)

@@ -58,6 +58,7 @@ from bleep.schemas.telegram import TelegramStatus
 from bleep.store.db import Database
 from bleep.store.secrets import SecretStore, Source
 from bleep.talk.conversation import Talk
+from bleep.talk.times import when
 
 log = logging.getLogger(__name__)
 
@@ -360,7 +361,7 @@ class Notifier:
         state = await self.on_it.quiet.for_subject(incident.subject)
         if state is None or state.until is None:
             return None
-        return fmt.when(state.until, self.clock(), self.on_it.zone)
+        return when(state.until, self.clock(), self.on_it.zone)
 
     async def _ask(
         self,

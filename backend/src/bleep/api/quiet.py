@@ -4,13 +4,14 @@ The store tells the watcher, which closes the target's open incidents when a qui
 looks at the target again when it ends; these routes only validate, call the store and answer.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from pydantic import ValidationError
 
 from bleep.api.deps import get_parts
+from bleep.incidents.quiet import MAX_SNOOZE
 from bleep.schemas.api import QuietView
 from bleep.schemas.quiet import QuietRequest, QuietScope
 from bleep.wiring import AppParts
@@ -18,8 +19,6 @@ from bleep.wiring import AppParts
 router = APIRouter(prefix="/quiet", tags=["quiet"])
 
 Parts = Annotated[AppParts, Depends(get_parts)]
-
-MAX_SNOOZE = timedelta(days=7)
 
 
 @router.put("/services/{service_id:path}")

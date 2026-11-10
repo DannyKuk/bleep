@@ -135,6 +135,22 @@ class Env:
         self.chat.updates.append([update])
         await self.bot.poll_once()
 
+    async def send(self) -> None:
+        """Press Send on the offer the last reply got: a reply alone instructs nothing (#402)."""
+        offer = self.chat.sent()[-1]
+        [[send, _]] = offer["reply_markup"]["inline_keyboard"]
+        assert send["text"] == "Send"
+        press = {
+            "update_id": 9500 + len(self.chat.calls),
+            "callback_query": {
+                "id": "press",
+                "message": {"message_id": offer["id"], "chat": {"id": int(CHAT)}},
+                "data": send["callback_data"],
+            },
+        }
+        self.chat.updates.append([press])
+        await self.bot.poll_once()
+
 
 def report(outcome: str, **extra) -> Report:
     fields = {"title": "t", "summary": "s", "cause": "shop-db was stopped.", **extra}
@@ -397,13 +413,16 @@ async def test_a_note_in_the_middle_of_a_run_is_no_end(env):
 # --- replies ---
 
 
-async def test_a_reply_to_a_message_without_a_plan_instructs_the_plan_that_waits(env):
+async def test_a_reply_to_a_message_without_a_plan_is_offered_to_the_plan_that_waits(env):
     incident = await env.open()
     await env.notifier.incident_opened(incident)
     request = await env.ask(incident)
     opener = env.chat.sent()[0]
 
     await env.reply(opener["id"], "Don't restart, I'll change the batch size myself")
+    offer = env.chat.sent()[-1]
+    assert offer["reply_parameters"]["message_id"] > opener["id"] and env.runner.resumed == []
+    await env.send()
 
     [(incident_id, decision, approval_id)] = env.runner.resumed
     assert (incident_id, approval_id) == (incident.id, request.id)

@@ -13,9 +13,11 @@ through `prompts.load`.
   lead its first message, every later one replies to it, and an `end_*` template leads its last.
   The end message is assembled from `end_report`, `end_checked`, `end_next` and `end_details`, each
   only when it has something to say.
-- `where_host`, `ran_nothing`, `duration_*`, `when_*` (`when_utc` adds the zone when none is
-  configured) and `on_it_morning` are the few words that go into a message or a button as values
-  (`format.phrase`), so a translation changes files only.
+- `where_host`, `ran_nothing`, `duration_*` and `on_it_morning` are the few words that go into a
+  message or a button as values (`format.phrase`), so a translation changes files only. The words
+  of a time are `prompts/talk/when_*`, shared with the chat's offers (`talk/times.py`).
 - Variables are plain `{name}` placeholders, as everywhere else.
 - `answer_*.md` are the short pop-ups shown when a button is tapped or an instruction is sent; they
-  are sent as plain text, not escaped.
+  are sent as plain text, not escaped. `answer_confirm_*`, `answer_left_alone`, `answer_watching`,
+  `answer_not_quiet`, `answer_cannot_expect` and `answer_plan_on_dashboard` answer an offer made
+  in the chat (#402); `plan_again` shows a waiting plan again with its own buttons when the person says yes to it.
