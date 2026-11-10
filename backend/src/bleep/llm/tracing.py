@@ -1,10 +1,11 @@
-"""Tracing of incident runs: off, a self-hosted Langfuse, or LangSmith. See
+"""Tracing of incident runs and chat readings: off, a self-hosted Langfuse, or LangSmith. See
 docs/design/observability.md.
 
 The tracer's callbacks go into the config of each graph run, not onto the chat models, so one
 trace holds the whole run: every node, tool call and model call under it. The keys are read from
 the environment or the dashboard's secret file and stay in the tracing client; nothing here puts
-them in the run's metadata.
+them in the run's metadata. A chat reading (`talk`) is a trace of its own, in the session of the
+surface it came from, `talk-panel` or `talk-telegram` (#411).
 """
 
 import asyncio
@@ -20,6 +21,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from bleep.config import SettingsError
 from bleep.schemas.incidents import Incident
+from bleep.schemas.talk import TalkSurface
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +61,15 @@ def trace_name(incident: Incident) -> str:
     return f"incident:{incident.title}"
 
 
+def talk_session(surface: TalkSurface) -> str:
+    """The session a chat reading is traced in: one per surface, each reading its own trace."""
+    return f"talk-{surface}"
+
+
+def talk_tags(surface: TalkSurface) -> list[str]:
+    return ["talk", f"surface:{surface}"]
+
+
 def trace_tags(incident: Incident) -> list[str]:
     subject = incident.subject
     tags = [f"host:{subject.host_id}"]
@@ -71,6 +82,9 @@ class NoTracing:
     """Tracing off: nothing is added to a run."""
 
     def run_config(self, incident: Incident) -> RunnableConfig:
+        return {}
+
+    def talk_config(self, surface: TalkSurface) -> RunnableConfig:
         return {}
 
     def trace_url(self, incident: Incident) -> str | None:
@@ -121,6 +135,17 @@ class LangfuseTracing:
             },
         }
 
+    def talk_config(self, surface: TalkSurface) -> RunnableConfig:
+        from langfuse.langchain import CallbackHandler
+
+        session = talk_session(surface)
+        return {
+            "callbacks": [CallbackHandler(public_key=self._public_key)],
+            "run_name": session,
+            "tags": talk_tags(surface),
+            "metadata": {"langfuse_session_id": session, "langfuse_trace_name": session},
+        }
+
     def trace_url(self, incident: Incident) -> str | None:
         # Langfuse's project-free /trace/<id> page looks the id up in the legacy traces table,
         # which v4 no longer writes, so the link names the project; without its id, no link.
@@ -154,6 +179,16 @@ class LangSmithTracing:
             "metadata": {"session_id": incident.id},
         }
 
+    def talk_config(self, surface: TalkSurface) -> RunnableConfig:
+        tracer = LangChainTracer(project_name=self._project, client=self._client)
+        session = talk_session(surface)
+        return {
+            "callbacks": [tracer],
+            "run_name": session,
+            "tags": talk_tags(surface),
+            "metadata": {"session_id": session},
+        }
+
     def trace_url(self, incident: Incident) -> str | None:
         return None
 
@@ -183,6 +218,9 @@ class ReloadingTracer:
 
     def run_config(self, incident: Incident) -> RunnableConfig:
         return self._tracer.run_config(incident)
+
+    def talk_config(self, surface: TalkSurface) -> RunnableConfig:
+        return self._tracer.talk_config(surface)
 
     def trace_url(self, incident: Incident) -> str | None:
         return self._tracer.trace_url(incident)

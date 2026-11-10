@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
+from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import AIMessage
 
 from bleep import prompts
@@ -22,6 +23,10 @@ from bleep.schemas.talk import (
     SignalLine,
     Snapshot,
     StepLine,
+    TalkAction,
+    TalkExchange,
+    TalkReading,
+    TalkUsage,
     Turn,
 )
 from bleep.store.db import Database
@@ -514,3 +519,163 @@ async def test_a_bug_while_answering_a_reading_still_answers(monkeypatch):
     reply = await talk(models).reply("leave shop alone")
 
     assert (reply.kind, reply.answer, reply.offer) == ("failed", fixed("failed"), None)
+
+
+# --- the talk log (#411) ---
+
+
+def logged(t: Talk) -> TalkExchange:
+    [entry] = t.log.exchanges()
+    return entry
+
+
+async def test_a_question_lands_in_the_log_with_its_reading_and_what_it_cost():
+    t = talk(
+        Models(reading(kind="question", answer="shop is down since 14:02.")), clock=lambda: NOW
+    )
+
+    reply = await t.reply("how is shop?", "inc_14", surface="telegram")
+
+    entry = logged(t)
+    assert reply.exchange_id == entry.id
+    assert (entry.at, entry.surface, entry.text, entry.incident_id) == (
+        NOW, "telegram", "how is shop?", "inc_14",
+    )  # fmt: skip
+    assert entry.reading == TalkReading(kind="question", answer="shop is down since 14:02.")
+    assert (entry.kind, entry.answer, entry.offer, entry.refused) == (
+        "question", "shop is down since 14:02.", None, None,
+    )  # fmt: skip
+    assert entry.usage == TalkUsage(model="unknown", calls=1, tokens_in=900, tokens_out=40)
+
+
+async def test_an_action_lands_in_the_log_with_the_offer_code_made_of_it():
+    action = {"kind": "snooze", "subject": "SHOP", "minutes": 120}
+    t = talk_at_now(Models(reading(kind="action", action=action)))
+
+    reply = await t.reply("leave shop alone for 2 hours")
+
+    entry = logged(t)
+    assert entry.reading is not None and entry.reading.action == TalkAction(**action)
+    assert entry.offer == reply.offer and entry.answer == reply.answer
+    assert entry.refused is None
+
+
+async def test_an_action_a_check_refused_lands_in_the_log_with_the_line_that_says_why():
+    t = talk(Models(reading(kind="action", action={"kind": "watch_again", "subject": "nope"})))
+
+    await t.reply("watch nope again")
+
+    entry = logged(t)
+    assert (entry.kind, entry.offer, entry.refused) == ("action", None, fixed("no_subject"))
+    assert entry.reading is not None
+    assert entry.reading.action == TalkAction(kind="watch_again", subject="nope")
+
+
+@pytest.mark.parametrize(
+    ("said", "kind", "line"),
+    [
+        (reading(kind="refusal", refusal="change", answer="Sure!"), "refusal", "refused_change"),
+        (reading(kind="unclear"), "unclear", "unclear"),
+    ],
+    ids=["refused", "unclear"],
+)
+async def test_a_refused_and_an_unclear_message_land_in_the_log_as_read(said, kind, line):
+    t = talk(Models(said))
+
+    await t.reply("hmm, rm -rf it")
+
+    entry = logged(t)
+    assert entry.reading is not None and entry.reading.kind == kind
+    assert (entry.kind, entry.answer, entry.error) == (kind, fixed(line), None)
+
+
+async def test_a_message_bleep_could_not_read_lands_in_the_log_with_the_errors_type():
+    t = talk(Models())  # the call itself fails
+
+    await t.reply("how is shop?")
+
+    entry = logged(t)
+    assert (entry.kind, entry.reading, entry.answer) == ("failed", None, fixed("failed"))
+    assert entry.error == "AssertionError" and entry.usage is None
+
+
+async def test_a_secret_typed_into_the_chat_is_redacted_in_the_log():
+    token = "ghp_" + "A1b2" * 9
+    t = talk(Models(reading(kind="action", action={"kind": "instruct"})))
+
+    await t.reply(f"use the token {token}\x07 for the deploy", "inc_14")
+
+    entry = logged(t)
+    assert entry.text == "use the token <redacted> for the deploy"
+    assert entry.offer is not None and entry.offer.text == entry.text
+    assert token not in json.dumps([e.model_dump(mode="json") for e in t.log.exchanges()])
+
+
+async def test_the_models_own_words_are_redacted_in_the_logged_reading():
+    token = "ghp_" + "A1b2" * 9
+    t = talk(Models(reading(kind="question", answer=f"the key is {token}")))
+
+    await t.reply("what is the key?")
+
+    entry = logged(t)
+    assert entry.reading is not None and token not in entry.reading.answer
+    assert token not in entry.answer
+
+
+class Recorder(AsyncCallbackHandler):
+    """What a tracer's callback sees: the root run's name and metadata, and each model call's."""
+
+    def __init__(self) -> None:
+        self.roots: list[tuple[str | None, dict]] = []
+        self.models: list[dict] = []
+
+    async def on_chain_start(self, serialized, inputs, *, parent_run_id=None, **kwargs) -> None:
+        if parent_run_id is None:
+            self.roots.append((kwargs.get("name"), kwargs.get("metadata") or {}))
+
+    async def on_chat_model_start(self, serialized, messages, **kwargs) -> None:
+        self.models.append(kwargs.get("metadata") or {})
+
+
+class FakeTracer:
+    """A tracer as `llm.tracing` builds one: its callback, the run's name and the session."""
+
+    def __init__(self) -> None:
+        self.surfaces: list[str] = []
+        self.handler = Recorder()
+
+    def talk_config(self, surface: str) -> dict:
+        self.surfaces.append(surface)
+        session = f"talk-{surface}"
+        return {
+            "callbacks": [self.handler],
+            "run_name": session,
+            "metadata": {"langfuse_session_id": session},
+        }
+
+
+@pytest.mark.parametrize("surface", ["panel", "telegram"])
+async def test_each_reading_is_its_own_trace_in_the_session_of_its_surface(surface, tmp_path):
+    tracer = FakeTracer()
+    ledger = await ledger_at(tmp_path)
+    t = talk(Models(reading(kind="question", answer="ok")), tracer=tracer, ledger=ledger)
+
+    await t.reply("how is it?", surface=surface)
+
+    session = {"langfuse_session_id": f"talk-{surface}"}
+    assert tracer.surfaces == [surface]
+    [(name, metadata)] = tracer.handler.roots
+    assert name == f"talk-{surface}" and metadata.items() >= session.items()
+    [model] = tracer.handler.models
+    assert model.items() >= session.items()
+    assert (await ledger.incident_total(TALK_USAGE)).tokens == 940  # still counted
+
+
+async def test_a_tracer_that_fails_leaves_the_reading_untraced_and_answered():
+    class Broken:
+        def talk_config(self, surface: str) -> dict:
+            raise RuntimeError("https://langfuse.example sk-lf-secret")
+
+    t = talk(Models(reading(kind="question", answer="ok")), tracer=Broken())
+
+    assert (await t.reply("how is it?")).answer == "ok"

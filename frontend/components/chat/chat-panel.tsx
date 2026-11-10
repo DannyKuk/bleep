@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, X } from "lucide-react";
+import { ArrowUp, Download, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -13,6 +13,7 @@ import { stateMood } from "@/lib/mood";
 import { idFromSegment } from "@/lib/routes";
 import {
   MESSAGE_MAX_CHARS,
+  TALK_LOG_MARKDOWN,
   isFinished,
   linkHref,
   pressConfirm,
@@ -168,6 +169,15 @@ export function ChatPanel() {
           <h2 className="text-lg leading-tight font-extrabold">Bleep</h2>
           <p className="text-[13px] text-ink-2">Asks before it changes anything</p>
         </div>
+        <a
+          href={TALK_LOG_MARKDOWN}
+          download
+          aria-label="Export chat"
+          title="Export chat"
+          className="grid size-9 place-items-center rounded-full hover:bg-soft focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        >
+          <Download className="size-5" />
+        </a>
         <button
           type="button"
           aria-label="Close chat"

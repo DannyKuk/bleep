@@ -41,6 +41,7 @@ from bleep.schemas.talk import TalkReply
 from bleep.store.db import Database
 from bleep.talk.confirms import CONFIRM_TTL
 from bleep.talk.conversation import Talk
+from bleep.talk.log import TalkLog
 from bleep.talk.state import BleepState
 from fakes import FakeChatModel, ssh_host
 
@@ -657,8 +658,9 @@ class SlowTalk:
     def __init__(self) -> None:
         self.go = asyncio.Event()
         self.asked: list[str] = []
+        self.log = TalkLog()
 
-    async def reply(self, text, incident_id=None, turns=()):
+    async def reply(self, text, incident_id=None, turns=(), surface="telegram"):
         self.asked.append(text)
         await self.go.wait()
         return TalkReply(kind="question", answer="late answer")
@@ -935,3 +937,70 @@ async def test_the_setup_gives_the_bot_its_looks_when_it_starts(env):
 
     assert env.bot.looks is sentinel
     await built.stop()
+
+
+# --- the talk log (#411) ---
+
+
+def logged(env: Env):
+    entries = env.talk.log.exchanges()
+    assert all(e.surface == "telegram" for e in entries)
+    return entries
+
+
+async def test_a_question_lands_in_the_log_as_telegrams_with_the_answer_sent(env):
+    await say(
+        env, "how long has it been down?", 311, reading(kind="question", answer="Since 12:00.")
+    )
+
+    [entry] = logged(env)
+    assert (entry.text, entry.incident_id) == ("how long has it been down?", env.incident.id)
+    assert entry.reading is not None and entry.reading.kind == "question"
+    assert (entry.answer, entry.links, entry.press) == ("Since 12:00.", [], None)
+
+
+async def test_a_refused_an_unclear_and_a_failed_reading_land_in_the_log(env):
+    await say(env, "rm -rf it", None, reading(kind="refusal", refusal="change"))
+    await say(env, "hmm", None, reading(kind="unclear"))
+    await say(env, "how is shop?", None)  # the scripted model has no answer: it fails
+
+    refused, unclear, failed = logged(env)
+    assert (refused.kind, refused.answer) == ("refusal", fixed("refused_change"))
+    assert refused.reading is not None and refused.reading.refusal == "change"
+    assert (unclear.kind, unclear.answer) == ("unclear", fixed("unclear"))
+    assert (failed.kind, failed.reading, failed.answer) == ("failed", None, fixed("failed"))
+    assert failed.error is not None
+
+
+async def test_a_pressed_offer_lands_in_the_log_with_its_press(env):
+    confirm_id = await offered(env, "snooze")
+
+    pop_up = await press(env, confirm_id)
+    await press(env, confirm_id)  # a second press ran nothing
+
+    [entry] = logged(env)
+    assert entry.offer is not None and entry.offer.target_id == SHOP
+    assert entry.answer == LINES["snooze"][1]
+    assert entry.press is not None
+    assert (entry.press.yes, entry.press.line, entry.press.at) == (True, pop_up, T0)
+
+
+async def test_a_press_on_another_message_is_not_logged_as_the_offers(env):
+    confirm_id = await offered(env, "snooze")
+
+    await press(env, confirm_id, message_id=999)
+    assert logged(env)[0].press is None
+    await press(env, confirm_id, verb="no")
+
+    [entry] = logged(env)
+    assert entry.press is not None
+    assert (entry.press.yes, entry.press.line) == (False, said("answer_confirm_no"))
+
+
+async def test_a_secret_typed_into_telegram_is_redacted_in_the_log(env):
+    token = "ghp_" + "A1b2" * 9
+    await say(env, f"is {token} the right token?", None, reading(kind="refusal", refusal="secret"))
+
+    [entry] = logged(env)
+    assert entry.text == "is <redacted> the right token?"
+    assert token not in str(env.talk.log.exchanges())

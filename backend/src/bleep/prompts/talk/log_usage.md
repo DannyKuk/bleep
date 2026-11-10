@@ -1,0 +1,1 @@
+- Cost: {model}, {calls} call(s), {tokens_in} tokens in, {tokens_out} out, {usd}

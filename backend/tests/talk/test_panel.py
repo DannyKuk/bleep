@@ -23,6 +23,7 @@ from bleep.store.db import Database
 from bleep.talk.actions import Actions
 from bleep.talk.confirms import CONFIRM_TTL
 from bleep.talk.conversation import Talk
+from bleep.talk.log import TalkLog
 from bleep.talk.panel import WAITING_MAX, Panel
 from bleep.talk.state import BleepState
 from fakes import FakeChatModel
@@ -293,8 +294,9 @@ class SlowTalk:
     def __init__(self) -> None:
         self.go = asyncio.Event()
         self.read: list[str] = []
+        self.log = TalkLog()
 
-    async def reply(self, text: str, incident_id: str | None, turns) -> TalkReply:
+    async def reply(self, text: str, incident_id: str | None, turns, surface) -> TalkReply:
         self.read.append(text)
         await self.go.wait()
         return TalkReply(kind="question", answer=f"about {text}")
@@ -352,3 +354,43 @@ async def test_yes_to_a_look_opens_it_from_the_dashboard_and_only_then(env):
     assert looks.asked == [(SHOP, "dashboard")]
     started = prompts.load("talk/look_started", subject="shop", incident="shop #1").strip()
     assert result.line == started
+
+
+# --- the talk log (#411) ---
+
+
+async def test_a_pressed_offer_lands_in_the_log_with_what_the_panel_showed_and_the_press(env):
+    reply = await say(env, "leave shop alone", reading(kind="action", action=ASKED["snooze"]))
+    assert reply.confirm is not None
+
+    done = await env.panel.press(reply.confirm.id, True, env.actions)
+    await env.panel.press(reply.confirm.id, True, env.actions)  # a second press ran nothing
+
+    [entry] = env.talk.log.exchanges()
+    assert (entry.surface, entry.text, entry.kind) == ("panel", "leave shop alone", "action")
+    assert entry.offer is not None and entry.offer.target_id == SHOP
+    assert (entry.answer, entry.links) == (reply.answer, reply.links)
+    assert entry.press is not None
+    assert (entry.press.yes, entry.press.line, entry.press.at) == (True, done.line, T0)
+
+
+async def test_a_yes_to_a_plan_is_logged_as_the_line_the_panel_showed_instead(env):
+    action = {"kind": "show_plan", "incident": "shop #1"}
+    reply = await say(env, "yes do it", reading(kind="action", action=action))
+
+    [entry] = env.talk.log.exchanges()
+    assert entry.offer is not None and entry.offer.kind == "show_plan"
+    on_page = prompts.load("talk/plan_on_page", incident="shop #1").strip()
+    assert entry.answer == reply.answer == on_page
+    assert entry.press is None and reply.confirm is None
+
+
+async def test_a_declined_offer_lands_in_the_log_as_no(env):
+    reply = await say(env, "leave shop alone", reading(kind="action", action=ASKED["leave_alone"]))
+    assert reply.confirm is not None
+
+    await env.panel.press(reply.confirm.id, False, env.actions)
+
+    [entry] = env.talk.log.exchanges()
+    assert entry.press is not None
+    assert (entry.press.yes, entry.press.line) == (False, said("answer_confirm_no"))

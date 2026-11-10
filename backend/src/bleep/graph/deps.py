@@ -49,6 +49,7 @@ from bleep.schemas.incidents import (
     Subject,
 )
 from bleep.schemas.settings import Budgets, ModelSettings, Thresholds
+from bleep.schemas.talk import TalkSurface
 from bleep.tools.registry import ActHandler, ToolRegistry
 
 # The actions Bleep can take without a plugin; plugins add theirs (coolify.*) when enabled.
@@ -183,6 +184,10 @@ class Tracer(Protocol):
 
     def run_config(self, incident: Incident) -> RunnableConfig:
         """What a graph run of `incident` adds to its config; empty when tracing is off."""
+        ...
+
+    def talk_config(self, surface: TalkSurface) -> RunnableConfig:
+        """What a chat reading on `surface` adds to its config (`talk`, #411)."""
         ...
 
     def trace_url(self, incident: Incident) -> str | None:

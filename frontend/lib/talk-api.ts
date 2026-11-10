@@ -32,6 +32,12 @@ export interface ConfirmResult {
   line: string;
 }
 
+/**
+ * The talk log as a Markdown transcript (#411): both chats' last messages with how Bleep read
+ * each. The backend sends it as an attachment, so a plain link with the session cookie saves it.
+ */
+export const TALK_LOG_MARKDOWN = "/api/talk/log?format=md";
+
 /** As `schemas/talk.py` `MESSAGE_MAX_CHARS`. */
 export const MESSAGE_MAX_CHARS = 1000;
 

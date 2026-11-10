@@ -5,7 +5,8 @@ It reads a message with the same `Talk` as Telegram and runs a confirmed offer t
 prompts and the actions, not the transcript (docs/design/app.md). A message never changes
 anything; an offer comes back with two buttons, and only a press of Yes (or Send) runs it, once,
 within `talk.confirms.CONFIRM_TTL` and while its incident is open. A "yes" to a waiting plan
-points to the incident's page, where the plan is shown in full with its own buttons.
+points to the incident's page, where the plan is shown in full with its own buttons. What it
+showed and each press go into the talk log (#411).
 """
 
 import asyncio
@@ -45,8 +46,12 @@ class Panel:
         try:
             async with self._turn:
                 self.confirms.expired()  # forgets the offers nobody answered in time
-                reply = await self.talk.reply(text, incident_id, self.turns.recent())
+                reply = await self.talk.reply(text, incident_id, self.turns.recent(), "panel")
                 answer = await self._answer(reply, actions)
+                confirm_id = answer.confirm.id if answer.confirm is not None else None
+                self.talk.log.shown(
+                    "panel", reply.exchange_id, answer.answer, answer.links, confirm_id
+                )
                 self.turns.add(text, answer.answer)
                 return answer
         finally:
@@ -78,14 +83,19 @@ class Panel:
     async def press(self, confirm_id: str, yes: bool, actions: Actions) -> ConfirmResult:
         """Run the offer `confirm_id` on yes, once; no drops it. A second press, an expired and
         an unknown offer run nothing."""
+        line = await self._press(confirm_id, yes, actions)
+        self.talk.log.pressed("panel", confirm_id, yes, line)
+        return ConfirmResult(line=line)
+
+    async def _press(self, confirm_id: str, yes: bool, actions: Actions) -> str:
         taken = self.confirms.take(confirm_id)
         if taken == "used":
-            return ConfirmResult(line=said("answer_confirm_used"))
+            return said("answer_confirm_used")
         if isinstance(taken, str):
-            return ConfirmResult(line=said("answer_confirm_expired"))
+            return said("answer_confirm_expired")
         if not yes:
-            return ConfirmResult(line=said("answer_confirm_no"))
-        return ConfirmResult(line=await actions.run(taken))
+            return said("answer_confirm_no")
+        return await actions.run(taken)
 
 
 async def _plan_line(offer: Offer, actions: Actions) -> str:

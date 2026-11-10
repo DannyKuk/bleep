@@ -97,6 +97,24 @@ describe("ChatPanel", () => {
     expect(screen.queryByRole("region", { name: "Chat with Bleep" })).not.toBeInTheDocument();
   });
 
+  it("exports the chat as the backend's Markdown transcript from its header", async () => {
+    const fetchMock = stubBackend(() => json(answer()));
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("button", { name: "Talk to Bleep" }));
+
+    const panel = screen.getByRole("region", { name: "Chat with Bleep" });
+    const exported = within(within(panel).getByRole("banner")).getByRole("link", {
+      name: "Export chat",
+    });
+
+    expect(exported).toHaveAttribute("href", "/api/talk/log?format=md");
+    expect(exported).toHaveAttribute("download");
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/talk/log"))).toEqual(
+      [],
+    );
+  });
+
   it("shows a status answer with in-app links built from the ids the backend sent", async () => {
     const fetchMock = stubBackend(() =>
       json(
