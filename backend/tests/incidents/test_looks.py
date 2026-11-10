@@ -2,7 +2,9 @@
 service with an open incident, a quiet one, an unknown one, Bleep's own, one whose host does not
 answer, or once the day's cost cap is spent (#403)."""
 
+import asyncio
 from datetime import timedelta
+from typing import Literal
 
 from bleep.incidents.looks import Looks
 from bleep.incidents.quiet import QuietStore
@@ -13,6 +15,8 @@ from bleep.schemas.services import Service
 from bleep.schemas.settings import Budgets
 from fakes import compose_labels
 from graph_env import T0, box, graph_env
+
+VIA: tuple[Literal["telegram", "dashboard"], ...] = ("telegram", "dashboard")
 
 
 class Runs:
@@ -71,6 +75,33 @@ async def test_a_second_look_opens_nothing_and_names_the_open_one(tmp_path):
     assert again.incident.id == first.incident.id
     assert len(await env.repo.signals(first.incident.id)) == 1  # nothing attached to it
     assert len(runs.started) == 1 and len(await env.repo.list()) == 1
+
+
+async def test_two_looks_at_once_open_one_incident(tmp_path):
+    env, looks, _, runs = await rig(tmp_path)
+
+    both = await asyncio.gather(*(looks.look(env.service_id("shop"), v) for v in VIA))
+
+    assert sorted(look.outcome for look in both) == ["open", "opened"]
+    assert len({look.incident.id for look in both}) == 1
+    assert len(runs.started) == 1 and len(await env.repo.list()) == 1
+
+
+async def test_an_incident_opened_after_the_check_is_named_and_starts_nothing(tmp_path):
+    """The write lock decides: an incident that opened between the look's check and its write
+    takes no look signal, and the look starts no run."""
+    env, looks, _, runs = await rig(tmp_path)
+    died = await env.open(shop(env), container="shop-web-1")
+
+    async def nothing_open(_subject: Subject) -> None:
+        return None  # what the check saw just before the watcher's write
+
+    env.repo.open_target = nothing_open  # type: ignore[method-assign]
+    look = await looks.look(env.service_id("shop"), "telegram")
+
+    assert (look.outcome, look.incident.id) == ("open", died.id)
+    assert [s.kind for s in await env.repo.signals(died.id)] == ["container_died"]
+    assert runs.started == []
 
 
 async def test_an_incident_the_watcher_opened_is_named_and_takes_no_look_signal(tmp_path):
