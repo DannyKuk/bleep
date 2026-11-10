@@ -45,6 +45,7 @@ from evals.run import (
     shop_items_url,
     suite_scenarios,
     summary,
+    without_urls,
 )
 from evals.scenarios import ExpectedAction, ExpectedStep, Scenario, ScenarioResult
 from fakes import FakeChatModel, FakeEngine
@@ -313,6 +314,32 @@ async def test_a_look_opens_on_the_healthy_service_without_a_fault_and_goes_on_t
     assert result.report.summary == "Asked to look; the shop was fine."
     assert result.tokens == 2000 + 3000 + 2800 + 1500 + 4 * 50  # the report's call counts
     assert judge.calls == [("nothing is wrong with the shop", result.diagnosis)]
+
+
+async def test_a_look_without_urls_is_run_on_a_host_whose_services_have_none(tmp_path):
+    fake = healthy_shop()
+    model = FakeChatModel(script=look_script(), structured_output_unsupported=True)
+    scenario = LOOK.model_copy(update={"no_urls": True})
+
+    result = await run_scenario(
+        scenario, settings(tmp_path, HOSTS + URLS), faults=FakeFaults(fake), judge=None,
+        connector=connector(fake), models=Models(model),
+    )  # fmt: skip
+
+    assert result.error is None
+    asked = "\n".join(str(m.content) for messages in model.seen for m in messages)
+    assert "No URL is set for this service in Bleep, so there is no URL to check." in asked
+    assert "Bleep checked the service's URLs" not in asked
+
+
+def test_a_host_without_urls_keeps_everything_else(tmp_path):
+    host = eval_host(settings(tmp_path, HOSTS + URLS))
+
+    bare = without_urls(host)
+
+    assert bare.services["shop"].urls == []
+    assert bare.rules == host.rules and bare.endpoint == host.endpoint
+    assert [u.url for u in host.services["shop"].urls]  # the original is untouched
 
 
 async def test_a_look_waits_until_every_container_of_the_service_is_healthy(tmp_path):

@@ -153,6 +153,9 @@ class Scenario(_Strict):
     mcp: str | None = None
     # What the plugin's `purpose` setting says that server is for (#370); empty leaves it unset.
     mcp_purpose: Purpose = ""
+    # The service has no URL in Bleep's settings for this run (#445): the hosts file's URLs are
+    # dropped from the host the run watches, so a look finds none to check. Looks only.
+    no_urls: bool = False
 
     @model_validator(mode="after")
     def _a_purpose_needs_a_server(self) -> Self:
@@ -164,6 +167,8 @@ class Scenario(_Strict):
     def _a_fault_or_a_look(self) -> Self:
         if (self.fault is None) == (not self.look):
             raise ValueError("a scenario switches a fault or asks for a look, one of the two")
+        if self.no_urls and not self.look:
+            raise ValueError("no_urls only changes what a look checks")
         if self.look and self.subject.kind != "service":
             raise ValueError("a look is asked for a service, never a whole host")
         return self

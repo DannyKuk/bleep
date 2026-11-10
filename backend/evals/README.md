@@ -142,6 +142,12 @@ A scenario with `look: true` and no `fault` switches nothing: once the watcher s
 uv run --group evals python -m evals.run --judge manual --only look-healthy --repeat 3
 ```
 
+[`look-healthy-no-url`](scenarios/look-healthy-no-url.yaml) is the same look with `no_urls: true`: the harness drops the hosts file's URLs for the run, so the shop has none to check, and the right ending is still healthy on its containers and logs, with no "external health unknown" hedge (#445).
+
+```bash
+uv run --group evals python -m evals.run --judge manual --only look-healthy-no-url --repeat 3
+```
+
 ### With an MCP server
 
 A scenario with `mcp: <fixture>` runs with Bleep's MCP plugin switched on, on a server the harness serves in its own process from [`fixtures/mcp/<fixture>.yaml`](fixtures/mcp/caddy.yaml) (`evals/mcp_server.py`): the tools it lists, with their descriptions and input schemas, and which of them the plugin's settings allow as `read_tools` and `act_tools`. No socket is opened and nothing needs `MCP_URL`; Investigate gets `mcp_tools` and `mcp_call`, and Propose is told how to write an `mcp.call` step with the act tools. A call answers the tool's fixed `result` text (or "<name>: done"), but evals stop after Propose, so an act tool is never called. [`misroute-mcp`](scenarios/misroute-mcp.yaml) is the misroute fault with a server that can reload Caddy and a read tool, `caddy_config`, showing the loaded config next to the Caddyfile on disk: the expected plan is one `mcp.call` of `caddy_reload` on shop-proxy whose arguments include `{"container": "shop-proxy"}`; it sets `mcp_purpose`, so Investigate's prompt names what the server is for and its read tool (#370). Pass `mcp=` to `run_scenario` to serve a server of your own instead (the tests do, to check nothing called it). Run it alone as any scenario:

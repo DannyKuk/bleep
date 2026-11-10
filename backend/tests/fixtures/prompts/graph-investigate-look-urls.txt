@@ -1,0 +1,83 @@
+# Incident
+
+Service shop on host a.
+
+## What opened it
+
+<untrusted source="signals" id="X">
+2026-11-02T12:00:00+00:00 look_requested {"via": "dashboard"}
+</untrusted id="X">
+
+The person asked you to look at this service now (`look_requested`); nothing Bleep watches had failed when they asked. Its `via` names where they asked, Telegram or the dashboard, not a part of the service. Something may be wrong or nothing may be: read the service as for any incident, and when everything you read is healthy, say so plainly and stop.
+
+Judge this service by its own containers above, its own recent logs and, when it has URLs, the URL checks above. A failed URL check, or errors in its own logs, is a finding even when every container runs healthy. Another container's logs, such as a reverse proxy's that is not part of this service, do not show that this one is healthy. Call it healthy only when its containers run, its own logs show no failure and every URL check passed, and say which of these you read; if one could not be read, say so instead of calling it healthy. A service with no URLs in Bleep's settings has no URL check above; that is nothing left unread, and it can be healthy on its containers and logs alone.
+
+## Containers
+
+<untrusted source="containers" id="X">
+name | state | health | image | restarts | exit code
+shop-web-1 | exited | none | img:1 | 0 | 1
+shop-db-1 | running | none | img:1 | 0 | -
+</untrusted id="X">
+
+## Recent logs
+
+shop-web-1:
+<untrusted source="logs" id="X">
+web says hi
+
+</untrusted id="X">
+
+shop-db-1:
+<untrusted source="logs" id="X">
+db ready
+
+</untrusted id="X">
+
+## URL checks
+
+Bleep checked the service's URLs when this run began, as its URL checks do:
+
+<untrusted source="url_checks" id="X">
+passed, answered 200: https://shop.example/health
+failed, expected status 200, got 502: https://shop.example/api/items
+</untrusted id="X">
+
+## Host
+
+<untrusted source="host_basics" id="X">
+os: Linux
+disks: / 49%, /boot/efi 1%
+</untrusted id="X">
+memory available: 57% of 3.7 GiB
+load: 0.44 (1 min), 0.3 (15 min) on 2 CPUs
+
+## Rules
+
+Host rules:
+- never restart postgres without telling me which app depends on it
+
+Service rules:
+(none)
+
+## Bleep's memory
+
+These are Bleep's own records of earlier incidents on these hosts, not data from a host. A quote from a log inside them is still wrapped as untrusted data. A past cause is a lead to check, not proof of this one, and a human's past decision says what they wanted then.
+
+Similar past incidents, the same service's first:
+(none)
+
+Facts about this service:
+(none)
+
+## Could not be read
+
+(none)
+
+## Your task
+
+Find out what went wrong and why. Your tools are read-only: the container list, inspect, logs, stats, Docker events, a few host commands and, when they are offered, a search of past incidents, the service repo's recent commits and their diffs, and a knowledge search of the Docker docs, the services' repo docs and past reports. Use them for what the context above does not settle yet: the containers involved, the ones they depend on, and the order things happened in. You have at most 8 tool calls, so spend them on what matters most.
+
+When the cause is a setting (an environment variable, a config value) and fixing it needs a value the context above does not give (the value it should have, not the one it has), search the service's docs for that setting by its exact name before you stop: `knowledge_search` with `sources` set to `repo`, when it is offered. The fix is planned from what you find.
+
+When you know enough, or the tools have nothing more to show, stop calling tools and answer in a few sentences: what happened, the most likely cause, and the evidence for it (which tool showed what). For such a setting, say what its docs give as its value and on which page, or that they give none. Say plainly what you could not find out.

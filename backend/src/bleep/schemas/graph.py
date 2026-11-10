@@ -125,7 +125,8 @@ class GatherContext(BaseModel):
     Everything else is Bleep's own data. `similar` and `facts` are Bleep's memory: trusted, except
     quoted text in them, which `memory.text` wraps as untrusted when it goes into a prompt.
     `gaps` names what could not be read, one short line each. `urls` holds the service's URLs
-    checked when the run began, for a look on request only (#423).
+    checked when the run began, for a look on request only (#423); `no_urls` is set when that
+    look is at a service with none, so the prompts say so instead of leaving the section out (#445).
     """
 
     at: datetime
@@ -133,6 +134,7 @@ class GatherContext(BaseModel):
     containers: list[ContainerSummary] = Field(default_factory=list)
     logs: dict[str, str] = Field(default_factory=dict)
     urls: list[UrlReading] = Field(default_factory=list)
+    no_urls: bool = False
     basics: HostBasics | None = None
     top_memory: list[ContainerMemory] = Field(default_factory=list)
     host_rules: list[str] = Field(default_factory=list)
