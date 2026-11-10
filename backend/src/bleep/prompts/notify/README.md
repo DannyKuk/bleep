@@ -9,8 +9,8 @@ through `prompts.load`.
   formatting entity or break the message. Templates therefore hold plain text only, no markup.
   The first line of a message says what kind of moment it is (an emoji and a word); the notifier
   has `format.bold_first_line` make it bold, the only markup a message carries.
-- Each incident is one thread: `head_new` or `head_again` and a line from `seen/` (what opened it)
-  lead its first message, every later one replies to it, and an `end_*` template leads its last.
+- Each incident is one thread: `head_new` or `head_again` and a line from `seen/` (what opened it;
+  `seen/look_requested` for a look the person asked for, #403) lead its first message, every later one replies to it, and an `end_*` template leads its last.
   The end message is assembled from `end_report`, `end_checked`, `end_next` and `end_details`, each
   only when it has something to say.
 - `where_host`, `ran_nothing`, `duration_*` and `on_it_morning` are the few words that go into a
