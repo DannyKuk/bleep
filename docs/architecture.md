@@ -57,13 +57,14 @@ flowchart LR
 | **Watcher manager** | `watcher/manager.py` | Runs a supervised task group per host, feeds every signal to the detector, opens or attaches incidents for subjects that are not quiet, starts the runner for new ones, and logs self-recoveries with a one-line explanation. |
 | **Incidents** | `incidents/repository.py`, `incidents/bus.py` | Incidents and their signals, one open per subject; the event bus stores every event, then fans it out to live subscribers. |
 | **Expectations** | `incidents/expectations.py` | "This is expected": records that what opened an incident is normal, only where a later identical event can be judged by it: a job's clean exit goes into its service's `exits`, a host that sleeps gets `may_sleep`. |
+| **Looks** | `incidents/looks.py` | A look on request: a person's confirmed tap opens an incident for a service through the watcher's path (`open_or_attach`, then the runner), unless it has an open incident, is quiet, unknown or Bleep's own, its host does not answer, or the day's cost cap is spent. |
 | **Watchdog** | `incidents/watchdog.py` | Tells the human once about an incident that has stopped moving. It only reports; it never acts. |
 | **Sleep watch** | `watcher/wake.py` | Notices that Bleep itself was suspended (its machine slept, its container was paused) from the gap between the wall clock and the monotonic clock, so the time it could not see is not counted as an outage. |
 | **Quiet store** | `incidents/quiet.py`, `api/quiet.py` | One quiet state per service or host, snooze or leave alone. Its listeners close the subject's incidents when a quiet starts and judge it again when one ends; a 30 s loop ends snoozes whose time has passed. |
 | **Runner** | `incidents/runner.py` | Runs each incident's graph in the background, started by the watcher manager for each newly opened incident, resumed after a decision or a restart (`recover_on_boot` at startup), and keeps the incident's status in step. |
 | **Approvals** | `incidents/approvals.py`, `incidents/reminders.py` | Pending approvals in SQLite, decided once by whichever channel answers first; HMAC grants for approved plans; reminders that never approve. |
 | **Notifier and Telegram bot** | `notify/`, `prompts/notify/` | The notifier the graph and the reminder loop call: it tells the dashboard bus and, when a bot token is set, Telegram. Each incident is one Telegram thread: an opener, replies to it, one end message that leads with the outcome. The bot long-polls Telegram; a button becomes a decision, raced fairly against the dashboard, and a reply to a plan is offered to it with Send. |
-| **Talk** | `talk/`, `prompts/talk/`, `watcher/overview.py` | Answers what the person writes in Bleep's chat from Bleep's own state: a snapshot built by code (hosts, services, open and recent incidents), the person's text and the snapshot wrapped as untrusted, one cheap-model call that reads the kind (question, action, refusal, unclear), fixed lines for all but a question's answer. An action is checked by code against that state and offered with one confirm button (`talk/offers.py`, `talk/confirms.py`); it reads, and nothing changes from a message alone. |
+| **Talk** | `talk/`, `prompts/talk/`, `watcher/overview.py` | Answers what the person writes in Bleep's chat from Bleep's own state: a snapshot built by code (hosts, services, open and recent incidents), the person's text and the snapshot wrapped as untrusted, one cheap-model call that reads the kind (question, action, refusal, unclear), fixed lines for all but a question's answer. An action is checked by code against that state and offered with one confirm button (`talk/offers.py`, `talk/looks.py`, `talk/confirms.py`); it reads, and nothing changes from a message alone. |
 | **Incident graph** | `graph/` | LangGraph state, nodes and wiring, checkpointed per incident in `checkpoints.sqlite`. |
 | **Read tools** | `tools/` | Docker reads and the host command tool for the model, each scoped to the incident's host, `recall_incidents` over memory, `recent_commits` and `commit_diff` for a service with a linked repo, and `knowledge_search`. |
 | **GitHub client** | `hosts/github.py` | Read-only GitHub REST: a repo's commits and diffs, its README and docs files; works without a token on public repos. |
@@ -143,6 +144,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **One open incident per subject, enforced by a unique index.**
 - **An unreachable host absorbs its services' signals.**
 - **A repeat within a day joins its group with a count and sends no "opened" message**; what came of it (its plan, its report, a wait) is still told, with the count.
+- **A look a person asked for is never a repeat**, and counts toward a repeat hold only when a watcher's failure attached to it: it opens through the same path, always with its own opener.
 - **The bus persists before it fans out**, so the timeline never loses an event.
 - **Every act step is logged `started` before its engine call and finished after it**, so a resumed run never repeats a finished step.
 - **A model call is cut off after 120 s and retried twice; a model that stays down pauses the run instead of failing it**, and an incident that stops moving gets one watchdog notice.
@@ -214,6 +216,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **Each incident is one Telegram thread**: its short name (`shop #14`), an opener, replies to it, an emoji per kind of message, one end message that leads with the outcome, and "Again" for a repeat.
 - **"🤫 I'm on it" on the opener snoozes the service or host for 1 h, 4 h or until 08:00** through the dashboard's quiet path, and the incident ends as Quiet.
 - **What the person asks for in the chat comes back as one confirm button**, built by code from the checked action, never from the model's words; only the press changes something, a reply to a plan included (#402).
+- **"Look at shop-web again" opens an incident only from its confirm button**, through the watcher's path, so its plan still waits for a yes; a service with an open incident, a quiet one, an unknown one or a spent budget is answered and opens none (#403).
 
 **Observability** ([details](design/observability.md))
 - **Tracing is off unless `TRACING` names Langfuse or LangSmith**, and off adds no callbacks at all.
