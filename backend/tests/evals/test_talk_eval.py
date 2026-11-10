@@ -5,8 +5,11 @@ the planted marker."""
 import pytest
 from langchain_core.messages import AIMessage
 
+from bleep.graph.nodes import gather, investigate
 from bleep.llm.usage import CostLedger
+from bleep.schemas.incidents import Signal, Subject
 from bleep.store.db import Database
+from bleep.talk.state import checks
 from evals.talk import (
     CASES_DIR,
     TalkCase,
@@ -21,7 +24,8 @@ from evals.talk import (
     run_case,
     score,
 )
-from fakes import FakeChatModel
+from fakes import FakeChatModel, FakeEngine
+from graph_env import T0, box, graph_env
 
 
 def case(case_id: str) -> TalkCase:
@@ -313,3 +317,81 @@ def test_a_turn_about_an_incident_the_state_does_not_have_is_refused(tmp_path):
     )
     with pytest.raises(TalkEvalError, match="shop #99"):
         load_case(path)
+
+
+# --- the `checked` state's checks are what a real run's events make (#422) ---
+
+DK_LOGS = "\n".join(
+    [
+        "> dkwebsite@1.4.0 start",
+        "> next start -p 3000",
+        "  ▲ Next.js 14.2.3",
+        "  - Local:        http://localhost:3000",
+        " ✓ Ready in 812ms",
+    ]
+)
+# A crash loop's log: the 200 lines Gather and the tool read are longer than the guard keeps.
+SHOP_LOGS = "\n".join(
+    [
+        "Error: connect ECONNREFUSED 172.18.0.3:5432",
+        "    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1555:16)",
+    ]
+    * 300
+)
+
+
+def tool_call(name: str, n: int, **args) -> dict:
+    return {"name": name, "args": args, "id": f"call-{n}", "type": "tool_call"}
+
+
+async def run_checks(tmp_path, engine, service: str, container: str, calls: list[dict]):
+    """Investigate's real tools on `engine`, with a scripted model making `calls`; the checks
+    `talk.state.checks` makes of the events."""
+    env = await graph_env(tmp_path, engine=engine)
+    env.models.model = FakeChatModel(script=[AIMessage("", tool_calls=calls), AIMessage("ok")])
+    subject = Subject(kind="service", host_id="a", service_id=env.service_id(service))
+    incident = await env.open(subject, container=container)
+    signals = [Signal(subject=subject, kind="look_requested", at=T0)]
+    state = {"incident_id": incident.id, "subject": subject, "signals": signals}
+    state |= await gather.make(env.deps)(state)
+    await investigate.make(env.deps)(state)
+    return checks(await env.bus.history(incident.id))
+
+
+def state_checks(name: str):
+    facts = load_state("checked").by_name(name)
+    assert facts is not None
+    return [c for c in facts.checks if not c.tool.startswith("verify_")]
+
+
+async def test_the_looks_checks_in_the_checked_state_are_what_its_tools_return(tmp_path):
+    engine = FakeEngine("a", [box("dkwebsite-web-1", "dkwebsite", health="healthy")])
+    engine.log_text = {"dkwebsite-web-1": DK_LOGS}
+    calls = [
+        tool_call("list_containers", 1),
+        tool_call("container_logs", 2, container="dkwebsite-web-1", since_minutes=60),
+        tool_call("inspect_container", 3, container="dkwebsite-web-1"),
+    ]
+
+    found = await run_checks(tmp_path, engine, "dkwebsite", "dkwebsite-web-1", calls)
+
+    assert found == state_checks("dkwebsite #3")
+
+
+async def test_the_fixs_checks_in_the_checked_state_are_what_its_tools_return(tmp_path):
+    engine = FakeEngine(
+        "a",
+        [
+            box("shop-web-1", "shop", state="exited", exit_code=1),
+            box("shop-db-1", "shop", state="exited", exit_code=0),
+        ],
+    )
+    engine.log_text = {"shop-web-1": SHOP_LOGS}
+    calls = [
+        tool_call("list_containers", 1),
+        tool_call("container_logs", 2, container="shop-web-1", since_minutes=30),
+    ]
+
+    found = await run_checks(tmp_path, engine, "shop", "shop-web-1", calls)
+
+    assert found == state_checks("shop #13")

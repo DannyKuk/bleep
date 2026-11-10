@@ -310,6 +310,10 @@ async def test_a_result_without_an_id_goes_only_to_the_call_just_before_it(world
         ("list_containers", "name | service | state | health | image | restarts"),
         ("inspect_container", "name: shop-web-1"),
         ("container_logs", "   "),
+        ("host_command", "Filesystem 1024-blocks Used Available Capacity Mounted on"),
+        ("host_command", "total used free shared buff/cache available"),
+        ("host_command", "Mach Virtual Memory Statistics: (page size of 16384 bytes)"),
+        ("host_command", "10:02 up 3 days, load averages: 1.2 1.1 1.0"),  # none at all
     ],
 )
 async def test_a_first_line_that_says_nothing_of_what_was_found_is_left_out(world, tool, line):

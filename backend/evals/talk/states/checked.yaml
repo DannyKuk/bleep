@@ -4,7 +4,8 @@
 # what `talk.state.checks` makes of Investigate's real tools run on a fake engine: a result is the
 # first line of the guarded output, and none where that line says nothing (the column names of
 # `list_containers`, the `name:` line of `inspect_container`, the cut note of a long log); the
-# `verify_*` lines use Verify's own details (`graph/nodes/verify.py`).
+# `verify_*` lines use Verify's own details (`graph/nodes/verify.py`). `tests/evals/test_talk_eval.py`
+# runs those tools and checks that the other lines are what they make.
 snapshot:
   now: "2026-11-10 10:20"
   zone: Europe/Vienna

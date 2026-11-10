@@ -50,6 +50,9 @@ _TOOL_HEADS = {
     "list_containers": re.compile(r"name \| service \| state \| health \| image \| restarts"),
     "inspect_container": re.compile(r"name: \S+"),
 }
+# Tools whose first line never tells what was found: most allowed host commands start with a
+# column header (`df -P`, `free -b`, `vm_stat`), so a host command keeps no result.
+_NO_RESULT = {"host_command"}
 # Names and titles came from hosts and labels; each is cut so one long label cannot crowd out
 # the rest, and the lists are cut so a large setup still fits (`Snapshot.left_out` counts the
 # rest). Services that need attention are listed first, so they are the last to go.
@@ -280,8 +283,9 @@ def checks(events: list[IncidentEvent]) -> list[CheckLine]:
 def _said(tool: str, line: object) -> str | None:
     """A result's line, or None when it says nothing about what was found: a note of the guard's
     (`[… N chars cut]` from a cut head, `[… repeated N times]`) or the head a tool always starts
-    with (`list_containers`' column names, `inspect_container`'s `name:` line)."""
-    if not isinstance(line, str) or not line.strip():
+    with (`list_containers`' column names, `inspect_container`'s `name:` line); and always for
+    a host command (`_NO_RESULT`)."""
+    if tool in _NO_RESULT or not isinstance(line, str) or not line.strip():
         return None
     one = " ".join(line.split())
     head = _TOOL_HEADS.get(tool)

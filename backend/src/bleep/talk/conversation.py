@@ -32,8 +32,7 @@ from bleep import prompts
 from bleep.guard.log import GuardLogger
 from bleep.guard.pipeline import guard_text
 from bleep.guard.redact import redact_text
-from bleep.guard.sanitize import collapse_repeats, strip_control
-from bleep.guard.untrusted import escape_untrusted
+from bleep.guard.sanitize import strip_control
 from bleep.incidents.repository import utcnow
 from bleep.llm.factory import Role
 from bleep.llm.guard import ModelGuard
@@ -87,6 +86,7 @@ REPLY_TIMEOUT_S = 60
 # it?" after a look (#422). The time is the reply's, carried on by the follow-ups, so a chat that
 # goes on does not keep the incident for ever.
 FOLLOW_UP = timedelta(minutes=10)
+_CUT_HEAD = re.compile(r"\[… [0-9]+ chars cut\]\n")  # `guard.sanitize.cut_tail`
 # A link in an answer: a scheme, `www.`, or a host name followed by a path. Telegram makes them
 # clickable, and a name or a cause from a host could carry one.
 _LINK = re.compile(
@@ -149,9 +149,9 @@ def follow_up(turns: Sequence[Turn], now: datetime) -> str | None:
 
 
 def _fitted(facts: IncidentFacts | None) -> IncidentFacts | None:
-    """The incident with its oldest checks left out until it fits `INCIDENT_CHARS` as the guard
-    will make it (secrets redacted, repeats collapsed, tags escaped): the guard keeps a text's
-    tail, so an incident too long would lose its head, its name and status."""
+    """The incident with its oldest checks left out until the guard keeps it whole within
+    `INCIDENT_CHARS`: the guard keeps a text's tail, so an incident too long would lose its
+    head, its name and status."""
     if facts is None or _fits(facts):
         return facts
     fitted = facts.model_copy(deep=True)
@@ -162,8 +162,10 @@ def _fitted(facts: IncidentFacts | None) -> IncidentFacts | None:
 
 
 def _fits(facts: IncidentFacts) -> bool:
-    guarded = escape_untrusted(collapse_repeats(redact_text(strip_control(_json(facts)))))
-    return len(guarded) <= INCIDENT_CHARS
+    """Whether the guard keeps the incident whole: a cut text starts with its cut note."""
+    wrapped, _ = guard_text("incident", _json(facts), INCIDENT_CHARS)
+    body = wrapped.split("\n", 1)[1]
+    return _CUT_HEAD.match(body) is None
 
 
 def _no_zone() -> tzinfo | None:
@@ -457,9 +459,14 @@ def _unnamed(action: TalkAction, followed: IncidentFacts | None, text: str) -> T
         return action
     names = {n.casefold() for n in (followed.id, followed.name) if n}
     said = " ".join(action.incident.split()).casefold()
-    if said in names and not any(n in text.casefold() for n in names):
+    if said in names and not any(_names(n, text) for n in names):
         return action.model_copy(update={"incident": None})
     return action
+
+
+def _names(name: str, text: str) -> bool:
+    """Whether `text` names `name` as a whole: `shop #1` is not named in `shop #12`."""
+    return re.search(rf"(?<![\w#]){re.escape(name)}(?!\w)", text, re.IGNORECASE) is not None
 
 
 def _logged_reading(reading: TalkReading | None) -> TalkReading | None:

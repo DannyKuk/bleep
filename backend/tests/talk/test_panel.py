@@ -421,6 +421,7 @@ async def test_a_chat_that_goes_on_does_not_keep_the_incident_and_never_reaches_
         ("restart it", {"kind": "refusal", "refusal": "change"}, False),
         ("don't restart", {"kind": "action", "action": ASKED["instruct"]}, False),
         ("tell shop #1 not to restart", {"kind": "action", "action": ASKED["instruct"]}, True),
+        ("tell shop #12 to wait", {"kind": "action", "action": ASKED["instruct"]}, False),
     ],
 )
 async def test_a_follow_up_reads_the_incident_but_only_a_reply_or_its_name_reaches_the_plan(
