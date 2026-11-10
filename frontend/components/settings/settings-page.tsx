@@ -9,12 +9,14 @@ import { SaveLockProvider } from "@/components/save-lock";
 import { HostForm, SSH_ONLY } from "@/components/settings/host-form";
 import { LanguageForm } from "@/components/settings/language-form";
 import { Alert, Status, useLoaded, useStaleSaving } from "@/components/settings/loaded";
-import { ModelSettings } from "@/components/settings/models";
+import { EMBEDDING_KEYS, EmbeddingSettings } from "@/components/settings/embeddings";
+import { MODEL_KEYS, ModelSettings } from "@/components/settings/models";
 import { PluginList } from "@/components/settings/plugins";
 import { TelegramSettings } from "@/components/settings/telegram";
 import { SecretFields } from "@/components/settings/secret-field";
 import { ThresholdsForm } from "@/components/settings/thresholds";
 import { TimeZoneForm } from "@/components/settings/time-zone-form";
+import { TRACING_KEYS, TracingSettings } from "@/components/settings/tracing";
 import { useSetTimeZone } from "@/components/time-zone";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
@@ -110,8 +112,8 @@ function Hosts({
 
 /**
  * What is Bleep-wide: the hosts as links to their own pages, thresholds, plugins, secrets,
- * Telegram and models. Secrets are set and cleared here or in the environment, and shown only as
- * set or missing.
+ * models, embeddings, tracing and Telegram. Secrets are set and cleared here or in the
+ * environment, and shown only as set or missing.
  */
 export function SettingsPage() {
   return (
@@ -152,20 +154,23 @@ function Settings() {
       async () => plugins.set(await apiFetch<PluginView[]>("/api/plugins")),
     );
 
-  /** What a changed secret changes elsewhere: a plugin's state, Telegram's status. A failed
-   * read says so instead of leaving a stale page unmarked. */
+  /** What a changed secret changes elsewhere: a plugin's state, Telegram's status, and whether a
+   * restart is needed (a tracer's key, the embeddings' address). A failed read says so instead of
+   * leaving a stale page unmarked. */
   async function readAgain() {
     try {
-      const [list, status] = await Promise.all([
+      const [list, status, current] = await Promise.all([
         apiFetch<PluginView[]>("/api/plugins"),
         apiFetch<TelegramStatus>("/api/telegram/status"),
+        apiFetch<SettingsView>("/api/settings"),
       ]);
       plugins.set(list);
       telegram.set(status);
+      settings.set(current);
       setNotice(null);
     } catch (failed) {
       setNotice(
-        `Saved, but reading the plugins and Telegram again failed (${failed instanceof Error ? failed.message : String(failed)}); reload the page.`,
+        `Saved, but reading the plugins, Telegram and settings again failed (${failed instanceof Error ? failed.message : String(failed)}); reload the page.`,
       );
     }
   }
@@ -194,6 +199,8 @@ function Settings() {
   const views = secrets.data ?? [];
   const inPlugins = new Set((plugins.data ?? []).flatMap((p) => p.secrets.map((s) => s.env)));
   const sourceOf = (name: string) => views.find((v) => v.name === name)?.source;
+  const forPanels = secrets.data ? { views, actions: secretActions } : undefined;
+  const inPanels = new Set<string>([...MODEL_KEYS, ...EMBEDDING_KEYS, ...TRACING_KEYS]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -201,8 +208,10 @@ function Settings() {
         <h1 className="text-lg font-semibold">Settings</h1>
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <KeyRound aria-hidden className="size-4 shrink-0" />
-          Keys, tokens and plugin addresses are set below or in .env; this page shows whether each
-          one is set, never its value. Every change here takes effect at once.
+          Keys, tokens and addresses are set below or in .env; this page shows whether each one is
+          set, never its value. A change takes effect at once, except the embeddings and a running
+          Langfuse tracer, which say when Bleep needs a restart. A setting in .env wins over this
+          page and says so.
         </p>
       </header>
 
@@ -245,6 +254,30 @@ function Settings() {
                 onSave={(thresholds) => saveSettings({ thresholds }, view.version)}
               />
             </Panel>
+            <Panel title="Models">
+              <ModelSettings
+                key={JSON.stringify([view.models, view.overrides.models, view.from_env])}
+                view={view}
+                onSave={(update) => saveSettings(update, view.version)}
+                secrets={forPanels}
+              />
+            </Panel>
+            <Panel title="Embeddings">
+              <EmbeddingSettings
+                key={JSON.stringify([view.embeddings, view.overrides.embeddings, view.from_env])}
+                view={view}
+                onSave={(update) => saveSettings(update, view.version)}
+                secrets={forPanels}
+              />
+            </Panel>
+            <Panel title="Tracing">
+              <TracingSettings
+                key={JSON.stringify([view.tracing, view.overrides.tracing, view.from_env])}
+                view={view}
+                onSave={(update) => saveSettings(update, view.version)}
+                secrets={forPanels}
+              />
+            </Panel>
           </>
         )}
       </Status>
@@ -265,33 +298,20 @@ function Settings() {
         <Status loaded={secrets} what="the secrets">
           {(list) => (
             <SecretFields
-              views={list.filter((v) => !inPlugins.has(v.name))}
+              views={list.filter((v) => !inPlugins.has(v.name) && !inPanels.has(v.name))}
               actions={secretActions}
             />
           )}
         </Status>
       </Panel>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title="Telegram">
-          <Status loaded={telegram} what="the Telegram status">
-            {(status) => (
-              <TelegramSettings status={status} tokenSource={sourceOf(status.token.env ?? "")} />
-            )}
-          </Status>
-        </Panel>
-        <Panel title="Models">
-          <Status loaded={settings} what="the models">
-            {(view) => (
-              <ModelSettings
-                models={view.models}
-                apiKey={view.model_key}
-                keySource={sourceOf(view.model_key.env ?? "")}
-              />
-            )}
-          </Status>
-        </Panel>
-      </div>
+      <Panel title="Telegram">
+        <Status loaded={telegram} what="the Telegram status">
+          {(status) => (
+            <TelegramSettings status={status} tokenSource={sourceOf(status.token.env ?? "")} />
+          )}
+        </Status>
+      </Panel>
     </div>
   );
 }

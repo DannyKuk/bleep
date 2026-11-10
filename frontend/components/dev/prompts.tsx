@@ -3,7 +3,7 @@
 import { FileText, Loader2, RotateCcw, Save } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 
-import { useDraft } from "@/components/dev/models";
+import { useDraft } from "@/components/dev/section";
 import { Failed, Loading, why } from "@/components/dev/status";
 import { useTimeZone } from "@/components/time-zone";
 import { Badge } from "@/components/ui/badge";

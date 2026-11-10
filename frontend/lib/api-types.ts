@@ -335,15 +335,8 @@ export interface ServiceDetail {
   recent_checks: UrlHistory[];
 }
 
-// Dev panel (#42: schemas/dev.py, and the model choice and budgets of schemas/settings.py, which
+// Dev panel (#42: schemas/dev.py, and the budgets of schemas/settings.py, which
 // the panel edits through `PUT /api/settings`). Interfaces, so a second copy of one merges.
-
-export interface ModelChoice {
-  provider: "openrouter" | "local";
-  model: string;
-  cheap_model: string;
-  local_model: string;
-}
 
 export interface Budgets {
   investigate_tool_calls: number;
@@ -360,9 +353,8 @@ export interface Budgets {
 
 /** The part of `GET /api/settings` the dev panel reads: values in force and the overrides. */
 export interface DevSettingsView {
-  models: ModelChoice;
   budgets: Budgets;
-  overrides: { models?: Partial<ModelChoice>; budgets?: Partial<Budgets> };
+  overrides: { budgets?: Partial<Budgets> };
   /** Sent back with a save, which is refused (409) when the settings changed since. */
   version: string;
 }

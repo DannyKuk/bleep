@@ -75,6 +75,17 @@ export function settingsView(overrides: Partial<SettingsView> = {}): SettingsVie
     plugins: { coolify: false },
     timezone: null,
     language: "en",
+    embeddings: { provider: "local", model: null, min_score: null },
+    tracing: {
+      tracing: "off",
+      langfuse_base_url: "http://langfuse-web:3000",
+      langfuse_ui_url: "http://localhost:3001",
+      langfuse_project_id: null,
+      langsmith_endpoint: null,
+      langsmith_project: "bleep",
+    },
+    from_env: [],
+    restart_needed: [],
     overrides: {
       hosts: {
         m1: { services: { "compose:shop": { protected_containers: ["shop-cache-1"] } } },
@@ -129,6 +140,16 @@ export function secretViews(): SecretView[] {
     secretView("TELEGRAM_BOT_TOKEN"),
     secretView("COOLIFY_URL", { kind: "address", carries: "COOLIFY_TOKEN" }),
     secretView("COOLIFY_TOKEN"),
+    secretView("LOCAL_BASE_URL", { kind: "address", private: true }),
+    secretView("EMBEDDINGS_BASE_URL", {
+      kind: "address",
+      carries: "EMBEDDINGS_API_KEY",
+      private: true,
+    }),
+    secretView("EMBEDDINGS_API_KEY"),
+    secretView("LANGFUSE_PUBLIC_KEY"),
+    secretView("LANGFUSE_SECRET_KEY"),
+    secretView("LANGSMITH_API_KEY"),
   ];
 }
 
@@ -171,4 +192,19 @@ export function stubBackend(routes: Record<string, Response | Response[]>) {
 export function sentBody(fetchMock: ReturnType<typeof stubBackend>, method: string, n = 0) {
   const calls = fetchMock.mock.calls.filter(([, init]) => init?.method === method);
   return JSON.parse(String(calls[n][1]?.body));
+}
+
+/** The backend of the whole settings page: `view` for the settings, `put` queued for each PUT. */
+export function settingsBackend(
+  view: SettingsView = settingsView(),
+  put: Response[] = [],
+  secrets: SecretView[] = secretViews(),
+) {
+  return stubBackend({
+    "GET /api/settings": json(view),
+    "GET /api/plugins": json([plugin()]),
+    "GET /api/telegram/status": json(telegram()),
+    "GET /api/secrets": json(secrets),
+    "PUT /api/settings": put,
+  });
 }

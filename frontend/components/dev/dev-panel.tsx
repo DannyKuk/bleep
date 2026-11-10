@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 import { BudgetsForm } from "@/components/dev/budgets";
 import { CostsPanel } from "@/components/dev/costs";
 import { GuardLogPanel } from "@/components/dev/guard-log";
-import { ModelsForm } from "@/components/dev/models";
 import { PromptsPanel } from "@/components/dev/prompts";
 import { Failed, Loading, why } from "@/components/dev/status";
 import { Panel } from "@/components/panel";
@@ -16,8 +15,7 @@ import type { DevSettingsView } from "@/lib/api-types";
 type State =
   { kind: "loading" } | { kind: "off" } | { kind: "failed"; why: string } | { kind: "on" };
 
-/** The model choice and the budgets, both read from one `GET /api/settings`, saved one at a
- * time, each from the view the other's save returned. */
+/** The budgets, read from `GET /api/settings`. The model choice is on the settings page. */
 function SettingsPanels() {
   const [view, setView] = useState<DevSettingsView | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -40,11 +38,6 @@ function SettingsPanels() {
     view ? form(view) : failure ? <Failed>{failure}</Failed> : <Loading>Loading</Loading>;
   return (
     <SaveLockProvider>
-      <Panel title="Models">
-        {body((v) => (
-          <ModelsForm view={v} onSaved={setView} onStale={readAgain} />
-        ))}
-      </Panel>
       <Panel title="Budgets">
         {body((v) => (
           <BudgetsForm view={v} onSaved={setView} onStale={readAgain} />
