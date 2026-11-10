@@ -544,3 +544,61 @@ async def test_a_repo_no_longer_linked_is_forgotten_by_the_failure_log(index):
     await refresher.refresh_repos()
 
     assert refresher._failing == {}
+
+
+async def test_a_document_embedded_by_another_model_is_embedded_again_though_its_text_is_unchanged(
+    tmp_path,
+):
+    db = Database(tmp_path / "bleep.db")
+    await db.migrate()
+    doc = repo_documents("acme/shop", [readme("acme/shop")])[0]
+    assert await KnowledgeIndex(db, FakeEmbedder(name="fake:old")).ingest(doc)
+
+    index = KnowledgeIndex(db, FakeEmbedder(name="fake:new"))
+    assert await index.has_other_model("repo:")
+    assert await index.ingest(doc)  # same hash, other model: not skipped
+    assert not await index.has_other_model("repo:")
+    assert not await index.ingest(doc)
+
+
+async def test_an_embedder_change_reads_the_repo_docs_at_the_next_start_not_a_day_later(tmp_path):
+    db = Database(tmp_path / "bleep.db")
+    await db.migrate()
+    wall = [datetime(2026, 11, 3, 12, tzinfo=UTC)]
+    old, new = FakeEmbedder(name="fake:old"), FakeEmbedder(name="fake:new")
+    repos = Repos({"acme/shop": [readme("acme/shop")]})
+    await KnowledgeRefresher(
+        KnowledgeIndex(db, old, clock=lambda: wall[0]), repos=repos, snapshot_dir=None
+    ).refresh_repos()
+    asked: list[str] = []
+    real = repos.doc_files
+
+    async def doc_files(repo: str):
+        asked.append(repo)
+        return await real(repo)
+
+    repos.doc_files = doc_files  # type: ignore[method-assign]
+
+    async def stop(_seconds: float) -> None:
+        raise asyncio.CancelledError
+
+    async def start(embedder: FakeEmbedder) -> KnowledgeIndex:
+        wall[0] = wall[0].replace(hour=wall[0].hour + 1)
+        index = KnowledgeIndex(db, embedder, clock=lambda: wall[0])
+        refresher = KnowledgeRefresher(
+            index, repos=repos, snapshot_dir=None, sleep=stop, monotonic=lambda: 0.0
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await refresher.run()
+        return index
+
+    await start(old)  # same embedder, an hour later: nothing to read
+    assert asked == []
+
+    index = await start(new)
+    assert asked == ["acme/shop"]
+    assert not await index.has_other_model("repo:")
+    assert await index.search("readme", sources={"repo"})
+
+    await start(new)  # and once is enough
+    assert asked == ["acme/shop"]
