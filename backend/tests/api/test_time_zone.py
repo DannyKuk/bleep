@@ -152,3 +152,20 @@ def test_a_snooze_set_in_vienna_is_stored_in_utc_and_shown_in_the_zone_chosen_la
     assert last_message(chat, 4) == fmt.bold_first_line(
         fmt.escape(f"🤫 Quiet until {in_new_york:%a %H:%M}")
     )
+
+
+def test_german_chosen_on_the_settings_page_is_what_telegram_says_next(app, chat):
+    """The setting of #374 reaches Telegram's messages and buttons, without a restart (#375)."""
+    open_incident(app, SHOP, "shop")
+    assert chat.sent[0].startswith(fmt.bold_first_line(fmt.escape("🔴 New: shop #1 · a")))
+
+    version = app.get("/api/settings").json()["version"]
+    changed = app.put(
+        "/api/settings", json={"general": {"language": "de"}}, headers={"If-Match": f'"{version}"'}
+    )
+    assert changed.json()["language"] == "de"
+    open_incident(app, API, "api")
+
+    assert chat.sent[1].startswith(fmt.bold_first_line(fmt.escape("🔴 Neu: api #1 · a")))
+    assert fmt.escape("Ich schaue es mir an") in chat.sent[1]
+    assert app.parts.notify.bot.actions.language() == "de"  # the bot's answers to a press too

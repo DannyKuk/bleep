@@ -246,6 +246,7 @@ def build_parts(
         incidents=incidents,
         quiet=quiet,
         zone=store.zone,  # the settings page's choice, read at each message
+        language=store.language,  # the same, so a change applies to the next message
         talk=talk,
     )
     incidents.on_finished(notify.notifier.incident_finished)
@@ -324,6 +325,7 @@ def build_talk(
         ledger=CostLedger(db),
         guard_log=guard_log,
         zone=store.zone,
+        language=store.language,
         tracer=tracer,
     )
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
@@ -372,3 +373,7 @@ def test_load_in_reads_the_twin(tmp_prompts):
     _translated_area(tmp_prompts)
     assert prompts.load_in("de", "notify/hi", name="Bleep") == "Hallo Bleep"
     assert prompts.load_in("en", "notify/hi", name="Bleep") == "Hi Bleep"
+
+
+def test_the_languages_with_twins_are_the_ones_a_person_can_choose():
+    assert get_args(Language) == prompts.LANGUAGES

@@ -16,7 +16,8 @@ const OPTIONS: { value: Language; label: string }[] = [
 
 /**
  * The language the model writes what the person reads in: reports, diagnoses, plans and the
- * recovery line. What the code reads (actions, containers, settings, commands) never changes.
+ * recovery line; Telegram and the chat's own lines follow it too (#375). What the code reads
+ * (actions, containers, settings, commands) never changes.
  */
 export function LanguageForm({
   language,
@@ -56,8 +57,9 @@ export function LanguageForm({
         </select>
       </div>
       <p className="text-xs text-muted-foreground">
-        The model writes reports, diagnoses, plans and recovery lines in {NAMES[language]}.
-        Container names, settings, commands and plan steps stay exactly as the host names them.
+        The model writes reports, diagnoses, plans and recovery lines in {NAMES[language]}, and
+        Bleep sends its Telegram messages, buttons and chat answers in it. Container names,
+        settings, commands and plan steps stay exactly as the host names them.
       </p>
       <div className="flex flex-wrap gap-2">
         <Button type="submit" size="sm" disabled={busy || draft === language}>

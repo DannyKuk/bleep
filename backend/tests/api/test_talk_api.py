@@ -189,3 +189,21 @@ def test_the_log_needs_a_session(app):
     with TestClient(app) as anonymous:
         assert anonymous.get(LOG).status_code == 401
         assert anonymous.get(LOG, params={"format": "md"}).status_code == 401
+
+
+def test_german_chosen_on_the_settings_page_is_what_the_panel_says_next(client, model):
+    """The setting of #374 reaches the panel's lines and buttons, without a restart (#375)."""
+    version = client.get("/api/settings").json()["version"]
+    changed = client.put(
+        "/api/settings", json={"general": {"language": "de"}}, headers={"If-Match": f'"{version}"'}
+    )
+    assert changed.status_code == 200
+    action = {"kind": "snooze", "subject": "shop", "minutes": 120}
+    model.script.append(reading(kind="action", action=action))
+
+    body = client.post(MESSAGES, json={"text": "lass shop 2 Std. in Ruhe"}).json()
+
+    assert body["answer"].startswith("🤫 shop bis ") and body["answer"].endswith(" stummschalten?")
+    assert (body["confirm"]["yes_label"], body["confirm"]["no_label"]) == ("Ja", "Nein")
+    pressed = client.post(f"/api/talk/confirms/{body['confirm']['id']}", json={"yes": True})
+    assert pressed.json()["line"].startswith("Stumm bis ")

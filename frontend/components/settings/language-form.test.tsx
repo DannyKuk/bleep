@@ -73,6 +73,7 @@ describe("the language on the settings page", () => {
     await userEvent.click(within(language).getByRole("button", { name: "Save language" }));
 
     expect(await within(language).findByText(/recovery lines in German/)).toBeVisible();
+    expect(within(language).getByText(/Telegram messages, buttons and chat answers/)).toBeVisible();
     expect(sentBody(fetchMock, "PUT")).toEqual({ general: { timezone: VIENNA, language: "de" } });
   });
 
