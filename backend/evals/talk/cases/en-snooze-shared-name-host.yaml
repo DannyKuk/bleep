@@ -1,0 +1,17 @@
+id: en-snooze-shared-name-host
+lang: en
+about: >-
+  A snooze of a service whose name another service shares, with the host named: the subject names
+  that host as the confirm lines do, or is the service's id, so code can tell which one (the
+  owner's own message, #410).
+state: shared
+text: snooze molecula on the coolify server for 1 hour
+expect:
+  kind: action
+  action:
+    kind: snooze
+    subject:
+    - molecula on coolify
+    - molecula on Coolify server
+    - coolify/hfys2nogpz7wrhcoqxymnfkt
+    minutes: 60

@@ -170,6 +170,19 @@ def test_two_services_with_one_name_are_not_guessed():
     assert confirm_line(checked, NOW, VIENNA) == "🤫 Snooze web on m1 until 15:12?"
 
 
+@pytest.mark.parametrize("said", ["web on m1", "Web on M1", "web on m1 "])
+def test_a_shared_name_with_its_host_is_that_hosts_service(said):
+    """As the confirm lines write it, by the host's id or name (#410)."""
+    found = find_subject(SNAPSHOT, said)
+    assert not isinstance(found, str) and found is not None
+    assert (found.target_id, found.name) == ("m1/compose:web", "web on m1")
+
+
+@pytest.mark.parametrize("said", ["web on nowhere", "grafana on laptop", "on m1"])
+def test_a_name_on_a_host_that_has_no_such_service_is_no_service(said):
+    assert find_subject(SNAPSHOT, said) is None
+
+
 def test_a_host_and_a_service_with_one_name_are_not_guessed():
     host = HostLine(id="shop", name="Shop box", health="ok", reachable=True)
     both = SNAPSHOT.model_copy(update={"hosts": [*SNAPSHOT.hosts, host]})

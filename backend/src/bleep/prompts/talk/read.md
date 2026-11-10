@@ -30,7 +30,7 @@ Pick one `kind`:
 
 ## The fields of an action
 
-- `subject`: the service's `name` or the host's `id` as Bleep's state lists them; the closest one when the person misspells it, else the words they used.
+- `subject`: the service's `name` or the host's `id` as Bleep's state lists them; the closest one when the person misspells it, else the words they used. When two services share the name and the person says which host ("molecula on the coolify server"), write the service's `name`, "on" and the host's `id`: `molecula on coolify`.
 - `incident`: the incident's `name`, its short name such as `shop #14`. A message about an incident (a reply to one of its messages) means that incident unless it names another.
 - `minutes`: a duration in minutes ("for 2 hours" is 120).
 - `until`: a local time as `YYYY-MM-DD HH:MM`, worked out from `now` in Bleep's state ("until 16:00" is today at 16:00; "until tomorrow" with no time is tomorrow at 08:00).

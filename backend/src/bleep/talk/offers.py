@@ -23,6 +23,7 @@ from bleep.schemas.talk import (
     Offer,
     OfferKind,
     QuietLine,
+    ServiceLine,
     Snapshot,
     TalkAction,
 )
@@ -65,7 +66,7 @@ def find_subject(snapshot: Snapshot, said: str | None) -> Subject | str | None:
     if not said:
         return None
     services = [s for s in snapshot.services if not s.id.endswith(CUT)]
-    by_id = [s for s in services if _same(said, s.id)]
+    by_id = [s for s in services if _same(said, s.id)] or _on_host(snapshot, services, said)
     named = by_id or [s for s in services if _same(said, s.name)]
     hosts = [] if by_id else [h for h in snapshot.hosts if _same(said, h.id) or _same(said, h.name)]
     if len(named) + len(hosts) > 1:
@@ -85,6 +86,16 @@ def find_subject(snapshot: Snapshot, said: str | None) -> Subject | str | None:
     if shared:
         name = line("subject_on_host", subject=name, host=service.host)
     return Subject("service", service.id, name, service.quiet, service.host)
+
+
+def _on_host(snapshot: Snapshot, services: list[ServiceLine], said: str) -> list[ServiceLine]:
+    """The service `said` names as "<service name> on <host id or name>", as the confirm lines
+    write a shared name (#410); none when it is not written so or names no such service."""
+    name, on, host = said.rpartition(" on ")
+    if not on:
+        return []
+    hosts = {h.id for h in snapshot.hosts if _same(host, h.id) or _same(host, h.name)}
+    return [s for s in services if s.host in hosts and _same(name, s.name)]
 
 
 def find_incident(
