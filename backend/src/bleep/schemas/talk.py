@@ -79,6 +79,16 @@ class Offer(BaseModel):
     text: str | None = None
 
 
+class TalkLink(BaseModel):
+    """A page an answer names: a service or an incident, found by code where `label` (its name
+    in Bleep's state) stands in the answer. The dashboard builds the link from `kind` and `id`;
+    Telegram shows none."""
+
+    kind: Literal["service", "incident"]
+    id: str
+    label: str
+
+
 class TalkReply(BaseModel):
     """What a surface shows for a message. `action` is what the model read the person to ask
     for; nothing has run. `offer` is that action once code checked it, with `answer` its confirm
@@ -90,6 +100,48 @@ class TalkReply(BaseModel):
     action: TalkAction | None = None
     incident_id: str | None = None
     offer: Offer | None = None
+    links: list[TalkLink] = Field(default_factory=list)
+
+
+MESSAGE_MAX_CHARS = 1000  # what a person may write in one message, on either surface
+
+
+class ChatMessage(BaseModel):
+    """A message written in the dashboard's panel; `incident_id` is the incident page it was
+    written on, while its chip is kept."""
+
+    text: str = Field(min_length=1, max_length=MESSAGE_MAX_CHARS)
+    incident_id: str | None = None
+
+
+class ChatConfirm(BaseModel):
+    """The two buttons under an offer in the panel: pressing one posts `yes` to
+    `/api/talk/confirms/{id}`. It expires at `expires_at`, or when `incident_id` ends."""
+
+    id: str
+    yes_label: str
+    no_label: str
+    expires_at: datetime
+    incident_id: str | None = None
+
+
+class ChatAnswer(BaseModel):
+    """What the panel shows for a message: the answer, the pages it names, and the offer's
+    buttons if it is one. Nothing has changed yet."""
+
+    answer: str
+    links: list[TalkLink] = Field(default_factory=list)
+    confirm: ChatConfirm | None = None
+
+
+class ConfirmPress(BaseModel):
+    yes: bool
+
+
+class ConfirmResult(BaseModel):
+    """What a press did, in one line; the buttons turn into it."""
+
+    line: str
 
 
 class QuietLine(BaseModel):
