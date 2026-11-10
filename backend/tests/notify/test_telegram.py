@@ -163,7 +163,8 @@ async def press_send(env: Env) -> None:
     [[send, no]] = offer["reply_markup"]["inline_keyboard"]
     assert (send["text"], no["text"]) == ("Send", "No")
     confirm_id = send["callback_data"].removeprefix("yes:")
-    update = fixture("callback_confirm", MESSAGE_ID="311", CONFIRM_ID=confirm_id, VERB="yes")
+    shown = str(env.bot._shown[confirm_id])
+    update = fixture("callback_confirm", MESSAGE_ID=shown, CONFIRM_ID=confirm_id, VERB="yes")
     env.api.updates.append(update)
     await env.bot.poll_once()
 
@@ -1405,10 +1406,13 @@ async def test_a_press_on_a_reminder_clears_the_original_proposal_too(env, closi
 
 
 async def test_a_telegram_reply_instruction_clears_the_plans_buttons(env, closing):
+    env.api.next_id = 400  # the offer gets an id of its own, apart from the plan's 311
     await poll(env, "reply_instruction")
     await press_send(env)
     assert env.runner.resumed[0][1].kind == "instruct"
-    assert set(await closing.cleared()) == {311}  # the offer's own press, then the plan's
+    # The press clears the offer (401); the decision clears the plan's messages, the proposal
+    # (311) and the offer again, since it is logged with the plan it was for.
+    assert sorted(await closing.cleared()) == [311, 401, 401]
 
 
 async def test_a_plan_sent_after_its_incident_closed_is_cleared_as_it_is_logged(env, closing):

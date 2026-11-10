@@ -657,13 +657,23 @@ class TelegramBot:
 
     async def _show_plan(self, offer: Offer, line: str, reply: int) -> str:
         """A yes to a waiting plan shows the plan again with its own buttons: their press is
-        the approval, through the same path as on the plan's first message."""
+        the approval, through the same path as on the plan's first message. Its buttons find
+        their plan through the message log, and a message logged before any other of its
+        incident would become the thread's opener (#380), so for an incident with no message in
+        the chat yet the plan is left to the dashboard. Once an opener is logged it stays the
+        lowest id, so the check needs no lock."""
         current = await self.approvals.current(offer.incident_id or "")
         if current is None or current.id != offer.plan_id or current.proposal.refused:
             refused = current is not None and current.proposal.refused
             why_not = answer("answer_refused_plan" if refused else "answer_not_waiting")
+        elif await self.messages.first_for(current.incident_id) is None:
+            why_not = answer("answer_plan_on_dashboard")
+        else:
+            why_not = ""
+        if why_not:
             await self._say(why_not, reply)
             return why_not
+        assert current is not None
         text = render(
             "plan_again", incident=offer.incident or "", steps=steps_text(current.proposal)
         )
@@ -672,7 +682,6 @@ class TelegramBot:
         message_id = await self.client.send_message(
             self.chat_id, bold_first_line(text), buttons, reply_to=reply
         )
-        # Logged even as the incident's first message: its buttons find their plan through the log.
         await self.messages.add(message_id, current.incident_id, current.id, self.clock())
         return line
 

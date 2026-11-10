@@ -19,5 +19,5 @@ through `prompts.load`.
 - Variables are plain `{name}` placeholders, as everywhere else.
 - `answer_*.md` are the short pop-ups shown when a button is tapped or an instruction is sent; they
   are sent as plain text, not escaped. `answer_confirm_*`, `answer_left_alone`, `answer_watching`,
-  `answer_not_quiet` and `answer_cannot_expect` answer an offer made in the chat (#402);
-  `plan_again` shows a waiting plan again with its own buttons when the person says yes to it.
+  `answer_not_quiet`, `answer_cannot_expect` and `answer_plan_on_dashboard` answer an offer made
+  in the chat (#402); `plan_again` shows a waiting plan again with its own buttons when the person says yes to it.

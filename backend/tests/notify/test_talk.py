@@ -10,7 +10,16 @@ import httpx
 import pytest
 from langchain_core.messages import AIMessage
 from pydantic import SecretStr
-from test_telegram import CHAT, PLAN, T0, TOKEN, FakeRunner, FakeTelegram, fixture
+from test_telegram import (
+    CHAT,
+    PLAN,
+    T0,
+    TOKEN,
+    FakeRunner,
+    FakeTelegram,
+    fixture,
+    set_env_plan,
+)
 
 from bleep import prompts
 from bleep.config import Settings
@@ -306,9 +315,14 @@ async def offered(env: Env, kind: str, reply_to: int | None = None) -> str:
     return confirm_id
 
 
-@pytest.mark.parametrize("kind", list(KINDS))
+@pytest.mark.parametrize("kind", [*KINDS, "show_plan"])
 async def test_a_message_alone_never_changes_anything_for_any_kind(env, kind):
-    await offered(env, "watch_again" if kind == "watch_again" else kind)
+    if kind == "show_plan":
+        action = {"kind": "show_plan", "incident": "shop #1"}
+        [sent] = await say(env, "yes, do it", None, reading(kind="action", action=action))
+        assert "approve:" in str(sent["reply_markup"])  # the plan's own buttons, not pressed
+    else:
+        await offered(env, kind)
     if kind == "watch_again":
         [quiet] = await env.quiet.active()
         assert quiet.mode == "leave_alone"  # still left alone: only the press ends it
@@ -383,17 +397,45 @@ async def test_yes_to_a_waiting_plan_shows_its_own_buttons_again(env):
     assert [d.kind for _, d in env.runner.resumed] == ["approve"]
 
 
-async def test_a_yes_to_a_plan_that_cannot_be_approved_here_shows_reject_only(env):
-    long = Proposal.model_validate(PLAN.model_dump() | {"refused": True})
+async def replace_plan(env: Env, plan: Proposal) -> str:
     await env.approvals.resolve(
         env.incident.id, Decision(kind="instruct", text="x", via="dashboard", at=T0)
     )
-    await env.approvals.request(env.incident.id, long, [])
+    return (await env.approvals.request(env.incident.id, plan, [])).id
+
+
+async def test_a_yes_to_a_refused_plan_is_told_it_cannot_be_approved(env):
+    await replace_plan(env, PLAN.model_copy(update={"refused": True}))
     action = {"kind": "show_plan", "incident": "shop #1"}
 
     [sent] = await say(env, "go ahead", None, reading(kind="action", action=action))
 
     assert sent["text"] == said("answer_refused_plan") and "reply_markup" not in sent
+
+
+async def test_a_yes_to_a_plan_telegram_cannot_show_in_full_shows_reject_only(env):
+    plan_id = await replace_plan(env, set_env_plan("postgres://shop@db/" + "x" * 900))
+    action = {"kind": "show_plan", "incident": "shop #1"}
+
+    [sent] = await say(env, "go ahead", None, reading(kind="action", action=action))
+
+    [[reject]] = sent["reply_markup"]["inline_keyboard"]
+    assert reject == {"text": "Reject", "callback_data": f"reject:{plan_id}"}
+    await nothing_changed(env)
+
+
+async def test_a_yes_to_a_plan_with_no_message_in_the_chat_never_opens_its_thread(env):
+    other = Subject(kind="service", host_id="demo", service_id="demo/web")
+    incident, _ = await env.repo.open_or_attach(
+        other, [Signal(subject=other, kind="container_died", at=T0)]
+    )
+    await env.approvals.request(incident.id, PLAN, [])  # its plan never reached Telegram
+    action = {"kind": "show_plan", "incident": incident.short_name}
+
+    [sent] = await say(env, "go ahead", None, reading(kind="action", action=action))
+
+    assert sent["text"] == said("answer_plan_on_dashboard") and "reply_markup" not in sent
+    assert await env.messages.first_for(incident.id) is None  # its opener is still to come
 
 
 # --- presses that change nothing ---
@@ -585,7 +627,10 @@ async def test_an_approve_pressed_right_after_a_reply_wins_and_the_reply_offers_
 
     assert [d.kind for _, d in env.runner.resumed] == ["approve"]
     [answer] = env.api.sent("sendMessage")
-    assert answer["text"] == fixed("no_plan", incident="shop #1") and "reply_markup" not in answer
+    # The reply is read in the background, before or after the press is decided: either way it
+    # learns the plan no longer waits, and offers nothing.
+    no_plan, decided = fixed("no_plan", incident="shop #1"), "Already decided on Telegram"
+    assert answer["text"] in (no_plan, decided) and "reply_markup" not in answer
 
 
 async def test_send_after_an_approve_on_the_same_plan_wins_nothing(env):
