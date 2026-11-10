@@ -1,0 +1,1 @@
+The person asked you to look at this service now (`look_requested`); nothing Bleep watches had failed when they asked. Its `via` names where they asked, Telegram or the dashboard, not a part of the service. Something may be wrong or nothing may be: read the service as for any incident, and when everything you read is healthy, say so plainly and stop.

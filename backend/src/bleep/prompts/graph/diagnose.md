@@ -28,7 +28,7 @@ Reply with one JSON object and nothing else, with these fields:
 The incident is about {subject}.
 
 What triggered it:
-{signals}
+{signals}{look}
 
 What was collected:
 {context}

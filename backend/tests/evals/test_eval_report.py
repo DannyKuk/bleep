@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from bleep.schemas.graph import Diagnosis, PlanStep, Proposal
+from bleep.schemas.graph import Diagnosis, PlanStep, Proposal, Report
 from evals.report import (
     GradeError,
     RunInfo,
@@ -424,3 +424,33 @@ def test_a_scenario_without_names_reports_none_and_old_raw_lines_still_load():
     line = result(1).model_dump_json(exclude={"diagnosis_unnamed", "plan_unnamed"})
     loaded = ScenarioResult.model_validate_json(line)
     assert (loaded.diagnosis_unnamed, loaded.plan_unnamed) == (None, None)
+
+
+def test_a_look_is_named_as_a_look_and_its_report_is_quoted():
+    look = Scenario.model_validate(
+        {
+            "id": "look-healthy",
+            "look": True,
+            "subject": SCENARIO.subject.model_dump(),
+            "expected": {
+                "root_cause": "nothing is wrong",
+                "category": "unknown",
+                "action": {"kind": "no_action"},
+            },
+        }
+    )
+    info = INFO.model_copy(update={"scenarios": [SCENARIO, look], "repeat": 1})
+    written = Report(
+        title="look requested on shop",
+        summary="The shop was healthy.",
+        cause="Nothing was wrong.",
+        outcome="No action proposed, nothing was done",
+    )
+    looked = result(1).model_copy(update={"id": "look-healthy", "report": written})
+
+    text = render(info, [result(1), looked])
+
+    assert "for 1 demo fault and 1 look on request, 1 run each" in text
+    assert "- Opened by the fault `db-down`" in text and "- Opened by a look on request" in text
+    assert "A look on request switches no fault" in text
+    assert "Report (No action proposed, nothing was done): The shop was healthy." in text

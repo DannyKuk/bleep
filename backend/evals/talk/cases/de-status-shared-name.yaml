@@ -1,0 +1,13 @@
+id: de-status-shared-name
+lang: de
+about: Two services share the name molecula, in German; the answer names the host of each.
+state: shared
+text: Wie steht es um molecula?
+expect:
+  kind: question
+  words:
+  - - This laptop
+    - Laptop
+  - - Coolify server
+    - Coolify
+  absent: [Bleep]

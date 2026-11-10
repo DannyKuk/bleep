@@ -92,8 +92,22 @@ def _json(value: BaseModel | list[Turn] | None) -> str:
     if value is None:
         return "null"
     # Compact, and without the fields that only say their default: the snapshot of a large setup
-    # stays well inside STATE_CHARS.
-    return value.model_dump_json(exclude_none=True, exclude_defaults=True)
+    # stays well inside STATE_CHARS. One host, service or incident a line: the guard cuts a line
+    # over 4,000 characters in its middle (`guard.sanitize.cap_lines`), and on one line a
+    # snapshot of eleven services lost the ones in the middle (#410).
+    data = value.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
+    return "{\n" + ",\n".join(f"{_compact(k)}:{_items(v)}" for k, v in data.items()) + "\n}"
+
+
+def _compact(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _items(value: object) -> str:
+    """A list one item a line; anything else on the line of its key."""
+    if isinstance(value, list) and value:
+        return "[\n" + ",\n".join(_compact(item) for item in value) + "\n]"
+    return _compact(value)
 
 
 def _fixed(name: str, **values: str) -> str:

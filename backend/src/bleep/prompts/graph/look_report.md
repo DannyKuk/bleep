@@ -1,0 +1,1 @@
+The person asked Bleep to look at this service; nothing had been seen failing. When the diagnosis found nothing wrong, say that the service was healthy and nothing needed doing. Do not call it an issue, a failure or unresolved, and give no follow-ups for a failure nobody saw.

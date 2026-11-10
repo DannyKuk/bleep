@@ -16,7 +16,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from bleep.guard.plan_check import mcp_arguments
-from bleep.schemas.graph import Action, Diagnosis, PlanStep, Proposal
+from bleep.schemas.graph import Action, Diagnosis, PlanStep, Proposal, Report
 from bleep.schemas.incidents import Subject
 from evals.github import GithubFixtureError, load_github_fixture
 from evals.mcp_server import McpFixtureError, load_mcp_fixture
@@ -136,9 +136,13 @@ class Expected(_Strict):
 
 
 class Scenario(_Strict):
+    """A fault the demo stack breaks with, or a look on request at a service that is fine
+    (`look`, #410): the run opens the incident as a person's tap does, nothing switched."""
+
     id: str
-    fault: str  # the name `demo/fault.sh` switches
-    subject: Subject  # the incident the fault must open
+    fault: str | None = None  # the name `demo/fault.sh` switches
+    look: bool = False
+    subject: Subject  # the incident the fault, or the look, must open
     expected: Expected
     timeout_s: int = Field(600, gt=0)  # from the fault on to the end of Propose
     # A fixture in evals/fixtures/github/ that the GitHub tools read; without one they are absent.
@@ -146,6 +150,19 @@ class Scenario(_Strict):
     # A fixture in evals/fixtures/mcp/ served as the MCP plugin's server, the plugin switched on
     # with its settings; without one the plugin is off.
     mcp: str | None = None
+
+    @model_validator(mode="after")
+    def _a_fault_or_a_look(self) -> Self:
+        if (self.fault is None) == (not self.look):
+            raise ValueError("a scenario switches a fault or asks for a look, one of the two")
+        if self.look and self.subject.kind != "service":
+            raise ValueError("a look is asked for a service, never a whole host")
+        return self
+
+    @property
+    def opener(self) -> str:
+        """What opens the scenario's incident, as a report names it."""
+        return "a look on request" if self.look else f"the fault `{self.fault}`"
 
 
 def load_scenario(path: Path) -> Scenario:
@@ -364,6 +381,7 @@ class ScenarioResult(BaseModel):
     incident_id: str | None = None
     diagnosis: Diagnosis | None = None
     proposal: Proposal | None = None
+    report: Report | None = None  # a look's that proposed no action; no other run reaches Report
     root_cause_score: float | None = None
     root_cause_pass: bool = False
     judge_reason: str | None = None

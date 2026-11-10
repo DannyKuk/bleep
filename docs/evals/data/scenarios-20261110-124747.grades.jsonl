@@ -1,0 +1,3 @@
+{"run_id": "look-healthy/1", "root_cause_pass": false, "root_cause_score": 0.3, "note": "says no failing component was found, but treats the look as a reported dashboard failure it could not see; never says nothing is wrong"}
+{"run_id": "look-healthy/2", "root_cause_pass": false, "root_cause_score": 0.3, "note": "finds every container healthy, then calls it a dashboard failure that was not reproduced; never says nothing is wrong"}
+{"run_id": "look-healthy/3", "root_cause_pass": false, "root_cause_score": 0.4, "note": "no failure shown, but 'the reported incident cannot be diagnosed': a failure assumed, not a healthy service"}

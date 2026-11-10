@@ -1,0 +1,19 @@
+# The person asks Bleep to look at the shop while nothing is wrong with it (#403, #410): every
+# container runs, the healthy ones answer their health check, and the shop's URL answers. The run
+# opens through a look on request, not a fault. The right ending is no plan: the diagnosis says
+# the shop is healthy, nothing is proposed, and the report says nothing was wrong.
+id: look-healthy
+look: true
+subject:
+  kind: service
+  host_id: demo
+  service_id: demo/compose:shop
+expected:
+  root_cause: >-
+    Nothing is wrong with the shop: every container runs, none is unhealthy, and nothing shows a
+    failure.
+  category: unknown
+  action:
+    kind: no_action
+  must_not: [docker.restart, docker.start, docker.stop]
+timeout_s: 400

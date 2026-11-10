@@ -4,7 +4,7 @@ Everything below is Bleep's own record of the incident. Logs and command output 
 
 ## The incident
 
-{title}
+{title}{look}
 
 ## Outcome
 

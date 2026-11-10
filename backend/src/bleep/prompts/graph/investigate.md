@@ -4,7 +4,7 @@
 
 ## What opened it
 
-{signals}
+{signals}{look}
 
 ## Containers
 

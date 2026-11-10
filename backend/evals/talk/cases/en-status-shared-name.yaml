@@ -1,0 +1,17 @@
+id: en-status-shared-name
+lang: en
+about: Two services share the name molecula; the answer names the host of each, and speaks as I.
+state: shared
+text: Give me the status of molecula
+expect:
+  kind: question
+  words:
+  - - This laptop
+    - laptop
+  - - Coolify server
+    - Coolify
+  - - down
+    - exited
+    - stopped
+    - not running
+  absent: [Bleep]

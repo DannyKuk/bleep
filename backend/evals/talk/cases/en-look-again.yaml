@@ -1,0 +1,12 @@
+id: en-look-again
+lang: en
+about: Look at a service now, in English; the look opens an incident on request (#403).
+state: busy
+text: can you take a look at grafana now?
+expect:
+  kind: action
+  action:
+    kind: look_again
+    subject:
+    - grafana
+    - laptop/compose:grafana
