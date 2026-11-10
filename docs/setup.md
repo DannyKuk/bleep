@@ -181,6 +181,17 @@ EMBEDDINGS_MIN_SCORE=                                      # recall's cut-off, 0
 
 Bleep refuses to start with the provider set and the URL or the model missing. After a model change, the next start embeds the stored incidents again; until that is done they are left out of recall. The same embedder indexes the docs for knowledge search. For logs and runbooks mostly in another language, a multilingual model behind the endpoint is the option: `BAAI/bge-m3` found German questions' pages first twice as often as bge-small, English ones less often, and is too heavy to ship in the image; Ollama offers it as `bge-m3` (not measured through Ollama; [bge-m3 against bge-small](evals/embeddings-multilingual-2026-11-06.md)). Its scores sit lower than bge-small's, so recall cuts off at 0.35 for a model named `bge-m3` instead of 0.5 ([min score](evals/embeddings-min-score-2026-11-06.md)). For any other model, or if recall misses past incidents you expect, set `EMBEDDINGS_MIN_SCORE`: past incidents scoring under it are never recalled, and unset it is 0.5 for a model Bleep has not measured. Embedding calls are not in the usage ledger: the dev panel's cost and the daily cap count only the chat models, so a paid embeddings endpoint is billed outside them. Details: [Memory](design/memory.md), [Embeddings](decisions/embeddings.md).
 
+**For German or mixed-language docs**, `google/gemini-embedding-2` through OpenRouter is the recommended option (the right chunk first for 22 of 22 queries over sloppy German service docs where bge-small managed 18, and one English first hit lost out of 20; [German docs](evals/embeddings-german-docs-2026-11-10.md), #377). Set these four in `.env`, with your own OpenRouter key (or set the key on the dashboard); recall's cut-off is then 0.65 on its own:
+
+```bash
+EMBEDDINGS_PROVIDER=openai
+EMBEDDINGS_BASE_URL=https://openrouter.ai/api/v1
+EMBEDDINGS_MODEL=google/gemini-embedding-2
+EMBEDDINGS_API_KEY=                                        # your OpenRouter key
+```
+
+Each embed is then a network call of about 420 ms, and a first ingest of the Docker docs and a repo's docs is about 85,000 tokens, about $0.02. Installs without a key keep the local bge-small. If OpenRouter is unreachable, what recall and knowledge search do has not been tested.
+
 ## Tracing (optional)
 
 Every incident run can become one trace, with the incident as its session. For a self-hosted Langfuse, fill in the `LANGFUSE_INIT_*`, `LANGFUSE_SALT`, `LANGFUSE_ENCRYPTION_KEY` and `LANGFUSE_NEXTAUTH_SECRET` lines of `.env` (`.env.example` says how), then:
