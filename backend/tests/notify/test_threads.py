@@ -568,17 +568,42 @@ async def test_two_messages_sent_at_once_give_one_opener_and_one_reply(env):
     assert replied_to(reply) == opener["id"] and "New" not in reply["text"]
 
 
+CLOSED_QUIET = "Closed: you told me to leave shop alone."
+
+
 async def test_a_close_after_the_end_message_is_a_note_not_a_second_end(env):
+    incident = await env.open()
+    await env.notifier.incident_opened(incident)
+    await env.notifier.report(incident, report(OUTCOME_TEXT["no_action"]))
+    await env.notifier.notice(incident.id, CLOSED_QUIET, "quiet")
+
+    messages = env.chat.sent()
+    assert ends(messages) == [messages[1]]
+    assert messages[2]["text"].startswith("ℹ️ Closed: you told me to leave shop alone")
+
+
+async def test_a_report_after_a_close_is_a_note_not_a_second_end(env):
+    incident = await env.open()
+    await env.notifier.incident_opened(incident)
+    await env.notifier.notice(incident.id, CLOSED_QUIET, "quiet")
+    await env.notifier.report(incident, report(OUTCOME_TEXT["no_action"]))
+
+    messages = env.chat.sent()
+    assert ends(messages) == [messages[1]] and first_line(messages[1]) == "*🤫 Quiet*"
+    assert messages[2]["text"].startswith("ℹ️ No action proposed")
+
+
+async def test_a_report_and_a_close_at_once_make_one_end_and_one_note(env):
     incident = await env.open()
     await env.notifier.incident_opened(incident)
     await asyncio.gather(
         env.notifier.report(incident, report(OUTCOME_TEXT["no_action"])),
-        env.notifier.notice(incident.id, "Closed: you told me to leave shop alone.", "quiet"),
+        env.notifier.notice(incident.id, CLOSED_QUIET, "quiet"),
     )
 
     messages = env.chat.sent()
-    assert len(ends(messages)) == 1 and ends(messages)[0] is messages[1]
-    assert messages[2]["text"].startswith("ℹ️ Closed: you told me to leave shop alone")
+    assert len(messages) == 3 and ends(messages) == [messages[1]]
+    assert messages[2]["text"].startswith("ℹ️ ")
 
 
 async def test_a_notice_is_one_line_whatever_a_name_in_it_holds(env):
