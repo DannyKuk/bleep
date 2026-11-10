@@ -258,12 +258,15 @@ class KnowledgeRefresher:
     async def _repos_wait(self) -> float:
         """Seconds until repo docs are due: what is left of the day since the last refresh when
         it covered the repos linked now, so a restart costs no GitHub requests. A first start, a
-        repo linked or unlinked since, and a clock that moved back are all due at once."""
+        repo linked or unlinked since, a repo doc embedded by another embedder than the one in force
+        (search leaves it out) and a clock that moved back are all due at once."""
         if self.repos is None:
             return 0.0
         try:
             last = await self.index.last_refresh(REPOS_REFRESH)
             linked = await self.repos.linked_repos()
+            if await self.index.has_other_model("repo:"):
+                return 0.0
         except Exception as error:  # an unreadable record only means refreshing early
             log.warning("knowledge: could not read the last repo refresh (%s)", error)
             return 0.0
