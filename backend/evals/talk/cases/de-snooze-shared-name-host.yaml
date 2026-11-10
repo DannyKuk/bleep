@@ -1,0 +1,19 @@
+id: de-snooze-shared-name-host
+lang: de
+about: >-
+  A snooze of a service whose name another service shares, named with its host as the German
+  confirm lines write it ("molecula auf laptop", #375): the subject names that host, in either
+  language, or is the service's id, so code can tell which one.
+state: shared
+text: schalte molecula auf laptop für 2 Stunden stumm
+expect:
+  kind: action
+  action:
+    kind: snooze
+    subject:
+    - molecula auf laptop
+    - molecula on laptop
+    - molecula auf This laptop
+    - molecula on This laptop
+    - laptop/compose:molecula
+    minutes: 120

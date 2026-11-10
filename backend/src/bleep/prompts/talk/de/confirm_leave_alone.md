@@ -1,1 +1,1 @@
-🤫 {subject} in Ruhe lassen, bis du etwas sagst?
+🤫 {subject} in Ruhe lassen, bis du Bescheid sagst?

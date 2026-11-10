@@ -131,15 +131,15 @@ def steps_text(proposal: Proposal, language: str = "en") -> Redacted:
     return Redacted("\n".join(lines))
 
 
-def shows_in_full(proposal: Proposal, language: str = "en") -> bool:
+def shows_in_full(proposal: Proposal) -> bool:
     """Whether the message shows every step whole: no set_env value or plugin param was cut, and
     the steps fit the field `render` caps them at (long heads can overflow it and lose a later
     step). When not, the proposal is approved on the dashboard only (Danny's decision, #38: never
-    approve blind). The words after a cut are as long as `language` says them, so it is the
-    language of the message."""
-    if any(_step_line(n, step, language)[1] for n, step in enumerate(proposal.steps, 1)):
+    approve blind). The same in every language: whether a step is cut does not depend on the
+    words after a cut, and steps with none are the same text in every language."""
+    if any(_step_line(n, step, "en")[1] for n, step in enumerate(proposal.steps, 1)):
         return False
-    return len(steps_text(proposal, language).strip()) <= FIELD_CHARS
+    return len(steps_text(proposal).strip()) <= FIELD_CHARS
 
 
 # Whitespace, and letters and marks that render blank (Braille blank, the Hangul fillers, the

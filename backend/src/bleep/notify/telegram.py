@@ -455,7 +455,7 @@ class TelegramBot:
             said = _said("answer_refused_plan", language)
             await self.client.answer_callback(callback_id, said)
             return
-        if kind == "approve" and not await self._shown_in_full(incident_id, approval_id, language):
+        if kind == "approve" and not await self._shown_in_full(incident_id, approval_id):
             # No Approve button was sent for it; a press that arrives anyway is refused.
             said = _said("answer_dashboard_only", language)
             await self.client.answer_callback(callback_id, said)
@@ -547,11 +547,11 @@ class TelegramBot:
         current = await self.approvals.current(incident_id)
         return current is not None and current.id == approval_id and current.proposal.refused
 
-    async def _shown_in_full(self, incident_id: str, approval_id: str, language: str) -> bool:
+    async def _shown_in_full(self, incident_id: str, approval_id: str) -> bool:
         current = await self.approvals.current(incident_id)
         if current is None or current.id != approval_id:
             return True  # `Actions.resolve` answers a stale or unknown plan in its own words
-        return shows_in_full(current.proposal, language)
+        return shows_in_full(current.proposal)
 
     async def _text(self, message: dict[str, Any]) -> None:
         """With `talk`, what the person wrote is answered in the background (`_answer`). Without
@@ -668,7 +668,7 @@ class TelegramBot:
         steps = steps_text(current.proposal, language)
         text = render("plan_again", language=language, incident=offer.incident or "", steps=steps)
         buttons = []
-        if shows_in_full(current.proposal, language):
+        if shows_in_full(current.proposal):
             buttons.append((_said("button_approve", language), f"approve:{current.id}"))
         buttons.append((_said("button_reject", language), f"reject:{current.id}"))
         message_id = await self.client.send_message(

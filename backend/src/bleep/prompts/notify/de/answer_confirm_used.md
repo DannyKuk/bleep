@@ -1,1 +1,1 @@
-Schon beantwortet; dieser Klick hat nichts geändert.
+Schon beantwortet; das hat nichts mehr geändert.

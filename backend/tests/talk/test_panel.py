@@ -487,7 +487,7 @@ async def test_in_german_the_panel_offers_with_german_words_and_buttons(env):
     done = await env.panel.press(reply.confirm.id, True, env.actions)
     again = await env.panel.press(reply.confirm.id, True, env.actions)
     assert done.line == "Stumm bis 14:00 UTC. Bleep lässt es bis dahin in Ruhe."
-    assert again.line == "Schon beantwortet; dieser Klick hat nichts geändert."
+    assert again.line == "Schon beantwortet; das hat nichts mehr geändert."
 
 
 async def test_in_german_a_refused_change_and_a_plan_on_its_page_are_german(env):

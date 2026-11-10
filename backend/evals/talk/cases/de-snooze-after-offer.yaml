@@ -1,0 +1,18 @@
+id: de-snooze-after-offer
+lang: de
+about: >-
+  A German follow-up to the German confirm line Bleep sent last (#375): the person changes the
+  snooze's end, and the new end, not the offered one, is read.
+state: busy
+turns:
+- said: lass shop 2 Stunden in Ruhe
+  answered: '🤫 shop bis 16:12 stummschalten?'
+text: nein, lieber bis morgen 8 Uhr
+expect:
+  kind: action
+  action:
+    kind: snooze
+    subject:
+    - shop
+    - laptop/compose:shop
+    until: 2026-11-10 08:00

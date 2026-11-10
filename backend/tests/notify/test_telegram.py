@@ -1572,7 +1572,7 @@ async def test_a_proposal_in_german_has_german_words_and_buttons_and_the_same_st
     [sent] = env.api.sent("sendMessage")
     text = sent["text"].replace("\\", "")
     assert text.splitlines()[0] == "*🙋 Deine Entscheidung*"
-    assert "Wahrscheinliche Ursache (Ressourcen, 80 % sicher): shop-web ran out of memory" in text
+    assert "Wahrscheinliche Ursache (Ressource, 80 % sicher): shop-web ran out of memory" in text
     assert "1. docker.restart shop-web-1 on demo" in text  # what is approved reads as in English
     assert "Tipp auf einen Button oder antworte" in text
     buttons = sent["reply_markup"]["inline_keyboard"][0]
@@ -1668,4 +1668,4 @@ async def test_a_long_set_env_value_in_german_says_so_in_german_and_gets_no_appr
     assert fmt.too_long("de") in text and fmt.too_long() not in text
     assert "(unbekannt, nicht sicher): nicht bestimmt" in text  # no diagnosis
     assert [b["text"] for b in sent["reply_markup"]["inline_keyboard"][0]] == ["Ablehnen"]
-    assert not fmt.shows_in_full(plan, "de")
+    assert not fmt.shows_in_full(plan)

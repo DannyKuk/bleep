@@ -1,1 +1,1 @@
-Nichts zu sehen, bis der Host antwortet; Bleep wartet und ändert nichts.
+Nichts zu prüfen, bis der Host antwortet; Bleep wartet und ändert nichts.

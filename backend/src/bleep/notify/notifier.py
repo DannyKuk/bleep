@@ -254,7 +254,7 @@ class Notifier:
             steps=fmt.steps_text(proposal, language),
             reason=fmt.prose_line(proposal.reason),
         )
-        approvable = fmt.shows_in_full(proposal, language)
+        approvable = fmt.shows_in_full(proposal)
         await self._ask(incident, approval, text, language, approvable=approvable)
 
     async def reminder(self, incident: Incident, approval: ApprovalRequest) -> None:
@@ -274,7 +274,7 @@ class Notifier:
             return
         steps = fmt.steps_text(current.proposal, language)
         text = fmt.render("reminder", language=language, waited=waited, steps=steps)
-        approvable = fmt.shows_in_full(current.proposal, language)
+        approvable = fmt.shows_in_full(current.proposal)
         await self._safely(self._ask(incident, approval, text, language, approvable=approvable))
 
     async def verification(self, incident: Incident, result: VerificationResult) -> None:

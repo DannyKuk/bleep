@@ -1,0 +1,17 @@
+id: de-watch-again-as-told
+lang: de
+about: >-
+  The words Bleep's German answers tell the person to say to end a quiet (`answer_left_alone`,
+  `quiet_through_host`: „backup-job wieder beobachten“, #375), said back as told.
+state: busy
+turns:
+- said: lass backup-job in Ruhe
+  answered: 'Bleep lässt backup-job in Ruhe, bis du „backup-job wieder beobachten“ sagst.'
+text: backup-job wieder beobachten
+expect:
+  kind: action
+  action:
+    kind: watch_again
+    subject:
+    - backup-job
+    - m1/compose:backup-job

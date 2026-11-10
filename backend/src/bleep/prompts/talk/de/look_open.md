@@ -1,1 +1,1 @@
-{incident} ist schon offen und betrifft {subject}; sein Thread zeigt, wo es steht.
+{incident} ist schon offen und betrifft {subject}; in seinem Thread steht der aktuelle Stand.

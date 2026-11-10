@@ -1,1 +1,1 @@
-Ressourcen
+Ressource

@@ -1,1 +1,1 @@
-Ist erwartet
+Erwartet
