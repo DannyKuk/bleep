@@ -1,0 +1,1 @@
+{"run_id": "oom/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "English control on the same branch: names WORKER_BATCH_MB=256 past the 64 MiB limit; missed the documented value 8 (scored by must_set)."}
