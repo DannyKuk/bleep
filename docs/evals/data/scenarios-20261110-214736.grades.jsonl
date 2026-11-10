@@ -1,0 +1,3 @@
+{"run_id": "look-healthy-no-url/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "says nothing is wrong: all four containers running, logs show normal work; no URL to check"}
+{"run_id": "look-healthy-no-url/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "says nothing is wrong: the four containers run and their logs show normal startup or work"}
+{"run_id": "look-healthy-no-url/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "says nothing is wrong: all four containers running, logs normal, no URL set"}
