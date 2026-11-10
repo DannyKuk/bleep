@@ -239,7 +239,7 @@ export function ChatPanel() {
             About <span className="font-mono">{aboutName}</span>
             <button
               type="button"
-              aria-label={`Do not send ${aboutName} with the message`}
+              aria-label={`Leave out ${aboutName}`}
               onClick={() => setDismissed(about)}
               className="grid size-6 place-items-center rounded-full hover:bg-surface focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >

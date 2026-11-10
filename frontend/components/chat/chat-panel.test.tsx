@@ -211,7 +211,7 @@ describe("ChatPanel", () => {
 
     expect(await screen.findByText("shop #14")).toBeInTheDocument();
     await write(user, "why did you restart it?");
-    await user.click(screen.getByRole("button", { name: "Do not send shop #14 with the message" }));
+    await user.click(screen.getByRole("button", { name: "Leave out shop #14" }));
     await write(user, "and now?");
 
     await waitFor(() => expect(posts(fetchMock)).toHaveLength(2));
