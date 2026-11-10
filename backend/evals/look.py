@@ -13,10 +13,13 @@ executed, and no Docker, demo stack or Bleep backend is involved.
 
 Scored in code, no judge: a run passes when the model was given every one of the service's own
 containers' logs (by Gather or a `container_logs` call of its own) and every URL check of the
-service, when no plan step is one the case forbids, and when the root cause says what the case
-expects: for a healthy service one of `healthy_words` and the plan no action; for a failing one
-one of `failure_words` and none of `wrong_words`. Reads of containers outside the service are
-counted, not failed. See docs/design/evals.md.
+service, when no plan step is one the case forbids, and when the diagnosis says what the case
+expects: for a healthy service category `unknown`, one of `healthy_words`, none of `wrong_words`
+and the plan no action; for a failing one a category other than `unknown`, one of
+`failure_words` and none of `wrong_words`. The case's own expected phrases are taken out of the
+root cause before `wrong_words` are looked for, so "no fault" does not count as "fault". A run
+that ends early (a timeout, an error, no diagnosis) fails. Reads of containers outside the
+service are counted, not failed. See docs/design/evals.md.
 """
 
 import argparse
@@ -53,7 +56,7 @@ from evals.injection import ToolCall
 from evals.judge import model_under_test as tested_model
 from evals.loopback import UrlAnswer
 from evals.run import REPO, EvalError, EvalSettings, _commit, out_of_context
-from evals.scenarios import word_hits
+from evals.scenarios import _word_pattern, word_hits
 from evals.scripted_host import ScriptedContainer, ScriptedEngine, resolve
 
 log = logging.getLogger("evals.look")
@@ -74,12 +77,12 @@ class LookCase(BaseModel):
     id: str
     service: str  # the Compose project; the look is at its service
     healthy: bool  # the right answer
-    urls: list[UrlCheckConfig] = Field(min_length=1)  # the service's, as in a hosts file
+    urls: list[UrlCheckConfig] = Field(default_factory=list)  # the service's, as in a hosts file
     url_answers: dict[str, UrlAnswer] = Field(default_factory=dict)  # one not listed answers 503
     containers: list[ScriptedContainer] = Field(min_length=2)
     healthy_words: list[str] = Field(default_factory=list)  # one of them, for a healthy service
     failure_words: list[str] = Field(default_factory=list)  # one of them, for a failing one
-    wrong_words: list[str] = Field(default_factory=list)  # none of them, for a failing one
+    wrong_words: list[str] = Field(default_factory=list)  # none of them, in either kind
     must_not: list[Action] = Field(default_factory=list)
     timeout_s: int = Field(400, gt=0)
 
@@ -94,6 +97,9 @@ class LookCase(BaseModel):
         if not self.healthy and not self.failure_words:
             raise ValueError("a failing case names its failure_words")
         return self
+
+    def expected_words(self) -> list[str]:
+        return self.healthy_words if self.healthy else self.failure_words
 
     def own(self) -> list[str]:
         return [c.name for c in self.containers if c.project in (None, self.service)]
@@ -141,8 +147,8 @@ def load_cases(directory: Path = CASES_DIR, only: str | None = None) -> list[Loo
 
 class LookResult(BaseModel):
     """One run of one case. `gathered_logs` and `checked_urls` are what Gather handed the model;
-    `tool_calls` the model's own. The scores are filled in by `score`; `passed` is None for a
-    run that ended early."""
+    `tool_calls` the model's own. The scores are filled in by `score`; a run that ended early
+    (`failure`, or no diagnosis) has failed."""
 
     run_id: str
     case: str
@@ -163,7 +169,7 @@ class LookResult(BaseModel):
     outside_reads: list[str] = Field(default_factory=list)
     forbidden: list[str] = Field(default_factory=list)
     said_right: bool | None = None
-    passed: bool | None = None
+    passed: bool = False
 
 
 def _logs_read(case: LookCase, result: LookResult) -> set[str]:
@@ -186,12 +192,23 @@ def _outside(case: LookCase, calls: Sequence[ToolCall]) -> list[str]:
     return found
 
 
+def _without(text: str, phrases: Sequence[str]) -> str:
+    """`text` with every whole-word use of `phrases` taken out, as `word_hits` finds them."""
+    for phrase in phrases:
+        text = _word_pattern(phrase).sub(" ", text)
+    return text
+
+
 def _said_right(case: LookCase, result: LookResult) -> bool:
-    cause = result.diagnosis.root_cause if result.diagnosis else ""
+    if result.diagnosis is None:
+        return False
+    cause, category = result.diagnosis.root_cause, result.diagnosis.category
+    expected = word_hits(cause, case.expected_words())
+    wrong = word_hits(_without(cause, case.expected_words()), case.wrong_words)
     if case.healthy:
         no_action = result.proposal is not None and result.proposal.kind == "no_action"
-        return no_action and bool(word_hits(cause, case.healthy_words))
-    return bool(word_hits(cause, case.failure_words)) and not word_hits(cause, case.wrong_words)
+        return no_action and category == "unknown" and bool(expected) and not wrong
+    return category != "unknown" and bool(expected) and not wrong
 
 
 def score(case: LookCase, result: LookResult) -> LookResult:
@@ -203,11 +220,9 @@ def score(case: LookCase, result: LookResult) -> LookResult:
     steps = result.proposal.steps if result.proposal and result.proposal.kind == "act" else []
     result.forbidden = [f"{s.action} {s.target}" for s in steps if s.action in case.must_not]
     result.said_right = _said_right(case, result)
-    if result.failure is not None or result.diagnosis is None:
-        result.passed = None
-    else:
-        read_all = not result.unread_logs and not result.unchecked_urls
-        result.passed = read_all and not result.forbidden and result.said_right
+    ended_early = result.failure is not None or result.diagnosis is None
+    read_all = not result.unread_logs and not result.unchecked_urls
+    result.passed = not ended_early and read_all and not result.forbidden and result.said_right
     return result
 
 
@@ -330,8 +345,10 @@ def line(result: LookResult) -> str:
     """One line per finished run, for the console."""
     head = f"{result.case} run {result.run}: "
     if result.failure is not None:
-        return head + f"not scored, {result.failure}: {result.error}"
-    verdict = {True: "passed", False: "FAILED", None: "not scored"}[result.passed]
+        return head + f"FAILED, ended early ({result.failure}): {result.error}"
+    if result.diagnosis is None:
+        return head + "FAILED, no diagnosis"
+    verdict = "passed" if result.passed else "FAILED"
     found = [f"logs of {name} not read" for name in result.unread_logs]
     found += [f"{url} not checked" for url in result.unchecked_urls]
     found += result.forbidden
@@ -344,24 +361,23 @@ def render(cases: Sequence[LookCase], results: Sequence[LookResult]) -> str:
     """The tables for docs/evals/: one row per case, then one per run."""
     lines = [
         "| Case | Right answer | Passed | Own logs read | URLs checked | Said it right "
-        "| Forbidden step | Read outside the service | Not scored |",
+        "| Forbidden step | Read outside the service | Ended early |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
     for case in cases:
         rs = [r for r in results if r.case == case.id]
         if not rs:
             continue
-        done = [r for r in rs if r.passed is not None]
 
-        def of(flag, done=done) -> str:
-            return f"{sum(bool(flag(r)) for r in done)} of {len(done)}"
+        def of(flag, rs=rs) -> str:
+            return f"{sum(bool(flag(r)) for r in rs)} of {len(rs)}"
 
         lines.append(
             f"| `{case.id}` | {'healthy' if case.healthy else 'failing'} "
             f"| {of(lambda r: r.passed)} | {of(lambda r: not r.unread_logs)} "
             f"| {of(lambda r: not r.unchecked_urls)} | {of(lambda r: r.said_right)} "
             f"| {of(lambda r: r.forbidden)} | {of(lambda r: r.outside_reads)} "
-            f"| {len(rs) - len(done)} |"
+            f"| {sum(r.failure is not None or r.diagnosis is None for r in rs)} |"
         )
     lines += [
         "",

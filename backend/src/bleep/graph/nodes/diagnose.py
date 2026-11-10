@@ -106,7 +106,9 @@ def _describe_signals(signals: list[Signal]) -> str:
     return "\n".join(lines) or "(none recorded)"
 
 
-def _describe_context(context: GatherContext) -> str:
+def _describe_context(context: GatherContext, with_urls: bool = True) -> str:
+    """What Gather collected. Its URL checks are left out after a fix ran (`with_urls` False):
+    they are from before it, and Verify's checks say how the URLs are now."""
     parts: list[str] = []
     if context.containers:
         parts.append(
@@ -119,8 +121,8 @@ def _describe_context(context: GatherContext) -> str:
         )
     for name, text in context.logs.items():
         parts.append(f"Recent log of {name}:\n{text}")
-    if context.urls:
-        parts.append(f"URL checks when the run began:\n{describe_urls(context.urls)}")
+    if context.urls and with_urls:
+        parts.append(prompts.load("graph/url_checks", checks=describe_urls(context.urls)).strip())
     if context.basics is not None:
         parts.append("Host basics:\n" + "\n".join(describe_basics(context.basics)))
     if context.top_memory:
@@ -195,7 +197,7 @@ def make(deps: GraphDeps) -> Node:
             signals=_describe_signals(state.get("signals", [])),
             look=look_rule("diagnose", state.get("signals", [])),
             language=language_rule("graph/diagnose", deps.settings_store.language()),
-            context=_describe_context(context),
+            context=_describe_context(context, with_urls=not state.get("verify_loops")),
             investigation=_describe_investigation(messages),
             untrusted_rule=prompts.load("untrusted/diagnose").strip(),
             planted_in_rule=prompts.load("untrusted/diagnose_planted_in").strip(),

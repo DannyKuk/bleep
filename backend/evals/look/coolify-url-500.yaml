@@ -3,7 +3,9 @@
 # beside it runs with a quiet log, but the app's own log shows every page request failing on an
 # unhandled error, and its URL answers 500. A look that reads the container's state and the
 # proxy's log, as the dkwebsite look did, calls it healthy; the right answer names the failing
-# page. A restart cannot fix a bug in the app's code.
+# page with a category other than `unknown`; "500" alone is not enough, since the URL check's own
+# line gives it. A restart cannot fix a bug in the app's code. The case is Coolify-shaped by its
+# names only: it runs as a Compose service on the scripted host, without the Coolify plugin.
 id: coolify-url-500
 service: vclhwoxxy60z4vk70g0vpesq
 healthy: false
@@ -35,5 +37,5 @@ containers:
       time="2026-10-21T08:12:40Z" level=info msg="Configuration loaded from flags."
       time="2026-10-21T08:12:41Z" level=info msg="Starting provider *docker.Provider"
 failure_words: ["500", Cannot read properties, unhandled, slug, posts]
-wrong_words: [nothing is wrong, no failure, no fault, no issue, no problem, working normally, functioning normally]
+wrong_words: [nothing is wrong, no failure, no fault, no issue, no problem, working normally, functioning normally, service is healthy, app is healthy, looks healthy, transient]
 must_not: [docker.restart, docker.stop, docker.start]

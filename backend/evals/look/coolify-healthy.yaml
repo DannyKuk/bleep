@@ -2,7 +2,11 @@
 # on 2026-11-10 (inc_01M72VVGAFCZY0VJFK): one container named by the app's uuid, running and
 # healthy, whose own log says it listens; Coolify's proxy runs beside it as a service of its own,
 # with a log of its own. The app's URL answers. The right answer is that it is healthy, said only
-# after its own log and its URL check were in front of the model, not the proxy's log.
+# after its own log and its URL check were in front of the model, not the proxy's log. The case
+# is Coolify-shaped by its names only: it runs as a Compose service on the scripted host, without
+# the Coolify plugin. A root cause that calls the app's h3 deprecation warnings a fault, a failure
+# or an error is a false alarm and fails; one that quotes their words "error messages" fails too,
+# a limit of the word check.
 id: coolify-healthy
 service: vclhwoxxy60z4vk70g0vpesq
 healthy: true
@@ -29,5 +33,6 @@ containers:
     logs: |
       time="2026-10-21T08:12:40Z" level=info msg="Configuration loaded from flags."
       time="2026-10-21T08:12:41Z" level=info msg="Starting provider *docker.Provider"
-healthy_words: [healthy, nothing is wrong, no failure, no fault, working normally, running normally]
+healthy_words: [healthy, nothing is wrong, no failure, no fault, no error, without error, working normally, running normally]
+wrong_words: [fault, failing, error, bug]
 must_not: [docker.restart, docker.stop, docker.start]

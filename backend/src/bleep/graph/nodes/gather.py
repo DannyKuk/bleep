@@ -98,15 +98,26 @@ async def _service(
     context.service_name = service.name
     context.containers = list(service.containers)
     context.service_rules = list(service.rules)
-    for name in _affected(service, signals)[:MAX_LOG_CONTAINERS]:
+    names = _affected(service, signals)[:MAX_LOG_CONTAINERS]
+    if bare_look(signals) and service.urls:
+        _, context.urls = await asyncio.gather(
+            _read_logs(deps, ctx, subject.host_id, names, context),
+            _check_urls(deps, service.urls),
+        )
+    else:
+        await _read_logs(deps, ctx, subject.host_id, names, context)
+
+
+async def _read_logs(
+    deps: GraphDeps, ctx: ToolContext, host_id: str, names: list[str], context: GatherContext
+) -> None:
+    for name in names:
         try:
-            text = await deps.registry.engine(subject.host_id).logs(name, tail=LOG_TAIL)
+            text = await deps.registry.engine(host_id).logs(name, tail=LOG_TAIL)
         except Exception as error:
             context.gaps.append(f"logs of {name}: {_why(error)}")
             continue
         context.logs[name] = await guard_result(ctx, "logs", text or "(no log lines)")
-    if bare_look(signals) and service.urls:
-        context.urls = await _check_urls(deps, service.urls)
 
 
 async def _check_urls(deps: GraphDeps, urls: list[UrlCheckConfig]) -> list[UrlReading]:

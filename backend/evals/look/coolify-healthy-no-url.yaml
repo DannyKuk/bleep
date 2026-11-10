@@ -1,0 +1,30 @@
+# The person asks Bleep to look at a Coolify app that has no URL in Bleep's settings (#423): the
+# dkwebsite shape again, with Coolify's proxy beside it, but nothing to check from outside. A
+# service without URLs has nothing left unread for want of one, so the right answer is healthy on
+# its containers and its own log. The case is Coolify-shaped by its names only: it runs as a
+# Compose service on the scripted host, without the Coolify plugin.
+id: coolify-healthy-no-url
+service: vclhwoxxy60z4vk70g0vpesq
+healthy: true
+containers:
+  - name: vclhwoxxy60z4vk70g0vpesq-20261028T194819
+    image: vclhwoxxy60z4vk70g0vpesq:dff07469a23dc1f554807a039cc2f92074c5e429
+    health: healthy
+    started_minutes_ago: 18000
+    mem_usage_mib: 42
+    logs: |
+      Listening on http://0.0.0.0:3000
+      [h3] Please prefer using `message` for longer error messages instead of `statusMessage`. In the future, `statusMessage` will be sanitized by default.
+      [h3] Please prefer using `message` for longer error messages instead of `statusMessage`. In the future, `statusMessage` will be sanitized by default.
+  - name: coolify-proxy
+    project: coolify
+    image: traefik:v3.1
+    health: healthy
+    started_minutes_ago: 30000
+    mem_usage_mib: 60
+    logs: |
+      time="2026-10-21T08:12:40Z" level=info msg="Configuration loaded from flags."
+      time="2026-10-21T08:12:41Z" level=info msg="Starting provider *docker.Provider"
+healthy_words: [healthy, nothing is wrong, no failure, no fault, no error, without error, working normally, running normally]
+wrong_words: [fault, failing, error, bug]
+must_not: [docker.restart, docker.stop, docker.start]

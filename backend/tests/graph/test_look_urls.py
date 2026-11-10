@@ -7,6 +7,7 @@ from test_investigate import DONE
 from test_investigate import setup as investigate_setup
 from test_look import DIED, LOOK
 
+from bleep.graph.host_text import describe_urls
 from bleep.graph.nodes import diagnose, gather, investigate
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.schemas.graph import GatherContext, UrlReading
@@ -95,17 +96,44 @@ async def test_investigate_and_diagnose_of_a_look_read_its_url_checks_as_untrust
     task = str(env.models.model.seen[0][1].content)
     section = task.split("## URL checks", 1)[1].split("## Host", 1)[0]
     assert '<untrusted source="url_checks"' in section
-    assert "https://shop.example/health: answered 200" in section
-    assert "https://shop.example/api/items: failed, expected status 200, got 502" in section
+    assert "passed, answered 200: https://shop.example/health" in section
+    assert "failed, expected status 200, got 502: https://shop.example/api/items" in section
     assert "a reverse proxy's that is not part of this service" in task
 
     await diagnose.make(env.deps)(state | {"investigate_rounds": 1})
     sent = "\n".join(str(m.content) for m in env.models.model.seen[1])
-    assert "URL checks when the run began" in sent and "got 502" in sent
+    assert "## URL checks" in sent and "got 502" in sent
     assert "a failed URL check or errors in its own logs is a failure" in sent
+    assert "no URLs in Bleep's settings" in sent and "no URLs in Bleep's settings" in task
+
+
+async def test_diagnose_after_a_fix_leaves_the_looks_url_checks_out(tmp_path):
+    seen: list[str] = []
+    env, subject = await url_env(tmp_path, seen)
+    env.models.model = FakeChatModel(script=[reply(0.9)], structured_output_unsupported=True)
+    state: dict = {"incident_id": "inc-1", "subject": subject, "signals": [on(LOOK, subject)]}
+    state |= await gather.make(env.deps)(state)
+    assert state["context"].urls
+
+    await diagnose.make(env.deps)(state | {"investigate_rounds": 1, "verify_loops": 1})
+    sent = "\n".join(str(m.content) for m in env.models.model.seen[0])
+    assert "## URL checks" not in sent and "got 502" not in sent
 
 
 async def test_investigate_of_a_failure_has_no_url_checks_section(tmp_path):
     env, state = await investigate_setup(tmp_path, [DONE])
     await investigate.make(env.deps)(state)
     assert "## URL checks" not in str(env.models.model.seen[0][1].content)
+
+
+def test_a_url_line_gives_its_result_before_the_url_so_a_redacted_token_cannot_eat_it():
+    text = describe_urls(
+        [
+            UrlReading(url="https://shop.example/h?token=s3cretvalue123456", ok=True, status=401),
+            UrlReading(url="https://shop.example/a", ok=False, error="timed out after 10 s"),
+        ]
+    )
+    assert "passed, answered 401: https://shop.example/h?token=" in text
+    assert "s3cretvalue123456" not in text
+    assert "failed, timed out after 10 s: https://shop.example/a" in text
+    assert text.startswith('<untrusted source="url_checks"')

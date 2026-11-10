@@ -50,10 +50,12 @@ def describe_basics(basics: HostBasics) -> list[str]:
 
 
 def describe_urls(readings: list[UrlReading]) -> str:
-    """Gather's URL checks, one a line, wrapped as untrusted: a URL can come from a plugin, such
-    as a Coolify application's domain."""
+    """Gather's URL checks, one a line, the result before the URL so a redaction inside the URL
+    cannot swallow it. The lines are Bleep's own, but wrapped as untrusted all the same, as host
+    text beside them is: defence in depth."""
     lines = [
-        f"{r.url}: answered {r.status}" if r.ok else f"{r.url}: failed, {r.error or 'no answer'}"
+        (f"passed, answered {r.status}" if r.ok else f"failed, {r.error or 'no answer'}")
+        + f": {r.url}"
         for r in readings
     ]
     return guard_text("url_checks", "\n".join(lines))[0]

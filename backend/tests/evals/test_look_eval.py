@@ -24,6 +24,7 @@ from evals.run import EvalSettings
 from fakes import FakeChatModel
 
 HEALTHY = "coolify-healthy"
+NO_URL = "coolify-healthy-no-url"
 FAILING = "coolify-url-500"
 NO_ACTION = {"kind": "no_action", "reason": "nothing to change"}
 
@@ -50,20 +51,20 @@ class Models:
         return self.model
 
 
-def look(cause: str, plan: dict, read: str | None = None) -> Models:
+def look(cause: str, plan: dict, read: str | None = None, category: str = "unknown") -> Models:
     """Investigate (optionally reading one container's logs first), Diagnose and Propose."""
     script = []
     if read is not None:
         call = {"name": "container_logs", "args": {"container": read}, "id": "call-1"}
         script.append(reply(tool_calls=[call]))
-    diagnosis = {"root_cause": cause, "category": "unknown", "confidence": 0.9}
+    diagnosis = {"root_cause": cause, "category": category, "confidence": 0.9}
     script += [reply(f"found: {cause}"), reply(json.dumps(diagnosis)), reply(json.dumps(plan))]
     return Models(script)
 
 
 def test_every_shipped_case_loads_with_a_healthy_and_a_failing_one():
     cases = load_cases()
-    assert {c.id for c in cases} >= {HEALTHY, FAILING}
+    assert {c.id for c in cases} >= {HEALTHY, NO_URL, FAILING}
     assert {c.healthy for c in cases} == {True, False}
     for c in cases:
         assert "coolify-proxy" not in c.own()
@@ -105,7 +106,7 @@ async def test_a_failing_look_called_healthy_after_reading_the_proxy_fails():
 async def test_a_failing_look_that_names_the_failure_passes_unless_it_restarts():
     c = case(FAILING)
     cause = "The home page answers 500: an unhandled error reading 'slug' in the posts API."
-    passed = await run_case(c, settings(), models=look(cause, NO_ACTION))
+    passed = await run_case(c, settings(), models=look(cause, NO_ACTION, category="code"))
     assert passed.said_right and passed.passed
 
     target = c.own()[0]
@@ -115,13 +116,14 @@ async def test_a_failing_look_that_names_the_failure_passes_unless_it_restarts()
         "reason": "restart it",
         "verification": {"containers": [target]},
     }
-    failed = await run_case(c, settings(), models=look(cause, restart))
+    failed = await run_case(c, settings(), models=look(cause, restart, category="code"))
     assert failed.forbidden == [f"docker.restart {target}"] and failed.passed is False
 
 
 async def test_render_scores_stored_runs_again(tmp_path, capsys):
     c = case(HEALTHY)
     result = await run_case(c, settings(), models=look("It is healthy.", NO_ACTION))
+    assert result.passed
     raw = tmp_path / "look.jsonl"
     raw.write_text(result.model_dump_json() + "\n", encoding="utf-8")
     assert read_jsonl(raw)[0].passed
@@ -130,3 +132,56 @@ async def test_render_scores_stored_runs_again(tmp_path, capsys):
     out = capsys.readouterr().out
     assert out.strip() == render([c], read_jsonl(raw)).strip()
     assert f"| `{HEALTHY}` | healthy | 1 of 1 |" in out
+
+
+@pytest.mark.parametrize(
+    ("case_id", "cause", "category"),
+    [
+        # The URL check's own line gives "500"; calling it transient is calling the app healthy.
+        (
+            FAILING,
+            "The service is healthy; the single 500 from the URL check is transient.",
+            "unknown",
+        ),
+        (FAILING, "The home page answers 500 now and then.", "unknown"),  # healthy's category
+        # A false alarm on the healthy app: its h3 deprecation warnings read as a fault.
+        (
+            HEALTHY,
+            "The container is healthy, but its log shows repeated h3 statusMessage errors, "
+            "a code fault.",
+            "code",
+        ),
+        (HEALTHY, "Nothing is wrong: the app is healthy and its URL answers.", "code"),
+    ],
+)
+async def test_a_wrong_answer_fails(case_id, cause, category):
+    result = await run_case(
+        case(case_id), settings(), models=look(cause, NO_ACTION, category=category)
+    )
+    assert result.failure is None, result.error
+    assert result.said_right is False and result.passed is False
+
+
+async def test_a_healthy_answer_that_says_no_fault_or_no_errors_is_not_a_false_alarm():
+    cause = "Nothing is wrong: no fault and no errors in its own log, and its URL answers."
+    result = await run_case(case(HEALTHY), settings(), models=look(cause, NO_ACTION))
+    assert result.said_right and result.passed
+
+
+async def test_a_look_at_a_service_without_urls_can_pass_on_its_logs_alone():
+    c = case(NO_URL)
+    assert c.urls == []
+    result = await run_case(
+        c, settings(), models=look("It is healthy: its log shows it listening.", NO_ACTION)
+    )
+    assert result.checked_urls == [] and result.unchecked_urls == []
+    assert result.passed
+
+
+async def test_a_run_that_ends_early_fails():
+    c = case(HEALTHY)
+    result = await run_case(c, settings(), models=Models([]))  # the model has nothing to say
+    assert result.failure is not None or result.diagnosis is None
+    assert result.passed is False
+    assert "FAILED" in line(result)
+    assert f"| `{HEALTHY}` | healthy | 0 of 1 |" in render([c], [result])
