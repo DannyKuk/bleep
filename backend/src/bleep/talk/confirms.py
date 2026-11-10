@@ -23,6 +23,12 @@ KEPT = 100  # offers kept at once; answered ones go first, then the oldest
 REMEMBERED = timedelta(hours=1)
 
 Refused = Literal["used", "expired", "unknown"]
+# The two buttons under an offer, on every surface: Send for words to a plan, else Yes.
+YES_LABEL, SEND_LABEL, NO_LABEL = "Yes", "Send", "No"
+
+
+def yes_label(offer: Offer) -> str:
+    return SEND_LABEL if offer.kind == "instruct" else YES_LABEL
 
 
 @dataclass
@@ -48,6 +54,10 @@ class Confirms:
         confirm_id = secrets.token_urlsafe(9)
         self._entries[confirm_id] = _Entry(offer, self.clock() + self.ttl)
         return confirm_id
+
+    def expires(self, confirm_id: str) -> datetime | None:
+        entry = self._entries.get(confirm_id)
+        return entry.expires if entry is not None else None
 
     def take(self, confirm_id: str) -> Offer | Refused:
         """The offer to run, once; why not otherwise. No await between the look and the mark,

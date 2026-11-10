@@ -1,6 +1,6 @@
 """Answer what the person writes to Bleep, from Bleep's own state, with one cheap-model call.
 
-Both surfaces call `Talk.reply`: the Telegram bot now, the dashboard's panel later (#391). It
+Both surfaces call `Talk.reply`: the Telegram bot and the dashboard's panel (#391). It
 reads; it never changes anything. The person's text, the conversation, the incident it is about
 and the snapshot all reach the model as untrusted data (`guard_text`), and the model only picks
 a kind and, for a question, writes the answer. An action comes back as an offer, checked by code
@@ -48,6 +48,7 @@ from bleep.schemas.talk import (
     TalkReply,
     Turn,
 )
+from bleep.talk.links import known_links, links_in, offer_links
 from bleep.talk.looks import look_offer
 from bleep.talk.offers import check, confirm_line, instruction
 from bleep.talk.state import StateReader
@@ -147,7 +148,10 @@ class Talk:
             log.warning("talk: could not read a message (%s)", type(error).__name__)
             return self._fallback("failed", _fixed("failed"), text, facts, incident_id)
         try:
-            return self._answer(reading, text, snapshot, facts, incident_id, spent)
+            said = self._answer(reading, text, snapshot, facts, incident_id, spent)
+            named = offer_links(said.offer) if said.offer else []
+            candidates = [*named, *known_links(snapshot, facts)]
+            return said.model_copy(update={"links": links_in(said.answer, candidates)})
         except Exception:  # a bug checking a reading must still answer, and keep its traceback
             log.exception("talk: could not answer a reading")
             return TalkReply(kind="failed", answer=_fixed("failed"), incident_id=incident_id)

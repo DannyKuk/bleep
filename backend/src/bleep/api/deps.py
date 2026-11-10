@@ -4,6 +4,7 @@ from bleep.api.cookie import COOKIE_NAME, set_session_cookie
 from bleep.config import Settings
 from bleep.incidents.expectations import Expectations
 from bleep.incidents.runner import IncidentRunner
+from bleep.talk.actions import Actions
 from bleep.wiring import AppParts
 
 
@@ -23,6 +24,23 @@ def get_runner(request: Request) -> IncidentRunner:
 def get_expectations(request: Request) -> Expectations:
     """ "This is expected", built with the runner by the lifespan."""
     return request.app.state.expectations
+
+
+def get_actions(request: Request) -> Actions:
+    """What the dashboard's chat panel runs a confirmed offer with: the code Telegram's
+    buttons use, as the dashboard."""
+    parts = get_parts(request)
+    return Actions(
+        parts.approvals,
+        get_runner(request),
+        "dashboard",
+        parts.quiet.clock,
+        incidents=parts.incidents,
+        quiet=parts.quiet,
+        expectations=get_expectations(request),
+        looks=request.app.state.looks,
+        zone=parts.settings_store.zone,
+    )
 
 
 async def require_session(request: Request, response: Response) -> str:

@@ -54,6 +54,7 @@ from bleep.schemas.settings import MODEL_KEY_ENV
 from bleep.store.db import Database
 from bleep.store.secrets import SecretName, SecretStore
 from bleep.talk.conversation import Talk
+from bleep.talk.panel import Panel
 from bleep.talk.state import BleepState
 from bleep.tools.default import default_registry
 from bleep.tools.docker_act import docker_act_tools
@@ -90,6 +91,7 @@ class AppParts:
     secrets: SecretStore
     dashboard_hosts: DashboardHosts
     talk: Talk
+    panel: Panel  # the dashboard's own conversation, read with `talk`
 
 
 # Every plugin Bleep has; each is off until a person switches it on.
@@ -294,6 +296,7 @@ def build_parts(
         secrets=secrets,
         dashboard_hosts=dashboard_hosts,
         talk=talk,
+        panel=Panel(talk),
     )
 
 
@@ -307,7 +310,7 @@ def build_talk(
     store: SettingsStore,
     guard_log: GuardLog,
 ) -> Talk:
-    """The conversation both surfaces answer with: Telegram's bot, and later the dashboard's
+    """The conversation both surfaces answer with: Telegram's bot and the dashboard's
     panel. It reads the watcher's overview as its health, the cheap model from the settings in
     force, and counts its calls in the usage ledger under the daily cap."""
     state = BleepState(overview, incidents, approvals, bus, zone=store.zone)

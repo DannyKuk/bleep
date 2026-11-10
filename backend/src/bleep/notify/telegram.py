@@ -18,7 +18,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, tzinfo
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 
 import httpx
 
@@ -26,7 +26,6 @@ from bleep.graph.deps import Approvals
 from bleep.guard.log import GuardLogger
 from bleep.incidents.bus import EventBus
 from bleep.incidents.expectations import RUNNING
-from bleep.incidents.looks import Channel, Look
 from bleep.incidents.quiet import QuietStore, morning_of, quiet_target, snooze_until
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.notify.format import answer, bold_first_line, phrase, render, shows_in_full, steps_text
@@ -34,10 +33,10 @@ from bleep.schemas.graph import Decision
 from bleep.schemas.incidents import TERMINAL_STATUSES
 from bleep.schemas.talk import Offer
 from bleep.store.db import Database
-from bleep.talk.confirms import Confirms
+from bleep.talk.actions import Actions, Expecting, Looking, Resumer
+from bleep.talk.confirms import NO_LABEL, Confirms, yes_label
 from bleep.talk.conversation import Talk
 from bleep.talk.history import Turns
-from bleep.talk.looks import look_said
 from bleep.talk.offers import confirm_line, instruction
 from bleep.talk.times import when
 
@@ -52,7 +51,6 @@ BACKOFF_MAX_S = 60.0
 INSTRUCTION_MAX_CHARS = 1000
 TALK_WAITING_MAX = 3  # messages being answered at once; one more is told Bleep is busy
 GUARD_INCIDENT = "telegram"  # guard_log rows that belong to no incident
-_CHANNEL_NAMES = {"dashboard": "the dashboard", "telegram": "Telegram"}
 
 
 def mask_chat_id(chat_id: str) -> str:
@@ -63,33 +61,6 @@ def mask_chat_id(chat_id: str) -> str:
 
 class TelegramError(Exception):
     """A Bot API call failed. The message never holds the URL, so never the token."""
-
-
-class Resumer(Protocol):
-    """The part of `IncidentRunner` the bot uses."""
-
-    async def resume(self, incident_id: str, decision: Decision, approval_id: str) -> Any: ...
-
-
-class ExpectAnswer(Protocol):
-    done: bool
-    text: str
-
-
-class Expecting(Protocol):
-    """The part of `incidents.expectations.Expectations` the bot and the notifier use."""
-
-    async def offered(self, incident_id: str) -> Any: ...
-
-    async def expected(
-        self, incident_id: str, via: Literal["telegram", "dashboard"]
-    ) -> ExpectAnswer: ...
-
-
-class Looking(Protocol):
-    """The part of `incidents.looks.Looks` the bot uses."""
-
-    async def look(self, service_id: str, via: Channel) -> Look: ...
 
 
 EXPECTED_VERB = "expected"  # the "It's expected" button's data; the incident is the message's
@@ -104,7 +75,6 @@ SNOOZE_AHEAD_MAX = timedelta(days=2)  # no button carries a later morning
 # An offer made in the chat is confirmed with `yes:<id>` or declined with `no:<id>`; the offer
 # itself is kept by the bot (`talk.confirms`), never carried by the button.
 CONFIRM_VERB, DECLINE_VERB = "yes", "no"
-YES_LABEL, SEND_LABEL, NO_LABEL = "Yes", "Send", "No"
 
 Row = list[tuple[str, str]]  # (label, callback data) buttons side by side
 
@@ -377,6 +347,22 @@ class TelegramBot:
         self._offset: int | None = None
         self.last_poll: datetime | None = None  # the last getUpdates that Telegram answered
 
+    @property
+    def actions(self) -> Actions:
+        """What a confirmed offer and a plan's buttons run through, shared with the dashboard's
+        panel (`talk.actions`); built from the bot's parts as they are now."""
+        return Actions(
+            self.approvals,
+            self.runner,
+            "telegram",
+            self.clock,
+            incidents=self.on_it.incidents if self.on_it is not None else None,
+            quiet=self.on_it.quiet if self.on_it is not None else None,
+            expectations=self.expectations,
+            looks=self.looks,
+            zone=self._zone,
+        )
+
     def continue_from(self, other: TelegramBot) -> None:
         """Go on from where `other` stopped when it is the same bot (the same token): Telegram
         would otherwise send again what `other` handled but had not yet confirmed."""
@@ -516,28 +502,15 @@ class TelegramBot:
         message_id = message["message_id"]
         choices = snooze_buttons(now, self.on_it.zone)
         kept = _kept_rows(message.get("reply_markup"))
-        open_plan = await self._plan_open(incident_id, approval_id)
+        open_plan = await self.actions.plan_open(incident_id, approval_id)
         await self._edit(message_id, [*kept, choices] if open_plan else [choices])
         # The incident can end, or its plan be decided, while the edit is on its way; their
         # clearing may have come first, and the edit must not put buttons back.
         incident = await self.on_it.incidents.get(incident_id)
         if incident is None or incident.status in TERMINAL_STATUSES:
             await self._edit(message_id, [])
-        elif kept and open_plan and not await self._plan_open(incident_id, approval_id):
+        elif kept and open_plan and not await self.actions.plan_open(incident_id, approval_id):
             await self._edit(message_id, [choices])
-
-    async def _plan_open(self, incident_id: str, approval_id: str) -> bool:
-        """Whether the plan a message asks about still waits; a message about none asks
-        nothing that closes before its incident ends."""
-        if not approval_id:
-            return True
-        current = await self.approvals.current(incident_id)
-        return (
-            current is not None
-            and current.id == approval_id
-            and current.decision is None
-            and not current.closed
-        )
 
     async def _edit(self, message_id: int, rows: list[Row]) -> None:
         """Set a message's buttons; a message that shows them already (a second tap) is fine."""
@@ -558,7 +531,7 @@ class TelegramBot:
     async def _shown_in_full(self, incident_id: str, approval_id: str) -> bool:
         current = await self.approvals.current(incident_id)
         if current is None or current.id != approval_id:
-            return True  # `_resolve` answers a stale or unknown plan in its own words
+            return True  # `Actions.resolve` answers a stale or unknown plan in its own words
         return shows_in_full(current.proposal)
 
     async def _text(self, message: dict[str, Any]) -> None:
@@ -621,23 +594,17 @@ class TelegramBot:
         showed, else to the one that waits now; a yes to a plan shows that plan's own buttons
         again. An offer about an incident is logged with it, so its buttons go when the
         incident ends or, for an instruction, when its plan is decided."""
-        if offer.kind in ("instruct", "show_plan"):
-            plan_id, why_not = await self._bind_plan(offer.incident_id or "", known)
-            if not why_not:
-                offer = offer.model_copy(update={"plan_id": plan_id})
-        elif offer.kind == "expected" and not await self._expectable(offer.incident_id or ""):
-            why_not = answer("answer_cannot_expect", incident=offer.incident or "")
-        else:
-            why_not = ""
-        if why_not:
-            await self._say(why_not, reply)
-            return why_not
+        shown = known[1] if known is not None and known[0] == offer.incident_id else ""
+        bound = await self.actions.bind(offer, shown)
+        if isinstance(bound, str):
+            await self._say(bound, reply)
+            return bound
+        offer = bound
         if offer.kind == "show_plan":
             return await self._show_plan(offer, line, reply)
         confirm_id = self.confirms.add(offer)
-        yes = SEND_LABEL if offer.kind == "instruct" else YES_LABEL
         buttons = [
-            (yes, f"{CONFIRM_VERB}:{confirm_id}"),
+            (yes_label(offer), f"{CONFIRM_VERB}:{confirm_id}"),
             (NO_LABEL, f"{DECLINE_VERB}:{confirm_id}"),
         ]
         message_id = await self.client.send_message(
@@ -653,17 +620,6 @@ class TelegramBot:
         if incident_id and await self.messages.first_for(incident_id) is not None:
             await self.messages.add(message_id, incident_id, plan_id, self.clock())
 
-    async def _bind_plan(self, incident_id: str, known: tuple[str, str] | None) -> tuple[str, str]:
-        """(the plan an instruction or a yes is for, why there is none): the plan the
-        replied-to message showed while it still waits, else the one waiting now."""
-        shown = known[1] if known is not None and known[0] == incident_id else ""
-        if shown:
-            if await self._plan_open(incident_id, shown):
-                return shown, ""
-            return "", await self._why_lost(incident_id, shown)
-        waiting = await self._waiting(incident_id)
-        return (waiting, "") if waiting else ("", answer("answer_not_waiting"))
-
     async def _show_plan(self, offer: Offer, line: str, reply: int) -> str:
         """A yes to a waiting plan shows the plan again with its own buttons: their press is
         the approval, through the same path as on the plan's first message. Its buttons find
@@ -671,18 +627,18 @@ class TelegramBot:
         incident would become the thread's opener (#380), so for an incident with no message in
         the chat yet the plan is left to the dashboard. Once an opener is logged it stays the
         lowest id, so the check needs no lock."""
-        current = await self.approvals.current(offer.incident_id or "")
-        if current is None or current.id != offer.plan_id or current.proposal.refused:
-            refused = current is not None and current.proposal.refused
-            why_not = answer("answer_refused_plan" if refused else "answer_not_waiting")
+        current = await self.actions.plan_to_show(offer)
+        if current == "refused":
+            why_not = answer("answer_refused_plan")
+        elif current == "gone":
+            why_not = answer("answer_not_waiting")
         elif await self.messages.first_for(current.incident_id) is None:
             why_not = answer("answer_plan_on_dashboard")
         else:
             why_not = ""
-        if why_not:
+        if why_not or isinstance(current, str):
             await self._say(why_not, reply)
             return why_not
-        assert current is not None
         text = render(
             "plan_again", incident=offer.incident or "", steps=steps_text(current.proposal)
         )
@@ -693,11 +649,6 @@ class TelegramBot:
         )
         await self.messages.add(message_id, current.incident_id, current.id, self.clock())
         return line
-
-    async def _expectable(self, incident_id: str) -> bool:
-        if self.expectations is None:
-            return False
-        return await self.expectations.offered(incident_id) is not None
 
     async def _incident_name(self, incident_id: str) -> str:
         incident = await self.on_it.incidents.get(incident_id) if self.on_it is not None else None
@@ -716,45 +667,10 @@ class TelegramBot:
             said = answer("answer_confirm_used" if taken == "used" else "answer_confirm_expired")
         else:
             self._shown.pop(confirm_id, None)
-            said = answer("answer_confirm_no") if verb == DECLINE_VERB else await self._run(taken)
+            no = verb == DECLINE_VERB
+            said = answer("answer_confirm_no") if no else await self.actions.run(taken)
         await self.client.answer_callback(callback_id, _cut(said))
         await self._edit(message_id, [])
-
-    async def _run(self, offer: Offer) -> str:
-        """Run a confirmed offer through the code the dashboard and the other buttons use, so
-        first-wins, a replaced plan and a closed incident are answered as they are there."""
-        now = self.clock()
-        if offer.incident_id and await self._ended(offer.incident_id):
-            return answer("answer_confirm_ended")
-        if offer.kind == "expected" and self.expectations is not None:
-            return (await self.expectations.expected(offer.incident_id or "", "telegram")).text
-        if offer.kind == "instruct" and offer.plan_id:
-            decision = Decision(kind="instruct", text=offer.text, via="telegram", at=now)
-            return await self._resolve(offer.incident_id or "", offer.plan_id, decision)
-        if offer.kind == "look_again":
-            if self.looks is None or offer.target_id is None:
-                return answer("answer_unknown")
-            look = await self.looks.look(offer.target_id, "telegram")
-            return look_said(look, now, self._zone())
-        if self.on_it is None or offer.scope is None or offer.target_id is None:
-            return answer("answer_unknown")
-        quiet, subject = self.on_it.quiet, offer.subject or offer.target_id
-        if offer.kind == "watch_again":
-            cleared = await quiet.clear(offer.scope, offer.target_id)
-            return answer("answer_watching" if cleared else "answer_not_quiet", subject=subject)
-        if offer.kind == "leave_alone":
-            await quiet.set(offer.scope, offer.target_id, "leave_alone", None)
-            return answer("answer_left_alone", subject=subject)
-        if offer.until is None or offer.until <= now:
-            return answer("answer_confirm_expired")
-        await quiet.set(offer.scope, offer.target_id, "snooze", offer.until)
-        return answer("answer_on_it", until=when(offer.until, now, self._zone()))
-
-    async def _ended(self, incident_id: str) -> bool:
-        if self.on_it is None:
-            return False  # an instruction or "It's expected" answers a closed incident itself
-        incident = await self.on_it.incidents.get(incident_id)
-        return incident is None or incident.status in TERMINAL_STATUSES
 
     async def _clear_expired(self) -> None:
         """Remove the buttons of the offers that expired unanswered."""
@@ -781,46 +697,12 @@ class TelegramBot:
             task.cancel()
         await asyncio.gather(*list(self._talking), return_exceptions=True)
 
-    async def _waiting(self, incident_id: str) -> str:
-        """The id of the incident's plan that waits for a decision now; empty when none does."""
-        current = await self.approvals.current(incident_id)
-        if current is None or current.decision is not None or current.closed:
-            return ""
-        return current.id
-
     async def _decide(
         self, callback_id: str, message_id: int, incident_id: str, approval_id: str, d: Decision
     ) -> None:
-        note = await self._resolve(incident_id, approval_id, d)
+        note = await self.actions.resolve(incident_id, approval_id, d)
         await self.client.answer_callback(callback_id, note)
         await self.client.clear_buttons(self.chat_id, message_id)
-
-    async def _resolve(self, incident_id: str, approval_id: str, decision: Decision) -> str:
-        """Try to win the approval; the text to tell the human either way."""
-        before = await self.approvals.current(incident_id)
-        won = await self.approvals.resolve(incident_id, decision, approval_id)
-        if won is not None:
-            await self.runner.resume(incident_id, won, approval_id)
-            refused = before is not None and before.id == approval_id and before.proposal.refused
-            if refused and decision.kind == "reject":
-                return answer("answer_let_go")
-            return answer(f"answer_{_PAST[decision.kind]}")
-        return await self._why_lost(incident_id, approval_id)
-
-    async def _why_lost(self, incident_id: str, approval_id: str) -> str:
-        """Why the plan `approval_id` takes no decision now, as the person is told."""
-        current = await self.approvals.current(incident_id)
-        if current is not None and current.id == approval_id and current.decision is not None:
-            via = current.decision.via
-            return answer("answer_already_decided", channel=_CHANNEL_NAMES.get(via, via))
-        if current is not None and current.id == approval_id and current.closed:
-            return answer("answer_closed")
-        if current is not None and current.id != approval_id:
-            return answer("answer_stale")
-        return answer("answer_not_waiting")
-
-
-_PAST = {"approve": "approved", "reject": "rejected", "instruct": "instructed"}
 
 
 def _cut(text: str) -> str:

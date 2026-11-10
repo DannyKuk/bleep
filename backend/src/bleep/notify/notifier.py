@@ -34,11 +34,8 @@ from bleep.notify.telegram import (
     EXPECTED_VERB,
     ON_IT_LABEL,
     ON_IT_VERB,
-    Expecting,
-    Looking,
     MessageLog,
     OnIt,
-    Resumer,
     TelegramBot,
     TelegramClient,
     TelegramError,
@@ -58,6 +55,7 @@ from bleep.schemas.settings import SecretStatus
 from bleep.schemas.telegram import TelegramStatus
 from bleep.store.db import Database
 from bleep.store.secrets import SecretStore, Source
+from bleep.talk.actions import Expecting, Looking, Resumer
 from bleep.talk.conversation import Talk
 from bleep.talk.times import when
 
