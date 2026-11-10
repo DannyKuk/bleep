@@ -278,7 +278,7 @@ def _scenario_section(scenario: Scenario, results: list[ScenarioResult]) -> list
     lines = [
         f"## {scenario.id}",
         "",
-        f"- Fault: `{scenario.fault}`",
+        f"- Opened by {scenario.opener}",
         f"- Expected root cause: {_cell(expected.root_cause)}",
         f"- Expected category `{expected.category}`, plan {_expected_plan(scenario)}"
         + (f", never {never}" if never else ""),
@@ -316,6 +316,11 @@ def _scenario_section(scenario: Scenario, results: list[ScenarioResult]) -> list
             lines.append(
                 f"  - Names: the diagnosis {_naming(r.diagnosis_unnamed)}, "
                 f"the plan {_naming(r.plan_unnamed)}"
+            )
+        if r.report:
+            lines.append(
+                f"  - Report ({_cell(r.report.outcome)}): {_cell(r.report.summary)} "
+                f"Cause: {_cell(r.report.cause)}"
             )
     lines.append("")
     return lines
@@ -430,7 +435,16 @@ def render(info: RunInfo, results: list[ScenarioResult], regrade: str | None = N
     """The report. `regrade` is the command that applied the grades by hand, if any."""
     minutes = (info.finished_at - info.started_at).total_seconds() / 60
     ids = ", ".join(s.id for s in info.scenarios)
-    faults, runs = _plural(len(info.scenarios), "demo fault"), _plural(info.repeat, "run")
+    looks = sum(s.look for s in info.scenarios)
+    opened = [
+        *(
+            [_plural(len(info.scenarios) - looks, "demo fault")]
+            if looks < len(info.scenarios)
+            else []
+        ),
+        *([_plural(looks, "look on request")] if looks else []),
+    ]
+    faults, runs = " and ".join(opened), _plural(info.repeat, "run")
     tested_note = " (a local model costs nothing per call)" if info.provider == "local" else ""
     judge_note = " (billed to a plan, not per call)" if info.judge.startswith("claude-code") else ""
     judge_cost = (
@@ -471,6 +485,13 @@ def render(info: RunInfo, results: list[ScenarioResult], regrade: str | None = N
         "the largest single "
         "prompt of the run; fallbacks are model calls that gave no structured output through "
         "tools, so Bleep asked for JSON in the reply instead."
+        + (
+            " A look on request switches no fault: once the watcher sees every container of the "
+            "service healthy, the run asks for a look as a person's tap does, times count from "
+            "then, and a look whose plan is no action goes on to Report, whose text is quoted."
+            if looks
+            else ""
+        )
         + (
             " The shop's containers were recreated before every run, volumes kept, so no earlier "
             "run's log reached the next."

@@ -52,6 +52,8 @@ from bleep.hosts.github import GithubClient
 from bleep.hosts.registry import Connector, Registry, connect_host
 from bleep.incidents.action_log import ActionLog
 from bleep.incidents.bus import EventBus
+from bleep.incidents.looks import Looks
+from bleep.incidents.quiet import QuietStore
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.incidents.runner import IncidentRunner
 from bleep.knowledge.index import KnowledgeIndex
@@ -64,6 +66,7 @@ from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.github import RepoFile
 from bleep.schemas.incidents import Incident, Subject
 from bleep.schemas.knowledge import KnowledgeDocument
+from bleep.schemas.services import Service
 from bleep.schemas.settings import ModelSettings, Thresholds
 from bleep.store.db import Database
 from bleep.tools.default import default_registry
@@ -103,8 +106,10 @@ ENV_FILE = REPO / ".env"
 REPORTS_DIR = REPO / "docs" / "evals"
 RAW_DIR = REPO / "data" / "evals"
 # The graph stops before these nodes: Approval is where a plan would be put to a human and then
-# executed, and Report would write to memory. Propose is the last node an eval runs.
+# executed, and Report would write to memory. Propose is the last node an eval runs, but for a
+# look that proposed no action: its report is part of the answer (#410), and memory is off.
 STOP_BEFORE = ["approval", "report"]
+LOOK_POLL_S = 1.0
 FAULT_TIMEOUT_S = 300
 COMPOSE_SERVICE = "com.docker.compose.service"
 DOCKER_DESKTOP_SOCKET = Path.home() / ".docker" / "run" / "docker.sock"
@@ -596,7 +601,14 @@ async def run_scenario(
                 )
                 await manager.start()
                 try:
-                    await _fault_run(scenario, settings, faults, result, graph, deps, db, catcher)
+                    await _fault_run(
+                        scenario, settings, faults, result, graph, deps, db, catcher, registry
+                    )
+                    if scenario.look and result.incident_id and result.failure is None:
+                        try:
+                            await _report_look(graph, deps, result)
+                        except Exception as error:  # as in _fault_run: a result, not a crash
+                            _failed(scenario, result, error)
                     if after is not None and result.incident_id and result.failure is None:
                         try:
                             await after(graph, deps, result)
@@ -623,12 +635,16 @@ async def _fault_run(
     deps: GraphDeps,
     db: Database,
     catcher: IncidentCatcher,
+    registry: Registry,
 ) -> None:
     fault_on = utcnow()
     incident: Incident | None = None
     try:
-        await faults.switch(scenario.fault, "on")
+        if scenario.fault is not None:
+            await faults.switch(scenario.fault, "on")
         async with asyncio.timeout(scenario.timeout_s):
+            if scenario.look:
+                await ask_for_look(scenario.subject, registry, db, catcher)
             incident = await catcher.wait_for(scenario.subject, since=fault_on)
             result.incident_id = incident.id
             result.seconds_to_incident = (incident.opened_at - fault_on).total_seconds()
@@ -640,7 +656,8 @@ async def _fault_run(
     except Exception as error:  # the run's failure is a result, not the harness's
         _failed(scenario, result, error)
     finally:
-        await faults.switch(scenario.fault, "off")
+        if scenario.fault is not None:
+            await faults.switch(scenario.fault, "off")
     if incident is not None:
         await _collect(
             result, graph, deps, db, incident, fault_on, settings.models.provider == "local"
@@ -651,6 +668,45 @@ async def _fault_run(
     result.category_correct = score_category(scenario.expected, result.diagnosis)
     names = score_names(scenario.expected, result.diagnosis, result.proposal)
     result.diagnosis_unnamed, result.plan_unnamed = names.diagnosis_unnamed, names.plan_unnamed
+
+
+def healthy(service: Service | None) -> bool:
+    """Whether the watcher's last listing shows every container of the service running, none
+    of them unhealthy or still starting."""
+    return service is not None and all(
+        c.state == "running" and c.health in ("healthy", "none") for c in service.containers
+    )
+
+
+async def ask_for_look(
+    subject: Subject, registry: Registry, db: Database, catcher: IncidentCatcher
+) -> None:
+    """Once the service is healthy, ask for a look at it as a person's tap does
+    (`incidents.looks.Looks`, #403): the incident opens through the watcher's path and reaches
+    the catcher like any other."""
+    service_id = subject.service_id or ""
+    while not healthy(registry.service(service_id)):
+        await asyncio.sleep(LOOK_POLL_S)
+    looks = Looks(IncidentRepo(db), catcher, QuietStore(db), registry)
+    look = await looks.look(service_id, "dashboard")
+    if look.outcome != "opened":
+        raise EvalError(f"the look at {service_id} opened no incident: {look.outcome}")
+
+
+async def _report_look(graph: CompiledStateGraph, deps: GraphDeps, result: ScenarioResult) -> None:
+    """A look whose plan is no action goes on to Report, as Bleep's own run does, and its
+    report is kept; a plan that acts waits for Approval, which an eval never gives. The report's
+    model call counts in the run's tokens and cost."""
+    assert result.incident_id is not None
+    config = IncidentRunner.config(result.incident_id)
+    if (await graph.aget_state(config)).next != ("report",):
+        return
+    await graph.ainvoke(None, config)
+    result.report = (await graph.aget_state(config)).values.get("report")
+    total = await deps.ledger.incident_total(result.incident_id)
+    result.tokens = total.tokens
+    if result.usd is not None and total.usd is not None:
+        result.usd = total.usd
 
 
 def _failed(scenario: Scenario, result: ScenarioResult, error: Exception) -> None:

@@ -1,0 +1,19 @@
+id: en-status-host-services
+lang: en
+about: >-
+  Every service on one host, by its name, not its containers (the owner's own question, #410);
+  nothing is left out, so nothing may be called cut off.
+state: shared
+text: Status update of coolify services
+expect:
+  kind: question
+  words:
+  - - source
+  - - bleep-testapp
+  - - coolify-sentinel
+  - - molecula
+  - - dkwebsite
+  - - coolify-proxy
+  - - easy-pointment-staticmain-cr2hzhk4nvabtad0zinjw1ev
+    - easy-pointment
+  absent: [Bleep, cut, truncated, left out]

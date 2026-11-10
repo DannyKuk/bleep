@@ -49,6 +49,14 @@ def test_a_scenario_loads_with_its_defaults(tmp_path):
     assert scenario.timeout_s == 600
 
 
+def test_a_look_scenario_opens_by_a_look_and_switches_no_fault(tmp_path):
+    body = {k: v for k, v in GOOD.items() if k != "fault"} | {"id": "look", "look": True}
+    scenario = load_scenario(write(tmp_path, "look", body))
+    assert scenario.fault is None and scenario.look
+    assert scenario.opener == "a look on request"
+    assert load_scenario(write(tmp_path, "db-down", GOOD)).opener == "the fault `db-down`"
+
+
 def test_the_id_must_be_the_file_name(tmp_path):
     with pytest.raises(ScenarioError, match="other.yaml"):
         load_scenario(write(tmp_path, "other", GOOD))
@@ -78,6 +86,10 @@ def test_the_id_must_be_the_file_name(tmp_path):
         (changed(must_name=["DATABASE_URL "]), "must_name"),
         (changed(must_set={"WORKER_BATCH_MB": ""}), "must_set"),
         (changed(must_set={" WORKER_BATCH_MB": "8"}), "must_set"),
+        ({k: v for k, v in GOOD.items() if k != "fault"}, "a fault or asks for a look"),
+        (GOOD | {"look": True}, "a fault or asks for a look"),
+        ({k: v for k, v in GOOD.items() if k != "fault"}
+         | {"look": True, "subject": {"kind": "host", "host_id": "demo"}}, "never a whole host"),
     ],
 )  # fmt: skip
 def test_a_malformed_scenario_is_refused(tmp_path, body, why):
@@ -117,8 +129,9 @@ def _demo_faults() -> set[str]:
 
 
 def test_every_shipped_scenario_fits_the_demo_shop():
-    """Each scenario switches a fault fault.sh knows, opens on a service of the demo hosts file
-    (the shop's own Compose project), and names the shop's containers as Compose names them."""
+    """Each scenario switches a fault fault.sh knows or asks for a look, opens on a service of
+    the demo hosts file (the shop's own Compose project), and names the shop's containers as
+    Compose names them."""
     compose = yaml.safe_load((REPO / "demo" / "compose.yaml").read_text(encoding="utf-8"))
     containers = {s["container_name"] for s in compose["services"].values()}
     hosts = yaml.safe_load((REPO / "config" / "hosts.demo.yaml").read_text(encoding="utf-8"))
@@ -127,7 +140,7 @@ def test_every_shipped_scenario_fits_the_demo_shop():
     }
     assert compose["name"] == "shop" and "demo/compose:shop" in services
     for scenario in load_scenarios():
-        assert scenario.fault in _demo_faults(), scenario.id
+        assert scenario.look or scenario.fault in _demo_faults(), scenario.id
         assert services.get(scenario.subject.service_id) == scenario.subject.host_id, scenario.id
         assert {t for _, t, _ in scenario.expected.action.keys} <= containers, scenario.id
 

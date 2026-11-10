@@ -255,6 +255,100 @@ async def test_a_run_scores_whether_the_diagnosis_and_the_plan_name_what_the_fix
     assert "the diagnosis does not name DB_HOST, the plan does not name DB_HOST" in summary(result)
 
 
+LOOK = Scenario.model_validate(
+    {
+        "id": "look-healthy",
+        "look": True,
+        "subject": {"kind": "service", "host_id": "demo", "service_id": SERVICE},
+        "expected": {
+            "root_cause": "nothing is wrong with the shop",
+            "category": "unknown",
+            "action": {"kind": "no_action"},
+            "must_not": ["docker.restart"],
+        },
+        "timeout_s": 20,
+    }
+)
+
+
+def healthy_shop() -> FakeEngine:
+    return FakeEngine(
+        "demo",
+        [box("shop-web", "shop", health="healthy"), box("shop-db", "shop", health="healthy")],
+    )
+
+
+def look_script() -> list[AIMessage]:
+    diagnosis = {"root_cause": "the shop is healthy", "category": "unknown", "confidence": 0.9}
+    plan = {"kind": "no_action", "steps": [], "reason": "nothing is wrong", "verification": {}}
+    report = {"summary": "Asked to look; the shop was fine.", "cause": "None found."}
+    return [
+        reply("both containers run and are healthy", tokens_in=2000),
+        reply(json.dumps(diagnosis), tokens_in=3000),
+        reply(json.dumps(plan), tokens_in=2800),
+        reply(json.dumps(report), tokens_in=1500),
+    ]
+
+
+async def test_a_look_opens_on_the_healthy_service_without_a_fault_and_goes_on_to_its_report(
+    tmp_path,
+):
+    fake = healthy_shop()
+    faults, judge = FakeFaults(fake), FakeJudge()
+    model = FakeChatModel(script=look_script(), structured_output_unsupported=True)
+
+    result = await run_scenario(
+        LOOK, settings(tmp_path), faults=faults, judge=judge, connector=connector(fake),
+        models=Models(model),
+    )  # fmt: skip
+
+    assert result.error is None
+    assert faults.calls == []  # nothing was broken, nothing switched
+    assert fake.acts == []
+    assert model.cursor == 4  # investigate, diagnose, propose, report
+    assert result.proposal is not None and result.proposal.kind == "no_action"
+    assert result.action_correct and not result.unnecessary_action and result.category_correct
+    assert result.report is not None
+    assert result.report.outcome == "No action proposed, nothing was done"
+    assert result.report.summary == "Asked to look; the shop was fine."
+    assert result.tokens == 2000 + 3000 + 2800 + 1500 + 4 * 50  # the report's call counts
+    assert judge.calls == [("nothing is wrong with the shop", result.diagnosis)]
+
+
+async def test_a_look_waits_until_every_container_of_the_service_is_healthy(tmp_path):
+    fake = FakeEngine(
+        "demo",
+        [box("shop-web", "shop", health="starting"), box("shop-db", "shop", health="healthy")],
+    )
+    quick = LOOK.model_copy(update={"timeout_s": 1})
+
+    result = await run_scenario(
+        quick, settings(tmp_path), faults=FakeFaults(fake), judge=None,
+        connector=connector(fake), models=Models(FakeChatModel(script=[])),
+    )  # fmt: skip
+
+    assert result.error == "timed out after 1 s waiting for the incident"
+    assert result.incident_id is None
+
+
+async def test_a_look_that_plans_an_action_stops_at_approval_without_a_report(tmp_path):
+    fake = healthy_shop()
+    step = {"action": "docker.restart", "host_id": "demo", "target": "shop-web"}
+    plan = {"kind": "act", "steps": [step], "reason": "restart it", "verification": {}}
+    script = [*look_script()[:2], reply(json.dumps(plan), tokens_in=2800)]
+    model = FakeChatModel(script=script, structured_output_unsupported=True)
+
+    result = await run_scenario(
+        LOOK, settings(tmp_path), faults=FakeFaults(fake), judge=None,
+        connector=connector(fake), models=Models(model),
+    )  # fmt: skip
+
+    assert result.error is None and result.report is None
+    assert model.cursor == 3
+    assert result.forbidden == ["docker.restart shop-web"] and result.unnecessary_action
+    assert fake.acts == []
+
+
 async def test_no_incident_in_time_is_an_error_and_the_fault_still_goes_off(tmp_path):
     fake = engine()
     faults, judge = FakeFaults(fake, symptoms=["blog-web"]), FakeJudge()

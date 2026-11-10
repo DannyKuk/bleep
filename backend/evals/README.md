@@ -132,6 +132,14 @@ timeout_s: 400                    # from the fault on to the end of Propose
 
 `tests/evals/test_scenarios_load.py` loads every file here, so a malformed scenario fails the tests.
 
+### A look on request
+
+A scenario with `look: true` and no `fault` switches nothing: once the watcher sees every container of its service running and none unhealthy or starting, the harness asks for a look as a person's tap does (`incidents.looks.Looks`, #403), and the incident opens through the watcher's path. A look whose plan is no action goes on to Report, and the batch report quotes it. [`look-healthy`](scenarios/look-healthy.yaml) looks at the shop while it is fine; the right answer is no plan, a diagnosis that says nothing is wrong, and a report that says so (#410). With no judge apart from the model under test, grade it by hand:
+
+```bash
+uv run --group evals python -m evals.run --judge manual --only look-healthy --repeat 3
+```
+
 ### With an MCP server
 
 A scenario with `mcp: <fixture>` runs with Bleep's MCP plugin switched on, on a server the harness serves in its own process from [`fixtures/mcp/<fixture>.yaml`](fixtures/mcp/caddy.yaml) (`evals/mcp_server.py`): the tools it lists, with their descriptions and input schemas, and which of them the plugin's settings allow as `read_tools` and `act_tools`. No socket is opened and nothing needs `MCP_URL`; Investigate gets `mcp_tools` and `mcp_call`, and Propose is told how to write an `mcp.call` step with the act tools. A call answers the tool's fixed `result` text (or "<name>: done"), but evals stop after Propose, so an act tool is never called. [`misroute-mcp`](scenarios/misroute-mcp.yaml) is the misroute fault with a server that can reload Caddy and a read tool, `caddy_config`, showing the loaded config next to the Caddyfile on disk: the expected plan is one `mcp.call` of `caddy_reload` on shop-proxy whose arguments include `{"container": "shop-proxy"}`. Pass `mcp=` to `run_scenario` to serve a server of your own instead (the tests do, to check nothing called it). Run it alone as any scenario:

@@ -22,6 +22,7 @@ from langchain_core.tools import BaseTool
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.host_text import describe_basics, gib, service_name
+from bleep.graph.look import look_rule
 from bleep.graph.planted import result_holds_tag
 from bleep.graph.state import IncidentState, Node
 from bleep.guard.log import GuardKind
@@ -245,6 +246,7 @@ def _task(state: IncidentState, limit: int, clock: Callable[[], datetime]) -> st
         "graph/investigate",
         subject=what,
         signals=_signals(state.get("signals", [])),
+        look=look_rule("investigate", state.get("signals", [])),
         containers=_containers(context),
         logs=_logs(context),
         host=_host(context),

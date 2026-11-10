@@ -1,0 +1,20 @@
+id: en-unknown-cause
+lang: en
+about: The state gives no cause; the answer says it does not know, in the first person.
+state: shared
+text: why is ai-interview down?
+expect:
+  kind: question
+  words:
+  - - don't know
+    - do not know
+    - not know
+    - no record
+    - can't tell
+    - cannot tell
+    - can't say
+    - cannot say
+    - no cause
+    - no information
+    - unknown
+  absent: [Bleep]

@@ -1,0 +1,3 @@
+{"run_id": "look-healthy/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "nothing is wrong: four containers running, web and db healthy, requests and worker batches succeed"}
+{"run_id": "look-healthy/2", "root_cause_pass": true, "root_cause_score": 1.0, "note": "nothing is wrong, from health checks, /api/items, db connections and worker batches"}
+{"run_id": "look-healthy/3", "root_cause_pass": true, "root_cause_score": 1.0, "note": "nothing is wrong: all four running, web and db healthy, requests and batches succeed"}

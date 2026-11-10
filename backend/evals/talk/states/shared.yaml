@@ -1,0 +1,190 @@
+# Two hosts, as an owner's own setup was on 2026-11-10 (#410): Bleep's own snapshot of it, built by
+# `talk.state.BleepState` from the live watcher and incidents. Two services are called molecula:
+# the one on the laptop is down and left alone, the one on the Coolify server is ok. Coolify's own
+# Compose project is the service `source`, whose containers are coolify, coolify-db and
+# coolify-redis. Nothing is left out. On one line its JSON was 4,658 characters, past the guard's
+# 4,000-character line cut, so the Coolify services in the middle never reached the model.
+snapshot:
+  now: 2026-11-10 14:02
+  zone: Europe/Vienna
+  hosts:
+  - id: laptop
+    name: This laptop
+    health: ok
+    reachable: true
+    last_seen: 2026-11-10 14:01
+  - id: coolify
+    name: Coolify server
+    health: ok
+    reachable: true
+    last_seen: 2026-11-10 14:01
+  services:
+  - id: laptop/compose:molecula
+    name: molecula
+    host: laptop
+    health: down
+    containers:
+    - name: molecula-frontend-1
+      state: exited
+      health: none
+      exit_code: 143
+    - name: molecula-backend-1
+      state: exited
+      health: unhealthy
+      exit_code: 0
+    - name: molecula-fetch-1
+      state: exited
+      health: none
+      exit_code: 0
+    - name: molecula-mcp-1
+      state: exited
+      health: none
+      exit_code: 137
+    quiet:
+      mode: leave_alone
+      since: 2026-11-05 08:52
+  - id: laptop/compose:ai-interview
+    name: ai-interview
+    host: laptop
+    health: down
+    containers:
+    - name: ai-interview-frontend-1
+      state: exited
+      health: none
+      exit_code: 143
+    - name: ai-interview-headtts-1
+      state: exited
+      health: unhealthy
+      exit_code: 137
+    - name: ai-interview-backend-1
+      state: exited
+      health: unhealthy
+      exit_code: 0
+    quiet:
+      mode: leave_alone
+      since: 2026-11-05 08:42
+  - id: laptop/compose:shop
+    name: shop
+    host: laptop
+    health: ok
+    containers:
+    - name: shop-proxy
+      state: running
+      health: none
+    - name: shop-web
+      state: running
+      health: healthy
+    - name: shop-db
+      state: running
+      health: healthy
+    - name: shop-worker
+      state: running
+      health: none
+  - id: laptop/compose:stabs-spike-zensus
+    name: stabs-spike-zensus
+    host: laptop
+    health: done
+    containers:
+    - name: stabs-spike-zensus-postgis-1
+      state: exited
+      health: unhealthy
+      exit_code: 0
+  - id: coolify/compose:source
+    name: source
+    host: coolify
+    health: ok
+    containers:
+    - name: coolify
+      state: running
+      health: healthy
+    - name: coolify-db
+      state: running
+      health: healthy
+    - name: coolify-redis
+      state: running
+      health: healthy
+  - id: coolify/8jmqebrstxvyypkrteclkd2r
+    name: bleep-testapp
+    host: coolify
+    health: ok
+    containers:
+    - name: 8jmqebrstxvyypkrteclkd2r-20261109T122755
+      state: running
+      health: healthy
+  - id: coolify/container:coolify-sentinel
+    name: coolify-sentinel
+    host: coolify
+    health: ok
+    containers:
+    - name: coolify-sentinel
+      state: running
+      health: healthy
+  - id: coolify/hfys2nogpz7wrhcoqxymnfkt
+    name: molecula
+    host: coolify
+    health: ok
+    containers:
+    - name: frontend-hfys2nogpz7wrhcoqxymnfkt-20261030T142307
+      state: running
+      health: healthy
+    - name: backend-hfys2nogpz7wrhcoqxymnfkt-20261030T142307
+      state: running
+      health: healthy
+    - name: fetch-hfys2nogpz7wrhcoqxymnfkt-20261030T142307
+      state: exited
+      health: none
+      exit_code: 0
+  - id: coolify/vclhwoxxy60z4vk70g0vpesq
+    name: dkwebsite
+    host: coolify
+    health: ok
+    containers:
+    - name: vclhwoxxy60z4vk70g0vpesq-20261028T194819
+      state: running
+      health: healthy
+  - id: coolify/compose:coolify-proxy
+    name: coolify-proxy
+    host: coolify
+    health: ok
+    containers:
+    - name: coolify-proxy
+      state: running
+      health: healthy
+  - id: coolify/id:4
+    name: easy-pointment-staticmain-cr2hzhk4nvabtad0zinjw1ev
+    host: coolify
+    health: ok
+    containers:
+    - name: cr2hzhk4nvabtad0zinjw1ev-000205002169
+      state: running
+      health: healthy
+  ended_last_24h:
+  - id: inc_01M7080SY1XTPCBXJE
+    title: container died on laptop/compose:shop
+    subject: laptop/compose:shop
+    status: closed
+    opened: 2026-11-09 14:30
+    ended: 2026-11-09 14:30
+    outcome: No action proposed, nothing was done
+    cause: The recorded diagnosis is that DATABASE_URL points to the unresolvable host `db`; deployment
+      documentation specifies the database endpoint as `shop-db:5432`. The full URL and whether both containers…
+  - id: inc_01M707XJXVDTWQC8VQ
+    title: container died on laptop/compose:shop
+    subject: laptop/compose:shop
+    status: closed
+    opened: 2026-11-09 14:28
+    ended: 2026-11-09 14:29
+    outcome: No action proposed, nothing was done
+    cause: 'The root cause remains uncertain: the effective DATABASE_URL and shared network aliases are
+      unknown. The deployment docs list `shop-db:5432` as the default endpoint, and differing Compose
+      working-dir…'
+  - id: inc_01M707MVG7PS9616T5
+    title: unhealthy on laptop/compose:shop
+    subject: laptop/compose:shop
+    status: resolved
+    opened: 2026-11-09 14:23
+    ended: 2026-11-09 14:25
+    outcome: Fixed and verified
+    cause: shop-db had shut down cleanly, removing its Docker DNS name, so shop-web could not resolve
+      its required database host and its health checks failed. The evidence does not establish why shop-db
+      stopped.

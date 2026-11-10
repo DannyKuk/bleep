@@ -229,7 +229,7 @@ async def test_an_override_of_the_diagnose_prompt_keeps_the_untrusted_data_rule(
 
     overridden = (
         "Name the cause. {untrusted_rule}\n{planted_in_rule}\n"
-        "{subject}\n{signals}\n{context}\n{investigation}"
+        "{subject}\n{signals}{look}\n{context}\n{investigation}"
     )
     prompts.use_overrides({"graph/diagnose": overridden})
     text = await sent_prompt(tmp_path)
@@ -245,7 +245,7 @@ async def test_an_override_of_the_diagnose_prompt_still_asks_for_planted_in(tmp_
 
     overridden = (
         "Name the cause. {untrusted_rule} {planted_in_rule}\n"
-        "{subject}{signals}{context}{investigation}"
+        "{subject}{signals}{look}{context}{investigation}"
     )
     prompts.use_overrides({"graph/diagnose": overridden})
     text = await sent_prompt(tmp_path)

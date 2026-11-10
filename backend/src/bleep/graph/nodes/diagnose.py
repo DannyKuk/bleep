@@ -24,6 +24,7 @@ from pydantic import Field, field_validator
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.host_text import describe_basics, service_name
+from bleep.graph.look import look_rule
 from bleep.graph.planted import EVIDENCE_SOURCE, planted_places, planted_sentence, read_sources
 from bleep.graph.state import IncidentState, Node
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
@@ -189,6 +190,7 @@ def make(deps: GraphDeps) -> Node:
             "graph/diagnose",
             subject=_describe_subject(subject, context),
             signals=_describe_signals(state.get("signals", [])),
+            look=look_rule("diagnose", state.get("signals", [])),
             context=_describe_context(context),
             investigation=_describe_investigation(messages),
             untrusted_rule=prompts.load("untrusted/diagnose").strip(),

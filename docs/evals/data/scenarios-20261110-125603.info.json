@@ -1,0 +1,51 @@
+{
+  "started_at": "2026-11-10T12:56:03.140290Z",
+  "finished_at": "2026-11-10T12:58:22.679338Z",
+  "model": "openai/gpt-6-luna",
+  "provider": "openrouter",
+  "judge": "manual",
+  "repeat": 3,
+  "scenarios": [
+    {
+      "id": "look-healthy",
+      "fault": null,
+      "look": true,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "Nothing is wrong with the shop: every container runs, none is unhealthy, and nothing shows a failure.",
+        "category": "unknown",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null
+    }
+  ],
+  "commit": "13a0cf2",
+  "command": "uv run --group evals python -m evals.run --judge manual --only look-healthy --repeat 3",
+  "reset_shop": true,
+  "knowledge": true,
+  "repo_docs": [
+    "DannyKuk/bleep: demo/shop/docs/deploy.md",
+    "DannyKuk/bleep: demo/shop/docs/services.md"
+  ],
+  "raw": "../../data/evals/scenarios-20261110-125603.jsonl",
+  "report": "docs/evals/scenarios-2026-11-10-2.md",
+  "grader": null,
+  "grades": null
+}

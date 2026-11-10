@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.host_text import incident_title, service_name
+from bleep.graph.look import look_rule
 from bleep.graph.planted import HINT_END, planted_places, planted_sentence
 from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.log import GuardKind
@@ -402,6 +403,7 @@ def make(deps: GraphDeps) -> Node:
         prompt = prompts.load(
             "graph/report",
             title=incident_title(state["subject"], signals, incident.title if incident else None),
+            look=look_rule("report", signals),
             outcome=said,
             diagnosis=_describe_diagnosis(diagnosis),
             plan=_describe_plan(proposal),
