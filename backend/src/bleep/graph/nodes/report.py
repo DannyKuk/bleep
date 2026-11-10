@@ -146,7 +146,8 @@ def _healthy_look(state: IncidentState) -> bool:
     Diagnose writes for a healthy service (`prompts/graph/look_diagnose.md`); the plan must be
     the model's, not a fallback of code (no diagnosis, no usable plan, a spent budget) or a
     refusal. A decision, or a trip back to Propose (an instruction, a stale plan), says the run
-    once had a plan that acts."""
+    once had a plan that acts, and a URL that failed when Gather read it says the service was
+    not healthy."""
     proposal, diagnosis = state.get("proposal"), state.get("diagnosis")
     return (
         bare_look(state.get("signals", []))
@@ -160,7 +161,15 @@ def _healthy_look(state: IncidentState) -> bool:
         and proposal.reason not in CODE_REASONS
         and state.get("decision") is None
         and state.get("replans", 0) == 0
+        and not _gathered_url_failed(state)
     )
+
+
+def _gathered_url_failed(state: IncidentState) -> bool:
+    """Whether a URL of the service failed when Gather read it (#423): the service was not
+    healthy during the run, whatever a later check finds."""
+    context = state.get("context")
+    return context is not None and any(not reading.ok for reading in context.urls)
 
 
 async def _look_outcome(deps: GraphDeps, state: IncidentState) -> Outcome:

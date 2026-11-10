@@ -62,6 +62,7 @@ async def setup(tmp_path, status: int = 200, engine: FakeEngine | None = None, u
     base = {"incident_id": incident.id, "subject": subject, "signals": [look]}
     context = (await gather.make(env.deps)(base))["context"]
     state = base | {"context": context, "diagnosis": HEALTHY, "proposal": LOOKED}
+    replies.seen.clear()  # Gather's own reading (#423); the tests count Report's requests
     return env, state, replies
 
 
@@ -179,7 +180,8 @@ async def test_a_plan_of_one_of_the_services_containers_still_checks_them_all(tm
 
 
 async def test_a_look_whose_url_fails_ends_as_no_action(tmp_path):
-    env, state, _ = await setup(tmp_path, status=503)
+    env, state, replies = await setup(tmp_path)
+    replies.status = 503  # it answered when Gather read it; it fails at Report
 
     update = await run(env, state)
 
@@ -187,6 +189,26 @@ async def test_a_look_whose_url_fails_ends_as_no_action(tmp_path):
     assert update["report"].outcome == report.OUTCOME_TEXT["no_action"]
     assert [c["target"] for c in await checks(env, state) if not c["ok"]] == [URL]
     assert any(e.text == "Check 1 failed" for e in update["report"].timeline)
+
+
+async def test_a_look_whose_url_failed_when_gathered_never_ends_healthy(tmp_path):
+    env, state, replies = await setup(tmp_path, status=500)
+    assert [(u.url, u.ok, u.status) for u in state["context"].urls] == [(URL, False, 500)]
+    replies.status = 200  # answering again by Report
+
+    update = await run(env, state)
+
+    assert update["outcome"] == "no_action"
+    assert await checks(env, state) == [] and replies.seen == []
+
+
+async def test_a_look_whose_gather_read_no_url_is_judged_by_its_check(tmp_path):
+    env, state, _ = await setup(tmp_path, urls=())
+    assert state["context"].urls == []
+
+    update = await run(env, state)
+
+    assert update["outcome"] == "healthy"  # on its containers
 
 
 async def test_a_look_at_a_container_that_is_down_or_unhealthy_ends_as_no_action(tmp_path):
