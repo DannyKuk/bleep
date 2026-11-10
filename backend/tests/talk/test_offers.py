@@ -251,6 +251,46 @@ def test_a_time_without_a_zone_says_utc():
     assert confirm_line(checked, NOW, None) == "🤫 Snooze shop until 13:42 UTC?"
 
 
+def german(**action):
+    return check(TalkAction(**action), SNAPSHOT, None, NOW, VIENNA, "words", language="de")
+
+
+def test_in_german_the_confirm_lines_are_german_and_the_offer_is_the_same():
+    checked = german(kind="snooze", subject="SHOP", minutes=120)
+    assert checked == offer(kind="snooze", subject="SHOP", minutes=120)
+    assert confirm_line(checked, NOW, VIENNA, "de") == "🤫 shop bis 16:12 stummschalten?"
+    tomorrow = german(kind="snooze", subject="shop", until="2026-11-10 08:00")
+    assert confirm_line(tomorrow, NOW, VIENNA, "de") == "🤫 shop bis morgen 08:00 stummschalten?"
+    expected = check(TalkAction(kind="expected", incident="shop #17"), SNAPSHOT, None, NOW, VIENNA)
+    assert confirm_line(expected, NOW, VIENNA, "de") == "👍 shop #17 als erwartet markieren?"
+
+
+def test_in_german_a_line_that_refuses_is_german():
+    assert german(kind="snooze", subject="nope", minutes=5) == line_de("no_subject")
+    assert german(kind="snooze", subject="web", minutes=5) == line_de(
+        "ambiguous_subject", subject="web"
+    )
+    assert german(kind="expected", incident="shop #16") == line_de(
+        "incident_ended", incident="shop #16"
+    )
+    assert german(kind="snooze", subject="shop", minutes=60 * 24 * 30) == line_de(
+        "snooze_limit", subject="shop", days="7"
+    )
+    assert "stumm" in german(kind="watch_again", subject="shop")
+
+
+def test_a_shared_name_said_with_its_host_in_german_is_that_hosts_service():
+    checked = german(kind="snooze", subject="m1/compose:web", minutes=60)
+    assert not isinstance(checked, str) and checked.subject == "web auf m1"
+    found = find_subject(SNAPSHOT, "web auf m1")  # the model may echo the German line
+    assert not isinstance(found, str) and found is not None
+    assert found.target_id == "m1/compose:web"
+
+
+def line_de(name: str, **values: str) -> str:
+    return prompts.load(f"talk/de/{name}", **values).strip()
+
+
 class Clock:
     def __init__(self) -> None:
         self.now = NOW

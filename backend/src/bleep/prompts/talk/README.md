@@ -25,7 +25,10 @@ How Bleep reads what a person writes in its chat, and the fixed lines it answers
   three messages are being answered already.
 - A press of an offer's button is answered with the lines a Telegram button gets
   (`notify/answer_*`), on both surfaces (`talk/actions.py`).
-- `when_*` are the words of a time in a chat (`talk/times.py`), shared with Telegram's messages.
+- `when_*` and `weekdays` are the words of a time in a chat (`talk/times.py`), shared with
+  Telegram's messages. `button_*` are the labels under an offer (Yes, Send, No).
+- Every fixed line has a German twin in `de/` with the same placeholders, chosen by the
+  `language` setting (#375). `read`, `message` and the `log_*` export stay English and have none.
 - `link_removed` stands in for a link taken out of an answer.
 - `log_*` build the Markdown transcript of the talk log (#411, `talk/log.py`), which the person
   exports to review answers: the heading (`log_head`), a heading per surface (`log_panel`,

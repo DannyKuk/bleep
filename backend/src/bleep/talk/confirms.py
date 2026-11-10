@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
 
+from bleep import prompts
 from bleep.incidents.repository import utcnow
 from bleep.schemas.talk import Offer
 
@@ -23,12 +24,20 @@ KEPT = 100  # offers kept at once; answered ones go first, then the oldest
 REMEMBERED = timedelta(hours=1)
 
 Refused = Literal["used", "expired", "unknown"]
-# The two buttons under an offer, on every surface: Send for words to a plan, else Yes.
-YES_LABEL, SEND_LABEL, NO_LABEL = "Yes", "Send", "No"
 
 
-def yes_label(offer: Offer) -> str:
-    return SEND_LABEL if offer.kind == "instruct" else YES_LABEL
+def _label(name: str, language: str) -> str:
+    return prompts.load_in(language, f"talk/button_{name}").strip()
+
+
+def yes_label(offer: Offer | None, language: str = "en") -> str:
+    """The first of the two buttons under an offer, on every surface: Send for words to a plan,
+    else Yes."""
+    return _label("send" if offer is not None and offer.kind == "instruct" else "yes", language)
+
+
+def no_label(language: str = "en") -> str:
+    return _label("no", language)
 
 
 @dataclass

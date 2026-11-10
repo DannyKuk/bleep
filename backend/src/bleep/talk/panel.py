@@ -17,7 +17,7 @@ from bleep import prompts
 from bleep.incidents.repository import utcnow
 from bleep.schemas.talk import ChatAnswer, ChatConfirm, ConfirmResult, Offer, TalkReply
 from bleep.talk.actions import Actions, said
-from bleep.talk.confirms import NO_LABEL, Confirms, yes_label
+from bleep.talk.confirms import Confirms, no_label, yes_label
 from bleep.talk.conversation import Talk
 from bleep.talk.history import Turns
 from bleep.talk.links import links_in, offer_links
@@ -42,7 +42,7 @@ class Panel:
     async def say(self, text: str, incident_id: str | None, actions: Actions) -> ChatAnswer:
         """Answer `text`, written on the page of `incident_id` if any. Changes nothing."""
         if self._waiting >= WAITING_MAX:
-            return ChatAnswer(answer=_fixed("busy"))
+            return ChatAnswer(answer=_fixed("busy", actions.language()))
         self._waiting += 1
         try:
             async with self._turn:
@@ -71,10 +71,11 @@ class Panel:
         confirm_id = self.confirms.add(bound)
         expires = self.confirms.expires(confirm_id)
         assert expires is not None
+        language = actions.language()
         confirm = ChatConfirm(
             id=confirm_id,
-            yes_label=yes_label(bound),
-            no_label=NO_LABEL,
+            yes_label=yes_label(bound, language),
+            no_label=no_label(language),
             expires_at=expires,
             incident_id=bound.incident_id,
         )
@@ -86,26 +87,26 @@ class Panel:
     async def press(self, confirm_id: str, yes: bool, actions: Actions) -> ConfirmResult:
         """Run the offer `confirm_id` on yes, once; no drops it. A second press, an expired and
         an unknown offer run nothing."""
-        taken = self.confirms.take(confirm_id)
+        taken, language = self.confirms.take(confirm_id), actions.language()
         if taken == "used":
-            return ConfirmResult(line=said("answer_confirm_used"))
+            return ConfirmResult(line=said("answer_confirm_used", language))
         if isinstance(taken, str):
-            return ConfirmResult(line=said("answer_confirm_expired"))
+            return ConfirmResult(line=said("answer_confirm_expired", language))
         # Logged as it takes the offer: a second press, answered while this one runs, is not it.
         press = self.talk.log.pressed("panel", confirm_id, yes)
-        line = await answered(press, actions.run(taken) if yes else said("answer_confirm_no"))
-        return ConfirmResult(line=line)
+        run = actions.run(taken) if yes else said("answer_confirm_no", language)
+        return ConfirmResult(line=await answered(press, run))
 
 
 async def _plan_line(offer: Offer, actions: Actions) -> str:
     """A yes to a waiting plan points to its page; a plan Bleep's own checks refused cannot be
     approved there either, and one that no longer waits is said so."""
-    plan = await actions.plan_to_show(offer)
+    plan, language = await actions.plan_to_show(offer), actions.language()
     if plan == "gone":
-        return said("answer_not_waiting")
+        return said("answer_not_waiting", language)
     name = "plan_refused" if plan == "refused" else "plan_on_page"
-    return _fixed(name, incident=offer.incident or "")
+    return _fixed(name, language, incident=offer.incident or "")
 
 
-def _fixed(name: str, **values: str) -> str:
-    return prompts.load(f"talk/{name}", **values).strip()
+def _fixed(name: str, language: str, /, **values: str) -> str:
+    return prompts.load_in(language, f"talk/{name}", **values).strip()

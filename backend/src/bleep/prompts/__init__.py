@@ -50,6 +50,15 @@ OVERRIDABLE = frozenset(
 # `talk/` reads what the person writes and holds the fixed lines that refuse it (#401).
 NOT_OVERRIDABLE_AREAS = ("evals/", "notify/", "talk/", "untrusted/")
 NOT_OVERRIDABLE = frozenset({"graph/propose_mcp", "graph/system", "graph/verify_unproven"})
+# The languages a person may choose (#373). English is the files as they are; each other language
+# has a twin of every text a person reads, at `<area>/<language>/<name>.md` (#375).
+LANGUAGES = ("en", "de")
+# The texts a person reads are Telegram's and the chat's. In those areas the model reads
+# `talk/read` and `talk/message`, which stay English as every prompt does, and the talk log's
+# export (`talk/log_*`) is a transcript for reviewing answers, kept English too.
+TRANSLATED_AREAS = ("notify/", "talk/")
+STAYS_ENGLISH = frozenset({"talk/read", "talk/message"})
+STAYS_ENGLISH_PREFIXES = ("talk/log_",)
 # C0 and C1 controls but tab and line breaks; the bidi overrides, isolates and marks (U+200E,
 # U+200F, U+061C), which reorder what a reader of the panel sees without changing what the model
 # reads; and the zero-width space and the byte-order mark, which hide where text is split.
@@ -144,3 +153,67 @@ def load(name: str, /, **variables: str) -> str:
             f"prompt {name!r}: missing {sorted(needed - given)}, unused {sorted(given - needed)}"
         )
     return text.format(**variables)
+
+
+def _twin_of(name: str) -> str | None:
+    """The English text `name` is a twin of (`notify/de/x` of `notify/x`), else None."""
+    area, _, rest = name.partition("/")
+    language, _, base = rest.partition("/")
+    return f"{area}/{base}" if language in LANGUAGES[1:] and base else None
+
+
+def translated(name: str) -> bool:
+    """Whether the English text `name` is read by a person, so it has a twin in each language."""
+    return (
+        name.startswith(TRANSLATED_AREAS)
+        and _twin_of(name) is None
+        and name not in STAYS_ENGLISH
+        and not name.startswith(STAYS_ENGLISH_PREFIXES)
+    )
+
+
+def in_language(name: str, language: str) -> str:
+    """The name of the text `name` in `language`: itself in English, else its twin."""
+    if language not in LANGUAGES:
+        raise PromptError(f"no language {language!r}; known: {', '.join(LANGUAGES)}")
+    if language == LANGUAGES[0]:
+        return name
+    if not translated(name):
+        raise PromptError(f"{name!r} stays English")
+    area, _, rest = name.partition("/")
+    return f"{area}/{language}/{rest}"
+
+
+def load_in(language: str, name: str, /, **variables: str) -> str:
+    """`load` the text `name` in `language`."""
+    return load(in_language(name, language), **variables)
+
+
+def twin_problems() -> list[str]:
+    """What keeps the texts a person reads from being the same in every language: a text with
+    no twin, a twin with no English text or of one that stays English, or a twin whose
+    placeholders differ from the English text's."""
+    names = {p.relative_to(PROMPTS_DIR).with_suffix("").as_posix() for p in all_prompt_files()}
+    problems = []
+    for name in sorted(names):
+        english = _twin_of(name)
+        if english is None:
+            if translated(name):
+                problems += [
+                    f"{name} has no {language} twin"
+                    for language in LANGUAGES[1:]
+                    if in_language(name, language) not in names
+                ]
+        elif not translated(english):
+            problems.append(f"{name} is a twin of a text that stays English")
+        elif english not in names:
+            problems.append(f"{name} has no English file")
+        else:
+            theirs, ours = placeholders(file_text(name)), placeholders(file_text(english))
+            if theirs != ours:
+                problems.append(f"{name} has {_listed(theirs)}, {english} has {_listed(ours)}")
+    return problems
+
+
+def _listed(names: set[str]) -> str:
+    return ", ".join(f"{{{name}}}" for name in sorted(names)) or "none"

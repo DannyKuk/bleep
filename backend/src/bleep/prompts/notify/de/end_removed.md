@@ -1,0 +1,2 @@
+➖ Geschlossen: Host entfernt
+{text}

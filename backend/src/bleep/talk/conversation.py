@@ -110,15 +110,15 @@ def _items(value: object) -> str:
     return _compact(value)
 
 
-def _fixed(name: str, **values: str) -> str:
-    return prompts.load(f"talk/{name}", **values).strip()
+def _fixed(name: str, language: str, /, **values: str) -> str:
+    return prompts.load_in(language, f"talk/{name}", **values).strip()
 
 
-def clean_answer(text: str) -> str:
+def clean_answer(text: str, language: str = "en") -> str:
     """The model's answer as a chat may show it: no control characters, secrets redacted, no
-    links, capped."""
+    links (each said removed, in `language`), capped."""
     clean = redact_text(strip_control(text)).strip()
-    clean = _LINK.sub(_fixed("link_removed"), clean)
+    clean = _LINK.sub(_fixed("link_removed", language), clean)
     return clean if len(clean) <= ANSWER_CHARS else clean[: ANSWER_CHARS - 1].rstrip() + "…"
 
 
@@ -129,6 +129,10 @@ def logged_text(text: str) -> str:
 
 def _no_zone() -> tzinfo | None:
     return None
+
+
+def _english() -> str:
+    return "en"
 
 
 @runtime_checkable
@@ -151,7 +155,9 @@ class Talk:
     """`models` builds the chat model for a role (the `cheap` one is used); `budgets` gives the
     chat's own daily cost cap and the model timeout, `ledger` records what each call cost.
     `zone` gives Bleep's time zone at each message (None: UTC), in which a snooze's time is read
-    and said. Each message is kept in `log`; `tracer` traces each reading."""
+    and said, and `language` the language of the fixed lines it answers with; the model's own
+    answer is in whatever it wrote. Each message is kept in `log`; `tracer` traces each
+    reading."""
 
     def __init__(
         self,
@@ -166,7 +172,9 @@ class Talk:
         clock: Callable[[], datetime] = utcnow,
         log: TalkLog | None = None,
         tracer: Tracing | None = None,
+        language: Callable[[], str] = _english,
     ) -> None:
+        self.language = language
         self.state = state
         self.models = models
         self.budgets = budgets
@@ -222,6 +230,7 @@ class Talk:
         costs: CallCosts,
     ) -> TalkReply:
         facts: IncidentFacts | None = None
+        language = self.language()
         try:
             async with asyncio.timeout(REPLY_TIMEOUT_S):
                 snapshot = await self.state.snapshot()
@@ -231,20 +240,25 @@ class Talk:
                 spent = _asks_look(reading) and await self._runs_spent()
         except BudgetExceeded as error:
             seen.error = type(error).__name__
-            return self._fallback("failed", _fixed("spent"), text, facts, incident_id)
+            line = _fixed("spent", language)
+            return self._fallback("failed", line, text, facts, incident_id, language)
         except Exception as error:  # the type only: a provider's message may quote its key
             seen.error = type(error).__name__
             log.warning("talk: could not read a message (%s)", seen.error)
-            return self._fallback("failed", _fixed("failed"), text, facts, incident_id)
+            line = _fixed("failed", language)
+            return self._fallback("failed", line, text, facts, incident_id, language)
         try:
-            said = self._answer(reading, text, snapshot, facts, incident_id, spent, seen)
+            said = self._answer(
+                reading, text, snapshot, facts, incident_id, spent, seen, language=language
+            )
             named = offer_links(said.offer) if said.offer else []
             candidates = [*named, *known_links(snapshot, facts)]
             return said.model_copy(update={"links": links_in(said.answer, candidates)})
         except Exception as error:  # a bug checking a reading must still answer, and its trace
             seen.error = type(error).__name__
             log.exception("talk: could not answer a reading")
-            return TalkReply(kind="failed", answer=_fixed("failed"), incident_id=incident_id)
+            answer = _fixed("failed", language)
+            return TalkReply(kind="failed", answer=answer, incident_id=incident_id)
 
     async def _read(
         self,
@@ -316,6 +330,8 @@ class Talk:
         incident_id: str | None,
         spent: bool = False,
         seen: _Seen | None = None,
+        *,
+        language: str,
     ) -> TalkReply:
         def reply(kind: ReplyKind, answer: str, offer: Offer | None = None) -> TalkReply:
             return TalkReply(
@@ -326,25 +342,26 @@ class Talk:
                 offer=offer,
             )
 
-        if reading.kind == "question" and (answer := clean_answer(reading.answer)):
+        if reading.kind == "question" and (answer := clean_answer(reading.answer, language)):
             return reply("question", answer)
         if reading.kind == "refusal" and reading.refusal == "secret":
-            return reply("refusal", _fixed("refused_secret"))
+            return reply("refusal", _fixed("refused_secret", language))
         if reading.kind == "action" and reading.action is not None:
             action = reading.action
             now, zone = self.clock(), self.zone()
             if action.kind == "look_again":
-                checked = look_offer(action, snapshot, now, zone, spent)
+                checked = look_offer(action, snapshot, now, zone, spent, language)
             else:
-                checked = check(action, snapshot, facts, now, zone, text.strip()[:TEXT_CHARS])
+                words = text.strip()[:TEXT_CHARS]
+                checked = check(action, snapshot, facts, now, zone, words, language)
             if seen is not None:
                 seen.checked = checked
             if isinstance(checked, str):
                 return reply("action", checked)
-            return reply("action", confirm_line(checked, now, zone), checked)
+            return reply("action", confirm_line(checked, now, zone, language), checked)
         kind: ReplyKind = "refusal" if reading.kind == "refusal" else "unclear"
-        line = _fixed("refused_change" if kind == "refusal" else "unclear")
-        fallback = self._fallback(kind, line, text, facts, incident_id)
+        line = _fixed("refused_change" if kind == "refusal" else "unclear", language)
+        fallback = self._fallback(kind, line, text, facts, incident_id, language)
         return fallback.model_copy(update={"action": reading.action})
 
     def _fallback(
@@ -354,6 +371,7 @@ class Talk:
         text: str,
         facts: IncidentFacts | None,
         incident_id: str | None,
+        language: str,
     ) -> TalkReply:
         """`line`, or, for a message about an open incident whose plan waits, the offer to send
         the person's words to that plan: in a reply to a waiting plan a change Bleep would
@@ -363,7 +381,7 @@ class Talk:
         if facts is None or not waiting:
             return TalkReply(kind=kind, answer=line, incident_id=incident_id)
         offer = instruction(facts.id, facts.name or facts.id, text.strip()[:TEXT_CHARS])
-        answer = confirm_line(offer, self.clock(), self.zone())
+        answer = confirm_line(offer, self.clock(), self.zone(), language)
         if kind == "failed":  # the person learns their words were not read before sending them
             answer = f"{line}\n{answer}"
         return TalkReply(kind=kind, answer=answer, incident_id=incident_id, offer=offer)

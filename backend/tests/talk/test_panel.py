@@ -23,7 +23,7 @@ from bleep.store.db import Database
 from bleep.talk.actions import Actions
 from bleep.talk.confirms import CONFIRM_TTL
 from bleep.talk.conversation import Talk
-from bleep.talk.log import TalkLog
+from bleep.talk.log import TalkLog, transcript
 from bleep.talk.panel import WAITING_MAX, Panel
 from bleep.talk.state import BleepState
 from fakes import FakeChatModel
@@ -251,7 +251,7 @@ async def test_a_plan_decided_meanwhile_takes_no_instruction(env):
 
     result = await env.panel.press(reply.confirm.id, True, env.actions)
 
-    assert result.line == said("answer_already_decided", channel="Telegram")
+    assert result.line == said("answer_already_decided", channel="on Telegram")
     assert env.runner.resumed == []
 
 
@@ -469,3 +469,43 @@ async def test_a_press_whose_run_fails_is_logged_as_failed_by_the_errors_type(en
     assert entry.press is not None
     failed = prompts.load("talk/log_press_failed", error="RuntimeError").strip()
     assert entry.press.line == failed and "locked" not in entry.press.line
+
+
+def in_german(env) -> None:
+    env.talk.language = env.actions.language = lambda: "de"
+
+
+async def test_in_german_the_panel_offers_with_german_words_and_buttons(env):
+    in_german(env)
+    reply = await say(env, "lass shop in ruhe", reading(kind="action", action=ASKED["snooze"]))
+
+    assert reply.answer == "🤫 shop bis 14:00 UTC stummschalten?"
+    assert reply.confirm is not None
+    assert (reply.confirm.yes_label, reply.confirm.no_label) == ("Ja", "Nein")
+    assert reply.links == [TalkLink(kind="service", id=SHOP, label="shop")]  # names stay names
+
+    done = await env.panel.press(reply.confirm.id, True, env.actions)
+    again = await env.panel.press(reply.confirm.id, True, env.actions)
+    assert done.line == "Stumm bis 14:00 UTC. Bleep lässt es bis dahin in Ruhe."
+    assert again.line == "Schon beantwortet; dieser Klick hat nichts geändert."
+
+
+async def test_in_german_a_refused_change_and_a_plan_on_its_page_are_german(env):
+    in_german(env)
+    refused = await say(env, "rm -rf /", reading(kind="refusal", refusal="change"))
+    assert refused.answer.startswith("Aus dem Chat kann ich keine Befehle ausführen.")
+
+    action = {"kind": "show_plan", "incident": "shop #1"}
+    plan = await say(env, "zeig den plan", reading(kind="action", action=action))
+    assert plan.answer.startswith("🙋 Der Plan von shop #1 wartet auf dein Ja.")
+    assert plan.confirm is None
+
+
+async def test_in_german_the_talk_log_export_stays_english(env):
+    in_german(env)
+    reply = await say(env, "lass shop in ruhe", reading(kind="action", action=ASKED["leave_alone"]))
+    assert reply.confirm is not None
+    await env.panel.press(reply.confirm.id, True, env.actions)
+
+    text = transcript(env.talk.log.exchanges(), T0)
+    assert "# Chat with Bleep" in text and "Pressed Yes" in text

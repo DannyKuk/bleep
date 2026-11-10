@@ -34,7 +34,7 @@ from bleep.schemas.incidents import TERMINAL_STATUSES
 from bleep.schemas.talk import Offer
 from bleep.store.db import Database
 from bleep.talk.actions import Actions, Expecting, Looking, Resumer
-from bleep.talk.confirms import NO_LABEL, Confirms, yes_label
+from bleep.talk.confirms import Confirms, no_label, yes_label
 from bleep.talk.conversation import Talk
 from bleep.talk.history import Turns
 from bleep.talk.log import answered
@@ -65,12 +65,11 @@ class TelegramError(Exception):
 
 
 EXPECTED_VERB = "expected"  # the "It's expected" button's data; the incident is the message's
-EXPECTED_LABEL = "It's expected"
 CALLBACK_TEXT_MAX = 200  # Telegram's limit for a button's answer
 # "🤫 I'm on it" is `onit`; its choices are `onit:1h`, `onit:4h` and `onit:morning:YYYYMMDD`,
-# the morning the menu showed. The incident is the message's.
+# the morning the menu showed. The incident is the message's. A button's data is the same in
+# every language, only its label is not, so a press is read the same after a change.
 ON_IT_VERB = "onit"
-ON_IT_LABEL = "🤫 I'm on it"
 ON_IT_NOTICE = "Snoozed from Telegram: you said you are on it."
 SNOOZE_AHEAD_MAX = timedelta(days=2)  # no button carries a later morning
 # An offer made in the chat is confirmed with `yes:<id>` or declined with `no:<id>`; the offer
@@ -82,6 +81,10 @@ Row = list[tuple[str, str]]  # (label, callback data) buttons side by side
 
 def _no_zone() -> tzinfo | None:
     return None
+
+
+def _english() -> str:
+    return "en"
 
 
 @dataclass(frozen=True)
@@ -102,16 +105,17 @@ class OnIt:
         return self.current_zone()
 
 
-def snooze_buttons(now: datetime, zone: tzinfo | None) -> Row:
+def snooze_buttons(now: datetime, zone: tzinfo | None, language: str = "en") -> Row:
     """The choices a press of "🤫 I'm on it" shows: 1 h, 4 h, until 08:00. The morning's
     button carries its date, so a press after it has passed snoozes nothing."""
     morning = snooze_until("morning", now, zone or UTC)
     day = morning.astimezone(zone or UTC).date()
+    until = when(morning, now, zone, language)
     return [
-        (phrase("duration_h", n="1"), f"{ON_IT_VERB}:1h"),
-        (phrase("duration_h", n="4"), f"{ON_IT_VERB}:4h"),
+        (phrase("duration_h", language=language, n="1"), f"{ON_IT_VERB}:1h"),
+        (phrase("duration_h", language=language, n="4"), f"{ON_IT_VERB}:4h"),
         (
-            phrase("on_it_morning", when=when(morning, now, zone)),
+            phrase("on_it_morning", language=language, when=until),
             f"{ON_IT_VERB}:morning:{day:%Y%m%d}",
         ),
     ]
@@ -311,7 +315,8 @@ class MessageLog:
 
 
 class TelegramBot:
-    """Polls Telegram and applies the chat's answers. Start it with `poll_forever()`."""
+    """Polls Telegram and applies the chat's answers. Start it with `poll_forever()`. Its own
+    words are in the language `language` gives at each answer (#375)."""
 
     def __init__(
         self,
@@ -327,7 +332,9 @@ class TelegramBot:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         on_it: OnIt | None = None,
         talk: Talk | None = None,
+        language: Callable[[], str] = _english,
     ) -> None:
+        self.language = language
         self.chat_id = str(chat_id)
         self.approvals = approvals
         self.runner = runner
@@ -362,6 +369,7 @@ class TelegramBot:
             expectations=self.expectations,
             looks=self.looks,
             zone=self._zone,
+            language=self.language,
         )
 
     def continue_from(self, other: TelegramBot) -> None:
@@ -433,21 +441,24 @@ class TelegramBot:
         if verb == ON_IT_VERB and known is not None and self.on_it is not None:
             await self._on_it(callback, *known, choice=approval_id)
             return
+        language = self.language()
         if verb not in ("approve", "reject") or not approval_id or known is None:
-            await self.client.answer_callback(callback_id, answer("answer_unknown"))
+            await self.client.answer_callback(callback_id, _said("answer_unknown", language))
             return
         kind: Literal["approve", "reject"] = "approve" if verb == "approve" else "reject"
         incident_id = known[0]
         if await self._closed(incident_id, approval_id):  # before why a yes is not offered here
-            await self.client.answer_callback(callback_id, answer("answer_closed"))
+            await self.client.answer_callback(callback_id, _said("answer_closed", language))
             await self.client.clear_buttons(self.chat_id, message_id)
             return
         if kind == "approve" and await self._refused_plan(incident_id, approval_id):
-            await self.client.answer_callback(callback_id, answer("answer_refused_plan"))
+            said = _said("answer_refused_plan", language)
+            await self.client.answer_callback(callback_id, said)
             return
-        if kind == "approve" and not await self._shown_in_full(incident_id, approval_id):
+        if kind == "approve" and not await self._shown_in_full(incident_id, approval_id, language):
             # No Approve button was sent for it; a press that arrives anyway is refused.
-            await self.client.answer_callback(callback_id, answer("answer_dashboard_only"))
+            said = _said("answer_dashboard_only", language)
+            await self.client.answer_callback(callback_id, said)
             return
         decision = Decision(kind=kind, via="telegram", at=self.clock())
         await self._decide(callback_id, message_id, incident_id, approval_id, decision)
@@ -471,37 +482,44 @@ class TelegramBot:
         callback_id, message = callback["id"], callback["message"]
         incident = await self.on_it.incidents.get(incident_id)
         target = quiet_target(incident.subject) if incident is not None else None
-        now, zone = self.clock(), self.on_it.zone
+        now, zone, language = self.clock(), self.on_it.zone, self.language()
         until = chosen_until(choice, now, zone) if choice else None
         unknown = choice and (until is None or until > now + SNOOZE_AHEAD_MAX)
         if incident is None or target is None or unknown:
-            await self.client.answer_callback(callback_id, answer("answer_unknown"))
+            await self.client.answer_callback(callback_id, _said("answer_unknown", language))
             return
         if incident.status in TERMINAL_STATUSES:
-            await self.client.answer_callback(callback_id, answer("answer_on_it_ended"))
+            said = _said("answer_on_it_ended", language)
+            await self.client.answer_callback(callback_id, said)
             await self._edit(message["message_id"], [])
             return
         if incident.status in RUNNING:
-            await self.client.answer_callback(callback_id, answer("answer_on_it_running"))
+            said = _said("answer_on_it_running", language)
+            await self.client.answer_callback(callback_id, said)
             return
         if until is None or until <= now:  # the first press, or a morning that has passed
             said = "answer_on_it_how_long" if until is None else "answer_on_it_passed"
-            await self.client.answer_callback(callback_id, answer(said))
-            await self._show_choices(message, incident_id, approval_id, now)
+            await self.client.answer_callback(callback_id, _said(said, language))
+            await self._show_choices(message, incident_id, approval_id, now, language)
             return
         await self.on_it.quiet.set(*target, "snooze", until)
         await self.on_it.bus.publish(incident_id, "notice", {"text": ON_IT_NOTICE})
-        said = answer("answer_on_it", until=when(until, now, zone))
+        said = _said("answer_on_it", language, until=when(until, now, zone, language))
         await self.client.answer_callback(callback_id, said)
 
     async def _show_choices(
-        self, message: dict[str, Any], incident_id: str, approval_id: str, now: datetime
+        self,
+        message: dict[str, Any],
+        incident_id: str,
+        approval_id: str,
+        now: datetime,
+        language: str,
     ) -> None:
         """The choices in place of the "🤫 I'm on it" row; the rows above it (a plan's Approve
         and Reject, "It's expected") stay while their question is open."""
         assert self.on_it is not None
         message_id = message["message_id"]
-        choices = snooze_buttons(now, self.on_it.zone)
+        choices = snooze_buttons(now, self.on_it.zone, language)
         kept = _kept_rows(message.get("reply_markup"))
         open_plan = await self.actions.plan_open(incident_id, approval_id)
         await self._edit(message_id, [*kept, choices] if open_plan else [choices])
@@ -529,11 +547,11 @@ class TelegramBot:
         current = await self.approvals.current(incident_id)
         return current is not None and current.id == approval_id and current.proposal.refused
 
-    async def _shown_in_full(self, incident_id: str, approval_id: str) -> bool:
+    async def _shown_in_full(self, incident_id: str, approval_id: str, language: str) -> bool:
         current = await self.approvals.current(incident_id)
         if current is None or current.id != approval_id:
             return True  # `Actions.resolve` answers a stale or unknown plan in its own words
-        return shows_in_full(current.proposal)
+        return shows_in_full(current.proposal, language)
 
     async def _text(self, message: dict[str, Any]) -> None:
         """With `talk`, what the person wrote is answered in the background (`_answer`). Without
@@ -543,20 +561,23 @@ class TelegramBot:
         text = message["text"].strip()
         reply_to = message.get("reply_to_message", {}).get("message_id")
         known = await self.messages.get(reply_to) if reply_to else None
+        language = self.language()
         if self.talk is None and known is None:
-            await self._say(answer("answer_no_reply"), reply)
+            await self._say(_said("answer_no_reply", language), reply)
             return
         if len(text) > INSTRUCTION_MAX_CHARS:
-            await self._say(answer("answer_too_long", limit=str(INSTRUCTION_MAX_CHARS)), reply)
+            limit = str(INSTRUCTION_MAX_CHARS)
+            await self._say(_said("answer_too_long", language, limit=limit), reply)
             return
         if self.talk is None:
             assert known is not None
             offer = instruction(known[0], await self._incident_name(known[0]), text)
-            await self._offer(offer, confirm_line(offer, self.clock(), self._zone()), reply, known)
+            line = confirm_line(offer, self.clock(), self._zone(), language)
+            await self._offer(offer, line, reply, known)
             return
         # Text changes nothing on its own, so a slow model never holds a button press behind it.
         if len(self._talking) >= TALK_WAITING_MAX:
-            await self._say(answer("answer_talk_busy"), reply)
+            await self._say(_said("answer_talk_busy", language), reply)
             return
         task = asyncio.create_task(self._answer_safely(text, reply, known), name="telegram talk")
         self._talking.add(task)
@@ -607,10 +628,10 @@ class TelegramBot:
         offer = bound
         if offer.kind == "show_plan":
             return await self._show_plan(offer, line, reply), None
-        confirm_id = self.confirms.add(offer)
+        confirm_id, language = self.confirms.add(offer), self.language()
         buttons = [
-            (yes_label(offer), f"{CONFIRM_VERB}:{confirm_id}"),
-            (NO_LABEL, f"{DECLINE_VERB}:{confirm_id}"),
+            (yes_label(offer, language), f"{CONFIRM_VERB}:{confirm_id}"),
+            (no_label(language), f"{DECLINE_VERB}:{confirm_id}"),
         ]
         message_id = await self.client.send_message(
             self.chat_id, line, buttons, reply_to=reply, markdown=False
@@ -632,23 +653,24 @@ class TelegramBot:
         incident would become the thread's opener (#380), so for an incident with no message in
         the chat yet the plan is left to the dashboard. Once an opener is logged it stays the
         lowest id, so the check needs no lock."""
-        current = await self.actions.plan_to_show(offer)
+        current, language = await self.actions.plan_to_show(offer), self.language()
         if current == "refused":
-            why_not = answer("answer_refused_plan")
+            why_not = _said("answer_refused_plan", language)
         elif current == "gone":
-            why_not = answer("answer_not_waiting")
+            why_not = _said("answer_not_waiting", language)
         elif await self.messages.first_for(current.incident_id) is None:
-            why_not = answer("answer_plan_on_dashboard")
+            why_not = _said("answer_plan_on_dashboard", language)
         else:
             why_not = ""
         if why_not or isinstance(current, str):
             await self._say(why_not, reply)
             return why_not
-        text = render(
-            "plan_again", incident=offer.incident or "", steps=steps_text(current.proposal)
-        )
-        buttons = [("Approve", f"approve:{current.id}")] if shows_in_full(current.proposal) else []
-        buttons.append(("Reject", f"reject:{current.id}"))
+        steps = steps_text(current.proposal, language)
+        text = render("plan_again", language=language, incident=offer.incident or "", steps=steps)
+        buttons = []
+        if shows_in_full(current.proposal, language):
+            buttons.append((_said("button_approve", language), f"approve:{current.id}"))
+        buttons.append((_said("button_reject", language), f"reject:{current.id}"))
         message_id = await self.client.send_message(
             self.chat_id, bold_first_line(text), buttons, reply_to=reply
         )
@@ -666,15 +688,16 @@ class TelegramBot:
         """A press of an offer's Yes (or Send) runs it, once; No drops it. A second press, an
         expired or unknown offer and a press on another message than the offer's own run
         nothing and are told so; the buttons go either way."""
-        shown = self._shown.get(confirm_id)
+        shown, language = self._shown.get(confirm_id), self.language()
         taken = self.confirms.take(confirm_id) if shown in (None, message_id) else "unknown"
         if isinstance(taken, str):
-            said = answer("answer_confirm_used" if taken == "used" else "answer_confirm_expired")
+            name = "answer_confirm_used" if taken == "used" else "answer_confirm_expired"
+            said = _said(name, language)
         else:
             self._shown.pop(confirm_id, None)
             yes = verb != DECLINE_VERB
             press = self.talk.log.pressed("telegram", confirm_id, yes) if self.talk else None
-            run = self.actions.run(taken) if yes else answer("answer_confirm_no")
+            run = self.actions.run(taken) if yes else _said("answer_confirm_no", language)
             said = await answered(press, run)
         await self.client.answer_callback(callback_id, _cut(said))
         await self._edit(message_id, [])
@@ -710,6 +733,11 @@ class TelegramBot:
         note = await self.actions.resolve(incident_id, approval_id, d)
         await self.client.answer_callback(callback_id, note)
         await self.client.clear_buttons(self.chat_id, message_id)
+
+
+def _said(name: str, language: str, /, **values: str) -> str:
+    """An answer or a button's label, `prompts/notify/<name>.md` in `language`."""
+    return answer(name, language=language, **values)
 
 
 def _cut(text: str) -> str:
