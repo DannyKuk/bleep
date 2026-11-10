@@ -1002,13 +1002,14 @@ def test_a_token_after_an_escaped_line_break_or_tab_is_redacted(token, escape):
 @pytest.mark.parametrize(
     "text",
     [
-        '{"msg": "line one\\nline two\\tskipped\\r\\nAKIA rotation docs"}',
-        '"C:\\\\new\\\\sk-folder" and "\\nnpm_install"',
-        "GET /search?q=%2525sk-test-mode&page=2",
-        "build 2525ab sk-short rk_test_x",
+        "GET /a?k=a%2sk_" + "live_" + B24,
+        "build x2525sk-" + B24,
+        '{"msg": "\\xsk-' + B24 + '"}',
+        "foonsk-" + B24,
     ],
 )
-def test_text_after_an_escape_that_holds_no_token_stays(text):
+def test_a_token_glued_to_what_is_almost_an_escape_stays(text):
+    """Each token here is hidden at a word start, so only the start check keeps it."""
     assert redact_with_count(text) == (text, 0)
 
 
@@ -1039,6 +1040,7 @@ def test_the_literal_first_patterns_match_what_the_start_first_ones_did():
     prefixes += ["AKIA", "ASIA", "123456789:", "pbkdf2_sha256$1$"]
     fillers = ["%3D", "%", "%2", "x", "_", "-", ".", " ", "é", "٣", "0", "\n", B24, HEX40, JWT]
     fillers += ["%25", "%253D", "25", "2525", "3D", "\\", "\\n", "\\r", "\\t", "n", "\\\\"]
+    fillers += ["%25253D", "2525ab", "%2525", "x2525", "2525%"]
     rng = random.Random(416)
     for _ in range(4000):
         text = "".join(rng.choice(prefixes + fillers) for _ in range(rng.randrange(1, 10)))
