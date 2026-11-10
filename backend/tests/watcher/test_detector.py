@@ -645,6 +645,25 @@ def test_a_death_outside_a_loop_and_another_containers_loop_carry_no_run_of_it()
     assert other.run is not None and other.run.container == "web-2"
 
 
+def test_a_death_back_in_time_carries_its_loops_run_only_while_the_loop_goes_on():
+    det, clock = make()
+    loop = crash_loop(det, clock, 0)
+    clock.at(180)
+    det.feed(died(clock))
+    [back] = det.tick(clock.at(190), states(box()), "h1")
+    assert isinstance(back, Recovered) and back.run == loop.run
+
+    clock.at(200)
+    det.feed(died(clock, container="web-2"))  # another container of the service, in no loop
+    [other] = det.tick(clock.at(210), states(box(name="web-2")), "h1")
+    assert isinstance(other, Recovered) and other.run is None
+
+    clock.at(900)  # a whole window without a death of web-1 since 180 s: its loop is over
+    det.feed(died(clock))
+    [after] = det.tick(clock.at(910), states(box()), "h1")
+    assert isinstance(after, Recovered) and after.run is None
+
+
 def test_forgetting_the_host_ends_its_loops():
     det, clock = make()
     crash_loop(det, clock, 0)
