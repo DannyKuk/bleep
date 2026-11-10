@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import get_args
 
@@ -252,13 +253,26 @@ WRITTEN_FOR_THE_PERSON = [
     "graph/report",
     "watcher/recovery_line",
 ]
-# What each one's German rule must name: the fields written in German, and what stays as it is.
-GERMAN_RULE_NAMES = {
-    "graph/diagnose": ["`root_cause`", "`detail`", "`missing`", "`category`"],
-    "graph/propose": ["`reason`", "`human_instructions`", "`target`", "`params`"],
-    "graph/report": ["`summary`", "`cause`", "`follow_ups`", "`cause_en`"],
-    "watcher/recovery_line": ["the sentence in German"],
+# Each graph prompt's German rule: the fields its "Write ... in German" sentence names (only the
+# ones the person reads), and those its "exactly as described above" sentence keeps. Diagnose's
+# `missing` only steers Investigate's next round and `planted_in` is a closed list, so both stay.
+GERMAN_FIELDS = {
+    "graph/diagnose": {"root_cause", "detail"},
+    "graph/propose": {"reason", "human_instructions"},
+    "graph/report": {"summary", "cause", "follow_ups"},
 }
+KEPT_FIELDS = {
+    "graph/diagnose": {"category", "source", "affected_services", "planted_in", "missing"},
+    "graph/propose": {"kind", "action", "target", "host_id", "params", "verification"},
+}
+
+
+def _sentence(rule: str, words: str) -> str:
+    return next(s for s in re.split(r"(?<=\.) ", rule) if words in s)
+
+
+def _fields(sentence: str) -> set[str]:
+    return set(re.findall(r"`([a-z_]+)`", sentence))
 
 
 def _rendered(name: str, language: Language) -> str:
@@ -301,8 +315,24 @@ def test_in_german_a_prompt_is_the_english_one_with_its_german_rule_at_the_place
     # The placeholder ends a line, so the rule is a paragraph of its own.
     assert file_text(name).split("{language}")[1].startswith("\n")
     assert "German" in rule
-    for named in GERMAN_RULE_NAMES[name]:
-        assert named in rule, (name, named)
+
+
+@pytest.mark.parametrize("name", list(GERMAN_FIELDS))
+def test_a_german_rule_names_exactly_the_fields_the_person_reads(name):
+    rule = load(f"{name}_de").strip()
+    written = _fields(_sentence(rule, "in German"))
+    assert written == GERMAN_FIELDS[name]
+    if name in KEPT_FIELDS:
+        assert _fields(_sentence(rule, "exactly as described above")) == KEPT_FIELDS[name]
+
+
+def test_the_german_report_asks_for_the_cause_in_english_too():
+    rule = load("graph/report_de")
+    assert "`cause_en`: the same root cause as `cause`, written in English" in rule
+
+
+def test_the_german_recovery_rule_asks_for_the_sentence_in_german():
+    assert "write the sentence in German" in load("watcher/recovery_line_de")
 
 
 def test_in_english_no_prompt_written_for_the_person_names_a_language():

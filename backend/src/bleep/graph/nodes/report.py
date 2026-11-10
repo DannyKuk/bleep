@@ -41,7 +41,7 @@ from bleep.graph.look import look_rule
 from bleep.graph.planted import HINT_END, planted_places, planted_sentence
 from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.log import GuardKind
-from bleep.guard.report_check import check_report
+from bleep.guard.report_check import MARKER, check_report
 from bleep.guard.titles import build_title
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
@@ -99,10 +99,13 @@ class _Draft(BaseModel):
     follow_ups: list[str] = Field(default_factory=list)
 
 
+# The draft in a language other than English (#374). Its docstring and the field's description
+# reach the model as the schema's. `cause_en` stays optional: a required one would turn a reply
+# without it into a report written from the record alone, losing the summary for a memory field.
 class _DraftWithEnglishCause(_Draft):
-    """A draft written in another language, with its cause in English as well (#374)."""
+    """What the model writes, with its cause in English as well."""
 
-    cause_en: str = ""
+    cause_en: str = Field("", description="The same root cause as `cause`, in English.")
 
 
 class _Facts(BaseModel):
@@ -390,6 +393,16 @@ async def _notify(deps: GraphDeps, incident: Incident, written: Report) -> None:
         log.warning("report: notifying %s failed: %s", incident.id, type(error).__name__)
 
 
+def _usable_english_cause(written: Report, incident_id: str) -> Report:
+    """A report in another language whose English cause is missing, or was only a "fixed" claim or
+    a copied log line, keeps none, so memory keeps the cause as written; that is logged, since
+    recall then compares an English query with it (#374)."""
+    if written.cause_en is not None and written.cause_en.strip() != MARKER:
+        return written
+    log.warning("report: %s has no English cause; memory keeps the cause as written", incident_id)
+    return written.model_copy(update={"cause_en": None})
+
+
 def make(deps: GraphDeps) -> Node:
     async def report(state: IncidentState) -> dict:
         incident_id = state["incident_id"]
@@ -454,6 +467,8 @@ def make(deps: GraphDeps) -> Node:
                 deps.guard_log.record(incident_id, kind, detail)
 
         written = check_report(written, _raw_logs(state), record)
+        if language != DEFAULT_LANGUAGE:
+            written = _usable_english_cause(written, incident_id)
         places, planted = await asyncio.to_thread(planted_follow_up, state)
         if planted is not None:  # after the check: Bleep's own text, never cut or removed
             follow_ups = [*written.follow_ups, planted]

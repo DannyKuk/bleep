@@ -871,12 +871,79 @@ async def test_in_english_the_report_asks_for_no_english_cause_and_keeps_none(tm
     assert update["report"].cause_en is None
 
 
-async def test_a_log_line_in_the_english_cause_is_removed_too(tmp_path):
-    env, state, _ = await setup(tmp_path, written(cause_en=LOG_LINE))
+async def test_a_log_line_in_the_english_cause_is_cut_like_one_in_the_cause(tmp_path):
+    copied = f"The database refused it: {LOG_LINE}"
+    env, state, _ = await setup(tmp_path, written(cause_en=copied))
     env.deps.settings_store = StaticSettings(written_in="de")
     logs, _ = guard_text("logs.shop-web-1", f"{LOG_LINE}\n")
     state |= {"context": GatherContext(at=T0, logs={"shop-web-1": logs}), "proposal": NO_ACTION}
 
     update = await run(env, state)
 
-    assert update["report"].cause_en == MARKER
+    assert update["report"].cause_en == f"The database refused it: {MARKER}"
+
+
+GERMAN_CAUSE = "Jemand hat shop-web gestoppt, und nichts hat ihn neu gestartet."
+
+
+async def german_run(tmp_path, *script: AIMessage, logs: str = "") -> tuple[Report, Remembered]:
+    """A German run with no action, its report and what memory was handed."""
+    env, state, _ = await setup(tmp_path, *script)
+    env.deps.settings_store = StaticSettings(written_in="de")
+    memory = Remembered()
+    env.deps.memory = memory  # type: ignore[assignment]
+    state |= {"proposal": NO_ACTION}
+    if logs:
+        guarded, _ = guard_text("logs.shop-web-1", f"{logs}\n")
+        state["context"] = GatherContext(at=T0, logs={"shop-web-1": guarded})
+    update = await run(env, state)
+    return update["report"], memory
+
+
+@pytest.mark.parametrize(
+    "cause_en",
+    [
+        None,  # the model left it out: it is optional, so no retry
+        "",
+        "  ",
+        "Fixed: someone stopped shop-web.",  # a "fixed" claim only, dropped
+        LOG_LINE,  # only a copied log line, cut to the marker
+    ],
+)
+async def test_a_german_report_without_a_usable_english_cause_keeps_none_and_says_so(
+    tmp_path, caplog, cause_en
+):
+    fields = {"cause": GERMAN_CAUSE} | ({} if cause_en is None else {"cause_en": cause_en})
+    with caplog.at_level("WARNING"):
+        stored, memory = await german_run(tmp_path, written(**fields), logs=LOG_LINE)
+
+    assert stored.cause_en is None and stored.cause == GERMAN_CAUSE
+    assert memory.reports == [stored]  # memory keeps the German cause then
+    assert "has no English cause; memory keeps the cause as written" in caplog.text
+
+
+async def test_a_german_report_from_the_record_alone_has_no_english_cause_and_says_so(
+    tmp_path, caplog
+):
+    with caplog.at_level("WARNING"):
+        stored, _ = await german_run(tmp_path)  # no reply scripted: the model call fails
+
+    assert stored.cause_en is None and stored.cause == DIAGNOSIS.root_cause
+    assert "has no English cause" in caplog.text
+
+
+async def test_an_english_report_never_warns_about_an_english_cause(tmp_path, caplog):
+    env, state, _ = await setup(tmp_path, written())
+    state |= {"proposal": NO_ACTION}
+    with caplog.at_level("WARNING"):
+        await run(env, state)
+    assert "English cause" not in caplog.text
+
+
+def test_the_german_drafts_schema_tells_the_model_only_what_the_field_is():
+    schema = report._DraftWithEnglishCause.model_json_schema()
+    assert schema["description"] == "What the model writes, with its cause in English as well."
+    assert schema["properties"]["cause_en"]["description"] == (
+        "The same root cause as `cause`, in English."
+    )
+    assert "#" not in json.dumps(schema)
