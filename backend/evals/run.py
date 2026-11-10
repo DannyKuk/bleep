@@ -580,7 +580,9 @@ async def run_scenario(
         fallbacks = stack.enter_context(counting_fallbacks())
         folder = stack.enter_context(tempfile.TemporaryDirectory(prefix="bleep-eval-"))
         if mcp is None and scenario.mcp is not None:
-            mcp = await stack.enter_async_context(serve(load_mcp_fixture(scenario.mcp)))
+            mcp = await stack.enter_async_context(
+                serve(load_mcp_fixture(scenario.mcp), scenario.mcp_purpose)
+            )
         db = Database(Path(folder) / "bleep.db")
         await db.migrate()
         registry = make_registry([eval_host(settings)], connector)

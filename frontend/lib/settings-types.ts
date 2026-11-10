@@ -144,6 +144,10 @@ export interface JsonSchemaProperty {
   title?: string;
   description?: string;
   default?: unknown;
+  /** A string field's cap: the input stops there instead of the API refusing the save. */
+  maxLength?: number;
+  /** An example of a good value, shown as the empty input's placeholder when there is no default. */
+  examples?: string[];
   /** Set on a `SecretStr`, which never gets an input. */
   writeOnly?: boolean;
   format?: string;

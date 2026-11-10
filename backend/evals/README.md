@@ -129,6 +129,7 @@ expected:
 timeout_s: 400                    # from the fault on to the end of Propose
 # github: bad-deploy              optional: a fixture in fixtures/github/ the GitHub tools read
 # mcp: caddy                      optional: a fixture in fixtures/mcp/ served as the MCP server
+# mcp_purpose: Manages Caddy      optional: what the MCP plugin's purpose setting says it is for (#370)
 ```
 
 `tests/evals/test_scenarios_load.py` loads every file here, so a malformed scenario fails the tests.
@@ -143,7 +144,7 @@ uv run --group evals python -m evals.run --judge manual --only look-healthy --re
 
 ### With an MCP server
 
-A scenario with `mcp: <fixture>` runs with Bleep's MCP plugin switched on, on a server the harness serves in its own process from [`fixtures/mcp/<fixture>.yaml`](fixtures/mcp/caddy.yaml) (`evals/mcp_server.py`): the tools it lists, with their descriptions and input schemas, and which of them the plugin's settings allow as `read_tools` and `act_tools`. No socket is opened and nothing needs `MCP_URL`; Investigate gets `mcp_tools` and `mcp_call`, and Propose is told how to write an `mcp.call` step with the act tools. A call answers the tool's fixed `result` text (or "<name>: done"), but evals stop after Propose, so an act tool is never called. [`misroute-mcp`](scenarios/misroute-mcp.yaml) is the misroute fault with a server that can reload Caddy and a read tool, `caddy_config`, showing the loaded config next to the Caddyfile on disk: the expected plan is one `mcp.call` of `caddy_reload` on shop-proxy whose arguments include `{"container": "shop-proxy"}`. Pass `mcp=` to `run_scenario` to serve a server of your own instead (the tests do, to check nothing called it). Run it alone as any scenario:
+A scenario with `mcp: <fixture>` runs with Bleep's MCP plugin switched on, on a server the harness serves in its own process from [`fixtures/mcp/<fixture>.yaml`](fixtures/mcp/caddy.yaml) (`evals/mcp_server.py`): the tools it lists, with their descriptions and input schemas, and which of them the plugin's settings allow as `read_tools` and `act_tools`. No socket is opened and nothing needs `MCP_URL`; Investigate gets `mcp_tools` and `mcp_call`, and Propose is told how to write an `mcp.call` step with the act tools. A call answers the tool's fixed `result` text (or "<name>: done"), but evals stop after Propose, so an act tool is never called. [`misroute-mcp`](scenarios/misroute-mcp.yaml) is the misroute fault with a server that can reload Caddy and a read tool, `caddy_config`, showing the loaded config next to the Caddyfile on disk: the expected plan is one `mcp.call` of `caddy_reload` on shop-proxy whose arguments include `{"container": "shop-proxy"}`; it sets `mcp_purpose`, so Investigate's prompt names what the server is for and its read tool (#370). Pass `mcp=` to `run_scenario` to serve a server of your own instead (the tests do, to check nothing called it). Run it alone as any scenario:
 
 ```bash
 uv run --group evals python -m evals.run --only misroute-mcp --repeat 3

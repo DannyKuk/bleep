@@ -3,9 +3,11 @@
 import re
 from typing import Any
 
+import httpx
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
+from pydantic import SecretStr
 
 from bleep.graph.build import build_graph, open_checkpointer
 from bleep.graph.deps import StaticSettings
@@ -14,9 +16,12 @@ from bleep.guard.pipeline import guard_text
 from bleep.guard.sanitize import MAX_CHARS
 from bleep.hosts.shell import CommandNotAllowed
 from bleep.incidents.runner import IncidentRunner
+from bleep.plugins.mcp_url import McpUrlPlugin
+from bleep.plugins.registry import PluginRegistry
 from bleep.schemas.graph import Diagnosis
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Budgets
+from bleep.tools.default import default_registry
 from bleep.tools.registry import ToolRegistry, ToolSpec
 from fakes import FakeChatModel
 from graph_env import T0, graph_env, shop_engine
@@ -369,3 +374,66 @@ async def test_tools_see_the_incidents_service(tmp_path):
 
     assert seen == [env.service_id("shop")]
     assert tool_messages(update)[0].content.split("\n")[1] == "ok"
+
+
+def _refuse(request: httpx.Request) -> httpx.Response:
+    raise AssertionError("building Investigate's prompt must not reach the MCP server")
+
+
+def with_mcp(env, settings: dict[str, Any] | None, *, on: bool = True) -> None:
+    """The MCP plugin with `settings`, on a transport that fails the test if it is used."""
+    plugins = PluginRegistry(
+        [McpUrlPlugin(httpx.MockTransport(_refuse))],
+        SecretStr("s"),
+        env={"MCP_URL": "https://mcp.example.com/mcp"},
+    )
+    plugins.set("mcp", settings or {}, on)
+    env.deps.tools = default_registry(plugins=plugins)
+
+
+def task(env) -> str:
+    """The first task prompt, with the random id of each untrusted wrapper replaced."""
+    first = env.models.model.seen[0]
+    text = next(m.content for m in first if isinstance(m, HumanMessage))
+    return re.sub(r'id="[0-9a-f]+"', 'id="X"', text)
+
+
+PURPOSE = "Manages the Coolify server: apps, deployments, env settings"
+ON = {"purpose": PURPOSE, "read_tools": ["list_applications", "get_deployment"]}
+
+
+async def test_with_the_plugin_on_the_prompt_names_its_purpose_and_read_tools(tmp_path):
+    env, state = await setup(tmp_path, [DONE])
+    with_mcp(env, ON)
+
+    await run(env, state)
+
+    sent = task(env)
+    assert f"in the words of the person who set Bleep up: {PURPOSE}\n" in sent
+    assert "The read tools you may run: `list_applications`, `get_deployment`." in sent
+    tasks = sent.split("## Your task")[1]
+    assert tasks.index("so spend them on what matters most.") < tasks.index(PURPOSE)
+    assert tasks.index(PURPOSE) < tasks.index("When the cause is a setting")
+    assert "<untrusted" not in sent.split("## Your task")[1]  # the person's own text
+
+
+@pytest.mark.parametrize(
+    "plugin",
+    [
+        pytest.param(None, id="no plugin"),
+        pytest.param({**ON, "purpose": ""}, id="on without a purpose"),
+        pytest.param({"purpose": PURPOSE}, id="on without read tools"),
+        pytest.param(ON, id="switched off"),
+    ],
+)
+async def test_without_a_purpose_to_tell_the_prompt_is_byte_for_byte_as_before(tmp_path, plugin):
+    before, state = await setup(tmp_path / "before", [DONE])
+    await run(before, state)
+    env, state = await setup(tmp_path / "after", [DONE])
+    if plugin is not None:
+        with_mcp(env, plugin, on=plugin is not ON)
+
+    await run(env, state)
+
+    assert task(env) == task(before)
+    assert "MCP" not in task(env)

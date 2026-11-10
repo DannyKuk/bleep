@@ -76,6 +76,7 @@ class ServedMcp:
 
     fixture: McpFixture
     transport: httpx.AsyncBaseTransport
+    purpose: str = ""  # what the plugin's settings say the server is for (#370)
     calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
     def plugins(self, guard_log: GuardLogger | None = None) -> PluginRegistry:
@@ -83,14 +84,18 @@ class ServedMcp:
         registry = PluginRegistry(
             [McpUrlPlugin(self.transport)], GRANT_SECRET, guard_log=guard_log, env={"MCP_URL": URL}
         )
-        settings = {"read_tools": self.fixture.read_tools, "act_tools": self.fixture.act_tools}
+        settings = {
+            "read_tools": self.fixture.read_tools,
+            "act_tools": self.fixture.act_tools,
+            "purpose": self.purpose,
+        }
         registry.set("mcp", settings, True)
         return registry
 
 
 @asynccontextmanager
-async def serve(fixture: McpFixture) -> AsyncIterator[ServedMcp]:
-    """Serve `fixture` until the block ends."""
+async def serve(fixture: McpFixture, purpose: str = "") -> AsyncIterator[ServedMcp]:
+    """Serve `fixture` until the block ends; `purpose` is what the plugin says it is for."""
     server: Server = Server("bleep-evals")
     listed = [
         types.Tool(name=t.name, description=t.description, inputSchema=t.input_schema)
@@ -107,7 +112,7 @@ async def serve(fixture: McpFixture) -> AsyncIterator[ServedMcp]:
     async def app(scope, receive, send) -> None:
         await manager.handle_request(scope, receive, send)
 
-    served = ServedMcp(fixture, httpx.ASGITransport(app=app))
+    served = ServedMcp(fixture, httpx.ASGITransport(app=app), purpose)
 
     @server.list_tools()
     async def list_tools() -> list[types.Tool]:
