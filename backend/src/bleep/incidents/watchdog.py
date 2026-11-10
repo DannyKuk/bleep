@@ -6,9 +6,11 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from bleep.graph.deps import Notifier, SettingsSource
+from bleep.graph.shown import shown_payload
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.schemas.incidents import Incident
+from bleep.schemas.shown import Shown
 
 log = logging.getLogger(__name__)
 
@@ -71,11 +73,8 @@ class Watchdog:
     async def _notice(self, incident: Incident, moved: datetime, now: datetime) -> None:
         self._noticed[incident.id] = moved
         minutes = int((now - moved).total_seconds() // 60)
-        text = (
-            f"This incident has not moved for {minutes} minutes (status {incident.status}). "
-            "Check the run; it may be waiting on a slow model or host."
-        )
-        await self.bus.publish(incident.id, "notice", {"text": text})
+        text = Shown.of("notice/stuck", minutes=str(minutes), status=incident.status)
+        await self.bus.publish(incident.id, "notice", shown_payload(text))
         try:
             await self.notifier.notice(incident.id, text)
         except Exception:  # a channel outage must not hide the dashboard notice

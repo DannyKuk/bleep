@@ -4,9 +4,12 @@ from functools import partial
 import pytest
 from fastapi.testclient import TestClient
 
+from bleep.graph.replan import PLANNING_AGAIN
+from bleep.graph.shown import shown_payload
 from bleep.guard.plan_check import check_shown
 from bleep.guard.redact import redacted_step
 from bleep.hosts.registry import Registry
+from bleep.incidents.expectations import DECISION_TEXT
 from bleep.incidents.repository import IncidentRepo
 from bleep.main import create_app
 from bleep.memory.embeddings import FakeEmbedder
@@ -20,6 +23,7 @@ from bleep.schemas.graph import (
     TimelineEntry,
 )
 from bleep.schemas.incidents import Incident, RecoveryEvent, Signal, Subject
+from bleep.schemas.shown import Shown
 from bleep.wiring import build_parts
 from fakes import FakeEngine, socket_host
 
@@ -306,7 +310,7 @@ def test_an_approval_its_incident_was_closed_under_is_reported_closed_not_pendin
     call(app_client, parts.incidents.set_status, incident.id, "awaiting_approval")
     runner = app_client.app.state.runner
     end = partial(runner.end, ending="quiet")
-    assert call(app_client, end, incident.id, "Closed: you told me to leave shop alone.")
+    assert call(app_client, end, incident.id, Shown.of("notice/left_alone", name="shop"))
 
     body = app_client.get(f"/api/incidents/{incident.id}").json()
     assert body["incident"]["status"] == "closed"
@@ -633,3 +637,95 @@ def test_the_list_and_the_detail_carry_each_incidents_short_name(app_client, par
     )
     detail = app_client.get(f"/api/incidents/{second.id}").json()
     assert detail["incident"]["short_name"] == "shop #2"
+
+
+# --- Bleep's own texts in the picked language (#427) ---
+
+
+def german(parts, monkeypatch) -> None:
+    monkeypatch.setattr(parts.settings_store, "language", lambda: "de")
+
+
+def test_a_notice_is_shown_in_the_picked_language_and_stays_english_where_it_is_stored(
+    app_client, parts, monkeypatch
+):
+    incident = open_incident(app_client, parts)
+    stored = shown_payload(Shown.of("notice/left_alone", name="shop"))
+    call(app_client, parts.bus.publish, incident.id, "notice", stored)
+    call(app_client, parts.bus.publish, incident.id, "notice", {"text": "from before #427"})
+    german(parts, monkeypatch)
+
+    events = app_client.get(f"/api/incidents/{incident.id}/events").json()
+
+    texts = [e["payload"]["text"] for e in events]
+    assert texts == ["Geschlossen: Du hast mir gesagt, shop in Ruhe zu lassen.", "from before #427"]
+    kept = call(app_client, parts.bus.history, incident.id)
+    assert kept[0].payload["text"] == "Closed: you told me to leave shop alone."
+
+
+def test_in_english_a_notice_reads_as_it_is_stored(app_client, parts):
+    incident = open_incident(app_client, parts)
+    call(app_client, parts.bus.publish, incident.id, "notice", shown_payload(PLANNING_AGAIN))
+    events = app_client.get(f"/api/incidents/{incident.id}/events").json()
+    assert events[0]["payload"]["text"] == "Planning again."
+
+
+def test_the_reports_fixed_texts_and_a_decision_of_bleeps_are_shown_in_the_picked_language(
+    app_client, parts, monkeypatch
+):
+    incident = open_incident(app_client, parts)
+    approval_id = ask(app_client, parts, incident.id)
+    expected = Decision(
+        kind="reject", text="This is expected.", via="telegram", at=T0, shown=DECISION_TEXT
+    )
+    call(app_client, parts.approvals.resolve, incident.id, expected, approval_id)
+    approved = Shown.of("decision/approved", channel=Shown.of("channel/on_dashboard"))
+    shown_report = REPORT.model_copy(
+        update={
+            "timeline": [
+                TimelineEntry(at=T0, text="Approved on the dashboard", shown=approved),
+                TimelineEntry(at=T0, text="from before #427"),
+            ],
+            "shown": {
+                "outcome": Shown.of("outcome/unverified"),
+                "human_decision": approved,
+                "cause": Shown.of("report/not_determined"),
+            },
+        }
+    )
+
+    async def fake_state(incident_id: str) -> dict:
+        return {"outcome": "unverified", "report": shown_report}
+
+    monkeypatch.setattr(app_client.app.state.runner, "state", fake_state)
+    german(parts, monkeypatch)
+    body = app_client.get(f"/api/incidents/{incident.id}").json()
+
+    report = body["report"]
+    assert report["outcome"] == "Aktion ausgeführt, nicht geprüft"
+    assert report["human_decision"] == "Freigegeben im Dashboard"
+    assert report["cause"] == "Nicht bestimmt."
+    timeline = [entry["text"] for entry in report["timeline"]]
+    assert timeline == ["Freigegeben im Dashboard", "from before #427"]
+    assert (report["summary"], report["action_taken"]) == (REPORT.summary, REPORT.action_taken)
+    assert body["approval"]["decision"]["text"] == "Das ist erwartet."
+    assert shown_report.outcome == "Action taken, not verified"  # the stored one is untouched
+
+
+def test_this_is_expected_says_what_it_records_and_answers_in_the_picked_language(
+    host_client, monkeypatch
+):
+    incident = unreachable(host_client)
+    german(host_client.parts, monkeypatch)
+    detail = host_client.get(f"/api/incidents/{incident.id}").json()
+    assert detail["expectation"].startswith("A darf schlafen: Solange er nicht antwortet")
+
+    response = host_client.post(f"/api/incidents/{incident.id}/expected")
+    assert response.json()["text"].startswith("Du hast gesagt, dass das erwartet ist. A darf")
+    again = host_client.post(f"/api/incidents/{incident.id}/expected")
+    assert again.status_code == 409
+    assert again.json()["detail"] == "Hier lässt sich gerade nichts als erwartet markieren."
+    events = call(host_client, host_client.parts.bus.history, incident.id)
+    kept = [e.payload["text"] for e in events if e.kind in ("expected", "notice")]
+    assert kept[0].startswith("You said this is expected. A may sleep")
+    assert kept[1] == "Closed: you said this is expected."

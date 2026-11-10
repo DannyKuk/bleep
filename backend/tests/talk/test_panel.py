@@ -18,6 +18,7 @@ from bleep.incidents.repository import IncidentRepo
 from bleep.schemas.api import HostView, QuietView, ServiceView
 from bleep.schemas.graph import Decision, PlanStep, Proposal
 from bleep.schemas.incidents import Signal, Subject
+from bleep.schemas.shown import Shown
 from bleep.schemas.talk import TalkLink, TalkReply
 from bleep.store.db import Database
 from bleep.talk.actions import Actions
@@ -87,7 +88,7 @@ class FakeExpectations:
 
     async def expected(self, incident_id: str, via: str) -> SimpleNamespace:
         self.marked.append((incident_id, via))
-        return SimpleNamespace(done=True, text="You said this is expected.")
+        return SimpleNamespace(done=True, said=Shown.of("expected/said", sentence="x"))
 
 
 def reading(**args) -> AIMessage:
@@ -225,7 +226,7 @@ async def test_yes_to_expected_marks_it_from_the_dashboard(env):
     result = await env.panel.press(reply.confirm.id, True, env.actions)
 
     assert env.expectations.marked == [(env.incident.id, "dashboard")]
-    assert result.line == "You said this is expected."
+    assert result.line == "You said this is expected. x"
 
 
 async def test_send_gives_the_words_to_the_waiting_plan_as_the_dashboard(env):

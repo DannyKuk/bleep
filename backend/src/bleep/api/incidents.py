@@ -1,17 +1,23 @@
 """Incident routes: the list, one incident with its findings, its timeline, the dashboard's
 decision on its approval, the human's feedback on its findings, and the self-recoveries that never
-became incidents."""
+became incidents.
+
+Bleep's own fixed texts in these views (notices, the report's outcome and timeline, "This is
+expected") are shown in the language the person picked; what is stored stays English (#427).
+"""
 
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 
+from bleep import prompts
 from bleep.api.deps import get_expectations, get_parts, get_runner
 from bleep.guard.redact import redacted_proposal
 from bleep.incidents.expectations import Expectations
 from bleep.incidents.repository import utcnow
 from bleep.incidents.runner import IncidentRunner
+from bleep.incidents.shown import decision_in, event_in, report_in
 from bleep.schemas.api import (
     ApprovalStatus,
     ApprovalView,
@@ -59,9 +65,10 @@ def _approval_status(record: ApprovalRecord) -> ApprovalStatus:
     return "closed" if record.closed else "pending"
 
 
-def _approval(record: ApprovalRecord | None) -> ApprovalView | None:
+def _approval(record: ApprovalRecord | None, language: str) -> ApprovalView | None:
     if record is None:
         return None
+    decision = record.decision
     return ApprovalView(
         id=record.id,
         status=_approval_status(record),
@@ -69,7 +76,7 @@ def _approval(record: ApprovalRecord | None) -> ApprovalView | None:
         proposal=redacted_proposal(record.proposal),
         requested_at=record.requested_at,
         reminders=record.reminders,
-        decision=record.decision,
+        decision=decision_in(decision, language) if decision is not None else None,
     )
 
 
@@ -124,15 +131,16 @@ async def get_incident(
     state = await runner.state(incident_id)
     expectation = await expectations.offered(incident_id)
     groups = await parts.incidents.groups([incident])
+    language = parts.settings_store.language()
     return IncidentDetail(
         incident=incident,
         diagnosis=state.get("diagnosis"),
         proposal=redacted_proposal(proposal) if (proposal := state.get("proposal")) else None,
-        approval=_approval(await parts.approvals.current(incident_id)),
+        approval=_approval(await parts.approvals.current(incident_id), language),
         outcome=state.get("outcome"),
-        report=state.get("report"),
+        report=report_in(report, language) if (report := state.get("report")) else None,
         feedback=await parts.memory.feedback(incident_id),
-        expectation=expectation.sentence() if expectation is not None else None,
+        expectation=prompts.show(expectation.said(), language) if expectation else None,
         repeats=group.count if (group := groups.get(incident_id)) is not None else 1,
     )
 
@@ -150,9 +158,10 @@ async def mark_expected(
     a host that sleeps) and close the incident. A pending plan is rejected first, first wins."""
     await _incident(parts, incident_id)
     answer = await expectations.expected(incident_id, "dashboard")
+    said = prompts.show(answer.said, parts.settings_store.language())
     if not answer.done:
-        raise HTTPException(409, answer.text)
-    return {"text": answer.text}
+        raise HTTPException(409, said)
+    return {"text": said}
 
 
 @router.get("/incidents/{incident_id}/events")
@@ -161,7 +170,8 @@ async def incident_events(
 ) -> list[IncidentEvent]:
     """The incident's timeline after seq `after`, in seq order."""
     await _incident(parts, incident_id)
-    return await parts.bus.history(incident_id, after)
+    language = parts.settings_store.language()
+    return [event_in(event, language) for event in await parts.bus.history(incident_id, after)]
 
 
 @router.post(

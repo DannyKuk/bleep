@@ -17,6 +17,7 @@ How signals become incidents and how an incident's progress reaches the dashboar
 - **Subscribers unregister on exit or cancel.** Reason: a closed SSE connection must not leave a queue filling forever (#11).
 - **Clocks are injected, timestamps are UTC.** Stored as ISO strings. Reason: tests control time and ordering without sleeping (#11).
 - **The app shares one `ApprovalStore` and one `GuardLog`.** `build_parts` passes them to the graph, the runner, the API and the reminder loop; the lifespan starts the reminders with the watcher, stops them first, and flushes the guard log after the runs and the watcher stop. Reason: a decision recorded by the API or Telegram must be the one the run and the boot recovery read, and a guard record made while shutting down must not be lost (#21).
+- **A notice is stored in English with the template it was made from** (#427). The runner, the watchdog, "This is expected", the watcher, the graph's nodes and the bot publish a notice (and an `expected` event) through `graph.shown.shown_payload`: `{"text": <English>, "shown": <the Shown>}`, where the English is the same words as before #427 and what the report's facts and the chat's snapshot read. `IncidentRunner.end` and `Notifier.notice` take a `schemas.shown.Shown`, so the channels say it in the person's language; `Expectations.expected` answers with one (`Answer.said`), rendered by whichever channel asked. Reason: the person reads the language they picked while every model keeps reading English ([notify](notify.md), [app](app.md)).
 
 ## Statuses
 

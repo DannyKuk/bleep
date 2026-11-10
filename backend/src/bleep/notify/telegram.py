@@ -22,7 +22,9 @@ from typing import Any, Literal
 
 import httpx
 
+from bleep import prompts
 from bleep.graph.deps import Approvals
+from bleep.graph.shown import shown_payload
 from bleep.guard.log import GuardLogger
 from bleep.incidents.bus import EventBus
 from bleep.incidents.expectations import RUNNING
@@ -31,6 +33,7 @@ from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.notify.format import answer, bold_first_line, phrase, render, shows_in_full, steps_text
 from bleep.schemas.graph import Decision
 from bleep.schemas.incidents import TERMINAL_STATUSES
+from bleep.schemas.shown import Shown
 from bleep.schemas.talk import Offer
 from bleep.store.db import Database
 from bleep.talk.actions import Actions, Expecting, Looking, Resumer
@@ -70,7 +73,7 @@ CALLBACK_TEXT_MAX = 200  # Telegram's limit for a button's answer
 # the morning the menu showed. The incident is the message's. A button's data is the same in
 # every language, only its label is not, so a press is read the same after a change.
 ON_IT_VERB = "onit"
-ON_IT_NOTICE = "Snoozed from Telegram: you said you are on it."
+ON_IT_NOTICE = Shown.of("notice/on_it")
 SNOOZE_AHEAD_MAX = timedelta(days=2)  # no button carries a later morning
 # An offer made in the chat is confirmed with `yes:<id>` or declined with `no:<id>`; the offer
 # itself is kept by the bot (`talk.confirms`), never carried by the button.
@@ -468,7 +471,8 @@ class TelegramBot:
         """ "It's expected": record it and close the incident, as the dashboard's button does."""
         assert self.expectations is not None
         result = await self.expectations.expected(incident_id, "telegram")
-        await self.client.answer_callback(callback_id, _cut(result.text))
+        said = prompts.show(result.said, self.language())
+        await self.client.answer_callback(callback_id, _cut(said))
         if result.done:  # a failed press leaves Approve and Reject to a plan that still waits
             await self.client.clear_buttons(self.chat_id, message_id)
 
@@ -504,7 +508,7 @@ class TelegramBot:
             await self._show_choices(message, incident_id, approval_id, now, language)
             return
         await self.on_it.quiet.set(*target, "snooze", until)
-        await self.on_it.bus.publish(incident_id, "notice", {"text": ON_IT_NOTICE})
+        await self.on_it.bus.publish(incident_id, "notice", shown_payload(ON_IT_NOTICE))
         said = _said("answer_on_it", language, until=when(until, now, zone, language))
         await self.client.answer_callback(callback_id, said)
 

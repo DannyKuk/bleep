@@ -6,6 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from bleep import prompts
+from bleep.graph.shown import english
 from bleep.hosts.config import HostConfig, ServiceOverrides, UrlCheckConfig
 from bleep.hosts.dashboard import HostChange
 from bleep.hosts.engine import EngineError
@@ -21,6 +22,7 @@ from bleep.schemas.graph import PlanStep, Proposal
 from bleep.schemas.incidents import Incident, Signal, Subject
 from bleep.schemas.quiet import QuietState
 from bleep.schemas.settings import Budgets, Language, Thresholds
+from bleep.schemas.shown import Shown
 from bleep.store.db import Database
 from bleep.watcher import manager as manager_module
 from bleep.watcher.detector import NO_LOGS_LINE, AttachSignals, Detector, OpenIncident
@@ -94,11 +96,11 @@ class FakeRunner:
         self.back.append(host_id)
 
     async def end(
-        self, incident_id: str, text: str, *, ending: str = "", spare: tuple[str, ...] = ()
+        self, incident_id: str, text: Shown, *, ending: str = "", spare: tuple[str, ...] = ()
     ) -> None:
         if self.repo is not None and await self.repo.close_unfinished(incident_id, spare) is None:
             return
-        self.ended.append((incident_id, text))
+        self.ended.append((incident_id, english(text)))
         self.endings.append(ending)
 
     async def close(self) -> None:
@@ -818,7 +820,7 @@ async def test_a_removed_host_stops_being_watched_and_its_open_incidents_are_end
     assert "c" not in r.manager.hosts and "c" not in r.manager._tasks
     assert [h.config.id for h in r.registry.hosts()] == ["h"]
     assert machines.machines["box.lan"].closed
-    assert r.runner.ended == [(incident.id, REMOVED_NOTICE)]  # host h's incident stays
+    assert r.runner.ended == [(incident.id, english(REMOVED_NOTICE))]  # host h's incident stays
     assert r.runner.endings == ["removed"]
     assert other.id not in [i for i, _ in r.runner.ended]
     await r.manager.stop()
@@ -890,7 +892,7 @@ async def test_a_moved_host_forgets_its_held_url_failures_and_its_incidents_hear
     await r.manager.host_changed(HostChange("c", "connection", moved, moved=True))
     assert "c" not in r.manager._held and "c" not in r.manager._announced
     notices = [e for e in await r.bus.history(incident.id) if e.kind == "notice"]
-    assert [e.payload["text"] for e in notices] == [manager_module.MOVED_NOTICE]
+    assert [e.payload["text"] for e in notices] == [english(manager_module.MOVED_NOTICE)]
     assert (await r.repo.get(incident.id)).status == "open"  # moved, not removed
     await r.manager.stop()
 
@@ -1063,7 +1065,7 @@ async def test_snoozing_again_does_not_end_a_closed_incident_twice(tmp_path):
 
 def test_the_notice_names_the_subject_and_the_mode():
     state = QuietState(scope="service", target_id=SHOP, mode="snooze", until=None, since=T0)
-    assert quiet_notice("shop", state) == (
+    assert english(quiet_notice("shop", state)) == (
         "Closed: you snoozed shop; I look at it again when the snooze ends."
     )
 
@@ -1270,7 +1272,7 @@ async def test_one_failing_end_does_not_keep_a_quiet_host_from_closing_the_other
     original = r.runner.end
 
     async def end(
-        incident_id: str, text: str, *, ending: str = "", spare: tuple[str, ...] = ()
+        incident_id: str, text: Shown, *, ending: str = "", spare: tuple[str, ...] = ()
     ) -> None:
         if incident_id == first.id:
             raise RuntimeError("the database is locked")

@@ -8,16 +8,11 @@ from bleep import prompts
 from bleep.graph.build import build_graph, open_checkpointer
 from bleep.graph.deps import StaticSettings
 from bleep.graph.nodes import propose, verify
+from bleep.graph.shown import english
+from bleep.incidents import runner as notices_of
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
-from bleep.incidents.runner import (
-    ANSWERED_NOTICE,
-    BACK_NOTICE,
-    QUIET_RUN_NOTICE,
-    QUIET_RUN_NOTICE_HOST,
-    WAITING_NOTICE,
-    IncidentRunner,
-)
+from bleep.incidents.runner import IncidentRunner
 from bleep.incidents.watchdog import Watchdog
 from bleep.schemas.graph import (
     Decision,
@@ -28,10 +23,20 @@ from bleep.schemas.graph import (
 )
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Budgets
+from bleep.schemas.shown import Shown
 from fakes import FakeChatModel
 from graph_env import T0, confident_model, graph_env, no_wait
 
 M2_PATH = ["gather", "investigate", "diagnose", "propose", "report"]
+# The notices as they are stored and as the channels were handed them in English.
+ANSWERED_NOTICE = english(notices_of.ANSWERED_NOTICE)
+BACK_NOTICE = english(notices_of.BACK_NOTICE)
+QUIET_RUN_NOTICE = english(notices_of.QUIET_RUN_NOTICE)
+QUIET_RUN_NOTICE_HOST = english(notices_of.QUIET_RUN_NOTICE_HOST)
+WAITING_NOTICE = english(notices_of.WAITING_NOTICE)
+REMOVED = Shown.of("notice/removed")
+SNOOZED = Shown.of("notice/snoozed", name="shop")
+LEFT_ALONE = Shown.of("notice/left_alone", name="shop")
 
 
 def service(env) -> Subject:
@@ -329,10 +334,10 @@ class NoticeNotifier:
     async def incident_opened(self, incident) -> None:
         return None
 
-    async def notice(self, incident_id: str, text: str, ending: str | None = None) -> None:
+    async def notice(self, incident_id: str, text: Shown, ending: str | None = None) -> None:
         if self.fail:
             raise RuntimeError("telegram is down")
-        self.notices.append((incident_id, text))
+        self.notices.append((incident_id, english(text)))
         self.endings.append(ending)
 
 
@@ -876,14 +881,14 @@ async def test_end_cancels_a_run_in_flight_closes_the_incident_and_says_why(tmp_
         runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
         await runner.start(incident)
         await asyncio.wait_for(env.deps.bus.reached.wait(), 5)
-        await runner.end(incident.id, "Closed: the host was removed.", ending="removed")
+        await runner.end(incident.id, REMOVED, ending="removed")
         await runner.join()
 
         assert (await env.repo.get(incident.id)).status == "closed"
         assert await runner.recover_on_boot() == []  # a closed incident is never run again
     events = await env.bus.history(incident.id)
-    assert events[-1].kind == "notice" and events[-1].payload["text"].endswith("removed.")
-    assert notifier.notices == [(incident.id, "Closed: the host was removed.")]
+    assert events[-1].kind == "notice" and events[-1].payload["text"] == english(REMOVED)
+    assert notifier.notices == [(incident.id, english(REMOVED))]
     assert notifier.endings == ["removed"]
 
 
@@ -897,15 +902,13 @@ async def test_end_with_spare_leaves_an_executing_incident_and_its_run_alone(tmp
         await runner.start(incident)
         await asyncio.wait_for(env.deps.bus.reached.wait(), 5)
         await env.repo.set_status(incident.id, "executing")
-        await runner.end(
-            incident.id, "Closed: quiet.", ending="quiet", spare=("executing", "verifying")
-        )
+        await runner.end(incident.id, SNOOZED, ending="quiet", spare=("executing", "verifying"))
         assert incident.id not in runner._ended
         assert not runner._runs[incident.id].cancelled()
         assert (await env.repo.get(incident.id)).status == "executing"
         await runner.close()
     texts = [e.payload.get("text") for e in await env.bus.history(incident.id)]
-    assert "Closed: quiet." not in texts
+    assert english(SNOOZED) not in texts
     assert notifier.notices == []
 
 
@@ -936,7 +939,7 @@ async def test_an_approve_landing_while_end_closes_the_incident_never_runs_execu
             return await real(incident_id)
 
         env.repo.close_unfinished = close_unfinished
-        await runner.end(incident.id, "Closed: the host was removed.", ending="removed")
+        await runner.end(incident.id, REMOVED, ending="removed")
         await runner.join()
 
     assert landed == [True]
@@ -981,7 +984,7 @@ async def test_a_yes_racing_end_with_the_stored_approvals_never_runs_and_leaves_
             return closed
 
         env.repo.close_unfinished = close_unfinished
-        await runner.end(incident.id, "Closed: you told me to leave shop alone.", ending="quiet")
+        await runner.end(incident.id, LEFT_ALONE, ending="quiet")
         await runner.join()
         record = await approvals.current(incident.id)
 
@@ -1009,7 +1012,7 @@ async def test_a_resume_that_arrives_after_end_is_not_driven(tmp_path, acting):
         await runner.join()
         approval_id = await runner.waiting_for(incident.id)
         won = await approvals.resolve(incident.id, decide("approve"), approval_id)
-        await runner.end(incident.id, "Closed: the host was removed.", ending="removed")
+        await runner.end(incident.id, REMOVED, ending="removed")
         await runner.resume(incident.id, won, approval_id)
         await runner.join()
 
@@ -1059,7 +1062,7 @@ async def test_end_leaves_a_finished_incident_as_it_is_and_says_nothing(tmp_path
     async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
         runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
         await env.repo.set_status(incident.id, "resolved")
-        await runner.end(incident.id, "Closed: the host was removed.", ending="removed")
+        await runner.end(incident.id, REMOVED, ending="removed")
     assert (await env.repo.get(incident.id)).status == "resolved"
     assert notifier.notices == []
 
@@ -1071,7 +1074,7 @@ async def test_end_says_when_a_step_may_already_have_run(tmp_path):
     async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
         runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus, notifier=notifier)
         await env.repo.set_status(incident.id, "executing")
-        await runner.end(incident.id, "Closed: the host was removed.", ending="removed")
+        await runner.end(incident.id, REMOVED, ending="removed")
     ((_, text),) = notifier.notices
     assert "may already have run" in text
 
@@ -1213,8 +1216,8 @@ class ChannelLog:
         self.heard.append(("opened", incident.status))
         self.titles.append(incident.title)
 
-    async def notice(self, incident_id: str, text: str, ending: str | None = None) -> None:
-        self.heard.append(("notice", text))
+    async def notice(self, incident_id: str, text: Shown, ending: str | None = None) -> None:
+        self.heard.append(("notice", english(text)))
         self.endings.append(ending)
 
     async def report(self, incident, report) -> None:

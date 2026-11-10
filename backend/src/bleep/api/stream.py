@@ -15,6 +15,7 @@ from sse_starlette import EventSourceResponse, ServerSentEvent
 
 from bleep.api.deps import get_parts
 from bleep.incidents.bus import EventBus
+from bleep.incidents.shown import event_in
 from bleep.schemas.incidents import IncidentEvent
 from bleep.wiring import AppParts
 
@@ -68,8 +69,9 @@ async def stream(
 
     async def messages() -> AsyncIterator[ServerSentEvent]:
         async for event in follow(parts.bus, incident_id, cursor):
+            shown = event_in(event, parts.settings_store.language())  # a notice in their words
             yield ServerSentEvent(
-                data=event.model_dump_json(), id=str(event.seq) if with_id else None
+                data=shown.model_dump_json(), id=str(event.seq) if with_id else None
             )
 
     return EventSourceResponse(messages(), ping=PING_S)

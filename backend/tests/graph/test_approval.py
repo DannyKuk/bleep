@@ -5,6 +5,7 @@ import pytest
 from bleep.graph.build import build_graph, open_checkpointer
 from bleep.graph.deps import StaticSettings
 from bleep.graph.nodes import approval, propose
+from bleep.graph.shown import english
 from bleep.incidents.approvals import ApprovalStore, grant_token
 from bleep.incidents.runner import IncidentRunner
 from bleep.schemas.graph import Decision, PlanStep, Proposal, VerificationPlan
@@ -358,7 +359,7 @@ async def test_a_coolify_target_naming_no_single_application_is_not_put_to_the_h
     )
 
     assert snapshots == []
-    assert unread == ["shop on a: names no single Coolify application"]
+    assert [english(line) for line in unread] == ["shop on a: names no single Coolify application"]
 
 
 async def test_a_coolify_target_on_an_unreachable_host_is_not_put_to_the_human(tmp_path):
@@ -371,7 +372,9 @@ async def test_a_coolify_target_on_an_unreachable_host_is_not_put_to_the_human(t
         env.deps, Proposal(kind="act", steps=[redeploy], reason="r")
     )
 
-    assert unread == ["shop on a: cannot be read, the host is unreachable"]
+    assert [english(line) for line in unread] == [
+        "shop on a: cannot be read, the host is unreachable"
+    ]
 
 
 # A plan the plan check refused twice (#113): the human instructs or lets it go, never approves.

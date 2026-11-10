@@ -10,21 +10,27 @@ from bleep.guard.plan_check import coolify_members
 from bleep.hosts.coolify_names import COOLIFY_UUID
 from bleep.hosts.engine import EngineError, EngineUnavailable
 from bleep.hosts.registry import Registry
+from bleep.schemas.shown import Shown
+
+UNREACHABLE = Shown.of("target/unreadable_unreachable")
+UNKNOWN_HOST = Shown.of("target/unreadable_unknown")
 
 
-async def read_app_uuid(registry: Registry, host_id: str, target: str) -> tuple[str | None, str]:
+async def read_app_uuid(
+    registry: Registry, host_id: str, target: str
+) -> tuple[str, None] | tuple[None, Shown]:
     """The uuid of the one Coolify application `target` names on the host now, or None and why
     not."""
     try:
         containers = await registry.engine(host_id).containers()
     except EngineUnavailable:
-        return None, "cannot be read, the host is unreachable"
+        return None, UNREACHABLE
     except EngineError:
-        return None, "cannot be read, the host did not list its containers"
+        return None, Shown.of("target/unreadable_unlisted")
     except KeyError:
-        return None, "cannot be read, the host is not in the hosts file"
+        return None, UNKNOWN_HOST
     members = coolify_members(containers, target)
     uuids = {c.labels[COOLIFY_UUID] for c in members if c.labels.get(COOLIFY_UUID)}
     if len(uuids) != 1:
-        return None, "names no single Coolify application"
-    return uuids.pop(), ""
+        return None, Shown.of("target/no_single_app")
+    return uuids.pop(), None
