@@ -16,7 +16,9 @@ SignalKind = Literal[
     "memory",
     "load",
     "host_unreachable",
+    "look_requested",  # a person asked Bleep to look at a service now (#403)
 ]
+LOOK_REQUESTED: SignalKind = "look_requested"
 IncidentStatus = Literal[
     "open",
     "investigating",

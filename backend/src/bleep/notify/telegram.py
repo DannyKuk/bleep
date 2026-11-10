@@ -26,6 +26,7 @@ from bleep.graph.deps import Approvals
 from bleep.guard.log import GuardLogger
 from bleep.incidents.bus import EventBus
 from bleep.incidents.expectations import RUNNING
+from bleep.incidents.looks import Channel, Look
 from bleep.incidents.quiet import QuietStore, morning_of, quiet_target, snooze_until
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.notify.format import answer, bold_first_line, phrase, render, shows_in_full, steps_text
@@ -36,6 +37,7 @@ from bleep.store.db import Database
 from bleep.talk.confirms import Confirms
 from bleep.talk.conversation import Talk
 from bleep.talk.history import Turns
+from bleep.talk.looks import look_said
 from bleep.talk.offers import confirm_line, instruction
 from bleep.talk.times import when
 
@@ -82,6 +84,12 @@ class Expecting(Protocol):
     async def expected(
         self, incident_id: str, via: Literal["telegram", "dashboard"]
     ) -> ExpectAnswer: ...
+
+
+class Looking(Protocol):
+    """The part of `incidents.looks.Looks` the bot uses."""
+
+    async def look(self, service_id: str, via: Channel) -> Look: ...
 
 
 EXPECTED_VERB = "expected"  # the "It's expected" button's data; the incident is the message's
@@ -358,6 +366,7 @@ class TelegramBot:
         self.clock = clock
         self._sleep = sleep
         self.expectations: Expecting | None = None
+        self.looks: Looking | None = None  # given with the runner, which a look starts
         self.on_it = on_it
         self.talk = talk
         self.turns = Turns()  # this chat's last turns, for the next message's context
@@ -722,6 +731,11 @@ class TelegramBot:
         if offer.kind == "instruct" and offer.plan_id:
             decision = Decision(kind="instruct", text=offer.text, via="telegram", at=now)
             return await self._resolve(offer.incident_id or "", offer.plan_id, decision)
+        if offer.kind == "look_again":
+            if self.looks is None or offer.target_id is None:
+                return answer("answer_unknown")
+            look = await self.looks.look(offer.target_id, "telegram")
+            return look_said(look, now, self._zone())
         if self.on_it is None or offer.scope is None or offer.target_id is None:
             return answer("answer_unknown")
         quiet, subject = self.on_it.quiet, offer.subject or offer.target_id

@@ -27,7 +27,7 @@ from bleep.guard.log import GuardLogger
 from bleep.guard.titles import split_service_id, title_name
 from bleep.incidents.bus import EventBus
 from bleep.incidents.quiet import QuietStore, quiet_target
-from bleep.incidents.repository import IncidentRepo, primary_signal, utcnow
+from bleep.incidents.repository import IncidentRepo, is_look, primary_signal, utcnow
 from bleep.notify import format as fmt
 from bleep.notify.telegram import (
     EXPECTED_LABEL,
@@ -35,6 +35,7 @@ from bleep.notify.telegram import (
     ON_IT_LABEL,
     ON_IT_VERB,
     Expecting,
+    Looking,
     MessageLog,
     OnIt,
     Resumer,
@@ -52,7 +53,7 @@ from bleep.schemas.graph import (
     Report,
     VerificationResult,
 )
-from bleep.schemas.incidents import TERMINAL_STATUSES, Ending, Incident
+from bleep.schemas.incidents import TERMINAL_STATUSES, Ending, Incident, Signal
 from bleep.schemas.settings import SecretStatus
 from bleep.schemas.telegram import TelegramStatus
 from bleep.store.db import Database
@@ -432,10 +433,11 @@ class Notifier:
 
     async def _opening(self, incident: Incident) -> tuple[str, int | None]:
         """The opener's head line, and the message it replies to: none for a new incident, the
-        previous incident's last message for a repeat (`Again`)."""
+        previous incident's last message for a repeat (`Again`). A look the person asked for
+        (#403) is new, whatever came before it."""
         name = incident.short_name or incident.id
         before = await self.incidents.previous(incident) if self.incidents is not None else None
-        if before is not None and before.closed_at is not None:
+        if before is not None and before.closed_at is not None and not await self._asked(incident):
             gap = incident.opened_at - before.closed_at
             if incident.fold_of is not None or gap < AGAIN_WITHIN:
                 head = fmt.render(
@@ -450,15 +452,23 @@ class Notifier:
         where = fmt.phrase("where_host") if host else incident.subject.host_id
         return fmt.bold_first_line(fmt.render("head_new", incident=name, where=where)), None
 
+    async def _asked(self, incident: Incident) -> bool:
+        return is_look(await self._signals(incident))
+
+    async def _signals(self, incident: Incident) -> list[Signal]:
+        return await self.incidents.signals(incident.id) if self.incidents is not None else []
+
     async def _seen(self, incident: Incident) -> str:
         """One line of what opened the incident, from its most telling signal."""
-        signals = await self.incidents.signals(incident.id) if self.incidents is not None else []
-        signal = primary_signal(signals)
+        signal = primary_signal(await self._signals(incident))
         if signal is None:
             return ""
         if signal.kind in _HOST_KINDS:
             return fmt.render(f"seen/{signal.kind}", host=incident.subject.host_id)
         service = split_service_id(incident.subject)[1]
+        if signal.kind == "look_requested":  # named as its short name names it (#403)
+            named = (incident.short_name or "").rsplit(" #", 1)[0]
+            return fmt.render("seen/look_requested", service=named or title_name(service))
         if signal.kind == "url_failed":
             url = str(signal.detail.get("url") or service)
             return fmt.render("seen/url_failed", url=title_name(url))
@@ -511,6 +521,7 @@ class NotifySetup:
     _rebuild: Callable[[], NotifySetup] | None = field(default=None, repr=False)
     _runner: Resumer | None = field(default=None, repr=False)
     _expectations: Expecting | None = field(default=None, repr=False)
+    _looks: Looking | None = field(default=None, repr=False)
 
     def status(self) -> TelegramStatus:
         """What the settings page shows: set up or not, the chat masked, when it last polled."""
@@ -549,12 +560,18 @@ class NotifySetup:
         self._expectations = expectations
         self.notifier.expectations = expectations
 
+    def use_looks(self, looks: Looking) -> None:
+        """A look on request for the chat's offers (#403); it starts runs, so it comes after
+        setup too."""
+        self._looks = looks
+
     def start(self, runner: Resumer) -> None:
         """Start polling. Does nothing without a token."""
         self._runner = runner
         if self.bot is not None and self._task is None:
             self.bot.runner = runner
             self.bot.expectations = self._expectations
+            self.bot.looks = self._looks
             self._task = asyncio.create_task(self.bot.poll_forever(), name="telegram poller")
 
     async def stop(self) -> None:
