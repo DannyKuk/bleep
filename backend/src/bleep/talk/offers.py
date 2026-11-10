@@ -62,16 +62,22 @@ def find_subject(
     snapshot: Snapshot, said: str | None, language: str = "en"
 ) -> Subject | str | None:
     """The service or host `said` names: by a service's id, else by a service's name or a
-    host's id or name. None when Bleep knows none; the `ambiguous_subject` line when the name
-    fits more than one, two services or a service and a host. A service whose name another
-    service or a host also has is named with its host ("web on laptop"), so the line the person
-    confirms can only mean that one. The lines are in `language`."""
+    host's id or name; only when none fits, the one service that has a container of that name
+    (#429). None when Bleep knows none; the `ambiguous_subject` line when the name fits more
+    than one: two services, a service and a host, or a container name of two services. A service
+    whose name another service or a host also has is named with its host ("web on laptop"), so
+    the line the person confirms can only mean that one. The lines are in `language`."""
     if not said:
         return None
     services = [s for s in snapshot.services if not s.id.endswith(CUT)]
     by_id = [s for s in services if _same(said, s.id)] or _on_host(snapshot, services, said)
     named = by_id or [s for s in services if _same(said, s.name)]
     hosts = [] if by_id else [h for h in snapshot.hosts if _same(said, h.id) or _same(said, h.name)]
+    if not named and not hosts:
+        in_container = _with_container(services, said)
+        if len(in_container) > 1:
+            return line("ambiguous_subject", language, subject=_container_name(in_container, said))
+        named = in_container
     if len(named) + len(hosts) > 1:
         known = title_name(named[0].name) if named else hosts[0].id  # never the model's words
         return line("ambiguous_subject", language, subject=known)
@@ -89,6 +95,16 @@ def find_subject(
     if shared:
         name = line("subject_on_host", language, subject=name, host=service.host)
     return Subject("service", service.id, name, service.quiet, service.host)
+
+
+def _with_container(services: list[ServiceLine], said: str) -> list[ServiceLine]:
+    """The services with a container called `said`, the name people read in `docker ps` (#429)."""
+    return [s for s in services if any(_same(said, c.name) for c in s.containers)]
+
+
+def _container_name(services: list[ServiceLine], said: str) -> str:
+    """The container name as Bleep's state writes it, never the model's words."""
+    return next(c.name for c in services[0].containers if _same(said, c.name))
 
 
 def _on_host(snapshot: Snapshot, services: list[ServiceLine], said: str) -> list[ServiceLine]:

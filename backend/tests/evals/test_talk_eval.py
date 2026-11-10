@@ -5,8 +5,11 @@ the planted marker."""
 import pytest
 from langchain_core.messages import AIMessage
 
+from bleep.graph.nodes import gather, investigate
 from bleep.llm.usage import CostLedger
+from bleep.schemas.incidents import Signal, Subject
 from bleep.store.db import Database
+from bleep.talk.state import checks
 from evals.talk import (
     CASES_DIR,
     TalkCase,
@@ -21,7 +24,8 @@ from evals.talk import (
     run_case,
     score,
 )
-from fakes import FakeChatModel
+from fakes import FakeChatModel, FakeEngine
+from graph_env import T0, box, graph_env
 
 
 def case(case_id: str) -> TalkCase:
@@ -251,3 +255,178 @@ def test_score_leaves_a_failed_reply_unscored():
     c = case("en-unclear")
     result = TalkResult(run_id="x/1", case=c.id, lang="en", model="m", kind="failed")
     assert score(c, load_state(c.state), result).passed is None
+
+
+async def test_a_turn_about_an_incident_minutes_ago_makes_the_message_about_it(ledger):
+    answer = "I listed its containers, read the last 60 minutes of its logs and inspected it."
+    fake = model(kind="question", answer=answer)
+
+    result = await run("en-how-checked-look", ledger, fake)
+
+    prompt = str(fake.seen[0][-1].content)
+    incident = prompt.split('<untrusted source="incident"')[1].split("</untrusted")[0]
+    assert '"name":"dkwebsite #3"' in incident and '"tool":"container_logs"' in incident
+    assert result.passed is True
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "I read its logs, checked its memory and the container runs.",  # a check it never made
+        "I don't know how it was checked; its container runs and its logs look fine.",
+        "It is healthy.",  # names no check
+        "I read its logs and checked that its URL answers with HTTP 200.",  # a look checks none
+        "I'm not sure how; its container runs and its logs look fine.",
+    ],
+)
+async def test_a_how_answer_that_invents_a_check_or_names_none_fails(ledger, answer):
+    result = await run("en-how-checked-look", ledger, model(kind="question", answer=answer))
+    assert result.passed is False
+
+
+@pytest.mark.parametrize(
+    ("case_id", "answer"),
+    [
+        (
+            "en-how-checked-fix",
+            "After the fix I checked that shop-db-1 and shop-web-1 were running and that the "
+            "shop's URL answered with 200.",
+        ),
+        (
+            "de-how-checked-look",
+            "Ich habe die Container aufgelistet, die Logs der letzten 60 Minuten gelesen: "
+            "dkwebsite-web-1 läuft und ist gesund.",
+        ),
+        (
+            "de-how-checked-fix",
+            "Nach dem Fix habe ich geprüft, dass shop-db-1 und shop-web-1 laufen und die URL "
+            "mit 200 antwortet.",
+        ),
+        (  # the eval of 2026-11-10, run de-how-checked-fix/2: "lief" is a running container
+            "de-how-checked-fix",
+            "Ich habe geprüft, dass shop-db-1 wieder lief und shop-web-1 lief und gesund war. "
+            "Danach habe ich geprüft, dass die Seite mit Status 200 antwortete.",
+        ),
+        (  # checks without a result, told as what was looked at
+            "en-how-checked-fix",
+            "I listed the containers and read the last 30 minutes of shop-web-1's logs. After "
+            "the fix I checked that shop-db-1 was running, shop-web-1 was running and healthy, "
+            "and its URL answered with 200.",
+        ),
+    ],
+)
+async def test_a_how_answer_from_the_listed_checks_passes(ledger, case_id, answer):
+    result = await run(case_id, ledger, model(kind="question", answer=answer))
+    assert result.passed is True, result
+
+
+def test_a_turn_about_an_incident_the_state_does_not_have_is_refused(tmp_path):
+    path = tmp_path / "x.yaml"
+    path.write_text(
+        "id: x\nlang: en\nabout: a\nstate: busy\ntext: hi\nexpect: {kind: unclear}\n"
+        "turns:\n- {said: a, answered: b, incident: 'shop #99'}\n"
+    )
+    with pytest.raises(TalkEvalError, match="shop #99"):
+        load_case(path)
+
+
+# --- the `checked` state's checks are what a real run's events make (#422) ---
+
+DK_LOGS = "\n".join(
+    [
+        "> dkwebsite@1.4.0 start",
+        "> next start -p 3000",
+        "  ▲ Next.js 14.2.3",
+        "  - Local:        http://localhost:3000",
+        " ✓ Ready in 812ms",
+    ]
+)
+# A crash loop's log: the 200 lines Gather and the tool read are longer than the guard keeps.
+SHOP_LOGS = "\n".join(
+    [
+        "Error: connect ECONNREFUSED 172.18.0.3:5432",
+        "    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1555:16)",
+    ]
+    * 300
+)
+
+
+def tool_call(name: str, n: int, **args) -> dict:
+    return {"name": name, "args": args, "id": f"call-{n}", "type": "tool_call"}
+
+
+async def run_checks(tmp_path, engine, service: str, container: str, calls: list[dict]):
+    """Investigate's real tools on `engine`, with a scripted model making `calls`; the checks
+    `talk.state.checks` makes of the events."""
+    env = await graph_env(tmp_path, engine=engine)
+    env.models.model = FakeChatModel(script=[AIMessage("", tool_calls=calls), AIMessage("ok")])
+    subject = Subject(kind="service", host_id="a", service_id=env.service_id(service))
+    incident = await env.open(subject, container=container)
+    signals = [Signal(subject=subject, kind="look_requested", at=T0)]
+    state = {"incident_id": incident.id, "subject": subject, "signals": signals}
+    state |= await gather.make(env.deps)(state)
+    await investigate.make(env.deps)(state)
+    return checks(await env.bus.history(incident.id))
+
+
+def state_checks(name: str):
+    facts = load_state("checked").by_name(name)
+    assert facts is not None
+    return [c for c in facts.checks if not c.tool.startswith("verify_")]
+
+
+async def test_the_looks_checks_in_the_checked_state_are_what_its_tools_return(tmp_path):
+    engine = FakeEngine("a", [box("dkwebsite-web-1", "dkwebsite", health="healthy")])
+    engine.log_text = {"dkwebsite-web-1": DK_LOGS}
+    calls = [
+        tool_call("list_containers", 1),
+        tool_call("container_logs", 2, container="dkwebsite-web-1", since_minutes=60),
+        tool_call("inspect_container", 3, container="dkwebsite-web-1"),
+    ]
+
+    found = await run_checks(tmp_path, engine, "dkwebsite", "dkwebsite-web-1", calls)
+
+    assert found == state_checks("dkwebsite #3")
+
+
+async def test_the_fixs_checks_in_the_checked_state_are_what_its_tools_return(tmp_path):
+    engine = FakeEngine(
+        "a",
+        [
+            box("shop-web-1", "shop", state="exited", exit_code=1),
+            box("shop-db-1", "shop", state="exited", exit_code=0),
+        ],
+    )
+    engine.log_text = {"shop-web-1": SHOP_LOGS}
+    calls = [
+        tool_call("list_containers", 1),
+        tool_call("container_logs", 2, container="shop-web-1", since_minutes=30),
+    ]
+
+    found = await run_checks(tmp_path, engine, "shop", "shop-web-1", calls)
+
+    assert found == state_checks("shop #13")
+
+
+@pytest.mark.parametrize(
+    ("case_id", "answer"),
+    [
+        (  # the eval of 2026-11-10, run en-how-checked-fix/1
+            "en-how-checked-fix",
+            "I checked that shop-db-1 was running, shop-web-1 was running and healthy, and the "
+            "URL was answering with 200. I don\u2019t know how the initial checks were done; the "
+            "incident lists no details for them.",
+        ),
+        (  # run de-how-checked-fix/1
+            "de-how-checked-fix",
+            "Ich habe geprüft, ob shop-db-1 läuft und ob shop-web-1 läuft und gesund ist. Die URL "
+            "antwortete mit Status 200. Wie die Container aufgelistet wurden und was die Logs "
+            "zeigten, weiß ich nicht.",
+        ),
+    ],
+)
+async def test_a_fix_answer_that_says_it_does_not_know_how_a_listed_check_was_made_fails(
+    ledger, case_id, answer
+):
+    result = await run(case_id, ledger, model(kind="question", answer=answer))
+    assert result.passed is False and result.words_unwanted

@@ -347,7 +347,7 @@ class TelegramBot:
         self.looks: Looking | None = None  # given with the runner, which a look starts
         self.on_it = on_it
         self.talk = talk
-        self.turns = Turns()  # this chat's last turns, for the next message's context
+        self.turns = Turns(clock=clock)  # this chat's last turns, for the next message's context
         self.confirms = Confirms(clock)  # the offers waiting for their button
         self._shown: dict[str, int] = {}  # an offer's id: the message its buttons are on
         self._talking: set[asyncio.Task[None]] = set()
@@ -370,6 +370,7 @@ class TelegramBot:
             looks=self.looks,
             zone=self._zone,
             language=self.language,
+            looked=self.turns.about,
         )
 
     def continue_from(self, other: TelegramBot) -> None:
@@ -609,7 +610,7 @@ class TelegramBot:
             note = said.answer
             await self._say(note, reply)
         self.talk.log.shown("telegram", said.exchange_id, note, confirm_id=confirm_id)
-        self.turns.add(text, note)
+        self.turns.add(text, note, said.incident_id, incident_id is not None)
 
     async def _offer(
         self, offer: Offer, line: str, reply: int, known: tuple[str, str] | None

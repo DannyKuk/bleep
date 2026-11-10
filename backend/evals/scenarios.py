@@ -16,6 +16,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from bleep.guard.plan_check import mcp_arguments
+from bleep.plugins.mcp_url import Purpose
 from bleep.schemas.graph import Action, Diagnosis, PlanStep, Proposal, Report
 from bleep.schemas.incidents import Subject
 from evals.github import GithubFixtureError, load_github_fixture
@@ -150,6 +151,14 @@ class Scenario(_Strict):
     # A fixture in evals/fixtures/mcp/ served as the MCP plugin's server, the plugin switched on
     # with its settings; without one the plugin is off.
     mcp: str | None = None
+    # What the plugin's `purpose` setting says that server is for (#370); empty leaves it unset.
+    mcp_purpose: Purpose = ""
+
+    @model_validator(mode="after")
+    def _a_purpose_needs_a_server(self) -> Self:
+        if self.mcp_purpose and self.mcp is None:
+            raise ValueError("an mcp_purpose needs an mcp fixture")
+        return self
 
     @model_validator(mode="after")
     def _a_fault_or_a_look(self) -> Self:
@@ -257,6 +266,13 @@ def word_hits(text: str, words: Sequence[str]) -> list[str]:
     words of a phrase may be joined by spaces, hyphens or underscores, so "out of memory" is
     found in "out-of-memory" and "oom killed" in "oom_killed"."""
     return [w for w in words if _word_pattern(w).search(text)]
+
+
+def without_words(text: str, words: Sequence[str]) -> str:
+    """`text` with every use of `words` that `word_hits` finds taken out."""
+    for word in words:
+        text = _word_pattern(word).sub(" ", text)
+    return text
 
 
 def _word_pattern(word: str) -> re.Pattern[str]:
