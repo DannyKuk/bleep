@@ -371,13 +371,13 @@ class _Server:
         # within one gap and both passes stay linear on any input. The raw pass catches an
         # escape whose stripping would also take a token character with it (ESC + letter); the
         # stripped pass catches a split by a longer escape sequence.
-        raw_gap = rf"(?:[\s\x00-\x1f\x7f-\x9f]|{INVISIBLE_CHARS})*"
+        raw_gap = rf"(?:[\s\x00-\x1f\x7f-\x9f\ud800-\udfff]|{INVISIBLE_CHARS})*"
         return re.compile(raw_gap.join(chars)), re.compile(r"\s*".join(chars))
 
     def scrub(self, text: str) -> str:
-        """The token out of server text, also where escape codes, control or invisible characters
-        or whitespace split it. A transformed echo (base64, reversed, in pieces far apart) is not
-        caught."""
+        """The token out of server text, also where escape codes, control or invisible characters,
+        lone surrogates or whitespace split it. A transformed echo (base64, reversed, in pieces far
+        apart) is not caught."""
         if self._echoes is None:
             return text
         raw, stripped = self._echoes
