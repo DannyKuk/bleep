@@ -27,7 +27,7 @@ from bleep.guard.log import GuardLogger
 from bleep.guard.titles import split_service_id, title_name
 from bleep.incidents.bus import EventBus
 from bleep.incidents.quiet import QuietStore, quiet_target
-from bleep.incidents.repository import IncidentRepo, is_look, primary_signal, utcnow
+from bleep.incidents.repository import IncidentRepo, primary_signal, utcnow
 from bleep.notify import format as fmt
 from bleep.notify.telegram import (
     EXPECTED_LABEL,
@@ -53,7 +53,7 @@ from bleep.schemas.graph import (
     Report,
     VerificationResult,
 )
-from bleep.schemas.incidents import TERMINAL_STATUSES, Ending, Incident, Signal
+from bleep.schemas.incidents import LOOK_REQUESTED, TERMINAL_STATUSES, Ending, Incident
 from bleep.schemas.settings import SecretStatus
 from bleep.schemas.telegram import TelegramStatus
 from bleep.store.db import Database
@@ -453,22 +453,25 @@ class Notifier:
         return fmt.bold_first_line(fmt.render("head_new", incident=name, where=where)), None
 
     async def _asked(self, incident: Incident) -> bool:
-        return is_look(await self._signals(incident))
-
-    async def _signals(self, incident: Incident) -> list[Signal]:
-        return await self.incidents.signals(incident.id) if self.incidents is not None else []
+        """Whether the person asked for the incident (#403), by the kind stored when it opened:
+        a watcher signal that attached since does not make it another kind."""
+        if self.incidents is None:
+            return False
+        return (await self.incidents.kinds([incident])).get(incident.id) == LOOK_REQUESTED
 
     async def _seen(self, incident: Incident) -> str:
-        """One line of what opened the incident, from its most telling signal."""
-        signal = primary_signal(await self._signals(incident))
+        """One line of what opened the incident, from its most telling signal; for a look, that
+        the person asked."""
+        service = split_service_id(incident.subject)[1]
+        if await self._asked(incident):  # named as its short name names it
+            named = (incident.short_name or "").rsplit(" #", 1)[0]
+            return fmt.render("seen/look_requested", service=named or title_name(service))
+        signals = await self.incidents.signals(incident.id) if self.incidents is not None else []
+        signal = primary_signal(signals)
         if signal is None:
             return ""
         if signal.kind in _HOST_KINDS:
             return fmt.render(f"seen/{signal.kind}", host=incident.subject.host_id)
-        service = split_service_id(incident.subject)[1]
-        if signal.kind == "look_requested":  # named as its short name names it (#403)
-            named = (incident.short_name or "").rsplit(" #", 1)[0]
-            return fmt.render("seen/look_requested", service=named or title_name(service))
         if signal.kind == "url_failed":
             url = str(signal.detail.get("url") or service)
             return fmt.render("seen/url_failed", url=title_name(url))

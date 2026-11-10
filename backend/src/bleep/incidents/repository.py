@@ -131,8 +131,13 @@ _COLUMNS = (
 )
 
 _OPEN = f"status NOT IN ({', '.join(repr(s) for s in TERMINAL_STATUSES)})"
-# Not a look on request (#403): its fold key is its subject's key, its kind and no target.
-_NOT_A_LOOK = f"(fold_key IS NULL OR fold_key != subject_key || '|{LOOK_REQUESTED}|')"
+# Not a look on request (#403) that saw nothing but the look: its fold key is its subject's key,
+# its kind and no target, and no watcher signal attached to it while it was open.
+_NOT_A_BARE_LOOK = (
+    f"NOT (COALESCE(fold_key, '') = subject_key || '|{LOOK_REQUESTED}|'"
+    " AND NOT EXISTS (SELECT 1 FROM incident_signals s WHERE s.incident_id = incidents.id"
+    f" AND json_extract(s.signal, '$.kind') != '{LOOK_REQUESTED}'))"
+)
 
 
 class IncidentRepo:
@@ -334,7 +339,9 @@ class IncidentRepo:
     ) -> Repeats | None:
         """The subject's finished incidents opened at or after `since`: those with one of the
         fold `keys`, or of any kind when `keys` is None; None when there is none. A look on
-        request (#403) is never one: a failure that outlives it was not missed by the watcher."""
+        request (#403) that took no watcher signal is not one: what the watcher holds back must
+        not depend on whether someone asked. One that took a failure while open is, as any
+        incident that took it would be."""
         column, values = ("subject_key", [subject.key])
         if keys is not None:
             column, values = ("fold_key", list(keys))
@@ -344,7 +351,7 @@ class IncidentRepo:
             async with conn.execute(
                 "SELECT id, COUNT(*) OVER () AS n,"
                 " MAX(COALESCE(closed_at, opened_at)) OVER () AS last FROM incidents"
-                f" WHERE {column} IN ({marks}) AND NOT {_OPEN} AND {_NOT_A_LOOK}"
+                f" WHERE {column} IN ({marks}) AND NOT {_OPEN} AND {_NOT_A_BARE_LOOK}"
                 " AND opened_at >= ?"
                 " ORDER BY opened_at DESC, id DESC LIMIT 1",
                 (*values, since.isoformat()),
@@ -380,12 +387,15 @@ class IncidentRepo:
         return kinds
 
     async def previous(self, incident: Incident) -> Incident | None:
-        """The subject's incident that closed last before `incident` opened, if any."""
+        """The subject's incident that closed last before `incident` opened, if any; a look on
+        request that took no watcher signal (#403) is not one: it saw no problem that could come
+        back."""
         conn = await self.db.connect()
         try:
             async with conn.execute(
                 f"SELECT {_COLUMNS} FROM incidents WHERE subject_key = ? AND id != ?"
                 f" AND NOT {_OPEN} AND closed_at IS NOT NULL AND opened_at <= ?"
+                f" AND {_NOT_A_BARE_LOOK}"
                 " ORDER BY closed_at DESC, id DESC LIMIT 1",
                 (incident.subject.key, incident.id, incident.opened_at.isoformat()),
             ) as cursor:
