@@ -81,7 +81,9 @@ class Actions:
     """What a surface `via` runs an offer with. `incidents` and `quiet` are None only where a
     surface has no quiet feature (a bot built without it): a quiet offer is then unknown, and an
     incident's end is left to the action's own answer. `zone` gives Bleep's time zone at each
-    answer, and `language` the language it is said in."""
+    answer, and `language` the language it is said in. `looked` hears the incident a look the
+    person confirmed opened or found open, so the surface's conversation goes on about it
+    (#422)."""
 
     approvals: Approvals
     runner: Resumer
@@ -93,6 +95,7 @@ class Actions:
     looks: Looking | None = None
     zone: Callable[[], tzinfo | None] = _no_zone
     language: Callable[[], str] = _english
+    looked: Callable[[str], None] | None = None
 
     async def bind(self, offer: Offer, shown_plan: str = "") -> Offer | str:
         """The offer ready to show, or why it cannot be offered now. An instruction and a yes
@@ -136,6 +139,8 @@ class Actions:
             if self.looks is None or offer.target_id is None:
                 return said("answer_unknown", language)
             look = await self.looks.look(offer.target_id, self.via)
+            if look.incident is not None and self.looked is not None:
+                self.looked(look.incident.id)
             return look_said(look, now, self.zone(), language)
         if self.quiet is None or offer.scope is None or offer.target_id is None:
             return said("answer_unknown", language)

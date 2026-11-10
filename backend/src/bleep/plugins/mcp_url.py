@@ -1,9 +1,10 @@
 """The MCP server by URL plugin: one MCP server's tools, through LangChain's MCP adapters.
 
 The server's endpoint and token (`MCP_URL`, `MCP_TOKEN`) come from the environment or the
-dashboard's secret file, never from the stored settings, which only say which of its tools Bleep may
-run: `read_tools` without approval, `act_tools` only as the `mcp.call` step of a plan a human
-approved. Any other tool is not allowed. The model gets two of Bleep's own tools rather than the
+dashboard's secret file, never from the stored settings. They say what the server is for (`purpose`,
+one line the person writes, which Investigate's prompt names) and which of its tools Bleep may run:
+`read_tools` without approval, `act_tools` only as the `mcp.call` step of a plan a human approved.
+Any other tool is not allowed. The model gets two of Bleep's own tools rather than the
 server's: `mcp_tools` lists what the server offers (its names, descriptions and input schemas,
 wrapped as untrusted data) and `mcp_call` runs a read tool. Each call opens one session, lists the
 tools with the adapters and calls the tool on that same session directly, so no LangChain runnable
@@ -30,6 +31,7 @@ from langchain_mcp_adapters.tools import load_mcp_tools
 from mcp import ClientSession
 from mcp.types import CallToolResult, EmbeddedResource, TextContent, TextResourceContents
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
@@ -60,7 +62,7 @@ from bleep.schemas.graph import ApprovalGrant, ApprovalRecord, PlanStep, StepRes
 from bleep.schemas.plugins import PluginHealth
 from bleep.tools.common import UNTRUSTED
 from bleep.tools.docker_act import StepRefused
-from bleep.tools.registry import ActHandler, ToolContext, ToolSpec
+from bleep.tools.registry import ActHandler, ToolBriefing, ToolContext, ToolSpec
 
 log = logging.getLogger(__name__)
 
@@ -81,14 +83,40 @@ REQUIRED_CHARS = 200  # the names of a tool's required arguments, at most
 LISTING_CHARS = MAX_CHARS - 1000
 MAX_BYTES = 2_000_000  # of one HTTP answer, counted before any decompression
 
+PURPOSE_CHARS = 200  # one sentence on what the server is for; it is read on every Investigate round
+_NOT_PLAIN = re.compile(rf"[\x00-\x1f\x7f-\x9f\u2028\u2029]|{INVISIBLE_CHARS}")
+
+
+def _one_plain_line(text: str) -> str:
+    if _NOT_PLAIN.search(text):
+        raise ValueError("must be one line of plain text, without control characters")
+    return text
+
+
 ToolName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_.\-/]{1,128}$")]
+Purpose = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, max_length=PURPOSE_CHARS),
+    AfterValidator(_one_plain_line),
+]
 Kind = Literal["read", "act", "marked", "not allowed"]
 
 
 class McpSettings(BaseModel):
-    """Which of the server's tools Bleep may run; the endpoint and token are in the env."""
+    """Which of the server's tools Bleep may run, and what the server is for; the endpoint and
+    token are in the env."""
 
     model_config = ConfigDict(extra="forbid")
+
+    purpose: Purpose = Field(
+        default="",
+        examples=["Manages the Coolify server: apps, deployments, env settings"],
+        description=(
+            "What the server is for, in a line: Investigate tells the model, so it knows when"
+            " asking the server is worth a call. Your own words, not the server's. Only used once"
+            " read tools are listed: with none, Investigate is not told."
+        ),
+    )
 
     read_tools: list[ToolName] = Field(
         default_factory=list,
@@ -490,8 +518,14 @@ def _read_tools(server: _Server) -> list[ToolSpec]:
             handle_validation_error=True,
         )
 
+    settings = server.settings
+    briefing = (
+        ToolBriefing(settings.purpose, tuple(settings.read_tools))
+        if settings.purpose and settings.read_tools
+        else None
+    )
     return [
-        ToolSpec("mcp_tools", "read", NAME, build_list),
+        ToolSpec("mcp_tools", "read", NAME, build_list, briefing=briefing),
         ToolSpec("mcp_call", "read", NAME, build_call),
     ]
 

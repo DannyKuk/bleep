@@ -1,0 +1,33 @@
+id: en-how-checked-look
+lang: en
+about: >-
+  "How did you check it?" sent on its own, two minutes after a turn about a healthy look (the
+  talk log of 2026-11-10): answered from the look's checks, with none it did not make.
+state: checked
+turns:
+- said: What did you check everything?
+  answered: I checked dkwebsite on the Coolify server. It was healthy, so nothing was changed.
+  incident: 'dkwebsite #3'
+  minutes_ago: 2
+text: Okay, so you only checked dkwebsite? How did you check it?
+expect:
+  kind: question
+  words:
+  - - log
+    - logs
+  - - container
+    - containers
+    - running
+    - inspected
+  absent:
+  - disk
+  - memory
+  - cpu
+  - stats
+  - github
+  - I don't know
+  - do not know
+  - not sure
+  - URL
+  - HTTP
+  - curl

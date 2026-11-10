@@ -28,7 +28,9 @@ DEFAULT_MIN_SCORE = 0.5
 # Recall's cut-off per model. bge-small's is the one recall was built on; bge-m3's is one 0.025
 # step below the highest that still returned every right past incident in
 # docs/spikes/embeddings/recall.py (docs/evals/embeddings-min-score-2026-11-06.md, #306).
-MIN_SCORES = {"bge-small-en-v1.5": 0.5, "bge-m3": 0.35}
+# gemini-embedding-2 (through an endpoint): one step below 0.675, the highest that returned every
+# right record on the 18 queries (docs/evals/embeddings-german-docs-2026-11-10.md, #377).
+MIN_SCORES = {"bge-small-en-v1.5": 0.5, "bge-m3": 0.35, "gemini-embedding-2": 0.65}
 _WORD = re.compile(r"[a-z0-9]+")
 
 

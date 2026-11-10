@@ -176,4 +176,5 @@ def main() -> None:
         print(f"\nraw: {out}", file=sys.stderr)
 
 
-main()
+if __name__ == "__main__":
+    main()

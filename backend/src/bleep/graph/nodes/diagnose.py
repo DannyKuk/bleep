@@ -23,7 +23,7 @@ from pydantic import Field, field_validator
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
-from bleep.graph.host_text import describe_basics, service_name
+from bleep.graph.host_text import describe_basics, describe_urls, service_name
 from bleep.graph.language import language_rule
 from bleep.graph.look import look_rule
 from bleep.graph.planted import EVIDENCE_SOURCE, planted_places, planted_sentence, read_sources
@@ -106,7 +106,9 @@ def _describe_signals(signals: list[Signal]) -> str:
     return "\n".join(lines) or "(none recorded)"
 
 
-def _describe_context(context: GatherContext) -> str:
+def _describe_context(context: GatherContext, with_urls: bool = True) -> str:
+    """What Gather collected. Its URL checks are left out after a fix ran (`with_urls` False):
+    they are from before it, and Verify's checks say how the URLs are now."""
     parts: list[str] = []
     if context.containers:
         parts.append(
@@ -119,6 +121,9 @@ def _describe_context(context: GatherContext) -> str:
         )
     for name, text in context.logs.items():
         parts.append(f"Recent log of {name}:\n{text}")
+    if context.urls and with_urls:
+        checks = describe_urls(context.urls)
+        parts.append(prompts.load("graph/url_checks_diagnose", checks=checks).strip())
     if context.basics is not None:
         parts.append("Host basics:\n" + "\n".join(describe_basics(context.basics)))
     if context.top_memory:
@@ -193,7 +198,7 @@ def make(deps: GraphDeps) -> Node:
             signals=_describe_signals(state.get("signals", [])),
             look=look_rule("diagnose", state.get("signals", [])),
             language=language_rule("graph/diagnose", deps.settings_store.language()),
-            context=_describe_context(context),
+            context=_describe_context(context, with_urls=not state.get("verify_loops")),
             investigation=_describe_investigation(messages),
             untrusted_rule=prompts.load("untrusted/diagnose").strip(),
             planted_in_rule=prompts.load("untrusted/diagnose_planted_in").strip(),

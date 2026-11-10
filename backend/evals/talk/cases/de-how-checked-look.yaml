@@ -1,0 +1,31 @@
+id: de-how-checked-look
+lang: de
+about: >-
+  "How did you check dkwebsite?" as a reply to a healthy look, in German: answered from the
+  look's checks, with none it did not make.
+state: checked
+incident: 'dkwebsite #3'
+text: Wie hast du dkwebsite geprüft?
+expect:
+  kind: question
+  words:
+  - - Log
+    - Logs
+    - Protokoll
+    - Protokolle
+  - - Container
+    - läuft
+    - lief
+    - laufen
+  absent:
+  - Festplatte
+  - Arbeitsspeicher
+  - CPU
+  - GitHub
+  - weiß nicht
+  - weiß es nicht
+  - weiß ich nicht
+  - keine Ahnung
+  - URL
+  - HTTP
+  - curl

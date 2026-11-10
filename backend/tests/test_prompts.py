@@ -123,6 +123,7 @@ OVERRIDABLE = [
     "graph/diagnose_missing",
     "graph/investigate",
     "graph/investigate_again",
+    "graph/investigate_mcp",
     "graph/look_diagnose",
     "graph/look_investigate",
     "graph/look_report",
@@ -133,6 +134,8 @@ OVERRIDABLE = [
     "graph/report",
     "graph/report_de",
     "graph/report_facts",
+    "graph/url_checks",
+    "graph/url_checks_diagnose",
     "graph/verify_failed",
     "llm/json_fallback",
     "llm/json_retry",
@@ -224,9 +227,9 @@ def test_the_prompts_with_a_fixed_part_render_as_they_did_before_it_moved_out(na
     when #105 narrowed the `planted_in` bullet, when #357 asked for exact names and when #364
     asked for a setting's documented value, `graph-investigate.txt` when #364 asked for that
     docs search, and `graph-propose.txt` when #276 kept Propose's plan to the steps the
-    diagnosis needs. `{look}` (#410) is filled as it is for a run no look opened, and
-    `{language}` (#374) as it is in English, so the fixtures also show that such a run's prompt
-    did not change."""
+    diagnosis needs. `{look}` (#410) and `{url_checks}` (#423) are filled as they are for a run
+    no look opened, and `{language}` (#374) as it is in English, so the fixtures also show that
+    such a run's prompt did not change."""
     extra = {field: load(rule).strip() for field, rule in FIXED_PARTS.get(name, {}).items()}
     fields = placeholders(prompts.file_text(name)) - {"untrusted_rule"} - set(extra)
     values = {field: f"<{field}>" for field in fields}
@@ -234,6 +237,8 @@ def test_the_prompts_with_a_fixed_part_render_as_they_did_before_it_moved_out(na
         values["mcp"] = ""  # the MCP plugin off (#118): the fixture predates `{mcp}`
     if "look" in values:
         values["look"] = ""  # a run no look opened (#410): its prompt is the one before `{look}`
+    if "url_checks" in values:
+        values["url_checks"] = ""  # a run no look opened checks no URL in Gather (#423)
     if "language" in values:
         values["language"] = language_rule(name, "en")  # empty (#374)
     rendered = load(

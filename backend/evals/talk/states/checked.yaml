@@ -1,0 +1,84 @@
+# Everything runs again. A look the person asked for at dkwebsite on coolify found it healthy
+# (dkwebsite #3), and shop #13 on the laptop was fixed and verified last night; each lists what
+# its run checked (#422). A look runs no URL check, so dkwebsite #3 lists none. The checks are
+# what `talk.state.checks` makes of Investigate's real tools run on a fake engine: a result is the
+# first line of the guarded output, and none where that line says nothing (the column names of
+# `list_containers`, the `name:` line of `inspect_container`, the cut note of a long log); the
+# `verify_*` lines use Verify's own details (`graph/nodes/verify.py`). `tests/evals/test_talk_eval.py`
+# runs those tools and checks that the other lines are what they make.
+snapshot:
+  now: "2026-11-10 10:20"
+  zone: Europe/Vienna
+  hosts:
+    - {id: laptop, name: laptop, health: ok, reachable: true, last_seen: "2026-11-10 10:20"}
+    - {id: coolify, name: Coolify server, health: ok, reachable: true, last_seen: "2026-11-10 10:20"}
+  services:
+    - id: coolify/coolify:dkwebsite
+      name: dkwebsite
+      host: coolify
+      health: ok
+      containers:
+        - {name: dkwebsite-web-1, state: running, health: healthy}
+    - id: laptop/compose:shop
+      name: shop
+      host: laptop
+      health: ok
+      containers:
+        - {name: shop-web-1, state: running, health: healthy}
+        - {name: shop-db-1, state: running, health: healthy}
+  ended_last_24h:
+    - id: inc_dk3
+      name: "dkwebsite #3"
+      title: "dkwebsite: a look on request"
+      subject: coolify/coolify:dkwebsite
+      status: resolved
+      opened: "2026-11-10 10:14"
+      ended: "2026-11-10 10:16"
+      outcome: Healthy; nothing was changed
+    - id: inc_13
+      name: "shop #13"
+      title: "shop: shop-web-1 died"
+      subject: laptop/compose:shop
+      status: resolved
+      opened: "2026-11-10 02:14"
+      ended: "2026-11-10 02:21"
+      outcome: Fixed and verified
+      cause: shop-web died because shop-db was stopped.
+incidents:
+  - id: inc_dk3
+    name: "dkwebsite #3"
+    title: "dkwebsite: a look on request"
+    subject: coolify/coolify:dkwebsite
+    status: resolved
+    opened: "2026-11-10 10:14"
+    ended: "2026-11-10 10:16"
+    outcome: Healthy; nothing was changed
+    signals:
+      - {kind: look_requested, at: "2026-11-10 10:14"}
+    checks:
+      - {tool: list_containers}
+      - {tool: container_logs, target: dkwebsite-web-1, minutes: 60, result: "> dkwebsite@1.4.0 start"}
+      - {tool: inspect_container, target: dkwebsite-web-1}
+    summary: >-
+      A look on request found dkwebsite healthy: its container runs and its logs show no
+      errors. Nothing was proposed or changed.
+  - id: inc_13
+    name: "shop #13"
+    title: "shop: shop-web-1 died"
+    subject: laptop/compose:shop
+    status: resolved
+    opened: "2026-11-10 02:14"
+    ended: "2026-11-10 02:21"
+    outcome: Fixed and verified
+    cause: shop-web died because shop-db was stopped.
+    signals:
+      - {kind: container_died, container: shop-web-1, at: "2026-11-10 02:14"}
+    checks:
+      - {tool: list_containers}
+      - {tool: container_logs, target: shop-web-1, minutes: 30}
+      - {tool: verify_container, target: shop-db-1, result: "passed: running"}
+      - {tool: verify_container, target: shop-web-1, result: "passed: running, healthy"}
+      - {tool: verify_url, target: "https://shop.example.com/", result: "passed: answering 200"}
+    summary: >-
+      shop-web died because shop-db was stopped. The person approved starting shop-db and
+      restarting shop-web at 02:19; both ran and the shop answered again.

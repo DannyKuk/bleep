@@ -173,6 +173,7 @@ async def test_a_min_score_passed_to_similar_wins_over_the_embedders(env):
         ("BAAI/bge-m3", 0.35),
         ("bge-m3", 0.35),  # as Ollama names it
         ("bge-m3:latest", 0.35),
+        ("google/gemini-embedding-2", 0.65),  # as OpenRouter names it
         ("BGE-M3:567m", 0.35),
         ("text-embedding-nomic-embed-text-v1.5", 0.5),  # not measured: the old default
     ],
