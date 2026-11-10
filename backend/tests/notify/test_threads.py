@@ -5,6 +5,7 @@ import gc
 import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from typing import get_args
 
 import httpx
 import pytest
@@ -16,11 +17,12 @@ from bleep.graph.nodes.report import HEALTHY_ANYWAY, OUTCOME_TEXT
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
-from bleep.notify.notifier import Notifier, setup
+from bleep.notify.notifier import Notifier, _end_template, setup
 from bleep.notify.telegram import MessageLog, TelegramBot
 from bleep.schemas.graph import (
     Check,
     Decision,
+    Outcome,
     PlanStep,
     Proposal,
     Report,
@@ -270,6 +272,64 @@ async def test_healthy_again_without_a_step_that_worked_is_not_fixed(env):
 
     _, end = env.chat.sent()
     assert first_line(end) == "*✅ Healthy again in 2 h*" and "Fixed" not in end["text"]
+
+
+# --- a look on request (#421) ---
+
+COOLIFY = Subject(kind="service", host_id="vps", service_id="vps/vclhwoxxy60z4vk70g0vpesq")
+
+
+async def look_checked(env, incident) -> None:
+    checks = [
+        Check(kind="container", target="dkwebsite-1", ok=True, detail="running"),
+        Check(kind="url", target="https://dk.example", ok=True, detail="answering 200"),
+    ]
+    await env.bus.publish(incident.id, "verification", {"ok": True, "attempt": 1, "checks": [
+        c.model_dump(mode="json") for c in checks
+    ]})  # fmt: skip
+
+
+async def test_a_look_that_found_the_service_healthy_ends_healthy_by_its_name(env):
+    incident = await env.open(COOLIFY, kind="look_requested", container=None, name="dkwebsite")
+    await env.notifier.incident_opened(incident)
+    await look_checked(env, incident)
+    await env.notifier.report(incident, report(OUTCOME_TEXT["healthy"]))
+
+    opener, end = env.chat.sent()
+    assert (
+        first_line(end) == "*✅ Looked: dkwebsite is healthy*" and replied_to(end) == opener["id"]
+    )
+    assert "Checked: dkwebsite\\-1 running; https://dk\\.example answering 200" in end["text"]
+    assert "Needs you" not in end["text"] and "vclhwoxxy60z4vk70g0vpesq" not in end["text"]
+
+
+async def test_a_healthy_look_ends_in_german_when_german_is_picked(env):
+    env.notifier.language = lambda: "de"
+    incident = await env.open(COOLIFY, kind="look_requested", container=None, name="dkwebsite")
+    await env.notifier.incident_opened(incident)
+    await look_checked(env, incident)
+    await env.notifier.report(incident, report(OUTCOME_TEXT["healthy"]))
+
+    _, end = env.chat.sent()
+    assert first_line(end) == "*✅ Angeschaut: dkwebsite ist gesund*"
+    assert "Geprüft: dkwebsite\\-1 running" in end["text"]
+
+
+def test_every_outcome_has_its_fixed_text_and_its_end_message():
+    texts = {kind: _end_template(OUTCOME_TEXT[kind]) for kind in get_args(Outcome)}
+    assert texts["healthy"] == "end_looked" and texts["no_action"] == "end_no_action"
+    assert len(set(OUTCOME_TEXT.values())) == len(OUTCOME_TEXT) == len(get_args(Outcome))
+    for name in texts.values():
+        assert prompts.file_text(f"notify/{name}") and prompts.file_text(f"notify/de/{name}")
+
+
+async def test_a_look_whose_check_failed_still_ends_needing_you(env):
+    incident = await env.open(COOLIFY, kind="look_requested", container=None, name="dkwebsite")
+    await env.notifier.incident_opened(incident)
+    await env.notifier.report(incident, report(OUTCOME_TEXT["no_action"]))
+
+    _, end = env.chat.sent()
+    assert first_line(end) == "*⚠️ Needs you · no action*"
 
 
 # --- no action, and its repeat ---

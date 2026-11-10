@@ -30,9 +30,10 @@ export function incidentMood(status: IncidentStatus, unsure = false): Mood {
   return "working";
 }
 
-/** The report's mood: a fix nobody confirmed needs the human; a run that ended quietly rests. */
+/** The report's mood: a fix nobody confirmed needs the human; a run that ended quietly rests. A
+ * look whose checks found the service healthy is good news too. */
 export function reportMood(outcome: Outcome): Mood {
-  if (outcome === "resolved") return "all_good";
+  if (outcome === "resolved" || outcome === "healthy") return "all_good";
   if (outcome === "unverified" || outcome === "budget") return "needs_you";
   return "resting";
 }

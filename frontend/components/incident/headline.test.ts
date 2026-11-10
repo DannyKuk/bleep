@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { approval, detail, diagnosis, incident, proposal } from "@/components/incident/fixtures";
-import { headline, headlineText, subjectName } from "@/components/incident/headline";
+import { headline, headlineText, lookedAt, subjectName } from "@/components/incident/headline";
 import type { IncidentStatus, Outcome } from "@/lib/api-types";
 
 const at = (status: IncidentStatus, outcome: Outcome | null = null) =>
@@ -73,8 +73,42 @@ describe("headline", () => {
     expect(at("resolved", "resolved")).toBe("Fixed and checked.");
   });
 
+  it("says a look that found the service healthy has nothing to do, by the service's name", () => {
+    const closed = (fields: Parameters<typeof incident>[0]) =>
+      headline(detail({ incident: incident({ status: "closed", ...fields }), outcome: "healthy" }));
+    expect(closed({})).toEqual({ lead: "", name: "shop", text: " looks healthy. Nothing to do." });
+    const coolify = {
+      kind: "service" as const,
+      host_id: "vps",
+      service_id: "vps/vclhwoxxy60z4vk70g0vpesq",
+    };
+    expect(headlineText(closed({ subject: coolify, short_name: "dkwebsite #3" }))).toBe(
+      "dkwebsite looks healthy. Nothing to do.",
+    );
+    expect(headlineText(closed({ subject: coolify, short_name: null }))).toBe(
+      "This service looks healthy. Nothing to do.",
+    );
+    expect(headlineText(closed({}))).not.toMatch(/cannot fix|fixed/i);
+  });
+
+  it("names a looked-at service by its id's name first, then its short name", () => {
+    const coolify = { kind: "service" as const, host_id: "vps", service_id: "vps/abc" };
+    expect(lookedAt({ subject: coolify, short_name: "my​site #1" })).toEqual({
+      lead: "",
+      name: "my�site",
+    });
+    expect(lookedAt(incident({ short_name: "other #2" }))).toEqual({ lead: "", name: "shop" });
+  });
+
   it("never says fixed for a closed incident, whatever its outcome", () => {
-    const outcomes: Outcome[] = ["rejected", "no_action", "unverified", "budget", "replan_limit"];
+    const outcomes: Outcome[] = [
+      "healthy",
+      "rejected",
+      "no_action",
+      "unverified",
+      "budget",
+      "replan_limit",
+    ];
     for (const outcome of outcomes) expect(at("closed", outcome)).not.toMatch(/fixed/i);
     expect(at("closed", "rejected")).toBe("Okay, I left it as it is.");
     expect(at("closed", "unverified")).toBe("I ran the plan, but could not confirm the fix.");

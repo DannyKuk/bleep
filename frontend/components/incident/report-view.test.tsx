@@ -124,6 +124,23 @@ describe("ReportView", () => {
     expect(screen.queryByRole("list", { name: "Follow-ups" })).toBeNull();
   });
 
+  it("shows a look that found the service healthy as good news, not as Needs you (#421)", () => {
+    const { container } = render(
+      <ReportView
+        report={report({
+          outcome: "Healthy when checked, nothing to do",
+          action_taken: null,
+          follow_ups: [],
+        })}
+        outcome="healthy"
+      />,
+    );
+    const pill = screen.getByText("Healthy when checked, nothing to do");
+    expect(pill).toHaveClass("text-ok");
+    expect(pill).not.toHaveClass("text-warn");
+    expect(container.querySelector("[data-mood]")).toHaveAttribute("data-mood", "all_good");
+  });
+
   it("never gives an unfixed outcome the green of a resolved one", () => {
     for (const outcome of [
       "rejected",

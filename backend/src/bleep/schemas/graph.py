@@ -12,7 +12,9 @@ from pydantic import BaseModel, Field, model_validator
 
 from bleep.schemas.docker import ContainerSummary, HostBasics
 
-Outcome = Literal["resolved", "rejected", "no_action", "unverified", "budget", "replan_limit"]
+Outcome = Literal[
+    "resolved", "healthy", "rejected", "no_action", "unverified", "budget", "replan_limit"
+]
 # Where host text gave orders or posed as Bleep (#105): a closed list, so the diagnosis can say
 # where without carrying any of that text.
 PlantedSource = Literal[

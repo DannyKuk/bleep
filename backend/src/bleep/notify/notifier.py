@@ -69,13 +69,15 @@ MAX_NEXT = 3  # follow-ups in the end message; the dashboard keeps them all
 _HOST_KINDS = ("disk", "memory", "load", "host_unreachable")
 _END_OF = {
     "resolved": "end_fixed",
+    "healthy": "end_looked",
     "unverified": "end_unverified",
     "rejected": "end_rejected",
     "no_action": "end_no_action",
     "budget": "end_stopped",
     "replan_limit": "end_stopped",
 }
-_CHECKED = ("end_fixed", "end_healthy", "end_unverified")  # ends that come after a check
+# The ends that come after a check.
+_CHECKED = ("end_fixed", "end_healthy", "end_looked", "end_unverified")
 
 
 def _english() -> str:
@@ -300,6 +302,8 @@ class Notifier:
         values = {"end_fixed": {"took": took}, "end_healthy": {"took": took}}.get(name, {})
         if name == "end_stopped":
             values = {"outcome": report.outcome}
+        if name == "end_looked":
+            values = {"service": _service_named(incident)}
         ran = report.action_taken or fmt.phrase("ran_nothing", language=language)
         parts = [
             fmt.bold_first_line(fmt.render(name, language=language, **values)),
@@ -492,8 +496,8 @@ class Notifier:
         """One line of what opened the incident, from its most telling signal; for a look, that
         the person asked."""
         service = split_service_id(incident.subject)[1]
-        if await self._asked(incident):  # named as its short name names it
-            named = (incident.short_name or "").rsplit(" #", 1)[0] or title_name(service)
+        if await self._asked(incident):
+            named = _service_named(incident)
             return fmt.render("seen/look_requested", language=language, service=named)
         signals = await self.incidents.signals(incident.id) if self.incidents is not None else []
         signal = primary_signal(signals)
@@ -518,6 +522,13 @@ class Notifier:
             log.warning("telegram: could not send: %s", error)
         except (sqlite3.Error, aiosqlite.Error, OSError) as error:
             log.warning("telegram: could not keep the thread: %s", error, exc_info=True)
+
+
+def _service_named(incident: Incident) -> str:
+    """The service as the incident's short name names it ("dkwebsite #3" names dkwebsite), or by
+    its key through `title_name` when it has none."""
+    named = (incident.short_name or "").rsplit(" #", 1)[0]
+    return named or title_name(split_service_id(incident.subject)[1])
 
 
 def _end_template(outcome: str) -> str:

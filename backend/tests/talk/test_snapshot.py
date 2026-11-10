@@ -6,12 +6,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from bleep.graph.nodes.report import OUTCOME_TEXT
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
 from bleep.schemas.api import ContainerView, HostView, QuietView, ServiceView
 from bleep.schemas.graph import Decision, PlanStep, Proposal
-from bleep.schemas.incidents import Signal, Subject
+from bleep.schemas.incidents import LOOK_REQUESTED, Signal, Subject
 from bleep.store.db import Database
 from bleep.talk.state import BleepState
 
@@ -150,6 +151,24 @@ async def test_the_snapshot_lists_hosts_services_and_incidents_in_the_local_zone
     assert (ended.name, ended.outcome) == ("shop #2", "Fixed and verified")
     assert ended.cause == "shop-db was stopped."  # one line
     assert ended.ended == "2026-11-09 02:05"
+
+
+async def test_a_look_that_found_the_service_healthy_is_listed_as_healthy_by_name(world):
+    world.clock_at = NOW - timedelta(minutes=5)
+    look = Signal(subject=SHOP, kind=LOOK_REQUESTED, at=world.clock_at, detail={"via": "telegram"})
+    incident, _ = await world.repo.open_or_attach(SHOP, [look], name="shop", attach=False)
+    healthy = OUTCOME_TEXT["healthy"]
+    await world.bus.publish(incident.id, "report", {"outcome": healthy, "cause": "None found."})
+    await world.repo.set_status(incident.id, "closed")
+
+    snapshot = await world.state(FakeHealth([host("laptop")], [service("shop")])).snapshot()
+
+    [ended] = snapshot.ended_last_24h
+    assert (ended.name, ended.title, ended.outcome) == (
+        "shop #1",
+        "look requested on shop",
+        "Healthy when checked, nothing to do",
+    )
 
 
 async def test_a_large_setup_and_a_hostile_label_still_fit_with_what_needs_attention_first(world):

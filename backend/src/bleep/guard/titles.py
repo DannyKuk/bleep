@@ -88,12 +88,16 @@ def title_name(name: str) -> str:
     return f'"{_cut(redact_text(text), TITLE_NAME_CHARS)}"'
 
 
-def build_title(subject: Subject, signals: list[Signal]) -> str:
+def build_title(subject: Subject, signals: list[Signal], name: str | None = None) -> str:
     """The title an incident opens with ("container died on a/compose:shop"): Bleep's words for
     its first signal and its subject, a service's key through `title_name`. The host id is the
-    hosts file's or the dashboard's, written by the operator, and stands as it is."""
+    hosts file's or the dashboard's, written by the operator, and stands as it is. Given `name`,
+    the service's name as the dashboard shows it, a service is named by it instead ("look
+    requested on dkwebsite"): the repository gives it for a look on request (#421)."""
     what = signals[0].kind.replace("_", " ") if signals else "incident"
     if not subject.service_id:
         return f"{what} on {subject.host_id}"
+    if name:
+        return f"{what} on {title_name(name)}"
     prefix, key = split_service_id(subject)
     return f"{what} on {prefix}{title_name(key)}"

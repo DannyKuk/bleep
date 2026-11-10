@@ -252,9 +252,11 @@ class IncidentRepo:
         now = self.clock()
         incident_id = new_incident_id(now)
         key = fold_key(subject, signals)
-        title = build_title(subject, signals)
+        look = is_look(signals)
+        # A look names its service as the person knows it, not by an id (#421).
+        title = build_title(subject, signals, name if look else None)
         # A look is asked for, never a repeat: its opener always reaches the chat (#403).
-        group = None if is_look(signals) else await self._group_to_join(conn, key, now, repeat_of)
+        group = None if look else await self._group_to_join(conn, key, now, repeat_of)
         if group is not None:
             # The title carries the count, so every message about the repeat says it.
             title += f" (seen {group.count + 1} times since {group.since:%d %b %H:%M} UTC)"

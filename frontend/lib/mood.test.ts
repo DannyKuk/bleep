@@ -85,6 +85,7 @@ describe("incidentMood", () => {
 describe("reportMood", () => {
   const cases: [Outcome, Mood][] = [
     ["resolved", "all_good"],
+    ["healthy", "all_good"],
     ["unverified", "needs_you"],
     ["budget", "needs_you"],
     ["rejected", "resting"],

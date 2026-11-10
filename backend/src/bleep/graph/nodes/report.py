@@ -2,9 +2,11 @@
 
 The outcome comes first, in code: one set earlier (a spent budget, Verify's `resolved`) stands,
 otherwise it follows the decision, and an approved plan that nothing verified is `unverified`,
-never `resolved`. The report around it is mostly Bleep's own: the title, the fixed outcome text,
-the action taken (from `step_results`), the human's decision with its channel, and a timeline
-built from the incident's stored bus events. One model call writes the summary, the cause and the
+never `resolved`. A look on request that ended with no action is checked as Verify checks, at
+once and without a model call, and ends `healthy` when every check passes (#421). The report
+around it is mostly Bleep's own: the title, the fixed outcome text, the action taken (from
+`step_results`), the human's decision with its channel, and a timeline built from the incident's
+stored bus events. One model call writes the summary, the cause and the
 follow-ups from that record, without any log text; what it writes is cut to size, loses every
 sentence that says "fixed" unless the outcome reads "Fixed and verified", and goes through
 `guard.report_check` against the logs the run read. A model that fails or a spent budget gives a
@@ -37,7 +39,8 @@ from bleep import prompts
 from bleep.graph.deps import GraphDeps
 from bleep.graph.host_text import incident_title, service_name
 from bleep.graph.language import language_rule
-from bleep.graph.look import look_rule
+from bleep.graph.look import bare_look, look_rule
+from bleep.graph.nodes import verify
 from bleep.graph.planted import HINT_END, planted_places, planted_sentence
 from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.log import GuardKind
@@ -65,6 +68,7 @@ log = logging.getLogger(__name__)
 # What the report says for each outcome; only `resolved` may ever say fixed (see `outcome_text`).
 OUTCOME_TEXT: dict[str, str] = {
     "resolved": "Fixed and verified",
+    "healthy": "Healthy when checked, nothing to do",
     "unverified": "Action taken, not verified",
     "rejected": "Rejected, nothing was done",
     "no_action": "No action proposed, nothing was done",
@@ -128,6 +132,30 @@ def outcome(state: IncidentState) -> Outcome:
     if proposal is None or proposal.kind == "no_action":
         return "no_action"
     return "unverified"  # approved, but nothing ran or was checked: never claim "fixed"
+
+
+def _healthy_look(state: IncidentState) -> bool:
+    """Whether the run is a bare look that ended with a plan of no action that nobody decided on:
+    the one run whose checks can end it `healthy` (#421). A refused plan, a rejected one or one
+    re-made after an instruction says something was wrong."""
+    proposal = state.get("proposal")
+    return (
+        bare_look(state.get("signals", []))
+        and proposal is not None
+        and proposal.kind == "no_action"
+        and not proposal.refused
+        and state.get("decision") is None
+    )
+
+
+async def _look_outcome(deps: GraphDeps, state: IncidentState) -> Outcome:
+    """`healthy` when every check Verify would make passes now (`verify.check_now`), else
+    `no_action`: something is off. The check is published as Verify's are, so the timeline and
+    the end message's "Checked" line show it."""
+    checked = await verify.check_now(deps, state)
+    if checked.checks:
+        await deps.bus.publish(state["incident_id"], "verification", verify.payload(checked))
+    return "healthy" if checked.ok else "no_action"
 
 
 def outcome_text(
@@ -407,6 +435,8 @@ def make(deps: GraphDeps) -> Node:
     async def report(state: IncidentState) -> dict:
         incident_id = state["incident_id"]
         result = outcome(state)
+        if result == "no_action" and _healthy_look(state):
+            result = await _look_outcome(deps, state)
         results = state.get("step_results")
         diagnosis, proposal = state.get("diagnosis"), state.get("proposal")
         said = outcome_text(result, results, proposal)

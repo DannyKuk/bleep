@@ -34,6 +34,8 @@ stop, it asks for that evidence, not for a new fix); otherwise the outcome is `u
 so it is at once when there was nothing to check. Nothing here says "fixed": that word needs a
 passing check. The clock that waits is `deps.sleep`, so tests never sleep.
 Each check publishes a `verification` event; the notifier hears the round's final result once.
+`check_now` makes one such check at once, for a look on request that ended with no action
+(#421); Report decides with it whether the look ends `healthy`.
 """
 
 import logging
@@ -639,39 +641,54 @@ def _describe(result: VerificationResult) -> str:
     return "\n".join(f"- {c.kind} {c.target}: {c.detail}" for c in result.checks if not c.ok)
 
 
-def make(deps: GraphDeps) -> Node:
-    async def one_check(
-        host_id: str,
-        plan: _Plan,
-        redeploys: list[_Redeploy],
-        first_running: dict[str, ContainerSummary],
-        attempt: int,
-        calm: set[str],
-    ) -> VerificationResult:
-        owned = deps.http is None
-        client = deps.http or httpx.AsyncClient()
-        try:
-            checks = [await _check_application(deps, host_id, r) for r in redeploys]
+async def _one_check(
+    deps: GraphDeps,
+    host_id: str,
+    plan: _Plan,
+    redeploys: list[_Redeploy],
+    first_running: dict[str, ContainerSummary],
+    attempt: int,
+    calm: set[str],
+) -> VerificationResult:
+    owned = deps.http is None
+    client = deps.http or httpx.AsyncClient()
+    try:
+        checks = [await _check_application(deps, host_id, r) for r in redeploys]
+        checks += [
+            await _check_container(deps, host_id, name, first_running) for name in plan.containers
+        ]
+        checks += [await _check_stopped(deps, host_id, name) for name in plan.stopped]
+        if plan.unproven:
             checks += [
-                await _check_container(deps, host_id, name, first_running)
-                for name in plan.containers
+                Check(kind="symptom", target=name, ok=False, detail=UNPROVEN)
+                for name in plan.stopped
             ]
-            checks += [await _check_stopped(deps, host_id, name) for name in plan.stopped]
-            if plan.unproven:
-                checks += [
-                    Check(kind="symptom", target=name, ok=False, detail=UNPROVEN)
-                    for name in plan.stopped
-                ]
-            checks += [await _check_url(client, cfg) for cfg in plan.urls]
-            if plan.readings:
-                checks += await _check_host(deps, host_id, plan.readings, calm)
-            if plan.blind:
-                checks.append(Check(kind="symptom", target=host_id, ok=False, detail=NOT_REREAD))
-        finally:
-            if owned:
-                await client.aclose()
-        return VerificationResult(ok=all(c.ok for c in checks), checks=checks, attempt=attempt)
+        checks += [await _check_url(client, cfg) for cfg in plan.urls]
+        if plan.readings:
+            checks += await _check_host(deps, host_id, plan.readings, calm)
+        if plan.blind:
+            checks.append(Check(kind="symptom", target=host_id, ok=False, detail=NOT_REREAD))
+    finally:
+        if owned:
+            await client.aclose()
+    return VerificationResult(ok=all(c.ok for c in checks), checks=checks, attempt=attempt)
 
+
+async def check_now(deps: GraphDeps, state: IncidentState) -> VerificationResult:
+    """One check of what Verify would check for the run's plan, at once: no wait and no second
+    check, and no model call. For a look that ended with no action (#421), where nothing ran that
+    a wait would give time to take effect. Each container is read twice in a row, so one that is
+    not running at the first read fails as one Verify first sees running does. Nothing to check
+    is no pass."""
+    plan = _plan(deps, state, [])
+    if plan.empty():
+        return VerificationResult(ok=False)
+    host_id = state["subject"].host_id
+    first_running = await _first_reads(deps, host_id, plan.containers)
+    return await _one_check(deps, host_id, plan, [], first_running, 1, set())
+
+
+def make(deps: GraphDeps) -> Node:
     async def verify(state: IncidentState) -> dict:
         incident_id = state["incident_id"]
         subject = state["subject"]
@@ -681,17 +698,17 @@ def make(deps: GraphDeps) -> Node:
         result = VerificationResult(ok=False)
         if plan.empty() and not redeploys:
             # Nothing to look at is not a pass, and another look at nothing would not help either.
-            await deps.bus.publish(incident_id, "verification", _payload(result))
+            await deps.bus.publish(incident_id, "verification", payload(result))
         else:
             first_running = await _first_reads(deps, subject.host_id, plan.containers)
             await _first_app_reads(deps, subject.host_id, redeploys)
             await deps.sleep(SETTLE_S)
             calm: set[str] = set()
             for attempt in range(1, CHECKS + 1):
-                result = await one_check(
-                    subject.host_id, plan, redeploys, first_running, attempt, calm
+                result = await _one_check(
+                    deps, subject.host_id, plan, redeploys, first_running, attempt, calm
                 )
-                await deps.bus.publish(incident_id, "verification", _payload(result))
+                await deps.bus.publish(incident_id, "verification", payload(result))
                 if result.ok or attempt == CHECKS:
                     break
                 await deps.sleep(RECHECK_S)
@@ -729,7 +746,8 @@ def make(deps: GraphDeps) -> Node:
     return verify
 
 
-def _payload(result: VerificationResult) -> dict:
+def payload(result: VerificationResult) -> dict:
+    """A check as its `verification` event carries it."""
     return {
         "ok": result.ok,
         "attempt": result.attempt,

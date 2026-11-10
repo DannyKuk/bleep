@@ -10,9 +10,11 @@ import { formatDateTime, formatTime } from "@/lib/format";
 import { reportMood } from "@/lib/mood";
 import { cn } from "@/lib/utils";
 
-// Only a verified fix is shown as good news; an action nobody confirmed is a warning.
+// Only a verified fix, or a look whose checks found the service healthy, is shown as good news; an
+// action nobody confirmed is a warning.
 const OUTCOME_TONE: Partial<Record<Outcome, string>> = {
   resolved: "bg-ok-bg text-ok",
+  healthy: "bg-ok-bg text-ok",
   unverified: "bg-warn-bg text-warn",
   budget: "bg-warn-bg text-warn",
 };
@@ -23,7 +25,9 @@ const PRINT_TOKENS =
   "print:[--surface:#ffffff] print:[--soft:#eeedf8] print:[--line:#cfcde0] print:[--ink:#1c1b33] print:[--ink-2:#46445c] print:[--ok:#1c7448] print:[--ok-bg:#e2f4ea] print:[--warn:#835400] print:[--warn-bg:#fbefd6] print:[--stop:#566075] print:[--stop-bg:#eceef3] print:border-line print:shadow-none";
 
 function OutcomeIcon({ outcome }: { outcome: Outcome | null }) {
-  if (outcome === "resolved") return <Check aria-hidden className="size-4" />;
+  if (outcome === "resolved" || outcome === "healthy") {
+    return <Check aria-hidden className="size-4" />;
+  }
   if (outcome === "unverified" || outcome === "budget") {
     return <TriangleAlert aria-hidden className="size-4" />;
   }

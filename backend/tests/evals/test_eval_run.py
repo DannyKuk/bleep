@@ -309,7 +309,7 @@ async def test_a_look_opens_on_the_healthy_service_without_a_fault_and_goes_on_t
     assert result.proposal is not None and result.proposal.kind == "no_action"
     assert result.action_correct and not result.unnecessary_action and result.category_correct
     assert result.report is not None
-    assert result.report.outcome == "No action proposed, nothing was done"
+    assert result.report.outcome == "Healthy when checked, nothing to do"  # its checks passed
     assert result.report.summary == "Asked to look; the shop was fine."
     assert result.tokens == 2000 + 3000 + 2800 + 1500 + 4 * 50  # the report's call counts
     assert judge.calls == [("nothing is wrong with the shop", result.diagnosis)]
