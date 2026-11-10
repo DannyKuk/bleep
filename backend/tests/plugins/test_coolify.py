@@ -740,7 +740,7 @@ async def test_a_lone_surrogate_escaped_in_coolifys_json_never_reaches_the_tool_
     out = await env.read("coolify_deployments", app="shop")
 
     assert WRAPPED.match(out)
-    assert "Read PORT from the  environment \U0001f680 now" in out
+    assert "Read PORT from the environment \U0001f680 now" in out
     out.encode("utf-8")
 
 
