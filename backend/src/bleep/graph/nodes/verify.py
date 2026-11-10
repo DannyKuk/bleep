@@ -34,8 +34,8 @@ stop, it asks for that evidence, not for a new fix); otherwise the outcome is `u
 so it is at once when there was nothing to check. Nothing here says "fixed": that word needs a
 passing check. The clock that waits is `deps.sleep`, so tests never sleep.
 Each check publishes a `verification` event; the notifier hears the round's final result once.
-`check_now` makes one such check at once, for a look on request that ended with no action
-(#421); Report decides with it whether the look ends `healthy`.
+`check_look` checks a look's service once, with these checks, for a look on request that ended
+with no action (#421); Report decides with it whether the look ends `healthy`.
 """
 
 import logging
@@ -53,7 +53,7 @@ from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.plan_check import coolify_members, host_urls
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.coolify_names import COOLIFY_UUID, coolify_container_name
-from bleep.hosts.discovery import expects_exit, is_finished, service_key
+from bleep.hosts.discovery import expects_exit, is_finished, is_self, service_key
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.hosts.readings import past_threshold, readings
 from bleep.hosts.shell import HostUnreadable, host_basics
@@ -674,17 +674,36 @@ async def _one_check(
     return VerificationResult(ok=all(c.ok for c in checks), checks=checks, attempt=attempt)
 
 
-async def check_now(deps: GraphDeps, state: IncidentState) -> VerificationResult:
-    """One check of what Verify would check for the run's plan, at once: no wait and no second
-    check, and no model call. For a look that ended with no action (#421), where nothing ran that
-    a wait would give time to take effect. Each container is read twice in a row, so one that is
-    not running at the first read fails as one Verify first sees running does. Nothing to check
-    is no pass."""
-    plan = _plan(deps, state, [])
+async def check_look(deps: GraphDeps, state: IncidentState) -> VerificationResult:
+    """One check of a look's service, for a look on request that ended with no action (#421):
+    at once, with no wait, no second check and no model call, by Verify's own checks.
+
+    Every container of the service is checked, never one the plan names instead: Bleep's own
+    are left out, and so is a job that finished as its service allows (`_finished_job`). Each
+    is judged against Gather's reading of it, so one that was not running then, or was
+    restarted or started again since (a crash-looper caught while it is up), fails as one
+    Verify first sees running does. The URLs are the service's from the hosts file, plus those
+    of the plan that are among the host's health checks; a model's URL is never requested.
+    Nothing to check is no pass."""
+    subject, proposal = state["subject"], state.get("proposal")
+    service = deps.registry.service(subject.service_id) if subject.service_id else None
+    if service is None:
+        return VerificationResult(ok=False)
+    host_id = subject.host_id
+    containers = [
+        c.name
+        for c in service.containers
+        if not is_self(c.labels) and _finished_job(deps, host_id, c) is None
+    ]
+    known = host_urls(deps.registry, host_id)
+    planned = [known[u] for u in proposal.verification.urls if u in known] if proposal else []
+    urls = {_url_key(cfg.url): cfg for cfg in [*service.urls, *planned]}
+    plan = _Plan(containers, list(urls.values()), [])
     if plan.empty():
         return VerificationResult(ok=False)
-    host_id = state["subject"].host_id
-    first_running = await _first_reads(deps, host_id, plan.containers)
+    context = state.get("context")
+    gathered = context.containers if context is not None else []
+    first_running = {c.name: c for c in gathered if c.state == "running"}
     return await _one_check(deps, host_id, plan, [], first_running, 1, set())
 
 

@@ -31,6 +31,7 @@ from bleep.schemas.graph import (
     PlanStep,
     Proposal,
     ServiceFact,
+    VerificationPlan,
 )
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Budgets
@@ -838,6 +839,27 @@ async def test_a_refused_hidden_param_tells_the_human_to_make_the_change_by_hand
         assert propose.BY_HAND not in told and propose.STOP_BY_HAND not in told
     assert propose.INSTRUCT in update["proposal"].human_instructions
     assert propose.INSTRUCT not in last["proposal"].human_instructions
+
+
+async def test_a_no_action_plans_unknown_checks_go_back_once_then_are_dropped(tmp_path):
+    """A plan of no action is held to the verification rules (#421), but one that names an
+    unknown URL or container twice is not refused for it: there is nothing to refuse to run, so
+    the checks are dropped and the advice stays."""
+    planted = "http://169.254.169.254/latest/meta-data/"
+    wrong = {"urls": [planted], "containers": ["shop_web"]}
+    advice = "Fix DATABASE_URL and recreate shop-web."
+    answer = reply(
+        kind="no_action", steps=[], reason="env var", verification=wrong, human_instructions=advice
+    )
+    env, state = await setup(tmp_path, answer, answer)
+
+    proposal = (await propose.make(env.deps)(state))["proposal"]
+
+    assert env.models.model.cursor == 2  # the first answer went back with the reasons
+    assert "169.254.169.254" in prompt(env, 1)
+    assert not proposal.refused and proposal.kind == "no_action"
+    assert proposal.verification == VerificationPlan()
+    assert proposal.human_instructions == advice
 
 
 async def test_other_no_action_reasons_are_not_refused(tmp_path):

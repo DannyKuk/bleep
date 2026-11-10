@@ -753,6 +753,9 @@ class LookRegistry:
             return None
         return Service(id=SHOP, host_id="demo", name="shop", source="compose", containers=[])
 
+    def services(self) -> list[Service]:
+        return [s for s in [self.service(SHOP)] if s is not None]
+
     def hosts(self) -> list[HostState]:
         return [HostState(config=ssh_host(id="demo"), reachable=self.reachable, last_seen=None)]
 

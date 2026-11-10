@@ -85,8 +85,13 @@ class Looks:
         if await self._spent():
             return replace(seen, outcome="spent")
         signal = Signal(subject=subject, kind=LOOK_REQUESTED, at=self.clock(), detail={"via": via})
+        # A name another host's service has too is said with its host in the title (#421).
+        shared = any(
+            s.host_id != service.host_id and s.name.casefold() == service.name.casefold()
+            for s in self.registry.services()
+        )
         incident, created = await self.repo.open_or_attach(
-            subject, [signal], name=service.name, attach=False
+            subject, [signal], name=service.name, attach=False, name_shared=shared
         )
         if not created:  # the watcher opened one in the meantime
             return replace(seen, outcome="open", incident=incident)

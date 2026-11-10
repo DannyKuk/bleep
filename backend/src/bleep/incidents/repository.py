@@ -175,13 +175,15 @@ class IncidentRepo:
         name: str | None = None,
         *,
         attach: bool = True,
+        name_shared: bool = False,
     ) -> tuple[Incident, bool]:
         """Attach `signals` to the subject's open incident, or open one; True when opened.
         With `attach` False an open incident takes nothing: it is returned as it is, and only a
         new one gets `signals` (a look on request, #403).
 
         A new incident gets its short name (`short_name`) from `name`, the service's name as the
-        dashboard shows it, when given.
+        dashboard shows it, when given; a look's title names the service by it too, with its host
+        when `name_shared` says another host has a service of that name (#421).
 
         A new incident folds into the group of the latest finished one with its fold key, else
         into the group of `repeat_of` (a finished incident of another kind that the same failure
@@ -199,7 +201,9 @@ class IncidentRepo:
                     target = await self._open_target(conn, subject)
                     created = target is None
                     if target is None:
-                        target = await self._insert(conn, subject, signals, repeat_of, name)
+                        target = await self._insert(
+                            conn, subject, signals, repeat_of, name, name_shared
+                        )
                     for signal in signals if created or attach else []:
                         await conn.execute(
                             "INSERT INTO incident_signals (incident_id, signal, at)"
@@ -248,13 +252,14 @@ class IncidentRepo:
         signals: list[Signal],
         repeat_of: str | None,
         name: str | None,
+        name_shared: bool = False,
     ) -> str:
         now = self.clock()
         incident_id = new_incident_id(now)
         key = fold_key(subject, signals)
         look = is_look(signals)
         # A look names its service as the person knows it, not by an id (#421).
-        title = build_title(subject, signals, name if look else None)
+        title = build_title(subject, signals, name if look else None, on_host=name_shared)
         # A look is asked for, never a repeat: its opener always reaches the chat (#403).
         group = None if look else await self._group_to_join(conn, key, now, repeat_of)
         if group is not None:

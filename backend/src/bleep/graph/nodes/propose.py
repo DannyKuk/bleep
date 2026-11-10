@@ -33,7 +33,14 @@ from bleep.hosts.registry import MIN_ID_PREFIX, Registry
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.memory.text import describe_fact, describe_past
-from bleep.schemas.graph import Diagnosis, GatherContext, PlanStep, Proposal, ProposalDraft
+from bleep.schemas.graph import (
+    Diagnosis,
+    GatherContext,
+    PlanStep,
+    Proposal,
+    ProposalDraft,
+    VerificationPlan,
+)
 from bleep.schemas.incidents import Subject
 from bleep.tools.registry import ActCatalog, PlanRules
 
@@ -42,6 +49,8 @@ NO_PLAN = "The model gave no usable plan, so Bleep proposes no action."
 BUDGET = "The incident's token budget or the day's cost cap is spent, so Bleep proposes no action."
 REFUSED = "Bleep's own checks refused the proposed plan twice, so nothing will run."
 MCP_CALL = "mcp.call"
+# The plan check's rules about a plan's verification checks, not its steps.
+_CHECK_RULES = frozenset({"unknown_url", "unknown_container"})
 INSTRUCT = (
     "You can tell Bleep what to do instead and it will plan again with that; it can also let "
     "this go. Nothing can be approved from a refused plan."
@@ -142,6 +151,9 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
     if not again:
         return retry
     _record(deps, incident_id, again)
+    if retry.kind == "no_action" and all(v.rule in _CHECK_RULES for v in again):
+        # Nothing would run, so there is nothing to refuse: only the checks go (#421).
+        return retry.model_copy(update={"verification": VerificationPlan()})
     unclear = any(v in again for v in _unclear_names(retry, deps.registry))
     return _refused(retry, again, can_instruct=replans_left(deps, state), unclear=unclear)
 

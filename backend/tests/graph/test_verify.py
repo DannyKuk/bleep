@@ -8,7 +8,6 @@ from bleep.graph.deps import StaticSettings
 from bleep.graph.nodes import verify
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.ssh import CommandResult, SshUnavailable
-from bleep.schemas.docker import ContainerDetail
 from bleep.schemas.graph import (
     ApprovalRecord,
     GatherContext,
@@ -2024,61 +2023,40 @@ async def test_another_apps_container_named_like_this_one_is_not_replaced(tmp_pa
     assert checks["evil-web0uuid-1"] == (False, "is exited")
 
 
-# --- one check at once, for a look on request (#421) ---
+# --- one check of a look's service (#421); the look's cases are in test_look_healthy.py ---
 
 
-def nothing_to_do(state: dict, verification: VerificationPlan | None = None) -> dict:
-    plan = Proposal(kind="no_action", reason="r", verification=verification or VerificationPlan())
-    return state | {"proposal": plan}
+def looked(state: dict, gathered: list | None = None) -> dict:
+    plan = Proposal(kind="no_action", reason="r", verification=VerificationPlan(urls=[URL]))
+    return state | {"proposal": plan, "context": GatherContext(at=T0, containers=gathered or [])}
 
 
-async def test_checking_now_waits_for_nothing_and_checks_the_service_and_its_urls(tmp_path):
+async def test_a_looks_check_waits_for_nothing_and_reads_against_gathers_reading(tmp_path):
     sleeps = Sleeps()
     env, state = await setup(tmp_path, Replies(200), sleeps=sleeps)
+    gathered = env.registry.service(state["subject"].service_id).containers
 
-    result = await verify.check_now(env.deps, nothing_to_do(state))
+    result = await verify.check_look(env.deps, looked(state, gathered))
 
     assert result.ok and result.attempt == 1
     assert {c.target for c in result.checks} == {"shop-web-1", "shop-db-1", URL}
     assert sleeps.waits == []
 
 
-async def test_checking_now_fails_on_a_url_that_does_not_answer(tmp_path):
-    env, state = await setup(tmp_path, Replies(503))
+async def test_a_looks_check_without_gathers_reading_proves_no_container_ran(tmp_path):
+    env, state = await setup(tmp_path, Replies(200))
 
-    result = await verify.check_now(env.deps, nothing_to_do(state))
-
-    assert not result.ok
-    assert [c.target for c in result.checks if not c.ok] == [URL]
-
-
-async def test_checking_now_fails_a_container_its_first_read_did_not_find_running(tmp_path):
-    engine = healthy_engine()
-    real_inspect = engine.inspect
-    reads: list[str] = []
-
-    async def coming_up(name: str) -> ContainerDetail:
-        detail = await real_inspect(name)
-        reads.append(name)
-        if len(reads) == 1:  # still in its restart backoff at the first read
-            down = detail.summary.model_copy(update={"state": "restarting"})
-            return detail.model_copy(update={"summary": down})
-        return detail
-
-    engine.inspect = coming_up  # type: ignore[method-assign]
-    env, state = await setup(tmp_path, Replies(200), engine=engine, urls=False)
-    plan = VerificationPlan(containers=["shop-web-1"])
-
-    result = await verify.check_now(env.deps, nothing_to_do(state, plan))
+    result = await verify.check_look(env.deps, looked(state))
 
     assert not result.ok
-    assert (result.checks[0].target, result.checks[0].detail) == ("shop-web-1", verify.CAME_UP)
+    containers = [c for c in result.checks if c.kind == "container"]
+    assert {c.detail for c in containers} == {verify.CAME_UP}
 
 
-async def test_checking_now_with_nothing_to_check_is_no_pass(tmp_path):
-    env, state = await setup(tmp_path, Replies(200), urls=False)
+async def test_a_looks_check_of_a_service_bleep_no_longer_knows_is_no_pass(tmp_path):
+    env, state = await setup(tmp_path, Replies(200))
     gone = Subject(kind="service", host_id="a", service_id="a/compose:gone")
 
-    result = await verify.check_now(env.deps, nothing_to_do(state) | {"subject": gone})
+    result = await verify.check_look(env.deps, looked(state) | {"subject": gone})
 
     assert not result.ok and result.checks == []

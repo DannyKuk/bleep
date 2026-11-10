@@ -6,6 +6,7 @@ import asyncio
 from datetime import timedelta
 from typing import Literal
 
+from bleep.hosts.registry import Registry
 from bleep.incidents.looks import Looks
 from bleep.incidents.quiet import QuietStore
 from bleep.incidents.repository import Repeats
@@ -13,8 +14,8 @@ from bleep.llm.usage import CostLedger
 from bleep.schemas.incidents import Incident, Signal, Subject
 from bleep.schemas.services import Service
 from bleep.schemas.settings import Budgets
-from fakes import FakeEngine, compose_labels
-from graph_env import T0, box, graph_env
+from fakes import FakeEngine, FakeShell, compose_labels, ssh_host
+from graph_env import T0, box, graph_env, shop_host
 
 VIA: tuple[Literal["telegram", "dashboard"], ...] = ("telegram", "dashboard")
 
@@ -82,6 +83,26 @@ async def test_a_look_at_a_coolify_app_is_titled_by_its_name_not_its_uuid(tmp_pa
     assert look.incident is not None
     assert look.incident.title == "look requested on dkwebsite"
     assert look.incident.short_name == "dkwebsite #1"
+
+
+async def test_a_look_names_the_host_when_another_hosts_service_has_the_same_name(tmp_path):
+    env, looks, _, _ = await rig(tmp_path)
+    other = FakeEngine("laptop", [box("shop-web-1", "shop")])
+
+    async def connect(host):
+        return (env.shell, env.engine) if host.id == "a" else (FakeShell("linux"), other)
+
+    env.registry = Registry([shop_host(), ssh_host(id="laptop", name="Laptop")], connect)
+    await env.registry.start()
+    looks.registry = env.registry
+
+    look = await looks.look(env.service_id("shop"), "telegram")
+
+    assert look.incident is not None
+    assert look.incident.title == "look requested on shop on a"
+    assert look.incident.short_name == "shop #1"
+    blog = await looks.look(env.service_id("blog"), "telegram")  # no other host has a blog
+    assert blog.incident is not None and blog.incident.title == "look requested on blog"
 
 
 async def test_a_watcher_incident_keeps_its_title_by_service_id(tmp_path):

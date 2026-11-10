@@ -255,12 +255,14 @@ async def test_a_verification_url_must_be_a_health_check_of_the_host(tmp_path):
     assert "unknown_url" in [
         v.rule for v in check_plan(on_b, env.registry, CORE, "b", incident_containers=SHOP_WEB)
     ]
+    # A plan of no action is held to the same rule: a look checks the service by it (#421).
     nothing_runs = Proposal(
         kind="no_action", reason="r", verification=VerificationPlan(urls=["http://x.example/"])
     )
-    assert (
-        check_plan(nothing_runs, env.registry, CORE, "a", incident_containers=SHOP_WEB) == []
-    )  # Verify never runs for it
+    refused = check_plan(nothing_runs, env.registry, CORE, "a", incident_containers=SHOP_WEB)
+    assert [(v.rule, v.step) for v in refused] == [("unknown_url", None)]
+    healthy = nothing_runs.model_copy(update={"verification": VerificationPlan(urls=[shop])})
+    assert check_plan(healthy, env.registry, CORE, "a", incident_containers=SHOP_WEB) == []
 
 
 async def test_a_verification_container_must_be_on_the_host(tmp_path):
@@ -278,6 +280,11 @@ async def test_a_verification_container_must_be_on_the_host(tmp_path):
     refused = check("shop-web-1", "shop_web")
     assert [(v.rule, v.step) for v in refused] == [("unknown_container", None)]
     assert "shop_web" in refused[0].text and "host a" in refused[0].text
+    nothing_runs = Proposal(
+        kind="no_action", reason="r", verification=VerificationPlan(containers=["shop_web"])
+    )
+    refused = check_plan(nothing_runs, env.registry, CORE, "a", incident_containers=SHOP_WEB)
+    assert [(v.rule, v.step) for v in refused] == [("unknown_container", None)]
 
 
 # --- a working container the incident does not name (#35) -----------------------------------

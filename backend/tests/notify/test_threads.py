@@ -279,12 +279,14 @@ async def test_healthy_again_without_a_step_that_worked_is_not_fixed(env):
 COOLIFY = Subject(kind="service", host_id="vps", service_id="vps/vclhwoxxy60z4vk70g0vpesq")
 
 
-async def look_checked(env, incident) -> None:
-    checks = [
-        Check(kind="container", target="dkwebsite-1", ok=True, detail="running"),
-        Check(kind="url", target="https://dk.example", ok=True, detail="answering 200"),
-    ]
-    await env.bus.publish(incident.id, "verification", {"ok": True, "attempt": 1, "checks": [
+DK_RUNNING = Check(kind="container", target="dkwebsite-1", ok=True, detail="running")
+DK_ANSWERS = Check(kind="url", target="https://dk.example", ok=True, detail="answering 200")
+
+
+async def look_checked(env, incident, *checks: Check) -> None:
+    checks = checks or (DK_RUNNING, DK_ANSWERS)
+    ok = all(c.ok for c in checks)
+    await env.bus.publish(incident.id, "verification", {"ok": ok, "attempt": 1, "checks": [
         c.model_dump(mode="json") for c in checks
     ]})  # fmt: skip
 
@@ -315,6 +317,21 @@ async def test_a_healthy_look_ends_in_german_when_german_is_picked(env):
     assert "Geprüft: dkwebsite\\-1 running" in end["text"]
 
 
+async def test_a_look_healthy_on_its_containers_alone_says_no_url_was_checked(env):
+    for language, head in (
+        ("en", "*✅ Looked: dkwebsite is healthy \\(no URL checked\\)*"),
+        ("de", "*✅ Angeschaut: dkwebsite ist gesund \\(keine URL geprüft\\)*"),
+    ):
+        env.notifier.language = lambda language=language: language
+        incident = await env.open(COOLIFY, kind="look_requested", container=None, name="dkwebsite")
+        await env.notifier.incident_opened(incident)
+        await look_checked(env, incident, DK_RUNNING)
+        await env.notifier.report(incident, report(OUTCOME_TEXT["healthy"]))
+        await env.close(incident)
+
+        assert first_line(env.chat.sent()[-1]) == head
+
+
 def test_every_outcome_has_its_fixed_text_and_its_end_message():
     texts = {kind: _end_template(OUTCOME_TEXT[kind]) for kind in get_args(Outcome)}
     assert texts["healthy"] == "end_looked" and texts["no_action"] == "end_no_action"
@@ -323,13 +340,16 @@ def test_every_outcome_has_its_fixed_text_and_its_end_message():
         assert prompts.file_text(f"notify/{name}") and prompts.file_text(f"notify/de/{name}")
 
 
-async def test_a_look_whose_check_failed_still_ends_needing_you(env):
+async def test_a_look_whose_check_failed_still_ends_needing_you_and_says_which(env):
     incident = await env.open(COOLIFY, kind="look_requested", container=None, name="dkwebsite")
     await env.notifier.incident_opened(incident)
+    failed = Check(kind="url", target="https://dk.example", ok=False, detail="status 503")
+    await look_checked(env, incident, DK_RUNNING, failed)
     await env.notifier.report(incident, report(OUTCOME_TEXT["no_action"]))
 
     _, end = env.chat.sent()
     assert first_line(end) == "*⚠️ Needs you · no action*"
+    assert "Checked: dkwebsite\\-1 running; https://dk\\.example status 503" in end["text"]
 
 
 # --- no action, and its repeat ---

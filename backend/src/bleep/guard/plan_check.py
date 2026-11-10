@@ -120,9 +120,9 @@ def check_plan(
             or _check_stop(number, step, registry, named)
         )
     violations.extend(_check_set_env_redeploy(proposal))
-    if proposal.kind == "act":
-        violations.extend(_check_urls(proposal, registry, host_id))
-        violations.extend(_check_containers(proposal, registry, host_id))
+    # A plan of no action is checked too: a look on request checks the service by it (#421).
+    violations.extend(_check_urls(proposal, registry, host_id))
+    violations.extend(_check_containers(proposal, registry, host_id))
     return violations
 
 
@@ -159,8 +159,9 @@ def host_urls(registry: Registry, host_id: str) -> dict[str, UrlCheckConfig]:
 
 
 def _check_urls(proposal: Proposal, registry: Registry, host_id: str) -> list[Violation]:
-    """Verify fetches every URL of a plan that ran, so only the host's configured health checks
-    may be named: a model-made URL could point Bleep's requests anywhere."""
+    """Verify fetches every URL of a plan that ran, and Report those of a look's plan of no
+    action (#421), so only the host's configured health checks may be named: a model-made URL
+    could point Bleep's requests anywhere."""
     configured = host_urls(registry, host_id)
     return [
         Violation(

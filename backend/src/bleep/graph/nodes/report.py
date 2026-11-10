@@ -41,6 +41,8 @@ from bleep.graph.host_text import incident_title, service_name
 from bleep.graph.language import language_rule
 from bleep.graph.look import bare_look, look_rule
 from bleep.graph.nodes import verify
+from bleep.graph.nodes.diagnose import FALLBACK_CAUSE
+from bleep.graph.nodes.propose import BUDGET, NO_DIAGNOSIS, NO_PLAN, REFUSED
 from bleep.graph.planted import HINT_END, planted_places, planted_sentence
 from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.log import GuardKind
@@ -89,6 +91,8 @@ FOLLOW_UP_CHARS = 300
 ENTRY_CHARS = 200
 NOT_DETERMINED = "Not determined."
 MAX_FACTS = 2
+# The reasons of the plans of no action that code, not the model, makes in Propose.
+CODE_REASONS = frozenset({NO_DIAGNOSIS, NO_PLAN, BUDGET, REFUSED})
 
 # "fixed" in each language a report can be written in (#374).
 _FIXED = re.compile(r"\b(?:fixed|behoben|repariert)\b", re.IGNORECASE)
@@ -135,26 +139,45 @@ def outcome(state: IncidentState) -> Outcome:
 
 
 def _healthy_look(state: IncidentState) -> bool:
-    """Whether the run is a bare look that ended with a plan of no action that nobody decided on:
-    the one run whose checks can end it `healthy` (#421). A refused plan, a rejected one or one
-    re-made after an instruction says something was wrong."""
-    proposal = state.get("proposal")
+    """Whether the run may end `healthy` once its checks pass (#421): a bare look whose model
+    found nothing wrong and planned no action, with nothing decided or planned again since.
+
+    The diagnosis must be the model's and say `category` `unknown`, which is what a look's
+    Diagnose writes for a healthy service (`prompts/graph/look_diagnose.md`); the plan must be
+    the model's, not a fallback of code (no diagnosis, no usable plan, a spent budget) or a
+    refusal. A decision, or a trip back to Propose (an instruction, a stale plan), says the run
+    once had a plan that acts."""
+    proposal, diagnosis = state.get("proposal"), state.get("diagnosis")
     return (
         bare_look(state.get("signals", []))
+        and diagnosis is not None
+        and diagnosis.category == "unknown"
+        and diagnosis.root_cause != FALLBACK_CAUSE
         and proposal is not None
         and proposal.kind == "no_action"
         and not proposal.refused
+        and proposal.reason not in CODE_REASONS
         and state.get("decision") is None
+        and state.get("replans", 0) == 0
     )
 
 
 async def _look_outcome(deps: GraphDeps, state: IncidentState) -> Outcome:
-    """`healthy` when every check Verify would make passes now (`verify.check_now`), else
+    """`healthy` when every check of the look's service passes now (`verify.check_look`), else
     `no_action`: something is off. The check is published as Verify's are, so the timeline and
-    the end message's "Checked" line show it."""
-    checked = await verify.check_now(deps, state)
+    the end message's "Checked" line show it. A signal the watcher attached to the incident
+    while the run went on is a failure, so such a run is not checked; nor is one whose check
+    fails to run (an engine error), which is logged."""
+    incident_id = state["incident_id"]
+    try:
+        if not bare_look(await deps.incidents.signals(incident_id)):
+            return "no_action"
+        checked = await verify.check_look(deps, state)
+    except Exception as error:  # the run must end with a report whatever the host does
+        log.warning("report: checking the look %s failed: %s", incident_id, type(error).__name__)
+        return "no_action"
     if checked.checks:
-        await deps.bus.publish(state["incident_id"], "verification", verify.payload(checked))
+        await deps.bus.publish(incident_id, "verification", verify.payload(checked))
     return "healthy" if checked.ok else "no_action"
 
 
@@ -476,8 +499,10 @@ def make(deps: GraphDeps) -> Node:
 
         follow_ups = [own(item, FOLLOW_UP_CHARS) for item in draft.follow_ups[:FOLLOW_UPS]]
         follow_ups = [item for item in follow_ups if item]
-        if not follow_ups and proposal is not None and proposal.human_instructions:
-            follow_ups = [own(proposal.human_instructions, FOLLOW_UP_CHARS)]
+        # A healthy look's advice is no follow-up: its checks found nothing to do.
+        advice = proposal.human_instructions if proposal and result != "healthy" else None
+        if not follow_ups and advice:
+            follow_ups = [own(advice, FOLLOW_UP_CHARS)]
         root_cause = diagnosis.root_cause if diagnosis is not None else ""
         english = draft.cause_en if isinstance(draft, _DraftWithEnglishCause) else ""
         written = Report(
