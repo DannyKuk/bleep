@@ -1074,6 +1074,23 @@ async def test_a_scenario_with_an_mcp_fixture_serves_it_and_proposes_with_its_ac
     assert '<untrusted source="mcp"' in propose_prompt
 
 
+async def test_a_scenarios_mcp_purpose_reaches_investigates_prompt(tmp_path):
+    fake = engine()
+    purpose = "Manages the Caddy reverse proxy"
+    served = SCENARIO.model_copy(update={"mcp": "caddy", "mcp_purpose": purpose})
+    model = FakeChatModel(script=script(), structured_output_unsupported=True)
+
+    result = await run_scenario(
+        served, settings(tmp_path), faults=FakeFaults(fake), judge=FakeJudge(),
+        connector=connector(fake), models=Models(model),
+    )  # fmt: skip
+
+    assert result.error is None
+    first = "\n".join(m.text for m in model.seen[0])
+    assert f"in the words of the person who set Bleep up: {purpose}\n" in first
+    assert "The read tools you may run: `caddy_config`." in first
+
+
 async def test_without_an_mcp_fixture_the_plugin_stays_off(tmp_path):
     fake = engine()
     model = FakeChatModel(script=script(), structured_output_unsupported=True)

@@ -16,6 +16,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from bleep.guard.plan_check import mcp_arguments
+from bleep.plugins.mcp_url import Purpose
 from bleep.schemas.graph import Action, Diagnosis, PlanStep, Proposal, Report
 from bleep.schemas.incidents import Subject
 from evals.github import GithubFixtureError, load_github_fixture
@@ -150,6 +151,14 @@ class Scenario(_Strict):
     # A fixture in evals/fixtures/mcp/ served as the MCP plugin's server, the plugin switched on
     # with its settings; without one the plugin is off.
     mcp: str | None = None
+    # What the plugin's `purpose` setting says that server is for (#370); empty leaves it unset.
+    mcp_purpose: Purpose = ""
+
+    @model_validator(mode="after")
+    def _a_purpose_needs_a_server(self) -> Self:
+        if self.mcp_purpose and self.mcp is None:
+            raise ValueError("an mcp_purpose needs an mcp fixture")
+        return self
 
     @model_validator(mode="after")
     def _a_fault_or_a_look(self) -> Self:

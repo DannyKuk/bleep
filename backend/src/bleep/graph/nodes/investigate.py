@@ -36,10 +36,11 @@ from bleep.memory.text import describe_fact, describe_past
 from bleep.schemas.graph import GatherContext
 from bleep.schemas.incidents import Signal
 from bleep.schemas.settings import Budgets
-from bleep.tools.registry import ToolContext
+from bleep.tools.registry import ToolBriefing, ToolContext
 
 log = logging.getLogger(__name__)
 
+MCP_TOOLS_SHOWN = 20  # read tools of the MCP server named in the prompt, at most
 SUMMARY_CHARS = 160  # the first line of a result, as the live view shows it
 CUT_NOTE_CHARS = 40  # room for the guard's "[… N chars cut]" line
 UNWRAP_CHARS = 4 * MAX_CHARS  # longer output is not a guarded one: guard it whole, no regex pass
@@ -129,7 +130,7 @@ def make(deps: GraphDeps) -> Node:
             )
             return ToolMessage(text, tool_call_id=call["id"], name=name)
 
-        new = _opening(state, limit, deps.clock)
+        new = _opening(state, limit, deps.clock, _mcp_section(deps.tools.briefings(ctx)))
         history = [*state.get("messages", []), *new]
         used = 0
         model = None
@@ -213,13 +214,15 @@ async def _invoke(
     return out if isinstance(out, str) else json.dumps(out, default=str)
 
 
-def _opening(state: IncidentState, limit: int, clock: Callable[[], datetime]) -> list[AnyMessage]:
+def _opening(
+    state: IncidentState, limit: int, clock: Callable[[], datetime], mcp: str
+) -> list[AnyMessage]:
     """The first round starts the conversation; a later one asks again about what was missing."""
     messages = state.get("messages", [])
     if not messages:
         return [
             SystemMessage(prompts.load("graph/system")),
-            HumanMessage(_task(state, limit, clock)),
+            HumanMessage(_task(state, limit, clock, mcp)),
         ]
     diagnosis = state.get("diagnosis")
     if isinstance(messages[-1], HumanMessage) or diagnosis is None:
@@ -233,7 +236,31 @@ def _opening(state: IncidentState, limit: int, clock: Callable[[], datetime]) ->
     return [HumanMessage(again)]
 
 
-def _task(state: IncidentState, limit: int, clock: Callable[[], datetime]) -> str:
+def _tool_names(names: tuple[str, ...]) -> str:
+    """The first `MCP_TOOLS_SHOWN` read tools by name, and how many more there are: all 50 a
+    person may list, at up to 128 characters, would add about 7 KB to every round, and
+    `mcp_tools` lists them all."""
+    shown = ", ".join(f"`{name}`" for name in names[:MCP_TOOLS_SHOWN])
+    left = len(names) - MCP_TOOLS_SHOWN
+    return f"{shown}, and {left} more" if left > 0 else shown
+
+
+def _mcp_section(briefings: list[ToolBriefing]) -> str:
+    """What the person wrote about the MCP server and the read tools it may run, set apart from
+    the text before it; empty without the plugin, so the prompt is then as it was before #370.
+    The purpose is the person's own text, validated when saved, so it goes in as it is."""
+    return "".join(
+        "\n\n"
+        + prompts.load(
+            "graph/investigate_mcp",
+            purpose=b.purpose,
+            tools=_tool_names(b.tools),
+        ).strip()
+        for b in briefings
+    )
+
+
+def _task(state: IncidentState, limit: int, clock: Callable[[], datetime], mcp: str) -> str:
     subject = state["subject"]
     context = state.get("context")
     if context is None:
@@ -247,6 +274,7 @@ def _task(state: IncidentState, limit: int, clock: Callable[[], datetime]) -> st
         subject=what,
         signals=_signals(state.get("signals", [])),
         look=look_rule("investigate", state.get("signals", [])),
+        mcp=mcp,
         containers=_containers(context),
         logs=_logs(context),
         host=_host(context),

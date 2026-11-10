@@ -165,7 +165,7 @@ Its one setting, `deploy_timeout_s`, is how long a redeploy may take (default 90
 - `MCP_URL`: the server's Streamable HTTP endpoint, required.
 - `MCP_TOKEN`: its bearer token, used when set. Give it the fewest rights the server offers: on a server that scopes its tokens, as Coolify's does, a read-only token keeps it read-only whatever Bleep's settings allow.
 
-In its settings, list the server's tools Bleep may run: `read_tools` without approval, `act_tools` only in a plan you approve. Any other tool is not run. An example with Coolify's own MCP server: [Plugins](design/plugins.md#mcp-server-by-url).
+In its settings, write in one line what the server is for (the plugins page's *Purpose*, at most 200 characters; Investigate tells the model, so it knows when asking the server is worth a call) and list the server's tools Bleep may run: `read_tools` without approval, `act_tools` only in a plan you approve. Any other tool is not run. An example with Coolify's own MCP server: [Plugins](design/plugins.md#mcp-server-by-url).
 
 ## Memory embeddings (optional)
 

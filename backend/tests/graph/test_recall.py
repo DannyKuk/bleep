@@ -127,7 +127,7 @@ async def test_report_remembers_and_the_next_incident_hears_what_the_human_rejec
     assert past.outcome == "Rejected, nothing was done"
     assert past.action == "nothing ran"
 
-    prompt = investigate._task({"subject": shop(env), "context": ctx}, 8, lambda: T0)
+    prompt = investigate._task({"subject": shop(env), "context": ctx}, 8, lambda: T0, "")
     assert "the human rejected docker.restart shop-web-1 on 2026-11-10" in prompt
 
 
@@ -159,7 +159,7 @@ async def test_the_investigate_prompt_labels_memory_as_bleeps_own(tmp_path):
     await store.add_fact(env.service_id("shop"), "the db is shared with billing")
     ctx = await gather_for(env, shop(env))
 
-    prompt = investigate._task({"subject": shop(env), "context": ctx}, 8, lambda: T0)
+    prompt = investigate._task({"subject": shop(env), "context": ctx}, 8, lambda: T0, "")
 
     memory = prompt.split("## Bleep's memory", 1)[1].split("## Could not be read", 1)[0]
     assert "Bleep's own records" in memory
@@ -274,7 +274,7 @@ async def test_a_thumbs_down_on_a_diagnosis_reaches_the_next_similar_incident(tm
 
     [past] = ctx.similar
     assert past.feedback == "the diagnosis was wrong (it was the disk, not the db)"
-    prompt = investigate._task({"subject": shop(env), "context": ctx}, 8, lambda: T0)
+    prompt = investigate._task({"subject": shop(env), "context": ctx}, 8, lambda: T0, "")
     assert "feedback: the diagnosis was wrong (it was the disk, not the db)" in prompt
 
 
