@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Health, Incident, IncidentStatus, Outcome } from "@/lib/api-types";
+import type { Incident, IncidentStatus, Outcome } from "@/lib/api-types";
 import {
   FAILED_NEEDS_YOU_MS,
   incidentMood,
@@ -44,12 +44,14 @@ const SNOOZED = {
   until: null,
   since: "2026-11-04T10:00:00Z",
 } as const;
-const hostOf = (overrides: Partial<Parameters<typeof overallMood>[1][number]> = {}) => ({
+type HostOf = Parameters<typeof overallMood>[1][number];
+const hostOf = (overrides: Partial<HostOf> = {}): HostOf => ({
   id: "demo",
   reachable: true,
   may_sleep: false,
   quiet: null,
   quiet_service_ids: [],
+  watching: null,
   ...overrides,
 });
 const reachable = [hostOf()];
@@ -139,9 +141,9 @@ describe("overallMood", () => {
     expect(overallMood([incident("resolved")], reachable, new Set(), NOW)).toBe("all_good");
   });
 
-  it("is working while Bleep is on an incident, even with a host unreachable", () => {
+  it("is working while Bleep is on an incident or a host is unreachable", () => {
     expect(overallMood([incident("executing")], reachable, new Set(), NOW)).toBe("working");
-    expect(overallMood([incident("executing")], unreachable, new Set(), NOW)).toBe("working");
+    expect(overallMood([], unreachable, new Set(), NOW)).toBe("working");
   });
 
   it("is not sure when the only plan waiting for the human rests on an unsure diagnosis", () => {
@@ -183,38 +185,70 @@ describe("watching (#358)", () => {
     expect(MOODS.indexOf("all_good")).toBe(MOODS.indexOf("watching") + 1);
   });
 
-  const serviceOf = (overrides: Partial<Parameters<typeof watchedServices>[0][number]> = {}) => ({
+  type ServiceOf = Parameters<typeof watchedServices>[0][number];
+  const urlWatch = {
+    kind: "url",
+    since: "2026-11-04T11:59:30Z",
+    opens_after: null,
+    url: "http://shop/",
+    container: null,
+    failures: 1,
+    failures_to_open: 2,
+  } as const;
+  const graceWatch = {
+    ...urlWatch,
+    kind: "container",
+    url: null,
+    container: "shop-web-1",
+    failures: null,
+    failures_to_open: null,
+    opens_after: "2026-11-04T12:01:00Z",
+  } as const;
+  const serviceOf = (overrides: Partial<ServiceOf> = {}): ServiceOf => ({
     host_id: "demo",
-    health: "down" as Health,
     quiet: null,
     open_incident_id: null,
+    watching: [urlWatch],
     ...overrides,
   });
+  const quietHost = { ...SNOOZED };
 
-  it("watches a service whose URL fails or whose container died, with no incident yet", () => {
-    // Both read as a down service in the services list: a failing URL check counts as down, and
-    // so does a dead container still inside its grace window.
+  it("watches a service whose URL failed fewer times than it takes, with no incident yet", () => {
     expect(overallMood([], reachable, new Set(), NOW, [serviceOf()])).toBe("watching");
     expect(overallState([], reachable, NOW, [serviceOf()])).toBe("amber");
   });
 
-  it("watches a host it cannot reach while no incident is open about it", () => {
-    expect(overallMood([], unreachable, new Set(), NOW)).toBe("watching");
-    expect(overallState([], unreachable, NOW)).toBe("amber");
+  it("watches a service whose container died inside its grace window", () => {
+    const dead = serviceOf({ watching: [graceWatch] });
+    expect(overallMood([], reachable, new Set(), NOW, [dead])).toBe("watching");
+    expect(overallState([], reachable, NOW, [dead])).toBe("amber");
   });
 
-  it("stays all good when everything is up, or what is down is quiet or asleep", () => {
-    const ok = serviceOf({ health: "ok" });
+  it("watches a host it cannot reach while the watcher waits out its window", () => {
+    const window = { ...graceWatch, kind: "unreachable", container: null } as const;
+    const hosts = [hostOf(), hostOf({ id: "other", reachable: false, watching: window })];
+    expect(overallMood([], hosts, new Set(), NOW)).toBe("watching");
+    expect(overallState([], hosts, NOW)).toBe("amber");
+  });
+
+  it("keeps an unreachable host the watcher does not wait on as working, as before", () => {
+    expect(overallMood([], unreachable, new Set(), NOW)).toBe("working");
+  });
+
+  it("stays all good for a quiet host, or a service the watcher waits on nothing for", () => {
+    // A service shown down that the watcher waits on nothing for (stopped on purpose, dead
+    // before Bleep started, still dead after its incident ended) opens nothing: no promise.
+    const shownDown = serviceOf({ watching: [] });
     const quiet = serviceOf({ quiet: { ...SNOOZED, scope: "service" } });
-    expect(overallMood([], reachable, new Set(), NOW, [ok, serviceOf({ health: "stopped" })])).toBe(
-      "all_good",
-    );
-    expect(overallMood([], reachable, new Set(), NOW, [quiet])).toBe("all_good");
+    expect(overallMood([], reachable, new Set(), NOW, [shownDown, quiet])).toBe("all_good");
+    expect(overallState([], reachable, NOW, [shownDown, quiet])).toBe("green");
     const asleep = [hostOf({ reachable: false, may_sleep: true })];
-    expect(overallMood([], asleep, new Set(), NOW, [serviceOf({ health: "asleep" })])).toBe(
-      "all_good",
-    );
-    expect(overallState([], reachable, NOW, [ok, quiet])).toBe("green");
+    expect(overallMood([], asleep, new Set(), NOW, [shownDown])).toBe("all_good");
+  });
+
+  it("lets a failed run fall to green after its day, though its service still shows down", () => {
+    const failed = incident("failed", "f", longAgo);
+    expect(overallState([failed], reachable, NOW, [serviceOf({ watching: [] })])).toBe("green");
   });
 
   it("does not watch a service whose incident is open: Bleep works on it", () => {
@@ -235,8 +269,8 @@ describe("watching (#358)", () => {
     );
   });
 
-  it("leaves a down service on a host out of reach to the host", () => {
-    const hosts = [hostOf({ reachable: false, quiet: { ...SNOOZED } })];
+  it("leaves a service on a host out of reach to the host", () => {
+    const hosts = [hostOf({ reachable: false, quiet: quietHost })];
     expect(watchedServices([serviceOf()], hosts)).toEqual([]);
     expect(overallMood([], hosts, new Set(), NOW, [serviceOf()])).toBe("all_good");
   });

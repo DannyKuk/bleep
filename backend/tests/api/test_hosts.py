@@ -211,6 +211,7 @@ def test_hosts(stocked):
             "may_sleep": False,
             "quiet": None,
             "quiet_service_ids": [],
+            "watching": None,
         },
         {
             "id": "b",
@@ -225,6 +226,7 @@ def test_hosts(stocked):
             "may_sleep": False,
             "quiet": None,
             "quiet_service_ids": [],
+            "watching": None,
         },
     ]
 
@@ -271,6 +273,7 @@ def test_services_shape(stocked):
         ],
         "open_incident_id": None,
         "quiet": None,
+        "watching": [],
     }
 
 
@@ -591,3 +594,52 @@ def test_the_services_of_an_asleep_host_are_asleep_not_down(settings, parts):
         [host] = client.get("/api/hosts").json()
         assert host["health"] == "asleep"
         assert [s["health"] for s in client.get("/api/services").json()] == ["asleep"]
+
+
+# --- what the watcher waits on (#358) ---
+
+
+def feed(client, signal: Signal) -> None:
+    """Hand a signal to the app's own watcher, as its URL checks or probes would."""
+    client.portal.call(client.app.state.watcher.sink, signal)
+
+
+def test_a_service_whose_url_failed_once_says_the_watcher_waits_on_it(stocked):
+    subject = Subject(kind="service", host_id="a", service_id=SHOP)
+    detail = {"ok": False, "url": "http://a/", "latency_ms": 10}
+    feed(stocked, Signal(subject=subject, kind="url_failed", at=datetime.now(UTC), detail=detail))
+    [watch] = shop_view(stocked)["watching"]
+    assert {k: watch[k] for k in ("kind", "url", "failures", "failures_to_open")} == {
+        "kind": "url",
+        "url": "http://a/",
+        "failures": 1,
+        "failures_to_open": 2,
+    }
+    assert shop_detail(stocked)["service"]["watching"] == [watch]
+    others = stocked.get("/api/services", params={"host_id": "b"}).json()
+    assert [s["watching"] for s in others] == [[]]
+
+
+def test_a_quiet_services_failure_is_not_shown_as_watched(stocked):
+    response = stocked.put(f"/api/quiet/services/{SHOP}", json={"mode": "leave_alone"})
+    assert response.status_code == 200
+    assert shop_view(stocked)["quiet"] is not None
+    subject = Subject(kind="service", host_id="a", service_id=SHOP)
+    detail = {"ok": False, "url": "http://a/", "latency_ms": 10}
+    feed(stocked, Signal(subject=subject, kind="url_failed", at=datetime.now(UTC), detail=detail))
+    assert shop_view(stocked)["watching"] == []
+
+
+def test_an_unreachable_host_inside_its_window_says_the_watcher_waits_on_it(settings, parts):
+    async def connect(host):
+        raise OSError("refused")
+
+    parts.registry = Registry([ssh_host(id="a")], connect)
+    with TestClient(create_app(settings, parts)) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        host = Subject(kind="host", host_id="a")
+        feed(client, Signal(subject=host, kind="host_unreachable", at=datetime.now(UTC)))
+        [view] = client.get("/api/hosts").json()
+    assert view["reachable"] is False
+    assert view["watching"]["kind"] == "unreachable"
+    assert view["watching"]["opens_after"] is not None

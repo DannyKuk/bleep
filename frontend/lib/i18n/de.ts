@@ -414,17 +414,21 @@ export const de: Messages = {
     lastHeard: (when) => `Zuletzt habe ich am ${when} von ihm gehört`,
     notReached: "Ich habe ihn noch nicht erreicht",
     blind: (names) => `, deshalb sehe ich ${names} nicht`,
-    lookIfUnreached: "Bleibt er unerreichbar, sehe ich ihn mir genauer an.",
+    lookAfterHost: (when) => `Antwortet er bis ${when} nicht, sehe ich ihn mir genauer an.`,
     watchingOne: (name, reason) => `Ich beobachte ${name}: ${reason}.`,
-    watchingMany: (names) => `Ich beobachte ${names}: sie sind ausgefallen.`,
-    containersDown: (count) =>
-      count === 1 ? "ein Container ist ausgefallen" : `${count} Container sind ausgefallen`,
-    urlsFailing: (failing, total) => {
-      if (total === 1) return "seine URL-Prüfung schlägt fehl";
-      if (failing === 1) return "eine seiner URL-Prüfungen schlägt fehl";
-      return `${failing} seiner ${total} URL-Prüfungen schlagen fehl`;
+    watchingMany: (names) => `Ich beobachte ${names}.`,
+    containerDied: "ein Container ist ausgefallen",
+    urlFailed: (count) => {
+      if (count === 1) return "seine URL-Prüfung ist einmal fehlgeschlagen";
+      if (count === 2) return "seine URL-Prüfung ist zweimal fehlgeschlagen";
+      return `seine URL-Prüfung ist ${count}-mal in Folge fehlgeschlagen`;
     },
-    itIsDown: "er ist ausgefallen",
+    urlFailing: "seine URL-Prüfung schlägt fehl",
+    lookAfterTime: (when) => `Ist er bis ${when} nicht zurück, sehe ich ihn mir genauer an.`,
+    lookAfterChecks: (left) =>
+      left === 1
+        ? "Schlägt auch die nächste Prüfung fehl, sehe ich ihn mir genauer an."
+        : `Schlagen noch ${left} Prüfungen fehl, sehe ich ihn mir genauer an.`,
     moreServices: (count) => `${count} weitere`,
     lookIfOne: "Hält das an, sehe ich ihn mir genauer an.",
     lookIfMany: "Bei jedem, bei dem das anhält, sehe ich genauer hin.",

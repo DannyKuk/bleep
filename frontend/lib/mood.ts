@@ -61,7 +61,10 @@ export function failedRecently(incident: Incident, now: number): boolean {
   return now - ended < FAILED_NEEDS_YOU_MS;
 }
 
-type QuietHost = Pick<HostView, "id" | "reachable" | "may_sleep" | "quiet" | "quiet_service_ids">;
+type QuietHost = Pick<
+  HostView,
+  "id" | "reachable" | "may_sleep" | "quiet" | "quiet_service_ids" | "watching"
+>;
 
 /** A host that may sleep and does not answer: it is asleep, which is no trouble. */
 export function isAsleep(host: Pick<HostView, "reachable" | "may_sleep">): boolean {
@@ -84,13 +87,15 @@ export function isOutOfReach(host: Pick<HostView, "reachable" | "may_sleep" | "q
   return !host.reachable && !host.quiet && !isAsleep(host);
 }
 
-type WatchedService = Pick<ServiceView, "host_id" | "health" | "quiet" | "open_incident_id">;
+type WatchedService = Pick<ServiceView, "host_id" | "quiet" | "open_incident_id" | "watching">;
 
 /**
- * The services that are down while no incident is open for them: the watcher has seen it and
- * waits for the failure to hold (a URL's failures in a row, a dead container's grace window)
- * before it opens one. A quiet service is left alone, and a service on a host Bleep cannot reach
- * is the host's trouble, not its own.
+ * The services the watcher waits on before it opens an incident (their `watching`, from the
+ * backend: a URL failing fewer times in a row than it needs, a death inside its grace window).
+ * Only what the watcher reports counts, never a service that merely shows down: a container
+ * stopped on purpose, one dead before Bleep started or one still dead after its incident ended
+ * opens nothing, so Bleep must not say it waits on it. A quiet service, one with its incident
+ * open and one on a host Bleep cannot reach (the host's trouble) are left out.
  */
 export function watchedServices<S extends WatchedService>(
   services: readonly S[],
@@ -99,19 +104,26 @@ export function watchedServices<S extends WatchedService>(
   const reached = new Set(hosts.filter((host) => host.reachable).map((host) => host.id));
   return services.filter(
     (service) =>
-      service.health === "down" &&
+      service.watching.length > 0 &&
       service.quiet === null &&
       service.open_incident_id === null &&
       reached.has(service.host_id),
   );
 }
 
+/** A host out of reach whose window the watcher is waiting out before it opens an incident. */
+export function isWatchedHost(
+  host: Pick<HostView, "reachable" | "may_sleep" | "quiet" | "watching">,
+) {
+  return isOutOfReach(host) && host.watching !== null;
+}
+
 /**
  * The overview's mood from the incidents, the hosts and the services. `unsureIds` holds the
  * waiting incidents whose diagnosis is unsure (read from their detail); without it every waiting
  * plan needs you. A quiet subject's failed run and a quiet host's unreachability do not count.
- * With no incident Bleep works on, a host out of reach or a service down (`watchedServices`)
- * makes Bleep watch.
+ * A host out of reach is Working, unless the watcher still waits out its window: then, as for a
+ * service the watcher waits on (`watchedServices`), Bleep watches.
  */
 export function overallMood(
   incidents: readonly Incident[],
@@ -127,7 +139,8 @@ export function overallMood(
   if (waiting.some((incident) => !unsureIds.has(incident.id))) return "needs_you";
   if (waiting.length > 0) return "not_sure";
   if (incidents.some((incident) => WORKING.has(incident.status))) return "working";
-  if (hosts.some(isOutOfReach)) return "watching";
+  if (hosts.some((host) => isOutOfReach(host) && !isWatchedHost(host))) return "working";
+  if (hosts.some(isWatchedHost)) return "watching";
   if (watchedServices(services, hosts).length > 0) return "watching";
   return "all_good";
 }

@@ -1,4 +1,18 @@
-import type { HostView, ServiceView } from "@/lib/api-types";
+import type { HostView, ServiceView, WatchView } from "@/lib/api-types";
+
+/** What the watcher waits on: a URL that failed once of the two it needs, unless overridden. */
+export function watch(overrides: Partial<WatchView> = {}): WatchView {
+  return {
+    kind: "url",
+    since: "2026-11-02T18:59:30Z",
+    opens_after: null,
+    url: "http://localhost:8080/",
+    container: null,
+    failures: 1,
+    failures_to_open: 2,
+    ...overrides,
+  };
+}
 
 export function host(overrides: Partial<HostView> = {}): HostView {
   return {
@@ -14,6 +28,7 @@ export function host(overrides: Partial<HostView> = {}): HostView {
     may_sleep: false,
     quiet: null,
     quiet_service_ids: [],
+    watching: null,
     ...overrides,
   };
 }
@@ -48,6 +63,7 @@ export function service(overrides: Partial<ServiceView> = {}): ServiceView {
     ],
     open_incident_id: null,
     quiet: null,
+    watching: [],
     ...overrides,
   };
 }

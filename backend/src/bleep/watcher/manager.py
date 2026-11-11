@@ -75,6 +75,7 @@ from bleep.watcher.detector import (
     Ignored,
     OpenIncident,
     Outcome,
+    Pending,
     Recovered,
     recovery_line,
 )
@@ -671,6 +672,25 @@ class WatcherManager:
         if subject.kind == "host":
             await self._attach_held(subject.host_id)
 
+    async def watching(self) -> list[Pending]:
+        """What the detector waits on that opens an incident once the wait is over (#358): the
+        same checks `_open` makes, read without acting. A quiet subject, a host that may sleep,
+        a subject whose incident is already open and a repeat still held are left out, since
+        nothing would open for them."""
+        found = []
+        for pending in self.detector.pending():
+            subject = pending.subject
+            if await self._quiet_now(subject) or self._asleep(subject, pending.signals):
+                continue
+            if await self.repo.open_incident_id(subject) is not None:
+                continue
+            if pending.run is not None:
+                outlived = await self._outlived(subject, pending.signals, pending.run)
+                if outlived is not None and self._hold_until(outlived) is not None:
+                    continue
+            found.append(pending)
+        return found
+
     def _service_name(self, subject: Subject) -> str | None:
         """The service's name as the dashboard shows it, for the incident's short name."""
         service = self.registry.service(subject.service_id) if subject.service_id else None
@@ -713,10 +733,15 @@ class WatcherManager:
             if container is not None:
                 self.detector.recovered(incident.subject.host_id, container, at)
 
+    def _hold_until(self, outlived: Repeats) -> datetime | None:
+        """Until when a failure that outlived these incidents waits; None once that is over."""
+        until = outlived.last_closed + repeat_hold(outlived.count)
+        return until if self._clock() < until else None
+
     def _still_held(self, subject: Subject, outlived: Repeats) -> bool:
         """Whether the failure must still wait for the hold of the incidents it outlived."""
-        until = outlived.last_closed + repeat_hold(outlived.count)
-        if self._clock() >= until:
+        until = self._hold_until(outlived)
+        if until is None:
             return False
         log.debug(
             "%s still fails after its last incident: none opens before %s", subject.key, until

@@ -87,14 +87,6 @@ export function heroSituation({
   return hosts.length === 0 ? { kind: "no_hosts" } : { kind: "quiet" };
 }
 
-// A crash, a dead or a never-started container, or a failing healthcheck: what the watcher calls
-// down (`container_health` in backend/src/bleep/watcher/health.py). A clean exit is a stop.
-const CLEAN_EXITS: readonly (number | null)[] = [0, 143];
-const isDownContainer = (container: ContainerView) =>
-  (container.state === "running" && container.health === "unhealthy") ||
-  ["dead", "created", "paused"].includes(container.state) ||
-  (container.state === "exited" && !CLEAN_EXITS.includes(container.exit_code));
-
 /** What a container shows of its trouble, in Docker's own words: "unhealthy", "exited (1)". */
 function containerTrouble(container: ContainerView): string {
   if (container.state === "running") return `${container.name} · ${container.health}`;
@@ -102,29 +94,44 @@ function containerTrouble(container: ContainerView): string {
   return `${container.name} · ${container.state}${code}`;
 }
 
+export interface WatchWords {
+  /** Why Bleep watches, after the service's name: "its URL check failed once". */
+  reason: string;
+  /** When it looks into it: "If the next check fails too, I will look into it." */
+  look: string;
+  /** The container or URL in mono: "shop-web-1 · exited (1)", "http://shop/ · 503". */
+  detail?: string;
+}
+
 /**
- * Why a watched service is down, from what the services list says of it: its containers that
- * are down, else its failing URL checks. `detail` names the first of them, for the mono line.
- * It never counts the failures in a row the watcher has seen, which the API does not say.
+ * What the watcher waits on for a service, in words: a death inside its grace window before a
+ * URL's failures in a row. The count and the time come from the watcher (`watching`), so the
+ * words never claim more than it has seen. `when` writes a time in the person's zone.
  */
 export function watchReason(
   service: ServiceView,
   t: Messages,
-): { reason: string; detail?: string } {
-  const down = service.containers.filter(isDownContainer);
-  if (down.length > 0) {
-    return { reason: t.overview.containersDown(down.length), detail: containerTrouble(down[0]) };
-  }
-  const failing = service.urls.filter((url) => url.status === "failing");
-  if (failing.length > 0) {
-    const [first] = failing;
-    const code = first.status_code === null ? "" : ` · ${first.status_code}`;
+  when: (iso: string) => string,
+): WatchWords {
+  const o = t.overview;
+  const watch =
+    service.watching.find((candidate) => candidate.kind === "container") ?? service.watching[0];
+  if (watch?.kind === "container") {
+    const container = service.containers.find((candidate) => candidate.name === watch.container);
     return {
-      reason: t.overview.urlsFailing(failing.length, service.urls.length),
-      detail: `${first.url}${code}`,
+      reason: o.containerDied,
+      look: watch.opens_after ? o.lookAfterTime(when(watch.opens_after)) : o.lookIfOne,
+      detail: container ? containerTrouble(container) : (watch.container ?? undefined),
     };
   }
-  return { reason: t.overview.itIsDown };
+  const status = service.urls.find((url) => url.url === watch?.url);
+  const code = status?.status_code ? ` · ${status.status_code}` : "";
+  const left = (watch?.failures_to_open ?? 0) - (watch?.failures ?? 0);
+  return {
+    reason: watch?.failures ? o.urlFailed(watch.failures) : o.urlFailing,
+    look: left > 0 ? o.lookAfterChecks(left) : o.lookIfOne,
+    detail: watch?.url ? `${watch.url}${code}` : undefined,
+  };
 }
 
 const NAMED_AT_MOST = 3;

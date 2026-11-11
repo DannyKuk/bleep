@@ -47,6 +47,23 @@ export interface HostView {
   may_sleep: boolean;
   quiet: QuietView | null;
   quiet_service_ids: string[];
+  /** The host has not answered and the watcher waits out its window before it opens an
+   * incident; only while it is unreachable. */
+  watching: WatchView | null;
+}
+
+/** A failure the watcher has seen and waits on before it opens an incident (#358), shown only
+ * while one would open once the wait is over. */
+export interface WatchView {
+  kind: "url" | "container" | "unreachable";
+  since: string;
+  /** When the window ends: a death's grace, an unreachable host's; null for a URL. */
+  opens_after: string | null;
+  url: string | null;
+  container: string | null;
+  /** A URL's failed checks in a row so far, and how many open an incident. */
+  failures: number | null;
+  failures_to_open: number | null;
 }
 
 export type ContainerHealth = "healthy" | "unhealthy" | "starting" | "none";
@@ -82,6 +99,8 @@ export interface ServiceView {
   urls: UrlStatus[];
   open_incident_id: string | null;
   quiet: QuietView | null;
+  /** What the watcher waits on for this service before it opens an incident. */
+  watching: WatchView[];
 }
 
 // Incidents (Task 21's contract: schemas/incidents.py, schemas/graph.py, schemas/api.py).

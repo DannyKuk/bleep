@@ -1,3 +1,5 @@
+from collections.abc import Awaitable, Callable
+
 from fastapi import Request, Response
 
 from bleep.api.cookie import COOKIE_NAME, set_session_cookie
@@ -7,6 +9,8 @@ from bleep.incidents.expectations import Expectations
 from bleep.incidents.runner import IncidentRunner
 from bleep.talk.actions import Actions
 from bleep.talk.progress import LookFollower
+from bleep.watcher.detector import Pending
+from bleep.watcher.manager import WatcherManager
 from bleep.wiring import AppParts
 
 
@@ -21,6 +25,16 @@ def get_settings(request: Request) -> Settings:
 def get_runner(request: Request) -> IncidentRunner:
     """The runner the lifespan started; it exists only while the app runs."""
     return request.app.state.runner
+
+
+Watching = Callable[[], Awaitable[list[Pending]]]
+
+
+def get_watching(request: Request) -> Watching | None:
+    """What the running watcher waits on before it opens an incident (#358); None before the
+    lifespan started it."""
+    watcher: WatcherManager | None = getattr(request.app.state, "watcher", None)
+    return watcher.watching if watcher is not None else None
 
 
 def get_expectations(request: Request) -> Expectations:

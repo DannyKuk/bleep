@@ -15,7 +15,7 @@ import {
 } from "@/components/overview/situation";
 import { useTimeZone } from "@/components/preferences";
 import type { HostView, Incident, IncidentDetail, PlanStep, ServiceView } from "@/lib/api-types";
-import { formatDateTime, showInvisible } from "@/lib/format";
+import { formatDateTime, formatTime, showInvisible } from "@/lib/format";
 import { type Messages, MESSAGES, useLanguage, useT } from "@/lib/i18n";
 import type { Mood } from "@/lib/mood";
 import { serviceHref } from "@/lib/routes";
@@ -159,8 +159,9 @@ function unreachableWords(
     ? t.overview.lastHeard(formatDateTime(host.last_seen, zone, language))
     : t.overview.notReached;
   const blind = names.length > 0 ? t.overview.blind(joinNames(names, t)) : "";
-  // With no incident about it yet the watcher waits out the host's window before it opens one.
-  const watch = incident ? "" : ` ${t.overview.lookIfUnreached}`;
+  // Only while the watcher reports it waits out the host's window: then an incident follows.
+  const opens = incident ? null : host.watching?.opens_after;
+  const watch = opens ? ` ${t.overview.lookAfterHost(formatTime(opens, zone, language))}` : "";
   return {
     tag: <HealthBadge health="down" label={t.health.unreachable} />,
     headline: t.overview.cannotReach(host.name),
@@ -172,7 +173,8 @@ function unreachableWords(
   };
 }
 
-function watchingWords(services: readonly ServiceView[], t: Messages): Words {
+function watchingWords(services: readonly ServiceView[], zone: Zone, language: Language): Words {
+  const t = MESSAGES[language];
   const tag = <HealthBadge health="degraded" label={t.health.watching} />;
   if (services.length > 1) {
     return {
@@ -182,11 +184,12 @@ function watchingWords(services: readonly ServiceView[], t: Messages): Words {
     };
   }
   const [service] = services;
-  const { reason, detail } = watchReason(service, t);
+  const when = (iso: string) => formatTime(iso, zone, language);
+  const { reason, look, detail } = watchReason(service, t, when);
   return {
     tag,
     headline: t.overview.watchingOne(service.name, reason),
-    body: t.overview.lookIfOne,
+    body: look,
     detail: detail && showInvisible(detail),
     link: { href: serviceHref(service.id), label: t.overview.showService },
   };
@@ -206,7 +209,7 @@ function wordsFor(
     case "unreachable":
       return unreachableWords(situation, services, zone, language);
     case "watching":
-      return watchingWords(situation.services, t);
+      return watchingWords(situation.services, zone, language);
     case "quiet":
       return {
         tag: <HealthBadge health="ok" label={t.health.allQuiet} />,

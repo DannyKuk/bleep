@@ -46,7 +46,8 @@ const OverallContext = createContext<Overall | null>(null);
  * The one poll of `GET /api/incidents` and `GET /api/hosts` behind the header's Bleep, and one of
  * `GET /api/services` beside it: every 10 s, paused while the tab is hidden (`usePoll`). The
  * services are a poll of their own so that a failed read of them leaves the header's incidents
- * and hosts standing; until they answer, the state is judged without them. It wraps the app
+ * and hosts standing. Until their first read answers the state is judged without them; after a
+ * failed read it is judged on the last good list, as the incidents and hosts are. It wraps the app
  * layout, so any page reads it with `useOverall()` instead of polling the same endpoints again.
  */
 export function OverallProvider({ children }: { children: ReactNode }) {

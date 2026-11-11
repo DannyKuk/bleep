@@ -5,7 +5,7 @@ import { json } from "@/components/dev/fixtures";
 import { HomeLogo } from "@/components/home-logo";
 import { incident } from "@/components/incident/fixtures";
 import { OverallProvider, useOverall } from "@/components/overall-state";
-import { host, service } from "@/components/overview/fixtures";
+import { host, service, watch } from "@/components/overview/fixtures";
 import type { HostView, Incident, ServiceView } from "@/lib/api-types";
 
 function stubReads(incidents: Incident[], hosts: HostView[], services: ServiceView[] = []) {
@@ -57,26 +57,29 @@ describe("HomeLogo", () => {
     expect(svg()).toHaveAttribute("data-mood", mood);
   });
 
-  it("is amber, not green, while a service is down with no incident open yet (#358)", async () => {
-    stubReads([], [host()], [service({ health: "down" })]);
+  it("is amber, not green, while the watcher waits on a service (#358)", async () => {
+    stubReads([], [host()], [service({ health: "down", watching: [watch()] })]);
     renderHeader();
     await vi.waitFor(() =>
       expect(screen.getByRole("link", { name: /Bleep/ })).toHaveAttribute("data-state", "amber"),
     );
   });
 
-  it("stays green when a service is down but quiet, or its incident is already open", async () => {
+  it("stays green for a service that only shows down, or one that is quiet", async () => {
     const quiet = { scope: "service", mode: "snooze", until: null, since: "x" } as const;
     stubReads(
       [incident({ status: "resolved" })],
       [host()],
-      [service({ health: "down", quiet }), service({ id: "b", health: "ok" })],
+      [
+        service({ health: "down" }),
+        service({ id: "b", health: "down", quiet, watching: [watch()] }),
+      ],
     );
     renderHeader();
     expect(await screen.findByText("green from 1")).toBeInTheDocument();
   });
 
-  it("judges the state without the services while they cannot be read", async () => {
+  it("judges the state without the services until they can be read", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn<typeof fetch>(async (input) => {

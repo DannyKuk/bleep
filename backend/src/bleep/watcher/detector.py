@@ -12,6 +12,7 @@ from collections import defaultdict, deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Literal
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
@@ -94,6 +95,26 @@ class Recovered:
 @dataclass(frozen=True)
 class Ignored:
     reason: str
+
+
+@dataclass(frozen=True)
+class Pending:
+    """A failure the detector has seen and waits on before it opens an incident (#358): a URL
+    failing fewer times in a row than `url_failures_to_open` (`failures` so far), a death inside
+    its grace window, or a host not answering inside `host_unreachable_s`. `signals` and `run`
+    are what the incident would open with, so the manager can judge whether it would open;
+    `opens_after` is when the window ends (None for a URL, which waits for checks, not time)."""
+
+    subject: Subject
+    kind: Literal["url", "container", "unreachable"]
+    signals: list[Signal]
+    since: datetime
+    opens_after: datetime | None = None
+    run: FailingRun | None = None
+    url: str | None = None
+    container: str | None = None
+    failures: int | None = None
+    failures_to_open: int | None = None
 
 
 ContainerKey = tuple[str, str]
@@ -204,6 +225,54 @@ class Detector:
                 # A looping container turns unhealthy before each crash: one more sign of it.
                 run = self._loop_run(key) if signal.kind == "unhealthy" else None
                 return self._emit(signal.subject, signals, now, run)
+
+    def pending(self) -> list[Pending]:
+        """What waits to open an incident now, read without changing anything. A memory or load
+        streak is left out: only URLs, deaths and an unreachable host are shown as waited on."""
+        t = self.t
+        grace = timedelta(seconds=t.container_grace_s)
+        found = [
+            Pending(
+                death.subject,
+                "container",
+                [death],
+                death.at,
+                opens_after=death.at + grace,
+                run=self._loop_run(key),
+                container=key[1],
+            )
+            for key, death in self._pending.items()
+        ]
+        for key, streak in self._streaks.items():
+            failing = self._failing.get(key)
+            if not streak or failing is None:
+                continue
+            first = streak[0]
+            if key[1] == "url_failed":
+                found.append(
+                    Pending(
+                        first.subject,
+                        "url",
+                        list(streak),
+                        first.at,
+                        run=self._with_loops(first.subject, failing),
+                        url=first.detail.get("url"),
+                        failures=len(streak),
+                        failures_to_open=t.url_failures_to_open,
+                    )
+                )
+            elif key[1] == "host_unreachable" and (down := self._down_since.get(key[0])):
+                found.append(
+                    Pending(
+                        first.subject,
+                        "unreachable",
+                        list(streak),
+                        down,
+                        opens_after=down + timedelta(seconds=t.host_unreachable_s),
+                        run=failing,
+                    )
+                )
+        return found
 
     def recovered(self, host_id: str, container: str, at: datetime) -> None:
         """The container was seen healthy at `at` (a fix Bleep verified): its loop is over."""
