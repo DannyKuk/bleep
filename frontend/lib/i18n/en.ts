@@ -23,7 +23,7 @@ export const en = {
     theme: (current: string, next: string) => `Theme: ${current}. Switch to ${next}`,
     state: {
       red: "something needs you",
-      amber: "Bleep is working on something",
+      amber: "Bleep has its eye on something",
       green: "all good",
       checking: "checking",
     },
@@ -374,6 +374,7 @@ export const en = {
     noRecentCheck: "No recent check",
     allQuiet: "All quiet",
     noHosts: "No hosts",
+    watching: "Watching",
   },
   counts: {
     hosts: (n: number) => `${n} host${n === 1 ? "" : "s"}`,
@@ -421,6 +422,22 @@ export const en = {
     lastHeard: (when: string) => `I last heard from it at ${when}`,
     notReached: "I have not reached it yet",
     blind: (names: string) => `, so I cannot see ${names}`,
+    lookIfUnreached: "I will look into it if it stays out of reach.",
+    // A service that is down with no incident open yet: the watcher waits to see if it holds.
+    watchingOne: (name: string, reason: string) => `Watching ${name}: ${reason}.`,
+    watchingMany: (names: string) => `Watching ${names}: they are down.`,
+    containersDown: (count: number) =>
+      count === 1 ? "a container is down" : `${count} containers are down`,
+    urlsFailing: (failing: number, total: number) => {
+      if (total === 1) return "its URL check fails";
+      if (failing === 1) return "one of its URL checks fails";
+      return `${failing} of its ${total} URL checks fail`;
+    },
+    itIsDown: "it is down",
+    moreServices: (count: number) => `${count} more`,
+    lookIfOne: "I will look into it if it keeps failing.",
+    lookIfMany: "I will look into each one that keeps failing.",
+    showService: "Show me the service",
     nothingNeeds: "Nothing needs you right now.",
     watching: (hosts: string, services: string) => `I am watching ${hosts} and ${services}.`,
     noHostsToWatch: "I have no hosts to watch yet.",

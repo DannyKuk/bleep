@@ -27,6 +27,7 @@ function stubBackend(talk: Answerer, incidents: Incident[] = [SHOP_14]) {
     const path = String(input);
     if (path.startsWith("/api/incidents")) return json(incidents);
     if (path.startsWith("/api/hosts")) return json([host()]);
+    if (path === "/api/services") return json([]);
     return talk(path, init?.body ? JSON.parse(String(init.body)) : null);
   });
   vi.stubGlobal("fetch", fetchMock);

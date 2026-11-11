@@ -54,10 +54,11 @@ function json(body: unknown, status = 200) {
   });
 }
 
-/** The header's overall poll (`OverallProvider`): the newest incidents and the hosts. */
+/** The header's overall poll (`OverallProvider`): the newest incidents, the hosts and the
+ * services. */
 function answerOverall(input: RequestInfo | URL): Response | undefined {
   const url = String(input);
-  if (url === "/api/hosts") return json([]);
+  if (url === "/api/hosts" || url === "/api/services") return json([]);
   if (url.startsWith("/api/incidents?limit=")) return json([]);
   return undefined;
 }

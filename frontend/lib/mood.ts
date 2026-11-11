@@ -1,7 +1,23 @@
-import type { HostView, Incident, IncidentStatus, Outcome, Subject } from "@/lib/api-types";
+import type {
+  HostView,
+  Incident,
+  IncidentStatus,
+  Outcome,
+  ServiceView,
+  Subject,
+} from "@/lib/api-types";
 
-/** Bleep's moods, in the order that decides when several apply (first wins), plus resting. */
-export const MOODS = ["needs_you", "not_sure", "working", "all_good", "resting"] as const;
+/** Bleep's moods, in the order that decides when several apply (first wins), plus resting.
+ * `watching` is the "hmm": something fails and the watcher has seen it, but it has opened no
+ * incident yet, since it waits to see whether the failure holds. */
+export const MOODS = [
+  "needs_you",
+  "not_sure",
+  "working",
+  "watching",
+  "all_good",
+  "resting",
+] as const;
 export type Mood = (typeof MOODS)[number];
 
 /** The header's colour of how things stand: red needs a human, amber Bleep is busy, green fine. */
@@ -63,16 +79,46 @@ export function isQuietSubject(
   return subject.kind === "service" && host.quiet_service_ids.includes(subject.service_id ?? "");
 }
 
+/** A host Bleep cannot reach that is neither quiet nor asleep: it is trouble. */
+export function isOutOfReach(host: Pick<HostView, "reachable" | "may_sleep" | "quiet">): boolean {
+  return !host.reachable && !host.quiet && !isAsleep(host);
+}
+
+type WatchedService = Pick<ServiceView, "host_id" | "health" | "quiet" | "open_incident_id">;
+
 /**
- * The overview's mood from the incidents and the hosts. `unsureIds` holds the waiting incidents
- * whose diagnosis is unsure (read from their detail); without it every waiting plan needs you.
- * A quiet subject's failed run and a quiet host's unreachability do not count.
+ * The services that are down while no incident is open for them: the watcher has seen it and
+ * waits for the failure to hold (a URL's failures in a row, a dead container's grace window)
+ * before it opens one. A quiet service is left alone, and a service on a host Bleep cannot reach
+ * is the host's trouble, not its own.
+ */
+export function watchedServices<S extends WatchedService>(
+  services: readonly S[],
+  hosts: readonly Pick<HostView, "id" | "reachable">[],
+): S[] {
+  const reached = new Set(hosts.filter((host) => host.reachable).map((host) => host.id));
+  return services.filter(
+    (service) =>
+      service.health === "down" &&
+      service.quiet === null &&
+      service.open_incident_id === null &&
+      reached.has(service.host_id),
+  );
+}
+
+/**
+ * The overview's mood from the incidents, the hosts and the services. `unsureIds` holds the
+ * waiting incidents whose diagnosis is unsure (read from their detail); without it every waiting
+ * plan needs you. A quiet subject's failed run and a quiet host's unreachability do not count.
+ * With no incident Bleep works on, a host out of reach or a service down (`watchedServices`)
+ * makes Bleep watch.
  */
 export function overallMood(
   incidents: readonly Incident[],
   hosts: readonly QuietHost[],
   unsureIds: ReadonlySet<string> = new Set(),
   now: number = Date.now(),
+  services: readonly WatchedService[] = [],
 ): Mood {
   const waiting = incidents.filter((incident) => incident.status === "awaiting_approval");
   const failedForYou = (incident: Incident) =>
@@ -81,19 +127,22 @@ export function overallMood(
   if (waiting.some((incident) => !unsureIds.has(incident.id))) return "needs_you";
   if (waiting.length > 0) return "not_sure";
   if (incidents.some((incident) => WORKING.has(incident.status))) return "working";
-  if (hosts.some((host) => !host.reachable && !host.quiet && !isAsleep(host))) return "working";
+  if (hosts.some(isOutOfReach)) return "watching";
+  if (watchedServices(services, hosts).length > 0) return "watching";
   return "all_good";
 }
 
-/** The header's three-colour state; it has no Not sure, since a waiting plan is red either way. */
+/** The header's three-colour state; it has no Not sure, since a waiting plan is red either way,
+ * and Watching is amber like Working, since Bleep's attention is on something. */
 export function overallState(
   incidents: readonly Incident[],
   hosts: readonly QuietHost[],
   now: number = Date.now(),
+  services: readonly WatchedService[] = [],
 ): OverallState {
-  const mood = overallMood(incidents, hosts, new Set(), now);
+  const mood = overallMood(incidents, hosts, new Set(), now, services);
   if (mood === "needs_you") return "red";
-  if (mood === "working") return "amber";
+  if (mood === "working" || mood === "watching") return "amber";
   return "green";
 }
 

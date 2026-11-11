@@ -238,8 +238,36 @@ describe("OverviewView hero", () => {
       />,
     );
     expect(headline()).toHaveTextContent("I cannot reach coolify-main.");
-    expect(screen.getByText(/so I cannot see molecula and blog\./)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /so I cannot see molecula and blog\. I will look into it if it stays out of reach\./,
+      ),
+    ).toBeInTheDocument();
     expect(within(hero()).getByText("ssh: connection timed out")).toBeInTheDocument();
+    expect(mood(container)).toBe("watching");
+  });
+
+  it("follows the incident about an unreachable host instead of promising to look", () => {
+    const { container } = render(
+      <OverviewView
+        hosts={[host({ id: "main", name: "coolify-main", reachable: false, health: "down" })]}
+        services={[]}
+        incidents={[
+          incident({
+            id: "host-inc",
+            status: "investigating",
+            subject: { kind: "host", host_id: "main", service_id: null },
+          }),
+        ]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("I cannot reach coolify-main.");
+    expect(hero()).not.toHaveTextContent("I will look into it");
+    expect(screen.getByRole("link", { name: /Follow along/ })).toHaveAttribute(
+      "href",
+      "/incidents/host-inc",
+    );
     expect(mood(container)).toBe("working");
   });
 
@@ -256,6 +284,132 @@ describe("OverviewView hero", () => {
     expect(screen.getByText("I am watching 2 hosts and 1 service.")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Show me/ })).toBeNull();
     expect(mood(container)).toBe("all_good");
+  });
+});
+
+describe("OverviewView hero while Bleep watches (#358)", () => {
+  const failingUrl = {
+    url: "http://testapp.local/",
+    status: "failing",
+    last_checked: null,
+    status_code: 503,
+    latency_ms: 40,
+  } as const;
+  const deadContainer = {
+    ...service().containers[0],
+    state: "exited",
+    exit_code: 1,
+  };
+
+  it("names a service whose URL fails with no incident yet, and says it waits", () => {
+    const { container } = render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[service({ name: "bleep-testapp", health: "down", urls: [failingUrl] })]}
+        incidents={[incident({ status: "resolved" })]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("Watching bleep-testapp: its URL check fails.");
+    expect(hero()).toHaveTextContent("I will look into it if it keeps failing.");
+    expect(within(hero()).getByText("http://testapp.local/ · 503")).toHaveClass("font-mono");
+    expect(within(hero()).getByText("Watching")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Show me the service/ })).toHaveAttribute(
+      "href",
+      "/services/demo%2Fcompose%3Ashop",
+    );
+    expect(hero()).not.toHaveTextContent("Nothing needs you");
+    expect(mood(container)).toBe("watching");
+  });
+
+  it("names a service whose container died inside its grace window", () => {
+    const { container } = render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[service({ health: "down", containers: [deadContainer] })]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("Watching shop: a container is down.");
+    expect(within(hero()).getByText("shop-web-1 · exited (1)")).toBeInTheDocument();
+    expect(mood(container)).toBe("watching");
+  });
+
+  it("says which container fails its healthcheck", () => {
+    const unhealthy = { ...service().containers[0], health: "unhealthy" } as const;
+    render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[service({ health: "down", containers: [unhealthy] })]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("Watching shop: a container is down.");
+    expect(within(hero()).getByText("shop-web-1 · unhealthy")).toBeInTheDocument();
+  });
+
+  it("names every service it watches", () => {
+    render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[
+          service({ health: "down", urls: [failingUrl] }),
+          service({ id: "demo/compose:blog", name: "blog", health: "down" }),
+        ]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("Watching shop and blog: they are down.");
+    expect(hero()).toHaveTextContent("I will look into each one that keeps failing.");
+  });
+
+  it("follows the incident instead once one is open for the service", () => {
+    const { container } = render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[service({ health: "down", urls: [failingUrl], open_incident_id: "inc-1" })]}
+        incidents={[incident({ status: "investigating" })]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("shop is down. I am on it.");
+    expect(mood(container)).toBe("working");
+  });
+
+  it("stays all good for a quiet service that is down, and for a host that is fine", () => {
+    const quiet = { scope: "service", mode: "snooze", until: null, since: "x" } as const;
+    const { container } = render(
+      <OverviewView
+        hosts={[host(), host({ id: "spare", name: "Spare M1" })]}
+        services={[
+          service({ health: "down", urls: [failingUrl], quiet }),
+          service({ id: "spare/compose:blog", host_id: "spare", name: "blog" }),
+        ]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("Nothing needs you right now.");
+    expect(mood(container)).toBe("all_good");
+  });
+
+  it("says it in German", () => {
+    act(() => setLanguage("de"));
+    render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[service({ health: "down", urls: [failingUrl] })]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("Ich beobachte shop: seine URL-Prüfung schlägt fehl.");
+    expect(hero()).toHaveTextContent("Hält das an, sehe ich ihn mir genauer an.");
+    expect(within(hero()).getByText("Unter Beobachtung")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Dienst ansehen/ })).toBeInTheDocument();
   });
 });
 
@@ -673,6 +827,7 @@ describe("OverviewView in German", () => {
         /Zuletzt habe ich am 02\.11\.2026, \d\d:\d\d von ihm gehört, deshalb sehe ich molecula und blog nicht\./,
       ),
     ).toBeInTheDocument();
+    expect(hero()).toHaveTextContent("Bleibt er unerreichbar, sehe ich ihn mir genauer an.");
     expect(within(hero()).getByText("Nicht erreichbar")).toBeInTheDocument();
     expect(within(hero()).getByText("ssh: connection timed out")).toBeInTheDocument();
   });

@@ -23,6 +23,11 @@
 .tilt {
   animation: tilt 2.6s ease-in-out infinite;
 }
+/* The lean is also the pose itself, so it holds with reduced motion. */
+.lean {
+  transform: rotate(5deg);
+  animation: lean 3.4s ease-in-out infinite;
+}
 
 .eyes {
   transform-origin: 60px 46px;
@@ -74,6 +79,10 @@
 .scratch {
   transform-origin: 40px 80px;
   animation: scratch 0.4s ease-in-out infinite;
+}
+/* A finger tapping the chin twice, then a pause: thinking it over. */
+.chin {
+  animation: chin 3.4s ease-in-out infinite;
 }
 
 .light {
@@ -187,6 +196,28 @@
   }
   50% {
     transform: rotate(-6deg);
+  }
+}
+@keyframes lean {
+  0%,
+  100% {
+    transform: rotate(5deg);
+  }
+  50% {
+    transform: rotate(7deg);
+  }
+}
+@keyframes chin {
+  0%,
+  60%,
+  76%,
+  92%,
+  100% {
+    transform: translateY(0);
+  }
+  68%,
+  84% {
+    transform: translateY(-2px);
   }
 }
 @keyframes pulse {

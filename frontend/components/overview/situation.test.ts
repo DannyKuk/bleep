@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import { diagnosis, incident } from "@/components/incident/fixtures";
 import { host, service } from "@/components/overview/fixtures";
-import { heroSituation, isHurting, reachLine } from "@/components/overview/situation";
+import {
+  heroSituation,
+  isHurting,
+  reachLine,
+  watchedNames,
+  watchReason,
+} from "@/components/overview/situation";
 import type { HostView, IncidentDetail, ServiceView } from "@/lib/api-types";
 import { MESSAGES } from "@/lib/i18n";
 
@@ -117,6 +123,94 @@ describe("heroSituation", () => {
     expect(heroSituation({ incidents: done, hosts: [], details: {}, now: NOW })).toEqual({
       kind: "no_hosts",
     });
+  });
+});
+
+describe("heroSituation while Bleep watches (#358)", () => {
+  const down = (overrides: Partial<ServiceView> = {}) => service({ health: "down", ...overrides });
+  const situation = (services: ServiceView[], hosts = [host()]) =>
+    heroSituation({ incidents: [], hosts, services, details: {}, now: NOW });
+
+  it("watches a service that is down with no incident open for it", () => {
+    expect(situation([down(), service({ id: "b" })])).toMatchObject({
+      kind: "watching",
+      services: [{ id: "demo/compose:shop" }],
+    });
+  });
+
+  it("puts an incident Bleep works on and an unreachable host first", () => {
+    const working = heroSituation({
+      incidents: [incident({ status: "investigating" })],
+      hosts: [host()],
+      services: [down({ id: "b" })],
+      details: {},
+      now: NOW,
+    });
+    expect(working).toMatchObject({ kind: "incident" });
+    const unreachable = situation([down()], [host(), host({ id: "far", reachable: false })]);
+    expect(unreachable).toMatchObject({ kind: "unreachable", host: { id: "far" } });
+  });
+
+  it("is quiet for a service down but quiet, one with its incident open, or one stopped", () => {
+    const quiet = { scope: "service", mode: "snooze", until: null, since: "x" } as const;
+    expect(
+      situation([
+        down({ quiet }),
+        down({ open_incident_id: "inc-1" }),
+        service({ health: "stopped" }),
+      ]),
+    ).toEqual({ kind: "quiet" });
+  });
+});
+
+describe("watchReason", () => {
+  const container = service().containers[0];
+  const failing = (url: string, code: number | null) =>
+    ({ url, status: "failing", last_checked: null, status_code: code, latency_ms: null }) as const;
+  const reason = (overrides: Partial<ServiceView>) =>
+    watchReason(service({ health: "down", ...overrides }), MESSAGES.en);
+
+  it("names a dead container before a failing URL", () => {
+    const dead = { ...container, state: "exited", exit_code: 137 };
+    expect(reason({ containers: [dead], urls: [failing("http://a/", 502)] })).toEqual({
+      reason: "a container is down",
+      detail: "shop-web-1 · exited (137)",
+    });
+  });
+
+  it("does not count a clean stop as down", () => {
+    const stopped = { ...container, name: "shop-worker-1", state: "exited", exit_code: 0 };
+    expect(
+      reason({ containers: [container, stopped], urls: [failing("http://a/", null)] }),
+    ).toEqual({ reason: "its URL check fails", detail: "http://a/" });
+  });
+
+  it("counts the failing URL checks without claiming how often they failed", () => {
+    const ok = service().urls[0];
+    expect(reason({ urls: [failing("http://a/", 500), ok] }).reason).toBe(
+      "one of its URL checks fails",
+    );
+    expect(reason({ urls: [failing("http://a/", 500), failing("http://b/", 500), ok] })).toEqual({
+      reason: "2 of its 3 URL checks fail",
+      detail: "http://a/ · 500",
+    });
+  });
+
+  it("says only that it is down when nothing more is known", () => {
+    expect(reason({ urls: [] })).toEqual({ reason: "it is down" });
+  });
+});
+
+describe("watchedNames", () => {
+  const named = (...names: string[]) =>
+    watchedNames(
+      names.map((name) => service({ id: name, name })),
+      MESSAGES.en,
+    );
+
+  it("names up to three, then two and how many more", () => {
+    expect(named("a", "b", "c")).toBe("a, b and c");
+    expect(named("a", "b", "c", "d", "e")).toBe("a, b and 3 more");
   });
 });
 

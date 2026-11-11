@@ -111,11 +111,11 @@ export function OverviewView({
   /** Reads the overview again after a quiet state was set or cleared on a row or a tile. */
   onChanged?: Reload;
 }) {
-  const situation = heroSituation({ incidents, hosts, details, now });
+  const situation = heroSituation({ incidents, hosts, services, details, now });
   const mood =
     situation.kind === "no_hosts"
       ? "resting"
-      : overallMood(incidents, hosts, unsureIds(details), now);
+      : overallMood(incidents, hosts, unsureIds(details), now, services);
   return (
     <div className="flex flex-col gap-10">
       <OverviewHero situation={situation} mood={mood} hosts={hosts} services={services} />
@@ -132,28 +132,27 @@ const POLL_MS = 10_000;
 
 const isWaiting = (incident: Incident) => incident.status === "awaiting_approval";
 
-// The services and the waiting incidents' details come from one tick and are committed together.
 // A detail that cannot be read is left out, so the hero falls back to the incident's title.
-async function fetchOverview(signal: AbortSignal, waitingIds: readonly string[]) {
-  const [services, ...read] = await Promise.all([
-    apiFetch<ServiceView[]>("/api/services", { signal }),
-    ...waitingIds.map((id) =>
+async function fetchDetails(signal: AbortSignal, waitingIds: readonly string[]) {
+  const read = await Promise.all(
+    waitingIds.map((id) =>
       apiFetch<IncidentDetail>(`/api/incidents/${encodeURIComponent(id)}`, { signal }).catch(
         () => null,
       ),
     ),
-  ]);
+  );
   const details: Record<string, IncidentDetail> = {};
   waitingIds.forEach((id, index) => {
-    const detail = read[index] as IncidentDetail | null;
+    const detail = read[index];
     if (detail) details[id] = detail;
   });
-  return { services, details };
+  return details;
 }
 
 /**
- * The overview: incidents and hosts from the app's shared poll (`useOverall`), the services and
- * the details of incidents waiting for the human from its own 10 s poll.
+ * The overview: incidents, hosts and services from the app's shared poll (`useOverall`), so the
+ * hero and the header read the same tick, and the details of incidents waiting for the human
+ * from its own 10 s poll.
  */
 export function Overview() {
   const overall = useOverall();
@@ -164,17 +163,18 @@ export function Overview() {
     .join("\n");
   // A new waiting incident changes the fetcher, which restarts the poll and reads it at once.
   const fetcher = useCallback(
-    (signal: AbortSignal) => fetchOverview(signal, waitingKey ? waitingKey.split("\n") : []),
+    (signal: AbortSignal) => fetchDetails(signal, waitingKey ? waitingKey.split("\n") : []),
     [waitingKey],
   );
-  const { data, error: servicesError, refresh } = usePoll(fetcher, POLL_MS);
+  const { data: details, error: detailsError, refresh } = usePoll(fetcher, POLL_MS);
   const reload = useCallback(async () => {
     overall.refresh();
     refresh();
   }, [overall, refresh]);
-  const error = overall.error ?? servicesError;
+  const error = overall.error ?? overall.servicesError ?? detailsError;
+  const { incidents, hosts, services, readAt } = overall;
 
-  if (!overall.incidents || !overall.hosts || overall.readAt === undefined || !data) {
+  if (!incidents || !hosts || !services || readAt === undefined || !details) {
     if (error) {
       return (
         <p role="alert" className="flex items-center gap-2 text-[15px] text-down">
@@ -199,11 +199,11 @@ export function Overview() {
         </p>
       )}
       <OverviewView
-        hosts={overall.hosts}
-        services={data.services}
-        incidents={overall.incidents}
-        details={data.details}
-        now={overall.readAt}
+        hosts={hosts}
+        services={services}
+        incidents={incidents}
+        details={details}
+        now={readAt}
         onHostAdded={reload}
         onChanged={reload}
       />

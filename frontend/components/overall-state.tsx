@@ -1,10 +1,10 @@
 "use client";
 
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
 
 import { usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
-import type { HostView, Incident } from "@/lib/api-types";
+import type { HostView, Incident, ServiceView } from "@/lib/api-types";
 import { overallState, type OverallState } from "@/lib/mood";
 
 /** The newest incidents the header reads: the API's largest page. An unfinished incident is
@@ -16,13 +16,17 @@ export interface Overall {
   /** The newest incidents, newest first; undefined until the first read answers. */
   incidents: Incident[] | undefined;
   hosts: HostView[] | undefined;
+  /** Every service, read on a poll of its own; undefined until its first read answers. */
+  services: ServiceView[] | undefined;
   /** Red, amber or green; undefined until the first read answers. */
   state: OverallState | undefined;
   /** The last refresh failed; the data above is then the last good read. */
   error: Error | undefined;
+  /** The last read of the services failed; `services` is then the last good read. */
+  servicesError: Error | undefined;
   /** When the data was read (ms since the epoch), the "now" the state was computed for. */
   readAt: number | undefined;
-  /** Reads the incidents and hosts again now, after a change the page made itself. */
+  /** Reads the incidents, hosts and services again now, after a change the page made itself. */
   refresh: () => void;
 }
 
@@ -34,25 +38,39 @@ async function fetchOverall(signal: AbortSignal) {
   return { incidents, hosts, readAt: Date.now() };
 }
 
+const fetchServices = (signal: AbortSignal) => apiFetch<ServiceView[]>("/api/services", { signal });
+
 const OverallContext = createContext<Overall | null>(null);
 
 /**
- * The one poll of `GET /api/incidents` and `GET /api/hosts` behind the header's Bleep: every
- * 10 s, paused while the tab is hidden (`usePoll`). It wraps the app layout, so any page reads it
- * with `useOverall()` instead of polling the same endpoints again.
+ * The one poll of `GET /api/incidents` and `GET /api/hosts` behind the header's Bleep, and one of
+ * `GET /api/services` beside it: every 10 s, paused while the tab is hidden (`usePoll`). The
+ * services are a poll of their own so that a failed read of them leaves the header's incidents
+ * and hosts standing; until they answer, the state is judged without them. It wraps the app
+ * layout, so any page reads it with `useOverall()` instead of polling the same endpoints again.
  */
 export function OverallProvider({ children }: { children: ReactNode }) {
-  const { data, error, refresh } = usePoll(fetchOverall, POLL_MS);
+  const { data, error, refresh: refreshOverall } = usePoll(fetchOverall, POLL_MS);
+  const services = usePoll(fetchServices, POLL_MS);
+  const refreshServices = services.refresh;
+  const refresh = useCallback(() => {
+    refreshOverall();
+    refreshServices();
+  }, [refreshOverall, refreshServices]);
   const value = useMemo<Overall>(
     () => ({
       incidents: data?.incidents,
       hosts: data?.hosts,
-      state: data ? overallState(data.incidents, data.hosts, data.readAt) : undefined,
+      services: services.data,
+      state: data
+        ? overallState(data.incidents, data.hosts, data.readAt, services.data)
+        : undefined,
       error,
+      servicesError: services.error,
       readAt: data?.readAt,
       refresh,
     }),
-    [data, error, refresh],
+    [data, error, services.data, services.error, refresh],
   );
   return <OverallContext.Provider value={value}>{children}</OverallContext.Provider>;
 }

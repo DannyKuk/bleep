@@ -16,7 +16,7 @@ export const de: Messages = {
     theme: (current, next) => `Darstellung: ${current}. Zu ${next} wechseln`,
     state: {
       red: "etwas braucht dich",
-      amber: "Bleep arbeitet an etwas",
+      amber: "Bleep hat etwas im Blick",
       green: "alles gut",
       checking: "wird geprüft",
     },
@@ -368,6 +368,7 @@ export const de: Messages = {
     noRecentCheck: "Keine aktuelle Prüfung",
     allQuiet: "Alles ruhig",
     noHosts: "Keine Hosts",
+    watching: "Unter Beobachtung",
   },
   counts: {
     hosts: (n) => `${n} Host${n === 1 ? "" : "s"}`,
@@ -413,6 +414,21 @@ export const de: Messages = {
     lastHeard: (when) => `Zuletzt habe ich am ${when} von ihm gehört`,
     notReached: "Ich habe ihn noch nicht erreicht",
     blind: (names) => `, deshalb sehe ich ${names} nicht`,
+    lookIfUnreached: "Bleibt er unerreichbar, sehe ich ihn mir genauer an.",
+    watchingOne: (name, reason) => `Ich beobachte ${name}: ${reason}.`,
+    watchingMany: (names) => `Ich beobachte ${names}: sie sind ausgefallen.`,
+    containersDown: (count) =>
+      count === 1 ? "ein Container ist ausgefallen" : `${count} Container sind ausgefallen`,
+    urlsFailing: (failing, total) => {
+      if (total === 1) return "seine URL-Prüfung schlägt fehl";
+      if (failing === 1) return "eine seiner URL-Prüfungen schlägt fehl";
+      return `${failing} seiner ${total} URL-Prüfungen schlagen fehl`;
+    },
+    itIsDown: "er ist ausgefallen",
+    moreServices: (count) => `${count} weitere`,
+    lookIfOne: "Hält das an, sehe ich ihn mir genauer an.",
+    lookIfMany: "Bei jedem, bei dem das anhält, sehe ich genauer hin.",
+    showService: "Dienst ansehen",
     nothingNeeds: "Gerade braucht dich nichts.",
     watching: (hosts, services) => `Ich beobachte ${hosts} und ${services}.`,
     noHostsToWatch: "Ich habe noch keinen Host, den ich beobachten kann.",
