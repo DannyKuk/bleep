@@ -222,6 +222,31 @@ async def test_a_file_without_a_patch_says_so(registry, github):
     assert "no text diff" in out
 
 
+@pytest.mark.parametrize(
+    ("status", "additions", "deletions", "previous"),
+    [("added", 0, 0, None), ("renamed", 0, 0, "pkg/old.py")],
+)
+def test_a_file_with_no_lines_changed_is_not_called_binary(status, additions, deletions, previous):
+    file = FileChange(
+        filename="pkg/__init__.py",
+        status=status,
+        additions=additions,
+        deletions=deletions,
+        previous_filename=previous,
+    )
+    out = describe_diff(detail(files=[file]), 8000)
+    assert "--- pkg/__init__.py\n(no lines changed: empty file" in out
+    assert "binary or too large" not in out
+
+
+def test_a_patchless_file_with_changed_lines_is_still_binary_or_too_large():
+    changed = FileChange(filename="big.bin", status="modified", additions=3, deletions=1)
+    removed = FileChange(filename="old.bin", status="removed", additions=0, deletions=5)
+    out = describe_diff(detail(files=[changed, removed]), 8000)
+    assert "--- big.bin\n(no text diff: binary or too large)" in out
+    assert "--- old.bin\n(no text diff: binary or too large)" in out
+
+
 @pytest.mark.parametrize("sha", ["xyz", "12", "../../etc"])
 async def test_a_malformed_sha_is_a_readable_refusal(registry, github, sha):
     out = await build(registry, github)["commit_diff"].ainvoke({"sha": sha})
