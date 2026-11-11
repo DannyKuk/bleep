@@ -1,11 +1,12 @@
 import hmac
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel
 
 from bleep.api.cookie import COOKIE_NAME, set_session_cookie
 from bleep.api.deps import get_parts, get_settings, require_session
+from bleep.api.errors import Refusal
 from bleep.schemas.api import Me
 from bleep.wiring import AppParts
 
@@ -26,12 +27,12 @@ async def login(
     client = request.client.host if request.client else "unknown"
     wait = parts.login_limiter.retry_after(client)
     if wait is not None:
-        raise HTTPException(429, "too many attempts", headers={"Retry-After": str(wait)})
+        raise Refusal(429, "too_many_attempts", headers={"Retry-After": str(wait)})
     settings = get_settings(request)
     expected = settings.admin_password.get_secret_value().encode()
     if not hmac.compare_digest(body.password.encode(), expected):
         parts.login_limiter.fail(client)
-        raise HTTPException(401, "wrong password")
+        raise Refusal(401, "wrong_password")
     response = Response(status_code=204)
     set_session_cookie(response, await parts.sessions.create(), settings)
     return response

@@ -3,9 +3,10 @@
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from bleep.api.deps import get_parts
+from bleep.api.errors import Refusal
 from bleep.incidents.repository import utcnow
 from bleep.schemas.api import HostView, ServiceDetail, ServiceView, UrlHistory
 from bleep.schemas.incidents import Subject
@@ -49,7 +50,7 @@ async def get_service(
         else None
     )
     if service is None or host is None:
-        raise HTTPException(404, "no such service")
+        raise Refusal(404, "no_service")
     subject = Subject(kind="service", host_id=service.host_id, service_id=service.id)
     view = service_view(
         service,

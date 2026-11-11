@@ -14,16 +14,16 @@ import json
 from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Response
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Body, Depends, Header, Response
 from pydantic import ValidationError
 
 from bleep.api.deps import get_parts
 from bleep.api.deps import get_settings as app_settings
+from bleep.api.errors import Refusal, problems_of
 from bleep.config import Settings
 from bleep.hosts.coolify_names import coolify_slug
 from bleep.incidents.settings_store import SettingsRefused, SettingsStale, check_body
-from bleep.plugins.urls import UrlRefused, check_dashboard_url, check_public
+from bleep.plugins.urls import NotPublic, UrlRefused, check_dashboard_url, check_public
 from bleep.schemas.settings import (
     ENV_NAMES,
     MODEL_KEY_ENV,
@@ -113,27 +113,23 @@ async def put_settings(
     settings: Annotated[Settings, Depends(app_settings)],
     response: Response,
     if_match: Annotated[str | None, Header()] = None,
-) -> SettingsView | JSONResponse:
+) -> SettingsView:
     """Each section given replaces that section's overrides; see `SettingsUpdate`. `If-Match`
     holds the version the body was built from. `budgets` are a 403 while the dev panel, which
     edits them, is off; the models, embeddings and tracing are the settings page's (#372)."""
     if if_match is None or not if_match.strip():
-        raise HTTPException(428, "send the settings version you read in If-Match")
+        raise Refusal(428, "need_version_settings")
     update = parse_body(body, SettingsUpdate)
     refuse_names_without_a_slug(update)
     if not settings.dev_panel and update.budgets is not None:
-        raise HTTPException(
-            403,
-            "the budgets are changed in the dev panel, which is off; "
-            "set BLEEP_DEV_PANEL=true to change them",
-        )
+        raise Refusal(403, "budgets_dev_panel")
     await check_tracing_addresses(update, parts)
     try:
         await parts.settings_store.update(update, version=version_of(if_match))
-    except SettingsStale as stale:
-        return stale_response(stale.current, "the settings changed since this version was read")
+    except SettingsStale as changed:
+        raise stale(changed.current, "stale_settings") from None
     except SettingsRefused as refusal:
-        raise HTTPException(422, str(refusal)) from None
+        raise Refusal.of(422, refusal) from None
     view = settings_view(parts)
     response.headers["ETag"] = f'"{view.version}"'
     return view
@@ -157,12 +153,15 @@ async def check_tracing_addresses(update: SettingsUpdate, parts: AppParts) -> No
             host = httpx.URL(url)
             await check_public(host.host, host.port or 443, parts.plugins.resolver)
         except UrlRefused as refused:
-            raise HTTPException(422, str(refused)) from None
-        except ValueError as refusal:
-            raise HTTPException(
+            raise Refusal.of(422, refused) from None
+        except NotPublic as refusal:
+            raise Refusal(
                 422,
-                f"{name} set on the dashboard must reach public addresses only, and {refusal}; "
-                "an address on a private network can be set in .env",
+                "address_public_only",
+                fallback=f"{name} set on the dashboard must reach public addresses only, and "
+                f"{refusal}; an address on a private network can be set in .env",
+                name=name,
+                reason=refusal,
             ) from None
 
 
@@ -174,11 +173,15 @@ def refuse_names_without_a_slug(update: SettingsUpdate) -> None:
         for service, overrides in host.services.items():
             for name in overrides.protected_containers or []:
                 if not coolify_slug(name):
-                    raise HTTPException(
+                    raise Refusal(
                         422,
-                        f"host {host_id}, service {service}: protected entry {name!r} has no "
-                        "letters or digits for Coolify's slug, so it would protect nothing by "
-                        "a Coolify name; protect the application by its uuid",
+                        "protected_no_slug",
+                        fallback=f"host {host_id}, service {service}: protected entry {name!r} "
+                        "has no letters or digits for Coolify's slug, so it would protect nothing "
+                        "by a Coolify name; protect the application by its uuid",
+                        host=host_id,
+                        service=service,
+                        entry=repr(name),
                     )
 
 
@@ -187,13 +190,9 @@ def version_of(if_match: str) -> str:
     return if_match.strip().removeprefix("W/").strip('"')
 
 
-def stale_response(current: str, what: str) -> JSONResponse:
+def stale(current: str, template: str) -> Refusal:
     """409: nothing was saved; the body and the `ETag` carry the version now, `current`."""
-    return JSONResponse(
-        {"detail": f"{what}; nothing was saved", "version": current},
-        status_code=409,
-        headers={"ETag": f'"{current}"'},
-    )
+    return Refusal(409, template, extra={"version": current}, headers={"ETag": f'"{current}"'})
 
 
 def check_size(body: Any) -> None:
@@ -201,15 +200,20 @@ def check_size(body: Any) -> None:
     for one nested deeper than `MAX_BODY_DEPTH`. `BodyLimitMiddleware` caps the raw bytes
     earlier."""
     if _too_deep(body):
-        raise HTTPException(422, "the body is nested too deeply")
+        raise Refusal(422, "body_too_deep")
     try:
         size = len(json.dumps(body, ensure_ascii=False))
     except RecursionError:
-        raise HTTPException(422, "the body is nested too deeply") from None
+        raise Refusal(422, "body_too_deep") from None
     except TypeError:  # not JSON (a form or text/plain body arrives as bytes)
-        raise HTTPException(422, "send the body as JSON") from None
+        raise Refusal(422, "body_not_json") from None
     if size > MAX_BODY_CHARS:
-        raise HTTPException(413, f"the body is over {MAX_BODY_CHARS:,} characters")
+        raise Refusal(
+            413,
+            "body_too_large_chars",
+            fallback=f"the body is over {MAX_BODY_CHARS:,} characters",
+            limit=MAX_BODY_CHARS,
+        )
 
 
 def parse_body[T](body: Any, model: type[T]) -> T:
@@ -220,7 +224,6 @@ def parse_body[T](body: Any, model: type[T]) -> T:
         check_body(body)
         return model.model_validate(body)  # type: ignore[attr-defined]
     except SettingsRefused as refusal:
-        raise HTTPException(422, str(refusal)) from None
+        raise Refusal.of(422, refusal) from None
     except ValidationError as error:
-        detail = error.errors(include_input=False, include_url=False, include_context=False)
-        raise HTTPException(422, detail) from None
+        raise Refusal.invalid(problems_of(error)) from None

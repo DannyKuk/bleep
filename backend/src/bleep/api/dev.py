@@ -10,12 +10,12 @@ version now when the prompt has changed since.
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Body, Depends, Header, Query, Response
 
 from bleep import prompts
 from bleep.api.deps import get_parts
-from bleep.api.settings import check_size, parse_body, stale_response, version_of
+from bleep.api.errors import Refusal
+from bleep.api.settings import check_size, parse_body, stale, version_of
 from bleep.guard.log import GuardKind
 from bleep.guard.redact import redact_text
 from bleep.incidents.prompt_overrides import (
@@ -63,12 +63,12 @@ def _prompt(parts: AppParts, name: str) -> PromptView:
 
 def _version(if_match: str | None) -> str:
     if if_match is None or not if_match.strip():
-        raise HTTPException(428, "send the prompt's version you read in If-Match")
+        raise Refusal(428, "need_version_prompt")
     return version_of(if_match)
 
 
-def _stale(stale: PromptStale) -> JSONResponse:
-    return stale_response(stale.current, "the prompt changed since this version was read")
+def _stale(changed: PromptStale) -> Refusal:
+    return stale(changed.current, "stale_prompt")
 
 
 def _answer(parts: AppParts, name: str, response: Response) -> PromptView:
@@ -90,27 +90,27 @@ async def set_prompt(
     parts: Parts,
     response: Response,
     if_match: Annotated[str | None, Header()] = None,
-) -> PromptView | JSONResponse:
+) -> PromptView:
     """Save an override; 422 unless it passes the loader's checks and holds no secret.
     `If-Match` holds the prompt's `version` the text was written from."""
     if name not in prompts.overridable_names():
-        raise HTTPException(404, "no such prompt")
+        raise Refusal(404, "no_prompt")
     version = _version(if_match)
     check_size(body)
     if isinstance(body, dict) and isinstance(body.get("text"), str):
         try:
             check_lines(body["text"])  # before the body's secret check reads it as a secret
         except PromptRefused as refusal:
-            raise HTTPException(422, str(refusal)) from None
+            raise Refusal.of(422, refusal) from None
     override = parse_body(body, PromptOverrideBody)
     try:
         await parts.prompt_overrides.set(name, override.text, version=version)
-    except PromptStale as stale:
-        return _stale(stale)
+    except PromptStale as changed:
+        raise _stale(changed) from None
     except UnknownPrompt:
-        raise HTTPException(404, "no such prompt") from None
+        raise Refusal(404, "no_prompt") from None
     except PromptRefused as refusal:
-        raise HTTPException(422, str(refusal)) from None
+        raise Refusal.of(422, refusal) from None
     return _answer(parts, name, response)
 
 
@@ -120,17 +120,17 @@ async def reset_prompt(
     parts: Parts,
     response: Response,
     if_match: Annotated[str | None, Header()] = None,
-) -> PromptView | JSONResponse:
+) -> PromptView:
     """Delete the override, so the prompt is read from its file again. `If-Match` holds the
     prompt's `version` the reset was asked from."""
     if name not in prompts.overridable_names():
-        raise HTTPException(404, "no such prompt")
+        raise Refusal(404, "no_prompt")
     try:
         await parts.prompt_overrides.reset(name, version=_version(if_match))
-    except PromptStale as stale:
-        return _stale(stale)
+    except PromptStale as changed:
+        raise _stale(changed) from None
     except UnknownPrompt:
-        raise HTTPException(404, "no such prompt") from None
+        raise Refusal(404, "no_prompt") from None
     return _answer(parts, name, response)
 
 

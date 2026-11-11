@@ -274,7 +274,7 @@ async def test_nothing_shows_a_value(tmp_path):
 
 
 async def test_a_value_something_needs_can_be_changed_but_not_cleared(tmp_path):
-    needed = SecretName("LANGSMITH_API_KEY", required="TRACING=langsmith needs it")
+    needed = SecretName("LANGSMITH_API_KEY", required="langsmith")
     store = SecretStore(tmp_path / "secrets.json", [needed], env={})
     await store.set("LANGSMITH_API_KEY", "lsv2_first")
     assert await store.set("LANGSMITH_API_KEY", "lsv2_second") == {"LANGSMITH_API_KEY"}

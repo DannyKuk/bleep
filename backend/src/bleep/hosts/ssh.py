@@ -27,6 +27,7 @@ import asyncssh
 from pydantic import BaseModel, SecretStr
 
 from bleep.hosts.config import HostConfig
+from bleep.schemas.refusal import Templated
 
 log = logging.getLogger(__name__)
 
@@ -368,7 +369,7 @@ class SshSession:
             shutil.rmtree(directory, ignore_errors=True)
 
 
-class AddressRefused(ValueError):
+class AddressRefused(Templated, ValueError):
     """The address does not resolve, or resolves to an address Bleep never connects a dashboard
     host to; the text names neither the name nor the address."""
 
@@ -436,13 +437,14 @@ async def vetted_address(host: str, port: int, resolve: Resolve | None = None) -
         try:
             addresses = await (resolve or resolve_host)(host, port)
         except Exception:  # any failure to look the name up means it does not resolve
-            raise AddressRefused("the address does not resolve") from None
+            raise AddressRefused("the address does not resolve", "address_unresolved") from None
     if not addresses:
-        raise AddressRefused("the address does not resolve")
+        raise AddressRefused("the address does not resolve", "address_unresolved")
     if any(is_refused(address) for address in addresses):
         raise AddressRefused(
             "the address is loopback, link-local, unspecified or multicast, which a host added "
-            "on the dashboard may not be"
+            "on the dashboard may not be",
+            "address_not_allowed",
         )
     return addresses[0]
 

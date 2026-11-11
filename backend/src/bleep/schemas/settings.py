@@ -15,6 +15,7 @@ from pydantic import (
     StringConstraints,
     field_validator,
 )
+from pydantic_core import PydanticCustomError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from bleep.hosts.config import MAX_EXITS, UrlCheckConfig, check_exits, check_url_syntax
@@ -98,7 +99,9 @@ _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 
 def _one_plain_line(name: str) -> str:
     if _CONTROL.search(name):
-        raise ValueError("must be one line without control characters")
+        raise PydanticCustomError(
+            "one_plain_line", "Value error, must be one line without control characters"
+        )
     return name
 
 
@@ -175,8 +178,10 @@ class ServiceSettings(_Overrides):
     def _checkable(cls, urls: list[UrlCheckConfig] | None) -> list[UrlCheckConfig] | None:
         for cfg in urls or []:
             if check_url_syntax(cfg.url) is not None:
-                raise ValueError(
-                    "invalid url: must be http:// or https:// with a host and a valid port"
+                raise PydanticCustomError(
+                    "url_check_invalid",
+                    "Value error, invalid url: must be http:// or https:// with a host and a "
+                    "valid port",
                 )
         return urls
 
@@ -193,7 +198,9 @@ def _known_zone(name: str) -> str:
         try:
             ZoneInfo(name)
         except ZoneInfoNotFoundError, ValueError, OSError:
-            raise ValueError("must be an IANA time zone, e.g. Europe/Vienna") from None
+            raise PydanticCustomError(
+                "time_zone", "Value error, must be an IANA time zone, e.g. Europe/Vienna"
+            ) from None
     return name
 
 
@@ -234,7 +241,10 @@ def _plain_url(url: str) -> str:
     """An http(s) URL with a host and no user or password; where it may point is the API's to
     check (`api/settings.py`)."""
     if check_url_syntax(url) is not None or has_userinfo(url):
-        raise ValueError("must be an http:// or https:// URL with a host and no password")
+        raise PydanticCustomError(
+            "plain_url",
+            "Value error, must be an http:// or https:// URL with a host and no password",
+        )
     return url.rstrip("/")
 
 
@@ -255,7 +265,9 @@ def _token(run: str) -> bool:
 def _not_a_key(name: str) -> str:
     tokens = any(_token(run[0]) for run in _TOKEN_RUN.finditer(name))
     if name.lower().startswith(_KEY_PREFIXES) or _OPENAI_KEY.match(name) or tokens:
-        raise ValueError("looks like a key, not a project; keys go in the secrets")
+        raise PydanticCustomError(
+            "looks_like_key", "Value error, looks like a key, not a project; keys go in the secrets"
+        )
     return name
 
 

@@ -32,6 +32,7 @@ from bleep.hosts.registry import Registry
 from bleep.incidents.repository import utcnow
 from bleep.plugins.registry import PluginError, PluginRegistry, UnknownPlugin
 from bleep.schemas.plugins import PluginUpdate, PluginView
+from bleep.schemas.refusal import Reasons, Templated
 from bleep.schemas.services import Service
 from bleep.schemas.settings import (
     DEFAULT_LANGUAGE,
@@ -73,7 +74,7 @@ SECTIONS = ("models", "budgets", "thresholds", "general", "embeddings", "tracing
 PLUGIN_PREFIX = "plugin:"
 
 
-class SettingsRefused(ValueError):
+class SettingsRefused(Templated, ValueError):
     """The update is not applied; the text says why and never holds a submitted value."""
 
 
@@ -212,14 +213,16 @@ class SettingsStore:
         self._started_embeddings = self.embedder_choice()
         return self._started_embeddings
 
-    def clear_refused(self, name: str) -> str | None:
+    def clear_refused(self, name: str) -> SettingsRefused | None:
         """Why a secret cannot be cleared now: the endpoint's address while the running embedder
         is that endpoint, which would fail every embed until a restart."""
         started = self._started_embeddings
         if name == EMBEDDINGS_URL_ENV and started is not None and started.provider == "openai":
-            return (
+            return SettingsRefused(
                 f"{EMBEDDINGS_URL_ENV} cannot be cleared while the endpoint embeds the memory; "
-                "choose the local model, restart Bleep, then clear it"
+                "choose the local model, restart Bleep, then clear it",
+                "settings_embeddings_clear",
+                name=EMBEDDINGS_URL_ENV,
             )
         return None
 
@@ -391,7 +394,11 @@ class SettingsStore:
             for host_id, host in (update.hosts or {}).items():
                 base = self._base.get(host_id)
                 if base is None:
-                    raise SettingsRefused(f"no host {host_id!r} in the hosts file or the dashboard")
+                    raise SettingsRefused(
+                        f"no host {host_id!r} in the hosts file or the dashboard",
+                        "settings_no_host",
+                        host=repr(host_id),
+                    )
                 _merged_host(base, host)  # raises on what the hosts file itself would refuse
                 hosts = merged.hosts if merged.hosts is not None else {}
                 if host.model_dump(exclude_none=True, exclude_defaults=True):
@@ -423,11 +430,16 @@ class SettingsStore:
                 if from_env:
                     raise SettingsRefused(
                         f"{from_env[0]} is set in the environment (.env or Compose), so "
-                        f"{names[field]} is read from there too; change it there"
+                        f"{names[field]} is read from there too; change it there",
+                        "settings_key_from_env",
+                        key=from_env[0],
+                        name=names[field],
                     )
                 raise SettingsRefused(
                     f"{names[field]} is set in the environment (.env or Compose), which wins; "
-                    "change it there"
+                    "change it there",
+                    "settings_from_env",
+                    name=names[field],
                 )
 
     def _warn_shadowed(self) -> None:
@@ -457,10 +469,15 @@ class SettingsStore:
             self._overrides = current
         if embeddings != embeddings_before and embeddings.provider == "openai":
             if not embeddings.model:
-                raise SettingsRefused("an embeddings endpoint needs its model (EMBEDDINGS_MODEL)")
+                raise SettingsRefused(
+                    "an embeddings endpoint needs its model (EMBEDDINGS_MODEL)",
+                    "settings_embeddings_model",
+                )
             if self._secrets is not None and self._secrets.get(EMBEDDINGS_URL_ENV) is None:
                 raise SettingsRefused(
-                    f"set {EMBEDDINGS_URL_ENV} first: the endpoint the embeddings are sent to"
+                    f"set {EMBEDDINGS_URL_ENV} first: the endpoint the embeddings are sent to",
+                    "settings_embeddings_url",
+                    name=EMBEDDINGS_URL_ENV,
                 )
         if self._secrets is None:
             return
@@ -471,14 +488,20 @@ class SettingsStore:
                 raise SettingsRefused(
                     f"clear {' and '.join(set_keys)} first: a key is sent only to the address it "
                     f"was entered for; then set the new {ENV_NAMES['tracing'][endpoint]} and "
-                    "enter the key again"
+                    "enter the key again",
+                    "settings_tracing_keys_first",
+                    keys=" and ".join(set_keys),
+                    name=ENV_NAMES["tracing"][endpoint],
                 )
         if tracing.tracing not in ("off", before.tracing):
             endpoint = next(e for e, t in TRACER_OF_ENDPOINT.items() if t == tracing.tracing)
             missing = [k for k in TRACING_ENDPOINTS[endpoint] if self._secrets.get(k) is None]
             if missing:
                 raise SettingsRefused(
-                    f"TRACING={tracing.tracing} needs {' and '.join(missing)}; set it first"
+                    f"TRACING={tracing.tracing} needs {' and '.join(missing)}; set it first",
+                    "settings_tracing_needs",
+                    tracing=tracing.tracing,
+                    keys=" and ".join(missing),
                 )
 
     async def _tell(self, changed: frozenset[str]) -> None:
@@ -492,10 +515,17 @@ class SettingsStore:
         """Add `entries` to the service's `exits` as a dashboard override ("This is expected").
         Only adds, so it needs no version: a page saving from an older one gets its 409."""
         if any(not is_exit_name(entry) for entry in entries):  # never `*`: one tap names jobs
-            raise SettingsRefused("an expected job must be a container or Compose service name")
+            raise SettingsRefused(
+                "an expected job must be a container or Compose service name",
+                "settings_expected_job",
+            )
         async with self._lock:
             if service.host_id not in self._base:
-                raise SettingsRefused(f"no host {service.host_id!r} in the hosts file or dashboard")
+                raise SettingsRefused(
+                    f"no host {service.host_id!r} in the hosts file or dashboard",
+                    "settings_no_host_here",
+                    host=repr(service.host_id),
+                )
             host = self._host_overrides().get(service.host_id, HostSettings()).model_copy(deep=True)
             config = self._effective(self._base[service.host_id])
             key = _settings_key(config, service)
@@ -517,11 +547,20 @@ class SettingsStore:
         model is not); the caller holds the lock."""
         base = self._base.get(host_id)
         if base is None:
-            raise SettingsRefused(f"no host {host_id!r} in the hosts file or the dashboard")
+            raise SettingsRefused(
+                f"no host {host_id!r} in the hosts file or the dashboard",
+                "settings_no_host",
+                host=repr(host_id),
+            )
         try:
             host = HostSettings.model_validate(host.model_dump(exclude_none=True))
         except ValidationError as error:
-            raise SettingsRefused(f"host {host_id}: {_why(error)}") from None
+            raise SettingsRefused(
+                f"host {host_id}: {_why(error)}",
+                "settings_host_reasons",
+                host=host_id,
+                reasons=Reasons.of(error),
+            ) from None
         _merged_host(base, host)
         await self._write({f"{HOST_PREFIX}{host_id}": host})
         self._host_overrides()[host_id] = host
@@ -830,7 +869,12 @@ def _merged_host(base: HostConfig, host: HostSettings) -> HostConfig:
     except ValidationError as error:
         # Only where, not the message: the hosts file's own messages quote the value.
         where = sorted({".".join(str(p) for p in e["loc"]) or "host" for e in error.errors()})
-        raise SettingsRefused(f"host {base.id}: invalid {', '.join(where)}") from None
+        raise SettingsRefused(
+            f"host {base.id}: invalid {', '.join(where)}",
+            "settings_host_invalid",
+            host=base.id,
+            where=", ".join(where),
+        ) from None
 
 
 def check_body(data: Any) -> None:
@@ -844,7 +888,9 @@ def _refuse_secrets(data: Any) -> None:
     if found:
         raise SettingsRefused(
             f"settings never hold secrets; {', '.join(found)} looks like one. "
-            "Secrets go in the environment or a mounted file named in the hosts file"
+            "Secrets go in the environment or a mounted file named in the hosts file",
+            "settings_secret",
+            found=", ".join(found),
         )
 
 

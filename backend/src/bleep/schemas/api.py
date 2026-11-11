@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
+from pydantic_core import PydanticCustomError
 
 from bleep.schemas.graph import (
     FACT_CHARS,
@@ -182,7 +183,9 @@ class DecisionBody(BaseModel):
     def _instruction_has_text(self) -> Self:
         text = (self.text or "").strip()
         if self.kind == "instruct" and not text:
-            raise ValueError("an instruction needs text")
+            raise PydanticCustomError(
+                "instruction_needs_text", "Value error, an instruction needs text"
+            )
         self.text = text if self.kind == "instruct" else None
         return self
 
@@ -217,7 +220,7 @@ class FactBody(BaseModel):
     def _has_text(self) -> Self:
         self.text = self.text.strip()
         if not self.text:
-            raise ValueError("a fact needs text")
+            raise PydanticCustomError("fact_needs_text", "Value error, a fact needs text")
         return self
 
 

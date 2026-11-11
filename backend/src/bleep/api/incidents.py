@@ -10,10 +10,10 @@ language the person picked; what is stored stays English (#427, #455).
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse
 
 from bleep import prompts
 from bleep.api.deps import get_expectations, get_parts, get_runner
+from bleep.api.errors import Refusal
 from bleep.guard.redact import redacted_proposal
 from bleep.incidents.expectations import Expectations
 from bleep.incidents.repository import utcnow
@@ -44,6 +44,7 @@ from bleep.schemas.incidents import (
     IncidentStatus,
     RecoveryEvent,
 )
+from bleep.schemas.shown import Shown
 from bleep.wiring import AppParts
 
 router = APIRouter(tags=["incidents"])
@@ -56,14 +57,12 @@ _STATUS: dict[str, ApprovalStatus] = {
     "reject": "rejected",
     "instruct": "instructed",
 }
-_CHANNEL = {"telegram": "Telegram", "dashboard": "the dashboard"}
-_FINDING = {"diagnosis": "diagnosis", "proposal": "plan"}
 
 
 async def _incident(parts: AppParts, incident_id: str) -> Incident:
     incident = await parts.incidents.get(incident_id)
     if incident is None:
-        raise HTTPException(404, "no such incident")
+        raise Refusal(404, "no_incident")
     return incident
 
 
@@ -88,13 +87,16 @@ def _approval(record: ApprovalRecord | None, language: str) -> ApprovalView | No
     )
 
 
-def _conflict(detail: str, decision: Decision | None = None) -> JSONResponse:
-    body = DecisionConflict(detail=detail, decided_via=decision.via if decision else None)
-    return JSONResponse(body.model_dump(), status_code=409)
+def _conflict(template: str, decision: Decision | None = None, **values: str | Shown) -> Refusal:
+    """409 shaped as a `DecisionConflict`: the text in the person's language, and the channel
+    that answered first."""
+    return Refusal(
+        409, template, extra={"decided_via": decision.via if decision else None}, **values
+    )
 
 
-def _already_decided(decision: Decision) -> JSONResponse:
-    return _conflict(f"Already decided on {_CHANNEL[decision.via]}", decision)
+def _already_decided(decision: Decision) -> Refusal:
+    return _conflict("already_decided", decision, channel=Shown.of(f"channel/on_{decision.via}"))
 
 
 @router.get("/incidents")
@@ -199,26 +201,26 @@ async def decide(
     incident = await _incident(parts, incident_id)
     record = await parts.approvals.current(incident_id)
     if record is None:
-        return _conflict("Nothing is waiting for a decision")
+        raise _conflict("nothing_waiting")
     if record.id != body.approval_id:
-        return _conflict("That plan was replaced by a newer one; reload to see it")
+        raise _conflict("plan_replaced")
     if record.decision is not None:
-        return _already_decided(record.decision)
+        raise _already_decided(record.decision)
     if incident.status in TERMINAL_STATUSES:
-        return _conflict(f"The incident is {incident.status}")
+        raise _conflict(f"incident_{incident.status}")
 
     if body.kind == "approve" and record.proposal.refused:
-        return _conflict("Bleep's checks refused this plan; tell Bleep what to do instead")
+        raise _conflict("plan_refused")
 
     decision = Decision(kind=body.kind, text=body.text, via="dashboard", at=utcnow())
     won = await parts.approvals.resolve(incident_id, decision, body.approval_id)
     if won is None:  # another channel answered, or the incident closed, since the read above
         latest = await parts.approvals.current(incident_id)
         if latest is not None and latest.id == body.approval_id and latest.decision is not None:
-            return _already_decided(latest.decision)
+            raise _already_decided(latest.decision)
         if latest is not None and latest.id == body.approval_id and latest.closed:
-            return _conflict("The incident was closed before anyone answered")
-        return _conflict("That plan was replaced by a newer one; reload to see it")
+            raise _conflict("incident_closed_first")
+        raise _conflict("plan_replaced")
     await runner.resume(incident_id, won, body.approval_id)
     return won
 
@@ -237,7 +239,7 @@ async def give_feedback(
     replaces it; the incident's memory record gets the votes, now or when Report writes it."""
     await _incident(parts, incident_id)
     if (await runner.state(incident_id)).get(body.target) is None:
-        raise HTTPException(409, f"There is no {_FINDING[body.target]} to rate yet")
+        raise Refusal(409, f"rate_no_{body.target}")
     return await parts.memory.set_feedback(incident_id, body.target, body.vote, body.note)
 
 
