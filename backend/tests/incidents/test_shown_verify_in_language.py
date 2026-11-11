@@ -113,6 +113,16 @@ def test_a_report_with_a_drifted_step_keeps_that_step_and_renders_the_rest(langu
     assert shown.action_taken == "; ".join(s.text for s in shown.steps)
 
 
+def test_an_action_text_that_is_not_the_steps_joined_is_shown_as_stored():
+    step = ReportStep(text=english(STEP), status="done", shown=STEP)
+    stored = report(action_taken=f"{MARKER} on a: done", steps=[step])
+
+    shown = report_in(stored, "de")
+
+    assert shown.action_taken == stored.action_taken
+    assert shown.steps[0].text == "docker.start web auf a: erledigt"
+
+
 def test_a_report_stored_before_the_steps_field_shows_its_action_as_stored():
     stored = report(action_taken="docker.start web on a: done")
     assert report_in(stored, "de").action_taken == "docker.start web on a: done"
@@ -147,3 +157,33 @@ def test_a_log_copy_in_a_step_is_cut_and_the_cut_step_shows_as_stored():
 
     assert MARKER in checked.steps[0].text and checked.steps[0].shown is None
     assert checked.steps[1] == clean
+
+
+@pytest.mark.parametrize("language", ["en", "de"])
+def test_a_log_copy_spanning_two_steps_stays_cut_in_every_view(language):
+    first = Shown.of(
+        "step/line",
+        action="docker.start",
+        target="shop-web-1",
+        host="a",
+        status=Shown.of("step/done"),
+    )
+    second = Shown.of(
+        "step/line",
+        action="docker.stop",
+        target="shop-db-1",
+        host="a",
+        status=Shown.of("step/done"),
+    )
+    steps = [ReportStep(text=english(s), status="done", shown=s) for s in (first, second)]
+    joined = "; ".join(s.text for s in steps)
+    assert len(joined) >= 60 and all(len(s.text) < 60 for s in steps)
+    stored = report(action_taken=joined, steps=steps)
+
+    checked = check_report(stored, [joined + " and the rest of the logged line goes on and on"])
+    shown = report_in(checked, language)
+
+    assert MARKER in checked.action_taken
+    assert shown.action_taken == checked.action_taken
+    assert shown.steps == []  # the joined text is all there is to show
+    assert "docker.start" not in shown.action_taken

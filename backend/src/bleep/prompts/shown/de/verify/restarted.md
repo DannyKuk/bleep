@@ -1,1 +1,1 @@
-nach dem Fix von seiner Neustart-Regel neu gestartet (Neustart-Zähler {now}, {then}, als Verify es zum ersten Mal laufend sah)
+nach dem Fix von seiner Neustart-Regel neu gestartet (Neustart-Zähler {now}, {then} beim ersten Mal, als Verify ihn laufend sah)

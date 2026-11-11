@@ -112,8 +112,11 @@ def report_in(report: Report, language: str) -> Report:
         if 0 <= place < len(follow_ups):
             follow_ups[place] = _rendered(shown, language, follow_ups[place])
     update: dict[str, Any] = {**fields, "timeline": timeline, "follow_ups": follow_ups}
-    if steps:
+    stored = "; ".join(step.text for step in report.steps)
+    if steps and report.action_taken == stored:  # a cut action text is shown as it was cut
         update |= {"steps": steps, "action_taken": "; ".join(step.text for step in steps)}
+    elif steps:
+        update["steps"] = steps
     return report.model_copy(update=update)
 
 

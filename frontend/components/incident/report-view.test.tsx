@@ -183,11 +183,12 @@ describe("ReportView", () => {
     expect(row.querySelector("svg")).toHaveClass(tone);
   });
 
-  it("shows a report stored before the steps field as rows with no status mark", () => {
+  it("marks the steps of a report stored before the steps field by their English ending", () => {
     render(
       <ReportView
         report={report({
-          action_taken: "docker.start shop-web on demo: done; docker.start shop-db on demo: failed",
+          action_taken:
+            "docker.start a on demo: done; docker.start b on demo: failed; docker.stop c on demo: refused; docker.stop d on demo: skipped",
           steps: [],
         })}
         outcome="unverified"
@@ -195,10 +196,13 @@ describe("ReportView", () => {
     );
     const rows = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
     expect(rows.map((row) => row.textContent)).toEqual([
-      "docker.start shop-web on demo: done",
-      "docker.start shop-db on demo: failed",
+      "docker.start a on demo: done",
+      "docker.start b on demo: failed",
+      "docker.stop c on demo: refused",
+      "docker.stop d on demo: skipped",
     ]);
-    for (const row of rows) expect(row.querySelector("svg")).toHaveClass("text-ink-2");
+    const tones = ["text-ok", "text-down", "text-down", "text-ink-2"];
+    rows.forEach((row, index) => expect(row.querySelector("svg")).toHaveClass(tones[index]));
   });
 
   it("shows each step of a mixed run on its own row, never a check for a failed one", () => {

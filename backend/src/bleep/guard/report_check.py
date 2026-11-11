@@ -95,13 +95,18 @@ def check_report(report: Report, raw_logs: Iterable[str], record: Record | None 
         removed += count
         return checked
 
+    taken = None if report.action_taken is None else cut(report.action_taken)
+    steps = [_cut_step(step, cut) for step in report.steps]
+    if "; ".join(step.text for step in steps) != (taken or ""):
+        steps = []  # a copy that spans steps leaves only the joined text, which the views show
+
     checked = report.model_copy(
         update={
             "summary": cut(report.summary),
             "cause": cut(report.cause),
             "cause_en": None if report.cause_en is None else cut(report.cause_en),
-            "action_taken": None if report.action_taken is None else cut(report.action_taken),
-            "steps": [_cut_step(step, cut) for step in report.steps],
+            "action_taken": taken,
+            "steps": steps,
             "follow_ups": [cut(item) for item in report.follow_ups],
         }
     )

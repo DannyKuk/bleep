@@ -536,7 +536,13 @@ async def _check_application(deps: GraphDeps, host_id: str, redeploy: _Redeploy)
     failure = _redeploy_failure(judged, gone, came_up, redeploy.first_running, bool(notes))
     if failure is not None:
         return _check("container", target, False, Shown.joined([failure, *notes], "; "))
-    detail = Shown.joined([Shown.of("verify/n_running", n=str(len(judged))), *notes], "; ")
+    # One has a verb of its own in German ("1 läuft", "3 laufen").
+    running = (
+        Shown.of("verify/one_running")
+        if len(judged) == 1
+        else Shown.of("verify/n_running", n=str(len(judged)))
+    )
+    detail = Shown.joined([running, *notes], "; ")
     return _check("container", target, True, detail)
 
 

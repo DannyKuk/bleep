@@ -47,14 +47,14 @@ CHECK_TEXTS = [
         Shown.of("verify/restarted", now="3", then="1"),
         "restarted by its restart policy after the fix (restart count 3, 1 when Verify first saw "
         "it running)",
-        "nach dem Fix von seiner Neustart-Regel neu gestartet (Neustart-Zähler 3, 1, als Verify "
-        "es zum ersten Mal laufend sah)",
+        "nach dem Fix von seiner Neustart-Regel neu gestartet (Neustart-Zähler 3, 1 beim ersten "
+        "Mal, als Verify ihn laufend sah)",
     ),
     (
         Shown.of("verify/started_again"),
         "started again after the fix (a later start time than when Verify first saw it running)",
         "nach dem Fix erneut gestartet (eine spätere Startzeit als beim ersten Mal, als Verify "
-        "es laufend sah)",
+        "ihn laufend sah)",
     ),
     (
         Shown.of("verify/recreated", now="2"),
@@ -74,7 +74,7 @@ CHECK_TEXTS = [
         "started again after the fix (web-0, a later start time than when Verify first saw it "
         "running)",
         "nach dem Fix erneut gestartet (web-0, eine spätere Startzeit als beim ersten Mal, als "
-        "Verify es laufend sah)",
+        "Verify ihn laufend sah)",
     ),
     (
         Shown.of("verify/not_finished"),
@@ -90,7 +90,8 @@ CHECK_TEXTS = [
     (Shown.of("verify/running_again"), "is running again", "läuft wieder"),
     (Shown.of("verify/running"), "running", "läuft"),
     (Shown.of("verify/running_healthy"), "running, healthy", "läuft, gesund"),
-    (Shown.of("verify/n_running", n="2"), "2 running", "2 laufen"),
+    (Shown.of("verify/n_running", n="3"), "3 running", "3 laufen"),
+    (Shown.of("verify/one_running"), "1 running", "1 läuft"),
     (Shown.of("verify/answering", status="200"), "answering 200", "antwortet mit 200"),
     (Shown.of("verify/url_failed"), "failed", "fehlgeschlagen"),
     (Shown.of("verify/is_exited"), "is exited", "ist beendet"),
@@ -109,7 +110,7 @@ CHECK_TEXTS = [
     (
         Shown.joined(
             [
-                Shown.of("verify/n_running", n="1"),
+                Shown.of("verify/one_running"),
                 Shown.of("verify/job_allowed", name="migrate"),
                 Shown.of("verify/job_finished", name="seed"),
             ],
@@ -117,8 +118,8 @@ CHECK_TEXTS = [
         ),
         "1 running; migrate exited 0, as its service's exits allow; seed exited 0 with no "
         "restart policy, a job that finished",
-        "1 laufen; migrate wurde mit 0 beendet, wie es die Ausstiege seines Dienstes erlauben; "
-        "seed wurde mit 0 beendet und hat keine Neustart-Regel, ein Job, der fertig geworden ist",
+        "1 läuft; migrate wurde mit 0 beendet, wie es die exits-Einstellung seines Dienstes "
+        "erlaubt; seed wurde mit 0 beendet und hat keine Neustart-Regel, ein abgeschlossener Job",
     ),
     (
         Shown.of("verify/no_redeploy_container_runs"),
@@ -254,7 +255,7 @@ async def test_the_first_check_that_sees_a_container_up_and_a_restart_read_in_ge
     )
     assert prompts.show(first.shown, "de") == (
         "nach dem Fix von seiner Neustart-Regel neu gestartet "
-        "(Neustart-Zähler 1, 0, als Verify es zum ersten Mal laufend sah)"
+        "(Neustart-Zähler 1, 0 beim ersten Mal, als Verify ihn laufend sah)"
     )
 
 
@@ -512,10 +513,11 @@ def test_the_planted_note_reads_in_german():
     many = prompts.show(planted_shown(["logs", "events", "memory"]), "de")
 
     assert one.startswith("Bleep hat in den Container-Logs Text gefunden, der für ihn wie Befehle")
+    assert "Bleep sucht nur nach einigen Anzeichen" in one
     assert many == (
-        "Bleep hat in den Container-Logs, den Docker-Events und früheren Vorfällen, an die sich "
-        "Bleep erinnert Text gefunden, der ihm Befehle geben wollte und ignoriert wurde; prüfe, "
-        "wer dort schreiben darf."
+        "Bleep hat in den Container-Logs, den Docker-Events und früheren Vorfällen aus Bleeps "
+        "Gedächtnis Text gefunden, der versucht hat, ihm Befehle zu geben, und den es ignoriert "
+        "hat; prüfe, wer dort schreiben darf."
     )
 
 

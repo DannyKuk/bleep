@@ -1,1 +1,1 @@
-anderer Host-Ausgabe
+sonstiger Host-Ausgabe

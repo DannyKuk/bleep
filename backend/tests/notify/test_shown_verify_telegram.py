@@ -95,7 +95,7 @@ async def test_an_end_names_what_ran_and_what_was_checked_in_the_picked_language
     text = env.chat.sent()[-1]["text"]
     assert "Ausgeführt: docker\\.start shop\\-db auf laptop: erledigt" in text
     assert "Geprüft: http://shop/health antwortet mit 200" in text
-    assert "\\- Bleep hat in den Container\\-Logs Text gefunden, der ihm Befehle" in text
+    assert "\\- Bleep hat in den Container\\-Logs Text gefunden, der versucht hat" in text
     assert "\\- Set a restart policy\\." in text  # the model's own words, as written
 
 

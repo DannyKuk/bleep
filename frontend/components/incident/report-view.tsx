@@ -45,8 +45,8 @@ function Section({ label, children }: { label: string; children: React.ReactNode
 }
 
 /** The mark before a step, in the incident page's colour code: a check only when it is done, a
- * cross when it failed or was refused, a dash for one that never ran (or whose status is not
- * known, a report stored before the backend sent it). The step's words say the same. */
+ * cross when it failed or was refused, a dash for one that never ran. The step's words say the
+ * same. */
 function StepMark({ status }: { status: ReportStep["status"] | null }) {
   if (status === "done") {
     return <Check aria-hidden className={cn("mt-1 size-4 shrink-0", LOOK.done.ink)} />;
@@ -57,15 +57,27 @@ function StepMark({ status }: { status: ReportStep["status"] | null }) {
   return <Minus aria-hidden className={cn("mt-1 size-4 shrink-0", LOOK.todo.ink)} />;
 }
 
+/** The status of a step line stored before the backend sent `steps`. Such a line is English by
+ * definition (the backend translated nothing then), so its ending can be read. */
+function legacyStatus(text: string): ReportStep["status"] | null {
+  if (/: done$/.test(text)) return "done";
+  if (/: failed$/.test(text)) return "failed";
+  if (/: refused$/.test(text)) return "refused";
+  return null;
+}
+
 /** One row per step, from the report's `steps`: the backend writes each in the picked language
  * and gives its status as a field. A report stored before that has only `action_taken`, which
- * the backend joined with "; "; its rows get no status mark. */
+ * the backend joined with "; ". */
 function Steps({ report }: { report: Report }) {
   const t = useT().report;
   const rows: { text: string; status: ReportStep["status"] | null }[] =
     report.steps.length > 0
       ? report.steps
-      : (report.action_taken?.split("; ") ?? []).map((text) => ({ text, status: null }));
+      : (report.action_taken?.split("; ") ?? []).map((text) => ({
+          text,
+          status: legacyStatus(text),
+        }));
   if (rows.length === 0) {
     return (
       <p className="flex items-start gap-2">

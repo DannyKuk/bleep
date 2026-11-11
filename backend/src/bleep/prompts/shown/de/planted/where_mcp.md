@@ -1,1 +1,1 @@
-Antworten des MCP-Servers
+den Antworten des MCP-Servers
