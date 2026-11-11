@@ -122,11 +122,15 @@ def _failed(error: GithubError, repo: str, client: GithubClient) -> str:
     """What went wrong, in Bleep's own words; GitHub's message never reaches the model."""
     if isinstance(error, RateLimited):
         until = f" until {error.reset_at:%H:%M} UTC" if error.reset_at else " for now"
-        token = "" if client.authenticated else " Without a token (GITHUB_TOKEN) it is 60 an hour."
+        token = (
+            ""
+            if client.authenticated
+            else f" Without a token ({client.token_name}) it is 60 an hour."
+        )
         return f"GitHub's rate limit is spent{until}.{token} Go on without the repo."
     if isinstance(error, TokenRefused):
         return (
-            "GitHub refused the token (GITHUB_TOKEN): it is wrong, expired or revoked."
+            f"GitHub refused the token ({client.token_name}): it is wrong, expired or revoked."
             " Go on without the repo."
         )
     if isinstance(error, NotFound):
@@ -134,7 +138,7 @@ def _failed(error: GithubError, repo: str, client: GithubClient) -> str:
             access = (
                 "the token cannot read it"
                 if client.authenticated
-                else "it is private and no GitHub token (GITHUB_TOKEN) is set"
+                else f"it is private and no GitHub token ({client.token_name}) is set"
             )
             return f"GitHub has no repo {repo}, or {access}."
         return f"{error}."

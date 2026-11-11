@@ -21,7 +21,7 @@ from bleep.graph.deps import (
 from bleep.guard.log import GuardLog
 from bleep.hosts.config import GithubConfig, load_hosts_file
 from bleep.hosts.dashboard import HOST_KEYS, SSH_KEYS, DashboardHosts, dashboard_keys
-from bleep.hosts.github import GithubClient, github_token
+from bleep.hosts.github import GithubClient, github_token, github_token_name
 from bleep.hosts.registry import Registry, connect_host
 from bleep.hosts.ssh import Scan
 from bleep.incidents.action_log import ActionLog
@@ -286,7 +286,9 @@ def build_parts(
     )
     if scan is not None:
         dashboard_hosts.scan = scan
-    github = GithubClient(github_token_source(github_config, secrets))
+    github = GithubClient(
+        github_token_source(github_config, secrets), token_name=github_token_name(github_config)
+    )
     bus, incidents, quiet = EventBus(db), IncidentRepo(db), QuietStore(db)
     approvals, guard_log = ApprovalStore(db, settings.secret), GuardLog(db)
     plugin_registry = PluginRegistry(
