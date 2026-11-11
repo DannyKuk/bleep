@@ -68,7 +68,7 @@ export interface ModelChoice {
   local_model: string;
 }
 
-export type EmbeddingsProvider = "local" | "openai";
+export type EmbeddingsProvider = "local" | "openai" | "server";
 export type TracingKind = "off" | "langfuse" | "langsmith";
 
 /** The embedder in force: `model` is the endpoint's, `min_score` null the model's own cut-off. */

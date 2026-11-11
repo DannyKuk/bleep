@@ -220,7 +220,9 @@ class GeneralOverrides(_Overrides):
     language: Language | None = None
 
 
-EmbeddingsProvider = Literal["local", "openai"]
+# `local` is the model baked into the image, `openai` an OpenAI-compatible endpoint that takes a
+# key, `server` one on this machine or the network that takes none (LM Studio, Ollama; #442).
+EmbeddingsProvider = Literal["local", "openai", "server"]
 TracingKind = Literal["off", "langfuse", "langsmith"]
 
 

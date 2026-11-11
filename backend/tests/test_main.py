@@ -207,10 +207,54 @@ def test_the_embedder_follows_the_settings(tmp_path, caplog):
     assert "EMBEDDINGS_BASE_URL" in caplog.text
 
 
+def test_a_local_server_embeds_under_its_own_name_and_is_sent_no_key(tmp_path, caplog):
+    import httpx
+
+    from bleep.memory.embeddings import FastEmbedEmbedder, OpenAICompatEmbedder
+    from bleep.schemas.settings import EmbeddingsChoice
+    from bleep.wiring import build_embedder
+
+    secrets = _secrets(
+        tmp_path,
+        {"EMBEDDINGS_BASE_URL": "http://host.docker.internal:1234/v1", "EMBEDDINGS_API_KEY": "k"},
+    )
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0, 0.0]}]})
+
+    choice = EmbeddingsChoice(provider="server", model="text-embedding-bge-m3")
+    embedder = build_embedder(choice, secrets)
+    assert isinstance(embedder, OpenAICompatEmbedder)
+    assert embedder.name == "server:text-embedding-bge-m3"
+    assert embedder.min_score == 0.35  # bge-m3's own, by name
+    embedder._transport = httpx.MockTransport(answer)
+    embedder.embed(["a"])
+    assert str(seen[0].url) == "http://host.docker.internal:1234/v1/embeddings"
+    assert "authorization" not in seen[0].headers  # a key left over from an endpoint stays home
+
+    # Like an endpoint, a server without its address embeds with the built-in model, and says so.
+    assert isinstance(build_embedder(choice, _secrets(tmp_path, {})), FastEmbedEmbedder)
+    assert "local server needs EMBEDDINGS_BASE_URL" in caplog.text
+
+
 def test_a_half_configured_embeddings_endpoint_no_longer_stops_bleep(settings):
     from bleep.config import check_settings
 
     check_settings(settings.model_copy(update={"embeddings_provider": "openai"}))
+
+
+def test_embeddings_provider_server_is_read_from_the_env(monkeypatch):
+    from bleep.config import Settings, check_settings
+    from bleep.wiring import embeddings_env
+
+    monkeypatch.setenv("EMBEDDINGS_PROVIDER", "server")
+    loaded = Settings(admin_password=SecretStr("p" * 12), secret=SecretStr("s"))
+
+    assert loaded.embeddings_provider == "server"
+    assert embeddings_env(loaded).provider == "server"
+    check_settings(loaded)  # an incomplete server does not stop Bleep either
 
 
 def test_recalls_min_score_is_the_models_unless_the_settings_name_one(tmp_path):

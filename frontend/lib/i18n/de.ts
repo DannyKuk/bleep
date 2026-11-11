@@ -815,10 +815,12 @@ export const de: Messages = {
     },
     embeddings: {
       embedder: "Embedder",
-      local: "Das lokale Modell, das mit Bleep kommt",
-      openai: "Ein OpenAI-kompatibler Endpunkt",
-      model: "Modell des Endpunkts",
-      modelHint: "Das Modell, das der Endpunkt bereitstellt. Das lokale Modell ignoriert es.",
+      local: "Das eingebaute Modell, das mit Bleep kommt",
+      server: "Ein lokaler Server (LM Studio, Ollama), ohne Schlüssel",
+      openai: "Ein OpenAI-kompatibler Endpunkt, mit Schlüssel",
+      model: "Modell des Endpunkts oder Servers",
+      modelHint:
+        "Das Modell, das der Endpunkt oder der Server bereitstellt. Das eingebaute Modell ignoriert es.",
       minScore: "Mindestwert für den Abruf",
       minScoreHint:
         "0 bis 1. Frühere Vorfälle mit einem niedrigeren Wert werden nie abgerufen. Leer: der Wert des Modells.",

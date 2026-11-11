@@ -30,6 +30,8 @@ DEFAULT_MIN_SCORE = 0.5
 # docs/spikes/embeddings/recall.py (docs/evals/embeddings-min-score-2026-11-06.md, #306).
 # gemini-embedding-2 (through an endpoint): one step below 0.675, the highest that returned every
 # right record on the 18 queries (docs/evals/embeddings-german-docs-2026-11-10.md, #377).
+# bge-m3 through LM Studio (a local server, #442) measured again: 0.375 is the highest step there
+# too, so 0.35 stands (docs/evals/embeddings-local-server-2026-11-11.md).
 MIN_SCORES = {"bge-small-en-v1.5": 0.5, "bge-m3": 0.35, "gemini-embedding-2": 0.65}
 _WORD = re.compile(r"[a-z0-9]+")
 
@@ -39,10 +41,11 @@ class EmbedderError(Exception):
 
 
 def min_score_for(model: str) -> float:
-    """Recall's measured cut-off for a model, by its name with or without an owner or a tag
-    ("BAAI/bge-m3", "bge-m3:latest"); 0.5 for a model that was not measured."""
-    key = model.lower().rsplit("/", 1)[-1].split(":", 1)[0]
-    return MIN_SCORES.get(key, DEFAULT_MIN_SCORE)
+    """Recall's measured cut-off for a model, by its name with or without an owner, a tag or the
+    `text-embedding-` LM Studio puts in front ("BAAI/bge-m3", "bge-m3:latest",
+    "text-embedding-bge-m3"); 0.5 for a model that was not measured."""
+    key = model.lower().rsplit("/", 1)[-1].split(":", 1)[0].split("@", 1)[0]
+    return MIN_SCORES.get(key.removeprefix("text-embedding-"), DEFAULT_MIN_SCORE)
 
 
 class Embedder(Protocol):
@@ -109,7 +112,9 @@ class FastEmbedEmbedder:
 
 
 class OpenAICompatEmbedder:
-    """`POST {base_url}/embeddings`, as OpenAI, LM Studio, Ollama and others serve it."""
+    """`POST {base_url}/embeddings`, as OpenAI, LM Studio, Ollama and others serve it. `kind` is
+    the prefix of its name: `openai` for an endpoint with a key, `server` for a local one
+    without (the same model on the two is not assumed to give the same vectors)."""
 
     def __init__(
         self,
@@ -118,11 +123,13 @@ class OpenAICompatEmbedder:
         api_key: SecretStr | str | Callable[[], SecretStr | None] | None = None,
         transport: httpx.BaseTransport | None = None,
         min_score: float | None = None,
+        kind: str = "openai",
     ) -> None:
         # A callable is read at every call, like the key: an address changed on the dashboard
         # clears its key, and the key typed for the new one must never go to the old one.
         self._base_url = base_url if callable(base_url) else lambda: base_url
         self.model = model
+        self.kind = kind
         self.min_score = min_score_for(model) if min_score is None else min_score
         key = SecretStr(api_key) if isinstance(api_key, str) else api_key
         # A callable is read at every call, so a key changed on the dashboard is used next.
@@ -131,7 +138,7 @@ class OpenAICompatEmbedder:
 
     @property
     def name(self) -> str:
-        return f"openai:{self.model}"
+        return f"{self.kind}:{self.model}"
 
     def embed(self, texts: list[str]) -> np.ndarray:
         if not texts:

@@ -31,7 +31,7 @@ describe("the Embeddings panel", () => {
     const embeddings = await panel();
 
     expect(within(embeddings).getByLabelText("Embedder")).toHaveValue("local");
-    expect(within(embeddings).getByLabelText("Endpoint model")).toHaveValue("");
+    expect(within(embeddings).getByLabelText("Endpoint or server model")).toHaveValue("");
     expect(within(embeddings).getByLabelText("Recall's minimum score")).toHaveValue("");
     expect(within(embeddings).queryByRole("status")).toBeNull();
   });
@@ -57,6 +57,51 @@ describe("the Embeddings panel", () => {
     expect(within(secrets).queryByRole("group", { name: "EMBEDDINGS_API_KEY" })).toBeNull();
   });
 
+  it("offers the built-in model, a local server and an endpoint, in that order", async () => {
+    settingsBackend();
+    render(<SettingsPage />);
+    const embeddings = await panel();
+    const options = within(within(embeddings).getByLabelText("Embedder")).getAllByRole("option");
+    expect(options.map((option) => option.getAttribute("value"))).toEqual([
+      "local",
+      "server",
+      "openai",
+    ]);
+    expect(options[1]).toHaveTextContent("A local server (LM Studio, Ollama), no key");
+  });
+
+  it("shows the address but no key row when a local server is the embedder in force", async () => {
+    settingsBackend(
+      settingsView({ embeddings: { provider: "server", model: "bge-m3", min_score: null } }),
+    );
+    render(<SettingsPage />);
+    const embeddings = await panel();
+    expect(within(embeddings).getByLabelText("Embedder")).toHaveValue("server");
+    expect(
+      await within(embeddings).findByRole("group", { name: "EMBEDDINGS_BASE_URL" }),
+    ).toBeInTheDocument();
+    expect(within(embeddings).queryByRole("group", { name: "EMBEDDINGS_API_KEY" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "EMBEDDINGS_API_KEY" })).toBeNull();
+  });
+
+  it("asks before choosing a local server, saves it with its model and says it re-embeds", async () => {
+    const fetchMock = settingsBackend(settingsView(), [json(settingsView())]);
+    render(<SettingsPage />);
+    const embeddings = await panel();
+
+    await userEvent.selectOptions(within(embeddings).getByLabelText("Embedder"), "server");
+    await userEvent.type(within(embeddings).getByLabelText("Endpoint or server model"), "bge-m3");
+    await userEvent.click(within(embeddings).getByRole("button", SAVE));
+    const confirm = within(embeddings).getByRole("status", { name: "Confirm the change" });
+    expect(confirm).toHaveTextContent("embed the memory and the knowledge index again");
+    expect(putsOf(fetchMock)).toHaveLength(0);
+    await userEvent.click(within(confirm).getByRole("button", { name: "Save for the next start" }));
+
+    expect(sentBody(fetchMock, "PUT")).toEqual({
+      embeddings: { provider: "server", model: "bge-m3" },
+    });
+  });
+
   it("asks before saving a model change and says it re-embeds at the next start", async () => {
     const fetchMock = settingsBackend(
       settingsView({
@@ -68,7 +113,7 @@ describe("the Embeddings panel", () => {
     render(<SettingsPage />);
     const embeddings = await panel();
 
-    const model = within(embeddings).getByLabelText("Endpoint model");
+    const model = within(embeddings).getByLabelText("Endpoint or server model");
     await userEvent.clear(model);
     await userEvent.type(model, "bge-m3");
     await userEvent.click(within(embeddings).getByRole("button", SAVE));
@@ -119,7 +164,7 @@ describe("the Embeddings panel", () => {
     settingsBackend();
     render(<SettingsPage />);
     const embeddings = await panel();
-    await userEvent.type(within(embeddings).getByLabelText("Endpoint model"), "x");
+    await userEvent.type(within(embeddings).getByLabelText("Endpoint or server model"), "x");
     await userEvent.click(within(embeddings).getByRole("button", SAVE));
     expect(
       within(embeddings).getByRole("status", { name: "Confirm the change" }),
@@ -183,12 +228,12 @@ describe("the Embeddings panel", () => {
     expect(within(embeddings).getByRole("group", { name: "Embedder" })).toHaveTextContent(
       "EMBEDDINGS_PROVIDER",
     );
-    expect(within(embeddings).getByLabelText("Endpoint model")).toBeInTheDocument();
+    expect(within(embeddings).getByLabelText("Endpoint or server model")).toBeInTheDocument();
   });
 
   it("shows the 409 for clearing the address while the endpoint embeds under its row", async () => {
     const refusal =
-      "EMBEDDINGS_BASE_URL cannot be cleared while the endpoint embeds the memory; choose the local model, restart Bleep, then clear it";
+      "EMBEDDINGS_BASE_URL cannot be cleared while an endpoint or a local server embeds the memory; choose the built-in model, restart Bleep, then clear it";
     const views = secretViews().map((view) =>
       view.name === "EMBEDDINGS_BASE_URL"
         ? {
@@ -256,7 +301,7 @@ describe("the Embeddings panel", () => {
     );
     render(<SettingsPage />);
     const embeddings = await panel();
-    await userEvent.clear(within(embeddings).getByLabelText("Endpoint model"));
+    await userEvent.clear(within(embeddings).getByLabelText("Endpoint or server model"));
     expect(within(embeddings).getByRole("button", SAVE)).toBeDisabled();
   });
 

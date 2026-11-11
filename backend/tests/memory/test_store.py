@@ -175,6 +175,8 @@ async def test_a_min_score_passed_to_similar_wins_over_the_embedders(env):
         ("bge-m3:latest", 0.35),
         ("google/gemini-embedding-2", 0.65),  # as OpenRouter names it
         ("BGE-M3:567m", 0.35),
+        ("text-embedding-bge-m3", 0.35),  # as LM Studio names it (#442)
+        ("text-embedding-bge-m3@fp16", 0.35),
         ("text-embedding-nomic-embed-text-v1.5", 0.5),  # not measured: the old default
     ],
 )
@@ -444,6 +446,16 @@ def test_the_openai_compatible_embedder_posts_and_normalises():
     assert str(seen[0].url) == "http://llm.local/v1/embeddings"
     assert seen[0].headers["authorization"] == "Bearer sk-test"
     assert json.loads(seen[0].content) == {"model": "nomic-embed", "input": ["a", "b"]}
+
+
+def test_a_server_embedder_is_named_apart_from_an_endpoint_one_for_the_same_model():
+    """Two servers' vectors for one model name are not assumed to be comparable, so switching
+    between them re-embeds."""
+    server = OpenAICompatEmbedder("http://x/v1", "bge-m3", kind="server")
+    endpoint = OpenAICompatEmbedder("http://x/v1", "bge-m3")
+
+    assert (server.name, endpoint.name) == ("server:bge-m3", "openai:bge-m3")
+    assert server.min_score == endpoint.min_score == 0.35
 
 
 def test_the_openai_compatible_embedder_reads_a_key_source_at_every_call():

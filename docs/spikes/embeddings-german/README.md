@@ -55,7 +55,10 @@ cd backend && EMBEDDINGS_API_KEY=... uv run python ../docs/spikes/embeddings-ger
     --out ../docs/spikes/embeddings-german/results-gemini-embedding-2.json
 ```
 
-`--min-score` overrides the cut-off for an `openai` model that has no entry in `MIN_SCORES`
+A local server (LM Studio, Ollama; no key) is `server` instead of `openai`, with `--base-url` and
+`--model` (#442; [results](../../evals/embeddings-local-server-2026-11-11.md)).
+
+`--min-score` overrides the cut-off for an `openai` or `server` model that has no entry in `MIN_SCORES`
 (the default is 0.5); the sweep shows where a better one lies.
 
 ## Results

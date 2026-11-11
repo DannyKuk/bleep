@@ -816,10 +816,11 @@ export const en = {
     },
     embeddings: {
       embedder: "Embedder",
-      local: "The local model that ships with Bleep",
-      openai: "An OpenAI-compatible endpoint",
-      model: "Endpoint model",
-      modelHint: "The model the endpoint serves. The local model ignores it.",
+      local: "The built-in model that ships with Bleep",
+      server: "A local server (LM Studio, Ollama), no key",
+      openai: "An OpenAI-compatible endpoint, with a key",
+      model: "Endpoint or server model",
+      modelHint: "The model the endpoint or the server serves. The built-in model ignores it.",
       minScore: "Recall's minimum score",
       minScoreHint:
         "0 to 1. Past incidents scoring under it are never recalled. Empty: the model's own.",
