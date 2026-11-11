@@ -1,6 +1,6 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { incident } from "@/components/incident/fixtures";
 import { OverallProvider } from "@/components/overall-state";
@@ -8,6 +8,7 @@ import { ServicePage } from "@/components/service/service-page";
 import { invalid, sentBody, settingsView } from "@/components/settings/fixtures";
 import type { IncidentListItem, ServiceDetail, UrlCheckPoint } from "@/lib/api-types";
 import { formatTime } from "@/lib/format";
+import { setLanguage } from "@/lib/i18n";
 import { SETTINGS_CHANGED } from "@/lib/settings-api";
 
 const SERVICE: ServiceDetail = {
@@ -948,5 +949,94 @@ describe("ServicePage settings", () => {
       "The shop db is shared with billing.",
     );
     expect(within(rules).queryByRole("button", { name: "Edit rules" })).toBeNull();
+  });
+});
+
+describe("ServicePage in German", () => {
+  beforeEach(() => act(() => setLanguage("de")));
+
+  it("speaks German on the page, the checks, the rules and the past incidents", async () => {
+    const fetchMock = stubBackend(
+      serviceWith({
+        health_since: todayAt(9, 5),
+        recent_checks: [{ url: "http://localhost:8080/", checks: CHECKS }],
+      }),
+      [
+        pastIncident(
+          { id: "inc-1", title: "shop-web-1 died", opened_at: "2026-11-02T19:00:00Z" },
+          { diagnosis: "up", proposal: "down" },
+        ),
+      ],
+    );
+    renderPage("demo/compose:shop");
+
+    expect((await screen.findByText(/-Dienst auf/, { selector: "p" })).textContent).toBe(
+      "compose-Dienst auf demo · 1 Container · gesund seit 9:05",
+    );
+    const crumbs = screen.getByRole("navigation", { name: "Brotkrümelnavigation" });
+    expect(within(crumbs).getByRole("link", { name: "Start" })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("region", { name: "Was ich über shop weiß" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Von außen geprüft" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Container" })).toBeInTheDocument();
+    const rules = screen.getByRole("region", { name: "Regeln, an die ich mich halte" });
+    expect(within(rules).getByRole("list", { name: "Regeln: Dieser Dienst" })).toBeInTheDocument();
+    expect(within(rules).getByRole("list", { name: "Regeln: Sein Host" })).toBeInTheDocument();
+    expect(within(rules).getByText("Ich ändere nie etwas ohne dein Ja.")).toBeInTheDocument();
+    expect(await screen.findByText(/Noch keine Fakten/)).toBeInTheDocument();
+
+    const strip = screen.getByRole("list", {
+      name: "Letzte 3 Prüfungen: 2 fehlgeschlagen, älteste zuerst, für http://localhost:8080/",
+    });
+    expect(within(strip).getAllByRole("img")[0]).toHaveAttribute(
+      "aria-label",
+      `Bestanden um ${formatTime(CHECKS[0].checked_at, undefined, "de")}, 200, 12 ms`,
+    );
+    const past = await screen.findByRole("list", { name: "Vorfälle" });
+    expect(within(past).getByText("Diagnose richtig")).toBeInTheDocument();
+    expect(within(past).getByText("Plan falsch")).toBeInTheDocument();
+    expect(within(past).getByText("02.11.2026, 20:00")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("says the service is still down after its last incident, and what a quiet one means", async () => {
+    const urls = [{ ...SERVICE.service.urls[0], status: "failing" as const, status_code: 404 }];
+    const down = { ...SERVICE.service, health: "down" as const, urls };
+    stubBackend(json({ ...SERVICE, service: down }), [
+      pastIncident({ id: "inc-9", title: "url failed on shop", closed_at: "2026-11-02T18:05:00Z" }),
+    ]);
+    const { unmount } = renderPage("demo/compose:shop");
+    const note = await screen.findByRole("note", { name: "Besteht weiterhin" });
+    expect(note).toHaveTextContent("Weiterhin ausgefallen; sein letzter Vorfall endete");
+    expect(note).toHaveTextContent("sobald eine Prüfung bestanden wurde");
+    unmount();
+
+    const since = todayAt(14, 2);
+    const hostQuiet = {
+      scope: "host",
+      mode: "snooze",
+      until: new Date(2030, 0, 1, 18, 0).toISOString(),
+      since,
+    };
+    stubBackend(json({ ...SERVICE, service: { ...SERVICE.service, quiet: hostQuiet } }));
+    renderPage("demo/compose:shop");
+    expect((await screen.findByRole("note")).textContent).toMatch(
+      /^Sein Host ist bis .*18:00 stumm, deshalb öffnet Bleep keine Vorfälle für ihn\.$/,
+    );
+  });
+
+  it("lets a long German word in a heading wrap and hyphenate", async () => {
+    const name = "Donaudampfschifffahrtsgesellschaftskapitän";
+    stubBackend(json({ ...SERVICE, service: { ...SERVICE.service, name } }));
+    renderPage("demo/compose:shop");
+    expect(await screen.findByRole("heading", { level: 1, name })).toHaveClass(
+      "wrap-anywhere",
+      "hyphens-auto",
+    );
+  });
+
+  it("says a service is gone and what failed to load, in German", async () => {
+    stubBackend(json({ detail: "kaputt" }, 500));
+    renderPage("demo/compose:shop");
+    expect(await screen.findByText(/Der Dienst konnte nicht geladen werden/)).toBeInTheDocument();
   });
 });

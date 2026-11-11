@@ -2,30 +2,35 @@
 
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiError, apiFetch } from "@/lib/api";
+import { type Messages, useT } from "@/lib/i18n";
 import { safeNext } from "@/lib/safe-next";
 
-function messageFor(error: unknown): string {
+function messageFor(error: unknown, t: Messages["login"]): string {
   if (error instanceof ApiError) {
-    if (error.status === 401) return "wrong password";
+    if (error.status === 401) return t.wrongPassword;
     if (error.status === 429) {
-      return error.retryAfter
-        ? `too many attempts, try again in ${error.retryAfter} s`
-        : "too many attempts, try again later";
+      return error.retryAfter ? t.tooManySoon(error.retryAfter) : t.tooManyLater;
     }
   }
-  return "could not reach the server, try again";
+  return t.unreachable;
 }
 
 export function LoginForm({ next }: { next: string }) {
   const router = useRouter();
+  const t = useT().login;
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+
+  // The metadata title is fixed at build time, so the title in the person's language is set here.
+  useEffect(() => {
+    document.title = t.title;
+  }, [t.title]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -39,7 +44,7 @@ export function LoginForm({ next }: { next: string }) {
       });
       router.replace(safeNext(next));
     } catch (e) {
-      setError(messageFor(e));
+      setError(messageFor(e, t));
       setBusy(false);
     }
   }
@@ -47,7 +52,7 @@ export function LoginForm({ next }: { next: string }) {
   return (
     <form onSubmit={submit} className="flex flex-col gap-3">
       <label htmlFor="password" className="text-sm font-medium">
-        Password
+        {t.password}
       </label>
       <Input
         id="password"
@@ -67,7 +72,7 @@ export function LoginForm({ next }: { next: string }) {
       )}
       <Button type="submit" disabled={busy || password === ""}>
         {busy && <Loader2 aria-hidden className="animate-spin" />}
-        Log in
+        {t.submit}
       </Button>
     </form>
   );

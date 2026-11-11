@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LoginForm } from "@/components/login-form";
+import { setLanguage } from "@/lib/i18n";
 
 const replace = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace }) }));
@@ -61,5 +62,42 @@ describe("LoginForm", () => {
     render(<LoginForm next="//evil.test" />);
     await submit();
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
+  });
+});
+
+describe("LoginForm in German", () => {
+  beforeEach(() => {
+    replace.mockReset();
+    act(() => setLanguage("de"));
+  });
+
+  it("shows the last language the page knew, without a settings read", async () => {
+    reply(401, { detail: "wrong password" });
+    render(<LoginForm next="/" />);
+    expect(screen.getByLabelText("Passwort")).toBeInTheDocument();
+    expect(document.title).toBe("Anmelden · Bleep");
+    await userEvent.type(screen.getByLabelText("Passwort"), "pw");
+    await userEvent.click(screen.getByRole("button", { name: "Anmelden" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("falsches Passwort");
+  });
+
+  it("says the wait time on 429 and that the server is out of reach", async () => {
+    reply(429, { detail: "too many attempts" }, { "retry-after": "30" });
+    const { unmount } = render(<LoginForm next="/" />);
+    await userEvent.type(screen.getByLabelText("Passwort"), "pw");
+    await userEvent.click(screen.getByRole("button", { name: "Anmelden" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "zu viele Versuche, versuch es in 30 s noch mal",
+    );
+    unmount();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Promise.reject(new TypeError("offline"))),
+    );
+    render(<LoginForm next="/" />);
+    await userEvent.type(screen.getByLabelText("Passwort"), "pw");
+    await userEvent.click(screen.getByRole("button", { name: "Anmelden" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Server nicht erreichbar");
   });
 });

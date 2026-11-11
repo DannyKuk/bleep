@@ -25,7 +25,8 @@ function texts(tree: Tree): string[] {
       const samples = [3, 2, "x"];
       return [String(value(...samples.slice(0, value.length)))];
     }
-    if (Array.isArray(value)) return value.map(String);
+    // A pair may leave one side empty (words that go before and after a target); not both.
+    if (Array.isArray(value)) return [value.map(String).join("")];
     return texts(value as Tree);
   });
 }

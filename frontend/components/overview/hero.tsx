@@ -9,37 +9,12 @@ import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import { HealthBadge } from "@/components/overview/health-badge";
 import { joinNames, type Situation } from "@/components/overview/situation";
 import { useTimeZone } from "@/components/preferences";
-import type {
-  Action,
-  HostHealth,
-  HostView,
-  Incident,
-  IncidentDetail,
-  PlanStep,
-  ServiceView,
-} from "@/lib/api-types";
+import type { HostView, Incident, IncidentDetail, PlanStep, ServiceView } from "@/lib/api-types";
 import { formatDateTime, showInvisible } from "@/lib/format";
+import { type Messages, MESSAGES, useLanguage, useT } from "@/lib/i18n";
 import type { Mood } from "@/lib/mood";
+import type { Language } from "@/lib/settings-types";
 import type { Zone } from "@/lib/zone";
-
-const TROUBLE: Record<HostHealth, string> = {
-  down: "is down",
-  degraded: "is struggling",
-  stopped: "has stopped",
-  done: "has finished",
-  unknown: "has a problem",
-  ok: "had a problem",
-  asleep: "is asleep",
-};
-
-const VERB: Record<Action, string> = {
-  "docker.restart": "restart",
-  "docker.stop": "stop",
-  "docker.start": "start",
-  "coolify.redeploy": "redeploy",
-  "coolify.set_env": "change a setting of",
-  "mcp.call": "call",
-};
 
 const PLAN_STEPS_SHOWN = 2;
 
@@ -51,8 +26,6 @@ interface Words {
   detail?: string;
   link?: { href: string; label: string };
 }
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** The subject's name and health: a service's from the services list, a host's from the hosts. */
 function subjectOf(
@@ -71,19 +44,26 @@ function subjectOf(
 
 /** "I want to start shop-db, then restart shop-web-1." with the targets in mono. */
 function PlanLine({ steps }: { steps: readonly PlanStep[] }) {
+  const messages = useT();
+  const t = messages.overview;
   const shown = steps.slice(0, PLAN_STEPS_SHOWN);
   const more = steps.length - shown.length;
   return (
     <>
-      I want to{" "}
-      {shown.map((step, index) => (
-        <span key={index}>
-          {index > 0 && ", then "}
-          {VERB[step.action]} <code className="font-mono">{showInvisible(step.target)}</code>
-        </span>
-      ))}
-      {more > 0 && `, and ${plural(more, "more step")}`}. I will not touch anything until you say
-      yes.
+      {t.planLead}
+      {shown.map((step, index) => {
+        const [before, after] = t.planVerbs[step.action];
+        return (
+          <span key={index}>
+            {index > 0 && t.planThen}
+            {before}
+            <code className="font-mono">{showInvisible(step.target)}</code>
+            {after}
+          </span>
+        );
+      })}
+      {more > 0 && t.planMore(messages.counts.moreSteps(more))}
+      {t.planEnd}
     </>
   );
 }
@@ -103,19 +83,22 @@ function TitleLine({ incident }: { incident: Incident }) {
   );
 }
 
-function waitingWords(incident: Incident, detail: IncidentDetail | undefined, trouble: string) {
+function waitingWords(
+  incident: Incident,
+  detail: IncidentDetail | undefined,
+  trouble: string,
+  t: Messages,
+) {
   const plan = planOf(detail);
   const unsure = detail?.diagnosis?.unsure === true;
-  let reason = "I need you.";
+  let reason = t.overview.needYou;
   let body: ReactNode = <TitleLine incident={incident} />;
   if (plan && isRefused(plan)) {
-    reason = "My own checks stopped my plan, so I need you.";
+    reason = t.overview.refusedPlan;
   } else if (plan?.kind === "no_action") {
-    reason = unsure
-      ? "I am not sure why, and I have no fix to run."
-      : "I know why, but I have no fix to run.";
+    reason = unsure ? t.overview.noFixUnsure : t.overview.noFixSure;
   } else if (plan) {
-    reason = unsure ? "I am not sure why, but I have a plan." : "I know why, and I have a fix.";
+    reason = unsure ? t.overview.planUnsure : t.overview.planSure;
     body = <PlanLine steps={plan.steps} />;
   }
   return { headline: `${trouble} ${reason}`, body };
@@ -125,32 +108,33 @@ function incidentWords(
   situation: Extract<Situation, { kind: "incident" }>,
   hosts: readonly HostView[],
   services: readonly ServiceView[],
+  t: Messages,
 ): Words {
   const { incident, detail } = situation;
   const subject = subjectOf(incident, hosts, services);
-  const trouble = `${subject.name} ${TROUBLE[subject.health ?? "unknown"]}.`;
+  const trouble = `${subject.name} ${t.overview.trouble[subject.health ?? "unknown"]}.`;
   const href = `/incidents/${incident.id}`;
   const tag = <IncidentStatusBadge status={incident.status} />;
   if (incident.status === "awaiting_approval") {
     return {
       tag,
-      ...waitingWords(incident, detail, trouble),
-      link: { href, label: "Show me the plan" },
+      ...waitingWords(incident, detail, trouble, t),
+      link: { href, label: t.overview.showPlan },
     };
   }
   if (incident.status === "failed") {
     return {
       tag,
-      headline: `I could not finish with ${subject.name}.`,
+      headline: t.overview.couldNotFinish(subject.name),
       body: <TitleLine incident={incident} />,
-      link: { href, label: "Show me what happened" },
+      link: { href, label: t.overview.showWhat },
     };
   }
   return {
     tag,
-    headline: `${trouble} I am on it.`,
+    headline: `${trouble} ${t.overview.onIt}`,
     body: <TitleLine incident={incident} />,
-    link: { href, label: "Follow along" },
+    link: { href, label: t.overview.followAlong },
   };
 }
 
@@ -158,19 +142,23 @@ function unreachableWords(
   situation: Extract<Situation, { kind: "unreachable" }>,
   services: readonly ServiceView[],
   zone: Zone,
+  language: Language,
 ): Words {
+  const t = MESSAGES[language];
   const { host, incident } = situation;
   const names = services.filter((service) => service.host_id === host.id).map((s) => s.name);
   const since = host.last_seen
-    ? `I last heard from it at ${formatDateTime(host.last_seen, zone, "en")}`
-    : "I have not reached it yet";
-  const blind = names.length > 0 ? `, so I cannot see ${joinNames(names)}` : "";
+    ? t.overview.lastHeard(formatDateTime(host.last_seen, zone, language))
+    : t.overview.notReached;
+  const blind = names.length > 0 ? t.overview.blind(joinNames(names, t)) : "";
   return {
-    tag: <HealthBadge health="down" label="Unreachable" />,
-    headline: `I cannot reach ${host.name}.`,
+    tag: <HealthBadge health="down" label={t.health.unreachable} />,
+    headline: t.overview.cannotReach(host.name),
     body: `${since}${blind}.`,
     detail: host.error ?? undefined,
-    link: incident ? { href: `/incidents/${incident.id}`, label: "Follow along" } : undefined,
+    link: incident
+      ? { href: `/incidents/${incident.id}`, label: t.overview.followAlong }
+      : undefined,
   };
 }
 
@@ -179,22 +167,24 @@ function wordsFor(
   hosts: readonly HostView[],
   services: readonly ServiceView[],
   zone: Zone,
+  language: Language,
 ): Words {
+  const t = MESSAGES[language];
   switch (situation.kind) {
     case "incident":
-      return incidentWords(situation, hosts, services);
+      return incidentWords(situation, hosts, services, t);
     case "unreachable":
-      return unreachableWords(situation, services, zone);
+      return unreachableWords(situation, services, zone, language);
     case "quiet":
       return {
-        tag: <HealthBadge health="ok" label="All quiet" />,
-        headline: "Nothing needs you right now.",
-        body: `I am watching ${plural(hosts.length, "host")} and ${plural(services.length, "service")}.`,
+        tag: <HealthBadge health="ok" label={t.health.allQuiet} />,
+        headline: t.overview.nothingNeeds,
+        body: t.overview.watching(t.counts.hosts(hosts.length), t.counts.services(services.length)),
       };
     case "no_hosts":
       return {
-        tag: <HealthBadge health="unknown" label="No hosts" />,
-        headline: "I have no hosts to watch yet.",
+        tag: <HealthBadge health="unknown" label={t.health.noHosts} />,
+        headline: t.overview.noHostsToWatch,
         body: null,
       };
   }
@@ -216,7 +206,9 @@ export function OverviewHero({
   services: readonly ServiceView[];
 }) {
   const zone = useTimeZone();
-  const words = wordsFor(situation, hosts, services, zone);
+  const language = useLanguage();
+  const t = useT();
+  const words = wordsFor(situation, hosts, services, zone, language);
   const others = situation.kind === "incident" ? situation.others : 0;
   return (
     <section
@@ -228,7 +220,7 @@ export function OverviewHero({
         {words.tag}
         <h1
           id="overview-headline"
-          className="text-[22px] leading-tight font-extrabold tracking-tight sm:text-[34px]"
+          className="text-[22px] leading-tight font-extrabold tracking-tight wrap-anywhere hyphens-auto sm:text-[34px]"
         >
           {words.headline}
         </h1>
@@ -256,7 +248,7 @@ export function OverviewHero({
                 href="/incidents"
                 className="inline-flex min-h-11 items-center rounded-full font-bold text-accent underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
               >
-                {plural(others, "more incident")} {others === 1 ? "needs" : "need"} you
+                {t.overview.moreNeed(others)}
               </Link>
             )}
           </div>

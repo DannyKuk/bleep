@@ -3,7 +3,11 @@ import { describe, expect, it } from "vitest";
 import { diagnosis, incident } from "@/components/incident/fixtures";
 import { host, service } from "@/components/overview/fixtures";
 import { heroSituation, isHurting, reachLine } from "@/components/overview/situation";
-import type { IncidentDetail } from "@/lib/api-types";
+import type { HostView, IncidentDetail, ServiceView } from "@/lib/api-types";
+import { MESSAGES } from "@/lib/i18n";
+
+const reach = (hosts: HostView[], services: ServiceView[]) =>
+  reachLine(hosts, services, MESSAGES.en);
 
 const NOW = Date.parse("2026-11-02T19:00:00Z");
 
@@ -135,7 +139,7 @@ describe("quiet subjects", () => {
     const situation = heroSituation({ incidents: [], hosts: [asleep], details: {}, now: NOW });
     expect(situation).toEqual({ kind: "quiet" });
     expect(isHurting(asleep, [])).toBe(false);
-    expect(reachLine([asleep], [])).toBe("It is fine.");
+    expect(reach([asleep], [])).toBe("It is fine.");
   });
 
   it("does not make an unreachable quiet host the headline", () => {
@@ -152,7 +156,7 @@ describe("quiet subjects", () => {
   it("is not hurting when its only hurting service is quiet, and the reach line says fine", () => {
     const services = [service({ health: "down", quiet: leftAlone })];
     expect(isHurting(host({ health: "down" }), services)).toBe(false);
-    expect(reachLine([host({ health: "down" })], services)).toBe("It is fine.");
+    expect(reach([host({ health: "down" })], services)).toBe("It is fine.");
   });
 
   it("still counts a service that is not quiet next to a quiet one", () => {
@@ -160,7 +164,7 @@ describe("quiet subjects", () => {
       service({ health: "down", quiet: leftAlone }),
       service({ id: "demo/compose:blog", name: "blog", health: "down" }),
     ];
-    const line = reachLine([host({ health: "down" })], services);
+    const line = reach([host({ health: "down" })], services);
     expect(line).toBe("Demo stack is hurting: 1 of its 2 services.");
   });
 
@@ -185,13 +189,13 @@ describe("reachLine", () => {
       service({ id: "demo/c", host_id: "demo", health: "stopped" }),
       service({ id: "main/x", host_id: "main", health: "down" }),
     ];
-    expect(reachLine(three({ health: "down" }), services)).toBe(
+    expect(reach(three({ health: "down" }), services)).toBe(
       "Only Demo stack is hurting: 1 of its 3 services. The other two are fine.",
     );
   });
 
   it("says when a whole host is out of reach", () => {
-    expect(reachLine(three({ reachable: false, health: "down" }), [])).toBe(
+    expect(reach(three({ reachable: false, health: "down" }), [])).toBe(
       "Demo stack is out of reach as a whole. The other two are fine.",
     );
   });
@@ -202,16 +206,16 @@ describe("reachLine", () => {
       host({ id: "b", name: "B", reachable: false, health: "unknown" }),
       host({ id: "c", name: "C" }),
     ];
-    expect(reachLine(hosts, [])).toBe("A and B are hurting. The other one is fine.");
+    expect(reach(hosts, [])).toBe("A and B are hurting. The other one is fine.");
   });
 
   it("covers all of a host's services, and its only one", () => {
     const one = [host({ health: "down" })];
-    expect(reachLine(one, [service({ health: "down" })])).toBe(
+    expect(reach(one, [service({ health: "down" })])).toBe(
       "Demo stack is hurting: its only service.",
     );
     expect(
-      reachLine(one, [
+      reach(one, [
         service({ id: "demo/a", health: "down" }),
         service({ id: "demo/b", health: "degraded" }),
       ]),
@@ -219,9 +223,28 @@ describe("reachLine", () => {
   });
 
   it("says all is fine in as few words as fit", () => {
-    expect(reachLine([host()], [])).toBe("It is fine.");
-    expect(reachLine([host({ id: "a" }), host({ id: "b" })], [])).toBe("Both are fine.");
-    expect(reachLine(three(), [])).toBe("All three are fine.");
-    expect(reachLine(three({ health: "unknown" }), [])).toBe("All three are fine.");
+    expect(reach([host()], [])).toBe("It is fine.");
+    expect(reach([host({ id: "a" }), host({ id: "b" })], [])).toBe("Both are fine.");
+    expect(reach(three(), [])).toBe("All three are fine.");
+    expect(reach(three({ health: "unknown" }), [])).toBe("All three are fine.");
+  });
+
+  it("reads in German with the German names of the counts", () => {
+    const services = [
+      service({ id: "demo/a", host_id: "demo", health: "down" }),
+      service({ id: "demo/b", host_id: "demo", health: "ok" }),
+      service({ id: "demo/c", host_id: "demo", health: "stopped" }),
+    ];
+    const de = (hosts: HostView[], rest: ServiceView[]) => reachLine(hosts, rest, MESSAGES.de);
+    expect(de(three({ health: "down" }), services)).toBe(
+      "Nur Demo stack hat Probleme: 1 seiner 3 Dienste. Die anderen zwei sind in Ordnung.",
+    );
+    expect(de(three({ reachable: false, health: "down" }), [])).toBe(
+      "Demo stack ist als Ganzes nicht erreichbar. Die anderen zwei sind in Ordnung.",
+    );
+    expect(de(three(), [])).toBe("Alle drei sind in Ordnung.");
+    expect(de([host({ health: "down" })], [service({ health: "down" })])).toBe(
+      "Demo stack hat Probleme: sein einziger Dienst.",
+    );
   });
 });

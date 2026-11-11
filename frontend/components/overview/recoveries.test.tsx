@@ -1,8 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { RecoveriesView } from "@/components/overview/recoveries";
 import type { RecoveryEvent } from "@/lib/api-types";
+import { setLanguage } from "@/lib/i18n";
 
 function recovery(overrides: Partial<RecoveryEvent> = {}): RecoveryEvent {
   return {
@@ -41,5 +42,15 @@ describe("RecoveriesView", () => {
   it("says when nothing has fixed itself", () => {
     render(<RecoveriesView recoveries={[]} />);
     expect(screen.getByText(/Nothing has fixed itself yet/)).toBeInTheDocument();
+  });
+
+  it("reads in German, with a German date, and keeps the explanation as it came", () => {
+    act(() => setLanguage("de"));
+    const { rerender } = render(<RecoveriesView recoveries={[recovery()]} />);
+    expect(screen.getByText(/^auf/)).toHaveTextContent("auf demo");
+    expect(screen.getByText(/^02\.11\.2026, \d\d:\d\d$/)).toBeInTheDocument();
+    expect(screen.getByText(/lost its database connection/)).toBeInTheDocument();
+    rerender(<RecoveriesView recoveries={[]} />);
+    expect(screen.getByText(/Bisher hat sich noch nichts von selbst behoben/)).toBeInTheDocument();
   });
 });

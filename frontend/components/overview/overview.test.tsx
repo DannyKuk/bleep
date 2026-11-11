@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -9,6 +9,7 @@ import { OverallProvider } from "@/components/overall-state";
 import { host, service } from "@/components/overview/fixtures";
 import { Overview, OverviewView } from "@/components/overview/overview";
 import type { IncidentDetail } from "@/lib/api-types";
+import { setLanguage } from "@/lib/i18n";
 
 const NOW = Date.parse("2026-11-02T19:00:00Z");
 
@@ -560,5 +561,204 @@ describe("OverviewView quiet", () => {
       />,
     );
     expect(mood(container)).toBe("all_good");
+  });
+});
+
+describe("OverviewView in German", () => {
+  const german = () => act(() => setLanguage("de"));
+
+  it("says what failed and what the plan is, with the targets in mono", () => {
+    german();
+    render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[service({ health: "down", open_incident_id: "inc-1" })]}
+        incidents={[incident()]}
+        details={{
+          "inc-1": detail({
+            approval: approval({
+              proposal: proposal({
+                steps: [
+                  { action: "docker.start", host_id: "demo", target: "shop-db", params: {} },
+                  { action: "docker.restart", host_id: "demo", target: "shop-web-1", params: {} },
+                  { action: "docker.stop", host_id: "demo", target: "shop-worker-1", params: {} },
+                ],
+              }),
+            }),
+          }),
+        }}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent(
+      "shop ist ausgefallen. Ich weiß, warum, und ich habe eine Behebung.",
+    );
+    expect(screen.getByText(/Ich möchte/)).toHaveTextContent(
+      "Ich möchte shop-db starten, danach shop-web-1 neu starten, und noch 1 Schritt. Ich fasse nichts an, bis du Ja sagst.",
+    );
+    expect(screen.getByText("shop-db").tagName).toBe("CODE");
+    expect(screen.getByRole("link", { name: "Plan ansehen" })).toHaveAttribute(
+      "href",
+      "/incidents/inc-1",
+    );
+    expect(screen.getByText("Braucht dein Ja")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Deine Hosts" })).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Dienste auf Demo stack" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Vorfall zu shop öffnen" })).toBeInTheDocument();
+    expect(screen.getByText("Demo stack hat Probleme: sein einziger Dienst.")).toBeInTheDocument();
+  });
+
+  it("counts the other incidents that need the human", () => {
+    german();
+    render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[service({ health: "down" })]}
+        incidents={[
+          incident({ id: "a", status: "awaiting_approval" }),
+          incident({ id: "b", status: "awaiting_approval" }),
+          incident({ id: "c", status: "awaiting_approval" }),
+        ]}
+        now={NOW}
+      />,
+    );
+    expect(
+      screen.getByRole("link", { name: "2 weitere Vorfälle brauchen dich" }),
+    ).toBeInTheDocument();
+  });
+
+  it("names an unreachable host, when it last answered and what it cannot see", () => {
+    german();
+    render(
+      <OverviewView
+        hosts={[
+          host({
+            id: "main",
+            name: "coolify-main",
+            kind: "ssh",
+            reachable: false,
+            health: "down",
+            last_seen: "2026-11-02T18:00:00Z",
+            error: "ssh: connection timed out",
+          }),
+          host(),
+        ]}
+        services={[
+          service({ id: "main/a", host_id: "main", name: "molecula", health: "unknown" }),
+          service({ id: "main/b", host_id: "main", name: "blog", health: "unknown" }),
+          service(),
+        ]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("Ich erreiche coolify-main nicht.");
+    expect(
+      screen.getByText(
+        /Zuletzt habe ich am 02\.11\.2026, \d\d:\d\d von ihm gehört, deshalb sehe ich molecula und blog nicht\./,
+      ),
+    ).toBeInTheDocument();
+    expect(within(hero()).getByText("Nicht erreichbar")).toBeInTheDocument();
+    expect(within(hero()).getByText("ssh: connection timed out")).toBeInTheDocument();
+  });
+
+  it("says nothing needs the human, and counts what it watches", () => {
+    german();
+    render(
+      <OverviewView
+        hosts={[host(), host({ id: "spare", name: "Spare M1" })]}
+        services={[service()]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("Gerade braucht dich nichts.");
+    expect(screen.getByText("Ich beobachte 2 Hosts und 1 Dienst.")).toBeInTheDocument();
+    expect(screen.getByText("Alles ruhig")).toBeInTheDocument();
+    expect(screen.getByText("Beide sind in Ordnung.")).toBeInTheDocument();
+  });
+
+  it("shows a host's basics with a decimal comma", () => {
+    german();
+    render(
+      <OverviewView
+        hosts={[
+          host({
+            basics: {
+              os: "linux",
+              cpus: 4,
+              mem_total: 8_000,
+              mem_available: 2_000,
+              load1: 0.34,
+              load15: 0.2,
+              disks: [{ mount: "/", used_percent: 58 }],
+            },
+          }),
+        ]}
+        services={[service()]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(screen.getByText("Last 0,3 · RAM 75 % · Platte 58 %")).toBeInTheDocument();
+  });
+
+  it("shows the empty state and the quiet state in German", () => {
+    german();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 4, 12, 0));
+    const { rerender } = render(<OverviewView hosts={[]} services={[]} incidents={[]} now={NOW} />);
+    expect(headline()).toHaveTextContent("Ich habe noch keinen Host, den ich beobachten kann.");
+    expect(screen.getByText("Noch keine Hosts.")).toBeInTheDocument();
+    expect(screen.getByText(/config\/hosts\.yaml/).closest("p")).toHaveTextContent(
+      "Oder trage einen in config/hosts.yaml ein.",
+    );
+    expect(screen.getByRole("link", { name: "Einrichtungsanleitung" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Host hinzufügen" })).not.toHaveLength(0);
+
+    rerender(
+      <OverviewView
+        hosts={[host({ health: "down", quiet_service_ids: ["demo/compose:shop"] })]}
+        services={[
+          service({
+            health: "down",
+            quiet: {
+              scope: "service",
+              mode: "snooze",
+              until: new Date(2026, 10, 4, 18, 0).toISOString(),
+              since: "2026-11-04T10:00:00Z",
+            },
+          }),
+        ]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(screen.getByText("Stumm bis 18:00")).toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it("lets a long German word in the headline wrap and hyphenate instead of widening the page", () => {
+    german();
+    render(
+      <OverviewView
+        hosts={[
+          host({
+            id: "main",
+            name: "Donaudampfschifffahrtsgesellschaftskapitän",
+            reachable: false,
+            health: "down",
+          }),
+        ]}
+        services={[]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent(
+      "Ich erreiche Donaudampfschifffahrtsgesellschaftskapitän nicht.",
+    );
+    expect(headline()).toHaveClass("wrap-anywhere", "hyphens-auto");
+    expect(headline().parentElement).toHaveClass("min-w-0");
   });
 });

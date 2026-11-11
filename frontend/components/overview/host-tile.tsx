@@ -8,37 +8,46 @@ import { QuietPill } from "@/components/quiet/quiet-pill";
 import { useTimeZone } from "@/components/preferences";
 import type { HostView, ServiceView } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
+import { FIXED_LOCALE, MESSAGES, useLanguage, useT } from "@/lib/i18n";
 import { isAsleep } from "@/lib/mood";
 import { hostHref, serviceHref } from "@/lib/routes";
+import type { Language } from "@/lib/settings-types";
 import { cn } from "@/lib/utils";
 import type { Zone } from "@/lib/zone";
 
 const FOCUS = "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
 
 /** "load 0.3 · mem 75% · disk 58%" (the fullest disk), or when an unreachable host was last seen. */
-export function basicsLine(host: HostView, zone?: Zone): string | null {
+export function basicsLine(host: HostView, zone: Zone, language: Language): string | null {
+  const t = MESSAGES[language].overview;
   if (!host.reachable) {
     return host.last_seen
-      ? `last seen ${formatDateTime(host.last_seen, zone, "en")}`
-      : "never reached";
+      ? t.lastSeen(formatDateTime(host.last_seen, zone, language))
+      : t.neverReached;
   }
   const basics = host.basics;
   if (!basics) return null;
   const parts: string[] = [];
-  if (basics.load1 != null) parts.push(`load ${basics.load1.toFixed(1)}`);
+  if (basics.load1 != null) {
+    const load = basics.load1.toLocaleString(FIXED_LOCALE[language], {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    });
+    parts.push(t.load(load));
+  }
   if (basics.mem_total && basics.mem_available != null) {
     const used = 1 - basics.mem_available / basics.mem_total;
-    parts.push(`mem ${Math.round(used * 100)}%`);
+    parts.push(t.memory(Math.round(used * 100)));
   }
   if (basics.disks.length > 0) {
-    parts.push(`disk ${Math.max(...basics.disks.map((disk) => disk.used_percent))}%`);
+    parts.push(t.disk(Math.max(...basics.disks.map((disk) => disk.used_percent))));
   }
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 /** The word on the host's health badge: an unreachable host that may sleep is simply asleep. */
-export function healthLabel(host: HostView): string | undefined {
-  return host.reachable || isAsleep(host) ? undefined : "Unreachable";
+export function healthLabel(host: HostView, language: Language): string | undefined {
+  return host.reachable || isAsleep(host) ? undefined : MESSAGES[language].health.unreachable;
 }
 
 /** An unreachable host's error, muted when nothing is wrong with that (quiet or asleep). */
@@ -52,6 +61,7 @@ const MOON_REVEAL =
   "pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:focus-visible:opacity-100 pointer-fine:data-popup-open:opacity-100";
 
 function ServicePill({ service, onChanged }: { service: ServiceView; onChanged: () => void }) {
+  const t = useT().overview;
   return (
     <li className="group flex min-h-11 items-center gap-2 rounded-field bg-surface pr-1.5 pl-1">
       <Link
@@ -66,13 +76,13 @@ function ServicePill({ service, onChanged }: { service: ServiceView; onChanged: 
       {service.open_incident_id && (
         <Link
           href={`/incidents/${service.open_incident_id}`}
-          aria-label={`Open incident on ${service.name}`}
+          aria-label={t.openIncidentOn(service.name)}
           className={cn(
             "inline-flex min-h-11 shrink-0 items-center gap-0.5 rounded-full px-1.5 text-[13px] font-bold text-down underline-offset-2 hover:underline",
             FOCUS,
           )}
         >
-          Incident
+          {t.incident}
           <ArrowUpRight aria-hidden className="size-3.5" />
         </Link>
       )}
@@ -106,7 +116,9 @@ export function HostTile({
   const titleId = `host-${host.id}`;
   const hurting = isHurting(host, services);
   const zone = useTimeZone();
-  const basics = basicsLine(host, zone);
+  const language = useLanguage();
+  const t = useT().overview;
+  const basics = basicsLine(host, zone, language);
   return (
     <section
       aria-labelledby={titleId}
@@ -132,7 +144,7 @@ export function HostTile({
           {host.quiet ? (
             <QuietPill quiet={host.quiet} />
           ) : (
-            <HealthBadge health={host.health} label={healthLabel(host)} />
+            <HealthBadge health={host.health} label={healthLabel(host, language)} />
           )}
           <QuietMenu
             target={{ scope: "host", id: host.id, name: host.name }}
@@ -142,13 +154,13 @@ export function HostTile({
         </span>
       </header>
       {services.length > 0 ? (
-        <ul aria-label={`Services on ${host.name}`} className="flex flex-col gap-1">
+        <ul aria-label={t.servicesOn(host.name)} className="flex flex-col gap-1">
           {services.map((service) => (
             <ServicePill key={service.id} service={service} onChanged={onChanged} />
           ))}
         </ul>
       ) : (
-        <p className="text-sm text-ink-2">No services seen.</p>
+        <p className="text-sm text-ink-2">{t.noServices}</p>
       )}
       {basics && <p className="font-mono text-xs text-ink-2">{basics}</p>}
       {!host.reachable && host.error && (

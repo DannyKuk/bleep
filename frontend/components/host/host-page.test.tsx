@@ -1,6 +1,6 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HostPage, StillFailing } from "@/components/host/host-page";
 import { incident } from "@/components/incident/fixtures";
@@ -13,6 +13,7 @@ import {
   stubBackend as stubSettingsBackend,
 } from "@/components/settings/fixtures";
 import type { HostView, IncidentListItem, ServiceView } from "@/lib/api-types";
+import { setLanguage } from "@/lib/i18n";
 
 const HOST: HostView = {
   id: "m1",
@@ -396,5 +397,63 @@ describe("HostPage", () => {
     await screen.findByRole("region", { name: "Rules for every service" });
     expect(screen.queryByRole("region", { name: "Service settings" })).toBeNull();
     expect(screen.queryByRole("textbox", { name: "URL 1" })).toBeNull();
+  });
+});
+
+describe("HostPage in German", () => {
+  beforeEach(() => act(() => setLanguage("de")));
+
+  it("speaks German on the page, its services and its states", async () => {
+    backend();
+    renderPage("m1", [{ ...HOST, reachable: false, error: "ssh: connection refused" }]);
+    const title = await screen.findByRole("heading", { level: 1, name: "M1" });
+    expect(title).toHaveClass("wrap-anywhere", "hyphens-auto");
+    expect(screen.getByText("Nicht erreichbar")).toBeInTheDocument();
+    expect(screen.getByText("ssh: connection refused")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Brotkrümelnavigation" })).toHaveTextContent(
+      "Start",
+    );
+    expect(screen.getByText(/SSH-Host/)).toHaveTextContent("SSH-Host m1 · 2 Dienste");
+    expect(screen.getByRole("heading", { name: "Dienste" })).toBeInTheDocument();
+    const list = await screen.findByRole("list", { name: "Dienste auf M1" });
+    expect(within(list).getByText("worker")).toBeInTheDocument();
+    expect(within(list).getByText("Ausgefallen")).toBeInTheDocument();
+    expect(screen.getByText(/^zuletzt gesehen 05\.11\.2026, \d\d:\d\d$/)).toBeInTheDocument();
+  });
+
+  it("says since or until when a quiet host is quiet", async () => {
+    backend();
+    const until = new Date(2030, 0, 1, 18, 0).toISOString();
+    const quiet = { scope: "host", mode: "snooze", until, since: "2026-11-05T10:00:00Z" } as const;
+    renderPage("m1", [{ ...HOST, quiet }]);
+    const note = await screen.findByRole("note");
+    expect(note.textContent).toMatch(
+      /^Bleep öffnet bis .*18:00 keine Vorfälle für ihn oder seine Dienste\.$/,
+    );
+    expect(
+      screen.getByRole("button", { name: /^M1 stummschalten: Host stumm bis .*18:00/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("says it is still unreachable after the last incident, with German dates", () => {
+    render(<StillFailing host={DOWN} last={hostIncident()} />);
+    const note = screen.getByRole("note", { name: "Besteht weiterhin" });
+    expect(note).toHaveTextContent(
+      /^Weiterhin nicht erreichbar; sein letzter Vorfall endete .+: host unreachable on m1\./,
+    );
+    expect(note.querySelector("time")).toHaveAttribute(
+      "title",
+      expect.stringMatching(/^05\.11\.2026, \d\d:\d\d$/),
+    );
+    expect(note).toHaveTextContent("einen neuen, von einer Stunde bis zu einem Tag");
+  });
+
+  it("says when Bleep does not know the host", async () => {
+    backend();
+    renderPage("nope");
+    expect(await screen.findByText(/Bleep kennt keinen Host namens/)).toHaveTextContent(
+      "nope. Zurück zu deinen Hosts",
+    );
+    expect(screen.getByRole("heading", { level: 1, name: "nope" })).toHaveClass("hyphens-auto");
   });
 });

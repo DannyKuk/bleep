@@ -14,6 +14,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { useT } from "@/lib/i18n";
 
 function AddHost({
   onAdded,
@@ -24,6 +25,7 @@ function AddHost({
 }) {
   const [open, setOpen] = useState(false);
   const { busy } = useSaveLock();
+  const t = useT().overview;
   return (
     <Dialog
       open={open}
@@ -35,7 +37,7 @@ function AddHost({
       <DialogTrigger render={trigger} />
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add a host</DialogTitle>
+          <DialogTitle>{t.addHost}</DialogTitle>
           <DialogDescription>{SSH_ONLY}</DialogDescription>
         </DialogHeader>
         <HostForm onChanged={onAdded} onClose={() => setOpen(false)} />
@@ -61,6 +63,7 @@ export function AddHostDialog(props: {
 
 /** The round + at the end of the "Your hosts" row. */
 export function AddHostButton({ onAdded }: { onAdded: () => Promise<void> }) {
+  const label = useT().overview.addHost;
   return (
     <AddHostDialog
       onAdded={onAdded}
@@ -68,8 +71,8 @@ export function AddHostButton({ onAdded }: { onAdded: () => Promise<void> }) {
         <Button
           variant="ghost"
           size="icon"
-          aria-label="Add a host"
-          title="Add a host"
+          aria-label={label}
+          title={label}
           className="-my-2 shrink-0 bg-accent/12 text-accent hover:bg-accent/20 [&_svg]:size-5"
         >
           <Plus aria-hidden />
