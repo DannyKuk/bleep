@@ -43,7 +43,7 @@ from langchain_core.language_models import BaseChatModel
 
 from bleep.config import Settings
 from bleep.graph.deps import ModelFactory
-from bleep.graph.shown import shown_payload
+from bleep.graph.shown import english, shown_payload
 from bleep.guard.log import GuardLogger
 from bleep.guard.titles import title_name
 from bleep.hosts.dashboard import HostChange
@@ -76,7 +76,7 @@ from bleep.watcher.detector import (
     OpenIncident,
     Outcome,
     Recovered,
-    explain_recovery,
+    recovery_line,
 )
 from bleep.watcher.health import container_health, is_asleep, service_health, url_status
 from bleep.watcher.health_store import HealthStore
@@ -92,9 +92,14 @@ HELD_PER_SERVICE = 5  # URL failures kept per service while its host is unreacha
 SLEPT_AFTER_INTERVALS = 2
 RESTART_BACKOFF_S = (1, 2, 5, 15, 60)
 LOG_TAIL_LINES = 50
-NO_EXPLANATION = "No explanation could be generated for this restart."
-CAP_SPENT_EXPLANATION = "No explanation: the daily cost cap is spent."
-HELD_LOOP_EXPLANATION = "It died again in its crash loop, and its restart policy brought it back."
+# The recovery lines Bleep writes in place of the cheap model's, stored in English and kept as
+# templates to show them in the person's language (#455).
+NO_EXPLANATION_SHOWN = Shown.of("recovery/no_explanation")
+CAP_SPENT_SHOWN = Shown.of("recovery/cap_spent")
+HELD_LOOP_SHOWN = Shown.of("recovery/held_loop")
+NO_EXPLANATION = english(NO_EXPLANATION_SHOWN)
+CAP_SPENT_EXPLANATION = english(CAP_SPENT_SHOWN)
+HELD_LOOP_EXPLANATION = english(HELD_LOOP_SHOWN)
 RECOVERY_USAGE = "recoveries"  # the usage ledger's key for recovery lines, which have no incident
 REMOVED_NOTICE = Shown.of("notice/removed")
 MOVED_NOTICE = Shown.of("notice/moved")
@@ -725,7 +730,7 @@ class WatcherManager:
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
-    async def _explain(self, model: BaseChatModel, logs: str) -> str:
+    async def _explain(self, model: BaseChatModel, logs: str) -> str | Shown:
         """The model's line, counted in the usage ledger and refused once the daily cap is spent,
         like an incident's calls."""
         config = None
@@ -736,16 +741,17 @@ class WatcherManager:
             config = {"callbacks": [UsageTracker(RECOVERY_USAGE, self._ledger)]}
         timeout_s = (self._budgets or Budgets)().model_timeout_s
         guard = ModelGuard(timeout_s, sleep=self._model_sleep)
-        return await explain_recovery(
+        return await recovery_line(
             model, logs, self._guard_log, "", config, guard, self._language()
         )
 
     async def _log_recovery(self, recovered: Recovered) -> None:
         death = recovered.signals[0]
         if await self._in_held_loop(recovered):
-            explanation = HELD_LOOP_EXPLANATION
+            line: str | Shown = HELD_LOOP_SHOWN
         else:
-            explanation = await self._recovery_line(recovered)
+            line = await self._recovery_line(recovered)
+        fixed = line if isinstance(line, Shown) else None
         try:
             await self.repo.log_recovery(
                 RecoveryEvent(
@@ -753,7 +759,8 @@ class WatcherManager:
                     service_id=death.subject.service_id,
                     container=recovered.container,
                     at=death.at,
-                    explanation=explanation,
+                    explanation=line if fixed is None else english(fixed),
+                    explanation_shown=fixed,
                 )
             )
         except Exception:
@@ -772,7 +779,7 @@ class WatcherManager:
             return False
         return outlived is not None and self._still_held(subject, outlived)
 
-    async def _recovery_line(self, recovered: Recovered) -> str:
+    async def _recovery_line(self, recovered: Recovered) -> str | Shown:
         logs = ""
         try:
             engine = self.registry.engine(recovered.signals[0].subject.host_id)
@@ -780,11 +787,11 @@ class WatcherManager:
         except Exception as error:  # the explanation is a nicety: the recovery is still logged
             log.warning("no logs for recovered container %s: %s", recovered.container, error)
         if self._models is None:
-            return NO_EXPLANATION
+            return NO_EXPLANATION_SHOWN
         try:
             return await self._explain(self._models("cheap"), logs)
         except BudgetExceeded:
-            return CAP_SPENT_EXPLANATION
+            return CAP_SPENT_SHOWN
         except Exception:
             log.exception("explaining the recovery of %s failed", recovered.container)
-            return NO_EXPLANATION
+            return NO_EXPLANATION_SHOWN

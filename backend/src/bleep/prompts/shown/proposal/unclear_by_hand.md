@@ -1,0 +1,1 @@
+Bleep never acts on a container whose name is also the start of another container's id, and an instruction cannot change that. Act on it by hand, or rename it (`docker rename`) so its name reads as no container's id.

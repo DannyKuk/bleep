@@ -1,0 +1,1 @@
+its arguments repeat a key or write a character as a \u escape, so the human would read other text than what runs, and could not read what they approve; write the arguments as plain JSON, every key once and every character as itself

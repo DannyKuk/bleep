@@ -1,0 +1,1 @@
+it is padded with blank lines or spaces (more than two line breaks in a row, 16 or more blanks in a row, or over 30 lines), so the human could miss what follows and could not read what they approve; write it without the padding

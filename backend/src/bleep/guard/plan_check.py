@@ -2,7 +2,9 @@
 
 `check_plan` runs on every proposal before a human is asked. It reads the registry as it stands
 (the last container listing), so a plan cannot name a container Bleep has never seen there.
-See docs/design/guard.md.
+Each reason is English, which is what Propose and the report read, and also the template it is
+made of (`prompts/shown/refusal/`), for a layer above to show in the person's language (#455):
+this part cannot load prompts, and a test holds both to the same words. See docs/design/guard.md.
 """
 
 import json
@@ -22,6 +24,7 @@ from bleep.hosts.discovery import is_self, protected_by
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import Action, PlanStep, Proposal
+from bleep.schemas.shown import Shown
 
 MAX_STEPS = 3
 KNOWN_ACTIONS: frozenset[str] = frozenset(typing.get_args(Action))
@@ -57,11 +60,44 @@ Rule = Literal[
 
 @dataclass(frozen=True)
 class Violation:
-    """One reason a plan is refused. `step` is the 1-based step it is about, None for the plan."""
+    """One reason a plan is refused. `step` is the 1-based step it is about, None for the plan.
+    `text` is English; `shown` is the same reason as a shown text."""
 
     rule: Rule
     text: str
     step: int | None = None
+    shown: Shown | None = None
+
+
+def step_refusal(number: int, step: PlanStep, why: Shown | str) -> Shown:
+    """A refusal of one step as a shown text: `step 1 (docker.stop shop-web-1 on a): why`."""
+    return Shown.of(
+        "refusal/step",
+        number=str(number),
+        action=step.action,
+        target=step.target,
+        host=step.host_id,
+        why=why,
+    )
+
+
+def step_text(number: int, step: PlanStep, why: str) -> str:
+    """`step_refusal` in English."""
+    return f"step {number} ({step.action} {step.target} on {step.host_id}): {why}"
+
+
+def step_violation(rule: Rule, number: int, step: PlanStep, why: str, shown: Shown) -> Violation:
+    """The violation of `rule` by step `number`, `why` in English and as `shown`."""
+    return Violation(rule, step_text(number, step, why), number, step_refusal(number, step, shown))
+
+
+def refusals_shown(violations: list[Violation]) -> Shown | None:
+    """The violations as one shown text, joined as an act tool joins their English; None when
+    one of them has no shown text."""
+    shown = [v.shown for v in violations if v.shown is not None]
+    if not shown or len(shown) < len(violations):
+        return None
+    return Shown.joined(shown, "; ")
 
 
 # An action's own rules for a step, from the code that runs the action (the MCP plugin's act tools
@@ -99,14 +135,28 @@ def check_plan(
     """
     violations: list[Violation] = []
     if proposal.kind == "no_action" and proposal.steps:
-        violations.append(Violation("plan_shape", "a no_action proposal must have no steps"))
+        violations.append(
+            Violation(
+                "plan_shape",
+                "a no_action proposal must have no steps",
+                shown=Shown.of("refusal/no_action_steps"),
+            )
+        )
     if proposal.kind == "act" and not proposal.steps:
-        violations.append(Violation("plan_shape", "an act proposal needs at least one step"))
+        violations.append(
+            Violation(
+                "plan_shape",
+                "an act proposal needs at least one step",
+                shown=Shown.of("refusal/act_no_steps"),
+            )
+        )
     if len(proposal.steps) > MAX_STEPS:
+        count = str(len(proposal.steps))
         violations.append(
             Violation(
                 "too_many_steps",
-                f"the plan has {len(proposal.steps)} steps; at most {MAX_STEPS} are allowed",
+                f"the plan has {count} steps; at most {MAX_STEPS} are allowed",
+                shown=Shown.of("refusal/too_many_steps", count=count, most=str(MAX_STEPS)),
             )
         )
     incident = set(incident_containers)
@@ -141,13 +191,13 @@ def _check_set_env_redeploy(proposal: Proposal) -> list[Violation]:
             for s in later
         ):
             continue
-        what = f"step {number} ({step.action} {step.target} on {step.host_id})"
         why = (
             f"an env var applies only at the next deploy; add a coolify.redeploy of {step.target}"
             f" on {step.host_id} after this step, naming the application exactly as this step"
             " does"
         )
-        found.append(Violation("set_env_without_redeploy", f"{what}: {why}", number))
+        shown = Shown.of("refusal/set_env_without_redeploy", target=step.target, host=step.host_id)
+        found.append(step_violation("set_env_without_redeploy", number, step, why, shown))
     return found
 
 
@@ -167,6 +217,7 @@ def _check_urls(proposal: Proposal, registry: Registry, host_id: str) -> list[Vi
             "unknown_url",
             f"verification url {url}: is not a health check of host {host_id} in its settings;"
             " only those can be checked",
+            shown=Shown.of("refusal/unknown_url", url=url, host=host_id),
         )
         for url in proposal.verification.urls
         if url not in configured
@@ -181,6 +232,7 @@ def _check_containers(proposal: Proposal, registry: Registry, host_id: str) -> l
         Violation(
             "unknown_container",
             f"verification container {name}: no container by that name on host {host_id}",
+            shown=Shown.of("refusal/unknown_container", name=name, host=host_id),
         )
         for name in proposal.verification.containers
         if registry.container(host_id, name) is None
@@ -203,17 +255,17 @@ def _check_working(
     if container is None or container.name in named or container.state != "running":
         return []
     if container.health == "healthy":
-        how = "running and healthy"
+        how, template = "running and healthy", "refusal/healthy_target"
     elif container.health == "none":
-        how = "running with no health check"
+        how, template = "running with no health check", "refusal/unchecked_target"
     else:
         return []
-    what = f"step {number} ({step.action} {step.target} on {step.host_id})"
     why = (
         f"{container.name} is {how}, and it is not one of this incident's containers; acting on "
         "a container that works is not a fix for this incident"
     )
-    return [Violation("healthy_target", f"{what}: {why}", number)]
+    shown = Shown.of(template, name=container.name)
+    return [step_violation("healthy_target", number, step, why, shown)]
 
 
 def _check_stop(
@@ -228,13 +280,13 @@ def _check_stop(
     container = registry.container(step.host_id, step.target)
     if container is None or container.name in named:
         return []
-    what = f"step {number} ({step.action} {step.target} on {step.host_id})"
     why = (
         f"neither this incident's signals nor the human name {container.name}, so stopping it is"
         " the human's call; leave it out, and if the fix needs it, answer no_action and say in"
         " human_instructions what to stop and why"
     )
-    return [Violation("unnamed_stop", f"{what}: {why}", number)]
+    shown = Shown.of("refusal/unnamed_stop", name=container.name)
+    return [step_violation("unnamed_stop", number, step, why, shown)]
 
 
 def _check_step(
@@ -245,17 +297,22 @@ def _check_step(
     host_id: str,
     rule: StepRule | None,
 ) -> list[Violation]:
-    what = f"step {number} ({step.action} {step.target} on {step.host_id})"
+
+    def refuse(rule: Rule, why: str, shown: Shown) -> list[Violation]:
+        return [step_violation(rule, number, step, why, shown)]
+
     if step.action not in KNOWN_ACTIONS:
-        return [Violation("unknown_action", f"{what}: is not an action Bleep has", number)]
+        why = "is not an action Bleep has"
+        return refuse("unknown_action", why, Shown.of("refusal/unknown_action"))
     if step.action not in enabled:
-        return [Violation("disabled_action", f"{what}: is not enabled; its plugin is off", number)]
+        why = "is not enabled; its plugin is off"
+        return refuse("disabled_action", why, Shown.of("refusal/disabled_action"))
     if step.host_id != host_id:
         why = f"targets another host; this incident is on {host_id}"
-        return [Violation("other_host", f"{what}: {why}", number)]
+        return refuse("other_host", why, Shown.of("refusal/other_host", host=host_id))
     if rule is None and step.action in RULED_ACTIONS:
         why = "Bleep has no act handler for it now, so its plugin's rules cannot be checked"
-        return [Violation("disabled_action", f"{what}: {why}", number)]
+        return refuse("disabled_action", why, Shown.of("refusal/no_handler"))
     return (
         check_params(number, step)
         or (rule(number, step) if rule is not None else [])
@@ -272,23 +329,29 @@ def check_params(number: int, step: PlanStep) -> list[Violation]:
     wanted = ACTION_PARAMS.get(step.action)
     if wanted is None:
         return []
-    what = f"step {number} ({step.action} {step.target} on {step.host_id})"
+
+    def refuse(why: str, shown: Shown) -> list[Violation]:
+        return [step_violation("bad_params", number, step, why, shown)]
+
     if set(step.params) != wanted:
-        takes = ", ".join(sorted(wanted)) or "no params"
-        return [Violation("bad_params", f"{what}: takes {takes}", number)]
+        if not wanted:
+            return refuse("takes no params", Shown.of("refusal/takes_nothing"))
+        takes = ", ".join(sorted(wanted))
+        return refuse(f"takes {takes}", Shown.of("refusal/takes", params=takes))
     if step.action == "mcp.call":
         if len(step.params["arguments"]) > MAX_ARGUMENTS:
             why = f"arguments are longer than {MAX_ARGUMENTS} characters"
-            return [Violation("bad_params", f"{what}: {why}", number)]
+            return refuse(why, Shown.of("refusal/arguments_too_long", limit=str(MAX_ARGUMENTS)))
         if mcp_arguments(step) is None:
-            return [Violation("bad_params", f"{what}: arguments must be a JSON object", number)]
+            why = "arguments must be a JSON object"
+            return refuse(why, Shown.of("refusal/arguments_not_object"))
         return []
     if "key" in wanted and not ENV_KEY.fullmatch(step.params["key"]):
         why = "key must be letters, digits and _, not starting with a digit"
-        return [Violation("bad_params", f"{what}: {why}", number)]
+        return refuse(why, Shown.of("refusal/bad_key"))
     if len(step.params.get("value", "")) > MAX_ENV_VALUE:
         why = f"value is longer than {MAX_ENV_VALUE} characters"
-        return [Violation("bad_params", f"{what}: {why}", number)]
+        return refuse(why, Shown.of("refusal/value_too_long", limit=str(MAX_ENV_VALUE)))
     return []
 
 
@@ -300,26 +363,29 @@ def check_shown(number: int, step: PlanStep) -> list[Violation]:
     `mcp.call` arguments whose JSON text decodes to something else (`_misread_json`). It runs
     after the other rules, so a step that breaks one of them gets that rule's reason. The act
     handlers run it again before their call. The text never quotes a param."""
-    what = f"step {number} ({step.action} {step.target} on {step.host_id})"
     if hides_head(number, step):
+        name = "refusal/hidden_head"
         why = (
             "its target would be shown to the human redacted, with a character dropped or with a"
             " control character, and the human could not read what they approve; answer"
             " no_action and say in human_instructions what to do by hand"
         )
     elif step.action == "mcp.call" and _misread_json(step.params.get("arguments", "")):
+        name = "refusal/misread_arguments"
         why = (
             "its arguments repeat a key or write a character as a \\u escape, so the human would"
             " read other text than what runs, and could not read what they approve; write the"
             " arguments as plain JSON, every key once and every character as itself"
         )
     elif pads_step(number, step):
+        name = "refusal/padded"
         why = (
             "it is padded with blank lines or spaces (more than two line breaks in a row, 16 or"
             " more blanks in a row, or over 30 lines), so the human could miss what follows and"
             " could not read what they approve; write it without the padding"
         )
     elif hides_params(step):
+        name = "refusal/hidden_params"
         why = (
             "part of its params would be hidden from the human approving it (text that looks like"
             " a secret, a line too long to show whole, a line break written as CR, a control"
@@ -329,7 +395,7 @@ def check_shown(number: int, step: PlanStep) -> list[Violation]:
         )
     else:
         return []
-    return [Violation("hidden_param", f"{what}: {why}", number)]
+    return [step_violation("hidden_param", number, step, why, Shown.of(name))]
 
 
 # A JSON escape; an escaped backslash is one match, so the `u0041` in `\\u0041` is not one.
@@ -385,55 +451,52 @@ def check_target(number: int, step: PlanStep, registry: Registry) -> list[Violat
     or any of its containers is Bleep's own. The plan check runs it before a human is asked and
     every act tool again right before its engine call (#24, #319).
     """
-    what = f"step {number} ({step.action} {step.target} on {step.host_id})"
 
-    def refuse(rule: Rule, why: str) -> list[Violation]:
-        return [Violation(rule, f"{what}: {why}", number)]
+    def refuse(rule: Rule, why: str, shown: Shown) -> list[Violation]:
+        return [step_violation(rule, number, step, why, shown)]
 
     host = next((h for h in registry.hosts() if h.config.id == step.host_id), None)
     if host is None:
-        return refuse("not_found", "the host is not in the hosts file")
+        why = "the host is not in the hosts file"
+        return refuse("not_found", why, Shown.of("refusal/host_unknown"))
     if not host.reachable:  # `error` then holds the connection failure, not a config problem
-        return refuse(
-            "host_error", "the host is unreachable right now, so its containers cannot be checked"
-        )
+        why = "the host is unreachable right now, so its containers cannot be checked"
+        return refuse("host_error", why, Shown.of("refusal/host_unreachable"))
     if host.error is not None:
-        return refuse(
-            "host_error",
-            "the host has a configuration error, so its protected containers may not be known",
-        )
+        why = "the host has a configuration error, so its protected containers may not be known"
+        return refuse("host_error", why, Shown.of("refusal/host_config_error"))
 
     protected = protected_names(host)
     if step.action.startswith("coolify."):
         members = coolify_members(registry.snapshot(step.host_id) or [], step.target)
         if not members:
-            return refuse("not_found", "no Coolify application by that name or uuid on this host")
+            why = "no Coolify application by that name or uuid on this host"
+            return refuse("not_found", why, Shown.of("refusal/no_app"))
         uuids = {c.labels[COOLIFY_UUID] for c in members if c.labels.get(COOLIFY_UUID)}
-        if len(uuids) != 1:
-            why = (
-                "names more than one Coolify application; use its uuid"
-                if uuids
-                else "its containers carry no Coolify application uuid; redeploy it from Coolify"
-                " once"
-            )
-            return refuse("not_found", why)
+        if len(uuids) > 1:
+            why = "names more than one Coolify application; use its uuid"
+            return refuse("not_found", why, Shown.of("refusal/several_apps"))
+        if not uuids:
+            why = "its containers carry no Coolify application uuid; redeploy it from Coolify once"
+            return refuse("not_found", why, Shown.of("refusal/no_app_uuid"))
         held = next((e for c in members if (e := app_protected_by(c, protected))), None)
         if held is not None:
-            return refuse(
-                "protected", f"the Coolify application {held} is protected in the hosts file"
-            )
+            why = f"the Coolify application {held} is protected in the hosts file"
+            return refuse("protected", why, Shown.of("refusal/app_protected", app=held))
     else:
         container = registry.container(step.host_id, step.target)
         if container is None:
-            return refuse("not_found", "no container by that name on this host")
+            why = "no container by that name on this host"
+            return refuse("not_found", why, Shown.of("refusal/no_container"))
         members = [container]
 
     found: list[Violation] = []
     for c in members:
         if is_self(c.labels):
-            found += refuse("self", f"{c.name} is one of Bleep's own containers")
+            why = f"{c.name} is one of Bleep's own containers"
+            found += refuse("self", why, Shown.of("refusal/own_container", name=c.name))
         elif (entry := protected_by(c, protected)) is not None:
-            found += refuse("protected", protected_reason(c, entry))
+            found += refuse("protected", protected_reason(c, entry), protected_shown(c, entry))
     return found
 
 
@@ -445,6 +508,13 @@ def protected_reason(container: ContainerSummary, entry: str) -> str:
         f"{container.name} belongs to the Coolify application {entry}, which is protected in the"
         " hosts file"
     )
+
+
+def protected_shown(container: ContainerSummary, entry: str) -> Shown:
+    """`protected_reason` as a shown text."""
+    if entry == container.name:
+        return Shown.of("refusal/protected", name=container.name)
+    return Shown.of("refusal/app_member_protected", name=container.name, app=entry)
 
 
 def mcp_arguments(step: PlanStep) -> dict[str, Any] | None:
@@ -462,12 +532,13 @@ def check_arguments(number: int, step: PlanStep, registry: Registry) -> list[Vio
     and the MCP plugin's act tool again right before its call."""
     if step.action != "mcp.call":
         return []
-    found = named_off_limits(mcp_arguments(step) or {}, registry, step.host_id)
+    found = off_limits_name(mcp_arguments(step) or {}, registry, step.host_id)
     if found is None:
         return []
-    rule, named = found
-    what = f"step {number} ({step.action} {step.target} on {step.host_id})"
-    return [Violation(rule, f"{what}: its arguments name {named}", number)]
+    rule, name = found
+    why = f"its arguments name {_named(rule, name)}"
+    shown = Shown.of(f"refusal/arguments_name_{rule}", name=name)
+    return [step_violation(rule, number, step, why, shown)]
 
 
 def _strings(value: Any) -> list[str]:
@@ -526,6 +597,20 @@ def _in(ref: str, texts: list[str]) -> bool:
 def named_off_limits(
     arguments: Any, registry: Registry, host_id: str, *, protected: bool = True
 ) -> tuple[Rule, str] | None:
+    """The rule `off_limits_name` finds broken, and the container it names in words."""
+    found = off_limits_name(arguments, registry, host_id, protected=protected)
+    return None if found is None else (found[0], _named(*found))
+
+
+def _named(rule: Rule, name: str) -> str:
+    if rule == "self":
+        return f"{name}, one of Bleep's own containers"
+    return f"{name}, a container protected in the hosts file"
+
+
+def off_limits_name(
+    arguments: Any, registry: Registry, host_id: str, *, protected: bool = True
+) -> tuple[Rule, str] | None:
     """Which off-limits container decoded JSON `arguments` name, and the rule it breaks: one of
     Bleep's own containers on `host_id` (by name, id or short id) or, with `protected`, a
     protected entry there, or a container on the host it protects (`protected_by`, by name, id
@@ -536,17 +621,17 @@ def named_off_limits(
     containers = registry.snapshot(host_id) or []
     for c in containers:
         if is_self(c.labels) and any(_in(ref, texts) for ref in _refs(c)):
-            return "self", f"{c.name}, one of Bleep's own containers"
+            return "self", c.name
     host = next((h for h in registry.hosts() if h.config.id == host_id), None)
     if not protected or host is None:
         return None
     entries = protected_names(host)
     for name in sorted(entries):
         if _in(name, texts):
-            return "protected", f"{name}, a container protected in the hosts file"
+            return "protected", name
     for c in containers:
         if protected_by(c, entries) is not None and any(_in(ref, texts) for ref in _refs(c)):
-            return "protected", f"{c.name}, a container protected in the hosts file"
+            return "protected", c.name
     return None
 
 

@@ -26,7 +26,7 @@ from bleep.guard.sanitize import strip_control
 from bleep.guard.titles import split_service_id, title_name
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
-from bleep.incidents.shown import report_in
+from bleep.incidents.shown import diagnosis_in, proposal_in, report_in
 from bleep.schemas.graph import Diagnosis, Report, outcome_of
 from bleep.schemas.incidents import TERMINAL_STATUSES, Incident, IncidentEvent
 from bleep.schemas.services import Service
@@ -145,8 +145,8 @@ class LookFollower:
         record = await self.plans.current(incident.id)
         if record is None or record.decision is not None or record.closed:
             return None
-        cause = _cause((await self.runs.state(incident.id)).get("diagnosis"))
-        cause = cause or record.proposal.reason
+        cause = _cause((await self.runs.state(incident.id)).get("diagnosis"), language)
+        cause = cause or proposal_in(record.proposal, language).reason
         name = "waits_refused" if record.proposal.refused else "waits"
         return _end(name, language, incident=_name(incident), cause=one_line(cause))
 
@@ -280,10 +280,11 @@ def _links(incident: Incident, line: str) -> list[TalkLink]:
     return links_in(line, [TalkLink(kind="incident", id=incident.id, label=_name(incident))])
 
 
-def _cause(diagnosis: object) -> str | None:
-    """The diagnosis' root cause, as the checkpoint holds it: the model, or its fields."""
+def _cause(diagnosis: object, language: str) -> str | None:
+    """The diagnosis' root cause, as the checkpoint holds it: the model, or its fields; Bleep's
+    own cause in `language`."""
     if isinstance(diagnosis, Diagnosis):
-        return diagnosis.root_cause
+        return diagnosis_in(diagnosis, language).root_cause
     if isinstance(diagnosis, dict) and isinstance(cause := diagnosis.get("root_cause"), str):
         return cause
     return None

@@ -41,7 +41,7 @@ from pydantic import (
 )
 from pydantic_core import PydanticCustomError
 
-from bleep.guard.grant import GrantInvalid, plan_hash, verify_grant
+from bleep.guard.grant import GrantInvalid, check_step_index, plan_hash, verify_grant
 from bleep.guard.log import GuardLogger
 from bleep.guard.pipeline import guard_text
 from bleep.guard.plan_check import (
@@ -52,6 +52,7 @@ from bleep.guard.plan_check import (
     check_target,
     mcp_arguments,
     named_off_limits,
+    step_violation,
 )
 from bleep.guard.redact import REDACTED
 from bleep.guard.sanitize import INVISIBLE_CHARS, MAX_CHARS, strip_control
@@ -61,6 +62,7 @@ from bleep.plugins import urls
 from bleep.plugins.base import Plugin, PluginContext
 from bleep.schemas.graph import ApprovalGrant, ApprovalRecord, PlanStep, StepResult
 from bleep.schemas.plugins import PluginHealth
+from bleep.schemas.shown import Shown
 from bleep.tools.common import UNTRUSTED
 from bleep.tools.docker_act import StepRefused
 from bleep.tools.registry import ActHandler, ToolBriefing, ToolContext, ToolSpec
@@ -631,9 +633,9 @@ class McpCall:
         tool = step.params.get("tool", "")
         if tool in self.server.settings.act_tools:
             return []
-        what = f"step {number} ({step.action} {step.target} on {step.host_id})"
         why = f"{tool} is not one of the MCP plugin's act tools"
-        return [Violation("bad_params", f"{what}: {why}", number)]
+        shown = Shown.of("refusal/not_act_tool", tool=tool)
+        return [step_violation("bad_params", number, step, why, shown)]
 
     def act_tool_names(self) -> list[str]:
         return list(self.server.settings.act_tools)
@@ -665,12 +667,10 @@ class McpCall:
         what: str,
     ) -> None:
         if step.action != ACTION:
-            raise StepRefused(f"{what}: {ACTION} cannot run {step.action}")
-        steps = plan.proposal.steps
-        if not 0 <= step_index < len(steps):
-            raise GrantInvalid(f"the approved plan has no step {step_index + 1}")
-        if steps[step_index] != step:
-            raise GrantInvalid(f"this is not step {step_index + 1} of the approved plan")
+            why = f"{ACTION} cannot run {step.action}"
+            shown = Shown.of("refusal/cannot_run", tool=ACTION, action=step.action)
+            raise StepRefused.at(step_index, step, why, shown)
+        check_step_index(step, plan, step_index)
         verify_grant(grant, plan.incident_id, plan_hash(plan.proposal, plan.snapshots), self.secret)
 
         number = step_index + 1
@@ -682,7 +682,7 @@ class McpCall:
             or check_shown(number, step)
         )
         if violations:
-            raise StepRefused("; ".join(v.text for v in violations))
+            raise StepRefused.of(violations)
 
 
 def _params(step: PlanStep) -> tuple[str, dict[str, Any]]:

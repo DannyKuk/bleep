@@ -12,10 +12,16 @@ import json
 from pydantic import SecretStr
 
 from bleep.schemas.graph import ApprovalGrant, ApprovalRecord, PlanStep, Proposal, TargetSnapshot
+from bleep.schemas.shown import Shown
 
 
 class GrantInvalid(Exception):
-    """The step is not covered by a grant for this exact plan; nothing was run."""
+    """The step is not covered by a grant for this exact plan; nothing was run. The message is
+    English; `shown` is the same as a shown text, for the notice that says why (#455)."""
+
+    def __init__(self, text: str, shown: Shown | None = None) -> None:
+        super().__init__(text)
+        self.shown = shown
 
 
 def binds_app(step: PlanStep) -> bool:
@@ -72,15 +78,30 @@ def verify_grant(
     a grant whose fields were edited to match carries the wrong token.
     """
     if grant is None:
-        raise GrantInvalid("no grant")
+        raise GrantInvalid("no grant", Shown.of("grant/none"))
     if grant.incident_id != incident_id:
-        raise GrantInvalid("the grant is for another incident")
+        raise GrantInvalid("the grant is for another incident", Shown.of("grant/other_incident"))
     if grant.plan_hash != plan_hash:
-        raise GrantInvalid("the grant is for another plan")
+        raise GrantInvalid("the grant is for another plan", Shown.of("grant/other_plan"))
     key = secret.get_secret_value() if isinstance(secret, SecretStr) else secret
     expected = grant_token(key, incident_id, plan_hash)
     if not hmac.compare_digest(grant.token.encode(), expected.encode()):
-        raise GrantInvalid("the grant's token does not match")
+        raise GrantInvalid("the grant's token does not match", Shown.of("grant/bad_token"))
+
+
+def check_step_index(step: PlanStep, plan: ApprovalRecord, step_index: int) -> None:
+    """Raise `GrantInvalid` unless `step` is step `step_index` of the approved `plan`."""
+    steps = plan.proposal.steps
+    number = str(step_index + 1)
+    if not 0 <= step_index < len(steps):
+        raise GrantInvalid(
+            f"the approved plan has no step {number}", Shown.of("grant/no_step", number=number)
+        )
+    if steps[step_index] != step:
+        raise GrantInvalid(
+            f"this is not step {number} of the approved plan",
+            Shown.of("grant/not_step", number=number),
+        )
 
 
 def verify_step(
@@ -93,9 +114,5 @@ def verify_step(
     """Raise `GrantInvalid` unless `step` is step `step_index` of the approved `plan` and `grant`
     was issued for that plan as it is now (its hash recomputed, not read). Every act handler runs
     this before anything else."""
-    steps = plan.proposal.steps
-    if not 0 <= step_index < len(steps):
-        raise GrantInvalid(f"the approved plan has no step {step_index + 1}")
-    if steps[step_index] != step:
-        raise GrantInvalid(f"this is not step {step_index + 1} of the approved plan")
+    check_step_index(step, plan, step_index)
     verify_grant(grant, plan.incident_id, plan_hash(plan.proposal, plan.snapshots), secret)

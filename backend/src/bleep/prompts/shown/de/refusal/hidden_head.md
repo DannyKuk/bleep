@@ -1,0 +1,1 @@
+sein Ziel würde der Person geschwärzt, mit einem weggelassenen Zeichen oder mit einem Steuerzeichen gezeigt, und sie könnte nicht lesen, was sie freigibt; antworte mit no_action und sag in human_instructions, was von Hand zu tun ist

@@ -4,7 +4,12 @@ The fixed texts the other parts of the backend write for the person (#427): the 
 incident's timeline, the report's outcome, timeline and decision lines, "This is expected" and
 its answers, the words for a plan's targets, and (#454) Verify's check details (`verify/`, the URL
 check's errors in `url/`), the report's step lines (`step/`), its fallback summary (`summary/`,
-with the outcome as it reads after a colon in `inline/`) and the planted-orders note (`planted/`).
+with the outcome as it reads after a colon in `inline/`) and the planted-orders note (`planted/`),
+and (#455) the plan check's and the act tools' refusals (`refusal/`, a grant's in `grant/`),
+Propose's texts in place of the model's (`proposal/`), Diagnose's fallback cause (`diagnosis/`)
+and the recovery lines in place of the cheap model's (`recovery/`). The plan check cannot load
+prompts, so it writes each reason's English itself beside its template; a test holds the two to
+the same words.
 
 - Code keeps such a text as `schemas.shown.Shown`: the template's name here (`notice/back`) and
   its values, or several parts joined. It is stored in English, `prompts.show(text, "en")`, in

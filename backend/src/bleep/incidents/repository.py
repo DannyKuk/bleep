@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import aiosqlite
+from pydantic import ValidationError
 
 from bleep.guard.titles import build_title, split_service_id, title_name
 from bleep.schemas.incidents import (
@@ -20,6 +21,7 @@ from bleep.schemas.incidents import (
     Signal,
     Subject,
 )
+from bleep.schemas.shown import Shown
 from bleep.store.db import Database
 
 log = logging.getLogger(__name__)
@@ -613,17 +615,20 @@ class IncidentRepo:
             await conn.close()
 
     async def log_recovery(self, event: RecoveryEvent) -> RecoveryEvent:
+        shown = event.explanation_shown
         conn = await self.db.connect()
         try:
             cursor = await conn.execute(
-                "INSERT INTO recovery_events (host_id, service_id, container, at, explanation)"
-                " VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO recovery_events"
+                " (host_id, service_id, container, at, explanation, explanation_shown)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     event.host_id,
                     event.service_id,
                     event.container,
                     event.at.isoformat(),
                     event.explanation,
+                    None if shown is None else json.dumps(shown.stored()),
                 ),
             )
             await conn.commit()
@@ -646,11 +651,24 @@ class IncidentRepo:
                         container=row["container"],
                         at=datetime.fromisoformat(row["at"]),
                         explanation=row["explanation"],
+                        explanation_shown=_shown(row["explanation_shown"]),
                     )
                     for row in await cursor.fetchall()
                 ]
         finally:
             await conn.close()
+
+
+def _shown(stored: str | None) -> Shown | None:
+    """A recovery's stored shown text; None for none, or for one that no longer reads as one,
+    which then shows its English."""
+    if stored is None:
+        return None
+    try:
+        return Shown.model_validate_json(stored)
+    except ValidationError:
+        log.warning("a recovery keeps a shown text that is not one: %r", stored[:200])
+        return None
 
 
 __all__ = ["IncidentRepo", "new_incident_id", "utcnow"]

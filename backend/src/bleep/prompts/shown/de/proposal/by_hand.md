@@ -1,0 +1,1 @@
+An einem Container, der funktioniert, wird nur etwas getan, wenn er zu diesem Vorfall gehört oder du ihn in einer Anweisung nennst. Wenn er der fehlerhafte ist, nenn ihn, oder kümmere dich von Hand um ihn.

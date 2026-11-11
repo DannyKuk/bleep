@@ -26,14 +26,20 @@ from pydantic import SecretStr
 from bleep.guard.grant import GrantInvalid, step_snapshot, verify_step
 from bleep.guard.log import GuardLogger
 from bleep.guard.plan_check import (
+    Violation,
     check_target,
     protected_names,
     protected_reason,
+    protected_shown,
+    refusals_shown,
+    step_refusal,
+    step_text,
 )
 from bleep.hosts.discovery import is_self, protected_by
 from bleep.hosts.engine import ContainerNotFound, EngineError, EngineUnavailable
 from bleep.hosts.registry import Registry
 from bleep.schemas.graph import Action, ApprovalGrant, ApprovalRecord, PlanStep, StepResult
+from bleep.schemas.shown import Shown
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +52,24 @@ _DOCKER: dict[Action, tuple[str, str]] = {
 
 
 class StepRefused(Exception):
-    """The guard refused the step's target (host error, protected, Bleep's own); nothing ran."""
+    """The guard refused the step's target (host error, protected, Bleep's own); nothing ran.
+    The message is English; `shown` is the same as a shown text, for the notice that says why
+    the plan did not run (#455)."""
+
+    def __init__(self, text: str, shown: Shown | None = None) -> None:
+        super().__init__(text)
+        self.shown = shown
+
+    @classmethod
+    def of(cls, violations: list[Violation]) -> StepRefused:
+        """The plan check's `violations` of one step, joined."""
+        return cls("; ".join(v.text for v in violations), refusals_shown(violations))
+
+    @classmethod
+    def at(cls, step_index: int, step: PlanStep, why: str, shown: Shown) -> StepRefused:
+        """Step `step_index` refused, `why` in English and as `shown`."""
+        number = step_index + 1
+        return cls(step_text(number, step, why), step_refusal(number, step, shown))
 
 
 def _utcnow() -> datetime:
@@ -144,25 +167,30 @@ class ActTool:
         """The container id to act on, once every check passed; raises on the first that fails.
 
         A `StepRefused` message names the step, as the plan check's violations do."""
-        what = f"step {step_index + 1} ({step.action} {step.target} on {step.host_id})"
         if step.action != self.name:
-            raise StepRefused(f"{what}: {self.name} cannot run {step.action}")
+            why = f"{self.name} cannot run {step.action}"
+            shown = Shown.of("refusal/cannot_run", tool=self.name, action=step.action)
+            raise StepRefused.at(step_index, step, why, shown)
         verify_step(step, grant, plan, step_index, self.secret)
 
         violations = check_target(step_index + 1, step, registry)
         if violations:
-            raise StepRefused("; ".join(v.text for v in violations))
+            raise StepRefused.of(violations)
 
         snapshot = step_snapshot(plan.snapshots, step)
         if snapshot is None or snapshot.container_id is None:
-            raise StepRefused(f"{what}: the approved plan holds no snapshot of this target")
+            why = "the approved plan holds no snapshot of this target"
+            raise StepRefused.at(step_index, step, why, Shown.of("refusal/no_snapshot"))
         approved = registry.container(step.host_id, snapshot.container_id)
         if approved is not None and is_self(approved.labels):
-            raise StepRefused(f"{what}: {approved.name} is one of Bleep's own containers")
+            why = f"{approved.name} is one of Bleep's own containers"
+            shown = Shown.of("refusal/own_container", name=approved.name)
+            raise StepRefused.at(step_index, step, why, shown)
         host = next((h for h in registry.hosts() if h.config.id == step.host_id), None)
         entries = protected_names(host) if host is not None else set()
         if approved is not None and (entry := protected_by(approved, entries)) is not None:
-            raise StepRefused(f"{what}: {protected_reason(approved, entry)}")
+            why, shown = protected_reason(approved, entry), protected_shown(approved, entry)
+            raise StepRefused.at(step_index, step, why, shown)
         return snapshot.container_id
 
 

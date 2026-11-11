@@ -10,7 +10,9 @@ diagnosis instead of an error, built from what Gather saw.
 The model's `planted_in` is kept only for places the run read and is never shown
 (`graph/planted.py`, #105). When host text the run read holds a wrapper tag the guard escaped or a
 line that gives orders (`guard/orders.py`, #271), Bleep adds one evidence line of its own that
-names where and quotes nothing.
+names where and quotes nothing. That line and the fallback's cause are stored in English, which is
+what Propose and the report read, and keep the templates they are made of, to show them in the
+person's language (#455).
 """
 
 import asyncio
@@ -26,7 +28,13 @@ from bleep.graph.deps import GraphDeps
 from bleep.graph.host_text import describe_basics, describe_urls, service_name
 from bleep.graph.language import language_rule
 from bleep.graph.look import look_rule
-from bleep.graph.planted import EVIDENCE_SOURCE, planted_places, planted_sentence, read_sources
+from bleep.graph.planted import (
+    EVIDENCE_SOURCE,
+    planted_places,
+    planted_sentence,
+    planted_shown,
+    read_sources,
+)
 from bleep.graph.state import IncidentState, Node
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
@@ -34,6 +42,7 @@ from bleep.memory.text import describe_fact, describe_past
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import Diagnosis, Evidence, GatherContext, PlantedSource
 from bleep.schemas.incidents import Signal, Subject
+from bleep.schemas.shown import Shown
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +51,7 @@ MAX_EVIDENCE = 8
 MESSAGE_LIMIT = 1500  # characters of each investigation message shown to the model
 MISSING_LIMIT = 300
 FALLBACK_CAUSE = "I could not form a diagnosis"
+FALLBACK_SHOWN = Shown.of("diagnosis/fallback_cause")
 
 
 SOURCES: tuple[PlantedSource, ...] = typing.get_args(PlantedSource)
@@ -82,7 +92,7 @@ async def _with_planted(
     places = await asyncio.to_thread(planted_places, context, messages, subject)
     sentence = planted_sentence(places)
     if sentence is not None:
-        line = Evidence(source=EVIDENCE_SOURCE, detail=sentence)
+        line = Evidence(source=EVIDENCE_SOURCE, detail=sentence, shown=planted_shown(places))
         found = found.model_copy(update={"evidence": [*found.evidence, line]})
     return found
 
@@ -172,6 +182,7 @@ def _fallback(context: GatherContext | None) -> Diagnosis:
             evidence.append(Evidence(source="gather", detail=_clip(f"could not read: {gap}", 300)))
     return Diagnosis(
         root_cause=FALLBACK_CAUSE,
+        shown=FALLBACK_SHOWN,
         category="unknown",
         evidence=evidence[:MAX_EVIDENCE],
         confidence=0.0,

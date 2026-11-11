@@ -5,6 +5,11 @@ sees it. A refused plan goes back to the model once with the reasons; refused ag
 `no_action` with the reasons for the human. Every refusal is written to the guard log as
 `blocked_action`. An unsure diagnosis is proposed on too, framed as "I am not sure, here is what I
 found"; only a missing diagnosis or a spent budget skips the model. See docs/design/graph.md.
+
+The texts Bleep writes in place of the model's (a fallback reason, a refusal's reasons and what
+the human is told) are stored in English, which is what a later Propose and the report read, and
+kept as the templates they are made of (`prompts/shown/proposal/`), to show them in the person's
+language (#455); a test holds both to the same words.
 """
 
 import logging
@@ -27,6 +32,7 @@ from bleep.guard.plan_check import (
     coolify_members,
     host_urls,
     protected_names,
+    step_violation,
 )
 from bleep.guard.redact import redacted_proposal, redacted_step
 from bleep.hosts.coolify_names import app_protected_by
@@ -44,6 +50,7 @@ from bleep.schemas.graph import (
     VerificationPlan,
 )
 from bleep.schemas.incidents import Subject
+from bleep.schemas.shown import Shown
 from bleep.tools.registry import ActCatalog, PlanRules
 
 log = logging.getLogger(__name__)
@@ -83,6 +90,20 @@ HIDDEN_BY_HAND = (
     "A step runs only when you can read every param of it, and Bleep hides anything that looks "
     "like a secret. If the change is needed, make it by hand."
 )
+# Each text above as its template.
+SHOWN = {
+    NO_DIAGNOSIS: Shown.of("proposal/no_diagnosis"),
+    NO_PLAN: Shown.of("proposal/no_plan"),
+    BUDGET: Shown.of("proposal/budget"),
+    REFUSED: Shown.of("proposal/refused"),
+    INSTRUCT: Shown.of("proposal/instruct"),
+    BY_HAND: Shown.of("proposal/by_hand"),
+    BY_HAND_ONLY: Shown.of("proposal/by_hand_only"),
+    STOP_BY_HAND: Shown.of("proposal/stop_by_hand"),
+    STOP_BY_HAND_ONLY: Shown.of("proposal/stop_by_hand_only"),
+    UNCLEAR_BY_HAND: Shown.of("proposal/unclear_by_hand"),
+    HIDDEN_BY_HAND: Shown.of("proposal/hidden_by_hand"),
+}
 
 
 def make(deps: GraphDeps) -> Node:
@@ -90,20 +111,25 @@ def make(deps: GraphDeps) -> Node:
         diagnosis = state.get("diagnosis")
         update: dict = {}
         if diagnosis is None:
-            proposal = Proposal(kind="no_action", reason=NO_DIAGNOSIS)
+            proposal = _no_action(NO_DIAGNOSIS)
         else:
             try:
                 proposal = await _plan(deps, state, diagnosis)
             except BudgetExceeded:
-                proposal = Proposal(kind="no_action", reason=BUDGET)
+                proposal = _no_action(BUDGET)
                 update["outcome"] = "budget"
             except StructuredOutputFailed:
-                proposal = Proposal(kind="no_action", reason=NO_PLAN)
+                proposal = _no_action(NO_PLAN)
         shown = redacted_proposal(proposal).model_dump(mode="json")
         await deps.bus.publish(state["incident_id"], "proposal", shown)
         return update | {"proposal": proposal}
 
     return propose
+
+
+def _no_action(reason: str) -> Proposal:
+    """No action, for `reason`, one of Bleep's own."""
+    return Proposal(kind="no_action", reason=reason, shown={"reason": SHOWN[reason]})
 
 
 def route(state: IncidentState) -> Literal["approval", "report"]:
@@ -233,13 +259,13 @@ def _unclear_names(proposal: Proposal, registry: Registry) -> list[Violation]:
             continue
         as_id = step.target.lower()
         if any(c.name != step.target and c.id.startswith(as_id) for c in containers):
-            what = f"step {number} ({step.action} {step.target} on {step.host_id})"
             why = (
                 f"{step.target} is a container's name and also the start of another container's"
                 " id, so the human could not tell which one it acts on; leave it out, and if the"
                 " fix needs it, answer no_action and say in human_instructions what to do"
             )
-            found.append(Violation("not_found", f"{what}: {why}", number))
+            shown = Shown.of("refusal/unclear_name", target=step.target)
+            found.append(step_violation("not_found", number, step, why, shown))
     return found
 
 
@@ -318,28 +344,67 @@ def _refused(
     proposal: Proposal, violations: list[Violation], *, can_instruct: bool, unclear: bool = False
 ) -> Proposal:
     """`no_action` that tells the human what was refused and why, and what they can do next."""
-    steps = [f"{n}. {_step(redacted_step(s))}" for n, s in enumerate(proposal.steps, start=1)]
+    shown_steps = [redacted_step(s) for s in proposal.steps]
+    steps = [f"{n}. {_step(s)}" for n, s in enumerate(shown_steps, start=1)]
     lines = [REFUSED, "Why:", _bullets(violations), "The refused plan:", *(steps or ["no steps"])]
     lines.append(f"The model's reason: {proposal.reason}")
-    if any(v.rule == "healthy_target" for v in violations):
+    advice = _advice(violations, can_instruct=can_instruct, unclear=unclear)
+    lines += advice
+    reasons = [_shown_reason(v) for v in violations]
+    told = [
+        SHOWN[REFUSED],
+        Shown.of("proposal/why"),
+        *(Shown.of("proposal/reason_line", reason=r) for r in reasons),
+        Shown.of("proposal/refused_plan"),
+        *([_step_shown(n, s) for n, s in enumerate(shown_steps, start=1)] or [_NO_STEPS]),
+        Shown.of("proposal/model_reason", reason=proposal.reason),
+        *(SHOWN[line] for line in advice),
+    ]
+    return Proposal(
+        kind="no_action",
+        refused=True,
+        refused_steps=shown_steps,
+        refusal_reasons=[v.text for v in violations],
+        reason=REFUSED,
+        verification=proposal.verification,
+        human_instructions="\n".join(lines),
+        shown={"reason": SHOWN[REFUSED], "human_instructions": Shown.joined(told, "\n")},
+        refusal_reasons_shown=reasons,
+    )
+
+
+_NO_STEPS = Shown.of("proposal/no_steps")
+
+
+def _advice(violations: list[Violation], *, can_instruct: bool, unclear: bool) -> list[str]:
+    """What the human can do about a refusal, one line each."""
+    rules = {v.rule for v in violations}
+    lines = []
+    if "healthy_target" in rules:
         lines.append(BY_HAND if can_instruct else BY_HAND_ONLY)
-    if any(v.rule == "unnamed_stop" for v in violations):
+    if "unnamed_stop" in rules:
         lines.append(STOP_BY_HAND if can_instruct else STOP_BY_HAND_ONLY)
-    if any(v.rule == "hidden_param" for v in violations):
+    if "hidden_param" in rules:
         lines.append(HIDDEN_BY_HAND)
     if unclear:
         lines.append(UNCLEAR_BY_HAND)
     if can_instruct:
         lines.append(INSTRUCT)
-    return Proposal(
-        kind="no_action",
-        refused=True,
-        refused_steps=[redacted_step(s) for s in proposal.steps],
-        refusal_reasons=[v.text for v in violations],
-        reason=REFUSED,
-        verification=proposal.verification,
-        human_instructions="\n".join(lines),
-    )
+    return lines
+
+
+def _shown_reason(violation: Violation) -> Shown:
+    """The violation as a shown text; one with none (a third party's rule) shows as written."""
+    return violation.shown or Shown.of("refusal/text", text=violation.text)
+
+
+def _step_shown(number: int, step: PlanStep) -> Shown:
+    """`_step` as a shown text, numbered."""
+    values = {"number": str(number), "action": step.action, "target": step.target}
+    params = ", ".join(f"{k}={v}" for k, v in sorted(step.params.items()))
+    if params:
+        return Shown.of("proposal/refused_step_params", **values, host=step.host_id, params=params)
+    return Shown.of("proposal/refused_step", **values, host=step.host_id)
 
 
 def _bullets(violations: list[Violation]) -> str:

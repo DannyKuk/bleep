@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from bleep.schemas.docker import ContainerSummary, HostBasics
 from bleep.schemas.shown import Shown
@@ -170,9 +171,14 @@ class GatherContext(BaseModel):
     gaps: list[str] = Field(default_factory=list)
 
 
+# Diagnose's model fills these two, so they carry no docstring: it would be the schema's
+# description. `shown` is the fixed text Bleep made a `detail` (the planted-orders line) or the
+# `root_cause` (no diagnosis could be formed) from, stored in English, to show it in the person's
+# language (#455); it is left out of the schema the model fills.
 class Evidence(BaseModel):
     source: str  # a tool name, "gather", "memory", ...
     detail: str  # one short statement, never a raw log dump
+    shown: SkipJsonSchema[Shown | None] = None
 
 
 class Diagnosis(BaseModel):
@@ -183,6 +189,7 @@ class Diagnosis(BaseModel):
     affected_services: list[str] = Field(default_factory=list)
     unsure: bool = False
     planted_in: list[PlantedSource] = Field(default_factory=list)
+    shown: SkipJsonSchema[Shown | None] = None
 
 
 class PlanStep(BaseModel):
@@ -195,6 +202,10 @@ class PlanStep(BaseModel):
 class VerificationPlan(BaseModel):
     containers: list[str] = Field(default_factory=list)
     urls: list[str] = Field(default_factory=list)
+
+
+# The plan's fields that can hold one of Bleep's fixed texts rather than the model's (#455).
+ProposalText = Literal["reason", "human_instructions"]
 
 
 class ProposalDraft(BaseModel):
@@ -219,11 +230,18 @@ class Proposal(ProposalDraft):
     human is asked to instruct or let it go, and no approval can ever make it run. Only
     `propose._refused` sets `refused`, `refused_steps` and `refusal_reasons`; the model never
     sees them (`ProposalDraft` is its schema) and `propose` builds every plan from a draft.
+
+    The reasons, and a `reason` or `human_instructions` Bleep wrote in place of the model's, are
+    English, which is what a later Propose and the report read; `shown` and
+    `refusal_reasons_shown` (one per reason) are the fixed texts they were made from, to show
+    them in the person's language (#455). Both are empty for a plan stored before that.
     """
 
     refused: bool = False
     refused_steps: list[PlanStep] = Field(default_factory=list)
     refusal_reasons: list[str] = Field(default_factory=list)
+    shown: dict[ProposalText, Shown] = Field(default_factory=dict)
+    refusal_reasons_shown: list[Shown] = Field(default_factory=list)
 
     @classmethod
     def from_draft(cls, draft: ProposalDraft) -> Proposal:

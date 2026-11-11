@@ -59,6 +59,7 @@ from bleep.plugins.coolify.client import CoolifyClient, CoolifyError, CoolifyUna
 from bleep.schemas.coolify import CoolifyApplication, CoolifyDeployment, CoolifyEnvKey
 from bleep.schemas.graph import Action, ApprovalGrant, ApprovalRecord, PlanStep, StepResult
 from bleep.schemas.plugins import PluginHealth
+from bleep.schemas.shown import Shown
 from bleep.tools.common import UNTRUSTED
 from bleep.tools.docker_act import StepRefused
 from bleep.tools.registry import ActHandler, ToolContext, ToolSpec
@@ -495,7 +496,9 @@ class CoolifyAction:
         what = f"step {step_index + 1} ({step.action} {step.target} on {step.host_id})"
         try:
             if step.action != self.name:
-                raise StepRefused(f"{what}: {self.name} cannot run {step.action}")
+                why = f"{self.name} cannot run {step.action}"
+                shown = Shown.of("refusal/cannot_run", tool=self.name, action=step.action)
+                raise StepRefused.at(step_index, step, why, shown)
             verify_step(step, grant, plan, step_index, self.secret)
             number = step_index + 1
             violations = (
@@ -504,23 +507,24 @@ class CoolifyAction:
                 or check_shown(number, step)
             )
             if violations:
-                raise StepRefused("; ".join(v.text for v in violations))
+                raise StepRefused.of(violations)
             try:
                 current = coolify_app_uuid(registry, step)
             except NoCoolifyApp:
-                raise StepRefused(
-                    f"{what}: names no single Coolify application on this host"
-                ) from None
+                why = "names no single Coolify application on this host"
+                shown = Shown.of("refusal/no_single_app")
+                raise StepRefused.at(step_index, step, why, shown) from None
             snapshot = step_snapshot(plan.snapshots, step)
             if snapshot is None or snapshot.app_uuid is None:
-                raise StepRefused(
-                    f"{what}: the approved plan holds no snapshot of this application"
-                )
+                why = "the approved plan holds no snapshot of this application"
+                raise StepRefused.at(step_index, step, why, Shown.of("refusal/no_app_snapshot"))
             if current != snapshot.app_uuid:
-                raise StepRefused(
-                    f"{what}: names the Coolify application {current} now, not {snapshot.app_uuid}"
+                why = (
+                    f"names the Coolify application {current} now, not {snapshot.app_uuid}"
                     " as approved; it was recreated or replaced since the approval"
                 )
+                shown = Shown.of("refusal/app_replaced", now=current, approved=snapshot.app_uuid)
+                raise StepRefused.at(step_index, step, why, shown)
             return snapshot.app_uuid
         except GrantInvalid as refusal:
             self._blocked(plan, f"{what}: refused, {refusal}")

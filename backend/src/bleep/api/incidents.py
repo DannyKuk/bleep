@@ -3,7 +3,8 @@ decision on its approval, the human's feedback on its findings, and the self-rec
 became incidents.
 
 Bleep's own fixed texts in these views (notices, the report's outcome and timeline, "This is
-expected") are shown in the language the person picked; what is stored stays English (#427).
+expected", the plan check's refusals and the texts in place of the model's) are shown in the
+language the person picked; what is stored stays English (#427, #455).
 """
 
 from typing import Annotated
@@ -17,7 +18,14 @@ from bleep.guard.redact import redacted_proposal
 from bleep.incidents.expectations import Expectations
 from bleep.incidents.repository import utcnow
 from bleep.incidents.runner import IncidentRunner
-from bleep.incidents.shown import decision_in, event_in, report_in
+from bleep.incidents.shown import (
+    decision_in,
+    diagnosis_in,
+    event_in,
+    proposal_in,
+    recovery_in,
+    report_in,
+)
 from bleep.schemas.api import (
     ApprovalStatus,
     ApprovalView,
@@ -72,7 +80,7 @@ def _approval(record: ApprovalRecord | None, language: str) -> ApprovalView | No
         id=record.id,
         status=_approval_status(record),
         plan_hash=record.plan_hash,
-        proposal=redacted_proposal(record.proposal),
+        proposal=proposal_in(redacted_proposal(record.proposal), language),
         requested_at=record.requested_at,
         reminders=record.reminders,
         decision=decision_in(decision, language) if decision is not None else None,
@@ -136,8 +144,10 @@ async def get_incident(
     language = parts.settings_store.language()
     return IncidentDetail(
         incident=incident,
-        diagnosis=state.get("diagnosis"),
-        proposal=redacted_proposal(proposal) if (proposal := state.get("proposal")) else None,
+        diagnosis=diagnosis_in(found, language) if (found := state.get("diagnosis")) else None,
+        proposal=proposal_in(redacted_proposal(proposal), language)
+        if (proposal := state.get("proposal"))
+        else None,
         approval=_approval(await parts.approvals.current(incident_id), language),
         outcome=state.get("outcome"),
         report=report_in(report, language) if (report := state.get("report")) else None,
@@ -238,4 +248,5 @@ async def list_recoveries(
     parts: Parts, limit: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 50
 ) -> list[RecoveryEvent]:
     """Containers that died and came back inside the grace window, newest first."""
-    return await parts.incidents.recoveries(limit)
+    language = parts.settings_store.language()
+    return [recovery_in(event, language) for event in await parts.incidents.recoveries(limit)]
