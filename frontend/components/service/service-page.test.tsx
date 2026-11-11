@@ -8,8 +8,7 @@ import { ServicePage } from "@/components/service/service-page";
 import { invalid, sentBody, settingsView } from "@/components/settings/fixtures";
 import type { IncidentListItem, ServiceDetail, UrlCheckPoint } from "@/lib/api-types";
 import { formatTime } from "@/lib/format";
-import { setLanguage } from "@/lib/i18n";
-import { SETTINGS_CHANGED } from "@/lib/settings-api";
+import { MESSAGES, setLanguage } from "@/lib/i18n";
 
 const SERVICE: ServiceDetail = {
   service: {
@@ -793,7 +792,9 @@ describe("ServicePage settings", () => {
     await userEvent.click(within(containers).getByRole("button", { name: "Remove shop-cache-1" }));
     await userEvent.click(within(containers).getByRole("button", { name: "Save" }));
 
-    expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(SETTINGS_CHANGED);
+    expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(
+      MESSAGES.en.settings.changedElsewhere,
+    );
     expect(await within(containers).findByDisplayValue("shop-web-1")).toBeInTheDocument();
     expect(within(containers).getByDisplayValue("shop-cache-1")).toBeInTheDocument();
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(1);

@@ -28,7 +28,7 @@ from bleep.guard.titles import split_service_id, title_name
 from bleep.incidents.bus import EventBus
 from bleep.incidents.quiet import QuietStore, quiet_target
 from bleep.incidents.repository import IncidentRepo, primary_signal, utcnow
-from bleep.incidents.shown import report_in
+from bleep.incidents.shown import check_in, report_in, verification_in
 from bleep.notify import format as fmt
 from bleep.notify.telegram import (
     EXPECTED_VERB,
@@ -289,7 +289,8 @@ class Notifier:
         if self.telegram is None or result.ok:
             return
         language = self.language()
-        failed = fmt.render("verification_failed", language=language, detail=result.detail)
+        lines = prompts.show(verification_in(result, language).lines(), language)
+        failed = fmt.render("verification_failed", language=language, detail=lines)
         await self._safely(self._send(incident, fmt.bold_first_line(failed), language))
 
     async def report(self, incident: Incident, report: Report) -> None:
@@ -323,7 +324,7 @@ class Notifier:
                 action=fmt.prose_line(ran),
             ),
         ]
-        if checked := _checked(checks):
+        if checked := _checked(checks, language):
             parts.append(fmt.render("end_checked", language=language, checks=checked))
         if report.follow_ups:
             items = report.follow_ups[:MAX_NEXT]
@@ -533,9 +534,10 @@ class Notifier:
             log.warning("telegram: could not keep the thread: %s", error, exc_info=True)
 
 
-def _checked(checks: list[Check]) -> fmt.Redacted | None:
-    """The checks as one line, or None when there are none."""
-    return fmt.prose_line("; ".join(f"{c.target} {c.detail}".strip() for c in checks)) or None
+def _checked(checks: list[Check], language: str) -> fmt.Redacted | None:
+    """The checks as one line in `language`, or None when there are none."""
+    shown = [check_in(c, language) for c in checks]
+    return fmt.prose_line("; ".join(f"{c.target} {c.detail}".strip() for c in shown)) or None
 
 
 def _service_named(incident: Incident) -> str:

@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 
 import { Panel } from "@/components/panel";
 import { SaveLockProvider } from "@/components/save-lock";
-import { HostForm, SSH_ONLY } from "@/components/settings/host-form";
+import { HostForm } from "@/components/settings/host-form";
 import { LanguageForm } from "@/components/settings/language-form";
 import { Alert, Status, useLoaded, useStaleSaving } from "@/components/settings/loaded";
 import { EMBEDDING_KEYS, EmbeddingSettings } from "@/components/settings/embeddings";
@@ -20,10 +20,8 @@ import { TRACING_KEYS, TracingSettings } from "@/components/settings/tracing";
 import { useSetTimeZone } from "@/components/preferences";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
-import { setLanguage } from "@/lib/i18n";
+import { setLanguage, useT } from "@/lib/i18n";
 import {
-  ADDRESS_CHANGED,
-  ADDRESS_NOT_CHECKED,
   deleteSecret,
   isAddressChanged,
   putSecret,
@@ -67,15 +65,14 @@ function Hosts({
   onChanged: () => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const t = useT().settings;
   return (
-    <Panel title="Hosts">
+    <Panel title={t.panels.hosts}>
       <div className="flex flex-col gap-3">
-        <p className="text-sm text-muted-foreground">
-          Each host&apos;s connection, rules and services are set on its own page.
-        </p>
-        {hosts.length === 0 && <p className="text-sm text-ink-2">No hosts yet.</p>}
+        <p className="text-sm text-muted-foreground">{t.hosts.note}</p>
+        {hosts.length === 0 && <p className="text-sm text-ink-2">{t.hosts.none}</p>}
         {hosts.length > 0 && (
-          <ul aria-label="Hosts" className="flex flex-col gap-1.5">
+          <ul aria-label={t.hosts.label} className="flex flex-col gap-1.5">
             {hosts.map((host) => (
               <li key={host.id}>
                 <Link
@@ -85,8 +82,8 @@ function Hosts({
                   <span className="text-sm font-bold">{host.name}</span>
                   <span className="text-xs text-muted-foreground">
                     {host.connection.source === "dashboard"
-                      ? "added on the dashboard"
-                      : "from config/hosts.yaml"}
+                      ? t.hosts.fromDashboard
+                      : t.hosts.fromFile}
                   </span>
                   <ChevronRight aria-hidden className="ml-auto size-4 text-muted-foreground" />
                 </Link>
@@ -98,10 +95,10 @@ function Hosts({
           <HostForm onChanged={onChanged} onClose={() => setOpen(false)} />
         ) : (
           <div className="flex flex-col gap-1.5">
-            <p className="text-xs text-muted-foreground">{SSH_ONLY}</p>
+            <p className="text-xs text-muted-foreground">{t.hosts.sshOnly}</p>
             <div>
-              <Button type="button" size="sm" onClick={() => setOpen(true)}>
-                Add an SSH host
+              <Button wrap type="button" size="sm" onClick={() => setOpen(true)}>
+                {t.hosts.addSsh}
               </Button>
             </div>
           </div>
@@ -125,6 +122,7 @@ export function SettingsPage() {
 }
 
 function Settings() {
+  const t = useT().settings;
   const settings = useLoaded<SettingsView>("/api/settings");
   const plugins = useLoaded<PluginView[]>("/api/plugins");
   const telegram = useLoaded<TelegramStatus>("/api/telegram/status");
@@ -174,9 +172,7 @@ function Settings() {
       settings.set(current);
       setNotice(null);
     } catch (failed) {
-      setNotice(
-        `Saved, but reading the plugins, Telegram and settings again failed (${failed instanceof Error ? failed.message : String(failed)}); reload the page.`,
-      );
+      setNotice(t.savedButReread(failed instanceof Error ? failed.message : String(failed)));
     }
   }
 
@@ -190,9 +186,9 @@ function Settings() {
         try {
           secrets.set(await apiFetch<SecretView[]>("/api/secrets"));
         } catch {
-          throw new Error(ADDRESS_NOT_CHECKED);
+          throw new Error(t.addressNotChecked);
         }
-        throw new Error(ADDRESS_CHANGED);
+        throw new Error(t.addressChanged);
       }
       await readAgain();
     },
@@ -210,23 +206,20 @@ function Settings() {
   return (
     <div className="flex flex-col gap-4">
       <header className="flex flex-col gap-1">
-        <h1 className="text-lg font-semibold">Settings</h1>
-        <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <KeyRound aria-hidden className="size-4 shrink-0" />
-          Keys, tokens and addresses are set below or in .env; this page shows whether each one is
-          set, never its value. A change takes effect at once, except the embeddings and a running
-          Langfuse tracer, which say when Bleep needs a restart. A setting in .env wins over this
-          page and says so.
+        <h1 className="text-lg font-semibold">{t.title}</h1>
+        <p className="flex items-start gap-2 text-sm text-muted-foreground">
+          <KeyRound aria-hidden className="mt-0.5 size-4 shrink-0" />
+          <span>{t.intro}</span>
         </p>
       </header>
 
       {notice && <Alert>{notice}</Alert>}
 
-      <Status loaded={settings} what="the settings">
+      <Status loaded={settings} what="settings">
         {(view) => (
           <>
             <Hosts hosts={view.hosts} onChanged={readSettings} />
-            <Panel title="Time zone">
+            <Panel title={t.panels.timeZone}>
               <TimeZoneForm
                 key={`${view.timezone}/${view.overrides.general?.timezone}`}
                 timezone={view.timezone}
@@ -239,7 +232,7 @@ function Settings() {
                 }
               />
             </Panel>
-            <Panel title="Language">
+            <Panel title={t.panels.language}>
               <LanguageForm
                 key={view.language}
                 language={view.language}
@@ -251,7 +244,7 @@ function Settings() {
                 }
               />
             </Panel>
-            <Panel title="Thresholds">
+            <Panel title={t.panels.thresholds}>
               <ThresholdsForm
                 key={JSON.stringify(view.thresholds)}
                 values={view.thresholds}
@@ -259,7 +252,7 @@ function Settings() {
                 onSave={(thresholds) => saveSettings({ thresholds }, view.version)}
               />
             </Panel>
-            <Panel title="Models">
+            <Panel title={t.panels.models}>
               <ModelSettings
                 key={JSON.stringify([view.models, view.overrides.models, view.from_env])}
                 view={view}
@@ -267,7 +260,7 @@ function Settings() {
                 secrets={forPanels}
               />
             </Panel>
-            <Panel title="Embeddings">
+            <Panel title={t.panels.embeddings}>
               <EmbeddingSettings
                 key={JSON.stringify([view.embeddings, view.overrides.embeddings, view.from_env])}
                 view={view}
@@ -275,7 +268,7 @@ function Settings() {
                 secrets={forPanels}
               />
             </Panel>
-            <Panel title="Tracing">
+            <Panel title={t.panels.tracing}>
               <TracingSettings
                 key={JSON.stringify([view.tracing, view.overrides.tracing, view.from_env])}
                 view={view}
@@ -287,8 +280,8 @@ function Settings() {
         )}
       </Status>
 
-      <Panel title="Plugins">
-        <Status loaded={plugins} what="the plugins">
+      <Panel title={t.panels.plugins}>
+        <Status loaded={plugins} what="plugins">
           {(list) => (
             <PluginList
               plugins={list}
@@ -299,8 +292,8 @@ function Settings() {
         </Status>
       </Panel>
 
-      <Panel title="Secrets">
-        <Status loaded={secrets} what="the secrets">
+      <Panel title={t.panels.secrets}>
+        <Status loaded={secrets} what="secrets">
           {(list) => (
             <SecretFields
               views={list.filter((v) => !inPlugins.has(v.name) && !inPanels.has(v.name))}
@@ -310,8 +303,8 @@ function Settings() {
         </Status>
       </Panel>
 
-      <Panel title="Telegram">
-        <Status loaded={telegram} what="the Telegram status">
+      <Panel title={t.panels.telegram}>
+        <Status loaded={telegram} what="telegram">
           {(status) => (
             <TelegramSettings status={status} tokenSource={sourceOf(status.token.env ?? "")} />
           )}

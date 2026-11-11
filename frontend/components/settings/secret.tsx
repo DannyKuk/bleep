@@ -1,5 +1,6 @@
 import { CheckCircle2, MinusCircle, XCircle } from "lucide-react";
 
+import { useT } from "@/lib/i18n";
 import type { SecretStatus } from "@/lib/settings-types";
 import { cn } from "@/lib/utils";
 
@@ -18,13 +19,9 @@ export function SecretBadge({
   /** Unset is then fine, not broken: shown neutrally. */
   optional?: boolean;
 }) {
-  const named = secret.env ? `env ${secret.env}` : `file ${secret.file ?? ""}`;
-  const where =
-    source === "env"
-      ? "Set in .env: "
-      : source === "dashboard"
-        ? "Set on the dashboard: "
-        : "Set: ";
+  const t = useT().settings.secret;
+  const named = secret.env ? t.env(secret.env) : t.file(secret.file ?? "");
+  const where = source === "env" ? t.setInEnv : source === "dashboard" ? t.setOnDashboard : t.setIn;
   const neutral = optional && !secret.set;
   const Icon = secret.set ? CheckCircle2 : neutral ? MinusCircle : XCircle;
   return (
@@ -39,7 +36,7 @@ export function SecretBadge({
     >
       <Icon aria-hidden className="size-3.5 shrink-0" />
       <span className="min-w-0 break-all">
-        {secret.set ? where : neutral ? "Not set, optional: " : "Missing: "}
+        {secret.set ? where : neutral ? t.notSetOptional : t.missingColon}
         <code className="font-mono">{named}</code>
       </span>
     </span>

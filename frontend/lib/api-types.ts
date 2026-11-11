@@ -226,12 +226,20 @@ export interface TimelineEntry {
   text: string;
 }
 
+/** One step of what ran, in the picked language; `status` is the step's result as a field. */
+export interface ReportStep {
+  text: string;
+  status: "done" | "failed" | "refused" | "skipped";
+}
+
 /** The incident write-up; `outcome` is the fixed text for the run's outcome. */
 export interface Report {
   title: string;
   summary: string;
   cause: string;
   action_taken: string | null;
+  /** `action_taken` one step at a time; empty for a report stored before the field existed. */
+  steps: ReportStep[];
   outcome: string;
   timeline: TimelineEntry[];
   follow_ups: string[];

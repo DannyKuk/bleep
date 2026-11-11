@@ -5,7 +5,7 @@ import { LOOK } from "@/components/incident/colour-code";
 import { subjectText } from "@/components/incident/incident-list";
 import { ShortNamePrefix } from "@/components/incident/short-name";
 import { useTimeZone } from "@/components/preferences";
-import type { Incident, Outcome, Report } from "@/lib/api-types";
+import type { Incident, Outcome, Report, ReportStep } from "@/lib/api-types";
 import { formatDateTime, formatTime } from "@/lib/format";
 import { useLanguage, useT } from "@/lib/i18n";
 import { reportMood } from "@/lib/mood";
@@ -44,23 +44,41 @@ function Section({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-/** The mark before a step, in the incident page's colour code: a check only when it says done, a
+/** The mark before a step, in the incident page's colour code: a check only when it is done, a
  * cross when it failed or was refused, a dash for one that never ran. The step's words say the
  * same. */
-function StepMark({ step }: { step: string }) {
-  if (/: done$/.test(step)) {
+function StepMark({ status }: { status: ReportStep["status"] | null }) {
+  if (status === "done") {
     return <Check aria-hidden className={cn("mt-1 size-4 shrink-0", LOOK.done.ink)} />;
   }
-  if (/: (failed|refused)$/.test(step)) {
+  if (status === "failed" || status === "refused") {
     return <X aria-hidden className={cn("mt-1 size-4 shrink-0", LOOK.failed.ink)} />;
   }
   return <Minus aria-hidden className={cn("mt-1 size-4 shrink-0", LOOK.todo.ink)} />;
 }
 
-/** One row per step: the backend joins the steps with "; " (`action_taken` in the Report node). */
-function Steps({ action }: { action: string | null }) {
+/** The status of a step line stored before the backend sent `steps`. Such a line is English by
+ * definition (the backend translated nothing then), so its ending can be read. */
+function legacyStatus(text: string): ReportStep["status"] | null {
+  if (/: done$/.test(text)) return "done";
+  if (/: failed$/.test(text)) return "failed";
+  if (/: refused$/.test(text)) return "refused";
+  return null;
+}
+
+/** One row per step, from the report's `steps`: the backend writes each in the picked language
+ * and gives its status as a field. A report stored before that has only `action_taken`, which
+ * the backend joined with "; ". */
+function Steps({ report }: { report: Report }) {
   const t = useT().report;
-  if (action === null) {
+  const rows: { text: string; status: ReportStep["status"] | null }[] =
+    report.steps.length > 0
+      ? report.steps
+      : (report.action_taken?.split("; ") ?? []).map((text) => ({
+          text,
+          status: legacyStatus(text),
+        }));
+  if (rows.length === 0) {
     return (
       <p className="flex items-start gap-2">
         <Minus aria-hidden className="mt-1 size-4 shrink-0 text-ink-2" />
@@ -70,10 +88,10 @@ function Steps({ action }: { action: string | null }) {
   }
   return (
     <ul aria-label={t.steps} className="flex flex-col gap-1">
-      {action.split("; ").map((step, index) => (
+      {rows.map((step, index) => (
         <li key={index} className="flex items-start gap-2">
-          <StepMark step={step} />
-          <span className="min-w-0">{step}</span>
+          <StepMark status={step.status} />
+          <span className="min-w-0">{step.text}</span>
         </li>
       ))}
     </ul>
@@ -156,7 +174,7 @@ export function ReportView({
         <p>{report.cause}</p>
       </Section>
       <Section label={words.did}>
-        <Steps action={report.action_taken} />
+        <Steps report={report} />
       </Section>
       {noAction && report.follow_ups.length > 0 && (
         <Section label={words.youCan}>

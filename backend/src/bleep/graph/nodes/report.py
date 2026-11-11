@@ -32,6 +32,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime
+from typing import Literal
 
 from langchain_core.messages import HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
@@ -44,7 +45,7 @@ from bleep.graph.look import bare_look, look_rule
 from bleep.graph.nodes import verify
 from bleep.graph.nodes.diagnose import FALLBACK_CAUSE
 from bleep.graph.nodes.propose import BUDGET, NO_DIAGNOSIS, NO_PLAN, REFUSED
-from bleep.graph.planted import HINT_END, planted_places, planted_sentence
+from bleep.graph.planted import HINT_END, planted_places, planted_sentence, planted_shown
 from bleep.graph.shown import english
 from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.log import GuardKind
@@ -62,6 +63,7 @@ from bleep.schemas.graph import (
     PlantedPlace,
     Proposal,
     Report,
+    ReportStep,
     StepResult,
 )
 from bleep.schemas.graph import TimelineEntry as Entry
@@ -182,18 +184,21 @@ async def _look_outcome(deps: GraphDeps, state: IncidentState) -> Outcome:
 
 
 def outcome_shown(
-    result: Outcome, results: list[StepResult] | None, proposal: Proposal | None
+    result: Outcome,
+    results: list[StepResult] | None,
+    proposal: Proposal | None,
+    area: str = "outcome",
 ) -> Shown:
     """The outcome's fixed text, told apart where the outcome alone would mislead: a pass with no
     step of this plan that succeeded (`plan_results`: an earlier plan's success is not this
     plan's), and an early stop after any action, of this plan or an earlier one, that Verify
-    could not confirm."""
+    could not confirm. `area` `inline` gives it as it reads after a colon."""
     results = results or []
     if result == "resolved" and not any(r.ok for r in plan_results(proposal, results)):
-        return Shown.of("outcome/healthy_anyway")
+        return Shown.of(f"{area}/healthy_anyway")
     if result in ("budget", "replan_limit") and any(r.reached_engine for r in results):
-        return Shown.of("outcome/not_verified", outcome=Shown.of(f"outcome/{result}"))
-    return Shown.of(f"outcome/{result}")
+        return Shown.of(f"{area}/not_verified", outcome=Shown.of(f"{area}/{result}"))
+    return Shown.of(f"{area}/{result}")
 
 
 def outcome_text(
@@ -338,31 +343,48 @@ def _entry(at: datetime, text: Shown | str) -> Entry:
     return Entry(at=at, text=clip(english(text), ENTRY_CHARS), shown=text)
 
 
-def action_taken(
+def step_lines(
     results: list[StepResult] | None, proposal: Proposal | None, host_id: str
-) -> str | None:
-    """What ran, one step after another; None when nothing ran.
+) -> list[ReportStep]:
+    """What ran, one line per step, each with its status; none when nothing ran.
 
     A `StepResult` names no host, so each step's host is read from the plan step at its
     `step_index`, falling back to the incident's host (a plan only ever acts on that host). A step
-    that never started (one after a failed step) reads "skipped", and one the act tool refused at
+    that never started (one after a failed step) is "skipped", and one the act tool refused at
     run time "refused".
     """
-    if not results:
-        return None
     steps = proposal.steps if proposal is not None else []
 
     def host(r: StepResult) -> str:
         return steps[r.step_index].host_id if 0 <= r.step_index < len(steps) else host_id
 
-    def status(r: StepResult) -> str:
+    def status(r: StepResult) -> Literal["done", "failed", "refused", "skipped"]:
         if r.ok:
             return "done"
         if r.refused:
             return "refused"
         return "skipped" if r.started_at is None else "failed"
 
-    return "; ".join(f"{r.action} {r.target} on {host(r)}: {status(r)}" for r in results)
+    lines = []
+    for r in results or []:
+        done = status(r)
+        shown = Shown.of(
+            "step/line",
+            action=r.action,
+            target=r.target,
+            host=host(r),
+            status=Shown.of(f"step/{done}"),
+        )
+        lines.append(ReportStep(text=english(shown), status=done, shown=shown))
+    return lines
+
+
+def action_taken(
+    results: list[StepResult] | None, proposal: Proposal | None, host_id: str
+) -> str | None:
+    """`step_lines` joined as the report stores them; None when nothing ran."""
+    lines = step_lines(results, proposal, host_id)
+    return "; ".join(line.text for line in lines) if lines else None
 
 
 def _raw_logs(state: IncidentState) -> list[str]:
@@ -509,7 +531,8 @@ def make(deps: GraphDeps) -> Node:
             else None
         )
         human = english(human_shown) if human_shown is not None else None
-        taken = action_taken(results, proposal, state["subject"].host_id)
+        lines = step_lines(results, proposal, state["subject"].host_id)
+        taken = "; ".join(line.text for line in lines) or None
         entries = timeline(signals, await deps.bus.history(incident_id))
         language = deps.settings_store.language()
 
@@ -540,12 +563,19 @@ def make(deps: GraphDeps) -> Node:
             follow_ups = [own(advice, FOLLOW_UP_CHARS)]
         root_cause = diagnosis.root_cause if diagnosis is not None else ""
         in_english = draft.cause_en if isinstance(draft, _DraftWithEnglishCause) else ""
+        fallback_shown = Shown.of(
+            "summary/fallback",
+            title=title,
+            outcome=outcome_shown(result, results, proposal, area="inline"),
+        )
+        fallback = english(fallback_shown)
         written = Report(
             title=title,
-            summary=own(draft.summary, SUMMARY_CHARS) or f"{title}: {said[0].lower()}{said[1:]}.",
+            summary=own(draft.summary, SUMMARY_CHARS) or fallback,
             cause=own(draft.cause, CAUSE_CHARS) or own(root_cause, CAUSE_CHARS) or NOT_DETERMINED,
             cause_en=own(in_english, CAUSE_CHARS) or None,
             action_taken=taken,
+            steps=lines,
             outcome=said,
             timeline=entries,
             follow_ups=[item for item in follow_ups if item],
@@ -560,6 +590,8 @@ def make(deps: GraphDeps) -> Node:
         shown = {"outcome": said_shown}
         if human_shown is not None:
             shown["human_decision"] = human_shown
+        if written.summary == fallback:
+            shown["summary"] = fallback_shown
         if written.cause == NOT_DETERMINED:
             shown["cause"] = Shown.of("report/not_determined")
         written = written.model_copy(update={"shown": shown})
@@ -568,7 +600,10 @@ def make(deps: GraphDeps) -> Node:
         places, planted = await asyncio.to_thread(planted_follow_up, state)
         if planted is not None:  # after the check: Bleep's own text, never cut or removed
             follow_ups = [*written.follow_ups, planted]
-            written = written.model_copy(update={"follow_ups": follow_ups, "planted_in": places})
+            noted = {len(written.follow_ups): planted_shown(places, hint=True)}
+            written = written.model_copy(
+                update={"follow_ups": follow_ups, "planted_in": places, "shown_follow_ups": noted}
+            )
 
         # Published, sent and remembered here; the runner closes the incident once this update
         # is checkpointed. A crash before that runs the node again (a second message; memory

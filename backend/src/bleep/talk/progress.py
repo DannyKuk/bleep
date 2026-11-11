@@ -26,6 +26,7 @@ from bleep.guard.sanitize import strip_control
 from bleep.guard.titles import split_service_id, title_name
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
+from bleep.incidents.shown import report_in
 from bleep.schemas.graph import Diagnosis, Report, outcome_of
 from bleep.schemas.incidents import TERMINAL_STATUSES, Incident, IncidentEvent
 from bleep.schemas.services import Service
@@ -160,7 +161,9 @@ class LookFollower:
             name = "rejected"
         if name == "healthy" and not _url_checked(events):
             name = "healthy_no_url"
-        values = {"incident": _name(incident), "summary": one_line(report.summary)}
+        # The outcome above is read from the stored English; only the summary is shown.
+        summary = report_in(report, language).summary
+        values = {"incident": _name(incident), "summary": one_line(summary)}
         if name in ("healthy", "healthy_no_url", "healthy_again", "unverified"):
             values["subject"] = _service(incident)
         if name == "fixed":

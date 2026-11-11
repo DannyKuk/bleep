@@ -13,7 +13,18 @@ const buttonVariants = cva(
         outline: "border border-line bg-surface hover:bg-soft",
       },
       size: { default: "h-11 px-5", sm: "h-9 px-4 pointer-coarse:h-11", icon: "size-11" },
+      // For a label that may be longer than the row it sits in (German): it wraps inside the
+      // button, which grows to fit, instead of pushing the page sideways.
+      wrap: { true: "text-center whitespace-normal" },
     },
+    compoundVariants: [
+      { wrap: true, size: "default", className: "h-auto min-h-11 py-2" },
+      {
+        wrap: true,
+        size: "sm",
+        className: "h-auto min-h-9 py-1.5 pointer-coarse:h-auto pointer-coarse:min-h-11",
+      },
+    ],
     defaultVariants: { variant: "default", size: "default" },
   },
 );
@@ -22,7 +33,8 @@ export function Button({
   className,
   variant,
   size,
+  wrap,
   ...props
 }: React.ComponentProps<"button"> & VariantProps<typeof buttonVariants>) {
-  return <button className={cn(buttonVariants({ variant, size }), className)} {...props} />;
+  return <button className={cn(buttonVariants({ variant, size, wrap }), className)} {...props} />;
 }

@@ -37,8 +37,6 @@ export interface HostEdit extends HostConnectionFields {
   host_key?: HostKeyConfirmation;
 }
 
-export const HOST_CHANGED = "This host changed since this page read it; reload the page.";
-
 const ifMatch = (version: string) => ({ "if-match": `"${version}"` });
 
 export const fetchHostKey = (address: string, port: number) =>

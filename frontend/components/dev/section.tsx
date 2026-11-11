@@ -5,9 +5,8 @@ import { useState } from "react";
 import { why } from "@/components/dev/status";
 import { useSaveLock } from "@/components/save-lock";
 import type { DevSettingsView } from "@/lib/api-types";
-import { isStale, NOT_SAVED, putSettings, rereadFailed } from "@/lib/settings-api";
-
-const READ_AGAIN = `${NOT_SAVED} They have been read again and your edits kept on top of them; check them and save again if your change is still needed.`;
+import { useT } from "@/lib/i18n";
+import { isStale, putSettings } from "@/lib/settings-api";
 
 /**
  * A form's draft of `fresh`, the values in force. When `fresh` changes (a save, or the read after
@@ -52,8 +51,9 @@ export interface SectionFormProps {
 export function useSectionSave(
   section: "budgets",
   { view, onSaved, onStale }: SectionFormProps,
-  what: string,
+  saveFailed: (message: string) => string,
 ) {
+  const t = useT();
   const lock = useSaveLock();
   const [saving, setSaving] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -70,12 +70,12 @@ export function useSectionSave(
         if (isStale(error)) {
           try {
             await onStale();
-            setFailure(READ_AGAIN);
+            setFailure(t.dev.readAgain);
           } catch (failed) {
-            setFailure(rereadFailed(failed));
+            setFailure(t.settings.rereadFailed(why(failed)));
           }
         } else {
-          setFailure(`Could not save the ${what}: ${why(error)}`);
+          setFailure(saveFailed(why(error)));
         }
       } finally {
         setSaving(false);

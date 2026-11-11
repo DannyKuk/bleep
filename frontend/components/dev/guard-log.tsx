@@ -10,17 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { GuardEntry, GuardKind } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
-import { useLanguage } from "@/lib/i18n";
-
-export const KINDS: Record<GuardKind, string> = {
-  refused_command: "Refused command",
-  redacted: "Redacted",
-  blocked_action: "Blocked action",
-  injection_marker: "Injection marker",
-  budget: "Budget",
-  foreign_chat: "Foreign chat",
-  prompt_override: "Prompt override",
-};
+import { useLanguage, useT } from "@/lib/i18n";
 
 export function guardLogPath(kind: GuardKind | "", incident: string): string {
   const query = new URLSearchParams();
@@ -39,23 +29,24 @@ export function GuardEntries({
 }) {
   const zone = useTimeZone();
   const language = useLanguage();
+  const t = useT().dev.guard;
   if (entries.length === 0) {
     return (
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
         <ShieldCheck aria-hidden className="size-4" />
-        Nothing in the guard log for this filter.
+        {t.empty}
       </p>
     );
   }
   return (
-    <ul aria-label="Guard log" className="flex flex-col divide-y divide-border">
+    <ul aria-label={t.label} className="flex flex-col divide-y divide-border">
       {entries.map((entry) => (
         <li key={entry.id} className="flex flex-col gap-1 py-2 first:pt-0 last:pb-0">
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge>{KINDS[entry.kind] ?? entry.kind}</Badge>
+            <Badge>{t.kinds[entry.kind] ?? entry.kind}</Badge>
             <button
               type="button"
-              title="Show only this incident's entries"
+              title={t.onlyThis}
               onClick={() => onIncident(entry.incident_id)}
               className="rounded-sm font-mono underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
@@ -78,6 +69,7 @@ export function GuardLogPanel() {
   const [reload, setReload] = useState(0);
   const { data, error } = useGet<GuardEntry[]>(guardLogPath(kind, incident), reload);
   const id = useId();
+  const t = useT().dev.guard;
 
   function showIncident(incidentId: string) {
     setTyped(incidentId);
@@ -95,7 +87,7 @@ export function GuardLogPanel() {
       >
         <div className="flex min-w-40 flex-col gap-1.5">
           <label htmlFor={`${id}-kind`} className="text-xs text-muted-foreground">
-            Kind
+            {t.kind}
           </label>
           <select
             id={`${id}-kind`}
@@ -103,50 +95,50 @@ export function GuardLogPanel() {
             onChange={(changed) => setKind(changed.target.value as GuardKind | "")}
             className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           >
-            <option value="">Every kind</option>
-            {(Object.keys(KINDS) as GuardKind[]).map((key) => (
+            <option value="">{t.everyKind}</option>
+            {(Object.keys(t.kinds) as GuardKind[]).map((key) => (
               <option key={key} value={key}>
-                {KINDS[key]}
+                {t.kinds[key]}
               </option>
             ))}
           </select>
         </div>
         <div className="flex min-w-48 flex-1 flex-col gap-1.5">
           <label htmlFor={`${id}-incident`} className="text-xs text-muted-foreground">
-            Incident
+            {t.incident}
           </label>
           <Input
             id={`${id}-incident`}
             value={typed}
             maxLength={200}
-            placeholder="Every incident"
+            placeholder={t.everyIncident}
             className="font-mono"
             onChange={(changed) => setTyped(changed.target.value)}
           />
         </div>
-        <Button type="submit" variant="outline">
+        <Button wrap type="submit" variant="outline">
           <Filter aria-hidden />
-          Filter
+          {t.filter}
         </Button>
         {incident && (
-          <Button type="button" variant="ghost" onClick={() => showIncident("")}>
+          <Button wrap type="button" variant="ghost" onClick={() => showIncident("")}>
             <X aria-hidden />
-            Every incident
+            {t.everyIncident}
           </Button>
         )}
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          aria-label="Refresh the guard log"
-          title="Refresh"
+          aria-label={t.refreshLabel}
+          title={t.refresh}
           onClick={() => setReload((n) => n + 1)}
         >
           <RefreshCw aria-hidden />
         </Button>
       </form>
-      {error && <Failed>Could not load the guard log: {error.message}</Failed>}
-      {!data && !error && <Loading>Loading the guard log</Loading>}
+      {error && <Failed>{t.loadFailed(error.message)}</Failed>}
+      {!data && !error && <Loading>{t.loading}</Loading>}
       {data && <GuardEntries entries={data} onIncident={showIncident} />}
     </div>
   );

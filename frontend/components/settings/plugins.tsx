@@ -10,6 +10,7 @@ import { SecretFields } from "@/components/settings/secret-field";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { type Messages, useT } from "@/lib/i18n";
 import type { SecretActions, SecretView } from "@/lib/secrets-api";
 import type { JsonSchemaProperty, PluginUpdate, PluginView } from "@/lib/settings-types";
 
@@ -85,6 +86,7 @@ function Field({
   onChange: (value: string) => void;
 }) {
   const id = useId();
+  const t = useT().settings.plugins;
   const kind = kindOf(property);
   const label = property.title ?? name;
   if (kind === "boolean") {
@@ -103,7 +105,7 @@ function Field({
     <div className="flex flex-col gap-1">
       <label htmlFor={id} className="text-xs text-muted-foreground">
         {label}
-        {kind === "list" && " (one per line)"}
+        {kind === "list" && t.onePerLine}
       </label>
       {kind === "list" ? (
         <textarea
@@ -134,20 +136,20 @@ function Field({
 const missingSecrets = (plugin: PluginView) =>
   plugin.secrets.filter((s) => s.required && !s.set).map((s) => s.env);
 
+type PluginMessages = Messages["settings"]["plugins"];
+
 /** "On", "Off", or, for a plugin switched on that does not run, what it is waiting for. */
-export function state(plugin: PluginView): string {
-  if (plugin.enabled) return "On";
-  if (!plugin.switched_on) return "Off";
+export function state(plugin: PluginView, t: PluginMessages): string {
+  if (plugin.enabled) return t.on;
+  if (!plugin.switched_on) return t.off;
   const missing = missingSecrets(plugin);
-  return missing.length > 0 ? `On, waiting for ${missing.join(", ")}` : "On, not running";
+  return missing.length > 0 ? t.onWaiting(missing.join(", ")) : t.onNotRunning;
 }
 
-function waitingNote(plugin: PluginView): string | null {
+function waitingNote(plugin: PluginView, t: PluginMessages): string | null {
   if (plugin.enabled || !plugin.switched_on) return null;
   const missing = missingSecrets(plugin);
-  return missing.length > 0
-    ? `Switched on, but it does not run until ${missing.join(", ")} is set, here or in .env (a value in .env needs a restart of Bleep).`
-    : "Switched on, but it could not be started; switch it off and on again to see why.";
+  return missing.length > 0 ? t.waiting(missing.join(", ")) : t.couldNotStart;
 }
 
 /**
@@ -182,23 +184,25 @@ export function PluginSettings({
     );
   const [draft, setDraft] = useState<Record<string, string>>(initial);
   const on = plugin.enabled || plugin.switched_on;
+  const { plugins: t, cancel } = useT().settings;
   const { saving, busy, problems, run } = useSaving();
   const settings = settingsFrom(draft, fields, plugin.settings);
   const dirty =
     JSON.stringify(settings) !== JSON.stringify(settingsFrom(initial(), fields, plugin.settings));
 
   return (
-    <section aria-label={`Plugin ${plugin.title}`} className="flex flex-col gap-3">
+    <section aria-label={t.plugin(plugin.title)} className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-medium">{plugin.title}</h3>
-        <Badge>{state(plugin)}</Badge>
+        <Badge>{state(plugin, t)}</Badge>
         {plugin.health && (
           <HealthBadge
             health={plugin.health.ok ? "ok" : "down"}
-            label={plugin.health.ok ? "Healthy" : "Unhealthy"}
+            label={plugin.health.ok ? t.healthy : t.unhealthy}
           />
         )}
         <Button
+          wrap
           type="button"
           size="sm"
           variant="outline"
@@ -207,11 +211,11 @@ export function PluginSettings({
           onClick={() => void run(() => onSave({ enabled: !on }))}
         >
           {on ? <PowerOff aria-hidden /> : <Power aria-hidden />}
-          {on ? "Switch off" : "Switch on"}
+          {on ? t.switchOff : t.switchOn}
         </Button>
       </div>
-      {waitingNote(plugin) && (
-        <p className="text-xs text-muted-foreground">{waitingNote(plugin)}</p>
+      {waitingNote(plugin, t) && (
+        <p className="text-xs text-muted-foreground">{waitingNote(plugin, t)}</p>
       )}
       {plugin.health?.detail && (
         <p className="text-xs text-muted-foreground">{plugin.health.detail}</p>
@@ -220,7 +224,7 @@ export function PluginSettings({
         <SecretFields views={views} actions={secrets.actions} />
       ) : (
         plugin.secrets.length > 0 && (
-          <ul aria-label={`Secrets for ${plugin.title}`} className="flex flex-wrap gap-1.5">
+          <ul aria-label={t.secretsFor(plugin.title)} className="flex flex-wrap gap-1.5">
             {plugin.secrets.map((secret) => (
               <li key={secret.env}>
                 <SecretBadge
@@ -251,18 +255,19 @@ export function PluginSettings({
           ))}
           {dirty && (
             <div className="flex gap-2">
-              <Button type="submit" size="sm" disabled={busy}>
+              <Button wrap type="submit" size="sm" disabled={busy}>
                 {saving && <Loader2 aria-hidden className="animate-spin" />}
-                Save settings
+                {t.saveSettings}
               </Button>
               <Button
+                wrap
                 type="button"
                 size="sm"
                 variant="ghost"
                 disabled={saving}
                 onClick={() => setDraft(initial())}
               >
-                Cancel
+                {cancel}
               </Button>
             </div>
           )}
@@ -285,8 +290,9 @@ export function PluginList({
   /** What `GET /api/secrets` lists, and how to set and clear one. */
   secrets?: { views: SecretView[]; actions: SecretActions };
 }) {
+  const t = useT().settings.plugins;
   if (plugins.length === 0) {
-    return <p className="text-sm text-muted-foreground">This Bleep has no plugins.</p>;
+    return <p className="text-sm text-muted-foreground">{t.none}</p>;
   }
   return (
     <div className="flex flex-col divide-y divide-border [&>*]:py-3 [&>*:first-child]:pt-0 [&>*:last-child]:pb-0">

@@ -2,7 +2,9 @@
 
 The fixed texts the other parts of the backend write for the person (#427): the notices on an
 incident's timeline, the report's outcome, timeline and decision lines, "This is expected" and
-its answers, and the words for a plan's targets.
+its answers, the words for a plan's targets, and (#454) Verify's check details (`verify/`, the URL
+check's errors in `url/`), the report's step lines (`step/`), its fallback summary (`summary/`,
+with the outcome as it reads after a colon in `inline/`) and the planted-orders note (`planted/`).
 
 - Code keeps such a text as `schemas.shown.Shown`: the template's name here (`notice/back`) and
   its values, or several parts joined. It is stored in English, `prompts.show(text, "en")`, in
