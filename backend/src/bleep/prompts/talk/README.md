@@ -17,8 +17,14 @@ How Bleep reads what a person writes in its chat, and the fixed lines it answers
 - `look_*` answer a look on request (#403, `talk/looks.py`), filled only with names from Bleep's
   state: why none is offered or opened (`look_host`, `look_open`, `look_snoozed`,
   `look_left_alone`, `look_quiet_host`, `look_unreachable`, `look_spent`, `look_unknown`), and
-  `look_started` once a press opened the incident. `confirm_look_again` is its confirm line, and
-  says that a look costs a model run.
+  `look_started` once a press opened the incident (`look_started_here` in the dashboard's panel,
+  which tells the result itself, #458). `confirm_look_again` is its confirm line, and says that a
+  look costs a model run.
+- `look_progress/`, `look_end/` and `look_step/` follow a look the panel started (#458,
+  `talk/progress.py`): the line for what the run does now, by node or tool; the summary once its
+  plan waits or it ended, by outcome, filled with the incident's short name and the report's or
+  diagnosis' words as one redacted line; and the "What I did" steps, by tool or plan action, with
+  `_of` variants that name the service's containers.
 - `plan_on_page` answers a yes to a waiting plan in the dashboard's panel, which points to the
   incident's page instead of showing the plan's buttons, and `plan_refused` one to a plan
   Bleep's own checks refused, which cannot be approved (#391). `busy` tells the panel that
@@ -35,6 +41,7 @@ How Bleep reads what a person writes in its chat, and the fixed lines it answers
   `log_telegram`, `log_empty`), each message (`log_exchange`, `log_about`) and the lines under
   it (`log_reading`, `log_unread`, `log_offer`, `log_refused`, `log_links`, `log_press`,
   `log_usage`, `log_cost_unknown`, `log_no_call`; `log_press_running` for a press still running,
-  `log_press_failed` for one whose run failed, by the error's type). No model reads them.
+  `log_press_failed` for one whose run failed, by the error's type; `log_look_ended` for the
+  summary a followed look ended with). No model reads them.
 - None of these can be overridden from the dev panel: they read the person's words and refuse
   them.

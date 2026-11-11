@@ -125,11 +125,14 @@ class TalkUsage(BaseModel):
 
 class TalkPress(BaseModel):
     """The press that took an offer and the line it was answered with; `line` stays empty
-    while what it runs is still running, or if that failed."""
+    while what it runs is still running, or if that failed. A look's press keeps the incident
+    it opened or found open, and `ended`, the panel's summary once that incident ended (#458)."""
 
     at: datetime
     yes: bool
     line: str = ""
+    incident_id: str | None = None
+    ended: str = ""
 
 
 class TalkExchange(BaseModel):
@@ -204,9 +207,29 @@ class ConfirmPress(BaseModel):
 
 
 class ConfirmResult(BaseModel):
-    """What a press did, in one line; the buttons turn into it."""
+    """What a press did, in one line; the buttons turn into it. `incident_id` is the incident a
+    look's press opened or found open, which the panel then follows (#458)."""
 
     line: str
+    incident_id: str | None = None
+
+
+# `running` until a plan waits for a yes (`waiting`) or the incident ends (`ended`); a waiting
+# look goes on running once the plan is decided.
+LookState = Literal["running", "waiting", "ended"]
+
+
+class LookProgress(BaseModel):
+    """How a look the panel follows goes (#458), all of it fixed words filled from Bleep's own
+    state: `line` says what the run does now, or, while its plan waits and once it ended, sums
+    it up with the report's (or the diagnosis') words as one redacted line. `steps` is what the
+    run did so far, in order, repeats folded ("What I did"). `links` are the pages `line`
+    names."""
+
+    state: LookState
+    line: str
+    links: list[TalkLink] = Field(default_factory=list)
+    steps: list[str] = Field(default_factory=list)
 
 
 class QuietLine(BaseModel):

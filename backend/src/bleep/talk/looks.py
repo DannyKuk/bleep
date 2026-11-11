@@ -48,13 +48,17 @@ def look_offer(
     return Offer(kind="look_again", scope="service", target_id=found.target_id, subject=found.name)
 
 
-def look_said(look: Look, now: datetime, zone: tzinfo | None, language: str = "en") -> str:
-    """What a press of a look's Yes is answered with, in `language`."""
+def look_said(
+    look: Look, now: datetime, zone: tzinfo | None, language: str = "en", here: bool = False
+) -> str:
+    """What a press of a look's Yes is answered with, in `language`. `here`: the surface tells
+    the result in the chat itself (the dashboard's panel, #458), not in the incident's thread."""
     subject = title_name(look.name)
     incident = (look.incident.short_name or look.incident.id) if look.incident is not None else ""
     match look.outcome:
         case "opened":
-            return line("look_started", language, subject=subject, incident=incident)
+            started = "look_started_here" if here else "look_started"
+            return line(started, language, subject=subject, incident=incident)
         case "open":
             return line("look_open", language, incident=incident, subject=subject)
         case "quiet" if look.quiet is not None:

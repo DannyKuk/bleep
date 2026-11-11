@@ -136,12 +136,7 @@ class Actions:
             decision = Decision(kind="instruct", text=offer.text, via=self.via, at=now)
             return await self.resolve(offer.incident_id or "", offer.plan_id, decision)
         if offer.kind == "look_again":
-            if self.looks is None or offer.target_id is None:
-                return said("answer_unknown", language)
-            look = await self.looks.look(offer.target_id, self.via)
-            if look.incident is not None and self.looked is not None:
-                self.looked(look.incident.id)
-            return look_said(look, now, self.zone(), language)
+            return (await self.look(offer))[0]
         if self.quiet is None or offer.scope is None or offer.target_id is None:
             return said("answer_unknown", language)
         subject = offer.subject or offer.target_id
@@ -156,6 +151,20 @@ class Actions:
             return said("answer_confirm_expired", language)
         await self.quiet.set(offer.scope, offer.target_id, "snooze", offer.until)
         return said("answer_on_it", language, until=when(offer.until, now, self.zone(), language))
+
+    async def look(self, offer: Offer) -> tuple[str, str | None]:
+        """Start the look a confirmed `look_again` asks for: what the person is told, and the
+        incident it opened or found open. The dashboard's panel tells the result itself (#458),
+        so its line says it comes in the chat, Telegram's that it comes in the thread."""
+        language = self.language()
+        if self.looks is None or offer.target_id is None:
+            return said("answer_unknown", language), None
+        look = await self.looks.look(offer.target_id, self.via)
+        incident_id = look.incident.id if look.incident is not None else None
+        if incident_id is not None and self.looked is not None:
+            self.looked(incident_id)
+        here = self.via == "dashboard"
+        return look_said(look, self.clock(), self.zone(), language, here=here), incident_id
 
     async def resolve(self, incident_id: str, approval_id: str, decision: Decision) -> str:
         """Try to win the approval; the text to tell the person either way."""

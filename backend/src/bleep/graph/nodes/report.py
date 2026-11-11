@@ -52,6 +52,8 @@ from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.schemas.graph import (
     FACT_CHARS,
+    HEALTHY_ANYWAY,
+    OUTCOME_TEXT,
     STARTED_AFTER_FIX,
     Decision,
     Diagnosis,
@@ -67,19 +69,6 @@ from bleep.schemas.settings import DEFAULT_LANGUAGE
 
 log = logging.getLogger(__name__)
 
-# What the report says for each outcome; only `resolved` may ever say fixed (see `outcome_text`).
-OUTCOME_TEXT: dict[str, str] = {
-    "resolved": "Fixed and verified",
-    "healthy": "Healthy when checked, nothing to do",
-    "unverified": "Action taken, not verified",
-    "rejected": "Rejected, nothing was done",
-    "no_action": "No action proposed, nothing was done",
-    "budget": "Stopped, the model budget is spent",
-    "replan_limit": "Stopped after too many new plans",
-}
-# `resolved` when the checks passed but no step of the plan succeeded: the service came back on its
-# own (a restart policy, Coolify), so it is not "Fixed".
-HEALTHY_ANYWAY = "Healthy again (verified); no step of the plan succeeded"
 # Added to an early stop (budget, re-plans) after Verify sent back a run in which a step ran.
 NOT_VERIFIED = "an earlier action was not verified"
 CHANNEL = {"telegram": "Telegram", "dashboard": "the dashboard"}
