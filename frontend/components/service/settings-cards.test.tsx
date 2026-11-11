@@ -88,6 +88,10 @@ describe("the service's settings cards in German", () => {
     expect(screen.getByText("Ich ändere nie etwas ohne dein Ja.")).toBeInTheDocument();
     const fixed = screen.getByRole("list", { name: "Durch die Hosts-Datei geschützt: shop" });
     expect(within(fixed).getByText("(aus der Hosts-Datei)")).toBeInTheDocument();
+    expect(fixed.querySelector("[title]")).toHaveAttribute(
+      "title",
+      "In der Hosts-Datei geschützt; nur eine Änderung dort hebt den Schutz auf",
+    );
     expect(
       screen.getByText("Auf diese greife ich nie zu, auch nicht nach deinem Ja."),
     ).toBeInTheDocument();

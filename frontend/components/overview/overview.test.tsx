@@ -594,7 +594,7 @@ describe("OverviewView in German", () => {
       "shop ist ausgefallen. Ich weiß, warum, und ich habe eine Behebung.",
     );
     expect(screen.getByText(/Ich möchte/)).toHaveTextContent(
-      "Ich möchte shop-db starten, danach shop-web-1 neu starten, und noch 1 Schritt. Ich fasse nichts an, bis du Ja sagst.",
+      "Ich möchte shop-db starten, danach shop-web-1 neu starten, und noch 1 weiteren Schritt ausführen. Ich fasse nichts an, bis du Ja sagst.",
     );
     expect(screen.getByText("shop-db").tagName).toBe("CODE");
     expect(screen.getByRole("link", { name: "Plan ansehen" })).toHaveAttribute(

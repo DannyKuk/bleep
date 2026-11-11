@@ -418,7 +418,7 @@ describe("HostPage in German", () => {
     const list = await screen.findByRole("list", { name: "Dienste auf M1" });
     expect(within(list).getByText("worker")).toBeInTheDocument();
     expect(within(list).getByText("Ausgefallen")).toBeInTheDocument();
-    expect(screen.getByText(/^zuletzt gesehen 05\.11\.2026, \d\d:\d\d$/)).toBeInTheDocument();
+    expect(screen.getByText(/^zuletzt gesehen am 05\.11\.2026, \d\d:\d\d$/)).toBeInTheDocument();
   });
 
   it("says since or until when a quiet host is quiet", async () => {
@@ -445,7 +445,9 @@ describe("HostPage in German", () => {
       "title",
       expect.stringMatching(/^05\.11\.2026, \d\d:\d\d$/),
     );
-    expect(note).toHaveTextContent("einen neuen, von einer Stunde bis zu einem Tag");
+    expect(note).toHaveTextContent(
+      "Einen neuen öffnet Bleep nach einer Wartezeit, die mit jeder Wiederholung wächst, von einer Stunde bis zu einem Tag.",
+    );
   });
 
   it("says when Bleep does not know the host", async () => {

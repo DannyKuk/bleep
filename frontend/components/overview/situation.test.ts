@@ -248,3 +248,14 @@ describe("reachLine", () => {
     );
   });
 });
+
+describe("the plan line's remaining steps", () => {
+  it("name the count and keep a verb in German", () => {
+    const { overview, counts } = MESSAGES.de;
+    expect(overview.planMore(counts.moreSteps(1))).toBe(", und noch 1 weiteren Schritt ausführen");
+    expect(overview.planMore(counts.moreSteps(3))).toBe(", und noch 3 weitere Schritte ausführen");
+    expect(MESSAGES.en.overview.planMore(MESSAGES.en.counts.moreSteps(3))).toBe(
+      ", and 3 more steps",
+    );
+  });
+});
