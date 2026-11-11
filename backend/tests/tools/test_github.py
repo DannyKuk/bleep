@@ -277,6 +277,21 @@ async def test_a_spent_rate_limit_is_a_readable_result(registry, github):
     assert "203.0.113.7" not in out  # GitHub's own message stays out
 
 
+@pytest.mark.parametrize(
+    ("tool", "args"), [("recent_commits", {}), ("commit_diff", {"sha": SMALL})]
+)
+async def test_a_refused_token_names_github_token_and_lets_the_model_go_on(
+    registry, github, tool, args
+):
+    github.override = httpx.Response(401, json=fixture("unauthorized.json"))
+    out = await build(registry, github)[tool].ainvoke(args)
+    assert out == (
+        "GitHub refused the token (GITHUB_TOKEN): it is wrong, expired or revoked."
+        " Go on without the repo."
+    )
+    assert "Bad credentials" not in out and "docs.github.com" not in out  # GitHub's words stay out
+
+
 async def test_github_down_is_a_readable_result(registry, github):
     github.override = httpx.Response(503, text="unavailable")
     out = await build(registry, github)["commit_diff"].ainvoke({"sha": SMALL})
