@@ -593,7 +593,7 @@ export const de: Messages = {
     send: "Senden",
     expired: "Abgelaufen",
     whatIDid: "Was ich getan habe",
-    lost: "Ich habe den Fortschritt des Ansehens kurz verloren. Ich versuche es noch mal…",
+    lost: "Ich habe kurz den Faden verloren. Ich versuche es noch mal…",
     tooLong: "Diese Nachricht ist zu lang.",
     notTaken: "Bleep konnte diese Nachricht nicht annehmen.",
     couldNotAnswer: (detail) => `Bleep konnte nicht antworten: ${detail}.`,
