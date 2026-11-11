@@ -182,13 +182,14 @@ def _head(detail: CommitDetail, room: int) -> str:
 
 
 def _patch_text(f: FileChange) -> str:
-    """GitHub sends no patch for a binary file, one too large to diff, and a file whose lines did
-    not change (empty, renamed without edits, mode only)."""
+    """GitHub sends no patch for a binary file (counted +0 -0), an empty one, a rename or mode
+    change with no edit, or a text file too large to diff; only the line counts tell the last
+    from the rest."""
     if f.patch:
         return f.patch
     if f.additions == 0 and f.deletions == 0:
-        return "(no lines changed: empty file, or only its mode or name changed)"
-    return "(no text diff: binary or too large)"
+        return "(no text diff: an empty or binary file, or only its mode or name changed)"
+    return "(no text diff: too large to show)"
 
 
 def describe_diff(detail: CommitDetail, max_chars: int) -> str:

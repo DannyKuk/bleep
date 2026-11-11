@@ -223,28 +223,27 @@ async def test_a_file_without_a_patch_says_so(registry, github):
 
 
 @pytest.mark.parametrize(
-    ("status", "additions", "deletions", "previous"),
-    [("added", 0, 0, None), ("renamed", 0, 0, "pkg/old.py")],
+    ("name", "status", "previous"),
+    [
+        ("pkg/__init__.py", "added", None),
+        ("pkg/new.py", "renamed", "pkg/old.py"),
+        ("image.png", "modified", None),
+    ],
 )
-def test_a_file_with_no_lines_changed_is_not_called_binary(status, additions, deletions, previous):
-    file = FileChange(
-        filename="pkg/__init__.py",
-        status=status,
-        additions=additions,
-        deletions=deletions,
-        previous_filename=previous,
-    )
+def test_a_patchless_file_with_no_lines_counted_is_not_called_too_large(name, status, previous):
+    file = FileChange(filename=name, status=status, previous_filename=previous)
     out = describe_diff(detail(files=[file]), 8000)
-    assert "--- pkg/__init__.py\n(no lines changed: empty file" in out
-    assert "binary or too large" not in out
+    assert f"--- {name}\n(no text diff: an empty or binary file, or only its mode or name" in out
+    assert "too large" not in out
 
 
-def test_a_patchless_file_with_changed_lines_is_still_binary_or_too_large():
-    changed = FileChange(filename="big.bin", status="modified", additions=3, deletions=1)
-    removed = FileChange(filename="old.bin", status="removed", additions=0, deletions=5)
+def test_a_patchless_file_with_lines_counted_is_a_text_file_too_large_to_diff():
+    changed = FileChange(filename="big.txt", status="modified", additions=3, deletions=1)
+    removed = FileChange(filename="old.txt", status="removed", additions=0, deletions=5)
     out = describe_diff(detail(files=[changed, removed]), 8000)
-    assert "--- big.bin\n(no text diff: binary or too large)" in out
-    assert "--- old.bin\n(no text diff: binary or too large)" in out
+    assert "--- big.txt\n(no text diff: too large to show)" in out
+    assert "--- old.txt\n(no text diff: too large to show)" in out
+    assert "binary" not in out
 
 
 @pytest.mark.parametrize("sha", ["xyz", "12", "../../etc"])
