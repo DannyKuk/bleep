@@ -13,13 +13,20 @@ from collections.abc import Awaitable
 from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends
 from pydantic import ValidationError
 
 from bleep.api.deps import get_parts
+from bleep.api.errors import Refusal, problems_of
 from bleep.api.settings import check_size
 from bleep.notify.telegram import mask_chat_id
-from bleep.plugins.urls import UrlRefused, check_dashboard_url, check_public, check_url
+from bleep.plugins.urls import (
+    NotPublic,
+    UrlRefused,
+    check_dashboard_url,
+    check_public,
+    check_url,
+)
 from bleep.schemas.secrets import SecretValue, SecretView
 from bleep.store.secrets import (
     AddressStale,
@@ -53,8 +60,7 @@ async def put_secret(name: str, body: Annotated[Any, Body()], parts: Parts) -> l
     try:
         sent = SecretValue.model_validate(body)
     except ValidationError as error:
-        detail = error.errors(include_input=False, include_url=False, include_context=False)
-        raise HTTPException(422, detail) from None
+        raise Refusal.invalid(problems_of(error)) from None
     value = sent.value
     if entry.kind == "address":
         if entry.private:
@@ -75,7 +81,7 @@ async def delete_secret(name: str, parts: Parts) -> list[SecretView]:
     embeddings endpoint's address while the running embedder is that endpoint."""
     _entry(parts.secrets, name)
     if (refused := parts.settings_store.clear_refused(name)) is not None:
-        raise HTTPException(409, refused)
+        raise Refusal.of(409, refused)
     await _change(parts.secrets.clear(name))
     return secret_views(parts.secrets)
 
@@ -130,15 +136,18 @@ async def _dashboard_address(parts: AppParts, name: str, value: str) -> str:
     try:
         value = check_dashboard_url(value, name)
     except UrlRefused as refused:
-        raise HTTPException(422, str(refused)) from None
+        raise Refusal.of(422, refused) from None
     url = httpx.URL(value)
     try:
         await check_public(url.host, url.port or 443, parts.plugins.resolver)
-    except ValueError as refusal:
-        raise HTTPException(
+    except NotPublic as refusal:
+        raise Refusal(
             422,
-            f"{name} set on the dashboard must reach public addresses only, and {refusal}; "
-            "an address on a private network can be set in .env",
+            "address_public_only",
+            fallback=f"{name} set on the dashboard must reach public addresses only, and "
+            f"{refusal}; an address on a private network can be set in .env",
+            name=name,
+            reason=refusal,
         ) from None
     return value
 
@@ -151,7 +160,7 @@ def _model_address(name: str, value: str) -> str:
     try:
         return check_url(value, name, internal=True)
     except UrlRefused as refused:
-        raise HTTPException(422, str(refused)) from None
+        raise Refusal.of(422, refused) from None
 
 
 def _invalid(store: SecretStore, name: str, kind: Kind) -> bool:
@@ -183,7 +192,7 @@ def _same_address(old: str, new: str) -> bool:
 def _entry(store: SecretStore, name: str) -> SecretName:
     """A name `GET /api/secrets` lists; a host's key (a family name) is set only with its host."""
     if name not in {entry.name for entry in store.names()}:
-        raise HTTPException(404, "no such secret can be set from the dashboard")
+        raise Refusal(404, "no_secret")
     return store.entry(name)
 
 
@@ -191,13 +200,13 @@ async def _change(change: Awaitable[set[str]]) -> None:
     try:
         await change
     except SecretFromEnv as owned:
-        raise HTTPException(409, str(owned)) from None
+        raise Refusal.of(409, owned) from None
     except AddressStale as stale:
-        raise HTTPException(428 if stale.missing else 409, str(stale)) from None
+        raise Refusal.of(428 if stale.missing else 409, stale) from None
     except SecretRefused as refused:
-        raise HTTPException(422, str(refused)) from None
+        raise Refusal.of(422, refused) from None
     except SecretNotSaved as not_saved:
-        raise HTTPException(500, str(not_saved)) from None
+        raise Refusal.of(500, not_saved) from None
     except OSError as error:
         log.error("secrets: the secret file could not be written (%s)", type(error).__name__)
-        raise HTTPException(500, "the secret could not be saved") from None
+        raise Refusal(500, "secret_not_saved") from None

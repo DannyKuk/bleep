@@ -1,9 +1,13 @@
+import json
 from datetime import UTC, datetime, timedelta
 from functools import partial
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
+from bleep import prompts
+from bleep.config import Settings
 from bleep.graph.replan import PLANNING_AGAIN
 from bleep.graph.shown import shown_payload
 from bleep.guard.plan_check import check_shown
@@ -548,6 +552,62 @@ def test_a_decision_on_an_unknown_incident_is_404(app_client, resumes):
     assert post_decision(app_client, "inc_nope", "a1").status_code == 404
 
 
+def test_every_decision_conflict_is_said_in_the_picked_language_with_the_winner_kept(
+    app_client, parts, resumes, monkeypatch
+):
+    monkeypatch.setattr(parts.settings_store, "language", lambda: "de")
+    incident = open_incident(app_client, parts)
+    nothing = post_decision(app_client, incident.id, "a1", "approve")
+    assert nothing.json() == {
+        "detail": "Es wartet nichts auf eine Entscheidung",
+        "decided_via": None,
+    }
+
+    approval_id = ask(app_client, parts, incident.id)
+    call(app_client, parts.approvals.resolve, incident.id, decided("approve", "telegram"))
+    telegram = post_decision(app_client, incident.id, approval_id, "reject")
+    assert telegram.json() == {
+        "detail": "Bereits auf Telegram entschieden",
+        "decided_via": "telegram",
+    }
+
+    other = open_incident(app_client, parts, service="a/other")
+    second = ask(app_client, parts, other.id)
+    assert post_decision(app_client, other.id, second, "approve").status_code == 200
+    again = post_decision(app_client, other.id, second, "approve")
+    assert again.json() == {
+        "detail": "Bereits im Dashboard entschieden",
+        "decided_via": "dashboard",
+    }
+
+    closed = open_incident(app_client, parts, service="a/third")
+    third = ask(app_client, parts, closed.id)
+    call(app_client, parts.incidents.set_status, closed.id, "closed")
+    over = post_decision(app_client, closed.id, third, "approve")
+    assert over.json() == {"detail": "Der Vorfall ist geschlossen", "decided_via": None}
+    assert resumes.calls == [(other.id, resumes.calls[0][1])]
+
+
+def test_a_rating_with_nothing_to_rate_and_an_unknown_incident_are_said_in_german(
+    app_client, parts, monkeypatch
+):
+    monkeypatch.setattr(parts.settings_store, "language", lambda: "de")
+    incident = open_incident(app_client, parts)
+    body = {"target": "diagnosis", "vote": "up"}
+    rated = app_client.post(f"/api/incidents/{incident.id}/feedback", json=body)
+    assert (rated.status_code, rated.json()["detail"]) == (
+        409,
+        "Es gibt noch keine Diagnose zum Bewerten",
+    )
+    plan = app_client.post(
+        f"/api/incidents/{incident.id}/feedback", json=body | {"target": "proposal"}
+    )
+    assert plan.json()["detail"] == "Es gibt noch keinen Plan zum Bewerten"
+    assert app_client.get("/api/incidents/inc_nope").json() == {
+        "detail": "Diesen Vorfall gibt es nicht"
+    }
+
+
 # --- recoveries ---
 
 
@@ -729,3 +789,125 @@ def test_this_is_expected_says_what_it_records_and_answers_in_the_picked_languag
     kept = [e.payload["text"] for e in events if e.kind in ("expected", "notice")]
     assert kept[0].startswith("You said this is expected. A may sleep")
     assert kept[1] == "Closed: you said this is expected."
+
+
+# --- what is stored and what a model reads, with the language picked (#456) ---
+
+
+async def dump_stored(db) -> list[str]:
+    """Every row of every table but the sessions, without the times, as sorted JSON lines."""
+    conn = await db.connect()
+    try:
+        async with conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'") as cursor:
+            tables = [row["name"] for row in await cursor.fetchall()]
+        lines = []
+        for table in sorted(set(tables) - {"sessions"}):
+            if table.startswith("knowledge"):
+                continue  # the background ingest of the docs, which is not a refusal
+            if table.startswith("sqlite_"):
+                continue
+            async with conn.execute(f"SELECT * FROM {table}") as cursor:  # noqa: S608
+                for row in await cursor.fetchall():
+                    kept = {
+                        k: v for k, v in dict(row).items() if k != "at" and not k.endswith("_at")
+                    }
+                    lines.append(f"{table} {json.dumps(kept, sort_keys=True, default=str)}")
+        return sorted(lines)
+    finally:
+        await conn.close()
+
+
+def model_prompts() -> dict[str, str]:
+    """Every prompt a model reads (not a text a person reads), loaded with placeholders filled."""
+    names = [
+        p.relative_to(prompts.PROMPTS_DIR).with_suffix("").as_posix()
+        for p in prompts.all_prompt_files()
+    ]
+    return {
+        name: prompts.load(
+            name, **dict.fromkeys(prompts.placeholders(prompts.file_text(name)), "x")
+        )
+        for name in names
+        if not name.startswith(prompts.TRANSLATED_AREAS) or name in prompts.STAYS_ENGLISH
+    }
+
+
+def refused_flow(tmp_path, clock, language: str) -> tuple[list[str], list[str], dict[str, str]]:
+    """The same refusals in an app of its own with `language` picked: a decision refused three
+    ways, a feedback with nothing to rate, settings saves that are stale, name a host that is not
+    there or fail validation, and dev panel overrides that are refused, saved and reset. Returns
+    what the API said, what is stored, and what the models read afterwards."""
+    settings = Settings(
+        data_dir=tmp_path / language,
+        hosts_file=tmp_path / language / "hosts.yaml",
+        admin_password=SecretStr("test-password"),
+        secret=SecretStr("test-secret"),
+        dev_panel=True,
+    )
+    parts = build_parts(settings, Registry([]), embedder=FakeEmbedder())
+    parts.incidents = IncidentRepo(parts.db, clock)
+    parts.settings_store.language = lambda: language
+    said: list[str] = []
+    with TestClient(create_app(settings, parts)) as client:
+        assert client.post("/api/auth/login", json={"password": "test-password"}).status_code == 204
+        incident = open_incident(client, parts)
+        approval_id = ask(client, parts, incident.id)
+        said.append(post_decision(client, incident.id, "a-old", "approve").json()["detail"])
+        call(client, parts.approvals.resolve, incident.id, decided("approve", "telegram"))
+        said.append(post_decision(client, incident.id, approval_id, "reject").json()["detail"])
+        call(client, parts.incidents.set_status, incident.id, "closed")
+        said.append(post_decision(client, incident.id, approval_id, "reject").json()["detail"])
+        body = {"target": "diagnosis", "vote": "up"}
+        feedback = client.post(f"/api/incidents/{incident.id}/feedback", json=body)
+        said.append(feedback.json()["detail"])
+
+        version = {"If-Match": client.get("/api/settings").json()["version"]}
+        for json_body, headers in (
+            ({}, {"If-Match": "stale"}),
+            ({"hosts": {"nowhere": {"may_sleep": True}}}, version),
+            ({"thresholds": {"repeated_deaths": 101}}, version),
+            ({"general": {"timezone": "Mars/Base"}}, version),
+        ):
+            answer = client.put("/api/settings", json=json_body, headers=headers)
+            said.append(json.dumps(answer.json()["detail"], ensure_ascii=False))
+
+        name = "llm/json_retry"
+        listed = client.get("/api/dev/prompts").json()
+        current = next(item["version"] for item in listed if item["name"] == name)
+        for text in ("a { b", "{0}", "nothing"):
+            answer = client.put(
+                f"/api/dev/prompts/{name}", json={"text": text}, headers={"If-Match": current}
+            )
+            said.append(answer.json()["detail"])
+        saved = client.put(
+            f"/api/dev/prompts/{name}",
+            json={"text": prompts.file_text(name)},
+            headers={"If-Match": current},
+        )
+        client.delete(f"/api/dev/prompts/{name}", headers={"If-Match": saved.json()["version"]})
+
+        call(client, parts.guard_log.flush)  # the guard log writes in the background
+        stored = call(client, dump_stored, parts.db)
+        events = call(client, parts.bus.history, incident.id)
+        stored += [f"event {e.kind} {json.dumps(e.payload, sort_keys=True)}" for e in events]
+        stored.append(json.dumps(parts.settings_store.overrides().model_dump(mode="json")))
+        stored = [
+            line.replace(incident.id, "<incident>").replace(approval_id, "<approval>")
+            for line in stored
+        ]
+        return said, stored, model_prompts()
+
+
+def test_the_picked_language_changes_nothing_that_is_stored_and_nothing_a_model_reads(
+    tmp_path, clock
+):
+    english_said, english_stored, english_read = refused_flow(tmp_path, clock, "en")
+    german_said, german_stored, german_read = refused_flow(tmp_path, clock, "de")
+
+    assert len(english_said) == len(german_said) == 11
+    assert all(en != de for en, de in zip(english_said, german_said, strict=True))
+    assert german_stored == english_stored
+    assert any(line.startswith("guard_log ") for line in english_stored)
+    assert any(line.startswith("incidents ") for line in english_stored)
+    assert german_read == english_read
+    assert "graph/propose" in english_read and "talk/read" in english_read

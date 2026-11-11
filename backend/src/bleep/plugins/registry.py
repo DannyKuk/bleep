@@ -25,6 +25,7 @@ from bleep.plugins import urls
 from bleep.plugins.base import Plugin, PluginContext
 from bleep.plugins.urls import Resolver, UrlRefused, check_dashboard_url
 from bleep.schemas.plugins import PluginHealth, PluginSecret, PluginView
+from bleep.schemas.refusal import Reasons, Templated
 from bleep.tools.registry import ActHandler, ToolSpec, check_kind
 
 log = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ _PLUGIN_NAME = re.compile(r"[a-z][a-z0-9]{0,31}")
 _RESERVED_NAMES = frozenset({"docker"})
 
 
-class PluginError(ValueError):
+class PluginError(Templated, ValueError):
     """A plugin cannot be switched on or configured that way; the text says why in Bleep's own
     words and never holds a secret's value."""
 
@@ -194,7 +195,10 @@ class PluginRegistry:
         if missing:
             raise PluginError(
                 f"plugin {plugin.name} needs {', '.join(missing)} set first, on the dashboard "
-                "or in the environment"
+                "or in the environment",
+                "plugin_needs",
+                plugin=plugin.name,
+                names=", ".join(missing),
             )
         public_only = None
         if plugin.connection is not None and self._from_dashboard(plugin.connection[0]):
@@ -202,7 +206,12 @@ class PluginRegistry:
             try:
                 check_dashboard_url(self._env[address], address)
             except UrlRefused as refused:  # a file edited by hand: never trusted more than the API
-                raise PluginError(f"plugin {plugin.name}: {refused}") from None
+                raise PluginError(
+                    f"plugin {plugin.name}: {refused}",
+                    "plugin_url",
+                    plugin=plugin.name,
+                    reason=refused,
+                ) from None
             public_only = self.resolver
         ctx = PluginContext(
             settings=settings,
@@ -221,7 +230,10 @@ class PluginRegistry:
         except Exception as error:  # PluginError too: the plugin's text could quote a secret
             log.warning("plugin %s could not be built: %s", plugin.name, type(error).__name__)
             raise PluginError(
-                f"plugin {plugin.name} could not be switched on ({type(error).__name__})"
+                f"plugin {plugin.name} could not be switched on ({type(error).__name__})",
+                "plugin_not_built",
+                plugin=plugin.name,
+                kind=type(error).__name__,
             ) from None
         _check_built(plugin, tools, handlers)  # Bleep's own words, so they pass through
         return _Active(ctx, tools, handlers)
@@ -231,7 +243,10 @@ class PluginRegistry:
             return plugin.settings_model.model_validate(dict(values))
         except ValidationError as error:
             raise PluginError(
-                f"plugin {plugin.name}: invalid settings ({_reasons(error)})"
+                f"plugin {plugin.name}: invalid settings ({_reasons(error)})",
+                "plugin_settings_invalid",
+                plugin=plugin.name,
+                reasons=Reasons.of(error, grouped=True, empty="settings"),
             ) from None
 
     async def _health(self, plugin: Plugin, ctx: PluginContext) -> PluginHealth:

@@ -3,11 +3,11 @@
 import asyncio
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Body, Depends, Header
 
 from bleep.api.deps import get_parts
-from bleep.api.settings import parse_body, stale_response, version_of
+from bleep.api.errors import Refusal
+from bleep.api.settings import parse_body, stale, version_of
 from bleep.incidents.settings_store import SettingsRefused, SettingsStale
 from bleep.plugins.registry import PluginError, UnknownPlugin
 from bleep.schemas.plugins import PluginUpdate, PluginView
@@ -32,20 +32,20 @@ async def put_plugin(
     body: Annotated[Any, Body()],
     parts: Parts,
     if_match: Annotated[str | None, Header()] = None,
-) -> PluginView | JSONResponse:
+) -> PluginView:
     """Change the plugin's settings, switch it on or off, or both. `If-Match` holds the
     plugin's `version` the body was built from: 428 without it, 409 when it is stale."""
     if name not in parts.plugins.names():
-        raise HTTPException(404, "no such plugin")
+        raise Refusal(404, "no_plugin")
     if if_match is None or not if_match.strip():
-        raise HTTPException(428, "send the plugin's version you read in If-Match")
+        raise Refusal(428, "need_version_plugin")
     update = parse_body(body, PluginUpdate)
     try:
         await parts.settings_store.set_plugin(name, update, version=version_of(if_match))
-    except SettingsStale as stale:
-        return stale_response(stale.current, "the plugin changed since this version was read")
+    except SettingsStale as changed:
+        raise stale(changed.current, "stale_plugin") from None
     except UnknownPlugin:
-        raise HTTPException(404, "no such plugin") from None
+        raise Refusal(404, "no_plugin") from None
     except (PluginError, SettingsRefused) as refusal:
-        raise HTTPException(422, str(refusal)) from None
+        raise Refusal.of(422, refusal) from None
     return await parts.settings_store.plugin_view(name)

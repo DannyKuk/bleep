@@ -6,9 +6,10 @@ docs/design/app.md."""
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Response
 
 from bleep.api.deps import get_actions, get_look_follower, get_parts
+from bleep.api.errors import Refusal
 from bleep.schemas.talk import (
     ChatAnswer,
     ChatMessage,
@@ -32,7 +33,7 @@ Follower = Annotated[LookFollower, Depends(get_look_follower)]
 @router.post("/messages")
 async def send_message(body: ChatMessage, parts: Parts, actions: Acts) -> ChatAnswer:
     if body.incident_id is not None and await parts.incidents.get(body.incident_id) is None:
-        raise HTTPException(404, "no such incident")
+        raise Refusal(404, "no_incident")
     return await parts.panel.say(body.text, body.incident_id, actions)
 
 
@@ -48,7 +49,7 @@ async def look_progress(incident_id: str, follower: Follower) -> LookProgress:
     """What the look's run does now, or its summary once its plan waits or it ended."""
     progress = await follower.look(incident_id)
     if progress is None:
-        raise HTTPException(404, "no such incident")
+        raise Refusal(404, "no_incident")
     return progress
 
 

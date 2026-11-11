@@ -18,6 +18,7 @@ from bleep.guard.log import GuardLogger
 from bleep.guard.sanitize import MAX_LINE
 from bleep.guard.secret_fields import find_secrets
 from bleep.incidents.repository import utcnow
+from bleep.schemas.refusal import Templated
 from bleep.store.db import Database
 
 log = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ class UnknownPrompt(LookupError):
         return "no prompt of that name can be overridden"
 
 
-class PromptRefused(ValueError):
+class PromptRefused(Templated, ValueError):
     """The override is not saved; the text says why and never quotes the override."""
 
 
@@ -170,12 +171,13 @@ def _check(name: str, text: str) -> None:
     if find_secrets(text):
         raise PromptRefused(
             "a prompt never holds a secret, and this text looks like it does. "
-            "Secrets go in the environment"
+            "Secrets go in the environment",
+            "prompt_secret",
         )
     try:
         prompts.check_override(name, text)
     except prompts.PromptError as error:
-        raise PromptRefused(str(error)) from None
+        raise PromptRefused(str(error), error.template, **error.values) from None
 
 
 def check_lines(text: str) -> None:
@@ -184,7 +186,12 @@ def check_lines(text: str) -> None:
     newlines and cuts a line over 4,000 characters."""
     if any(mark in text for mark in ("\r", "\u2028", "\u2029")):
         raise PromptRefused(
-            "line breaks must be plain newlines; CR, CRLF, U+2028 and U+2029 are not allowed"
+            "line breaks must be plain newlines; CR, CRLF, U+2028 and U+2029 are not allowed",
+            "prompt_line_breaks",
         )
     if any(len(line) > MAX_LINE for line in text.split("\n")):
-        raise PromptRefused(f"a line is over {MAX_LINE:,} characters; break it up")
+        raise PromptRefused(
+            f"a line is over {MAX_LINE:,} characters; break it up",
+            "prompt_line_long",
+            limit=MAX_LINE,
+        )

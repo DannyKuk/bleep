@@ -132,7 +132,7 @@ def secret_names(plugins: Sequence[Plugin], tracing: str) -> list[SecretName]:
         SecretName(EMBEDDINGS_URL_ENV, kind="address", carries=EMBEDDINGS_KEY_ENV, private=True),
         SecretName(EMBEDDINGS_KEY_ENV),
         *(
-            SecretName(key, required=f"TRACING={tracing} needs it" if key in needed else None)
+            SecretName(key, required=tracing if key in needed else None)
             for keys in TRACING_KEYS.values()
             for key in keys
         ),

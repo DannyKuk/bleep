@@ -10,6 +10,7 @@ import json
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from bleep.api.errors import language_of, render
 from bleep.api.settings import MAX_BODY_CHARS
 
 # A character is at most 4 bytes in UTF-8, so a compact JSON body (what `JSON.stringify` sends)
@@ -40,13 +41,13 @@ class BodyLimitMiddleware:
             return
         declared = dict(scope["headers"]).get(b"content-length")
         if declared is not None and _too_big(declared, self.max_bytes):
-            await self._refuse(send)
+            await self._refuse(scope, send)
             return
         body = await self._read_capped(receive)
         if body is DISCONNECTED:
             return
         if body is None:
-            await self._refuse(send)
+            await self._refuse(scope, send)
             return
         assert isinstance(body, bytes)
         sent = False
@@ -74,10 +75,14 @@ class BodyLimitMiddleware:
             if not message.get("more_body", False):
                 return b"".join(chunks)
 
-    async def _refuse(self, send: Send) -> None:
-        payload = json.dumps(
-            {"detail": f"the body is over {self.max_bytes:,} bytes; the body is not accepted"}
-        ).encode()
+    async def _refuse(self, scope: Scope, send: Send) -> None:
+        detail = render(
+            "body_too_large_bytes",
+            {"limit": self.max_bytes},
+            f"the body is over {self.max_bytes:,} bytes; the body is not accepted",
+            language_of(scope.get("app")),
+        )
+        payload = json.dumps({"detail": detail}).encode()
         await send(
             {
                 "type": "http.response.start",
