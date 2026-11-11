@@ -1033,6 +1033,8 @@ def test_a_token_after_a_form_feed_backspace_or_encoded_escape_is_redacted(token
         '{"msg": "a\\u00zzsk-' + B24 + '"}',
         '{"msg": "a\\\\u0026xsk-' + B24 + '"}',
         "foobsk-" + B24,
+        "au0026sk-" + B24,
+        "menu2024sk-" + B24,
         "a%5Cxsk-" + B24,
         "a%5Zbsk-" + B24,
     ],
