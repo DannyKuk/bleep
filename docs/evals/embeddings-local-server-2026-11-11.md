@@ -56,7 +56,7 @@ For nomic-embed-text, 0.5 loses a right record that 0.475 keeps, and no threshol
 | First ingest of the Docker docs snapshot (444 chunks) | 33 s (in the image) | about 85,000 tokens | **14.8 s** (566 s in-process, #146) | 6.4 s |
 | Money | none | $0.20 per million tokens | none | none |
 
-The bge-m3 run embedded 598 texts in 103 calls; the first run of it took about 19 s in all.
+The bge-m3 run embedded 598 texts in 103 calls.
 
 ## What it shows
 
