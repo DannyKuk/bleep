@@ -19,7 +19,9 @@ expects: for a healthy service category `unknown`, not unsure, one of `healthy_w
 `failure_words` and none of `wrong_words`. The case's own expected phrases are taken out of the
 root cause before `wrong_words` are looked for, so "no fault" does not count as "fault". A run
 that ends early (a timeout, an error, no diagnosis) fails. Reads of containers outside the
-service are counted, not failed. See docs/design/evals.md.
+service are counted, not failed. A case with `could_run` (#365) also needs a plan of no action
+whose `could_run` names exactly those actions, marked to wait for the person when it names any;
+`enabled` sets the actions the run may use. See docs/design/evals.md.
 """
 
 import argparse
@@ -37,7 +39,13 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from bleep.graph.build import build_graph, open_checkpointer
-from bleep.graph.deps import GraphDeps, InMemoryApprovals, ModelFactory, StaticSettings
+from bleep.graph.deps import (
+    CORE_ACTIONS,
+    GraphDeps,
+    InMemoryApprovals,
+    ModelFactory,
+    StaticSettings,
+)
 from bleep.graph.deps import model_factory as default_models
 from bleep.guard.log import GuardLog
 from bleep.hosts.config import HostConfig, ServiceOverrides, UrlCheckConfig
@@ -84,12 +92,21 @@ class LookCase(BaseModel):
     failure_words: list[str] = Field(default_factory=list)  # one of them, for a failing one
     wrong_words: list[str] = Field(default_factory=list)  # none of them, in either kind
     must_not: list[Action] = Field(default_factory=list)
+    # The actions enabled for the run, Bleep's core ones when not given; and for a case about a
+    # plan of no action whose fix Bleep could run (#365), the actions its `could_run` must name
+    # (none: a fix Bleep cannot run, which must still close).
+    enabled: list[Action] | None = None
+    could_run: list[Action] | None = None
     timeout_s: int = Field(400, gt=0)
 
     @model_validator(mode="after")
     def _fits(self) -> Self:
         if not self.own():
             raise ValueError("the service has no container of its own")
+        if self.could_run and not set(self.could_run) <= set(self.enabled or CORE_ACTIONS):
+            raise ValueError("could_run names an action the case does not enable")
+        if self.could_run is not None and self.healthy:
+            raise ValueError("a healthy case has no fix to run")
         if len(self.own()) == len(self.containers):
             raise ValueError("a look case has a container outside the service, such as a proxy")
         if self.healthy and not self.healthy_words:
@@ -103,6 +120,9 @@ class LookCase(BaseModel):
 
     def own(self) -> list[str]:
         return [c.name for c in self.containers if c.project in (None, self.service)]
+
+    def actions(self) -> frozenset[str]:
+        return frozenset(self.enabled) if self.enabled is not None else CORE_ACTIONS
 
     @property
     def subject(self) -> Subject:
@@ -169,6 +189,7 @@ class LookResult(BaseModel):
     outside_reads: list[str] = Field(default_factory=list)
     forbidden: list[str] = Field(default_factory=list)
     said_right: bool | None = None
+    could_run_right: bool | None = None  # None for a case that does not score it
     passed: bool = False
 
 
@@ -205,6 +226,18 @@ def _said_right(case: LookCase, result: LookResult) -> bool:
     return category != "unknown" and bool(expected) and not wrong
 
 
+def _could_run_right(case: LookCase, proposal: Proposal | None) -> bool | None:
+    """For a case with `could_run`: the plan is no action, its `could_run` names exactly the
+    case's actions, and code marked it to wait for the human's instruction just when it names
+    any (#365)."""
+    if case.could_run is None:
+        return None
+    if proposal is None or proposal.kind != "no_action":
+        return False
+    named = set(proposal.could_run) == set(case.could_run)
+    return named and proposal.fix_runnable == bool(case.could_run)
+
+
 def score(case: LookCase, result: LookResult) -> LookResult:
     """Fill in the checks and the verdict of a finished run."""
     read = _logs_read(case, result)
@@ -214,9 +247,16 @@ def score(case: LookCase, result: LookResult) -> LookResult:
     steps = result.proposal.steps if result.proposal and result.proposal.kind == "act" else []
     result.forbidden = [f"{s.action} {s.target}" for s in steps if s.action in case.must_not]
     result.said_right = _said_right(case, result)
+    result.could_run_right = _could_run_right(case, result.proposal)
     ended_early = result.failure is not None or result.diagnosis is None
     read_all = not result.unread_logs and not result.unchecked_urls
-    result.passed = not ended_early and read_all and not result.forbidden and result.said_right
+    result.passed = (
+        not ended_early
+        and read_all
+        and not result.forbidden
+        and result.said_right
+        and result.could_run_right is not False
+    )
     return result
 
 
@@ -265,7 +305,9 @@ async def run_case(
                     action_log=ActionLog(db),
                     approvals=InMemoryApprovals(secret),
                     guard_log=guard_log,
-                    settings_store=StaticSettings(model_settings=settings.models),
+                    settings_store=StaticSettings(
+                        model_settings=settings.models, actions=case.actions()
+                    ),
                     http=http,
                 )
                 graph = build_graph(deps, saver)
@@ -330,6 +372,8 @@ def _cell(text: object) -> str:
 def _plan(proposal: Proposal | None) -> str:
     if proposal is None:
         return "none"
+    if proposal.kind == "no_action" and proposal.could_run:
+        return f"no action, could run {', '.join(proposal.could_run)}"
     if proposal.kind == "no_action":
         return "no action"
     return ", ".join(f"{s.action} {s.target}" for s in proposal.steps)
@@ -348,6 +392,8 @@ def line(result: LookResult) -> str:
     found += result.forbidden
     if result.said_right is False:
         found.append("root cause says the wrong thing")
+    if result.could_run_right is False:
+        found.append("could_run is not the case's")
     return head + f"{verdict}; plan {_plan(result.proposal)}" + "".join(f"; {f}" for f in found)
 
 
@@ -355,8 +401,8 @@ def render(cases: Sequence[LookCase], results: Sequence[LookResult]) -> str:
     """The tables for docs/evals/: one row per case, then one per run."""
     lines = [
         "| Case | Right answer | Passed | Own logs read | URLs checked | Said it right "
-        "| Forbidden step | Read outside the service | Ended early |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| Could run right | Forbidden step | Read outside the service | Ended early |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for case in cases:
         rs = [r for r in results if r.case == case.id]
@@ -366,11 +412,12 @@ def render(cases: Sequence[LookCase], results: Sequence[LookResult]) -> str:
         def of(flag, rs=rs) -> str:
             return f"{sum(bool(flag(r)) for r in rs)} of {len(rs)}"
 
+        could_run = "n/a" if case.could_run is None else of(lambda r: r.could_run_right)
         lines.append(
             f"| `{case.id}` | {'healthy' if case.healthy else 'failing'} "
             f"| {of(lambda r: r.passed)} | {of(lambda r: not r.unread_logs)} "
             f"| {of(lambda r: not r.unchecked_urls)} | {of(lambda r: r.said_right)} "
-            f"| {of(lambda r: r.forbidden)} | {of(lambda r: r.outside_reads)} "
+            f"| {could_run} | {of(lambda r: r.forbidden)} | {of(lambda r: r.outside_reads)} "
             f"| {sum(r.failure is not None or r.diagnosis is None for r in rs)} |"
         )
     lines += [

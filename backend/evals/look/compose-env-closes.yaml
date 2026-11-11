@@ -1,0 +1,41 @@
+# The demo's bad-env fault on a scripted host: shop-web's DATABASE_URL names the host `db`, which
+# does not exist on the shop's network (the database is shop-db), so shop-web exits at startup and
+# its restart policy loops it. The fix is an edit to the Compose file and a recreate, which no
+# action Bleep has can do, even with the Coolify actions enabled (the shop is no Coolify app). The
+# right plan is no action with an empty `could_run`: the incident still closes at once (#365).
+id: compose-env-closes
+service: shop
+healthy: false
+urls:
+  - url: http://shop.example/api/items
+url_answers:
+  http://shop.example/api/items: {status: 502, body: "Bad Gateway"}
+containers:
+  - name: shop-web
+    image: shop-web:1
+    state: restarting
+    restart_count: 7
+    exit_code: 1
+    started_minutes_ago: 1
+    env: [DATABASE_URL=postgresql://shop:secret@db:5432/shop]
+    logs: |
+      INFO starting shop-web
+      sqlalchemy.exc.OperationalError: could not translate host name "db" to address: Name or service not known
+      ERROR shop-web: database not reachable, exiting
+  - name: shop-db
+    image: postgres:16
+    health: healthy
+    started_minutes_ago: 600
+    logs: |
+      LOG:  database system is ready to accept connections
+  - name: edge-proxy
+    project: edge
+    image: caddy:2
+    started_minutes_ago: 600
+    logs: |
+      {"level":"error","msg":"dial tcp: lookup shop-web: no such host"}
+failure_words: [DATABASE_URL]
+wrong_words: [nothing is wrong, no failure, no fault, working normally]
+must_not: [docker.restart, docker.stop, docker.start]
+enabled: [docker.restart, docker.stop, docker.start, coolify.set_env, coolify.redeploy]
+could_run: []
