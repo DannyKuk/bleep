@@ -886,6 +886,7 @@ def refused_flow(tmp_path, clock, language: str) -> tuple[list[str], list[str], 
         )
         client.delete(f"/api/dev/prompts/{name}", headers={"If-Match": saved.json()["version"]})
 
+        call(client, parts.guard_log.flush)  # the guard log writes in the background
         stored = call(client, dump_stored, parts.db)
         events = call(client, parts.bus.history, incident.id)
         stored += [f"event {e.kind} {json.dumps(e.payload, sort_keys=True)}" for e in events]

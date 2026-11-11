@@ -335,6 +335,10 @@ TEMPLATED = {
 # Named from a value at run time (`incident_{status}`, `rate_no_{target}`, `url_https_{hint}`) or
 # by the body limit, which renders it without raising.
 BUILT = {
+    "prompt_brace_single_close",
+    "prompt_brace_single_open",
+    "prompt_brace_unclosed",
+    "prompt_brace_unknown",
     "body_too_large_bytes",
     "host_key_busy",
     "host_key_unavailable",
@@ -400,19 +404,41 @@ def test_the_api_texts_are_not_overridable_and_no_model_reads_them():
 # --- braces in an override, plugin reasons, and a name from the request ---
 
 
-@pytest.mark.parametrize("text", ["a { b", "a } b", "{x!r}", "{0}", "{x:>5}"])
-def test_an_override_with_bad_braces_is_said_in_german_and_reads_as_its_own_text_in_english(text):
+# The braces Python's formatter refuses, by what the text holds: the template, a part of the German
+# text and whether the English reads as Python's own message.
+BRACES = [
+    ("a } b", "prompt_brace_single_close", "Ein einzelnes '}' ist nicht erlaubt", True),
+    ("{ok} }", "prompt_brace_single_close", "Ein einzelnes '}' ist nicht erlaubt", True),
+    ("a {", "prompt_brace_single_open", "Ein einzelnes '{' am Ende ist nicht erlaubt", True),
+    ("a { b", "prompt_brace_unclosed", "nie mit '}' geschlossen", True),
+    ("{name", "prompt_brace_unclosed", "nie mit '}' geschlossen", True),
+    ("{{ok}} {a:", "prompt_brace_unknown", "kein einfacher {name}-Platzhalter", False),
+    ("{a!", "prompt_brace_unknown", "kein einfacher {name}-Platzhalter", False),
+    ("{a!rr}", "prompt_brace_unknown", "kein einfacher {name}-Platzhalter", False),
+]
+
+
+@pytest.mark.parametrize(("text", "template", "german", "python_says"), BRACES)
+def test_each_kind_of_bad_braces_has_its_own_text_in_both_languages(
+    text, template, german, python_says
+):
     error = refused(prompts.check_override, "llm/json_retry", text)
-    assert error.template in {"prompt_bad_braces", "prompt_placeholder_form"}
+
+    assert error.template == template
+    assert german in said(error, "de")
+    assert said(error, "de").startswith("Ungültige Klammern: ")
+    assert "expected" not in said(error, "de") and "encountered" not in said(error, "de")
+    assert said(error, "en").startswith("bad braces: ")
+    if python_says:
+        assert said(error, "en") == str(error)
+
+
+@pytest.mark.parametrize("text", ["{x!r}", "{0}", "{x:>5}"])
+def test_a_placeholder_that_is_not_a_plain_name_is_said_in_german(text):
+    error = refused(prompts.check_override, "llm/json_retry", text)
+    assert error.template == "prompt_placeholder_form"
     assert said(error, "en") == str(error)
-    assert said(error, "de") != str(error)
-    assert not said(error, "de").startswith(("bad braces", "only plain"))
-
-
-def test_a_placeholder_that_is_not_a_plain_name_names_it_in_german():
-    error = refused(prompts.check_override, "llm/json_retry", "{0}")
-    assert said(error, "de") == "Erlaubt sind nur einfache {name}-Platzhalter, gefunden wurde {0}"
-    assert said(error, "en") == "only plain {name} placeholders are allowed, got {0}"
+    assert said(error, "de").startswith("Erlaubt sind nur einfache {name}-Platzhalter")
 
 
 class _Stub:

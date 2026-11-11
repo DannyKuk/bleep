@@ -91,13 +91,39 @@ class PromptError(Exception):
         self.values = values
 
 
+def _brace_template(text: str) -> str:
+    """The `api/` template for text `string.Formatter` refused for its braces, found by reading
+    the braces rather than Python's message: a `}` alone, a `{` at the end, a field never closed
+    (nothing but its name follows), or something else, which has no reason of its own."""
+    i = 0
+    while i < len(text):
+        if text[i : i + 2] in ("{{", "}}"):
+            i += 2
+        elif text[i] == "}":
+            return "prompt_brace_single_close"
+        elif text[i] == "{":
+            rest = text[i + 1 :]
+            if not rest:
+                return "prompt_brace_single_open"
+            close = rest.find("}")
+            name = rest if close < 0 else rest[:close]
+            if any(char in "{:!" for char in name):
+                return "prompt_brace_unknown"
+            if close < 0:
+                return "prompt_brace_unclosed"
+            i += close + 2  # a field with just a name: the problem is further on
+        else:
+            i += 1
+    return "prompt_brace_unknown"
+
+
 def placeholders(text: str) -> set[str]:
     """The `{name}` placeholders in a prompt. `{{` and `}}` are literal braces."""
     names: set[str] = set()
     try:
         parsed = list(string.Formatter().parse(text))
     except ValueError as error:
-        raise PromptError(f"bad braces: {error}", "prompt_bad_braces", reason=str(error)) from error
+        raise PromptError(f"bad braces: {error}", _brace_template(text)) from error
     for _, field, spec, conversion in parsed:
         if field is None:
             continue
