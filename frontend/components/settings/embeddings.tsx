@@ -23,6 +23,7 @@ const fields = (t: EmbeddingMessages): Field[] => [
     env: "EMBEDDINGS_PROVIDER",
     options: [
       { value: "local", label: t.local },
+      { value: "server", label: t.server },
       { value: "openai", label: t.openai },
     ],
   },
@@ -44,14 +45,15 @@ export function embeddingsWarning(
   const embedderChanged =
     reset ||
     changed.includes("provider") ||
-    (changed.includes("model") && draft.provider === "openai");
+    (changed.includes("model") && draft.provider !== "local");
   return embedderChanged ? t.reembed : t.scoreOnly;
 }
 
 /**
  * The embedder behind memory and knowledge search. A change applies at the next start, so a save
  * asks first, and the panel says so while a restart is needed. The endpoint's key is shown only
- * when the embedder in force is an endpoint, since the local model needs none (#372).
+ * when the embedder in force is an endpoint, since the built-in model and a local server need
+ * none (#372, #442).
  */
 export function EmbeddingSettings({
   view,

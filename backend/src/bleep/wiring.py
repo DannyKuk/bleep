@@ -205,22 +205,24 @@ def tracing_env() -> TracingOverrides:
 
 
 def build_embedder(choice: EmbeddingsChoice, secrets: SecretStore) -> Embedder:
-    """The local model unless the choice names an OpenAI-compatible endpoint whose model and base
-    URL are set; an endpoint without them falls back to the local model, with a warning. The
-    model names the endpoint's model only: the local model is the one baked into the image, and
-    another could not be downloaded there. The endpoint's address and key are read from the
-    secret store at each call. `min_score` sets recall's cut-off; unset, the model's own."""
-    if choice.provider == "openai":
+    """The built-in model unless the choice names an OpenAI-compatible endpoint, or a local
+    server, whose model and base URL are set; one without them falls back to the built-in model,
+    with a warning. The model names the endpoint's or the server's model only: the built-in model
+    is the one baked into the image, and another could not be downloaded there. The address is
+    read from the secret store at each call, and so is an endpoint's key; a local server is sent
+    none. `min_score` sets recall's cut-off; unset, the model's own."""
+    if choice.provider in ("openai", "server"):
         if choice.model and secrets.get(EMBEDDINGS_URL_ENV) is not None:
             return OpenAICompatEmbedder(
                 lambda: _value(secrets.get(EMBEDDINGS_URL_ENV)),
                 choice.model,
-                lambda: secrets.get(EMBEDDINGS_KEY_ENV),
+                (lambda: secrets.get(EMBEDDINGS_KEY_ENV)) if choice.provider == "openai" else None,
                 min_score=choice.min_score,
+                kind=choice.provider,
             )
         log.warning(
-            "embeddings: an endpoint needs EMBEDDINGS_BASE_URL and EMBEDDINGS_MODEL; the local "
-            "model embeds until both are set and Bleep is restarted"
+            "embeddings: an endpoint or a local server needs EMBEDDINGS_BASE_URL and "
+            "EMBEDDINGS_MODEL; the built-in model embeds until both are set and Bleep is restarted"
         )
     return FastEmbedEmbedder(DEFAULT_LOCAL_MODEL, min_score=choice.min_score)
 
@@ -231,12 +233,13 @@ def _value(secret: SecretStr | None) -> str | None:
 
 def start_embedder(store: SettingsStore, secrets: SecretStore) -> Embedder:
     """The embedder the settings in force name, recorded in the store so a change saved later
-    shows as needing a restart. An endpoint that is not complete is the local model."""
+    shows as needing a restart. An endpoint or a server that is not complete is the built-in
+    model."""
     choice = store.start_embeddings()
-    if choice.provider == "local" and store.embeddings().provider == "openai":
+    if choice.provider == "local" and store.embeddings().provider != "local":
         log.warning(
-            "embeddings: an endpoint needs EMBEDDINGS_BASE_URL and EMBEDDINGS_MODEL; the local "
-            "model embeds until both are set and Bleep is restarted"
+            "embeddings: an endpoint or a local server needs EMBEDDINGS_BASE_URL and "
+            "EMBEDDINGS_MODEL; the built-in model embeds until both are set and Bleep is restarted"
         )
     return build_embedder(choice, secrets)
 

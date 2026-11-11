@@ -212,6 +212,45 @@ def test_an_embeddings_endpoint_needs_its_address_and_model_first(app):
     }
 
 
+def test_a_local_server_needs_its_address_and_model_but_no_key(app):
+    no_address = put_settings(app, {"embeddings": {"provider": "server", "model": "bge-m3"}})
+    assert no_address.status_code == 422
+    assert "EMBEDDINGS_BASE_URL first" in no_address.json()["detail"]
+
+    put_secret(app, "EMBEDDINGS_BASE_URL", "http://host.docker.internal:1234/v1")
+    no_model = put_settings(app, {"embeddings": {"provider": "server"}})
+    assert no_model.status_code == 422 and "EMBEDDINGS_MODEL" in no_model.json()["detail"]
+
+    app.parts.settings_store.start_embeddings()
+    saved = put_settings(app, {"embeddings": {"provider": "server", "model": "bge-m3"}})
+    assert saved.status_code == 200  # no EMBEDDINGS_API_KEY was needed
+    assert saved.json()["embeddings"]["provider"] == "server"
+    assert saved.json()["restart_needed"] == ["embeddings"]  # it re-embeds at the next start
+
+
+def test_the_embeddings_address_is_not_cleared_while_a_local_server_embeds(app):
+    put_secret(app, "EMBEDDINGS_BASE_URL", "http://host.docker.internal:1234/v1")
+    put_settings(app, {"embeddings": {"provider": "server", "model": "bge-m3"}})
+    app.parts.settings_store.start_embeddings()
+
+    refused = app.delete("/api/secrets/EMBEDDINGS_BASE_URL")
+    assert refused.status_code == 409 and "built-in model" in refused.json()["detail"]
+
+
+def test_an_embeddings_provider_the_env_sets_wins_over_a_local_server_on_the_page(
+    start, settings, monkeypatch
+):
+    monkeypatch.setenv("EMBEDDINGS_PROVIDER", "local")
+    app = start(
+        Settings(
+            **settings.model_dump(include={"data_dir", "hosts_file", "admin_password", "secret"})
+        )
+    )
+    put_secret(app, "EMBEDDINGS_BASE_URL", "http://host.docker.internal:1234/v1")
+    refused = put_settings(app, {"embeddings": {"provider": "server", "model": "bge-m3"}})
+    assert refused.status_code == 422 and "EMBEDDINGS_PROVIDER" in refused.json()["detail"]
+
+
 def test_a_changed_embedder_says_a_restart_is_needed(app):
     store = app.parts.settings_store
     store.start_embeddings()  # what the running embedder was built with

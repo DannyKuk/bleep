@@ -41,9 +41,10 @@ class Settings(BaseSettings):
     )
     telegram_chat_id: str | None = Field(default=None, validation_alias="TELEGRAM_CHAT_ID")
     # Embeddings for long-term memory, also without the prefix: the local model by default, or
-    # any OpenAI-compatible `/embeddings` endpoint. A change re-embeds the memory on the next boot.
+    # any OpenAI-compatible `/embeddings` endpoint, or a local server that needs no key. A change
+    # re-embeds the memory on the next boot.
     # Each one set here wins over the settings page, which can set them too (#372).
-    embeddings_provider: Literal["local", "openai"] = Field(
+    embeddings_provider: Literal["local", "openai", "server"] = Field(
         default="local", validation_alias=AliasChoices("EMBEDDINGS_PROVIDER", "embeddings_provider")
     )
     embeddings_model: str | None = Field(

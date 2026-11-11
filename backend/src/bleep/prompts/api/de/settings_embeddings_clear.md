@@ -1,1 +1,1 @@
-{name} lässt sich nicht löschen, solange der Endpunkt das Gedächtnis einbettet; wähle das lokale Modell, starte Bleep neu und lösche es dann
+{name} lässt sich nicht löschen, solange ein Endpunkt oder ein lokaler Server das Gedächtnis einbettet; wähle das eingebaute Modell, starte Bleep neu und lösche es dann

@@ -199,11 +199,11 @@ class SettingsStore:
         return _layer(_layer(EmbeddingsChoice(), self._chosen("embeddings")), self._env_embeddings)
 
     def embedder_choice(self) -> EmbeddingsChoice:
-        """The embedder `embeddings()` builds: an endpoint only with its model and address set,
-        else the local model, whose model is the image's."""
+        """The embedder `embeddings()` builds: an endpoint or a local server only with its model
+        and address set, else the built-in model, whose model is the image's."""
         chosen = self.embeddings()
         address = self._secrets.get(EMBEDDINGS_URL_ENV) if self._secrets is not None else None
-        if chosen.provider == "openai" and chosen.model and address is not None:
+        if chosen.provider != "local" and chosen.model and address is not None:
             return chosen
         return EmbeddingsChoice(min_score=chosen.min_score)
 
@@ -214,13 +214,13 @@ class SettingsStore:
         return self._started_embeddings
 
     def clear_refused(self, name: str) -> SettingsRefused | None:
-        """Why a secret cannot be cleared now: the endpoint's address while the running embedder
-        is that endpoint, which would fail every embed until a restart."""
+        """Why a secret cannot be cleared now: the address of the endpoint or the local server
+        while the running embedder is that one, which would fail every embed until a restart."""
         started = self._started_embeddings
-        if name == EMBEDDINGS_URL_ENV and started is not None and started.provider == "openai":
+        if name == EMBEDDINGS_URL_ENV and started is not None and started.provider != "local":
             return SettingsRefused(
-                f"{EMBEDDINGS_URL_ENV} cannot be cleared while the endpoint embeds the memory; "
-                "choose the local model, restart Bleep, then clear it",
+                f"{EMBEDDINGS_URL_ENV} cannot be cleared while an endpoint or a local "
+                "server embeds the memory; choose the built-in model, restart Bleep, then clear it",
                 "settings_embeddings_clear",
                 name=EMBEDDINGS_URL_ENV,
             )
@@ -467,7 +467,7 @@ class SettingsStore:
             embeddings, tracing = self.embeddings(), self.tracing()
         finally:
             self._overrides = current
-        if embeddings != embeddings_before and embeddings.provider == "openai":
+        if embeddings != embeddings_before and embeddings.provider != "local":
             if not embeddings.model:
                 raise SettingsRefused(
                     "an embeddings endpoint needs its model (EMBEDDINGS_MODEL)",

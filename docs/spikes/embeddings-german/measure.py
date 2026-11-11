@@ -5,8 +5,12 @@ queries (#377), with what a full first ingest would embed, so cost can be worked
     cd backend && EMBEDDINGS_API_KEY=... uv run python ../docs/spikes/embeddings-german/measure.py \
         openai --base-url https://openrouter.ai/api/v1 --model google/gemini-embedding-2
 
-`local` is Bleep's default as Bleep runs it (fastembed, bge-small, two threads); `openai` is
-Bleep's `OpenAICompatEmbedder`, with the key read from the environment variable named by
+    cd backend && uv run python ../docs/spikes/embeddings-german/measure.py server \
+        --base-url http://localhost:1234/v1 --model text-embedding-bge-m3
+
+`local` is Bleep's default as Bleep runs it (fastembed, bge-small, two threads); `server` is a
+local server (LM Studio, Ollama) through `OpenAICompatEmbedder` with no key (#442); `openai` is
+the same class for an endpoint, with the key read from the environment variable named by
 `--key-env` (default EMBEDDINGS_API_KEY) and never printed or written. Every text goes through
 `CountingEmbedder`, so the totals are what was embedded. `--list-chunks` prints the German set's
 chunk ids and exits (no embedder). `--out` writes the numbers as JSON.
@@ -89,9 +93,13 @@ def build_embedder(args: argparse.Namespace) -> Embedder:
     if args.provider == "local":
         cache = os.environ.get("FASTEMBED_CACHE_PATH")
         return FastEmbedEmbedder(args.model or "BAAI/bge-small-en-v1.5", cache_dir=cache)
-    key = os.environ.get(args.key_env)
     if not args.base_url or not args.model:
-        sys.exit("openai needs --base-url and --model")
+        sys.exit(f"{args.provider} needs --base-url and --model")
+    if args.provider == "server":  # a local server needs no key, as in Bleep (#442)
+        return OpenAICompatEmbedder(
+            args.base_url, args.model, min_score=args.min_score, kind="server"
+        )
+    key = os.environ.get(args.key_env)
     if not key:
         sys.exit(f"openai needs the key in the environment variable {args.key_env}")
     return OpenAICompatEmbedder(
@@ -317,7 +325,7 @@ def render(result: dict) -> str:
 
 async def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("provider", nargs="?", choices=["local", "openai"])
+    parser.add_argument("provider", nargs="?", choices=["local", "openai", "server"])
     parser.add_argument("--base-url")
     parser.add_argument("--model")
     parser.add_argument("--key-env", default="EMBEDDINGS_API_KEY")

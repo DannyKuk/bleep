@@ -1,1 +1,1 @@
-{name} cannot be cleared while the endpoint embeds the memory; choose the local model, restart Bleep, then clear it
+{name} cannot be cleared while an endpoint or a local server embeds the memory; choose the built-in model, restart Bleep, then clear it
