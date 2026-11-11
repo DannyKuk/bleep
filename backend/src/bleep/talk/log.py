@@ -3,7 +3,8 @@ that was off can be reviewed from the real conversation, not from memory.
 
 `Talk.reply` adds an entry for each message it reads, with the reading, what the checks made of
 it and what it cost; the surface then adds what it showed (`shown`) and the press of the offer's
-buttons (`pressed`), found by the offer's id. In memory, one ring per surface, like the turns
+buttons (`pressed`), found by the offer's id, and for a look the panel followed, the summary
+it ended with (`looked`, #458). In memory, one ring per surface, like the turns
 (`talk.history`): a restart empties it, and the person's words, which may hold anything, are
 never written to disk, and are kept only as Bleep read them. `GET /api/talk/log` reads it, as
 JSON or as the Markdown transcript `transcript` builds (docs/design/app.md). The transcript is
@@ -63,6 +64,14 @@ class TalkLog:
             return None
         entry.press = TalkPress(at=self.clock(), yes=yes)
         return entry.press
+
+    def looked(self, surface: TalkSurface, incident_id: str, summary: str) -> None:
+        """Keep the summary a followed look ended with on the press that opened it or found it
+        open (#458), once: the first one stands."""
+        for entry in self._rings[surface]:
+            press = entry.press
+            if press is not None and press.incident_id == incident_id and not press.ended:
+                press.ended = summary
 
     def exchanges(self) -> list[TalkExchange]:
         """Each surface's entries, oldest first, the panel's before Telegram's."""
@@ -130,6 +139,8 @@ def _details(exchange: TalkExchange) -> list[str]:
         button = yes_label(exchange.offer) if exchange.press.yes else no_label()
         said = exchange.press.line or _line("log_press_running")
         lines.append(_line("log_press", button=button, line=said))
+        if exchange.press.ended:
+            lines.append(_line("log_look_ended", line=" ".join(exchange.press.ended.split())))
     lines.append(_cost(exchange))
     return lines
 

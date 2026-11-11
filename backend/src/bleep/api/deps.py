@@ -5,6 +5,7 @@ from bleep.config import Settings
 from bleep.incidents.expectations import Expectations
 from bleep.incidents.runner import IncidentRunner
 from bleep.talk.actions import Actions
+from bleep.talk.progress import LookFollower
 from bleep.wiring import AppParts
 
 
@@ -42,6 +43,22 @@ def get_actions(request: Request) -> Actions:
         zone=parts.settings_store.zone,
         language=parts.settings_store.language,
         looked=parts.panel.turns.about,
+    )
+
+
+def get_look_follower(request: Request) -> LookFollower:
+    """What the chat panel follows a look it started with (#458), reading the run's checkpoint
+    through the runner."""
+    parts = get_parts(request)
+    return LookFollower(
+        parts.incidents,
+        parts.bus,
+        parts.approvals,
+        get_runner(request),
+        parts.registry,
+        parts.talk.log,
+        clock=parts.quiet.clock,
+        language=parts.settings_store.language,
     )
 
 

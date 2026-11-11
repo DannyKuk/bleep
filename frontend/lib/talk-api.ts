@@ -1,5 +1,5 @@
-// The chat panel's contract: `POST /api/talk/messages` and `POST /api/talk/confirms/{id}`
-// (schemas/talk.py). Written by hand like `api-types.ts`. The panel sends the person's words and
+// The chat panel's contract: `POST /api/talk/messages`, `POST /api/talk/confirms/{id}` and
+// `GET /api/talk/looks/{incident_id}` (schemas/talk.py). Written by hand like `api-types.ts`. The panel sends the person's words and
 // renders what comes back; every word Bleep says is the backend's.
 
 import { ApiError, apiFetch } from "@/lib/api";
@@ -30,6 +30,19 @@ export interface ChatAnswer {
 
 export interface ConfirmResult {
   line: string;
+  /** The incident a look's press opened or found open, which the panel then follows (#458). */
+  incident_id: string | null;
+}
+
+/** `running` until a plan waits for a yes (`waiting`) or the incident ends (`ended`). */
+export type LookState = "running" | "waiting" | "ended";
+
+/** How a look the panel follows goes: what it does now, or its summary, and what it did. */
+export interface LookProgress {
+  state: LookState;
+  line: string;
+  links: TalkLink[];
+  steps: string[];
 }
 
 /**
@@ -63,6 +76,9 @@ export const pressConfirm = (confirmId: string, yes: boolean) =>
     method: "POST",
     body: JSON.stringify({ yes }),
   });
+
+export const fetchLook = (incidentId: string) =>
+  apiFetch<LookProgress>(`/api/talk/looks/${encodeURIComponent(incidentId)}`);
 
 export function linkHref(link: TalkLink): string {
   return link.kind === "service"

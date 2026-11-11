@@ -3,7 +3,7 @@
 import { ArrowUp, Download, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 import { Bleep } from "@/components/bleep/bleep";
 import { useOverall } from "@/components/overall-state";
@@ -13,6 +13,7 @@ import { stateMood } from "@/lib/mood";
 import { idFromSegment } from "@/lib/routes";
 import {
   MESSAGE_MAX_CHARS,
+  fetchLook,
   fetchTalkLog,
   isFinished,
   linkHref,
@@ -20,6 +21,7 @@ import {
   sendMessage,
   splitLinks,
   type ChatConfirm,
+  type LookProgress,
   type TalkLink,
 } from "@/lib/talk-api";
 
@@ -29,8 +31,18 @@ const BAR_GAP_PX = 12;
 const REVOKE_AFTER_MS = 40_000; // as FileSaver.js waits before freeing a saved file's URL
 // As `schemas/talk.py` `ChatMessage.incident_id`: a page path that is no incident id gets no chip.
 const INCIDENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+// How often a look the panel follows is asked about (#458): often while it runs, seldom while it
+// waits (for a yes on the incident's page, for the model or for its host).
+const LOOK_RUNNING_MS = 2_000;
+const LOOK_WAITING_MS = 10_000;
 
-type Offer = ChatConfirm & { line?: string; pressing?: boolean; failed?: string };
+type Offer = ChatConfirm & {
+  line?: string;
+  pressing?: boolean;
+  failed?: string;
+  /** The incident a look's press opened or found open: the panel follows it. */
+  looking?: string;
+};
 
 type Turn =
   | { key: number; who: "you"; text: string }
@@ -107,9 +119,13 @@ export function ChatPanel() {
     return () => window.clearInterval(timer);
   }, [waiting]);
 
+  const scrollDown = useCallback(() => {
+    if (list.current) list.current.scrollTop = list.current.scrollHeight;
+  }, []);
+
   useEffect(() => {
-    if (open && list.current) list.current.scrollTop = list.current.scrollHeight;
-  }, [open, turns, sending]);
+    if (open) scrollDown();
+  }, [open, turns, sending, scrollDown]);
 
   useEffect(() => {
     if (open) input.current?.focus();
@@ -153,8 +169,8 @@ export function ChatPanel() {
   async function press(key: number, offer: Offer, yes: boolean) {
     updateOffer(key, { pressing: true, failed: undefined });
     try {
-      const { line } = await pressConfirm(offer.id, yes);
-      updateOffer(key, { pressing: false, line });
+      const { line, incident_id } = await pressConfirm(offer.id, yes);
+      updateOffer(key, { pressing: false, line, looking: incident_id ?? undefined });
     } catch (error) {
       updateOffer(key, { pressing: false, failed: failure(error) });
     }
@@ -275,6 +291,9 @@ export function ChatPanel() {
                   onPress={(yes) => press(turn.key, turn.offer!, yes)}
                 />
               )}
+              {turn.offer?.looking && (
+                <LookFollow incidentId={turn.offer.looking} onChange={scrollDown} />
+              )}
             </li>
           );
         })}
@@ -343,6 +362,79 @@ function Answer({ text, links }: { text: string; links: TalkLink[] }) {
       )}
     </>
   );
+}
+
+/**
+ * A look the panel started, followed until its incident ends (#458): what the run does now, its
+ * summary once its plan waits or it ended, and what it did. Asked about every 2 s while it runs
+ * and every 10 s while it waits; a failed ask keeps the last answer, says so and asks again. Only
+ * an answer that shows something new scrolls the chat down. It stops at the end, or when the
+ * panel closes.
+ */
+function LookFollow({ incidentId, onChange }: { incidentId: string; onChange: () => void }) {
+  const [look, setLook] = useState<LookProgress | null>(null);
+  const [lost, setLost] = useState(false);
+
+  useEffect(() => {
+    let stopped = false;
+    let timer: number | undefined;
+    let pace = LOOK_RUNNING_MS;
+    async function ask() {
+      try {
+        const now = await fetchLook(incidentId);
+        if (stopped) return;
+        setLook((shown) => (shows(shown, now) ? shown : now));
+        setLost(false);
+        if (now.state === "ended") return;
+        pace = now.state === "waiting" ? LOOK_WAITING_MS : LOOK_RUNNING_MS;
+      } catch {
+        if (stopped) return;
+        setLost(true);
+      }
+      timer = window.setTimeout(ask, pace);
+    }
+    void ask();
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [incidentId]);
+
+  useEffect(onChange, [look, lost, onChange]);
+
+  if (!look && !lost) return null;
+  return (
+    <div
+      data-testid="look"
+      className="rounded-[18px] rounded-bl-md border border-line bg-surface px-3.5 py-2.5 break-words whitespace-pre-line"
+    >
+      {look && (
+        <p className={look.state === "running" ? "text-ink-2" : undefined}>
+          <Answer text={look.line} links={look.links} />
+        </p>
+      )}
+      {look && look.steps.length > 0 && (
+        <>
+          <p className="mt-2 text-[13px] font-bold text-ink-2">What I did</p>
+          <ul aria-label="What I did" className="list-disc pl-5 text-[13.5px] whitespace-normal">
+            {look.steps.map((step, index) => (
+              <li key={index}>{step}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {lost && (
+        <p role="alert" className="mt-1 text-[13px] font-bold text-down">
+          Lost track of the look for a moment. Trying again…
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Whether `next` shows what `shown` does, so a poll that brought nothing new changes nothing. */
+function shows(shown: LookProgress | null, next: LookProgress): boolean {
+  return shown !== null && JSON.stringify(shown) === JSON.stringify(next);
 }
 
 function OfferButtons({

@@ -5,8 +5,9 @@ It reads a message with the same `Talk` as Telegram and runs a confirmed offer t
 prompts and the actions, not the transcript (docs/design/app.md). A message never changes
 anything; an offer comes back with two buttons, and only a press of Yes (or Send) runs it, once,
 within `talk.confirms.CONFIRM_TTL` and while its incident is open. A "yes" to a waiting plan
-points to the incident's page, where the plan is shown in full with its own buttons. What it
-showed and each press go into the talk log (#411).
+points to the incident's page, where the plan is shown in full with its own buttons. A look's
+press returns the incident it opened or found open, which the panel follows through
+`talk.progress` (#458). What it showed and each press go into the talk log (#411).
 """
 
 import asyncio
@@ -94,8 +95,21 @@ class Panel:
             return ConfirmResult(line=said("answer_confirm_expired", language))
         # Logged as it takes the offer: a second press, answered while this one runs, is not it.
         press = self.talk.log.pressed("panel", confirm_id, yes)
-        run = actions.run(taken) if yes else said("answer_confirm_no", language)
-        return ConfirmResult(line=await answered(press, run))
+        if not yes:
+            return ConfirmResult(line=await answered(press, said("answer_confirm_no", language)))
+        if taken.kind != "look_again":
+            return ConfirmResult(line=await answered(press, actions.run(taken)))
+        looked: str | None = None
+
+        async def look() -> str:
+            nonlocal looked
+            line, looked = await actions.look(taken)
+            return line
+
+        line = await answered(press, look())
+        if press is not None:
+            press.incident_id = looked
+        return ConfirmResult(line=line, incident_id=looked)
 
 
 async def _plan_line(offer: Offer, actions: Actions) -> str:
