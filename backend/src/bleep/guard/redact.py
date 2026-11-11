@@ -323,55 +323,125 @@ def _names_a_setting(match: re.Match[str]) -> bool:
     return _is_secret_key(path.rpartition(":")[2])
 
 
-_QUOTE_OR_ESCAPE = re.compile(r"\\.|\"")
-# What follows the closing quote of a JSON string: the brackets it closes, then a comma and the
-# next key (compact JSON) or the end of the value, with or without a comma.
-_JSON_STRING_END = re.compile(r"\"[}\]]*+(?:,(?=\"[^\"\\]{0,96}+\":)|,?\Z)")
-_JSON_OPENER = re.compile(r"[:\[,{][ \t]{0,8}+\Z")  # before a JSON value's or list item's quote
+# One JSON token after blanks: a string (its body, then its closing quote, missing when the line
+# ends first), a number or literal, or a bracket, comma or colon. Only the first `-` of a number
+# is optional, so a date (`2024-01-01`) reads as numbers in a row, which JSON never has.
+_JSON_TOKEN = re.compile(
+    r"[ \t]*+(?:(\"(?:[^\"\\\n]|\\.)*+)(\")?|-?[0-9]++(?:\.[0-9]++)?(?:[eE][+-]?[0-9]++)?"
+    r"|true|false|null|([{}\[\],:]))"
+)
+# JSON tokens in a row, the last string maybe left open, with `<redacted>` as a token too
+_JSON_RUN = re.compile(
+    r"(?:\"(?:[^\"\\\n]|\\.)*+\"|-?[0-9]++(?:\.[0-9]++)?(?:[eE][+-]?[0-9]++)?|true|false|null"
+    r"|<redacted>|[{}\[\],:])*+(?:\"(?:[^\"\\\n]|\\.)*+)?"
+)
+_BLANKS = re.compile(r"[ \t]*+")
+_OPENER_OF = {"}": "{", "]": "["}
 
 
 @lru_cache(maxsize=16)
-def _line_quotes(text: str, line_start: int) -> tuple[int, ...]:
-    """The positions of the `"` that no backslash escapes on the line of `text` starting at
-    `line_start`: read once per line, so each pair on it costs two bisections, not a scan."""
+def _json_strings(text: str, line_start: int) -> tuple[tuple[int, ...], tuple[int, ...], int]:
+    """The line of `text` at `line_start` read as JSON: where each string that is a value (not a
+    key) opens and closes, and where its JSON ends; nothing when the line is not JSON from where
+    its JSON starts to its end or the JSON's end. The JSON starts at the line's first `{` (or `[`
+    when it has none) with no `"` before it, after a log prefix, or at the line's start when that
+    is a key, as on a line of pretty-printed JSON. Read once per line, so each pair on it costs a
+    bisection."""
     end = text.find("\n", line_start)
-    found = _QUOTE_OR_ESCAPE.finditer(text, line_start, len(text) if end < 0 else end)
-    return tuple(quote.start() for quote in found if quote.group() == '"')
+    end = len(text) if end < 0 else end
+    pos = _BLANKS.match(text, line_start, end).end()
+    member_line = text.startswith('"', pos)  # one member of an object, as pretty-printed
+    if member_line:
+        stack, expect = ["{"], "key"
+    else:
+        pos = text.find("{", line_start, end)
+        pos = text.find("[", line_start, end) if pos < 0 else pos
+        if pos < 0 or '"' in text[line_start:pos]:
+            return (), (), line_start
+        stack, expect = [], "value"
+    opens: list[int] = []
+    closes: list[int] = []
+    fresh = False  # right after `{` or `[`, where the bracket may close at once
+    keys = 0  # of the outermost object
+    while pos < end and expect != "done":
+        token = _JSON_TOKEN.match(text, pos, end)
+        if token is None:
+            break
+        body, mark = token.group(1), token.group(3)
+        if body is not None and not token.group(2):
+            break  # a string the line ends inside: what comes after it is unknown
+        outermost = len(stack) == 1
+        if body is not None and expect == "key" and not (member_line and outermost and keys):
+            expect = "colon"
+            keys += outermost
+        elif body is not None and expect == "value":
+            opens.append(token.start(1))
+            closes.append(token.start(2))
+            expect = "comma"
+        elif body is None and mark is None and expect == "value":
+            expect = "comma"
+        elif mark in ("{", "[") and expect == "value":
+            stack.append(mark)
+            expect = "key" if mark == "{" else "value"
+        elif mark in _OPENER_OF and stack[-1] == _OPENER_OF[mark] and (fresh or expect == "comma"):
+            stack.pop()
+            expect = "comma" if stack else "done"
+        elif mark == ":" and expect == "colon":
+            expect = "value"
+        elif mark == "," and expect == "comma":
+            expect = "key" if stack[-1] == "{" else "value"
+        else:
+            break
+        fresh = mark in ("{", "[")
+        pos = token.end()
+    if expect != "done" and not _ends_json_line(text, pos, end, expect, fresh):
+        return (), (), line_start
+    return tuple(opens), tuple(closes), pos
 
 
-def _end_in_string(match: re.Match[str], value: str) -> int | None:
-    """Where an unquoted value ends when it sits inside a double-quoted string (an odd number of
-    unescaped `"` before it on its line): at the string's closing quote, if what follows that
-    quote is what follows a string there. In JSON (the string opens after `:`, `[`, `,` or `{`)
-    that is its closing brackets, a comma and the next key; elsewhere (`msg="…"`, a shell word)
-    only the end of the value, since `"a=b"}` in a shell is the value `b}`. None otherwise, and
-    when a backslash comes before the quote: it may escape it (`\\"`), or another (`\\\\"`)."""
+def _ends_json_line(text: str, pos: int, end: int, expect: str, fresh: bool) -> bool:
+    """Whether a line of JSON that is not done may end at `pos`: only blanks follow, after a
+    value (`"a": 1`, `"a": 1,` in pretty-printed JSON) or an opening bracket (`"a": {`). A line
+    with anything else in it, or that stops after a key or a colon, is not read as JSON at all."""
+    if _BLANKS.match(text, pos, end).end() != end:
+        return False
+    return expect in ("comma", "key") or (expect == "value" and fresh)
+
+
+def _end_in_string(match: re.Match[str], value: str, origin: tuple[str, int]) -> int | None:
+    """Where an unquoted value ends when it sits inside a JSON string value: at the string's
+    closing quote, when its line reads as JSON (`_json_strings`) from where the JSON starts up to
+    the end of the value (`{"q": "a=1&token=x","n":1}`). `origin` is the text the match was
+    found in, or the one that text was cut from, and where it starts there. None otherwise, and
+    when a backslash comes before the first quote: it may escape it (`\\"`), or another
+    (`\\\\"`).
+
+    `<redacted>` with JSON tokens after its quote is redaction's own output and ends there,
+    however the line reads: a value hidden whole earlier on the line may have taken a quote
+    with it, after which a second pass no longer reads the line as JSON."""
     end = value.find('"')
     if end < 0 or "\\" in value[:end]:
         return None
-    text, start = match.string, match.start(3)
-    line_start = text.rfind("\n", 0, start) + 1
-    quotes = _line_quotes(text, line_start)
-    before = bisect.bisect_left(quotes, start)
-    if before % 2 == 0:
+    if value[:end] == REDACTED:
+        return end if _JSON_RUN.fullmatch(value, end + 1) else None
+    text, shift = origin
+    start = shift + match.start(3)
+    opens, closes, valid = _json_strings(text, text.rfind("\n", 0, start) + 1)
+    index = bisect.bisect_left(opens, start) - 1
+    if index < 0 or closes[index] != start + end or shift + match.end(3) > valid:
         return None
-    opening, tail = quotes[before - 1], value[end:]
-    if _JSON_OPENER.search(text, max(line_start, opening - 9), opening):
-        return end if _JSON_STRING_END.match(tail) else None
-    return end if tail == '"' else None
+    return end
 
 
-def _after_string(tail: str, depth: int) -> str:
-    """The closing quote, brackets and comma after a value that ended in its string, and the
-    compact JSON after them with its pairs judged as `_redact_inside` judges them."""
-    close = _JSON_STRING_END.match(tail).end()
-    rest = tail[close:]
-    return tail[:close] + (_redact_inside(rest, depth, outside=True) if rest else "")
+def _redact_line_pair(match: re.Match[str]) -> str:
+    return _redact_pair(match, 0, (match.string, 0))
 
 
-def _redact_pair(match: re.Match[str], depth: int = 0, outside: bool = True) -> str:
-    """`outside`: whether `match.string` starts outside any quoted string, so that the quotes
-    before the pair on its line tell whether it sits inside one."""
+def _redact_pair(
+    match: re.Match[str], depth: int = 0, origin: tuple[str, int] | None = None
+) -> str:
+    """`origin`: the text whose lines may be read as JSON for the pair (`_end_in_string`) and
+    where `match.string` starts in it; None inside a value, whose own quotes say nothing."""
     key, separator, value = match.group(1), match.group(2), match.group(3)
     if _names_a_setting(match):
         return match.group(0)
@@ -407,26 +477,29 @@ def _redact_pair(match: re.Match[str], depth: int = 0, outside: bool = True) -> 
         return f"{key}{separator}{_redact_inside(value, depth)}"
     if quote:
         return f"{key}{separator}{quote}{REDACTED}{quote if closed else ''}"
-    if outside and depth < MAX_NESTING and (end := _end_in_string(match, value)) is not None:
-        # `{"q": "a=1&token=x"}`: the string's closing quote, comma and braces stay. Each pair
-        # in the compact JSON after them is a level deeper, so past `MAX_NESTING` such strings
-        # in one run the rest of the run is hidden whole, as before.
-        own, after = value[:end], _after_string(value[end:], depth)
-        return f"{key}{separator}{own if _is_plain(own) else REDACTED}{after}"
+    if origin and depth < MAX_NESTING and (end := _end_in_string(match, value, origin)) is not None:
+        # `{"q": "a=1&token=x"}`: the string's closing quote, comma and braces stay, and the
+        # JSON after them has its pairs judged as a kept value's are, each a level deeper, so
+        # past `MAX_NESTING` such strings in one run the rest of the run is hidden whole, as
+        # before. A plain value before the quote is hidden too, so a second pass reads
+        # `<redacted>` there and ends it the same.
+        rest = value[end + 1 :]
+        place = (origin[0], origin[1] + match.start(3) + end + 1)
+        return f'{key}{separator}{REDACTED}"{_redact_inside(rest, depth, place) if rest else ""}'
     return f"{key}{separator}{REDACTED}"
 
 
 MAX_NESTING = 3
 
 
-def _redact_inside(value: str, depth: int, outside: bool = False) -> str:
+def _redact_inside(value: str, depth: int, origin: tuple[str, int] | None = None) -> str:
     """The pairs inside a value that is kept (`TOKEN_URL=https://x/cb?token=abc`): one pass of
     `_KEY_VALUE` takes the whole value and never looks inside it. Past `MAX_NESTING` levels a value
-    still holding a pair is hidden whole, which bounds the work. `outside`: the value starts
-    outside any quoted string (the compact JSON after one), not inside a value that may."""
+    still holding a pair is hidden whole, which bounds the work. `origin`: where `value` was cut
+    from when it is the JSON after a string (`_redact_pair`)."""
     if depth >= MAX_NESTING:
         return REDACTED if _KEY_VALUE.search(value) else value
-    return _KEY_VALUE.sub(lambda inner: _redact_pair(inner, depth + 1, outside), value)
+    return _KEY_VALUE.sub(lambda inner: _redact_pair(inner, depth + 1, origin), value)
 
 
 # A DSN's user with no password is its key (Sentry: `https://<key>@o0.ingest.sentry.io/1`, also
@@ -707,7 +780,7 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
     ),
     # before the value patterns, so a value holding a token (`password=ghp_...!tail`) is one
     # redaction
-    (_KEY_VALUE, _redact_pair),
+    (_KEY_VALUE, _redact_line_pair),
     (_ELEMENT, _redact_element),
     # --db-password hunter2, --api-key abc, --key abc: a secret option followed by its value
     (
@@ -1360,6 +1433,7 @@ def redact_with_count(text: str) -> tuple[str, int]:
                 found += count
         text = "\n".join(lines)
     text, total = _redact_all(text)
+    _json_strings.cache_clear()  # it holds the unredacted input
     return text, total + found
 
 

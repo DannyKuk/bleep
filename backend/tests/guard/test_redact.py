@@ -489,6 +489,8 @@ def assert_no_slower_than_benign(text: str) -> None:
         '"token=a" ',
         '"token=a\\" ',
         '"q":"token=a",',
+        '["token=a",',
+        '{"q":"token=a","n":[1,1,1,1]},',
     ],
 )
 @pytest.mark.parametrize("length", [4000, 4001])
@@ -1407,22 +1409,98 @@ def test_a_value_with_an_escape_before_its_closing_quote_is_hidden_whole(value, 
         ('password=abc"}', "password=<redacted>"),
         ('x="y" password=abc"', 'x="y" password=<redacted>'),
         ('{"a": "b", password=abc", "n": 1}', '{"a": "b", password=<redacted> "n": 1}'),
-        ('echo "password=abc"', 'echo "password=<redacted>"'),
-        ('msg="GET /?token=abc" status=200', 'msg="GET /?token=<redacted>" status=200'),
-        # in a shell `"a=b"}` is the value `b}`, so only a bare closing quote ends it there
+        # only a line that reads as JSON ends a value at a quote: in a shell `"a=b"}` is `b}`
+        ('echo "password=abc"', 'echo "password=<redacted>'),
+        ('msg="GET /?token=abc" status=200', 'msg="GET /?token=<redacted> status=200'),
+        ('it is 5" tall password=p4ss"', 'it is 5" tall password=<redacted>'),
         ('echo "password=abc"}', 'echo "password=<redacted>'),
         ('echo "password=abc",x', 'echo "password=<redacted>'),
         ('echo "password=ab"cd"', 'echo "password=<redacted>'),
+        ('msg: "a b, token=p4ss","n":"w0rd" end', 'msg: "a b, token=<redacted> end'),
+        ('size: 5" {"k":"v", password=p4ss","k":"w0rd"}', 'size: 5" {"k":"v", password=<redacted>'),
+        (
+            'note=5" password=x:"c token=p4ss","k":rest0fpass',
+            'note=5" password=<redacted> token=<redacted>',
+        ),
+        (
+            'echo \'say "hi\' && export TOKEN=p4ss","a":w0rd',
+            "echo 'say \"hi' && export TOKEN=<redacted>",
+        ),
+        # the line goes on as no JSON does: after the quote, or after the value
         ('{"q": "token=ab"cd"}', '{"q": "token=<redacted>'),
         ('{"q": "token=ab"}cd"}', '{"q": "token=<redacted>'),
         ('{"q": "token=ab","cd"}', '{"q": "token=<redacted>'),
         ('{"q": "token=ab",cd}', '{"q": "token=<redacted>'),
+        ('{"q":"token=ab","k":"cd","k"', '{"q":"token=<redacted>'),
+        ('"k":"token=ab","k":"cd"', '"k":"token=<redacted>'),
+        ('{"q":"token=ab","k":"cd', '{"q":"token=<redacted>'),
+        ('x"{"q":"token=ab","k":"cd"}', 'x"{"q":"token=<redacted>'),
         ('{"q": "token=ab&quot;cd"}', '{"q": "token=<redacted>"}'),
         ('{"q": "token=ab%22cd"}', '{"q": "token=<redacted>"}'),
     ],
 )
 def test_a_value_not_plainly_ending_with_its_string_is_hidden_as_before(text, out):
     assert redact_text(text) == out
+
+
+@pytest.mark.parametrize(
+    ("text", "out"),
+    [
+        ('  "q": "a=1&token=x",', '  "q": "a=1&token=<redacted>",'),
+        ('    "url": "/cb?token=x"', '    "url": "/cb?token=<redacted>"'),
+        ('  "q": {"u": "token=x"},', '  "q": {"u": "token=<redacted>"},'),
+        ('web-1  | {"q":"token=x","n":1}', 'web-1  | {"q":"token=<redacted>","n":1}'),
+        (
+            '2026-11-11T10:00:00Z [x] {"q":"token=x"}',
+            '2026-11-11T10:00:00Z [x] {"q":"token=<redacted>"}',
+        ),
+        (
+            '{"q":"token=x","o":{"a":[1,true,null]},"m":"a b"}',
+            '{"q":"token=<redacted>","o":{"a":[1,true,null]},"m":"a b"}',
+        ),
+    ],
+)
+def test_pretty_printed_and_prefixed_json_lines_keep_their_structure(text, out):
+    assert redact_with_count(text) == (out, 1)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'level=error msg="login failed password=SEC1\\"cd" body={"q":"a=1&token=SEC2","n":1}',
+        '{"a": "token=SEC1\\"cd", "b": {"q":"token=SEC2","n":1}}',
+        'err="password=SEC1\\\\" req={"url":"/cb?token=SEC2","status":302}',
+        '"token=SEC1\\\\" "":"token=SEC2","":',
+        'curl -H "X-Token: SEC1" -d {"q":"token=SEC2","n":1}',
+        '{"a":"token=SEC1\\"c","b":"password=SEC2","c":"token=SEC3","d":1} {"q":"token=SEC4"}',
+    ],
+)
+def test_a_value_hidden_whole_before_a_json_string_leaves_the_result_stable(text):
+    out, count = redact_with_count(text)
+    assert "SEC" not in out and count >= 2
+    assert redact_with_count(out) == (out, 0)
+
+
+def test_lines_of_json_records_never_show_a_secret_and_stay_stable():
+    """Several JSON records on one line, with secrets that hold quotes, backslashes and JSON
+    punctuation, and filler of the same: no secret shows and a second pass changes nothing."""
+    import random
+
+    rng = random.Random(4601)
+    for _ in range(600):
+        records, secrets = [], []
+        while sum(map(len, records)) < rng.choice([300, 1500, 3800]):
+            secret = f"Q{len(secrets):04d}Z"
+            secrets.append(secret)
+            tail = rng.choice(["", '"x', "\\", "a,b", '","k":"', "}", '\\",\\"k\\":\\"'])
+            filler = "".join(rng.choice('ab "\\,:{}[]') for _ in range(rng.randrange(0, 80)))
+            msg = rng.choice(["", "a=1&", "x "]) + rng.choice(["token=", "password="]) + secret
+            record = {"msg": msg + tail, "f": filler, "n": 1}
+            records.append(json.dumps(record, separators=rng.choice([(",", ":"), (", ", ": ")])))
+        text = rng.choice(["", " ", ","]).join(records)
+        out, count = redact_with_count(text)
+        assert not any(secret in out for secret in secrets), text
+        assert redact_with_count(out) == (out, 0), text
 
 
 def test_a_value_inside_a_json_string_never_shows_a_part_of_itself():
