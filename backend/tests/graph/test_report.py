@@ -11,12 +11,14 @@ from bleep import prompts
 from bleep.graph.deps import StaticSettings
 from bleep.graph.language import language_rule
 from bleep.graph.nodes import report, verify
+from bleep.graph.nodes.investigate import guard_result
 from bleep.graph.planted import HINT_END, PLANTED_START, planted_places
 from bleep.graph.replan import PLANNING_AGAIN
 from bleep.graph.shown import shown_payload
 from bleep.guard.pipeline import guard_text
 from bleep.guard.report_check import MARKER
 from bleep.schemas.docker import DiskUsage, HostBasics
+from bleep.schemas.github import Commit
 from bleep.schemas.graph import (
     Decision,
     Diagnosis,
@@ -32,6 +34,7 @@ from bleep.schemas.graph import (
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Budgets
 from bleep.schemas.shown import Shown
+from bleep.tools.github import describe_commits
 from fakes import FakeChatModel
 from graph_env import T0, graph_env, no_wait
 
@@ -671,6 +674,54 @@ async def test_a_wrapper_tag_escaped_in_plugin_output_names_the_plugin(tmp_path,
     update = await run(env, state)
 
     assert update["report"].follow_ups[-1] == (f"Bleep found text in the {where} {HINT_END}")
+
+
+DEPLOY_SHA = "3f204d3a9c51e0b7d2f84a6c1e9b05d7f3a2c8e1"
+NAMED_CAUSE = "commit 3f204d3 'Deploy shop 2' set SHOP_VERSION to 2, which reads price_cents."
+
+
+def commits_read() -> list[ToolMessage]:
+    """The deploy's commit as `recent_commits` lists it and Investigate keeps the result."""
+    listed = Commit(sha=DEPLOY_SHA, date=T0, author="shop-dev", message="Deploy shop 2")
+    out, _ = guard_text("commits", describe_commits("o/shop", 48, None, [listed]))
+    text, _, _ = guard_result("recent_commits", out)
+    return [ToolMessage(text, tool_call_id="c1", name="recent_commits")]
+
+
+async def test_a_commit_the_run_read_keeps_its_sha_in_the_report(tmp_path):
+    env, state, notified = await setup(tmp_path, written(cause=NAMED_CAUSE))
+    state |= {"proposal": NO_ACTION, "messages": commits_read()}
+
+    update = await run(env, state)
+
+    assert update["report"].cause == NAMED_CAUSE
+    assert notified.reports[0][1].cause == NAMED_CAUSE
+    assert env.guard_log.records == []
+
+
+async def test_a_made_up_sha_is_dropped_from_the_report(tmp_path):
+    made_up = NAMED_CAUSE.replace("3f204d3", "9c0ffee")
+    env, state, notified = await setup(tmp_path, written(cause=made_up))
+    state |= {"proposal": NO_ACTION, "messages": commits_read()}
+
+    update = await run(env, state)
+
+    cause = "commit 'Deploy shop 2' set SHOP_VERSION to 2, which reads price_cents."
+    assert update["report"].cause == cause
+    assert notified.reports[0][1].cause == cause
+    assert [kind for _, kind, _ in env.guard_log.records] == ["redacted"]
+
+
+async def test_a_run_without_github_tools_writes_the_report_unchanged(tmp_path):
+    cause = "shop-web 3f2a1b9c8d7e was stopped (exit code 137) and its restart policy is no."
+    env, state, _ = await setup(tmp_path, written(cause=cause))
+    logs, _ = guard_text("logs.shop-web-1", "INFO image ghcr.io/o/shop:3f204d3 started\n")
+    state |= {"proposal": NO_ACTION, "context": GatherContext(at=T0, logs={"shop-web-1": logs})}
+
+    update = await run(env, state)
+
+    assert update["report"].cause == cause
+    assert env.guard_log.records == []
 
 
 async def test_an_escaped_wrapper_tag_in_host_text_is_reported_even_if_the_model_missed_it(
