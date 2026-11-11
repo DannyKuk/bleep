@@ -8,12 +8,12 @@ docs/design/hosts.md.
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Response
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Body, Depends, Header, Response
 from pydantic import BaseModel, ValidationError
 
 from bleep.api.deps import get_parts
-from bleep.api.settings import check_size, stale_response, version_of
+from bleep.api.errors import Refusal, problems_of
+from bleep.api.settings import check_size, stale, version_of
 from bleep.hosts.dashboard import (
     HostConflict,
     HostKeyBusy,
@@ -29,6 +29,7 @@ from bleep.schemas.dashboard_hosts import (
     HostKeyRequest,
     NewDashboardHost,
 )
+from bleep.schemas.refusal import Problem
 from bleep.schemas.settings import HostSettingsView
 from bleep.store.secrets import SecretNotSaved, SecretRefused
 from bleep.wiring import AppParts
@@ -47,9 +48,9 @@ async def fetch_host_key(body: Annotated[Any, Body()], parts: Parts) -> HostKeyO
     try:
         return await parts.dashboard_hosts.offer_host_key(request.address, request.port)
     except HostKeyUnavailable as unavailable:
-        raise HTTPException(502, str(unavailable)) from None
+        raise Refusal.of(502, unavailable) from None
     except HostKeyBusy as busy:
-        raise HTTPException(429, str(busy)) from None
+        raise Refusal.of(429, busy) from None
 
 
 @router.post("", status_code=201)
@@ -65,26 +66,26 @@ async def change_host(
     body: Annotated[Any, Body()],
     parts: Parts,
     if_match: Annotated[str | None, Header()] = None,
-) -> HostSettingsView | JSONResponse:
+) -> HostSettingsView:
     edit = _parsed(body, DashboardHostEdit)
     version = _required(if_match)
     try:
         await _change(parts.dashboard_hosts.change(host_id, edit, version=version))
-    except HostStale as stale:
-        return stale_response(stale.current, "the host changed since this version was read")
+    except HostStale as changed:
+        raise stale(changed.current, "stale_host") from None
     return _view(parts, host_id)
 
 
 @router.delete("/{host_id}", status_code=204, response_model=None)
 async def remove_host(
     host_id: str, parts: Parts, if_match: Annotated[str | None, Header()] = None
-) -> Response | JSONResponse:
+) -> Response:
     """Remove a dashboard host and its keys; its open incidents are closed with a notice."""
     version = _required(if_match)
     try:
         await _change(parts.dashboard_hosts.remove(host_id, version=version))
-    except HostStale as stale:
-        return stale_response(stale.current, "the host changed since this version was read")
+    except HostStale as changed:
+        raise stale(changed.current, "stale_host") from None
     return Response(status_code=204)
 
 
@@ -104,15 +105,16 @@ def _parsed[T: BaseModel](body: Any, model: type[T]) -> T:
     try:
         return model.model_validate(body)
     except ValidationError as error:
-        detail = [
-            {
-                "type": problem["type"],
-                "loc": [_where(part) for part in problem["loc"]],
-                "msg": problem["msg"],
-            }
-            for problem in error.errors(include_input=False, include_url=False)
+        problems = [
+            Problem(
+                loc=tuple(_where(part) for part in problem.loc),
+                type=problem.type,
+                msg=problem.msg,
+                ctx=problem.ctx,
+            )
+            for problem in problems_of(error)
         ]
-        raise HTTPException(422, detail) from None
+        raise Refusal.invalid(problems) from None
 
 
 def _where(part: int | str) -> int | str:
@@ -121,7 +123,7 @@ def _where(part: int | str) -> int | str:
 
 def _required(if_match: str | None) -> str:
     if if_match is None or not if_match.strip():
-        raise HTTPException(428, "send the host's version you read in If-Match")
+        raise Refusal(428, "need_version_host")
     return version_of(if_match)
 
 
@@ -129,13 +131,13 @@ async def _change(change: Any) -> None:
     try:
         await change
     except UnknownHost:
-        raise HTTPException(404, "no such host was added on the dashboard") from None
+        raise Refusal(404, "no_dashboard_host") from None
     except HostConflict as conflict:
-        raise HTTPException(409, str(conflict)) from None
+        raise Refusal.of(409, conflict) from None
     except (HostRefused, SecretRefused) as refused:
-        raise HTTPException(422, str(refused)) from None
+        raise Refusal.of(422, refused) from None
     except SecretNotSaved as not_saved:
-        raise HTTPException(500, str(not_saved)) from None
+        raise Refusal.of(500, not_saved) from None
 
 
 def _view(parts: AppParts, host_id: str) -> HostSettingsView:

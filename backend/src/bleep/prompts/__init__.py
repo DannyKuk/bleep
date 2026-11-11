@@ -54,18 +54,20 @@ OVERRIDABLE = frozenset(
 # the model how to write an `mcp.call` step around the server's wrapped tool schemas, and
 # `graph/verify_unproven` tells it not to start again a container a human approved stopping.
 # `talk/` reads what the person writes and holds the fixed lines that refuse it (#401). `shown/`
-# holds the fixed texts other parts write for the person, stored in English (#427).
-NOT_OVERRIDABLE_AREAS = ("evals/", "notify/", "shown/", "talk/", "untrusted/")
+# holds the fixed texts other parts write for the person, stored in English (#427). `api/` holds
+# the API's error texts, which a person reads and no model does (#456).
+NOT_OVERRIDABLE_AREAS = ("api/", "evals/", "notify/", "shown/", "talk/", "untrusted/")
 NOT_OVERRIDABLE = frozenset({"graph/propose_mcp", "graph/system", "graph/verify_unproven"})
 # The languages a person may choose (#373). English is the files as they are; each other language
 # has a twin of every text a person reads, at `<area>/<language>/<name>.md` (#375).
 LANGUAGES = ("en", "de")
-# The texts a person reads are Telegram's, the chat's and the fixed texts the other parts write
-# (`shown/`, #427). In those areas the model reads `talk/read` and `talk/message`, which stay
-# English as every prompt does, and the talk log's export (`talk/log_*`) is a transcript for
-# reviewing answers, kept English too. A `shown/` text is stored in English, which is what a
-# model reads of it, and only shown in another language (`show`).
-TRANSLATED_AREAS = ("notify/", "shown/", "talk/")
+# The texts a person reads are Telegram's, the chat's, the fixed texts the other parts write
+# (`shown/`, #427) and the API's errors (`api/`, #456). In those areas the model reads
+# `talk/read` and `talk/message`, which stay English as every prompt does, and the talk log's
+# export (`talk/log_*`) is a transcript for reviewing answers, kept English too. A `shown/` text
+# is stored in English, which is what a model reads of it, and only shown in another language
+# (`show`).
+TRANSLATED_AREAS = ("api/", "notify/", "shown/", "talk/")
 STAYS_ENGLISH = frozenset({"talk/read", "talk/message"})
 STAYS_ENGLISH_PREFIXES = ("talk/log_",)
 # C0 and C1 controls but tab and line breaks; the bidi overrides, isolates and marks (U+200E,
@@ -79,7 +81,14 @@ _overrides: dict[str, str] = {}
 
 
 class PromptError(Exception):
-    """A prompt is missing, malformed, or filled with the wrong variables."""
+    """A prompt is missing, malformed, or filled with the wrong variables. An override that is
+    refused names the `api/` template it is said with in the person's language (#456) and the
+    template's values."""
+
+    def __init__(self, message: str, template: str = "", **values: str) -> None:
+        super().__init__(message)
+        self.template = template
+        self.values = values
 
 
 def placeholders(text: str) -> set[str]:
@@ -120,16 +129,25 @@ def check_override(name: str, text: str) -> None:
     """Raise `PromptError` unless `text` can stand in for the prompt `name`: it must parse and
     use exactly the file's placeholders, since the callers fill exactly those."""
     if name not in overridable_names():
-        raise PromptError(f"no prompt named {name!r} can be overridden")
+        raise PromptError(
+            f"no prompt named {name!r} can be overridden", "prompt_not_overridable", name=name
+        )
     if _CONTROL.search(text):
-        raise PromptError("control characters, bidi marks and invisible characters are not allowed")
+        raise PromptError(
+            "control characters, bidi marks and invisible characters are not allowed",
+            "prompt_control",
+        )
     needed, given = placeholders(file_text(name)), placeholders(text)
     if needed != given:
-        missing = ", ".join(f"{{{p}}}" for p in sorted(needed - given)) or "none"
-        unknown = ", ".join(f"{{{p}}}" for p in sorted(given - needed)) or "none"
-        raise PromptError(
-            f"use exactly the file's placeholders; missing: {missing}; unknown: {unknown}"
-        )
+        missing = ", ".join(f"{{{p}}}" for p in sorted(needed - given))
+        unknown = ", ".join(f"{{{p}}}" for p in sorted(given - needed))
+        message = f"use exactly the file's placeholders; missing: {missing or 'none'}"
+        message += f"; unknown: {unknown or 'none'}"
+        if missing and unknown:
+            raise PromptError(message, "prompt_placeholders", missing=missing, unknown=unknown)
+        if missing:
+            raise PromptError(message, "prompt_placeholders_missing", missing=missing)
+        raise PromptError(message, "prompt_placeholders_unknown", unknown=unknown)
 
 
 def use_overrides(overrides: Mapping[str, str]) -> None:

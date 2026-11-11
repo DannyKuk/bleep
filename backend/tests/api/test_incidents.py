@@ -548,6 +548,62 @@ def test_a_decision_on_an_unknown_incident_is_404(app_client, resumes):
     assert post_decision(app_client, "inc_nope", "a1").status_code == 404
 
 
+def test_every_decision_conflict_is_said_in_the_picked_language_with_the_winner_kept(
+    app_client, parts, resumes, monkeypatch
+):
+    monkeypatch.setattr(parts.settings_store, "language", lambda: "de")
+    incident = open_incident(app_client, parts)
+    nothing = post_decision(app_client, incident.id, "a1", "approve")
+    assert nothing.json() == {
+        "detail": "Es wartet nichts auf eine Entscheidung",
+        "decided_via": None,
+    }
+
+    approval_id = ask(app_client, parts, incident.id)
+    call(app_client, parts.approvals.resolve, incident.id, decided("approve", "telegram"))
+    telegram = post_decision(app_client, incident.id, approval_id, "reject")
+    assert telegram.json() == {
+        "detail": "Bereits auf Telegram entschieden",
+        "decided_via": "telegram",
+    }
+
+    other = open_incident(app_client, parts, service="a/other")
+    second = ask(app_client, parts, other.id)
+    assert post_decision(app_client, other.id, second, "approve").status_code == 200
+    again = post_decision(app_client, other.id, second, "approve")
+    assert again.json() == {
+        "detail": "Bereits im Dashboard entschieden",
+        "decided_via": "dashboard",
+    }
+
+    closed = open_incident(app_client, parts, service="a/third")
+    third = ask(app_client, parts, closed.id)
+    call(app_client, parts.incidents.set_status, closed.id, "closed")
+    over = post_decision(app_client, closed.id, third, "approve")
+    assert over.json() == {"detail": "Der Vorfall ist geschlossen", "decided_via": None}
+    assert resumes.calls == [(other.id, resumes.calls[0][1])]
+
+
+def test_a_rating_with_nothing_to_rate_and_an_unknown_incident_are_said_in_german(
+    app_client, parts, monkeypatch
+):
+    monkeypatch.setattr(parts.settings_store, "language", lambda: "de")
+    incident = open_incident(app_client, parts)
+    body = {"target": "diagnosis", "vote": "up"}
+    rated = app_client.post(f"/api/incidents/{incident.id}/feedback", json=body)
+    assert (rated.status_code, rated.json()["detail"]) == (
+        409,
+        "Es gibt noch keine Diagnose zum Bewerten",
+    )
+    plan = app_client.post(
+        f"/api/incidents/{incident.id}/feedback", json=body | {"target": "proposal"}
+    )
+    assert plan.json()["detail"] == "Es gibt noch keinen Plan zum Bewerten"
+    assert app_client.get("/api/incidents/inc_nope").json() == {
+        "detail": "Diesen Vorfall gibt es nicht"
+    }
+
+
 # --- recoveries ---
 
 

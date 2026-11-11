@@ -8,6 +8,7 @@ import unicodedata
 from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, SecretStr
+from pydantic_core import PydanticCustomError
 
 HOST_ID = r"[a-z0-9][a-z0-9-]{0,39}"
 _LABEL = re.compile(r"(?!-)[A-Za-z0-9-]{1,63}(?<!-)")
@@ -19,20 +20,26 @@ def _address(value: str) -> str:
     """A host name or an IP literal, and nothing an SSH client could read as more: no scheme,
     user, port, path, space or option."""
     if "%" in value:  # a scope id may hold anything, spaces and commas included
-        raise ValueError("must be an address without a scope id (%)")
+        raise PydanticCustomError("address_scope", "must be an address without a scope id (%)")
     try:
         return str(ipaddress.ip_address(value))
     except ValueError:
         pass
     labels = value.removesuffix(".").split(".")
     if len(value) > 253 or not all(_LABEL.fullmatch(label) for label in labels):
-        raise ValueError("must be a host name or an IP address, such as box.lan or 10.0.0.5")
+        raise PydanticCustomError(
+            "address_shape",
+            "must be a host name or an IP address, such as box.lan or 10.0.0.5",
+        )
     return value.lower()
 
 
 def _user(value: str) -> str:
     if not _USER.fullmatch(value):
-        raise ValueError("must be a login name: letters, digits, _ . -, not starting with - or .")
+        raise PydanticCustomError(
+            "login_shape",
+            "must be a login name: letters, digits, _ . -, not starting with - or .",
+        )
     return value
 
 
@@ -43,14 +50,17 @@ def _docker_socket(value: str) -> str:
         or parts[0] != ""
         or not all(_SOCKET_PART.fullmatch(p) and p not in (".", "..") for p in parts[1:])
     ):
-        raise ValueError("must be an absolute path on the host, such as /var/run/docker.sock")
+        raise PydanticCustomError(
+            "socket_path",
+            "must be an absolute path on the host, such as /var/run/docker.sock",
+        )
     return value
 
 
 def _name(value: str) -> str:
     value = value.strip()
     if not value or any(unicodedata.category(c) in {"Cc", "Cf", "Zl", "Zp"} for c in value):
-        raise ValueError("must be a short name without control characters")
+        raise PydanticCustomError("short_name", "must be a short name without control characters")
     return value
 
 

@@ -10,10 +10,11 @@ live only and without an id, because seq counts per incident. A comment line goe
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, Query
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
 from bleep.api.deps import get_parts
+from bleep.api.errors import Refusal
 from bleep.incidents.bus import EventBus
 from bleep.incidents.shown import event_in
 from bleep.schemas.incidents import IncidentEvent
@@ -63,7 +64,7 @@ async def stream(
     """`Last-Event-ID` (a reconnect) wins over `after` (the first connect); both apply only to
     one incident's stream."""
     if incident_id is not None and await parts.incidents.get(incident_id) is None:
-        raise HTTPException(404, "no such incident")
+        raise Refusal(404, "no_incident")
     cursor = last_event_id if last_event_id is not None else after
     with_id = incident_id is not None
 

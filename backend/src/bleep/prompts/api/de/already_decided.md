@@ -1,0 +1,1 @@
+Bereits {channel} entschieden

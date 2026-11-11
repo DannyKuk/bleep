@@ -1,6 +1,7 @@
-from fastapi import HTTPException, Request, Response
+from fastapi import Request, Response
 
 from bleep.api.cookie import COOKIE_NAME, set_session_cookie
+from bleep.api.errors import Refusal
 from bleep.config import Settings
 from bleep.incidents.expectations import Expectations
 from bleep.incidents.runner import IncidentRunner
@@ -67,7 +68,7 @@ async def require_session(request: Request, response: Response) -> str:
     token = request.cookies.get(COOKIE_NAME)
     check = await get_parts(request).sessions.check(token) if token else None
     if token is None or check is None:
-        raise HTTPException(status_code=401, detail="not authenticated")
+        raise Refusal(401, "not_authenticated")
     if check.refreshed:  # the expiry slid, so the browser's copy slides with it
         set_session_cookie(response, token, get_settings(request))
     return token

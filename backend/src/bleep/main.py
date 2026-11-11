@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, FastAPI
 from bleep.api import (
     auth,
     dev,
+    errors,
     host_settings,
     hosts,
     incidents,
@@ -164,6 +165,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
 
     app = FastAPI(title="Bleep", lifespan=lifespan)
     app.add_middleware(BodyLimitMiddleware)
+    errors.register(app)
     app.state.settings = settings
     app.state.parts = parts
 

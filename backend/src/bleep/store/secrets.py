@@ -48,7 +48,14 @@ class UnknownSecret(KeyError):
 
 
 class SecretRefused(ValueError):
-    """The value cannot be stored; the text says why and never quotes it."""
+    """The value cannot be stored; the text says why and never quotes it. `template` and
+    `values` are what the API says it with in the person's language (`prompts/api/`, #456),
+    which this part cannot import."""
+
+    def __init__(self, message: str, template: str = "", **values: str | int) -> None:
+        super().__init__(message)
+        self.template = template
+        self.values = values
 
 
 class SecretFromEnv(SecretRefused):
@@ -60,8 +67,8 @@ class AddressStale(SecretRefused):
     address in force: it was typed for another address, so it is not stored. `missing` says
     which."""
 
-    def __init__(self, message: str, *, missing: bool) -> None:
-        super().__init__(message)
+    def __init__(self, message: str, template: str, *, missing: bool, **values: str | int) -> None:
+        super().__init__(message, template, **values)
         self.missing = missing
 
 
@@ -69,13 +76,18 @@ class SecretNotSaved(Exception):
     """The change could not be made safe before writing (a listener that must run first
     failed), so nothing was written."""
 
+    def __init__(self, message: str, template: str = "", **values: str | int) -> None:
+        super().__init__(message)
+        self.template = template
+        self.values = values
+
 
 @dataclass(frozen=True)
 class SecretName:
     """One value the dashboard may set: a `secret`, an `address` a token is sent to (`carries`
     names that token), or an `id` that is not secret but lives with the secrets (a chat id).
-    `required` says why it cannot be cleared from the dashboard, when something in force needs
-    it (the tracer `TRACING` names). `private`: an address that may be on a private network or
+    `required` names the tracer (`TRACING`) that needs it, which is why it cannot be cleared
+    from the dashboard. `private`: an address that may be on a private network or
     a Docker name when set from the dashboard, a model server's (#372)."""
 
     name: str
@@ -207,16 +219,27 @@ class SecretStore:
                 if token != name:
                     continue
                 if address not in self._values:
-                    raise SecretRefused(f"set {address} first: {name} is sent only there")
+                    raise SecretRefused(
+                        f"set {address} first: {name} is sent only there",
+                        "secret_address_first",
+                        address=address,
+                        name=name,
+                    )
                 if address_version is None:
                     raise AddressStale(
-                        f"send the version of {address} the token was typed for", missing=True
+                        f"send the version of {address} the token was typed for",
+                        "secret_version_missing",
+                        missing=True,
+                        address=address,
                     )
                 if not hmac.compare_digest(address_version, self.address_version(address) or ""):
                     raise AddressStale(
                         f"{address} changed since it was read; read it again and enter "
                         f"{name} for the address now set",
+                        "secret_address_changed",
                         missing=False,
+                        address=address,
+                        name=name,
                     )
             current = self._values.get(name)
             if current is not None and current.get_secret_value() == value:
@@ -254,7 +277,12 @@ class SecretStore:
         async with self._lock:
             self._refuse_env(name)
             if entry.required is not None and name in self._values:
-                raise SecretRefused(f"{name} cannot be cleared: {entry.required}")
+                raise SecretRefused(
+                    f"{name} cannot be cleared: TRACING={entry.required} needs it",
+                    "secret_needed",
+                    name=name,
+                    tracing=entry.required,
+                )
             values = dict(self._values)
             values.pop(name, None)
             if entry.carries is not None:
@@ -288,10 +316,13 @@ class SecretStore:
     def _refuse_env(self, name: str) -> None:
         if self._env_owned(name):
             together = " and ".join(sorted(self._group.get(name, {name})))
+            grouped = name in self._group
             raise SecretFromEnv(
                 f"{together} come from the environment, which wins; change them there"
-                if name in self._group
-                else f"{name} is set in the environment, which wins; change it there"
+                if grouped
+                else f"{name} is set in the environment, which wins; change it there",
+                "secrets_from_env" if grouped else "secret_from_env",
+                **({"names": together} if grouped else {"name": name}),
             )
 
     def _addresses(self) -> Iterator[tuple[str, str]]:
@@ -314,7 +345,7 @@ class SecretStore:
             except Exception as error:  # the type only: a message could quote a value
                 log.warning("secrets: not saved, preparing failed (%s)", type(error).__name__)
                 raise SecretNotSaved(
-                    "the change could not be prepared; nothing was saved"
+                    "the change could not be prepared; nothing was saved", "secret_not_prepared"
                 ) from None
         await asyncio.to_thread(self._write, values)
         self._values = values
@@ -415,16 +446,25 @@ def _checked(name: str, value: str, kind: Kind = "secret") -> str:
         value = value.replace("\r\n", "\n")
     value = value.strip()
     if not value:
-        raise SecretRefused(f"{name} is empty; clear it instead")
+        raise SecretRefused(f"{name} is empty; clear it instead", "secret_empty", name=name)
     if len(value) > MAX_VALUE_CHARS:
-        raise SecretRefused(f"{name} is over {MAX_VALUE_CHARS:,} characters")
+        raise SecretRefused(
+            f"{name} is over {MAX_VALUE_CHARS:,} characters",
+            "secret_too_long",
+            name=name,
+            limit=MAX_VALUE_CHARS,
+        )
     # Cc: C0, DEL and C1 controls; Cf: invisible format characters; Zl and Zp: U+2028, U+2029.
     if any(
         unicodedata.category(char) in {"Cc", "Cf", "Zl", "Zp"} and char not in breaks
         for char in value
     ):
         what = "a control" if breaks else "a line break, a control"
-        raise SecretRefused(f"{name} holds {what} or an invisible character")
+        raise SecretRefused(
+            f"{name} holds {what} or an invisible character",
+            "secret_control" if breaks else "secret_line_break",
+            name=name,
+        )
     return value
 
 

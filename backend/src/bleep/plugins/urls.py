@@ -15,6 +15,8 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
+from bleep.schemas.refusal import Templated
+
 # The addresses a token may travel to over plain http: loopback, private and CGNAT (Tailscale).
 NEARBY = tuple(
     ipaddress.ip_network(net)
@@ -40,7 +42,7 @@ METADATA_ADDRESSES = frozenset(
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,62}")
 
 
-class UrlRefused(ValueError):
+class UrlRefused(Templated, ValueError):
     """A plugin's URL is not one Bleep sends its token to; the text names the variable, never
     the URL."""
 
@@ -83,28 +85,34 @@ def check_url(
     refused: type[UrlRefused] = UrlRefused,
     *,
     https_hint: str = "",
+    hint_name: str = "",
     internal: bool = False,
 ) -> str:
     """`raw`, read from the variable `env`, as a URL Bleep may send a token to, or `refused`.
-    `https_hint` follows the plain-http refusal and says where the https address is. With
+    `https_hint` follows the plain-http refusal and says where the https address is, and
+    `hint_name` names the `api/url_https_<hint_name>` text that says it. With
     `internal`, a name under `.internal`, the top-level domain reserved for private networks, is
     nearby too: Docker names this machine `host.docker.internal`, where a local model server
     usually listens."""
     try:
         url = httpx.URL(raw.strip())
     except httpx.InvalidURL:
-        raise refused(f"{env} is not a URL") from None
+        raise refused(f"{env} is not a URL", "url_not_a_url", name=env) from None
     if url.scheme not in ("http", "https") or not url.host or url.userinfo:
-        raise refused(f"{env} must be an http(s) URL with a host and no password")
+        raise refused(
+            f"{env} must be an http(s) URL with a host and no password", "url_shape", name=env
+        )
     if url.query or url.fragment or "?" in raw or "#" in raw:
-        raise refused(f"{env} must have no query or fragment")
+        raise refused(f"{env} must have no query or fragment", "url_query", name=env)
     if internal and _metadata(url.host):
-        raise refused(f"{env} must not be a cloud metadata service")
+        raise refused(f"{env} must not be a cloud metadata service", "url_metadata", name=env)
     is_internal = internal and url.host.lower().endswith(".internal")
     if url.scheme == "http" and not (_nearby(url.host) or is_internal):
         raise refused(
             f"{env} must use https unless it is a private address or a Docker service name"
-            f"{https_hint}, since the token travels with every request"
+            f"{https_hint}, since the token travels with every request",
+            f"url_https_{hint_name}" if hint_name else "url_https",
+            name=env,
         )
     return str(url)
 
@@ -163,14 +171,20 @@ def check_dashboard_url(raw: str, env: str, refused: type[UrlRefused] = UrlRefus
     if httpx.URL(url).scheme != "https":
         raise refused(
             f"{env} set on the dashboard must be https; an address on a private network or over "
-            "plain http can be set in .env"
+            "plain http can be set in .env",
+            "url_dashboard_https",
+            name=env,
         )
     return url
 
 
+class NotPublic(Templated, ValueError):
+    """A host does not resolve, or resolves to an address that is not public."""
+
+
 async def check_public(host: str, port: int, resolver: Resolver) -> list[str]:
     """The addresses `host` resolves to, when there is at least one and every one is public;
-    else `ValueError` in Bleep's words, never naming the host or an address."""
+    else `NotPublic` in Bleep's words, never naming the host or an address."""
     try:
         ipaddress.ip_address(host)
         addresses = [host]  # an address is never looked up
@@ -179,11 +193,11 @@ async def check_public(host: str, port: int, resolver: Resolver) -> list[str]:
     try:
         addresses = addresses if addresses is not None else await resolver(host, port)
     except OSError:
-        raise ValueError("its name could not be resolved") from None
+        raise NotPublic("its name could not be resolved", "public_unresolved") from None
     if not addresses:
-        raise ValueError("its name could not be resolved")
+        raise NotPublic("its name could not be resolved", "public_unresolved")
     if not all(is_public(address) for address in addresses):
-        raise ValueError("it resolves to an address that is not public")
+        raise NotPublic("it resolves to an address that is not public", "public_not_public")
     return addresses
 
 

@@ -19,6 +19,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 
 from bleep.hosts.coolify_names import coolify_slug
 
@@ -111,14 +112,19 @@ def check_exits(entries: list[str]) -> list[str]:
     """`exits` as stored: names by Docker's rule, `*` only alone, at most `MAX_EXITS`. The
     errors never quote an entry: one may come from a container's label."""
     if EVERY_CONTAINER in entries and len(set(entries)) > 1:
-        raise ValueError('"*" stands alone in exits: it already names every container')
+        raise PydanticCustomError(
+            "exits_star_alone", '"*" stands alone in exits: it already names every container'
+        )
     if any(e != EVERY_CONTAINER and not is_exit_name(e) for e in entries):
-        raise ValueError(
+        raise PydanticCustomError(
+            "exits_names",
             "exits entries are container or Compose service names: letters, digits, _ . -, "
-            "starting with a letter or digit, at most 128 characters"
+            "starting with a letter or digit, at most 128 characters",
         )
     if len(set(entries)) > MAX_EXITS:
-        raise ValueError(f"exits holds at most {MAX_EXITS} entries")
+        raise PydanticCustomError(
+            "exits_too_many", "exits holds at most {limit} entries", {"limit": MAX_EXITS}
+        )
     return list(dict.fromkeys(entries))
 
 
