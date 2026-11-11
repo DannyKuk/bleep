@@ -214,8 +214,8 @@ class ConfirmResult(BaseModel):
     incident_id: str | None = None
 
 
-# `running` until a plan waits for a yes (`waiting`) or the incident ends (`ended`); a waiting
-# look goes on running once the plan is decided.
+# `running` until the run waits (`waiting`: for a yes to its plan, for the model to answer again
+# or for its host) or the incident ends (`ended`); a waiting look goes on running once it can.
 LookState = Literal["running", "waiting", "ended"]
 
 

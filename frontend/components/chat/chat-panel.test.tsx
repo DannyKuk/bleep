@@ -478,6 +478,30 @@ describe("ChatPanel", () => {
       expect(within(screen.getByTestId("look")).queryByRole("alert")).not.toBeInTheDocument();
     });
 
+    it("scrolls the chat down only when an answer shows something new", async () => {
+      const waits = "🙋 shop #7 found a problem: shop-web exited.\nIts plan waits.";
+      const waiting = look({ state: "waiting", line: waits, links: [SHOP_7] });
+      const { asked } = stubLook(
+        waiting,
+        { ...waiting, links: [{ ...SHOP_7 }] },
+        waiting,
+        look({ line: "Running the plan…" }),
+      );
+      await pressLook();
+      await screen.findByText(/found a problem/);
+      const chat = screen.getByRole("region", { name: "Chat with Bleep" }).querySelector("ol")!;
+      const scrolled = vi.fn();
+      Object.defineProperty(chat, "scrollTop", { get: () => 0, set: scrolled, configurable: true });
+
+      await wait(20_000);
+      expect(asked).toHaveLength(3);
+      expect(scrolled).not.toHaveBeenCalled(); // the same plan, asked about twice more
+
+      await wait(10_000);
+      expect(screen.getByText("Running the plan…")).toBeInTheDocument();
+      expect(scrolled).toHaveBeenCalled();
+    });
+
     it("stops asking once the panel is closed", async () => {
       const { asked } = stubLook(look({}));
       const user = await pressLook();

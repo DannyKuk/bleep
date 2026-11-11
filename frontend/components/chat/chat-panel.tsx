@@ -31,8 +31,8 @@ const BAR_GAP_PX = 12;
 const REVOKE_AFTER_MS = 40_000; // as FileSaver.js waits before freeing a saved file's URL
 // As `schemas/talk.py` `ChatMessage.incident_id`: a page path that is no incident id gets no chip.
 const INCIDENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
-// How often a look the panel follows is asked about (#458): often while it runs, seldom while its
-// plan waits for a yes, which a person gives on the incident's page.
+// How often a look the panel follows is asked about (#458): often while it runs, seldom while it
+// waits (for a yes on the incident's page, for the model or for its host).
 const LOOK_RUNNING_MS = 2_000;
 const LOOK_WAITING_MS = 10_000;
 
@@ -367,8 +367,9 @@ function Answer({ text, links }: { text: string; links: TalkLink[] }) {
 /**
  * A look the panel started, followed until its incident ends (#458): what the run does now, its
  * summary once its plan waits or it ended, and what it did. Asked about every 2 s while it runs
- * and every 10 s while its plan waits; a failed ask keeps the last answer, says so and asks again.
- * It stops at the end, or when the panel closes.
+ * and every 10 s while it waits; a failed ask keeps the last answer, says so and asks again. Only
+ * an answer that shows something new scrolls the chat down. It stops at the end, or when the
+ * panel closes.
  */
 function LookFollow({ incidentId, onChange }: { incidentId: string; onChange: () => void }) {
   const [look, setLook] = useState<LookProgress | null>(null);
@@ -382,7 +383,7 @@ function LookFollow({ incidentId, onChange }: { incidentId: string; onChange: ()
       try {
         const now = await fetchLook(incidentId);
         if (stopped) return;
-        setLook(now);
+        setLook((shown) => (shows(shown, now) ? shown : now));
         setLost(false);
         if (now.state === "ended") return;
         pace = now.state === "waiting" ? LOOK_WAITING_MS : LOOK_RUNNING_MS;
@@ -429,6 +430,11 @@ function LookFollow({ incidentId, onChange }: { incidentId: string; onChange: ()
       )}
     </div>
   );
+}
+
+/** Whether `next` shows what `shown` does, so a poll that brought nothing new changes nothing. */
+function shows(shown: LookProgress | null, next: LookProgress): boolean {
+  return shown !== null && JSON.stringify(shown) === JSON.stringify(next);
 }
 
 function OfferButtons({

@@ -2,7 +2,8 @@
 
 The panel has no thread for a look's end message, so it asks here every few seconds. While the
 run goes on, one fixed line says what it does now, picked from the last node it started or tool
-it called (`talk/look_progress/`); tool arguments and host text never reach it. While its plan
+it called (`talk/look_progress/`); tool arguments and host text never reach it. A run paused
+for the model or waiting for its host says so instead, from the incident's status. While its plan
 waits for a yes, and once the incident ended, the line sums it up: a fixed headline for the
 outcome, as Telegram's end message picks it (`notify/notifier._end_template`), with the report's
 summary, or the diagnosis' cause while a plan waits, as one redacted, capped line
@@ -79,6 +80,11 @@ _END_OF = {
 }
 
 
+# A run that waits for something but a person: the model to answer again (`paused`, retried by
+# the runner) or the incident's host (`waiting`). Its last event would say it still works.
+_HELD = {"paused": "paused", "waiting": "host_waiting"}
+
+
 class RunState(Protocol):
     """The part of `IncidentRunner` that reads a run's checkpoint: its diagnosis."""
 
@@ -123,6 +129,9 @@ class LookFollower:
             return LookProgress(
                 state="waiting", line=line, links=_links(incident, line), steps=steps
             )
+        if incident.status in _HELD:
+            line = _held(incident, language)
+            return LookProgress(state="waiting", line=line, steps=steps)
         return LookProgress(state="running", line=progress_line(events, language), steps=steps)
 
     def _containers(self, incident: Incident) -> set[str]:
@@ -231,6 +240,14 @@ def _step(step: str, containers: list[str], vague: bool, language: str) -> str:
         name = f"talk/look_step/{step}_of"
         return prompts.load_in(language, name, containers=", ".join(containers)).strip()
     return prompts.load_in(language, f"talk/look_step/{step}").strip()
+
+
+def _held(incident: Incident, language: str) -> str:
+    """Why the run waits, the host named by its id from the hosts file."""
+    name = f"talk/look_progress/{_HELD[incident.status]}"
+    if incident.status == "waiting":
+        return prompts.load_in(language, name, host=incident.subject.host_id).strip()
+    return prompts.load_in(language, name).strip()
 
 
 def _tool(name: object) -> str:

@@ -355,6 +355,36 @@ async def test_a_waiting_plan_is_summed_up_with_the_diagnosis_but_the_look_goes_
     assert waiting.steps == [en("look_step/containers")]
 
 
+@pytest.mark.parametrize(
+    ("status", "said"),
+    [
+        ("paused", en("look_progress/paused")),
+        ("waiting", en("look_progress/host_waiting", host="demo")),
+    ],
+)
+async def test_a_run_held_up_says_why_and_not_what_it_did_last_then_goes_on(env, status, said):
+    await publish(env, "node_started", node="investigate")
+    await publish(env, "tool_call", name="container_logs", args={"container": "x"}, id="1")
+    await env.repo.set_status(env.incident.id, status)
+
+    held = await look(env)
+
+    assert (held.state, held.line, held.links) == ("waiting", said, [])
+    assert held.steps == [en("look_step/logs")]
+
+    await env.repo.set_status(env.incident.id, "investigating")
+    await publish(env, "node_started", node="diagnose")
+    going = await look(env)
+    assert (going.state, going.line) == ("running", en("look_progress/diagnose"))
+
+
+async def test_a_paused_run_is_said_in_the_language_the_person_chose(env):
+    env.language = "de"
+    await env.repo.set_status(env.incident.id, "paused")
+
+    assert (await look(env)).line == prompts.load("talk/de/look_progress/paused").strip()
+
+
 async def test_a_waiting_plan_without_a_diagnosis_gives_its_reason(env):
     await env.approvals.request(env.incident.id, PLAN, [])
     await env.repo.set_status(env.incident.id, "awaiting_approval")
