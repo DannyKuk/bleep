@@ -6,9 +6,10 @@ A diagnosis or a report that names the commit behind an incident ("commit 3f204d
 wrong commit or to none, so code checks every sha the model writes against the commits the run
 read: those `recent_commits` lists and the one `commit_diff` shows, read from where the tools
 write a sha (`tools/github.describe_commits`, `describe_diff`) inside Investigate's wrapper for
-that tool. A commit message's first line ends at any line break, so a message cannot start a list
-line of its own. A sha in a log, in another tool's output, in a commit message or a patch, or in
-a GitHub failure sentence was not read as a commit and does not count.
+that tool. The tools end a commit message's first line at any line break and print an author, a
+path and the repo on one line, so none of them can start a list line or a diff head. A sha in a
+log, in another tool's output, in a commit message or a patch, or in a GitHub failure sentence
+was not read as a commit and does not count.
 """
 
 import re

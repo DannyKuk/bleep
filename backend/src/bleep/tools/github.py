@@ -94,6 +94,13 @@ def _cut(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + f" {CUT}"
 
 
+def _one_line(text: str) -> str:
+    """`text` with each line break `str.splitlines` knows as a space, so a value printed on a
+    line of Bleep's own (a commit's author, the path asked for, the repo) can never start a line
+    that reads as another commit of the list or another diff head (#350)."""
+    return " ".join(text.splitlines())
+
+
 def _size(text: str) -> int:
     """How long `text` is once the guard has cleaned, redacted and escaped it."""
     return len(escape_untrusted(redact_text(strip_control(text))))
@@ -149,18 +156,20 @@ def _failed(error: GithubError, repo: str, client: GithubClient) -> str:
 
 def _commit_lines(c: Commit) -> list[str]:
     """The commit's line, then its message's other lines indented. The first line ends at any
-    line break the guard keeps as one (`\\r`, U+2028, VT, NEL, …), so a message can never start
-    a line that reads as another commit of the list (#350)."""
+    line break the guard keeps as one (`\\r`, U+2028, VT, NEL, …), and the author is one line,
+    so neither can start a line that reads as another commit of the list (#350)."""
     first, *rest = _cut(c.message.strip(), MESSAGE_CHARS).splitlines() or [""]
     while rest and not rest[0]:
         rest.pop(0)
-    lines = [f"- {c.sha[:7]} {_when(c.date)} {_cut(c.author, AUTHOR_CHARS)}: {first}"]
+    author = _cut(_one_line(c.author), AUTHOR_CHARS)
+    lines = [f"- {c.sha[:7]} {_when(c.date)} {author}: {first}"]
     lines += [f"    {line}" for line in rest]
     return lines
 
 
 def describe_commits(repo: str, since_hours: int, path: str | None, commits: list[Commit]) -> str:
-    where = f" touching {path}" if path else ""
+    repo = _one_line(repo)
+    where = f" touching {_one_line(path)}" if path else ""
     if not commits:
         return f"No commits to {repo}{where} in the last {since_hours} hours."
     lines = [f"Commits to {repo}{where} in the last {since_hours} hours, newest first:"]
@@ -188,7 +197,8 @@ def _head(detail: CommitDetail, room: int) -> str:
     """The sha, author, date, message and as many changed files as fit `room`; the files left
     out are counted."""
     lines = [
-        f"commit {detail.sha[:7]} by {_cut(detail.author, AUTHOR_CHARS)} on {_when(detail.date)}",
+        f"commit {detail.sha[:7]} by {_cut(_one_line(detail.author), AUTHOR_CHARS)} "
+        f"on {_when(detail.date)}",
         _cut_to(detail.message.strip(), room // 3),
         "",
         f"{len(detail.files)} files changed, +{detail.additions} -{detail.deletions}:",
