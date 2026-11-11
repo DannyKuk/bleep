@@ -18,7 +18,7 @@ from bleep.guard.redact import redact_text
 from bleep.guard.sanitize import MAX_CHARS, strip_control
 from bleep.guard.untrusted import escape_untrusted
 from bleep.hosts.github import GithubClient, GithubError, GithubUnavailable, NotFound, RateLimited
-from bleep.schemas.github import Commit, CommitDetail
+from bleep.schemas.github import Commit, CommitDetail, FileChange
 from bleep.tools.common import guard_result, invalid_arguments
 from bleep.tools.registry import ToolContext, ToolSpec
 
@@ -153,7 +153,7 @@ def describe_commits(repo: str, since_hours: int, path: str | None, commits: lis
     return "\n".join(lines)
 
 
-def _file_line(f) -> str:
+def _file_line(f: FileChange) -> str:
     renamed = f" (was {_cut(f.previous_filename, NAME_CHARS)})" if f.previous_filename else ""
     return f"  {f.status} {_cut(f.filename, NAME_CHARS)}{renamed} (+{f.additions} -{f.deletions})"
 
@@ -181,6 +181,17 @@ def _head(detail: CommitDetail, room: int) -> str:
     return "\n".join(lines)
 
 
+def _patch_text(f: FileChange) -> str:
+    """GitHub sends no patch for a binary file (counted +0 -0), an empty one, a rename or mode
+    change with no edit, or a text file too large to diff; only the line counts tell the last
+    from the rest."""
+    if f.patch:
+        return f.patch
+    if f.additions == 0 and f.deletions == 0:
+        return "(no text diff: an empty or binary file, or only its mode or name changed)"
+    return "(no text diff: too large to show)"
+
+
 def describe_diff(detail: CommitDetail, max_chars: int) -> str:
     """The commit's head (at most half of `max_chars`), then the patches in order until
     `max_chars`, sized as the guard will write them; what is left out is named, so the model
@@ -190,9 +201,7 @@ def describe_diff(detail: CommitDetail, max_chars: int) -> str:
     used = _size(text)
     room = budget - NOTE_CHARS
     for i, f in enumerate(detail.files):
-        block = f"\n\n--- {_cut(f.filename, NAME_CHARS)}\n" + (
-            f.patch or "(no text diff: binary or too large)"
-        )
+        block = f"\n\n--- {_cut(f.filename, NAME_CHARS)}\n{_patch_text(f)}"
         if used + _size(block) <= room:
             text += block
             used += _size(block)
