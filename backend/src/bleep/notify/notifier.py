@@ -28,7 +28,13 @@ from bleep.guard.titles import split_service_id, title_name
 from bleep.incidents.bus import EventBus
 from bleep.incidents.quiet import QuietStore, quiet_target
 from bleep.incidents.repository import IncidentRepo, primary_signal, utcnow
-from bleep.incidents.shown import check_in, report_in, verification_in
+from bleep.incidents.shown import (
+    check_in,
+    diagnosis_in,
+    proposal_in,
+    report_in,
+    verification_in,
+)
 from bleep.notify import format as fmt
 from bleep.notify.telegram import (
     EXPECTED_VERB,
@@ -241,6 +247,9 @@ class Notifier:
         if self.telegram is None:
             return
         language = self.language()
+        if diagnosis is not None:
+            diagnosis = diagnosis_in(diagnosis, language)
+        proposal = proposal_in(proposal, language)
         cause, category, confidence = fmt.confidence_text(diagnosis, language)
         if proposal.refused:
             text = fmt.render(

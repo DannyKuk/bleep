@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from bleep.schemas.shown import Shown
+
 SignalKind = Literal[
     "container_died",
     "oom",
@@ -105,9 +107,15 @@ class IncidentEvent(BaseModel):
 
 
 class RecoveryEvent(BaseModel):
+    """A container that died and came back by itself. `explanation` is the cheap model's line, or
+    English Bleep wrote in its place; `explanation_shown` is the fixed text that English was made
+    from, to show it in the person's language (#455), None for the model's line or a row stored
+    before that."""
+
     id: int | None = None
     host_id: str
     service_id: str | None = None
     container: str
     at: datetime
     explanation: str
+    explanation_shown: Shown | None = None

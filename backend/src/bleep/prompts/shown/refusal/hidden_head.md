@@ -1,0 +1,1 @@
+its target would be shown to the human redacted, with a character dropped or with a control character, and the human could not read what they approve; answer no_action and say in human_instructions what to do by hand

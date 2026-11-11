@@ -38,6 +38,7 @@ from bleep.graph.shown import english
 from bleep.graph.state import IncidentState, Node
 from bleep.graph.targets import UNKNOWN_HOST, UNREACHABLE, read_app_uuid
 from bleep.guard.grant import GrantInvalid, binds_app, step_snapshot
+from bleep.guard.plan_check import step_refusal
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import (
@@ -57,6 +58,8 @@ log = logging.getLogger(__name__)
 
 NOT_APPROVED = Shown.of("notice/not_approved")
 GONE = Shown.of("target/gone")
+CANNOT_RUN_YET_SHOWN = Shown.of("refusal/cannot_run_yet")
+CANNOT_RUN_YET = english(CANNOT_RUN_YET_SHOWN)
 DONE_WORD = {"docker.restart": "restarted", "docker.stop": "stopped", "docker.start": "started"}
 _COOLIFY_STEP = (
     "not confirmed after a restart (Bleep cannot read back a Coolify step; check the application"
@@ -71,10 +74,6 @@ CONFIRM_PLUGIN = {
     ),
 }
 CONFIRM_OTHER = "not confirmed after a restart (Bleep cannot read this step back); not run again"
-
-
-def _what(index: int, step: PlanStep) -> str:
-    return f"step {index + 1} ({step.action} {step.target} on {step.host_id})"
 
 
 def _plan_key(plan: ApprovalRecord) -> str:
@@ -199,20 +198,22 @@ def make(deps: GraphDeps) -> Node:
         payload = {"action": step.action, "target": step.target, "status": status}
         await deps.bus.publish(incident_id, "action", payload)
 
-    def refusals(state: IncidentState, plan: ApprovalRecord) -> list[str]:
-        """What the act tools' own checks refuse, for every step, before any step runs."""
-        reasons: list[str] = []
+    def refusals(state: IncidentState, plan: ApprovalRecord) -> list[Shown]:
+        """What the act tools' own checks refuse, for every step, before any step runs. A
+        refusal that carries no shown text (another handler's) shows as it was written."""
+        reasons: list[Shown] = []
         for index, step in enumerate(plan.proposal.steps):
             tool = deps.act_tools.get(step.action)
             if tool is None:
-                reasons.append(f"{_what(index, step)}: Bleep cannot run this action yet")
+                reasons.append(step_refusal(index + 1, step, CANNOT_RUN_YET_SHOWN))
                 continue
             try:
                 tool.check(step, state.get("grant"), deps.registry, plan=plan, step_index=index)
             except GrantInvalid as refusal:
-                reasons.append(f"{_what(index, step)}: the approval does not cover it ({refusal})")
+                why = Shown.of("refusal/not_covered", why=refusal.shown or str(refusal))
+                reasons.append(step_refusal(index + 1, step, why))
             except StepRefused as refusal:  # its text names the step already
-                reasons.append(str(refusal))
+                reasons.append(refusal.shown or Shown.of("refusal/text", text=str(refusal)))
         return reasons
 
     async def still_open(incident_id: str) -> None:
@@ -240,7 +241,7 @@ def make(deps: GraphDeps) -> Node:
         # Any other exception leaves the step `started`: a rerun reads the host, never re-runs it.
         try:
             if tool is None:
-                raise StepRefused(f"{_what(index, step)}: Bleep cannot run this action yet")
+                raise StepRefused.at(index, step, CANNOT_RUN_YET, CANNOT_RUN_YET_SHOWN)
             ran = await tool.run(
                 step, state.get("grant"), deps.registry, plan=plan, step_index=index
             )
@@ -352,7 +353,7 @@ def make(deps: GraphDeps) -> Node:
                 return await back_to_propose(state, stale)
             reasons = refusals(state, plan)
             if reasons:
-                refused = Shown.of("notice/refused", reasons="; ".join(reasons))
+                refused = Shown.of("notice/refused", reasons=Shown.joined(reasons, "; "))
                 return await back_to_propose(state, refused)
 
         results: list[StepResult] = []

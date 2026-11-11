@@ -10,7 +10,7 @@ from bleep import prompts
 from bleep.graph.build import build_graph
 from bleep.graph.deps import StaticSettings
 from bleep.graph.nodes import diagnose
-from bleep.graph.planted import planted_places
+from bleep.graph.planted import planted_places, planted_shown
 from bleep.graph.state import checkpoint_serializer
 from bleep.guard.pipeline import guard_text
 from bleep.incidents.runner import IncidentRunner
@@ -138,6 +138,7 @@ async def test_garbage_from_a_weak_model_gives_the_fallback_diagnosis(tmp_path):
         confidence=0.0,
         unsure=True,
         evidence=d.evidence,
+        shown=diagnose.FALLBACK_SHOWN,
     )
     assert [e.detail for e in d.evidence] == ["could not read: logs of shop-db-1: timeout"]
 
@@ -334,6 +335,7 @@ async def test_a_wrapper_tag_the_guard_escaped_gets_bleeps_own_evidence_line(tmp
         source="bleep",
         detail="Bleep found text in the container logs that tried to give it orders and ignored "
         "it; check who can write there.",
+        shown=planted_shown(["logs"]),
     )
 
 
@@ -349,6 +351,7 @@ async def test_a_plainly_written_order_gets_bleeps_own_evidence_line(tmp_path):
         source="bleep",
         detail="Bleep found text in the documents Bleep searched that tried to give it orders and "
         "ignored it; check who can write there.",
+        shown=planted_shown(["docs"]),
     )
 
 
@@ -364,6 +367,7 @@ async def test_a_hostile_service_name_gets_bleeps_own_evidence_line(tmp_path):
         source="bleep",
         detail="Bleep found text in the service name that tried to give it orders and ignored it; "
         "check who can write there.",
+        shown=planted_shown(["service_name"]),
     )
 
 

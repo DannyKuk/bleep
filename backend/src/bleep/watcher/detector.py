@@ -19,6 +19,7 @@ from langchain_core.runnables import RunnableConfig
 
 from bleep import prompts
 from bleep.graph.language import language_rule
+from bleep.graph.shown import english
 from bleep.guard.log import GuardLogger
 from bleep.guard.pipeline import guard_text
 from bleep.hosts.readings import past_threshold
@@ -26,13 +27,18 @@ from bleep.llm.guard import ModelGuard, ModelUnavailable
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import DEFAULT_LANGUAGE, Budgets, Language, Thresholds
+from bleep.schemas.shown import Shown
 
 log = logging.getLogger(__name__)
 
 LOG_TAIL_CHARS = 4_000
 RECOVERY_LINE_CHARS = 200
-MODEL_DOWN_LINE = "The container died and its restart policy brought it back."
-NO_LOGS_LINE = "No logs were available to explain the restart."
+# The lines Bleep writes in place of the model's, kept as templates to show them in the person's
+# language (#455); stored in English.
+MODEL_DOWN = Shown.of("recovery/model_down")
+NO_LOGS = Shown.of("recovery/no_logs")
+MODEL_DOWN_LINE = english(MODEL_DOWN)
+NO_LOGS_LINE = english(NO_LOGS)
 SENTENCE_END = re.compile(r"(?<=[.!?])\s")
 
 # Signals that already mean "past a threshold" because the source applied one (Docker only reports
@@ -455,8 +461,22 @@ async def explain_recovery(
     in `language` (#374). `config` goes to the model call (the caller's usage tracker). The call
     runs under `guard` (the default timeout when none is given); a model that cannot be reached
     gives `MODEL_DOWN_LINE`, so a hanging model never holds the caller."""
+    line = await recovery_line(model, logs_tail, guard_log, incident_id, config, guard, language)
+    return line if isinstance(line, str) else english(line)
+
+
+async def recovery_line(
+    model: BaseChatModel,
+    logs_tail: str,
+    guard_log: GuardLogger | None = None,
+    incident_id: str = "",
+    config: RunnableConfig | None = None,
+    guard: ModelGuard | None = None,
+    language: Language = DEFAULT_LANGUAGE,
+) -> str | Shown:
+    """`explain_recovery`, with a line Bleep wrote in place of the model's as its template."""
     if not logs_tail.strip():
-        return NO_LOGS_LINE
+        return NO_LOGS
     # Redact the whole text, then keep the tail: cutting first could leave half a secret.
     logs, redactions = await asyncio.to_thread(
         guard_text, "logs", logs_tail.strip(), LOG_TAIL_CHARS
@@ -474,7 +494,7 @@ async def explain_recovery(
         reply = await guard.call(lambda: model.ainvoke([HumanMessage(prompt)], config))
     except ModelUnavailable as error:
         log.warning("recovery line without the model (%s)", error.reason)
-        return MODEL_DOWN_LINE
+        return MODEL_DOWN
     sentence = SENTENCE_END.split(" ".join(reply.text.split()), maxsplit=1)[0]
     if len(sentence) > RECOVERY_LINE_CHARS:
         sentence = sentence[: RECOVERY_LINE_CHARS - 1].rstrip() + "…"

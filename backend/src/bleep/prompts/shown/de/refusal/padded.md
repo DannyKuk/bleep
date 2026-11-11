@@ -1,0 +1,1 @@
+er ist mit Leerzeilen oder Leerzeichen aufgefüllt (mehr als zwei Zeilenumbrüche hintereinander, 16 oder mehr Leerzeichen hintereinander oder über 30 Zeilen), also könnte die Person übersehen, was folgt, und nicht lesen, was sie freigibt; schreib ihn ohne die Auffüllung

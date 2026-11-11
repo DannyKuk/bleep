@@ -15,8 +15,8 @@ from pydantic import ValidationError
 
 from bleep import prompts
 from bleep.graph.nodes.report import ENTRY_CHARS, clip
-from bleep.schemas.graph import Check, Decision, Report, VerificationResult
-from bleep.schemas.incidents import IncidentEvent
+from bleep.schemas.graph import Check, Decision, Diagnosis, Proposal, Report, VerificationResult
+from bleep.schemas.incidents import IncidentEvent, RecoveryEvent
 from bleep.schemas.shown import Shown
 
 log = logging.getLogger(__name__)
@@ -28,6 +28,49 @@ def _rendered(shown: Shown, language: str, stored: str) -> str:
     except prompts.PromptError as error:
         log.warning("shown text %r does not render, keeping the stored English: %s", shown, error)
         return stored
+
+
+def _as_stored(shown: Shown | None, language: str, stored: str) -> str:
+    """`shown` in `language` while its English is still `stored`, word for word; a text changed
+    after it was made (cut, redacted, joined) shows as it is stored (#455)."""
+    if shown is None or _rendered(shown, prompts.LANGUAGES[0], "") != stored:
+        return stored
+    return _rendered(shown, language, stored)
+
+
+def proposal_in(proposal: Proposal, language: str) -> Proposal:
+    """The plan with Bleep's own reason, refusal reasons and instructions in `language`; the
+    model's reason and instructions are as it wrote them."""
+    fields = {
+        field: _as_stored(shown, language, getattr(proposal, field) or "")
+        for field, shown in proposal.shown.items()
+    }
+    reasons = list(proposal.refusal_reasons)
+    if len(proposal.refusal_reasons_shown) == len(reasons):
+        reasons = [
+            _as_stored(shown, language, stored)
+            for shown, stored in zip(proposal.refusal_reasons_shown, reasons, strict=True)
+        ]
+    update = {**fields, "refusal_reasons": reasons, "shown": {}, "refusal_reasons_shown": []}
+    return proposal.model_copy(update=update)
+
+
+def diagnosis_in(diagnosis: Diagnosis, language: str) -> Diagnosis:
+    """The diagnosis with Bleep's own cause and evidence lines in `language`."""
+    evidence = [
+        item.model_copy(
+            update={"detail": _as_stored(item.shown, language, item.detail), "shown": None}
+        )
+        for item in diagnosis.evidence
+    ]
+    cause = _as_stored(diagnosis.shown, language, diagnosis.root_cause)
+    return diagnosis.model_copy(update={"root_cause": cause, "evidence": evidence, "shown": None})
+
+
+def recovery_in(event: RecoveryEvent, language: str) -> RecoveryEvent:
+    """The recovery with Bleep's own line in `language`; the cheap model's is as it wrote it."""
+    explanation = _as_stored(event.explanation_shown, language, event.explanation)
+    return event.model_copy(update={"explanation": explanation, "explanation_shown": None})
 
 
 def event_in(event: IncidentEvent, language: str) -> IncidentEvent:

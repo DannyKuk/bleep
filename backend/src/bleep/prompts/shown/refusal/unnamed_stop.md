@@ -1,0 +1,1 @@
+neither this incident's signals nor the human name {name}, so stopping it is the human's call; leave it out, and if the fix needs it, answer no_action and say in human_instructions what to stop and why

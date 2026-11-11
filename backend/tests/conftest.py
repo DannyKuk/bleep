@@ -10,6 +10,7 @@ with warnings.catch_warnings():
     import langchain_openrouter  # noqa: F401
 
 import os
+from dataclasses import dataclass
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,9 +18,13 @@ from pydantic import SecretStr
 
 from bleep import prompts
 from bleep.config import Settings
+from bleep.guard import plan_check
+from bleep.guard.grant import GrantInvalid
 from bleep.hosts.registry import Registry
 from bleep.main import create_app
 from bleep.memory.embeddings import FakeEmbedder, FastEmbedEmbedder
+from bleep.schemas.shown import Shown
+from bleep.tools.docker_act import StepRefused
 from bleep.wiring import AppParts, build_parts
 
 
@@ -60,6 +65,31 @@ def no_prompt_overrides():
     prompts.use_overrides({})
     yield
     prompts.use_overrides({})
+
+
+@pytest.fixture(autouse=True)
+def refusals_read_as_their_templates(monkeypatch):
+    """Every refusal the plan check and the act tools give, in any test, carries its template and
+    reads in English as that template does (#455): what Propose, the guard log and the report
+    read of it stays what it was."""
+
+    def same(text: str, shown: Shown | None) -> None:
+        assert shown is not None, f"a refusal without its template: {text!r}"
+        assert prompts.show(shown, "en") == text
+
+    @dataclass(frozen=True)
+    class Checked(plan_check.Violation):
+        def __post_init__(self) -> None:
+            same(self.text, self.shown)
+
+    monkeypatch.setattr(plan_check, "Violation", Checked)
+    for refusal in (StepRefused, GrantInvalid):
+
+        def checked(self, text: str, shown: Shown | None = None, _init=refusal.__init__) -> None:
+            same(text, shown)
+            _init(self, text, shown)
+
+        monkeypatch.setattr(refusal, "__init__", checked)
 
 
 @pytest.fixture

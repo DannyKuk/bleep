@@ -559,9 +559,11 @@ def make(deps: GraphDeps) -> Node:
         follow_ups = [item for item in follow_ups if item]
         # A healthy look's advice is no follow-up: its checks found nothing to do.
         advice = proposal.human_instructions if proposal and result != "healthy" else None
-        if not follow_ups and advice:
+        advised = not follow_ups and bool(advice)
+        if advised and advice:
             follow_ups = [own(advice, FOLLOW_UP_CHARS)]
         root_cause = diagnosis.root_cause if diagnosis is not None else ""
+        model_cause = own(draft.cause, CAUSE_CHARS)
         in_english = draft.cause_en if isinstance(draft, _DraftWithEnglishCause) else ""
         fallback_shown = Shown.of(
             "summary/fallback",
@@ -572,7 +574,7 @@ def make(deps: GraphDeps) -> Node:
         written = Report(
             title=title,
             summary=own(draft.summary, SUMMARY_CHARS) or fallback,
-            cause=own(draft.cause, CAUSE_CHARS) or own(root_cause, CAUSE_CHARS) or NOT_DETERMINED,
+            cause=model_cause or own(root_cause, CAUSE_CHARS) or NOT_DETERMINED,
             cause_en=own(in_english, CAUSE_CHARS) or None,
             action_taken=taken,
             steps=lines,
@@ -594,13 +596,23 @@ def make(deps: GraphDeps) -> Node:
             shown["summary"] = fallback_shown
         if written.cause == NOT_DETERMINED:
             shown["cause"] = Shown.of("report/not_determined")
-        written = written.model_copy(update={"shown": shown})
+        elif (
+            not model_cause
+            and diagnosis is not None
+            and diagnosis.shown is not None
+            and written.cause == diagnosis.root_cause  # neither cut nor checked away
+        ):
+            shown["cause"] = diagnosis.shown
+        told = proposal.shown.get("human_instructions") if proposal is not None else None
+        kept = advised and told is not None and written.follow_ups[:1] == [advice]
+        noted = {0: told} if kept and told is not None else {}
+        written = written.model_copy(update={"shown": shown, "shown_follow_ups": noted})
         if language != DEFAULT_LANGUAGE:
             written = _usable_english_cause(written, incident_id)
         places, planted = await asyncio.to_thread(planted_follow_up, state)
         if planted is not None:  # after the check: Bleep's own text, never cut or removed
             follow_ups = [*written.follow_ups, planted]
-            noted = {len(written.follow_ups): planted_shown(places, hint=True)}
+            noted = {**noted, len(written.follow_ups): planted_shown(places, hint=True)}
             written = written.model_copy(
                 update={"follow_ups": follow_ups, "planted_in": places, "shown_follow_ups": noted}
             )

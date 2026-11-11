@@ -1,0 +1,1 @@
+weder die Signale dieses Vorfalls noch die Person nennen {name}, also entscheidet die Person, ob er gestoppt wird; lass ihn weg, und wenn der Fix ihn braucht, antworte mit no_action und sag in human_instructions, was gestoppt werden soll und warum

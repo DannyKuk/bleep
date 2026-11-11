@@ -1,0 +1,1 @@
+seine Argumente wiederholen einen Schlüssel oder schreiben ein Zeichen als \u-Escape, also würde die Person anderen Text lesen als den, der läuft, und könnte nicht lesen, was sie freigibt; schreib die Argumente als schlichtes JSON, jeden Schlüssel einmal und jedes Zeichen als sich selbst
