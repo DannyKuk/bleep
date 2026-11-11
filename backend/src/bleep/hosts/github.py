@@ -56,6 +56,11 @@ class RateLimited(GithubError):
         self.reset_at = reset_at
 
 
+class TokenRefused(GithubError):
+    """GitHub answered 401: the token is wrong, expired or revoked. Every call fails the same way
+    until it is replaced."""
+
+
 class GithubUnavailable(GithubError):
     """GitHub could not be reached, timed out or answered with a server error."""
 
@@ -354,7 +359,7 @@ class GithubClient:
         if _rate_limited(response):
             raise RateLimited("GitHub's rate limit is spent", _reset_at(response))
         if status == 401:
-            raise GithubError("GitHub refused the token (401)")
+            raise TokenRefused("GitHub refused the token (401)")
         if status >= 500:
             raise GithubUnavailable(f"GitHub answered {status}")
         raise GithubError(f"GitHub answered {status} for {what}")

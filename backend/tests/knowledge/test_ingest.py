@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from bleep.hosts.github import RateLimited
+from bleep.hosts.github import RateLimited, TokenRefused
 from bleep.knowledge.index import KnowledgeIndex
 from bleep.knowledge.ingest import (
     MAX_REPO_FILE_CHARS,
@@ -73,6 +73,7 @@ class Repos:
     def __init__(self, files: dict[str, list[RepoFile]], failing: set[str] = frozenset()) -> None:
         self.files, self.failing = files, set(failing)
         self.limited: set[str] = set()
+        self.refused: set[str] = set()
         self.unread: dict[str, list[str]] = {}
         self.asked: list[str] = []
 
@@ -83,6 +84,8 @@ class Repos:
         self.asked.append(repo)
         if repo in self.limited:
             raise RateLimited("GitHub's rate limit is spent")
+        if repo in self.refused:
+            raise TokenRefused("GitHub refused the token (401)")
         if repo in self.failing:
             raise RuntimeError("GitHub answered 503")
         return RepoDocFiles(files=self.files[repo], unread=self.unread.get(repo, []))
@@ -602,3 +605,17 @@ async def test_an_embedder_change_reads_the_repo_docs_at_the_next_start_not_a_da
 
     await start(new)  # and once is enough
     assert asked == ["acme/shop"]
+
+
+async def test_a_refused_token_skips_the_repo_and_is_logged_once(index, caplog):
+    repos = Repos({"acme/shop": [readme("acme/shop")], "acme/api": [readme("acme/api")]})
+    repos.refused = {"acme/shop"}
+    now = [0.0]
+    with caplog.at_level("WARNING", logger="bleep.knowledge.ingest"):
+        await run_days(index, repos, now, 3)
+
+    assert "acme/api" in repos.asked and repos.asked.count("acme/shop") > 1  # tried again, skipped
+    assert not any(i.startswith("repo:acme/shop") for i in await index.document_ids("repo:"))
+    warned = [r for r in caplog.records if "could not read the docs of acme/shop" in r.message]
+    assert len(warned) == 1
+    assert "Bad credentials" not in warned[0].message

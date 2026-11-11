@@ -17,7 +17,14 @@ from pydantic import BaseModel, Field
 from bleep.guard.redact import redact_text
 from bleep.guard.sanitize import MAX_CHARS, strip_control
 from bleep.guard.untrusted import escape_untrusted
-from bleep.hosts.github import GithubClient, GithubError, GithubUnavailable, NotFound, RateLimited
+from bleep.hosts.github import (
+    GithubClient,
+    GithubError,
+    GithubUnavailable,
+    NotFound,
+    RateLimited,
+    TokenRefused,
+)
 from bleep.schemas.github import Commit, CommitDetail, FileChange
 from bleep.tools.common import guard_result, invalid_arguments
 from bleep.tools.registry import ToolContext, ToolSpec
@@ -117,6 +124,11 @@ def _failed(error: GithubError, repo: str, client: GithubClient) -> str:
         until = f" until {error.reset_at:%H:%M} UTC" if error.reset_at else " for now"
         token = "" if client.authenticated else " Without a token (GITHUB_TOKEN) it is 60 an hour."
         return f"GitHub's rate limit is spent{until}.{token} Go on without the repo."
+    if isinstance(error, TokenRefused):
+        return (
+            "GitHub refused the token (GITHUB_TOKEN): it is wrong, expired or revoked."
+            " Go on without the repo."
+        )
     if isinstance(error, NotFound):
         if error.kind == "repo":
             access = (
