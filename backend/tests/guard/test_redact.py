@@ -1484,21 +1484,22 @@ def test_a_value_hidden_whole_before_a_json_string_leaves_the_result_stable(text
 @pytest.mark.parametrize(
     ("text", "kept"),
     [
-        # the `"` that rules the JSON out is gone from the tail the cut keeps
+        # the `"` that rules the JSON out is in the part the cut drops
         ('x "y ' + "a " * 2400 + ' {"q":"token=p4ss","n":"w0rd"}', '{"q":"token=<redacted>'),
-        # JSON from the line's start, its pair in the tail: the tail is hidden as before
+        # the head window ends where pretty-printed JSON may end a line
+        (
+            '{"q":"token=p4ss","n":"w0rd", ' + '"k": 1, ' * 900 + ' garbage" end',
+            "token=<redacted> ",
+        ),
+        # JSON from the line's start, its pair in the tail, in the head or still open there
         ('{"pad":"' + "a " * 2400 + '","q":"token=p4ss","n":"w0rd"}', '"q":"token=<redacted>'),
-        # JSON done within the head window keeps its structure
-        ('{"q":"token=p4ss","n":"w0rd"} ' + "a " * 2400, '{"q":"token=<redacted>","n":"w0rd"} a'),
-        # JSON still open at the head window's end is hidden as before
+        ('{"q":"token=p4ss","n":"w0rd"} ' + "a " * 2400, '{"q":"token=<redacted> a'),
         ('{"q":"token=p4ss","n":"w0rd","pad":"' + "a " * 2400 + '"}', '{"q":"token=<redacted> a'),
     ],
 )
-def test_a_pair_in_json_on_a_line_over_4000_characters(text, kept):
+def test_a_pair_in_json_on_a_line_over_4000_characters_is_hidden_as_before(text, kept):
     out, count = redact_with_count(text)
-    assert "p4ss" not in out and kept in out and count == 1
-    if kept.endswith("<redacted>"):
-        assert "w0rd" not in out
+    assert "p4ss" not in out and "w0rd" not in out and kept in out and count == 1
     assert redact_with_count(out) == (out, 0)
 
 

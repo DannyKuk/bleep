@@ -336,7 +336,9 @@ _JSON_RUN = re.compile(
     r"|<redacted>|[{}\[\],:])*+(?:\"(?:[^\"\\\n]|\\.)*+)?"
 )
 _BLANKS = re.compile(r"[ \t]*+")
-_AFTER_CUT_NOTE = re.compile(r"\[… [0-9]+ chars cut\]\n\Z")  # `join_cut` puts a cut's tail there
+# The note `join_cut` puts between a cut line's head and tail, each on a line of its own
+_CUT_NOTE_BEFORE = re.compile(r"\[… [0-9]+ chars cut\]\n\Z")
+_CUT_NOTE_AFTER = re.compile(rf"\n[^\n]{{0,{MAX_LEAD}}}?\[… [0-9]+ chars cut\](?:\n|\Z)")
 _OPENER_OF = {"}": "{", "]": "["}
 
 
@@ -347,12 +349,14 @@ def _json_strings(text: str, line_start: int) -> tuple[tuple[int, ...], tuple[in
     its JSON starts to its end or the JSON's end. The JSON starts at the line's first `{` (or `[`
     when it has none) with no `"` before it, after a log prefix, or at the line's start when that
     is a key, as on a line of pretty-printed JSON. Read once per line, so each pair on it costs a
-    bisection. The kept tail of a line over 4,000 characters, on its own line after the cut note,
-    is no JSON: its line's start, which may hold the `"` that rules the JSON out, is gone."""
-    if _AFTER_CUT_NOTE.search(text, max(0, line_start - 40), line_start):
-        return (), (), line_start
+    bisection. The head and tail kept of a line over 4,000 characters, on lines of their own
+    around the cut note, are no JSON (`_cut_line`)."""
     end = text.find("\n", line_start)
     end = len(text) if end < 0 else end
+    if _CUT_NOTE_BEFORE.search(text, max(0, line_start - 40), line_start) or _CUT_NOTE_AFTER.match(
+        text, end
+    ):
+        return (), (), line_start
     pos = _BLANKS.match(text, line_start, end).end()
     member_line = text.startswith('"', pos)  # one member of an object, as pretty-printed
     if member_line:
@@ -1140,18 +1144,19 @@ def _apply(pattern: re.Pattern[str], replacement: Replacement, text: str) -> tup
     return pattern.sub(replace, text), changed
 
 
-_PATTERNS_TO_CUT = [(_ELEMENT_TO_CUT if p is _ELEMENT else p, r) for p, r in _PATTERNS]
-_PATTERNS_MID_LINE = [(p, _redact_pair if r is _redact_line_pair else r) for p, r in _PATTERNS]
+# A window of a line over 4,000 characters is never read as JSON: an edge of the window is no
+# edge of the line, and the line's other part may hold what rules the JSON out.
+_PATTERNS_IN_CUT = [(p, _redact_pair if r is _redact_line_pair else r) for p, r in _PATTERNS]
+_PATTERNS_TO_CUT = [(_ELEMENT_TO_CUT if p is _ELEMENT else p, r) for p, r in _PATTERNS_IN_CUT]
 
 
-def _redact_all(text: str, cut_end: bool = False, mid_line: bool = False) -> tuple[str, int]:
-    """All patterns over `text`; with `cut_end`, its end is a window edge inside a cut line;
-    with `mid_line`, its start is one, so its first line is not read as JSON (`_json_strings`)
-    and a pair in a string there is hidden to whitespace."""
+def _redact_all(text: str, cut_end: bool = False, in_cut: bool = False) -> tuple[str, int]:
+    """All patterns over `text`; with `in_cut`, `text` is a window of a line over 4,000
+    characters; with `cut_end`, it is the head window, whose end is the window's edge."""
     text, total = _redact_blocks(text)
     text, count = _redact_keys(text)
     total += count
-    patterns = _PATTERNS_TO_CUT if cut_end else _PATTERNS_MID_LINE if mid_line else _PATTERNS
+    patterns = _PATTERNS_TO_CUT if cut_end else _PATTERNS_IN_CUT if in_cut else _PATTERNS
     for pattern, replacement in patterns:
         text, count = _apply(pattern, replacement, text)
         total += count
@@ -1403,7 +1408,7 @@ def _kept_head(head: str, after: str) -> tuple[str, bool]:
 def _kept_tail(before: str, tail: str) -> str:
     """The part of `redact(before + tail)` that stands for `tail`; see `_kept_head`."""
     window = before + tail
-    new = _redact_all(window, mid_line=True)[0]
+    new = _redact_all(window, in_cut=True)[0]
     if new.startswith(before):
         start = len(before)
     elif new.endswith(tail):
