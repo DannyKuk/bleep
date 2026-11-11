@@ -350,6 +350,22 @@ def test_the_github_client_reads_with_the_hosts_file_token(settings, tmp_path, m
     assert not parts.github.authenticated
     names = {s.name for s in parts.graph_deps.tools.specs()}
     assert {"recent_commits", "commit_diff"} <= names
+    assert parts.github.token_name == "BLEEP_TEST_GITHUB_TOKEN"
+
+
+def test_the_github_client_names_its_token_as_the_hosts_file_configures_it(settings, tmp_path):
+    token_file = tmp_path / "gh"
+    token_file.write_text("ghp_test", encoding="utf-8")
+    endpoint = "hosts:\n  - {id: demo, name: Demo, kind: socket, endpoint: 'tcp://127.0.0.1:1'}\n"
+    named = {
+        f"github:\n  token: {{file: {token_file}}}\n": "the token file named in the hosts file",
+        "": "GITHUB_TOKEN",
+    }
+    for github_section, expected in named.items():
+        hosts = tmp_path / "hosts.yaml"
+        hosts.write_text(github_section + endpoint, encoding="utf-8")
+        parts = build_parts(settings.model_copy(update={"hosts_file": hosts}))
+        assert parts.github.token_name == expected
 
 
 def test_the_app_ingests_the_docker_docs_and_offers_knowledge_search(settings, parts):

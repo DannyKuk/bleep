@@ -10,7 +10,7 @@ from pydantic import SecretStr
 import bleep.tools.github as github_tools
 from bleep.guard.pipeline import guard_text
 from bleep.hosts.config import GithubConfig, SecretRef, ServiceOverrides
-from bleep.hosts.github import GithubClient, github_token_name
+from bleep.hosts.github import GithubClient, github_token, github_token_name
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.github import Commit, CommitDetail, FileChange
@@ -344,6 +344,24 @@ async def test_a_refused_token_never_puts_its_value_in_the_sentence(registry, gi
     )
     out = await build_with(registry, client)["commit_diff"].ainvoke({"sha": SMALL})
     assert "(SHOP_GH_TOKEN)" in out and token not in out
+
+
+async def test_a_token_read_from_a_file_never_reaches_the_model_nor_does_its_path(
+    registry, github, tmp_path
+):
+    secret = "ghp_" + "f" * 36
+    token_file = tmp_path / "gh-secret-file"
+    token_file.write_text(secret + "\n", encoding="utf-8")
+    config = GithubConfig(token=SecretRef(file=token_file))
+    client = GithubClient(
+        github_token(config),
+        transport=httpx.MockTransport(github),
+        token_name=github_token_name(config),
+    )
+    github.override = httpx.Response(401, json=fixture("unauthorized.json"))
+    out = await build_with(registry, client)["recent_commits"].ainvoke({})
+    assert "(the token file named in the hosts file)" in out
+    assert secret not in out and str(token_file) not in out and token_file.name not in out
 
 
 async def test_github_down_is_a_readable_result(registry, github):
