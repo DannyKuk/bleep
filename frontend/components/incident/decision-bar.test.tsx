@@ -95,6 +95,34 @@ describe("DecisionBar", () => {
     });
   });
 
+  it("offers a no-action plan whose fix Bleep could run an instruction and Let it go", async () => {
+    const fetchMock = reply(200, decided("instruct", "dashboard", "set it to 0 and redeploy"));
+    const couldRun = approval({
+      proposal: proposal({
+        kind: "no_action",
+        steps: [],
+        reason: "The value to use is the person's call.",
+        human_instructions: "Remove TESTAPP_FAIL_AFTER_S (currently 180), then redeploy.",
+        could_run: ["coolify.set_env", "coolify.redeploy"],
+        fix_runnable: true,
+      }),
+    });
+    render(<DecisionBar incidentId="inc-1" approval={couldRun} onDecided={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: "Yes, go ahead" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Let it go" })).toBeEnabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Tell Bleep something" }));
+    await userEvent.type(screen.getByRole("textbox"), "set it to 0 and redeploy");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(sent(fetchMock)).toEqual({
+      approval_id: "appr-1",
+      kind: "instruct",
+      text: "set it to 0 and redeploy",
+    });
+  });
+
   it("offers no yes for a refused plan stored before the refused flag", () => {
     const reason = "Bleep's own checks refused the proposed plan twice, so nothing will run.";
     const legacy = approval({

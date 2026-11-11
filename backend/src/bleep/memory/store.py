@@ -55,6 +55,8 @@ def decision_memory(decision: Decision | None, proposal: Proposal | None) -> str
     if decision.kind == "reject":
         if proposal is not None and proposal.refused:
             return f"let go of the refused plan on {day}"  # not a plan the human turned down
+        if proposal is not None and proposal.instruct_only:
+            return f"let go of a fix Bleep could run on {day}"
         return f"rejected {plan} on {day}"
     return f"instructed on {day}: {decision.text or ''}"
 

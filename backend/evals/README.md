@@ -245,6 +245,12 @@ uv run --group evals python -m evals.look --repeat 3
 uv run --group evals python -m evals.look --render ../data/evals/look-<YYYYMMDD-HHMMSS>.jsonl
 ```
 
+A case may also set `enabled`, the actions the run may use (Bleep's core three when not given), and `could_run`, the actions a plan of no action must name for the incident to wait for the person's instruction (#365): the plan must be no action and its `could_run` exactly the case's (empty for a fix Bleep cannot run, which must still close), and a run with any other plan fails. [`coolify-env-could-run`](look/coolify-env-could-run.yaml) is the Coolify spike's `TESTAPP_FAIL_AFTER_S` case with `coolify.set_env` and `coolify.redeploy` enabled, [`compose-env-closes`](look/compose-env-closes.yaml) the bad-env Compose edit with the same actions enabled. A lean round on both:
+
+```bash
+uv run --group evals python -m evals.look --only coolify-env-could-run,compose-env-closes --repeat 3
+```
+
 Each run writes `data/evals/look-<YYYYMMDD-HHMMSS>.jsonl` (`LookResult`) and its tables beside it as `.md`. `--render` scores the stored runs again with the case files as they are now. `tests/evals/test_look_eval.py` loads every case and scores each on a scripted model.
 
 ## Recovery line

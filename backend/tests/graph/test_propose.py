@@ -416,6 +416,80 @@ def test_route_sends_only_an_act_plan_to_approval():
     assert propose.route({}) == "report"
 
 
+# A plan of no action whose fix the enabled actions could run waits for the human (#365).
+COOLIFY_ACTIONS = frozenset({*CORE_ACTIONS, "coolify.set_env", "coolify.redeploy"})
+REMOVE_FAIL_AFTER = "Remove TESTAPP_FAIL_AFTER_S (currently 180), then redeploy."
+
+
+def could_run(*actions: str, instructions: str | None = REMOVE_FAIL_AFTER, **extra) -> AIMessage:
+    return reply(
+        kind="no_action",
+        steps=[],
+        reason="The value to use is the person's call.",
+        human_instructions=instructions,
+        could_run=list(actions),
+        **extra,
+    )
+
+
+async def test_a_no_action_plan_whose_fix_the_enabled_actions_could_run_goes_to_approval(
+    tmp_path,
+):
+    env, state = await setup(tmp_path, could_run("coolify.set_env", "coolify.redeploy"))
+    env.deps.settings_store = StaticSettings(actions=COOLIFY_ACTIONS)
+
+    update = await propose.make(env.deps)(state)
+
+    plan = update["proposal"]
+    assert plan.kind == "no_action" and plan.fix_runnable and plan.instruct_only
+    assert plan.could_run == ["coolify.set_env", "coolify.redeploy"]
+    assert plan.steps == [] and not plan.refused
+    assert propose.route(update) == "approval"
+    assert "`could_run`" in prompt(env)
+
+
+@pytest.mark.parametrize(
+    ("answer", "why"),
+    [
+        (could_run("coolify.set_env", "coolify.redeploy"), "the Coolify actions are not enabled"),
+        (could_run("docker.restart", "compose.edit"), "an action Bleep does not have"),
+        (could_run(instructions=FIX_ENV), "a Compose-file edit: nothing Bleep could run"),
+        (could_run("docker.restart", instructions=None), "no instructions to the human"),
+        (could_run("docker.restart", instructions="  "), "blank instructions to the human"),
+        (could_run(fix_runnable=True), "the model cannot mark it itself"),
+    ],
+    ids=["coolify-off", "unknown-action", "compose-edit", "no-text", "blank-text", "forged-flag"],
+)
+async def test_any_other_no_action_plan_still_closes_at_once(tmp_path, answer, why):
+    env, state = await setup(tmp_path, answer)
+
+    update = await propose.make(env.deps)(state)
+
+    plan = update["proposal"]
+    assert plan.kind == "no_action" and not plan.fix_runnable and not plan.instruct_only, why
+    assert propose.route(update) == "report"
+
+
+async def test_a_fix_bleep_could_run_closes_when_no_replan_is_left(tmp_path):
+    env, state = await setup(tmp_path, could_run("docker.restart"))
+    env.deps.settings_store = StaticSettings(budget_limits=Budgets(replans=0))
+
+    update = await propose.make(env.deps)(state)
+
+    assert not update["proposal"].fix_runnable and propose.route(update) == "report"
+
+
+async def test_could_run_on_a_plan_that_acts_changes_nothing(tmp_path):
+    answer = reply(
+        kind="act", steps=[restart("shop-web-1")], reason="x", could_run=["docker.restart"]
+    )
+    env, state = await setup(tmp_path, answer)
+
+    plan = (await propose.make(env.deps)(state))["proposal"]
+
+    assert plan.kind == "act" and not plan.fix_runnable and not plan.instruct_only
+
+
 async def test_off_limits_lists_protected_containers_of_an_override_matching_no_service(tmp_path):
     env, state = await setup(
         tmp_path, acting(restart("shop-web-1")), protected=["shop-db-1"], key="database"

@@ -391,6 +391,25 @@ def test_an_approve_on_a_refused_plan_is_409_and_nothing_resumes(app_client, par
     assert call(app_client, parts.approvals.current, incident.id).decision is None
 
 
+def test_an_approve_on_a_no_action_plan_bleep_could_run_is_409_and_nothing_resumes(
+    app_client, parts, resumes
+):
+    """#365: the plan waits for an instruction or a let-go; nothing runs from it."""
+    incident = open_incident(app_client, parts)
+    plan = Proposal(
+        kind="no_action", reason="x", human_instructions="y", could_run=["docker.restart"]
+    )
+    plan = plan.model_copy(update={"fix_runnable": True})
+    approval_id = call(app_client, parts.approvals.request, incident.id, plan, []).id
+
+    response = post_decision(app_client, incident.id, approval_id, "approve")
+
+    assert response.status_code == 409
+    assert "nothing to approve" in response.json()["detail"]
+    assert resumes.calls == []
+    assert call(app_client, parts.approvals.current, incident.id).decision is None
+
+
 def test_an_approve_on_a_plan_refused_for_a_hidden_param_is_409(app_client, parts, resumes):
     """#294: the dashboard would have shown `"auth": "<redacted>"` while the real text ran."""
     hidden = PlanStep(

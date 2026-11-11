@@ -581,3 +581,12 @@ def test_letting_a_refused_plan_go_is_not_remembered_as_a_rejection():
 
     assert said == "let go of the refused plan on 2026-11-10"
     assert "rejected" not in said
+
+
+def test_letting_a_fix_bleep_could_run_go_is_not_remembered_as_a_rejection():
+    from bleep.memory.store import decision_memory
+
+    plan = Proposal(kind="no_action", reason="r", could_run=["docker.start"], fix_runnable=True)
+    let_go = Decision(kind="reject", via="telegram", at=datetime(2026, 11, 11, 9, tzinfo=UTC))
+
+    assert decision_memory(let_go, plan) == "let go of a fix Bleep could run on 2026-11-11"

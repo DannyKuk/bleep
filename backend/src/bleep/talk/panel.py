@@ -113,12 +113,14 @@ class Panel:
 
 
 async def _plan_line(offer: Offer, actions: Actions) -> str:
-    """A yes to a waiting plan points to its page; a plan Bleep's own checks refused cannot be
-    approved there either, and one that no longer waits is said so."""
+    """A yes to a waiting plan points to its page; a plan Bleep's own checks refused, or one of
+    no action, cannot be approved there either, and one that no longer waits is said so."""
     plan, language = await actions.plan_to_show(offer), actions.language()
     if plan == "gone":
         return said("answer_not_waiting", language)
-    name = "plan_refused" if plan == "refused" else "plan_on_page"
+    name = "plan_on_page"
+    if plan == "refused" or plan == "no_action":
+        name = f"plan_{plan}"
     return _fixed(name, language, incident=offer.incident or "")
 
 

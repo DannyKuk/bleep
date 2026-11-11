@@ -405,6 +405,18 @@ async def test_a_plan_its_checks_refused_is_said_so(env):
     assert waiting.line == en("look_end/waits_refused", incident="shop #1", cause=PLAN.reason)
 
 
+async def test_a_plan_of_no_action_bleep_could_run_asks_for_an_instruction(env):
+    could_run = Proposal(kind="no_action", reason="the value is yours", fix_runnable=True)
+    await env.approvals.request(env.incident.id, could_run, [])
+    await env.repo.set_status(env.incident.id, "awaiting_approval")
+
+    waiting = await look(env)
+
+    assert waiting.line == en(
+        "look_end/waits_no_action", incident="shop #1", cause="the value is yours"
+    )
+
+
 async def test_waiting_then_approved_then_running_then_fixed(env):
     approval = await env.approvals.request(env.incident.id, PLAN, [])
     await env.repo.set_status(env.incident.id, "awaiting_approval")

@@ -274,3 +274,67 @@ async def test_a_failing_look_without_urls_that_restarts_the_container_fails():
     cause = "An unhandled error reading 'slug' in the posts API."
     result = await run_case(c, settings(), models=look(cause, restart, category="code"))
     assert result.forbidden == [f"docker.restart {target}"] and result.passed is False
+
+
+# A plan of no action whose fix the enabled actions could run (#365).
+COULD_RUN = "coolify-env-could-run"
+COMPOSE_EDIT = "compose-env-closes"
+REMOVE_FAIL_AFTER = {
+    "kind": "no_action",
+    "reason": "The value to use is not known.",
+    "human_instructions": "Remove TESTAPP_FAIL_AFTER_S (currently 180), then redeploy.",
+    "could_run": ["coolify.set_env", "coolify.redeploy"],
+}
+FAIL_AFTER = "TESTAPP_FAIL_AFTER_S=180 makes /health answer 500 after 180 seconds."
+FIX_COMPOSE = {
+    "kind": "no_action",
+    "reason": "Bleep cannot edit the Compose file.",
+    "human_instructions": "Set DATABASE_URL to shop-db, then docker compose up -d shop-web.",
+}
+BAD_URL = "shop-web's DATABASE_URL names the host db, which does not exist."
+
+
+async def test_a_fix_bleep_could_run_passes_when_could_run_names_its_enabled_actions():
+    models = look(FAIL_AFTER, REMOVE_FAIL_AFTER, category="config")
+
+    result = await run_case(case(COULD_RUN), settings(), models=models)
+
+    assert result.failure is None, result.error
+    assert result.proposal.fix_runnable  # the case's enabled actions reached Propose's check
+    assert result.could_run_right and result.passed
+    assert "could run coolify.set_env, coolify.redeploy" in line(result)
+
+
+@pytest.mark.parametrize(
+    "plan",
+    [
+        REMOVE_FAIL_AFTER | {"could_run": []},
+        REMOVE_FAIL_AFTER | {"could_run": ["coolify.redeploy"]},
+    ],
+    ids=["none", "redeploy-only"],
+)
+async def test_a_fix_bleep_could_run_fails_on_any_other_could_run(plan):
+    models = look(FAIL_AFTER, plan, category="config")
+
+    result = await run_case(case(COULD_RUN), settings(), models=models)
+
+    assert result.could_run_right is False and result.passed is False
+    assert "could_run is not the case's" in line(result)
+
+
+async def test_a_compose_edit_passes_only_when_it_still_closes():
+    c = case(COMPOSE_EDIT)
+    closes = await run_case(c, settings(), models=look(BAD_URL, FIX_COMPOSE, category="config"))
+    assert closes.could_run_right and closes.passed and not closes.proposal.fix_runnable
+
+    waits = FIX_COMPOSE | {"could_run": ["docker.restart"]}
+    result = await run_case(c, settings(), models=look(BAD_URL, waits, category="config"))
+    assert result.proposal.fix_runnable and result.could_run_right is False
+    assert result.passed is False
+
+
+def test_a_case_whose_could_run_names_an_action_it_does_not_enable_is_refused(tmp_path):
+    data = case(COULD_RUN).model_dump(mode="json") | {"id": "x", "enabled": None}
+    (tmp_path / "x.yaml").write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(LookError, match="does not enable"):
+        load_case(tmp_path / "x.yaml")

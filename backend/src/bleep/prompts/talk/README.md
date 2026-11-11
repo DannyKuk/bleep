@@ -27,7 +27,8 @@ How Bleep reads what a person writes in its chat, and the fixed lines it answers
   `_of` variants that name the service's containers.
 - `plan_on_page` answers a yes to a waiting plan in the dashboard's panel, which points to the
   incident's page instead of showing the plan's buttons, and `plan_refused` one to a plan
-  Bleep's own checks refused, which cannot be approved (#391). `busy` tells the panel that
+  Bleep's own checks refused, which cannot be approved (#391); `plan_no_action` one to a plan
+  of no action that waits for an instruction because Bleep could run its fix (#365). `busy` tells the panel that
   three messages are being answered already.
 - A press of an offer's button is answered with the lines a Telegram button gets
   (`notify/answer_*`), on both surfaces (`talk/actions.py`).

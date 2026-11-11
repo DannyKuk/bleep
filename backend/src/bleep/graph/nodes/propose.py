@@ -4,7 +4,9 @@ The model answers with a `Proposal`; code then checks it (`guard.plan_check`) be
 sees it. A refused plan goes back to the model once with the reasons; refused again, it becomes
 `no_action` with the reasons for the human. Every refusal is written to the guard log as
 `blocked_action`. An unsure diagnosis is proposed on too, framed as "I am not sure, here is what I
-found"; only a missing diagnosis or a spent budget skips the model. See docs/design/graph.md.
+found"; only a missing diagnosis or a spent budget skips the model. A "no action" whose fix the
+enabled actions could run (`could_run`) goes to Approval as a refused plan does, for the human's
+instruction (#365). See docs/design/graph.md.
 
 The texts Bleep writes in place of the model's (a fallback reason, a refusal's reasons and what
 the human is told) are stored in English, which is what a later Propose and the report read, and
@@ -133,13 +135,13 @@ def _no_action(reason: str) -> Proposal:
 
 
 def route(state: IncidentState) -> Literal["approval", "report"]:
-    """A plan that acts needs a human's yes, and a refused plan the human's instruction or
-    dismissal (Approval sends it on to the report itself once no re-plan is left); any other
-    "no action" goes straight to the report."""
+    """A plan that acts needs a human's yes, and a refused plan or one whose fix Bleep could run
+    the human's instruction or dismissal (Approval sends a refused plan on to the report itself
+    once no re-plan is left); any other "no action" goes straight to the report."""
     proposal = state.get("proposal")
     if proposal is None:
         return "report"
-    return "approval" if proposal.kind == "act" or proposal.refused else "report"
+    return "approval" if proposal.kind == "act" or proposal.instruct_only else "report"
 
 
 async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> Proposal:
@@ -165,10 +167,11 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
 
     mcp = await _mcp_section(deps, incident_id, enabled)
     messages: list[BaseMessage] = [HumanMessage(_prompt(deps, state, diagnosis, enabled, mcp))]
+    can_instruct = replans_left(deps, state)
     proposal = _read(await _ask(deps, incident_id, messages), deps.registry, host_id)
     violations = check(proposal)
     if not violations:
-        return proposal
+        return _answerable(proposal, enabled, can_instruct=can_instruct)
     _record(deps, incident_id, violations)
     messages += [
         AIMessage(proposal.model_dump_json(include=set(ProposalDraft.model_fields))),
@@ -177,10 +180,26 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
     retry = _read(await _ask(deps, incident_id, messages), deps.registry, host_id)
     again = check(retry)
     if not again:
-        return retry
+        return _answerable(retry, enabled, can_instruct=can_instruct)
     _record(deps, incident_id, again)
     unclear = any(v in again for v in _unclear_names(retry, deps.registry))
-    return _refused(retry, again, can_instruct=replans_left(deps, state), unclear=unclear)
+    return _refused(retry, again, can_instruct=can_instruct, unclear=unclear)
+
+
+def _answerable(proposal: Proposal, enabled: set[str], *, can_instruct: bool) -> Proposal:
+    """The plan, marked `fix_runnable` when it is no action whose instructions to the human the
+    actions it names (`could_run`) could carry out, every one of them enabled, and an instruction
+    could still follow. Such a plan waits for the human's instruction or "Let it go" instead of
+    closing (#365); the plan an instruction leads to is checked and approved as any other."""
+    named = set(proposal.could_run)
+    runnable = (
+        proposal.kind == "no_action"
+        and bool(named)
+        and named <= enabled
+        and bool((proposal.human_instructions or "").strip())
+        and can_instruct
+    )
+    return proposal.model_copy(update={"fix_runnable": True}) if runnable else proposal
 
 
 def _step_rules(deps: GraphDeps) -> dict[str, StepRule]:

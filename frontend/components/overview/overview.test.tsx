@@ -184,6 +184,21 @@ describe("OverviewView hero", () => {
     expect(screen.queryByText(/I want to/)).toBeNull();
   });
 
+  it("asks how for a plan of no action whose fix Bleep could run, without a plan to approve", () => {
+    const couldRun = proposal({ kind: "no_action", steps: [], fix_runnable: true });
+    render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[service({ health: "down" })]}
+        incidents={[incident()]}
+        details={{ "inc-1": detail({ approval: approval({ proposal: couldRun }) }) }}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("shop is down. I could run the fix once you tell me how.");
+    expect(screen.queryByText(/I want to/)).toBeNull();
+  });
+
   it("counts the other incidents that need the human", () => {
     render(
       <OverviewView

@@ -3,7 +3,7 @@
 import { Check, Loader2, type LucideIcon, MessageSquare, TriangleAlert, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
-import { isRefused } from "@/components/incident/headline";
+import { isInstructOnly } from "@/components/incident/headline";
 import { useKeyboardInset } from "@/components/incident/use-phone";
 import { useReportPinnedBar } from "@/components/pinned-bar";
 import { useTimeZone } from "@/components/preferences";
@@ -47,7 +47,7 @@ interface AnswerLine {
  * when, and what it led to. */
 function answerLine(
   decision: Decision,
-  refused: boolean,
+  letGo: boolean,
   status: IncidentStatus | undefined,
   nothingRanBefore: boolean,
   zone: Zone,
@@ -68,7 +68,7 @@ function answerLine(
   if (decision.kind === "reject") {
     // An earlier plan of the same incident may have run before this one was put to the human.
     const nothing = nothingRanBefore ? words.nothingRan : words.planDidNotRun;
-    const who = refused ? words.letGo(where) : words.no(where);
+    const who = letGo ? words.letGo(where) : words.no(where);
     return { text: `${who} ${nothing}`, icon: X, tone: "text-ink-2" };
   }
   return {
@@ -79,9 +79,9 @@ function answerLine(
 }
 
 /**
- * Approve ("Yes, go ahead"), reject ("No, leave it") or instruct one approval. A plan Bleep's
- * own checks refused (`isRefused`, a plan stored before the flag included) has no "Yes, go
- * ahead", and the reject reads "Let it go". The request names the approval it answers, so a stale
+ * Approve ("Yes, go ahead"), reject ("No, leave it") or instruct one approval. A plan of no
+ * action put to the human (`isInstructOnly`: one Bleep's own checks refused, or one whose fix it
+ * could run) has no "Yes, go ahead", and the reject reads "Let it go". The request names the approval it answers, so a stale
  * page cannot approve a plan it never showed. After any answer, or a 409 saying another channel
  * answered first, the buttons lock and the outcome stays on screen. Render it with
  * `key={approval.id}` so a new plan gets fresh buttons.
@@ -120,7 +120,7 @@ export function DecisionBar({
   const [text, setText] = useState("");
   const textId = useId();
 
-  const refused = isRefused(approval.proposal);
+  const letGo = isInstructOnly(approval.proposal);
   const decision = approval.decision ?? mine;
   const locked = decision !== null || conflict !== null || sending !== null;
 
@@ -165,7 +165,7 @@ export function DecisionBar({
   const spinner = (kind: DecisionKind) =>
     sending === kind ? <Loader2 aria-hidden className="motion-safe:animate-spin" /> : null;
 
-  const yes = !refused && (
+  const yes = !letGo && (
     <Button
       className={cn(
         "font-extrabold",
@@ -189,7 +189,7 @@ export function DecisionBar({
       onClick={() => void decide("reject")}
     >
       {spinner("reject") ?? <X aria-hidden />}
-      {refused ? words.letGoButton : words.reject}
+      {letGo ? words.letGoButton : words.reject}
     </Button>
   );
   const tell = (
@@ -270,7 +270,7 @@ export function DecisionBar({
     </p>
   );
   const answer =
-    decision && answerLine(decision, refused, status, nothingRanBefore, zone, language, t);
+    decision && answerLine(decision, letGo, status, nothingRanBefore, zone, language, t);
   const answerText = answer && (
     <p
       role="status"

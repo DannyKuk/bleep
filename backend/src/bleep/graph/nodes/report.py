@@ -123,7 +123,8 @@ def outcome(state: IncidentState) -> Outcome:
         return "unverified"  # a later plan was rejected or empty, but an earlier one ran
     decision = state.get("decision")
     proposal = state.get("proposal")
-    if decision is not None and decision.kind == "reject" and not (proposal and proposal.refused):
+    let_go = proposal is not None and proposal.instruct_only
+    if decision is not None and decision.kind == "reject" and not let_go:
         return "rejected"
     if proposal is None or proposal.kind == "no_action":
         return "no_action"
@@ -224,7 +225,7 @@ def decision_shown(
     kind: str, via: str | None, text: str | None = None, *, let_go: bool = False
 ) -> Shown:
     """The decision as one line, with its channel: "Approved on Telegram". `let_go` is a reject
-    of a plan Bleep's own checks refused."""
+    of a plan of no action put to the human (`Proposal.instruct_only`)."""
     channel = via if via in CHANNELS else "other"
     on = Shown.of(f"channel/on_{channel}")
     if kind == "approve":
@@ -524,7 +525,7 @@ def make(deps: GraphDeps) -> Node:
         signals = state.get("signals", [])
         title = incident.title if incident is not None else build_title(state["subject"], signals)
         decision: Decision | None = state.get("decision")
-        let_go = bool(proposal and proposal.refused)
+        let_go = bool(proposal and proposal.instruct_only)
         human_shown = (
             decision_shown(decision.kind, decision.via, decision.text, let_go=let_go)
             if decision

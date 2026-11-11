@@ -259,7 +259,17 @@ class Notifier:
                 reasons=_reasons(proposal),
                 steps=_refused_steps(proposal, language),
             )
-            await self._ask(incident, approval, text, language, approvable=False, refused=True)
+            await self._ask(incident, approval, text, language, approvable=False, let_go=True)
+            return
+        if proposal.instruct_only:
+            text = fmt.render(
+                "could_run",
+                language=language,
+                root_cause=fmt.prose_line(cause),
+                reason=fmt.prose_line(proposal.reason),
+                instructions=fmt.prose_line(proposal.human_instructions or ""),
+            )
+            await self._ask(incident, approval, text, language, approvable=False, let_go=True)
             return
         text = fmt.render(
             "proposal",
@@ -282,10 +292,11 @@ class Notifier:
             return  # no plan to show
         language = self.language()
         waited = fmt.duration(self.clock() - current.requested_at, language)
-        if current.proposal.refused:
-            text = fmt.render("refused_reminder", language=language, waited=waited)
+        if current.proposal.instruct_only:
+            name = "refused_reminder" if current.proposal.refused else "could_run_reminder"
+            text = fmt.render(name, language=language, waited=waited)
             await self._safely(
-                self._ask(incident, approval, text, language, approvable=False, refused=True)
+                self._ask(incident, approval, text, language, approvable=False, let_go=True)
             )
             return
         steps = fmt.steps_text(current.proposal, language)
@@ -349,12 +360,13 @@ class Notifier:
         await self._send(incident, fmt.message(*parts), language, end=True, instead=note)
 
     async def _let_go(self, incident_id: str) -> bool:
-        """Whether the person let a plan Bleep's own checks refused go: a no-action run that ends
-        as theirs, as a rejected plan does."""
+        """Whether the person let a plan of no action they were asked about go (one Bleep's own
+        checks refused, or one whose fix it could run): a no-action run that ends as theirs, as a
+        rejected plan does."""
         current = await self.approvals.current(incident_id) if self.approvals else None
         return (
             current is not None
-            and current.proposal.refused
+            and current.proposal.instruct_only
             and current.decision is not None
             and current.decision.kind == "reject"
         )
@@ -416,13 +428,13 @@ class Notifier:
         language: str,
         *,
         approvable: bool = True,
-        refused: bool = False,
+        let_go: bool = False,
     ) -> None:
         """Send a plan with its buttons and remember which incident and plan the message is
         about. A plan the message cannot show in full (`fmt.shows_in_full`) gets Reject only, and
-        a plan Bleep's own checks `refused` gets "Let it go" in its place."""
+        a plan of no action (`Proposal.instruct_only`) gets "Let it go" in its place (`let_go`)."""
         approve = fmt.phrase("button_approve", language=language)
-        reject = fmt.phrase("button_let_go" if refused else "button_reject", language=language)
+        reject = fmt.phrase("button_let_go" if let_go else "button_reject", language=language)
         buttons = [(approve, f"approve:{approval.id}")] if approvable else []
         buttons.append((reject, f"reject:{approval.id}"))
         buttons += await self._expect_button(incident.id, language)

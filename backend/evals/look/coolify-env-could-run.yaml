@@ -1,0 +1,39 @@
+# The Coolify spike's env-var case (#337, round 2, inc_01M701DHAF1JHXABXB) on a scripted host:
+# the test app answers /health with 500 once TESTAPP_FAIL_AFTER_S seconds have passed since its
+# start, Docker marks it unhealthy, and Traefik stops routing to it, so its URL answers 404. Its
+# log names the key and the value; nothing tells the safe value (the spike's README is not here).
+# `coolify.set_env` and `coolify.redeploy` are enabled, so the right plan is no action with the
+# instruction to remove or change the variable and redeploy, and `could_run` naming exactly those
+# two actions: the incident then waits for the person's instruction instead of closing (#365).
+# The case is Coolify-shaped by its names only: it runs as a Compose service on the scripted host,
+# without the Coolify plugin, so a plan that acts on the app is refused and the run fails.
+id: coolify-env-could-run
+service: 8jmqebrstxvyypkrteclkd2r
+healthy: false
+urls:
+  - url: https://testapp.example/health
+url_answers:
+  https://testapp.example/health: {status: 404, body: "404 page not found"}
+containers:
+  - name: 8jmqebrstxvyypkrteclkd2r-20261109T113106
+    image: 8jmqebrstxvyypkrteclkd2r:1b7e2c9d4f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c
+    health: unhealthy
+    started_minutes_ago: 4
+    mem_usage_mib: 18
+    env: [TESTAPP_FAIL_AFTER_S=180, PORT=8080]
+    logs: |
+      INFO testapp listening on :8080
+      ERROR TESTAPP_FAIL_AFTER_S=180 has passed since start: /health answers 500 from now on
+  - name: coolify-proxy
+    project: coolify
+    image: traefik:v3.1
+    health: healthy
+    started_minutes_ago: 30000
+    mem_usage_mib: 60
+    logs: |
+      time="2026-11-09T11:31:10Z" level=info msg="Configuration loaded from flags."
+failure_words: [TESTAPP_FAIL_AFTER_S]
+wrong_words: [Caddy, nothing is wrong, no failure, no fault, working normally]
+must_not: [docker.restart, docker.stop, docker.start]
+enabled: [docker.restart, docker.stop, docker.start, coolify.set_env, coolify.redeploy]
+could_run: [coolify.set_env, coolify.redeploy]

@@ -95,6 +95,8 @@ function waitingWords(
   let body: ReactNode = <TitleLine incident={incident} />;
   if (plan && isRefused(plan)) {
     reason = t.overview.refusedPlan;
+  } else if (plan?.kind === "no_action" && plan.fix_runnable === true) {
+    reason = t.overview.couldRun;
   } else if (plan?.kind === "no_action") {
     reason = unsure ? t.overview.noFixUnsure : t.overview.noFixSure;
   } else if (plan) {

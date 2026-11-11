@@ -455,9 +455,8 @@ class TelegramBot:
             await self.client.answer_callback(callback_id, _said("answer_closed", language))
             await self.client.clear_buttons(self.chat_id, message_id)
             return
-        if kind == "approve" and await self._refused_plan(incident_id, approval_id):
-            said = _said("answer_refused_plan", language)
-            await self.client.answer_callback(callback_id, said)
+        if kind == "approve" and (why := await self._unapprovable(incident_id, approval_id)):
+            await self.client.answer_callback(callback_id, _said(why, language))
             return
         if kind == "approve" and not await self._shown_in_full(incident_id, approval_id):
             # No Approve button was sent for it; a press that arrives anyway is refused.
@@ -548,9 +547,15 @@ class TelegramBot:
         current = await self.approvals.current(incident_id)
         return current is not None and current.id == approval_id and current.closed
 
-    async def _refused_plan(self, incident_id: str, approval_id: str) -> bool:
+    async def _unapprovable(self, incident_id: str, approval_id: str) -> str | None:
+        """The answer to a yes for a plan of no action, which nothing can approve (no Approve
+        button is sent for one); None for any other plan."""
         current = await self.approvals.current(incident_id)
-        return current is not None and current.id == approval_id and current.proposal.refused
+        if current is None or current.id != approval_id:
+            return None
+        if current.proposal.refused:
+            return "answer_refused_plan"
+        return "answer_no_action_plan" if current.proposal.kind != "act" else None
 
     async def _shown_in_full(self, incident_id: str, approval_id: str) -> bool:
         current = await self.approvals.current(incident_id)
@@ -661,6 +666,8 @@ class TelegramBot:
         current, language = await self.actions.plan_to_show(offer), self.language()
         if current == "refused":
             why_not = _said("answer_refused_plan", language)
+        elif current == "no_action":
+            why_not = _said("answer_no_action_plan", language)
         elif current == "gone":
             why_not = _said("answer_not_waiting", language)
         elif await self.messages.first_for(current.incident_id) is None:
