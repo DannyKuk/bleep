@@ -7,13 +7,13 @@
 | | |
 |---|---|
 | Model under test | `openai/gpt-6-luna` (provider `openrouter`) |
-| Judge | `claude-code` through DeepEval GEval: the Claude Code CLI on its default model `opus` (Claude Opus 5.5 on this date), on the owner's plan; a root cause passes at 0.7 or more |
+| Judge | `claude-code` through DeepEval GEval: the Claude Code CLI with the model its settings name, `opus` (Claude Opus 5.5 on this date), on the owner's plan; a root cause passes at 0.7 or more |
 | Graded by hand | Claude (Opus 5.5), against each scenario's expected root cause, after GEval; every grade and its note in [`scenarios-20261111-153102.grades.jsonl`](data/scenarios-20261111-153102.grades.jsonl). These grades are compared with GEval's [below](#geval-against-grading-by-hand); the tables keep GEval's scores |
 | Scenarios | bad-deploy, bad-env, db-down, disk-full, hung, misroute, oom, port-conflict, 1 run each |
 | When | 2026-11-11 15:31 UTC, 15 min |
 | Commit | `5b62434a` |
 | Raw data | [`scenarios-20261111-153102.jsonl`](data/scenarios-20261111-153102.jsonl) |
-| Reproduce | `EVAL_JUDGE_MODEL=claude-code uv run --group evals python -m evals.run --only bad-deploy,bad-env,db-down,disk-full,hung,misroute,oom,port-conflict --repeat 1` (in `backend/`). This batch ran as `--only bad-deploy`, then one `--append` per other scenario, before `--only` took several ids |
+| Reproduce | `export EVAL_JUDGE_MODEL=claude-code:opus`, then `uv run --group evals python -m evals.run --only bad-deploy --repeat 1` and, for each of bad-env, db-down, disk-full, hung, misroute, oom and port-conflict, `uv run --group evals python -m evals.run --only <scenario> --repeat 1 --append data/evals/scenarios-20261111-153102.jsonl` (in `backend/`); `--only` takes one id. The batch ran with `EVAL_JUDGE_MODEL=claude-code`, so the CLI used the model set in its own settings, `opus`; the raw file and info record only `claude-code` |
 
 Each run switches the fault on, lets Bleep's watcher open the incident and runs the graph to the end of Propose, then switches the fault off. Nothing is executed. Times count from the fault going on; steps are the model's tool calls, and tools lists them in order with their arguments cut short (n/a for a run recorded before they were kept); peak prompt is the largest single prompt of the run; fallbacks are model calls that gave no structured output through tools, so Bleep asked for JSON in the reply instead. The shop's containers were recreated before every run, volumes kept, so no earlier run's log reached the next. Knowledge search was offered over the shipped Docker docs snapshot, as in the app, and the linked repo docs `DannyKuk/bleep: demo/shop/docs/deploy.md`, `DannyKuk/bleep: demo/shop/docs/services.md`, read from this checkout.
 
