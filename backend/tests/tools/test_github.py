@@ -376,3 +376,80 @@ def test_secret_looking_file_names_in_the_cut_note_do_not_cost_the_head():
     assert out.splitlines()[1].startswith("commit 80960fa")
     assert "chars cut]" not in out
     assert "[diff cut here" in out
+
+
+def _words(n: int, start: int = 0) -> str:
+    """Text the guard leaves alone, so its guarded size is its length; a line over 4,000 characters
+    it would cut itself."""
+    return " ".join(f"w{i}" for i in range(start, start + n))
+
+
+def _short_patch() -> str:
+    return "@@ -1,3 +1,4 @@\n" + "".join(f"+line {i}\n" for i in range(60))
+
+
+async def _diff_of(registry, github, files: list[FileChange]) -> str:
+    body = fixture("commit-small.json")
+    body["files"] = [f.model_dump(mode="json") for f in files]
+    github.override = httpx.Response(200, json=body)
+    return await build(registry, github)["commit_diff"].ainvoke({"sha": SMALL})
+
+
+async def test_a_file_of_very_long_lines_does_not_hide_the_file_after_it(registry, github):
+    long_lines = "@@ -0,0 +1,5 @@\n" + "\n".join("+" + _words(500, i * 500) for i in range(5))
+    files = [
+        FileChange(filename="data/big.jsonl", status="added", additions=5, patch=long_lines),
+        FileChange(filename="docs/report.md", status="added", additions=60, patch=_short_patch()),
+    ]
+
+    out = await _diff_of(registry, github, files)
+
+    assert WRAPPED.match(out)
+    assert len(out) <= 8000 + 200
+    assert "--- docs/report.md\n@@ -1,3 +1,4 @@\n+line 0" in out
+    assert "+line 59" in out  # the short file is whole
+    assert "w0 w1 w2 w3 w4" in out and "[… cut]" in out  # the long lines are cut inside a line
+    assert "not shown in full: data/big.jsonl]" in out  # only the cut file is named
+
+
+async def test_a_large_file_does_not_hide_the_file_after_it(registry, github):
+    large = "@@ -1,9 +1,9 @@\n" + "".join(f"+row {i} {_words(8)}\n" for i in range(2000))
+    files = [
+        FileChange(filename="package-lock.json", status="modified", additions=2000, patch=large),
+        FileChange(
+            filename="demo/compose.yaml", status="modified", additions=60, patch=_short_patch()
+        ),
+        FileChange(
+            filename="demo/shop/app.py", status="modified", additions=60, patch=_short_patch()
+        ),
+    ]
+
+    out = await _diff_of(registry, github, files)
+
+    assert WRAPPED.match(out)
+    assert len(out) <= 8000 + 200
+    assert "--- package-lock.json\n@@ -1,9 +1,9 @@\n+row 0" in out
+    assert "+line 59" in out
+    assert out.count("+line 59") == 2  # both short files are whole
+    assert "not shown in full: package-lock.json]" in out
+
+
+def test_a_second_huge_file_still_leaves_the_third_its_share():
+    huge = "@@ -0,0 +1 @@\n" + "\n".join("+" + _words(500, i * 500) for i in range(20))
+    files = [
+        FileChange(filename="a.lock", status="added", additions=1, patch=huge),
+        FileChange(filename="b.lock", status="added", additions=1, patch=huge),
+        FileChange(filename="c.py", status="added", additions=60, patch=_short_patch()),
+    ]
+
+    out = describe_diff(detail(files=files), 8000)
+
+    assert len(out) <= 8000
+    assert "--- c.py\n@@ -1,3 +1,4 @@" in out
+    assert "not shown in full: a.lock, b.lock]" in out
+
+
+def test_a_diff_that_fits_is_shown_whole_with_no_cut_note():
+    files = [FileChange(filename="a.py", status="added", additions=60, patch=_short_patch())]
+    out = describe_diff(detail(files=files), 8000)
+    assert "diff cut" not in out and "[… cut]" not in out
