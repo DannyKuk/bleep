@@ -4,7 +4,6 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from bleep import prompts
 from bleep.main import create_app
 
 LOGIN = {"password": "test-password"}
@@ -355,7 +354,7 @@ def test_a_validator_of_bleeps_own_reads_in_german_and_keeps_its_field(
     german = settings_put(signed_in, {"general": {"timezone": "Mars/Base"}}).json()["detail"]
 
     assert [(e["type"], e["loc"]) for e in english] == [("time_zone", ["general", "timezone"])]
-    assert english[0]["msg"] == "must be an IANA time zone, e.g. Europe/Vienna"
+    assert english[0]["msg"] == "Value error, must be an IANA time zone, e.g. Europe/Vienna"
     assert german[0]["loc"] == ["general", "timezone"]
     assert german[0]["msg"] == "muss eine IANA-Zeitzone sein, zum Beispiel Europe/Vienna"
 
@@ -421,44 +420,54 @@ def test_a_host_form_names_the_field_and_never_what_was_sent(signed_in, parts, m
     assert "secret-host" not in str(detail)
 
 
-# --- what is stored and what a model reads stays English ---
-
-PROMPT = "llm/json_retry"
+# --- the 422 list, names from the request, bad braces in an override ---
 
 
-def prompt_texts(client: TestClient) -> dict[str, str]:
-    return {item["name"]: item["file_text"] for item in client.get("/api/dev/prompts").json()}
+def test_a_422_list_logs_no_warning_in_either_language(signed_in, parts, monkeypatch, caplog):
+    for language in ("en", "de"):
+        pick(parts, monkeypatch, language)
+        caplog.clear()
+        with caplog.at_level("WARNING", logger="bleep.api"):
+            answer = settings_put(signed_in, {"thresholds": {"repeated_deaths": 101}})
+            assert answer.status_code == 422
+            assert signed_in.post("/api/talk/messages", json={}).status_code == 422
+        assert caplog.records == []
 
 
-def guard_log(client: TestClient) -> list[str]:
-    return sorted(entry["detail"] for entry in client.get("/api/dev/guard-log").json())
-
-
-def save_and_reset(client: TestClient) -> None:
-    listed = client.get("/api/dev/prompts").json()
-    version = next(item["version"] for item in listed if item["name"] == PROMPT)
-    text = prompts.file_text(PROMPT)
-    saved = client.put(
-        f"/api/dev/prompts/{PROMPT}", json={"text": text}, headers={"If-Match": version}
-    )
-    assert saved.status_code == 200
-    reset = client.delete(
-        f"/api/dev/prompts/{PROMPT}", headers={"If-Match": saved.json()["version"]}
-    )
-    assert reset.status_code == 200
-
-
-def test_the_picked_language_changes_no_prompt_a_model_reads_and_no_text_that_is_stored(
-    signed_in, parts, monkeypatch
+@pytest.mark.parametrize("language", ["en", "de"])
+def test_a_host_name_from_the_body_is_shown_escaped_not_raw(
+    signed_in, parts, monkeypatch, language
 ):
-    english = prompt_texts(signed_in)
-    assert english == {name: prompts.file_text(name) for name in english}
-    save_and_reset(signed_in)
-    stored_in_english = guard_log(signed_in)
-    assert stored_in_english == [f"override of {PROMPT} reset", f"override of {PROMPT} saved"]
+    key = "a'\x01‮b"
+    pick(parts, monkeypatch, language)
+    answer = settings_put(signed_in, {"hosts": {key: {"may_sleep": True}}})
+    assert answer.status_code == 422
+    detail = answer.json()["detail"]
+    sentence = "no host {} in the hosts file or the dashboard"
+    german = "Kein Host {} in der Hosts-Datei oder im Dashboard"
+    assert detail == (sentence if language == "en" else german).format(repr(key))
+    assert "\x01" not in detail and "‮" not in detail
 
+
+@pytest.mark.parametrize("language", ["en", "de"])
+def test_a_protected_entry_without_a_slug_is_shown_escaped(signed_in, parts, monkeypatch, language):
+    pick(parts, monkeypatch, language)
+    body = {"hosts": {"a": {"services": {"x": {"protected_containers": ["\U0001f680'"]}}}}}
+    detail = settings_put(signed_in, body).json()["detail"]
+    start = "host a, service x: protected entry " if language == "en" else "Host a, Dienst x: "
+    assert detail.startswith(start)
+    assert repr("\U0001f680'") in detail
+
+
+@pytest.mark.parametrize("text", ["a { b", "{x!r}", "{0}"])
+def test_a_dev_panel_override_with_bad_braces_is_refused_in_german(
+    signed_in, parts, monkeypatch, text
+):
     pick(parts, monkeypatch, "de")
-    assert prompt_texts(signed_in) == english
-    save_and_reset(signed_in)
-
-    assert guard_log(signed_in) == sorted(stored_in_english * 2)
+    listed = signed_in.get("/api/dev/prompts").json()
+    version = next(item["version"] for item in listed if item["name"] == "llm/json_retry")
+    answer = signed_in.put(
+        "/api/dev/prompts/llm/json_retry", json={"text": text}, headers={"If-Match": version}
+    )
+    assert answer.status_code == 422
+    assert answer.json()["detail"].startswith(("Ungültige Klammern", "Erlaubt sind nur"))

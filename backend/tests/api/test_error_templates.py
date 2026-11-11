@@ -16,8 +16,9 @@ from bleep.hosts.dashboard import HostConflict, HostKeyBusy, HostKeyUnavailable,
 from bleep.hosts.ssh import AddressRefused, vetted_address
 from bleep.incidents.prompt_overrides import PromptRefused, check_lines
 from bleep.incidents.settings_store import SettingsRefused, check_body
+from bleep.plugins.registry import PluginRegistry
 from bleep.plugins.urls import NotPublic, UrlRefused, check_dashboard_url, check_public, check_url
-from bleep.schemas.refusal import Problem
+from bleep.schemas.refusal import Problem, Reasons
 from bleep.store.secrets import MAX_VALUE_CHARS, _checked
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "bleep"
@@ -143,10 +144,15 @@ def test_a_refusal_carried_inside_another_is_said_in_the_same_language():
 
 
 def test_a_validation_reason_inside_a_refusal_is_said_in_the_picked_language():
-    problems = (
-        Problem(
-            ("a", "b"), "less_than_equal", "Input should be less than or equal to 5", {"le": "5"}
-        ),
+    problems = Reasons(
+        (
+            Problem(
+                ("a", "b"),
+                "less_than_equal",
+                "Input should be less than or equal to 5",
+                {"le": "5"},
+            ),
+        )
     )
     error = SettingsRefused("host a: a.b: x", "settings_host_reasons", host="a", reasons=problems)
     assert said(error, "en") == "host a: a.b: Input should be less than or equal to 5"
@@ -389,3 +395,79 @@ def test_the_api_texts_are_not_overridable_and_no_model_reads_them():
     assert not api & set(prompts.overridable_names())
     for path in (SRC / "graph").rglob("*.py"):
         assert "api/" not in path.read_text(encoding="utf-8").replace("api/v1", ""), path
+
+
+# --- braces in an override, plugin reasons, and a name from the request ---
+
+
+@pytest.mark.parametrize("text", ["a { b", "a } b", "{x!r}", "{0}", "{x:>5}"])
+def test_an_override_with_bad_braces_is_said_in_german_and_reads_as_its_own_text_in_english(text):
+    error = refused(prompts.check_override, "llm/json_retry", text)
+    assert error.template in {"prompt_bad_braces", "prompt_placeholder_form"}
+    assert said(error, "en") == str(error)
+    assert said(error, "de") != str(error)
+    assert not said(error, "de").startswith(("bad braces", "only plain"))
+
+
+def test_a_placeholder_that_is_not_a_plain_name_names_it_in_german():
+    error = refused(prompts.check_override, "llm/json_retry", "{0}")
+    assert said(error, "de") == "Erlaubt sind nur einfache {name}-Platzhalter, gefunden wurde {0}"
+    assert said(error, "en") == "only plain {name} placeholders are allowed, got {0}"
+
+
+class _Stub:
+    name = "demo"
+
+    class settings_model:  # noqa: N801
+        @staticmethod
+        def model_validate(values):
+            raise ValidationError.from_exception_data(
+                "Settings",
+                [
+                    {"type": "missing", "loc": ("b",), "input": {}},
+                    {"type": "missing", "loc": ("a",), "input": {}},
+                    {"type": "string_type", "loc": ("a",), "input": 1},
+                    {"type": "missing", "loc": (), "input": {}},
+                ],
+            )
+
+
+def test_a_plugins_settings_reasons_are_sorted_and_grouped_by_field_in_both_languages():
+    error = refused(PluginRegistry._validate, object(), _Stub(), {})
+    expected = (
+        "plugin demo: invalid settings (a: Field required, Input should be a valid string; "
+        "b: Field required; settings: Field required)"
+    )
+    assert str(error) == expected
+    assert said(error, "en") == expected
+    assert said(error, "de") == (
+        "Plugin demo: ungültige Einstellungen (a: Pflichtfeld, Die Eingabe muss ein gültiger "
+        "Text sein; b: Pflichtfeld; settings: Pflichtfeld)"
+    )
+
+
+def test_a_plugins_own_validator_keeps_its_value_error_prefix_in_english():
+    from bleep.plugins.mcp_url import McpSettings
+
+    class Plugin:
+        name = "mcp_url"
+        settings_model = McpSettings
+
+    error = refused(PluginRegistry._validate, object(), Plugin(), {"purpose": "a\nb"})
+    assert str(error) == (
+        "plugin mcp_url: invalid settings (purpose: Value error, must be one line of plain text, "
+        "without control characters)"
+    )
+    assert said(error, "en") == str(error)
+    assert said(error, "de") == (
+        "Plugin mcp_url: ungültige Einstellungen (purpose: muss eine Zeile Klartext ohne "
+        "Steuerzeichen sein)"
+    )
+
+
+def test_a_name_from_the_request_is_shown_escaped_as_it_was_before():
+    name = "a'\x01\u202eb"
+    error = refused(prompts.check_override, name, "text")
+    assert "\x01" not in said(error, "en") and "\u202e" not in said(error, "en")
+    assert said(error, "en") == str(error) == f"no prompt named {name!r} can be overridden"
+    assert said(error, "de") == f"Der Prompt {name!r} lässt sich nicht überschreiben"

@@ -181,7 +181,7 @@ def refuse_names_without_a_slug(update: SettingsUpdate) -> None:
                         "by a Coolify name; protect the application by its uuid",
                         host=host_id,
                         service=service,
-                        entry=name,
+                        entry=repr(name),
                     )
 
 

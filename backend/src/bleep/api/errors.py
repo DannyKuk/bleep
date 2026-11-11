@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from bleep import prompts
-from bleep.schemas.refusal import Problem, Templated, Value
+from bleep.schemas.refusal import Problem, Reasons, Templated, Value
 from bleep.schemas.shown import Shown
 
 log = logging.getLogger(__name__)
@@ -74,7 +74,7 @@ class Refusal(HTTPException):
     @classmethod
     def invalid(cls, problems: Sequence[Problem]) -> Refusal:
         """422 with a list of problems, each rendered from its type."""
-        refusal = cls(422, "invalid")
+        refusal = cls(422, "", fallback="invalid")
         refusal.problems = list(problems)
         return refusal
 
@@ -118,12 +118,24 @@ def _value(value: Value, language: str) -> str:
             return prompts.show(value, language)
         case Templated():
             return render(value.template, value.values, str(value), language)
-        case _:
-            return "; ".join(
-                f"{'.'.join(str(part) for part in problem.loc) or 'value'}: "
-                f"{problem_text(problem, language)}"
-                for problem in value
-            )
+        case Reasons():
+            return _reasons(value, language)
+
+
+def _reasons(reasons: Reasons, language: str) -> str:
+    found: list[tuple[str, str]] = [
+        (
+            ".".join(str(part) for part in problem.loc) or reasons.empty,
+            problem_text(problem, language),
+        )
+        for problem in reasons.problems
+    ]
+    if not reasons.grouped:
+        return "; ".join(f"{where}: {text}" for where, text in found)
+    by_field: dict[str, list[str]] = {}
+    for where, text in found:
+        by_field.setdefault(where, []).append(text)
+    return "; ".join(f"{where}: {', '.join(texts)}" for where, texts in sorted(by_field.items()))
 
 
 def _grouped(number: int, language: str) -> str:

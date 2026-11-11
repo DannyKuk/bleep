@@ -1,1 +1,1 @@
-no prompt named '{name}' can be overridden
+no prompt named {name} can be overridden

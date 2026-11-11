@@ -32,7 +32,7 @@ from bleep.hosts.registry import Registry
 from bleep.incidents.repository import utcnow
 from bleep.plugins.registry import PluginError, PluginRegistry, UnknownPlugin
 from bleep.schemas.plugins import PluginUpdate, PluginView
-from bleep.schemas.refusal import Problem, Templated
+from bleep.schemas.refusal import Reasons, Templated
 from bleep.schemas.services import Service
 from bleep.schemas.settings import (
     DEFAULT_LANGUAGE,
@@ -397,7 +397,7 @@ class SettingsStore:
                     raise SettingsRefused(
                         f"no host {host_id!r} in the hosts file or the dashboard",
                         "settings_no_host",
-                        host=host_id,
+                        host=repr(host_id),
                     )
                 _merged_host(base, host)  # raises on what the hosts file itself would refuse
                 hosts = merged.hosts if merged.hosts is not None else {}
@@ -524,7 +524,7 @@ class SettingsStore:
                 raise SettingsRefused(
                     f"no host {service.host_id!r} in the hosts file or dashboard",
                     "settings_no_host_here",
-                    host=service.host_id,
+                    host=repr(service.host_id),
                 )
             host = self._host_overrides().get(service.host_id, HostSettings()).model_copy(deep=True)
             config = self._effective(self._base[service.host_id])
@@ -550,7 +550,7 @@ class SettingsStore:
             raise SettingsRefused(
                 f"no host {host_id!r} in the hosts file or the dashboard",
                 "settings_no_host",
-                host=host_id,
+                host=repr(host_id),
             )
         try:
             host = HostSettings.model_validate(host.model_dump(exclude_none=True))
@@ -559,7 +559,7 @@ class SettingsStore:
                 f"host {host_id}: {_why(error)}",
                 "settings_host_reasons",
                 host=host_id,
-                reasons=_problems(error),
+                reasons=Reasons.of(error),
             ) from None
         _merged_host(base, host)
         await self._write({f"{HOST_PREFIX}{host_id}": host})
@@ -892,18 +892,6 @@ def _refuse_secrets(data: Any) -> None:
             "settings_secret",
             found=", ".join(found),
         )
-
-
-def _problems(error: ValidationError) -> tuple[Problem, ...]:
-    return tuple(
-        Problem(
-            loc=tuple(e["loc"]),
-            type=e["type"],
-            msg=e["msg"],
-            ctx={key: str(value) for key, value in (e.get("ctx") or {}).items()},
-        )
-        for e in error.errors(include_input=False, include_url=False)
-    )
 
 
 def _why(problem: Exception) -> str:

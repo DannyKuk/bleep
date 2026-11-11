@@ -113,17 +113,20 @@ def check_exits(entries: list[str]) -> list[str]:
     errors never quote an entry: one may come from a container's label."""
     if EVERY_CONTAINER in entries and len(set(entries)) > 1:
         raise PydanticCustomError(
-            "exits_star_alone", '"*" stands alone in exits: it already names every container'
+            "exits_star_alone",
+            'Value error, "*" stands alone in exits: it already names every container',
         )
     if any(e != EVERY_CONTAINER and not is_exit_name(e) for e in entries):
         raise PydanticCustomError(
             "exits_names",
-            "exits entries are container or Compose service names: letters, digits, _ . -, "
-            "starting with a letter or digit, at most 128 characters",
+            "Value error, exits entries are container or Compose service names: letters, "
+            "digits, _ . -, starting with a letter or digit, at most 128 characters",
         )
     if len(set(entries)) > MAX_EXITS:
         raise PydanticCustomError(
-            "exits_too_many", "exits holds at most {limit} entries", {"limit": MAX_EXITS}
+            "exits_too_many",
+            "Value error, exits holds at most {limit} entries",
+            {"limit": MAX_EXITS},
         )
     return list(dict.fromkeys(entries))
 

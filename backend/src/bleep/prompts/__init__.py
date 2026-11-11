@@ -97,12 +97,16 @@ def placeholders(text: str) -> set[str]:
     try:
         parsed = list(string.Formatter().parse(text))
     except ValueError as error:
-        raise PromptError(f"bad braces: {error}") from error
+        raise PromptError(f"bad braces: {error}", "prompt_bad_braces", reason=str(error)) from error
     for _, field, spec, conversion in parsed:
         if field is None:
             continue
         if not field.isidentifier() or spec or conversion:
-            raise PromptError(f"only plain {{name}} placeholders are allowed, got {{{field}}}")
+            raise PromptError(
+                f"only plain {{name}} placeholders are allowed, got {{{field}}}",
+                "prompt_placeholder_form",
+                field=field,
+            )
         names.add(field)
     return names
 
@@ -130,7 +134,7 @@ def check_override(name: str, text: str) -> None:
     use exactly the file's placeholders, since the callers fill exactly those."""
     if name not in overridable_names():
         raise PromptError(
-            f"no prompt named {name!r} can be overridden", "prompt_not_overridable", name=name
+            f"no prompt named {name!r} can be overridden", "prompt_not_overridable", name=repr(name)
         )
     if _CONTROL.search(text):
         raise PromptError(

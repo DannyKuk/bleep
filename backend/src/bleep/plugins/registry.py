@@ -25,7 +25,7 @@ from bleep.plugins import urls
 from bleep.plugins.base import Plugin, PluginContext
 from bleep.plugins.urls import Resolver, UrlRefused, check_dashboard_url
 from bleep.schemas.plugins import PluginHealth, PluginSecret, PluginView
-from bleep.schemas.refusal import Problem, Templated
+from bleep.schemas.refusal import Reasons, Templated
 from bleep.tools.registry import ActHandler, ToolSpec, check_kind
 
 log = logging.getLogger(__name__)
@@ -246,7 +246,7 @@ class PluginRegistry:
                 f"plugin {plugin.name}: invalid settings ({_reasons(error)})",
                 "plugin_settings_invalid",
                 plugin=plugin.name,
-                reasons=_problems(error),
+                reasons=Reasons.of(error, grouped=True, empty="settings"),
             ) from None
 
     async def _health(self, plugin: Plugin, ctx: PluginContext) -> PluginHealth:
@@ -263,18 +263,6 @@ class PluginRegistry:
             if secret := value.get_secret_value():
                 detail = detail.replace(secret, REDACTED)
         return PluginHealth(ok=health.ok, detail=detail)
-
-
-def _problems(error: ValidationError) -> tuple[Problem, ...]:
-    return tuple(
-        Problem(
-            loc=tuple(e["loc"]) or ("settings",),
-            type=e["type"],
-            msg=e["msg"],
-            ctx={key: str(value) for key, value in (e.get("ctx") or {}).items()},
-        )
-        for e in error.errors(include_input=False, include_url=False)
-    )
 
 
 def _reasons(error: ValidationError) -> str:

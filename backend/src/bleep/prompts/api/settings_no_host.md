@@ -1,1 +1,1 @@
-no host '{host}' in the hosts file or the dashboard
+no host {host} in the hosts file or the dashboard

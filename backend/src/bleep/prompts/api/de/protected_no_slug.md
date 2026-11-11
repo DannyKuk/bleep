@@ -1,1 +1,1 @@
-Host {host}, Dienst {service}: Der geschützte Eintrag '{entry}' hat keine Buchstaben oder Ziffern für Coolifys Slug und würde über einen Coolify-Namen nichts schützen; schütze die Anwendung über ihre UUID
+Host {host}, Dienst {service}: Der geschützte Eintrag {entry} hat keine Buchstaben oder Ziffern für Coolifys Slug und würde über einen Coolify-Namen nichts schützen; schütze die Anwendung über ihre UUID

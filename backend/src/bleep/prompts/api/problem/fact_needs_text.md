@@ -1,1 +1,1 @@
-a fact needs text
+Value error, a fact needs text

@@ -20,7 +20,9 @@ def _address(value: str) -> str:
     """A host name or an IP literal, and nothing an SSH client could read as more: no scheme,
     user, port, path, space or option."""
     if "%" in value:  # a scope id may hold anything, spaces and commas included
-        raise PydanticCustomError("address_scope", "must be an address without a scope id (%)")
+        raise PydanticCustomError(
+            "address_scope", "Value error, must be an address without a scope id (%)"
+        )
     try:
         return str(ipaddress.ip_address(value))
     except ValueError:
@@ -29,7 +31,7 @@ def _address(value: str) -> str:
     if len(value) > 253 or not all(_LABEL.fullmatch(label) for label in labels):
         raise PydanticCustomError(
             "address_shape",
-            "must be a host name or an IP address, such as box.lan or 10.0.0.5",
+            "Value error, must be a host name or an IP address, such as box.lan or 10.0.0.5",
         )
     return value.lower()
 
@@ -38,7 +40,7 @@ def _user(value: str) -> str:
     if not _USER.fullmatch(value):
         raise PydanticCustomError(
             "login_shape",
-            "must be a login name: letters, digits, _ . -, not starting with - or .",
+            "Value error, must be a login name: letters, digits, _ . -, not starting with - or .",
         )
     return value
 
@@ -52,7 +54,7 @@ def _docker_socket(value: str) -> str:
     ):
         raise PydanticCustomError(
             "socket_path",
-            "must be an absolute path on the host, such as /var/run/docker.sock",
+            "Value error, must be an absolute path on the host, such as /var/run/docker.sock",
         )
     return value
 
@@ -60,7 +62,9 @@ def _docker_socket(value: str) -> str:
 def _name(value: str) -> str:
     value = value.strip()
     if not value or any(unicodedata.category(c) in {"Cc", "Cf", "Zl", "Zp"} for c in value):
-        raise PydanticCustomError("short_name", "must be a short name without control characters")
+        raise PydanticCustomError(
+            "short_name", "Value error, must be a short name without control characters"
+        )
     return value
 
 

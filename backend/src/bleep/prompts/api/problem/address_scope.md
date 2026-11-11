@@ -1,1 +1,1 @@
-must be an address without a scope id (%)
+Value error, must be an address without a scope id (%)

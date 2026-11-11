@@ -91,7 +91,8 @@ _NOT_PLAIN = re.compile(rf"[\x00-\x1f\x7f-\x9f\u2028\u2029]|{INVISIBLE_CHARS}")
 def _one_plain_line(text: str) -> str:
     if _NOT_PLAIN.search(text):
         raise PydanticCustomError(
-            "plain_text_line", "must be one line of plain text, without control characters"
+            "plain_text_line",
+            "Value error, must be one line of plain text, without control characters",
         )
     return text
 
@@ -135,7 +136,9 @@ class McpSettings(BaseModel):
     @model_validator(mode="after")
     def _read_or_act(self) -> Self:
         if set(self.read_tools) & set(self.act_tools):
-            raise PydanticCustomError("tool_read_and_act", "a tool is either read or act, not both")
+            raise PydanticCustomError(
+                "tool_read_and_act", "Value error, a tool is either read or act, not both"
+            )
         return self
 
 
