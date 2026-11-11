@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+import bleep.tools.github as github_tools
 from bleep.guard.pipeline import guard_text
 from bleep.hosts.config import ServiceOverrides
 from bleep.hosts.github import GithubClient
@@ -453,3 +454,43 @@ def test_a_diff_that_fits_is_shown_whole_with_no_cut_note():
     files = [FileChange(filename="a.py", status="added", additions=60, patch=_short_patch())]
     out = describe_diff(detail(files=files), 8000)
     assert "diff cut" not in out and "[… cut]" not in out
+
+
+def test_a_line_longer_than_what_is_left_is_cut_inside_the_line_not_to_its_header():
+    line = _words(650)  # about 3,800 characters: the guard leaves a line under 4,000 alone
+    files = [
+        FileChange(
+            filename="data.jsonl", status="added", additions=1, patch=f"@@ -0,0 +1 @@\n+{line}"
+        ),
+        FileChange(filename="docs/report.md", status="added", additions=60, patch=_short_patch()),
+    ]
+
+    out = describe_diff(detail(files=files), 2000)
+
+    assert len(out) <= 2000
+    assert line[:600] in out  # most of what fitted is the line's own start
+    assert "[… cut]" in out
+    assert "+line 59" in out  # the short file after it is whole
+    assert "not shown in full: data.jsonl]" in out
+
+
+def test_a_huge_commit_costs_about_max_chars_to_measure(monkeypatch):
+    measured = []
+    real = github_tools.redact_text
+
+    def counting(text: str) -> str:
+        measured.append(len(text))
+        return real(text)
+
+    monkeypatch.setattr(github_tools, "redact_text", counting)
+    patch = "@@ -0,0 +1 @@\n" + "\n".join("+" + _words(500, i * 500) for i in range(10))  # ~32 KB
+    files = [
+        FileChange(filename=f"gen/file_{i}.py", status="added", additions=10, patch=patch)
+        for i in range(300)
+    ]
+
+    out = describe_diff(detail(files=files), 8000)
+
+    assert len(out) <= 8000
+    assert "--- gen/file_0.py" in out
+    assert sum(measured) < 8000 * 10  # not the commit's ~9.7 MB

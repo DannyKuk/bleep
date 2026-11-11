@@ -29,6 +29,7 @@ MESSAGE_CHARS = 600  # of one commit's message in the list
 AUTHOR_CHARS = 80  # a git author name is whatever the pusher set
 NAME_CHARS = 200  # of one file name
 NOTE_CHARS = 240  # room kept for a cut note
+WORK_FACTOR = 4  # times the room: the most patch text one diff measures with the guard
 MIN_HEAD = 200  # a patch that does not fit is cut to a head only when this much room is left
 # A little room under the guard's limit, so the guard never cuts a result itself.
 OUTPUT_CHARS = MAX_CHARS - 100
@@ -212,21 +213,30 @@ def describe_diff(detail: CommitDetail, max_chars: int) -> str:
     text = _head(detail, budget // 2)
     used = _size(text)
     room = budget - NOTE_CHARS
-    headers = [f"\n\n--- {_cut(f.filename, NAME_CHARS)}\n" for f in detail.files]
-    patches = [_patch_text(f) for f in detail.files]
-    sizes = [_size(h + p) for h, p in zip(headers, patches, strict=True)]
+    blocks = [(f"\n\n--- {_cut(f.filename, NAME_CHARS)}\n", _patch_text(f)) for f in detail.files]
+    # What a patch costs is measured only while it could still fit and only up to a work limit,
+    # so a commit of hundreds of large patches costs about `max_chars`, not its own size.
+    later = [0] * (len(blocks) + 1)
+    for i in range(len(blocks) - 1, -1, -1):
+        later[i] = later[i + 1] + len(blocks[i][0]) + len(blocks[i][1])
+    work = 0
     left: list[str] = []
     for i, f in enumerate(detail.files):
-        if used + sizes[i] <= room:
-            text += headers[i] + patches[i]
-            used += sizes[i]
-            continue
+        header, patch = blocks[i]
+        raw = len(header) + len(patch)
+        if raw <= room - used and work + raw <= WORK_FACTOR * room:
+            work += raw
+            size = _size(header + patch)
+            if used + size <= room:
+                text += header + patch
+                used += size
+                continue
         left.append(f.filename)
         # Keep what the later files need if they fit in the other half; else split what is left.
         free = room - used
-        share = max(free // 2, free - sum(sizes[i + 1 :])) if i + 1 < len(sizes) else free
+        share = max(free // 2, free - later[i + 1]) if i + 1 < len(blocks) else free
         if share > MIN_HEAD:
-            head = _patch_head(headers[i], patches[i], share)
+            head = _patch_head(header, patch, share)
             text += head
             used += _size(head)
     if not left:
