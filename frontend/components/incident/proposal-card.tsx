@@ -210,6 +210,8 @@ function Plan({
   const statuses = run ? stepStatuses(proposal.steps, run) : [];
   const verification = run?.verification ?? null;
   const checking = verification !== null || (status === "verifying" && planned.length > 0);
+  // A look's no-action plan is checked at Report (#421); only an act plan waits for its checks.
+  const showChecks = proposal.kind === "act" ? checking : verification !== null;
   return (
     <div className="flex flex-col gap-4 text-[15px]">
       {proposal.kind === "no_action" ? (
@@ -222,9 +224,7 @@ function Plan({
         </ol>
       )}
       <p className="text-base leading-relaxed">{proposal.reason}</p>
-      {proposal.kind === "act" && checking && (
-        <Checks planned={planned} verification={verification} />
-      )}
+      {showChecks && <Checks planned={planned} verification={verification} />}
       {proposal.kind === "act" && !checking && planned.length > 0 && (
         <p className="text-ink-2">
           Afterwards I check{" "}

@@ -1,5 +1,7 @@
 """The fixed texts Bleep stores, in English as before they became templates (#427)."""
 
+from typing import get_args
+
 import pytest
 
 from bleep import prompts
@@ -8,6 +10,7 @@ from bleep.graph.replan import PLANNING_AGAIN
 from bleep.graph.shown import english, shown_payload
 from bleep.incidents import expectations, runner
 from bleep.notify.telegram import ON_IT_NOTICE
+from bleep.schemas.graph import HEALTHY_ANYWAY, OUTCOME_TEXT, Outcome
 from bleep.schemas.shown import Shown
 from bleep.watcher import manager
 
@@ -141,7 +144,7 @@ BEFORE = [
         Shown.of("outcome/not_verified", outcome=Shown.of("outcome/budget")),
         "Stopped, the model budget is spent; an earlier action was not verified",
     ),
-    (Shown.of("outcome/healthy_anyway"), report.HEALTHY_ANYWAY),
+    (Shown.of("outcome/healthy_anyway"), HEALTHY_ANYWAY),
     (Shown.of("report/not_determined"), "Not determined."),
 ]
 
@@ -152,7 +155,7 @@ def test_a_fixed_text_is_stored_in_the_words_it_had_before_it_became_a_template(
 
 
 def test_the_outcomes_read_as_they_did_before():
-    assert report.OUTCOME_TEXT == {
+    assert OUTCOME_TEXT == {
         "resolved": "Fixed and verified",
         "healthy": "Healthy when checked, nothing to do",
         "unverified": "Action taken, not verified",
@@ -161,7 +164,14 @@ def test_the_outcomes_read_as_they_did_before():
         "budget": "Stopped, the model budget is spent",
         "replan_limit": "Stopped after too many new plans",
     }
-    assert report.HEALTHY_ANYWAY == "Healthy again (verified); no step of the plan succeeded"
+    assert HEALTHY_ANYWAY == "Healthy again (verified); no step of the plan succeeded"
+
+
+def test_the_outcome_texts_schemas_keeps_are_the_templates_english():
+    # schemas may not import prompts, so it keeps literals; they must follow the templates.
+    for kind in get_args(Outcome):
+        assert OUTCOME_TEXT[kind] == english(Shown.of(f"outcome/{kind}"))
+    assert english(Shown.of("outcome/healthy_anyway")) == HEALTHY_ANYWAY
 
 
 @pytest.mark.parametrize(

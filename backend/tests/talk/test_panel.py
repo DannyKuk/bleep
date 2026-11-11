@@ -353,8 +353,37 @@ async def test_yes_to_a_look_opens_it_from_the_dashboard_and_only_then(env):
     result = await env.panel.press(reply.confirm.id, True, env.actions)
 
     assert looks.asked == [(SHOP, "dashboard")]
-    started = prompts.load("talk/look_started", subject="shop", incident="shop #1").strip()
-    assert result.line == started
+    started = prompts.load("talk/look_started_here", subject="shop", incident="shop #1").strip()
+    assert (result.line, result.incident_id) == (started, env.incident.id)
+    [entry] = env.talk.log.exchanges()
+    assert entry.press is not None and entry.press.incident_id == env.incident.id
+
+
+async def test_a_press_that_is_no_look_follows_no_incident(env):
+    reply = await say(env, "leave shop alone", reading(kind="action", action=ASKED["snooze"]))
+    assert reply.confirm is not None
+
+    result = await env.panel.press(reply.confirm.id, True, env.actions)
+
+    assert result.incident_id is None
+
+
+async def test_a_look_that_failed_to_start_is_logged_by_its_errors_type(env):
+    class Broken:
+        async def look(self, service_id: str, via: str) -> Look:
+            raise RuntimeError("ssh: secret-host refused")
+
+    env.actions.looks = Broken()
+    action = {"kind": "look_again", "subject": "shop"}
+    reply = await say(env, "look at shop again", reading(kind="action", action=action))
+    assert reply.confirm is not None
+
+    with pytest.raises(RuntimeError):
+        await env.panel.press(reply.confirm.id, True, env.actions)
+
+    [entry] = env.talk.log.exchanges()
+    assert entry.press is not None and entry.press.incident_id is None
+    assert "RuntimeError" in entry.press.line and "secret-host" not in entry.press.line
 
 
 def incident_read(env, call: int) -> str:

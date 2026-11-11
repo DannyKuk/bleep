@@ -9,13 +9,13 @@ message it is (#380).
 
 import re
 import unicodedata
-from datetime import timedelta
 
 from bleep import prompts
 from bleep.guard.plan_check import MAX_STEPS
 from bleep.guard.redact import params_line, redact_text, redacted_step, step_head
 from bleep.guard.sanitize import INVISIBLE_CHARS, PRESENTATION_SELECTORS
 from bleep.schemas.graph import Diagnosis, PlanStep, Proposal
+from bleep.talk.times import duration as duration
 
 TELEGRAM_LIMIT = 4096
 FIELD_CHARS = 600  # one value; keeps a message far below the limit
@@ -76,16 +76,6 @@ def bold_first_line(rendered: str) -> str:
 def message(*parts: str) -> str:
     """Rendered parts as one message, one under the other, cut to Telegram's limit."""
     return _fit("\n".join(part for part in parts if part))
-
-
-def duration(span: timedelta, language: str = "en") -> str:
-    """A span as a person says it in a chat: "4 min", "2 h", "3 days"."""
-    minutes = max(int(span.total_seconds() // 60), 1)
-    if minutes < 60:
-        return phrase("duration_min", language=language, n=str(minutes))
-    if minutes < 48 * 60:
-        return phrase("duration_h", language=language, n=str(minutes // 60))
-    return phrase("duration_days", language=language, n=str(minutes // (24 * 60)))
 
 
 def answer(name: str, /, *, language: str = "en", **values: str) -> str:

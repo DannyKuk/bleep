@@ -16,6 +16,31 @@ from bleep.schemas.shown import Shown
 Outcome = Literal[
     "resolved", "healthy", "rejected", "no_action", "unverified", "budget", "replan_limit"
 ]
+# What the report says for each outcome; only `resolved` may ever say fixed
+# (`graph/nodes/report.outcome_text`). Here, not in the graph, so a surface that words the end of
+# a run (Telegram's end message, the dashboard's panel) can tell the outcome from the report.
+OUTCOME_TEXT: dict[Outcome, str] = {
+    "resolved": "Fixed and verified",
+    "healthy": "Healthy when checked, nothing to do",
+    "unverified": "Action taken, not verified",
+    "rejected": "Rejected, nothing was done",
+    "no_action": "No action proposed, nothing was done",
+    "budget": "Stopped, the model budget is spent",
+    "replan_limit": "Stopped after too many new plans",
+}
+# `resolved` when the checks passed but no step of the plan succeeded: the service came back on its
+# own (a restart policy, Coolify), so it is not "Fixed".
+HEALTHY_ANYWAY = "Healthy again (verified); no step of the plan succeeded"
+
+
+def outcome_of(text: str) -> Outcome | Literal["healthy_anyway"] | None:
+    """The outcome a report's fixed `outcome` text stands for: `healthy_anyway` for
+    `HEALTHY_ANYWAY`, None for a text no outcome's begins (an early stop adds to its own)."""
+    if text == HEALTHY_ANYWAY:
+        return "healthy_anyway"
+    return next((kind for kind, said in OUTCOME_TEXT.items() if text.startswith(said)), None)
+
+
 # Where host text gave orders or posed as Bleep (#105): a closed list, so the diagnosis can say
 # where without carrying any of that text.
 PlantedSource = Literal[
@@ -126,7 +151,8 @@ class GatherContext(BaseModel):
     Everything else is Bleep's own data. `similar` and `facts` are Bleep's memory: trusted, except
     quoted text in them, which `memory.text` wraps as untrusted when it goes into a prompt.
     `gaps` names what could not be read, one short line each. `urls` holds the service's URLs
-    checked when the run began, for a look on request only (#423).
+    checked when the run began, for a look on request only (#423); `no_urls` is set when that
+    look is at a service with none, so the prompts say so instead of leaving the section out (#445).
     """
 
     at: datetime
@@ -134,6 +160,7 @@ class GatherContext(BaseModel):
     containers: list[ContainerSummary] = Field(default_factory=list)
     logs: dict[str, str] = Field(default_factory=dict)
     urls: list[UrlReading] = Field(default_factory=list)
+    no_urls: bool = False
     basics: HostBasics | None = None
     top_memory: list[ContainerMemory] = Field(default_factory=list)
     host_rules: list[str] = Field(default_factory=list)

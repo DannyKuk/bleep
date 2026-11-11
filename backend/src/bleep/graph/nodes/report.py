@@ -32,7 +32,6 @@ import asyncio
 import logging
 import re
 from datetime import datetime
-from typing import get_args
 
 from langchain_core.messages import HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
@@ -55,6 +54,7 @@ from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.schemas.graph import (
     FACT_CHARS,
+    OUTCOME_TEXT,
     STARTED_AFTER_FIX,
     Decision,
     Diagnosis,
@@ -71,14 +71,6 @@ from bleep.schemas.shown import Shown
 
 log = logging.getLogger(__name__)
 
-# What the report says for each outcome (`prompts/shown/outcome/`); only `resolved` may ever
-# say fixed (see `outcome_text`).
-OUTCOME_TEXT: dict[str, str] = {
-    kind: english(Shown.of(f"outcome/{kind}")) for kind in get_args(Outcome)
-}
-# `resolved` when the checks passed but no step of the plan succeeded: the service came back on its
-# own (a restart policy, Coolify), so it is not "Fixed".
-HEALTHY_ANYWAY = english(Shown.of("outcome/healthy_anyway"))
 CHANNELS = ("telegram", "dashboard")
 FINISHED = {"gather": Shown.of("timeline/gathered"), "diagnose": Shown.of("timeline/diagnosed")}
 STEP_STATUSES = ("started", "done", "failed", "skipped")

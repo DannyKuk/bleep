@@ -1,0 +1,53 @@
+{
+  "started_at": "2026-11-10T21:47:36.445178Z",
+  "finished_at": "2026-11-10T21:54:49.147950Z",
+  "model": "openai/gpt-6-luna",
+  "provider": "openrouter",
+  "judge": "manual",
+  "repeat": 3,
+  "scenarios": [
+    {
+      "id": "look-healthy-no-url",
+      "fault": null,
+      "look": true,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "Nothing is wrong with the shop: every container runs, none is unhealthy, its logs show no failure, and the shop has no URL set in Bleep to check.",
+        "category": "unknown",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": true
+    }
+  ],
+  "commit": "6957d94",
+  "command": "uv run --group evals python -m evals.run --judge manual --only look-healthy-no-url --repeat 3",
+  "reset_shop": true,
+  "knowledge": true,
+  "repo_docs": [
+    "DannyKuk/bleep: demo/shop/docs/deploy.md",
+    "DannyKuk/bleep: demo/shop/docs/services.md"
+  ],
+  "raw": "../../data/evals/scenarios-20261110-214736.jsonl",
+  "report": "docs/evals/scenarios-2026-11-10-8.md",
+  "grader": null,
+  "grades": null
+}

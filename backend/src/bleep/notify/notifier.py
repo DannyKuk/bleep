@@ -23,7 +23,6 @@ import httpx
 from bleep import prompts
 from bleep.config import Settings
 from bleep.graph.deps import Approvals
-from bleep.graph.nodes.report import HEALTHY_ANYWAY, OUTCOME_TEXT
 from bleep.guard.log import GuardLogger
 from bleep.guard.titles import split_service_id, title_name
 from bleep.incidents.bus import EventBus
@@ -49,6 +48,7 @@ from bleep.schemas.graph import (
     Proposal,
     Report,
     VerificationResult,
+    outcome_of,
 )
 from bleep.schemas.incidents import LOOK_REQUESTED, TERMINAL_STATUSES, Ending, Incident
 from bleep.schemas.settings import SecretStatus
@@ -547,12 +547,10 @@ def _service_named(incident: Incident) -> str:
 
 def _end_template(outcome: str) -> str:
     """The end message's template for the report's fixed outcome text."""
-    if outcome == HEALTHY_ANYWAY:
+    kind = outcome_of(outcome)
+    if kind == "healthy_anyway":
         return "end_healthy"
-    for kind, text in OUTCOME_TEXT.items():
-        if outcome.startswith(text):
-            return _END_OF[kind]
-    return "end_stopped"
+    return _END_OF[kind] if kind is not None else "end_stopped"
 
 
 def _refused_steps(proposal: Proposal, language: str) -> fmt.Redacted:

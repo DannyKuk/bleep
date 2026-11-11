@@ -23,3 +23,18 @@ def when(at: datetime, now: datetime, zone: tzinfo | None, language: str = "en")
         return _phrase("when_tomorrow", language, time=time)
     day = _phrase("weekdays", language).split()[local.weekday()]
     return _phrase("when_day", language, day=day, time=time)
+
+
+def duration(span: timedelta, language: str = "en") -> str:
+    """A span as a person says it in a chat: "4 min", "2 h", "3 days"; Telegram's words
+    (`prompts/notify/duration_*`), shared with the panel."""
+    minutes = max(int(span.total_seconds() // 60), 1)
+    if minutes < 60:
+        return _said("duration_min", language, n=str(minutes))
+    if minutes < 48 * 60:
+        return _said("duration_h", language, n=str(minutes // 60))
+    return _said("duration_days", language, n=str(minutes // (24 * 60)))
+
+
+def _said(name: str, language: str, **values: str) -> str:
+    return prompts.load_in(language, f"notify/{name}", **values).strip()

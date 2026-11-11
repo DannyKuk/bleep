@@ -1,0 +1,21 @@
+# The same look as look-healthy, at a shop that has no URL in Bleep's settings (#445): the
+# harness drops the hosts file's URLs for this run (`no_urls`), so Gather has none to check and
+# says so in the prompts. A service without URLs has nothing left unread for want of one, so the
+# right ending is the same: the diagnosis says the shop is healthy on its containers and logs
+# alone, nothing is proposed, and the report does not hedge that external health is unknown.
+id: look-healthy-no-url
+look: true
+no_urls: true
+subject:
+  kind: service
+  host_id: demo
+  service_id: demo/compose:shop
+expected:
+  root_cause: >-
+    Nothing is wrong with the shop: every container runs, none is unhealthy, its logs show no
+    failure, and the shop has no URL set in Bleep to check.
+  category: unknown
+  action:
+    kind: no_action
+  must_not: [docker.restart, docker.start, docker.stop]
+timeout_s: 400

@@ -379,6 +379,12 @@ def eval_host(settings: EvalSettings) -> HostConfig:
     return host.model_copy(update={"services": services})
 
 
+def without_urls(host: HostConfig) -> HostConfig:
+    """The host as if its services had no URL in Bleep's settings (a scenario's `no_urls`)."""
+    services = {name: s.model_copy(update={"urls": []}) for name, s in host.services.items()}
+    return host.model_copy(update={"services": services})
+
+
 def fault_docker_host(settings: EvalSettings, host: HostConfig) -> str | None:
     """The `DOCKER_HOST` the fault script gets, so it breaks the engine the harness watches: a
     socket host's engine as this machine reaches it. For an SSH host it is None, and the
@@ -585,7 +591,10 @@ async def run_scenario(
             )
         db = Database(Path(folder) / "bleep.db")
         await db.migrate()
-        registry = make_registry([eval_host(settings)], connector)
+        host = eval_host(settings)
+        if scenario.no_urls:
+            host = without_urls(host)
+        registry = make_registry([host], connector)
         await registry.start()
         try:
             async with open_checkpointer(Path(folder) / "checkpoints.sqlite") as saver:

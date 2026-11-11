@@ -13,7 +13,6 @@ from pydantic import SecretStr, ValidationError
 
 from bleep import prompts
 from bleep.config import Settings
-from bleep.graph.nodes.report import HEALTHY_ANYWAY, OUTCOME_TEXT
 from bleep.graph.replan import PLANNING_AGAIN
 from bleep.graph.shown import english
 from bleep.incidents.approvals import ApprovalStore
@@ -23,6 +22,8 @@ from bleep.incidents.runner import BACK_NOTICE
 from bleep.notify.notifier import Notifier, _end_template, setup
 from bleep.notify.telegram import MessageLog, TelegramBot
 from bleep.schemas.graph import (
+    HEALTHY_ANYWAY,
+    OUTCOME_TEXT,
     Check,
     Decision,
     Outcome,
