@@ -17,9 +17,10 @@ import { SecretFields } from "@/components/settings/secret-field";
 import { ThresholdsForm } from "@/components/settings/thresholds";
 import { TimeZoneForm } from "@/components/settings/time-zone-form";
 import { TRACING_KEYS, TracingSettings } from "@/components/settings/tracing";
-import { useSetTimeZone } from "@/components/time-zone";
+import { useSetTimeZone } from "@/components/preferences";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
+import { setLanguage } from "@/lib/i18n";
 import {
   ADDRESS_CHANGED,
   ADDRESS_NOT_CHECKED,
@@ -134,6 +135,10 @@ function Settings() {
   useEffect(() => {
     if (zoneInForce !== undefined) setZone(zoneInForce);
   }, [zoneInForce, setZone]);
+  const languageInForce = settings.data?.language;
+  useEffect(() => {
+    if (languageInForce === "en" || languageInForce === "de") setLanguage(languageInForce);
+  }, [languageInForce]);
 
   const saveSettings = (update: SettingsUpdate, version: string) =>
     saving(

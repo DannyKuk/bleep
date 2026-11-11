@@ -5,12 +5,13 @@ import { useEffect, useId, useState } from "react";
 
 import { useDraft } from "@/components/dev/section";
 import { Failed, Loading, why } from "@/components/dev/status";
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
 import type { PromptOverrideBody, PromptView } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
+import { useLanguage } from "@/lib/i18n";
 import { isStale } from "@/lib/settings-api";
 
 const MAX_PROMPT = 20_000; // the API's limit (PROMPT_CHARS)
@@ -39,6 +40,7 @@ export function PromptEditor({
   onStale: () => Promise<void>;
 }) {
   const zone = useTimeZone();
+  const language = useLanguage();
   const inForce = prompt.override ?? prompt.file_text;
   const [draft, setDraft] = useDraft({ text: inForce });
   const text = draft.text;
@@ -86,7 +88,7 @@ export function PromptEditor({
           <span>
             Overridden{" "}
             <time dateTime={prompt.overridden_at}>
-              {formatDateTime(prompt.overridden_at, zone)}
+              {formatDateTime(prompt.overridden_at, zone, language)}
             </time>
           </span>
         ) : (

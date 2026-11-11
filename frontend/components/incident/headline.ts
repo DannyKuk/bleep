@@ -1,5 +1,6 @@
-import type { Incident, IncidentDetail, Outcome, Proposal, Subject } from "@/lib/api-types";
+import type { Incident, IncidentDetail, Proposal, Subject } from "@/lib/api-types";
 import { showInvisible } from "@/lib/format";
+import type { Messages } from "@/lib/i18n";
 
 // Longer names are cut, so a label set on a host cannot fill the headline.
 const NAME_MAX = 40;
@@ -25,9 +26,9 @@ export interface SubjectName {
 
 /** The subject for a headline. The name comes from the host (a Compose label anyone starting a
  * container sets), so characters that draw nothing are marked and a long one is cut. */
-export function subjectName(subject: Subject): SubjectName {
+export function subjectName(subject: Subject, t: Messages): SubjectName {
   if (subject.kind === "host" || !subject.service_id) {
-    return { lead: "Host ", name: shown(subject.host_id) };
+    return { lead: t.headline.host, name: shown(subject.host_id) };
   }
   const key = subject.service_id.slice(subject.service_id.indexOf("/") + 1);
   const colon = key.indexOf(":");
@@ -35,7 +36,7 @@ export function subjectName(subject: Subject): SubjectName {
   const name = key.slice(colon + 1);
   return colon > 0 && name && (source === "compose" || source === "container")
     ? { lead: "", name: shown(name) }
-    : { lead: "This service", name: "" };
+    : { lead: t.headline.thisService, name: "" };
 }
 
 /**
@@ -43,8 +44,11 @@ export function subjectName(subject: Subject): SubjectName {
  * name its short name gives ("dkwebsite #3" names dkwebsite, a Coolify app's uuid does not), else
  * "This service".
  */
-export function lookedAt(incident: Pick<Incident, "subject" | "short_name">): SubjectName {
-  const named = subjectName(incident.subject);
+export function lookedAt(
+  incident: Pick<Incident, "subject" | "short_name">,
+  t: Messages,
+): SubjectName {
+  const named = subjectName(incident.subject, t);
   const short = incident.short_name?.replace(/ #\d+$/, "") ?? "";
   return named.name || !short ? named : { lead: "", name: shown(short) };
 }
@@ -64,55 +68,45 @@ export function headlineText({ lead = "", name = "", text }: Headline): string {
   return `${lead}${name}${text}`;
 }
 
-// A healthy look's text follows the service's name (`lookedAt`).
-const CLOSED: Record<Outcome, string> = {
-  resolved: "Fixed and checked.",
-  healthy: " looks healthy. Nothing to do.",
-  rejected: "Okay, I left it as it is.",
-  no_action: "I cannot fix this one. Here is what to do.",
-  unverified: "I ran the plan, but could not confirm the fix.",
-  budget: "I stopped: this run used up its budget.",
-  replan_limit: "I found no plan I may run.",
-};
-
 /**
  * The incident page's headline for the moment, in Bleep's voice. It says "fixed" only for a
- * resolved incident, which the run reaches only once its checks passed.
+ * resolved incident, which the run reaches only once its checks passed. A healthy look's text,
+ * and the trouble line, follow the subject's name.
  */
-export function headline({
-  incident,
-  approval,
-  diagnosis,
-  outcome,
-}: Pick<IncidentDetail, "incident" | "approval" | "diagnosis" | "outcome">): Headline {
+export function headline(
+  {
+    incident,
+    approval,
+    diagnosis,
+    outcome,
+  }: Pick<IncidentDetail, "incident" | "approval" | "diagnosis" | "outcome">,
+  t: Messages,
+): Headline {
   const say = (text: string): Headline => ({ text });
+  const words = t.headline;
   switch (incident.status) {
     case "open":
     case "investigating":
-      return say("I am looking into it.");
+      return say(words.looking);
     case "paused":
-      return say("Paused for a moment. I will try again.");
+      return say(words.paused);
     case "waiting":
-      return say("The host does not answer. I wait for it to come back.");
+      return say(words.waiting);
     case "awaiting_approval": {
-      if (approval && isRefused(approval.proposal)) {
-        return say("I found no plan I may run. What now?");
-      }
-      const text = diagnosis?.unsure
-        ? " is in trouble. I have a plan, but I am not sure."
-        : " is in trouble. Can I fix it?";
-      return { ...subjectName(incident.subject), text };
+      if (approval && isRefused(approval.proposal)) return say(words.noPlanWhatNow);
+      const text = diagnosis?.unsure ? words.troubleUnsure : words.trouble;
+      return { ...subjectName(incident.subject, t), text };
     }
     case "executing":
-      return say("On it.");
+      return say(words.executing);
     case "verifying":
-      return say("Almost there.");
+      return say(words.verifying);
     case "resolved":
-      return say("Fixed and checked.");
+      return say(words.resolved);
     case "failed":
-      return say("I got stuck. This needs a look.");
+      return say(words.failed);
     case "closed":
-      if (outcome === "healthy") return { ...lookedAt(incident), text: CLOSED.healthy };
-      return say(outcome ? CLOSED[outcome] : "Closed.");
+      if (outcome === "healthy") return { ...lookedAt(incident, t), text: words.ended.healthy };
+      return say(outcome ? words.ended[outcome] : words.closed);
   }
 }

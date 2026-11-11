@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import type { UrlCheckPoint } from "@/lib/api-types";
 import { formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -11,7 +11,7 @@ import type { Zone } from "@/lib/zone";
 /** "Passed at 14:02:30, 200, 42 ms"; a check with no reply has no status code. */
 export function checkWords(check: UrlCheckPoint, zone?: Zone): string {
   const parts = [
-    `${check.ok ? "Passed" : "Failed"} at ${formatTime(check.checked_at, zone)}`,
+    `${check.ok ? "Passed" : "Failed"} at ${formatTime(check.checked_at, zone, "en")}`,
     check.status_code != null ? String(check.status_code) : "no reply",
     `${check.latency_ms} ms`,
   ];

@@ -503,9 +503,9 @@ describe("ServicePage history", () => {
     });
     const ticks = within(strip).getAllByRole("img");
     expect(ticks.map((tick) => tick.getAttribute("aria-label"))).toEqual([
-      `Passed at ${formatTime(CHECKS[0].checked_at)}, 200, 12 ms`,
-      `Failed at ${formatTime(CHECKS[1].checked_at)}, 500, 30 ms`,
-      `Failed at ${formatTime(CHECKS[2].checked_at)}, no reply, 10000 ms`,
+      `Passed at ${formatTime(CHECKS[0].checked_at, undefined, "en")}, 200, 12 ms`,
+      `Failed at ${formatTime(CHECKS[1].checked_at, undefined, "en")}, 500, 30 ms`,
+      `Failed at ${formatTime(CHECKS[2].checked_at, undefined, "en")}, no reply, 10000 ms`,
     ]);
     expect(ticks.map((tick) => tick.dataset.ok)).toEqual(["true", "false", "false"]);
     expect(ticks.map((tick) => tick.tabIndex)).toEqual([-1, -1, 0]); // one stop, on the newest
@@ -520,8 +520,8 @@ describe("ServicePage history", () => {
     renderPage("demo/compose:shop");
     const strip = await screen.findByRole("list", { name: /^Last 3 checks/ });
     const ticks = within(strip).getAllByRole("img");
-    const first = `Passed at ${formatTime(CHECKS[0].checked_at)}, 200, 12 ms`;
-    const second = `Failed at ${formatTime(CHECKS[1].checked_at)}, 500, 30 ms`;
+    const first = `Passed at ${formatTime(CHECKS[0].checked_at, undefined, "en")}, 200, 12 ms`;
+    const second = `Failed at ${formatTime(CHECKS[1].checked_at, undefined, "en")}, 500, 30 ms`;
 
     await user.hover(ticks[0]);
     expect(screen.getByText(first, { selector: "p" })).toBeInTheDocument();

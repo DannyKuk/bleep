@@ -14,8 +14,6 @@ export interface Look {
   ink: string;
   /** The label's text colour, where the state gives it one. */
   tone?: string;
-  /** Said to a screen reader after the label, so the colour is never the only cue. */
-  word: string;
   /** The marker: a cross for a step that went wrong, where a run stopped or a no; an alert for
    * what broke and opened the incident; a plain dot otherwise. */
   icon: "dot" | "cross" | "alert";
@@ -29,19 +27,18 @@ export interface Look {
  * Tailwind sees them.
  */
 export const LOOK: Record<Mark, Look> = {
-  done: { fill: "bg-ok", ink: "text-ok", word: "done", icon: "dot" },
-  current: { fill: "bg-accent", ink: "text-accent", word: "now", icon: "dot" },
-  failed: { fill: "bg-down", ink: "text-down", tone: "text-down", word: "failed", icon: "cross" },
+  done: { fill: "bg-ok", ink: "text-ok", icon: "dot" },
+  current: { fill: "bg-accent", ink: "text-accent", icon: "dot" },
+  failed: { fill: "bg-down", ink: "text-down", tone: "text-down", icon: "cross" },
   stopped: {
     fill: "bg-down",
     ink: "text-down",
     tone: "text-down",
-    word: "stopped here",
     icon: "cross",
   },
-  warning: { fill: "bg-warn", ink: "text-warn", tone: "text-warn", word: "warning", icon: "dot" },
-  todo: { fill: "bg-line", ink: "text-ink-2", tone: "text-ink-2", word: "not done", icon: "dot" },
-  declined: { fill: "bg-stop", ink: "text-stop", word: "you said no", icon: "cross" },
-  info: { fill: "bg-stop", ink: "text-stop", word: "note", icon: "dot" },
-  opened: { fill: "bg-down", ink: "text-down", word: "what broke", icon: "alert" },
+  warning: { fill: "bg-warn", ink: "text-warn", tone: "text-warn", icon: "dot" },
+  todo: { fill: "bg-line", ink: "text-ink-2", tone: "text-ink-2", icon: "dot" },
+  declined: { fill: "bg-stop", ink: "text-stop", icon: "cross" },
+  info: { fill: "bg-stop", ink: "text-stop", icon: "dot" },
+  opened: { fill: "bg-down", ink: "text-down", icon: "alert" },
 };

@@ -6,7 +6,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { isRefused } from "@/components/incident/headline";
 import { useKeyboardInset } from "@/components/incident/use-phone";
 import { useReportPinnedBar } from "@/components/pinned-bar";
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import { Button } from "@/components/ui/button";
 import { ApiError, apiFetch } from "@/lib/api";
 import type {
@@ -16,28 +16,26 @@ import type {
   DecisionKind,
   IncidentStatus,
 } from "@/lib/api-types";
-import { CHANNEL, formatDateTime } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
+import { type Messages, useLanguage, useT } from "@/lib/i18n";
+import type { Language } from "@/lib/settings-types";
 import { cn } from "@/lib/utils";
 import type { Zone } from "@/lib/zone";
 
 const MAX_INSTRUCTION = 2000;
+// The phone's two buttons share a row; a long word (German) wraps inside its button rather than
+// pushing the row past the screen (#376).
+const WRAPS = "h-auto min-h-12 min-w-0 flex-1 py-2 text-center whitespace-normal hyphens-auto";
 
 // What a yes has led to so far. Only `resolved` says fixed: the run reaches it once its checks
 // passed.
-const AFTER_YES: Partial<Record<IncidentStatus, { text: string; icon: LucideIcon; tone: string }>> =
-  {
-    executing: {
-      text: "Running the plan.",
-      icon: Loader2,
-      tone: "text-warn motion-safe:animate-spin",
-    },
-    verifying: {
-      text: "Checking it worked.",
-      icon: Loader2,
-      tone: "text-warn motion-safe:animate-spin",
-    },
-    resolved: { text: "Fixed and checked.", icon: Check, tone: "text-ok" },
-  };
+const AFTER_YES: Partial<
+  Record<IncidentStatus, { word: "running" | "checking" | "fixed"; icon: LucideIcon; tone: string }>
+> = {
+  executing: { word: "running", icon: Loader2, tone: "text-warn motion-safe:animate-spin" },
+  verifying: { word: "checking", icon: Loader2, tone: "text-warn motion-safe:animate-spin" },
+  resolved: { word: "fixed", icon: Check, tone: "text-ok" },
+};
 
 interface AnswerLine {
   text: string;
@@ -53,24 +51,28 @@ function answerLine(
   status: IncidentStatus | undefined,
   nothingRanBefore: boolean,
   zone: Zone,
+  language: Language,
+  t: Messages,
 ): AnswerLine {
-  const where = `on ${CHANNEL[decision.via]}, ${formatDateTime(decision.at, zone)}`;
+  const words = t.decision;
+  const when = formatDateTime(decision.at, zone, language);
+  const where = words.where(t.channel.on[decision.via], when);
   if (decision.kind === "approve") {
     const after = status ? AFTER_YES[status] : undefined;
     return {
-      text: `You said yes ${where}.${after ? ` ${after.text}` : ""}`,
+      text: `${words.yes(where)}${after ? ` ${words[after.word]}` : ""}`,
       icon: after?.icon ?? Check,
       tone: after?.tone ?? "text-ink-2",
     };
   }
   if (decision.kind === "reject") {
     // An earlier plan of the same incident may have run before this one was put to the human.
-    const nothing = nothingRanBefore ? "Nothing ran." : "This plan did not run.";
-    const who = refused ? "You let it go" : "You said no";
-    return { text: `${who} ${where}. ${nothing}`, icon: X, tone: "text-ink-2" };
+    const nothing = nothingRanBefore ? words.nothingRan : words.planDidNotRun;
+    const who = refused ? words.letGo(where) : words.no(where);
+    return { text: `${who} ${nothing}`, icon: X, tone: "text-ink-2" };
   }
   return {
-    text: `You told me ${where}: “${decision.text ?? ""}”. I am planning again.`,
+    text: words.told(where, decision.text ?? ""),
     icon: MessageSquare,
     tone: "text-accent",
   };
@@ -108,6 +110,9 @@ export function DecisionBar({
 }) {
   const [sending, setSending] = useState<DecisionKind | null>(null);
   const zone = useTimeZone();
+  const language = useLanguage();
+  const t = useT();
+  const words = t.decision;
   const [mine, setMine] = useState<Decision | null>(null);
   const [conflict, setConflict] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -170,7 +175,7 @@ export function DecisionBar({
       onClick={() => void decide("approve")}
     >
       {spinner("approve") ?? <Check aria-hidden />}
-      Yes, go ahead
+      {words.approve}
     </Button>
   );
   const no = (
@@ -178,27 +183,30 @@ export function DecisionBar({
       variant="outline"
       className={cn(
         "h-12 font-extrabold",
-        pinned ? "flex-1 border-0 bg-soft px-3" : "border-[1.5px] px-[22px] text-base",
+        pinned ? `${WRAPS} border-0 bg-soft px-3` : "border-[1.5px] px-[22px] text-base",
       )}
       disabled={locked}
       onClick={() => void decide("reject")}
     >
       {spinner("reject") ?? <X aria-hidden />}
-      {refused ? "Let it go" : "No, leave it"}
+      {refused ? words.letGoButton : words.reject}
     </Button>
   );
   const tell = (
     <Button
       variant="ghost"
-      className={cn("h-12 bg-soft font-extrabold", pinned ? "flex-1 px-3" : "px-[22px] text-base")}
+      className={cn(
+        "h-12 bg-soft font-extrabold",
+        pinned ? `${WRAPS} px-3` : "px-[22px] text-base",
+      )}
       disabled={locked}
       aria-expanded={instructing}
       // The phone's button is too narrow for the whole phrase; its name stays the same.
-      aria-label={pinned ? "Tell Bleep something" : undefined}
+      aria-label={pinned ? words.tell : undefined}
       onClick={() => setInstructing((open) => !open)}
     >
       <MessageSquare aria-hidden />
-      {pinned ? "Tell Bleep" : "Tell Bleep something"}
+      {pinned ? words.tellShort : words.tell}
     </Button>
   );
 
@@ -211,7 +219,7 @@ export function DecisionBar({
       }}
     >
       <label htmlFor={textId} className="text-sm font-bold text-ink-2">
-        I will plan again with this in mind. Nothing runs until you say yes to a plan.
+        {words.tellHint}
       </label>
       <textarea
         id={textId}
@@ -229,7 +237,7 @@ export function DecisionBar({
           className={cn("bg-ink text-bg hover:bg-ink/90", pinned && "h-[50px] flex-1 text-base")}
           disabled={!text.trim()}
         >
-          Send
+          {words.send}
         </Button>
         <Button
           variant="ghost"
@@ -237,7 +245,7 @@ export function DecisionBar({
           className={cn("text-ink-2", pinned && "h-[50px] text-base")}
           onClick={() => setInstructing(false)}
         >
-          Cancel
+          {words.cancel}
         </Button>
       </div>
     </form>
@@ -246,7 +254,7 @@ export function DecisionBar({
   const sendingLine = sending === "instruct" && (
     <p className="flex items-center gap-1.5 text-sm text-ink-2">
       <Loader2 aria-hidden className="size-3.5 motion-safe:animate-spin" />
-      Sending
+      {words.sending}
     </p>
   );
   const conflictLine = conflict && (
@@ -258,10 +266,11 @@ export function DecisionBar({
   const failureLine = failure && (
     <p role="alert" className="flex items-center gap-1.5 text-[15px] font-bold text-down">
       <TriangleAlert aria-hidden className="size-4 shrink-0" />
-      Not sent: {failure}
+      {words.notSent(failure)}
     </p>
   );
-  const answer = decision && answerLine(decision, refused, status, nothingRanBefore, zone);
+  const answer =
+    decision && answerLine(decision, refused, status, nothingRanBefore, zone, language, t);
   const answerText = answer && (
     <p
       role="status"
@@ -294,7 +303,7 @@ export function DecisionBar({
       ref={barRef}
       data-pinned
       role="region"
-      aria-label="Your answer"
+      aria-label={words.yourAnswer}
       style={{ bottom: keyboard }}
       className="fixed inset-x-0 bottom-0 z-40 flex flex-col gap-2.5 rounded-t-[26px] bg-surface pt-3 pr-[max(env(safe-area-inset-right),16px)] pb-[max(env(safe-area-inset-bottom),16px)] pl-[max(env(safe-area-inset-left),16px)] shadow-[0_-6px_24px_rgba(20,19,42,0.08)] dark:shadow-[0_-6px_24px_rgba(0,0,0,0.35)] print:hidden"
     >

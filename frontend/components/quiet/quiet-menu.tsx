@@ -4,7 +4,7 @@ import { Moon } from "lucide-react";
 import { useRef, useState, type ReactElement } from "react";
 
 import { SaveError, problemsOf } from "@/components/settings/save-error";
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -17,6 +17,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { QuietView } from "@/lib/api-types";
+import { type Messages, useLanguage, useT } from "@/lib/i18n";
+import type { Language } from "@/lib/settings-types";
 import type { Zone } from "@/lib/zone";
 import {
   clearQuiet,
@@ -29,10 +31,15 @@ import {
   type SnoozeChoice,
 } from "@/lib/quiet-api";
 
-const snoozes = (now: Date, zone: Zone): { choice: SnoozeChoice; label: string }[] => [
-  { choice: "1h", label: "For 1 hour" },
-  { choice: "4h", label: "For 4 hours" },
-  { choice: "morning", label: morningLabel(now, zone) },
+const snoozes = (
+  now: Date,
+  zone: Zone,
+  language: Language,
+  t: Messages,
+): { choice: SnoozeChoice; label: string }[] => [
+  { choice: "1h", label: t.quiet.forHour },
+  { choice: "4h", label: t.quiet.forHours },
+  { choice: "morning", label: morningLabel(now, zone, language) },
 ];
 
 interface QuietMenuProps {
@@ -58,6 +65,9 @@ export function QuietMenu({ target, quiet, onChanged, trigger, className }: Quie
   const own = quiet !== null && quiet.scope === target.scope;
   const throughHost = quiet !== null && !own;
   const zone = useTimeZone();
+  const language = useLanguage();
+  const t = useT();
+  const words = t.quiet;
 
   async function apply(change: () => Promise<unknown>) {
     if (busy.current) return;
@@ -91,7 +101,7 @@ export function QuietMenu({ target, quiet, onChanged, trigger, className }: Quie
             <Button
               variant="ghost"
               size="icon"
-              aria-label={`Quiet ${target.name}`}
+              aria-label={words.quietName(target.name)}
               className={cn(MOON, className)}
             >
               <Moon aria-hidden />
@@ -102,17 +112,17 @@ export function QuietMenu({ target, quiet, onChanged, trigger, className }: Quie
       <DropdownMenuContent>
         <DropdownMenuGroup>
           <DropdownMenuLabel>
-            {quiet ? quietLabel(quiet, new Date(), zone) : `Snooze ${target.name}`}
-            {throughHost && " (set on its host)"}
+            {quiet ? quietLabel(quiet, new Date(), zone, language) : words.snoozeName(target.name)}
+            {throughHost && words.throughHost}
           </DropdownMenuLabel>
         </DropdownMenuGroup>
         {own && (
           <DropdownMenuItem closeOnClick={false} onClick={() => apply(() => clearQuiet(target))}>
-            Watch again
+            {words.watchAgain}
           </DropdownMenuItem>
         )}
         {quiet && <DropdownMenuSeparator />}
-        {snoozes(new Date(), zone).map(({ choice, label }) => (
+        {snoozes(new Date(), zone, language, t).map(({ choice, label }) => (
           <DropdownMenuItem
             key={choice}
             closeOnClick={false}
@@ -125,8 +135,8 @@ export function QuietMenu({ target, quiet, onChanged, trigger, className }: Quie
         ))}
         <DropdownMenuSeparator />
         <DropdownMenuItem closeOnClick={false} onClick={() => put({ mode: "leave_alone" })}>
-          Leave it alone
-          <span className="text-xs font-normal text-ink-2">until you switch it back</span>
+          {words.leaveAlone}
+          <span className="text-xs font-normal text-ink-2">{words.leaveAloneHint}</span>
         </DropdownMenuItem>
         {problems.length > 0 && (
           <div className="px-2.5 pt-2 pb-1">

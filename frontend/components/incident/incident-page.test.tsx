@@ -13,8 +13,10 @@ import {
 import { DETAIL_POLL_MS, IncidentPage } from "@/components/incident/incident-page";
 import { subjectText } from "@/components/incident/incident-list";
 import { OverallProvider } from "@/components/overall-state";
+import { PreferencesProvider } from "@/components/preferences";
 import { PHONE_QUERY } from "@/components/incident/use-phone";
 import type { IncidentDetail } from "@/lib/api-types";
+import { en } from "@/lib/i18n/en";
 
 class StubEventSource {
   static readonly CLOSED = 2;
@@ -160,7 +162,7 @@ describe("IncidentPage", () => {
     const card = await screen.findByRole("article", { name: "Report" });
     expect(card).toHaveTextContent("Fixed and verified");
     expect(card).toHaveTextContent("Set restart: unless-stopped on shop-web.");
-    expect(card).toHaveTextContent(subjectText(incident({ status: "resolved" })));
+    expect(card).toHaveTextContent(subjectText(incident({ status: "resolved" }), en));
     expect(screen.queryByRole("region", { name: "Report" })).not.toBeInTheDocument();
   });
 
@@ -687,5 +689,41 @@ describe("IncidentPage", () => {
       const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT")!;
       expect(String(put[0])).toBe("/api/quiet/hosts/demo");
     });
+  });
+});
+
+describe("IncidentPage in the language of the settings", () => {
+  beforeEach(() => {
+    vi.stubGlobal("EventSource", StubEventSource);
+    hostList = [{ id: "demo", name: "Demo stack" }];
+  });
+
+  it("speaks German once the settings say de, with German dates and the data as it came", async () => {
+    const fetchMock = stubBackend(detail({ diagnosis: diagnosis() }));
+    const backend = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) =>
+      String(input) === "/api/settings"
+        ? json({ language: "de", timezone: "Europe/Vienna" })
+        : backend(input, init),
+    );
+    render(
+      <PreferencesProvider>
+        <OverallProvider>
+          <IncidentPage id="inc-1" />
+        </OverallProvider>
+      </PreferencesProvider>,
+    );
+    expect(
+      await screen.findByRole("heading", { name: "shop hat ein Problem. Darf ich es beheben?" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Braucht dein Ja")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Das ist mein Plan" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ja, freigeben" })).toBeEnabled();
+    expect(screen.getByText("82 % sicher")).toBeInTheDocument();
+    expect(screen.getByText("Konfiguration")).toBeInTheDocument();
+    expect(screen.getByText("02.11.2026, 19:00")).toBeInTheDocument();
+    expect(screen.getAllByText("shop-web-1 died")[0]).toBeInTheDocument();
+    expect(screen.getByText(/restart policy is no/)).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("de");
   });
 });

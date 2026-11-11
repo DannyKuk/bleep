@@ -1,16 +1,18 @@
 import type { IncidentEvent, IncidentStatus } from "@/lib/api-types";
 
-/** The run's eight steps as the progress bar names them, each with its graph node. */
+/** The run's eight steps in order, by graph node; `progress.steps` names them. */
 export const PROGRESS_STEPS = [
-  { node: "gather", label: "Gather" },
-  { node: "investigate", label: "Investigate" },
-  { node: "diagnose", label: "Diagnose" },
-  { node: "propose", label: "Plan" },
-  { node: "approval", label: "Your yes" },
-  { node: "execute", label: "Fix" },
-  { node: "verify", label: "Check" },
-  { node: "report", label: "Report" },
+  "gather",
+  "investigate",
+  "diagnose",
+  "propose",
+  "approval",
+  "execute",
+  "verify",
+  "report",
 ] as const;
+
+export type ProgressNode = (typeof PROGRESS_STEPS)[number];
 
 /**
  * `done` went well, `current` runs now, `todo` was not reached, `failed` ran and went wrong (a
@@ -20,7 +22,7 @@ export const PROGRESS_STEPS = [
 export type StepState = "done" | "current" | "todo" | "failed" | "stopped" | "declined";
 
 export interface ProgressStep {
-  label: string;
+  node: ProgressNode;
   state: StepState;
 }
 
@@ -52,7 +54,7 @@ export class RunSoFar {
   }
 }
 
-const INDEX = new Map<string, number>(PROGRESS_STEPS.map(({ node }, index) => [node, index]));
+const INDEX = new Map<string, number>(PROGRESS_STEPS.map((node, index) => [node, index]));
 const REPORT = INDEX.get("report")!;
 const VERIFY = INDEX.get("verify")!;
 // Where a run that has published nothing yet (or whose history is still loading) must be.
@@ -109,8 +111,8 @@ export function progressSteps(events: IncidentEvent[], status: IncidentStatus): 
     current = BY_STATUS[status] ?? null;
   }
 
-  return PROGRESS_STEPS.map(({ label }, index) => ({
-    label,
+  return PROGRESS_STEPS.map((node, index) => ({
+    node,
     state:
       index === stopped ? "stopped" : index === current ? "current" : (ended.get(index) ?? "todo"),
   }));

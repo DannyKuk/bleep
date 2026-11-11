@@ -2,22 +2,11 @@ import { CircleAlert, X } from "lucide-react";
 
 import { LOOK, type Mark } from "@/components/incident/colour-code";
 import { RunSoFar } from "@/components/incident/progress";
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import type { Incident, IncidentEvent } from "@/lib/api-types";
-import { CHANNEL, formatTime } from "@/lib/format";
+import { formatTime } from "@/lib/format";
+import { type Messages, useLanguage, useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-
-// Each node in two tenses: while it runs and once it is done.
-const NODES: Record<string, [string, string]> = {
-  gather: ["Gathering context", "Gathered context"],
-  investigate: ["Investigating", "Investigated"],
-  diagnose: ["Diagnosing", "Diagnosed"],
-  propose: ["Planning a fix", "Planned"],
-  approval: ["Waiting for your answer", "Answered"],
-  execute: ["Running the plan", "Ran the plan"],
-  verify: ["Checking the service", "Checked the service"],
-  report: ["Writing the report", "Wrote the report"],
-};
 
 /** A line is running while its mark is `current`. */
 interface Entry {
@@ -30,25 +19,23 @@ interface Entry {
 const ACTION_MARK: Record<string, Mark> = { done: "done", failed: "failed", skipped: "todo" };
 const DECISION_MARK: Record<string, Mark> = { approve: "done", reject: "declined" };
 
-function channel(payload: Record<string, unknown>): string {
+function decisionText(payload: Record<string, unknown>, t: Messages): string {
   const via = payload.via;
-  return via === "telegram" || via === "dashboard" ? CHANNEL[via] : "a channel";
-}
-
-function decisionText(payload: Record<string, unknown>): string {
-  const where = channel(payload);
-  if (payload.kind === "approve") return `Approved on ${where}`;
-  if (payload.kind === "reject") {
-    return payload.refused === true ? `Let go on ${where}` : `Rejected on ${where}`;
-  }
-  return `Instruction from ${where}: “${String(payload.text ?? "")}”`;
+  const known = via === "telegram" || via === "dashboard";
+  const on = known ? t.channel.on[via] : t.channel.onUnknown;
+  const words = t.timeline;
+  if (payload.kind === "approve") return words.approved(on);
+  if (payload.kind === "reject")
+    return payload.refused === true ? words.letGo(on) : words.rejected(on);
+  const from = known ? t.channel.from[via] : t.channel.fromUnknown;
+  return words.instruction(from, String(payload.text ?? ""));
 }
 
 /**
  * The incident's steps, one line each, marked in the incident page's colour code; a node's start
  * and finish become one line, which ends as the progress bar's step does (`RunSoFar`).
  */
-export function timelineEntries(events: IncidentEvent[]): Entry[] {
+export function timelineEntries(events: IncidentEvent[], t: Messages): Entry[] {
   const entries: Entry[] = [];
   const open = new Map<string, Entry>();
   const openSteps = new Map<string, Entry>();
@@ -57,7 +44,9 @@ export function timelineEntries(events: IncidentEvent[]): Entry[] {
     run.follow(event);
     const { kind, payload, seq, at } = event;
     const node = String(payload.node ?? "");
-    const [running, done] = NODES[node] ?? [`Running ${node}`, `Finished ${node}`];
+    const [running, done] = Object.hasOwn(t.timeline.nodes, node)
+      ? t.timeline.nodes[node]
+      : [t.timeline.running(node), t.timeline.finished(node)];
     switch (kind) {
       case "node_started": {
         const entry: Entry = { seq, at, mark: "current", text: running };
@@ -90,11 +79,11 @@ export function timelineEntries(events: IncidentEvent[]): Entry[] {
           seq,
           at,
           mark: "info",
-          text: payload.kind === "no_action" ? "Proposed no action" : "Proposed a plan",
+          text: payload.kind === "no_action" ? t.timeline.proposedNothing : t.timeline.proposed,
         });
         break;
       case "approval_requested":
-        entries.push({ seq, at, mark: "info", text: "Asked for approval" });
+        entries.push({ seq, at, mark: "info", text: t.timeline.asked });
         break;
       case "decision": {
         // The wait ends with the answer, before Approval resumes and finishes.
@@ -105,7 +94,7 @@ export function timelineEntries(events: IncidentEvent[]): Entry[] {
           seq,
           at,
           mark: DECISION_MARK[String(payload.kind)] ?? "info",
-          text: decisionText(payload),
+          text: decisionText(payload, t),
         });
         break;
       }
@@ -120,7 +109,7 @@ export function timelineEntries(events: IncidentEvent[]): Entry[] {
           seq,
           at,
           mark: status === "started" ? "current" : (ACTION_MARK[status] ?? "info"),
-          text: `${step}: ${status}`,
+          text: `${step}: ${t.timeline.stepStatus[status] ?? status}`,
         };
         if (status === "started") openSteps.set(step, entry);
         entries.push(entry);
@@ -131,7 +120,7 @@ export function timelineEntries(events: IncidentEvent[]): Entry[] {
           seq,
           at,
           mark: payload.ok ? "done" : "warning",
-          text: `Check ${String(payload.attempt ?? 1)} ${payload.ok ? "passed" : "failed"}`,
+          text: t.timeline.check(String(payload.attempt ?? 1), payload.ok === true),
         });
         break;
       case "expected":
@@ -147,27 +136,33 @@ export function timelineEntries(events: IncidentEvent[]): Entry[] {
   return entries;
 }
 
-const END: Partial<Record<Incident["status"], { text: string; mark: Mark }>> = {
-  resolved: { text: "Resolved", mark: "done" },
-  closed: { text: "Closed", mark: "info" },
-  failed: { text: "Failed", mark: "failed" },
-};
+const END = { resolved: "done", closed: "info", failed: "failed" } as const satisfies Partial<
+  Record<Incident["status"], Mark>
+>;
+
+const hasEnded = (status: Incident["status"]): status is keyof typeof END =>
+  Object.hasOwn(END, status);
 
 /** The incident's own start and end around its events: what opened it, and how it ended. */
-function withEnds(entries: Entry[], incident: Incident): Entry[] {
+function withEnds(entries: Entry[], incident: Incident, t: Messages): Entry[] {
   const opened: Entry = { seq: -1, at: incident.opened_at, mark: "opened", text: incident.title };
-  const end = END[incident.status];
-  if (end) {
-    // An ended incident has nothing running: a failed run stopped at what still ran, and
-    // anything else never finished it, as the progress bar shows.
-    for (const entry of entries.filter(({ mark }) => mark === "current")) {
-      entry.mark = incident.status === "failed" ? "stopped" : "todo";
-    }
+  const status = incident.status;
+  if (!hasEnded(status)) return [opened, ...entries];
+  // An ended incident has nothing running: a failed run stopped at what still ran, and anything
+  // else never finished it, as the progress bar shows.
+  for (const entry of entries.filter(({ mark }) => mark === "current")) {
+    entry.mark = status === "failed" ? "stopped" : "todo";
   }
-  const closed: Entry[] =
-    end && incident.closed_at
-      ? [{ seq: Number.MAX_SAFE_INTEGER, at: incident.closed_at, ...end }]
-      : [];
+  const closed: Entry[] = incident.closed_at
+    ? [
+        {
+          seq: Number.MAX_SAFE_INTEGER,
+          at: incident.closed_at,
+          mark: END[status],
+          text: t.timeline.end[status],
+        },
+      ]
+    : [];
   return [opened, ...entries, ...closed];
 }
 
@@ -201,14 +196,16 @@ function Marker({ mark }: { mark: Mark }) {
  * last how it ended.
  */
 export function Timeline({ events, incident }: { events: IncidentEvent[]; incident?: Incident }) {
-  const steps = timelineEntries(events);
+  const t = useT();
+  const steps = timelineEntries(events, t);
   const zone = useTimeZone();
+  const language = useLanguage();
   if (steps.length === 0 && !incident) {
-    return <p className="text-sm text-ink-2">Nothing has happened yet.</p>;
+    return <p className="text-sm text-ink-2">{t.timeline.empty}</p>;
   }
-  const entries = incident ? withEnds(steps, incident) : steps;
+  const entries = incident ? withEnds(steps, incident, t) : steps;
   return (
-    <ol aria-label="Timeline" className="flex flex-col gap-3">
+    <ol aria-label={t.timeline.label} className="flex flex-col gap-3">
       {entries.map(({ seq, at, mark, text }) => (
         <li key={seq} data-state={mark} className="flex items-start gap-2.5 text-sm">
           <Marker mark={mark} />
@@ -221,9 +218,9 @@ export function Timeline({ events, incident }: { events: IncidentEvent[]; incide
           >
             {text}
           </span>
-          <span className="sr-only">, {LOOK[mark].word}</span>
+          <span className="sr-only">, {t.marks[mark]}</span>
           <time dateTime={at} className="shrink-0 font-mono text-xs text-ink-2">
-            {formatTime(at, zone)}
+            {formatTime(at, zone, language)}
           </time>
         </li>
       ))}

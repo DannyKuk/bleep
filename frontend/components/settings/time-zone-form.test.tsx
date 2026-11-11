@@ -14,7 +14,7 @@ import {
 } from "@/components/settings/fixtures";
 import { SettingsPage } from "@/components/settings/settings-page";
 import { zoneChoices } from "@/components/settings/time-zone-form";
-import { TimeZoneProvider } from "@/components/time-zone";
+import { PreferencesProvider } from "@/components/preferences";
 import { formatDateTime } from "@/lib/format";
 import type { SettingsView } from "@/lib/settings-types";
 import { browserZone } from "@/lib/zone";
@@ -35,9 +35,9 @@ function backend(view: SettingsView, put: Response[] = []) {
 /** The settings page inside the app's time zone, as the app layout has it. */
 function renderPage() {
   const page = render(
-    <TimeZoneProvider>
+    <PreferencesProvider>
       <SettingsPage />
-    </TimeZoneProvider>,
+    </PreferencesProvider>,
   );
   const lastPoll = () => page.container.querySelector(`time[datetime="${LAST_POLL}"]`);
   return { lastPoll };
@@ -67,7 +67,9 @@ describe("the time zone on the settings page", () => {
     const fetchMock = backend(settingsView({ timezone: null }), [json(chosen)]);
     const { lastPoll } = renderPage();
     const zone = await panel();
-    await waitFor(() => expect(lastPoll()).toHaveTextContent(formatDateTime(LAST_POLL)));
+    await waitFor(() =>
+      expect(lastPoll()).toHaveTextContent(formatDateTime(LAST_POLL, undefined, "en")),
+    );
 
     await userEvent.selectOptions(within(zone).getByRole("combobox"), NEW_YORK);
     await userEvent.click(within(zone).getByRole("button", { name: "Save time zone" }));
@@ -76,7 +78,9 @@ describe("the time zone on the settings page", () => {
     expect(sentBody(fetchMock, "PUT")).toEqual({ general: { timezone: NEW_YORK } });
     const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
     expect(put?.[1]?.headers).toMatchObject({ "if-match": '"v1"' });
-    await waitFor(() => expect(lastPoll()).toHaveTextContent(formatDateTime(LAST_POLL, NEW_YORK)));
+    await waitFor(() =>
+      expect(lastPoll()).toHaveTextContent(formatDateTime(LAST_POLL, NEW_YORK, "en")),
+    );
   });
 
   it("shows why a zone was refused and keeps the one in force", async () => {

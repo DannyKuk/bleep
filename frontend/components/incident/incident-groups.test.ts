@@ -11,6 +11,8 @@ import {
   headline,
   matchesFilter,
 } from "@/components/incident/incident-groups";
+import { de } from "@/lib/i18n/de";
+import { en } from "@/lib/i18n/en";
 import type { IncidentStatus } from "@/lib/api-types";
 
 const ALL: IncidentStatus[] = [
@@ -54,31 +56,52 @@ describe("incident groups", () => {
     expect(groupOf(failed, NOW, quiet)).toBe("earlier");
     expect(matchesFilter(failed, "needs_you", NOW, quiet)).toBe(false);
     expect(groupIncidents([failed], NOW, quiet).map((g) => g.group)).toEqual(["earlier"]);
-    expect(headline([failed], NOW, quiet)).toBe("Nothing needs you right now.");
+    expect(headline([failed], NOW, quiet, en)).toBe("Nothing needs you right now.");
   });
 
   it("matches each status with exactly the filters that name it", () => {
     for (const status of ALL) {
       const hits = FILTERS.filter(
-        (f) => f.id !== "all" && matchesFilter(incident({ status }), f.id, NOW),
+        (id) => id !== "all" && matchesFilter(incident({ status }), id, NOW),
       );
       expect(hits, status).toHaveLength(1);
     }
   });
 
   it("writes the duration of a closed incident only", () => {
-    expect(formatDuration("2026-11-02T18:00:00Z", null)).toBe("");
-    expect(formatDuration("2026-11-02T18:00:00Z", "2026-11-02T18:04:00Z")).toBe("4 min");
-    expect(formatDuration("2026-11-02T18:00:00Z", "2026-11-02T20:05:00Z")).toBe("2 h 5 min");
-    expect(formatDuration("2026-11-02T18:00:00Z", "2026-11-02T18:00:10Z")).toBe("under 1 min");
+    expect(formatDuration("2026-11-02T18:00:00Z", null, en)).toBe("");
+    expect(formatDuration("2026-11-02T18:00:00Z", "2026-11-02T18:04:00Z", en)).toBe("4 min");
+    expect(formatDuration("2026-11-02T18:00:00Z", "2026-11-02T20:05:00Z", en)).toBe("2 h 5 min");
+    expect(formatDuration("2026-11-02T18:00:00Z", "2026-11-02T18:00:10Z", en)).toBe("under 1 min");
+  });
+
+  it("writes the duration in German, one day singular and many plural", () => {
+    expect(formatDuration("2026-11-02T18:00:00Z", "2026-11-02T18:00:10Z", de)).toBe("unter 1 Min.");
+    expect(formatDuration("2026-11-02T18:00:00Z", "2026-11-02T20:05:00Z", de)).toBe(
+      "2 Std. 5 Min.",
+    );
+    expect(formatDuration("2026-11-02T18:00:00Z", "2026-11-03T19:00:00Z", de)).toBe("1 Tag");
+    expect(formatDuration("2026-11-02T18:00:00Z", "2026-11-05T19:00:00Z", de)).toBe("3 Tage");
+  });
+
+  it("counts what needs the human in the headline in German, one or many", () => {
+    const needsYou = (id: string) => incident({ id });
+    expect(headline([needsYou("a")], NOW, [], de)).toBe("1 braucht dich.");
+    expect(headline([needsYou("a"), needsYou("b")], NOW, [], de)).toBe("2 brauchen dich.");
+    expect(
+      headline([needsYou("a"), incident({ id: "b", status: "investigating" })], NOW, [], de),
+    ).toBe("1 braucht dich, an 1 bin ich dran.");
+    expect(headline([], NOW, [], de)).toBe("Noch keine Vorfälle.");
   });
 
   it("counts what needs the human in the headline", () => {
-    expect(headline([], NOW)).toBe("No incidents yet.");
-    expect(headline([incident({ status: "resolved" })], NOW)).toBe("Nothing needs you right now.");
-    expect(headline([incident(), incident({ id: "b", status: "investigating" })], NOW)).toBe(
-      "1 needs you, I am on 1.",
+    expect(headline([], NOW, [], en)).toBe("No incidents yet.");
+    expect(headline([incident({ status: "resolved" })], NOW, [], en)).toBe(
+      "Nothing needs you right now.",
     );
+    expect(
+      headline([incident(), incident({ id: "b", status: "investigating" })], NOW, [], en),
+    ).toBe("1 needs you, I am on 1.");
   });
 
   it("keeps a failed run under Needs you for a day after it ended, then under Earlier", () => {
@@ -88,8 +111,8 @@ describe("incident groups", () => {
     expect(groupOf(endedAgo(DAY + 60_000), NOW)).toBe("earlier");
     expect(matchesFilter(endedAgo(DAY / 2), "needs_you", NOW)).toBe(true);
     expect(matchesFilter(endedAgo(DAY / 2), "closed_or_failed", NOW)).toBe(true);
-    expect(headline([endedAgo(DAY / 2)], NOW)).toBe("1 needs you.");
-    expect(headline([endedAgo(DAY + 60_000)], NOW)).toBe("Nothing needs you right now.");
+    expect(headline([endedAgo(DAY / 2)], NOW, [], en)).toBe("1 needs you.");
+    expect(headline([endedAgo(DAY + 60_000)], NOW, [], en)).toBe("Nothing needs you right now.");
   });
 });
 

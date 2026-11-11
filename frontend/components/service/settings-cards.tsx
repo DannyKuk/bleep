@@ -8,12 +8,13 @@ import { CheckStrip } from "@/components/service/check-strip";
 import { useLoaded, useStaleSaving } from "@/components/settings/loaded";
 import { ListEditor } from "@/components/settings/rules";
 import { UrlEditor } from "@/components/settings/urls";
-import { useTimeZone } from "@/components/time-zone";
+import { useTimeZone } from "@/components/preferences";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
 import type { Health, UrlCheckPoint, UrlHistory, UrlStatus } from "@/lib/api-types";
 import { formatTime } from "@/lib/format";
+import { useLanguage } from "@/lib/i18n";
 import { putSettings } from "@/lib/settings-api";
 import type {
   HostOverrides,
@@ -150,13 +151,14 @@ const notChecked = (url: string): UrlStatus => ({
 
 function UrlRow({ url, checks }: { url: UrlStatus; checks: UrlCheckPoint[] }) {
   const zone = useTimeZone();
+  const language = useLanguage();
   const { label: statusLabel, health } = URL_HEALTH[url.status];
   const label =
     url.status === "unknown" && url.last_checked != null ? "No recent check" : statusLabel;
   const facts = [
     url.status_code,
     url.latency_ms != null ? `${url.latency_ms} ms` : null,
-    url.last_checked != null ? `checked ${formatTime(url.last_checked, zone)}` : null,
+    url.last_checked != null ? `checked ${formatTime(url.last_checked, zone, language)}` : null,
   ].filter((part) => part != null);
   return (
     <li className="flex flex-col gap-1.5 rounded-row bg-soft px-3 py-2 text-sm">
