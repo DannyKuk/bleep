@@ -544,11 +544,17 @@ def _redact_jwt(match: re.Match[str]) -> str:
 
 # A token starts where no word does, or right after a percent-encoded byte
 # (`?next=%3Fk%3Dsk_live_…`), whose last hex digit `\b` takes for the end of a word (#416), after
-# one encoded again any number of times (`%253D`, `%25253D`), or after a JSON-escaped line break
-# or tab (`"started\nsk_live_…"`), whose `n` reads as a word (#440). Each lookbehind is of fixed
-# width, so a depth of three or more is told by its last `2525` and not by the `%` before it.
+# one encoded again any number of times (`%253D`, `%25253D`), after a JSON-escaped line break, tab,
+# form feed or backspace (`"started\nsk_live_…"`), whose letter reads as a word (#440, #452), the
+# same percent-encoded (`%5Cn`), or after a `\uXXXX` escape, whose last hex digit does the same:
+# Go's encoding/json writes `&`, `<` and `>` as `&`, `<` and `>` (#452). Each
+# lookbehind is of fixed width, so a depth of three or more is told by its last `2525` and not by
+# the `%` before it.
 _HEX2 = "[0-9A-Fa-f]{2}"
-_AFTER_ESCAPE = rf"(?:(?<=%{_HEX2})|(?<=%25{_HEX2})|(?<=2525{_HEX2})|(?<=\\[nrt]))"
+_AFTER_ESCAPE = (
+    rf"(?:(?<=%{_HEX2})|(?<=%25{_HEX2})|(?<=2525{_HEX2})"
+    r"|(?<=\\[nrtfb])|(?<=%5[Cc][nrtfb])|(?<=\\u[0-9A-Fa-f]{4}))"
+)
 _TOKEN_START = rf"(?:(?<!\w)|{_AFTER_ESCAPE})"
 
 
