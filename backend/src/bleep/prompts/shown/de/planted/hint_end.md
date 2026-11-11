@@ -1,0 +1,1 @@
+der für ihn wie Befehle aussieht und den es ignoriert hat; prüfe, wer dort schreiben darf. Bleep sucht nur nach einigen Anzeichen untergeschobener Befehle, ein Bericht ohne diesen Hinweis heißt also nicht, dass keine untergeschoben wurden.

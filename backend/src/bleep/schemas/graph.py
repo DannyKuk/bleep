@@ -6,7 +6,7 @@ side against fixed shapes. Milestone 3 filled in `StepResult` (#24), `Verificati
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -341,8 +341,9 @@ class LoggedStep(BaseModel):
     result: StepResult
 
 
-# How Verify's failed container check begins when the container was started again after the
-# fix (#320); the report's timeline reads it.
+# How the English of Verify's failed container check begins when the container was started again
+# after the fix (#320), as `prompts/shown/verify/{restarted,started_again,recreated}.md` begin;
+# the report's timeline reads it.
 STARTED_AFTER_FIX = (
     "restarted by its restart policy after the fix",
     "started again after the fix",
@@ -353,12 +354,36 @@ STARTED_AFTER_FIX = (
 class Check(BaseModel):
     """One thing Verify looked at: a container's state, a URL's answer, a `host` reading (disk,
     memory or load) against its threshold, or a `symptom` it could not see answered (a stopped
-    container nothing shows the service works without, a host problem nothing can read again)."""
+    container nothing shows the service works without, a host problem nothing can read again).
+
+    `target` and `detail` are English, which is what Propose and the report's facts read.
+    `target_shown` and `shown` are what they were made from, to show them in the person's
+    language (#454); None for a check stored before that."""
 
     kind: Literal["container", "url", "host", "symptom"]
     target: str  # the container name, the URL, the reading, or the host for a host symptom
     ok: bool
     detail: str = ""  # one short line from Bleep's own checks, never host or reply text
+    target_shown: Shown | None = None
+    shown: Shown | None = None
+
+    def stored(self) -> dict[str, Any]:
+        """The shape a `verification` event's payload keeps for this check."""
+        data = self.model_dump(mode="json", exclude={"target_shown", "shown"})
+        if self.target_shown is not None:
+            data["target_shown"] = self.target_shown.stored()
+        if self.shown is not None:
+            data["shown"] = self.shown.stored()
+        return data
+
+    def line(self) -> Shown:
+        """The check as one line, `ok container shop-web-1: running`."""
+        return Shown.of(
+            "verify/line_ok" if self.ok else "verify/line_failed",
+            kind=Shown.of(f"verify/kind_{self.kind}"),
+            target=self.target_shown or self.target,
+            detail=self.shown or self.detail,
+        )
 
 
 class VerificationResult(BaseModel):
@@ -373,12 +398,28 @@ class VerificationResult(BaseModel):
 
     @property
     def detail(self) -> str:
-        """The checks as short lines, for a chat message or the live view."""
+        """The checks as short lines in English, for a model's prompt."""
         if not self.checks:
             return "Nothing could be checked."
         return "\n".join(
             f"{'ok' if c.ok else 'FAILED'} {c.kind} {c.target}: {c.detail}" for c in self.checks
         )
+
+    def lines(self) -> Shown:
+        """`detail` as a shown text, for a chat message."""
+        if not self.checks:
+            return Shown.of("verify/nothing_checked")
+        return Shown.joined([c.line() for c in self.checks], "\n")
+
+
+class ReportStep(BaseModel):
+    """One step of what ran: `text` in English (`Report.action_taken` joins them), the step's
+    `status` as a field so no surface reads it off the words, and `shown`, the text it was made
+    from, to show it in the person's language (#454)."""
+
+    text: str
+    status: Literal["done", "failed", "refused", "skipped"]
+    shown: Shown | None = None
 
 
 class TimelineEntry(BaseModel):
@@ -392,7 +433,7 @@ class TimelineEntry(BaseModel):
 
 
 # The report's fields that hold one of Bleep's fixed texts rather than the model's (#427).
-ReportText = Literal["outcome", "cause", "human_decision"]
+ReportText = Literal["outcome", "summary", "cause", "human_decision"]
 
 
 class Report(BaseModel):
@@ -401,7 +442,8 @@ class Report(BaseModel):
     The model writes `summary`, `cause`, `cause_en` and `follow_ups`, checked by
     `guard.report_check` before they are stored or sent; everything else is Bleep's own. `outcome`
     is the fixed text for the run's outcome ("Fixed and verified" only for `resolved`).
-    `action_taken` is None when nothing ran. `planted_in` names where host text tried to give
+    `action_taken` is None when nothing ran; `steps` holds the same steps one by one, each with
+    its status (#454). `planted_in` names where host text tried to give
     Bleep orders (`graph/planted.py`), the places its fixed follow-up names; code sets it, never
     the model. `cause_en` is the cause in English when the report is written in another language
     (#374), the one memory keeps; None in English. `shown` holds the fields that are a fixed
@@ -420,3 +462,7 @@ class Report(BaseModel):
     human_decision: str | None = None
     planted_in: list[PlantedPlace] = Field(default_factory=list)
     shown: dict[ReportText, Shown] = Field(default_factory=dict)
+    steps: list[ReportStep] = Field(default_factory=list)
+    # The follow-ups that are a fixed text of Bleep's (the planted-orders note), by their place
+    # in `follow_ups`.
+    shown_follow_ups: dict[int, Shown] = Field(default_factory=dict)

@@ -1,0 +1,1 @@
+FEHLGESCHLAGEN {kind} {target}: {detail}

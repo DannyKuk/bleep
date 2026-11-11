@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from bleep import prompts
+from bleep.graph.shown import english
 from bleep.guard.redact import REDACTED
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
@@ -25,6 +26,7 @@ from bleep.schemas.graph import (
 )
 from bleep.schemas.incidents import IncidentEvent, Signal, Subject
 from bleep.schemas.services import Service
+from bleep.schemas.shown import Shown
 from bleep.schemas.talk import TalkExchange, TalkLink
 from bleep.store.db import Database
 from bleep.talk.log import TalkLog, transcript
@@ -471,6 +473,34 @@ async def test_the_summary_is_in_the_language_the_person_chose(env):
         "talk/de/look_end/fixed", incident="shop #1", took=took, summary="Läuft wieder."
     )
     assert progress.line == said.strip()
+
+
+@pytest.mark.parametrize(
+    ("language", "summary"),
+    [
+        ("en", "shop: action taken, not verified."),
+        ("de", "shop: Aktion ausgeführt, nicht geprüft."),
+    ],
+)
+async def test_a_fallback_summary_the_model_never_wrote_is_in_the_language_the_person_chose(
+    env, language, summary
+):
+    env.language = language
+    fallback = Shown.of(
+        "summary/fallback",
+        title="shop",
+        outcome=Shown.of("inline/unverified"),
+    )
+    await ended(
+        env,
+        OUTCOME_TEXT["unverified"],
+        summary=english(fallback),
+        shown={"summary": fallback.model_dump(mode="json")},
+    )
+
+    progress = await look(env)
+
+    assert summary in progress.line
 
 
 async def test_an_unknown_incident_is_none(env):
