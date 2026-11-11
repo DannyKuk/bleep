@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
 import type { HostView, Incident, IncidentDetail, ServiceView } from "@/lib/api-types";
+import { useT } from "@/lib/i18n";
 import { overallMood } from "@/lib/mood";
 
 const SETUP_DOCS = "https://github.com/DannyKuk/bleep/blob/main/docs/setup.md";
@@ -21,27 +22,31 @@ type Details = Readonly<Record<string, IncidentDetail>>;
 type Reload = () => Promise<void>;
 
 function NoHosts({ onHostAdded }: { onHostAdded: Reload }) {
+  const t = useT().overview;
+  const [before, after] = t.orConfigFile;
   return (
     <div className="flex flex-col items-center gap-3 rounded-card-sm border border-dashed border-line px-6 py-12 text-center md:rounded-card">
       <ServerOff aria-hidden className="size-6 text-ink-2" />
-      <p className="text-[15px] font-bold">No hosts yet.</p>
+      <p className="text-[15px] font-bold">{t.noHostsYet}</p>
       <AddHostDialog
         onAdded={onHostAdded}
         trigger={
           <Button>
             <Plus aria-hidden />
-            Add a host
+            {t.addHost}
           </Button>
         }
       />
       <p className="text-[15px] text-ink-2">
-        Or add one in <code className="font-mono">config/hosts.yaml</code>.
+        {before}
+        <code className="font-mono">config/hosts.yaml</code>
+        {after}
       </p>
       <a
         href={SETUP_DOCS}
         className="inline-flex min-h-11 items-center text-[15px] text-accent underline underline-offset-2"
       >
-        Setup guide
+        {t.setupGuide}
       </a>
     </div>
   );
@@ -58,14 +63,15 @@ function Hosts({
   onHostAdded: Reload;
   onChanged: Reload;
 }) {
+  const t = useT();
   return (
     <section aria-labelledby="your-hosts" className="flex flex-col gap-4">
       <div className="flex items-start gap-3">
         <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3.5 gap-y-1.5">
           <h2 id="your-hosts" className="text-xl font-extrabold">
-            Your hosts
+            {t.overview.yourHosts}
           </h2>
-          <p className="text-[15px] text-ink-2">{reachLine(hosts, services)}</p>
+          <p className="text-[15px] text-ink-2">{reachLine(hosts, services, t)}</p>
         </div>
         <AddHostButton onAdded={onHostAdded} />
       </div>
@@ -151,6 +157,7 @@ async function fetchOverview(signal: AbortSignal, waitingIds: readonly string[])
  */
 export function Overview() {
   const overall = useOverall();
+  const t = useT();
   const waitingKey = (overall.incidents ?? [])
     .filter(isWaiting)
     .map((incident) => incident.id)
@@ -172,14 +179,14 @@ export function Overview() {
       return (
         <p role="alert" className="flex items-center gap-2 text-[15px] text-down">
           <TriangleAlert aria-hidden className="size-4" />
-          Could not load the overview: {error.message}
+          {t.overview.loadFailed(error.message)}
         </p>
       );
     }
     return (
       <p role="status" className="flex items-center gap-2 text-[15px] text-ink-2">
         <Loader2 aria-hidden className="size-4 animate-spin motion-reduce:animate-none" />
-        Loading hosts
+        {t.overview.loading}
       </p>
     );
   }
@@ -188,7 +195,7 @@ export function Overview() {
       {error && (
         <p role="alert" className="flex items-center gap-2 text-[13px] text-warn">
           <TriangleAlert aria-hidden className="size-3.5" />
-          Refresh failed, showing the last data: {error.message}
+          {t.common.refreshFailed(error.message)}
         </p>
       )}
       <OverviewView

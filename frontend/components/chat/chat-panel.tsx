@@ -9,6 +9,7 @@ import { Bleep } from "@/components/bleep/bleep";
 import { useOverall } from "@/components/overall-state";
 import { usePinnedBarSpace } from "@/components/pinned-bar";
 import { ApiError } from "@/lib/api";
+import { type Messages, useT } from "@/lib/i18n";
 import { stateMood } from "@/lib/mood";
 import { idFromSegment } from "@/lib/routes";
 import {
@@ -60,19 +61,17 @@ function aboutText(error: ApiError): boolean {
   );
 }
 
-function failure(error: unknown): string {
+function failure(error: unknown, t: Messages["chat"]): string {
   if (error instanceof ApiError && error.status === 422) {
-    return aboutText(error) ? "That message is too long." : "Bleep could not take that message.";
+    return aboutText(error) ? t.tooLong : t.notTaken;
   }
-  if (error instanceof ApiError && error.detail) return `Bleep could not answer: ${error.detail}.`;
-  return "Bleep could not be reached. Try again.";
+  if (error instanceof ApiError && error.detail) return t.couldNotAnswer(error.detail);
+  return t.unreachable;
 }
 
-function exportFailure(error: unknown): string {
-  if (error instanceof ApiError && error.status === 401) {
-    return "Your session has ended. Log in again to export the chat.";
-  }
-  return "The chat could not be exported. Try again.";
+function exportFailure(error: unknown, t: Messages["chat"]): string {
+  if (error instanceof ApiError && error.status === 401) return t.sessionEnded;
+  return t.exportFailed;
 }
 
 /**
@@ -83,6 +82,7 @@ function exportFailure(error: unknown): string {
  * and only a press runs it.
  */
 export function ChatPanel() {
+  const t = useT().chat;
   const { state, incidents } = useOverall();
   const pathname = usePathname();
   const barSpace = usePinnedBarSpace();
@@ -101,7 +101,7 @@ export function ChatPanel() {
   const segment = pageIncident ? idFromSegment(pageIncident) : null;
   const incidentId = segment && INCIDENT_ID.test(segment) ? segment : null;
   const about = incidentId && dismissed !== incidentId ? incidentId : null;
-  const aboutName = incidents?.find((i) => i.id === about)?.short_name ?? "this incident";
+  const aboutName = incidents?.find((i) => i.id === about)?.short_name ?? null;
   const mood = state ? stateMood(state) : "not_sure";
 
   const expired = (offer: Offer) => {
@@ -150,7 +150,7 @@ export function ChatPanel() {
         offer: reply.confirm ?? undefined,
       });
     } catch (error) {
-      add({ who: "error", text: failure(error) });
+      add({ who: "error", text: failure(error, t) });
       setDraft(text);
     } finally {
       setSending(false);
@@ -172,7 +172,7 @@ export function ChatPanel() {
       const { line, incident_id } = await pressConfirm(offer.id, yes);
       updateOffer(key, { pressing: false, line, looking: incident_id ?? undefined });
     } catch (error) {
-      updateOffer(key, { pressing: false, failed: failure(error) });
+      updateOffer(key, { pressing: false, failed: failure(error, t) });
     }
   }
 
@@ -189,7 +189,7 @@ export function ChatPanel() {
       // Some browsers read the file after `click` returns; revoking at once can cut the save.
       window.setTimeout(() => URL.revokeObjectURL(url), REVOKE_AFTER_MS);
     } catch (error) {
-      add({ who: "error", text: exportFailure(error) });
+      add({ who: "error", text: exportFailure(error, t) });
     } finally {
       setExporting(false);
     }
@@ -199,7 +199,7 @@ export function ChatPanel() {
     return (
       <button
         type="button"
-        aria-label={waiting ? "Talk to Bleep (Bleep asked you something)" : "Talk to Bleep"}
+        aria-label={waiting ? t.openAsked : t.open}
         onClick={() => setOpen(true)}
         style={barSpace ? { bottom: barSpace + BAR_GAP_PX } : undefined}
         className="fixed right-5 bottom-5 z-40 grid size-14 place-items-center rounded-full border border-line bg-surface shadow-[0_8px_28px_-8px_rgba(40,30,120,0.35)] hover:bg-soft focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none print:hidden"
@@ -217,7 +217,7 @@ export function ChatPanel() {
 
   return (
     <section
-      aria-label="Chat with Bleep"
+      aria-label={t.label}
       onKeyDown={(event) => event.key === "Escape" && setOpen(false)}
       className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-surface sm:inset-auto sm:right-5 sm:bottom-5 sm:h-[520px] sm:max-h-[calc(100dvh-40px)] sm:w-[360px] sm:rounded-card-sm sm:border sm:border-line sm:shadow-[0_18px_50px_-12px_rgba(40,30,120,0.40)] print:hidden"
     >
@@ -225,12 +225,12 @@ export function ChatPanel() {
         <Bleep mood={mood} size={40} />
         <div className="min-w-0 flex-1">
           <h2 className="text-lg leading-tight font-extrabold">Bleep</h2>
-          <p className="text-[13px] text-ink-2">Asks before it changes anything</p>
+          <p className="text-[13px] text-ink-2">{t.tagline}</p>
         </div>
         <button
           type="button"
-          aria-label="Export chat"
-          title="Export chat"
+          aria-label={t.export}
+          title={t.export}
           onClick={exportChat}
           disabled={exporting}
           aria-busy={exporting}
@@ -240,7 +240,7 @@ export function ChatPanel() {
         </button>
         <button
           type="button"
-          aria-label="Close chat"
+          aria-label={t.close}
           onClick={() => setOpen(false)}
           className="grid size-9 place-items-center rounded-full hover:bg-soft focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
@@ -254,7 +254,7 @@ export function ChatPanel() {
       >
         {turns.length === 0 && (
           <li className="mx-auto max-w-[85%] py-6 text-center text-[13.5px] text-ink-2">
-            Ask how things look, or tell Bleep to leave a service alone for a while.
+            {t.empty}
           </li>
         )}
         {turns.map((turn) => {
@@ -299,7 +299,7 @@ export function ChatPanel() {
         })}
         {sending && (
           <li className="mr-auto rounded-[18px] rounded-bl-md border border-line bg-surface px-3.5 py-2 text-ink-2">
-            Bleep is reading…
+            {t.reading}
           </li>
         )}
       </ol>
@@ -309,10 +309,10 @@ export function ChatPanel() {
       >
         {about && (
           <span className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-soft py-1 pr-1 pl-3 text-[13px] font-bold">
-            About <span className="font-mono">{aboutName}</span>
+            {t.about} <span className="font-mono">{aboutName ?? t.aboutThis}</span>
             <button
               type="button"
-              aria-label={`Leave out ${aboutName}`}
+              aria-label={aboutName ? t.leaveOut(aboutName) : t.leaveOutThis}
               onClick={() => setDismissed(about)}
               className="grid size-6 place-items-center rounded-full hover:bg-surface focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
@@ -326,13 +326,13 @@ export function ChatPanel() {
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             maxLength={MESSAGE_MAX_CHARS}
-            aria-label="Message to Bleep"
-            placeholder={about ? "Ask about this incident…" : "Ask Bleep or tell it what to do…"}
+            aria-label={t.message}
+            placeholder={about ? t.askIncident : t.ask}
             className="min-w-0 flex-1 bg-transparent text-[14.5px] outline-none placeholder:text-ink-2"
           />
           <button
             type="submit"
-            aria-label="Send"
+            aria-label={t.send}
             disabled={sending || !draft.trim()}
             className="grid size-9 shrink-0 place-items-center rounded-full bg-accent text-accent-ink disabled:opacity-50"
           >
@@ -372,6 +372,7 @@ function Answer({ text, links }: { text: string; links: TalkLink[] }) {
  * panel closes.
  */
 function LookFollow({ incidentId, onChange }: { incidentId: string; onChange: () => void }) {
+  const t = useT().chat;
   const [look, setLook] = useState<LookProgress | null>(null);
   const [lost, setLost] = useState(false);
 
@@ -415,8 +416,8 @@ function LookFollow({ incidentId, onChange }: { incidentId: string; onChange: ()
       )}
       {look && look.steps.length > 0 && (
         <>
-          <p className="mt-2 text-[13px] font-bold text-ink-2">What I did</p>
-          <ul aria-label="What I did" className="list-disc pl-5 text-[13.5px] whitespace-normal">
+          <p className="mt-2 text-[13px] font-bold text-ink-2">{t.whatIDid}</p>
+          <ul aria-label={t.whatIDid} className="list-disc pl-5 text-[13.5px] whitespace-normal">
             {look.steps.map((step, index) => (
               <li key={index}>{step}</li>
             ))}
@@ -425,7 +426,7 @@ function LookFollow({ incidentId, onChange }: { incidentId: string; onChange: ()
       )}
       {lost && (
         <p role="alert" className="mt-1 text-[13px] font-bold text-down">
-          Lost track of the look for a moment. Trying again…
+          {t.lost}
         </p>
       )}
     </div>
@@ -446,8 +447,9 @@ function OfferButtons({
   expired: boolean;
   onPress: (yes: boolean) => void;
 }) {
+  const t = useT().chat;
   if (offer.line || expired) {
-    return <p className="pl-1 text-[13px] font-bold text-ink-2">{offer.line ?? "Expired"}</p>;
+    return <p className="pl-1 text-[13px] font-bold text-ink-2">{offer.line ?? t.expired}</p>;
   }
   return (
     <div className="flex flex-col gap-1.5">

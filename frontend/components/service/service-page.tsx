@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Lock, ThumbsDown, ThumbsUp, TriangleAlert } from "lucide-react";
+import { Lock, ThumbsDown, ThumbsUp } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -13,6 +13,7 @@ import { useOverall } from "@/components/overall-state";
 import { Panel } from "@/components/panel";
 import { QuietButton } from "@/components/quiet/quiet-button";
 import { SaveLockProvider } from "@/components/save-lock";
+import { Failed, Loading } from "@/components/status-notes";
 import { MemoryPanel } from "@/components/service/memory-panel";
 import {
   CheckedUrls,
@@ -33,9 +34,10 @@ import type {
   ServiceView,
 } from "@/lib/api-types";
 import { formatDateTime, formatSince } from "@/lib/format";
-import { useLanguage, useT } from "@/lib/i18n";
-import { quietLabel, sinceWords } from "@/lib/quiet-api";
+import { MESSAGES, useLanguage, useT } from "@/lib/i18n";
+import { sinceWords, untilWords } from "@/lib/quiet-api";
 import { hostHref } from "@/lib/routes";
+import type { Language } from "@/lib/settings-types";
 import { cn } from "@/lib/utils";
 import type { Zone } from "@/lib/zone";
 
@@ -62,24 +64,6 @@ function useOnce<T>(path: string, version = 0): Loaded<T> {
   return state;
 }
 
-function Failed({ children }: { children: React.ReactNode }) {
-  return (
-    <p role="alert" className="flex items-center gap-2 text-sm text-down">
-      <TriangleAlert aria-hidden className="size-4" />
-      {children}
-    </p>
-  );
-}
-
-function Loading({ children }: { children: React.ReactNode }) {
-  return (
-    <p role="status" className="flex items-center gap-2 text-sm text-ink-2">
-      <Loader2 aria-hidden className="size-4 animate-spin" />
-      {children}
-    </p>
-  );
-}
-
 function containerTone(container: ContainerView): string {
   if (container.health === "unhealthy") return "text-down";
   if (container.state === "running") {
@@ -94,6 +78,7 @@ function containerTone(container: ContainerView): string {
 }
 
 function ContainerRow({ container }: { container: ContainerView }) {
+  const t = useT().service;
   const detail =
     container.health === "none" ? container.state : `${container.state}, ${container.health}`;
   return (
@@ -104,31 +89,31 @@ function ContainerRow({ container }: { container: ContainerView }) {
       <span className="flex items-center gap-1.5 font-mono break-all">
         {container.protected && <Lock aria-hidden className="size-3 shrink-0 text-ink-2" />}
         {container.name}
-        {container.protected && (
-          <span className="sr-only"> (protected: Bleep never acts on it)</span>
-        )}
+        {container.protected && <span className="sr-only">{t.protectedNote}</span>}
       </span>
       <span className={cn("font-bold", containerTone(container))}>{detail}</span>
     </li>
   );
 }
 
-const FINDINGS = [
-  { target: "diagnosis", label: "Diagnosis" },
-  { target: "proposal", label: "Plan" },
-] as const;
+const FINDINGS = ["diagnosis", "proposal"] as const;
 
 /** The human's right or wrong on the incident's diagnosis and plan; nothing when they gave none. */
 function Votes({ votes }: { votes: IncidentVotes }) {
-  const given = FINDINGS.flatMap(({ target, label }) => {
+  const t = useT().service;
+  const words = {
+    diagnosis: { up: t.diagnosisRight, down: t.diagnosisWrong },
+    proposal: { up: t.planRight, down: t.planWrong },
+  };
+  const given = FINDINGS.flatMap((target) => {
     const vote = votes[target];
-    return vote ? [{ target, label, vote }] : [];
+    return vote ? [{ target, vote }] : [];
   });
   if (given.length === 0) return null;
   return (
     <span className="flex flex-wrap items-center gap-1.5 text-xs font-bold">
-      <span className="sr-only">Your feedback:</span>
-      {given.map(({ target, label, vote }) => {
+      <span className="sr-only">{t.yourFeedback}</span>
+      {given.map(({ target, vote }) => {
         const Icon = vote === "up" ? ThumbsUp : ThumbsDown;
         return (
           <span
@@ -139,7 +124,7 @@ function Votes({ votes }: { votes: IncidentVotes }) {
             )}
           >
             <Icon aria-hidden className="size-3" />
-            {label} {vote === "up" ? "right" : "wrong"}
+            {words[target][vote]}
           </span>
         );
       })}
@@ -152,14 +137,10 @@ function PastIncidents({ incidents }: { incidents: IncidentListItem[] }) {
   const language = useLanguage();
   const t = useT();
   if (incidents.length === 0) {
-    return (
-      <p className="text-sm text-ink-2">
-        No incidents yet. When this service breaks, it shows here.
-      </p>
-    );
+    return <p className="text-sm text-ink-2">{t.service.noIncidents}</p>;
   }
   return (
-    <ul aria-label="Incidents" className="flex flex-col gap-1.5">
+    <ul aria-label={t.incidents.title} className="flex flex-col gap-1.5">
       {incidents.map((incident) => (
         <li key={incident.id}>
           <Link
@@ -184,16 +165,16 @@ function PastIncidents({ incidents }: { incidents: IncidentListItem[] }) {
 }
 
 /** The one line under a quiet service's title: why Bleep is silent about it, and since or until when. */
-function quietNote(quiet: QuietView, zone: Zone): string {
+function quietNote(quiet: QuietView, zone: Zone, language: Language): string {
   const now = new Date();
-  const label = quietLabel(quiet, now, zone, "en");
-  if (quiet.scope === "host") {
-    return `Its host is ${label.replace(/^Host /, "")}, so Bleep opens no incidents for it.`;
-  }
-  if (quiet.mode === "leave_alone") {
-    return `Since ${sinceWords(new Date(quiet.since), now, zone, "en")} Bleep opens no incidents for it.`;
-  }
-  return `Bleep opens no incidents for it until ${label.replace(/^Snoozed until /, "")}.`;
+  const t = MESSAGES[language].service;
+  const until =
+    quiet.mode === "leave_alone" || quiet.until === null
+      ? null
+      : untilWords(new Date(quiet.until), now, zone, language);
+  if (quiet.scope === "host") return until === null ? t.hostLeftAlone : t.hostSnoozed(until);
+  if (until === null) return t.since(sinceWords(new Date(quiet.since), now, zone, language));
+  return t.until(until);
 }
 
 /**
@@ -208,15 +189,17 @@ function StillFailing({
   last: IncidentListItem | undefined;
 }) {
   const zone = useTimeZone();
+  const language = useLanguage();
+  const t = useT().service;
   if (service.quiet || service.health !== "down" || service.open_incident_id !== null) return null;
   if (!last || !ENDED.has(last.status)) return null;
   const ended = last.closed_at ?? last.opened_at;
   const checkFails = service.urls.some((url) => url.status === "failing");
   return (
-    <p role="note" aria-label="Still failing" className="text-sm text-ink-2">
-      Still down after its last incident ended{" "}
-      <time dateTime={ended} title={formatDateTime(ended, zone, "en")}>
-        {formatSince(ended, undefined, zone, "en")}
+    <p role="note" aria-label={t.stillLabel} className="text-sm text-ink-2">
+      {t.stillBefore}{" "}
+      <time dateTime={ended} title={formatDateTime(ended, zone, language)}>
+        {formatSince(ended, undefined, zone, language)}
       </time>
       :{" "}
       <Link
@@ -226,14 +209,10 @@ function StillFailing({
         <ShortNamePrefix name={last.short_name} />
         {last.title}
       </Link>
-      .
-      {checkFails &&
-        " Bleep opens a new one once a check has passed, or after a wait that grows with each repeat, from an hour to a day."}
+      .{checkFails && t.stillCheck}
     </p>
   );
 }
-
-const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 /**
  * A service's page: its health, what Bleep knows, its checks and containers, rules, incidents.
@@ -249,6 +228,9 @@ export function ServicePage({ id }: { id: string }) {
 
 function Service({ id }: { id: string }) {
   const zone = useTimeZone();
+  const language = useLanguage();
+  const messages = useT();
+  const t = messages.service;
   const encoded = encodeURIComponent(id);
   const [reloads, setReloads] = useState(0);
   const overall = useOverall();
@@ -271,14 +253,14 @@ function Service({ id }: { id: string }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <nav aria-label="Breadcrumb">
+      <nav aria-label={messages.host.breadcrumb}>
         <ol className="flex flex-wrap items-center gap-x-2 text-sm text-ink-2">
           <li>
             <Link
               href="/"
               className="inline-flex min-h-11 items-center font-bold text-accent hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
-              Home
+              {messages.nav.home}
             </Link>
           </li>
           {service && (
@@ -303,29 +285,29 @@ function Service({ id }: { id: string }) {
 
       <header className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <h1 className="text-3xl font-extrabold wrap-anywhere md:text-4xl">{name}</h1>
+          <h1 className="text-3xl font-extrabold wrap-anywhere hyphens-auto md:text-4xl">{name}</h1>
           {service && !service.quiet && <HealthBadge health={service.health} />}
           {service && <QuietButton target={target} quiet={service.quiet} onChanged={reload} />}
         </div>
         {service?.quiet && (
           <p role="note" className="text-sm text-ink-2">
-            {quietNote(service.quiet, zone)}
+            {quietNote(service.quiet, zone, language)}
           </p>
         )}
         {service && incidents.data && <StillFailing service={service} last={incidents.data[0]} />}
         {service ? (
           <p className="text-sm text-ink-2">
-            {service.source} service on <span className="font-mono">{service.host_id}</span>
+            {t.sourceOn(service.source)} <span className="font-mono">{service.host_id}</span>
             {" · "}
-            {count(service.containers.length, "container")}
+            {messages.counts.containers(service.containers.length)}
             {service.health === "ok" && data?.health_since && (
               <>
-                {" · healthy since "}
+                {t.healthySince}
                 <time
                   dateTime={data.health_since}
-                  title={formatDateTime(data.health_since, zone, "en")}
+                  title={formatDateTime(data.health_since, zone, language)}
                 >
-                  {formatSince(data.health_since, undefined, zone, "en")}
+                  {formatSince(data.health_since, undefined, zone, language)}
                 </time>
               </>
             )}
@@ -333,28 +315,20 @@ function Service({ id }: { id: string }) {
         ) : (
           <p className="font-mono text-xs text-ink-2">{id}</p>
         )}
-        {missing && (
-          <p className="text-sm text-ink-2">
-            Bleep does not see this service on its host now. What it remembers is below.
-          </p>
-        )}
-        {detail.error && !missing && (
-          <Failed>Could not load the service: {detail.error.message}</Failed>
-        )}
-        {!detail.data && !detail.error && <Loading>Loading the service</Loading>}
-        {settingsError && (
-          <Failed>Could not load the service&apos;s settings: {settingsError.message}</Failed>
-        )}
+        {missing && <p className="text-sm text-ink-2">{t.missing}</p>}
+        {detail.error && !missing && <Failed>{t.loadFailed(detail.error.message)}</Failed>}
+        {!detail.data && !detail.error && <Loading>{t.loading}</Loading>}
+        {settingsError && <Failed>{t.settingsFailed(settingsError.message)}</Failed>}
         {notice && <Failed>{notice}</Failed>}
       </header>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title={`What I know about ${name}`} className="lg:col-span-2">
+        <Panel title={t.whatIKnow(name)} className="lg:col-span-2">
           <MemoryPanel serviceId={id} />
         </Panel>
         {shown && (
           <>
-            <Panel title="Checked from outside">
+            <Panel title={t.urls}>
               <CheckedUrls
                 name={name}
                 statuses={service?.urls ?? []}
@@ -362,22 +336,22 @@ function Service({ id }: { id: string }) {
                 settings={settings}
               />
             </Panel>
-            <Panel title="Containers">
+            <Panel title={t.containers}>
               <div className="flex flex-col gap-4">
                 {service && service.containers.length > 0 ? (
-                  <ul className="flex flex-col gap-1.5" aria-label="Containers">
+                  <ul className="flex flex-col gap-1.5" aria-label={t.containers}>
                     {service.containers.map((container) => (
                       <ContainerRow key={container.id} container={container} />
                     ))}
                   </ul>
                 ) : (
-                  <p className="text-sm text-ink-2">No containers.</p>
+                  <p className="text-sm text-ink-2">{t.noContainers}</p>
                 )}
                 {settings && <ProtectedContainers name={name} settings={settings} />}
                 {settings && <ExpectedExits name={name} settings={settings} />}
               </div>
             </Panel>
-            <Panel title="Rules I follow" className="lg:col-span-2">
+            <Panel title={t.rules} className="lg:col-span-2">
               <FollowedRules
                 name={name}
                 rules={data?.rules ?? []}
@@ -387,13 +361,13 @@ function Service({ id }: { id: string }) {
             </Panel>
           </>
         )}
-        <Panel title="Past incidents" className="lg:col-span-2">
+        <Panel title={t.pastIncidents} className="lg:col-span-2">
           {incidents.data ? (
             <PastIncidents incidents={incidents.data} />
           ) : incidents.error ? (
-            <Failed>Could not load the incidents: {incidents.error.message}</Failed>
+            <Failed>{t.incidentsFailed(incidents.error.message)}</Failed>
           ) : (
-            <Loading>Loading the incidents</Loading>
+            <Loading>{t.incidentsLoading}</Loading>
           )}
         </Panel>
       </div>

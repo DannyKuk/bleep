@@ -10,6 +10,7 @@ import { OverallProvider } from "@/components/overall-state";
 import { host } from "@/components/overview/fixtures";
 import { PinnedBarProvider, useReportPinnedBar } from "@/components/pinned-bar";
 import type { Incident } from "@/lib/api-types";
+import { setLanguage } from "@/lib/i18n";
 import type { ChatAnswer, LookProgress, TalkLink } from "@/lib/talk-api";
 
 let pathname = "/";
@@ -553,5 +554,97 @@ describe("ChatPanel", () => {
 
     rerender(page(false));
     expect(screen.getByRole("button", { name: "Talk to Bleep" }).style.bottom).toBe("");
+  });
+});
+
+describe("ChatPanel in German", () => {
+  beforeEach(() => {
+    pathname = "/";
+    act(() => setLanguage("de"));
+  });
+
+  it("names its own controls and failures in German", async () => {
+    stubBackend(() => json({ detail: "das Modell ist weg" }, 503));
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(screen.getByRole("button", { name: "Mit Bleep sprechen" }));
+    const panel = screen.getByRole("region", { name: "Chat mit Bleep" });
+    expect(within(panel).getByText("Fragt, bevor es etwas ändert")).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Chat exportieren" })).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Chat schließen" })).toBeInTheDocument();
+    expect(within(panel).getByText(/Frag, wie es aussieht/)).toBeInTheDocument();
+
+    await user.type(
+      screen.getByRole("textbox", { name: "Nachricht an Bleep" }),
+      "wie geht es shop?",
+    );
+    await user.click(screen.getByRole("button", { name: "Senden" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Bleep konnte nicht antworten: das Modell ist weg.",
+    );
+  });
+
+  it("asks about the incident of the page and lets its chip go, in German", async () => {
+    pathname = "/incidents/inc_14";
+    stubBackend(() => json(answer()));
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("button", { name: "Mit Bleep sprechen" }));
+
+    expect(await screen.findByText("shop #14")).toBeInTheDocument();
+    expect(screen.getByText(/^Zu/)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Frag etwas zu diesem Vorfall…")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "shop #14 weglassen" }));
+    expect(
+      screen.getByPlaceholderText("Frag Bleep oder sag ihm, was es tun soll…"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an offer past its time as expired", async () => {
+    stubBackend(() =>
+      json(
+        answer({ confirm: { ...SNOOZE.confirm!, id: "old", expires_at: "2000-01-01T00:00:00Z" } }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("button", { name: "Mit Bleep sprechen" }));
+    await user.type(screen.getByRole("textbox", { name: "Nachricht an Bleep" }), "stumm");
+    await user.click(screen.getByRole("button", { name: "Senden" }));
+    expect(await screen.findByText("Abgelaufen")).toBeInTheDocument();
+  });
+
+  it("keeps the words the backend wrote for a look as they came", async () => {
+    const asked = answer({
+      answer: "🔎 Jetzt shop anschauen?",
+      confirm: { ...SNOOZE.confirm!, id: "look1" },
+    });
+    stubBackend((path) => {
+      if (path === "/api/talk/messages") return json(asked);
+      if (path.startsWith("/api/talk/confirms/")) {
+        return json({ line: "🔎 Ich schaue mir shop jetzt an.", incident_id: "inc_7" });
+      }
+      return json({
+        state: "ended",
+        line: "✅ Angeschaut: shop ist gesund",
+        links: [],
+        steps: ["Container aufgelistet"],
+      });
+    });
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("button", { name: "Mit Bleep sprechen" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Nachricht an Bleep" }),
+      "schau dir shop an",
+    );
+    await user.click(screen.getByRole("button", { name: "Senden" }));
+    await user.click(await screen.findByRole("button", { name: "Yes" }));
+
+    expect(await screen.findByText("✅ Angeschaut: shop ist gesund")).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Was ich getan habe" })).toHaveTextContent(
+      "Container aufgelistet",
+    );
   });
 });

@@ -1,4 +1,5 @@
 import type { HostView, Incident, IncidentDetail, ServiceView } from "@/lib/api-types";
+import type { Messages } from "@/lib/i18n";
 import { isAsleep, overallMood, type Mood } from "@/lib/mood";
 
 /** What the overview's hero is about, picked in the order of Bleep's moods. */
@@ -69,25 +70,12 @@ export function heroSituation({ incidents, hosts, details, now }: HeroInput): Si
   return hosts.length === 0 ? { kind: "no_hosts" } : { kind: "quiet" };
 }
 
-const COUNT_WORDS = [
-  "zero",
-  "one",
-  "two",
-  "three",
-  "four",
-  "five",
-  "six",
-  "seven",
-  "eight",
-  "nine",
-];
-
-const countWord = (n: number) => COUNT_WORDS[n] ?? String(n);
+const countWord = (n: number, t: Messages) => t.overview.numbers[n] ?? String(n);
 
 /** "A", "A and B", "A, B and C". */
-export function joinNames(names: readonly string[]): string {
+export function joinNames(names: readonly string[], t: Messages): string {
   if (names.length <= 1) return names.join("");
-  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return `${names.slice(0, -1).join(", ")} ${t.overview.and} ${names[names.length - 1]}`;
 }
 
 const serviceHurting = (service: ServiceView) =>
@@ -106,41 +94,53 @@ export function isHurting(host: HostView, services: readonly ServiceView[]): boo
   return host.health === "down" || host.health === "degraded";
 }
 
-function servicesReach(host: HostView, services: readonly ServiceView[]): string {
+function servicesReach(host: HostView, services: readonly ServiceView[], t: Messages): string {
   const own = services.filter((service) => service.host_id === host.id);
   const hurting = own.filter(serviceHurting).length;
   if (hurting === 0) return "";
-  if (own.length === 1) return ": its only service";
-  if (hurting === own.length) return `: all ${hurting} of its services`;
-  return `: ${hurting} of its ${own.length} services`;
+  if (own.length === 1) return t.overview.reachOnly;
+  if (hurting === own.length) return t.overview.reachAll(hurting);
+  return t.overview.reachSome(hurting, own.length);
 }
 
 function hurtingSentence(
   hurting: readonly HostView[],
   services: readonly ServiceView[],
   hostCount: number,
+  t: Messages,
 ): string {
-  if (hurting.length > 1) return `${joinNames(hurting.map((host) => host.name))} are hurting.`;
+  if (hurting.length > 1) {
+    return t.overview.manyHurting(
+      joinNames(
+        hurting.map((host) => host.name),
+        t,
+      ),
+    );
+  }
   const [host] = hurting;
-  if (!host.reachable) return `${host.name} is out of reach as a whole.`;
-  const only = hostCount > 1 ? "Only " : "";
-  return `${only}${host.name} is hurting${servicesReach(host, services)}.`;
+  if (!host.reachable) return t.overview.outOfReach(host.name);
+  return t.overview.oneHurting(host.name, hostCount > 1, servicesReach(host, services, t));
 }
 
-function fineSentence(fine: number, hostCount: number): string {
+function fineSentence(fine: number, hostCount: number, t: Messages): string {
+  const o = t.overview;
   if (fine === hostCount) {
-    if (fine === 1) return "It is fine.";
-    if (fine === 2) return "Both are fine.";
-    return `All ${countWord(fine)} are fine.`;
+    if (fine === 1) return o.fineOne;
+    if (fine === 2) return o.fineBoth;
+    return o.fineAll(countWord(fine, t));
   }
   if (fine === 0) return "";
-  return fine === 1 ? "The other one is fine." : `The other ${countWord(fine)} are fine.`;
+  return fine === 1 ? o.otherOne : o.otherMany(countWord(fine, t));
 }
 
 /** The line above the host tiles: how far a problem reaches, and that the rest is fine. */
-export function reachLine(hosts: readonly HostView[], services: readonly ServiceView[]): string {
+export function reachLine(
+  hosts: readonly HostView[],
+  services: readonly ServiceView[],
+  t: Messages,
+): string {
   const hurting = hosts.filter((host) => isHurting(host, services));
-  const fine = fineSentence(hosts.length - hurting.length, hosts.length);
+  const fine = fineSentence(hosts.length - hurting.length, hosts.length, t);
   if (hurting.length === 0) return fine;
-  return [hurtingSentence(hurting, services, hosts.length), fine].filter(Boolean).join(" ");
+  return [hurtingSentence(hurting, services, hosts.length, t), fine].filter(Boolean).join(" ");
 }

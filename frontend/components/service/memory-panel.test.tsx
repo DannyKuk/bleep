@@ -1,9 +1,10 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { MemoryPanel } from "@/components/service/memory-panel";
 import type { ServiceFact } from "@/lib/api-types";
+import { setLanguage } from "@/lib/i18n";
 
 const FACTS = "/api/services/demo%2Fcompose%3Ashop/facts";
 
@@ -102,5 +103,41 @@ describe("MemoryPanel", () => {
       "Could not delete the fact: no such fact",
     );
     expect(screen.getByText("The db is shared with billing.")).toBeInTheDocument();
+  });
+
+  it("speaks German, with German dates, and keeps a fact's text as written", async () => {
+    act(() => setLanguage("de"));
+    stubBackend(
+      json([
+        fact(),
+        fact({ id: 2, text: "Always redeploy.", source: "report", incident_id: "inc-7" }),
+      ]),
+    );
+    render(<MemoryPanel serviceId="demo/compose:shop" />);
+
+    const list = await screen.findByRole("list", { name: "Fakten" });
+    const [mine, learned] = within(list).getAllByRole("listitem");
+    expect(mine).toHaveTextContent("The db is shared with billing.");
+    expect(mine).toHaveTextContent(/Von dir hinzugefügt, 02\.11\.2026, \d\d:\d\d/);
+    expect(learned).toHaveTextContent(/Gelernt aus dem Bericht eines Vorfalls, 02\.11\.2026/);
+    expect(
+      within(mine).getByRole("button", { name: "Fakt löschen: The db is shared with billing." }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Bleep liest diese bei jedem Vorfall dieses Dienstes."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Etwas, das Bleep über diesen Dienst immer wissen soll"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hinzufügen" })).toBeInTheDocument();
+  });
+
+  it("says in German that the facts could not be read", async () => {
+    act(() => setLanguage("de"));
+    stubBackend(json({ detail: "boom" }, 500));
+    render(<MemoryPanel serviceId="demo/compose:shop" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Die Fakten konnten nicht geladen werden",
+    );
   });
 });

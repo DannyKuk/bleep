@@ -5,23 +5,26 @@ import { useRef, useState } from "react";
 import { useTimeZone } from "@/components/preferences";
 import type { UrlCheckPoint } from "@/lib/api-types";
 import { formatTime } from "@/lib/format";
+import { type Messages, MESSAGES, useLanguage, useT } from "@/lib/i18n";
+import type { Language } from "@/lib/settings-types";
 import { cn } from "@/lib/utils";
 import type { Zone } from "@/lib/zone";
 
 /** "Passed at 14:02:30, 200, 42 ms"; a check with no reply has no status code. */
-export function checkWords(check: UrlCheckPoint, zone?: Zone): string {
+export function checkWords(check: UrlCheckPoint, zone: Zone, language: Language): string {
+  const t = MESSAGES[language].service;
+  const time = formatTime(check.checked_at, zone, language);
   const parts = [
-    `${check.ok ? "Passed" : "Failed"} at ${formatTime(check.checked_at, zone, "en")}`,
-    check.status_code != null ? String(check.status_code) : "no reply",
+    check.ok ? t.passedAt(time) : t.failedAt(time),
+    check.status_code != null ? String(check.status_code) : t.noReply,
     `${check.latency_ms} ms`,
   ];
   return parts.join(", ");
 }
 
-function summary(checks: UrlCheckPoint[]): string {
-  if (checks.length === 1) return `Last check: ${checks[0].ok ? "passed" : "failed"}`;
-  const failed = checks.filter((check) => !check.ok).length;
-  return `Last ${checks.length} checks: ${failed === 0 ? "all passed" : `${failed} failed`}`;
+function summary(checks: UrlCheckPoint[], t: Messages["service"]): string {
+  if (checks.length === 1) return t.lastCheck(checks[0].ok);
+  return t.lastChecks(checks.length, checks.filter((check) => !check.ok).length);
 }
 
 /** Where an arrow key, Home or End moves from tick `from` of `count`; null for any other key. */
@@ -43,6 +46,8 @@ function target(key: string, from: number, count: number): number | null {
 export function CheckStrip({ url, checks }: { url: string; checks: UrlCheckPoint[] }) {
   const [active, setActive] = useState<number | null>(null);
   const zone = useTimeZone();
+  const language = useLanguage();
+  const t = useT().service;
   const [tabStop, setTabStop] = useState<number | null>(null); // null: the newest
   const ticks = useRef<(HTMLSpanElement | null)[]>([]);
   if (checks.length === 0) return null;
@@ -60,7 +65,7 @@ export function CheckStrip({ url, checks }: { url: string; checks: UrlCheckPoint
   return (
     <div className="flex flex-col gap-1">
       <ol
-        aria-label={`${summary(checks)}, oldest first, for ${url}`}
+        aria-label={t.stripLabel(summary(checks, t), url)}
         className="flex h-6 items-end gap-[3px]"
         onMouseLeave={() => setActive(null)}
       >
@@ -74,7 +79,7 @@ export function CheckStrip({ url, checks }: { url: string; checks: UrlCheckPoint
                 ticks.current[index] = node;
               }}
               role="img"
-              aria-label={checkWords(check, zone)}
+              aria-label={checkWords(check, zone, language)}
               data-ok={check.ok}
               tabIndex={index === stop ? 0 : -1}
               onMouseEnter={() => setActive(index)}
@@ -93,7 +98,9 @@ export function CheckStrip({ url, checks }: { url: string; checks: UrlCheckPoint
           </li>
         ))}
       </ol>
-      <p className="text-xs text-ink-2">{shown ? checkWords(shown, zone) : summary(checks)}</p>
+      <p className="text-xs text-ink-2">
+        {shown ? checkWords(shown, zone, language) : summary(checks, t)}
+      </p>
     </div>
   );
 }

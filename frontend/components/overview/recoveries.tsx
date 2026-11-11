@@ -8,7 +8,7 @@ import { usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
 import type { RecoveryEvent } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
-import { useLanguage } from "@/lib/i18n";
+import { useLanguage, useT } from "@/lib/i18n";
 import { serviceHref } from "@/lib/routes";
 
 const LIMIT = 10;
@@ -29,11 +29,11 @@ function Container({ recovery }: { recovery: RecoveryEvent }) {
 export function RecoveriesView({ recoveries }: { recoveries: RecoveryEvent[] }) {
   const zone = useTimeZone();
   const language = useLanguage();
+  const t = useT().recoveries;
   if (recoveries.length === 0) {
     return (
       <p className="rounded-row border border-dashed border-line px-4 py-3 text-[15px] text-ink-2">
-        Nothing has fixed itself yet. When a container dies and comes back within its grace window,
-        I list it here instead of opening an incident.
+        {t.empty}
       </p>
     );
   }
@@ -54,7 +54,9 @@ export function RecoveriesView({ recoveries }: { recoveries: RecoveryEvent[] }) 
             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
               <Container recovery={recovery} />
               <span className="text-[13px] text-ink-2">
-                on <span className="font-mono">{recovery.host_id}</span>
+                {t.on[0]}
+                <span className="font-mono">{recovery.host_id}</span>
+                {t.on[1]}
               </span>
               <time
                 dateTime={recovery.at}
@@ -77,21 +79,22 @@ const fetchRecoveries = (signal: AbortSignal) =>
 /** Containers that died and came back on their own, newest first. */
 export function Recoveries() {
   const { data, error } = usePoll(fetchRecoveries, POLL_MS);
+  const t = useT().recoveries;
   return (
     <section aria-labelledby="recoveries" className="flex flex-col gap-3">
       <h2 id="recoveries" className="text-xl font-extrabold">
-        Fixed themselves
+        {t.title}
       </h2>
       {error && (
         <p role="alert" className="flex items-center gap-2 text-[13px] text-warn">
           <TriangleAlert aria-hidden className="size-3.5" />
-          Could not load recoveries: {error.message}
+          {t.loadFailed(error.message)}
         </p>
       )}
       {!data && !error && (
         <p role="status" className="flex items-center gap-2 text-[15px] text-ink-2">
           <Loader2 aria-hidden className="size-4 animate-spin motion-reduce:animate-none" />
-          Loading what fixed itself
+          {t.loading}
         </p>
       )}
       {data && <RecoveriesView recoveries={data} />}

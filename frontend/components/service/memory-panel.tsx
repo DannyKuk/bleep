@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { apiFetch } from "@/lib/api";
 import type { FactBody, ServiceFact } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
-import { useLanguage } from "@/lib/i18n";
+import { useLanguage, useT } from "@/lib/i18n";
 
 const MAX_FACT = 200; // the API's limit (FACT_CHARS)
 
@@ -24,22 +24,30 @@ function factsPath(serviceId: string): string {
 function FactOrigin({ fact }: { fact: ServiceFact }) {
   const zone = useTimeZone();
   const language = useLanguage();
+  const t = useT().service.memory;
   const when = (
     <time dateTime={fact.created_at}>{formatDateTime(fact.created_at, zone, language)}</time>
   );
-  if (fact.source === "human") return <>Added by you, {when}</>;
+  if (fact.source === "human") {
+    return (
+      <>
+        {t.addedByYou}
+        {when}
+      </>
+    );
+  }
   return (
     <>
-      Learned from{" "}
+      {t.learnedFrom}
       {fact.incident_id ? (
         <Link
           href={`/incidents/${fact.incident_id}`}
           className="underline underline-offset-2 hover:text-ink"
         >
-          an incident&apos;s report
+          {t.report}
         </Link>
       ) : (
-        "a report"
+        t.aReport
       )}
       , {when}
     </>
@@ -57,16 +65,10 @@ export function FactList({
   deleting: number | null;
   onDelete: (fact: ServiceFact) => void;
 }) {
-  if (facts.length === 0) {
-    return (
-      <p className="text-sm text-ink-2">
-        No facts yet. Add one here, or tell Bleep during an incident, such as &ldquo;always redeploy
-        rather than restart&rdquo;.
-      </p>
-    );
-  }
+  const t = useT().service.memory;
+  if (facts.length === 0) return <p className="text-sm text-ink-2">{t.empty}</p>;
   return (
-    <ul aria-label="Facts" className="flex flex-col divide-y divide-line">
+    <ul aria-label={t.facts} className="flex flex-col divide-y divide-line">
       {facts.map((fact) => (
         <li key={fact.id} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -78,8 +80,8 @@ export function FactList({
           <Button
             size="icon"
             variant="ghost"
-            aria-label={`Delete the fact: ${fact.text}`}
-            title="Delete this fact"
+            aria-label={t.deleteFact(fact.text)}
+            title={t.deleteThis}
             disabled={deleting !== null}
             onClick={() => onDelete(fact)}
           >
@@ -106,16 +108,17 @@ export function MemoryPanel({ serviceId }: { serviceId: string }) {
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
   const inputId = useId();
+  const t = useT().service.memory;
 
   useEffect(() => {
     const controller = new AbortController();
     apiFetch<ServiceFact[]>(factsPath(serviceId), { signal: controller.signal })
       .then(setFacts)
       .catch((error: unknown) => {
-        if (!controller.signal.aborted) setFailure(`Could not load the facts: ${why(error)}`);
+        if (!controller.signal.aborted) setFailure(t.loadFailed(why(error)));
       });
     return () => controller.abort();
-  }, [serviceId]);
+  }, [serviceId, t]);
 
   async function add() {
     const body: FactBody = { text: text.trim() };
@@ -129,7 +132,7 @@ export function MemoryPanel({ serviceId }: { serviceId: string }) {
       setFacts((known) => [...(known ?? []), fact]);
       setText("");
     } catch (error) {
-      setFailure(`Could not add the fact: ${why(error)}`);
+      setFailure(t.addFailed(why(error)));
     } finally {
       setAdding(false);
     }
@@ -142,7 +145,7 @@ export function MemoryPanel({ serviceId }: { serviceId: string }) {
       await apiFetch<void>(`${factsPath(serviceId)}/${fact.id}`, { method: "DELETE" });
       setFacts((known) => (known ?? []).filter((kept) => kept.id !== fact.id));
     } catch (error) {
-      setFailure(`Could not delete the fact: ${why(error)}`);
+      setFailure(t.deleteFailed(why(error)));
     } finally {
       setDeleting(null);
     }
@@ -152,12 +155,12 @@ export function MemoryPanel({ serviceId }: { serviceId: string }) {
     <div className="flex flex-col gap-3">
       <p className="flex items-center gap-2 text-xs text-ink-2">
         <Brain aria-hidden className="size-3.5" />
-        Bleep reads these on every incident of this service.
+        {t.intro}
       </p>
       {facts === null && !failure ? (
         <p role="status" className="flex items-center gap-2 text-sm text-ink-2">
           <Loader2 aria-hidden className="size-4 animate-spin" />
-          Loading the facts
+          {t.loading}
         </p>
       ) : (
         <FactList facts={facts ?? []} deleting={deleting} onDelete={(fact) => void remove(fact)} />
@@ -170,7 +173,7 @@ export function MemoryPanel({ serviceId }: { serviceId: string }) {
         }}
       >
         <label htmlFor={inputId} className="text-xs text-ink-2">
-          Something Bleep should always know about this service
+          {t.prompt}
         </label>
         <div className="flex gap-2">
           <Input
@@ -181,7 +184,7 @@ export function MemoryPanel({ serviceId }: { serviceId: string }) {
           />
           <Button type="submit" size="default" variant="outline" disabled={!text.trim() || adding}>
             {adding ? <Loader2 aria-hidden className="animate-spin" /> : <Plus aria-hidden />}
-            Add
+            {t.add}
           </Button>
         </div>
       </form>

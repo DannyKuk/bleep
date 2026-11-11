@@ -14,17 +14,19 @@ import { QuietButton } from "@/components/quiet/quiet-button";
 import { QuietPill } from "@/components/quiet/quiet-pill";
 import { SaveLockProvider } from "@/components/save-lock";
 import { HostSettings } from "@/components/settings/hosts";
-import { Alert, Status, useLoaded, useStaleSaving } from "@/components/settings/loaded";
+import { useLoaded, useStaleSaving } from "@/components/settings/loaded";
+import { Failed, Loading } from "@/components/status-notes";
 import { useTimeZone } from "@/components/preferences";
 import { type Poll, usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
 import type { HostView, IncidentListItem, QuietView, ServiceView } from "@/lib/api-types";
 import { formatDateTime, formatSince } from "@/lib/format";
+import { MESSAGES, useLanguage, useT } from "@/lib/i18n";
 import { isAsleep } from "@/lib/mood";
-import { quietLabel, sinceWords } from "@/lib/quiet-api";
+import { sinceWords, untilWords } from "@/lib/quiet-api";
 import { serviceHref } from "@/lib/routes";
 import { putSettings } from "@/lib/settings-api";
-import type { SettingsUpdate, SettingsView } from "@/lib/settings-types";
+import type { Language, SettingsUpdate, SettingsView } from "@/lib/settings-types";
 import { cn } from "@/lib/utils";
 import type { Zone } from "@/lib/zone";
 
@@ -32,18 +34,18 @@ const POLL_MS = 10_000;
 const LINK =
   "font-bold text-accent hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
 
+const TITLE = "text-3xl font-extrabold wrap-anywhere hyphens-auto md:text-4xl";
+
 const fetchServices = (signal: AbortSignal) => apiFetch<ServiceView[]>("/api/services", { signal });
 
-const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
-
 /** The line under a quiet host's title: since or until when Bleep is silent about it. */
-function quietNote(quiet: QuietView, zone: Zone): string {
+function quietNote(quiet: QuietView, zone: Zone, language: Language): string {
   const now = new Date();
+  const t = MESSAGES[language].host;
   if (quiet.mode === "leave_alone" || quiet.until === null) {
-    return `Since ${sinceWords(new Date(quiet.since), now, zone, "en")} Bleep opens no incidents for it or its services.`;
+    return t.since(sinceWords(new Date(quiet.since), now, zone, language));
   }
-  const until = quietLabel(quiet, now, zone, "en").replace(/^Host snoozed until /, "");
-  return `Bleep opens no incidents for it or its services until ${until}.`;
+  return t.until(untilWords(new Date(quiet.until), now, zone, language));
 }
 
 /**
@@ -58,6 +60,7 @@ function unseenKeys(hostId: string, configured: string[], seen: ServiceView[]): 
 }
 
 function ServiceRow({ service }: { service: ServiceView }) {
+  const t = useT().host;
   return (
     <li>
       <Link
@@ -67,7 +70,7 @@ function ServiceRow({ service }: { service: ServiceView }) {
         <span className="min-w-0 text-sm font-bold wrap-anywhere">{service.name}</span>
         <span className="flex items-center gap-2">
           {service.open_incident_id && (
-            <span className="text-[13px] font-bold text-down">Incident open</span>
+            <span className="text-[13px] font-bold text-down">{t.incidentOpen}</span>
           )}
           {service.quiet ? (
             <QuietPill quiet={service.quiet} />
@@ -90,6 +93,7 @@ function ConfiguredRow({
   serviceKey: string;
   unseen: boolean;
 }) {
+  const t = useT().host;
   return (
     <li>
       <Link
@@ -97,7 +101,7 @@ function ConfiguredRow({
         className="flex min-h-11 flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-row bg-soft px-3 py-2 hover:bg-line focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
       >
         <span className="min-w-0 font-mono text-sm font-bold wrap-anywhere">{serviceKey}</span>
-        {unseen && <span className="text-[13px] font-bold text-ink-2">Not seen now</span>}
+        {unseen && <span className="text-[13px] font-bold text-ink-2">{t.notSeenNow}</span>}
       </Link>
     </li>
   );
@@ -115,18 +119,20 @@ function ServiceList({
   services: Poll<ServiceView[]>;
   configured: string[];
 }) {
+  const t = useT();
   const read = services.data !== undefined;
   const seen = (services.data ?? []).filter((service) => service.host_id === hostId);
   const others = unseenKeys(hostId, configured, seen);
   return (
     <div className="flex flex-col gap-2">
-      {!read && (
-        <Status loaded={services} what="the services">
-          {() => null}
-        </Status>
-      )}
+      {!read &&
+        (services.error ? (
+          <Failed>{t.host.loadFailed.services(services.error.message)}</Failed>
+        ) : (
+          <Loading>{t.host.loading.services}</Loading>
+        ))}
       {seen.length + others.length > 0 ? (
-        <ul aria-label={`Services on ${name}`} className="flex flex-col gap-1.5">
+        <ul aria-label={t.overview.servicesOn(name)} className="flex flex-col gap-1.5">
           {seen.map((service) => (
             <ServiceRow key={service.id} service={service} />
           ))}
@@ -135,7 +141,7 @@ function ServiceList({
           ))}
         </ul>
       ) : (
-        read && <p className="text-sm text-ink-2">Bleep sees no services on this host yet.</p>
+        read && <p className="text-sm text-ink-2">{t.host.noServices}</p>
       )}
     </div>
   );
@@ -155,22 +161,24 @@ export function StillFailing({
   last: IncidentListItem | undefined;
 }) {
   const zone = useTimeZone();
+  const language = useLanguage();
+  const t = useT().host;
   if (host.quiet || host.reachable || isAsleep(host)) return null;
   if (!last || last.kind !== "host_unreachable" || !ENDED.has(last.status)) return null;
   if (host.last_seen !== null && new Date(host.last_seen) > new Date(last.opened_at)) return null;
   const ended = last.closed_at ?? last.opened_at;
   return (
-    <p role="note" aria-label="Still failing" className="text-sm text-ink-2">
-      Still unreachable after its last incident ended{" "}
-      <time dateTime={ended} title={formatDateTime(ended, zone, "en")}>
-        {formatSince(ended, undefined, zone, "en")}
+    <p role="note" aria-label={t.stillLabel} className="text-sm text-ink-2">
+      {t.stillBefore}{" "}
+      <time dateTime={ended} title={formatDateTime(ended, zone, language)}>
+        {formatSince(ended, undefined, zone, language)}
       </time>
       :{" "}
       <Link href={`/incidents/${last.id}`} className={LINK}>
         <ShortNamePrefix name={last.short_name} />
         {last.title}
       </Link>
-      . Bleep opens a new one after a wait that grows with each repeat, from an hour to a day.
+      {t.stillAfter}
     </p>
   );
 }
@@ -187,12 +195,14 @@ function Header({
   onChanged: () => void;
 }) {
   const zone = useTimeZone();
-  const basics = basicsLine(host, zone);
+  const language = useLanguage();
+  const t = useT();
+  const basics = basicsLine(host, zone, language);
   return (
     <header className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h1 className="text-3xl font-extrabold wrap-anywhere md:text-4xl">{host.name}</h1>
-        {!host.quiet && <HealthBadge health={host.health} label={healthLabel(host)} />}
+        <h1 className={TITLE}>{host.name}</h1>
+        {!host.quiet && <HealthBadge health={host.health} label={healthLabel(host, language)} />}
         <QuietButton
           target={{ scope: "host", id: host.id, name: host.name }}
           quiet={host.quiet}
@@ -201,15 +211,15 @@ function Header({
       </div>
       {host.quiet && (
         <p role="note" className="text-sm text-ink-2">
-          {quietNote(host.quiet, zone)}
+          {quietNote(host.quiet, zone, language)}
         </p>
       )}
       <StillFailing host={host} last={last} />
       <p className="text-sm text-ink-2">
-        {host.kind === "ssh" ? "SSH" : "Docker socket"} host{" "}
+        {host.kind === "ssh" ? t.host.ssh : t.host.socket}{" "}
         <span className="font-mono">{host.id}</span>
         {" · "}
-        {count(services, "service")}
+        {t.counts.services(services)}
       </p>
       {basics && <p className="font-mono text-xs text-ink-2">{basics}</p>}
       {!host.reachable && host.error && (
@@ -231,6 +241,7 @@ export function HostPage({ id }: { id: string }) {
 function Host({ id }: { id: string }) {
   const router = useRouter();
   const overall = useOverall();
+  const t = useT();
   const services = usePoll(fetchServices, POLL_MS);
   const fetchLastIncident = useCallback(
     (signal: AbortSignal) =>
@@ -244,7 +255,8 @@ function Host({ id }: { id: string }) {
   const { notice, saving } = useStaleSaving();
 
   const host = overall.hosts?.find((candidate) => candidate.id === id);
-  const hostSettings = settings.data?.hosts.find((candidate) => candidate.id === id);
+  const view = settings.data;
+  const hostSettings = view?.hosts.find((candidate) => candidate.id === id);
   const onHost = (services.data ?? []).filter((service) => service.host_id === id);
   const missing =
     overall.hosts !== undefined &&
@@ -268,11 +280,11 @@ function Host({ id }: { id: string }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <nav aria-label="Breadcrumb">
+      <nav aria-label={t.host.breadcrumb}>
         <ol className="flex flex-wrap items-center gap-x-2 text-sm text-ink-2">
           <li>
             <Link href="/" className={cn("inline-flex min-h-11 items-center", LINK)}>
-              Home
+              {t.nav.home}
             </Link>
           </li>
           <li aria-hidden>&rsaquo;</li>
@@ -284,11 +296,13 @@ function Host({ id }: { id: string }) {
 
       {missing ? (
         <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-extrabold wrap-anywhere md:text-4xl">{id}</h1>
+          <h1 className={TITLE}>{id}</h1>
           <p className="text-sm text-ink-2">
-            Bleep does not know a host called <span className="font-mono">{id}</span>.{" "}
+            {t.host.unknownBefore}
+            <span className="font-mono">{id}</span>
+            {t.host.unknownAfter}
             <Link href="/" className={LINK}>
-              Back to your hosts
+              {t.host.backToHosts}
             </Link>
           </p>
         </div>
@@ -302,16 +316,17 @@ function Host({ id }: { id: string }) {
               onChanged={refresh}
             />
           ) : (
-            <h1 className="text-3xl font-extrabold wrap-anywhere md:text-4xl">{name}</h1>
+            <h1 className={TITLE}>{name}</h1>
           )}
-          {overall.hosts === undefined && (
-            <Status loaded={{ error: overall.error }} what="the host">
-              {() => null}
-            </Status>
-          )}
-          {notice && <Alert>{notice}</Alert>}
+          {overall.hosts === undefined &&
+            (overall.error ? (
+              <Failed>{t.host.loadFailed.host(overall.error.message)}</Failed>
+            ) : (
+              <Loading>{t.host.loading.host}</Loading>
+            ))}
+          {notice && <Failed>{notice}</Failed>}
 
-          <Panel title="Services">
+          <Panel title={t.host.services}>
             <ServiceList
               hostId={id}
               name={name}
@@ -320,22 +335,24 @@ function Host({ id }: { id: string }) {
             />
           </Panel>
 
-          <Status loaded={settings} what="the host's settings">
-            {(view) =>
-              hostSettings && (
-                <HostSettings
-                  host={hostSettings}
-                  overrides={view.overrides.hosts?.[id]}
-                  save={(overrides) => saveSettings({ hosts: { [id]: overrides } }, view.version)}
-                  onHostChanged={readSettings}
-                  onRemoved={async () => {
-                    overall.refresh();
-                    router.push("/");
-                  }}
-                />
-              )
-            }
-          </Status>
+          {view ? (
+            hostSettings && (
+              <HostSettings
+                host={hostSettings}
+                overrides={view.overrides.hosts?.[id]}
+                save={(overrides) => saveSettings({ hosts: { [id]: overrides } }, view.version)}
+                onHostChanged={readSettings}
+                onRemoved={async () => {
+                  overall.refresh();
+                  router.push("/");
+                }}
+              />
+            )
+          ) : settings.error ? (
+            <Failed>{t.host.loadFailed.settings(settings.error.message)}</Failed>
+          ) : (
+            <Loading>{t.host.loading.settings}</Loading>
+          )}
         </>
       )}
     </div>
