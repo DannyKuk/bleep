@@ -7,12 +7,14 @@ import { SaveError, useSaving } from "@/components/settings/save-error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useT } from "@/lib/i18n";
 import type { SecretActions, SecretView } from "@/lib/secrets-api";
 
 function Where({ view }: { view: SecretView }) {
-  if (!view.set) return <Badge>Missing</Badge>;
-  if (view.invalid) return <Badge>Set, but not valid: enter it again</Badge>;
-  return <Badge>{view.source === "env" ? "Set in .env" : "Set on the dashboard"}</Badge>;
+  const t = useT().settings.secret;
+  if (!view.set) return <Badge>{t.missing}</Badge>;
+  if (view.invalid) return <Badge>{t.invalid}</Badge>;
+  return <Badge>{view.source === "env" ? t.inEnv : t.onDashboard}</Badge>;
 }
 
 /**
@@ -38,6 +40,7 @@ export function SecretField({
     setTypedFor(address?.version);
     setValue("");
   }
+  const { secret: t, save: saveWord, clear, replace } = useT().settings;
   const { saving, busy, problems, run } = useSaving();
   const isAddress = view.kind === "address";
   const isSecret = view.kind === "secret";
@@ -61,15 +64,12 @@ export function SecretField({
         )}
       </div>
       {owned ? (
-        <p className="text-xs text-muted-foreground">
-          {view.set ? "Set in .env, which wins over the dashboard." : "Decided by .env."} Change it
-          there and restart Bleep.
-        </p>
+        <p className="text-xs text-muted-foreground">{t.ownedNote(view.set)}</p>
       ) : !addressReady ? (
         <p className="text-xs text-muted-foreground">
           {address.env_owned
-            ? `${address.name} is set in .env, so ${view.name} is read from .env too.`
-            : `Set ${address.name} first: a token is stored for the address it is sent to.`}
+            ? t.addressInEnv(address.name, view.name)
+            : t.setAddressFirst(address.name)}
         </p>
       ) : (
         <form
@@ -81,7 +81,7 @@ export function SecretField({
         >
           <div className="flex flex-wrap items-center gap-2">
             <label htmlFor={id} className="sr-only">
-              {view.set ? `New value for ${view.name}` : `Value for ${view.name}`}
+              {view.set ? t.newValueFor(view.name) : t.valueFor(view.name)}
             </label>
             <Input
               id={id}
@@ -96,41 +96,34 @@ export function SecretField({
                     ? "http://"
                     : "https://"
                   : view.set
-                    ? "Type a new value"
-                    : "Type a value"
+                    ? t.typeNew
+                    : t.typeValue
               }
               onChange={(changed) => setValue(changed.target.value)}
               className="max-w-sm min-w-48 flex-1 font-mono"
             />
-            <Button type="submit" size="sm" disabled={busy || value === ""}>
+            <Button wrap type="submit" size="sm" disabled={busy || value === ""}>
               {saving && <Loader2 aria-hidden className="animate-spin" />}
-              {view.set ? "Replace" : "Save"}
+              {view.set ? replace : saveWord}
             </Button>
             {view.set && (
               <Button
+                wrap
                 type="button"
                 size="sm"
                 variant="outline"
                 disabled={busy}
                 onClick={() => void run(() => actions.clear(view.name))}
               >
-                Clear
+                {clear}
               </Button>
             )}
           </div>
           {isAddress && view.private && (
-            <p className="text-xs text-muted-foreground">
-              {view.carries && `A new or cleared address clears ${view.carries}. `}A model
-              server&apos;s address may be private, such as http://host.docker.internal:1234/v1.
-            </p>
+            <p className="text-xs text-muted-foreground">{t.privateHint(view.carries ?? "")}</p>
           )}
           {isAddress && !view.private && (
-            <p className="text-xs text-muted-foreground">
-              {view.carries &&
-                `A new or cleared address clears ${view.carries} and switches the plugin off. `}
-              From the dashboard an address must be https and reach public addresses only; set a
-              private or http one in .env.
-            </p>
+            <p className="text-xs text-muted-foreground">{t.publicHint(view.carries ?? "")}</p>
           )}
         </form>
       )}

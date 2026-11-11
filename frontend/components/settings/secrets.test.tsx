@@ -15,7 +15,8 @@ import {
 } from "@/components/settings/fixtures";
 import { SecretField } from "@/components/settings/secret-field";
 import { SettingsPage } from "@/components/settings/settings-page";
-import { ADDRESS_CHANGED, ADDRESS_NOT_CHECKED, type SecretView } from "@/lib/secrets-api";
+import type { SecretView } from "@/lib/secrets-api";
+import { MESSAGES } from "@/lib/i18n";
 
 const TOKEN = "tok-9f8e7d6c5b4a";
 
@@ -276,7 +277,9 @@ describe("secrets on the settings page", () => {
       }),
     );
     const group = screen.getByRole("group", { name: "COOLIFY_TOKEN" });
-    expect(await within(group).findByRole("alert")).toHaveTextContent(ADDRESS_CHANGED);
+    expect(await within(group).findByRole("alert")).toHaveTextContent(
+      MESSAGES.en.settings.addressChanged,
+    );
     expect(within(group).getByLabelText("Value for COOLIFY_TOKEN")).toHaveValue("");
   });
 
@@ -294,7 +297,7 @@ describe("secrets on the settings page", () => {
     const group = screen.getByRole("group", { name: "COOLIFY_TOKEN" });
     await userEvent.click(within(group).getByRole("button", { name: "Save" }));
     const alert = await within(group).findByRole("alert");
-    expect(alert).toHaveTextContent(ADDRESS_NOT_CHECKED);
+    expect(alert).toHaveTextContent(MESSAGES.en.settings.addressNotChecked);
     expect(alert).not.toHaveTextContent("has been read again");
   });
 

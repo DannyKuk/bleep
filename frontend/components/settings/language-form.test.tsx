@@ -54,6 +54,7 @@ describe("the language on the settings page", () => {
         .map((o) => o.textContent),
     ).toEqual(["English", "Deutsch (German)"]);
     expect(language).toHaveTextContent("stay exactly as the host names them");
+    expect(language).toHaveTextContent("This dashboard follows it too");
     expect(within(language).getByRole("button", { name: "Save language" })).toBeDisabled();
   });
 
@@ -75,8 +76,10 @@ describe("the language on the settings page", () => {
     await userEvent.selectOptions(within(language).getByRole("combobox"), "de");
     await userEvent.click(within(language).getByRole("button", { name: "Save language" }));
 
-    expect(await within(language).findByText(/recovery lines in German/)).toBeVisible();
-    expect(within(language).getByText(/Telegram messages, buttons and chat answers/)).toBeVisible();
+    expect(await within(language).findByText(/Zeilen zur Behebung auf Deutsch/)).toBeVisible();
+    expect(
+      within(language).getByText(/Telegram-Nachrichten, Buttons und Chat-Antworten/),
+    ).toBeVisible();
     expect(sentBody(fetchMock, "PUT")).toEqual({ general: { timezone: VIENNA, language: "de" } });
   });
 
@@ -115,10 +118,10 @@ describe("the language on the settings page", () => {
       json(settingsView({ language: "de", overrides: { general: { language: "de" } } })),
     ]);
     renderPage();
-    const zone = await screen.findByRole("region", { name: "Time zone" });
-    await userEvent.click(within(zone).getByRole("button", { name: "Clear the choice" }));
+    const zone = await screen.findByRole("region", { name: "Zeitzone" });
+    await userEvent.click(within(zone).getByRole("button", { name: "Auswahl löschen" }));
 
-    expect(await within(zone).findByText(/Telegram shows UTC/)).toBeVisible();
+    expect(await within(zone).findByText(/Telegram zeigt UTC/)).toBeVisible();
     expect(sentBody(fetchMock, "PUT")).toEqual({ general: { language: "de" } });
   });
 

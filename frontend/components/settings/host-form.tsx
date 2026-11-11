@@ -3,6 +3,7 @@
 import { Loader2 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 
+import { CodeText } from "@/components/code-text";
 import { SaveError, useSaving } from "@/components/settings/save-error";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,50 +12,32 @@ import {
   addHost,
   changeHost,
   fetchHostKey,
-  HOST_CHANGED,
   isHostStale,
   OFFER_LIFETIME_MS,
   removeHost,
   type HostKeyConfirmation,
   type HostKeyOffer,
 } from "@/lib/hosts-api";
+import { useT } from "@/lib/i18n";
 import type { HostSettingsView } from "@/lib/settings-types";
-
-const FIELD_LABELS = {
-  name: "Name",
-  id: "ID",
-  address: "Address",
-  port: "Port",
-  user: "User",
-  docker_socket: "Docker socket",
-  ssh_key: "SSH key",
-  host_key: "Host key",
-};
-
-/** Where a host that the dashboard cannot add goes instead. */
-export const SSH_ONLY =
-  "Only SSH hosts can be added here. A host with a Docker socket, and a host on the machine Bleep itself runs on (loopback), go in config/hosts.yaml.";
 
 const KEYGEN = 'ssh-keygen -t ed25519 -f bleep_key -C bleep -N ""';
 
-const NEW_KEY_HINT = (
-  <>
-    <p>
-      Paste the private key Bleep logs in with. It is stored apart from the database and never shown
-      again.
-    </p>
-    <p>We recommend a new key just for Bleep, so it never holds your own. Make one with</p>
-    <code className="block w-fit max-w-full overflow-x-auto rounded-md bg-soft px-2 py-1 font-mono whitespace-nowrap text-ink">
-      {KEYGEN}
-    </code>
-    <p>
-      then add <code className="font-mono">bleep_key.pub</code> to{" "}
-      <code className="font-mono">~/.ssh/authorized_keys</code> of the user above on the server, and
-      paste <code className="font-mono">bleep_key</code> here. Removing that line cuts Bleep off.
-      Keys with a passphrase are not supported.
-    </p>
-  </>
-);
+function NewKeyHint() {
+  const t = useT().settings.hostForm;
+  return (
+    <>
+      <p>{t.keyPaste}</p>
+      <p>{t.keyRecommend}</p>
+      <code className="block w-fit max-w-full overflow-x-auto rounded-md bg-soft px-2 py-1 font-mono whitespace-nowrap text-ink">
+        {KEYGEN}
+      </code>
+      <p>
+        <CodeText text={t.keyThen} />
+      </p>
+    </>
+  );
+}
 
 const slug = (name: string) =>
   name
@@ -89,6 +72,7 @@ function HostKeyCheck({
   const [ticked, setTicked] = useState(false);
   const [checking, setChecking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const t = useT().settings.hostForm;
 
   const current =
     offered &&
@@ -125,9 +109,7 @@ function HostKeyCheck({
       setOffered({ offer: await fetchHostKey(address.trim(), port), expired: false });
     } catch (error) {
       setOffered(null);
-      setProblem(
-        error instanceof ApiError ? error.detail : "Could not reach Bleep to check the host key.",
-      );
+      setProblem(error instanceof ApiError ? error.detail : t.couldNotReach);
     } finally {
       setChecking(false);
     }
@@ -137,6 +119,7 @@ function HostKeyCheck({
     <div className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-2">
         <Button
+          wrap
           type="button"
           size="sm"
           variant="outline"
@@ -144,9 +127,9 @@ function HostKeyCheck({
           onClick={() => void check()}
         >
           {checking && <Loader2 aria-hidden className="animate-spin" />}
-          Check the host key
+          {t.check}
         </Button>
-        <span className="text-xs text-muted-foreground">The check saves nothing.</span>
+        <span className="text-xs text-muted-foreground">{t.checkSavesNothing}</span>
       </div>
       {problem && (
         <p role="alert" className="text-xs text-health-down">
@@ -155,22 +138,17 @@ function HostKeyCheck({
       )}
       {offered && !current && (
         <p role="alert" className="text-xs text-health-down">
-          {offered.expired
-            ? "The host key offer expired. Check the host key again."
-            : "The address or port changed since the check. Check the host key again."}
+          {offered.expired ? t.offerExpired : t.offerMoved}
         </p>
       )}
       {current && (
         <div className="flex flex-col gap-1.5 rounded-lg border border-line p-2.5">
-          <p className="text-xs">Bleep was offered this {current.key_type} host key:</p>
-          <code aria-label="Offered host key fingerprint" className="font-mono text-sm break-all">
+          <p className="text-xs">{t.offered(current.key_type)}</p>
+          <code aria-label={t.fingerprintLabel} className="font-mono text-sm break-all">
             {current.fingerprint}
           </code>
           <p className="text-xs text-muted-foreground">
-            Compare it with the server&apos;s own: run{" "}
-            <code className="font-mono">ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code> on
-            it (use the key file of the type above). If it differs, stop: someone else may be
-            answering at this address.
+            <CodeText text={t.compare} />
           </p>
           <label htmlFor={id} className="flex items-center gap-2 text-sm">
             <input
@@ -180,7 +158,7 @@ function HostKeyCheck({
               disabled={disabled}
               onChange={(changed) => setTicked(changed.target.checked)}
             />
-            This fingerprint matches the one on the server
+            {t.matches}
           </label>
         </div>
       )}
@@ -233,7 +211,8 @@ export function HostForm({
   const [socket, setSocket] = useState(connection?.docker_socket ?? "/var/run/docker.sock");
   const [key, setKey] = useState("");
   const [confirmation, setConfirmation] = useState<HostKeyConfirmation | null>(null);
-  const { saving, busy, problems, run } = useSaving(FIELD_LABELS);
+  const { hostForm: t, save: saveWord, cancel } = useT().settings;
+  const { saving, busy, problems, run } = useSaving(t.labels);
 
   const portNumber = Number(port);
   const portValid = Number.isInteger(portNumber) && portNumber >= 1 && portNumber <= 65535;
@@ -282,7 +261,7 @@ export function HostForm({
       } catch (error) {
         if (!isHostStale(error)) throw error;
         await onChanged().catch(() => undefined);
-        throw new Error(HOST_CHANGED);
+        throw new Error(t.changed);
       }
     });
     if (!saved) return;
@@ -294,7 +273,7 @@ export function HostForm({
 
   return (
     <form
-      aria-label={adding ? "Add a host" : `Edit ${host.name}`}
+      aria-label={adding ? t.addForm : t.editForm(host.name)}
       className="flex flex-col gap-3"
       onSubmit={(submitted) => {
         submitted.preventDefault();
@@ -302,7 +281,7 @@ export function HostForm({
       }}
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Name">
+        <Field label={t.labels.name}>
           {(id) => (
             <Input
               id={id}
@@ -315,7 +294,7 @@ export function HostForm({
           )}
         </Field>
         {adding && (
-          <Field label="ID" hint="Lowercase letters, digits and dashes; it cannot change later.">
+          <Field label={t.labels.id} hint={t.idHint}>
             {(id) => (
               <Input
                 id={id}
@@ -330,7 +309,7 @@ export function HostForm({
             )}
           </Field>
         )}
-        <Field label="Address">
+        <Field label={t.labels.address}>
           {(id) => (
             <Input
               id={id}
@@ -338,12 +317,12 @@ export function HostForm({
               value={address}
               autoCapitalize="off"
               spellCheck={false}
-              placeholder="box.lan or 10.0.0.5"
+              placeholder={t.addressPlaceholder}
               onChange={(changed) => setAddress(changed.target.value)}
             />
           )}
         </Field>
-        <Field label="Port">
+        <Field label={t.labels.port}>
           {(id) => (
             <Input
               id={id}
@@ -355,7 +334,7 @@ export function HostForm({
             />
           )}
         </Field>
-        <Field label="User">
+        <Field label={t.labels.user}>
           {(id) => (
             <Input
               id={id}
@@ -367,7 +346,7 @@ export function HostForm({
             />
           )}
         </Field>
-        <Field label="Docker socket">
+        <Field label={t.labels.docker_socket}>
           {(id) => (
             <Input
               id={id}
@@ -382,18 +361,10 @@ export function HostForm({
       </div>
       {moved && (
         <p role="note" className="text-xs text-health-degraded">
-          A new address, port or user clears this host&apos;s stored SSH key and host key. Check the
-          host key and enter the key again below; Save waits for both.
+          {t.moved}
         </p>
       )}
-      <Field
-        label={adding ? "SSH private key" : "New SSH private key"}
-        hint={
-          adding
-            ? NEW_KEY_HINT
-            : "Leave empty to keep the stored key. A new one is never shown again."
-        }
-      >
+      <Field label={adding ? t.newKey : t.newKeyEdit} hint={adding ? <NewKeyHint /> : t.keepStored}>
         {(id) => (
           <textarea
             id={id}
@@ -414,19 +385,17 @@ export function HostForm({
         disabled={busy}
       />
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="submit" size="sm" disabled={busy || !ready || !portValid}>
+        <Button wrap type="submit" size="sm" disabled={busy || !ready || !portValid}>
           {saving && <Loader2 aria-hidden className="animate-spin" />}
-          {adding ? "Add host" : "Save"}
+          {adding ? t.addHost : saveWord}
         </Button>
         {onClose && (
-          <Button type="button" size="sm" variant="outline" disabled={busy} onClick={onClose}>
-            Cancel
+          <Button wrap type="button" size="sm" variant="outline" disabled={busy} onClick={onClose}>
+            {cancel}
           </Button>
         )}
         {needsKeys && !ready && (
-          <span className="text-xs text-muted-foreground">
-            Needs the key and a confirmed host key.
-          </span>
+          <span className="text-xs text-muted-foreground">{t.needsKeys}</span>
         )}
       </div>
       <SaveError problems={problems} />
@@ -447,6 +416,7 @@ export function RemoveHost({
   onRemoved?: () => Promise<void>;
 }) {
   const [sure, setSure] = useState(false);
+  const { hostForm: t, cancel } = useT().settings;
   const { saving, busy, problems, run } = useSaving();
   const version = host.connection.version;
 
@@ -458,7 +428,7 @@ export function RemoveHost({
       } catch (error) {
         if (!isHostStale(error)) throw error;
         await onChanged().catch(() => undefined);
-        throw new Error(HOST_CHANGED);
+        throw new Error(t.changed);
       }
     });
     if (removed) await onRemoved();
@@ -467,32 +437,28 @@ export function RemoveHost({
 
   return (
     <div className="flex flex-col gap-1.5">
-      {sure && (
-        <p className="text-xs text-muted-foreground">
-          Bleep stops watching {host.name} and deletes its keys. Its open incidents are closed with
-          a notice.
-        </p>
-      )}
+      {sure && <p className="text-xs text-muted-foreground">{t.removeWarning(host.name)}</p>}
       <div className="flex flex-wrap items-center gap-2">
         {sure ? (
           <>
-            <Button type="button" size="sm" disabled={busy} onClick={() => void remove()}>
+            <Button wrap type="button" size="sm" disabled={busy} onClick={() => void remove()}>
               {saving && <Loader2 aria-hidden className="animate-spin" />}
-              Yes, remove this host
+              {t.removeYes}
             </Button>
-            <Button type="button" size="sm" variant="outline" onClick={() => setSure(false)}>
-              Cancel
+            <Button wrap type="button" size="sm" variant="outline" onClick={() => setSure(false)}>
+              {cancel}
             </Button>
           </>
         ) : (
           <Button
+            wrap
             type="button"
             size="sm"
             variant="outline"
             disabled={busy}
             onClick={() => setSure(true)}
           >
-            Remove
+            {t.remove}
           </Button>
         )}
       </div>

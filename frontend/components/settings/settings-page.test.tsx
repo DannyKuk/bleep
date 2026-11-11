@@ -12,7 +12,7 @@ import {
   telegram,
 } from "@/components/settings/fixtures";
 import { SettingsPage } from "@/components/settings/settings-page";
-import { SETTINGS_CHANGED } from "@/lib/settings-api";
+import { MESSAGES } from "@/lib/i18n";
 
 function backend(put: Response[] = [], view = settingsView()) {
   return stubBackend({
@@ -98,7 +98,9 @@ describe("SettingsPage", () => {
     );
     await userEvent.click(within(coolify).getByRole("button", { name: "Save settings" }));
 
-    expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(SETTINGS_CHANGED);
+    expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(
+      MESSAGES.en.settings.changedElsewhere,
+    );
     expect(await screen.findByDisplayValue("1800")).toBeInTheDocument();
     const puts = fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT");
     expect(puts).toHaveLength(1);

@@ -9,10 +9,10 @@ import { ListEditor, SourceNote } from "@/components/settings/rules";
 import { SaveError, useSaving } from "@/components/settings/save-error";
 import { Fact, SecretBadge } from "@/components/settings/secret";
 import { Button } from "@/components/ui/button";
+import { useT } from "@/lib/i18n";
 import type { HostConnection, HostOverrides, HostSettingsView } from "@/lib/settings-types";
 import { cn } from "@/lib/utils";
 
-const RULE_LABELS = { rules: "Rule" };
 /** The host's overrides with its own rules replaced, or back to the hosts file's (undefined). */
 export function withHostRules(host: HostOverrides | undefined, rules?: string[]): HostOverrides {
   const next = { ...host, rules };
@@ -36,6 +36,7 @@ function MaySleep({
   overrides: HostOverrides | undefined;
   save: (host: HostOverrides) => Promise<unknown>;
 }) {
+  const t = useT().settings.hostSettings;
   const { busy, problems, run } = useSaving();
   return (
     <div className="flex flex-col gap-2">
@@ -56,18 +57,16 @@ function MaySleep({
           }
           className="size-4"
         />
-        This host may sleep
+        {t.mayNote}
       </label>
-      <p className="text-xs text-muted-foreground">
-        For a laptop: while it does not answer, it shows as asleep and Bleep opens no incident for
-        it.
-      </p>
+      <p className="text-xs text-muted-foreground">{t.sleepNote}</p>
       <SaveError problems={problems} />
     </div>
   );
 }
 
 function KeyState({ what, set }: { what: string; set: boolean }) {
+  const t = useT().settings.hostSettings;
   return (
     <span
       data-set={set}
@@ -81,17 +80,18 @@ function KeyState({ what, set }: { what: string; set: boolean }) {
       ) : (
         <XCircle aria-hidden className="size-3.5" />
       )}
-      {what}: {set ? "set" : "missing"}
+      {t.keyState(what, set)}
     </span>
   );
 }
 
 function Connection({ connection }: { connection: HostConnection }) {
+  const t = useT().settings.hostSettings;
   if (connection.kind === "socket") {
     return (
       <dl className="flex flex-col gap-1.5">
-        <Fact label="Kind">Docker socket</Fact>
-        <Fact label="Endpoint">
+        <Fact label={t.kind}>{t.kindSocket}</Fact>
+        <Fact label={t.endpoint}>
           <code className="font-mono">{connection.endpoint}</code>
         </Fact>
       </dl>
@@ -99,32 +99,32 @@ function Connection({ connection }: { connection: HostConnection }) {
   }
   return (
     <dl className="flex flex-col gap-1.5">
-      <Fact label="Kind">SSH</Fact>
-      <Fact label="Address">
+      <Fact label={t.kind}>{t.kindSsh}</Fact>
+      <Fact label={t.address}>
         <code className="font-mono">
           {connection.user}@{connection.address}:{connection.port}
         </code>
       </Fact>
-      <Fact label="Docker socket">
+      <Fact label={t.dockerSocket}>
         <code className="font-mono">{connection.docker_socket}</code>
       </Fact>
       {connection.key_file && (
-        <Fact label="SSH key">
+        <Fact label={t.sshKey}>
           <SecretBadge secret={connection.key_file} />
         </Fact>
       )}
       {connection.ssh_key && (
-        <Fact label="SSH key">
-          <KeyState what="Key" set={connection.ssh_key.set} />
+        <Fact label={t.sshKey}>
+          <KeyState what={t.keyWord} set={connection.ssh_key.set} />
         </Fact>
       )}
       {connection.host_key && (
-        <Fact label="Host key">
-          <KeyState what="Host key" set={connection.host_key.set} />
+        <Fact label={t.hostKey}>
+          <KeyState what={t.hostKeyWord} set={connection.host_key.set} />
         </Fact>
       )}
       {connection.known_hosts_file && (
-        <Fact label="Known hosts">
+        <Fact label={t.knownHosts}>
           <code className="font-mono">{connection.known_hosts_file}</code>
         </Fact>
       )}
@@ -153,13 +153,14 @@ export function HostSettings({
   onRemoved?: () => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
+  const t = useT().settings.hostSettings;
   const fromDashboard = host.connection.source === "dashboard" && onHostChanged !== undefined;
   return (
     <>
-      <Panel title="Connection">
+      <Panel title={t.panelConnection}>
         <div className="flex flex-col gap-1.5">
           <p className="text-xs text-muted-foreground">
-            {fromDashboard ? "Added on the dashboard" : "From config/hosts.yaml; change it there"}
+            {fromDashboard ? t.addedOnDashboard : t.fromFileEdit}
           </p>
           <Connection connection={host.connection} />
           {fromDashboard &&
@@ -174,12 +175,13 @@ export function HostSettings({
               <div className="flex flex-col gap-2 pt-1">
                 <div>
                   <Button
+                    wrap
                     type="button"
                     size="sm"
                     variant="outline"
                     onClick={() => setEditing(true)}
                   >
-                    Edit connection
+                    {t.editConnection}
                   </Button>
                 </div>
                 <RemoveHost host={host} onChanged={onHostChanged} onRemoved={onRemoved} />
@@ -187,17 +189,17 @@ export function HostSettings({
             ))}
         </div>
       </Panel>
-      <Panel title="Sleep">
+      <Panel title={t.panelSleep}>
         <MaySleep host={host} overrides={overrides} save={save} />
       </Panel>
-      <Panel title="Rules for every service">
+      <Panel title={t.panelRules}>
         <ListEditor
           key={JSON.stringify(host.rules)}
-          label={`Rules for ${host.name}`}
+          label={t.rulesFor(host.name)}
           items={host.rules}
-          addLabel="Add a rule for this host"
-          emptyText="No host rules."
-          labels={RULE_LABELS}
+          addLabel={t.addRule}
+          emptyText={t.noRules}
+          labels={{ rules: t.ruleLabel }}
           overridden={overrides?.rules !== undefined}
           onSave={(rules) => save(withHostRules(overrides, rules))}
           onReset={() => save(withHostRules(overrides))}

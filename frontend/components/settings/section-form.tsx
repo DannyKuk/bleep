@@ -8,6 +8,7 @@ import { SecretFields } from "@/components/settings/secret-field";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useT } from "@/lib/i18n";
 import type { SecretActions, SecretView } from "@/lib/secrets-api";
 
 /** What the page hands a panel so it can show the secrets that belong to it. */
@@ -41,8 +42,6 @@ export interface Change {
   /** The save puts back the layer below: every override is cleared. */
   reset: boolean;
 }
-
-export const IN_ENV = "Set in the environment (.env or Compose)";
 
 /** The fields of `section` the environment decides, from the view's `from_env`. */
 export const envFields = (fromEnv: string[], section: string): string[] =>
@@ -107,6 +106,7 @@ function FieldRow({
   fromEnv: boolean;
   onChange: (value: string) => void;
 }) {
+  const t = useT().settings.section;
   const id = useId();
   const described = field.hint ? `${id}-hint` : undefined;
   const head = (
@@ -126,12 +126,10 @@ function FieldRow({
       <div role="group" aria-label={field.label} className="flex flex-col gap-1">
         {head}
         <div className="flex flex-wrap items-center gap-2">
-          <Badge>{IN_ENV}</Badge>
+          <Badge>{t.inEnv}</Badge>
           {value && <code className="font-mono text-sm break-all">{value}</code>}
         </div>
-        <p className="text-xs text-muted-foreground">
-          Change it in .env or the Compose file and restart Bleep.
-        </p>
+        <p className="text-xs text-muted-foreground">{t.changeInEnv}</p>
       </div>
     );
   }
@@ -188,7 +186,7 @@ export function SectionForm({
   fromEnv,
   what,
   confirm,
-  confirmLabel = "Save",
+  confirmLabel,
   onSave,
 }: {
   groups: Group[];
@@ -201,6 +199,7 @@ export function SectionForm({
   confirmLabel?: string;
   onSave: (body: Record<string, unknown>) => Promise<unknown>;
 }) {
+  const { section: t, save: saveWord, cancel } = useT().settings;
   const fields = groups.flatMap((group) => group.fields);
   const labels = Object.fromEntries(fields.map((field) => [field.name, field.label]));
   const [draft, setDraft] = useState(values);
@@ -280,7 +279,7 @@ export function SectionForm({
       {asking ? (
         <div
           role="status"
-          aria-label="Confirm the change"
+          aria-label={t.confirm}
           className="flex flex-col gap-2 rounded-row bg-soft p-3"
         >
           <p id={questionId} className="text-sm">
@@ -288,6 +287,7 @@ export function SectionForm({
           </p>
           <div className="flex flex-wrap gap-2">
             <Button
+              wrap
               ref={confirmButton}
               type="button"
               size="sm"
@@ -296,9 +296,10 @@ export function SectionForm({
               onClick={() => void save(asking.body)}
             >
               {saving && <Loader2 aria-hidden className="animate-spin" />}
-              {confirmLabel}
+              {confirmLabel ?? saveWord}
             </Button>
             <Button
+              wrap
               type="button"
               size="sm"
               variant="ghost"
@@ -308,36 +309,44 @@ export function SectionForm({
                 setAsking(null);
               }}
             >
-              Cancel
+              {cancel}
             </Button>
           </div>
         </div>
       ) : (
         <div className="flex flex-wrap gap-2">
-          <Button ref={saveButton} type="submit" size="sm" disabled={busy || changed.length === 0}>
+          <Button
+            wrap
+            ref={saveButton}
+            type="submit"
+            size="sm"
+            disabled={busy || changed.length === 0}
+          >
             {saving && <Loader2 aria-hidden className="animate-spin" />}
             {what}
           </Button>
           {changed.length > 0 && (
             <Button
+              wrap
               type="button"
               size="sm"
               variant="ghost"
               disabled={saving}
               onClick={() => setDraft(values)}
             >
-              Cancel
+              {cancel}
             </Button>
           )}
           {overridden && (
             <Button
+              wrap
               type="button"
               size="sm"
               variant="outline"
               disabled={busy}
               onClick={() => submit({}, true)}
             >
-              Back to the defaults
+              {t.defaults}
             </Button>
           )}
         </div>

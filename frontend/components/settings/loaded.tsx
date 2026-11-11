@@ -4,7 +4,8 @@ import { Loader2, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { apiFetch } from "@/lib/api";
-import { isStale, rereadFailed, SETTINGS_CHANGED, SettingsChanged } from "@/lib/settings-api";
+import { useT } from "@/lib/i18n";
+import { isStale, SettingsChanged } from "@/lib/settings-api";
 
 export interface Loaded<T> {
   data?: T;
@@ -46,21 +47,16 @@ export function Status<T>({
   children,
 }: {
   loaded: Loaded<T>;
-  what: string;
+  what: "settings" | "plugins" | "secrets" | "telegram";
   children: (data: T) => React.ReactNode;
 }) {
+  const t = useT().settings.load[what];
   if (loaded.data !== undefined) return children(loaded.data);
-  if (loaded.error) {
-    return (
-      <Alert>
-        Could not load {what}: {loaded.error.message}
-      </Alert>
-    );
-  }
+  if (loaded.error) return <Alert>{t.failed(loaded.error.message)}</Alert>;
   return (
     <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
       <Loader2 aria-hidden className="size-4 animate-spin" />
-      Loading {what}
+      {t.loading}
     </p>
   );
 }
@@ -71,6 +67,7 @@ export function Status<T>({
  * says so.
  */
 export function useStaleSaving() {
+  const t = useT().settings;
   const [notice, setNotice] = useState<string | null>(null);
   async function saving(put: () => Promise<void>, readAgain: () => Promise<void>) {
     try {
@@ -80,11 +77,11 @@ export function useStaleSaving() {
       if (!isStale(error)) throw error;
       try {
         await readAgain();
-        setNotice(SETTINGS_CHANGED);
+        setNotice(t.changedElsewhere);
       } catch (failed) {
-        setNotice(rereadFailed(failed));
+        setNotice(t.rereadFailed(failed instanceof Error ? failed.message : String(failed)));
       }
-      throw new SettingsChanged();
+      throw new SettingsChanged(t.notSaved);
     }
   }
   return { notice, setNotice, saving };

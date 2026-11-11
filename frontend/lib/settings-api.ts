@@ -1,16 +1,10 @@
 import { ApiError, apiFetch } from "@/lib/api";
 
-export const NOT_SAVED = "Not saved: the settings changed elsewhere since this page read them.";
-export const SETTINGS_CHANGED = `${NOT_SAVED} They have been read again; check them and make your change again if it is still needed.`;
-
-/** What to say when the settings could not be read again after a 409: the page is still stale. */
-export const rereadFailed = (error: unknown) =>
-  `${NOT_SAVED} Reading them again failed (${error instanceof Error ? error.message : String(error)}); reload the page before you change anything else.`;
-
-/** A save refused because the settings changed since they were read. */
+/** A save refused because the settings changed since they were read; `message` is what the form
+ * shows, in the language in force. */
 export class SettingsChanged extends Error {
-  constructor() {
-    super(NOT_SAVED);
+  constructor(message: string) {
+    super(message);
     this.name = "SettingsChanged";
   }
 }
