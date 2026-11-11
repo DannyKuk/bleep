@@ -10,12 +10,15 @@ from bleep import prompts
 from bleep.graph.build import build_graph
 from bleep.graph.deps import StaticSettings
 from bleep.graph.nodes import diagnose
+from bleep.graph.nodes.investigate import guard_result
 from bleep.graph.planted import planted_places, planted_shown
 from bleep.graph.state import checkpoint_serializer
 from bleep.guard.pipeline import guard_text
 from bleep.incidents.runner import IncidentRunner
+from bleep.schemas.github import Commit
 from bleep.schemas.graph import Diagnosis, Evidence, GatherContext
 from bleep.schemas.incidents import Signal, Subject
+from bleep.tools.github import describe_commits
 from fakes import FakeChatModel
 from graph_env import T0, graph_env
 
@@ -459,3 +462,46 @@ async def test_in_english_the_diagnose_prompt_names_no_language(tmp_path):
     text = await sent_prompt(tmp_path)
     assert "German" not in text
     assert "otherwise an empty string.\n\nThe incident is about" in text
+
+
+DEPLOY_SHA = "3f204d3a9c51e0b7d2f84a6c1e9b05d7f3a2c8e1"
+
+
+def commits_read() -> list[ToolMessage]:
+    """The deploy's commit as `recent_commits` lists it and Investigate keeps the result."""
+    listed = Commit(sha=DEPLOY_SHA, date=T0, author="shop-dev", message="Deploy shop 2")
+    out, _ = guard_text("commits", describe_commits("o/shop", 48, None, [listed]))
+    text, _, _ = guard_result("recent_commits", out)
+    return [ToolMessage(text, tool_call_id="c1", name="recent_commits")]
+
+
+async def test_a_sha_the_run_read_stays_in_the_diagnosis_and_a_made_up_one_is_dropped(tmp_path):
+    cause = "commit 3f204d3 'Deploy shop 2' set SHOP_VERSION to 2, see also commit 9c0ffee."
+    evidence = [
+        {"source": "recent_commits", "detail": "3f204d3 'Deploy shop 2' sets SHOP_VERSION 2"},
+        {"source": "commit_diff", "detail": "9c0ffee1 adds price_cents"},
+        {"source": "commit_diff", "detail": "commit 9c0ffee"},
+    ]
+    env, state = await setup(tmp_path, [reply(0.9, root_cause=cause, evidence=evidence)])
+
+    update = await diagnose.make(env.deps)(state | {"messages": commits_read()})
+
+    d = update["diagnosis"]
+    assert d.root_cause == "commit 3f204d3 'Deploy shop 2' set SHOP_VERSION to 2, see also commit."
+    assert [e.detail for e in d.evidence] == [
+        "3f204d3 'Deploy shop 2' sets SHOP_VERSION 2",
+        "adds price_cents",
+    ]
+    assert [(k, t) for _, k, t in env.guard_log.records] == [
+        ("redacted", "3 commit sha(s) the run never read removed from the diagnosis")
+    ]
+
+
+async def test_a_root_cause_that_was_only_a_made_up_sha_is_the_fallbacks(tmp_path):
+    env, state = await setup(tmp_path, [reply(0.9, root_cause="The commit 9c0ffee.")])
+
+    update = await diagnose.make(env.deps)(state)
+
+    d = update["diagnosis"]
+    assert d.root_cause == diagnose.FALLBACK_CAUSE and d.shown == diagnose.FALLBACK_SHOWN
+    assert d.category == "config" and d.confidence == 0.9

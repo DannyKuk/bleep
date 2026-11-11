@@ -712,6 +712,22 @@ async def test_a_made_up_sha_is_dropped_from_the_report(tmp_path):
     assert [kind for _, kind, _ in env.guard_log.records] == ["redacted"]
 
 
+async def test_a_report_text_that_was_only_a_made_up_sha_falls_back_to_bleeps_record(tmp_path):
+    draft = written(cause="The commit 9c0ffee.", summary="commit 9c0ffee", follow_ups=["9c0ffee1"])
+    env, state, _ = await setup(tmp_path, draft)
+    state |= {"proposal": NO_ACTION, "messages": commits_read()}
+
+    update = await run(env, state)
+
+    told = update["report"]
+    assert told.cause == DIAGNOSIS.root_cause
+    assert told.summary == f"{TITLE}: no action proposed, nothing was done."
+    assert told.follow_ups == [NO_ACTION.human_instructions]
+    assert [t for _, _, t in env.guard_log.records] == [
+        "3 commit sha(s) the run never read removed from the report"
+    ]
+
+
 async def test_a_run_without_github_tools_writes_the_report_unchanged(tmp_path):
     cause = "shop-web 3f2a1b9c8d7e was stopped (exit code 137) and its restart policy is no."
     env, state, _ = await setup(tmp_path, written(cause=cause))

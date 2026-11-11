@@ -13,6 +13,10 @@ line that gives orders (`guard/orders.py`, #271), Bleep adds one evidence line o
 names where and quotes nothing. That line and the fallback's cause are stored in English, which is
 what Propose and the report read, and keep the templates they are made of, to show them in the
 person's language (#455).
+
+The root cause and each evidence statement keep a commit sha only when the run read that commit
+from GitHub (`graph/commits.py`, #350), since the approval message shows them before any report;
+a root cause left with nothing else is the fallback's, and such a statement is dropped.
 """
 
 import asyncio
@@ -24,6 +28,7 @@ from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage
 from pydantic import Field, field_validator
 
 from bleep import prompts
+from bleep.graph.commits import ShaCheck, read_shas
 from bleep.graph.deps import GraphDeps
 from bleep.graph.host_text import describe_basics, describe_urls, service_name
 from bleep.graph.language import language_rule
@@ -36,6 +41,7 @@ from bleep.graph.planted import (
     read_sources,
 )
 from bleep.graph.state import IncidentState, Node
+from bleep.guard.log import GuardKind
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.memory.text import describe_fact, describe_past
@@ -163,12 +169,14 @@ def _describe_investigation(messages: list[AnyMessage]) -> str:
     return "\n".join(lines) or "(no investigation yet)"
 
 
-def _evidence(draft: Diagnosis) -> list[Evidence]:
-    """Short statements only: a model that pastes output gets it cut, never passed on whole."""
-    return [
-        Evidence(source=_clip(e.source, 60), detail=_clip(e.detail, DETAIL_LIMIT))
+def _evidence(draft: Diagnosis, shas: ShaCheck) -> list[Evidence]:
+    """Short statements only: a model that pastes output gets it cut, never passed on whole. A
+    statement left empty by a sha the run never read is dropped."""
+    entries = [
+        Evidence(source=_clip(e.source, 60), detail=shas(_clip(e.detail, DETAIL_LIMIT)))
         for e in draft.evidence[:MAX_EVIDENCE]
     ]
+    return [e for e in entries if e.detail]
 
 
 def _fallback(context: GatherContext | None) -> Diagnosis:
@@ -235,15 +243,24 @@ def make(deps: GraphDeps) -> Node:
             return {"diagnosis": await _with_planted(fallback, context, messages, subject)}
 
         missing = _clip(draft.missing, MISSING_LIMIT)
+        shas = ShaCheck(read_shas(messages))
+        root_cause = shas(_clip(draft.root_cause, 500))
         diagnosis = Diagnosis(
-            root_cause=_clip(draft.root_cause, 500),
+            root_cause=root_cause or FALLBACK_CAUSE,
+            shown=None if root_cause else FALLBACK_SHOWN,
             category=draft.category,
-            evidence=_evidence(draft),
+            evidence=_evidence(draft, shas),
             confidence=draft.confidence,
             affected_services=draft.affected_services,
             unsure=draft.confidence < budgets.low_confidence,
             planted_in=_planted(draft.planted_in),
         )
+
+        def record(kind: GuardKind, detail: str) -> None:
+            if deps.guard_log is not None:
+                deps.guard_log.record(incident_id, kind, detail)
+
+        shas.record_to(record, "the diagnosis")
         diagnosis = await _with_planted(diagnosis, context, messages, subject)
         update: dict = {"diagnosis": diagnosis}
         if diagnosis.unsure and rounds == 1:

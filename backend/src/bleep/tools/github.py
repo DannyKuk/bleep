@@ -148,9 +148,14 @@ def _failed(error: GithubError, repo: str, client: GithubClient) -> str:
 
 
 def _commit_lines(c: Commit) -> list[str]:
-    first, _, rest = _cut(c.message.strip(), MESSAGE_CHARS).partition("\n")
+    """The commit's line, then its message's other lines indented. The first line ends at any
+    line break the guard keeps as one (`\\r`, U+2028, VT, NEL, …), so a message can never start
+    a line that reads as another commit of the list (#350)."""
+    first, *rest = _cut(c.message.strip(), MESSAGE_CHARS).splitlines() or [""]
+    while rest and not rest[0]:
+        rest.pop(0)
     lines = [f"- {c.sha[:7]} {_when(c.date)} {_cut(c.author, AUTHOR_CHARS)}: {first}"]
-    lines += [f"    {line}" for line in rest.strip("\n").splitlines()]
+    lines += [f"    {line}" for line in rest]
     return lines
 
 

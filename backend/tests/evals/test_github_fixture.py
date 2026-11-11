@@ -74,7 +74,7 @@ def test_a_planted_commit_is_the_newest():
 
 def test_named_commits_are_the_fixtures_commits_a_text_names_by_a_sha_start():
     texts = [
-        f"commit {'B' * 7} 'commit b' did it; see {'a' * 12}.",
+        f"commit {'B' * 7}: 'commit b' did it; see {'a' * 12}.",
         f"not {'c' * 6}, nor shop:{'c' * 7}, nor {'d' * 7}",
     ]
 

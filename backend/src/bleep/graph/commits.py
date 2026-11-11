@@ -1,12 +1,14 @@
-"""Keep a commit sha in the report only when the run read that commit from GitHub (#350).
+"""Keep a commit sha in what the model writes only when the run read that commit from GitHub
+(#350).
 
-A report that names the commit behind an incident ("commit 3f204d3 'Deploy shop 2' changed …")
-lets the human open, revert or blame it. A sha the model made up sends them to the wrong commit
-or to none, so code checks every sha the report writes against the commits the run read: those
-`recent_commits` lists and the one `commit_diff` shows, read from where the tools write a sha
-(`tools/github.describe_commits`, `describe_diff`) inside Investigate's wrapper for that tool. A
-sha in a log, in another tool's output, in a commit message or a patch, or in a GitHub failure
-sentence was not read as a commit and does not count.
+A diagnosis or a report that names the commit behind an incident ("commit 3f204d3 'Deploy shop
+2' changed …") lets the human open, revert or blame it. A sha the model made up sends them to the
+wrong commit or to none, so code checks every sha the model writes against the commits the run
+read: those `recent_commits` lists and the one `commit_diff` shows, read from where the tools
+write a sha (`tools/github.describe_commits`, `describe_diff`) inside Investigate's wrapper for
+that tool. A commit message's first line ends at any line break, so a message cannot start a list
+line of its own. A sha in a log, in another tool's output, in a commit message or a patch, or in
+a GitHub failure sentence was not read as a commit and does not count.
 """
 
 import re
@@ -15,39 +17,37 @@ from collections.abc import Iterable
 from langchain_core.messages import AnyMessage, ToolMessage
 
 from bleep.guard.report_check import Record
-from bleep.schemas.graph import Report
 
 # Investigate's wrapper, named after the tool, then the tool's own first line: the list's head,
-# or the diff's "commit <sha> by …", which carries the sha GitHub answered with.
+# or the diff's "commit <sha> by …", which carries the sha GitHub answered with. Both tools write
+# the first 7 characters of a sha.
 _COMMITS_HEAD = re.compile(r'<untrusted source="recent_commits" id="[a-z0-9]{4,32}">\nCommits to ')
 _DIFF_HEAD = re.compile(
-    r'<untrusted source="commit_diff" id="[a-z0-9]{4,32}">\ncommit ([0-9a-f]{7,40}) by '
+    r'<untrusted source="commit_diff" id="[a-z0-9]{4,32}">\ncommit ([0-9a-f]{7}) by '
 )
-# One commit of the list: "- <sha> <date> UTC <author>: <message>". A message's own lines are
-# indented, though a carriage return in one (a line break once guarded) can still start a line
-# this way: such a sha came from the repo's text, which is what counts, not from the model.
-_LISTED = re.compile(r"^- ([0-9a-f]{7,40}) \d{4}-\d\d-\d\d \d\d:\d\d UTC ", re.MULTILINE)
+_LISTED = re.compile(r"^- ([0-9a-f]{7}) \d{4}-\d\d-\d\d \d\d:\d\d UTC ", re.MULTILINE)
 
-# What reads as a sha in a report: a word of 7 hex characters mixing digits and letters, as the
-# tools show a sha (so neither "defaced" nor "1048576" is one), or any word of 7 to 40 hex
-# characters right after "commit". A word that is part of a name, a path, an image tag or a
-# value (`shop:3f204d3`, `REV=3f204d3`) is not one.
-_EDGE_BEFORE = r"(?<![\w./:@#=-])"
-_EDGE_AFTER = r"(?![\w/:@-])(?!\.\w)"
-_SHORT_SHA = re.compile(
-    rf"{_EDGE_BEFORE}(?=[0-9a-f]{{0,6}}[0-9])(?=[0-9a-f]{{0,6}}[a-f])[0-9a-f]{{7}}{_EDGE_AFTER}",
-    re.IGNORECASE,
+# A word of 7 to 40 hex characters as a text writes it, not inside a name, a path, an image tag, a
+# value or a URL (`shop-3f204d3`, `shop:3f204d3`, `REV=3f204d3`, `…/commit/3f204d3`); a period or
+# a colon after it ends it. The eval measure reads shas with it too (`evals.github`).
+HEX_WORD = re.compile(r"(?<![\w./:@#=-])[0-9a-f]{7,40}(?![\w/@-])(?![.:]\w)", re.IGNORECASE)
+# Words that say the hex word after them is a commit: "commit 1234567", "Commit-Hash 9c0ffee1",
+# "sha 1234567", "Revert 3f204d3".
+_CUE = re.compile(
+    r"\b(?:commits?|sha|hash|revert(?:s|ed)?)(?:-(?:hash|sha|id))?[\s`'\"(:]{1,3}\Z", re.IGNORECASE
 )
-_AFTER_COMMIT = re.compile(
-    rf"\bcommits?[\s`'\"(:]{{1,3}}{_EDGE_BEFORE}([0-9a-f]{{7,40}}){_EDGE_AFTER}", re.IGNORECASE
-)
-_EMPTY_QUOTE = re.compile(r"\(\s*\)|\[\s*\]|`\s*`|'\s*'|\"\s*\"")
-_SPACES = re.compile(r"[ \t]{2,}")
-_SPACE_BEFORE_MARK = re.compile(r"[ \t]+(?=[,.;:!?)])")
+CUE_ROOM = 24  # characters before a hex word where its cue is looked for
+DOCKER_ID = 12  # Docker shows a container's or an image's id as 12 hex characters
+_PAIRS = {"(": ")", "[": "]", "`": "`", "'": "'", '"': '"'}
+_ENDS_CLAUSE = " ,.;:!?)"
+# Words that say nothing once the sha after them is gone: the cues and the articles.
+_EMPTY_WORDS = {"commit", "commits", "sha", "hash", "revert", "reverts", "reverted"}
+_EMPTY_WORDS |= {"a", "an", "the", "der", "die", "das", "ein", "eine", "einen"}
+_WORD = re.compile(r"[^\W\d_]+")
 
 
 def read_shas(messages: Iterable[AnyMessage]) -> set[str]:
-    """The shas of the commits the run's GitHub tools listed or showed, as they wrote them."""
+    """The short shas of the commits the run's GitHub tools listed or showed."""
     read: set[str] = set()
     for message in messages:
         if not isinstance(message, ToolMessage):
@@ -60,11 +60,22 @@ def read_shas(messages: Iterable[AnyMessage]) -> set[str]:
     return read
 
 
-def _spans(text: str) -> list[tuple[int, int]]:
-    """Where `text` writes a sha, in order, each once."""
-    found = {m.span() for m in _SHORT_SHA.finditer(text)}
-    found |= {m.span(1) for m in _AFTER_COMMIT.finditer(text)}
-    return sorted(found)
+def written_shas(text: str) -> list[tuple[int, int]]:
+    """Where `text` writes a commit sha: a hex word after a cue ("commit", "sha", …), whatever
+    its letters, or one mixing digits and letters, as a sha almost always does, so neither
+    "defaced" nor "1048576" is one. Without a cue a word of 12 is Docker's id of a container or
+    an image, not a sha: the GitHub tools show 7."""
+    return [m.span() for m in HEX_WORD.finditer(text) if _cued(text, m.start()) or _bare(m[0])]
+
+
+def _cued(text: str, start: int) -> bool:
+    return _CUE.search(text[max(0, start - CUE_ROOM) : start]) is not None
+
+
+def _bare(word: str) -> bool:
+    """Whether a hex word with no cue reads as a sha: digits and letters mixed, not 12 long."""
+    mixed = any(c.isdigit() for c in word) and any(not c.isdigit() for c in word)
+    return mixed and len(word) != DOCKER_ID
 
 
 def _kept(written: str, read: set[str]) -> str:
@@ -77,46 +88,59 @@ def _kept(written: str, read: set[str]) -> str:
     return written[: len(longest)]
 
 
-def _tidy(text: str) -> str:
-    """`text` without the brackets, quotes and spaces a removed sha left empty."""
-    text = _EMPTY_QUOTE.sub("", text)
-    return _SPACE_BEFORE_MARK.sub("", _SPACES.sub(" ", text)).strip()
+def _removed(text: str, start: int, end: int) -> tuple[int, int]:
+    """The stretch to remove for the sha at `start:end`: with the brackets or quotes around it
+    that it alone fills, and the space before it when the clause goes on or ends right after."""
+    if start > 0 and end < len(text) and _PAIRS.get(text[start - 1]) == text[end]:
+        start, end = start - 1, end + 1
+    if start > 0 and text[start - 1] == " " and (end == len(text) or text[end] in _ENDS_CLAUSE):
+        start -= 1
+    elif start == 0 and text[end : end + 1] == " ":
+        end += 1
+    return start, end
 
 
-def _checked(text: str, read: set[str]) -> tuple[str, int]:
-    """`text` with each sha the run did not read removed, and how many were."""
-    spans = _spans(text)
-    if not spans:
-        return text, 0
+def _nearly_empty(text: str) -> bool:
+    """Whether nothing is left to read but cue words and articles ("The commit.")."""
+    return not any(w.lower() not in _EMPTY_WORDS for w in _WORD.findall(text))
+
+
+def drop_unread(text: str, read: set[str]) -> tuple[str, int]:
+    """`text` with each sha the run did not read removed, and how many were. A longer sha that
+    starts with a read one is cut to it. A text that a removal leaves nearly empty is empty, so
+    the caller's fallback takes its place."""
     out, last, dropped = [], 0, 0
-    for start, end in spans:
+    for start, end in written_shas(text):
         kept = _kept(text[start:end], read)
-        dropped += not kept
-        out += [text[last:start], kept]
-        last = end
-    joined = "".join([*out, text[last:]])
-    return (_tidy(joined) if dropped else joined), dropped
+        if kept:
+            out += [text[last:start], kept]
+            last = end
+            continue
+        start, end = _removed(text, max(start, last), end)
+        out.append(text[last:start])
+        last, dropped = end, dropped + 1
+    if not out:
+        return text, 0
+    checked = "".join([*out, text[last:]])
+    return ("" if dropped and _nearly_empty(checked) else checked), dropped
 
 
-def check_shas(report: Report, read: set[str], record: Record | None = None) -> Report:
-    """The report with every commit sha the run did not read (`read_shas`) removed from the
-    model's text: the summary, the cause, its English copy and the follow-ups. A longer sha that
-    starts with a read one is cut to it. A removal is recorded as `redacted`, once per report."""
-    dropped = 0
+class ShaCheck:
+    """Checks each text the model wrote for one record (a diagnosis, a report) against the shas
+    the run read, counting what it removes, so the guard log gets one line per record."""
 
-    def check(text: str) -> str:
-        nonlocal dropped
-        checked, count = _checked(text, read)
-        dropped += count
+    def __init__(self, read: set[str]) -> None:
+        self.read = read
+        self.dropped = 0
+
+    def __call__(self, text: str) -> str:
+        checked, dropped = drop_unread(text, self.read)
+        self.dropped += dropped
         return checked
 
-    update = {
-        "summary": check(report.summary),
-        "cause": check(report.cause),
-        "cause_en": None if report.cause_en is None else check(report.cause_en),
-        "follow_ups": [item for item in map(check, report.follow_ups) if item],
-    }
-    if dropped and record is not None:
-        record("redacted", f"{dropped} commit sha(s) the run never read removed from the report")
-    changed = any(getattr(report, key) != value for key, value in update.items())
-    return report.model_copy(update=update) if changed else report
+    def record_to(self, record: Record, where: str) -> None:
+        """Record what was removed from `where` as `redacted`, if anything was."""
+        if self.dropped:
+            record(
+                "redacted", f"{self.dropped} commit sha(s) the run never read removed from {where}"
+            )

@@ -9,8 +9,9 @@ around it is mostly Bleep's own: the title, the fixed outcome text, the action t
 stored bus events. One model call writes the summary, the cause and the
 follow-ups from that record, without any log text; what it writes is cut to size, loses every
 sentence that says "fixed" unless the outcome reads "Fixed and verified", and goes through
-`guard.report_check` against the logs the run read; a commit sha stays only when the run read
-that commit from GitHub (`graph/commits.py`, #350). A model that fails or a spent budget gives
+`guard.report_check` against the logs the run read. Each text keeps a commit sha only when the run
+read that commit from GitHub, and one left with nothing else falls back as an empty one does
+(`graph/commits.py`, #350). A model that fails or a spent budget gives
 a report written from the record alone. The report is published as a `report` event, sent through
 `Notifier.report` for every outcome, remembered in long-term memory with the human's decision
 (`Memory.add_report`). The node does not close the incident: the runner does, once the
@@ -39,7 +40,7 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
 
 from bleep import prompts
-from bleep.graph.commits import check_shas, read_shas
+from bleep.graph.commits import ShaCheck, read_shas
 from bleep.graph.deps import GraphDeps
 from bleep.graph.host_text import incident_title, service_name
 from bleep.graph.language import language_rule
@@ -554,8 +555,10 @@ def make(deps: GraphDeps) -> Node:
         schema = _Draft if language == DEFAULT_LANGUAGE else _DraftWithEnglishCause
         draft = await _write(deps, incident_id, prompt, schema)
 
+        shas = ShaCheck(read_shas(state.get("messages", [])))
+
         def own(text: str, limit: int) -> str:
-            text = clip(text, limit)
+            text = shas(clip(text, limit))
             return text if fixed else _no_fixed_claim(text)
 
         follow_ups = [own(item, FOLLOW_UP_CHARS) for item in draft.follow_ups[:FOLLOW_UPS]]
@@ -591,8 +594,8 @@ def make(deps: GraphDeps) -> Node:
             if deps.guard_log is not None:
                 deps.guard_log.record(incident_id, kind, detail)
 
+        shas.record_to(record, "the report")
         written = check_report(written, _raw_logs(state), record)
-        written = check_shas(written, read_shas(state.get("messages", [])), record)
         shown = {"outcome": said_shown}
         if human_shown is not None:
             shown["human_decision"] = human_shown
