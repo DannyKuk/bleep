@@ -29,6 +29,8 @@ MESSAGE_CHARS = 600  # of one commit's message in the list
 AUTHOR_CHARS = 80  # a git author name is whatever the pusher set
 NAME_CHARS = 200  # of one file name
 NOTE_CHARS = 240  # room kept for a cut note
+WORK_FACTOR = 4  # times the room: the most patch text one diff measures with the guard
+MIN_HEAD = 200  # a patch that does not fit is cut to a head only when this much room is left
 # A little room under the guard's limit, so the guard never cuts a result itself.
 OUTPUT_CHARS = MAX_CHARS - 100
 CUT = "[… cut]"
@@ -99,11 +101,14 @@ def _cut_to(text: str, room: int) -> str:
 
 
 def _shrink(text: str, room: int) -> str:
-    """The longest head of `text`, ending at a line, whose guarded size fits `room`."""
+    """The longest head of `text` whose guarded size fits `room`: ending at a line when that
+    keeps at least half of it, else cut inside a line, so one very long line never leaves an
+    empty head."""
     part = text[:room]
     while part and _size(part) > room:
         part = part[: max(0, len(part) - (_size(part) - room) - 1)]
-    return part[: part.rfind("\n")] if "\n" in part else part
+    lines = part[: part.rfind("\n")] if "\n" in part else ""
+    return lines if len(lines) * 2 >= len(part) else part
 
 
 def _failed(error: GithubError, repo: str, client: GithubClient) -> str:
@@ -192,27 +197,53 @@ def _patch_text(f: FileChange) -> str:
     return "(no text diff: too large to show)"
 
 
+def _patch_head(header: str, patch: str, room: int) -> str:
+    """The file's header and the head of its patch with a cut mark, in `room`; empty when not
+    even the header fits."""
+    room -= _size(header) + len(CUT) + 1
+    return header + _shrink(patch, room).rstrip() + f" {CUT}" if room > 0 else ""
+
+
 def describe_diff(detail: CommitDetail, max_chars: int) -> str:
     """The commit's head (at most half of `max_chars`), then the patches in order until
-    `max_chars`, sized as the guard will write them; what is left out is named, so the model
-    knows the diff was cut and where."""
+    `max_chars`, sized as the guard will write them. A patch that does not fit is cut to a head
+    and the files after it still get their share, so one huge or long-line file never hides the
+    rest; the files not shown in full are named, so the model knows the diff was cut and where."""
     budget = min(max_chars, OUTPUT_CHARS)
     text = _head(detail, budget // 2)
     used = _size(text)
     room = budget - NOTE_CHARS
+    blocks = [(f"\n\n--- {_cut(f.filename, NAME_CHARS)}\n", _patch_text(f)) for f in detail.files]
+    # What a patch costs is measured only while it could still fit and only up to a work limit,
+    # so a commit of hundreds of large patches costs about `max_chars`, not its own size.
+    later = [0] * (len(blocks) + 1)
+    for i in range(len(blocks) - 1, -1, -1):
+        later[i] = later[i + 1] + len(blocks[i][0]) + len(blocks[i][1])
+    work = 0
+    left: list[str] = []
     for i, f in enumerate(detail.files):
-        block = f"\n\n--- {_cut(f.filename, NAME_CHARS)}\n{_patch_text(f)}"
-        if used + _size(block) <= room:
-            text += block
-            used += _size(block)
-            continue
-        if room - used > 200:
-            text += _shrink(block, room - used)
-        left = [g.filename for g in detail.files[i:]]
-        named = ", ".join(left[:5]) + (f" and {len(left) - 5} more" if len(left) > 5 else "")
-        head = "\n\n[diff cut here; not shown in full: "
-        return text + head + _cut_to(named, NOTE_CHARS - _size(head) - 1) + "]"
-    return text
+        header, patch = blocks[i]
+        raw = len(header) + len(patch)
+        if raw <= room - used and work + raw <= WORK_FACTOR * room:
+            work += raw
+            size = _size(header + patch)
+            if used + size <= room:
+                text += header + patch
+                used += size
+                continue
+        left.append(f.filename)
+        # Keep what the later files need if they fit in the other half; else split what is left.
+        free = room - used
+        share = max(free // 2, free - later[i + 1]) if i + 1 < len(blocks) else free
+        if share > MIN_HEAD:
+            head = _patch_head(header, patch, share)
+            text += head
+            used += _size(head)
+    if not left:
+        return text
+    named = ", ".join(left[:5]) + (f" and {len(left) - 5} more" if len(left) > 5 else "")
+    head = "\n\n[diff cut here; not shown in full: "
+    return text + head + _cut_to(named, NOTE_CHARS - _size(head) - 1) + "]"
 
 
 def _tool(
