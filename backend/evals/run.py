@@ -983,7 +983,7 @@ def _parser() -> argparse.ArgumentParser:
         help="the root cause judge, as EVAL_JUDGE_MODEL: an OpenRouter model id, "
         "claude-code[:<model>], or manual (graded by hand afterwards with evals.report)",
     )
-    parser.add_argument("--only", help="run one scenario, by id")
+    parser.add_argument("--only", help="run only these scenarios, by id (comma-separated)")
     parser.add_argument(
         "--language",
         choices=["en", "de"],

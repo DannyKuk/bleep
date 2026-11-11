@@ -113,6 +113,25 @@ def test_only_picks_one_scenario(tmp_path):
     assert [s.id for s in load_scenarios(tmp_path, only="hung")] == ["hung"]
 
 
+def test_only_picks_several_scenarios_by_comma(tmp_path):
+    write(tmp_path, "db-down", GOOD)
+    write(tmp_path, "hung", GOOD | {"id": "hung", "fault": "hung"})
+    write(tmp_path, "oom", GOOD | {"id": "oom", "fault": "oom"})
+    assert [s.id for s in load_scenarios(tmp_path, only="oom, db-down")] == ["db-down", "oom"]
+
+
+def test_an_unknown_id_among_several_is_refused_by_name(tmp_path):
+    write(tmp_path, "db-down", GOOD)
+    with pytest.raises(ScenarioError, match="no scenario 'nope' in"):
+        load_scenarios(tmp_path, only="db-down,nope")
+
+
+def test_an_only_of_commas_alone_is_refused(tmp_path):
+    write(tmp_path, "db-down", GOOD)
+    with pytest.raises(ScenarioError, match="db-down"):
+        load_scenarios(tmp_path, only=" , ")
+
+
 def test_an_unknown_only_names_the_known_scenarios(tmp_path):
     write(tmp_path, "db-down", GOOD)
     with pytest.raises(ScenarioError, match="db-down"):
