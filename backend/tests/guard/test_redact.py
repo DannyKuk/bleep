@@ -1481,6 +1481,27 @@ def test_a_value_hidden_whole_before_a_json_string_leaves_the_result_stable(text
     assert redact_with_count(out) == (out, 0)
 
 
+@pytest.mark.parametrize(
+    ("text", "kept"),
+    [
+        # the `"` that rules the JSON out is gone from the tail the cut keeps
+        ('x "y ' + "a " * 2400 + ' {"q":"token=p4ss","n":"w0rd"}', '{"q":"token=<redacted>'),
+        # JSON from the line's start, its pair in the tail: the tail is hidden as before
+        ('{"pad":"' + "a " * 2400 + '","q":"token=p4ss","n":"w0rd"}', '"q":"token=<redacted>'),
+        # JSON done within the head window keeps its structure
+        ('{"q":"token=p4ss","n":"w0rd"} ' + "a " * 2400, '{"q":"token=<redacted>","n":"w0rd"} a'),
+        # JSON still open at the head window's end is hidden as before
+        ('{"q":"token=p4ss","n":"w0rd","pad":"' + "a " * 2400 + '"}', '{"q":"token=<redacted> a'),
+    ],
+)
+def test_a_pair_in_json_on_a_line_over_4000_characters(text, kept):
+    out, count = redact_with_count(text)
+    assert "p4ss" not in out and kept in out and count == 1
+    if kept.endswith("<redacted>"):
+        assert "w0rd" not in out
+    assert redact_with_count(out) == (out, 0)
+
+
 def test_lines_of_json_records_never_show_a_secret_and_stay_stable():
     """Several JSON records on one line, with secrets that hold quotes, backslashes and JSON
     punctuation, and filler of the same: no secret shows and a second pass changes nothing."""

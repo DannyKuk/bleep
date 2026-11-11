@@ -336,6 +336,7 @@ _JSON_RUN = re.compile(
     r"|<redacted>|[{}\[\],:])*+(?:\"(?:[^\"\\\n]|\\.)*+)?"
 )
 _BLANKS = re.compile(r"[ \t]*+")
+_AFTER_CUT_NOTE = re.compile(r"\[… [0-9]+ chars cut\]\n\Z")  # `join_cut` puts a cut's tail there
 _OPENER_OF = {"}": "{", "]": "["}
 
 
@@ -346,7 +347,10 @@ def _json_strings(text: str, line_start: int) -> tuple[tuple[int, ...], tuple[in
     its JSON starts to its end or the JSON's end. The JSON starts at the line's first `{` (or `[`
     when it has none) with no `"` before it, after a log prefix, or at the line's start when that
     is a key, as on a line of pretty-printed JSON. Read once per line, so each pair on it costs a
-    bisection."""
+    bisection. The kept tail of a line over 4,000 characters, on its own line after the cut note,
+    is no JSON: its line's start, which may hold the `"` that rules the JSON out, is gone."""
+    if _AFTER_CUT_NOTE.search(text, max(0, line_start - 40), line_start):
+        return (), (), line_start
     end = text.find("\n", line_start)
     end = len(text) if end < 0 else end
     pos = _BLANKS.match(text, line_start, end).end()
@@ -1137,14 +1141,18 @@ def _apply(pattern: re.Pattern[str], replacement: Replacement, text: str) -> tup
 
 
 _PATTERNS_TO_CUT = [(_ELEMENT_TO_CUT if p is _ELEMENT else p, r) for p, r in _PATTERNS]
+_PATTERNS_MID_LINE = [(p, _redact_pair if r is _redact_line_pair else r) for p, r in _PATTERNS]
 
 
-def _redact_all(text: str, cut_end: bool = False) -> tuple[str, int]:
-    """All patterns over `text`; with `cut_end`, its end is a window edge inside a cut line."""
+def _redact_all(text: str, cut_end: bool = False, mid_line: bool = False) -> tuple[str, int]:
+    """All patterns over `text`; with `cut_end`, its end is a window edge inside a cut line;
+    with `mid_line`, its start is one, so its first line is not read as JSON (`_json_strings`)
+    and a pair in a string there is hidden to whitespace."""
     text, total = _redact_blocks(text)
     text, count = _redact_keys(text)
     total += count
-    for pattern, replacement in _PATTERNS_TO_CUT if cut_end else _PATTERNS:
+    patterns = _PATTERNS_TO_CUT if cut_end else _PATTERNS_MID_LINE if mid_line else _PATTERNS
+    for pattern, replacement in patterns:
         text, count = _apply(pattern, replacement, text)
         total += count
     return text, total
@@ -1395,7 +1403,7 @@ def _kept_head(head: str, after: str) -> tuple[str, bool]:
 def _kept_tail(before: str, tail: str) -> str:
     """The part of `redact(before + tail)` that stands for `tail`; see `_kept_head`."""
     window = before + tail
-    new = _redact_all(window)[0]
+    new = _redact_all(window, mid_line=True)[0]
     if new.startswith(before):
         start = len(before)
     elif new.endswith(tail):
@@ -1432,8 +1440,10 @@ def redact_with_count(text: str) -> tuple[str, int]:
                 lines[index], count = _cut_line(line, following)
                 found += count
         text = "\n".join(lines)
-    text, total = _redact_all(text)
-    _json_strings.cache_clear()  # it holds the unredacted input
+    try:
+        text, total = _redact_all(text)
+    finally:
+        _json_strings.cache_clear()  # it holds the unredacted input
     return text, total + found
 
 
