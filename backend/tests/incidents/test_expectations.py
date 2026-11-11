@@ -8,6 +8,7 @@ import pytest
 from pydantic import SecretStr
 
 from bleep.graph.build import build_graph, open_checkpointer
+from bleep.graph.shown import english
 from bleep.incidents.expectations import CLOSED_NOTICE, Answer, Expectations, expectation_for
 from bleep.incidents.runner import IncidentRunner
 from bleep.incidents.settings_store import SettingsRefused, SettingsStore
@@ -15,6 +16,7 @@ from bleep.plugins.registry import PluginRegistry
 from bleep.schemas.graph import Decision, PlanStep, Proposal, VerificationPlan
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import ModelSettings
+from bleep.schemas.shown import Shown
 from graph_env import T0, box, graph_env, shop_engine
 
 LABELS = Path(__file__).parent.parent / "fixtures" / "labels"
@@ -73,7 +75,7 @@ async def test_a_jobs_clean_exit_is_recorded_in_exits_and_the_incident_closes(tm
     assert env.registry.service(shop(env).service_id).exits == ["fetch"]
     assert (await env.repo.get(incident.id)).status == "closed"
     assert await events(env, incident.id, "expected") == [answer.text]
-    assert CLOSED_NOTICE in await events(env, incident.id, "notice")
+    assert english(CLOSED_NOTICE) in await events(env, incident.id, "notice")
     assert await rig.expectations.offered(incident.id) is None  # closed: offered no more
 
 
@@ -86,7 +88,7 @@ class Endings:
     async def incident_opened(self, incident) -> None:
         return None
 
-    async def notice(self, incident_id: str, text: str, ending: str | None = None) -> None:
+    async def notice(self, incident_id: str, text: Shown, ending: str | None = None) -> None:
         self.endings.append(ending)
 
 
@@ -210,7 +212,8 @@ async def test_a_write_that_fails_changes_nothing_and_the_plan_still_waits(tmp_p
         rig.settings.expect_exits = refuse  # type: ignore[method-assign]
         answer = await rig.expectations.expected(incident.id, "telegram")
 
-    assert answer == Answer(False, "Bleep could not record that; nothing was changed.")
+    assert answer == Answer(False, Shown.of("expected/not_recorded"))
+    assert answer.text == "Bleep could not record that; nothing was changed."
     record = await env.deps.approvals.current(incident.id)
     assert record.id == request.id and record.decision is None
     assert (await env.repo.get(incident.id)).status == "open"

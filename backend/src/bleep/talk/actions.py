@@ -20,6 +20,7 @@ from bleep.incidents.quiet import QuietStore
 from bleep.incidents.repository import IncidentRepo
 from bleep.schemas.graph import ApprovalRecord, Decision
 from bleep.schemas.incidents import TERMINAL_STATUSES
+from bleep.schemas.shown import Shown
 from bleep.schemas.talk import Offer
 from bleep.talk.looks import look_said
 from bleep.talk.times import when
@@ -55,7 +56,7 @@ class Resumer(Protocol):
 
 class ExpectAnswer(Protocol):
     done: bool
-    text: str
+    said: Shown
 
 
 class Expecting(Protocol):
@@ -131,7 +132,8 @@ class Actions:
         if offer.incident_id and await self._ended(offer.incident_id):
             return said("answer_confirm_ended", language)
         if offer.kind == "expected" and self.expectations is not None:
-            return (await self.expectations.expected(offer.incident_id or "", self.via)).text
+            answer = await self.expectations.expected(offer.incident_id or "", self.via)
+            return prompts.show(answer.said, language)
         if offer.kind == "instruct" and offer.plan_id:
             decision = Decision(kind="instruct", text=offer.text, via=self.via, at=now)
             return await self.resolve(offer.incident_id or "", offer.plan_id, decision)

@@ -8,8 +8,9 @@ import hashlib
 import json
 import re
 import string
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Protocol
 
 PROMPTS_DIR = Path(__file__).parent
 NAME = re.compile(r"^[a-z0-9_]+(?:/[a-z0-9_]+)*$")
@@ -52,16 +53,19 @@ OVERRIDABLE = frozenset(
 # untrusted-data rule with no placeholder to check an override against. `graph/propose_mcp` tells
 # the model how to write an `mcp.call` step around the server's wrapped tool schemas, and
 # `graph/verify_unproven` tells it not to start again a container a human approved stopping.
-# `talk/` reads what the person writes and holds the fixed lines that refuse it (#401).
-NOT_OVERRIDABLE_AREAS = ("evals/", "notify/", "talk/", "untrusted/")
+# `talk/` reads what the person writes and holds the fixed lines that refuse it (#401). `shown/`
+# holds the fixed texts other parts write for the person, stored in English (#427).
+NOT_OVERRIDABLE_AREAS = ("evals/", "notify/", "shown/", "talk/", "untrusted/")
 NOT_OVERRIDABLE = frozenset({"graph/propose_mcp", "graph/system", "graph/verify_unproven"})
 # The languages a person may choose (#373). English is the files as they are; each other language
 # has a twin of every text a person reads, at `<area>/<language>/<name>.md` (#375).
 LANGUAGES = ("en", "de")
-# The texts a person reads are Telegram's and the chat's. In those areas the model reads
-# `talk/read` and `talk/message`, which stay English as every prompt does, and the talk log's
-# export (`talk/log_*`) is a transcript for reviewing answers, kept English too.
-TRANSLATED_AREAS = ("notify/", "talk/")
+# The texts a person reads are Telegram's, the chat's and the fixed texts the other parts write
+# (`shown/`, #427). In those areas the model reads `talk/read` and `talk/message`, which stay
+# English as every prompt does, and the talk log's export (`talk/log_*`) is a transcript for
+# reviewing answers, kept English too. A `shown/` text is stored in English, which is what a
+# model reads of it, and only shown in another language (`show`).
+TRANSLATED_AREAS = ("notify/", "shown/", "talk/")
 STAYS_ENGLISH = frozenset({"talk/read", "talk/message"})
 STAYS_ENGLISH_PREFIXES = ("talk/log_",)
 # C0 and C1 controls but tab and line breaks; the bidi overrides, isolates and marks (U+200E,
@@ -192,6 +196,34 @@ def in_language(name: str, language: str) -> str:
 def load_in(language: str, name: str, /, **variables: str) -> str:
     """`load` the text `name` in `language`."""
     return load(in_language(name, language), **variables)
+
+
+class ShownText(Protocol):
+    """A text Bleep's code wrote for a person (`schemas.shown.Shown`)."""
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def values(self) -> Mapping[str, str | ShownText]: ...
+
+    @property
+    def parts(self) -> Sequence[ShownText]: ...
+
+    @property
+    def sep(self) -> str: ...
+
+
+def show(text: ShownText, language: str) -> str:
+    """`text` in `language`: each of its `shown/` templates filled, its parts joined. In English
+    it is the text as it is stored and as a model reads it."""
+    if not text.name:
+        return text.sep.join(show(part, language) for part in text.parts)
+    values = {
+        key: value if isinstance(value, str) else show(value, language)
+        for key, value in text.values.items()
+    }
+    return load_in(language, f"shown/{text.name}", **values).strip()
 
 
 def twin_problems() -> list[str]:

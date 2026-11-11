@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from bleep.schemas.docker import ContainerSummary, HostBasics
+from bleep.schemas.shown import Shown
 
 Outcome = Literal[
     "resolved", "healthy", "rejected", "no_action", "unverified", "budget", "replan_limit"
@@ -234,6 +235,9 @@ class Decision(BaseModel):
     text: str | None = None  # the instruction, for `instruct`
     via: Literal["telegram", "dashboard"]
     at: datetime
+    # `text` as a fixed text of Bleep's ("This is expected."), to show it in the person's
+    # language (#427); None for the human's own words.
+    shown: Shown | None = None
 
 
 class TargetSnapshot(BaseModel):
@@ -378,10 +382,17 @@ class VerificationResult(BaseModel):
 
 
 class TimelineEntry(BaseModel):
-    """One moment of an incident, written by Bleep's code from its stored events."""
+    """One moment of an incident, written by Bleep's code from its stored events. `text` is
+    English; `shown` is what it was made from, to show it in the person's language (#427), None
+    for a notice stored before that."""
 
     at: datetime
     text: str
+    shown: Shown | None = None
+
+
+# The report's fields that hold one of Bleep's fixed texts rather than the model's (#427).
+ReportText = Literal["outcome", "cause", "human_decision"]
 
 
 class Report(BaseModel):
@@ -393,7 +404,9 @@ class Report(BaseModel):
     `action_taken` is None when nothing ran. `planted_in` names where host text tried to give
     Bleep orders (`graph/planted.py`), the places its fixed follow-up names; code sets it, never
     the model. `cause_en` is the cause in English when the report is written in another language
-    (#374), the one memory keeps; None in English.
+    (#374), the one memory keeps; None in English. `shown` holds the fields that are a fixed
+    text of Bleep's as the templates they were made from, so the API and the notifier show them
+    in the person's language (#427); the fields themselves stay English, as memory keeps them.
     """
 
     title: str
@@ -406,3 +419,4 @@ class Report(BaseModel):
     follow_ups: list[str] = Field(default_factory=list)
     human_decision: str | None = None
     planted_in: list[PlantedPlace] = Field(default_factory=list)
+    shown: dict[ReportText, Shown] = Field(default_factory=dict)

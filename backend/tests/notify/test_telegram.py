@@ -35,12 +35,14 @@ from bleep.schemas.graph import (
     VerificationResult,
 )
 from bleep.schemas.incidents import Signal, Subject
+from bleep.schemas.shown import Shown
 from bleep.store.db import Database
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "telegram"
 T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
 TOKEN = "7001:AAH-secret_token-value"
 CHAT = "4242"
+PAUSED = Shown.of("notice/model_paused", reason="timeout", minutes="5")
 PLAN = Proposal(
     kind="act",
     steps=[PlanStep(action="docker.restart", host_id="demo", target="shop-web-1")],
@@ -808,7 +810,7 @@ async def test_other_messages_are_sent_and_a_send_failure_does_not_raise(env):
         ),
     )
     await env.notifier.report(env.incident, REPORT)
-    await env.notifier.notice(env.incident_id, "Cost cap reached.")
+    await env.notifier.notice(env.incident_id, PAUSED)
     assert len(env.api.sent("sendMessage")) == 3  # a check that passed is told in the end
 
     env.api.calls.clear()
@@ -816,7 +818,7 @@ async def test_other_messages_are_sent_and_a_send_failure_does_not_raise(env):
         transport=httpx.MockTransport(lambda r: httpx.Response(500, json={"ok": False}))
     )
     env.notifier.telegram = TelegramClient(TOKEN, broken)
-    await env.notifier.notice(env.incident_id, "still fine")  # swallowed
+    await env.notifier.notice(env.incident_id, PAUSED)  # swallowed
     with pytest.raises(TelegramError):  # the Approval node reports this one to the dashboard
         await env.notifier.proposal(
             env.incident, None, PLAN, (await env.approvals.current(env.incident_id)).request
@@ -855,7 +857,7 @@ async def test_without_a_token_the_notifier_is_bus_only(tmp_path):
     await built.notifier.reminder(incident, request)
     await built.notifier.verification(incident, VerificationResult(ok=True))
     await built.notifier.report(incident, REPORT)
-    await built.notifier.notice(incident.id, "n")
+    await built.notifier.notice(incident.id, PAUSED)
     built.start(FakeRunner())  # nothing to start
     await built.stop()
 
@@ -1199,7 +1201,7 @@ async def test_a_token_changed_on_the_dashboard_restarts_polling_with_it(tmp_pat
             break
         await asyncio.sleep(0.01)
     assert [p.split("/")[1][:7] for p in paths] == ["bot7001", "bot7002"]
-    await notifier.notice("inc_1", "hello")
+    await notifier.notice("inc_1", PAUSED)
     assert paths[-1].startswith("/bot7002:") and paths[-1].endswith("/sendMessage")
     await built.stop()
     await built.close()
@@ -1229,7 +1231,8 @@ class FakeExpectations:
 
     async def expected(self, incident_id: str, via: str):
         self.marked.append((incident_id, via))
-        return SimpleNamespace(done=True, text="You said this is expected. " + "x" * 300)
+        said = Shown.of("expected/said", sentence="x" * 300)
+        return SimpleNamespace(done=True, said=said)
 
 
 def buttons(body: dict) -> list[tuple[str, str]]:
@@ -1273,7 +1276,7 @@ async def test_pressing_its_expected_marks_the_incident_and_clears_the_buttons(e
 async def test_a_press_that_fails_leaves_the_plans_buttons_in_place(env):
     class Refusing(FakeExpectations):
         async def expected(self, incident_id: str, via: str):
-            return SimpleNamespace(done=False, text="Nothing here can be marked as expected now.")
+            return SimpleNamespace(done=False, said=Shown.of("expected/not_offered"))
 
     env.bot.expectations = Refusing()
     update = fixture("callback_approve", APPROVAL_ID=env.approval_id)
@@ -1283,6 +1286,23 @@ async def test_a_press_that_fails_leaves_the_plans_buttons_in_place(env):
 
     assert "Nothing here" in env.api.sent("answerCallbackQuery")[0]["text"]
     assert env.api.sent("editMessageReplyMarkup") == []
+
+
+async def test_pressing_its_expected_is_answered_in_the_picked_language(env):
+    class Recording(FakeExpectations):
+        async def expected(self, incident_id: str, via: str):
+            sentence = Shown.of("expected/may_sleep", name="nas")
+            return SimpleNamespace(done=True, said=Shown.of("expected/said", sentence=sentence))
+
+    env.bot.language = lambda: "de"
+    env.bot.expectations = Recording()
+    update = fixture("callback_approve", APPROVAL_ID=env.approval_id)
+    update["result"][0]["callback_query"]["data"] = "expected"
+    env.api.updates.append(update)
+    await env.bot.poll_once()
+
+    [answer] = env.api.sent("answerCallbackQuery")
+    assert answer["text"].startswith("Du hast gesagt, dass das erwartet ist. nas darf schlafen")
 
 
 async def test_a_reply_to_an_opened_message_is_offered_to_the_plan_that_waits(env):

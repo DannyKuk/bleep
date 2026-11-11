@@ -20,6 +20,7 @@ from typing import Any
 import aiosqlite
 import httpx
 
+from bleep import prompts
 from bleep.config import Settings
 from bleep.graph.deps import Approvals
 from bleep.guard.log import GuardLogger
@@ -27,6 +28,7 @@ from bleep.guard.titles import split_service_id, title_name
 from bleep.incidents.bus import EventBus
 from bleep.incidents.quiet import QuietStore, quiet_target
 from bleep.incidents.repository import IncidentRepo, primary_signal, utcnow
+from bleep.incidents.shown import report_in
 from bleep.notify import format as fmt
 from bleep.notify.telegram import (
     EXPECTED_VERB,
@@ -50,6 +52,7 @@ from bleep.schemas.graph import (
 )
 from bleep.schemas.incidents import LOOK_REQUESTED, TERMINAL_STATUSES, Ending, Incident
 from bleep.schemas.settings import SecretStatus
+from bleep.schemas.shown import Shown
 from bleep.schemas.telegram import TelegramStatus
 from bleep.store.db import Database
 from bleep.store.secrets import SecretStore, Source
@@ -92,8 +95,9 @@ class Notifier:
     again, every later one replies to it, and the last one leads with the outcome (#380).
     `incidents` gives the short names, the signals and the previous incident. With `on_it` the
     opener carries "🤫 I'm on it" (#389), and a quiet end says until when. Each message is in
-    the language `language` gives as it is sent (#375); the values in it (names, the model's
-    text, the fixed texts other parts wrote) are as they came."""
+    the language `language` gives as it is sent (#375), and so are the fixed texts other parts
+    wrote that it carries (a notice, the report's outcome, #427); names and the model's text
+    are as they came."""
 
     def __init__(
         self,
@@ -295,10 +299,11 @@ class Notifier:
             await self._safely(self._report(incident, report))
 
     async def _report(self, incident: Incident, report: Report) -> None:
-        name = _end_template(report.outcome)
+        name = _end_template(report.outcome)  # by the English outcome, as stored
         if name == "end_no_action" and await self._let_go(incident.id):
             name = "end_rejected"
         language = self.language()
+        report = report_in(report, language)
         took = fmt.duration(self.clock() - incident.opened_at, language)
         values = {"end_fixed": {"took": took}, "end_healthy": {"took": took}}.get(name, {})
         if name == "end_stopped":
@@ -351,18 +356,19 @@ class Notifier:
             return []
         return [Check.model_validate(c) for c in events[-1].payload.get("checks", [])]
 
-    async def notice(self, incident_id: str, text: str, ending: Ending | None = None) -> None:
+    async def notice(self, incident_id: str, text: Shown, ending: Ending | None = None) -> None:
         """A note in the middle of a run, or, with `ending`, the end message of an incident that
         closed outside its run's report; one that comes after the end message is a note. A
         folded repeat's return (`back`) arrives silently: its wait was told, the end is
         only so the thread does not stop at "waits"."""
         if self.telegram is not None:
-            await self._safely(self._notice(incident_id, fmt.prose_line(text), ending))
+            await self._safely(self._notice(incident_id, text, ending))
 
-    async def _notice(self, incident_id: str, text: str, ending: Ending | None) -> None:
+    async def _notice(self, incident_id: str, shown: Shown, ending: Ending | None) -> None:
         assert self.telegram is not None and self.chat_id is not None
         incident = await self.incidents.get(incident_id) if self.incidents is not None else None
         language = self.language()
+        text = fmt.prose_line(prompts.show(shown, language))
         note = fmt.render("notice", language=language, text=text)
         if incident is None:  # no thread to put it in
             await self.telegram.send_message(self.chat_id, note)

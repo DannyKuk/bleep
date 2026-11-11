@@ -37,6 +37,7 @@ from bleep.schemas.graph import Decision, Proposal
 from bleep.schemas.incidents import Incident, Signal, Subject
 from bleep.schemas.services import HostState, Service
 from bleep.schemas.settings import Budgets
+from bleep.schemas.shown import Shown
 from bleep.schemas.talk import TalkReply
 from bleep.store.db import Database
 from bleep.talk.confirms import CONFIRM_TTL
@@ -99,7 +100,7 @@ class FakeExpectations:
 
     async def expected(self, incident_id: str, via: str):
         self.marked.append((incident_id, via))
-        return SimpleNamespace(done=True, text="You said this is expected.")
+        return SimpleNamespace(done=True, said=Shown.of("expected/said", sentence="x"))
 
 
 def reading(**args) -> AIMessage:
@@ -374,7 +375,7 @@ async def test_yes_to_expected_goes_through_its_expectations(env):
     pop_up = await press(env, await offered(env, "expected"))
 
     assert env.expectations.marked == [(env.incident.id, "telegram")]
-    assert pop_up == "You said this is expected."
+    assert pop_up == "You said this is expected. x"
 
 
 async def test_send_gives_the_persons_words_to_the_plan_that_waits(env):

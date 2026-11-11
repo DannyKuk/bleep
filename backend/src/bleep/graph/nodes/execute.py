@@ -34,8 +34,9 @@ from typing import Literal
 
 from bleep.graph.deps import GraphDeps, IncidentFinished
 from bleep.graph.replan import replan
+from bleep.graph.shown import english
 from bleep.graph.state import IncidentState, Node
-from bleep.graph.targets import read_app_uuid
+from bleep.graph.targets import UNKNOWN_HOST, UNREACHABLE, read_app_uuid
 from bleep.guard.grant import GrantInvalid, binds_app, step_snapshot
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.docker import ContainerSummary
@@ -49,13 +50,13 @@ from bleep.schemas.graph import (
     TargetSnapshot,
 )
 from bleep.schemas.incidents import TERMINAL_STATUSES
+from bleep.schemas.shown import Shown
 from bleep.tools.docker_act import StepRefused
 
 log = logging.getLogger(__name__)
 
-STALE = "The plan did not run, the state changed since approval: {changes}."
-REFUSED = "The plan did not run, Bleep's checks refused it: {reasons}."
-NOT_APPROVED = "The plan did not run, it is not the plan the human approved."
+NOT_APPROVED = Shown.of("notice/not_approved")
+GONE = Shown.of("target/gone")
 DONE_WORD = {"docker.restart": "restarted", "docker.stop": "stopped", "docker.start": "started"}
 _COOLIFY_STEP = (
     "not confirmed after a restart (Bleep cannot read back a Coolify step; check the application"
@@ -80,21 +81,23 @@ def _plan_key(plan: ApprovalRecord) -> str:
     return f"{plan.plan_hash}:{plan.id}"
 
 
-async def _read(deps: GraphDeps, host_id: str, ref: str) -> tuple[ContainerSummary | None, str]:
+async def _read(
+    deps: GraphDeps, host_id: str, ref: str
+) -> tuple[ContainerSummary, None] | tuple[None, Shown]:
     """The container as the host shows it now, or None and a fixed reason (never host text)."""
     try:
-        return (await deps.registry.engine(host_id).inspect(ref)).summary, ""
+        return (await deps.registry.engine(host_id).inspect(ref)).summary, None
     except ContainerNotFound:
-        return None, "is gone"
+        return None, GONE
     except EngineUnavailable:
-        return None, "cannot be read, the host is unreachable"
+        return None, UNREACHABLE
     except KeyError:
-        return None, "cannot be read, the host is not in the hosts file"
+        return None, UNKNOWN_HOST
 
 
 async def _changes(
     deps: GraphDeps, plan: ApprovalRecord, steps: list[PlanStep], touched: set[tuple[str, str]]
-) -> list[str]:
+) -> list[Shown]:
     """One line per target of `steps` that is not as it was approved.
 
     A Coolify application must still be the one its name resolved to (#139); a container, the
@@ -102,17 +105,17 @@ async def _changes(
     container in `touched` was already acted on by an earlier step of this plan, so its start
     time is expected to have moved and only its id is compared.
     """
-    changes: list[str] = []
+    changes: list[Shown] = []
     seen: set[tuple[str, str, bool]] = set()
     for step in steps:
         key = (step.host_id, step.target, binds_app(step))
         if key in seen:
             continue
         seen.add(key)
-        where = f"{step.target} on {step.host_id}"
+        where = Shown.of("target/where", target=step.target, host=step.host_id)
         snapshot = step_snapshot(plan.snapshots, step)
         if snapshot is None:
-            changes.append(f"{where} was not read when the plan was approved")
+            changes.append(Shown.of("target/not_read", where=where))
         elif binds_app(step):
             changes += await _app_changes(deps, step, snapshot, where)
         else:
@@ -121,13 +124,13 @@ async def _changes(
 
 
 async def _app_changes(
-    deps: GraphDeps, step: PlanStep, snapshot: TargetSnapshot, where: str
-) -> list[str]:
+    deps: GraphDeps, step: PlanStep, snapshot: TargetSnapshot, where: Shown
+) -> list[Shown]:
     uuid, why = await read_app_uuid(deps.registry, step.host_id, step.target)
     if uuid is None:
-        return [f"{where} {why}"]
+        return [Shown.of("target/state", where=where, why=why)]
     if uuid != snapshot.app_uuid:
-        return [f"{where} is another Coolify application now (it was deleted and recreated)"]
+        return [Shown.of("target/other_app", where=where)]
     return []
 
 
@@ -135,16 +138,16 @@ async def _container_changes(
     deps: GraphDeps,
     step: PlanStep,
     snapshot: TargetSnapshot,
-    where: str,
+    where: Shown,
     touched: set[tuple[str, str]],
-) -> list[str]:
+) -> list[Shown]:
     summary, why = await _read(deps, step.host_id, step.target)
     if summary is None:
-        return [f"{where} {why}"]
+        return [Shown.of("target/state", where=where, why=why)]
     if summary.id != snapshot.container_id:
-        return [f"{where} was recreated"]
+        return [Shown.of("target/recreated", where=where)]
     if (step.host_id, step.target) not in touched and _started_again(snapshot, summary):
-        return [f"{where} was started again"]
+        return [Shown.of("target/started_again", where=where)]
     return []
 
 
@@ -286,7 +289,7 @@ def make(deps: GraphDeps) -> Node:
             word = DONE_WORD.get(step.action, "ran")
             ok, detail = True, f"{word} {step.target}, confirmed after a restart"
         else:
-            reason = f"the container {why}" if summary is None else "its effect does not show"
+            reason = "its effect does not show" if why is None else f"the container {english(why)}"
             ok, detail = False, f"not confirmed after a restart ({reason}); not run again"
         result = StepResult(
             step_index=index,
@@ -311,11 +314,11 @@ def make(deps: GraphDeps) -> Node:
             step_index=index, action=step.action, target=step.target, ok=False, detail=detail
         )
 
-    async def back_to_propose(state: IncidentState, notice: str) -> dict:
+    async def back_to_propose(state: IncidentState, notice: Shown) -> dict:
         """Void the grant and plan again. The decision goes too, since the yes was for this plan
         and a next "no action" must not report it; a run out of re-plans keeps it, so its
         report says the human approved and Bleep stopped."""
-        log.info("execute: %s back to propose: %s", state["incident_id"], notice)
+        log.info("execute: %s back to propose: %s", state["incident_id"], english(notice))
         update = await replan(deps, state, notice)
         if update.get("outcome") is None:
             update["decision"] = None
@@ -345,10 +348,12 @@ def make(deps: GraphDeps) -> Node:
         if not logged:  # nothing of this plan has run: check everything before the first step
             changes = await _changes(deps, plan, steps, set())
             if changes:
-                return await back_to_propose(state, STALE.format(changes="; ".join(changes)))
+                stale = Shown.of("notice/stale", changes=Shown.joined(changes, "; "))
+                return await back_to_propose(state, stale)
             reasons = refusals(state, plan)
             if reasons:
-                return await back_to_propose(state, REFUSED.format(reasons="; ".join(reasons)))
+                refused = Shown.of("notice/refused", reasons="; ".join(reasons))
+                return await back_to_propose(state, refused)
 
         results: list[StepResult] = []
         stop: str | None = None  # why the remaining steps are skipped
@@ -365,7 +370,8 @@ def make(deps: GraphDeps) -> Node:
                     touched = {(s.host_id, s.target) for s in steps[:index]}
                     changes = await _changes(deps, plan, [step], touched)
                     if changes:
-                        stop = "the state changed since approval: " + "; ".join(changes)
+                        listed = "; ".join(english(change) for change in changes)
+                        stop = "the state changed since approval: " + listed
                         results.append(await skip(state, plan, index, step, stop))
                         continue
                 result = await run_step(state, plan, index, step)

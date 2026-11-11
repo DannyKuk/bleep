@@ -25,14 +25,18 @@ from langgraph.types import interrupt
 
 from bleep.graph.deps import GraphDeps
 from bleep.graph.replan import replan, replans_left
+from bleep.graph.shown import shown_payload
 from bleep.graph.state import IncidentState, Node
 from bleep.graph.targets import read_app_uuid
 from bleep.guard.grant import binds_app
 from bleep.guard.redact import redacted_proposal
 from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
-from bleep.schemas.graph import ApprovalRecord, Decision, Proposal, TargetSnapshot
+from bleep.schemas.graph import ApprovalRecord, Decision, PlanStep, Proposal, TargetSnapshot
+from bleep.schemas.shown import Shown
 
 log = logging.getLogger(__name__)
+
+NOT_SENT = Shown.of("notice/not_sent")
 
 
 class ApprovalNotDecided(RuntimeError):
@@ -40,16 +44,22 @@ class ApprovalNotDecided(RuntimeError):
     tell what the human chose, so it stops rather than guess."""
 
 
-def _why(error: Exception) -> str:
+def _why(error: Exception) -> Shown:
     """A short, fixed reason: engine messages are host text and do not belong in Bleep's own."""
     if isinstance(error, ContainerNotFound):
-        return "container not found"
+        return Shown.of("target/not_found")
     if isinstance(error, EngineUnavailable):
-        return "host unreachable"
-    return "host not in the hosts file"  # KeyError from the registry
+        return Shown.of("target/host_unreachable")
+    return Shown.of("target/host_unknown")  # KeyError from the registry
 
 
-async def _snapshots(deps: GraphDeps, proposal: Proposal) -> tuple[list[TargetSnapshot], list[str]]:
+def _unread(step: PlanStep, why: Shown) -> Shown:
+    return Shown.of("target/unread", target=step.target, host=step.host_id, why=why)
+
+
+async def _snapshots(
+    deps: GraphDeps, proposal: Proposal
+) -> tuple[list[TargetSnapshot], list[Shown]]:
     """Each target as it is now, and a line for each one that cannot be read.
 
     A Coolify step's target is bound to the application uuid it names now; every other step's
@@ -57,7 +67,7 @@ async def _snapshots(deps: GraphDeps, proposal: Proposal) -> tuple[list[TargetSn
     restart count and state.
     """
     snapshots: list[TargetSnapshot] = []
-    unread: list[str] = []
+    unread: list[Shown] = []
     seen: set[tuple[str, str, bool]] = set()
     for step in proposal.steps:
         key = (step.host_id, step.target, binds_app(step))
@@ -67,7 +77,7 @@ async def _snapshots(deps: GraphDeps, proposal: Proposal) -> tuple[list[TargetSn
         if binds_app(step):
             uuid, why = await read_app_uuid(deps.registry, step.host_id, step.target)
             if uuid is None:
-                unread.append(f"{step.target} on {step.host_id}: {why}")
+                unread.append(_unread(step, why))
             else:
                 snapshots.append(
                     TargetSnapshot(host_id=step.host_id, target=step.target, app_uuid=uuid)
@@ -76,7 +86,7 @@ async def _snapshots(deps: GraphDeps, proposal: Proposal) -> tuple[list[TargetSn
         try:
             summary = (await deps.registry.engine(step.host_id).inspect(step.target)).summary
         except (ContainerNotFound, EngineUnavailable, KeyError) as error:
-            unread.append(f"{step.target} on {step.host_id}: {_why(error)}")
+            unread.append(_unread(step, _why(error)))
             continue
         snapshots.append(
             TargetSnapshot(
@@ -92,7 +102,7 @@ async def _snapshots(deps: GraphDeps, proposal: Proposal) -> tuple[list[TargetSn
 
 
 def make(deps: GraphDeps) -> Node:
-    async def ask(state: IncidentState, proposal: Proposal) -> ApprovalRecord | list[str]:
+    async def ask(state: IncidentState, proposal: Proposal) -> ApprovalRecord | list[Shown]:
         """Store, publish and send the question; the unread targets when one cannot be read."""
         incident_id = state["incident_id"]
         snapshots, unread = await _snapshots(deps, proposal)
@@ -110,11 +120,7 @@ def make(deps: GraphDeps) -> Node:
                 await deps.notifier.proposal(incident, state.get("diagnosis"), proposal, request)
             except Exception as error:  # a channel outage must not strand the stored question
                 log.warning("approval: notifying %s failed: %s", incident_id, type(error).__name__)
-                await deps.bus.publish(
-                    incident_id,
-                    "notice",
-                    {"text": "The plan could not be sent to a channel; answer it here."},
-                )
+                await deps.bus.publish(incident_id, "notice", shown_payload(NOT_SENT))
         return await deps.approvals.current(incident_id)
 
     async def approval(state: IncidentState) -> dict:
@@ -134,8 +140,8 @@ def make(deps: GraphDeps) -> Node:
         if record is None or (consumed is not None and record.id == consumed.id):
             asked = await ask(state, proposal)
             if isinstance(asked, list):
-                notice = "The plan was not put to you, a target could not be read: "
-                notice += "; ".join(asked) + "."
+                targets = Shown.joined(asked, "; ")
+                notice = Shown.of("notice/not_asked", targets=targets)
                 return {"decision": None, "grant": None, **await replan(deps, state, notice)}
             record = asked
 

@@ -3,11 +3,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from bleep.graph.deps import StaticSettings
+from bleep.graph.shown import english
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
 from bleep.incidents.watchdog import Watchdog
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Budgets
+from bleep.schemas.shown import Shown
 from bleep.store.db import Database
 
 T0 = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
@@ -29,8 +31,8 @@ class Channel:
     def __init__(self) -> None:
         self.notices: list[tuple[str, str]] = []
 
-    async def notice(self, incident_id: str, text: str) -> None:
-        self.notices.append((incident_id, text))
+    async def notice(self, incident_id: str, text: Shown) -> None:
+        self.notices.append((incident_id, english(text)))
 
 
 @pytest.fixture

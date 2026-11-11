@@ -9,8 +9,11 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from bleep import prompts
 from bleep.graph.deps import StaticSettings
+from bleep.graph.language import language_rule
 from bleep.graph.nodes import report, verify
 from bleep.graph.planted import HINT_END, PLANTED_START, planted_places
+from bleep.graph.replan import PLANNING_AGAIN
+from bleep.graph.shown import shown_payload
 from bleep.guard.pipeline import guard_text
 from bleep.guard.report_check import MARKER
 from bleep.schemas.docker import DiskUsage, HostBasics
@@ -28,6 +31,7 @@ from bleep.schemas.graph import (
 )
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Budgets
+from bleep.schemas.shown import Shown
 from fakes import FakeChatModel
 from graph_env import T0, graph_env, no_wait
 
@@ -941,6 +945,58 @@ async def test_an_english_report_never_warns_about_an_english_cause(tmp_path, ca
     with caplog.at_level("WARNING"):
         await run(env, state)
     assert "English cause" not in caplog.text
+
+
+# --- Bleep's own texts: English where stored and read, shown in the person's language (#427) ---
+
+
+async def english_and_german_runs(tmp_path) -> dict[str, tuple[str, Report]]:
+    """The same run with each language picked: the prompt the model got, and the report."""
+    runs = {}
+    for language, reply in (("en", written()), ("de", GERMAN)):
+        env, state, _ = await setup(tmp_path / language, reply)
+        env.deps.settings_store = StaticSettings(written_in=language)
+        where = Shown.of("target/where", target="shop-web-1", host="a")
+        stale = Shown.of("notice/stale", changes=Shown.of("target/recreated", where=where))
+        await env.bus.publish(
+            state["incident_id"], "notice", shown_payload(stale.then(PLANNING_AGAIN))
+        )
+        await env.bus.publish(
+            state["incident_id"], "decision", {"kind": "approve", "via": "telegram"}
+        )
+        state |= {"proposal": ACT, "decision": decide("approve"), "step_results": [RESULT]}
+        update = await run(env, state)
+        runs[language] = (env.models.model.seen[0][0].text, update["report"])
+    return runs
+
+
+async def test_what_a_model_reads_of_bleeps_fixed_texts_is_the_same_english_in_german(tmp_path):
+    runs = await english_and_german_runs(tmp_path)
+    (en_prompt, en_report), (de_prompt, de_report) = runs["en"], runs["de"]
+
+    assert de_prompt.replace(language_rule("graph/report", "de"), "") == en_prompt
+    assert "Planning again." in en_prompt and "Approved on Telegram" in en_prompt
+    for field in ("title", "outcome", "action_taken", "human_decision", "shown"):
+        assert getattr(de_report, field) == getattr(en_report, field), field
+    assert [e.text for e in de_report.timeline] == [e.text for e in en_report.timeline]
+    assert de_report.outcome == "Action taken, not verified"
+
+
+async def test_the_reports_fixed_texts_carry_what_they_were_made_from(tmp_path):
+    _, stored = (await english_and_german_runs(tmp_path))["de"]
+
+    assert prompts.show(stored.shown["outcome"], "de") == "Aktion ausgeführt, nicht geprüft"
+    assert prompts.show(stored.shown["human_decision"], "de") == "Freigegeben im Dashboard"
+    shown = [prompts.show(e.shown, "de") for e in stored.timeline if e.shown is not None]
+    assert "Signal: Container ausgefallen (shop-web-1)" in shown
+    assert "Freigegeben auf Telegram" in shown
+    assert any(line.endswith("wurde neu erstellt. Ich plane neu.") for line in shown)
+    assert "cause" not in stored.shown  # the model's own, in German already
+
+
+def test_a_cause_nobody_determined_is_a_fixed_text_too():
+    assert report.NOT_DETERMINED == "Not determined."
+    assert prompts.show(Shown.of("report/not_determined"), "de") == "Nicht bestimmt."
 
 
 def test_the_german_drafts_schema_tells_the_model_only_what_the_field_is():

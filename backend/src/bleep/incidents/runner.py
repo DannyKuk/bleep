@@ -25,7 +25,8 @@ from bleep.graph.deps import (
     StaticSettings,
     Tracer,
 )
-from bleep.guard.titles import seen_note
+from bleep.graph.shown import shown_payload
+from bleep.guard.titles import seen_since
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo, utcnow
 from bleep.llm.guard import ModelUnavailable
@@ -38,23 +39,20 @@ from bleep.schemas.incidents import (
     Signal,
     Subject,
 )
+from bleep.schemas.shown import Shown
 
 log = logging.getLogger(__name__)
 
 AFTER_PAUSE = "after_pause"  # config flag: this run goes on from a pause
 MAX_PAUSE_MIN = 60  # the longest wait between two retries of a paused run
 LONG_PAUSE_S = 3600  # a run paused this long in all gets one more notice
-QUIET_RUN_NOTICE = "Closed: the service was made quiet while I worked on it, so I stopped here."
-QUIET_RUN_NOTICE_HOST = "Closed: the host was made quiet while I worked on it, so I stopped here."
-WAITING_NOTICE = (
-    "The host does not answer, so there is nothing I can look at: every check would fail. "
-    "I wait for it and close this incident when it answers again."
-)
-BACK_NOTICE = "Closed: the host answers again. It recovered on its own; nothing was changed."
-ANSWERED_NOTICE = (
-    "Closed: the host answered again before I got to it. It recovered on its own; nothing was "
-    "changed."
-)
+QUIET_RUN_NOTICE = Shown.of("notice/quiet_run")
+QUIET_RUN_NOTICE_HOST = Shown.of("notice/quiet_run_host")
+WAITING_NOTICE = Shown.of("notice/waiting")
+BACK_NOTICE = Shown.of("notice/back")
+ANSWERED_NOTICE = Shown.of("notice/answered")
+MAY_HAVE_RUN = Shown.of("notice/step_may_have_run")
+STILL_PAUSED = Shown.of("notice/model_still_paused")
 # Every status but `waiting`: closing on the host's return must never close an incident whose run
 # has started, whatever kind it is.
 NOT_WAITING = tuple(s for s in get_args(IncidentStatus) if s != "waiting")
@@ -204,13 +202,13 @@ class IncidentRunner:
             return
         if await self.repo.close_unfinished(incident.id, spare=NOT_WAITING) is None:
             return
-        await self.bus.publish(incident.id, "notice", {"text": BACK_NOTICE})
+        await self.bus.publish(incident.id, "notice", shown_payload(BACK_NOTICE))
         await self._tell(incident.id, BACK_NOTICE, ending="back")
 
     async def end(
         self,
         incident_id: str,
-        text: str,
+        text: Shown,
         *,
         ending: Ending,
         spare: tuple[IncidentStatus, ...] = (),
@@ -244,8 +242,8 @@ class IncidentRunner:
         if before is None:
             return False
         if before in ("executing", "verifying"):
-            text += " A step of the approved plan may already have run; see the actions above."
-        await self.bus.publish(incident_id, "notice", {"text": text})
+            text = text.then(MAY_HAVE_RUN)
+        await self.bus.publish(incident_id, "notice", shown_payload(text))
         await self._tell(incident_id, text, ending=ending)
         return True
 
@@ -309,10 +307,10 @@ class IncidentRunner:
             # The host's last probe reached it after the outage was seen (the host came back
             # before the run got here): nothing is waited for, and no channel is told of a wait.
             if await self.repo.close_unfinished(incident.id) is not None:
-                await self.bus.publish(incident.id, "notice", {"text": ANSWERED_NOTICE})
+                await self.bus.publish(incident.id, "notice", shown_payload(ANSWERED_NOTICE))
             return
         await self.repo.set_status(incident.id, "waiting")
-        await self.bus.publish(incident.id, "notice", {"text": WAITING_NOTICE})
+        await self.bus.publish(incident.id, "notice", shown_payload(WAITING_NOTICE))
         await self._announce(incident.model_copy(update={"status": "waiting"}))
 
     def _answered_since(self, host_id: str, signals: list[Signal]) -> bool:
@@ -333,7 +331,7 @@ class IncidentRunner:
         except Exception as error:
             log.warning("incident %s: announcing it failed: %s", incident.id, type(error).__name__)
 
-    async def _tell(self, incident_id: str, text: str, ending: Ending | None = None) -> None:
+    async def _tell(self, incident_id: str, text: Shown, ending: Ending | None = None) -> None:
         """Send a notice to the channels: a human who approved on Telegram hears of a run that
         died there too. With `ending` it is the incident's end message. A channel outage is
         logged and changes nothing."""
@@ -396,12 +394,13 @@ class IncidentRunner:
         except Exception as error:  # a broken run must not take the runner down
             log.exception("incident %s: graph run failed", incident_id)
             self._forget_pauses(incident_id)
-            text = f"The run stopped on an error ({type(error).__name__}); see the backend log."
-            if current is not None and (note := seen_note(current.title)):
-                text += f" This incident is {note[1:-1]}."
+            text = Shown.of("notice/run_error", error=type(error).__name__)
+            if current is not None and (seen := seen_since(current.title)):
+                count, since = seen
+                text = text.then(Shown.of("notice/run_error_repeat", count=count, since=since))
             try:
                 await self.repo.set_status(incident_id, "failed")
-                await self.bus.publish(incident_id, "notice", {"text": text})
+                await self.bus.publish(incident_id, "notice", shown_payload(text))
             except Exception:
                 log.exception("incident %s: recording the failure failed", incident_id)
             await self._tell(incident_id, text, ending="error")
@@ -422,7 +421,7 @@ class IncidentRunner:
             return
         is_host = incident is not None and incident.subject.kind == "host"
         text = QUIET_RUN_NOTICE_HOST if is_host else QUIET_RUN_NOTICE
-        await self.bus.publish(incident_id, "notice", {"text": text})
+        await self.bus.publish(incident_id, "notice", shown_payload(text))
         await self._tell(incident_id, text, ending="quiet")
 
     async def _pause(
@@ -442,17 +441,14 @@ class IncidentRunner:
         paused_for = (now - self._since.setdefault(incident_id, now)).total_seconds()
         text = None
         if announce:
-            text = (
-                f"The model is not answering ({unavailable.reason}). The run is paused and tries "
-                f"again from where it stopped, first in {base} minutes, then less often."
-            )
+            text = Shown.of("notice/model_paused", reason=unavailable.reason, minutes=str(base))
         elif paused_for >= LONG_PAUSE_S and incident_id not in self._warned_long:
             self._warned_long.add(incident_id)
-            text = "The run has been paused for an hour: the model is still not answering."
+            text = STILL_PAUSED
         try:
             await self.repo.set_status(incident_id, "paused")
             if text is not None:
-                await self.bus.publish(incident_id, "notice", {"text": text})
+                await self.bus.publish(incident_id, "notice", shown_payload(text))
         except Exception:
             log.exception("incident %s: recording the pause failed", incident_id)
         if text is not None:

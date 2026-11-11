@@ -26,6 +26,7 @@ from bleep.notify.telegram import MessageLog, OnIt, TelegramBot, chosen_until, s
 from bleep.schemas.graph import Decision, PlanStep, Proposal
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Thresholds
+from bleep.schemas.shown import Shown
 from bleep.store.db import Database
 from bleep.talk.times import when
 from bleep.watcher.detector import Detector
@@ -206,7 +207,9 @@ async def test_the_opener_of_a_host_incident_carries_im_on_it(env):
 
 async def test_only_the_opener_carries_it(env):
     incident = await env.open()
-    await env.notifier.notice(incident.id, "The model is not answering.")
+    await env.notifier.notice(
+        incident.id, Shown.of("notice/model_paused", reason="timeout", minutes="5")
+    )
 
     opener, note = env.chat.sent("sendMessage")
     assert buttons(opener) and not buttons(note)

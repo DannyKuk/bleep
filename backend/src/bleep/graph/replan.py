@@ -7,10 +7,11 @@ plan and the world (or the human) can go on forever. See docs/design/graph.md.
 """
 
 from bleep.graph.deps import GraphDeps
+from bleep.graph.shown import shown_payload
 from bleep.graph.state import IncidentState
+from bleep.schemas.shown import Shown
 
-PLANNING_AGAIN = "Planning again."
-STOPPED = "Bleep stopped after {limit} new plans in this incident; nothing more will run."
+PLANNING_AGAIN = Shown.of("notice/planning_again")
 
 
 def replans_left(deps: GraphDeps, state: IncidentState) -> bool:
@@ -18,7 +19,7 @@ def replans_left(deps: GraphDeps, state: IncidentState) -> bool:
     return state.get("replans", 0) + 1 <= deps.settings_store.budgets().replans
 
 
-async def replan(deps: GraphDeps, state: IncidentState, notice: str | None = None) -> dict:
+async def replan(deps: GraphDeps, state: IncidentState, notice: Shown | None = None) -> dict:
     """The state update for one more trip back to Propose, or for the end of the run.
 
     `notice`, when given, is published with "Planning again." after it; when the budget is spent
@@ -28,11 +29,10 @@ async def replan(deps: GraphDeps, state: IncidentState, notice: str | None = Non
     limit = deps.settings_store.budgets().replans
     incident_id = state["incident_id"]
     if count > limit:
-        text = STOPPED.format(limit=limit)
-        await deps.bus.publish(
-            incident_id, "notice", {"text": f"{notice} {text}" if notice else text}
-        )
+        stopped = Shown.of("notice/stopped", limit=str(limit))
+        text = notice.then(stopped) if notice else stopped
+        await deps.bus.publish(incident_id, "notice", shown_payload(text))
         return {"replans": count, "outcome": "replan_limit"}
     if notice:
-        await deps.bus.publish(incident_id, "notice", {"text": f"{notice} {PLANNING_AGAIN}"})
+        await deps.bus.publish(incident_id, "notice", shown_payload(notice.then(PLANNING_AGAIN)))
     return {"replans": count}

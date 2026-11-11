@@ -13,13 +13,17 @@ from pydantic import SecretStr, ValidationError
 
 from bleep import prompts
 from bleep.config import Settings
-from bleep.graph.nodes.report import HEALTHY_ANYWAY, OUTCOME_TEXT
+from bleep.graph.replan import PLANNING_AGAIN
+from bleep.graph.shown import english
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
+from bleep.incidents.runner import BACK_NOTICE
 from bleep.notify.notifier import Notifier, _end_template, setup
 from bleep.notify.telegram import MessageLog, TelegramBot
 from bleep.schemas.graph import (
+    HEALTHY_ANYWAY,
+    OUTCOME_TEXT,
     Check,
     Decision,
     Outcome,
@@ -29,7 +33,9 @@ from bleep.schemas.graph import (
     VerificationResult,
 )
 from bleep.schemas.incidents import Signal, Subject
+from bleep.schemas.shown import Shown
 from bleep.store.db import Database
+from bleep.watcher.manager import REMOVED_NOTICE
 
 T0 = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
 CHAT = "4242"
@@ -44,6 +50,7 @@ PLAN = Proposal(
     reason="shop-web needs its database.",
 )
 END_EMOJI = ("✅", "⚠️", "❔", "🙅", "🛑 *Stopped", "🤫", "👍", "❗", "➖")
+PAUSED = Shown.of("notice/model_paused", reason="timeout", minutes="5")
 
 
 class Chat:
@@ -453,7 +460,7 @@ async def test_a_host_that_comes_back_ends_with_back(env):
     incident = await env.open(HOST, kind="host_unreachable", container=None)
     await env.notifier.incident_opened(incident.model_copy(update={"status": "waiting"}))
     env.now = T0 + timedelta(minutes=6)
-    await env.notifier.notice(incident.id, "Closed: the host answers again.", ending="back")
+    await env.notifier.notice(incident.id, BACK_NOTICE, ending="back")
 
     opener, back = env.chat.sent()
     assert first_line(opener) == "*🔴 New: M1 \\#1 · host*"
@@ -473,7 +480,7 @@ async def test_a_host_that_comes_back_ends_with_back(env):
 async def test_every_other_close_is_its_own_end_message(env, ending, head):
     incident = await env.open()
     await env.notifier.incident_opened(incident)
-    await env.notifier.notice(incident.id, "Closed: some reason.", ending=ending)
+    await env.notifier.notice(incident.id, REMOVED_NOTICE, ending=ending)
 
     opener, end = env.chat.sent()
     assert first_line(end) == head and replied_to(end) == opener["id"]
@@ -483,7 +490,7 @@ async def test_every_other_close_is_its_own_end_message(env, ending, head):
 async def test_a_note_in_the_middle_of_a_run_is_no_end(env):
     incident = await env.open()
     await env.notifier.incident_opened(incident)
-    await env.notifier.notice(incident.id, "The model is not answering.")
+    await env.notifier.notice(incident.id, PAUSED)
 
     opener, note = env.chat.sent()
     assert note["text"].startswith("ℹ️ The model is not answering") and not ends([note])
@@ -559,7 +566,7 @@ async def test_when_the_opener_never_arrived_the_next_message_becomes_the_opener
     await env.notifier.incident_opened(incident)  # lost: Telegram is down
     env.chat.down = False
     await env.ask(incident)
-    await env.notifier.notice(incident.id, "Planning again.")
+    await env.notifier.notice(incident.id, PLANNING_AGAIN)
 
     proposal, note = env.chat.sent()
     assert first_line(proposal) == "*🔴 New: shop \\#1 · laptop*"
@@ -639,14 +646,14 @@ async def test_the_opener_says_what_was_seen(env, subject, kind, detail, seen):
 async def test_a_folded_host_repeat_ends_with_a_silent_back(env):
     first = await env.open(HOST, kind="host_unreachable", container=None)
     await env.notifier.incident_opened(first.model_copy(update={"status": "waiting"}))
-    await env.notifier.notice(first.id, "Closed: the host answers again.", ending="back")
+    await env.notifier.notice(first.id, BACK_NOTICE, ending="back")
     await env.close(first)
     env.now = T0 + timedelta(minutes=10)
     second = await env.open(HOST, kind="host_unreachable", container=None)
     assert second.fold_of == first.id
     await env.notifier.incident_opened(second.model_copy(update={"status": "waiting"}))
     env.now = T0 + timedelta(minutes=14)
-    await env.notifier.notice(second.id, "Closed: the host answers again.", ending="back")
+    await env.notifier.notice(second.id, BACK_NOTICE, ending="back")
 
     _, first_back, again, back = env.chat.sent()
     assert first_line(again).startswith("*🔁 Again: M1 \\#2")
@@ -658,8 +665,8 @@ async def test_a_folded_host_repeat_ends_with_a_silent_back(env):
 async def test_two_messages_sent_at_once_give_one_opener_and_one_reply(env):
     incident = await env.open()
     await asyncio.gather(
-        env.notifier.notice(incident.id, "first note"),
-        env.notifier.notice(incident.id, "second note"),
+        env.notifier.notice(incident.id, PLANNING_AGAIN),
+        env.notifier.notice(incident.id, PAUSED),
     )
 
     opener, reply = env.chat.sent()
@@ -667,7 +674,7 @@ async def test_two_messages_sent_at_once_give_one_opener_and_one_reply(env):
     assert replied_to(reply) == opener["id"] and "New" not in reply["text"]
 
 
-CLOSED_QUIET = "Closed: you told me to leave shop alone."
+CLOSED_QUIET = Shown.of("notice/left_alone", name="shop")
 
 
 async def test_a_close_after_the_end_message_is_a_note_not_a_second_end(env):
@@ -708,7 +715,7 @@ async def test_a_report_and_a_close_at_once_make_one_end_and_one_note(env):
 async def test_a_notice_is_one_line_whatever_a_name_in_it_holds(env):
     incident = await env.open()
     await env.notifier.incident_opened(incident)
-    text = "Closed: you told me to leave shop\n✅ Fixed in 1 min\nalone."
+    text = Shown.of("notice/left_alone", name="shop\n✅ Fixed in 1 min\n")
     await env.notifier.notice(incident.id, text, ending="quiet")
 
     _, end = env.chat.sent()
@@ -737,7 +744,7 @@ async def test_a_store_error_while_telling_never_reaches_the_run(env, monkeypatc
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(env.messages, "first_for", locked)
-    await env.notifier.notice(incident.id, "The model budget is spent.")  # does not raise
+    await env.notifier.notice(incident.id, PAUSED)  # does not raise
     await env.notifier.report(incident, report(OUTCOME_TEXT["budget"]))
 
 
@@ -746,8 +753,59 @@ async def test_an_incident_closed_outside_its_report_leaves_no_lock_behind(env):
     incident = await env.open()
     await env.notifier.incident_opened(incident)
     await env.repo.close_unfinished(incident.id)  # as `IncidentRunner.end` does, before it tells
-    await env.notifier.notice(incident.id, "Closed: the host was removed.", ending="removed")
+    await env.notifier.notice(incident.id, REMOVED_NOTICE, ending="removed")
     await env.notifier.drain()
     gc.collect()
 
     assert len(env.chat.sent()) == 2 and len(env.notifier._threads) == 0
+
+
+# --- the fixed texts other parts wrote, in the picked language (#427) ---
+
+
+async def test_a_notice_and_an_end_carry_their_text_in_the_picked_language(env):
+    env.notifier.language = lambda: "de"
+    incident = await env.open()
+    await env.notifier.incident_opened(incident)
+    await env.notifier.notice(incident.id, PLANNING_AGAIN)
+    await env.notifier.notice(incident.id, CLOSED_QUIET, "quiet")
+
+    _, note, end = env.chat.sent()
+    assert note["text"] == "ℹ️ Ich plane neu\\."
+    assert end["text"] == "*🤫 Stumm*\nGeschlossen: Du hast mir gesagt, shop in Ruhe zu lassen\\."
+
+
+async def test_in_english_a_notice_is_the_text_as_stored(env):
+    incident = await env.open()
+    await env.notifier.incident_opened(incident)
+    await env.notifier.notice(incident.id, BACK_NOTICE, ending="back")
+
+    _, end = env.chat.sent()
+    assert end["text"].split("\n")[1] == (
+        "Closed: the host answers again\\. It recovered on its own; nothing was changed\\."
+    )
+
+
+async def test_a_stopped_end_says_its_outcome_in_the_picked_language(env):
+    env.notifier.language = lambda: "de"
+    incident = await env.open()
+    await env.notifier.incident_opened(incident)
+    outcome = Shown.of("outcome/not_verified", outcome=Shown.of("outcome/budget"))
+    stopped = report(english(outcome), shown={"outcome": outcome})
+    await env.notifier.report(incident, stopped)
+
+    end = env.chat.sent()[-1]["text"].split("\n")
+    assert end[:2] == [
+        "*🛑 Gestoppt*",
+        "Gestoppt, das Modellbudget ist aufgebraucht; eine frühere Aktion wurde nicht geprüft\\.",
+    ]
+
+
+async def test_a_cause_nobody_determined_is_said_in_the_picked_language(env):
+    env.notifier.language = lambda: "de"
+    incident = await env.open()
+    await env.notifier.incident_opened(incident)
+    undetermined = {"cause": Shown.of("report/not_determined")}
+    await env.notifier.report(incident, report(OUTCOME_TEXT["no_action"], shown=undetermined))
+
+    assert "Nicht bestimmt\\." in env.chat.sent()[-1]["text"]

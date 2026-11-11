@@ -24,6 +24,7 @@ from bleep.graph.deps import GraphDeps
 from bleep.graph.host_text import describe_basics, describe_urls, gib, service_name
 from bleep.graph.look import look_rule
 from bleep.graph.planted import result_holds_tag
+from bleep.graph.shown import shown_payload
 from bleep.graph.state import IncidentState, Node
 from bleep.guard.log import GuardKind
 from bleep.guard.pipeline import guard_text
@@ -36,6 +37,7 @@ from bleep.memory.text import describe_fact, describe_past
 from bleep.schemas.graph import GatherContext
 from bleep.schemas.incidents import Signal
 from bleep.schemas.settings import Budgets
+from bleep.schemas.shown import Shown
 from bleep.tools.registry import ToolBriefing, ToolContext
 
 log = logging.getLogger(__name__)
@@ -84,13 +86,10 @@ def first_line(guarded: str) -> str:
     return line if len(line) <= SUMMARY_CHARS else line[: SUMMARY_CHARS - 1] + "…"
 
 
-def _budget_text(spent: BudgetExceeded, budgets: Budgets) -> str:
+def _budget_text(spent: BudgetExceeded, budgets: Budgets) -> Shown:
     if spent.kind == "daily_cost":
-        cap = f"${budgets.daily_cost_usd:.2f}"
-        return f"Investigation stopped: the daily model cost cap ({cap}) is spent."
-    return (
-        f"Investigation stopped: this incident used its {budgets.incident_tokens:,} model tokens."
-    )
+        return Shown.of("notice/budget_daily", cap=f"${budgets.daily_cost_usd:.2f}")
+    return Shown.of("notice/budget_tokens", tokens=f"{budgets.incident_tokens:,}")
 
 
 def _source(name: str) -> str:
@@ -157,7 +156,7 @@ def make(deps: GraphDeps) -> Node:
             except BudgetExceeded as spent:
                 text = _budget_text(spent, deps.settings_store.budgets())
                 record("budget", f"{spent.kind} budget spent in investigate round {rounds}")
-                await deps.bus.publish(incident_id, "notice", {"text": text})
+                await deps.bus.publish(incident_id, "notice", shown_payload(text))
                 try:
                     await deps.notifier.notice(incident_id, text)
                 except Exception as error:  # a channel outage must not lose the budget's report

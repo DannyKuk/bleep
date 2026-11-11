@@ -43,6 +43,7 @@ from langchain_core.language_models import BaseChatModel
 
 from bleep.config import Settings
 from bleep.graph.deps import ModelFactory
+from bleep.graph.shown import shown_payload
 from bleep.guard.log import GuardLogger
 from bleep.guard.titles import title_name
 from bleep.hosts.dashboard import HostChange
@@ -65,6 +66,7 @@ from bleep.schemas.incidents import Incident, IncidentStatus, RecoveryEvent, Sig
 from bleep.schemas.quiet import QuietChange, QuietState
 from bleep.schemas.services import HostState
 from bleep.schemas.settings import DEFAULT_LANGUAGE, Budgets, Language
+from bleep.schemas.shown import Shown
 from bleep.watcher import host_probe, http_checks, poller
 from bleep.watcher.detector import (
     AttachSignals,
@@ -94,13 +96,8 @@ NO_EXPLANATION = "No explanation could be generated for this restart."
 CAP_SPENT_EXPLANATION = "No explanation: the daily cost cap is spent."
 HELD_LOOP_EXPLANATION = "It died again in its crash loop, and its restart policy brought it back."
 RECOVERY_USAGE = "recoveries"  # the usage ledger's key for recovery lines, which have no incident
-REMOVED_NOTICE = "Closed: the host was removed from Bleep on the dashboard, so it is not watched."
-MOVED_NOTICE = (
-    "The host's address, port or user was changed on the dashboard: what Bleep reads from here on "
-    "comes from the new connection, which may be another machine."
-)
-LEFT_ALONE_NOTICE = "Closed: you told me to leave {name} alone."
-SNOOZED_NOTICE = "Closed: you snoozed {name}; I look at it again when the snooze ends."
+REMOVED_NOTICE = Shown.of("notice/removed")
+MOVED_NOTICE = Shown.of("notice/moved")
 EVERY_SERVICE = "*"  # a waiting recheck of all of a host's services, known only from a listing
 RUNNING_STATUSES: tuple[IncidentStatus, ...] = (
     "executing",
@@ -116,9 +113,9 @@ def repeat_hold(repeats: int) -> timedelta:
     return min(REPEAT_HOLD * 2 ** min(repeats - 1, 5), REPEAT_HOLD_MAX)
 
 
-def quiet_notice(name: str, state: QuietState) -> str:
-    template = LEFT_ALONE_NOTICE if state.mode == "leave_alone" else SNOOZED_NOTICE
-    return template.format(name=name)
+def quiet_notice(name: str, state: QuietState) -> Shown:
+    template = "notice/left_alone" if state.mode == "leave_alone" else "notice/snoozed"
+    return Shown.of(template, name=name)
 
 
 def _host_of(service_id: str) -> str:
@@ -289,7 +286,7 @@ class WatcherManager:
             if self._health is not None:
                 await self._health.forget_host(host_id)
             for incident in await self.repo.open_on_host(host_id):
-                await self.bus.publish(incident.id, "notice", {"text": MOVED_NOTICE})
+                await self.bus.publish(incident.id, "notice", shown_payload(MOVED_NOTICE))
         if change.kind == "added":
             self.registry.add(change.config)
         else:
@@ -624,8 +621,8 @@ class WatcherManager:
         new = urls - named
         self._announced[host_id] = (host_incident, named | urls)
         if new:
-            text = f"URL checks failing while the host is unreachable: {', '.join(sorted(new))}."
-            await self.bus.publish(host_incident, "notice", {"text": text})
+            text = Shown.of("notice/urls_unreachable", urls=", ".join(sorted(new)))
+            await self.bus.publish(host_incident, "notice", shown_payload(text))
 
     # -- the detector's outcomes ---------------------------------------------------------------
 

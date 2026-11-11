@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Literal
 
 from bleep.graph.deps import Approvals
+from bleep.graph.shown import english, shown_payload
 from bleep.hosts.config import is_exit_name
 from bleep.hosts.discovery import compose_service
 from bleep.hosts.registry import Registry
@@ -22,6 +23,7 @@ from bleep.incidents.runner import IncidentRunner, waits_for_host
 from bleep.incidents.settings_store import SettingsRefused, SettingsStore
 from bleep.schemas.graph import Decision
 from bleep.schemas.incidents import TERMINAL_STATUSES, Incident, Signal
+from bleep.schemas.shown import Shown
 
 log = logging.getLogger(__name__)
 
@@ -30,10 +32,13 @@ Channel = Literal["telegram", "dashboard"]
 RUNNING = ("executing", "verifying")
 # The signals of a job's clean exit: its deaths, then down past grace or a loop of them.
 EXIT_KINDS = ("container_died", "down_past_grace", "restart_loop")
-CLOSED_NOTICE = "Closed: you said this is expected."
-DECISION_TEXT = "This is expected."
-CLOSED_MEANWHILE = "The incident was closed meanwhile, before anyone answered its plan."
-_CHANNEL = {"telegram": "Telegram", "dashboard": "the dashboard"}
+CLOSED_NOTICE = Shown.of("notice/expected")
+DECISION_TEXT = Shown.of("expected/decision")
+CLOSED_MEANWHILE = Shown.of("expected/closed_meanwhile")
+_CHANNEL = {
+    "telegram": Shown.of("channel/on_telegram"),
+    "dashboard": Shown.of("channel/on_dashboard"),
+}
 
 
 @dataclass(frozen=True)
@@ -46,23 +51,26 @@ class Expectation:
     entries: tuple[str, ...] = ()
     subject_name: str = ""
 
-    def sentence(self) -> str:
+    def said(self) -> Shown:
+        """What it records, in one sentence."""
         if self.kind == "may_sleep":
-            return (
-                f"{self.subject_name} may sleep: I open nothing while it does not answer, "
-                "and show it as asleep."
-            )
-        jobs = ", ".join(self.entries)
-        return (
-            f"{jobs} on {self.subject_name} is expected to exit: "
-            "I stay quiet when it exits with 0, and a crash is still an incident."
-        )
+            return Shown.of("expected/may_sleep", name=self.subject_name)
+        return Shown.of("expected/exits", jobs=", ".join(self.entries), name=self.subject_name)
+
+    def sentence(self) -> str:
+        return english(self.said())
 
 
 @dataclass(frozen=True)
 class Answer:
+    """What a press of "This is expected" is told, shown in the person's language."""
+
     done: bool
-    text: str
+    said: Shown
+
+    @property
+    def text(self) -> str:
+        return english(self.said)
 
 
 def expectation_for(
@@ -146,10 +154,10 @@ class Expectations:
         incident."""
         expectation = await self.offered(incident_id)
         if expectation is None:
-            return Answer(False, "Nothing here can be marked as expected now.")
+            return Answer(False, Shown.of("expected/not_offered"))
         service = self.registry.service(expectation.service_id or "")
         if expectation.kind == "exits" and service is None:
-            return Answer(False, "Bleep does not see that service now; nothing was recorded.")
+            return Answer(False, Shown.of("expected/no_service"))
         try:
             if expectation.kind == "may_sleep":
                 await self.settings.expect_sleep(expectation.host_id)
@@ -157,31 +165,37 @@ class Expectations:
                 await self.settings.expect_exits(service, list(expectation.entries))
         except SettingsRefused as refused:
             log.warning("incident %s: expectation not recorded: %s", incident_id, refused)
-            return Answer(False, "Bleep could not record that; nothing was changed.")
-        text = f"You said this is expected. {expectation.sentence()}"
+            return Answer(False, Shown.of("expected/not_recorded"))
+        text = Shown.of("expected/said", sentence=expectation.said())
         pending = await self.approvals.current(incident_id)
         if pending is not None and pending.decision is None:
-            decision = Decision(kind="reject", text=DECISION_TEXT, via=via, at=self.clock())
+            decision = Decision(
+                kind="reject",
+                text=english(DECISION_TEXT),
+                via=via,
+                at=self.clock(),
+                shown=DECISION_TEXT,
+            )
             if await self.approvals.resolve(incident_id, decision, pending.id) is None:
                 return await self._lost(incident_id, text, via)
         elif pending is not None:  # a decision won while the settings were written
             return await self._lost(incident_id, text, via)
-        await self.bus.publish(incident_id, "expected", {"text": text, "via": via})
+        await self.bus.publish(incident_id, "expected", shown_payload(text, via=via))
         if not await self.runner.end(incident_id, CLOSED_NOTICE, ending="expected", spare=RUNNING):
             # A plan started running on the host meanwhile, or the incident closed on its own.
-            return Answer(False, f"{text} The incident was not closed here; see its page.")
+            return Answer(False, text.then(Shown.of("expected/not_closed")))
         log.info("incident %s: marked expected on %s", incident_id, via)
         return Answer(True, text)
 
-    async def _lost(self, incident_id: str, recorded: str, via: Channel) -> Answer:
+    async def _lost(self, incident_id: str, recorded: Shown, via: Channel) -> Answer:
         """A decision on another channel won the plan after the expectation was written, or the
         incident was closed from outside (quiet, a removed host) before anyone answered it."""
         latest = await self.approvals.current(incident_id)
-        await self.bus.publish(incident_id, "expected", {"text": recorded, "via": via})
+        await self.bus.publish(incident_id, "expected", shown_payload(recorded, via=via))
         if latest is not None and latest.closed:
-            return Answer(False, f"{recorded} {CLOSED_MEANWHILE}")
+            return Answer(False, recorded.then(CLOSED_MEANWHILE))
         won = latest.decision if latest is not None else None
-        where = f" on {_CHANNEL[won.via]}" if won is not None else ""
-        return Answer(
-            False, f"{recorded} The plan was already decided{where}, so the incident stays open."
-        )
+        if won is None:
+            return Answer(False, recorded.then(Shown.of("expected/decided")))
+        decided = Shown.of("expected/decided_on", channel=_CHANNEL[won.via])
+        return Answer(False, recorded.then(decided))

@@ -10,13 +10,19 @@ from bleep.guard.redact import redact_text
 from bleep.guard.sanitize import strip_control
 from bleep.schemas.incidents import Signal, Subject
 
-_SEEN = re.compile(r"\(seen \d+ times since [^)]*\)$")
+_SEEN = re.compile(r"\(seen (\d+) times since ([^)]*)\)$")
 
 
 def seen_note(title: str) -> str:
     """The "(seen N times since …)" a repeat's title ends with; empty for any other title."""
     found = _SEEN.search(title)
     return found.group(0) if found else ""
+
+
+def seen_since(title: str) -> tuple[str, str] | None:
+    """The N and the time of a repeat's "(seen N times since …)"; None for any other title."""
+    found = _SEEN.search(title)
+    return (found.group(1), found.group(2)) if found else None
 
 
 # The kinds `hosts.discovery` puts before a service key: Bleep's own words, not the label's.

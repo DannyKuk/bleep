@@ -31,6 +31,7 @@ name, never a diagnosis or a log, so nothing a host wrote can become a fact Blee
 import asyncio
 import logging
 import re
+from datetime import datetime
 
 from langchain_core.messages import HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
@@ -44,6 +45,7 @@ from bleep.graph.nodes import verify
 from bleep.graph.nodes.diagnose import FALLBACK_CAUSE
 from bleep.graph.nodes.propose import BUDGET, NO_DIAGNOSIS, NO_PLAN, REFUSED
 from bleep.graph.planted import HINT_END, planted_places, planted_sentence
+from bleep.graph.shown import english
 from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.log import GuardKind
 from bleep.guard.report_check import MARKER, check_report
@@ -52,7 +54,6 @@ from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.schemas.graph import (
     FACT_CHARS,
-    HEALTHY_ANYWAY,
     OUTCOME_TEXT,
     STARTED_AFTER_FIX,
     Decision,
@@ -66,19 +67,19 @@ from bleep.schemas.graph import (
 from bleep.schemas.graph import TimelineEntry as Entry
 from bleep.schemas.incidents import Incident, IncidentEvent, Signal
 from bleep.schemas.settings import DEFAULT_LANGUAGE
+from bleep.schemas.shown import Shown
 
 log = logging.getLogger(__name__)
 
-# Added to an early stop (budget, re-plans) after Verify sent back a run in which a step ran.
-NOT_VERIFIED = "an earlier action was not verified"
-CHANNEL = {"telegram": "Telegram", "dashboard": "the dashboard"}
-FINISHED = {"gather": "Gathered the context", "diagnose": "Diagnosed"}
+CHANNELS = ("telegram", "dashboard")
+FINISHED = {"gather": Shown.of("timeline/gathered"), "diagnose": Shown.of("timeline/diagnosed")}
+STEP_STATUSES = ("started", "done", "failed", "skipped")
 SUMMARY_CHARS = 800
 CAUSE_CHARS = 500
 FOLLOW_UPS = 5
 FOLLOW_UP_CHARS = 300
 ENTRY_CHARS = 200
-NOT_DETERMINED = "Not determined."
+NOT_DETERMINED = english(Shown.of("report/not_determined"))
 MAX_FACTS = 2
 # The reasons of the plans of no action that code, not the model, makes in Propose.
 CODE_REASONS = frozenset({NO_DIAGNOSIS, NO_PLAN, BUDGET, REFUSED})
@@ -180,22 +181,30 @@ async def _look_outcome(deps: GraphDeps, state: IncidentState) -> Outcome:
     return "healthy" if checked.ok else "no_action"
 
 
-def outcome_text(
+def outcome_shown(
     result: Outcome, results: list[StepResult] | None, proposal: Proposal | None
-) -> str:
+) -> Shown:
     """The outcome's fixed text, told apart where the outcome alone would mislead: a pass with no
     step of this plan that succeeded (`plan_results`: an earlier plan's success is not this
     plan's), and an early stop after any action, of this plan or an earlier one, that Verify
     could not confirm."""
     results = results or []
     if result == "resolved" and not any(r.ok for r in plan_results(proposal, results)):
-        return HEALTHY_ANYWAY
+        return Shown.of("outcome/healthy_anyway")
     if result in ("budget", "replan_limit") and any(r.reached_engine for r in results):
-        return f"{OUTCOME_TEXT[result]}; {NOT_VERIFIED}"
-    return OUTCOME_TEXT[result]
+        return Shown.of("outcome/not_verified", outcome=Shown.of(f"outcome/{result}"))
+    return Shown.of(f"outcome/{result}")
 
 
-def _clip(text: str, limit: int) -> str:
+def outcome_text(
+    result: Outcome, results: list[StepResult] | None, proposal: Proposal | None
+) -> str:
+    """`outcome_shown` in English, as the report stores it."""
+    return english(outcome_shown(result, results, proposal))
+
+
+def clip(text: str, limit: int) -> str:
+    """`text` on one line, cut to `limit` characters."""
     text = " ".join(str(text).split())
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
@@ -206,17 +215,26 @@ def _no_fixed_claim(text: str) -> str:
     return " ".join(s for s in sentences if s and not _FIXED.search(s))
 
 
+def decision_shown(
+    kind: str, via: str | None, text: str | None = None, *, let_go: bool = False
+) -> Shown:
+    """The decision as one line, with its channel: "Approved on Telegram". `let_go` is a reject
+    of a plan Bleep's own checks refused."""
+    channel = via if via in CHANNELS else "other"
+    on = Shown.of(f"channel/on_{channel}")
+    if kind == "approve":
+        return Shown.of("decision/approved", channel=on)
+    if kind == "reject":
+        return Shown.of("decision/let_go" if let_go else "decision/rejected", channel=on)
+    said = clip(text or "", ENTRY_CHARS)
+    return Shown.of("decision/instructed", channel=Shown.of(f"channel/from_{channel}"), text=said)
+
+
 def decision_text(
     kind: str, via: str | None, text: str | None = None, *, let_go: bool = False
 ) -> str:
-    """The decision as one line, with its channel: "Approved on Telegram". `let_go` is a reject
-    of a plan Bleep's own checks refused."""
-    where = CHANNEL.get(via or "", "a channel")
-    if kind == "approve":
-        return f"Approved on {where}"
-    if kind == "reject":
-        return f"Let go on {where}" if let_go else f"Rejected on {where}"
-    return f"Instruction from {where}: {_clip(text or '', ENTRY_CHARS)}"
+    """`decision_shown` in English, as the report stores it."""
+    return english(decision_shown(kind, via, text, let_go=let_go))
 
 
 def _steps_text(steps: list[dict]) -> str:
@@ -225,29 +243,34 @@ def _steps_text(steps: list[dict]) -> str:
     )
 
 
-def _signal_text(signal: Signal) -> str:
-    where = f" ({signal.container})" if signal.container else ""
-    return f"Signal: {signal.kind.replace('_', ' ')}{where}"
+def _signal_text(signal: Signal) -> Shown:
+    kind = Shown.of(f"signal/{signal.kind}")
+    if signal.container:
+        return Shown.of("timeline/signal_container", kind=kind, container=signal.container)
+    return Shown.of("timeline/signal", kind=kind)
 
 
-def _event_text(event: IncidentEvent, tool_calls: int) -> str | None:
-    """One line for an event worth a place in the report, None for the rest."""
+def _event_text(event: IncidentEvent, tool_calls: int) -> Shown | str | None:
+    """One line for an event worth a place in the report, None for the rest; a notice stored
+    before #427 is its text alone."""
     payload = event.payload
     match event.kind:
         case "node_finished" if payload.get("node") == "investigate":
-            return f"Investigated with {tool_calls} tool call{'' if tool_calls == 1 else 's'}"
+            if tool_calls == 1:
+                return Shown.of("timeline/investigated_one")
+            return Shown.of("timeline/investigated", count=str(tool_calls))
         case "node_finished":
             return FINISHED.get(str(payload.get("node")))
         case "proposal" if payload.get("kind") == "act":
-            return "Proposed: " + _steps_text(payload.get("steps") or [])
+            return Shown.of("timeline/proposed", steps=_steps_text(payload.get("steps") or []))
         case "proposal":
-            return "Proposed no action"
+            return Shown.of("timeline/proposed_nothing")
         case "approval_requested":
-            return "Asked for approval"
+            return Shown.of("timeline/asked")
         case "reminder":
-            return "Reminder sent"
+            return Shown.of("timeline/reminded")
         case "decision":
-            return decision_text(
+            return decision_shown(
                 str(payload.get("kind")),
                 payload.get("via"),
                 payload.get("text"),
@@ -255,27 +278,31 @@ def _event_text(event: IncidentEvent, tool_calls: int) -> str | None:
             )
         case "action":  # Execute, one per step status change: {action, target, status}
             action, target = payload.get("action", "?"), payload.get("target", "?")
-            return f"{action} {target}: {payload.get('status', '?')}"
+            status = str(payload.get("status", "?"))
+            word = Shown.of(f"step/{status}") if status in STEP_STATUSES else status
+            return Shown.of("timeline/step", action=str(action), target=str(target), status=word)
         case "verification":
             return _verification_text(payload)
         case "notice":
-            return str(payload.get("text", "")) or None
+            return Shown.in_payload(payload) or str(payload.get("text", "")) or None
     return None
 
 
-def _verification_text(payload: dict) -> str:
+def _verification_text(payload: dict) -> Shown:
     """A check's line, such as "Check 2 passed", with "; no URL was checked" when it passed on
     containers alone (a service with no health URL): a running container does not show that the
     service answers. A check failed by a container started again after the fix says so (#320),
     without its name, which is host text."""
-    line = f"Check {payload.get('attempt', 1)} {'passed' if payload.get('ok') else 'failed'}"
+    attempt = str(payload.get("attempt", 1))
     checks = payload.get("checks") or []
     kinds = {check.get("kind") for check in checks}
     if payload.get("ok") and "container" in kinds and "url" not in kinds:
-        return f"{line}; no URL was checked"
+        return Shown.of("timeline/check_passed_no_url", attempt=attempt)
+    if payload.get("ok"):
+        return Shown.of("timeline/check_passed", attempt=attempt)
     if any(_started_after_fix(check) for check in checks):
-        return f"{line}; a container was started again after the fix"
-    return line
+        return Shown.of("timeline/check_failed_started_again", attempt=attempt)
+    return Shown.of("timeline/check_failed", attempt=attempt)
 
 
 def _started_after_fix(check: dict) -> bool:
@@ -291,7 +318,7 @@ def timeline(signals: list[Signal], events: list[IncidentEvent]) -> list[Entry]:
 
     Node starts, tool calls and tool results are summed up into one line per investigation.
     """
-    entries = [Entry(at=s.at, text=_clip(_signal_text(s), ENTRY_CHARS)) for s in signals]
+    entries = [_entry(s.at, _signal_text(s)) for s in signals]
     tool_calls = 0
     for event in events:
         if event.kind == "node_started" and event.payload.get("node") == "investigate":
@@ -300,8 +327,15 @@ def timeline(signals: list[Signal], events: list[IncidentEvent]) -> list[Entry]:
             tool_calls += 1
         text = _event_text(event, tool_calls)
         if text:
-            entries.append(Entry(at=event.at, text=_clip(text, ENTRY_CHARS)))
+            entries.append(_entry(event.at, text))
     return sorted(entries, key=lambda entry: entry.at)  # stable: equal times keep their order
+
+
+def _entry(at: datetime, text: Shown | str) -> Entry:
+    """A timeline entry: its English text cut to size, and the shown text it was made from."""
+    if isinstance(text, str):
+        return Entry(at=at, text=clip(text, ENTRY_CHARS))
+    return Entry(at=at, text=clip(english(text), ENTRY_CHARS), shown=text)
 
 
 def action_taken(
@@ -416,7 +450,7 @@ async def _learn(deps: GraphDeps, state: IncidentState) -> None:
     )
     try:
         found = await _ask(deps, incident_id, _Facts, prompt)
-        texts = [_clip(text, FACT_CHARS) for text in found.facts]
+        texts = [clip(text, FACT_CHARS) for text in found.facts]
         texts = list(dict.fromkeys(text for text in texts if text))[:MAX_FACTS]
         await deps.memory.replace_report_facts(subject.service_id, incident_id, texts)
     except Exception as error:
@@ -461,18 +495,20 @@ def make(deps: GraphDeps) -> Node:
             result = await _look_outcome(deps, state)
         results = state.get("step_results")
         diagnosis, proposal = state.get("diagnosis"), state.get("proposal")
-        said = outcome_text(result, results, proposal)
+        said_shown = outcome_shown(result, results, proposal)
+        said = english(said_shown)
         fixed = said == OUTCOME_TEXT["resolved"]  # only then may the report say "fixed"
         incident = await deps.incidents.get(incident_id)
         signals = state.get("signals", [])
         title = incident.title if incident is not None else build_title(state["subject"], signals)
         decision: Decision | None = state.get("decision")
         let_go = bool(proposal and proposal.refused)
-        human = (
-            decision_text(decision.kind, decision.via, decision.text, let_go=let_go)
+        human_shown = (
+            decision_shown(decision.kind, decision.via, decision.text, let_go=let_go)
             if decision
             else None
         )
+        human = english(human_shown) if human_shown is not None else None
         taken = action_taken(results, proposal, state["subject"].host_id)
         entries = timeline(signals, await deps.bus.history(incident_id))
         language = deps.settings_store.language()
@@ -493,7 +529,7 @@ def make(deps: GraphDeps) -> Node:
         draft = await _write(deps, incident_id, prompt, schema)
 
         def own(text: str, limit: int) -> str:
-            text = _clip(text, limit)
+            text = clip(text, limit)
             return text if fixed else _no_fixed_claim(text)
 
         follow_ups = [own(item, FOLLOW_UP_CHARS) for item in draft.follow_ups[:FOLLOW_UPS]]
@@ -503,12 +539,12 @@ def make(deps: GraphDeps) -> Node:
         if not follow_ups and advice:
             follow_ups = [own(advice, FOLLOW_UP_CHARS)]
         root_cause = diagnosis.root_cause if diagnosis is not None else ""
-        english = draft.cause_en if isinstance(draft, _DraftWithEnglishCause) else ""
+        in_english = draft.cause_en if isinstance(draft, _DraftWithEnglishCause) else ""
         written = Report(
             title=title,
             summary=own(draft.summary, SUMMARY_CHARS) or f"{title}: {said[0].lower()}{said[1:]}.",
             cause=own(draft.cause, CAUSE_CHARS) or own(root_cause, CAUSE_CHARS) or NOT_DETERMINED,
-            cause_en=own(english, CAUSE_CHARS) or None,
+            cause_en=own(in_english, CAUSE_CHARS) or None,
             action_taken=taken,
             outcome=said,
             timeline=entries,
@@ -521,6 +557,12 @@ def make(deps: GraphDeps) -> Node:
                 deps.guard_log.record(incident_id, kind, detail)
 
         written = check_report(written, _raw_logs(state), record)
+        shown = {"outcome": said_shown}
+        if human_shown is not None:
+            shown["human_decision"] = human_shown
+        if written.cause == NOT_DETERMINED:
+            shown["cause"] = Shown.of("report/not_determined")
+        written = written.model_copy(update={"shown": shown})
         if language != DEFAULT_LANGUAGE:
             written = _usable_english_cause(written, incident_id)
         places, planted = await asyncio.to_thread(planted_follow_up, state)

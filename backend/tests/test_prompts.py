@@ -8,6 +8,7 @@ from bleep import prompts
 from bleep.graph.language import language_rule
 from bleep.prompts import PromptError, all_prompt_files, file_text, load, placeholders
 from bleep.schemas.settings import Language
+from bleep.schemas.shown import Shown
 
 
 def test_load_fills_placeholders(tmp_prompts):
@@ -414,3 +415,40 @@ def test_load_in_reads_the_twin(tmp_prompts):
 
 def test_the_languages_with_twins_are_the_ones_a_person_can_choose():
     assert get_args(Language) == prompts.LANGUAGES
+
+
+# --- the fixed texts other parts write (#427) ---
+
+
+def test_a_shown_text_has_a_twin_and_cannot_be_overridden():
+    assert prompts.in_language("shown/notice/back", "de") == "shown/de/notice/back"
+    assert not [name for name in prompts.overridable_names() if name.startswith("shown/")]
+    with pytest.raises(PromptError):
+        prompts.check_override("shown/notice/back", "Back.")
+
+
+def _shown_area(root: Path) -> None:
+    (root / "shown" / "de").mkdir(parents=True)
+    for language, hello, done in (
+        ("", "Hi {name}: {what}", "done"),
+        ("de", "Hallo {name}: {what}", "fertig"),
+    ):
+        (root / "shown" / language / "hello.md").write_text(hello + "\n", encoding="utf-8")
+        (root / "shown" / language / "done.md").write_text(done + "\n", encoding="utf-8")
+
+
+def test_show_fills_each_template_in_the_language_and_joins_the_parts(tmp_prompts):
+    _shown_area(tmp_prompts)
+    done = Shown.of("done")
+    text = Shown.joined(
+        [Shown.of("hello", name="Bleep", what=Shown.joined([done, done], ", ")), done], "; "
+    )
+    assert prompts.show(text, "en") == "Hi Bleep: done, done; done"
+    assert prompts.show(text, "de") == "Hallo Bleep: fertig, fertig; fertig"
+
+
+def test_show_reads_only_the_shown_texts(tmp_prompts):
+    with pytest.raises(PromptError):
+        prompts.show(Shown.of("../demo/hello", name="x"), "en")
+    with pytest.raises(PromptError):
+        prompts.show(Shown.of("hello"), "en")  # demo/hello exists, shown/hello does not

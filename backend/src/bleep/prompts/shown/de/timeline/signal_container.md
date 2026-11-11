@@ -1,0 +1,1 @@
+Signal: {kind} ({container})
