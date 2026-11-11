@@ -999,6 +999,29 @@ def test_a_token_after_an_escaped_line_break_or_tab_is_redacted(token, escape):
     assert token not in out and f"started{escape}<redacted>" in out
 
 
+@pytest.mark.parametrize("token", ON_SIGHT)
+@pytest.mark.parametrize(
+    "escape", ["\\u0026", "\\u003c", "\\u003E", "\\u000a", "\\u00ea", "\\u2028"]
+)
+def test_a_token_after_a_json_unicode_escape_is_redacted(token, escape):
+    """Go's encoding/json writes `&`, `<` and `>` as `\\u0026`, `\\u003c` and `\\u003e`."""
+    text = '{"q": "a=1' + escape + token + '"}'
+
+    out = redact_text(text)
+
+    assert token not in out and f"a=1{escape}<redacted>" in out
+
+
+@pytest.mark.parametrize("token", ON_SIGHT)
+@pytest.mark.parametrize("escape", ["\\f", "\\b", "%5Cn", "%5cr", "%5Ct", "%5Cf", "%5cb"])
+def test_a_token_after_a_form_feed_backspace_or_encoded_escape_is_redacted(token, escape):
+    text = "GET /log?msg=started" + escape + token + "&x=1"
+
+    out = redact_text(text)
+
+    assert token not in out and f"started{escape}<redacted>" in out
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -1006,6 +1029,12 @@ def test_a_token_after_an_escaped_line_break_or_tab_is_redacted(token, escape):
         "build x2525sk-" + B24,
         '{"msg": "\\xsk-' + B24 + '"}',
         "foonsk-" + B24,
+        '{"msg": "a\\u002sk-' + B24 + '"}',
+        '{"msg": "a\\u00zzsk-' + B24 + '"}',
+        '{"msg": "a\\\\u0026xsk-' + B24 + '"}',
+        "foobsk-" + B24,
+        "a%5Cxsk-" + B24,
+        "a%5Zbsk-" + B24,
     ],
 )
 def test_a_token_glued_to_what_is_almost_an_escape_stays(text):
@@ -1041,6 +1070,7 @@ def test_the_literal_first_patterns_match_what_the_start_first_ones_did():
     fillers = ["%3D", "%", "%2", "x", "_", "-", ".", " ", "é", "٣", "0", "\n", B24, HEX40, JWT]
     fillers += ["%25", "%253D", "25", "2525", "3D", "\\", "\\n", "\\r", "\\t", "n", "\\\\"]
     fillers += ["%25253D", "2525ab", "%2525", "x2525", "2525%"]
+    fillers += ["\\u0026", "\\u00", "\\f", "\\b", "%5Cn", "%5C", "u0026", "\\u003e"]
     rng = random.Random(416)
     for _ in range(4000):
         text = "".join(rng.choice(prefixes + fillers) for _ in range(rng.randrange(1, 10)))
@@ -1089,6 +1119,13 @@ def test_a_vendor_token_under_a_secret_key_is_one_redaction():
         "\\n",
         "\\nsk-",
         "\\\\nAQ.",
+        "\\u0026",
+        "\\u0026sk-",
+        "\\u00",
+        "\\fsk-",
+        "\\bAKIA",
+        "%5Cn",
+        "%5Cnsk_live_",
         "glrt-",
         "glagent-",
         "xghp_",
