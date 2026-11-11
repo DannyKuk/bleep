@@ -203,7 +203,8 @@ def outcome_text(
     return english(outcome_shown(result, results, proposal))
 
 
-def _clip(text: str, limit: int) -> str:
+def clip(text: str, limit: int) -> str:
+    """`text` on one line, cut to `limit` characters."""
     text = " ".join(str(text).split())
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
@@ -225,7 +226,7 @@ def decision_shown(
         return Shown.of("decision/approved", channel=on)
     if kind == "reject":
         return Shown.of("decision/let_go" if let_go else "decision/rejected", channel=on)
-    said = _clip(text or "", ENTRY_CHARS)
+    said = clip(text or "", ENTRY_CHARS)
     return Shown.of("decision/instructed", channel=Shown.of(f"channel/from_{channel}"), text=said)
 
 
@@ -333,8 +334,8 @@ def timeline(signals: list[Signal], events: list[IncidentEvent]) -> list[Entry]:
 def _entry(at: datetime, text: Shown | str) -> Entry:
     """A timeline entry: its English text cut to size, and the shown text it was made from."""
     if isinstance(text, str):
-        return Entry(at=at, text=_clip(text, ENTRY_CHARS))
-    return Entry(at=at, text=_clip(english(text), ENTRY_CHARS), shown=text)
+        return Entry(at=at, text=clip(text, ENTRY_CHARS))
+    return Entry(at=at, text=clip(english(text), ENTRY_CHARS), shown=text)
 
 
 def action_taken(
@@ -449,7 +450,7 @@ async def _learn(deps: GraphDeps, state: IncidentState) -> None:
     )
     try:
         found = await _ask(deps, incident_id, _Facts, prompt)
-        texts = [_clip(text, FACT_CHARS) for text in found.facts]
+        texts = [clip(text, FACT_CHARS) for text in found.facts]
         texts = list(dict.fromkeys(text for text in texts if text))[:MAX_FACTS]
         await deps.memory.replace_report_facts(subject.service_id, incident_id, texts)
     except Exception as error:
@@ -528,7 +529,7 @@ def make(deps: GraphDeps) -> Node:
         draft = await _write(deps, incident_id, prompt, schema)
 
         def own(text: str, limit: int) -> str:
-            text = _clip(text, limit)
+            text = clip(text, limit)
             return text if fixed else _no_fixed_claim(text)
 
         follow_ups = [own(item, FOLLOW_UP_CHARS) for item in draft.follow_ups[:FOLLOW_UPS]]
