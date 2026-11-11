@@ -1147,6 +1147,55 @@ async def test_letting_a_refused_plan_go_answers_that_it_was_let_go(env):
     assert "Let go" in pop_up["text"] and "Rejected" not in pop_up["text"]
 
 
+# A plan of no action whose fix the enabled actions could run (#365): asked as a refused plan is.
+COULD_RUN = Proposal(
+    kind="no_action",
+    reason="The value to use is the person's call.",
+    human_instructions="Remove TESTAPP_FAIL_AFTER_S (currently 180), then redeploy.",
+    could_run=["coolify.set_env", "coolify.redeploy"],
+    fix_runnable=True,
+)
+
+
+async def test_a_plan_bleep_could_run_shows_the_fix_and_offers_instruct_and_let_it_go(env):
+    incident, plan, request = await refused_incident(env, COULD_RUN)
+
+    await env.notifier.proposal(incident, None, plan, request)
+    await env.notifier.reminder(incident, request)
+
+    first, reminder = env.api.sent("sendMessage")
+    for message in (first, reminder):
+        [button] = message["reply_markup"]["inline_keyboard"][0]
+        assert (button["text"], button["callback_data"]) == ("Let it go", f"reject:{request.id}")
+        assert "could run" in message["text"] and "Reply" in message["text"]
+    assert r"TESTAPP\_FAIL\_AFTER\_S \(currently 180\)" in first["text"]
+    assert "refused" not in first["text"] + reminder["text"]
+
+
+async def test_an_approve_press_for_a_plan_bleep_could_run_is_refused(env):
+    incident, plan, request = await refused_incident(env, COULD_RUN)
+    await env.notifier.proposal(incident, None, plan, request)
+    env.api.updates.append(fixture("callback_approve", APPROVAL_ID=request.id))
+
+    await env.bot.poll_once()
+
+    assert env.runner.resumed == []
+    assert (await env.approvals.current(incident.id)).decision is None
+    [pop_up] = env.api.sent("answerCallbackQuery")
+    assert pop_up["text"].startswith("A plan of no action cannot be approved")
+
+
+async def test_letting_a_plan_bleep_could_run_go_answers_that_it_was_let_go(env):
+    incident, plan, request = await refused_incident(env, COULD_RUN)
+    await env.notifier.proposal(incident, None, plan, request)
+    env.api.updates.append(fixture("callback_reject", APPROVAL_ID=request.id))
+
+    await env.bot.poll_once()
+
+    [pop_up] = env.api.sent("answerCallbackQuery")
+    assert "Let go" in pop_up["text"] and "Rejected" not in pop_up["text"]
+
+
 # --- set from the dashboard ---
 
 

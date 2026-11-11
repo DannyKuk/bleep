@@ -322,6 +322,21 @@ async def test_the_in_memory_approvals_refuse_an_approve_on_a_refused_plan_too()
     assert await store.resolve("inc", decide("reject")) is not None
 
 
+@pytest.mark.parametrize("fix_runnable", [True, False])
+async def test_no_plan_of_no_action_can_be_approved_in_either_store(db, fix_runnable):
+    """#365: a no-action plan whose fix Bleep could run is put to the person too; whatever marks
+    it, nothing that runs nothing is approvable."""
+    from bleep.graph.deps import InMemoryApprovals
+
+    plan = Proposal(kind="no_action", reason="x", fix_runnable=fix_runnable)
+    incident_id = await open_incident(db)
+    for store in (ApprovalStore(db, SECRET, Clock()), InMemoryApprovals(SECRET)):
+        await store.request(incident_id, plan, [])
+        assert await store.resolve(incident_id, decide("approve")) is None
+        assert await store.grant(incident_id) is None
+        assert await store.resolve(incident_id, decide("instruct", text="x")) is not None
+
+
 async def test_a_closed_incidents_pending_approval_cannot_be_decided_from_any_channel(db):
     incident_id = await open_incident(db)
     store = ApprovalStore(db, SECRET, Clock())

@@ -333,6 +333,19 @@ async def test_a_yes_to_a_plan_bleeps_checks_refused_says_it_cannot_be_approved(
     assert reply.links == [TalkLink(kind="incident", id=env.incident.id, label="shop #1")]
 
 
+async def test_a_yes_to_a_no_action_plan_bleep_could_run_says_there_is_nothing_to_approve(env):
+    decision = Decision(kind="instruct", text="x", via="dashboard", at=T0)
+    await env.approvals.resolve(env.incident.id, decision)
+    could_run = Proposal(kind="no_action", reason="the value is yours", fix_runnable=True)
+    await env.approvals.request(env.incident.id, could_run, [])
+    action = {"kind": "show_plan", "incident": "shop #1"}
+
+    reply = await say(env, "go ahead", reading(kind="action", action=action))
+
+    assert reply.confirm is None
+    assert reply.answer == prompts.load("talk/plan_no_action", incident="shop #1").strip()
+
+
 class FakeLooks:
     def __init__(self, incident) -> None:
         self.incident = incident
