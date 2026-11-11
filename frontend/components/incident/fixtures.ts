@@ -70,6 +70,7 @@ export function report(overrides: Partial<Report> = {}): Report {
     summary: "shop-web was stopped and nothing restarted it. Bleep started it again.",
     cause: "Someone stopped shop-web-1 and its restart policy is no.",
     action_taken: "docker.start shop-web-1 on demo: done",
+    steps: [{ text: "docker.start shop-web-1 on demo: done", status: "done" }],
     outcome: "Fixed and verified",
     timeline: [
       { at: "2026-11-02T18:00:00Z", text: "Signal: container died (shop-web-1)" },

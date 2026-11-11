@@ -49,6 +49,7 @@ from langchain_core.messages import HumanMessage
 
 from bleep import prompts
 from bleep.graph.deps import GraphDeps
+from bleep.graph.shown import english
 from bleep.graph.state import IncidentState, Node, plan_results
 from bleep.guard.plan_check import coolify_members, host_urls
 from bleep.hosts.config import UrlCheckConfig
@@ -60,15 +61,10 @@ from bleep.hosts.shell import HostUnreadable, host_basics
 from bleep.hosts.ssh import SshUnavailable
 from bleep.hosts.url_check import check_url
 from bleep.schemas.docker import ContainerSummary
-from bleep.schemas.graph import (
-    STARTED_AFTER_FIX,
-    Check,
-    Proposal,
-    StepResult,
-    VerificationResult,
-)
+from bleep.schemas.graph import Check, Proposal, StepResult, VerificationResult
 from bleep.schemas.incidents import Signal
 from bleep.schemas.settings import Thresholds
+from bleep.schemas.shown import Shown
 
 log = logging.getLogger(__name__)
 
@@ -84,23 +80,53 @@ def _redeployed(proposal: Proposal | None) -> list[str]:
     return list(dict.fromkeys(s.target for s in steps if s.action == "coolify.redeploy"))
 
 
-UNPROVEN = "stopped as approved; nothing shows the service works (none of its URLs was checked)"
-NOT_REREAD = (
-    "only disk, memory and load can be read again; nothing shows this host's problem is over"
-)
+_UNPROVEN = Shown.of("verify/unproven")
+_NOT_REREAD = Shown.of("verify/not_reread")
+_CAME_UP = Shown.of("verify/came_up")
+_NOT_GATHERED_RUNNING = Shown.of("verify/not_gathered_running")  # a look's one check, #421
+_NOT_FINISHED = Shown.of("verify/not_finished")
+_NO_SINGLE_APP = Shown.of("verify/no_single_app")
+_STARTED_AGAIN = Shown.of("verify/started_again")
+# The English of each, as a check stores it and a model reads it; `RESTARTED` keeps its
+# `{now}` and `{then}`.
+UNPROVEN = english(_UNPROVEN)
+NOT_REREAD = english(_NOT_REREAD)
+CAME_UP = english(_CAME_UP)
+NOT_GATHERED_RUNNING = english(_NOT_GATHERED_RUNNING)
+NOT_FINISHED = english(_NOT_FINISHED)
+NO_SINGLE_APP = english(_NO_SINGLE_APP)
+STARTED_AGAIN = english(_STARTED_AGAIN)
+RESTARTED = english(Shown.of("verify/restarted", now="{now}", then="{then}"))
 HOST_READINGS = ("disk", "memory", "load")
-SEEN = "when Verify first saw it running"
-RESTARTED = STARTED_AFTER_FIX[0] + " (restart count {now}, {then} " + SEEN + ")"
-STARTED_AGAIN = STARTED_AFTER_FIX[1] + " (a later start time than " + SEEN + ")"
-CAME_UP = "first seen running at this check; it has to stay up until the next one"
-NOT_GATHERED_RUNNING = "not running when Bleep gathered the context"  # a look's one check, #421
-REDEPLOY_RESTARTED = (
-    STARTED_AFTER_FIX[0] + " ({name}, a container the redeploy made, restart count {now})"
-)
-REDEPLOY_STARTED_AGAIN = STARTED_AFTER_FIX[1] + " ({name}, a later start time than " + SEEN + ")"
-NOT_FINISHED = "the redeploy did not succeed (Coolify reported it failed, or Bleep stopped waiting)"
-NO_SINGLE_APP = "names no single Coolify application"
-RECREATED = STARTED_AFTER_FIX[2] + ", then restarted by its restart policy (restart count {now})"
+# The states and healths Docker reports that have a sentence of their own ("is exited"), since
+# German needs a verb for each.
+STATES = ("created", "paused", "restarting", "removing", "exited", "dead", "unhealthy", "starting")
+
+
+def _is(state: str) -> Shown:
+    """ "is exited", "is unhealthy": a container's state or health as a sentence."""
+    if state in STATES:
+        return Shown.of(f"verify/is_{state}")
+    return Shown.of("verify/is_other", state=state)
+
+
+def _check(
+    kind: Literal["container", "url", "host", "symptom"],
+    target: str | Shown,
+    ok: bool,
+    detail: Shown,
+) -> Check:
+    """A check with its English target and detail, and the texts they were made from."""
+    if isinstance(target, Shown):
+        return Check(
+            kind=kind,
+            target=english(target),
+            ok=ok,
+            detail=english(detail),
+            target_shown=target,
+            shown=detail,
+        )
+    return Check(kind=kind, target=target, ok=ok, detail=english(detail), shown=detail)
 
 
 @dataclass(frozen=True)
@@ -310,7 +336,7 @@ async def _first_reads(
     return reads
 
 
-def _after_fix(first: ContainerSummary, now: ContainerSummary) -> str | None:
+def _after_fix(first: ContainerSummary, now: ContainerSummary) -> Shown | None:
     """Why `now` was started again since `first`, Verify's first read of it running, or None.
 
     Docker raises the restart count only for its restart policy's restarts, and resets it only on
@@ -319,11 +345,15 @@ def _after_fix(first: ContainerSummary, now: ContainerSummary) -> str | None:
     on it or not. Both start times are the host's, so clock skew does not matter. A container
     with another id was recreated since (by Compose or Coolify): it counts its restarts from 0."""
     if now.id != first.id:
-        return RECREATED.format(now=now.restart_count) if now.restart_count > 0 else None
+        return (
+            Shown.of("verify/recreated", now=str(now.restart_count)) if now.restart_count else None
+        )
     if now.restart_count > first.restart_count:
-        return RESTARTED.format(now=now.restart_count, then=first.restart_count)
+        return Shown.of(
+            "verify/restarted", now=str(now.restart_count), then=str(first.restart_count)
+        )
     if first.started_at and now.started_at and now.started_at > first.started_at:
-        return STARTED_AGAIN
+        return _STARTED_AGAIN
     return None
 
 
@@ -337,25 +367,23 @@ async def _check_container(
     try:
         summary = (await deps.registry.engine(host_id).inspect(name)).summary
     except ContainerNotFound:
-        return Check(kind="container", target=name, ok=False, detail="not found")
+        return _check("container", name, False, Shown.of("verify/not_found"))
     except EngineUnavailable, KeyError:
-        return Check(kind="container", target=name, ok=False, detail="host not reachable")
+        return _check("container", name, False, Shown.of("verify/host_not_reachable"))
     if summary.state != "running":
-        return Check(kind="container", target=name, ok=False, detail=f"is {summary.state}")
+        return _check("container", name, False, _is(summary.state))
     first = first_running.get(name)
     if first is None:
         first_running[name] = summary
-        return Check(kind="container", target=name, ok=False, detail=CAME_UP)
+        return _check("container", name, False, _CAME_UP)
     started_again = _after_fix(first, summary)
     if started_again is not None:
-        return Check(kind="container", target=name, ok=False, detail=started_again)
+        return _check("container", name, False, started_again)
     if summary.health in ("unhealthy", "starting"):
-        return Check(kind="container", target=name, ok=False, detail=f"is {summary.health}")
-    return Check(
-        kind="container",
-        target=name,
-        ok=True,
-        detail="running, healthy" if summary.health == "healthy" else "running",
+        return _check("container", name, False, _is(summary.health))
+    healthy = summary.health == "healthy"
+    return _check(
+        "container", name, True, Shown.of("verify/running_healthy" if healthy else "verify/running")
     )
 
 
@@ -454,7 +482,7 @@ async def _first_app_reads(deps: GraphDeps, host_id: str, redeploys: list[_Redep
                 redeploy.first_running[c.id] = c
 
 
-def _finished_job(deps: GraphDeps, host_id: str, container: ContainerSummary) -> str | None:
+def _finished_job(deps: GraphDeps, host_id: str, container: ContainerSummary) -> Shown | None:
     """The line for `container` when it is a job that finished as the watcher reads one, else
     None: exited 0, and named in its service's `exits` (`expects_exit`, #84) or a one-shot with
     no restart policy to bring it back (`is_finished`)."""
@@ -462,9 +490,9 @@ def _finished_job(deps: GraphDeps, host_id: str, container: ContainerSummary) ->
         return None
     service = deps.registry.service(f"{host_id}/{service_key(container.name, container.labels)}")
     if expects_exit(service.exits if service is not None else [], container.name, container.labels):
-        return f"{container.name} exited 0, as its service's exits allow"
+        return Shown.of("verify/job_allowed", name=container.name)
     if is_finished(container):
-        return f"{container.name} exited 0 with no restart policy, a job that finished"
+        return Shown.of("verify/job_finished", name=container.name)
     return None
 
 
@@ -483,17 +511,17 @@ async def _check_application(deps: GraphDeps, host_id: str, redeploy: _Redeploy)
     within the slack plus that lead before the deploy counts. A restart keeps a container's
     creation time, so an old container (created before that floor) restarting or shutting down
     after the deploy counts neither for nor against the app."""
-    target = f"{redeploy.target} (Coolify application)"
+    target = Shown.of("verify/target_app", name=redeploy.target)
     if redeploy.since is None:
-        return Check(kind="container", target=target, ok=False, detail="not redeployed")
+        return _check("container", target, False, Shown.of("verify/not_redeployed"))
     if redeploy.result is not None and not redeploy.result.ok:
-        return Check(kind="container", target=target, ok=False, detail=NOT_FINISHED)
+        return _check("container", target, False, _NOT_FINISHED)
     if redeploy.uuid is None:
-        return Check(kind="container", target=target, ok=False, detail=NO_SINGLE_APP)
+        return _check("container", target, False, _NO_SINGLE_APP)
     try:
         listed = await deps.registry.engine(host_id).containers()
     except EngineUnavailable, KeyError:
-        return Check(kind="container", target=target, ok=False, detail="host not reachable")
+        return _check("container", target, False, Shown.of("verify/host_not_reachable"))
     made = _made(listed, redeploy)
     present = {c.id for c in made}
     gone = [name for cid, name in redeploy.seen.items() if cid not in present]
@@ -507,9 +535,9 @@ async def _check_application(deps: GraphDeps, host_id: str, redeploy: _Redeploy)
         redeploy.first_running[c.id] = c
     failure = _redeploy_failure(judged, gone, came_up, redeploy.first_running, bool(notes))
     if failure is not None:
-        return Check(kind="container", target=target, ok=False, detail="; ".join([failure, *notes]))
-    detail = "; ".join([f"{len(judged)} running", *notes])
-    return Check(kind="container", target=target, ok=True, detail=detail)
+        return _check("container", target, False, Shown.joined([failure, *notes], "; "))
+    detail = Shown.joined([Shown.of("verify/n_running", n=str(len(judged))), *notes], "; ")
+    return _check("container", target, True, detail)
 
 
 def _redeploy_failure(
@@ -518,7 +546,7 @@ def _redeploy_failure(
     came_up: list[ContainerSummary],
     first_running: dict[str, ContainerSummary],
     finished_jobs: bool,
-) -> str | None:
+) -> Shown | None:
     """Why the containers a redeploy made do not verify their application, or None.
 
     The rules of a container check, each across all of them: one seen earlier this round is
@@ -528,23 +556,27 @@ def _redeploy_failure(
     starting. At least one with a creation time must be among them: one with none counts
     against the app, never for it."""
     if gone:
-        return f"{gone[0]} is gone since an earlier check"
+        return Shown.of("verify/gone", name=gone[0])
     if not any(c.created_at is not None for c in judged):
-        return "no container made by the redeploy" + (" runs" if finished_jobs else "")
+        return Shown.of(
+            "verify/no_redeploy_container_runs" if finished_jobs else "verify/no_redeploy_container"
+        )
     down = next((c for c in judged if c.state != "running"), None)
     if down is not None:
-        return f"{down.name} is {down.state}"
+        return Shown.of("verify/named", name=down.name, what=_is(down.state))
     restarted = next((c for c in judged if c.restart_count > 0), None)
     if restarted is not None:
-        return REDEPLOY_RESTARTED.format(name=restarted.name, now=restarted.restart_count)
+        return Shown.of(
+            "verify/redeploy_restarted", name=restarted.name, now=str(restarted.restart_count)
+        )
     if came_up:
-        return f"{came_up[0].name} {CAME_UP}"
+        return Shown.of("verify/named", name=came_up[0].name, what=_CAME_UP)
     again = next((c for c in judged if _started_since(first_running[c.id], c)), None)
     if again is not None:
-        return REDEPLOY_STARTED_AGAIN.format(name=again.name)
+        return Shown.of("verify/redeploy_started_again", name=again.name)
     bad = next((c for c in judged if c.health in ("unhealthy", "starting")), None)
     if bad is not None:
-        return f"{bad.name} is {bad.health}"
+        return Shown.of("verify/named", name=bad.name, what=_is(bad.health))
     return None
 
 
@@ -555,22 +587,25 @@ def _started_since(first: ContainerSummary, now: ContainerSummary) -> bool:
 async def _check_url(client: httpx.AsyncClient, cfg: UrlCheckConfig) -> Check:
     result = await check_url(client, cfg)
     if result.ok:
-        return Check(kind="url", target=cfg.url, ok=True, detail=f"answering {result.status}")
-    return Check(kind="url", target=cfg.url, ok=False, detail=result.error or "failed")
+        return _check("url", cfg.url, True, Shown.of("verify/answering", status=str(result.status)))
+    if result.error is None:
+        return _check("url", cfg.url, False, Shown.of("verify/url_failed"))
+    # `check_url` words every error as a template; a check without one shows as stored.
+    return Check(kind="url", target=cfg.url, ok=False, detail=result.error, shown=result.shown)
 
 
 async def _check_stopped(deps: GraphDeps, host_id: str, name: str) -> Check:
     """A signalled container the plan stopped: it passes only while it is down."""
-    target = f"{name} (stopped by the plan)"
+    target = Shown.of("verify/target_stopped", name=name)
     try:
         summary = (await deps.registry.engine(host_id).inspect(name)).summary
     except ContainerNotFound:
-        return Check(kind="container", target=target, ok=False, detail="not found")
+        return _check("container", target, False, Shown.of("verify/not_found"))
     except EngineUnavailable, KeyError:
-        return Check(kind="container", target=target, ok=False, detail="host not reachable")
+        return _check("container", target, False, Shown.of("verify/host_not_reachable"))
     if summary.state == "running":
-        return Check(kind="container", target=target, ok=False, detail="is running again")
-    return Check(kind="container", target=target, ok=True, detail=f"is {summary.state}")
+        return _check("container", target, False, Shown.of("verify/running_again"))
+    return _check("container", target, True, _is(summary.state))
 
 
 async def _check_host(
@@ -589,43 +624,43 @@ async def _check_host(
     try:
         found = readings(await host_basics(shell), load_minutes=1) if shell is not None else {}
     except SshUnavailable, OSError:
-        return [Check(kind="host", target=k, ok=False, detail="host not reachable") for k in kinds]
+        unreachable = Shown.of("verify/host_not_reachable")
+        return [_check("host", k, False, unreachable) for k in kinds]
     except HostUnreadable:
-        return [Check(kind="host", target=k, ok=False, detail="could not be read") for k in kinds]
+        return [_check("host", k, False, Shown.of("verify/could_not_read")) for k in kinds]
     thresholds = deps.settings_store.thresholds()
     checks = []
     for kind in kinds:
         detail = found.get(kind)
         if detail is None:
-            checks.append(Check(kind="host", target=kind, ok=False, detail="could not be read"))
+            checks.append(_check("host", kind, False, Shown.of("verify/could_not_read")))
             continue
         within = not past_threshold(kind, detail, thresholds)
         if within:
             calm.add(kind)
         ok = within and (kind != "load" or kind in before)
-        checks.append(
-            Check(kind="host", target=kind, ok=ok, detail=_reading(kind, detail, thresholds))
-        )
+        checks.append(_check("host", kind, ok, _reading(kind, detail, thresholds)))
     return checks
 
 
-def _reading(kind: str, detail: dict, t: Thresholds) -> str:
+def _reading(kind: str, detail: dict, t: Thresholds) -> Shown:
     """A reading against its threshold, in Bleep's words: the mount name is host text, left out."""
     match kind:
         case "disk":
-            return (
-                f"{detail['percent']:g} % used on the fullest disk, "
-                f"needs under {t.disk_percent:g} %"
+            return Shown.of(
+                "verify/disk_reading", percent=f"{detail['percent']:g}", limit=f"{t.disk_percent:g}"
             )
         case "memory":
-            return (
-                f"{detail['available_percent']:.1f} % available, "
-                f"needs at least {t.memory_available_percent_min:g} %"
+            return Shown.of(
+                "verify/memory_reading",
+                percent=f"{detail['available_percent']:.1f}",
+                limit=f"{t.memory_available_percent_min:g}",
             )
         case _:
-            return (
-                f"{detail['load_per_cpu']:.2f} per CPU over the last minute, "
-                f"needs at most {t.load_per_cpu:g} on two checks in a row"
+            return Shown.of(
+                "verify/load_reading",
+                load=f"{detail['load_per_cpu']:.2f}",
+                limit=f"{t.load_per_cpu:g}",
             )
 
 
@@ -660,15 +695,12 @@ async def _one_check(
         ]
         checks += [await _check_stopped(deps, host_id, name) for name in plan.stopped]
         if plan.unproven:
-            checks += [
-                Check(kind="symptom", target=name, ok=False, detail=UNPROVEN)
-                for name in plan.stopped
-            ]
+            checks += [_check("symptom", name, False, _UNPROVEN) for name in plan.stopped]
         checks += [await _check_url(client, cfg) for cfg in plan.urls]
         if plan.readings:
             checks += await _check_host(deps, host_id, plan.readings, calm)
         if plan.blind:
-            checks.append(Check(kind="symptom", target=host_id, ok=False, detail=NOT_REREAD))
+            checks.append(_check("symptom", host_id, False, _NOT_REREAD))
     finally:
         if owned:
             await client.aclose()
@@ -708,7 +740,9 @@ async def check_look(deps: GraphDeps, state: IncidentState) -> VerificationResul
     result = await _one_check(deps, host_id, plan, [], first_running, 1, set())
     # There is no next check to stay up until: say what the look knows instead.
     checks = [
-        c.model_copy(update={"detail": NOT_GATHERED_RUNNING}) if c.detail == CAME_UP else c
+        c.model_copy(update={"detail": NOT_GATHERED_RUNNING, "shown": _NOT_GATHERED_RUNNING})
+        if c.detail == CAME_UP
+        else c
         for c in result.checks
     ]
     return result.model_copy(update={"checks": checks})
@@ -777,7 +811,7 @@ def payload(result: VerificationResult) -> dict:
     return {
         "ok": result.ok,
         "attempt": result.attempt,
-        "checks": [c.model_dump(mode="json") for c in result.checks],
+        "checks": [c.stored() for c in result.checks],
     }
 
 

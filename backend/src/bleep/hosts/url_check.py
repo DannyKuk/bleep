@@ -12,6 +12,7 @@ import httpx
 from pydantic import BaseModel
 
 from bleep.hosts.config import UrlCheckConfig
+from bleep.schemas.shown import Shown
 
 MAX_BODY_BYTES = 64 * 1024
 MAX_REDIRECTS = 20  # httpx's own default
@@ -26,6 +27,9 @@ class UrlCheck(BaseModel):
     latency_ms: int
     error: str | None = None
     body_matched: bool | None = None  # None: no body text was asked for, or no reply came
+    # `error` as the template it was made from (`prompts/shown/url/`), to show it in the person's
+    # language (#454); the English `error` is what the watcher and the models read.
+    shown: Shown | None = None
 
 
 async def check_url(
@@ -45,6 +49,7 @@ async def check_url(
     status: int | None = None
     matched: bool | None = None
     error: str | None = None
+    why: Shown | None = None
     try:
         async with asyncio.timeout(timeout_s):  # the whole reply, so a slow drip cannot hang
             response = await _get_following_redirects(client, cfg.url, timeout_s)
@@ -54,24 +59,31 @@ async def check_url(
                     encoding = response.headers.get("content-encoding", "identity")
                     if encoding.strip().lower() not in ("", "identity"):
                         error = "the reply is compressed although plain text was asked for"
+                        why = Shown.of("url/compressed")
                     else:
                         matched = cfg.body_contains in await _read_capped(response)
             finally:
                 await response.aclose()
     except TimeoutError:
         error = f"no complete reply within {timeout_s:g} s"
+        why = Shown.of("url/no_complete_reply", seconds=f"{timeout_s:g}")
     except httpx.TimeoutException:
         error = f"timed out after {timeout_s:g} s"
+        why = Shown.of("url/timed_out", seconds=f"{timeout_s:g}")
     except Exception as problem:  # httpx.HTTPError, InvalidURL, a bad header: this URL failed
         error = f"request failed ({type(problem).__name__})"  # never the text: a server wrote it
+        why = Shown.of("url/request_failed", error=type(problem).__name__)
     latency_ms = round((clock() - started) * 1000)
     if error is None:
         if status != cfg.expect_status:
             error = f"expected status {cfg.expect_status}, got {status}"
+            why = Shown.of("url/wrong_status", expected=str(cfg.expect_status), status=str(status))
         elif matched is False:
             error = "the reply does not contain the expected text"
+            why = Shown.of("url/no_text")
         elif latency_ms > slow_ms:
             error = f"slow: {latency_ms} ms (limit {slow_ms} ms)"
+            why = Shown.of("url/slow", latency=str(latency_ms), limit=str(slow_ms))
     return UrlCheck(
         url=cfg.url,
         ok=error is None,
@@ -79,6 +91,7 @@ async def check_url(
         latency_ms=latency_ms,
         error=error,
         body_matched=matched,
+        shown=why,
     )
 
 

@@ -19,10 +19,13 @@ from bleep.guard.orders import gives_orders, line_signs, orders
 from bleep.guard.untrusted import holds_escaped_tag, without_copied_wrappers
 from bleep.schemas.graph import GatherContext, PlantedPlace, PlantedSource
 from bleep.schemas.incidents import Subject
+from bleep.schemas.shown import Shown
 from bleep.tools.knowledge import SOURCE_LABEL
 
 # Each place in the human's words; the order is the closed list's, which the plugins' places
-# extend (Diagnose's `planted_in` keeps to `PlantedSource`).
+# extend (Diagnose's `planted_in` keeps to `PlantedSource`). The words are also templates,
+# `prompts/shown/planted/`, to show the report's follow-up in the person's language (#454); a
+# test holds them to the same English.
 PLANTED_WHERE: dict[PlantedPlace, str] = {
     "logs": "container logs",
     "events": "Docker events",
@@ -211,3 +214,15 @@ def planted_sentence(places: list[PlantedPlace], end: str = PLANTED_END) -> str 
         return None
     named = where[0] if len(where) == 1 else f"{', '.join(where[:-1])} and {where[-1]}"
     return f"{PLANTED_START}in the {named} {end}"
+
+
+def planted_shown(places: list[PlantedPlace], hint: bool = False) -> Shown | None:
+    """`planted_sentence` as a shown text; `hint` gives the report's follow-up."""
+    where = [Shown.of(f"planted/where_{place}") for place in places]
+    if not where:
+        return None
+    named = where[0]
+    if len(where) > 1:
+        named = Shown.of("planted/and", rest=Shown.joined(where[:-1], ", "), last=where[-1])
+    end = Shown.of("planted/hint_end" if hint else "planted/end")
+    return Shown.of("planted/sentence", where=named, end=end)

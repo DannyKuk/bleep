@@ -11,7 +11,7 @@ checked.
 from collections.abc import Callable, Iterable
 
 from bleep.guard.log import GuardKind
-from bleep.schemas.graph import Report
+from bleep.schemas.graph import Report, ReportStep
 
 WINDOW = 60  # characters shared with a log that make a copy
 MARKER = "[log excerpt removed]"
@@ -72,11 +72,17 @@ def _cut(text: str, windows: set[int]) -> tuple[str, int]:
     return "".join(out), len(spans)
 
 
+def _cut_step(step: ReportStep, cut: Callable[[str], str]) -> ReportStep:
+    """A step with the log copy cut from its text; a changed text shows as it is, in English."""
+    text = cut(step.text)
+    return step if text == step.text else step.model_copy(update={"text": text, "shown": None})
+
+
 def check_report(report: Report, raw_logs: Iterable[str], record: Record | None = None) -> Report:
     """The report with every stretch copied from `raw_logs` replaced by `MARKER`.
 
-    Checks `summary`, `cause`, `cause_en`, `action_taken` and each follow-up. A replacement is
-    recorded as `redacted` in the guard log, once per report.
+    Checks `summary`, `cause`, `cause_en`, `action_taken`, each step's text and each follow-up.
+    A replacement is recorded as `redacted` in the guard log, once per report.
     """
     windows = _windows(raw_logs)
     if not windows:
@@ -95,6 +101,7 @@ def check_report(report: Report, raw_logs: Iterable[str], record: Record | None 
             "cause": cut(report.cause),
             "cause_en": None if report.cause_en is None else cut(report.cause_en),
             "action_taken": None if report.action_taken is None else cut(report.action_taken),
+            "steps": [_cut_step(step, cut) for step in report.steps],
             "follow_ups": [cut(item) for item in report.follow_ups],
         }
     )

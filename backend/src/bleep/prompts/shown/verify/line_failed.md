@@ -1,0 +1,1 @@
+FAILED {kind} {target}: {detail}

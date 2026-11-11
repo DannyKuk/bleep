@@ -38,6 +38,7 @@ describe("ReportView", () => {
         report={report({
           outcome: "No action proposed, nothing was done",
           action_taken: null,
+          steps: [],
           human_decision: null,
           follow_ups: [],
           timeline: [],
@@ -115,7 +116,11 @@ describe("ReportView", () => {
   it("puts the follow-ups of a no-action report under What you can do", () => {
     render(
       <ReportView
-        report={report({ action_taken: null, follow_ups: ["Set restart: unless-stopped."] })}
+        report={report({
+          action_taken: null,
+          steps: [],
+          follow_ups: ["Set restart: unless-stopped."],
+        })}
         outcome="no_action"
       />,
     );
@@ -130,6 +135,7 @@ describe("ReportView", () => {
         report={report({
           outcome: "Healthy when checked, nothing to do",
           action_taken: null,
+          steps: [],
           follow_ups: [],
         })}
         outcome="healthy"
@@ -162,17 +168,37 @@ describe("ReportView", () => {
     ["failed", "text-down"],
     ["refused", "text-down"],
     ["skipped", "text-ink-2"],
-    ["weird", "text-ink-2"],
-  ])("marks a step ending %s", (status, tone) => {
+  ] as const)("marks a step by its status field, %s, whatever words say it", (status, tone) => {
     render(
       <ReportView
-        report={report({ action_taken: `docker.start shop-web on demo: ${status}` })}
+        report={report({
+          action_taken: "docker.start shop-web auf demo: etwas",
+          steps: [{ text: "docker.start shop-web auf demo: etwas", status }],
+        })}
         outcome="unverified"
       />,
     );
     const row = within(screen.getByRole("list", { name: "Steps" })).getByRole("listitem");
-    expect(row).toHaveTextContent(`docker.start shop-web on demo: ${status}`);
+    expect(row).toHaveTextContent("docker.start shop-web auf demo: etwas");
     expect(row.querySelector("svg")).toHaveClass(tone);
+  });
+
+  it("shows a report stored before the steps field as rows with no status mark", () => {
+    render(
+      <ReportView
+        report={report({
+          action_taken: "docker.start shop-web on demo: done; docker.start shop-db on demo: failed",
+          steps: [],
+        })}
+        outcome="unverified"
+      />,
+    );
+    const rows = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "docker.start shop-web on demo: done",
+      "docker.start shop-db on demo: failed",
+    ]);
+    for (const row of rows) expect(row.querySelector("svg")).toHaveClass("text-ink-2");
   });
 
   it("shows each step of a mixed run on its own row, never a check for a failed one", () => {
@@ -181,6 +207,10 @@ describe("ReportView", () => {
         report={report({
           action_taken:
             "docker.restart shop-web on demo: failed; docker.start shop-db on demo: skipped",
+          steps: [
+            { text: "docker.restart shop-web on demo: failed", status: "failed" },
+            { text: "docker.start shop-db on demo: skipped", status: "skipped" },
+          ],
         })}
         outcome="unverified"
       />,
