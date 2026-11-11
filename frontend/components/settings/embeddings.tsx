@@ -9,47 +9,43 @@ import {
   SecretRows,
   SectionForm,
 } from "@/components/settings/section-form";
+import { type Messages, useT } from "@/lib/i18n";
 import type { SettingsUpdate, SettingsView } from "@/lib/settings-types";
 
 export const EMBEDDING_KEYS = ["EMBEDDINGS_BASE_URL", "EMBEDDINGS_API_KEY"] as const;
 
-const FIELDS: Field[] = [
+type EmbeddingMessages = Messages["settings"]["embeddings"];
+
+const fields = (t: EmbeddingMessages): Field[] => [
   {
     name: "provider",
-    label: "Embedder",
+    label: t.embedder,
     env: "EMBEDDINGS_PROVIDER",
     options: [
-      { value: "local", label: "The local model that ships with Bleep" },
-      { value: "openai", label: "An OpenAI-compatible endpoint" },
+      { value: "local", label: t.local },
+      { value: "openai", label: t.openai },
     ],
   },
-  {
-    name: "model",
-    label: "Endpoint model",
-    env: "EMBEDDINGS_MODEL",
-    hint: "The model the endpoint serves. The local model ignores it.",
-  },
+  { name: "model", label: t.model, env: "EMBEDDINGS_MODEL", hint: t.modelHint },
   {
     name: "min_score",
-    label: "Recall's minimum score",
+    label: t.minScore,
     env: "EMBEDDINGS_MIN_SCORE",
     number: true,
-    hint: "0 to 1. Past incidents scoring under it are never recalled. Empty: the model's own.",
+    hint: t.minScoreHint,
   },
 ];
 
-const AT_NEXT_START = "It applies at the next start of Bleep, not at once.";
-const RE_EMBED = `${AT_NEXT_START} A new provider or model makes Bleep embed the memory and the knowledge index again then, and until that is done past incidents are left out of recall.`;
-
 /** What a save of this change means, said before it goes: when it applies and what it re-embeds. */
-export function embeddingsWarning({ changed, draft, reset }: Change): string {
+export function embeddingsWarning(
+  { changed, draft, reset }: Change,
+  t: Pick<EmbeddingMessages, "reembed" | "scoreOnly">,
+): string {
   const embedderChanged =
     reset ||
     changed.includes("provider") ||
     (changed.includes("model") && draft.provider === "openai");
-  return embedderChanged
-    ? RE_EMBED
-    : `${AT_NEXT_START} A minimum score does not embed anything again.`;
+  return embedderChanged ? t.reembed : t.scoreOnly;
 }
 
 /**
@@ -66,17 +62,14 @@ export function EmbeddingSettings({
   onSave: (update: SettingsUpdate) => Promise<unknown>;
   secrets?: PanelSecrets;
 }) {
+  const t = useT().settings.embeddings;
   const { provider, model, min_score } = view.embeddings;
   const keys = provider === "openai" ? EMBEDDING_KEYS : EMBEDDING_KEYS.slice(0, 1);
   return (
     <div className="flex flex-col gap-4">
-      {view.restart_needed.includes("embeddings") && (
-        <RestartNote>
-          A restart is needed: the embeddings saved here are in force only after Bleep restarts.
-        </RestartNote>
-      )}
+      {view.restart_needed.includes("embeddings") && <RestartNote>{t.restart}</RestartNote>}
       <SectionForm
-        groups={[{ fields: FIELDS }]}
+        groups={[{ fields: fields(t) }]}
         values={{
           provider,
           model: model ?? "",
@@ -84,9 +77,9 @@ export function EmbeddingSettings({
         }}
         overrides={{ ...view.overrides.embeddings }}
         fromEnv={envFields(view.from_env, "embeddings")}
-        what="Save the embeddings"
-        confirm={embeddingsWarning}
-        confirmLabel="Save for the next start"
+        what={t.save}
+        confirm={(change) => embeddingsWarning(change, t)}
+        confirmLabel={t.saveNext}
         onSave={(embeddings) => onSave({ embeddings })}
       />
       <SecretRows secrets={secrets} names={keys} />

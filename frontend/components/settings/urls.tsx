@@ -7,14 +7,8 @@ import { SourceNote } from "@/components/settings/rules";
 import { SaveError, useSaving } from "@/components/settings/save-error";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useT } from "@/lib/i18n";
 import type { UrlCheck } from "@/lib/settings-types";
-
-const URL_LABELS = {
-  urls: "URL",
-  url: "URL",
-  expect_status: "Expected status",
-  body_contains: "Body contains",
-};
 
 interface Row {
   url: string;
@@ -57,7 +51,8 @@ export function UrlEditor({
   onClose?: () => void;
 }) {
   const [rows, setRows] = useState(() => urls.map(toRow));
-  const { saving, busy, problems, run } = useSaving(URL_LABELS);
+  const { urls: t, save: saveWord, cancel, removeItem } = useT().settings;
+  const { saving, busy, problems, run } = useSaving(t.labels);
   const checks = rows.map(toCheck);
   const [blank, setBlank] = useState<number[]>([]);
   const dirty = JSON.stringify(checks) !== JSON.stringify(urls.map((u) => toCheck(toRow(u))));
@@ -81,13 +76,13 @@ export function UrlEditor({
     <div className="flex flex-col gap-2">
       <SourceNote overridden={overridden} disabled={busy} onReset={() => void done(onReset)} />
       {rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No URLs are checked.</p>
+        <p className="text-sm text-muted-foreground">{t.none}</p>
       ) : (
-        <ul aria-label={`URLs for ${service}`} className="flex flex-col gap-2">
+        <ul aria-label={t.for(service)} className="flex flex-col gap-2">
           {rows.map((row, index) => (
             <li key={index} className="flex flex-wrap gap-2 sm:flex-nowrap">
               <Input
-                aria-label={`URL ${index + 1}`}
+                aria-label={t.url(index + 1)}
                 placeholder="https://shop.example.com/health"
                 value={row.url}
                 aria-invalid={blank.includes(index) || undefined}
@@ -95,15 +90,15 @@ export function UrlEditor({
                 onChange={(changed) => change(index, "url", changed.target.value)}
               />
               <Input
-                aria-label={`Expected status ${index + 1}`}
+                aria-label={t.status(index + 1)}
                 inputMode="numeric"
                 value={row.status}
                 className="w-20 shrink-0"
                 onChange={(changed) => change(index, "status", changed.target.value)}
               />
               <Input
-                aria-label={`Body contains ${index + 1}`}
-                placeholder="Body contains (optional)"
+                aria-label={t.body(index + 1)}
+                placeholder={t.bodyPlaceholder}
                 value={row.contains}
                 className="min-w-0 flex-1"
                 onChange={(changed) => change(index, "contains", changed.target.value)}
@@ -112,7 +107,7 @@ export function UrlEditor({
                 type="button"
                 size="icon"
                 variant="ghost"
-                aria-label={`Remove ${row.url || `URL ${index + 1}`}`}
+                aria-label={removeItem(row.url || t.url(index + 1))}
                 onClick={() => {
                   setRows(rows.filter((_, at) => at !== index));
                   setBlank([]);
@@ -126,22 +121,24 @@ export function UrlEditor({
       )}
       <div className="flex flex-wrap gap-2">
         <Button
+          wrap
           type="button"
           size="sm"
           variant="outline"
           onClick={() => setRows([...rows, { url: "", status: "200", contains: "" }])}
         >
           <Plus aria-hidden />
-          Add a URL
+          {t.add}
         </Button>
         {dirty && (
-          <Button type="button" size="sm" disabled={busy} onClick={save}>
+          <Button wrap type="button" size="sm" disabled={busy} onClick={save}>
             {saving && <Loader2 aria-hidden className="animate-spin" />}
-            Save
+            {saveWord}
           </Button>
         )}
         {(dirty || onClose) && (
           <Button
+            wrap
             type="button"
             size="sm"
             variant="ghost"
@@ -152,17 +149,11 @@ export function UrlEditor({
               onClose?.();
             }}
           >
-            Cancel
+            {cancel}
           </Button>
         )}
       </div>
-      <SaveError
-        problems={
-          blank.length > 0
-            ? blank.map((at) => `URL ${at + 1}: enter an address, or remove the row`)
-            : problems
-        }
-      />
+      <SaveError problems={blank.length > 0 ? blank.map((at) => t.blank(at + 1)) : problems} />
     </div>
   );
 }

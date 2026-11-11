@@ -1,9 +1,11 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { CostTables, costText, UNPRICED_NOTE } from "@/components/dev/costs";
+import { CostTables, costText } from "@/components/dev/costs";
 import type { CostView, IncidentCost } from "@/lib/api-types";
+import { MESSAGES } from "@/lib/i18n";
 
+const UNPRICED_NOTE = MESSAGES.en.dev.costs.note;
 const usage = { calls: 2, tokens_in: 1500, tokens_out: 150, usd: 0.375, unpriced: 0 };
 
 const COSTS: CostView = {
@@ -131,7 +133,7 @@ describe("CostTables", () => {
   });
 
   it("writes a cost below a cent with four decimals", () => {
-    expect(costText({ ...usage, usd: 0.0042 })).toBe("$0.0042");
-    expect(costText({ ...usage, usd: 0 })).toBe("$0.00");
+    expect(costText({ ...usage, usd: 0.0042 }, "en")).toBe("$0.0042");
+    expect(costText({ ...usage, usd: 0 }, "en")).toBe("$0.00");
   });
 });

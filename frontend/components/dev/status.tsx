@@ -2,6 +2,8 @@ import { Loader2, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { apiFetch } from "@/lib/api";
+import { FIXED_LOCALE, MESSAGES } from "@/lib/i18n";
+import type { Language } from "@/lib/settings-types";
 
 export const why = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -44,10 +46,14 @@ export function useGet<T>(path: string, reload = 0): Loaded<T> {
   return state;
 }
 
-/** "$0.38", or "$0.0042" below a cent; "unknown" when no call had a price. */
-export function formatUsd(usd: number | null): string {
-  if (usd === null) return "unknown";
-  return `$${usd.toFixed(usd > 0 && usd < 0.01 ? 4 : 2)}`;
+/** "$0.38", or "$0.0042" below a cent (German "$0,38"); "unknown" when no call had a price. */
+export function formatUsd(usd: number | null, language: Language): string {
+  if (usd === null) return MESSAGES[language].dev.costs.unknown;
+  const digits = usd > 0 && usd < 0.01 ? 4 : 2;
+  const amount = usd.toLocaleString(language === "en" ? "en-US" : FIXED_LOCALE[language], {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+    useGrouping: false,
+  });
+  return `$${amount}`;
 }
-
-export const formatCount = (n: number) => n.toLocaleString("en-US");

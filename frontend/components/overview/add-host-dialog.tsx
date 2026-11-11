@@ -4,7 +4,7 @@ import { Plus } from "lucide-react";
 import { useState } from "react";
 
 import { SaveLockProvider, useSaveLock } from "@/components/save-lock";
-import { HostForm, SSH_ONLY } from "@/components/settings/host-form";
+import { HostForm } from "@/components/settings/host-form";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -38,7 +38,7 @@ function AddHost({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t.addHost}</DialogTitle>
-          <DialogDescription>{SSH_ONLY}</DialogDescription>
+          <DialogDescription>{useT().settings.hosts.sshOnly}</DialogDescription>
         </DialogHeader>
         <HostForm onChanged={onAdded} onClose={() => setOpen(false)} />
       </DialogContent>

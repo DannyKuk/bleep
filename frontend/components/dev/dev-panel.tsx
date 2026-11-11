@@ -7,10 +7,12 @@ import { CostsPanel } from "@/components/dev/costs";
 import { GuardLogPanel } from "@/components/dev/guard-log";
 import { PromptsPanel } from "@/components/dev/prompts";
 import { Failed, Loading, why } from "@/components/dev/status";
+import { CodeText } from "@/components/code-text";
 import { Panel } from "@/components/panel";
 import { SaveLockProvider } from "@/components/save-lock";
 import { ApiError, apiFetch } from "@/lib/api";
 import type { DevSettingsView } from "@/lib/api-types";
+import { useT } from "@/lib/i18n";
 
 type State =
   { kind: "loading" } | { kind: "off" } | { kind: "failed"; why: string } | { kind: "on" };
@@ -19,26 +21,27 @@ type State =
 function SettingsPanels() {
   const [view, setView] = useState<DevSettingsView | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const t = useT().dev;
 
   useEffect(() => {
     const controller = new AbortController();
     apiFetch<DevSettingsView>("/api/settings", { signal: controller.signal })
       .then(setView)
       .catch((error: unknown) => {
-        if (!controller.signal.aborted) setFailure(`Could not load the settings: ${why(error)}`);
+        if (!controller.signal.aborted) setFailure(t.settingsFailed(why(error)));
       });
     return () => controller.abort();
-  }, []);
+  }, [t]);
 
   async function readAgain() {
     setView(await apiFetch<DevSettingsView>("/api/settings"));
   }
 
   const body = (form: (view: DevSettingsView) => React.ReactNode) =>
-    view ? form(view) : failure ? <Failed>{failure}</Failed> : <Loading>Loading</Loading>;
+    view ? form(view) : failure ? <Failed>{failure}</Failed> : <Loading>{t.loading}</Loading>;
   return (
     <SaveLockProvider>
-      <Panel title="Budgets">
+      <Panel title={t.panels.budgets}>
         {body((v) => (
           <BudgetsForm view={v} onSaved={setView} onStale={readAgain} />
         ))}
@@ -50,6 +53,7 @@ function SettingsPanels() {
 /** Developer settings, apart from the user UI; the backend answers only with `BLEEP_DEV_PANEL=true`. */
 export function DevPanel() {
   const [state, setState] = useState<State>({ kind: "loading" });
+  const t = useT().dev;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -63,28 +67,35 @@ export function DevPanel() {
     return () => controller.abort();
   }, []);
 
-  if (state.kind === "loading") return <Loading>Loading the dev panel</Loading>;
-  if (state.kind === "failed") return <Failed>Could not load the dev panel: {state.why}</Failed>;
-  if (state.kind === "off") {
+  const body = () => {
+    if (state.kind === "loading") return <Loading>{t.loadingPanel}</Loading>;
+    if (state.kind === "failed") return <Failed>{t.panelFailed(state.why)}</Failed>;
+    if (state.kind === "off") {
+      return (
+        <p className="text-sm text-muted-foreground">
+          <CodeText text={t.off} />
+        </p>
+      );
+    }
     return (
-      <p className="text-sm text-muted-foreground">
-        The dev panel is off. Set <span className="font-mono">BLEEP_DEV_PANEL=true</span> in{" "}
-        <span className="font-mono">.env</span> and restart Bleep to turn it on.
-      </p>
+      <div className="flex flex-col gap-4">
+        <SettingsPanels />
+        <Panel title={t.panels.prompts}>
+          <PromptsPanel />
+        </Panel>
+        <Panel title={t.panels.cost}>
+          <CostsPanel />
+        </Panel>
+        <Panel title={t.panels.guardLog}>
+          <GuardLogPanel />
+        </Panel>
+      </div>
     );
-  }
+  };
   return (
     <div className="flex flex-col gap-4">
-      <SettingsPanels />
-      <Panel title="Prompts">
-        <PromptsPanel />
-      </Panel>
-      <Panel title="Cost">
-        <CostsPanel />
-      </Panel>
-      <Panel title="Guard log">
-        <GuardLogPanel />
-      </Panel>
+      <h1 className="text-lg font-semibold">{t.title}</h1>
+      {body()}
     </div>
   );
 }

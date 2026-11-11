@@ -5,19 +5,13 @@ import { useId, useState } from "react";
 
 import { SaveError, useSaving } from "@/components/settings/save-error";
 import { Button } from "@/components/ui/button";
+import { useT } from "@/lib/i18n";
 import type { Language } from "@/lib/settings-types";
-
-const LABELS = { language: "Language" };
-const NAMES: Record<Language, string> = { en: "English", de: "German" };
-const OPTIONS: { value: Language; label: string }[] = [
-  { value: "en", label: "English" },
-  { value: "de", label: "Deutsch (German)" },
-];
 
 /**
  * The language the model writes what the person reads in: reports, diagnoses, plans and the
- * recovery line; Telegram and the chat's own lines follow it too (#375). What the code reads
- * (actions, containers, settings, commands) never changes.
+ * recovery line; Telegram, the chat's own lines (#375) and this dashboard (#376) follow it too.
+ * What the code reads (actions, containers, settings, commands) never changes.
  */
 export function LanguageForm({
   language,
@@ -29,7 +23,12 @@ export function LanguageForm({
 }) {
   const id = useId();
   const [draft, setDraft] = useState<Language>(language);
-  const { saving, busy, problems, run } = useSaving(LABELS);
+  const t = useT().settings.language;
+  const { saving, busy, problems, run } = useSaving({ language: t.label });
+  const options: { value: Language; label: string }[] = [
+    { value: "en", label: t.english },
+    { value: "de", label: t.german },
+  ];
 
   return (
     <form
@@ -41,7 +40,7 @@ export function LanguageForm({
     >
       <div className="flex flex-col gap-1.5">
         <label htmlFor={`${id}-language`} className="text-sm">
-          Bleep writes in
+          {t.writesIn}
         </label>
         <select
           id={`${id}-language`}
@@ -49,22 +48,18 @@ export function LanguageForm({
           onChange={(changed) => setDraft(changed.target.value as Language)}
           className="h-11 w-full max-w-sm rounded-field border border-line bg-surface px-3 text-[15px] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
-          {OPTIONS.map((option) => (
+          {options.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>
           ))}
         </select>
       </div>
-      <p className="text-xs text-muted-foreground">
-        The model writes reports, diagnoses, plans and recovery lines in {NAMES[language]}, and
-        Bleep sends its Telegram messages, buttons and chat answers in it. Container names,
-        settings, commands and plan steps stay exactly as the host names them.
-      </p>
+      <p className="text-xs text-muted-foreground">{t.note(t.name[language])}</p>
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" size="sm" disabled={busy || draft === language}>
+        <Button wrap type="submit" size="sm" disabled={busy || draft === language}>
           {saving && <Loader2 aria-hidden className="animate-spin" />}
-          Save language
+          {t.save}
         </Button>
       </div>
       <SaveError problems={problems} />

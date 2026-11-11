@@ -10,7 +10,7 @@ import {
   settingsView,
 } from "@/components/settings/fixtures";
 import { SettingsPage } from "@/components/settings/settings-page";
-import { SETTINGS_CHANGED } from "@/lib/settings-api";
+import { MESSAGES } from "@/lib/i18n";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -138,7 +138,9 @@ describe("the Models panel", () => {
     await userEvent.type(within(models).getByLabelText("Model"), "2");
     await userEvent.click(within(models).getByRole("button", { name: "Save the models" }));
 
-    expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(SETTINGS_CHANGED);
+    expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(
+      MESSAGES.en.settings.changedElsewhere,
+    );
     expect(putsOf(fetchMock)).toHaveLength(1);
   });
 

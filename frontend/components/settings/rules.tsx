@@ -6,6 +6,7 @@ import { useId, useState } from "react";
 import { SaveError, useSaving } from "@/components/settings/save-error";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 /** Where the values in force come from, and the way back to the hosts file's. */
@@ -18,18 +19,18 @@ export function SourceNote({
   onReset: () => void;
   disabled?: boolean;
 }) {
-  if (!overridden)
-    return <span className="text-xs text-muted-foreground">From the hosts file</span>;
+  const t = useT().settings.list;
+  if (!overridden) return <span className="text-xs text-muted-foreground">{t.fromFile}</span>;
   return (
     <span className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-      Changed here
+      {t.changedHere}
       <button
         type="button"
         disabled={disabled}
         onClick={onReset}
         className="underline underline-offset-2 hover:text-foreground disabled:opacity-50"
       >
-        Use the hosts file&apos;s
+        {t.useFile}
       </button>
     </span>
   );
@@ -68,6 +69,7 @@ export function ListEditor({
 }) {
   const [draft, setDraft] = useState(items);
   const [adding, setAdding] = useState("");
+  const { list: t, add: addWord, save, cancel, removeItem } = useT().settings;
   const { saving, busy, problems, run } = useSaving(labels);
   const addId = useId();
   const cleaned = draft.map((item) => item.trim()).filter(Boolean);
@@ -95,7 +97,7 @@ export function ListEditor({
           {draft.map((item, index) => (
             <li key={index} className="flex gap-2">
               <Input
-                aria-label={`${label}: entry ${index + 1}`}
+                aria-label={t.entryOf(label, index + 1)}
                 value={item}
                 className={cn(mono && "font-mono")}
                 onChange={(changed) =>
@@ -106,7 +108,7 @@ export function ListEditor({
                 type="button"
                 size="icon"
                 variant="ghost"
-                aria-label={`Remove ${item || `entry ${index + 1}`}`}
+                aria-label={removeItem(item || t.entry(index + 1))}
                 onClick={() => setDraft(draft.filter((_, at) => at !== index))}
               >
                 <Trash2 aria-hidden />
@@ -132,25 +134,27 @@ export function ListEditor({
             }
           }}
         />
-        <Button type="button" variant="outline" disabled={!adding.trim()} onClick={add}>
+        <Button wrap type="button" variant="outline" disabled={!adding.trim()} onClick={add}>
           <Plus aria-hidden />
-          Add
+          {addWord}
         </Button>
       </div>
       {(dirty || onClose) && (
         <div className="flex gap-2">
           {dirty && (
             <Button
+              wrap
               type="button"
               size="sm"
               disabled={busy}
               onClick={() => void done(() => onSave(cleaned))}
             >
               {saving && <Loader2 aria-hidden className="animate-spin" />}
-              Save
+              {save}
             </Button>
           )}
           <Button
+            wrap
             type="button"
             size="sm"
             variant="ghost"
@@ -160,7 +164,7 @@ export function ListEditor({
               onClose?.();
             }}
           >
-            Cancel
+            {cancel}
           </Button>
         </div>
       )}

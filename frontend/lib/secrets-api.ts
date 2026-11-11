@@ -29,12 +29,6 @@ export interface SecretActions {
   clear: (name: string) => Promise<unknown>;
 }
 
-export const ADDRESS_CHANGED =
-  "The address changed since this page read it, so the token was not saved. The page has been read again; check the address and type the token again.";
-
-export const ADDRESS_NOT_CHECKED =
-  "The token was refused because its address may have changed, and the page could not check; reload the page.";
-
 /** `PUT /api/secrets/{name}`; answers the whole list. The value is never kept by this module. */
 export function putSecret(
   name: string,

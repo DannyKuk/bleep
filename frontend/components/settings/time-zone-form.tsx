@@ -5,10 +5,9 @@ import { useId, useState } from "react";
 
 import { SaveError, useSaving } from "@/components/settings/save-error";
 import { Button } from "@/components/ui/button";
+import { useT } from "@/lib/i18n";
 import type { GeneralOverrides } from "@/lib/settings-types";
 import { browserZone } from "@/lib/zone";
-
-const LABELS = { timezone: "Time zone" };
 
 /** Every zone the browser knows, its own first; `kept` too when the browser does not list it. */
 export function zoneChoices(own: string, kept: string | null): string[] {
@@ -34,7 +33,8 @@ export function TimeZoneForm({
   const id = useId();
   const own = browserZone();
   const [draft, setDraft] = useState(timezone ?? own);
-  const { saving, busy, problems, run } = useSaving(LABELS);
+  const t = useT().settings.timeZone;
+  const { saving, busy, problems, run } = useSaving({ timezone: t.label });
   const fromEnv = timezone !== null && chosen === undefined;
 
   return (
@@ -47,7 +47,7 @@ export function TimeZoneForm({
     >
       <div className="flex flex-col gap-1.5">
         <label htmlFor={`${id}-zone`} className="text-sm">
-          Show every time in
+          {t.showIn}
         </label>
         <select
           id={`${id}-zone`}
@@ -57,33 +57,30 @@ export function TimeZoneForm({
         >
           {zoneChoices(own, timezone).map((zone) => (
             <option key={zone} value={zone}>
-              {zone === own ? `${zone} (this browser)` : zone}
+              {zone === own ? t.thisBrowser(zone) : zone}
             </option>
           ))}
         </select>
       </div>
       <p className="text-xs text-muted-foreground">
-        {timezone === null
-          ? "None chosen yet: the dashboard shows this browser's time zone, and Telegram shows UTC and says so."
-          : fromEnv
-            ? `${timezone} comes from BLEEP_TIMEZONE in .env until one is chosen here.`
-            : `Telegram and the dashboard show every time in ${timezone}.`}{" "}
-        Times are kept in UTC, so a change shows every time anew.
+        {timezone === null ? t.none : fromEnv ? t.fromEnv(timezone) : t.chosen(timezone)}{" "}
+        {t.keptInUtc}
       </p>
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" size="sm" disabled={busy || draft === chosen}>
+        <Button wrap type="submit" size="sm" disabled={busy || draft === chosen}>
           {saving && <Loader2 aria-hidden className="animate-spin" />}
-          Save time zone
+          {t.save}
         </Button>
         {chosen !== undefined && (
           <Button
+            wrap
             type="button"
             size="sm"
             variant="ghost"
             disabled={busy}
             onClick={() => void run(() => onSave({}))}
           >
-            Clear the choice
+            {t.clear}
           </Button>
         )}
       </div>

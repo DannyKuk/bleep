@@ -6,32 +6,27 @@ import { useState } from "react";
 import { SaveError, useSaving } from "@/components/settings/save-error";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useT } from "@/lib/i18n";
 import type { Thresholds } from "@/lib/settings-types";
 
 type Name = keyof Thresholds;
 
-/** Every threshold with what it decides and its unit, in the order the form shows them. */
-export const THRESHOLDS: { name: Name; label: string; unit?: string }[] = [
-  { name: "container_grace_s", label: "Wait before a dead container opens an incident", unit: "s" },
-  { name: "repeated_deaths", label: "Deaths that make a crash loop" },
-  { name: "repeated_window_s", label: "Counted within", unit: "s" },
-  { name: "url_failures_to_open", label: "Failed URL checks in a row before an incident" },
-  { name: "url_slow_ms", label: "A URL slower than this counts as failed", unit: "ms" },
-  { name: "disk_percent", label: "Disk used at or above", unit: "%" },
-  { name: "memory_available_percent_min", label: "Memory available below", unit: "%" },
-  { name: "memory_polls", label: "Memory low for this many probes" },
-  { name: "load_per_cpu", label: "Load per CPU above" },
-  { name: "load_polls", label: "Load high for this many probes" },
-  { name: "host_unreachable_s", label: "Host unreachable before an incident", unit: "s" },
-  { name: "debounce_s", label: "Signals within this time join one incident", unit: "s" },
-  {
-    name: "fold_window_h",
-    label: "A repeat within this time joins its group (0: never)",
-    unit: "h",
-  },
+/** Every threshold with its unit, in the order the form shows them; the words are in the messages. */
+export const THRESHOLDS: { name: Name; unit?: string }[] = [
+  { name: "container_grace_s", unit: "s" },
+  { name: "repeated_deaths" },
+  { name: "repeated_window_s", unit: "s" },
+  { name: "url_failures_to_open" },
+  { name: "url_slow_ms", unit: "ms" },
+  { name: "disk_percent", unit: "%" },
+  { name: "memory_available_percent_min", unit: "%" },
+  { name: "memory_polls" },
+  { name: "load_per_cpu" },
+  { name: "load_polls" },
+  { name: "host_unreachable_s", unit: "s" },
+  { name: "debounce_s", unit: "s" },
+  { name: "fold_window_h", unit: "h" },
 ];
-
-const LABELS = Object.fromEntries(THRESHOLDS.map(({ name, label }) => [name, label]));
 
 const asDraft = (values: Thresholds) =>
   Object.fromEntries(THRESHOLDS.map(({ name }) => [name, String(values[name])])) as Record<
@@ -59,7 +54,8 @@ export function ThresholdsForm({
   onSave: (thresholds: Partial<Thresholds>) => Promise<unknown>;
 }) {
   const [draft, setDraft] = useState(() => asDraft(values));
-  const { saving, busy, problems, run } = useSaving(LABELS);
+  const { thresholds: t, cancel, section } = useT().settings;
+  const { saving, busy, problems, run } = useSaving(t.labels);
   const changed = THRESHOLDS.filter(({ name }) => draft[name].trim() !== String(values[name]));
   const overridden = Object.keys(overrides).length > 0;
 
@@ -78,12 +74,12 @@ export function ThresholdsForm({
       }}
     >
       <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
-        {THRESHOLDS.map(({ name, label, unit }) => (
+        {THRESHOLDS.map(({ name, unit }) => (
           <label key={name} className="flex items-center justify-between gap-3 text-sm">
             <span className="min-w-0">
-              {label}
+              {t.labels[name]}
               {name in overrides && (
-                <span className="ml-1.5 text-xs text-muted-foreground">(changed here)</span>
+                <span className="ml-1.5 text-xs text-muted-foreground">{t.changedHere}</span>
               )}
             </span>
             <span className="flex shrink-0 items-center gap-1.5">
@@ -100,30 +96,32 @@ export function ThresholdsForm({
         ))}
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" size="sm" disabled={busy || changed.length === 0}>
+        <Button wrap type="submit" size="sm" disabled={busy || changed.length === 0}>
           {saving && <Loader2 aria-hidden className="animate-spin" />}
-          Save thresholds
+          {t.save}
         </Button>
         {changed.length > 0 && (
           <Button
+            wrap
             type="button"
             size="sm"
             variant="ghost"
             disabled={saving}
             onClick={() => setDraft(asDraft(values))}
           >
-            Cancel
+            {cancel}
           </Button>
         )}
         {overridden && (
           <Button
+            wrap
             type="button"
             size="sm"
             variant="outline"
             disabled={busy}
             onClick={() => void run(() => onSave({}))}
           >
-            Back to the defaults
+            {section.defaults}
           </Button>
         )}
       </div>

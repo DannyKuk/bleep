@@ -4,9 +4,12 @@ import { ExternalLink, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
-import { Failed, formatCount, formatUsd, Loading, useGet } from "@/components/dev/status";
+import { Failed, formatUsd, Loading, useGet } from "@/components/dev/status";
 import { Button } from "@/components/ui/button";
 import type { CostView, Usage } from "@/lib/api-types";
+import { formatCount } from "@/lib/format";
+import { MESSAGES, useLanguage, useT } from "@/lib/i18n";
+import type { Language } from "@/lib/settings-types";
 
 const DAYS = 30;
 
@@ -14,46 +17,53 @@ const DAYS = 30;
 export const isWebLink = (url: string | null): url is string =>
   url !== null && /^https?:\/\//i.test(url);
 
-export const UNPRICED_NOTE =
-  'Dollars sum only the calls with a known price. "+ N unpriced" counts the calls without one: they are in no dollar figure and do not count toward the daily cap.';
-
 /** Today's spend against the cap, and the calls today it leaves out. */
-export function todayText({ spent_today_usd, daily_cap_usd, unpriced_today }: CostView): string {
-  const spent = `Today: ${formatUsd(spent_today_usd)} of the ${formatUsd(daily_cap_usd)} daily cap.`;
+export function todayText(
+  { spent_today_usd, daily_cap_usd, unpriced_today }: CostView,
+  language: Language,
+): string {
+  const t = MESSAGES[language].dev.costs;
+  const spent = t.today(formatUsd(spent_today_usd, language), formatUsd(daily_cap_usd, language));
   if (unpriced_today === 0) return spent;
-  const calls = unpriced_today === 1 ? "1 call today has" : `${unpriced_today} calls today have`;
-  return `${spent} ${calls} no known price and ${unpriced_today === 1 ? "is" : "are"} not in that sum.`;
+  const calls =
+    unpriced_today === 1 ? t.oneUnpriced : t.manyUnpriced(formatCount(unpriced_today, language));
+  return `${spent} ${calls}`;
 }
 
 /** The cost, with how many calls it leaves out because their price is unknown. */
-export function costText({ usd, unpriced }: Usage): string {
-  return unpriced > 0 ? `${formatUsd(usd)} + ${unpriced} unpriced` : formatUsd(usd);
+export function costText({ usd, unpriced }: Usage, language: Language): string {
+  const text = formatUsd(usd, language);
+  return unpriced > 0
+    ? MESSAGES[language].dev.costs.withUnpriced(text, formatCount(unpriced, language))
+    : text;
 }
 
 const cell = "px-2 py-1.5 text-right tabular-nums whitespace-nowrap";
 const head = "px-2 py-1.5 text-right font-medium text-muted-foreground whitespace-nowrap";
 
 function UsageCells({ usage }: { usage: Usage }) {
+  const language = useLanguage();
   return (
     <>
-      <td className={cell}>{formatCount(usage.calls)}</td>
-      <td className={cell}>{formatCount(usage.tokens_in)}</td>
-      <td className={cell}>{formatCount(usage.tokens_out)}</td>
-      <td className={cell}>{costText(usage)}</td>
+      <td className={cell}>{formatCount(usage.calls, language)}</td>
+      <td className={cell}>{formatCount(usage.tokens_in, language)}</td>
+      <td className={cell}>{formatCount(usage.tokens_out, language)}</td>
+      <td className={cell}>{costText(usage, language)}</td>
     </>
   );
 }
 
 /** The prompt overrides the incident's run started with, each with the start of its hash. */
 function OverrideList({ overrides }: { overrides: Record<string, string> | null }) {
-  if (overrides === null) return <span className="text-muted-foreground">not recorded</span>;
+  const t = useT().dev.costs;
+  if (overrides === null) return <span className="text-muted-foreground">{t.notRecorded}</span>;
   const names = Object.keys(overrides).sort();
-  if (names.length === 0) return <span className="text-muted-foreground">none</span>;
+  if (names.length === 0) return <span className="text-muted-foreground">{t.none}</span>;
   return (
     <ul className="flex flex-col gap-0.5">
       {names.map((name) => (
         <li key={name} className="font-mono text-xs">
-          <span title={`override version ${overrides[name]}`}>{name}</span>{" "}
+          <span title={t.overrideVersion(overrides[name])}>{name}</span>{" "}
           <span className="text-muted-foreground">{overrides[name].slice(0, 8)}</span>
         </li>
       ))}
@@ -62,25 +72,28 @@ function OverrideList({ overrides }: { overrides: Record<string, string> | null 
 }
 
 function UsageHeads() {
+  const t = useT().dev.costs;
   return (
     <>
-      <th className={head}>Calls</th>
-      <th className={head}>Tokens in</th>
-      <th className={head}>Tokens out</th>
-      <th className={head}>Cost</th>
+      <th className={head}>{t.calls}</th>
+      <th className={head}>{t.tokensIn}</th>
+      <th className={head}>{t.tokensOut}</th>
+      <th className={head}>{t.cost}</th>
     </>
   );
 }
 
 export function CostTables({ costs }: { costs: CostView }) {
+  const t = useT().dev.costs;
+  const language = useLanguage();
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-sm">{todayText(costs)}</p>
+      <p className="text-sm">{todayText(costs, language)}</p>
       <div className="overflow-x-auto">
-        <table aria-label="Cost per day" className="w-full text-sm">
+        <table aria-label={t.perDay} className="w-full text-sm">
           <thead className="border-b border-border">
             <tr>
-              <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">Day</th>
+              <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">{t.day}</th>
               <UsageHeads />
             </tr>
           </thead>
@@ -88,7 +101,7 @@ export function CostTables({ costs }: { costs: CostView }) {
             {costs.days.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-2 py-3 text-muted-foreground">
-                  No model calls in the last {DAYS} days.
+                  {t.noDays(DAYS)}
                 </td>
               </tr>
             )}
@@ -102,14 +115,16 @@ export function CostTables({ costs }: { costs: CostView }) {
         </table>
       </div>
       <div className="overflow-x-auto">
-        <table aria-label="Cost per incident" className="w-full text-sm">
+        <table aria-label={t.perIncident} className="w-full text-sm">
           <thead className="border-b border-border">
             <tr>
-              <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">Incident</th>
-              <UsageHeads />
-              <th className={head}>Trace</th>
               <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">
-                Prompt overrides
+                {t.incident}
+              </th>
+              <UsageHeads />
+              <th className={head}>{t.trace}</th>
+              <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">
+                {t.overrides}
               </th>
             </tr>
           </thead>
@@ -117,7 +132,7 @@ export function CostTables({ costs }: { costs: CostView }) {
             {costs.incidents.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-2 py-3 text-muted-foreground">
-                  No incident has called a model yet.
+                  {t.noIncidents}
                 </td>
               </tr>
             )}
@@ -142,10 +157,10 @@ export function CostTables({ costs }: { costs: CostView }) {
                       href={row.trace_url}
                       target="_blank"
                       rel="noreferrer"
-                      aria-label={`Trace of ${row.title ?? row.incident_id}`}
+                      aria-label={t.traceOf(row.title ?? row.incident_id)}
                       className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-foreground"
                     >
-                      Trace
+                      {t.trace}
                       <ExternalLink aria-hidden className="size-3.5" />
                     </a>
                   ) : row.trace_url ? (
@@ -153,7 +168,7 @@ export function CostTables({ costs }: { costs: CostView }) {
                       {row.trace_url}
                     </span>
                   ) : (
-                    <span className="text-muted-foreground">none</span>
+                    <span className="text-muted-foreground">{t.none}</span>
                   )}
                 </td>
                 <td className="px-2 py-1.5">
@@ -164,7 +179,7 @@ export function CostTables({ costs }: { costs: CostView }) {
           </tbody>
         </table>
       </div>
-      {hasUnpriced(costs) && <p className="text-xs text-muted-foreground">{UNPRICED_NOTE}</p>}
+      {hasUnpriced(costs) && <p className="text-xs text-muted-foreground">{t.note}</p>}
     </div>
   );
 }
@@ -176,17 +191,18 @@ const hasUnpriced = (costs: CostView) =>
 
 /** Tokens and dollars from the usage ledger, per day and per incident. */
 export function CostsPanel() {
+  const t = useT().dev.costs;
   const [reload, setReload] = useState(0);
   const { data, error } = useGet<CostView>(`/api/dev/costs?days=${DAYS}`, reload);
   return (
     <div className="flex flex-col gap-3">
-      {error && <Failed>Could not load the costs: {error.message}</Failed>}
-      {!data && !error && <Loading>Loading the costs</Loading>}
+      {error && <Failed>{t.loadFailed(error.message)}</Failed>}
+      {!data && !error && <Loading>{t.loading}</Loading>}
       {data && <CostTables costs={data} />}
       <div>
-        <Button variant="ghost" size="sm" onClick={() => setReload((n) => n + 1)}>
+        <Button wrap variant="ghost" size="sm" onClick={() => setReload((n) => n + 1)}>
           <RefreshCw aria-hidden />
-          Refresh
+          {t.refresh}
         </Button>
       </div>
     </div>

@@ -3,6 +3,7 @@
 import { FileText, Loader2, RotateCcw, Save } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 
+import { CodeText } from "@/components/code-text";
 import { useDraft } from "@/components/dev/section";
 import { Failed, Loading, why } from "@/components/dev/status";
 import { useTimeZone } from "@/components/preferences";
@@ -11,15 +12,10 @@ import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
 import type { PromptOverrideBody, PromptView } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
-import { useLanguage } from "@/lib/i18n";
+import { useLanguage, useT } from "@/lib/i18n";
 import { isStale } from "@/lib/settings-api";
 
 const MAX_PROMPT = 20_000; // the API's limit (PROMPT_CHARS)
-
-const NOT_SAVED = "Not saved: this prompt changed elsewhere since this page read it.";
-export const PROMPT_READ_AGAIN = `${NOT_SAVED} It has been read again and your edit kept on top of it; check it and save again if your change is still needed.`;
-export const promptRereadFailed = (error: unknown) =>
-  `${NOT_SAVED} Reading it again failed (${why(error)}); reload the page before you change anything else.`;
 
 const promptPath = (name: string) =>
   `/api/dev/prompts/${name.split("/").map(encodeURIComponent).join("/")}`;
@@ -41,6 +37,7 @@ export function PromptEditor({
 }) {
   const zone = useTimeZone();
   const language = useLanguage();
+  const t = useT().dev.prompts;
   const inForce = prompt.override ?? prompt.file_text;
   const [draft, setDraft] = useDraft({ text: inForce });
   const text = draft.text;
@@ -48,7 +45,7 @@ export function PromptEditor({
   const [failure, setFailure] = useState<string | null>(null);
   const id = useId();
 
-  async function send(init: RequestInit, failed: string) {
+  async function send(init: RequestInit, failed: (message: string) => string) {
     setBusy(true);
     setFailure(null);
     try {
@@ -62,12 +59,12 @@ export function PromptEditor({
       if (isStale(error)) {
         try {
           await onStale();
-          setFailure(PROMPT_READ_AGAIN);
-        } catch (failed) {
-          setFailure(promptRereadFailed(failed));
+          setFailure(t.readAgain);
+        } catch (stale) {
+          setFailure(t.rereadFailed(why(stale)));
         }
       } else {
-        setFailure(`${failed}: ${why(error)}`);
+        setFailure(failed(why(error)));
       }
     } finally {
       setBusy(false);
@@ -80,13 +77,13 @@ export function PromptEditor({
       className="flex flex-col gap-2"
       onSubmit={(submitted) => {
         submitted.preventDefault();
-        void send({ method: "PUT", body: JSON.stringify(body) }, "Could not save the override");
+        void send({ method: "PUT", body: JSON.stringify(body) }, t.saveFailed);
       }}
     >
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         {prompt.override !== null && prompt.overridden_at ? (
           <span>
-            Overridden{" "}
+            {t.overridden}{" "}
             <time dateTime={prompt.overridden_at}>
               {formatDateTime(prompt.overridden_at, zone, language)}
             </time>
@@ -94,19 +91,21 @@ export function PromptEditor({
         ) : (
           <span className="flex items-center gap-1">
             <FileText aria-hidden className="size-3.5" />
-            Read from <span className="font-mono">prompts/{prompt.name}.md</span>
+            <span>
+              <CodeText text={t.readFrom(prompt.name)} />
+            </span>
           </span>
         )}
-        <span aria-label="Placeholders" className="flex flex-wrap gap-1">
+        <span aria-label={t.placeholders} className="flex flex-wrap gap-1">
           {prompt.placeholders.length === 0
-            ? "No placeholders"
+            ? t.noPlaceholders
             : prompt.placeholders.map((name) => (
                 <Badge key={name} className="font-mono">{`{${name}}`}</Badge>
               ))}
         </span>
       </div>
       <label htmlFor={id} className="sr-only">
-        Text of {prompt.name}
+        {t.textOf(prompt.name)}
       </label>
       <textarea
         id={id}
@@ -117,23 +116,27 @@ export function PromptEditor({
         onChange={(changed) => setDraft({ text: changed.target.value })}
         className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs leading-relaxed focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
       />
-      <p className="text-xs text-muted-foreground">
-        Use exactly the file&apos;s placeholders; write a literal brace as {"{{"} or {"}}"}.
-      </p>
+      <p className="text-xs text-muted-foreground">{t.hint}</p>
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" variant="outline" disabled={busy || !text.trim() || text === inForce}>
+        <Button
+          wrap
+          type="submit"
+          variant="outline"
+          disabled={busy || !text.trim() || text === inForce}
+        >
           {busy ? <Loader2 aria-hidden className="animate-spin" /> : <Save aria-hidden />}
-          Save the override
+          {t.save}
         </Button>
         {prompt.override !== null && (
           <Button
+            wrap
             type="button"
             variant="ghost"
             disabled={busy}
-            onClick={() => void send({ method: "DELETE" }, "Could not reset the prompt")}
+            onClick={() => void send({ method: "DELETE" }, t.resetFailed)}
           >
             <RotateCcw aria-hidden />
-            Reset to the file
+            {t.reset}
           </Button>
         )}
       </div>
@@ -148,23 +151,24 @@ export function PromptsPanel() {
   const [failure, setFailure] = useState<string | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
   const id = useId();
+  const t = useT().dev.prompts;
 
   useEffect(() => {
     const controller = new AbortController();
     apiFetch<PromptView[]>("/api/dev/prompts", { signal: controller.signal })
       .then(setPrompts)
       .catch((error: unknown) => {
-        if (!controller.signal.aborted) setFailure(`Could not load the prompts: ${why(error)}`);
+        if (!controller.signal.aborted) setFailure(t.loadFailed(why(error)));
       });
     return () => controller.abort();
-  }, []);
+  }, [t]);
 
   async function readAgain() {
     setPrompts(await apiFetch<PromptView[]>("/api/dev/prompts"));
   }
 
   if (failure) return <Failed>{failure}</Failed>;
-  if (!prompts) return <Loading>Loading the prompts</Loading>;
+  if (!prompts) return <Loading>{t.loading}</Loading>;
   const selected = chosen ?? prompts[0]?.name ?? "";
   const prompt = prompts.find((p) => p.name === selected);
   const overridden = prompts.filter((p) => p.override !== null).length;
@@ -173,7 +177,7 @@ export function PromptsPanel() {
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-1.5">
         <label htmlFor={id} className="text-xs text-muted-foreground">
-          Prompt ({overridden} of {prompts.length} overridden)
+          {t.pick(overridden, prompts.length)}
         </label>
         <select
           id={id}
@@ -184,7 +188,7 @@ export function PromptsPanel() {
           {prompts.map((p) => (
             <option key={p.name} value={p.name}>
               {p.name}
-              {p.override !== null ? " (overridden)" : ""}
+              {p.override !== null ? t.overriddenTag : ""}
             </option>
           ))}
         </select>

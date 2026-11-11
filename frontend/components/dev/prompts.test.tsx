@@ -3,7 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { json, prompt, sentBody, stubBackend } from "@/components/dev/fixtures";
-import { PROMPT_READ_AGAIN, PromptsPanel } from "@/components/dev/prompts";
+import { PromptsPanel } from "@/components/dev/prompts";
+import { MESSAGES } from "@/lib/i18n";
 
 const RECOVERY = "/api/dev/prompts/watcher/recovery_line";
 const PROPOSE = prompt({
@@ -101,7 +102,7 @@ describe("PromptsPanel", () => {
     await userEvent.type(box, "Mine: {{logs}");
     await userEvent.click(screen.getByRole("button", { name: "Save the override" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(PROMPT_READ_AGAIN);
+    expect(await screen.findByRole("alert")).toHaveTextContent(MESSAGES.en.dev.prompts.readAgain);
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls[2][0]).toBe("/api/dev/prompts");
     expect(box).toHaveValue("Mine: {logs}");
