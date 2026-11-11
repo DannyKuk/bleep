@@ -1,3 +1,4 @@
+import json
 import re
 import time
 
@@ -485,6 +486,9 @@ def assert_no_slower_than_benign(text: str) -> None:
         '"cookie": "a=b; ',
         "token: [\n  a\n]x,",
         "token: [\n  a:\n",
+        '"token=a" ',
+        '"token=a\\" ',
+        '"q":"token=a",',
     ],
 )
 @pytest.mark.parametrize("length", [4000, 4001])
@@ -1355,3 +1359,102 @@ def test_a_secret_glued_to_a_preceding_word_is_redacted(text, secret):
 )
 def test_a_token_pattern_left_anchored_keeps_a_glued_look_alike(text):
     assert redact_with_count(text) == (text, 0)
+
+
+JSON_STRINGS = ['{{"q": "{}"}}', '{{"q": "{}", "n": 1}}', '{{"q":"{}","n":1}}', '["{}", "x"]']
+
+
+@pytest.mark.parametrize("before", ["", "a=1&", "a=1%26", "a=1&amp;", "a=1\\u0026"])
+@pytest.mark.parametrize("key", ["token", "password"])
+@pytest.mark.parametrize("template", JSON_STRINGS)
+def test_a_pair_inside_a_json_string_ends_at_its_closing_quote(template, key, before):
+    out, count = redact_with_count(template.format(f"{before}{key}=hunter2"))
+    assert (out, count) == (template.format(f"{before}{key}=<redacted>"), 1)
+    assert redact_with_count(out) == (out, 0)
+
+
+def test_the_compact_json_after_a_pair_ending_in_its_string_is_still_redacted():
+    out, count = redact_with_count('{"q":"a=1&token=x1","password":"y2","url":"?pw=z3","n":1}')
+    assert out == (
+        '{"q":"a=1&token=<redacted>","password":"<redacted>","url":"?pw=<redacted>","n":1}'
+    )
+    assert count == 3 and redact_with_count(out) == (out, 0)
+
+
+def test_many_pairs_ending_in_their_strings_on_one_run_hide_the_rest_of_the_run():
+    text = json.dumps({f"k{i}": f"token=hunter{i}x" for i in range(8)}, separators=(",", ":"))
+    out = redact_text(text)
+    assert not any(f"hunter{i}x" in out for i in range(8))
+    assert out.startswith('{"k0":"token=<redacted>","k1":"token=<redacted>",')
+    assert redact_with_count(out) == (out, 0)
+
+
+@pytest.mark.parametrize(
+    "value", ['ab\\"cd', "ab\\\\", 'ab\\\\\\"cd', '\\"abcd', "ab\\u0022cd", 'ab\\",\\"cd']
+)
+@pytest.mark.parametrize("after", ["", ", ", ","])
+def test_a_value_with_an_escape_before_its_closing_quote_is_hidden_whole(value, after):
+    out = redact_text('{"q": "token=' + value + '"' + after + '"n": 1}')
+    assert out.startswith('{"q": "token=<redacted>')
+    assert "ab" not in out and "cd" not in out
+
+
+@pytest.mark.parametrize(
+    ("text", "out"),
+    [
+        ('password=ab"cdef', "password=<redacted>"),
+        ('password=abc"', "password=<redacted>"),
+        ('password=abc"}', "password=<redacted>"),
+        ('x="y" password=abc"', 'x="y" password=<redacted>'),
+        ('{"a": "b", password=abc", "n": 1}', '{"a": "b", password=<redacted> "n": 1}'),
+        ('echo "password=abc"', 'echo "password=<redacted>"'),
+        ('msg="GET /?token=abc" status=200', 'msg="GET /?token=<redacted>" status=200'),
+        # in a shell `"a=b"}` is the value `b}`, so only a bare closing quote ends it there
+        ('echo "password=abc"}', 'echo "password=<redacted>'),
+        ('echo "password=abc",x', 'echo "password=<redacted>'),
+        ('echo "password=ab"cd"', 'echo "password=<redacted>'),
+        ('{"q": "token=ab"cd"}', '{"q": "token=<redacted>'),
+        ('{"q": "token=ab"}cd"}', '{"q": "token=<redacted>'),
+        ('{"q": "token=ab","cd"}', '{"q": "token=<redacted>'),
+        ('{"q": "token=ab",cd}', '{"q": "token=<redacted>'),
+        ('{"q": "token=ab&quot;cd"}', '{"q": "token=<redacted>"}'),
+        ('{"q": "token=ab%22cd"}', '{"q": "token=<redacted>"}'),
+    ],
+)
+def test_a_value_not_plainly_ending_with_its_string_is_hidden_as_before(text, out):
+    assert redact_text(text) == out
+
+
+def test_a_value_inside_a_json_string_never_shows_a_part_of_itself():
+    """Random unquoted values under `token=` in JSON-looking and shell-looking strings: the
+    marker `TSEC` in a value never shows. Values hold no `:`, so no compact JSON key can follow
+    them."""
+    import random
+
+    rng = random.Random(460)
+    alphabet = ['"', "\\", "TSEC", "}", "]", ",", "a", "&", "%22", "&quot;", "\\u0022", "{", "["]
+    openers = ['{"q": "', '{"q":"', '["', 'msg="', 'echo "', "", 'x="y" ', '{"m": "\\"hi\\" ']
+    closers = ["", '"}', '", "n": 1}', '","n":1}', " next=1", '"]']
+    for _ in range(30_000):
+        value = rng.choice(["a", "TSEC", "\\"]) + "".join(
+            rng.choice(alphabet) for _ in range(rng.randrange(0, 8))
+        )
+        text = rng.choice(openers) + "token=" + value + rng.choice(closers)
+        out = redact_text(text)
+        if "TSEC" in value:
+            assert "TSEC" not in out, text
+        assert redact_with_count(out) == (out, 0), text
+
+
+@pytest.mark.parametrize("separators", [(",", ":"), (", ", ": ")])
+def test_json_with_a_pair_in_a_string_stays_json_and_hides_the_value(separators):
+    import random
+
+    rng = random.Random(4600)
+    chars = "abcXYZ019-_.~!*()$@/+=%"
+    for _ in range(2_000):
+        secret = "s" + "".join(rng.choice(chars) for _ in range(rng.randrange(6, 20)))
+        record = {"msg": f"GET /cb?state=1&access_token={secret}", "status": 302}
+        out = redact_text(json.dumps(record, separators=separators))
+        assert secret not in out
+        assert json.loads(out) == {**record, "msg": "GET /cb?state=1&access_token=<redacted>"}
