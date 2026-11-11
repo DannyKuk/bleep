@@ -5,7 +5,8 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from bleep.schemas.graph import Diagnosis, PlanStep, Proposal, Report
+from bleep.schemas.graph import Diagnosis, Evidence, PlanStep, Proposal, Report
+from evals.github import load_github_fixture
 from evals.report import (
     GradeError,
     RunInfo,
@@ -416,6 +417,35 @@ def test_what_a_scenario_must_set_is_listed_as_key_and_value_with_its_names():
     assert "  - Names: the diagnosis leaves out `WORKER_BATCH_MB=8`, the plan names every one" in (
         text
     )
+
+
+def test_a_scenario_with_a_repo_counts_the_diagnoses_that_name_a_commit_by_its_sha():
+    scenario = SCENARIO.model_copy(update={"github": "bad-deploy"})
+    deploy = load_github_fixture("bad-deploy").commits[0].sha[:7]
+    named = Diagnosis(
+        root_cause=f"commit {deploy} 'Deploy shop 2' set SHOP_VERSION to 2",
+        category="code",
+        confidence=0.9,
+    )
+    in_evidence = named.model_copy(
+        update={
+            "root_cause": "version 2 reads price_cents",
+            "evidence": [Evidence(source="commit_diff", detail=f"{deploy} sets SHOP_VERSION")],
+        }
+    )
+    runs = [
+        result(1, diagnosis=named),
+        result(2, diagnosis=in_evidence),
+        result(3),
+        result(4, diagnosis=None, error="timed out"),
+    ]
+
+    text = render(INFO.model_copy(update={"scenarios": [scenario]}), runs)
+
+    assert f"  - Commits named by sha: the diagnosis `{deploy}`" in text
+    assert "  - Commits named by sha: the diagnosis none" in text
+    assert "- The diagnosis named a commit of the repo by its sha in 2 of 3 diagnosed runs" in text
+    assert "Commits named" not in render(INFO, RESULTS)
 
 
 def test_a_scenario_without_names_reports_none_and_old_raw_lines_still_load():

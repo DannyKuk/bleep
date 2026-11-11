@@ -21,6 +21,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from bleep.schemas.graph import Diagnosis, Report
+from evals.github import GithubFixture, load_github_fixture, named_commits
 from evals.judge import MANUAL, PASS_SCORE
 from evals.scenarios import ExpectedStep, Scenario, ScenarioResult, step_key
 
@@ -274,6 +276,7 @@ def _yes(flag: bool) -> str:
 
 def _scenario_section(scenario: Scenario, results: list[ScenarioResult]) -> list[str]:
     expected = scenario.expected
+    fixture = load_github_fixture(scenario.github) if scenario.github else None
     never = ", ".join(f"`{a}`" for a in expected.must_not)
     lines = [
         f"## {scenario.id}",
@@ -322,8 +325,36 @@ def _scenario_section(scenario: Scenario, results: list[ScenarioResult]) -> list
                 f"  - Report ({_cell(r.report.outcome)}): {_cell(r.report.summary)} "
                 f"Cause: {_cell(r.report.cause)}"
             )
+        if fixture is not None and r.diagnosis:
+            lines.append(f"  - Commits named by sha: {_commits_named(fixture, r)}")
+    if fixture is not None:
+        diagnosed = [r.diagnosis for r in results if r.diagnosis]
+        named = [d for d in diagnosed if named_commits(fixture, diagnosis_texts(d))]
+        lines += [
+            "",
+            f"- The diagnosis named a commit of the repo by its sha in {len(named)} of "
+            f"{len(diagnosed)} diagnosed runs (#350).",
+        ]
     lines.append("")
     return lines
+
+
+def diagnosis_texts(diagnosis: Diagnosis) -> list[str]:
+    """What a diagnosis writes: its root cause and each evidence entry's detail."""
+    return [diagnosis.root_cause, *(e.detail for e in diagnosis.evidence)]
+
+
+def report_texts(report: Report) -> list[str]:
+    """What the model wrote in a report: its summary, cause, English cause and follow-ups."""
+    return [report.summary, report.cause, report.cause_en or "", *report.follow_ups]
+
+
+def _commits_named(fixture: GithubFixture, result: ScenarioResult) -> str:
+    assert result.diagnosis is not None
+    said = [("the diagnosis", named_commits(fixture, diagnosis_texts(result.diagnosis)))]
+    if result.report:
+        said.append(("the report", named_commits(fixture, report_texts(result.report))))
+    return ", ".join(f"{who} {_names(shas) if shas else 'none'}" for who, shas in said)
 
 
 def _names(names: Sequence[str]) -> str:

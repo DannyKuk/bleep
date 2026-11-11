@@ -10,7 +10,8 @@ stands in for that repo. Anything else is GitHub's 404.
 
 import hashlib
 import json
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -21,6 +22,9 @@ from bleep.hosts.github import GithubClient
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "github"
 NOT_FOUND = {"message": "Not Found", "status": "404"}
+# A word of 7 to 40 hex characters, as a sha is written in a text, not inside a name, a path or a
+# value; the same edges as the report's check (`bleep.graph.commits`).
+_HEX_WORD = re.compile(r"(?<![\w./:@#=-])[0-9a-f]{7,40}(?![\w/:@-])(?!\.\w)", re.IGNORECASE)
 
 
 class GithubFixtureError(ValueError):
@@ -66,6 +70,13 @@ def load_github_fixture(name: str, directory: Path = FIXTURES_DIR) -> GithubFixt
         return GithubFixture.model_validate(json.loads(path.read_text(encoding="utf-8")))
     except (OSError, ValueError, ValidationError) as error:
         raise GithubFixtureError(f"GitHub fixture {path}: {error}") from error
+
+
+def named_commits(fixture: GithubFixture, texts: Iterable[str]) -> list[str]:
+    """The short shas of the fixture's commits that `texts` name by sha, in the fixture's order:
+    a hex word of 7 characters or more, in any case, that starts the commit's sha (#350)."""
+    words = {word.lower() for text in texts for word in _HEX_WORD.findall(text)}
+    return [c.sha[:7] for c in fixture.commits if any(c.sha.startswith(w) for w in words)]
 
 
 def planted_commit(
