@@ -329,7 +329,10 @@ def _logs(context: GatherContext) -> str:
 
 
 def _url_checks(context: GatherContext) -> str:
-    """Gather's URL checks as a section of their own; empty, and the prompt as it was, without."""
+    """Gather's URL checks as a section of their own, or the line that the service has no URL
+    (#445); empty, and the prompt as it was, for any other run."""
+    if context.no_urls:
+        return "\n\n" + prompts.load("graph/url_checks_none").strip()
     if not context.urls:
         return ""
     return "\n\n" + prompts.load("graph/url_checks", checks=describe_urls(context.urls)).strip()

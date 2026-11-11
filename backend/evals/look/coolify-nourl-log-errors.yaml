@@ -1,0 +1,38 @@
+# The person asks Bleep to look at a Coolify app that has no URL in Bleep's settings and fails in
+# a way no container shows (#445): its container runs and passes its health check (which reads a
+# static path), Coolify's proxy beside it runs with a quiet log, but the app's own log shows every
+# page request failing on an unhandled error. The look's prompts say a service without URLs has
+# nothing to check and that its health rests on its containers and its own logs; this case checks
+# that line does not push a look to call the service healthy when the own logs show a failure. The
+# right answer names the failing page with a category other than `unknown`. A restart cannot fix a
+# bug in the app's code. The case is Coolify-shaped by its names only: it runs as a Compose
+# service on the scripted host, without the Coolify plugin.
+id: coolify-nourl-log-errors
+service: vclhwoxxy60z4vk70g0vpesq
+healthy: false
+containers:
+  - name: vclhwoxxy60z4vk70g0vpesq-20261109T171204
+    image: vclhwoxxy60z4vk70g0vpesq:4be1c09d2f7e3a5b6c8d9e0f1a2b3c4d5e6f7a8b
+    health: healthy
+    started_minutes_ago: 1250
+    mem_usage_mib: 44
+    logs: |
+      Listening on http://0.0.0.0:3000
+      [nuxt] [request error] [unhandled] [500] Cannot read properties of undefined (reading 'slug')
+        at ./server/api/posts/index.get.ts:14:22
+      [nuxt] [request error] [unhandled] [500] Cannot read properties of undefined (reading 'slug')
+        at ./server/api/posts/index.get.ts:14:22
+      [nuxt] [request error] [unhandled] [500] Cannot read properties of undefined (reading 'slug')
+        at ./server/api/posts/index.get.ts:14:22
+  - name: coolify-proxy
+    project: coolify
+    image: traefik:v3.1
+    health: healthy
+    started_minutes_ago: 30000
+    mem_usage_mib: 60
+    logs: |
+      time="2026-10-21T08:12:40Z" level=info msg="Configuration loaded from flags."
+      time="2026-10-21T08:12:41Z" level=info msg="Starting provider *docker.Provider"
+failure_words: [Cannot read properties, unhandled, slug, posts]
+wrong_words: [nothing is wrong, no failure, no fault, no issue, no problem, working normally, functioning normally, service is healthy, app is healthy, service looks healthy, app looks healthy]
+must_not: [docker.restart, docker.stop, docker.start]

@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { useRef } from "react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { json } from "@/components/dev/fixtures";
@@ -10,7 +10,7 @@ import { OverallProvider } from "@/components/overall-state";
 import { host } from "@/components/overview/fixtures";
 import { PinnedBarProvider, useReportPinnedBar } from "@/components/pinned-bar";
 import type { Incident } from "@/lib/api-types";
-import type { ChatAnswer } from "@/lib/talk-api";
+import type { ChatAnswer, LookProgress, TalkLink } from "@/lib/talk-api";
 
 let pathname = "/";
 vi.mock("next/navigation", () => ({ usePathname: () => pathname }));
@@ -331,6 +331,203 @@ describe("ChatPanel", () => {
 
     expect(screen.getByRole("region", { name: "Chat with Bleep" })).toBeInTheDocument();
     expect(screen.getByText("All good.")).toBeInTheDocument();
+  });
+
+  describe("following a look it started (#458)", () => {
+    const LOOK = answer({
+      answer: "🔎 Look at shop now? It costs a model run.",
+      confirm: { ...SNOOZE.confirm!, id: "look1" },
+    });
+    const PRESSED = "🔎 Looking at shop now as shop #7. I'll tell you here what I find.";
+    const SHOP_7: TalkLink = { kind: "incident", id: "inc_7", label: "shop #7" };
+
+    function look(overrides: Partial<LookProgress>): LookProgress {
+      return { state: "running", line: "Looking into it…", links: [], steps: [], ...overrides };
+    }
+
+    /** The look's answers in turn, the last one again for every ask after them. */
+    function stubLook(...answers: (LookProgress | Error)[]) {
+      const asked: string[] = [];
+      const fetchMock = stubBackend((path) => {
+        if (path === "/api/talk/messages") return json(LOOK);
+        if (path.startsWith("/api/talk/confirms/")) {
+          return json({ line: PRESSED, incident_id: "inc_7" });
+        }
+        asked.push(path);
+        const next = answers.length > 1 ? answers.shift()! : answers[0];
+        return next instanceof Error ? Promise.reject(next) : json(next);
+      });
+      return { asked, fetchMock };
+    }
+
+    async function pressLook() {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      renderPanel();
+      await user.click(screen.getByRole("button", { name: "Talk to Bleep" }));
+      await write(user, "can you check up shop-web?");
+      await user.click(await screen.findByRole("button", { name: "Yes" }));
+      await screen.findByText(PRESSED);
+      return user;
+    }
+
+    const wait = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("shows the run's progress, then its summary with links and what it did, then stops", async () => {
+      const summary = "✅ shop #7: shop is healthy (no URL checked).\nAll containers ran.";
+      const steps = ["Listed the containers", "Read the logs of shop-web, shop-db"];
+      const { asked } = stubLook(
+        look({}),
+        look({ line: "Reading through the container logs…", steps: steps.slice(0, 1) }),
+        look({ state: "ended", line: summary, links: [SHOP_7], steps }),
+      );
+      await pressLook();
+
+      expect(await screen.findByText("Looking into it…")).toBeInTheDocument();
+      expect(asked).toEqual(["/api/talk/looks/inc_7"]);
+      await wait(2_000);
+      expect(screen.getByText("Reading through the container logs…")).toBeInTheDocument();
+      expect(screen.getByRole("list", { name: "What I did" })).toHaveTextContent(
+        "Listed the containers",
+      );
+
+      await wait(2_000);
+      const followed = screen.getByTestId("look");
+      expect(followed).toHaveTextContent("shop is healthy (no URL checked).");
+      expect(within(followed).getByRole("link", { name: "shop #7" })).toHaveAttribute(
+        "href",
+        "/incidents/inc_7",
+      );
+      expect(
+        within(screen.getByRole("list", { name: "What I did" }))
+          .getAllByRole("listitem")
+          .map((item) => item.textContent),
+      ).toEqual(steps);
+      expect(screen.queryByText("Reading through the container logs…")).not.toBeInTheDocument();
+
+      await wait(30_000);
+      expect(asked).toHaveLength(3); // ended: no more asks
+    });
+
+    it("keeps following, slower, while the plan waits, and through the fix to its end", async () => {
+      const waits = "🙋 shop #7 found a problem: shop-web was OOM-killed.\nIts plan waits.";
+      const fixed = "✅ shop #7: fixed in 4 min\nshop-web runs again.";
+      const { asked } = stubLook(
+        look({ state: "waiting", line: waits, links: [SHOP_7], steps: ["Listed the containers"] }),
+        look({ line: "Running the plan…", steps: ["Listed the containers"] }),
+        look({ line: "Checking it's healthy again…", steps: ["Restarted shop-web"] }),
+        look({ state: "ended", line: fixed, links: [SHOP_7], steps: ["Restarted shop-web"] }),
+      );
+      await pressLook();
+
+      expect(await screen.findByText(/found a problem/)).toBeInTheDocument();
+      await wait(2_000);
+      expect(asked).toHaveLength(1); // a waiting plan is asked about every 10 s
+      await wait(8_000);
+      expect(asked).toHaveLength(2);
+      expect(screen.getByText("Running the plan…")).toBeInTheDocument();
+
+      await wait(2_000);
+      expect(screen.getByText("Checking it's healthy again…")).toBeInTheDocument();
+      await wait(2_000);
+      expect(screen.getByTestId("look")).toHaveTextContent("fixed in 4 min");
+      expect(screen.getByRole("list", { name: "What I did" })).toHaveTextContent(
+        "Restarted shop-web",
+      );
+      await wait(20_000);
+      expect(asked).toHaveLength(4);
+    });
+
+    it("ends a rejected plan's look with the backend's line", async () => {
+      const waits = "🙋 shop #7 found a problem: shop-web exited.\nIts plan waits.";
+      const rejected = "🙅 shop #7: left to you, nothing was changed.\nNothing ran.";
+      const { asked } = stubLook(
+        look({ state: "waiting", line: waits, links: [SHOP_7] }),
+        look({ state: "ended", line: rejected, links: [SHOP_7] }),
+      );
+      await pressLook();
+
+      await screen.findByText(/found a problem/);
+      await wait(10_000);
+      expect(screen.getByTestId("look")).toHaveTextContent("left to you, nothing was changed.");
+      await wait(20_000);
+      expect(asked).toHaveLength(2);
+    });
+
+    it("keeps the last line when an ask fails, says so, and asks again", async () => {
+      stubLook(
+        look({ line: "Searching the docs…" }),
+        new TypeError("offline"),
+        look({ line: "Writing it up…" }),
+      );
+      await pressLook();
+
+      expect(await screen.findByText("Searching the docs…")).toBeInTheDocument();
+      await wait(2_000);
+      expect(screen.getByText("Searching the docs…")).toBeInTheDocument();
+      expect(within(screen.getByTestId("look")).getByRole("alert")).toHaveTextContent(
+        "Lost track of the look for a moment.",
+      );
+
+      await wait(2_000);
+      expect(screen.getByText("Writing it up…")).toBeInTheDocument();
+      expect(within(screen.getByTestId("look")).queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("scrolls the chat down only when an answer shows something new", async () => {
+      const waits = "🙋 shop #7 found a problem: shop-web exited.\nIts plan waits.";
+      const waiting = look({ state: "waiting", line: waits, links: [SHOP_7] });
+      const { asked } = stubLook(
+        waiting,
+        { ...waiting, links: [{ ...SHOP_7 }] },
+        waiting,
+        look({ line: "Running the plan…" }),
+      );
+      await pressLook();
+      await screen.findByText(/found a problem/);
+      const chat = screen.getByRole("region", { name: "Chat with Bleep" }).querySelector("ol")!;
+      const scrolled = vi.fn();
+      Object.defineProperty(chat, "scrollTop", { get: () => 0, set: scrolled, configurable: true });
+
+      await wait(20_000);
+      expect(asked).toHaveLength(3);
+      expect(scrolled).not.toHaveBeenCalled(); // the same plan, asked about twice more
+
+      await wait(10_000);
+      expect(screen.getByText("Running the plan…")).toBeInTheDocument();
+      expect(scrolled).toHaveBeenCalled();
+    });
+
+    it("stops asking once the panel is closed", async () => {
+      const { asked } = stubLook(look({}));
+      const user = await pressLook();
+      await screen.findByText("Looking into it…");
+
+      await user.click(screen.getByRole("button", { name: "Close chat" }));
+      await wait(10_000);
+
+      expect(asked).toHaveLength(1);
+    });
+
+    it("follows nothing after a press that is no look", async () => {
+      stubBackend((path) =>
+        path === "/api/talk/messages"
+          ? json(SNOOZE)
+          : json({ line: "Snoozed until 16:04.", incident_id: null }),
+      );
+      const user = userEvent.setup();
+      renderPanel();
+      await user.click(screen.getByRole("button", { name: "Talk to Bleep" }));
+      await write(user, "leave shop alone");
+      await user.click(await screen.findByRole("button", { name: "Yes" }));
+
+      await screen.findByText("Snoozed until 16:04.");
+      expect(screen.queryByTestId("look")).not.toBeInTheDocument();
+    });
   });
 
   it("sits above a bar pinned to the screen's bottom, and goes back down once it is gone", () => {

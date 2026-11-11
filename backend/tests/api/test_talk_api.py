@@ -7,9 +7,11 @@ from langchain_core.messages import AIMessage
 
 from bleep import prompts
 from bleep.hosts.registry import Registry
+from bleep.incidents.repository import utcnow
 from bleep.main import create_app
 from bleep.memory.embeddings import FakeEmbedder
 from bleep.schemas.docker import ContainerSummary
+from bleep.schemas.incidents import Signal, Subject
 from bleep.talk.confirms import CONFIRM_TTL
 from bleep.wiring import build_parts
 from fakes import FakeChatModel, FakeEngine, compose_labels, ssh_host
@@ -88,7 +90,7 @@ def test_a_snooze_is_only_an_offer_until_yes_is_pressed_once(client, model):
     again = client.post(f"/api/talk/confirms/{confirm['id']}", json={"yes": True})
 
     assert pressed.status_code == 200 and pressed.json()["line"].startswith("Snoozed until")
-    assert again.json() == {"line": said("answer_confirm_used")}
+    assert again.json() == {"line": said("answer_confirm_used"), "incident_id": None}
     assert shop_quiet(client)["mode"] == "snooze"
 
 
@@ -105,8 +107,15 @@ def test_no_an_unknown_and_an_expired_offer_change_nothing(client, app, model):
     confirms.clock = lambda: now + CONFIRM_TTL
     expired = client.post(f"/api/talk/confirms/{second['id']}", json={"yes": True})
 
-    assert declined.json() == {"line": said("answer_confirm_no")}
-    assert unknown.json() == expired.json() == {"line": said("answer_confirm_expired")}
+    assert declined.json() == {"line": said("answer_confirm_no"), "incident_id": None}
+    assert (
+        unknown.json()
+        == expired.json()
+        == {
+            "line": said("answer_confirm_expired"),
+            "incident_id": None,
+        }
+    )
     assert shop_quiet(client) is None
 
 
@@ -207,3 +216,25 @@ def test_german_chosen_on_the_settings_page_is_what_the_panel_says_next(client, 
     assert (body["confirm"]["yes_label"], body["confirm"]["no_label"]) == ("Ja", "Nein")
     pressed = client.post(f"/api/talk/confirms/{body['confirm']['id']}", json={"yes": True})
     assert pressed.json()["line"].startswith("Stumm bis ")
+
+
+def test_a_look_is_followed_by_its_incident_id_and_an_unknown_one_is_404(client, app):
+    subject = Subject(kind="service", host_id="a", service_id=SHOP)
+    signal = Signal(subject=subject, kind="look_requested", at=utcnow())
+    incident, _ = client.portal.call(app.state.parts.incidents.open_or_attach, subject, [signal])
+
+    response = client.get(f"/api/talk/looks/{incident.id}")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "state": "running",
+        "line": prompts.load("talk/look_progress/start").strip(),
+        "links": [],
+        "steps": [],
+    }
+    assert client.get("/api/talk/looks/inc_nope").status_code == 404
+
+
+def test_following_a_look_needs_a_session(app):
+    with TestClient(app) as anonymous:
+        assert anonymous.get("/api/talk/looks/inc_nope").status_code == 401
