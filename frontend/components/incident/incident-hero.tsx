@@ -85,7 +85,7 @@ export function IncidentHero({ detail, stream }: { detail: IncidentDetail; strea
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <IncidentStatusBadge status={incident.status} />
-        {outcome && outcome !== incident.status && <Badge>{t.outcome[outcome]}</Badge>}
+        {outcome && outcome !== incident.status && <Badge>{t.outcome[outcome] ?? outcome}</Badge>}
         <StreamBadge status={stream} />
       </div>
     </section>

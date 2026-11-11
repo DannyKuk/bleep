@@ -208,7 +208,6 @@ function StillFailing({
   last: IncidentListItem | undefined;
 }) {
   const zone = useTimeZone();
-  const language = useLanguage();
   if (service.quiet || service.health !== "down" || service.open_incident_id !== null) return null;
   if (!last || !ENDED.has(last.status)) return null;
   const ended = last.closed_at ?? last.opened_at;
@@ -216,8 +215,8 @@ function StillFailing({
   return (
     <p role="note" aria-label="Still failing" className="text-sm text-ink-2">
       Still down after its last incident ended{" "}
-      <time dateTime={ended} title={formatDateTime(ended, zone, language)}>
-        {formatSince(ended, undefined, zone, language)}
+      <time dateTime={ended} title={formatDateTime(ended, zone, "en")}>
+        {formatSince(ended, undefined, zone, "en")}
       </time>
       :{" "}
       <Link
@@ -250,7 +249,6 @@ export function ServicePage({ id }: { id: string }) {
 
 function Service({ id }: { id: string }) {
   const zone = useTimeZone();
-  const language = useLanguage();
   const encoded = encodeURIComponent(id);
   const [reloads, setReloads] = useState(0);
   const overall = useOverall();
@@ -325,9 +323,9 @@ function Service({ id }: { id: string }) {
                 {" · healthy since "}
                 <time
                   dateTime={data.health_since}
-                  title={formatDateTime(data.health_since, zone, language)}
+                  title={formatDateTime(data.health_since, zone, "en")}
                 >
-                  {formatSince(data.health_since, undefined, zone, language)}
+                  {formatSince(data.health_since, undefined, zone, "en")}
                 </time>
               </>
             )}

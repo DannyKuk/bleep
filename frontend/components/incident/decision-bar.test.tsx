@@ -370,7 +370,7 @@ describe("DecisionBar in German", () => {
     expect(screen.getByRole("button", { name: "Bleep etwas sagen" })).toBeEnabled();
     await userEvent.click(screen.getByRole("button", { name: "Nein, ablehnen" }));
     expect(await screen.findByRole("status")).toHaveTextContent(
-      /^Abgelehnt auf Telegram, .+\. Dieser Plan lief nicht\.$/,
+      /^Abgelehnt auf Telegram, .+\. Dieser Plan wurde nicht ausgeführt\.$/,
     );
   });
 

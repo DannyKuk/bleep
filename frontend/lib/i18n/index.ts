@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 
 import { de } from "@/lib/i18n/de";
 import { en } from "@/lib/i18n/en";
+import { LANGUAGE_KEY as KEY } from "@/lib/i18n/script";
 import type { Language } from "@/lib/settings-types";
 
 /** The shape every language's messages have: English's keys, with any words in each string. */
@@ -23,7 +24,6 @@ export const DATE_LOCALE: Record<Language, string | undefined> = { en: undefined
 /** The locale for a short day ("2 Nov", "Tue") and for counts ("1,234"). */
 export const FIXED_LOCALE: Record<Language, string> = { en: "en-GB", de: "de-DE" };
 
-const KEY = "bleep:language";
 const listeners = new Set<() => void>();
 let held: Language | null = null;
 

@@ -30,7 +30,9 @@ export function DiagnosisCard({
         <Badge className="px-3 py-1 text-[13px] font-extrabold text-ink">
           {t.diagnosis.sure(Math.round(diagnosis.confidence * 100))}
         </Badge>
-        <Badge className="px-3 py-1 text-[13px]">{t.category[diagnosis.category]}</Badge>
+        <Badge className="px-3 py-1 text-[13px]">
+          {t.category[diagnosis.category] ?? diagnosis.category}
+        </Badge>
       </div>
       {diagnosis.unsure && (
         <p
@@ -84,7 +86,7 @@ function ShortDiagnosis({ diagnosis }: { diagnosis: Diagnosis }) {
     <div className="flex flex-col gap-2.5">
       <p className="text-sm font-extrabold text-ink-2">
         {t.diagnosis.sure(Math.round(diagnosis.confidence * 100))} ·{" "}
-        {t.category[diagnosis.category]}
+        {t.category[diagnosis.category] ?? diagnosis.category}
       </p>
       {diagnosis.unsure && (
         <p

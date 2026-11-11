@@ -18,5 +18,5 @@ const HEALTH: Record<IncidentStatus, Health> = {
 };
 
 export function IncidentStatusBadge({ status }: { status: IncidentStatus }) {
-  return <HealthBadge health={HEALTH[status]} label={useT().status[status]} />;
+  return <HealthBadge health={HEALTH[status]} label={useT().status[status] ?? status} />;
 }

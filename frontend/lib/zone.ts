@@ -85,6 +85,6 @@ export function clockIn(at: Date, zone: Zone): string {
   return `${hour}:${String(minute).padStart(2, "0")}`;
 }
 
-/** "Tue" (in German "Di.") in `zone`. */
+/** "Tue" (in German "Di") in `zone`. */
 export const weekdayIn = (at: Date, zone: Zone, language: Language) =>
   at.toLocaleDateString(FIXED_LOCALE[language], { weekday: "short", timeZone: zone });

@@ -65,11 +65,11 @@ const INVISIBLE = new RegExp(
   "gu",
 );
 // Only switch a character between text and emoji look; common after an emoji and no place to hide a name.
-const PRESENTATION = /[︎️]/g;
+const PRESENTATION = /[\ufe0e\ufe0f]/g;
 
 /** Text with every character that draws nothing (zero-width, bidi marks, fillers, variation
- * selectors) shown as "�", the way the Telegram message shows a step, so a name cannot hide in
+ * selectors) shown as "\uFFFD", the way the Telegram message shows a step, so a name cannot hide in
  * a plan's params. U+FE0E and U+FE0F are dropped instead of marked. */
 export function showInvisible(text: string): string {
-  return text.replace(PRESENTATION, "").replace(INVISIBLE, "�");
+  return text.replace(PRESENTATION, "").replace(INVISIBLE, "\uFFFD");
 }

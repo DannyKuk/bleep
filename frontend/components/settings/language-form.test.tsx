@@ -1,7 +1,8 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { AppNav } from "@/components/app-nav";
 import {
   invalid,
   json,
@@ -15,6 +16,8 @@ import {
 import { SettingsPage } from "@/components/settings/settings-page";
 import { PreferencesProvider } from "@/components/preferences";
 import type { SettingsView } from "@/lib/settings-types";
+
+vi.mock("next/navigation", () => ({ usePathname: () => "/settings" }));
 
 const VIENNA = "Europe/Vienna";
 
@@ -75,6 +78,31 @@ describe("the language on the settings page", () => {
     expect(await within(language).findByText(/recovery lines in German/)).toBeVisible();
     expect(within(language).getByText(/Telegram messages, buttons and chat answers/)).toBeVisible();
     expect(sentBody(fetchMock, "PUT")).toEqual({ general: { timezone: VIENNA, language: "de" } });
+  });
+
+  it("turns the rest of the dashboard German and the page's language to de once German is saved", async () => {
+    const german = settingsView({
+      language: "de",
+      overrides: { general: { language: "de" } },
+      version: "v2",
+    });
+    backend(settingsView(), [json(german)]);
+    render(
+      <PreferencesProvider>
+        <AppNav />
+        <SettingsPage />
+      </PreferencesProvider>,
+    );
+    expect(screen.getByRole("link", { name: "Incidents" })).toBeVisible();
+    expect(document.documentElement.lang).toBe("en");
+    const language = await panel();
+
+    await userEvent.selectOptions(within(language).getByRole("combobox"), "de");
+    await userEvent.click(within(language).getByRole("button", { name: "Save language" }));
+
+    expect(await screen.findByRole("link", { name: "Vorfälle" })).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "Hauptmenü" })).toBeVisible();
+    expect(document.documentElement.lang).toBe("de");
   });
 
   it("keeps German when the time zone is cleared", async () => {

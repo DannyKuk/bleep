@@ -30,10 +30,33 @@ function texts(tree: Tree): string[] {
   });
 }
 
+const SAMPLES = [111, 222, 333];
+
+/** For every sentence taking values, which of them it writes out (by position). */
+function usedValues(tree: Tree, path = ""): Record<string, number[]> {
+  const found: Record<string, number[]> = {};
+  for (const [key, value] of Object.entries(tree)) {
+    const at = path ? `${path}.${key}` : key;
+    if (typeof value === "function") {
+      const text = String(value(...SAMPLES.slice(0, value.length)));
+      found[at] = SAMPLES.slice(0, value.length).flatMap((n, i) =>
+        text.includes(String(n)) ? [i] : [],
+      );
+    } else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      Object.assign(found, usedValues(value as Tree, at));
+    }
+  }
+  return found;
+}
+
 describe("messages", () => {
   // The type check holds every key too; this also covers the maps typed by a plain string key.
   it("has every key in both languages, each taking the same values", () => {
     expect(shape(MESSAGES.de)).toEqual(shape(MESSAGES.en));
+  });
+
+  it("has every sentence write out the same values in both languages", () => {
+    expect(usedValues(MESSAGES.de)).toEqual(usedValues(MESSAGES.en));
   });
 
   it.each(["en", "de"] as const)("has no empty message in %s", (language) => {

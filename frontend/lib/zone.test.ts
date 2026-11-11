@@ -43,6 +43,27 @@ describe("a chosen time zone", () => {
     expect(morningLabel(noonUtc, NEW_YORK, "en")).toBe("Until 8:00");
   });
 
+  it("says the same in German, with German day words and 24 h clocks", () => {
+    const now = new Date("2026-11-09T04:00:00Z");
+    expect(formatSince("2026-11-08T22:30:00Z", now, VIENNA, "de")).toBe("gestern 23:30");
+    expect(formatSince("2026-11-05T10:00:00Z", now, VIENNA, "de")).toMatch(/^Do\.? 11:00$/);
+    expect(formatSince("2026-10-20T13:02:00Z", now, VIENNA, "de")).toMatch(/^20\. Okt\.? 15:02$/);
+    expect(formatDateTime("2026-11-09T12:00:05Z", VIENNA, "de")).toBe("09.11.2026, 13:00");
+
+    const noonUtc = new Date("2026-11-09T12:00:00Z");
+    expect(morningLabel(noonUtc, VIENNA, "de")).toBe("Bis morgen 8:00");
+    expect(morningLabel(noonUtc, NEW_YORK, "de")).toBe("Bis 8:00");
+    const until = snoozeUntil("morning", noonUtc, VIENNA).toISOString();
+    const view = { scope: "service", mode: "snooze", until, since } as const;
+    expect(quietLabel(view, noonUtc, VIENNA, "de")).toBe("Stumm bis morgen 8:00");
+    expect(quietLabel({ ...view, scope: "host" }, noonUtc, VIENNA, "de")).toBe(
+      "Host stumm bis morgen 8:00",
+    );
+    expect(quietLabel({ ...view, mode: "leave_alone", until: null }, noonUtc, VIENNA, "de")).toBe(
+      "In Ruhe gelassen",
+    );
+  });
+
   it("keeps until 08:00 at 08:00 local across a clock change", () => {
     const beforeSpring = new Date("2026-03-28T12:00:00Z"); // Vienna moves to CEST on 29 March
     expect(snoozeUntil("morning", beforeSpring, VIENNA).toISOString()).toBe(
