@@ -106,6 +106,30 @@ describe("the settings page in German", () => {
   });
 });
 
+describe("long German labels on the settings page", () => {
+  it("wrap inside their buttons instead of overflowing a phone's width", async () => {
+    backend(settingsView({ language: "de", restart_needed: [] }));
+    await act(async () => setLanguage("de"));
+    render(<SettingsPage />);
+
+    const embeddings = await screen.findByRole("region", { name: "Embeddings" });
+    await userEvent.selectOptions(within(embeddings).getByLabelText("Embedder"), "openai");
+    await userEvent.click(within(embeddings).getByRole("button", { name: "Embeddings speichern" }));
+    const confirm = await within(embeddings).findByRole("button", {
+      name: "Für den nächsten Start speichern",
+    });
+    for (const button of [
+      confirm,
+      screen.getByRole("button", { name: "SSH-Host hinzufügen" }),
+      within(screen.getByRole("region", { name: "Schwellenwerte" })).getByRole("button", {
+        name: "Schwellenwerte speichern",
+      }),
+    ]) {
+      expect(button).toHaveClass("whitespace-normal", "h-auto", "min-h-9");
+    }
+  });
+});
+
 describe("the host form in German", () => {
   it("labels its fields and the host key check in German", async () => {
     stubBackend({});

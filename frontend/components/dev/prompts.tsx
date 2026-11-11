@@ -158,16 +158,16 @@ export function PromptsPanel() {
     apiFetch<PromptView[]>("/api/dev/prompts", { signal: controller.signal })
       .then(setPrompts)
       .catch((error: unknown) => {
-        if (!controller.signal.aborted) setFailure(t.loadFailed(why(error)));
+        if (!controller.signal.aborted) setFailure(why(error));
       });
     return () => controller.abort();
-  }, [t]);
+  }, []);
 
   async function readAgain() {
     setPrompts(await apiFetch<PromptView[]>("/api/dev/prompts"));
   }
 
-  if (failure) return <Failed>{failure}</Failed>;
+  if (failure) return <Failed>{t.loadFailed(failure)}</Failed>;
   if (!prompts) return <Loading>{t.loading}</Loading>;
   const selected = chosen ?? prompts[0]?.name ?? "";
   const prompt = prompts.find((p) => p.name === selected);

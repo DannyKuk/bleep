@@ -111,6 +111,46 @@ describe("the developer panel in German", () => {
     expect(screen.getByText(/Nutze genau die Platzhalter der Datei/)).toBeVisible();
   });
 
+  it("does not read again, and translates a failed read, when the language changes", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const path = String(input);
+      if (path === "/api/dev") return json({ enabled: true });
+      if (path === "/api/dev/prompts") return json({ detail: "boom" }, 500);
+      if (path === "/api/settings") return json({ detail: "boom" }, 500);
+      if (path.startsWith("/api/dev/costs")) return json({ ...COSTS, days: [], unpriced_today: 0 });
+      return json([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DevPanel />);
+    expect(await screen.findByText("Could not load the prompts: boom")).toBeVisible();
+    const calls = fetchMock.mock.calls.length;
+
+    await act(async () => setLanguage("de"));
+
+    expect(await screen.findByText("Die Prompts konnten nicht geladen werden: boom")).toBeVisible();
+    expect(screen.getByText("Die Einstellungen konnten nicht geladen werden: boom")).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledTimes(calls);
+  });
+
+  it("lets the buttons of the panel wrap, so a long German label stays inside a phone's width", async () => {
+    stubBackend(json(prompt()));
+    await act(async () => setLanguage("de"));
+    render(
+      <PromptEditor
+        prompt={prompt({ override: "x" })}
+        onSaved={() => undefined}
+        onStale={async () => undefined}
+      />,
+    );
+    for (const name of ["Überschreibung speichern", "Auf die Datei zurücksetzen"]) {
+      expect(screen.getByRole("button", { name })).toHaveClass(
+        "whitespace-normal",
+        "h-auto",
+        "min-h-11",
+      );
+    }
+  });
+
   it("links to the developer panel in German", async () => {
     stubBackend(json({ enabled: true }));
     await act(async () => setLanguage("de"));

@@ -28,17 +28,23 @@ function SettingsPanels() {
     apiFetch<DevSettingsView>("/api/settings", { signal: controller.signal })
       .then(setView)
       .catch((error: unknown) => {
-        if (!controller.signal.aborted) setFailure(t.settingsFailed(why(error)));
+        if (!controller.signal.aborted) setFailure(why(error));
       });
     return () => controller.abort();
-  }, [t]);
+  }, []);
 
   async function readAgain() {
     setView(await apiFetch<DevSettingsView>("/api/settings"));
   }
 
   const body = (form: (view: DevSettingsView) => React.ReactNode) =>
-    view ? form(view) : failure ? <Failed>{failure}</Failed> : <Loading>{t.loading}</Loading>;
+    view ? (
+      form(view)
+    ) : failure ? (
+      <Failed>{t.settingsFailed(failure)}</Failed>
+    ) : (
+      <Loading>{t.loading}</Loading>
+    );
   return (
     <SaveLockProvider>
       <Panel title={t.panels.budgets}>
