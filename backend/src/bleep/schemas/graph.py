@@ -221,6 +221,10 @@ class ProposalDraft(BaseModel):
     reason: str
     verification: VerificationPlan = Field(default_factory=VerificationPlan)
     human_instructions: str | None = None
+    # For `no_action`: the enabled actions `human_instructions` could be carried out with, should
+    # the human tell Bleep to (#365). Free text, so a name the model gets wrong does not cost the
+    # plan; code checks every one is enabled (`propose._answerable`).
+    could_run: list[str] = Field(default_factory=list)
 
 
 class Proposal(ProposalDraft):
@@ -235,6 +239,9 @@ class Proposal(ProposalDraft):
     English, which is what a later Propose and the report read; `shown` and
     `refusal_reasons_shown` (one per reason) are the fixed texts they were made from, to show
     them in the person's language (#455). Both are empty for a plan stored before that.
+
+    `fix_runnable` is a `no_action` whose `could_run` names only enabled actions (#365): the
+    human is asked as for a refused plan, and only `propose._answerable` sets it.
     """
 
     refused: bool = False
@@ -242,6 +249,13 @@ class Proposal(ProposalDraft):
     refusal_reasons: list[str] = Field(default_factory=list)
     shown: dict[ProposalText, Shown] = Field(default_factory=dict)
     refusal_reasons_shown: list[Shown] = Field(default_factory=list)
+    fix_runnable: bool = False
+
+    @property
+    def instruct_only(self) -> bool:
+        """A plan of no action put to the human all the same: it waits for an instruction (back
+        to Propose) or "Let it go", and nothing can ever approve it."""
+        return self.refused or (self.kind == "no_action" and self.fix_runnable)
 
     @classmethod
     def from_draft(cls, draft: ProposalDraft) -> Proposal:

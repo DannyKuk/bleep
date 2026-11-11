@@ -211,6 +211,8 @@ async def decide(
 
     if body.kind == "approve" and record.proposal.refused:
         raise _conflict("plan_refused")
+    if body.kind == "approve" and record.proposal.kind != "act":
+        raise _conflict("plan_no_action")
 
     decision = Decision(kind=body.kind, text=body.text, via="dashboard", at=utcnow())
     won = await parts.approvals.resolve(incident_id, decision, body.approval_id)

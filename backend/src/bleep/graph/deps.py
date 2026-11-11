@@ -328,7 +328,7 @@ class InMemoryApprovals:
             return None
         if approval_id is not None and record.id != approval_id:
             return None
-        if decision.kind == "approve" and record.proposal.refused:
+        if decision.kind == "approve" and record.proposal.kind != "act":
             return None
         record.decision = decision
         return decision

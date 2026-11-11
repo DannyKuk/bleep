@@ -14,6 +14,12 @@ export function isRefused(proposal: Proposal): boolean {
   return proposal.refused === true || proposal.reason === REFUSED_REASON;
 }
 
+/** A plan of no action put to the human all the same, refused or one whose fix Bleep could run
+ * (#365): it waits for an instruction or "Let it go", never a yes. */
+export function isInstructOnly(proposal: Proposal): boolean {
+  return isRefused(proposal) || (proposal.kind === "no_action" && proposal.fix_runnable === true);
+}
+
 /**
  * How a headline names the subject: `lead` is Bleep's words, `name` is data (a Compose project's
  * or a container's own name, or a host's id) to show in mono. A service id from another source (a

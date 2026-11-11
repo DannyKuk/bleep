@@ -230,9 +230,9 @@ def test_the_prompts_with_a_fixed_part_render_as_they_did_before_it_moved_out(na
     when #105 narrowed the `planted_in` bullet, when #357 asked for exact names and when #364
     asked for a setting's documented value, `graph-investigate.txt` when #364 asked for that
     docs search, and `graph-propose.txt` when #276 kept Propose's plan to the steps the
-    diagnosis needs. `{look}` (#410) and `{url_checks}` (#423) are filled as they are for a run
-    no look opened, and `{language}` (#374) as it is in English, so the fixtures also show that
-    such a run's prompt did not change."""
+    diagnosis needs and when #365 asked for `could_run`. `{look}` (#410) and `{url_checks}`
+    (#423) are filled as they are for a run no look opened, and `{language}` (#374) as it is in
+    English, so the fixtures also show that such a run's prompt did not change."""
     extra = {field: load(rule).strip() for field, rule in FIXED_PARTS.get(name, {}).items()}
     fields = placeholders(prompts.file_text(name)) - {"untrusted_rule"} - set(extra)
     values = {field: f"<{field}>" for field in fields}
@@ -271,7 +271,15 @@ GERMAN_FIELDS = {
 }
 KEPT_FIELDS = {
     "graph/diagnose": {"category", "source", "affected_services", "planted_in", "missing"},
-    "graph/propose": {"kind", "action", "target", "host_id", "params", "verification"},
+    "graph/propose": {
+        "kind",
+        "action",
+        "target",
+        "host_id",
+        "params",
+        "could_run",
+        "verification",
+    },
 }
 
 

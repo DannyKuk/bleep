@@ -2,7 +2,9 @@
 
 A plan the plan check refused twice (`Proposal.refused`) is put the same way while re-plans
 remain, but only an instruction (back to Propose) or a no (on to the report) can answer it; a
-yes is never recorded for it and never gets a grant (#113).
+yes is never recorded for it and never gets a grant (#113). A plan of no action whose fix the
+enabled actions could run (`Proposal.fix_runnable`, #365) is put and answered the same way; both
+are `Proposal.instruct_only`.
 
 The node reads each target (a container's id, start time, restart count and state, or the
 uuid a Coolify application name resolves to, so Execute can tell a stale plan), stores the plan
@@ -126,9 +128,9 @@ def make(deps: GraphDeps) -> Node:
     async def approval(state: IncidentState) -> dict:
         incident_id = state["incident_id"]
         proposal = state.get("proposal")
-        if proposal is None or not (proposal.kind == "act" or proposal.refused):
+        if proposal is None or not (proposal.kind == "act" or proposal.instruct_only):
             return {"decision": None, "grant": None}  # nothing to approve: route goes to report
-        if proposal.refused and not replans_left(deps, state):
+        if proposal.instruct_only and not replans_left(deps, state):
             # No instruction could follow. When the run already went back to Propose (any re-plan
             # counts: an instruction, a stale plan, an unreadable target) the budget is spent and
             # the run ends as `replan_limit`; with no trip so far it is the plain refusal.
@@ -161,7 +163,8 @@ def make(deps: GraphDeps) -> Node:
             incident_id,
             "decision",
             {"kind": decision.kind, "text": decision.text, "via": decision.via}
-            | ({"refused": True} if proposal.refused else {}),
+            # The key marks an answer to a plan of no action: a no to it reads "Let it go".
+            | ({"refused": True} if proposal.instruct_only else {}),
         )
         approved = decision.kind == "approve" and proposal.kind == "act"
         update: dict = {
@@ -181,12 +184,13 @@ def make(deps: GraphDeps) -> Node:
 def route(state: IncidentState) -> Literal["propose", "execute", "report"]:
     """A yes goes to Execute; an instruction goes back to Propose, and so does a plan that could
     not be put to the human; a no closes with a report, and so does a run out of re-plans. A
-    refused plan has only the instruction (back to Propose) or the report: never Execute."""
+    plan of no action put to the human (`instruct_only`) has only the instruction (back to
+    Propose) or the report: never Execute."""
     proposal = state.get("proposal")
     if proposal is None or state.get("outcome") is not None:
         return "report"
     decision = state.get("decision")
-    if proposal.refused:
+    if proposal.instruct_only:
         return "propose" if decision is not None and decision.kind == "instruct" else "report"
     if proposal.kind != "act":
         return "report"

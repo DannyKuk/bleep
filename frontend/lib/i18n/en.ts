@@ -409,6 +409,7 @@ export const en = {
     refusedPlan: "My own checks stopped my plan, so I need you.",
     noFixUnsure: "I am not sure why, and I have no fix to run.",
     noFixSure: "I know why, but I have no fix to run.",
+    couldRun: "I could run the fix once you tell me how.",
     planUnsure: "I am not sure why, but I have a plan.",
     planSure: "I know why, and I have a fix.",
     onIt: "I am on it.",

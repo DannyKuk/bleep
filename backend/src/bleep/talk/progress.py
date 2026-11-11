@@ -147,7 +147,11 @@ class LookFollower:
             return None
         cause = _cause((await self.runs.state(incident.id)).get("diagnosis"), language)
         cause = cause or proposal_in(record.proposal, language).reason
-        name = "waits_refused" if record.proposal.refused else "waits"
+        name = "waits"
+        if record.proposal.refused:
+            name = "waits_refused"
+        elif record.proposal.instruct_only:
+            name = "waits_no_action"
         return _end(name, language, incident=_name(incident), cause=one_line(cause))
 
     async def _ended(self, incident: Incident, events: list[IncidentEvent], language: str) -> str:
@@ -173,12 +177,13 @@ class LookFollower:
         return _end(name, language, **values)
 
     async def _let_go(self, incident_id: str) -> bool:
-        """Whether the person let a plan Bleep's own checks refused go, which Telegram's end
-        message words as a rejected plan too."""
+        """Whether the person let a plan of no action they were asked about go (one Bleep's own
+        checks refused, or one whose fix it could run), which Telegram's end message words as a
+        rejected plan too."""
         current = await self.plans.current(incident_id)
         return (
             current is not None
-            and current.proposal.refused
+            and current.proposal.instruct_only
             and current.decision is not None
             and current.decision.kind == "reject"
         )

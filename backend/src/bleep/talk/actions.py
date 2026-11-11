@@ -116,12 +116,17 @@ class Actions:
             return said("answer_cannot_expect", self.language(), incident=offer.incident or "")
         return offer
 
-    async def plan_to_show(self, offer: Offer) -> ApprovalRecord | Literal["refused", "gone"]:
+    async def plan_to_show(
+        self, offer: Offer
+    ) -> ApprovalRecord | Literal["refused", "no_action", "gone"]:
         """The plan a yes (`show_plan`) points to, or why there is none to approve: Bleep's own
-        checks refused it, or it no longer waits."""
+        checks refused it, it is a plan of no action waiting for an instruction (#365), or it no
+        longer waits."""
         current = await self.approvals.current(offer.incident_id or "")
         if current is not None and current.proposal.refused:
             return "refused"
+        if current is not None and current.proposal.instruct_only:
+            return "no_action"
         if current is None or current.id != offer.plan_id:
             return "gone"
         return current
@@ -174,8 +179,10 @@ class Actions:
         won = await self.approvals.resolve(incident_id, decision, approval_id)
         if won is not None:
             await self.runner.resume(incident_id, won, approval_id)
-            refused = before is not None and before.id == approval_id and before.proposal.refused
-            if refused and decision.kind == "reject":
+            let_go = (
+                before is not None and before.id == approval_id and before.proposal.instruct_only
+            )
+            if let_go and decision.kind == "reject":
                 return said("answer_let_go", self.language())
             return said(f"answer_{_PAST[decision.kind]}", self.language())
         return await self.why_lost(incident_id, approval_id)

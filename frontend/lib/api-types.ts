@@ -189,6 +189,10 @@ export interface Proposal {
   human_instructions: string | null;
   /** Bleep's own checks refused the plan twice: it can be instructed or let go, never approved. */
   refused?: boolean;
+  /** For no action: the enabled actions its instructions to the human could be carried out with. */
+  could_run?: string[];
+  /** No action whose fix Bleep could run: it waits for an instruction or a let-go (#365). */
+  fix_runnable?: boolean;
 }
 
 export type DecisionKind = "approve" | "reject" | "instruct";

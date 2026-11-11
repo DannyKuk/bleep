@@ -457,3 +457,66 @@ def test_route_after_a_refused_plan_is_propose_or_report_never_execute():
     assert approval.route({"proposal": plan, "decision": decide("approve")}) == "report"
     assert approval.route({"proposal": plan, "decision": None}) == "report"
     assert propose.route({"proposal": plan}) == "approval"
+
+
+# A plan of no action whose fix the enabled actions could run (#365): asked as a refused plan is.
+
+
+def could_run(**update) -> Proposal:
+    plan = Proposal(
+        kind="no_action",
+        reason="The value to use is the person's call.",
+        human_instructions="Remove TESTAPP_FAIL_AFTER_S (currently 180), then redeploy.",
+        could_run=["docker.restart"],
+        fix_runnable=True,
+    )
+    return plan.model_copy(update=update)
+
+
+async def test_a_no_action_plan_bleep_could_run_waits_for_the_human_and_cannot_be_approved(
+    run, plans
+):
+    plans[0].append(could_run())
+    incident_id = await run.start()
+
+    record = await run.store.current(incident_id)
+    assert record is not None and record.decision is None and record.proposal.fix_runnable
+    assert (await run.env.repo.get(incident_id)).status == "awaiting_approval"
+    assert [p[1].fix_runnable for p in run.notifier.proposals] == [True]
+    assert await run.store.resolve(incident_id, decide("approve"), record.id) is None
+    assert (await run.store.current(incident_id)).decision is None
+
+
+async def test_an_instruction_on_a_plan_bleep_could_run_plans_again_for_a_yes(run, plans):
+    plans[0].extend([could_run(), restart()])
+    incident_id = await run.start()
+    await run.decide(incident_id, decide("instruct", "restart shop-web-1"))
+
+    assert plans[1] == [[], ["restart shop-web-1"]]
+    state = await run.state(incident_id)
+    assert state["replans"] == 1 and state["proposal"] == restart()
+    assert state.get("grant") is None  # the new plan waits for its own yes
+    latest = await run.store.current(incident_id)
+    assert latest.proposal == restart() and latest.decision is None
+    assert (await run.env.repo.get(incident_id)).status == "awaiting_approval"
+
+
+async def test_letting_a_plan_bleep_could_run_go_reports_no_action(run, plans):
+    plans[0].append(could_run())
+    incident_id = await run.start()
+    await run.decide(incident_id, decide("reject"))
+
+    state = await run.state(incident_id)
+    assert state["outcome"] == "no_action" and state.get("grant") is None
+    assert (await run.events(incident_id, "decision"))[-1]["refused"] is True  # "Let it go"
+    assert (await run.env.repo.get(incident_id)).status == "closed"
+
+
+def test_route_after_a_plan_bleep_could_run_is_propose_or_report_never_execute():
+    plan = could_run()
+    assert propose.route({"proposal": plan}) == "approval"
+    assert approval.route({"proposal": plan, "decision": decide("instruct", "x")}) == "propose"
+    assert approval.route({"proposal": plan, "decision": decide("approve")}) == "report"
+    assert approval.route({"proposal": plan, "decision": decide("reject")}) == "report"
+    assert propose.route({"proposal": could_run(fix_runnable=False)}) == "report"
+    assert not could_run(kind="act").instruct_only

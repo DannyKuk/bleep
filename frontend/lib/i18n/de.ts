@@ -401,6 +401,7 @@ export const de: Messages = {
     refusedPlan: "Meine eigenen Prüfungen haben meinen Plan gestoppt, deshalb brauche ich dich.",
     noFixUnsure: "Ich bin mir nicht sicher, warum, und ich habe keine Behebung zum Ausführen.",
     noFixSure: "Ich weiß, warum, aber ich habe keine Behebung zum Ausführen.",
+    couldRun: "Ich könnte die Behebung ausführen, sobald du mir sagst, wie.",
     planUnsure: "Ich bin mir nicht sicher, warum, aber ich habe einen Plan.",
     planSure: "Ich weiß, warum, und ich habe eine Behebung.",
     onIt: "Ich bin dran.",
