@@ -497,8 +497,9 @@ TWICE_ESCAPED_COMMANDS = [
         lambda c: _logfmt(json.dumps({"cmd": c})) + " status=500",
         lambda c: json.dumps({"log": _logfmt(_logfmt(c)), "status": 500}),
         lambda c: json.dumps({"log": _logfmt(json.dumps({"cmd": c})), "status": 500}),
+        lambda c: _logfmt(_logfmt(_logfmt(c))) + " status=500",
     ],
-    ids=["logfmt in logfmt", "json in logfmt", "in json", "json in logfmt in json"],
+    ids=["logfmt in logfmt", "json in logfmt", "in json", "json in logfmt in json", "thrice"],
 )
 def test_a_password_between_quotes_escaped_twice_is_hidden_whole(command, form):
     """A run of backslashes and a quote (`\\\\\\"`) is one quote, closed by the same run, so a

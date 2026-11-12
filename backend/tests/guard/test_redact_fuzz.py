@@ -16,7 +16,7 @@ from bleep.guard.redact import redact_with_count
 LINES_PER_FORM = 1500
 NAMES = ["curl", "mysql", "mongo", "redis-cli", "mongosh", "mysqladmin"]
 PIECES = [*NAMES, "ab", "-p", "-a", "x/y", "é", "😀", ",", ";"]
-PREFIXES = ["", "+ ", "curl -s x && ", "mongo started; ", "echo ok; ", "INFO curl check "]
+PREFIXES = ["", "+ ", "curl -s x && ", "mongo started; ", "echo ok; ", "INFO curl check ", "sh -c "]
 KEEP = "KEEPME"
 SHELL_SPECIAL = set(" '\"\\;`&|(")
 
