@@ -39,7 +39,12 @@ CLI_TIMEOUT_S = 300
 
 
 class JudgeError(Exception):
-    """The judge cannot be built or did not answer."""
+    """The judge cannot be built or did not answer. After retries it carries what they cost."""
+
+    def __init__(self, message: str = "", attempts: int = 1, usd: float | None = None) -> None:
+        super().__init__(message)
+        self.attempts = attempts
+        self.usd = usd
 
 
 class SameModel(JudgeError):
@@ -238,7 +243,7 @@ class RootCauseJudge:
                 usd=_add(usd, spent),
                 attempts=attempt,
             )
-        raise JudgeError(f"{last_error} (after {JUDGE_ATTEMPTS} attempts)")
+        raise JudgeError(f"{last_error} (after {JUDGE_ATTEMPTS} attempts)", JUDGE_ATTEMPTS, usd)
 
     async def _attempt(
         self, expected: str, diagnosis: Diagnosis

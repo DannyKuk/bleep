@@ -94,7 +94,7 @@ RESULTS = [
 def test_the_report_shows_judge_attempts_only_above_one():
     one, three = result(1), result(2, judge_attempts=3)
     assert "attempts" not in render(INFO, [one])
-    assert "The judge needed 3 attempts" in render(INFO, [one, three])
+    assert "The judge was asked 3 times" in render(INFO, [one, three])
 
 
 def test_a_results_file_from_before_judge_attempts_still_loads():

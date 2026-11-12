@@ -590,6 +590,7 @@ async def _judge(case: LoopBackCase, judge: Judge, run: ScenarioResult) -> None:
         judgement = await judge.judge(case.expected.root_cause, run.diagnosis)
     except JudgeError as error:
         run.judge_reason = f"the judge failed: {error}"
+        run.judge_attempts, run.judge_usd = error.attempts, error.usd
         return
     if judgement is None:  # graded by hand later
         return
