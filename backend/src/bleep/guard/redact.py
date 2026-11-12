@@ -432,12 +432,22 @@ def _user_password_part(word: str, skip: int) -> Edit | None:
 def _value_part(word: str, pending: str, name: str) -> Edit | None:
     """The password in the word right after a flag that takes it. Whatever it looks like it is
     the password, digits too; only a port mapping after `-p` of the `mongo` family is kept, as
-    `docker run --name mongo -p 27017:27017` publishes a port."""
+    `docker run --name mongo -p 27017:27017` publishes a port, bare or quoted, also in escaped
+    quotes (`-p \\"27017:27017\\"` in logfmt)."""
     if pending == "user":
         return _user_password_part(word, 0)
-    if name in _MONGO and _PORT_MAPPING.fullmatch(word.strip("\"'")):
+    if name in _MONGO and _PORT_MAPPING.fullmatch(_unquoted(word)):
         return None
     return _hidden_part(word, 0)
+
+
+def _unquoted(word: str) -> str:
+    """`word` without the quote it opens and closes with (`"…"`, `\\"…\\"`, `\\u0022…\\u0022`),
+    or without its plain quotes at either end when it has no such pair."""
+    quote, lead = _opening_quote(word)
+    if quote and word.endswith(quote) and len(word) - len(quote) >= lead:
+        return word[lead : len(word) - len(quote)]
+    return word.strip("\"'")
 
 
 def _opens_value(word: str) -> bool:

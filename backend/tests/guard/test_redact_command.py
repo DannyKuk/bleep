@@ -398,6 +398,42 @@ def test_a_port_mapping_or_a_missing_password_stays(line):
     assert redact_command(line) == line
 
 
+def _in_form(command: str, form: str) -> str:
+    if form == "json":
+        return json.dumps({"cmd": command, "n": 1})
+    if form == "logfmt":
+        return _logfmt(command) + " n=1"
+    if form == "logfmt twice":
+        return _logfmt(_logfmt(command)) + " n=1"
+    return command
+
+
+@pytest.mark.parametrize(
+    "mapping", ["27017:27017", "27017:27017/tcp", "127.0.0.1:27017:27017/udp", ":27017"]
+)
+@pytest.mark.parametrize("quote", ['"', "'"])
+@pytest.mark.parametrize("form", ["plain", "json", "logfmt", "logfmt twice"])
+def test_a_quoted_port_mapping_after_mongo_p_stays_inside_escaped_quotes(mapping, quote, form):
+    """`msg="docker run --name mongo -p \\"27017:27017\\" mongo"`: the escaped quotes around the
+    mapping are no part of it (#510)."""
+    line = _in_form(f"docker run --name mongo -p {quote}{mapping}{quote} mongo", form)
+    assert redact_with_count(line) == (line, 0)
+
+
+@pytest.mark.parametrize(
+    "password", ["27017:27017x", "27017:27017 s3cret", "27017:27017/s3cret", "s3cret:27017"]
+)
+@pytest.mark.parametrize("quote", ['"', "'"])
+@pytest.mark.parametrize("form", ["plain", "json", "logfmt", "logfmt twice"])
+def test_a_password_that_only_looks_like_a_port_mapping_is_hidden_in_escaped_quotes(
+    password, quote, form
+):
+    line = _in_form(f"docker run --name mongo -p {quote}{password}{quote} mongo", form)
+    out = _hidden_once(line)
+    assert "s3cret" not in out and "27017x" not in out
+    assert out.count("mongo") == line.count("mongo")
+
+
 @pytest.mark.parametrize(
     ("line", "expected"),
     [
