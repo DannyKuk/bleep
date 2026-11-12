@@ -187,9 +187,10 @@ export interface Follow {
  * fields on top (an emptied field is left out, so the layer below shows). A field in `fromEnv`
  * has no input: the environment wins, and the API refuses a change to it. `confirm`, when it
  * returns a text, makes a save ask first, inline; the save goes only on the second click.
- * `children` come after the fields, before the buttons. `follow` makes some fields show the
- * default of the choice made in another field's draft, while no override sets them and the person
- * has not typed in them; such a field is no edit, so a save leaves it unset. `onDraft` hears the
+ * `children` come after the fields, before the buttons. `follow`: once the draft of its `on`
+ * field differs from the one in force, a field whose value is the default of the choice in force
+ * is unset, as the backend counts it: it shows the default of the new choice, and a
+ * save drops its override. Any other value is the person's own and stays. `onDraft` hears the
  * draft as it is shown.
  */
 export function SectionForm({
@@ -219,14 +220,16 @@ export function SectionForm({
   const { section: t, save: saveWord, cancel } = useT().settings;
   const fields = groups.flatMap((group) => group.fields);
   const labels = Object.fromEntries(fields.map((field) => [field.name, field.label]));
-  const [typed, setTyped] = useState<Set<string>>(new Set());
   const [chosen, setDraft] = useState(values);
-  const follows = (name: string): boolean =>
-    follow !== undefined &&
-    chosen[follow.on] !== values[follow.on] &&
-    !(name in overrides) &&
-    !typed.has(name) &&
-    follow.defaults[chosen[follow.on]]?.[name] !== undefined;
+  const follows = (name: string): boolean => {
+    if (!follow || fromEnv.includes(name) || chosen[follow.on] === values[follow.on]) return false;
+    const unset = follow.defaults[values[follow.on]]?.[name];
+    return (
+      follow.defaults[chosen[follow.on]]?.[name] !== undefined &&
+      unset !== undefined &&
+      chosen[name].trim() === unset
+    );
+  };
   const draft = Object.fromEntries(
     Object.entries(chosen).map(([name, text]) => [
       name,
@@ -260,6 +263,8 @@ export function SectionForm({
 
   function body(): Record<string, unknown> {
     const update = { ...overrides };
+    for (const field of editable)
+      if (shown(field) && follows(field.name)) delete update[field.name];
     for (const field of changed) {
       const text = chosen[field.name].trim();
       if (text === "") delete update[field.name];
@@ -297,7 +302,6 @@ export function SectionForm({
             fromEnv={fromEnv.includes(field.name)}
             onChange={(value) => {
               setAsking(null);
-              setTyped(new Set(typed).add(field.name));
               setDraft({ ...chosen, [field.name]: value });
             }}
           />
@@ -370,7 +374,6 @@ export function SectionForm({
               variant="ghost"
               disabled={saving}
               onClick={() => {
-                setTyped(new Set());
                 setDraft(values);
               }}
             >
