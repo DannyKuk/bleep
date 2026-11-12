@@ -33,6 +33,7 @@ def chat_model(settings: ModelSettings, role: Role, timeout_s: int | None = None
             temperature=settings.temperature,
             **_bounds(timeout_s, 1),
         )
+    settings = settings.resolved()
     name = settings.model if role == "main" else settings.cheap_model
     if settings.provider == "anthropic":
         # No temperature: Claude Sonnet 5.5 rejects any value but its default (langchain-anthropic

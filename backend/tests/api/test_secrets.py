@@ -79,7 +79,13 @@ def resolver() -> FakeResolver:
 
 @pytest.fixture
 def app(settings, plugin, resolver, monkeypatch):
-    for name in ("FAKE_URL", "FAKE_TOKEN", "OPENROUTER_API_KEY", "TELEGRAM_BOT_TOKEN"):
+    for name in (
+        "FAKE_URL",
+        "FAKE_TOKEN",
+        "OPENROUTER_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "TELEGRAM_BOT_TOKEN",
+    ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
@@ -194,6 +200,44 @@ def test_the_anthropic_key_set_on_the_dashboard_is_used_and_the_view_follows_the
     assert app.delete("/api/secrets/ANTHROPIC_API_KEY").status_code == 200
     assert app.parts.settings_store.models().anthropic_api_key is None
     assert app.get("/api/settings").json()["model_key"]["set"] is False
+
+
+def test_choosing_anthropic_on_the_dashboard_without_ids_gives_the_claude_ids(app):
+    version = app.get("/api/settings").json()["version"]
+    assert app.get("/api/settings").json()["models"]["model"] == "openai/gpt-6-luna"
+
+    saved = app.put(
+        "/api/settings",
+        json={"models": {"provider": "anthropic"}},
+        headers={"If-Match": f'"{version}"'},
+    )
+
+    assert saved.status_code == 200
+    models = app.get("/api/settings").json()["models"]
+    assert (models["provider"], models["model"], models["cheap_model"]) == (
+        "anthropic",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
+    )
+    assert app.parts.settings_store.models().model == "claude-sonnet-5-5"
+
+
+def test_an_id_saved_with_the_provider_stays_and_going_back_to_openrouter_restores_its_defaults(
+    app,
+):
+    def save(models):
+        version = app.get("/api/settings").json()["version"]
+        response = app.put(
+            "/api/settings", json={"models": models}, headers={"If-Match": f'"{version}"'}
+        )
+        assert response.status_code == 200
+
+    save({"provider": "anthropic", "model": "claude-opus-5-5"})
+    models = app.get("/api/settings").json()["models"]
+    assert (models["model"], models["cheap_model"]) == ("claude-opus-5-5", "claude-haiku-5-5")
+
+    save({"model": "claude-opus-5-5", "provider": "openrouter"})
+    assert app.get("/api/settings").json()["models"]["cheap_model"] == "openai/gpt-6-luna"
 
 
 def test_the_github_token_set_on_the_dashboard_is_used_at_the_next_request(app):

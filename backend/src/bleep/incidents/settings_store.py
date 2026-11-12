@@ -188,14 +188,14 @@ class SettingsStore:
         the key and the local model's base URL as the secret store has them, read at each call."""
         models = _layer(self._env_models, self._chosen("models"))
         if self._secrets is None:
-            return models
+            return models.resolved()
         update: dict[str, Any] = {
             "openrouter_api_key": self._secrets.get(MODEL_KEY_ENV),
             "anthropic_api_key": self._secrets.get(ANTHROPIC_KEY_ENV),
         }
         if (local_url := self._secrets.get(LOCAL_URL_ENV)) is not None:
             update["local_base_url"] = local_url.get_secret_value()
-        return models.model_copy(update=update)
+        return models.model_copy(update=update).resolved()
 
     def embeddings(self) -> EmbeddingsChoice:
         """The embedder chosen: the env's fields, else the dashboard's. It is built once, at the

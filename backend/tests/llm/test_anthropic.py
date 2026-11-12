@@ -76,6 +76,36 @@ def test_the_anthropic_provider_builds_chat_anthropic_and_the_roles_pick_models(
     assert main.anthropic_api_key.get_secret_value() == KEY
 
 
+def test_the_claude_ids_are_the_defaults_of_the_anthropic_provider():
+    settings = ModelSettings(provider="anthropic", anthropic_api_key=SecretStr(KEY))
+    main, cheap = chat_model(settings, "main"), chat_model(settings, "cheap")
+    assert (main.model, cheap.model) == ("claude-sonnet-5-5", "claude-haiku-5-5")
+
+
+def test_an_id_the_person_chose_stays_with_the_anthropic_provider():
+    settings = ModelSettings(provider="anthropic", model="claude-opus-5-5")
+    assert chat_model(settings, "main").model == "claude-opus-5-5"
+    assert chat_model(settings, "cheap").model == "claude-haiku-5-5"
+
+
+def test_the_other_providers_keep_their_defaults():
+    assert ModelSettings().resolved().model == "openai/gpt-6-luna"
+    local = ModelSettings(provider="local").resolved()
+    assert (local.model, local.cheap_model, local.local_model) == (
+        "openai/gpt-6-luna",
+        "openai/gpt-6-luna",
+        "openai/gpt-oss-20b",
+    )
+
+
+def test_the_provider_alone_from_the_env_gives_the_claude_ids(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("LLM_CHEAP_MODEL", raising=False)
+    models = ModelSettings().resolved()
+    assert (models.model, models.cheap_model) == ("claude-sonnet-5-5", "claude-haiku-5-5")
+
+
 def test_the_model_has_no_temperature_because_claude_sonnet_5_5_rejects_one():
     model = chat_model(claude(temperature=0), "main")
     assert model.temperature is None

@@ -28,6 +28,9 @@ def _env(name: str, field: str) -> AliasChoices:
 MODEL_KEY_ENV = "OPENROUTER_API_KEY"  # `ModelSettings.openrouter_api_key`
 ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"  # `ModelSettings.anthropic_api_key`
 ModelProvider = Literal["openrouter", "anthropic", "local"]
+OPENROUTER_DEFAULT_MODEL = "openai/gpt-6-luna"
+ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-5-5"
+ANTHROPIC_DEFAULT_CHEAP_MODEL = "claude-haiku-5-5"
 
 
 class ModelSettings(BaseSettings):
@@ -36,9 +39,9 @@ class ModelSettings(BaseSettings):
     model_config = SettingsConfigDict(env_ignore_empty=True, extra="ignore", populate_by_name=True)
 
     provider: ModelProvider = Field("openrouter", validation_alias=_env("LLM_PROVIDER", "provider"))
-    model: str = Field("openai/gpt-6-luna", validation_alias=_env("LLM_MODEL", "model"))
+    model: str = Field(OPENROUTER_DEFAULT_MODEL, validation_alias=_env("LLM_MODEL", "model"))
     cheap_model: str = Field(
-        "openai/gpt-6-luna", validation_alias=_env("LLM_CHEAP_MODEL", "cheap_model")
+        OPENROUTER_DEFAULT_MODEL, validation_alias=_env("LLM_CHEAP_MODEL", "cheap_model")
     )
     local_base_url: str = Field(
         "http://host.docker.internal:1234/v1",
@@ -54,6 +57,23 @@ class ModelSettings(BaseSettings):
     anthropic_api_key: SecretStr | None = Field(
         None, validation_alias=_env("ANTHROPIC_API_KEY", "anthropic_api_key")
     )
+
+    def resolved(self) -> ModelSettings:
+        """With the Anthropic provider, an id that is still the OpenRouter default is Claude's:
+        the default follows the provider. Any other id is the person's own and stays. The OpenRouter
+        default is not an Anthropic id, so an id equal to it can only be one nobody chose for
+        Anthropic: unset in `.env`, or left as it was when the provider was switched."""
+        if self.provider != "anthropic":
+            return self
+        update = {
+            name: claude
+            for name, claude in (
+                ("model", ANTHROPIC_DEFAULT_MODEL),
+                ("cheap_model", ANTHROPIC_DEFAULT_CHEAP_MODEL),
+            )
+            if getattr(self, name) == OPENROUTER_DEFAULT_MODEL
+        }
+        return self.model_copy(update=update)
 
 
 class Budgets(BaseModel):
