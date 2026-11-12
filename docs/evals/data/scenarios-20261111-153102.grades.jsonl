@@ -1,0 +1,8 @@
+{"run_id": "bad-deploy/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names version 2 querying price_cents, which shop-db lacks because the version 2 migration was not applied; leaves out that shop-web stays healthy"}
+{"run_id": "bad-env/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names DATABASE_URL pointing at the unresolvable host db where the database is shop-db, so startup cannot reach it"}
+{"run_id": "db-down/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-db stopped, so shop-web cannot reach its database; says honestly why it stopped is not known"}
+{"run_id": "disk-full/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the shop_uploads volume at /uploads out of space, failing the upload health check; the 20 MB size is not named"}
+{"run_id": "hung/1", "root_cause_pass": false, "root_cause_score": 0.0, "note": "names no cause (category unknown) and reads the logged /health lines as answers, the opposite of a hang"}
+{"run_id": "misroute/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-proxy's Caddyfile.misroute sending to shop-web:8001 while shop-web listens on 8000, hence the 502s"}
+{"run_id": "oom/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names WORKER_BATCH_MB=256 past the 64 MiB limit, so shop-worker is OOM-killed"}
+{"run_id": "port-conflict/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-canary holding host port 8080, so shop-proxy cannot publish its port and exits"}
