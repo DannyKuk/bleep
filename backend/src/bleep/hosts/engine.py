@@ -34,6 +34,8 @@ from bleep.schemas.docker import (
     ContainerSummary,
     DockerEvent,
     EngineInfo,
+    HealthCheck,
+    HealthProbe,
     MountInfo,
     PortBinding,
 )
@@ -469,6 +471,37 @@ def _summary(raw: dict) -> ContainerSummary:
     )
 
 
+def _seconds(nanos: int | None) -> float | None:
+    """A Docker duration (nanoseconds); 0 or missing means the check uses Docker's default."""
+    return nanos / 1_000_000_000 if nanos else None
+
+
+def _healthcheck(raw: dict) -> HealthCheck | None:
+    check = (raw.get("Config") or {}).get("Healthcheck") or {}
+    test = [str(part) for part in check.get("Test") or []]
+    if not test or test[0] == "NONE":
+        return None
+    return HealthCheck(
+        command=" ".join(test[1:]) or " ".join(test),
+        interval_s=_seconds(check.get("Interval")),
+        timeout_s=_seconds(check.get("Timeout")),
+        retries=check.get("Retries") or None,
+        start_period_s=_seconds(check.get("StartPeriod")),
+    )
+
+
+def _probes(state: dict) -> list[HealthProbe]:
+    return [
+        HealthProbe(
+            start=_time(entry.get("Start")),
+            end=_time(entry.get("End")),
+            exit_code=entry.get("ExitCode"),
+            output=entry.get("Output") or "",
+        )
+        for entry in (state.get("Health") or {}).get("Log") or []
+    ]
+
+
 def _detail(raw: dict) -> ContainerDetail:
     state = raw.get("State") or {}
     ports = [
@@ -494,6 +527,8 @@ def _detail(raw: dict) -> ContainerDetail:
         oom_killed=bool(state.get("OOMKilled")),
         restart_count=raw.get("RestartCount", 0),
         error=state.get("Error") or None,
+        healthcheck=_healthcheck(raw),
+        probes=_probes(state),
     )
 
 

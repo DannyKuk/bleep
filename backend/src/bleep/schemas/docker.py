@@ -34,6 +34,25 @@ class MountInfo(BaseModel):
     read_only: bool
 
 
+class HealthCheck(BaseModel):
+    """A container's health check as configured. An unset number means Docker's default."""
+
+    command: str  # the arguments joined by spaces, or the `CMD-SHELL` string
+    interval_s: float | None = None
+    timeout_s: float | None = None
+    retries: int | None = None
+    start_period_s: float | None = None
+
+
+class HealthProbe(BaseModel):
+    """One recorded run of the health check. Docker records a timeout as exit code -1."""
+
+    start: datetime | None = None
+    end: datetime | None = None
+    exit_code: int | None = None
+    output: str = ""  # untrusted: whatever the probe printed
+
+
 class ContainerDetail(BaseModel):
     """One container's full inspect, as Bleep uses it.
 
@@ -49,6 +68,8 @@ class ContainerDetail(BaseModel):
     oom_killed: bool = False
     restart_count: int = 0
     error: str | None = None
+    healthcheck: HealthCheck | None = None  # None when the container has no health check
+    probes: list[HealthProbe] = Field(default_factory=list)  # oldest first; Docker keeps 5
 
 
 class ContainerStats(BaseModel):
