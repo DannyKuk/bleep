@@ -847,6 +847,7 @@ export const de: Messages = {
       changeInEnv: "Ändere es in der .env oder der Compose-Datei und starte Bleep neu.",
       confirm: "Änderung bestätigen",
       defaults: "Zurück zu den Standardwerten",
+      examples: (ids) => `Beispiele: ${ids}. Jede andere ID geht auch.`,
     },
     models: {
       provider: "Anbieter",

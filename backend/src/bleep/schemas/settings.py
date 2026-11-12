@@ -31,12 +31,13 @@ ModelProvider = Literal["openrouter", "anthropic", "local"]
 OPENROUTER_DEFAULT_MODEL = "openai/gpt-6-luna"
 ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-5-5"
 ANTHROPIC_DEFAULT_CHEAP_MODEL = "claude-haiku-5-5"
-# The `model` and `cheap_model` a provider falls back to; the settings page shows them (#517).
-# The local provider calls `local_model`, so its two are never used and stay the OpenRouter ids.
-PROVIDER_DEFAULT_MODELS: dict[ModelProvider, dict[str, str]] = {
-    "openrouter": {"model": OPENROUTER_DEFAULT_MODEL, "cheap_model": OPENROUTER_DEFAULT_MODEL},
-    "anthropic": {"model": ANTHROPIC_DEFAULT_MODEL, "cheap_model": ANTHROPIC_DEFAULT_CHEAP_MODEL},
-    "local": {"model": OPENROUTER_DEFAULT_MODEL, "cheap_model": OPENROUTER_DEFAULT_MODEL},
+# Ids the settings page offers per provider as examples, so a person can pick one instead of
+# looking it up; any id can still be typed. From OpenRouter's public model list and Anthropic's
+# model ids, read 2026-11-12 (#517).
+MODEL_EXAMPLES: dict[ModelProvider, tuple[str, ...]] = {
+    "openrouter": ("openai/gpt-6-luna", "openai/gpt-6.1-terra", "openai/gpt-6.1-sol"),
+    "anthropic": ("claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"),
+    "local": ("openai/gpt-oss-20b",),
 }
 
 
@@ -74,7 +75,10 @@ class ModelSettings(BaseSettings):
             return self
         update = {
             name: claude
-            for name, claude in PROVIDER_DEFAULT_MODELS["anthropic"].items()
+            for name, claude in (
+                ("model", ANTHROPIC_DEFAULT_MODEL),
+                ("cheap_model", ANTHROPIC_DEFAULT_CHEAP_MODEL),
+            )
             if getattr(self, name) == OPENROUTER_DEFAULT_MODEL
         }
         return self.model_copy(update=update)
@@ -385,6 +389,16 @@ class ModelChoice(BaseModel):
     local_model: str
 
 
+class ProviderModels(BaseModel):
+    """The ids that would run with one provider (`model` and `cheap_model` for a hosted one,
+    `local_model` for a local server), and example ids it takes."""
+
+    model: str
+    cheap_model: str
+    local_model: str
+    examples: list[str]
+
+
 class EmbeddingsChoice(BaseModel):
     """The embedder in force. `model` is the endpoint's (None: the local model); `min_score` None
     is the model's measured cut-off (`memory.embeddings.min_score_for`)."""
@@ -456,9 +470,9 @@ class SettingsView(BaseModel):
     """`GET /api/settings`: the values in force, and the database's overrides that changed them."""
 
     models: ModelChoice
-    # Per provider, the `model` and `cheap_model` that apply while the field is unset, so the page
-    # can switch the two fields with the provider select (#517).
-    model_defaults: dict[ModelProvider, dict[str, str]] = PROVIDER_DEFAULT_MODELS
+    # Per provider, the ids that would run if it were chosen with what is stored now, so the page
+    # shows what runs for the provider in its select before a save (#517).
+    models_by_provider: dict[ModelProvider, ProviderModels]
     model_key: SecretStatus  # the key's variable of the provider in force; a local model needs none
     budgets: Budgets
     thresholds: Thresholds

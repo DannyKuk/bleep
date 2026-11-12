@@ -27,6 +27,8 @@ export interface Field {
   /** A number: sent as one when it is, as typed (for the API to refuse) when it is not. */
   number?: boolean;
   hint?: string;
+  /** Ids offered as examples on a text input; any other text can still be typed. */
+  examples?: string[];
   /** Shown, and counted in a save, only while this holds of the draft; hidden keeps its stored value. */
   visibleWhen?: (draft: Record<string, string>) => boolean;
 }
@@ -110,7 +112,10 @@ function FieldRow({
 }) {
   const t = useT().settings.section;
   const id = useId();
-  const described = field.hint ? `${id}-hint` : undefined;
+  const examples = !field.options && field.examples?.length ? field.examples : undefined;
+  const described =
+    [field.hint && `${id}-hint`, examples && `${id}-examples`].filter(Boolean).join(" ") ||
+    undefined;
   const head = (
     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
       {fromEnv ? (
@@ -161,38 +166,42 @@ function FieldRow({
           autoComplete="off"
           spellCheck={false}
           className={field.number ? "max-w-32" : "max-w-xl font-mono"}
+          list={examples && `${id}-list`}
           onChange={(changed) => onChange(changed.target.value)}
         />
       )}
+      {examples && (
+        <datalist id={`${id}-list`}>
+          {examples.map((example) => (
+            <option key={example} value={example} />
+          ))}
+        </datalist>
+      )}
       {field.hint && (
-        <p id={described} className="text-xs text-muted-foreground">
+        <p id={`${id}-hint`} className="text-xs text-muted-foreground">
           {field.hint}
+        </p>
+      )}
+      {examples && (
+        <p id={`${id}-examples`} className="text-xs break-words text-muted-foreground">
+          {t.examples(examples.join(", "))}
         </p>
       )}
     </div>
   );
 }
 
-/** Fields that show the default of the choice made in another field's draft (#517). */
-export interface Follow {
-  /** The select whose draft decides: the provider. */
-  on: string;
-  /** Per choice of `on`, the default each following field shows. */
-  defaults: Record<string, Record<string, string>>;
-}
-
 /**
  * The form of one settings section (models, embeddings, tracing). `values` are those in force,
  * as text; `overrides` are what the database holds, which a save sends again with the changed
  * fields on top (an emptied field is left out, so the layer below shows). A field in `fromEnv`
- * has no input: the environment wins, and the API refuses a change to it. `confirm`, when it
- * returns a text, makes a save ask first, inline; the save goes only on the second click.
- * `children` come after the fields, before the buttons. `follow`: at the moment the `on`
- * field's draft changes, each visible field whose value is the default of the choice left (or of
- * the choice in force) is swapped for the default of the new choice and saved as unset, which
- * drops its override. What is typed afterwards is kept as typed. A field the environment sets
- * shows the new choice's default when it is the default of the choice in force. `onDraft` hears
- * the draft.
+ * has no input: the environment wins, and the API refuses a change to it. `valuesFor` gives the
+ * values that would be in force with the draft's choices (the Models panel: the ids of the
+ * provider in its select); a field the person has not edited shows them, and so does a field the
+ * environment sets. A field is edited while it holds text the person typed that differs from
+ * what it would show unedited; only edited fields that are shown count in a save. `confirm`,
+ * when it returns a text, makes a save ask first, inline; the save goes only on the second
+ * click. `onDraft` hears the draft.
  */
 export function SectionForm({
   groups,
@@ -202,7 +211,7 @@ export function SectionForm({
   what,
   confirm,
   confirmLabel,
-  follow,
+  valuesFor,
   onDraft,
   onSave,
 }: {
@@ -214,26 +223,20 @@ export function SectionForm({
   what: string;
   confirm?: (change: Change) => string | null;
   confirmLabel?: string;
-  follow?: Follow;
+  valuesFor?: (draft: Record<string, string>) => Record<string, string>;
   onDraft?: (draft: Record<string, string>) => void;
   onSave: (body: Record<string, unknown>) => Promise<unknown>;
 }) {
   const { section: t, save: saveWord, cancel } = useT().settings;
   const fields = groups.flatMap((group) => group.fields);
   const labels = Object.fromEntries(fields.map((field) => [field.name, field.label]));
-  const [draft, setDraft] = useState(values);
-  const [unset, setUnset] = useState<Set<string>>(new Set());
-  const providerChanged = follow !== undefined && draft[follow.on] !== values[follow.on];
-  const followed = (name: string): boolean =>
-    follow !== undefined && follow.defaults[draft[follow.on]]?.[name] !== undefined;
-  const shownInForce = (name: string): string => {
-    if (!follow) return values[name];
-    const inForce = follow.defaults[values[follow.on]]?.[name];
-    const next = follow.defaults[draft[follow.on]]?.[name];
-    return fromEnv.includes(name) && next !== undefined && inForce === values[name]
-      ? next
-      : values[name];
-  };
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const unedited = (typed: Record<string, string>) => ({
+    ...values,
+    ...valuesFor?.({ ...values, ...typed }),
+  });
+  const base = unedited(edits);
+  const draft = { ...base, ...edits };
   const shown = (field: Field) => field.visibleWhen?.(draft) ?? true;
   const draftKey = JSON.stringify(draft);
   useEffect(() => onDraft?.(draft), [draftKey]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -250,20 +253,16 @@ export function SectionForm({
     else if (cancelled.current) saveButton.current?.focus();
     cancelled.current = false;
   }, [asking]);
-  const editable = fields.filter((field) => !fromEnv.includes(field.name));
-  const changed = editable.filter(
+  const changed = fields.filter(
     (field) =>
+      !fromEnv.includes(field.name) &&
       shown(field) &&
-      !unset.has(field.name) &&
-      ((providerChanged && followed(field.name) && draft[field.name].trim() !== "") ||
-        isEdit(field, draft[field.name], values[field.name], field.name in overrides)),
+      isEdit(field, draft[field.name], base[field.name], field.name in overrides),
   );
   const overridden = Object.keys(overrides).length > 0;
 
   function body(): Record<string, unknown> {
     const update = { ...overrides };
-    for (const field of editable)
-      if (shown(field) && unset.has(field.name)) delete update[field.name];
     for (const field of changed) {
       const text = draft[field.name].trim();
       if (text === "") delete update[field.name];
@@ -274,26 +273,9 @@ export function SectionForm({
 
   function change(name: string, value: string) {
     setAsking(null);
-    const next = { ...draft, [name]: value };
-    const swapped = new Set(unset);
-    swapped.delete(name);
-    if (follow && name === follow.on && value !== draft[name]) {
-      for (const field of editable) {
-        const to = follow.defaults[value]?.[field.name];
-        const text = draft[field.name].trim();
-        const left = [follow.defaults[draft[name]], follow.defaults[values[name]]];
-        if (
-          to !== undefined &&
-          (field.visibleWhen?.(next) ?? true) &&
-          left.some((choice) => choice?.[field.name] === text)
-        ) {
-          next[field.name] = to;
-          swapped.add(field.name);
-        }
-      }
-    }
-    setDraft(next);
-    setUnset(swapped);
+    const typed = { ...edits, [name]: value };
+    if (value === unedited(typed)[name]) delete typed[name];
+    setEdits(typed);
   }
 
   async function save(update: Record<string, unknown>) {
@@ -322,7 +304,7 @@ export function SectionForm({
             <FieldRow
               key={field.name}
               field={field}
-              value={follow ? shownInForce(field.name) : values[field.name]}
+              value={base[field.name]}
               draft={draft[field.name]}
               fromEnv={fromEnv.includes(field.name)}
               onChange={(value) => change(field.name, value)}
@@ -395,10 +377,7 @@ export function SectionForm({
               size="sm"
               variant="ghost"
               disabled={saving}
-              onClick={() => {
-                setDraft(values);
-                setUnset(new Set());
-              }}
+              onClick={() => setEdits({})}
             >
               {cancel}
             </Button>

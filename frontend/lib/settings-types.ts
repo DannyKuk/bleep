@@ -68,6 +68,14 @@ export interface ModelChoice {
   local_model: string;
 }
 
+/** The ids that would run with one provider, and example ids it takes. */
+export interface ProviderModels {
+  model: string;
+  cheap_model: string;
+  local_model: string;
+  examples: string[];
+}
+
 export type EmbeddingsProvider = "local" | "openai" | "server";
 export type TracingKind = "off" | "langfuse" | "langsmith";
 
@@ -131,8 +139,8 @@ export interface SettingsOverrides {
 
 export interface SettingsView {
   models: ModelChoice;
-  /** Per provider, the model and cheap model that apply while the field is unset. */
-  model_defaults: Record<ModelChoice["provider"], { model: string; cheap_model: string }>;
+  /** Per provider, the ids that would run if it were chosen with what is stored now. */
+  models_by_provider: Record<ModelChoice["provider"], ProviderModels>;
   /** The key's variable of the provider in force; a local model needs none. */
   model_key: SecretStatus;
   budgets: Record<string, number>;
