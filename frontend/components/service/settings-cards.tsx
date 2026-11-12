@@ -178,7 +178,14 @@ function UrlRow({ url, checks }: { url: UrlStatus; checks: UrlCheckPoint[] }) {
   );
 }
 
-const sameUrl = (url: string) => url.trim().replace(/\/+$/, "").toLowerCase();
+/** A URL as two checks of one address compare, by the backend's rule (`_same_check`): scheme and
+ * host in lower case, the path as written, no final `/`. */
+function sameUrl(url: string): string {
+  const [scheme, rest = ""] = url.trim().split("://", 2);
+  const slash = rest.indexOf("/");
+  const [authority, path] = slash < 0 ? [rest, ""] : [rest.slice(0, slash), rest.slice(slash)];
+  return `${scheme.toLowerCase()}://${authority.toLowerCase()}${path.replace(/\/+$/, "")}`;
+}
 
 /** The suggested checks the service does not have yet, compared by their URLs. */
 export function notYetChecked(suggested: unknown, urls: UrlCheck[]): UrlCheck[] {

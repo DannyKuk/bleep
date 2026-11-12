@@ -2,6 +2,7 @@
 service page's own save (#348). Coolify answers from the recorded `domains.json`; no network."""
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -106,12 +107,14 @@ def test_a_service_not_run_by_coolify_is_offered_nothing_and_an_unknown_one_is_4
     assert suggested(app, "a/nothing-here").status_code == 404
 
 
-def test_coolify_failing_suggests_nothing_and_never_shows_its_answer(app, coolify):
+def test_coolify_failing_suggests_nothing_and_never_shows_its_answer(app, coolify, caplog):
     put_plugin(app, True)
     coolify.status, coolify.body = 500, {"message": "stack trace with a secret"}
-    response = suggested(app)
+    with caplog.at_level(logging.DEBUG):
+        response = suggested(app)
     assert response.status_code == 200
     assert response.json() == []
+    assert "stack trace with a secret" not in caplog.text
 
 
 def test_accepted_suggestions_are_stored_as_service_page_checks_and_not_offered_again(app):
