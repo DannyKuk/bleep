@@ -68,6 +68,11 @@ export function settingsView(overrides: Partial<SettingsView> = {}): SettingsVie
       cheap_model: "openai/gpt-6-luna",
       local_model: "openai/gpt-oss-20b",
     },
+    model_defaults: {
+      openrouter: { model: "openai/gpt-6-luna", cheap_model: "openai/gpt-6-luna" },
+      anthropic: { model: "claude-sonnet-5-5", cheap_model: "claude-haiku-5-5" },
+      local: { model: "openai/gpt-6-luna", cheap_model: "openai/gpt-6-luna" },
+    },
     model_key: { env: "OPENROUTER_API_KEY", file: null, set: true },
     budgets: { investigate_tool_calls: 8 },
     thresholds: THRESHOLD_VALUES,

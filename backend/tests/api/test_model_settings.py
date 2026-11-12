@@ -13,6 +13,7 @@ from bleep.hosts.registry import Registry
 from bleep.llm.tracing import LangfuseTracing, LangSmithTracing, NoTracing, ReloadingTracer
 from bleep.main import create_app
 from bleep.memory.embeddings import FakeEmbedder
+from bleep.schemas.settings import ModelSettings
 from bleep.wiring import build_parts
 from fakes import database_bytes
 
@@ -506,3 +507,15 @@ def test_langfuse_switched_off_on_the_page_or_its_keys_cleared_stops_at_once(app
     assert app.delete("/api/secrets/LANGFUSE_SECRET_KEY").status_code == 200
     assert isinstance(inner_tracer(app), NoTracing)
     assert app.get("/api/settings").json()["restart_needed"] == []
+
+
+def test_the_view_carries_each_providers_default_models_and_resolving_uses_them(app):
+    defaults = app.get("/api/settings").json()["model_defaults"]
+
+    assert defaults["openrouter"]["model"] == "openai/gpt-6-luna"
+    assert defaults["anthropic"] == {
+        "model": "claude-sonnet-5-5",
+        "cheap_model": "claude-haiku-5-5",
+    }
+    resolved = ModelSettings(provider="anthropic").resolved()
+    assert {"model": resolved.model, "cheap_model": resolved.cheap_model} == defaults["anthropic"]

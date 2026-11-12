@@ -131,6 +131,8 @@ export interface SettingsOverrides {
 
 export interface SettingsView {
   models: ModelChoice;
+  /** Per provider, the model and cheap model that apply while the field is unset. */
+  model_defaults: Record<ModelChoice["provider"], { model: string; cheap_model: string }>;
   /** The key's variable of the provider in force; a local model needs none. */
   model_key: SecretStatus;
   budgets: Record<string, number>;

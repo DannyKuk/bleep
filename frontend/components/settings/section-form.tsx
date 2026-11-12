@@ -27,6 +27,8 @@ export interface Field {
   /** A number: sent as one when it is, as typed (for the API to refuse) when it is not. */
   number?: boolean;
   hint?: string;
+  /** Shown, and counted in a save, only while this holds of the draft; hidden keeps its stored value. */
+  visibleWhen?: (draft: Record<string, string>) => boolean;
 }
 
 export interface Group {
@@ -171,13 +173,24 @@ function FieldRow({
   );
 }
 
+/** Fields that show the default of the choice made in another field's draft (#517). */
+export interface Follow {
+  /** The select whose draft decides: the provider. */
+  on: string;
+  /** Per choice of `on`, the default each following field shows. */
+  defaults: Record<string, Record<string, string>>;
+}
+
 /**
  * The form of one settings section (models, embeddings, tracing). `values` are those in force,
  * as text; `overrides` are what the database holds, which a save sends again with the changed
  * fields on top (an emptied field is left out, so the layer below shows). A field in `fromEnv`
  * has no input: the environment wins, and the API refuses a change to it. `confirm`, when it
  * returns a text, makes a save ask first, inline; the save goes only on the second click.
- * `children` come after the fields, before the buttons.
+ * `children` come after the fields, before the buttons. `follow` makes some fields show the
+ * default of the choice made in another field's draft, while no override sets them and the person
+ * has not typed in them; such a field is no edit, so a save leaves it unset. `onDraft` hears the
+ * draft as it is shown.
  */
 export function SectionForm({
   groups,
@@ -187,6 +200,8 @@ export function SectionForm({
   what,
   confirm,
   confirmLabel,
+  follow,
+  onDraft,
   onSave,
 }: {
   groups: Group[];
@@ -197,12 +212,30 @@ export function SectionForm({
   what: string;
   confirm?: (change: Change) => string | null;
   confirmLabel?: string;
+  follow?: Follow;
+  onDraft?: (draft: Record<string, string>) => void;
   onSave: (body: Record<string, unknown>) => Promise<unknown>;
 }) {
   const { section: t, save: saveWord, cancel } = useT().settings;
   const fields = groups.flatMap((group) => group.fields);
   const labels = Object.fromEntries(fields.map((field) => [field.name, field.label]));
-  const [draft, setDraft] = useState(values);
+  const [typed, setTyped] = useState<Set<string>>(new Set());
+  const [chosen, setDraft] = useState(values);
+  const follows = (name: string): boolean =>
+    follow !== undefined &&
+    chosen[follow.on] !== values[follow.on] &&
+    !(name in overrides) &&
+    !typed.has(name) &&
+    follow.defaults[chosen[follow.on]]?.[name] !== undefined;
+  const draft = Object.fromEntries(
+    Object.entries(chosen).map(([name, text]) => [
+      name,
+      follow && follows(name) ? follow.defaults[chosen[follow.on]][name] : text,
+    ]),
+  );
+  const shown = (field: Field) => field.visibleWhen?.(draft) ?? true;
+  const draftKey = JSON.stringify(draft);
+  useEffect(() => onDraft?.(draft), [draftKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const [asking, setAsking] = useState<{ body: Record<string, unknown>; text: string } | null>(
     null,
   );
@@ -217,15 +250,18 @@ export function SectionForm({
     cancelled.current = false;
   }, [asking]);
   const editable = fields.filter((field) => !fromEnv.includes(field.name));
-  const changed = editable.filter((field) =>
-    isEdit(field, draft[field.name], values[field.name], field.name in overrides),
+  const changed = editable.filter(
+    (field) =>
+      shown(field) &&
+      !follows(field.name) &&
+      isEdit(field, draft[field.name], values[field.name], field.name in overrides),
   );
   const overridden = Object.keys(overrides).length > 0;
 
   function body(): Record<string, unknown> {
     const update = { ...overrides };
     for (const field of changed) {
-      const text = draft[field.name].trim();
+      const text = chosen[field.name].trim();
       if (text === "") delete update[field.name];
       else update[field.name] = field.number ? parsed(text) : text;
     }
@@ -252,7 +288,7 @@ export function SectionForm({
       }}
     >
       {groups.map((group, at) => {
-        const rows = group.fields.map((field) => (
+        const rows = group.fields.filter(shown).map((field) => (
           <FieldRow
             key={field.name}
             field={field}
@@ -261,7 +297,8 @@ export function SectionForm({
             fromEnv={fromEnv.includes(field.name)}
             onChange={(value) => {
               setAsking(null);
-              setDraft({ ...draft, [field.name]: value });
+              setTyped(new Set(typed).add(field.name));
+              setDraft({ ...chosen, [field.name]: value });
             }}
           />
         ));
@@ -332,7 +369,10 @@ export function SectionForm({
               size="sm"
               variant="ghost"
               disabled={saving}
-              onClick={() => setDraft(values)}
+              onClick={() => {
+                setTyped(new Set());
+                setDraft(values);
+              }}
             >
               {cancel}
             </Button>

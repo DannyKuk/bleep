@@ -31,16 +31,12 @@ describe("the Models panel", () => {
     expect(within(models).getByRole("option", { name: "Anthropic" })).toBeInTheDocument();
     expect(within(models).getByLabelText("Model")).toHaveValue("openai/gpt-6-luna");
     expect(within(models).getByLabelText("Cheap model")).toHaveValue("openai/gpt-6-luna");
-    expect(within(models).getByLabelText("Local model")).toHaveValue("openai/gpt-oss-20b");
+    expect(within(models).queryByLabelText("Local model")).toBeNull();
     expect(within(models).getByRole("group", { name: "OPENROUTER_API_KEY" })).toHaveTextContent(
       "Set in .env",
     );
-    expect(within(models).getByRole("group", { name: "ANTHROPIC_API_KEY" })).toHaveTextContent(
-      "Missing",
-    );
-    expect(within(models).getByRole("group", { name: "LOCAL_BASE_URL" })).toHaveTextContent(
-      "may be private",
-    );
+    expect(within(models).queryByRole("group", { name: "ANTHROPIC_API_KEY" })).toBeNull();
+    expect(within(models).queryByRole("group", { name: "LOCAL_BASE_URL" })).toBeNull();
     expect(within(models).getByRole("button", { name: "Save the models" })).toBeDisabled();
     expect(within(models).queryByRole("status")).toBeNull();
   });
@@ -48,11 +44,14 @@ describe("the Models panel", () => {
   it("sends only what changed on top of the overrides, with the version it read", async () => {
     const saved = settingsView({
       version: "v2",
-      models: { ...settingsView().models, provider: "local", model: "x/y" },
-      overrides: { models: { provider: "local", model: "x/y" } },
+      models: { ...settingsView().models, provider: "anthropic", model: "x/y" },
+      overrides: { models: { provider: "anthropic", model: "x/y" } },
     });
     const fetchMock = settingsBackend(
-      settingsView({ overrides: { models: { provider: "local" } } }),
+      settingsView({
+        models: { ...settingsView().models, provider: "anthropic" },
+        overrides: { models: { provider: "anthropic" } },
+      }),
       [json(saved)],
     );
     render(<SettingsPage />);
@@ -63,7 +62,7 @@ describe("the Models panel", () => {
     await userEvent.type(model, "x/y ");
     await userEvent.click(within(models).getByRole("button", { name: "Save the models" }));
 
-    expect(sentBody(fetchMock, "PUT")).toEqual({ models: { provider: "local", model: "x/y" } });
+    expect(sentBody(fetchMock, "PUT")).toEqual({ models: { provider: "anthropic", model: "x/y" } });
     expect(putsOf(fetchMock)[0][1]?.headers).toMatchObject({ "if-match": '"v1"' });
     expect(await within(models).findByDisplayValue("x/y")).toBeInTheDocument();
   });
@@ -154,14 +153,106 @@ describe("the Models panel", () => {
   it("lists the model's key and address here and not again under Secrets", async () => {
     settingsBackend();
     render(<SettingsPage />);
-    const models = await panel();
+    await panel();
     const secrets = await screen.findByRole("region", { name: "Secrets" });
 
-    expect(within(models).getByRole("group", { name: "LOCAL_BASE_URL" })).toBeInTheDocument();
     expect(within(secrets).queryByRole("group", { name: "OPENROUTER_API_KEY" })).toBeNull();
     expect(within(secrets).queryByRole("group", { name: "ANTHROPIC_API_KEY" })).toBeNull();
     expect(within(secrets).queryByRole("group", { name: "LOCAL_BASE_URL" })).toBeNull();
     expect(within(secrets).getByRole("group", { name: "TELEGRAM_BOT_TOKEN" })).toBeInTheDocument();
+  });
+
+  it("switches the two model fields to the chosen provider's defaults before saving", async () => {
+    const fetchMock = settingsBackend();
+    render(<SettingsPage />);
+    const models = await panel();
+    const provider = within(models).getByLabelText("Provider");
+
+    await userEvent.selectOptions(provider, "anthropic");
+    expect(within(models).getByLabelText("Model")).toHaveValue("claude-sonnet-5-5");
+    expect(within(models).getByLabelText("Cheap model")).toHaveValue("claude-haiku-5-5");
+    await userEvent.selectOptions(provider, "openrouter");
+    expect(within(models).getByLabelText("Model")).toHaveValue("openai/gpt-6-luna");
+    expect(within(models).getByLabelText("Cheap model")).toHaveValue("openai/gpt-6-luna");
+
+    await userEvent.selectOptions(provider, "anthropic");
+    await userEvent.click(within(models).getByRole("button", { name: "Save the models" }));
+    expect(sentBody(fetchMock, "PUT")).toEqual({ models: { provider: "anthropic" } });
+  });
+
+  it("keeps a typed id across a provider switch and saves it", async () => {
+    const fetchMock = settingsBackend();
+    render(<SettingsPage />);
+    const models = await panel();
+
+    await userEvent.selectOptions(within(models).getByLabelText("Provider"), "anthropic");
+    const model = within(models).getByLabelText("Model");
+    await userEvent.clear(model);
+    await userEvent.type(model, "claude-mine");
+    await userEvent.click(within(models).getByRole("button", { name: "Save the models" }));
+
+    expect(sentBody(fetchMock, "PUT")).toEqual({
+      models: { provider: "anthropic", model: "claude-mine" },
+    });
+  });
+
+  it("shows the resolved defaults of a saved provider and leaves them unset switching back", async () => {
+    const saved = settingsView({
+      models: {
+        provider: "anthropic",
+        model: "claude-sonnet-5-5",
+        cheap_model: "claude-haiku-5-5",
+        local_model: "openai/gpt-oss-20b",
+      },
+      overrides: { models: { provider: "anthropic" } },
+    });
+    const fetchMock = settingsBackend(saved, [json(settingsView())]);
+    render(<SettingsPage />);
+    const models = await panel();
+
+    await userEvent.selectOptions(within(models).getByLabelText("Provider"), "openrouter");
+    expect(within(models).getByLabelText("Model")).toHaveValue("openai/gpt-6-luna");
+    await userEvent.click(within(models).getByRole("button", { name: "Save the models" }));
+
+    expect(sentBody(fetchMock, "PUT")).toEqual({ models: { provider: "openrouter" } });
+  });
+
+  it("shows only the fields and the key or address of the provider in the select", async () => {
+    settingsBackend();
+    render(<SettingsPage />);
+    const models = await panel();
+    const provider = within(models).getByLabelText("Provider");
+
+    await userEvent.selectOptions(provider, "anthropic");
+    expect(within(models).getByRole("group", { name: "ANTHROPIC_API_KEY" })).toBeInTheDocument();
+    expect(within(models).queryByRole("group", { name: "OPENROUTER_API_KEY" })).toBeNull();
+    expect(within(models).queryByLabelText("Local model")).toBeNull();
+
+    await userEvent.selectOptions(provider, "local");
+    expect(within(models).getByLabelText("Local model")).toHaveValue("openai/gpt-oss-20b");
+    expect(within(models).getByRole("group", { name: "LOCAL_BASE_URL" })).toBeInTheDocument();
+    expect(within(models).queryByRole("group", { name: "ANTHROPIC_API_KEY" })).toBeNull();
+    expect(within(models).queryByLabelText("Model")).toBeNull();
+    expect(within(models).queryByLabelText("Cheap model")).toBeNull();
+  });
+
+  it("neither sends nor clears the stored value of a hidden field", async () => {
+    const fetchMock = settingsBackend(
+      settingsView({ overrides: { models: { model: "x/y", local_model: "my/local" } } }),
+      [json(settingsView())],
+    );
+    render(<SettingsPage />);
+    const models = await panel();
+
+    const model = within(models).getByLabelText("Model");
+    await userEvent.clear(model);
+    await userEvent.selectOptions(within(models).getByLabelText("Provider"), "local");
+    expect(within(models).queryByLabelText("Model")).toBeNull();
+    await userEvent.click(within(models).getByRole("button", { name: "Save the models" }));
+
+    expect(sentBody(fetchMock, "PUT")).toEqual({
+      models: { model: "x/y", local_model: "my/local", provider: "local" },
+    });
   });
 
   it("no longer sends anyone to the dev panel for the models", async () => {

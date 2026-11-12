@@ -31,6 +31,13 @@ ModelProvider = Literal["openrouter", "anthropic", "local"]
 OPENROUTER_DEFAULT_MODEL = "openai/gpt-6-luna"
 ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-5-5"
 ANTHROPIC_DEFAULT_CHEAP_MODEL = "claude-haiku-5-5"
+# The `model` and `cheap_model` a provider falls back to; the settings page shows them (#517).
+# The local provider calls `local_model`, so its two are never used and stay the OpenRouter ids.
+PROVIDER_DEFAULT_MODELS: dict[ModelProvider, dict[str, str]] = {
+    "openrouter": {"model": OPENROUTER_DEFAULT_MODEL, "cheap_model": OPENROUTER_DEFAULT_MODEL},
+    "anthropic": {"model": ANTHROPIC_DEFAULT_MODEL, "cheap_model": ANTHROPIC_DEFAULT_CHEAP_MODEL},
+    "local": {"model": OPENROUTER_DEFAULT_MODEL, "cheap_model": OPENROUTER_DEFAULT_MODEL},
+}
 
 
 class ModelSettings(BaseSettings):
@@ -67,10 +74,7 @@ class ModelSettings(BaseSettings):
             return self
         update = {
             name: claude
-            for name, claude in (
-                ("model", ANTHROPIC_DEFAULT_MODEL),
-                ("cheap_model", ANTHROPIC_DEFAULT_CHEAP_MODEL),
-            )
+            for name, claude in PROVIDER_DEFAULT_MODELS["anthropic"].items()
             if getattr(self, name) == OPENROUTER_DEFAULT_MODEL
         }
         return self.model_copy(update=update)
@@ -452,6 +456,9 @@ class SettingsView(BaseModel):
     """`GET /api/settings`: the values in force, and the database's overrides that changed them."""
 
     models: ModelChoice
+    # Per provider, the `model` and `cheap_model` that apply while the field is unset, so the page
+    # can switch the two fields with the provider select (#517).
+    model_defaults: dict[ModelProvider, dict[str, str]] = PROVIDER_DEFAULT_MODELS
     model_key: SecretStatus  # the key's variable of the provider in force; a local model needs none
     budgets: Budgets
     thresholds: Thresholds
