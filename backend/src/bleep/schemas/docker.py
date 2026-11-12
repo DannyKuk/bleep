@@ -105,6 +105,14 @@ class EngineInfo(BaseModel):
     mem_total: int = 0  # bytes
     containers: int = 0
     containers_running: int = 0
+    system_time: datetime | None = None  # the engine host's clock when it answered
+
+
+class LastLog(BaseModel):
+    """When a container last wrote a log line, on the same clock as `now`: the engine host's."""
+
+    at: datetime | None  # None: it has written nothing yet
+    now: datetime
 
 
 class DiskUsage(BaseModel):

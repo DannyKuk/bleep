@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from bleep.hosts.config import ServiceOverrides
-from bleep.hosts.engine import EngineUnavailable, _detail
+from bleep.hosts.engine import EngineError, EngineUnavailable, _detail
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import (
     ContainerDetail,
@@ -14,6 +14,7 @@ from bleep.schemas.docker import (
     DockerEvent,
     HealthCheck,
     HealthProbe,
+    LastLog,
     MountInfo,
     PortBinding,
 )
@@ -689,3 +690,61 @@ async def test_events_labelled_bleep_self_are_dropped_even_when_not_in_the_snaps
 
     events = await env.run("recent_events", minutes=30)
     assert "bleep-gone-1" not in events and "shop-web-1" in events
+
+
+def last_written(env, at, now=NOW):
+    env.engine.last_logs["shop-web-1"] = LastLog(at=at, now=now)
+
+
+async def test_logs_start_with_how_long_ago_the_last_line_was_written(env):
+    last_written(env, NOW - timedelta(seconds=192))
+    out = await env.run("container_logs", container="shop-web-1")
+    first, _, rest = out.partition("\n")
+    stamp = (NOW - timedelta(seconds=192)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert first == f"last line written 3 min 12 s ago ({stamp})"
+    assert rest.startswith("<untrusted")
+
+
+@pytest.mark.parametrize(
+    ("seconds", "said"),
+    [
+        (0, "0 s"),
+        (5, "5 s"),
+        (60, "1 min 0 s"),
+        (3 * 3600 + 5 * 60 + 9, "3 h 5 min"),
+        (2 * 86400 + 4 * 3600 + 59, "2 d 4 h"),
+        (-30, "0 s"),
+    ],
+)
+async def test_the_age_of_the_last_line_reads_in_its_largest_units(env, seconds, said):
+    last_written(env, NOW - timedelta(seconds=seconds))
+    out = await env.run("container_logs", container="shop-web-1")
+    assert out.startswith(f"last line written {said} ago (")
+
+
+async def test_a_container_that_never_logged_says_no_output_yet(env):
+    last_written(env, None)
+    out = await env.run("container_logs", container="shop-web-1")
+    assert out.startswith("no output yet\n<untrusted")
+
+
+async def test_an_engine_that_cannot_say_leaves_the_logs_as_they_were(env):
+    out = await env.run("container_logs", container="shop-web-1")
+    assert out.startswith("<untrusted") and "last line" not in out
+
+
+async def test_an_engine_that_fails_the_last_line_call_still_returns_the_logs(env):
+    async def refuse(container):
+        raise EngineError("a", "no logging driver that can be read")
+
+    env.engine.last_log = refuse
+    out = await env.run("container_logs", container="shop-web-1", tail=1000)
+    assert out.startswith("<untrusted") and "retrying" in out
+
+
+async def test_the_last_line_header_carries_nothing_the_container_wrote(env):
+    """The header is built from the parsed time only: a hostile last line cannot reach it."""
+    last_written(env, NOW - timedelta(seconds=10))
+    out = await env.run("container_logs", container="shop-web-1", tail=1)
+    header = out.split("\n", 1)[0]
+    assert re.fullmatch(r"last line written 10 s ago \(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\)", header)

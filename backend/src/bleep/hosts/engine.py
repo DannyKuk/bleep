@@ -36,6 +36,7 @@ from bleep.schemas.docker import (
     EngineInfo,
     HealthCheck,
     HealthProbe,
+    LastLog,
     MountInfo,
     PortBinding,
 )
@@ -111,6 +112,14 @@ class Engine(Protocol):
     async def start(self, container: str) -> None: ...
     async def reconnect(self) -> None: ...
     async def close(self) -> None: ...
+
+
+@runtime_checkable
+class LogClock(Protocol):
+    """An engine that can say when a container last wrote a log line. Separate from `Engine`:
+    a fake or scripted engine may lack it, and the log tools then say nothing about it."""
+
+    async def last_log(self, container: str) -> LastLog | None: ...
 
 
 class _Stream:
@@ -199,6 +208,23 @@ class DockerSdkEngine:
             options["since"] = _aware(since).timestamp()
         raw = await self._call(lambda c: c.api.logs(container, **options), container)
         return raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+
+    async def last_log(self, container: str) -> LastLog | None:
+        """When the container last wrote a line, and the time on this engine's own clock now, so
+        the age does not depend on the clock of the machine Bleep runs on. None when the engine
+        cannot say: no clock, or a first log word that is not a timestamp."""
+        raw = await self._call(
+            lambda c: c.api.logs(container, stdout=True, stderr=True, tail=1, timestamps=True),
+            container,
+        )
+        now = (await self.info()).system_time
+        text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+        if now is None:
+            return None
+        if not text.strip():
+            return LastLog(at=None, now=now)
+        at = _log_time(text.split(None, 1)[0])
+        return None if at is None else LastLog(at=at, now=now)
 
     async def stats(self, container: str) -> ContainerStats:
         raw = await self._call(lambda c: c.api.stats(container, stream=False), container)
@@ -594,4 +620,18 @@ def _info(raw: dict) -> EngineInfo:
         mem_total=raw.get("MemTotal", 0),
         containers=raw.get("Containers", 0),
         containers_running=raw.get("ContainersRunning", 0),
+        system_time=_log_time(raw.get("SystemTime", "")),
     )
+
+
+_LOG_STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})")
+
+
+def _log_time(stamp: str) -> datetime | None:
+    """A Docker RFC 3339 timestamp, or None when the text is not exactly one."""
+    if not _LOG_STAMP.fullmatch(stamp):
+        return None
+    try:
+        return _aware(datetime.fromisoformat(stamp))
+    except ValueError:
+        return None
