@@ -290,6 +290,11 @@ async def test_a_claude_call_records_tokens_and_a_cost_from_the_price_table(ledg
     assert total.usd == pytest.approx(2.0 + 1.0)
 
 
+async def test_claude_opus_5_5_is_priced_from_the_table(ledger):
+    await record(ledger, anthropic_reply("claude-opus-5-5", 1_000_000, 100_000))
+    assert (await ledger.incident_total("i")).usd == pytest.approx(4.0 + 2.0)
+
+
 async def test_a_dated_id_of_the_model_is_priced_as_the_model(ledger):
     await record(ledger, anthropic_reply("claude-sonnet-5-5-20261001", 500_000, 0))
     assert (await ledger.incident_total("i")).usd == pytest.approx(1.0)

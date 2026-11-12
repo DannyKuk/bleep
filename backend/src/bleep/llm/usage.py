@@ -26,6 +26,7 @@ PRICES: dict[str, tuple[float, float]] = {
     "openai/gpt-oss-20b": (0.0, 0.0),
     "claude-sonnet-5-5": (2.0, 10.0),
     "claude-haiku-5-5": (0.10, 0.50),
+    "claude-opus-5-5": (4.0, 20.0),
 }
 # Claude Haiku 5.5 charges more for a call whose prompt is over 100,000 tokens: the price of the
 # whole call, not of the tokens past the line.
