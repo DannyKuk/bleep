@@ -11,7 +11,7 @@ import itertools
 import re
 import string
 from collections.abc import Callable
-from functools import lru_cache
+from functools import lru_cache, partial
 
 from bleep.guard.sanitize import (
     CONTROL_CHARS,
@@ -81,68 +81,135 @@ def hide_values(text: str, values: list[str]) -> str:
 
 def redact_command(text: str) -> str:
     """`redact_text` for a health-check command, then the password a database or HTTP client
-    takes on its command line (`hide_client_passwords`). Only for a line known to be a command:
-    free text such as a log line is never read this way."""
+    takes on its command line read as a command (`hide_client_passwords`), where a quote nothing
+    closes hides the rest of the line. Only for a line known to be a command: `redact_text`
+    reads every log line as free text."""
     return hide_client_passwords(redact_text(text))
 
 
 _CLIENT_NAME = (
-    r"redis-cli|mysql(?:admin|dump|check|import|show)?|mariadb(?:-[a-z]+)?|mongo(?:sh|s)?|curl"
+    r"redis-cli|mysql(?:admin|dump|pump|check|import|show|slap|binlog|sh)?|mariadb(?:-[a-z]+)?"
+    r"|mongo(?:sh|s)?|curl"
 )
-_CLIENT_COMMAND = re.compile(rf"(?<![A-Za-z0-9_.-])({_CLIENT_NAME})(?![A-Za-z0-9_-])[^\n]*")
-_WORD_NAME = re.compile(rf"(?:.*[/;&|(])?({_CLIENT_NAME})")  # curl, /usr/bin/curl, &&curl
-_SEPARATE_PASSWORD = {
-    "redis-cli": {"-a", "--pass"},
-    "mongosh": {"-p", "--password"},
-    "mongo": {"-p", "--password"},
-    "mongos": {"-p", "--password"},
-}
-_USER_FLAGS = {"-u", "--user", "--proxy-user"}
-_PLAIN_RUN = re.compile(r"[^\s\"']+")
+# A client's name as a word of its own, also right after a JSON escape (`"step 1\ncurl -u …"`)
+_CLIENT_START = r"(?:(?<![A-Za-z0-9_.-])|(?<=\\[nrtfb])|(?<=\\u[0-9A-Fa-f]{4}))"
+_CLIENT_AT = re.compile(rf"{_CLIENT_START}(?:{_CLIENT_NAME})(?![A-Za-z0-9_-])")
+_CLIENT_COMMAND = re.compile(rf"{_CLIENT_START}({_CLIENT_NAME})(?![A-Za-z0-9_-])[^\n]*")
+_WORD_NAME = re.compile(rf"(?:.*[/;&|(=\"'])?({_CLIENT_NAME})")  # /usr/bin/curl, &&curl, cmd="curl
+_MONGO = {"mongosh", "mongo", "mongos"}
+_SEPARATE_PASSWORD = {"redis-cli": {"-a", "--pass"}} | dict.fromkeys(_MONGO, {"-p", "--password"})
+_CURL_USER_FLAGS = ("--user", "--proxy-user")
+_EMPTY = ("''", '""')  # an empty password, `-p''`, is evidence
+_CURL_SHORT_USER = re.compile(r"-[A-Za-z0-9]*?[uU]")  # -u, -U, and -su, -fsSu in a group
+# A run of a word with no quote; a backslash escapes the next character (`s3cret\ pass`)
+_PLAIN_RUN = re.compile(r"(?:[^\s\"'\\]++|\\.|\\\Z)++", re.DOTALL)
+# In free text an escaped quote is a quote too: logfmt writes `msg="redis-cli -a \"pa ss\""`
+_FREE_RUN = re.compile(r"(?:[^\s\"'`\\]++|\\[^\"']|\\\Z)++", re.DOTALL)
+_OPENING_QUOTE = re.compile(r"(\\?[\"'])\1*+")
 _QUOTE = re.compile(r"[\"']")
 _DOUBLE_QUOTED_END = re.compile(r"(?:[^\"\\]|\\.)*+\"", re.DOTALL)
+# What follows the closing quote of a string a command sits in (`msg="curl -u bob:pw" n=1`)
+_AFTER_STRING = re.compile(r"[\s,;:.)}\]]|\Z")
+_SHORT_FLAG = re.compile(r"-[A-Za-z]")
+# What `docker run --name mongo -p` publishes, a port mapping and no password
+_PORT_MAPPING = re.compile(
+    r"(?:[0-9]{1,3}(?:\.[0-9]{1,3}){3}:)?[0-9]{0,5}:[0-9]{1,5}(?:-[0-9]{1,5})?(?:/(?:tcp|udp))?"
+)
+_NEXT_ITEM = re.compile(r"[ \t]*+,[ \t]*+(\"(?:[^\"\\\n]|\\.)*+\"|'[^'\n]*+')")
+_JSON_ESCAPE = re.compile(r"\\(u[0-9A-Fa-f]{4}|.)", re.DOTALL)
+_JSON_UNESCAPED = {"b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+
+Edit = tuple[int, int, str]  # replace text[start:stop] with the string
+Pending = str | None  # the flag a word waits for its value after: "plain", "user", or none
 
 
-def _quote_end(text: str, at: int, no_closer: set[str]) -> int:
-    """Where the quoted string opening at `at` ends, or -1. A quote nothing closes is looked for
-    once: the quote kind goes into `no_closer`, so a line of such quotes costs one scan, not one
-    each."""
-    quote = text[at]
+def _quote_end(text: str, at: int, no_closer: set[str], limit: int | None = None) -> int:
+    """Where the quoted string opening at `at` ends, before `limit`, or -1. A quote nothing
+    closes is looked for once: the quote kind goes into `no_closer`, so a line of such quotes
+    costs one scan, not one each."""
+    quote, limit = text[at], len(text) if limit is None else limit
     if quote in no_closer:
         return -1
     if quote == "'":
-        end = text.find("'", at + 1)
+        end = text.find("'", at + 1, limit)
         end = end + 1 if end >= 0 else -1
     else:
-        found = _DOUBLE_QUOTED_END.match(text, at + 1)
+        found = _DOUBLE_QUOTED_END.match(text, at + 1, limit)
         end = found.end() if found else -1
     if end < 0:
         no_closer.add(quote)
     return end
 
 
-def _shell_words(text: str, start: int) -> tuple[list[tuple[int, int]], int | None]:
+def _escaped_quote_end(text: str, at: int, no_closer: set[str], limit: int) -> int:
+    """Where the string an escaped quote (`\\"`, `\\'`) opens at `at` ends, at the same escaped
+    quote, before `limit`; or -1, looked for once per kind as `_quote_end` does."""
+    quote = text[at : at + 2]
+    end = -1 if quote in no_closer else text.find(quote, at + 2, limit)
+    if end < 0:
+        no_closer.add(quote)
+        return -1
+    return end + 2
+
+
+def _shell_words(
+    text: str,
+    start: int,
+    free: bool = False,
+    first_only: bool = False,
+    limit: int | None = None,
+    no_closer: set[str] | None = None,
+) -> tuple[list[tuple[int, int]], int | None]:
     """The words of a shell command from `start`, and where an unclosed quote opens, if one does.
 
-    A word runs to whitespace, quoted parts included (`-p'pa ss'`, `pa,ss`). A quote nothing
-    closes after whitespace would swallow the rest of the line in a shell: the caller hides it
-    from there. One attached to a word (the closing quote of a JSON string around the command)
-    only ends that word.
+    A word runs to whitespace, quoted parts and backslash escapes included (`-p'pa ss'`, `pa,ss`,
+    `pa\\ ss`). A quote nothing closes after whitespace would swallow the rest of the line in a
+    shell: the caller hides it from there. One attached to a word (the closing quote of a JSON
+    string around the command) only ends that word.
+
+    In free text (`free`, a log line) a quote nothing closes is an ordinary character of its word
+    and the words go on; the place returned is the first such quote. A quote or backtick right
+    after a word and before a blank, a comma, a colon, a full stop or a closing bracket ends the
+    word: it closes a string or a code span the command sits in. An escaped quote (`\\"`) is a
+    quote as well, closed by the same escaped quote, as logfmt escapes every quote in a value.
+    `first_only` stops after the first word, `limit` is where the text ends, and `no_closer` may
+    be shared by calls that read on to the same `limit` from later and later places
+    (`_quote_end`).
     """
-    words, no_closer, at, end = [], set[str](), start, len(text)
-    while at < end:
+    words, at = [], start
+    no_closer = set[str]() if no_closer is None else no_closer
+    end = len(text) if limit is None else limit
+    plain_run = _FREE_RUN if free else _PLAIN_RUN
+    unclosed = None
+    while at < end and not (first_only and words):
         if text[at].isspace():
             at += 1
             continue
         first = at
         while at < end and not text[at].isspace():
-            run = _PLAIN_RUN.match(text, at)
+            run = plain_run.match(text, at, end)
             if run:
                 at = run.end()
                 continue
-            closed = _quote_end(text, at, no_closer)
+            if free and text[at] == "\\":  # `\\"` or `\\'`: the run ends only there
+                if _closes_string(text, first, at, end, 2):
+                    break
+                closed = _escaped_quote_end(text, at, no_closer, end)
+                if closed < 0:
+                    unclosed = at if unclosed is None else unclosed
+                at = closed if closed >= 0 else at + 2
+                continue
+            if free and _closes_string(text, first, at, end):
+                break
+            if text[at] == "`":
+                at += 1
+                continue
+            closed = _quote_end(text, at, no_closer, end)
             if closed >= 0:
                 at = closed
+            elif free:
+                unclosed = at if unclosed is None else unclosed
+                at += 1
             elif at > first:
                 break
             elif text[first - 1].isspace():
@@ -152,7 +219,17 @@ def _shell_words(text: str, start: int) -> tuple[list[tuple[int, int]], int | No
                 first = at
         if at > first:
             words.append((first, at))
-    return words, None
+    return words, unclosed
+
+
+def _closes_string(text: str, first: int, at: int, end: int, width: int = 1) -> bool:
+    """Whether the quote at `at` (`width` characters, 2 for an escaped one), in the word from
+    `first`, closes a string the command sits in: it follows the word and comes before a blank
+    or punctuation, and does not open a password right after its flag or its user (`-p'.pw'`,
+    `bob:',pw'`)."""
+    if at == first or text[at - 1] in ":=" or _SHORT_FLAG.fullmatch(text, first, at):
+        return False
+    return _AFTER_STRING.match(text, at + width, end) is not None
 
 
 def _json_items(text: str, start: int) -> list[tuple[int, int]]:
@@ -168,73 +245,369 @@ def _json_items(text: str, start: int) -> list[tuple[int, int]]:
     return items
 
 
-def _hide_after(word: str, keep: int) -> str:
-    """The word with all but its first `keep` characters hidden, its quotes kept."""
-    quote = word[0] if word[0] in "\"'" else ""
-    inner = word[1:-1] if quote and len(word) > 1 and word.endswith(quote) else word.lstrip(quote)
-    if not inner[keep:] or inner[keep:].startswith(REDACTED):
-        return word
-    return f"{quote}{inner[:keep]}{REDACTED}{quote}"
+def _list_items(text: str, start: int, limit: int | None = None) -> list[tuple[int, int]]:
+    """The quoted items of a list from `start`, right after an item: each after a comma, up to
+    anything that is not one more item on the line (the list's end, a key) or `limit`."""
+    items, at = [], start
+    limit = len(text) if limit is None else limit
+    while item := _NEXT_ITEM.match(text, at, limit):
+        items.append(item.span(1))
+        at = item.end()
+    return items
 
 
-def _hide_user_password(word: str, skip: int) -> str:
-    """`user:password` with the password hidden; a word with no colon names a user only."""
-    colon = word.strip("\"'")[skip:].find(":")
-    return word if colon < 0 else _hide_after(word, skip + colon + 1)
+def _hidden_part(word: str, keep: int) -> Edit | None:
+    """The part of `word` after its first `keep` characters, its quotes kept: where it starts and
+    ends in the word and what takes its place; None when nothing is left to hide, or when the
+    part is a reference (`$REDIS_PASSWORD`), which holds no password."""
+    quote, lead = _opening_quote(word)
+    start = lead + keep  # `keep` counts after the opening quotes
+    if quote and word.endswith(quote) and len(word) - len(quote) >= lead:
+        stop, closer = len(word) - len(quote), ""
+    else:
+        stop, closer = len(word), quote
+    hidden_already = word[start:stop].lstrip("\\\"'").startswith(REDACTED)  # `"-p"<redacted>`
+    if start >= stop or hidden_already or _REFERENCE.fullmatch(word, start, stop):
+        return None
+    return start, stop, REDACTED + closer
+
+
+def _opening_quote(word: str) -> tuple[str, int]:
+    """The quote `word` opens with (`"`, `'`, or an escaped `\\"`, `\\'`), and how many characters
+    it and its repeats take; none and 0 when it opens with no quote."""
+    found = _OPENING_QUOTE.match(word)
+    return (found.group(1), found.end()) if found else ("", 0)
+
+
+def _user_password_part(word: str, skip: int) -> Edit | None:
+    """The password of `user:password`, `skip` characters after the opening quotes; a word with no
+    colon names a user only."""
+    lead = _opening_quote(word)[1]
+    colon = word.find(":", lead + skip)
+    return None if colon < 0 else _hidden_part(word, colon - lead + 1)
+
+
+def _value_part(word: str, pending: str, name: str) -> Edit | None:
+    """The password in the word right after a flag that takes it. Whatever it looks like it is
+    the password, digits too; only a port mapping after `-p` of the `mongo` family is kept, as
+    `docker run --name mongo -p 27017:27017` publishes a port."""
+    if pending == "user":
+        return _user_password_part(word, 0)
+    if name in _MONGO and _PORT_MAPPING.fullmatch(word.strip("\"'")):
+        return None
+    return _hidden_part(word, 0)
+
+
+def _opens_value(word: str) -> bool:
+    """`-p'` cut short by a later client's name (`-p'mysql'`): the quote opens the password.
+    `-p''` is an empty one."""
+    return word.startswith("-p") and len(word) > 2 and word[2:] not in _EMPTY
+
+
+def _attached(word: str, bare: str) -> bool:
+    """`-ppw`, `-p'pw'` and `-p'` with its value to come: a password attached to `-p`."""
+    return bare.startswith("-p") and (len(bare) > 2 or _opens_value(word))
+
+
+# How the password is read out of the word that holds it
+Rule = Callable[[str], Edit | None]
+
+
+def _curl_user(bare: str) -> tuple[Pending, Rule | None]:
+    """curl's `-u`/`--user` and `-U`/`--proxy-user`, alone (the next word is `user:pw`), grouped
+    with other short flags (`-fsSu`) or with the value attached (`-ubob:pw`)."""
+    if bare in _CURL_USER_FLAGS:
+        return "user", None
+    if bare.startswith(tuple(f"{flag}=" for flag in _CURL_USER_FLAGS)):
+        return None, partial(_user_password_part, skip=bare.index("=") + 1)
+    flag = None if bare.startswith("--") else _CURL_SHORT_USER.match(bare)
+    if flag is None:
+        return None, None
+    if flag.end() == len(bare):
+        return "user", None
+    return None, partial(_user_password_part, skip=flag.end())
+
+
+def _password_slots(
+    words: list[str], name: str, pending: Pending = None
+) -> tuple[dict[int, Rule], str, Pending]:
+    """Which words hold a password and how to read it, by the word's index; the client whose
+    rules apply after the words, and the flag the last word left waiting for its value. Reads
+    `-a` and `--pass` for `redis-cli`, `-p`, `--password` and the attached `-ppw` for the `mongo`
+    family, curl's user flags (`_curl_user`), and the attached `-ppw` of the MySQL clients. The
+    word after a flag is its value whatever it is, except a long option after the `mongo`
+    family's `-p` (`--eval`), which may prompt. A later client's name among the words (`curl …
+    && redis-cli -a pw`) switches the rules; a flag's value never does."""
+    slots: dict[int, Rule] = {}
+    for index, word in enumerate(words):
+        bare = word.strip("\"'")
+        rule: Rule | None = None
+        if pending and not (name in _MONGO and bare.startswith("--")):
+            rule, pending = partial(_value_part, pending=pending, name=name), None
+        elif not bare.startswith("-") and (later := _WORD_NAME.fullmatch(bare)):
+            name, pending = later.group(1), None
+        elif name == "curl":
+            pending, rule = _curl_user(bare)
+        elif (name in _MONGO or name.startswith(("mysql", "mariadb"))) and _attached(word, bare):
+            pending, rule = None, partial(_hidden_part, keep=2)
+        else:
+            pending = "plain" if bare in _SEPARATE_PASSWORD.get(name, ()) else None
+        if rule is not None:
+            slots[index] = rule
+    return slots, name, pending
+
+
+def _parts(spans: list[tuple[int, int]], text: str, slots: dict[int, Rule]) -> list[Edit]:
+    """The edits that hide the password of each slot (`_password_slots`) in `text`."""
+    edits = []
+    for index, rule in sorted(slots.items()):
+        first, last = spans[index]
+        if part := rule(text[first:last]):
+            edits.append((first + part[0], first + part[1], part[2]))
+    return edits
+
+
+def _command_edits(command: str, after_name: int, name: str) -> list[Edit]:
+    """The passwords in one command line from right after a client's name, as shell words or,
+    when the name was an item of a list (`["redis-cli", "-a", "pw"]`), as the items after it. A
+    quote nothing closes after whitespace hides the rest of the line."""
+    if command[after_name : after_name + 1] in ("'", '"'):
+        spans, unclosed = _json_items(command, after_name + 1), None
+    else:
+        spans, unclosed = _shell_words(command, after_name)
+    slots = _password_slots([command[a:b] for a, b in spans], name)[0]
+    edits = _parts(spans, command, slots)
+    if unclosed is not None:
+        edits.append((unclosed, len(command), REDACTED))
+    return edits
+
+
+def _edited(text: str, edits: list[Edit]) -> str:
+    """`text` with each edit made; the edits are in order and do not overlap."""
+    out, kept = [], 0
+    for start, stop, new in edits:
+        out += [text[kept:start], new]
+        kept = stop
+    return "".join(out) + text[kept:]
+
+
+def _merged(edits: list[Edit]) -> list[Edit]:
+    """The edits in order, two that overlap made one that hides both."""
+    out: list[Edit] = []
+    for edit in sorted(edits):
+        if out and edit[0] < out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], edit[1]), REDACTED)
+        else:
+            out.append(edit)
+    return out
 
 
 def _hide_in_command(match: re.Match[str]) -> str:
-    """One command line from a client's name on. Reads `-a`, `--pass`, `-p` and `--password` for
-    `redis-cli` and the `mongo` family, `-u` and `--user` for `curl`, and the attached `-ppw` of
-    the MySQL clients, as shell words or as the items of a JSON list. A later client's name in
-    the same line (`curl … && redis-cli -a pw`) switches the rules."""
-    text, name = match.group(0), match.group(1)
-    after_name = match.end(1) - match.start()
-    if text[after_name : after_name + 1] in ("'", '"'):  # the name was a JSON item: close it
-        spans, unclosed = _json_items(text, after_name + 1), None
-    else:
-        spans, unclosed = _shell_words(text, after_name)
-    words = [text[a:b] for a, b in spans]
-    changes: dict[int, str] = {}
-    for index, word in enumerate(words):
-        if index in changes:
-            continue
-        bare = word.strip("\"'")
-        if later := _WORD_NAME.fullmatch(bare):
-            name = later.group(1)
-            continue
-        following = index + 1 if index + 1 < len(words) else None
-        if following is not None and words[following].strip("\"'").startswith("-"):
-            following = None
-        if name.startswith(("mysql", "mariadb")):
-            if bare.startswith("-p") and len(bare) > 2 and bare[2] != "=":
-                changes[index] = _hide_after(word, 2)
-        elif name == "curl":
-            if bare in _USER_FLAGS and following is not None:
-                changes[following] = _hide_user_password(words[following], 0)
-            elif bare.startswith("-u") and len(bare) > 2 and not bare.startswith("--"):
-                changes[index] = _hide_user_password(word, 2)
-        elif bare in _SEPARATE_PASSWORD.get(name, ()) and following is not None:
-            changes[following] = _hide_after(words[following], 0)
-    out, kept = [], 0
-    for index in sorted(changes):
-        a, b = spans[index]
-        if changes[index] != words[index]:
-            out.append(text[kept:a] + changes[index])
-            kept = b
-    if unclosed is None:
-        return "".join(out) + text[kept:]
-    return "".join(out) + text[kept:unclosed] + REDACTED
+    command = match.group(0)
+    return _edited(command, _command_edits(command, match.end(1) - match.start(), match[1]))
 
 
 def hide_client_passwords(text: str) -> str:
-    """The password a database or HTTP client takes on its command line: `redis-cli -a pw` and
-    `--pass pw`, `mongosh -p pw` and `--password pw`, `curl -u user:pw`, `mysqladmin -ppw`
-    (quoted or not). A shell word is hidden whole, up to whitespace, whatever its quotes and
-    commas. It looks only after a client's name, because `-a` and `-p` mean other things
-    elsewhere; and only for a line known to be a command (`redact_command`), not for the global
-    `redact_text`, which every log line goes through."""
+    """The password a database or HTTP client takes on its command line, for a line known to be a
+    command (`redact_command`): `redis-cli -a pw` and `--pass pw`, `mongosh -p pw` and
+    `--password pw`, `curl -u user:pw`, `mysqladmin -ppw` (quoted or not). A shell word is hidden
+    whole, up to whitespace, whatever its quotes and commas, and a quote nothing closes after
+    whitespace hides the rest of the line. It looks only after a client's name, because `-a` and
+    `-p` mean other things elsewhere. `redact_text` reads the same flags in free text
+    (`_hide_client_passwords_in_lines`)."""
     return _CLIENT_COMMAND.sub(_hide_in_command, text)
+
+
+def _free_edits(
+    text: str,
+    names: list[tuple[int, int]],
+    end: int,
+    read: list[bool],
+    limits: list[int] | None = None,
+) -> list[Edit]:
+    """The passwords in free text, read in pieces: each from a client's name (a span of `names`
+    whose `read` is true) to the next name or the name's limit (`limits`, `end` when not given),
+    with that name's rules, so a quote or a later command cannot hide one command from the
+    reading (`mongo started; cmd="redis-cli -a pw"`). A flag at a piece's end takes the next
+    name's word as its value (`redis-cli -a mongo`). A password word that runs on past the next
+    name, or holds a quote the piece does not close (`-a 'pass with curl inside'`, `-p'mysql'`),
+    is read again whole, to the limit, and the names inside it are no pieces; when nothing closes
+    its quote even there it is hidden to the limit."""
+    limits = [end] * len(names) if limits is None else limits
+    edits: list[Edit] = []
+    no_closers: dict[int, set[str]] = {}
+    name, pending, read_from, limit, index = "", None, -1, end, 0
+    while index < len(names):
+        if read_from < 0:
+            if not read[index]:
+                index += 1
+                continue
+            read_from, limit, pending = names[index][1], limits[index], None
+            name = text[names[index][0] : read_from]
+            if text[read_from : read_from + 1] in ("'", '"'):  # the name was an item of a list
+                items = _list_items(text, read_from + 1, limit)
+                if items:
+                    slots = _password_slots([text[a:b] for a, b in items], name)[0]
+                    edits += _parts(items, text, slots)
+                    index, read_from = _next_name(names, index, items[-1][1]), -1
+                    continue
+        cut = _next_name(names, index, read_from)
+        stop = min(names[cut][0] if cut < len(names) else end, limit)
+        spans, unclosed = _shell_words(text, read_from, True, limit=stop)
+        words = [text[a:b] for a, b in spans]
+        slots, after_name, after_pending = _password_slots(words, name, pending)
+        run_on = _run_on(spans, slots, after_pending, unclosed, stop, limit)
+        if run_on is None:
+            edits += _parts(spans, text, slots)
+            index = cut
+            if pending := after_pending if stop < limit else None:
+                read_from, name = stop, after_name
+            else:
+                index, read_from = _next_name(names, index - 1, stop), -1
+            continue
+        whole, open_at = _shell_words(
+            text, spans[run_on][0], True, True, limit, no_closers.setdefault(limit, set())
+        )
+        first, last = whole[0]
+        spans, words = spans[:run_on] + [(first, last)], words[:run_on] + [text[first:last]]
+        slots, name, pending = _password_slots(words, name, pending)
+        rule = slots.get(run_on)
+        # an empty value (`-a "`) still opens the quote; one already hidden stays as it is
+        part = rule and (rule(words[run_on]) or rule(words[run_on] + "x"))
+        if open_at is None or part is None:
+            edits += _parts(spans, text, slots)
+            index, read_from = _next_name(names, index, last) - 1, last
+            continue
+        # nothing closes the password's quote: it is hidden to the end
+        edits += _parts(spans[:run_on], text, {i: slots[i] for i in slots if i < run_on})
+        edits.append((min(first + part[0], open_at), limit, REDACTED))
+        index, read_from = _next_name(names, index, limit), -1
+    return edits
+
+
+def _run_on(
+    spans: list[tuple[int, int]],
+    slots: dict[int, Rule],
+    pending: Pending,
+    unclosed: int | None,
+    stop: int,
+    limit: int,
+) -> int | None:
+    """The first word of a piece that must be read again to the limit: a password word, or a
+    flag left waiting for its value, that runs on into the next name (`-p'mysql'`, `'-p'mongo`),
+    or a password word holding a quote the piece does not close."""
+    for at, (first, last) in enumerate(spans):
+        holds = at in slots or (pending is not None and at == len(spans) - 1)
+        if holds and (last == stop < limit or (unclosed is not None and first <= unclosed < last)):
+            return at
+    return None
+
+
+def _next_name(names: list[tuple[int, int]], index: int, at: int) -> int:
+    """The index of the first name after `names[index]` that starts at or after `at`."""
+    index += 1
+    while index < len(names) and names[index][0] < at:
+        index += 1
+    return index
+
+
+def _json_decoded(body: str) -> tuple[str, Callable[[int], int]]:
+    """A JSON string's body decoded, and where a place in the decoded text is in `body`. Every
+    escape (`\\"`, `\\n`, `\\u00e9`) is one decoded character, so a place maps to an escape's
+    start or end, never into it."""
+    escapes = [found.span() for found in _JSON_ESCAPE.finditer(body)]
+    if not escapes:
+        return body, lambda place: place
+    decoded = _JSON_ESCAPE.sub(_json_unescaped, body)
+    shrunk = itertools.accumulate((stop - start - 1 for start, stop in escapes), initial=0)
+    decoded_at = [start - shrink for (start, _), shrink in zip(escapes, shrunk, strict=False)]
+
+    def raw(place: int) -> int:
+        index = bisect.bisect_right(decoded_at, place) - 1
+        if index < 0:
+            return place
+        start, stop = escapes[index]
+        return start if place == decoded_at[index] else stop + place - decoded_at[index] - 1
+
+    return decoded, raw
+
+
+def _json_unescaped(escape: re.Match[str]) -> str:
+    mark = escape.group(1)
+    return chr(int(mark[1:], 16)) if len(mark) == 5 else _JSON_UNESCAPED.get(mark, mark)
+
+
+def _string_edits(text: str, opens: int, closes: int) -> tuple[list[Edit], int]:
+    """The passwords in the JSON string value between the quotes at `opens` and `closes`, and how
+    far the reading went. A client's name alone is an item of a list whose later items are its
+    words, read up to the last of them; any other string is read decoded, as free text, so a word
+    ends at the string's closing quote and an escaped quote is a quote, and each edit is put back
+    in place of the escapes it covers."""
+    body = text[opens + 1 : closes]
+    if whole := _WORD_NAME.fullmatch(body):
+        items = _list_items(text, closes + 1)
+        slots = _password_slots([text[a:b] for a, b in items], whole.group(1))[0]
+        return _parts(items, text, slots), items[-1][1] if items else closes
+    decoded, raw = _json_decoded(body)
+    names = [found.span() for found in _CLIENT_AT.finditer(decoded)]
+    shift = opens + 1
+    edits = [
+        (shift + raw(a), shift + raw(b), new.replace('"', '\\"'))
+        for a, b, new in _free_edits(decoded, names, len(decoded), [True] * len(names))
+    ]
+    return edits, closes
+
+
+# Up to the next quote, which closes a JSON key when a colon follows it (`"curl": …`)
+_TO_QUOTE = re.compile(r"(?:[^\"\\\n]|\\.)*+")
+_COLON_AFTER = re.compile(r"[ \t]*+:")
+
+
+def _line_edits(text: str, start: int, end: int) -> list[Edit]:
+    """The passwords on the line of `text` from `start` to `end`. On a line that reads as JSON
+    (`_json_strings`) each string value holding a client's name is read alone (`_string_edits`),
+    so the JSON stays JSON, and a name in a key is read only up to the key's closing quote; every
+    other name, and every name on any other line, is read as free text (`_free_edits`)."""
+    opens, closes, json_end = _json_strings(text, start)
+    names = [found.span() for found in _CLIENT_AT.finditer(text, start, end)]
+    inside = [-1] * len(names)
+    limits = [end] * len(names)
+    if json_end > start:
+        quote, in_key = -1, False  # the next quote after a name, looked for once per quote
+        for at, (name_start, name_end) in enumerate(names):
+            index = bisect.bisect_right(opens, name_start) - 1
+            if index >= 0 and name_end <= closes[index]:
+                inside[at] = index
+                continue
+            if quote < name_end:
+                quote = _TO_QUOTE.match(text, name_end, end).end()
+                in_key = quote < json_end and bool(_COLON_AFTER.match(text, quote + 1, end))
+            if in_key:
+                limits[at] = quote
+    edits: list[Edit] = []
+    reached = start
+    for index in sorted({index for index in inside if index >= 0}):
+        if opens[index] > reached:  # not an item a list before it already read
+            found, reached = _string_edits(text, opens[index], closes[index])
+            edits += found
+    edits += _free_edits(text, names, end, [index < 0 for index in inside], limits)
+    return _merged(edits)
+
+
+def _hide_client_passwords_in_lines(text: str) -> tuple[str, int]:
+    """`redact_text`'s last step: the password a client takes on its command line, wherever a
+    client's name shows in a line (`_line_edits`), and how many were hidden. Each line is read
+    once, in pieces from one client's name to the next, so the work stays linear."""
+    edits: list[Edit] = []
+    at = 0
+    while found := _CLIENT_AT.search(text, at):
+        start = text.rfind("\n", 0, found.start()) + 1
+        end = text.find("\n", found.end())
+        end = len(text) if end < 0 else end
+        edits += _line_edits(text, start, end)
+        at = end
+    swallowed = sum(text.count(REDACTED, start, stop) for start, stop, _ in edits)
+    return _edited(text, edits), len(edits) - swallowed
 
 
 _URL_SCHEME = re.compile(r"([A-Za-z][A-Za-z0-9+.-]{0,31})://")
@@ -1630,19 +2003,34 @@ def redact_with_count(text: str) -> tuple[str, int]:
     """
     text = normalise_newlines(text)
     found = 0
-    if len(text) > MAX_LINE:
-        lines = text.split("\n")
-        for index, line in enumerate(lines):
-            if len(line) > MAX_LINE:
-                following = lines[index + 1] if index + 1 < len(lines) else ""
-                lines[index], count = _cut_line(line, following)
-                found += count
-        text = "\n".join(lines)
     try:
+        if len(text) > MAX_LINE:
+            lines = text.split("\n")
+            for index, line in enumerate(lines):
+                if len(line) > MAX_LINE:
+                    following = lines[index + 1] if index + 1 < len(lines) else ""
+                    lines[index], count = _cut_long_line(line, following)
+                    found += count
+            text = "\n".join(lines)
         text, total = _redact_all(text)
+        text, hidden = _hide_client_passwords_in_lines(text)
     finally:
         _json_strings.cache_clear()  # it holds the unredacted input
-    return text, total + found
+    return text, max(0, total + hidden + found)  # a password hidden to the end may take markers
+
+
+def _cut_long_line(line: str, next_line: str) -> tuple[str, int]:
+    """A line over 4,000 characters without the passwords its clients take, then cut
+    (`_cut_line`) when it is still that long, so a cut between a client's flag and its password
+    keeps neither the password nor the flag alone. Only the passwords hidden in what is kept are
+    counted."""
+    hidden_line, hidden = _hide_client_passwords_in_lines(line)
+    if len(hidden_line) <= MAX_LINE:
+        return hidden_line, max(0, hidden)
+    cut, count = _cut_line(hidden_line, next_line)
+    if hidden_line == line:
+        return cut, count
+    return cut, max(0, cut.count(REDACTED) - line.count(REDACTED))
 
 
 def redact_text(text: str) -> str:
