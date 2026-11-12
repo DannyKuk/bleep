@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -6,6 +7,7 @@ import pytest
 from bleep.hosts.github import NotFound
 from bleep.schemas.services import Service
 from bleep.tools.github import COMMITS, describe_commits, describe_deploy, describe_diff
+from evals import long_deploy
 from evals.github import (
     FIXTURES_DIR,
     FixtureCommit,
@@ -184,3 +186,71 @@ async def test_bad_deploy_old_hides_the_cause_from_the_window_and_shows_it_in_th
     assert "Deploy shop 2" in deployed and "whole cents" in deployed
     assert "Reword the setup guide" not in deployed  # pushed after the deploy
     assert "Log the shop version" not in deployed  # deployed before
+
+
+async def test_the_compare_pages_from_the_oldest_and_lists_the_newest_250_unpaged():
+    commits = [
+        FixtureCommit(sha=f"{i:040x}", minutes_ago=1000 - i, author="dev", message=f"c{i}")
+        for i in range(999, -1, -1)  # newest first
+    ]
+    github = fixture_client(GithubFixture(commits=commits), lambda: START)
+    base, head = f"{0:040x}", f"{999:040x}"
+
+    unpaged = await github.compare(REPO, base, head)
+    page = await github.compare_older(REPO, base, head, 300, 10)
+    past = await github.compare_older(REPO, base, head, 999)
+
+    assert unpaged.total_commits == 999 and len(unpaged.commits) == 250
+    assert unpaged.commits[0].message == "c999" and unpaged.commits[-1].message == "c750"
+    assert [c.message for c in page.commits] == [f"c{i}" for i in range(699, 689, -1)]
+    assert past.commits == [] and past.total_commits == 999
+
+
+def test_the_long_deploy_fixture_is_what_the_committed_script_builds():
+    committed = (FIXTURES_DIR / "bad-deploy-long.json").read_text(encoding="utf-8")
+
+    assert committed == long_deploy.render()
+    fixture = load_github_fixture("bad-deploy-long")
+    assert len({c.sha for c in fixture.commits}) == len(fixture.commits)
+
+
+async def test_bad_deploy_long_hides_the_cause_from_the_window_and_the_first_250():
+    (scenario,) = load_scenarios(only="bad-deploy-long")
+    assert scenario.github == "bad-deploy-long" and scenario.fault == "bad-deploy"
+    fixture = load_github_fixture(scenario.github)
+    github = fixture_client(fixture, lambda: START)
+
+    window = await github.commits(REPO, START - timedelta(hours=720), limit=100)
+    narrowed = await github.commits(
+        REPO, START - timedelta(hours=720), path="demo/shop", limit=COMMITS
+    )
+    assert "whole cents" not in describe_commits(REPO, 720, None, window)
+    assert narrowed == []  # the cause is older than the widest window, with or without a path
+    running = await FixtureDeploys(fixture, START).running_commit(SHOP)
+    assert running is not None and running.previous is not None
+    assert running.since == START - timedelta(days=41)
+
+    unpaged = await github.compare(REPO, running.previous, running.sha)
+    first = describe_deploy(REPO, running, unpaged)
+    assert "this deploy brought 300 commits" in first and "Deploy shop 2" in first
+    assert "whole cents" not in first
+    assert len(unpaged.commits) == 250 and unpaged.total_commits == 300
+
+
+async def test_following_the_notes_skip_reaches_the_cause_in_the_last_part():
+    fixture = load_github_fixture("bad-deploy-long")
+    github = fixture_client(fixture, lambda: START)
+    running = await FixtureDeploys(fixture, START).running_commit(SHOP)
+    assert running is not None and running.previous is not None
+    unpaged = await github.compare(REPO, running.previous, running.sha)
+    parts = [describe_deploy(REPO, running, unpaged)]
+
+    while match := re.search(r"with skip=(\d+) for them\)", parts[-1]):
+        older = await github.compare_older(REPO, running.previous, running.sha, int(match[1]))
+        parts.append(describe_deploy(REPO, running, older, skip=int(match[1])))
+
+    shas = [sha for part in parts for sha in re.findall(r"^- ([0-9a-f]{7}) ", part, re.M)]
+    assert len(shas) == 300 and len(set(shas)) == 300  # the whole deploy, no gap, no repeat
+    assert 3 <= len(parts) <= 6
+    assert "whole cents" in parts[-1] and "whole cents" not in "".join(parts[:-1])
+    assert shas[0] == "d9f9be1" and shas[-1] == "3350063"

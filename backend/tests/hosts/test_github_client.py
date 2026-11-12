@@ -17,6 +17,7 @@ from bleep.hosts.github import (
     TokenRefused,
     github_token,
 )
+from fakes import PagedCompare, compare_commit
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "github"
 REPO = "encode/httpx"
@@ -396,3 +397,82 @@ async def test_a_secondary_limit_waits_for_retry_after_not_the_primary_reset():
         await github.commits(REPO, SINCE)
     assert caught.value.reset_at is not None
     assert 55 <= (caught.value.reset_at - before).total_seconds() <= 65
+
+
+BASE, HEAD = "a" * 40, "b" * 40
+
+
+def paged(count: int, **kwargs) -> tuple[GithubClient, PagedCompare]:
+    compare = PagedCompare([compare_commit(i) for i in range(count)], **kwargs)
+    return GithubClient(None, transport=httpx.MockTransport(compare)), compare
+
+
+async def indexes(github: GithubClient, skip: int, count: int = 100) -> list[int]:
+    found = await github.compare_older(REPO, BASE, HEAD, skip, count)
+    return [int(c.sha[:7], 16) for c in found.commits]
+
+
+async def test_compare_older_reads_the_commits_after_the_newest_skip_newest_first():
+    github, _ = paged(1371)  # as long as the range the fake was measured on
+
+    assert await indexes(github, 0, 3) == [1370, 1369, 1368]
+    assert await indexes(github, 85) == list(range(1285, 1185, -1))  # across a page border
+    assert await indexes(github, 1271) == list(range(99, -1, -1))  # exactly one page, the oldest
+    assert await indexes(github, 1300) == list(range(70, -1, -1))  # ends at GitHub's first
+
+
+async def test_compare_older_walks_a_long_range_in_parts_without_gap_or_repeat():
+    github, _ = paged(1371)
+    seen: list[int] = []
+
+    while part := await indexes(github, len(seen), 37):
+        seen += part
+
+    assert seen == list(range(1370, -1, -1))
+
+
+async def test_compare_older_asks_the_total_without_the_file_list_then_the_wanted_pages():
+    github, compare = paged(1371)
+
+    found = await github.compare_older(REPO, BASE, HEAD, 85)
+
+    assert found.total_commits == 1371 and found.status == "ahead"
+    asked = [(r.url.params["page"], r.url.params["per_page"]) for r in compare.requests]
+    # The total from a page past the first (page 1 carries the whole file list), then the two
+    # pages of 100 that hold positions 1186 to 1285 (counted from the oldest): 12 and 13.
+    assert asked == [("2", "1"), ("12", "100"), ("13", "100")]
+
+
+async def test_compare_older_reads_one_page_when_the_part_lies_in_it():
+    github, compare = paged(1371)
+
+    await github.compare_older(REPO, BASE, HEAD, 1300)
+
+    assert [r.url.params["page"] for r in compare.requests] == ["2", "1"]
+
+
+async def test_compare_older_past_the_oldest_is_empty_with_the_total():
+    github, compare = paged(40)
+
+    found = await github.compare_older(REPO, BASE, HEAD, 40)
+
+    assert found.commits == [] and found.total_commits == 40
+    assert len(compare.requests) == 1
+
+
+async def test_compare_older_of_a_rollback_reads_no_commits():
+    github, compare = paged(0, status="behind", behind_by=3)
+
+    found = await github.compare_older(REPO, BASE, HEAD, 5)
+
+    assert found.status == "behind" and found.commits == [] and len(compare.requests) == 1
+
+
+async def test_the_unpaged_compare_holds_the_newest_250_newest_first():
+    github, compare = paged(1371)
+
+    found = await github.compare(REPO, BASE, HEAD)
+
+    assert [int(c.sha[:7], 16) for c in found.commits] == list(range(1370, 1120, -1))
+    assert found.total_commits == 1371
+    assert "page" not in compare.requests[0].url.params

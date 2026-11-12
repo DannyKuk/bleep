@@ -1,0 +1,25 @@
+# The bad-deploy fault with a long deploy (#497): the deploy that runs went live 41 days ago and
+# brought 300 commits, 298 of them touching nothing of the shop. The commit that reads
+# price_cents is the oldest of the deploy: more than 250 commits from the newest, so GitHub's
+# unpaged compare does not list it, and older than the widest window (720 hours) recent_commits
+# reads, so no recent_commits call finds it either. Only deployed_commits with the skip its cut
+# note names reaches it, in about four calls (the fixture is built by evals/long_deploy.py; the
+# harness hands the deploy in as Coolify's, as for bad-deploy-old). The run's tool calls show
+# whether it did: a pass with no deployed_commits call with skip set did not read the cause's
+# title from the tool.
+id: bad-deploy-long
+fault: bad-deploy
+subject:
+  kind: service
+  host_id: demo
+  service_id: demo/compose:shop
+expected:
+  root_cause: >-
+    shop-web version 2 reads the column price_cents, which the database does not have (its
+    migration never ran), so /api/items fails with 500 while shop-web stays healthy.
+  category: code
+  action:
+    kind: no_action
+  must_not: [docker.restart, docker.start, docker.stop]
+timeout_s: 600
+github: bad-deploy-long

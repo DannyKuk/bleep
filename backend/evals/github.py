@@ -7,8 +7,9 @@ optional `deploy` names the commit that runs, the one deployed before it and how
 live; `FixtureDeploys` hands it to `deployed_commits` as the Coolify plugin's deployments would,
 for whatever service asks, since the demo shop runs on Compose. `fixture_client` answers the
 requests the tools make (the commit list, with `since`, `path`, `per_page` and `sha`, one commit
-by a sha or its prefix, and the compare of two) in GitHub's shape, for whatever repo the service
-names, since the fixture stands in for that repo. Anything else is GitHub's 404.
+by a sha or its prefix, and the compare of two, which holds the newest 250 commits unpaged and
+pages from the oldest with `page` and `per_page`, #497) in GitHub's shape, for whatever repo the
+service names, since the fixture stands in for that repo. Anything else is GitHub's 404.
 """
 
 import hashlib
@@ -28,6 +29,7 @@ from bleep.schemas.services import Service
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "github"
 NOT_FOUND = {"message": "Not Found", "status": "404"}
+COMPARE_LIMIT = 250  # the commits GitHub's compare lists when asked without pages
 
 
 class GithubFixtureError(ValueError):
@@ -150,6 +152,17 @@ def _shape(repo: str, commit: FixtureCommit, at: datetime, files: bool) -> dict:
     return shaped
 
 
+def _compare_page(oldest_first: list[dict], params: httpx.QueryParams) -> list[dict]:
+    """The commits of a compare as GitHub sends them (measured on a real range of 1,371): the
+    newest 250 asked without `page` or `per_page`, else that page of `per_page` (at most 100,
+    default 30), counted from the oldest; past the end, none."""
+    if "page" not in params and "per_page" not in params:
+        return oldest_first[-COMPARE_LIMIT:]
+    per_page = min(int(params.get("per_page", "30")), 100)
+    page = int(params.get("page", "1"))
+    return oldest_first[(page - 1) * per_page : page * per_page]
+
+
 def fixture_client(
     fixture: GithubFixture, clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 ) -> GithubClient:
@@ -160,14 +173,15 @@ def fixture_client(
     def index(sha: str) -> int | None:
         return next((i for i, (c, _) in enumerate(dated) if c.sha.startswith(sha.lower())), None)
 
-    def compare(repo: str, basehead: str) -> httpx.Response:
+    def compare(repo: str, basehead: str, params: httpx.QueryParams) -> httpx.Response:
         base, _, head = basehead.partition("...")
         b, h = index(base), index(head)
         if b is None or h is None:
             return httpx.Response(404, json=NOT_FOUND)
         between = dated[h:b] if b > h else []  # newest first; GitHub lists them oldest first
         status = "ahead" if b > h else "behind" if b < h else "identical"
-        listed = [_shape(repo, c, at, files=False) for c, at in reversed(between)]
+        oldest_first = [_shape(repo, c, at, files=False) for c, at in reversed(between)]
+        listed = _compare_page(oldest_first, params)
         return httpx.Response(
             200,
             json={
@@ -182,7 +196,7 @@ def fixture_client(
     def handler(request: httpx.Request) -> httpx.Response:
         parts = request.url.path.strip("/").split("/")
         if len(parts) == 5 and parts[0] == "repos" and parts[3] == "compare":
-            return compare(f"{parts[1]}/{parts[2]}", parts[4])
+            return compare(f"{parts[1]}/{parts[2]}", parts[4], request.url.params)
         if len(parts) < 4 or parts[0] != "repos" or parts[3] != "commits" or len(parts) > 5:
             return httpx.Response(404, json=NOT_FOUND)
         repo = f"{parts[1]}/{parts[2]}"

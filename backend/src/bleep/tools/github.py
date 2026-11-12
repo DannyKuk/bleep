@@ -40,6 +40,7 @@ from bleep.tools.registry import ToolContext, ToolSpec
 Clock = Callable[[], datetime]
 
 COMMITS = 20  # asked for per call; the newest that fit are shown
+MAX_SKIP = 100_000
 UP_TO = 30  # commits asked for up to the running one when the deploy before it is unknown
 TITLE_CHARS = 240  # of one commit's line in a deploy's list: its message's first line only
 MESSAGE_CHARS = 600  # of one commit's message in the list
@@ -52,6 +53,10 @@ MIN_HEAD = 200  # a patch that does not fit is cut to a head only when this much
 OUTPUT_CHARS = MAX_CHARS - 100
 CUT = "[… cut]"
 NO_REPO = "this service has no GitHub repo set"
+NO_SKIP = (
+    f"(skip reads nothing here: with no known end to the deploy, only the {UP_TO} newest commits"
+    " up to the running one are listed; recent_commits with a path reaches older ones.)"
+)
 REVISION_LABEL = "org.opencontainers.image.revision"
 IMAGE_SOURCE_LABEL = "org.opencontainers.image.source"
 SHA = re.compile(r"[0-9a-fA-F]{7,40}")  # a commit sha as GitHub takes one
@@ -71,7 +76,10 @@ DEPLOYED_COMMITS = (
     "any age. Call it first when the incident could follow a deploy, a change or a new version "
     "(an error that started at a point in time, a missing column or setting), then read a commit "
     "with commit_diff. When Bleep cannot tell which commit runs, it says so; use recent_commits "
-    "then." + UNTRUSTED
+    "then. It shows as many commits as fit and says how many older ones it left out, and the "
+    "`skip` to read them: `skip` is how many of the newest commits to skip, so skip=80 lists "
+    "the commits after the 80 newest. Read every part before ruling a commit out; the oldest "
+    "commits of a long deploy are in the last part." + UNTRUSTED
 )
 RECENT_COMMITS = (
     "List the latest commits to this service's GitHub repo in a time window, newest first: short "
@@ -106,6 +114,16 @@ class CommitsArgs(BaseModel):
     since_hours: int = Field(48, ge=1, le=720, description="How many hours back to look.")
     path: str | None = Field(
         None, max_length=200, description="Only commits touching this repo file or folder."
+    )
+
+
+class DeployedArgs(BaseModel):
+    skip: int = Field(
+        0,
+        ge=0,
+        le=MAX_SKIP,
+        description="How many of the deploy's newest commits to skip; the number the note of "
+        "the part before names.",
     )
 
 
@@ -251,16 +269,26 @@ def _running_head(repo: str, running: RunningCommit) -> str:
     return f"Running in {_one_line(repo)}: commit {running.sha[:7].lower()}, {how}."
 
 
-def _left_out(total: int, shown: int, which: str = "older") -> list[str]:
-    left = total - shown
-    return [f"({left} {which} commits of this deploy not shown)"] if left > 0 else []
+def _left_out(left: int, skip: int | None = None, which: str = "older") -> list[str]:
+    """The note for the `left` commits of the deploy not shown, with the `skip` that reads them
+    when it is known."""
+    if left <= 0:
+        return []
+    ask = f"; call deployed_commits with skip={skip} for them" if skip is not None else ""
+    return [f"({left} {which} commits of this deploy not shown{ask})"]
 
 
 def describe_deploy(
-    repo: str, running: RunningCommit, comparison: Comparison, notes: Sequence[str] = ()
+    repo: str,
+    running: RunningCommit,
+    comparison: Comparison,
+    notes: Sequence[str] = (),
+    skip: int = 0,
 ) -> str:
     """What the running deploy brought: the commits from the one deployed before it to the one
-    that runs, newest first, as many as fit; those left out are counted from GitHub's total."""
+    that runs, newest first, as many as fit; those left out are counted from GitHub's total and
+    the note says which `skip` reads them. With `skip`, `comparison` holds the commits after the
+    `skip` newest, and the list says which of the deploy's commits it is."""
     previous = (running.previous or "")[:7].lower()
     lines = [_running_head(repo, running), *notes]
     if comparison.status == "identical":
@@ -272,12 +300,25 @@ def describe_deploy(
             " this one: this deploy went back (a rollback) and brought no new commits."
         )
         return "\n".join(lines)
-    total = max(comparison.total_commits, len(comparison.commits))
+    total = (
+        comparison.total_commits if skip else max(comparison.total_commits, len(comparison.commits))
+    )
     dropped = (
         f" and left out {comparison.behind_by} commits that one ran (the branches diverged)"
         if comparison.status == "diverged"
         else ""
     )
+    brought = f"The deploy before it ran commit {previous}; this deploy brought {total} commits"
+    if skip and not comparison.commits:
+        lines.append(f"{brought}{dropped}, and skip={skip} is past the oldest of them.")
+        return "\n".join(lines)
+    if skip:
+        lines.append(
+            f"{brought}{dropped}. The {skip} newest are skipped; these are the next ones, newest"
+            " first:"
+        )
+        shown = _fit(lines, [_title_line(c) for c in comparison.commits])
+        return "\n".join([*lines, *_left_out(total - skip - shown, skip + shown)])
     # Asked without pages, GitHub's list ends at the comparison's newest commit, the head
     # (`GithubClient.compare`); a list that does not is not claimed to hold the newest.
     newest = not comparison.commits or comparison.commits[0].sha.lower().startswith(
@@ -289,12 +330,12 @@ def describe_deploy(
         else "as GitHub listed them, newest first; the list does not start at the running"
         " commit, so it may leave out the newest:"
     )
-    lines.append(
-        f"The deploy before it ran commit {previous}; this deploy brought {total} commits"
-        f"{dropped}, {order}"
-    )
+    lines.append(f"{brought}{dropped}, {order}")
     shown = _fit(lines, [_title_line(c) for c in comparison.commits])
-    return "\n".join([*lines, *_left_out(total, shown, "older" if newest else "more")])
+    left = total - shown
+    return "\n".join(
+        [*lines, *(_left_out(left, shown) if newest else _left_out(left, which="more"))]
+    )
 
 
 def describe_up_to(
@@ -524,10 +565,6 @@ def _not_shown(repo: str, running: RunningCommit, client: GithubClient) -> str:
     )
 
 
-class NoArgs(BaseModel):
-    pass
-
-
 def github_specs(
     client: GithubClient,
     clock: Clock = lambda: datetime.now(UTC),
@@ -537,7 +574,7 @@ def github_specs(
     `deploys` says which commit a service runs, when a deploy tool Bleep reads deployed it."""
 
     def deployed_tool(ctx: ToolContext) -> StructuredTool:
-        async def run(repo: str) -> str:
+        async def run(repo: str, skip: int = 0) -> str:
             service = ctx.registry.service(ctx.service_id) if ctx.service_id else None
             if service is None:
                 return NO_REPO
@@ -546,19 +583,26 @@ def github_specs(
                 return await guard_result(ctx, "deployed", describe_unknown(repo, notes))
             try:
                 if running.previous:
-                    comparison = await client.compare(repo, running.previous, running.sha)
-                    text = describe_deploy(repo, running, comparison, notes)
+                    if skip:
+                        comparison = await client.compare_older(
+                            repo, running.previous, running.sha, skip
+                        )
+                    else:
+                        comparison = await client.compare(repo, running.previous, running.sha)
+                    text = describe_deploy(repo, running, comparison, notes, skip)
                 else:
                     found = await client.commits(repo, None, limit=UP_TO, sha=running.sha)
                     # GitHub reads `sha` as a branch name too; only the commit itself confirms it.
                     if not found or not found[0].sha.lower().startswith(running.sha.lower()):
                         raise NotFound("not the running commit", "commit")
+                    if skip:
+                        notes = [*notes, NO_SKIP]
                     text = describe_up_to(repo, running, found, notes)
             except NotFound:
                 text = _not_shown(repo, running, client)
             return await guard_result(ctx, "deployed", text)
 
-        return _tool(ctx, client, "deployed_commits", DEPLOYED_COMMITS, NoArgs, run)
+        return _tool(ctx, client, "deployed_commits", DEPLOYED_COMMITS, DeployedArgs, run)
 
     def commits_tool(ctx: ToolContext) -> StructuredTool:
         async def run(repo: str, since_hours: int = 48, path: str | None = None) -> str:

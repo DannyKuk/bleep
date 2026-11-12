@@ -5,7 +5,7 @@ import contextlib
 import json
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -571,3 +571,57 @@ def database_bytes(data_dir: Path) -> bytes:
         with contextlib.suppress(FileNotFoundError):
             found += (data_dir / name).read_bytes()
     return found
+
+
+def compare_commit(index: int, title: str | None = None) -> dict:
+    """The `index`th commit of a compare, in the shape of `tests/fixtures/github/compare.json`
+    (a recorded answer): one commit a day from 2024-01-01 on, its sha starting with its index."""
+    day = datetime(2024, 1, 1, tzinfo=UTC) + timedelta(days=index)
+    person = {"name": "dev", "date": day.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    sha = f"{index:07x}" + "c" * 33
+    return {
+        "sha": sha,
+        "commit": {
+            "author": person,
+            "committer": person,
+            "message": title if title is not None else f"Change number {index}",
+        },
+        "author": {"login": "dev"},
+        "html_url": f"https://github.com/o/shop/commit/{sha}",
+    }
+
+
+class PagedCompare:
+    """GitHub's compare of two commits as measured on a real 1,371-commit range
+    (expressjs/express 4.0.0...4.18.0, 2026-11-12): commits are listed oldest first; asked with
+    no `page` or `per_page`, the answer holds the newest 250; with them it holds that page of
+    `per_page` (at most 100), counted from the oldest, and a page past the end is a 200 with no
+    commits; `total_commits` is the whole range's on every page; the `files` list comes with
+    the first page (and the unpaged answer) only. `requests` keeps what was asked."""
+
+    def __init__(self, commits: list[dict], status: str = "ahead", behind_by: int = 0) -> None:
+        self.commits = commits  # oldest first
+        self.status = status
+        self.behind_by = behind_by
+        self.requests: list[httpx.Request] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        params = request.url.params
+        if "page" in params or "per_page" in params:
+            per_page = min(int(params.get("per_page", "30")), 100)
+            page = int(params.get("page", "1"))
+            listed = self.commits[(page - 1) * per_page : page * per_page]
+            has_files = page == 1
+        else:
+            listed, has_files = self.commits[-250:], True
+        body: dict = {
+            "status": self.status,
+            "ahead_by": len(self.commits),
+            "behind_by": self.behind_by,
+            "total_commits": len(self.commits),
+            "commits": listed,
+        }
+        if has_files:
+            body["files"] = [{"filename": "README.md", "status": "modified"}]
+        return httpx.Response(200, json=body)

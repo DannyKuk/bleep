@@ -170,6 +170,12 @@ A GitHub fixture may name the deploy that runs (`deploy: {commit, previous, minu
 uv run --group evals python -m evals.run --only bad-deploy,bad-deploy-old --repeat 3
 ```
 
+[`bad-deploy-long`](scenarios/bad-deploy-long.yaml) is the same fault with a deploy 41 days old that brought 300 commits, the cause the oldest of them: more than 250 from the newest, so GitHub's unpaged compare does not list it, and older than the widest `recent_commits` window. `deployed_commits` reaches it only with `skip`, the number its cut note names (#497); the run's tool calls in the report show whether the model used it. Its fixture is built by `evals/long_deploy.py` (`uv run python -m evals.long_deploy` rewrites it; a test checks the committed file matches):
+
+```bash
+uv run --group evals python -m evals.run --only bad-deploy-old,bad-deploy-long --repeat 3
+```
+
 ## Injection tests
 
 `python -m evals.injection` asks whether planted text can steer Bleep. Each case in `injection/` is one attack or one control, run through the same harness as a scenario and then on to the report: the plan is put to Approval and rejected, and Report writes. Nothing is executed. The design is in [docs/design/evals.md](../../docs/design/evals.md#injection-tests).

@@ -275,19 +275,41 @@ class GithubClient:
         """The commits `head` has that `base` lacks, newest first: GitHub lists them oldest first
         and, asked without pages, at most 250 ending at the newest. A 404 is a missing sha or a
         repo GitHub cannot show, which it does not tell apart."""
+        raw = await self._compare(repo, base, head, None)
+        return _comparison(raw, raw.commits)
+
+    async def compare_older(
+        self, repo: str, base: str, head: str, skip: int, count: int = MAX_PER_PAGE
+    ) -> Comparison:
+        """Up to `count` of the commits `head` has that `base` lacks, newest first, after
+        skipping the `skip` newest, however long the range: `commits` is empty when `skip` is
+        past the last one. GitHub pages a compare from the oldest commit and sends `total_commits`
+        with every page, so one small request (a page past the first holds no file list, the
+        heavy part) learns the total, and the one or two pages that hold the wanted positions
+        are then read. The shas are fixed, so the positions do not move between calls."""
+        count = max(1, min(count, MAX_PER_PAGE))
+        total = await self._compare(repo, base, head, (2, 1))
+        newest = total.total_commits - max(0, skip)  # one past the newest wanted, oldest first
+        if total.status not in ("ahead", "diverged") or newest <= 0:
+            return _comparison(total, [])
+        oldest = max(0, newest - count)
+        chronological: list[_RawCommit] = []
+        for page in range(oldest // MAX_PER_PAGE + 1, (newest - 1) // MAX_PER_PAGE + 2):
+            chronological += (await self._compare(repo, base, head, (page, MAX_PER_PAGE))).commits
+        start = oldest % MAX_PER_PAGE
+        return _comparison(total, chronological[start : start + (newest - oldest)])
+
+    async def _compare(
+        self, repo: str, base: str, head: str, paged: tuple[int, int] | None
+    ) -> _RawComparison:
+        """One compare request, for page and page size `paged` or, without, GitHub's default."""
         check_repo(repo)
         check_sha(base)
         check_sha(head)
         what = f"commit {base[:7]} or {head[:7]} in {repo}"
-        data = await self._get(f"/repos/{repo}/compare/{base}...{head}", None, what, "commit")
-        raw = _parse(_RawComparison, data)
-        return Comparison(
-            status=raw.status,
-            ahead_by=raw.ahead_by,
-            behind_by=raw.behind_by,
-            total_commits=raw.total_commits,
-            commits=[c.summary() for c in reversed(raw.commits)],
-        )
+        params = {"page": str(paged[0]), "per_page": str(paged[1])} if paged else None
+        data = await self._get(f"/repos/{repo}/compare/{base}...{head}", params, what, "commit")
+        return _parse(_RawComparison, data)
 
     async def commit(self, repo: str, sha: str) -> CommitDetail:
         """One commit with every file it changed and each file's patch."""
@@ -417,6 +439,16 @@ class GithubClient:
         if status >= 500:
             raise GithubUnavailable(f"GitHub answered {status}")
         raise GithubError(f"GitHub answered {status} for {what}")
+
+
+def _comparison(raw: _RawComparison, oldest_first: list[_RawCommit]) -> Comparison:
+    return Comparison(
+        status=raw.status,
+        ahead_by=raw.ahead_by,
+        behind_by=raw.behind_by,
+        total_commits=raw.total_commits,
+        commits=[c.summary() for c in reversed(oldest_first)],
+    )
 
 
 def _parse[T](shape: type[T], data: Any) -> T:
