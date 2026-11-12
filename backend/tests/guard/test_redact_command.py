@@ -434,6 +434,27 @@ def test_a_password_that_only_looks_like_a_port_mapping_is_hidden_in_escaped_quo
     assert out.count("mongo") == line.count("mongo")
 
 
+# The quote of .NET's JSON (`"`, `\\u0022` in logfmt) and an escaped `\'` in logfmt
+WRITTEN_QUOTES = [
+    ('msg="docker run --name mongo -p \\\\u0022{}\\\\u0022 mongo" n=1', "docker"),
+    ('{{"cmd": "docker run --name mongo -p \\u0022{}\\u0022 mongo", "n": 1}}', "docker"),
+    ("msg=\"mongosh -p \\'{}\\' --quiet\" n=1", "mongosh"),
+]
+
+
+@pytest.mark.parametrize(("template", "client"), WRITTEN_QUOTES)
+def test_a_port_mapping_in_a_quote_json_or_logfmt_writes_stays(template, client):
+    line = template.format("27017:27017")
+    assert redact_with_count(line) == (line, 0)
+
+
+@pytest.mark.parametrize(("template", "client"), WRITTEN_QUOTES)
+def test_a_password_that_looks_like_a_mapping_in_such_a_quote_is_hidden(template, client):
+    line = template.format("27017:27017x")
+    out = _hidden_once(line)
+    assert "27017x" not in out and client in out and "n" in out.rsplit("<redacted>", 1)[1]
+
+
 @pytest.mark.parametrize(
     ("line", "expected"),
     [
