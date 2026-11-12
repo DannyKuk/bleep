@@ -564,6 +564,10 @@ export const de: Messages = {
     suggestedFor: (name) => `Von Coolify vorgeschlagene Prüfungen für ${name}`,
     suggestedTitle: "Coolify stellt ihn unter diesen Adressen bereit",
     suggestedNote: "Soll ich sie von außen prüfen? Ich prüfe keine davon, bevor du sie hinzufügst.",
+    staleFor: (url) => `Domain bei Coolify nicht mehr vorhanden: ${url}`,
+    staleNote:
+      "Coolify hat diese Domain nicht mehr. Ich prüfe sie weiter, bis du die Prüfung entfernst, und kann dafür Vorfälle öffnen.",
+    removeStale: "Diese Prüfung entfernen",
     addSuggested: (count) =>
       count === 1 ? "Diese Prüfung hinzufügen" : `Diese ${count} Prüfungen hinzufügen`,
     thisService: "Dieser Dienst",

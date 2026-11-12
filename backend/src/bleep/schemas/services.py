@@ -29,6 +29,14 @@ class Service(BaseModel):
     )  # entries of jobs meant to finish (`expects_exit`)
 
 
+class CheckSuggestions(BaseModel):
+    """What the plugins say about a service's URL checks (#348, #493): the checks to offer it, and
+    those it has whose host the plugin's own records no longer list."""
+
+    offered: list[UrlCheckConfig] = Field(default_factory=list)
+    stale: list[UrlCheckConfig] = Field(default_factory=list)
+
+
 @dataclass(frozen=True)
 class HostState:
     config: HostConfig

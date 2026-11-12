@@ -574,6 +574,10 @@ export const en = {
     suggestedFor: (name: string) => `Checks Coolify suggests for ${name}`,
     suggestedTitle: "Coolify serves it at these addresses",
     suggestedNote: "Shall I check them from outside? I check none of them until you add them.",
+    staleFor: (url: string) => `Domain gone from Coolify: ${url}`,
+    staleNote:
+      "Coolify no longer has this domain. I keep checking it until you remove the check, and it may open incidents.",
+    removeStale: "Remove this check",
     addSuggested: (count: number) => (count === 1 ? "Add this check" : `Add these ${count} checks`),
     thisService: "This service",
     itsHost: "Its host",
