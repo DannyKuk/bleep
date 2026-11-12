@@ -1,0 +1,126 @@
+{
+  "started_at": "2026-11-12T11:43:29Z",
+  "finished_at": "2026-11-12T11:53:23.645344Z",
+  "model": "openai/gpt-6-luna",
+  "provider": "openrouter",
+  "judge": "claude-code:opus",
+  "repeat": 3,
+  "scenarios": [
+    {
+      "id": "hung",
+      "fault": "hung",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-web hangs: the container runs but answers no request, so its health check times out.",
+        "category": "code",
+        "action": {
+          "kind": "act",
+          "steps": [
+            {
+              "action": "docker.restart",
+              "target": "shop-web",
+              "tool": null,
+              "arguments": null
+            }
+          ],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false
+    },
+    {
+      "id": "db-down",
+      "fault": "db-down",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "The database container shop-db is stopped, so shop-web cannot connect to its database and the shop's API fails.",
+        "category": "dependency",
+        "action": {
+          "kind": "act",
+          "steps": [
+            {
+              "action": "docker.start",
+              "target": "shop-db",
+              "tool": null,
+              "arguments": null
+            }
+          ],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false
+    },
+    {
+      "id": "disk-full",
+      "fault": "disk-full",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "The shop's 20 MB uploads volume is full (No space left on device), so shop-web cannot write to it and its health check fails.",
+        "category": "resource",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false
+    }
+  ],
+  "commit": "c460f8d9",
+  "command": "uv run --group evals python -m evals.run --judge claude-code:opus --only disk-full --repeat 1 --append data/evals/scenarios-20261112-114329.jsonl",
+  "reset_shop": true,
+  "knowledge": true,
+  "repo_docs": [
+    "DannyKuk/bleep: demo/shop/docs/deploy.md",
+    "DannyKuk/bleep: demo/shop/docs/services.md"
+  ],
+  "raw": "../../data/evals/scenarios-20261112-114329.jsonl",
+  "report": "docs/evals/scenarios-2026-11-12.md",
+  "grader": null,
+  "grades": null
+}

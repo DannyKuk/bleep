@@ -26,6 +26,7 @@ from bleep.schemas.graph import ContainerMemory, GatherContext, UrlReading
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.services import HostState, Service
 from bleep.tools.common import guard_result
+from bleep.tools.docker_read import last_line_header
 from bleep.tools.registry import ToolContext
 
 log = logging.getLogger(__name__)
@@ -114,11 +115,13 @@ async def _read_logs(
 ) -> None:
     for name in names:
         try:
-            text = await deps.registry.engine(host_id).logs(name, tail=LOG_TAIL)
+            engine = deps.registry.engine(host_id)
+            text = await engine.logs(name, tail=LOG_TAIL)
         except Exception as error:
             context.gaps.append(f"logs of {name}: {_why(error)}")
             continue
-        context.logs[name] = await guard_result(ctx, "logs", text or "(no log lines)")
+        header = await last_line_header(engine, name)
+        context.logs[name] = header + await guard_result(ctx, "logs", text or "(no log lines)")
 
 
 async def _check_urls(deps: GraphDeps, urls: list[UrlCheckConfig]) -> list[UrlReading]:

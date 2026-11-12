@@ -33,7 +33,7 @@ Measured on the demo shop's eight faults with real models. Every number comes fr
 | Runbook pages that give orders | Read in 6 of 6 runs, followed in none | [report](docs/evals/injection-docs-2026-11-04.md) |
 | After a fix that did not hold | 9 of 9 loop-back cases right, never the failed fix again | [report](docs/evals/loopback-2026-11-04.md) |
 
-`openai/gpt-6-luna` missed `hung` in every run of the first two rows' rounds ([#480](https://github.com/DannyKuk/bleep/issues/480)); that is 3 of the 4 misses in the first row and the 1 in the second.
+`openai/gpt-6-luna` missed `hung` in every run of the first two rows' rounds (3 of the 4 misses in the first row, the 1 in the second); since #480 shows the health probes it proposes the restart in 5 of 6 runs but still calls the cause unknown ([report](docs/evals/health-probes-2026-11-12.md)).
 
 ## How it works
 

@@ -34,6 +34,9 @@ from bleep.schemas.docker import (
     ContainerSummary,
     DockerEvent,
     EngineInfo,
+    HealthCheck,
+    HealthProbe,
+    LastLog,
     MountInfo,
     PortBinding,
 )
@@ -109,6 +112,14 @@ class Engine(Protocol):
     async def start(self, container: str) -> None: ...
     async def reconnect(self) -> None: ...
     async def close(self) -> None: ...
+
+
+@runtime_checkable
+class LogClock(Protocol):
+    """An engine that can say when a container last wrote a log line. Separate from `Engine`:
+    a fake or scripted engine may lack it, and the log tools then say nothing about it."""
+
+    async def last_log(self, container: str) -> LastLog | None: ...
 
 
 class _Stream:
@@ -197,6 +208,23 @@ class DockerSdkEngine:
             options["since"] = _aware(since).timestamp()
         raw = await self._call(lambda c: c.api.logs(container, **options), container)
         return raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+
+    async def last_log(self, container: str) -> LastLog | None:
+        """When the container last wrote a line, and the time on this engine's own clock now, so
+        the age does not depend on the clock of the machine Bleep runs on. None when the engine
+        cannot say: no clock, or a first log word that is not a timestamp."""
+        raw = await self._call(
+            lambda c: c.api.logs(container, stdout=True, stderr=True, tail=1, timestamps=True),
+            container,
+        )
+        now = (await self.info()).system_time
+        text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+        if now is None:
+            return None
+        if not text.strip():
+            return LastLog(at=None, now=now)
+        at = _log_time(text.split(None, 1)[0])
+        return None if at is None else LastLog(at=at, now=now)
 
     async def stats(self, container: str) -> ContainerStats:
         raw = await self._call(lambda c: c.api.stats(container, stream=False), container)
@@ -469,6 +497,38 @@ def _summary(raw: dict) -> ContainerSummary:
     )
 
 
+def _seconds(nanos: int | None) -> float | None:
+    """A Docker duration (nanoseconds); 0 or missing means the check uses Docker's default."""
+    return nanos / 1_000_000_000 if nanos else None
+
+
+def _healthcheck(raw: dict) -> HealthCheck | None:
+    check = (raw.get("Config") or {}).get("Healthcheck") or {}
+    test = [str(part) for part in check.get("Test") or []]
+    if not test or test[0] == "NONE" or not test[1:]:
+        return None
+    return HealthCheck(
+        command=test[1:],
+        shell=test[0] == "CMD-SHELL",
+        interval_s=_seconds(check.get("Interval")),
+        timeout_s=_seconds(check.get("Timeout")),
+        retries=check.get("Retries") or None,
+        start_period_s=_seconds(check.get("StartPeriod")),
+    )
+
+
+def _probes(state: dict) -> list[HealthProbe]:
+    return [
+        HealthProbe(
+            start=_time(entry.get("Start")),
+            end=_time(entry.get("End")),
+            exit_code=entry.get("ExitCode"),
+            output=entry.get("Output") or "",
+        )
+        for entry in (state.get("Health") or {}).get("Log") or []
+    ]
+
+
 def _detail(raw: dict) -> ContainerDetail:
     state = raw.get("State") or {}
     ports = [
@@ -494,6 +554,8 @@ def _detail(raw: dict) -> ContainerDetail:
         oom_killed=bool(state.get("OOMKilled")),
         restart_count=raw.get("RestartCount", 0),
         error=state.get("Error") or None,
+        healthcheck=_healthcheck(raw),
+        probes=_probes(state),
     )
 
 
@@ -558,4 +620,18 @@ def _info(raw: dict) -> EngineInfo:
         mem_total=raw.get("MemTotal", 0),
         containers=raw.get("Containers", 0),
         containers_running=raw.get("ContainersRunning", 0),
+        system_time=_log_time(raw.get("SystemTime", "")),
     )
+
+
+_LOG_STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})")
+
+
+def _log_time(stamp: object) -> datetime | None:
+    """A Docker RFC 3339 timestamp, or None when the value is not exactly one."""
+    if not isinstance(stamp, str) or not _LOG_STAMP.fullmatch(stamp):
+        return None
+    try:
+        return _aware(datetime.fromisoformat(stamp))
+    except ValueError:
+        return None

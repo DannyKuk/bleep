@@ -28,6 +28,7 @@ from bleep.schemas.docker import (
     ContainerSummary,
     DockerEvent,
     EngineInfo,
+    LastLog,
 )
 from bleep.schemas.graph import PlanStep, StepResult
 from bleep.schemas.plugins import PluginHealth
@@ -270,6 +271,7 @@ class FakeEngine:
         self.container_list = list(containers)
         self.details = details or {}
         self.log_text = logs or {}
+        self.last_logs: dict[str, LastLog] = {}
         self.stats_by_name = stats or {}
         self.history = list(events)
         self.engine_info = info or EngineInfo(name=host_id)
@@ -311,6 +313,11 @@ class FakeEngine:
         self._check()
         lines = self.log_text.get(self.container_list[self._find(container)].name, "")
         return "".join(lines.splitlines(keepends=True)[-tail:]) if tail > 0 else ""
+
+    async def last_log(self, container: str) -> LastLog | None:
+        """What `last_logs` says for the container; None, which prints nothing, when unset."""
+        self._check()
+        return self.last_logs.get(self.container_list[self._find(container)].name)
 
     async def stats(self, container: str) -> ContainerStats:
         self._check()

@@ -1,0 +1,58 @@
+{
+  "started_at": "2026-11-12T10:02:49Z",
+  "finished_at": "2026-11-12T10:16:04.188670Z",
+  "model": "openai/gpt-6-luna",
+  "provider": "openrouter",
+  "judge": "claude-code:opus",
+  "repeat": 4,
+  "scenarios": [
+    {
+      "id": "hung",
+      "fault": "hung",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-web hangs: the container runs but answers no request, so its health check times out.",
+        "category": "code",
+        "action": {
+          "kind": "act",
+          "steps": [
+            {
+              "action": "docker.restart",
+              "target": "shop-web",
+              "tool": null,
+              "arguments": null
+            }
+          ],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false
+    }
+  ],
+  "commit": "8d4a4f70",
+  "command": "uv run --group evals python -m evals.run --judge claude-code:opus --only hung --repeat 1 --append data/evals/scenarios-20261112-100249.jsonl",
+  "reset_shop": true,
+  "knowledge": true,
+  "repo_docs": [
+    "DannyKuk/bleep: demo/shop/docs/deploy.md",
+    "DannyKuk/bleep: demo/shop/docs/services.md"
+  ],
+  "raw": "../../data/evals/scenarios-20261112-100249.jsonl",
+  "report": "docs/evals/scenarios-2026-11-12.md",
+  "grader": null,
+  "grades": null
+}

@@ -44,6 +44,199 @@ def _redact_env_entry(item: str) -> str:
     return entry if place is not None and redact_text(entry) == entry else f"{key}={REDACTED}"
 
 
+def secret_env_values(env: list[str]) -> list[str]:
+    """The values of the entries whose `KEY=value` the redaction would change (a secret key such
+    as `REDIS_PASSWORD`), longest first. Compose copies such a value into a health-check command,
+    where `hide_values` finds the same text; `PORT=8000` is no secret and is not in the list."""
+    values = {
+        item.partition("=")[2]
+        for item in env
+        if "=" in item and item.partition("=")[2] and redact_text(item) != item
+    }
+    return sorted(values, key=len, reverse=True)
+
+
+LONG_VALUE = 8  # from this length a value is hidden wherever it shows, inside a word too
+
+
+def hide_values(text: str, values: list[str]) -> str:
+    """Every one of `values` in `text` hidden, in one pass so a marker already placed is never
+    rewritten. A value of 8 or more characters is hidden wherever it appears (`-ps3cretpassw0rd`:
+    inside a word it is still that secret). A shorter one only as a whole token, not inside a
+    word, so `SECRET_KEY=e` does not turn `timed out` into `tim<redacted>d out`. A value that is
+    also a plain word in the text (a password `shop` for the user `shop`) is hidden there too: it
+    is the password."""
+    alternatives = []
+    for value in sorted({v for v in values if v}, key=len, reverse=True):
+        escaped = re.escape(value)
+        if len(value) < LONG_VALUE:
+            escaped = (r"(?<!\w)" if re.match(r"\w", value[0]) else "") + escaped
+            escaped += r"(?!\w)" if re.match(r"\w", value[-1]) else ""
+        alternatives.append(escaped)
+    if not alternatives:
+        return text
+    pattern = re.compile("|".join([re.escape(REDACTED), *alternatives]))
+    return pattern.sub(lambda m: REDACTED, text)
+
+
+def redact_command(text: str) -> str:
+    """`redact_text` for a health-check command, then the password a database or HTTP client
+    takes on its command line (`hide_client_passwords`). Only for a line known to be a command:
+    free text such as a log line is never read this way."""
+    return hide_client_passwords(redact_text(text))
+
+
+_CLIENT_NAME = (
+    r"redis-cli|mysql(?:admin|dump|check|import|show)?|mariadb(?:-[a-z]+)?|mongo(?:sh|s)?|curl"
+)
+_CLIENT_COMMAND = re.compile(rf"(?<![A-Za-z0-9_.-])({_CLIENT_NAME})(?![A-Za-z0-9_-])[^\n]*")
+_WORD_NAME = re.compile(rf"(?:.*[/;&|(])?({_CLIENT_NAME})")  # curl, /usr/bin/curl, &&curl
+_SEPARATE_PASSWORD = {
+    "redis-cli": {"-a", "--pass"},
+    "mongosh": {"-p", "--password"},
+    "mongo": {"-p", "--password"},
+    "mongos": {"-p", "--password"},
+}
+_USER_FLAGS = {"-u", "--user", "--proxy-user"}
+_PLAIN_RUN = re.compile(r"[^\s\"']+")
+_QUOTE = re.compile(r"[\"']")
+_DOUBLE_QUOTED_END = re.compile(r"(?:[^\"\\]|\\.)*+\"", re.DOTALL)
+
+
+def _quote_end(text: str, at: int, no_closer: set[str]) -> int:
+    """Where the quoted string opening at `at` ends, or -1. A quote nothing closes is looked for
+    once: the quote kind goes into `no_closer`, so a line of such quotes costs one scan, not one
+    each."""
+    quote = text[at]
+    if quote in no_closer:
+        return -1
+    if quote == "'":
+        end = text.find("'", at + 1)
+        end = end + 1 if end >= 0 else -1
+    else:
+        found = _DOUBLE_QUOTED_END.match(text, at + 1)
+        end = found.end() if found else -1
+    if end < 0:
+        no_closer.add(quote)
+    return end
+
+
+def _shell_words(text: str, start: int) -> tuple[list[tuple[int, int]], int | None]:
+    """The words of a shell command from `start`, and where an unclosed quote opens, if one does.
+
+    A word runs to whitespace, quoted parts included (`-p'pa ss'`, `pa,ss`). A quote nothing
+    closes after whitespace would swallow the rest of the line in a shell: the caller hides it
+    from there. One attached to a word (the closing quote of a JSON string around the command)
+    only ends that word.
+    """
+    words, no_closer, at, end = [], set[str](), start, len(text)
+    while at < end:
+        if text[at].isspace():
+            at += 1
+            continue
+        first = at
+        while at < end and not text[at].isspace():
+            run = _PLAIN_RUN.match(text, at)
+            if run:
+                at = run.end()
+                continue
+            closed = _quote_end(text, at, no_closer)
+            if closed >= 0:
+                at = closed
+            elif at > first:
+                break
+            elif text[first - 1].isspace():
+                return words, first
+            else:
+                at += 1
+                first = at
+        if at > first:
+            words.append((first, at))
+    return words, None
+
+
+def _json_items(text: str, start: int) -> list[tuple[int, int]]:
+    """The quoted strings of a JSON list from `start`, and nothing between them."""
+    items, no_closer, at = [], set[str](), start
+    while found := _QUOTE.search(text, at):
+        end = _quote_end(text, found.start(), no_closer)
+        if end < 0:
+            at = found.end()
+            continue
+        items.append((found.start(), end))
+        at = end
+    return items
+
+
+def _hide_after(word: str, keep: int) -> str:
+    """The word with all but its first `keep` characters hidden, its quotes kept."""
+    quote = word[0] if word[0] in "\"'" else ""
+    inner = word[1:-1] if quote and len(word) > 1 and word.endswith(quote) else word.lstrip(quote)
+    if not inner[keep:] or inner[keep:].startswith(REDACTED):
+        return word
+    return f"{quote}{inner[:keep]}{REDACTED}{quote}"
+
+
+def _hide_user_password(word: str, skip: int) -> str:
+    """`user:password` with the password hidden; a word with no colon names a user only."""
+    colon = word.strip("\"'")[skip:].find(":")
+    return word if colon < 0 else _hide_after(word, skip + colon + 1)
+
+
+def _hide_in_command(match: re.Match[str]) -> str:
+    """One command line from a client's name on. Reads `-a`, `--pass`, `-p` and `--password` for
+    `redis-cli` and the `mongo` family, `-u` and `--user` for `curl`, and the attached `-ppw` of
+    the MySQL clients, as shell words or as the items of a JSON list. A later client's name in
+    the same line (`curl … && redis-cli -a pw`) switches the rules."""
+    text, name = match.group(0), match.group(1)
+    after_name = match.end(1) - match.start()
+    if text[after_name : after_name + 1] in ("'", '"'):  # the name was a JSON item: close it
+        spans, unclosed = _json_items(text, after_name + 1), None
+    else:
+        spans, unclosed = _shell_words(text, after_name)
+    words = [text[a:b] for a, b in spans]
+    changes: dict[int, str] = {}
+    for index, word in enumerate(words):
+        if index in changes:
+            continue
+        bare = word.strip("\"'")
+        if later := _WORD_NAME.fullmatch(bare):
+            name = later.group(1)
+            continue
+        following = index + 1 if index + 1 < len(words) else None
+        if following is not None and words[following].strip("\"'").startswith("-"):
+            following = None
+        if name.startswith(("mysql", "mariadb")):
+            if bare.startswith("-p") and len(bare) > 2 and bare[2] != "=":
+                changes[index] = _hide_after(word, 2)
+        elif name == "curl":
+            if bare in _USER_FLAGS and following is not None:
+                changes[following] = _hide_user_password(words[following], 0)
+            elif bare.startswith("-u") and len(bare) > 2 and not bare.startswith("--"):
+                changes[index] = _hide_user_password(word, 2)
+        elif bare in _SEPARATE_PASSWORD.get(name, ()) and following is not None:
+            changes[following] = _hide_after(words[following], 0)
+    out, kept = [], 0
+    for index in sorted(changes):
+        a, b = spans[index]
+        if changes[index] != words[index]:
+            out.append(text[kept:a] + changes[index])
+            kept = b
+    if unclosed is None:
+        return "".join(out) + text[kept:]
+    return "".join(out) + text[kept:unclosed] + REDACTED
+
+
+def hide_client_passwords(text: str) -> str:
+    """The password a database or HTTP client takes on its command line: `redis-cli -a pw` and
+    `--pass pw`, `mongosh -p pw` and `--password pw`, `curl -u user:pw`, `mysqladmin -ppw`
+    (quoted or not). A shell word is hidden whole, up to whitespace, whatever its quotes and
+    commas. It looks only after a client's name, because `-a` and `-p` mean other things
+    elsewhere; and only for a line known to be a command (`redact_command`), not for the global
+    `redact_text`, which every log line goes through."""
+    return _CLIENT_COMMAND.sub(_hide_in_command, text)
+
+
 _URL_SCHEME = re.compile(r"([A-Za-z][A-Za-z0-9+.-]{0,31})://")
 # Schemes that name a network service, whose host is where it runs. Notification URLs
 # (`pushbullet://<token>`, `pover://<user>@<token>`) put a token where the host goes.

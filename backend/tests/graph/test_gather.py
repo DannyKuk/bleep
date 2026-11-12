@@ -1,9 +1,10 @@
+from datetime import timedelta
 from typing import Any
 
 from langchain_core.messages import AIMessage
 
 from bleep.graph.nodes import gather, investigate, propose
-from bleep.schemas.docker import ContainerStats
+from bleep.schemas.docker import ContainerStats, LastLog
 from bleep.schemas.graph import Diagnosis, GatherContext, PastIncident
 from bleep.schemas.incidents import Signal, Subject
 from fakes import FakeChatModel, FakeEngine
@@ -202,3 +203,45 @@ async def test_unknown_service_and_host_are_gaps(tmp_path):
 
     nowhere = await run_gather(env, Subject(kind="host", host_id="zz"), [])
     assert nowhere.gaps == ["host zz is not in the hosts file"]
+
+
+async def test_gather_puts_how_long_ago_a_container_last_wrote_before_its_logs(tmp_path):
+    engine = shop_engine()
+    engine.log_text = {"shop-web-1": "web says hi\n"}
+    engine.last_logs["shop-web-1"] = LastLog(at=T0 - timedelta(seconds=192), now=T0)
+    env = await graph_env(tmp_path, engine=engine)
+    subject = Subject(kind="service", host_id="a", service_id=env.service_id("shop"))
+
+    ctx = await run_gather(env, subject, [died(subject, "shop-web-1")])
+
+    assert ctx.logs["shop-web-1"].startswith("last line written 3 min 12 s ago (")
+    assert '\n<untrusted source="logs"' in ctx.logs["shop-web-1"]
+    assert "web says hi" in ctx.logs["shop-web-1"]
+
+
+async def test_gather_says_nothing_about_the_last_line_when_the_engine_cannot(tmp_path):
+    engine = shop_engine()
+    engine.log_text = {"shop-web-1": "web says hi\n"}
+    env = await graph_env(tmp_path, engine=engine)
+    subject = Subject(kind="service", host_id="a", service_id=env.service_id("shop"))
+
+    ctx = await run_gather(env, subject, [died(subject, "shop-web-1")])
+
+    assert ctx.logs["shop-web-1"].startswith('<untrusted source="logs"')
+
+
+async def test_gather_keeps_the_logs_when_the_last_line_call_fails(tmp_path):
+    engine = shop_engine()
+    engine.log_text = {"shop-web-1": "web says hi\n"}
+
+    async def break_down(container):
+        raise TypeError("expected string or bytes-like object")
+
+    engine.last_log = break_down
+    env = await graph_env(tmp_path, engine=engine)
+    subject = Subject(kind="service", host_id="a", service_id=env.service_id("shop"))
+
+    ctx = await run_gather(env, subject, [died(subject, "shop-web-1")])
+
+    assert ctx.logs["shop-web-1"].startswith('<untrusted source="logs"')
+    assert "web says hi" in ctx.logs["shop-web-1"]
