@@ -245,16 +245,22 @@ def make(deps: GraphDeps) -> Node:
         missing = _clip(draft.missing, MISSING_LIMIT)
         shas = ShaCheck(read_shas(messages))
         root_cause = shas(_clip(draft.root_cause, 500))
-        diagnosis = Diagnosis(
-            root_cause=root_cause or FALLBACK_CAUSE,
-            shown=None if root_cause else FALLBACK_SHOWN,
-            category=draft.category,
-            evidence=_evidence(draft, shas),
-            confidence=draft.confidence,
-            affected_services=draft.affected_services,
-            unsure=draft.confidence < budgets.low_confidence,
-            planted_in=_planted(draft.planted_in),
-        )
+        if root_cause:
+            diagnosis = Diagnosis(
+                root_cause=root_cause,
+                category=draft.category,
+                evidence=_evidence(draft, shas),
+                confidence=draft.confidence,
+                affected_services=draft.affected_services,
+                unsure=draft.confidence < budgets.low_confidence,
+                planted_in=_planted(draft.planted_in),
+            )
+        else:
+            # The cause was only a made-up sha: no diagnosis, as when the model gave none, but
+            # what the model saw planted still counts.
+            diagnosis = _fallback(context).model_copy(
+                update={"planted_in": _planted(draft.planted_in)}
+            )
 
         def record(kind: GuardKind, detail: str) -> None:
             if deps.guard_log is not None:

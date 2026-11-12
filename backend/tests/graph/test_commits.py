@@ -167,7 +167,10 @@ def test_a_github_failure_naming_a_made_up_sha_reads_no_commit():
         ("commit 3f204d changed it", None),
         ("commit 3f204d4 changed it", "commit changed it"),
         ("commit 9c0ffee: changed SHOP_VERSION", "commit: changed SHOP_VERSION"),
-        ("the deploy 9c0ffee1a2 broke it", "the deploy broke it"),
+        ("the deploy 9c0ffee1a2 broke it", None),
+        ("the deploy commit 9c0ffee1a2 broke it", "the deploy commit broke it"),
+        ("commit [9c0ffee1a2] broke it", "commit broke it"),
+        ("3f204d3a9c broke it", "3f204d3 broke it"),
         (f"Revert {EARLIER} to bring prices back", "Revert to bring prices back"),
         ("Commit-Hash 9c0ffee1 war schuld", "Commit-Hash war schuld"),
         ("the sha 1234567 reads price_cents", "the sha reads price_cents"),
@@ -193,8 +196,40 @@ def test_a_text_left_with_nothing_else_is_empty_for_the_callers_fallback(text):
     assert drop_unread(text, READ) == ("", 1)
 
 
+@pytest.mark.parametrize(
+    ("opens", "closes"),
+    [("„", "“"), ("„", "”"), ("‚", "‘"), ("‚", "’"), ("“", "”"), ("‘", "’")]
+    + [("«", "»"), ("»", "«"), ("‹", "›"), ("›", "‹")],
+)
+def test_a_removed_sha_takes_the_typographic_quotes_it_alone_filled(opens, closes):
+    assert checked(f"im Commit {opens}9c0ffee{closes} geändert") == "im Commit geändert"
+    assert checked(f"im Commit {opens}9c0ffee1a2{closes} geändert") == "im Commit geändert"
+
+
 def test_a_longer_read_sha_keeps_a_shorter_start_of_it():
     assert checked("commit 3f204d3 did it", {DEPLOY}) == "commit 3f204d3 did it"
+
+
+@pytest.mark.parametrize("text", ["3f204d3a9c51 did it", f"{DEPLOY.upper()} did it"])
+def test_a_long_word_with_no_cue_that_starts_a_read_sha_is_that_sha(text):
+    assert checked(text, {DEPLOY}) == text
+
+
+TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736"
+MD5 = "5d41402abc4b2a76b9719d911017c592"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"request {TRACE_ID} failed with 502",
+        f"the file's md5 is {MD5}, the image's checksum differs",
+        "job 550e8400e29b41d4a716446655440000 and build 3f2a1b9c timed out",
+        "trace 550e8400-e29b-41d4-a716-446655440000 shows the retry",
+    ],
+)
+def test_a_long_hex_word_with_no_cue_is_a_value_not_a_sha(text):
+    assert drop_unread(text, READ) == (text, 0)
 
 
 @pytest.mark.parametrize(

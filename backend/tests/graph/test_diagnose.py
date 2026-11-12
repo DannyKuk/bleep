@@ -465,6 +465,8 @@ async def test_in_english_the_diagnose_prompt_names_no_language(tmp_path):
 
 
 DEPLOY_SHA = "3f204d3a9c51e0b7d2f84a6c1e9b05d7f3a2c8e1"
+TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736"
+MD5 = "5d41402abc4b2a76b9719d911017c592"
 
 
 def commits_read() -> list[ToolMessage]:
@@ -479,8 +481,9 @@ async def test_a_sha_the_run_read_stays_in_the_diagnosis_and_a_made_up_one_is_dr
     cause = "commit 3f204d3 'Deploy shop 2' set SHOP_VERSION to 2, see also commit 9c0ffee."
     evidence = [
         {"source": "recent_commits", "detail": "3f204d3 'Deploy shop 2' sets SHOP_VERSION 2"},
-        {"source": "commit_diff", "detail": "9c0ffee1 adds price_cents"},
+        {"source": "commit_diff", "detail": "9c0ffee adds price_cents"},
         {"source": "commit_diff", "detail": "commit 9c0ffee"},
+        {"source": "logs", "detail": f"request {TRACE_ID} failed, build 9c0ffee1a2 runs"},
     ]
     env, state = await setup(tmp_path, [reply(0.9, root_cause=cause, evidence=evidence)])
 
@@ -491,17 +494,38 @@ async def test_a_sha_the_run_read_stays_in_the_diagnosis_and_a_made_up_one_is_dr
     assert [e.detail for e in d.evidence] == [
         "3f204d3 'Deploy shop 2' sets SHOP_VERSION 2",
         "adds price_cents",
+        f"request {TRACE_ID} failed, build 9c0ffee1a2 runs",
     ]
     assert [(k, t) for _, k, t in env.guard_log.records] == [
         ("redacted", "3 commit sha(s) the run never read removed from the diagnosis")
     ]
 
 
-async def test_a_root_cause_that_was_only_a_made_up_sha_is_the_fallbacks(tmp_path):
-    env, state = await setup(tmp_path, [reply(0.9, root_cause="The commit 9c0ffee.")])
+async def test_a_trace_id_in_the_root_cause_stays_for_the_fix(tmp_path):
+    cause = f"shop-api fails request {TRACE_ID} because the md5 {MD5} of its config changed"
+    env, state = await setup(tmp_path, [reply(0.9, root_cause=cause)])
+
+    update = await diagnose.make(env.deps)(state | {"messages": commits_read()})
+
+    assert update["diagnosis"].root_cause == cause
+    assert env.guard_log.records == []
+
+
+async def test_a_root_cause_that_was_only_a_made_up_sha_is_the_whole_fallback(tmp_path):
+    draft = reply(0.9, root_cause="The commit 9c0ffee.", planted_in=["commits"])
+    env, state = await setup(tmp_path, [draft])
+    state |= {"messages": commits_read()}
 
     update = await diagnose.make(env.deps)(state)
 
     d = update["diagnosis"]
+    fallback = diagnose._fallback(state["context"])
     assert d.root_cause == diagnose.FALLBACK_CAUSE and d.shown == diagnose.FALLBACK_SHOWN
-    assert d.category == "config" and d.confidence == 0.9
+    assert d.category == "unknown" and d.confidence == 0.0 and d.unsure
+    assert d.evidence == fallback.evidence and d.affected_services == []
+    assert d.planted_in == ["commits"]
+    assert [(k, t) for _, k, t in env.guard_log.records] == [
+        ("redacted", "1 commit sha(s) the run never read removed from the diagnosis")
+    ]
+    assert diagnose.route({**state, **update}) == "investigate"
+    assert "messages" in update

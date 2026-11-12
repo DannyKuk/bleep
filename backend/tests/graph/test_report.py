@@ -713,7 +713,9 @@ async def test_a_made_up_sha_is_dropped_from_the_report(tmp_path):
 
 
 async def test_a_report_text_that_was_only_a_made_up_sha_falls_back_to_bleeps_record(tmp_path):
-    draft = written(cause="The commit 9c0ffee.", summary="commit 9c0ffee", follow_ups=["9c0ffee1"])
+    draft = written(
+        cause="The commit 9c0ffee.", summary="commit 9c0ffee", follow_ups=["commit 9c0ffee1"]
+    )
     env, state, _ = await setup(tmp_path, draft)
     state |= {"proposal": NO_ACTION, "messages": commits_read()}
 
@@ -725,6 +727,26 @@ async def test_a_report_text_that_was_only_a_made_up_sha_falls_back_to_bleeps_re
     assert told.follow_ups == [NO_ACTION.human_instructions]
     assert [t for _, _, t in env.guard_log.records] == [
         "3 commit sha(s) the run never read removed from the report"
+    ]
+
+
+async def test_a_trace_id_or_checksum_with_no_cue_stays_in_the_report(tmp_path):
+    cause = (
+        "request 4bf92f3577b34da6a3ce929d0e0e4736 failed because the config's md5 "
+        "5d41402abc4b2a76b9719d911017c592 changed with commit 3f204d3."
+    )
+    follow_ups = ["Look up trace 4bf92f3577b34da6a3ce929d0e0e4736 and drop commit c0ffee1a2b."]
+    env, state, _ = await setup(tmp_path, written(cause=cause, follow_ups=follow_ups))
+    state |= {"proposal": NO_ACTION, "messages": commits_read()}
+
+    update = await run(env, state)
+
+    assert update["report"].cause == cause
+    assert update["report"].follow_ups == [
+        "Look up trace 4bf92f3577b34da6a3ce929d0e0e4736 and drop commit."
+    ]
+    assert [t for _, _, t in env.guard_log.records] == [
+        "1 commit sha(s) the run never read removed from the report"
     ]
 
 

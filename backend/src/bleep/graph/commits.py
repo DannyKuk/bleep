@@ -32,14 +32,33 @@ _LISTED = re.compile(r"^- ([0-9a-f]{7}) \d{4}-\d\d-\d\d \d\d:\d\d UTC ", re.MULT
 # value or a URL (`shop-3f204d3`, `shop:3f204d3`, `REV=3f204d3`, `…/commit/3f204d3`); a period or
 # a colon after it ends it. The eval measure reads shas with it too (`evals.github`).
 HEX_WORD = re.compile(r"(?<![\w./:@#=-])[0-9a-f]{7,40}(?![\w/@-])(?![.:]\w)", re.IGNORECASE)
+# The brackets and quotes a text puts around a sha, each with the marks that close it: German
+# writes „…“ and ‚…‘ (or „…”), French «…» and ‹…›, German also »…« and ›…‹.
+_PAIRS = {
+    "(": ")",
+    "[": "]",
+    "`": "`",
+    "'": "'",
+    '"': '"',
+    "„": "“”",
+    "‚": "‘’",
+    "“": "”",
+    "‘": "’",
+    "«": "»",
+    "»": "«",
+    "‹": "›",
+    "›": "‹",
+}
 # Words that say the hex word after them is a commit: "commit 1234567", "Commit-Hash 9c0ffee1",
-# "sha 1234567", "Revert 3f204d3".
+# "sha 1234567", "Revert 3f204d3", "Commit „9c0ffee1“"; a space, a colon or an opening mark
+# may stand between them.
 _CUE = re.compile(
-    r"\b(?:commits?|sha|hash|revert(?:s|ed)?)(?:-(?:hash|sha|id))?[\s`'\"(:]{1,3}\Z", re.IGNORECASE
+    r"\b(?:commits?|sha|hash|revert(?:s|ed)?)(?:-(?:hash|sha|id))?"
+    rf"[\s:{re.escape(''.join(_PAIRS))}]{{1,3}}\Z",
+    re.IGNORECASE,
 )
 CUE_ROOM = 24  # characters before a hex word where its cue is looked for
-DOCKER_ID = 12  # Docker shows a container's or an image's id as 12 hex characters
-_PAIRS = {"(": ")", "[": "]", "`": "`", "'": "'", '"': '"'}
+SHORT_SHA = 7  # the GitHub tools write the first 7 characters of a sha
 _ENDS_CLAUSE = " ,.;:!?)"
 # Words that say nothing once the sha after them is gone: the cues and the articles.
 _EMPTY_WORDS = {"commit", "commits", "sha", "hash", "revert", "reverts", "reverted"}
@@ -61,22 +80,29 @@ def read_shas(messages: Iterable[AnyMessage]) -> set[str]:
     return read
 
 
-def written_shas(text: str) -> list[tuple[int, int]]:
+def written_shas(text: str, read: set[str]) -> list[tuple[int, int]]:
     """Where `text` writes a commit sha: a hex word after a cue ("commit", "sha", …), whatever
-    its letters, or one mixing digits and letters, as a sha almost always does, so neither
-    "defaced" nor "1048576" is one. Without a cue a word of 12 is Docker's id of a container or
-    an image, not a sha: the GitHub tools show 7."""
-    return [m.span() for m in HEX_WORD.finditer(text) if _cued(text, m.start()) or _bare(m[0])]
+    its length and letters, or a word with no cue that reads as one (`_bare`)."""
+    return [
+        m.span()
+        for m in HEX_WORD.finditer(text)
+        if _cued(text, m.start()) or _bare(m[0].lower(), read)
+    ]
 
 
 def _cued(text: str, start: int) -> bool:
     return _CUE.search(text[max(0, start - CUE_ROOM) : start]) is not None
 
 
-def _bare(word: str) -> bool:
-    """Whether a hex word with no cue reads as a sha: digits and letters mixed, not 12 long."""
+def _bare(word: str, read: set[str]) -> bool:
+    """Whether a hex word with no cue reads as a sha: one that starts a sha the run read or starts
+    with one, or a word as short as the tools write a sha that mixes digits and letters, as a sha
+    almost always does, so neither "defaced" nor "1048576" is one. A longer word with no cue is a
+    trace id, a checksum, a uuid or Docker's id of a container, which the text may need."""
+    if any(known.startswith(word) or word.startswith(known) for known in read):
+        return True
     mixed = any(c.isdigit() for c in word) and any(not c.isdigit() for c in word)
-    return mixed and len(word) != DOCKER_ID
+    return mixed and len(word) == SHORT_SHA
 
 
 def _kept(written: str, read: set[str]) -> str:
@@ -92,7 +118,7 @@ def _kept(written: str, read: set[str]) -> str:
 def _removed(text: str, start: int, end: int) -> tuple[int, int]:
     """The stretch to remove for the sha at `start:end`: with the brackets or quotes around it
     that it alone fills, and the space before it when the clause goes on or ends right after."""
-    if start > 0 and end < len(text) and _PAIRS.get(text[start - 1]) == text[end]:
+    if start > 0 and end < len(text) and text[end] in _PAIRS.get(text[start - 1], ""):
         start, end = start - 1, end + 1
     if start > 0 and text[start - 1] == " " and (end == len(text) or text[end] in _ENDS_CLAUSE):
         start -= 1
@@ -111,7 +137,7 @@ def drop_unread(text: str, read: set[str]) -> tuple[str, int]:
     starts with a read one is cut to it. A text that a removal leaves nearly empty is empty, so
     the caller's fallback takes its place."""
     out, last, dropped = [], 0, 0
-    for start, end in written_shas(text):
+    for start, end in written_shas(text, read):
         kept = _kept(text[start:end], read)
         if kept:
             out += [text[last:start], kept]
