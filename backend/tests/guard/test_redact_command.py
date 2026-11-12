@@ -390,11 +390,88 @@ def test_a_password_in_any_shape_is_hidden_inside_json(line, expected):
         "docker run --name mongo -p 0.0.0.0:27017:27017/udp mongo",
         "mongosh -u root -p --authenticationDatabase admin",
         "mysqladmin -p ping",
+        "mongosh -p --quiet",
     ],
 )
 def test_a_port_mapping_or_a_missing_password_stays(line):
     assert redact_with_count(line) == (line, 0)
     assert redact_command(line) == line
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ('mongo -u mongo -p "mongo" --eval 1', 'mongo -u mongo -p "<redacted>" --eval 1'),
+        ("redis-cli -a 'mongo' ping", "redis-cli -a '<redacted>' ping"),
+        ('redis-cli --pass "mysql"', 'redis-cli --pass "<redacted>"'),
+        ("curl -u 'bob:mysql' x", "curl -u 'bob:<redacted>' x"),
+        (
+            'redis-cli -a "pass phrase with curl inside" ping',
+            'redis-cli -a "<redacted>" ping',
+        ),
+        ("redis-cli -a 's3c mysql ret' ping", "redis-cli -a '<redacted>' ping"),
+        ("curl -u bob:'x mysql -ps3cret2'", "curl -u bob:<redacted>"),
+        ("mysqladmin -p'pw mongo -p x' ping", "mysqladmin -p<redacted> ping"),
+        ("redis-cli -a --s3cret ping", "redis-cli -a <redacted> ping"),
+        (
+            '{"cmd":"redis-cli -a \'s3c mysql ret\' ping","n":1}',
+            '{"cmd":"redis-cli -a \'<redacted>\' ping","n":1}',
+        ),
+        (
+            '{"cmd":"redis-cli -a \\"pass with curl inside\\" ping","n":1}',
+            '{"cmd":"redis-cli -a \\"<redacted>\\" ping","n":1}',
+        ),
+        ('{"cmd":"mongo -p\'mongo\' x","n":1}', '{"cmd":"mongo -p<redacted> x","n":1}'),
+    ],
+)
+def test_a_quoted_password_holding_a_client_name_is_hidden_whole(line, expected):
+    """The names inside a quoted password are part of it, not commands of their own."""
+    out = _hidden_once(line)
+    assert out == expected
+    assert "s3c" not in out and "phrase" not in out
+    if line.startswith("{"):
+        json.loads(out)
+    else:
+        assert redact_command(line) == expected
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "mongo -p'mongo' x",
+        '{"cmd":"mongo -p\'mongo\' x","n":1}',
+        "mongosh é -U -p' mysqladmin '' -U",
+        "mongosh'-p'mysql -ps3c --eval",
+        'mongo"-p""\t mysql',
+        'mysql"-p""--user ;',
+        "mongosh''-p' ' | ` \\  (",
+        '{"cmd": "mongosh\'-p\'mysql -ps3c --eval", "n": 1}',
+    ],
+)
+def test_a_password_running_into_a_client_name_is_hidden_once(line):
+    out, count = redact_with_count(line)
+    assert count >= 1
+    assert redact_with_count(out) == (out, 0)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '{"curl": "| --eval -u \'", "argv": ["|", "--eval", "-u", "\'"], "z": "mongo"}',
+        '{"curl": "-u", "x": "bob:pw", "argv": ["-u", "\'"], "y": "\'"}',
+    ],
+)
+def test_a_client_name_in_a_json_key_is_read_only_to_the_key_end(line):
+    out = redact_text(line)
+    assert json.loads(out).keys() == json.loads(line).keys()
+    assert redact_with_count(out) == (out, 0)
+
+
+def test_a_command_in_a_json_key_is_still_read():
+    line = '{"curl -u a:pw1234": 1, "b": "redis-cli -a pw1234"}'
+    out = _hidden_once(line)
+    assert out == '{"curl -u a:<redacted>": 1, "b": "redis-cli -a <redacted>"}'
+    json.loads(out)
 
 
 def test_a_long_line_that_hiding_brings_under_the_cut_is_not_cut():
@@ -478,6 +555,44 @@ def test_redact_text_is_linear_on_lines_full_of_client_names(line):
 )
 def test_redact_text_is_linear_on_one_line_full_of_client_names(piece):
     text = piece * (1_000_000 // len(piece))
+    started = time.perf_counter()
+    redact_text(text)
+    assert time.perf_counter() - started < 1.0
+
+
+# Quoted passwords holding names, read again to the limit, and names in a JSON key
+QUOTED_UNITS = [
+    "mysqladmin -p'x mysql ",
+    "redis-cli -a 'curl ",
+    'redis-cli -a "curl ',
+    "curl -u 'b:curl ",
+    "mongo -p'mongo ",
+    'mongo -p "mongo" ',
+    "mysqladmin -p'mysql' ",
+    "curl -u 'b:mysql' ",
+    'redis-cli -a x/curl" ',
+    "redis-cli -a --",
+]
+
+
+@pytest.mark.parametrize("unit", QUOTED_UNITS)
+@pytest.mark.parametrize("form", ["one", "lines", "json"])
+def test_redact_text_is_linear_on_quoted_passwords_holding_names(unit, form):
+    if form == "one":
+        text = unit * (1_000_000 // len(unit))
+    elif form == "lines":
+        text = _lines_of(unit * (3900 // len(unit)))
+    else:
+        text = _lines_of(json.dumps({"cmd": unit * (3000 // len(unit)), "n": 1}))
+    started = time.perf_counter()
+    redact_text(text)
+    assert time.perf_counter() - started < 1.0
+
+
+@pytest.mark.parametrize("form", ["one", "lines"])
+def test_redact_text_is_linear_on_json_keys_full_of_client_names(form):
+    key = json.dumps({"curl -u a:'" * (330 if form == "lines" else 90_000): 1})
+    text = key if form == "one" else _lines_of(key)
     started = time.perf_counter()
     redact_text(text)
     assert time.perf_counter() - started < 1.0

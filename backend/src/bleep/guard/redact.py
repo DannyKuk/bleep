@@ -11,7 +11,7 @@ import itertools
 import re
 import string
 from collections.abc import Callable
-from functools import lru_cache
+from functools import lru_cache, partial
 
 from bleep.guard.sanitize import (
     CONTROL_CHARS,
@@ -140,7 +140,12 @@ def _quote_end(text: str, at: int, no_closer: set[str], limit: int | None = None
 
 
 def _shell_words(
-    text: str, start: int, free: bool = False, first_only: bool = False, limit: int | None = None
+    text: str,
+    start: int,
+    free: bool = False,
+    first_only: bool = False,
+    limit: int | None = None,
+    no_closer: set[str] | None = None,
 ) -> tuple[list[tuple[int, int]], int | None]:
     """The words of a shell command from `start`, and where an unclosed quote opens, if one does.
 
@@ -153,9 +158,11 @@ def _shell_words(
     and the words go on; the place returned is the first such quote. A quote or backtick right
     after a word and before a blank, a comma, a colon, a full stop or a closing bracket ends the
     word: it closes a string or a code span the command sits in. `first_only` stops after the
-    first word, and `limit` is where the text ends.
+    first word, `limit` is where the text ends, and `no_closer` may be shared by calls that read
+    on to the same `limit` from later and later places (`_quote_end`).
     """
-    words, no_closer, at = [], set[str](), start
+    words, at = [], start
+    no_closer = set[str]() if no_closer is None else no_closer
     end = len(text) if limit is None else limit
     plain_run = _FREE_RUN if free else _PLAIN_RUN
     unclosed = None
@@ -214,11 +221,12 @@ def _json_items(text: str, start: int) -> list[tuple[int, int]]:
     return items
 
 
-def _list_items(text: str, start: int) -> list[tuple[int, int]]:
+def _list_items(text: str, start: int, limit: int | None = None) -> list[tuple[int, int]]:
     """The quoted items of a list from `start`, right after an item: each after a comma, up to
-    anything that is not one more item on the line (the list's end, a key)."""
+    anything that is not one more item on the line (the list's end, a key) or `limit`."""
     items, at = [], start
-    while item := _NEXT_ITEM.match(text, at):
+    limit = len(text) if limit is None else limit
+    while item := _NEXT_ITEM.match(text, at, limit):
         items.append(item.span(1))
         at = item.end()
     return items
@@ -229,11 +237,13 @@ def _hidden_part(word: str, keep: int) -> Edit | None:
     ends in the word and what takes its place; None when nothing is left to hide, or when the
     part is a reference (`$REDIS_PASSWORD`), which holds no password."""
     quote = word[0] if word[0] in "\"'" else ""
+    start = len(word) - len(word.lstrip(quote)) + keep  # `keep` counts after the opening quotes
     if quote and len(word) > 1 and word.endswith(quote):
-        start, stop, closer = 1 + keep, len(word) - 1, ""
+        stop, closer = len(word) - 1, ""
     else:
-        start, stop, closer = len(word) - len(word.lstrip(quote)) + keep, len(word), quote
-    if start >= stop or word.startswith(REDACTED, start) or _REFERENCE.fullmatch(word, start, stop):
+        stop, closer = len(word), quote
+    hidden_already = word[start:stop].lstrip("\"'").startswith(REDACTED)  # `"-p"<redacted>`
+    if start >= stop or hidden_already or _REFERENCE.fullmatch(word, start, stop):
         return None
     return start, stop, REDACTED + closer
 
@@ -261,78 +271,82 @@ def _opens_value(word: str) -> bool:
     return word.startswith("-p") and len(word) > 2 and word[2:] not in _EMPTY
 
 
-def _curl_user(word: str, bare: str) -> tuple[Pending, Edit | None]:
+def _attached(word: str, bare: str) -> bool:
+    """`-ppw`, `-p'pw'` and `-p'` with its value to come: a password attached to `-p`."""
+    return bare.startswith("-p") and (len(bare) > 2 or _opens_value(word))
+
+
+# How the password is read out of the word that holds it
+Rule = Callable[[str], Edit | None]
+
+
+def _curl_user(bare: str) -> tuple[Pending, Rule | None]:
     """curl's `-u`/`--user` and `-U`/`--proxy-user`, alone (the next word is `user:pw`), grouped
     with other short flags (`-fsSu`) or with the value attached (`-ubob:pw`)."""
     if bare in _CURL_USER_FLAGS:
         return "user", None
     if bare.startswith(tuple(f"{flag}=" for flag in _CURL_USER_FLAGS)):
-        return None, _user_password_part(word, bare.index("=") + 1)
+        return None, partial(_user_password_part, skip=bare.index("=") + 1)
     flag = None if bare.startswith("--") else _CURL_SHORT_USER.match(bare)
     if flag is None:
         return None, None
     if flag.end() == len(bare):
         return "user", None
-    return None, _user_password_part(word, flag.end())
+    return None, partial(_user_password_part, skip=flag.end())
 
 
-def _password_parts(
+def _password_slots(
     words: list[str], name: str, pending: Pending = None
-) -> tuple[dict[int, Edit], str, Pending]:
-    """The password in each word that holds one, by the word's index; the client whose rules
-    apply after the words, and the flag the last word left waiting for its value. Reads `-a`
-    and `--pass` for `redis-cli`, `-p` and `--password` for the `mongo` family, curl's user
-    flags (`_curl_user`), and the attached `-ppw` of the MySQL clients. The word after a flag is
-    its value unless it is a long option (`--eval`). A later client's name among the words
-    (`curl … && redis-cli -a pw`) switches the rules; a flag's value never does."""
-    parts: dict[int, Edit] = {}
+) -> tuple[dict[int, Rule], str, Pending]:
+    """Which words hold a password and how to read it, by the word's index; the client whose
+    rules apply after the words, and the flag the last word left waiting for its value. Reads
+    `-a` and `--pass` for `redis-cli`, `-p`, `--password` and the attached `-ppw` for the `mongo`
+    family, curl's user flags (`_curl_user`), and the attached `-ppw` of the MySQL clients. The
+    word after a flag is its value whatever it is, except a long option after the `mongo`
+    family's `-p` (`--eval`), which may prompt. A later client's name among the words (`curl …
+    && redis-cli -a pw`) switches the rules; a flag's value never does."""
+    slots: dict[int, Rule] = {}
     for index, word in enumerate(words):
         bare = word.strip("\"'")
-        part = None
-        if pending and not bare.startswith("--"):
-            part, pending = _value_part(word, pending, name), None
+        rule: Rule | None = None
+        if pending and not (name in _MONGO and bare.startswith("--")):
+            rule, pending = partial(_value_part, pending=pending, name=name), None
         elif not bare.startswith("-") and (later := _WORD_NAME.fullmatch(bare)):
             name, pending = later.group(1), None
-        elif name.startswith(("mysql", "mariadb")):
-            pending = None
-            if bare.startswith("-p") and (len(bare) > 2 or _opens_value(word)):
-                part = _hidden_part(word, 2)
         elif name == "curl":
-            pending, part = _curl_user(word, bare)
+            pending, rule = _curl_user(bare)
+        elif (name in _MONGO or name.startswith(("mysql", "mariadb"))) and _attached(word, bare):
+            pending, rule = None, partial(_hidden_part, keep=2)
         else:
             pending = "plain" if bare in _SEPARATE_PASSWORD.get(name, ()) else None
-            if name in _MONGO and bare.startswith("-p") and len(bare) > 2 and bare[2] != "-":
-                part = _hidden_part(word, 2)  # `mongo -ppw`
-        if part is not None:
-            parts[index] = part
-    return parts, name, pending
+        if rule is not None:
+            slots[index] = rule
+    return slots, name, pending
 
 
-def _command_edits(
-    command: str, after_name: int, name: str, free: bool, pending: Pending = None
-) -> tuple[list[Edit], str, Pending]:
-    """The passwords in one command line from `after_name` on (right after a client's name, or
-    where a flag before waits for its value), as shell words or, when the name was an item of a
-    list (`["redis-cli", "-a", "pw"]`), as the items after it; and the rules and flag the words
-    leave for what follows (`_password_parts`). `free` reads the line as free text
-    (`_shell_words`); a password word holding the quote nothing closes is hidden to the end."""
-    unclosed = None
-    if not pending and command[after_name : after_name + 1] in ("'", '"'):
-        spans = (_list_items if free else _json_items)(command, after_name + 1)
-        if free and not spans:
-            spans, unclosed = _shell_words(command, after_name, free)
-    else:
-        spans, unclosed = _shell_words(command, after_name, free)
-    parts, name, pending = _password_parts([command[a:b] for a, b in spans], name, pending)
+def _parts(spans: list[tuple[int, int]], text: str, slots: dict[int, Rule]) -> list[Edit]:
+    """The edits that hide the password of each slot (`_password_slots`) in `text`."""
     edits = []
-    for index, (start, stop, hidden) in sorted(parts.items()):
+    for index, rule in sorted(slots.items()):
         first, last = spans[index]
-        if free and unclosed is not None and first <= unclosed < last:
-            return [*edits, (min(first + start, unclosed), len(command), REDACTED)], name, None
-        edits.append((first + start, first + stop, hidden))
-    if not free and unclosed is not None:
+        if part := rule(text[first:last]):
+            edits.append((first + part[0], first + part[1], part[2]))
+    return edits
+
+
+def _command_edits(command: str, after_name: int, name: str) -> list[Edit]:
+    """The passwords in one command line from right after a client's name, as shell words or,
+    when the name was an item of a list (`["redis-cli", "-a", "pw"]`), as the items after it. A
+    quote nothing closes after whitespace hides the rest of the line."""
+    if command[after_name : after_name + 1] in ("'", '"'):
+        spans, unclosed = _json_items(command, after_name + 1), None
+    else:
+        spans, unclosed = _shell_words(command, after_name)
+    slots = _password_slots([command[a:b] for a, b in spans], name)[0]
+    edits = _parts(spans, command, slots)
+    if unclosed is not None:
         edits.append((unclosed, len(command), REDACTED))
-    return edits, name, pending
+    return edits
 
 
 def _edited(text: str, edits: list[Edit]) -> str:
@@ -357,8 +371,7 @@ def _merged(edits: list[Edit]) -> list[Edit]:
 
 def _hide_in_command(match: re.Match[str]) -> str:
     command = match.group(0)
-    edits = _command_edits(command, match.end(1) - match.start(), match[1], False)[0]
-    return _edited(command, edits)
+    return _edited(command, _command_edits(command, match.end(1) - match.start(), match[1]))
 
 
 def hide_client_passwords(text: str) -> str:
@@ -372,45 +385,97 @@ def hide_client_passwords(text: str) -> str:
     return _CLIENT_COMMAND.sub(_hide_in_command, text)
 
 
-def _free_edits(text: str, names: list[tuple[int, int]], end: int, read: list[bool]) -> list[Edit]:
+def _free_edits(
+    text: str,
+    names: list[tuple[int, int]],
+    end: int,
+    read: list[bool],
+    limits: list[int] | None = None,
+) -> list[Edit]:
     """The passwords in free text, read in pieces: each from a client's name (a span of `names`
-    whose `read` is true) to the next name or `end`, with that name's rules, so a quote or a
-    later command cannot hide one command from the reading (`mongo started; cmd="redis-cli -a
-    pw"`). A flag at a piece's end takes the next name's word as its value
-    (`redis-cli -a mongo`), and a password running into the next name (`-p'mysql'`) is hidden
-    through that name's word, where the reading goes on with the same rules."""
+    whose `read` is true) to the next name or the name's limit (`limits`, `end` when not given),
+    with that name's rules, so a quote or a later command cannot hide one command from the
+    reading (`mongo started; cmd="redis-cli -a pw"`). A flag at a piece's end takes the next
+    name's word as its value (`redis-cli -a mongo`). A password word that runs on past the next
+    name, or holds a quote the piece does not close (`-a 'pass with curl inside'`, `-p'mysql'`),
+    is read again whole, to the limit, and the names inside it are no pieces; when nothing closes
+    its quote even there it is hidden to the limit."""
+    limits = [end] * len(names) if limits is None else limits
     edits: list[Edit] = []
-    name, pending, index = "", None, 0
-    pos = read_from = -1
+    no_closers: dict[int, set[str]] = {}
+    name, pending, read_from, limit, index = "", None, -1, end, 0
     while index < len(names):
-        if pos < 0:
+        if read_from < 0:
             if not read[index]:
                 index += 1
                 continue
-            pos, read_from = names[index]
-            name = text[pos:read_from]
-        cut = index + 1
-        while cut < len(names) and names[cut][0] < read_from:
-            cut += 1
-        stop = names[cut][0] if cut < len(names) else end
-        piece = text[pos:stop]
-        found, name, pending = _command_edits(piece, read_from - pos, name, True, pending)
-        edits += [(pos + a, pos + b, new) for a, b, new in found]
-        index = cut
-        if index >= len(names):
-            break
-        if found and found[-1][1] == len(piece):
-            word = _shell_words(text, stop, True, first_only=True, limit=end)[0]
-            word_end = word[0][1] if word else stop
-            if text[stop - 1] in "\"'" and text.startswith(text[stop - 1], word_end):
-                word_end += 1  # the quote that opened before the name closes after it
-            edits[-1] = (edits[-1][0], word_end, edits[-1][2])
-            pos, read_from, pending = stop, word_end, None
-        elif pending:
-            pos = read_from = stop
-        else:
-            pos = -1
+            read_from, limit, pending = names[index][1], limits[index], None
+            name = text[names[index][0] : read_from]
+            if text[read_from : read_from + 1] in ("'", '"'):  # the name was an item of a list
+                items = _list_items(text, read_from + 1, limit)
+                if items:
+                    slots = _password_slots([text[a:b] for a, b in items], name)[0]
+                    edits += _parts(items, text, slots)
+                    index, read_from = _next_name(names, index, items[-1][1]), -1
+                    continue
+        cut = _next_name(names, index, read_from)
+        stop = min(names[cut][0] if cut < len(names) else end, limit)
+        spans, unclosed = _shell_words(text, read_from, True, limit=stop)
+        words = [text[a:b] for a, b in spans]
+        slots, after_name, after_pending = _password_slots(words, name, pending)
+        run_on = _run_on(spans, slots, after_pending, unclosed, stop, limit)
+        if run_on is None:
+            edits += _parts(spans, text, slots)
+            index = cut
+            if pending := after_pending if stop < limit else None:
+                read_from, name = stop, after_name
+            else:
+                index, read_from = _next_name(names, index - 1, stop), -1
+            continue
+        whole, open_at = _shell_words(
+            text, spans[run_on][0], True, True, limit, no_closers.setdefault(limit, set())
+        )
+        first, last = whole[0]
+        spans, words = spans[:run_on] + [(first, last)], words[:run_on] + [text[first:last]]
+        slots, name, pending = _password_slots(words, name, pending)
+        rule = slots.get(run_on)
+        # an empty value (`-a "`) still opens the quote; one already hidden stays as it is
+        part = rule and (rule(words[run_on]) or rule(words[run_on] + "x"))
+        if open_at is None or part is None:
+            edits += _parts(spans, text, slots)
+            index, read_from = _next_name(names, index, last) - 1, last
+            continue
+        # nothing closes the password's quote: it is hidden to the end
+        edits += _parts(spans[:run_on], text, {i: slots[i] for i in slots if i < run_on})
+        edits.append((min(first + part[0], open_at), limit, REDACTED))
+        index, read_from = _next_name(names, index, limit), -1
     return edits
+
+
+def _run_on(
+    spans: list[tuple[int, int]],
+    slots: dict[int, Rule],
+    pending: Pending,
+    unclosed: int | None,
+    stop: int,
+    limit: int,
+) -> int | None:
+    """The first word of a piece that must be read again to the limit: a password word, or a
+    flag left waiting for its value, that runs on into the next name (`-p'mysql'`, `'-p'mongo`),
+    or a password word holding a quote the piece does not close."""
+    for at, (first, last) in enumerate(spans):
+        holds = at in slots or (pending is not None and at == len(spans) - 1)
+        if holds and (last == stop < limit or (unclosed is not None and first <= unclosed < last)):
+            return at
+    return None
+
+
+def _next_name(names: list[tuple[int, int]], index: int, at: int) -> int:
+    """The index of the first name after `names[index]` that starts at or after `at`."""
+    index += 1
+    while index < len(names) and names[index][0] < at:
+        index += 1
+    return index
 
 
 def _json_decoded(body: str) -> tuple[str, Callable[[int], int]]:
@@ -447,12 +512,9 @@ def _string_edits(text: str, opens: int, closes: int) -> tuple[list[Edit], int]:
     in place of the escapes it covers."""
     body = text[opens + 1 : closes]
     if whole := _WORD_NAME.fullmatch(body):
-        words = _list_items(text, closes + 1)
-        parts = _password_parts([text[a:b] for a, b in words], whole.group(1))[0]
-        edits = [
-            (words[i][0] + a, words[i][0] + b, new) for i, (a, b, new) in sorted(parts.items())
-        ]
-        return edits, words[-1][1] if words else closes
+        items = _list_items(text, closes + 1)
+        slots = _password_slots([text[a:b] for a, b in items], whole.group(1))[0]
+        return _parts(items, text, slots), items[-1][1] if items else closes
     decoded, raw = _json_decoded(body)
     names = [found.span() for found in _CLIENT_AT.finditer(decoded)]
     shift = opens + 1
@@ -463,26 +525,39 @@ def _string_edits(text: str, opens: int, closes: int) -> tuple[list[Edit], int]:
     return edits, closes
 
 
+# Up to the next quote, which closes a JSON key when a colon follows it (`"curl": …`)
+_TO_QUOTE = re.compile(r"(?:[^\"\\\n]|\\.)*+")
+_COLON_AFTER = re.compile(r"[ \t]*+:")
+
+
 def _line_edits(text: str, start: int, end: int) -> list[Edit]:
     """The passwords on the line of `text` from `start` to `end`. On a line that reads as JSON
     (`_json_strings`) each string value holding a client's name is read alone (`_string_edits`),
-    so the JSON stays JSON; every name outside such a string, and every name on any other line,
-    is read as free text (`_free_edits`)."""
+    so the JSON stays JSON, and a name in a key is read only up to the key's closing quote; every
+    other name, and every name on any other line, is read as free text (`_free_edits`)."""
     opens, closes, json_end = _json_strings(text, start)
     names = [found.span() for found in _CLIENT_AT.finditer(text, start, end)]
     inside = [-1] * len(names)
+    limits = [end] * len(names)
     if json_end > start:
+        quote, in_key = -1, False  # the next quote after a name, looked for once per quote
         for at, (name_start, name_end) in enumerate(names):
             index = bisect.bisect_right(opens, name_start) - 1
             if index >= 0 and name_end <= closes[index]:
                 inside[at] = index
+                continue
+            if quote < name_end:
+                quote = _TO_QUOTE.match(text, name_end, end).end()
+                in_key = quote < json_end and bool(_COLON_AFTER.match(text, quote + 1, end))
+            if in_key:
+                limits[at] = quote
     edits: list[Edit] = []
     reached = start
     for index in sorted({index for index in inside if index >= 0}):
         if opens[index] > reached:  # not an item a list before it already read
             found, reached = _string_edits(text, opens[index], closes[index])
             edits += found
-    edits += _free_edits(text, names, end, [index < 0 for index in inside])
+    edits += _free_edits(text, names, end, [index < 0 for index in inside], limits)
     return _merged(edits)
 
 
