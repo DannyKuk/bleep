@@ -57,6 +57,7 @@ from bleep.hosts.registry import Registry
 from bleep.plugins import urls
 from bleep.plugins.base import Plugin, PluginContext
 from bleep.plugins.coolify.client import CoolifyClient, CoolifyError, CoolifyUnavailable
+from bleep.plugins.coolify.deploys import CoolifyDeploys
 from bleep.schemas.coolify import CoolifyApplication, CoolifyDeployment, CoolifyEnvKey
 from bleep.schemas.graph import Action, ApprovalGrant, ApprovalRecord, PlanStep, StepResult
 from bleep.schemas.plugins import PluginHealth
@@ -716,6 +717,9 @@ class CoolifyPlugin(Plugin):
 
     def tools(self, ctx: PluginContext) -> list[ToolSpec]:
         return read_specs(self.client(ctx))
+
+    def deploys(self, ctx: PluginContext) -> CoolifyDeploys:
+        return CoolifyDeploys(self.client(ctx))
 
     def act_handlers(self, ctx: PluginContext) -> dict[str, ActHandler]:
         timeout = CoolifySettings.model_validate(ctx.settings.model_dump()).deploy_timeout_s

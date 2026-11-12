@@ -1,0 +1,394 @@
+{
+ "commits": [
+  {
+   "sha": "48d21d0b20c053e14dcac563d678a1b86e786232",
+   "minutes_ago": 40,
+   "author": "bleep-dev",
+   "message": "Reword the setup guide's first steps",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "1349192c693a649b457618f2c6b2c19e9f9fa522",
+   "minutes_ago": 135,
+   "author": "bleep-dev",
+   "message": "Bump ruff to the latest release",
+   "files": [
+    {
+     "filename": "backend/pyproject.toml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "26f0c3e0932197f4c4b0ecc67a6bd6357c5fa9ea",
+   "minutes_ago": 230,
+   "author": "bleep-dev",
+   "message": "Show the host's uptime on the overview card",
+   "files": [
+    {
+     "filename": "frontend/src/app/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "34d87947e372d71b1075484e9b007d157948feb1",
+   "minutes_ago": 325,
+   "author": "bleep-dev",
+   "message": "Fix a typo in the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "58301bf245f81c5ccc822f30585217cd350b1cbf",
+   "minutes_ago": 420,
+   "author": "bleep-dev",
+   "message": "Test the event cursor across a restart",
+   "files": [
+    {
+     "filename": "backend/tests/watcher/test_events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "18253489c85020d2685feed79ec4577cee5136a9",
+   "minutes_ago": 515,
+   "author": "bleep-dev",
+   "message": "Sort the plugin list by title",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "74fa01b089012d73e6b069e1a3cf3c2a2dea3dd9",
+   "minutes_ago": 610,
+   "author": "bleep-dev",
+   "message": "Add a dark mode screenshot to the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "f63ab77ae878f2ecc5d620f3ef28f0e83708064c",
+   "minutes_ago": 705,
+   "author": "bleep-dev",
+   "message": "Name the Telegram bot in the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "a3a417be3dfb852f152fc577b9b6707c62fd29d4",
+   "minutes_ago": 800,
+   "author": "bleep-dev",
+   "message": "Cache the knowledge index between restarts",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "49e350c200188f22da570e36dd55858b140a1146",
+   "minutes_ago": 895,
+   "author": "bleep-dev",
+   "message": "Retry an SSH connect once before giving up",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "7ebeeb9d6a4943df0f18b8f2f25aeb0477cd4193",
+   "minutes_ago": 990,
+   "author": "bleep-dev",
+   "message": "Bump next to the latest patch release",
+   "files": [
+    {
+     "filename": "frontend/package.json",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "05d27755b983f52870281e8ea410e28676f85844",
+   "minutes_ago": 1085,
+   "author": "bleep-dev",
+   "message": "Explain the quiet hours in the docs",
+   "files": [
+    {
+     "filename": "docs/design/notify.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "c2e2a27a3859967e06a92e064ac483f9cc723248",
+   "minutes_ago": 1180,
+   "author": "bleep-dev",
+   "message": "Log the watcher's tick time at debug level",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/manager.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "5a6ad1def6cb4835aae29dfe32d9a391cf9d85e8",
+   "minutes_ago": 1275,
+   "author": "bleep-dev",
+   "message": "Align the incident timeline's icons",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "3fbce823d3b9415b528eb1c2aadb4b4205a1c248",
+   "minutes_ago": 1370,
+   "author": "bleep-dev",
+   "message": "Drop an unused helper from the prompts loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/__init__.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "69f036562b4d3893bfe9455f6a9e5c9a0caae455",
+   "minutes_ago": 1465,
+   "author": "bleep-dev",
+   "message": "Run the frontend tests in CI on Node 22",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "1566e6b6d43d1ceb48c3f3163270c4c2006c866d",
+   "minutes_ago": 1560,
+   "author": "bleep-dev",
+   "message": "Clarify the demo's fault script usage",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "277ccfd0a884b3af1362bf184226d5744a31cd35",
+   "minutes_ago": 1655,
+   "author": "bleep-dev",
+   "message": "Add a test for an empty hosts file",
+   "files": [
+    {
+     "filename": "backend/tests/hosts/test_config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "6cc1f789ccfc190f80593c4dc8e061469231ff1e",
+   "minutes_ago": 1750,
+   "author": "bleep-dev",
+   "message": "Shorten the approval message's footer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "127e507fe6a0334b12daa649d6d6f39a6ce4ba83",
+   "minutes_ago": 1845,
+   "author": "bleep-dev",
+   "message": "Keep the chat panel scrolled to the newest message",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "4e1a7229726843e23c497e0bb18ddd35c28dd2a8",
+   "minutes_ago": 1940,
+   "author": "bleep-dev",
+   "message": "Bump uvicorn to the latest release",
+   "files": [
+    {
+     "filename": "backend/pyproject.toml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "94f1192388e15a571d6d5782e6e721c245d4a3a1",
+   "minutes_ago": 2035,
+   "author": "bleep-dev",
+   "message": "Note the evals' cost in the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "68f4aabb60e2fc79afc354bb591837a62fe0b26c",
+   "minutes_ago": 2130,
+   "author": "bleep-dev",
+   "message": "Rename a test to say what it checks",
+   "files": [
+    {
+     "filename": "backend/tests/graph/test_report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "6d0cdc405f291e7ad0020a4528cd79a08ce27cac",
+   "minutes_ago": 2225,
+   "author": "bleep-dev",
+   "message": "Format the issue templates",
+   "files": [
+    {
+     "filename": ".github/ISSUE_TEMPLATE/bug.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d9f9be16d2f9d5fd043579e64975986727895711",
+   "minutes_ago": 4380,
+   "author": "shop-dev",
+   "message": "Deploy shop 2",
+   "files": [
+    {
+     "filename": "demo/compose.yaml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -14,7 +14,7 @@ services:\n     environment:\n       DATABASE_URL: ${SHOP_DATABASE_URL:-postgresql://shop:shop@shop-db:5432/shop}\n-      SHOP_VERSION: ${SHOP_VERSION:-1}\n+      SHOP_VERSION: ${SHOP_VERSION:-2}\n       # 1 mounts the injection tests' hook (shop/inject.py, backend/evals/injection.py); off here."
+    }
+   ]
+  },
+  {
+   "sha": "335006387524dfc3b1f9a939d3bb0ca6be90b5c2",
+   "minutes_ago": 4384,
+   "author": "shop-dev",
+   "message": "Keep item prices in whole cents for shop 2\n\nAdds a price_cents column in a migration and reads it in /api/items from version 2 on.",
+   "files": [
+    {
+     "filename": "demo/shop/app.py",
+     "additions": 3,
+     "deletions": 1,
+     "patch": "@@ -22,6 +22,9 @@ log = logging.getLogger(\"shop\")\n VERSION = os.environ.get(\"SHOP_VERSION\", \"1\")\n UPLOADS = Path(os.environ.get(\"UPLOADS_DIR\", \"/uploads\"))\n # What a health check writes to the uploads volume, to prove the app can still store an upload.\n PROBE_BYTES = 64 * 1024\n+# Version 2 keeps prices in whole cents, in a column its database migration adds.\n+PRICE_COLUMN = {\"1\": \"price\", \"2\": \"price_cents\"}\n SEED = [(\"Coffee beans\", 14.50), (\"Mug\", 9.00), (\"Grinder\", 69.00)]\n@@ -83,7 +86,8 @@ def health() -> JSONResponse:\n @app.get(\"/api/items\")\n def items() -> list[dict]:\n+    column = PRICE_COLUMN.get(VERSION, \"price\")\n     with connect() as conn:\n-        rows = conn.execute(\"SELECT id, name, price FROM items ORDER BY id\").fetchall()\n+        rows = conn.execute(f\"SELECT id, name, {column} FROM items ORDER BY id\").fetchall()\n     return [{\"id\": i, \"name\": name, \"price\": float(price)} for i, name, price in rows]"
+    },
+    {
+     "filename": "demo/shop/migrations/0002_price_cents.sql",
+     "status": "added",
+     "additions": 3,
+     "deletions": 0,
+     "patch": "@@ -0,0 +1,3 @@\n+-- shop 2: prices in whole cents\n+ALTER TABLE items ADD COLUMN price_cents integer;\n+UPDATE items SET price_cents = round(price * 100);"
+    }
+   ]
+  },
+  {
+   "sha": "a2696ac3d02b358c7074eea32e2063e38e6ddfd6",
+   "minutes_ago": 11520,
+   "author": "shop-dev",
+   "message": "Log the shop version at startup",
+   "files": [
+    {
+     "filename": "demo/shop/app.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -53,7 +53,7 @@ async def lifespan(_app: FastAPI):\n     except psycopg.Error as error:\n         log.error(\"cannot reach the database, exiting: %s\", error)\n         raise SystemExit(1) from error\n-    log.info(\"shop started, uploads in %s\", UPLOADS)\n+    log.info(\"shop version %s started, uploads in %s\", VERSION, UPLOADS)\n     yield"
+    }
+   ]
+  }
+ ],
+ "deploy": {
+  "commit": "d9f9be16d2f9d5fd043579e64975986727895711",
+  "previous": "a2696ac3d02b358c7074eea32e2063e38e6ddfd6",
+  "minutes_ago": 4320
+ }
+}

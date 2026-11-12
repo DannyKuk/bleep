@@ -71,11 +71,12 @@ from bleep.schemas.services import Service
 from bleep.schemas.settings import DEFAULT_LANGUAGE, Language, ModelSettings, Thresholds
 from bleep.store.db import Database
 from bleep.tools.default import default_registry
+from bleep.tools.github import DeploySource
 from bleep.tools.knowledge import Searcher
 from bleep.watcher.detector import Detector
 from bleep.watcher.http_checks import UrlCheckStore
 from bleep.watcher.manager import WatcherManager
-from evals.github import fixture_client, load_github_fixture
+from evals.github import FixtureDeploys, fixture_client, load_github_fixture
 from evals.judge import DEFAULT_JUDGE, MANUAL, Judge, JudgeError, build_judge, check_distinct
 from evals.judge import model_under_test as tested_model
 from evals.mcp_server import ServedMcp, load_mcp_fixture, serve
@@ -481,11 +482,13 @@ def _graph_deps(
     github: GithubClient | None = None,
     knowledge: Searcher | None = None,
     mcp: ServedMcp | None = None,
+    deploys: DeploySource | None = None,
 ) -> GraphDeps:
     """Bleep's graph parts, minus everything that reaches past Propose or out of the process:
     no act tools but the MCP plugin's when the run serves its server (`evals.mcp_server`; Execute
     never runs, so none is called), no memory unless a test plants one (each run starts blank),
-    no Telegram, no GitHub tools unless the run serves a fixture (`evals.github`), and no
+    no Telegram, no GitHub tools unless the run serves a fixture (`evals.github`, with its deploy
+    as the running commit when it names one), and no
     knowledge search unless a case gives one."""
     guard_log = GuardLog(db)
     plugins = mcp.plugins(guard_log) if mcp is not None else None
@@ -495,7 +498,9 @@ def _graph_deps(
     )
     return GraphDeps(
         registry=registry,
-        tools=default_registry(plugins=plugins, github=github, knowledge=knowledge),
+        tools=default_registry(
+            plugins=plugins, github=github, knowledge=knowledge, deploys=deploys
+        ),
         act_tools=plugins.act_tools({}) if plugins is not None else {},
         models=models or model_factory(store),
         bus=EventBus(db),
@@ -617,9 +622,14 @@ async def run_scenario(
         await registry.start()
         try:
             async with open_checkpointer(Path(folder) / "checkpoints.sqlite") as saver:
+                deploys = None
                 if github is None and scenario.github is not None:
-                    github = fixture_client(load_github_fixture(scenario.github))
-                deps = _graph_deps(db, registry, settings, models, memory, github, knowledge, mcp)
+                    fixture, start = load_github_fixture(scenario.github), utcnow()
+                    github = fixture_client(fixture, lambda: start)
+                    deploys = FixtureDeploys(fixture, start)
+                deps = _graph_deps(
+                    db, registry, settings, models, memory, github, knowledge, mcp, deploys
+                )
                 graph = build_graph(deps, saver)
                 catcher = IncidentCatcher(graph, deps.incidents, deps.bus)
                 manager = WatcherManager(

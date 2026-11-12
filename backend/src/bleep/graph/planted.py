@@ -55,6 +55,7 @@ TOOL_SOURCE: dict[str, PlantedPlace] = {
     "recent_events": "events",
     "inspect_container": "inspect",
     "recall_incidents": "memory",
+    "deployed_commits": "commits",
     "recent_commits": "commits",
     "commit_diff": "commits",
     "knowledge_search": "docs",

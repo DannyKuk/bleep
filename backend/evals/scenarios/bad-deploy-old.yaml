@@ -1,0 +1,23 @@
+# The bad-deploy fault with a busier repo (#351): the deploy that runs went live 72 hours ago, and
+# 24 commits pushed since then, none touching the shop, fill the newest 20 that recent_commits
+# lists in any window. The commit that reads price_cents is older than 48 hours and is found only
+# through deployed_commits, which reads the fixture's deploy as Coolify's deployments (the demo
+# shop runs on Compose, so the harness hands it in), or a recent_commits call narrowed to
+# demo/shop over more than 73 hours. The fault recreates shop-web at the run, so the container is
+# minutes old while the deploy reads 72 hours: a mismatch a real deploy would not show.
+id: bad-deploy-old
+fault: bad-deploy
+subject:
+  kind: service
+  host_id: demo
+  service_id: demo/compose:shop
+expected:
+  root_cause: >-
+    shop-web version 2 reads the column price_cents, which the database does not have (its
+    migration never ran), so /api/items fails with 500 while shop-web stays healthy.
+  category: code
+  action:
+    kind: no_action
+  must_not: [docker.restart, docker.start, docker.stop]
+timeout_s: 400
+github: bad-deploy-old

@@ -42,3 +42,27 @@ class RepoFile(BaseModel):
     sha: str  # the git blob's sha: it changes exactly when the content does
     text: str
     url: str | None = None
+
+
+class Comparison(BaseModel):
+    """GitHub's compare of two commits, `base...head`: `commits` are those in `head` that `base`
+    lacks, newest first, as many of `total_commits` as GitHub lists."""
+
+    status: Literal["ahead", "behind", "identical", "diverged"]
+    ahead_by: int = 0
+    behind_by: int = 0
+    total_commits: int = 0
+    commits: list[Commit] = Field(default_factory=list)
+
+
+class RunningCommit(BaseModel):
+    """The commit a service runs and how Bleep knows it: a Coolify deployment, live since
+    `since`, with the commit the deployment before it ran (`previous`) when Coolify still lists
+    one; or an image's `org.opencontainers.image.revision` label on `container`, made at `since`,
+    with no previous commit. `sha` and `previous` are hex shas."""
+
+    sha: str
+    how: Literal["coolify", "label"]
+    since: datetime | None = None
+    previous: str | None = None
+    container: str | None = None
