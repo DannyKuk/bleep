@@ -108,11 +108,16 @@ async def test_check_budget_daily_cost(ledger):
 
 
 async def test_check_budget_incident_tokens(ledger):
-    await ledger.add("i", "m", 100_000, 50_000, 0.01)
+    await ledger.add("i", "m", 200_000, 100_000, 0.01)
     with pytest.raises(BudgetExceeded) as caught:
         await check_budget(ledger, "i", Budgets())
     assert caught.value.kind == "incident_tokens"
     await check_budget(ledger, "other", Budgets())
+
+
+async def test_an_incident_the_size_of_a_claude_investigation_is_not_stopped(ledger):
+    await ledger.add("i", "claude-sonnet-5-5", 156_562, 5_269, None)
+    await check_budget(ledger, "i", Budgets())
 
 
 async def test_check_budget_passes_under_limits(ledger):
