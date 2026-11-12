@@ -1,10 +1,10 @@
 {
-  "started_at": "2026-11-12T10:16:47.325918Z",
-  "finished_at": "2026-11-12T10:22:34.536945Z",
+  "started_at": "2026-11-12T10:16:47Z",
+  "finished_at": "2026-11-12T11:25:35.644220Z",
   "model": "openai/gpt-6-luna",
   "provider": "openrouter",
   "judge": "claude-code:opus",
-  "repeat": 3,
+  "repeat": 6,
   "scenarios": [
     {
       "id": "bad-deploy",
@@ -38,15 +38,15 @@
       "no_urls": false
     }
   ],
-  "commit": "944489bf",
-  "command": "uv run --group evals python -m evals.run --only bad-deploy --repeat 3",
+  "commit": "9950e3ef",
+  "command": "uv run --group evals python -m evals.run --only bad-deploy --repeat 3 --append docs/evals/data/scenarios-20261112-101647.jsonl",
   "reset_shop": true,
   "knowledge": true,
   "repo_docs": [
     "DannyKuk/bleep: demo/shop/docs/deploy.md",
     "DannyKuk/bleep: demo/shop/docs/services.md"
   ],
-  "raw": "../../data/evals/scenarios-20261112-101647.jsonl",
+  "raw": "data/scenarios-20261112-101647.jsonl",
   "report": "docs/evals/scenarios-2026-11-12.md",
   "grader": null,
   "grades": null
