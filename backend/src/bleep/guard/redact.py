@@ -144,27 +144,66 @@ def _quote_end(text: str, at: int, no_closer: set[str], limit: int | None = None
     return end
 
 
+def _closes_escaped(quote: str, width: int, at_least: bool) -> Callable[[int], bool]:
+    """Which runs of backslashes and `quote` close a string an escaped quote of `width` opens.
+    Each level of logfmt or JSON doubles every backslash, and one that escapes `quote` puts one
+    more before it, so a level never makes a quote narrower: a narrower run closes a string
+    around the command (`\\"` after `\\\\\\"`). A wider one ends in the same quote with backslashes
+    of the password before it (`\\"pw\\\\\\\\\\"`, a password ending in a backslash), which
+    double as often as the quote: inside a single-quoted string, where the shell escapes nothing,
+    each such run closes it. Inside a double-quoted one an odd number of them escapes the quote
+    (`\\\\\\"` after `\\"`); when every level escaped the quote, its width is a power of two and
+    the backslashes come in steps of twice that width, so only an even number closes it; when
+    not, the step is not known and any such run closes it, as it does for `at_least`."""
+    if at_least or quote == "'" or width & (width - 1):
+        return lambda run: run >= width
+    return lambda run: run >= width and (run - width) % (2 * width) == 0
+
+
 class _Closers:
     """What the scans for a closing quote up to one limit found: the quote kinds nothing closes
-    (`_quote_end`), and every escaped quote, a whole run of backslashes and a quote, by kind, from
-    one scan the first time one is looked for. Escaped quotes come in any width, so a line of
-    many widths costs that one scan, not one per width."""
+    (`_quote_end`), and every escaped quote, a whole run of backslashes and a quote, by its
+    quote and width, from one scan the first time one is looked for, so a line of many widths
+    costs that one scan."""
 
     def __init__(self) -> None:
         self.no_closer: set[str] = set()
-        self._escaped: dict[str, list[int]] | None = None
+        self._runs: dict[str, dict[int, list[int]]] | None = None  # quote, width: where each ends
+        self._closing: dict[tuple[str, int, bool], list[int]] = {}
 
-    def escaped_end(self, text: str, at: int, width: int, limit: int) -> int:
-        """Where the string the escaped quote of `width` characters at `at` opens (`\\"`, `\\'`,
-        `\\\\\\"`) ends, at the next escaped quote of the same width before `limit`; or -1. The
-        tail of a wider run (`\\"` in `\\\\\\"`) closes nothing."""
-        if self._escaped is None:
-            self._escaped = {}
+    def escaped_end(
+        self, text: str, at: int, width: int, limit: int, at_least: bool = False
+    ) -> int:
+        """Where the string the escaped quote of `width` characters at `at` (`\\"`, `\\'`,
+        `\\\\\\"`) opens ends, at the next run that closes it (`_closes_escaped`) before `limit`;
+        or -1. Each run is in the list of every width it closes: at most as many lists as its
+        own width, so building them stays linear."""
+        quote = text[at + width - 1]
+        closing = self._closing.get((quote, width, at_least))
+        if closing is None:
+            closes = _closes_escaped(quote, width, at_least)
+            runs = self._runs_of(text, at, limit)[quote]
+            closing = sorted(itertools.chain(*(ends for run, ends in runs.items() if closes(run))))
+            self._closing[(quote, width, at_least)] = closing
+        index = bisect.bisect_right(closing, at + width)
+        return closing[index] if index < len(closing) else -1
+
+    def backslashes_end(self, text: str, at: int, run: int, limit: int) -> int:
+        """Where the string ends that the run of `run` backslashes and a quote at `at` opens when
+        read as escaped backslashes and the escaped quote (`\\"`) or quote after them, which is
+        how the run reads when nothing closes it at its full width: an escaped quote is closed by
+        any run ending in one, a quote as `_quote_end` closes it. Or -1."""
+        if run % 2:
+            return _quote_end(text, at + run - 1, self.no_closer, limit)
+        return self.escaped_end(text, at + run - 2, 2, limit, at_least=True)
+
+    def _runs_of(self, text: str, at: int, limit: int) -> dict[str, dict[int, list[int]]]:
+        if self._runs is None:
+            self._runs = {'"': {}, "'": {}}
             for found in _WHOLE_ESCAPED_QUOTE.finditer(text, at, limit):
-                self._escaped.setdefault(found.group(), []).append(found.start())
-        places = self._escaped.get(text[at : at + width], [])
-        index = bisect.bisect_right(places, at)
-        return places[index] + width if index < len(places) else -1
+                run, quote = found.end() - found.start(), text[found.end() - 1]
+                self._runs[quote].setdefault(run, []).append(found.end())
+        return self._runs
 
 
 def _shell_words(
@@ -174,6 +213,7 @@ def _shell_words(
     first_only: bool = False,
     limit: int | None = None,
     closers: _Closers | None = None,
+    to_the_end: bool = False,
 ) -> tuple[list[tuple[int, int]], int | None]:
     """The words of a shell command from `start`, and where an unclosed quote opens, if one does.
 
@@ -186,10 +226,14 @@ def _shell_words(
     and the words go on; the place returned is the first such quote. A quote or backtick right
     after a word and before a blank, a comma, a colon, a full stop or a closing bracket ends the
     word: it closes a string or a code span the command sits in. An escaped quote (`\\"`, or
-    `\\\\\\"` escaped twice: any run of backslashes and a quote) is a quote as well, closed by the
-    same run, as logfmt escapes every quote and backslash in a value.
+    `\\\\\\"` escaped twice: any run of backslashes and a quote) is a quote as well, closed by a
+    run of at least its width (`_closes_escaped`), as logfmt escapes every quote and backslash in
+    a value.
     `first_only` stops after the first word, `limit` is where the text ends, and `closers` may
-    be shared by calls that read on to the same `limit` from later and later places.
+    be shared by calls that read on to the same `limit` from later and later places. A reading
+    `to_the_end` of the line reads an escaped quote nothing closes at its full width as escaped
+    backslashes and the quote after them (`_Closers.backslashes_end`), as a reading in pieces
+    cannot tell that nothing closes it.
     """
     words, at = [], start
     closers = _Closers() if closers is None else closers
@@ -211,6 +255,12 @@ def _shell_words(
                 if _closes_string(text, first, at, end, width):
                     break
                 closed = closers.escaped_end(text, at, width, end)
+                if closed < 0 and to_the_end:
+                    # an odd run as an escaped backslash and the quote of the string around it
+                    if width % 2 and _closes_string(text, first, at + width - 1, end):
+                        at += width - 1
+                        break
+                    closed = closers.backslashes_end(text, at, width, end)
                 if closed < 0:
                     unclosed = at if unclosed is None else unclosed
                 at = closed if closed >= 0 else at + width
@@ -290,9 +340,13 @@ def _hidden_part(word: str, keep: int) -> Edit | None:
 
 def _opening_quote(word: str) -> tuple[str, int]:
     """The quote `word` opens with (`"`, `'`, or an escaped `\\"`, `\\'`, `\\\\\\"`), and how many
-    characters it and its repeats take; none and 0 when it opens with no quote."""
+    characters it and its repeats take; none and 0 when it opens with no quote, or with one whose
+    width is no power of two (`\\\\"`), which escaped backslashes may lead."""
     found = _OPENING_QUOTE.match(word)
-    return (found.group(1), found.end()) if found else ("", 0)
+    width = len(found.group(1)) if found else 0
+    if not found or width & (width - 1):
+        return "", 0
+    return found.group(1), found.end()
 
 
 def _user_password_part(word: str, skip: int) -> Edit | None:
@@ -482,7 +536,7 @@ def _free_edits(
                 index, read_from = _next_name(names, index - 1, stop), -1
             continue
         whole, open_at = _shell_words(
-            text, spans[run_on][0], True, True, limit, closers.setdefault(limit, _Closers())
+            text, spans[run_on][0], True, True, limit, closers.setdefault(limit, _Closers()), True
         )
         first, last = whole[0]
         spans, words = spans[:run_on] + [(first, last)], words[:run_on] + [text[first:last]]

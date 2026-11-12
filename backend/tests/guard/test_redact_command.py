@@ -531,10 +531,69 @@ def test_a_password_between_quotes_escaped_twice_is_hidden_whole(command, form):
             'redis-cli -a \\"a \\\\\\"b\\\\\\" c\\" ping',
             'redis-cli -a \\"<redacted>\\" ping',
         ),
+        (
+            'msg="curl -u \\"bob:s3cret\\\\\\\\\\" http://x" status=500',
+            'msg="curl -u \\"bob:<redacted>\\" http://x" status=500',
+        ),
+        (
+            'msg="redis-cli -a \\" s3cret\\\\\\\\\\" ping" status=500',
+            'msg="redis-cli -a \\"<redacted>\\" ping" status=500',
+        ),
+        (
+            "msg='redis-cli -a \\' s3cret\\\\\\' ping' status=500",
+            "msg='redis-cli -a \\'<redacted>\\' ping' status=500",
+        ),
+        (
+            'msg="msg=\\"redis-cli -a \\\\\\" s3cret\\\\\\\\\\\\\\\\\\\\\\" ping\\"" n=1',
+            'msg="msg=\\"redis-cli -a \\\\\\"<redacted>\\\\\\" ping\\"" n=1',
+        ),
+        (
+            'msg="redis-cli -a \\"pw\\\\\\\\\\"\'\\" s3cret\' ping" n=1',
+            'msg="redis-cli -a \\"<redacted>\\" ping" n=1',
+        ),
+        (
+            _logfmt(_logfmt('redis-cli -a "pw\\\\"\'" s3cret\' ping')) + " n=1",
+            'msg="msg=\\"redis-cli -a \\\\\\"<redacted>\\\\\\" ping\\"" n=1',
+        ),
     ],
 )
-def test_an_escaped_quote_is_closed_only_by_a_run_of_the_same_width(line, expected):
+def test_an_escaped_quote_is_closed_by_a_run_the_shell_would_close_it_with(line, expected):
+    """A narrower run closes the string around the command, and a wider one of a double quote
+    holds an escaped quote of the password (`\\\\\\"` in `\\"`), but one that adds an even number of
+    the password's backslashes (`pw\\\\\\\\\\"`, a password ending in a backslash) closes it."""
     assert _hidden_once(line) == expected
+    in_json = redact_text(json.dumps({"log": line, "n": 1}))
+    assert "s3cret" not in in_json and json.loads(in_json)["n"] == 1
+
+
+@pytest.mark.parametrize(
+    ("hide", "line", "expected"),
+    [
+        (redact_text, 'msg="redis-cli -a pw\\\\" n=1', 'msg="redis-cli -a <redacted>\\\\" n=1'),
+        (redact_command, 'redis-cli -a \\\\"pw x" ping', "redis-cli -a <redacted> ping"),
+        (hide_client_passwords, 'redis-cli -a \\\\"pw x" ping', "redis-cli -a <redacted> ping"),
+        (
+            hide_client_passwords,
+            'redis-cli -a \\\\\\"pw\\\\\\" ping',
+            'redis-cli -a \\\\\\"<redacted>\\\\\\" ping',
+        ),
+        (
+            hide_client_passwords,
+            'redis-cli -a \\\\\\"pw x\\\\\\" ping',
+            'redis-cli -a \\\\\\"<redacted>\\\\\\" x\\\\\\" ping',
+        ),
+    ],
+)
+def test_a_run_of_backslashes_and_a_quote_keeps_its_backslashes_around_the_marker(
+    hide, line, expected
+):
+    """What reading a run as one quote changes: a password's trailing backslashes stay after
+    `<redacted>` with the quote they lead; an odd run (`\\\\"`, an escaped backslash and a quote)
+    opens no wide quote, so the word is hidden whole as before; and a wide quote that opens the
+    password is put back after `<redacted>`."""
+    out = hide(line)
+    assert out == expected
+    assert hide(out) == out
 
 
 def test_a_closing_quote_put_back_in_a_json_string_keeps_the_json():

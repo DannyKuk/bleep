@@ -6,6 +6,7 @@ Seeded, so a failure names the seed and the form and reproduces."""
 
 import json
 import random
+import re
 import shlex
 from collections.abc import Callable
 
@@ -15,38 +16,62 @@ from bleep.guard.redact import redact_with_count
 
 LINES_PER_FORM = 1500
 NAMES = ["curl", "mysql", "mongo", "redis-cli", "mongosh", "mysqladmin"]
-PIECES = [*NAMES, "ab", "-p", "-a", "x/y", "é", "😀", ",", ";"]
+PLAIN_PIECES = [*NAMES, "ab", "-p", "-a", "x/y", "é", "😀", ",", ";", "'"]
+PIECES = [*PLAIN_PIECES, "\\", "\\\\", '"']
 PREFIXES = ["", "+ ", "curl -s x && ", "mongo started; ", "echo ok; ", "INFO curl check ", "sh -c "]
 KEEP = "KEEPME"
+CORE = re.compile(r"Zq[0-9]{3}Xw")
+STRING_END = re.compile(rf"[\s,;:.)}}\]]|{'|'.join(NAMES)}")
 SHELL_SPECIAL = set(" '\"\\;`&|(")
 
 
-def _secret(rng: random.Random) -> tuple[str, str]:
-    """A password and the core that must never show: client names, flags, blanks and
-    punctuation around it, so it starts with a blank or a comma as often as with a letter."""
+def _secret(rng: random.Random, pieces: list[str]) -> tuple[str, str]:
+    """A password and the core that must never show: client names, flags, blanks, quotes,
+    backslashes and punctuation around it, so it starts with a blank or a comma as often as
+    with a letter."""
     core = f"Zq{rng.randint(100, 999)}Xw"
-    parts = [core]
+    parts = [rng.choice(["", " "]) + core]
     for _ in range(rng.randint(0, 3)):
-        parts.append(rng.choice(["", " ", "  "]) + rng.choice(PIECES))
+        parts.append(rng.choice(["", " ", "  "]) + rng.choice(pieces))
     rng.shuffle(parts)
     return "".join(parts), core
 
 
-def _quoted(rng: random.Random, value: str) -> str:
+def _double_quoted(value: str) -> str:
+    """`value` as a shell writes it inside double quotes, its `\\`, `"`, `$` and `` ` `` escaped."""
+    return '"' + "".join("\\" + c if c in '\\"$`' else c for c in value) + '"'
+
+
+def _quoted(rng: random.Random, value: str, split: bool) -> str:
+    """`value` quoted as a shell would, or, when `split`, also as a double-quoted part and a
+    single-quoted one (`"pw\\\\"'" s3cret'`), cut outside the core. One holding `'` goes in double
+    quotes, as `shlex.quote` would put a quote in the middle of the word (`'a'"'"'b'`), and the
+    single-quoted part never starts with a blank, punctuation or a client's name: a quote there,
+    after a word and before a blank or the next command, is read as the end of a string around
+    the command (docs/design/guard.md)."""
     draw = rng.random()
+    core = CORE.search(value)
+    if split and core and draw < 0.2 and "'" not in value:
+        cuts = [*range(1, core.start() + 1), *range(core.end(), len(value))]
+        cuts = [cut for cut in cuts if not STRING_END.match(value, cut)]
+        if cuts:
+            cut = rng.choice(cuts)
+            return _double_quoted(value[:cut]) + f"'{value[cut:]}'"
+    if "'" in value or 0.4 <= draw < 0.7:
+        return _double_quoted(value)
     if draw < 0.4:
         return shlex.quote(value)
-    if draw < 0.7 and not set(value) & set('"\\$`'):
-        return f'"{value}"'
     if not set(value) & SHELL_SPECIAL:
         return value
     return shlex.quote(value)
 
 
-def _command(rng: random.Random) -> tuple[str, str]:
-    value, core = _secret(rng)
-    quoted = _quoted(rng, value)
-    user = _quoted(rng, "bob:" + value)
+def _command(rng: random.Random, plain: bool) -> tuple[str, str]:
+    """A client's command with a generated password; a `plain` one holds no backslash or `"`
+    and is quoted in one part."""
+    value, core = _secret(rng, PLAIN_PIECES if plain else PIECES)
+    quoted = _quoted(rng, value, not plain)
+    user = _quoted(rng, "bob:" + value, not plain)
     commands = [
         f"redis-cli -h db -a {quoted} ping",
         f"redis-cli --pass {quoted} ping",
@@ -89,6 +114,9 @@ FORMS: dict[str, Callable[[str, str, random.Random], str]] = {
         _logfmt(line) + " other=" + _logfmt(f'redis-cli -a "x y" {KEEP}')
     ),
 }
+# Forms that quote with `'` and leave `"` as it is: the shell's double quote stays a plain quote
+# whose escaped backslashes they double, which the redaction does not read (docs/design/guard.md)
+DOUBLE_QUOTE_LEFT_PLAIN = {"logfmt single", "repr"}
 JSON_FORMS = {"json", "argv", "sh -c", "logfmt in json", "json in json", "logfmt twice in json"}
 
 
@@ -96,7 +124,7 @@ def _problems(form: str, seed: int) -> list[tuple[str, str, str]]:
     rng = random.Random(f"{form}/{seed}")
     problems = []
     for _ in range(LINES_PER_FORM):
-        command, core = _command(rng)
+        command, core = _command(rng, form in DOUBLE_QUOTE_LEFT_PLAIN)
         line = FORMS[form](rng.choice(PREFIXES) + command, command, rng)
         out, count = redact_with_count(line)
         if core in out:
