@@ -1848,3 +1848,135 @@ async def test_a_failure_after_a_bare_look_opens_at_once(tmp_path):
     await minutes(r, 2)
 
     assert len(r.runner.started) == 2 and r.runner.started[-1].title.startswith("url failed")
+
+
+# --- what the watcher waits on before it opens an incident (#358) ---
+
+
+def stop(name: str, at: datetime) -> DockerEvent:
+    return DockerEvent(
+        time=at,
+        type="container",
+        action="stop",
+        container_id=f"id-{name}",
+        container_name=name,
+        attributes={"name": name},
+    )
+
+
+def crash_shop(r: Rig, exit_code: int = 1, stopped: bool = False) -> None:
+    """shop-web-1 dies (stopped on purpose first, when `stopped`) and is listed exited."""
+    at = r.clock.now + timedelta(seconds=1)
+    if stopped:
+        r.engine.history.append(stop("shop-web-1", at))
+    r.engine.history.append(die("shop-web-1", at, exit_code))
+    r.engine.container_list[0] = box(
+        "shop-web-1", "shop", state="exited", exit_code=exit_code, restart_policy="no"
+    )
+
+
+async def test_a_url_failing_once_is_watched_with_its_count_until_its_incident_opens(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    r.not_found.add("shop")
+    await r.pulse()
+    [pending] = await r.manager.watching()
+    assert (pending.kind, pending.subject.service_id) == ("url", SHOP)
+    assert (pending.url, pending.failures, pending.failures_to_open) == (
+        "https://shop.example/",
+        1,
+        2,
+    )
+    await r.pulse()
+    assert len(r.runner.started) == 1
+    assert await r.manager.watching() == []
+
+
+async def test_a_death_inside_its_grace_window_is_watched_until_it_opens(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse(urls=False)
+    crash_shop(r)
+    await r.pulse(urls=False)
+    [pending] = await r.manager.watching()
+    assert (pending.kind, pending.container) == ("container", "shop-web-1")
+    for _ in range(5):
+        await r.pulse(urls=False)
+    assert len(r.runner.started) == 1
+    assert await r.manager.watching() == []
+
+
+async def test_a_host_not_answering_is_watched_inside_its_window(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    await r.lose_host()
+    await r.pulse(urls=False)
+    await r.pulse(urls=False)
+    watched = [p for p in await r.manager.watching() if p.subject == HOST]
+    assert [p.kind for p in watched] == ["unreachable"]
+
+
+async def test_a_host_that_may_sleep_is_never_watched_for_not_answering(tmp_path):
+    r = await Rig(tmp_path, may_sleep=True).boot()
+    await r.pulse()
+    await r.lose_host()
+    await r.pulse(urls=False)
+    await r.pulse(urls=False)
+    assert await r.manager.watching() == []
+
+
+async def test_a_quiet_service_is_not_watched(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("service", SHOP, "leave_alone", None)
+    await r.pulse()
+    r.not_found.add("shop")
+    await r.pulse()
+    assert await r.manager.watching() == []
+
+
+async def test_a_container_stopped_on_purpose_is_not_watched_though_it_exited_137(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse(urls=False)
+    crash_shop(r, exit_code=137, stopped=True)
+    await r.pulse(urls=False)
+    assert await r.manager.watching() == []
+
+
+async def test_a_container_already_dead_when_bleep_started_is_not_watched(tmp_path):
+    r = Rig(tmp_path)
+    crash_shop(r)
+    r.engine.history.clear()  # it died before Bleep was there to see it
+    await r.boot()
+    for _ in range(3):
+        await r.pulse(urls=False)
+    assert await r.manager.watching() == []
+
+
+async def test_a_paused_or_created_container_is_not_watched(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse(urls=False)
+    r.engine.container_list[0] = box("shop-web-1", "shop", state="paused")
+    r.engine.container_list[1] = box("blog-web-1", "blog", state="created")
+    for _ in range(3):
+        await r.pulse(urls=False)
+    assert await r.manager.watching() == []
+
+
+async def test_a_container_still_dead_after_its_incident_ended_is_not_watched(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse(urls=False)
+    await r.kill("shop")
+    await close_open(r, Subject(kind="service", host_id="h", service_id=SHOP))
+    for _ in range(3):
+        await r.pulse(urls=False)
+    assert await r.manager.watching() == []
+
+
+async def test_a_url_failure_that_outlived_its_incident_is_not_watched_while_held(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    r.not_found.add("shop")
+    await minutes(r, 2)
+    await close_open(r, Subject(kind="service", host_id="h", service_id=SHOP))
+    await minutes(r, 1)  # one failure of the next streak, inside the hour's hold
+    assert r.detector.pending() != []
+    assert await r.manager.watching() == []

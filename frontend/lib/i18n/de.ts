@@ -16,7 +16,7 @@ export const de: Messages = {
     theme: (current, next) => `Darstellung: ${current}. Zu ${next} wechseln`,
     state: {
       red: "etwas braucht dich",
-      amber: "Bleep arbeitet an etwas",
+      amber: "Bleep hat etwas im Blick",
       green: "alles gut",
       checking: "wird geprüft",
     },
@@ -368,6 +368,7 @@ export const de: Messages = {
     noRecentCheck: "Keine aktuelle Prüfung",
     allQuiet: "Alles ruhig",
     noHosts: "Keine Hosts",
+    watching: "Unter Beobachtung",
   },
   counts: {
     hosts: (n) => `${n} Host${n === 1 ? "" : "s"}`,
@@ -413,6 +414,25 @@ export const de: Messages = {
     lastHeard: (when) => `Zuletzt habe ich am ${when} von ihm gehört`,
     notReached: "Ich habe ihn noch nicht erreicht",
     blind: (names) => `, deshalb sehe ich ${names} nicht`,
+    lookAfterHost: (when) => `Antwortet er bis ${when} nicht, sehe ich ihn mir genauer an.`,
+    watchingOne: (name, reason) => `Ich beobachte ${name}: ${reason}.`,
+    watchingMany: (names) => `Ich beobachte ${names}.`,
+    containerDied: "ein Container ist ausgefallen",
+    urlFailed: (count) => {
+      if (count === 1) return "seine URL-Prüfung ist einmal fehlgeschlagen";
+      if (count === 2) return "seine URL-Prüfung ist zweimal fehlgeschlagen";
+      return `seine URL-Prüfung ist ${count}-mal in Folge fehlgeschlagen`;
+    },
+    urlFailing: "seine URL-Prüfung schlägt fehl",
+    lookAfterTime: (when) => `Ist er bis ${when} nicht zurück, sehe ich ihn mir genauer an.`,
+    lookAfterChecks: (left) =>
+      left === 1
+        ? "Schlägt auch die nächste Prüfung fehl, sehe ich ihn mir genauer an."
+        : `Schlagen noch ${left} Prüfungen fehl, sehe ich ihn mir genauer an.`,
+    moreServices: (count) => `${count} weitere`,
+    lookIfOne: "Hält das an, sehe ich ihn mir genauer an.",
+    lookIfMany: "Bei jedem, bei dem das anhält, sehe ich genauer hin.",
+    showService: "Dienst ansehen",
     nothingNeeds: "Gerade braucht dich nichts.",
     watching: (hosts, services) => `Ich beobachte ${hosts} und ${services}.`,
     noHostsToWatch: "Ich habe noch keinen Host, den ich beobachten kann.",

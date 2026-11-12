@@ -17,10 +17,10 @@ export interface Pose {
   handLeft: Point;
   handRight: Point;
   hop: boolean;
-  headMotion?: "tilt";
+  headMotion?: "tilt" | "lean";
   eyesMotion: "blink" | "wander";
   leftMotion: "float" | "flailL" | "scratch";
-  rightMotion: "wave" | "float" | "float2" | "flailR";
+  rightMotion: "wave" | "float" | "float2" | "flailR" | "chin";
   question: boolean;
 }
 
@@ -53,6 +53,22 @@ export const POSES: Record<Mood, Pose> = {
     eyesMotion: "wander",
     leftMotion: "float",
     rightMotion: "float2",
+    question: false,
+  },
+  // The "hmm": the eyes look aside at the thing that fails, the head leans towards it and one
+  // hand rests on the chin. Amber like working, but the light holds steady.
+  watching: {
+    eyes: "M51 46h2 M75 46h2",
+    eyeWidth: 8,
+    lcd: "#FFD36E",
+    light: "warn",
+    handLeft: [28, 92],
+    handRight: [68, 76],
+    hop: false,
+    headMotion: "lean",
+    eyesMotion: "blink",
+    leftMotion: "float",
+    rightMotion: "chin",
     question: false,
   },
   needs_you: {

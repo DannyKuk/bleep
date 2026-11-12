@@ -36,6 +36,7 @@ const HOST: HostView = {
   may_sleep: false,
   quiet: null,
   quiet_service_ids: [],
+  watching: null,
 };
 
 const router = vi.hoisted(() => ({ push: vi.fn() }));
@@ -51,6 +52,7 @@ const SHOP: ServiceView = {
   urls: [],
   open_incident_id: null,
   quiet: null,
+  watching: [],
 };
 const WORKER: ServiceView = { ...SHOP, id: "m1/compose:worker", name: "worker", health: "down" };
 const ELSEWHERE: ServiceView = { ...SHOP, id: "m2/compose:blog", host_id: "m2", name: "blog" };

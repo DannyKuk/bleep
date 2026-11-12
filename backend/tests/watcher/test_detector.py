@@ -783,3 +783,79 @@ def test_a_new_container_drops_the_old_ones_pending_death():
         clock.now - timedelta(seconds=70)
     ]
     assert down.run is None
+
+
+# --- what the detector waits on (#358) ---
+
+
+def test_nothing_is_pending_at_first():
+    det, _ = make()
+    assert det.pending() == []
+
+
+def test_a_url_failing_once_of_the_two_it_needs_is_pending_with_its_count():
+    det, clock = make()
+    url = "http://web/"
+    det.feed(sig(SVC, "url_failed", clock, ok=False, url=url, latency_ms=10))
+    [pending] = det.pending()
+    assert (pending.kind, pending.subject, pending.url) == ("url", SVC, url)
+    assert (pending.failures, pending.failures_to_open) == (1, 2)
+    assert pending.since == T0 and pending.opens_after is None
+
+    clock.at(30)
+    assert isinstance(
+        det.feed(sig(SVC, "url_failed", clock, ok=False, url=url, latency_ms=10))[0], OpenIncident
+    )
+    assert det.pending() == []  # it opened: nothing waits any more
+
+
+def test_a_url_that_passes_again_is_no_longer_pending():
+    det, clock = make()
+    det.feed(sig(SVC, "url_failed", clock, ok=False, url="http://web/", latency_ms=10))
+    clock.at(30)
+    det.feed(sig(SVC, "url_failed", clock, ok=True, url="http://web/", latency_ms=10))
+    assert det.pending() == []
+
+
+def test_a_death_is_pending_until_its_grace_window_ends():
+    det, clock = make()
+    death = died(clock)
+    det.feed(death)
+    [pending] = det.pending()
+    assert (pending.kind, pending.container, pending.signals) == ("container", "web-1", [death])
+    assert pending.opens_after == T0 + timedelta(seconds=60)
+    det.tick(clock.at(61), states(box(state="exited")), host_id="h1")
+    assert det.pending() == []
+
+
+def test_a_recovered_death_is_no_longer_pending():
+    det, clock = make()
+    det.feed(died(clock))
+    det.tick(clock.at(20), states(box(health="healthy")), host_id="h1")
+    assert det.pending() == []
+
+
+def test_a_one_shot_exit_0_is_never_pending():
+    det, clock = make()
+    det.feed(died(clock, exit_code=0, restart_policy="no"))
+    assert det.pending() == []
+
+
+def test_a_host_not_answering_is_pending_until_its_window_ends():
+    det, clock = make()
+    det.feed(sig(HOST, "host_unreachable", clock))
+    clock.at(60)
+    det.feed(sig(HOST, "host_unreachable", clock))
+    [pending] = det.pending()
+    assert (pending.kind, pending.subject, pending.since) == ("unreachable", HOST, T0)
+    assert pending.opens_after == T0 + timedelta(seconds=300)
+    clock.at(120)
+    det.feed(sig(HOST, "host_unreachable", clock, ok=True))
+    assert det.pending() == []
+
+
+def test_memory_and_load_streaks_are_not_shown_as_pending():
+    det, clock = make()
+    det.feed(sig(HOST, "memory", clock, available_percent=1))
+    det.feed(sig(HOST, "load", clock, load_per_cpu=50))
+    assert det.pending() == []

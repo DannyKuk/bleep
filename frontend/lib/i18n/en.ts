@@ -23,7 +23,7 @@ export const en = {
     theme: (current: string, next: string) => `Theme: ${current}. Switch to ${next}`,
     state: {
       red: "something needs you",
-      amber: "Bleep is working on something",
+      amber: "Bleep has its eye on something",
       green: "all good",
       checking: "checking",
     },
@@ -374,6 +374,7 @@ export const en = {
     noRecentCheck: "No recent check",
     allQuiet: "All quiet",
     noHosts: "No hosts",
+    watching: "Watching",
   },
   counts: {
     hosts: (n: number) => `${n} host${n === 1 ? "" : "s"}`,
@@ -421,6 +422,26 @@ export const en = {
     lastHeard: (when: string) => `I last heard from it at ${when}`,
     notReached: "I have not reached it yet",
     blind: (names: string) => `, so I cannot see ${names}`,
+    lookAfterHost: (when: string) => `If it does not answer by ${when}, I will look into it.`,
+    // What the watcher waits on before it opens an incident, as it reports it (#358).
+    watchingOne: (name: string, reason: string) => `Watching ${name}: ${reason}.`,
+    watchingMany: (names: string) => `Watching ${names}.`,
+    containerDied: "a container died",
+    urlFailed: (count: number) => {
+      if (count === 1) return "its URL check failed once";
+      if (count === 2) return "its URL check failed twice";
+      return `its URL check failed ${count} times in a row`;
+    },
+    urlFailing: "its URL check fails",
+    lookAfterTime: (when: string) => `If it is not back by ${when}, I will look into it.`,
+    lookAfterChecks: (left: number) =>
+      left === 1
+        ? "If the next check fails too, I will look into it."
+        : `If ${left} more checks fail, I will look into it.`,
+    moreServices: (count: number) => `${count} more`,
+    lookIfOne: "I will look into it if it keeps failing.",
+    lookIfMany: "I will look into each one that keeps failing.",
+    showService: "Show me the service",
     nothingNeeds: "Nothing needs you right now.",
     watching: (hosts: string, services: string) => `I am watching ${hosts} and ${services}.`,
     noHostsToWatch: "I have no hosts to watch yet.",

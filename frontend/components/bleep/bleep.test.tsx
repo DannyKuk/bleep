@@ -44,6 +44,7 @@ describe("Bleep", () => {
   it.each([
     ["all_good", "ok", "float", "wave"],
     ["working", "warn", "float", "float2"],
+    ["watching", "warn", "float", "chin"],
     ["needs_you", "down", "flailL", "flailR"],
     ["not_sure", "stop", "scratch", "float"],
     ["resting", "ok", "float", "float2"],
@@ -52,6 +53,14 @@ describe("Bleep", () => {
     expect(part("light")).toHaveAttribute("data-light", light);
     expect(part("hand-left")).toHaveAttribute("data-motion", l);
     expect(part("hand-right")).toHaveAttribute("data-motion", r);
+  });
+
+  it("watches with a hand on its chin and a steady light, unlike working", () => {
+    const watching = draw("watching", 132);
+    const place = watching.part("hand-right")!.firstElementChild!;
+    expect(place.getAttribute("style")).toContain("translate(68px, 76px)");
+    expect(watching.part("light")!.getAttribute("class")).not.toMatch(/pulse/);
+    expect(draw("working", 132).part("light")!.getAttribute("class")).toMatch(/slowpulse/);
   });
 
   it("floats a question mark only when it is not sure", () => {

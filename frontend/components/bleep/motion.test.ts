@@ -27,6 +27,11 @@ describe("Bleep's motion", () => {
     }
   });
 
+  it("keeps the watching lean as a pose when motion is off", () => {
+    const lean = css.slice(css.indexOf(".lean {"), css.indexOf("}", css.indexOf(".lean {")));
+    expect(lean).toMatch(/^\s*transform: rotate\(5deg\);/m);
+  });
+
   it("names only keyframes it defines", () => {
     const used = [...css.matchAll(/animation: (\w+) /g)]
       .map((m) => m[1])

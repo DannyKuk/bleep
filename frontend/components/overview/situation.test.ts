@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { diagnosis, incident } from "@/components/incident/fixtures";
-import { host, service } from "@/components/overview/fixtures";
-import { heroSituation, isHurting, reachLine } from "@/components/overview/situation";
+import { host, service, watch } from "@/components/overview/fixtures";
+import {
+  heroSituation,
+  isHurting,
+  reachLine,
+  watchedNames,
+  watchReason,
+} from "@/components/overview/situation";
 import type { HostView, IncidentDetail, ServiceView } from "@/lib/api-types";
 import { MESSAGES } from "@/lib/i18n";
 
@@ -117,6 +123,109 @@ describe("heroSituation", () => {
     expect(heroSituation({ incidents: done, hosts: [], details: {}, now: NOW })).toEqual({
       kind: "no_hosts",
     });
+  });
+});
+
+describe("heroSituation while Bleep watches (#358)", () => {
+  const down = (overrides: Partial<ServiceView> = {}) =>
+    service({ health: "down", watching: [watch()], ...overrides });
+  const situation = (services: ServiceView[], hosts = [host()]) =>
+    heroSituation({ incidents: [], hosts, services, details: {}, now: NOW });
+
+  it("watches a service the watcher waits on, with no incident open for it", () => {
+    expect(situation([down(), service({ id: "b" })])).toMatchObject({
+      kind: "watching",
+      services: [{ id: "demo/compose:shop" }],
+    });
+  });
+
+  it("does not watch a service that only shows down: the watcher waits on nothing for it", () => {
+    expect(situation([down({ watching: [] })])).toEqual({ kind: "quiet" });
+  });
+
+  it("puts an incident Bleep works on and an unreachable host first", () => {
+    const working = heroSituation({
+      incidents: [incident({ status: "investigating" })],
+      hosts: [host()],
+      services: [down({ id: "b" })],
+      details: {},
+      now: NOW,
+    });
+    expect(working).toMatchObject({ kind: "incident" });
+    const unreachable = situation([down()], [host(), host({ id: "far", reachable: false })]);
+    expect(unreachable).toMatchObject({ kind: "unreachable", host: { id: "far" } });
+  });
+
+  it("is quiet for a service quiet or with its incident open, though the watcher waits", () => {
+    const quiet = { scope: "service", mode: "snooze", until: null, since: "x" } as const;
+    expect(situation([down({ quiet }), down({ open_incident_id: "inc-1" })])).toEqual({
+      kind: "quiet",
+    });
+  });
+});
+
+describe("watchReason", () => {
+  const container = service().containers[0];
+  const at = (iso: string) => `at ${iso.slice(11, 16)}`;
+  const reason = (overrides: Partial<ServiceView>) =>
+    watchReason(service({ health: "down", ...overrides }), MESSAGES.en, at);
+  const failing = {
+    url: "http://localhost:8080/",
+    status: "failing",
+    last_checked: null,
+    status_code: 503,
+    latency_ms: 30,
+  } as const;
+
+  it("says how many checks failed in a row and how many more open an incident", () => {
+    expect(reason({ urls: [failing], watching: [watch()] })).toEqual({
+      reason: "its URL check failed once",
+      look: "If the next check fails too, I will look into it.",
+      detail: "http://localhost:8080/ · 503",
+    });
+    const twice = watch({ failures: 2, failures_to_open: 5 });
+    expect(reason({ watching: [twice] })).toMatchObject({
+      reason: "its URL check failed twice",
+      look: "If 3 more checks fail, I will look into it.",
+    });
+  });
+
+  it("names a death inside its grace window before a URL, with when the window ends", () => {
+    const dead = { ...container, state: "exited", exit_code: 137 };
+    const grace = watch({
+      kind: "container",
+      url: null,
+      container: "shop-web-1",
+      failures: null,
+      failures_to_open: null,
+      opens_after: "2026-11-02T19:01:00Z",
+    });
+    expect(reason({ containers: [dead], watching: [watch(), grace] })).toEqual({
+      reason: "a container died",
+      look: "If it is not back by at 19:01, I will look into it.",
+      detail: "shop-web-1 · exited (137)",
+    });
+  });
+
+  it("claims no count the watcher did not give", () => {
+    const uncounted = watch({ failures: null, failures_to_open: null });
+    expect(reason({ watching: [uncounted] })).toMatchObject({
+      reason: "its URL check fails",
+      look: "I will look into it if it keeps failing.",
+    });
+  });
+});
+
+describe("watchedNames", () => {
+  const named = (...names: string[]) =>
+    watchedNames(
+      names.map((name) => service({ id: name, name })),
+      MESSAGES.en,
+    );
+
+  it("names up to three, then two and how many more", () => {
+    expect(named("a", "b", "c")).toBe("a, b and c");
+    expect(named("a", "b", "c", "d", "e")).toBe("a, b and 3 more");
   });
 });
 

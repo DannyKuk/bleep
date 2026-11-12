@@ -59,6 +59,23 @@ class QuietView(BaseModel):
         return cls(scope=state.scope, mode=state.mode, until=state.until, since=state.since)
 
 
+class WatchView(BaseModel):
+    """A failure the watcher has seen and waits on before it opens an incident (#358), shown
+    only while an incident would open once the wait is over (not quiet, asleep, already open or
+    held as a repeat). `url`: `failures` checks in a row failed of the `failures_to_open` it
+    needs. `container`: a death inside its grace window, which ends at `opens_after`.
+    `unreachable`: the host has not answered since `since`, and its window ends at
+    `opens_after`."""
+
+    kind: Literal["url", "container", "unreachable"]
+    since: datetime
+    opens_after: datetime | None = None
+    url: str | None = None
+    container: str | None = None
+    failures: int | None = None
+    failures_to_open: int | None = None
+
+
 class HostView(BaseModel):
     id: str
     name: str
@@ -72,6 +89,7 @@ class HostView(BaseModel):
     may_sleep: bool = False
     quiet: QuietView | None = None
     quiet_service_ids: list[str] = []
+    watching: WatchView | None = None
 
 
 class ContainerView(BaseModel):
@@ -119,6 +137,7 @@ class ServiceView(BaseModel):
     urls: list[UrlStatus]
     open_incident_id: str | None
     quiet: QuietView | None = None
+    watching: list[WatchView] = []
 
 
 ApprovalStatus = Literal["pending", "approved", "rejected", "instructed", "closed"]
