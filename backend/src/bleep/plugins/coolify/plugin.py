@@ -27,12 +27,14 @@ See docs/design/plugins.md.
 """
 
 import asyncio
+import ipaddress
 import json
 import logging
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit
 
 import httpx
 from langchain_core.tools import BaseTool, StructuredTool
@@ -61,7 +63,7 @@ from bleep.plugins.coolify.deploys import CoolifyDeploys
 from bleep.schemas.coolify import CoolifyApplication, CoolifyDeployment, CoolifyEnvKey
 from bleep.schemas.graph import Action, ApprovalGrant, ApprovalRecord, PlanStep, StepResult
 from bleep.schemas.plugins import PluginHealth
-from bleep.schemas.services import Service
+from bleep.schemas.services import CheckSuggestions, Service
 from bleep.schemas.settings import has_userinfo
 from bleep.schemas.shown import Shown
 from bleep.tools.common import UNTRUSTED
@@ -453,6 +455,62 @@ def suggested_checks(service: Service, apps: list[CoolifyApplication]) -> list[U
     return found[:SUGGESTED_MAX]
 
 
+def _domain_host(item: str) -> str | None:
+    """The host of one domain item in lower case, without port or final dot; None when the item
+    is not a URL."""
+    url = _URL.fullmatch(item.strip())
+    parts = _AUTHORITY.fullmatch(url["rest"]) if url else None
+    return (parts["host"].lower().rstrip(".") or None) if parts else None
+
+
+def _current_hosts(service: Service, app: CoolifyApplication) -> set[str]:
+    """The hosts of every domain `app` has for `service`, preview domains and ones with a query
+    included; empty when it has none or when one item is not a URL (a wildcard), since the list
+    cannot then be said to be complete."""
+    hosts: set[str] = set()
+    for item, _, _ in _offered_domains(service, app):
+        if not item.strip():
+            continue
+        host = _domain_host(item)
+        if host is None:
+            return set()
+        hosts.add(host)
+    return hosts
+
+
+def _checked_domain(url: str) -> str | None:
+    """The host of a check's URL in lower case when it is a domain name (a dot, not an address);
+    a check on `localhost`, a Docker name or an IP address is no Coolify domain."""
+    try:
+        host = (urlsplit(url).hostname or "").rstrip(".")
+    except ValueError:
+        return None
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return host if "." in host else None
+    return None
+
+
+def stale_checks(service: Service, apps: list[CoolifyApplication]) -> list[UrlCheckConfig]:
+    """The checks `service` has whose host is not among its application's current domains
+    (#493), by the same domains `suggested_checks` offers. Only hosts are compared, so a check
+    typed by hand on another domain of the service is flagged too. None when the service has
+    no single application, when the application lists no domain (a hand-typed check may be the
+    only way to reach it), or when its domain list is not readable as a whole."""
+    app = app_of(service, apps)
+    if app is None:
+        return []
+    hosts = _current_hosts(service, app)
+    if not hosts:
+        return []
+    return [
+        check
+        for check in service.urls
+        if (host := _checked_domain(check.url)) is not None and host not in hosts
+    ]
+
+
 def _failed(error: CoolifyError) -> str:
     return f"Coolify could not be read: {error}."
 
@@ -795,17 +853,20 @@ class CoolifyPlugin(Plugin):
             for action in ("coolify.redeploy", "coolify.set_env")
         }
 
-    async def suggested_checks(self, ctx: PluginContext, service: Service) -> list[UrlCheckConfig]:
-        """The checks the domains of the service's Coolify application suggest; none when it has
-        no application or Coolify cannot be read."""
+    async def check_suggestions(self, ctx: PluginContext, service: Service) -> CheckSuggestions:
+        """The checks the domains of the service's Coolify application suggest, and the service's
+        own checks on a domain it no longer has; nothing when it has no application or Coolify
+        cannot be read."""
         if service.source != "coolify":
-            return []
+            return CheckSuggestions()
         try:
             apps = await self.client(ctx).applications()
         except CoolifyError as error:
             log.warning("coolify: no suggested checks: %s", type(error).__name__)
-            return []
-        return suggested_checks(service, apps)
+            return CheckSuggestions()
+        return CheckSuggestions(
+            offered=suggested_checks(service, apps), stale=stale_checks(service, apps)
+        )
 
     async def health(self, ctx: PluginContext) -> PluginHealth:
         """Coolify's version, read with the token; the error's own words when that fails."""

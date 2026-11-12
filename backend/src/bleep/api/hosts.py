@@ -7,8 +7,8 @@ from fastapi import APIRouter, Depends
 
 from bleep.api.deps import Watching, get_parts, get_watching
 from bleep.api.errors import Refusal
-from bleep.hosts.config import UrlCheckConfig
 from bleep.schemas.api import HostView, ServiceDetail, ServiceView, UrlHistory
+from bleep.schemas.services import CheckSuggestions
 from bleep.watcher.overview import Overview
 from bleep.wiring import AppParts
 
@@ -47,15 +47,17 @@ async def list_services(
 @router.get("/services/{service_id:path}/suggested-checks")
 async def suggested_checks(
     service_id: str, parts: Annotated[AppParts, Depends(get_parts)]
-) -> list[UrlCheckConfig]:
-    """URL checks the switched-on plugins suggest for the service, such as its Coolify
-    application's domains, without those it has (#348); empty when no plugin suggests any. They
-    are offered on the service's page and saved like any URL set there; nothing is checked before.
-    Declared before `GET /services/{id}`, which would otherwise take this path too."""
+) -> CheckSuggestions:
+    """What the switched-on plugins say about the service's URL checks: `offered`, such as its
+    Coolify application's domains, without those it has (#348), and `stale`, the checks it has on
+    a domain Coolify no longer lists (#493). Both are empty when no plugin says anything. They
+    are shown on the service's page; an offer is saved like any URL set there, and nothing is
+    checked or removed before a person clicks. Declared before `GET /services/{id}`, which would
+    otherwise take this path too."""
     service = parts.registry.service(service_id)
     if service is None:
         raise Refusal(404, "no_service")
-    return await parts.plugins.suggested_checks(service)
+    return await parts.plugins.check_suggestions(service)
 
 
 @router.get("/services/{service_id:path}")
