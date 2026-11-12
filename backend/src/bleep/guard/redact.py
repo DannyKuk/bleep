@@ -175,14 +175,15 @@ def _closes_escaped(
     one an odd number of them escapes the quote (`\\\\\\"` after `\\"`): the backslashes come in
     steps of twice the highest power of two the levels wrote, the width when every level escaped
     the quote (1, 2, 4 …), so only an even number closes it. A level that quotes with `'`
-    (single-quoted logfmt, Python's `repr`) doubles the backslashes and leaves `"` as it is, so
-    each of `levels` such levels inside those that escape the quote doubles its step again
-    (`"a\\\\" s3cret"` is `"a\\" s3cret"` in `repr`)."""
+    (single-quoted logfmt, Python's `repr`) doubles the backslashes and leaves `"` as it is, a 0
+    among the ones in the binary count of the quote's backslashes when it lies between levels that
+    escape it; each of the `levels` such levels around the command not counted that way lies
+    inside them all and doubles the step again (`"a\\\\" s3cret"` is `"a\\" s3cret"` in `repr`)."""
     if at_least or kind.endswith("'"):
         return lambda run: run >= width
-    step = 2 << (width - 1).bit_length()
-    if not width & (width - 1):
-        step <<= levels
+    backslashes = width - 1
+    counted = backslashes.bit_length() - backslashes.bit_count()
+    step = 2 << backslashes.bit_length() << max(0, levels - counted)
     return lambda run: run >= width and (run - width) % step == 0
 
 

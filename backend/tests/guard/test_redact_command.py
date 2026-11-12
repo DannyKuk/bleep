@@ -723,6 +723,33 @@ def test_each_level_that_quotes_with_a_single_quote_is_read_inside_its_own_strin
     assert _hidden_once(line) == expected
 
 
+def _single_logfmt(text: str) -> str:
+    return "msg='" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        lambda c: _single_logfmt(_logfmt(f"cmd={c!r}")),
+        lambda c: "cmd=" + repr(_logfmt(_single_logfmt(c))),
+        lambda c: _single_logfmt(_logfmt(_single_logfmt(c))),
+    ],
+    ids=["repr in logfmt in single", "single in logfmt in repr", "single, logfmt, single"],
+)
+@pytest.mark.parametrize(
+    "command",
+    ['redis-cli -a "a\\" s3cret" ping', 'redis-cli -a "a\\\\\\" s3cret\\\\" ping'],
+)
+def test_a_level_that_quotes_with_a_single_quote_counts_once_between_and_inside_others(
+    form, command
+):
+    """A `'` level between two that escape `"` shows in the width of the quote (`\\\\"`, a 0 in
+    its binary count); one inside them all does not, and each counts once."""
+    line = form(command) + " n=1"
+    out = _hidden_once(line)
+    assert "s3cret" not in out and "n=1" in out
+
+
 @pytest.mark.parametrize(
     "line",
     [
