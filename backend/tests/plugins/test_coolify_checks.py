@@ -74,7 +74,7 @@ def test_a_check_on_the_health_path_expects_the_status_coolify_expects_and_slash
     assert statuses(blog, apps()) == statuses(notes, apps()) == {200}
 
 
-@pytest.mark.parametrize("code", [None, "204", 99, 600, True, 2.5])
+@pytest.mark.parametrize("code", [None, "204", 99, 100, 199, 301, 302, 399, 600, True, 2.5])
 def test_a_health_path_without_a_usable_return_code_expects_200(code):
     raw = json.loads((FIXTURES / "domains.json").read_text(encoding="utf-8"))
     raw[0]["health_check_return_code"] = code
@@ -291,7 +291,16 @@ def test_an_odd_health_check_field_reads_as_unknown_and_keeps_the_application(en
 
 @pytest.mark.parametrize(
     ("code", "read"),
-    [(204, 204), (404, 404), ("204", None), (700, None), (True, None), (None, None)],
+    [
+        (204, 204),
+        (404, 404),
+        (302, None),
+        (100, None),
+        ("204", None),
+        (700, None),
+        (True, None),
+        (None, None),
+    ],
 )
 def test_an_odd_health_check_return_code_reads_as_unknown_and_keeps_the_application(code, read):
     app = CoolifyApplication.model_validate({"uuid": SHOP, "health_check_return_code": code})
