@@ -19,7 +19,18 @@ LINES_PER_FORM = 1500
 NAMES = ["curl", "mysql", "mongo", "redis-cli", "mongosh", "mysqladmin"]
 PLAIN_PIECES = [*NAMES, "ab", "-p", "-a", "x/y", "é", "😀", ",", ";", "'"]
 PIECES = [*PLAIN_PIECES, "\\", "\\\\", '"']
-PREFIXES = ["", "+ ", "curl -s x && ", "mongo started; ", "echo ok; ", "INFO curl check ", "sh -c "]
+PREFIXES = [
+    "",
+    "+ ",
+    "curl -s x && ",
+    "mongo started; ",
+    "echo ok; ",
+    "INFO curl check ",
+    "sh -c ",
+    "echo 'ok: ' && ",
+    'echo "a, " ; ',
+    "don't: ",
+]
 KEEP = "KEEPME"
 CORE = re.compile(r"Zq[0-9]{3}Xw")
 SHELL_SPECIAL = set(" '\"\\;`&|(")
@@ -134,6 +145,17 @@ FORMS: dict[str, Callable[[str, str, random.Random], str]] = {
     "repr in logfmt": lambda line, _, __: _logfmt(f"cmd={line!r}") + f" {KEEP}",
     "logfmt in repr": lambda line, _, __: f"cmd={_logfmt(line)!r} {KEEP}",
     "single in json": lambda line, _, __: json.dumps({"log": _logfmt(line, "'"), "k": KEEP}),
+    "single in single": lambda line, _, __: _logfmt(_logfmt(line, "'"), "'") + f" {KEEP}",
+    "repr in single in logfmt": lambda line, _, __: (
+        _logfmt(_logfmt(f"cmd={line!r}", "'")) + f" {KEEP}"
+    ),
+    "single in dotnet": lambda line, _, __: (
+        _logfmt(_dotnet({"cmd": _logfmt(line, "'")})) + f" {KEEP}"
+    ),
+    "repr in logfmt in single": lambda line, _, __: (
+        _logfmt(_logfmt(f"cmd={line!r}"), "'") + f" {KEEP}"
+    ),
+    "bytes repr": lambda line, _, __: f"out={line.encode()!r} {KEEP}",
     "two values": lambda line, _, __: (
         _logfmt(line) + " other=" + _logfmt(f'redis-cli -a "x y" {KEEP}')
     ),
