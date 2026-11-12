@@ -1039,5 +1039,7 @@ def test_the_description_and_schema_name_skip():
     tool = spec.build(ctx)
 
     assert "skip" in tool.description and "oldest commits of a long deploy" in tool.description
-    assert "do not read a long deploy to its end" in tool.description
+    assert "read the next part" in tool.description
+    assert "do not spend them all on commits" in tool.description
+    assert "do not read a long deploy" not in tool.description
     assert set(tool.args) == {"skip"}

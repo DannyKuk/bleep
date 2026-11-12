@@ -81,9 +81,10 @@ DEPLOYED_COMMITS = (
     "then. It shows as many commits as fit and says how many older ones it left out, and the "
     "`skip` to read them: `skip` is how many of the newest commits to skip, so skip=80 lists "
     "the commits after the 80 newest. The oldest commits of a long deploy are in its last "
-    "part. Read a further part only when the commits shown do not explain the failure and the "
-    "evidence points at an older change (what the error names, a file, a setting): each part "
-    "costs a tool call and a GitHub request, so do not read a long deploy to its end." + UNTRUSTED
+    "part. While the commits shown do not explain the failure and the evidence points at an "
+    "older change (what the error names, a file, a setting), read the next part. Each part "
+    "costs a tool call: stop when the round's tool calls run short, and do not spend them all "
+    "on commits." + UNTRUSTED
 )
 RECENT_COMMITS = (
     "List the latest commits to this service's GitHub repo in a time window, newest first: short "
