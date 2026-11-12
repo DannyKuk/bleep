@@ -759,6 +759,7 @@ async def _judge(scenario: Scenario, judge: Judge, result: ScenarioResult) -> No
         judgement = await judge.judge(scenario.expected.root_cause, result.diagnosis)
     except JudgeError as error:
         result.judge_reason = f"the judge failed: {error}"
+        result.judge_attempts, result.judge_usd = error.attempts, error.usd
         return
     if judgement is None:  # graded by hand later
         return
@@ -766,6 +767,7 @@ async def _judge(scenario: Scenario, judge: Judge, result: ScenarioResult) -> No
     result.root_cause_pass = judgement.passed
     result.judge_reason = judgement.reason
     result.judge_usd = judgement.usd
+    result.judge_attempts = judgement.attempts
 
 
 def summary(result: ScenarioResult) -> str:

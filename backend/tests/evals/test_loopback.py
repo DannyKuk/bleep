@@ -10,12 +10,13 @@ from langchain_core.messages import AIMessage
 
 from bleep.schemas.graph import Diagnosis, Proposal
 from bleep.schemas.settings import ModelSettings
-from evals.judge import Judgement, ManualJudge
+from evals.judge import JudgeError, Judgement, ManualJudge
 from evals.loopback import (
     CASES_DIR,
     LoopBackCase,
     LoopBackError,
     LoopBackResult,
+    _judge,
     apply_grades,
     line,
     load_case,
@@ -217,6 +218,22 @@ async def test_a_case_whose_loop_back_is_the_other_one_is_a_failed_run():
 
     assert result.run.failure == "error"
     assert "handed over verify_unproven" in (result.run.error or "")
+
+
+async def test_a_judge_that_failed_after_retries_still_records_attempts_and_cost():
+    class Exhausted:
+        name = "fake-judge"
+
+        async def judge(self, expected: str, diagnosis: Diagnosis) -> Judgement:
+            raise JudgeError("unreadable (after 3 attempts)", attempts=3, usd=0.003)
+
+    run = ScenarioResult(
+        id="verify-failed-oom", model="tiny", judge="fake-judge",
+        diagnosis=Diagnosis(root_cause="db stopped", category="dependency", confidence=0.8),
+    )  # fmt: skip
+    await _judge(case("verify-failed-oom"), Exhausted(), run)
+    assert run.judge_reason == "the judge failed: unreadable (after 3 attempts)"
+    assert (run.judge_attempts, run.judge_usd) == (3, 0.003)
 
 
 async def test_with_the_manual_judge_a_failed_case_waits_for_its_grade(tmp_path):

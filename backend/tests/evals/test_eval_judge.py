@@ -156,6 +156,68 @@ async def test_a_low_score_fails():
     assert judgement.usd is None
 
 
+GOOD = json.dumps({"score": 9, "reason": "names the stopped db"})
+
+
+def scripted(*answers: str | Exception, usd: float | None = None):
+    asked: list[str] = []
+
+    async def complete(prompt: str) -> Completion:
+        asked.append(prompt)
+        answer = answers[len(asked) - 1]
+        if isinstance(answer, Exception):
+            raise answer
+        return Completion(answer, usd=usd)
+
+    return complete, asked
+
+
+async def test_a_good_first_answer_makes_one_call():
+    pytest.importorskip("deepeval")
+    complete, asked = scripted(GOOD)
+    judgement = await RootCauseJudge("fake-judge", complete).judge("db stopped", DIAGNOSIS)
+    assert len(asked) == 1 and judgement.attempts == 1
+
+
+async def test_a_bad_answer_is_asked_for_again_and_the_good_one_scores():
+    pytest.importorskip("deepeval")
+    complete, asked = scripted(json.dumps({"reason": "no score"}), GOOD, usd=0.001)
+    judgement = await RootCauseJudge("fake-judge", complete).judge("db stopped", DIAGNOSIS)
+    assert len(asked) == 2
+    assert judgement.attempts == 2
+    assert judgement.score == pytest.approx(0.9)
+    assert judgement.usd == pytest.approx(0.002)
+
+
+async def test_a_failed_call_is_asked_for_again():
+    pytest.importorskip("deepeval")
+    complete, asked = scripted(JudgeError("claude exited with 1"), GOOD)
+    judgement = await RootCauseJudge("fake-judge", complete).judge("db stopped", DIAGNOSIS)
+    assert judgement.attempts == 2 and len(asked) == 2
+
+
+async def test_three_unreadable_answers_raise_a_judge_error_with_the_last_error():
+    pytest.importorskip("deepeval")
+    complete, asked = scripted("nope", "still nope", JudgeError("claude exited with 1"))
+    with pytest.raises(JudgeError, match="claude exited with 1.*3 attempts"):
+        await RootCauseJudge("fake-judge", complete).judge("db stopped", DIAGNOSIS)
+    assert len(asked) == 3
+
+
+async def test_three_failures_carry_the_attempts_and_the_summed_cost():
+    pytest.importorskip("deepeval")
+    complete, _ = scripted("nope", "nope", "nope", usd=0.001)
+    with pytest.raises(JudgeError) as caught:
+        await RootCauseJudge("fake-judge", complete).judge("db stopped", DIAGNOSIS)
+    assert caught.value.attempts == 3
+    assert caught.value.usd == pytest.approx(0.003)
+
+
+def test_a_judge_error_from_the_setup_has_the_defaults():
+    error = JudgeError("needs OPENROUTER_API_KEY")
+    assert (error.attempts, error.usd) == (1, None)
+
+
 async def test_the_manual_judge_needs_no_key_and_leaves_the_grade_to_a_human(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     judge = build_judge(MANUAL, CLOUD)
