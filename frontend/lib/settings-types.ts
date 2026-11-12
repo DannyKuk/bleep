@@ -62,7 +62,7 @@ export interface HostSettingsView {
 }
 
 export interface ModelChoice {
-  provider: "openrouter" | "local";
+  provider: "openrouter" | "anthropic" | "local";
   model: string;
   cheap_model: string;
   local_model: string;
@@ -131,7 +131,7 @@ export interface SettingsOverrides {
 
 export interface SettingsView {
   models: ModelChoice;
-  /** The OpenRouter key's variable; a local model needs none. */
+  /** The key's variable of the provider in force; a local model needs none. */
   model_key: SecretStatus;
   budgets: Record<string, number>;
   thresholds: Thresholds;

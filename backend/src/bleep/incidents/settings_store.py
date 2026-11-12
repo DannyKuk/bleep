@@ -35,6 +35,7 @@ from bleep.schemas.plugins import PluginUpdate, PluginView
 from bleep.schemas.refusal import Reasons, Templated
 from bleep.schemas.services import Service
 from bleep.schemas.settings import (
+    ANTHROPIC_KEY_ENV,
     DEFAULT_LANGUAGE,
     EMBEDDINGS_URL_ENV,
     ENV_NAMES,
@@ -188,7 +189,10 @@ class SettingsStore:
         models = _layer(self._env_models, self._chosen("models"))
         if self._secrets is None:
             return models
-        update: dict[str, Any] = {"openrouter_api_key": self._secrets.get(MODEL_KEY_ENV)}
+        update: dict[str, Any] = {
+            "openrouter_api_key": self._secrets.get(MODEL_KEY_ENV),
+            "anthropic_api_key": self._secrets.get(ANTHROPIC_KEY_ENV),
+        }
         if (local_url := self._secrets.get(LOCAL_URL_ENV)) is not None:
             update["local_base_url"] = local_url.get_secret_value()
         return models.model_copy(update=update)

@@ -10,7 +10,7 @@ import {
 import { type Messages, useT } from "@/lib/i18n";
 import type { SettingsUpdate, SettingsView } from "@/lib/settings-types";
 
-export const MODEL_KEYS = ["OPENROUTER_API_KEY", "LOCAL_BASE_URL"] as const;
+export const MODEL_KEYS = ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "LOCAL_BASE_URL"] as const;
 
 const fields = (t: Messages["settings"]["models"]): Field[] => [
   {
@@ -19,6 +19,7 @@ const fields = (t: Messages["settings"]["models"]): Field[] => [
     env: "LLM_PROVIDER",
     options: [
       { value: "openrouter", label: "OpenRouter" },
+      { value: "anthropic", label: "Anthropic" },
       { value: "local", label: t.local },
     ],
   },

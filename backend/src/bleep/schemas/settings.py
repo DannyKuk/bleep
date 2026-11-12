@@ -26,6 +26,8 @@ def _env(name: str, field: str) -> AliasChoices:
 
 
 MODEL_KEY_ENV = "OPENROUTER_API_KEY"  # `ModelSettings.openrouter_api_key`
+ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"  # `ModelSettings.anthropic_api_key`
+ModelProvider = Literal["openrouter", "anthropic", "local"]
 
 
 class ModelSettings(BaseSettings):
@@ -33,9 +35,7 @@ class ModelSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_ignore_empty=True, extra="ignore", populate_by_name=True)
 
-    provider: Literal["openrouter", "local"] = Field(
-        "openrouter", validation_alias=_env("LLM_PROVIDER", "provider")
-    )
+    provider: ModelProvider = Field("openrouter", validation_alias=_env("LLM_PROVIDER", "provider"))
     model: str = Field("openai/gpt-6-luna", validation_alias=_env("LLM_MODEL", "model"))
     cheap_model: str = Field(
         "openai/gpt-6-luna", validation_alias=_env("LLM_CHEAP_MODEL", "cheap_model")
@@ -50,6 +50,9 @@ class ModelSettings(BaseSettings):
     temperature: float = 0
     openrouter_api_key: SecretStr | None = Field(
         None, validation_alias=_env("OPENROUTER_API_KEY", "openrouter_api_key")
+    )
+    anthropic_api_key: SecretStr | None = Field(
+        None, validation_alias=_env("ANTHROPIC_API_KEY", "anthropic_api_key")
     )
 
 
@@ -123,7 +126,7 @@ class ModelOverrides(_Overrides):
     """The model choice. The local model's base URL and every API key are kept in the secret
     file, not here (`store/secrets.py`, #372)."""
 
-    provider: Literal["openrouter", "local"] | None = None
+    provider: ModelProvider | None = None
     model: ModelName | None = None
     cheap_model: ModelName | None = None
     local_model: ModelName | None = None
@@ -352,7 +355,7 @@ class SettingsUpdate(_Overrides):
 
 
 class ModelChoice(BaseModel):
-    provider: Literal["openrouter", "local"]
+    provider: ModelProvider
     model: str
     cheap_model: str
     local_model: str
@@ -429,7 +432,7 @@ class SettingsView(BaseModel):
     """`GET /api/settings`: the values in force, and the database's overrides that changed them."""
 
     models: ModelChoice
-    model_key: SecretStatus  # the OpenRouter key's variable; a local model needs none
+    model_key: SecretStatus  # the key's variable of the provider in force; a local model needs none
     budgets: Budgets
     thresholds: Thresholds
     hosts: list[HostSettingsView]

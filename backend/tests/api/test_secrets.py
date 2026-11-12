@@ -168,6 +168,34 @@ def test_the_model_key_set_on_the_dashboard_is_used_at_the_next_model_call(app):
     assert app.parts.settings_store.models().openrouter_api_key is None
 
 
+def test_the_anthropic_key_set_on_the_dashboard_is_used_and_the_view_follows_the_provider(app):
+    anthropic_key = "sk-ant-api03-dashboard-key-0123456789"
+    put(app, "ANTHROPIC_API_KEY", anthropic_key)
+
+    key = app.parts.settings_store.models().anthropic_api_key
+    assert key is not None and key.get_secret_value() == anthropic_key
+    assert app.get("/api/settings").json()["model_key"]["env"] == "OPENROUTER_API_KEY"
+    version = app.get("/api/settings").json()["version"]
+    chosen = app.put(
+        "/api/settings",
+        json={"models": {"provider": "anthropic", "model": "claude-sonnet-5-5"}},
+        headers={"If-Match": f'"{version}"'},
+    )
+    assert chosen.status_code == 200
+    view = app.get("/api/settings").json()
+    assert view["model_key"] == {
+        "env": "ANTHROPIC_API_KEY",
+        "file": None,
+        "set": True,
+        "source": "dashboard",
+    }
+    for page in ("/api/secrets", "/api/settings", "/api/plugins", "/api/telegram/status"):
+        assert anthropic_key not in app.get(page).text
+    assert app.delete("/api/secrets/ANTHROPIC_API_KEY").status_code == 200
+    assert app.parts.settings_store.models().anthropic_api_key is None
+    assert app.get("/api/settings").json()["model_key"]["set"] is False
+
+
 def test_the_github_token_set_on_the_dashboard_is_used_at_the_next_request(app):
     assert not app.parts.github.authenticated
     put(app, "GITHUB_TOKEN", "ghp_dashboard0123456789")

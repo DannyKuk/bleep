@@ -25,6 +25,7 @@ from bleep.hosts.coolify_names import coolify_slug
 from bleep.incidents.settings_store import SettingsRefused, SettingsStale, check_body
 from bleep.plugins.urls import NotPublic, UrlRefused, check_dashboard_url, check_public
 from bleep.schemas.settings import (
+    ANTHROPIC_KEY_ENV,
     ENV_NAMES,
     MODEL_KEY_ENV,
     TRACING_ENDPOINTS,
@@ -65,12 +66,16 @@ def _too_deep(body: Any) -> bool:
 
 def settings_view(parts: AppParts) -> SettingsView:
     store = parts.settings_store
+    models = store.models()
+    key_env, key = (
+        (ANTHROPIC_KEY_ENV, models.anthropic_api_key)
+        if models.provider == "anthropic"
+        else (MODEL_KEY_ENV, models.openrouter_api_key)
+    )
     return SettingsView(
         models=store.model_choice(),
         model_key=SecretStatus(
-            env=MODEL_KEY_ENV,
-            set=store.models().openrouter_api_key is not None,
-            source=parts.secrets.state(MODEL_KEY_ENV).source,
+            env=key_env, set=key is not None, source=parts.secrets.state(key_env).source
         ),
         budgets=store.budgets(),
         thresholds=store.thresholds(),
