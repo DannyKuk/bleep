@@ -3,6 +3,7 @@ import { vi } from "vitest";
 import type { SecretView } from "@/lib/secrets-api";
 import type {
   HostSettingsView,
+  ModelChoice,
   PluginView,
   SettingsView,
   TelegramStatus,
@@ -60,6 +61,61 @@ export function sshHost(overrides: Partial<HostSettingsView> = {}): HostSettings
   };
 }
 
+export const MODEL_EXAMPLES = {
+  openrouter: ["openai/gpt-6-luna", "openai/gpt-6.1-terra", "openai/gpt-6.1-sol"],
+  anthropic: ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"],
+  local: ["openai/gpt-oss-20b"],
+};
+/** The ids each provider runs with nothing stored, as `GET /api/settings` gives them. */
+export const OPENROUTER_IDS = {
+  model: "openai/gpt-6-luna",
+  cheap_model: "openai/gpt-6-luna",
+  local_model: "openai/gpt-oss-20b",
+};
+export const CLAUDE_IDS = {
+  model: "claude-sonnet-5-5",
+  cheap_model: "claude-haiku-5-5",
+  local_model: "openai/gpt-oss-20b",
+};
+
+type Provider = ModelChoice["provider"];
+export type ModelIds = typeof OPENROUTER_IDS;
+export const DEFAULT_IDS: Record<Provider, ModelIds> = {
+  openrouter: OPENROUTER_IDS,
+  anthropic: CLAUDE_IDS,
+  local: OPENROUTER_IDS,
+};
+/** `DEFAULT_IDS` with `over` under every provider, as the API gives a custom id. */
+export const idsWith = (over: Partial<ModelIds>): Record<Provider, ModelIds> => ({
+  openrouter: { ...OPENROUTER_IDS, ...over },
+  anthropic: { ...CLAUDE_IDS, ...over },
+  local: { ...OPENROUTER_IDS, ...over },
+});
+
+/** A view whose models agree with each other: `saved` in force, `ids` per provider. */
+export function modelsView({
+  saved = "openrouter",
+  ids = DEFAULT_IDS,
+  stored = {},
+  fromEnv = [],
+}: {
+  saved?: Provider;
+  ids?: Record<Provider, ModelIds>;
+  stored?: Partial<ModelChoice>;
+  fromEnv?: string[];
+}): SettingsView {
+  return settingsView({
+    models: { provider: saved, ...ids[saved] },
+    models_by_provider: {
+      openrouter: { ...ids.openrouter, examples: MODEL_EXAMPLES.openrouter },
+      anthropic: { ...ids.anthropic, examples: MODEL_EXAMPLES.anthropic },
+      local: { ...ids.local, examples: MODEL_EXAMPLES.local },
+    },
+    overrides: { models: stored },
+    from_env: fromEnv,
+  });
+}
+
 export function settingsView(overrides: Partial<SettingsView> = {}): SettingsView {
   return {
     models: {
@@ -67,6 +123,11 @@ export function settingsView(overrides: Partial<SettingsView> = {}): SettingsVie
       model: "openai/gpt-6-luna",
       cheap_model: "openai/gpt-6-luna",
       local_model: "openai/gpt-oss-20b",
+    },
+    models_by_provider: {
+      openrouter: { ...OPENROUTER_IDS, examples: MODEL_EXAMPLES.openrouter },
+      anthropic: { ...CLAUDE_IDS, examples: MODEL_EXAMPLES.anthropic },
+      local: { ...OPENROUTER_IDS, examples: MODEL_EXAMPLES.local },
     },
     model_key: { env: "OPENROUTER_API_KEY", file: null, set: true },
     budgets: { investigate_tool_calls: 8 },

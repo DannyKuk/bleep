@@ -74,6 +74,7 @@ def settings_view(parts: AppParts) -> SettingsView:
     )
     return SettingsView(
         models=store.model_choice(),
+        models_by_provider=store.models_by_provider(),
         model_key=SecretStatus(
             env=key_env, set=key is not None, source=parts.secrets.state(key_env).source
         ),

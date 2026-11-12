@@ -850,6 +850,7 @@ export const en = {
       changeInEnv: "Change it in .env or the Compose file and restart Bleep.",
       confirm: "Confirm the change",
       defaults: "Back to the defaults",
+      examples: (ids: string) => `Examples: ${ids}. Any other id works too.`,
     },
     models: {
       provider: "Provider",

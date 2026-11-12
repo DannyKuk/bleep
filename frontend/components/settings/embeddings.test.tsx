@@ -295,6 +295,26 @@ describe("the Embeddings panel", () => {
     expect(within(embeddings).getByRole("button", SAVE)).toBeEnabled();
   });
 
+  it("puts every field back with Cancel, and a value typed back to the one in force is no change", async () => {
+    settingsBackend(
+      settingsView({ embeddings: { provider: "local", model: "m", min_score: 0.4 } }),
+    );
+    render(<SettingsPage />);
+    const embeddings = await panel();
+    const model = within(embeddings).getByLabelText("Endpoint or server model");
+
+    await userEvent.type(model, "2{Backspace}");
+    expect(within(embeddings).getByRole("button", SAVE)).toBeDisabled();
+    expect(within(embeddings).queryByRole("button", { name: "Cancel" })).toBeNull();
+
+    await userEvent.selectOptions(within(embeddings).getByLabelText("Embedder"), "openai");
+    await userEvent.type(model, "-new");
+    await userEvent.click(within(embeddings).getByRole("button", { name: "Cancel" }));
+    expect(within(embeddings).getByLabelText("Embedder")).toHaveValue("local");
+    expect(model).toHaveValue("m");
+    expect(within(embeddings).getByRole("button", SAVE)).toBeDisabled();
+  });
+
   it("treats emptying a field that no override sets as no change", async () => {
     settingsBackend(
       settingsView({ embeddings: { provider: "local", model: "m", min_score: 0.4 } }),

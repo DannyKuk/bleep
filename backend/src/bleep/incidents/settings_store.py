@@ -18,7 +18,7 @@ import os
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, tzinfo
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ValidationError
@@ -40,6 +40,7 @@ from bleep.schemas.settings import (
     EMBEDDINGS_URL_ENV,
     ENV_NAMES,
     LOCAL_URL_ENV,
+    MODEL_EXAMPLES,
     MODEL_KEY_ENV,
     TRACER_OF_ENDPOINT,
     TRACING_ENDPOINTS,
@@ -54,7 +55,9 @@ from bleep.schemas.settings import (
     Language,
     ModelChoice,
     ModelOverrides,
+    ModelProvider,
     ModelSettings,
+    ProviderModels,
     SecretStatus,
     ServiceSettings,
     ServiceSettingsView,
@@ -330,6 +333,22 @@ class SettingsStore:
     def model_choice(self) -> ModelChoice:
         models = self.models()
         return ModelChoice(**{name: getattr(models, name) for name in ModelChoice.model_fields})
+
+    def models_by_provider(self) -> dict[ModelProvider, ProviderModels]:
+        """Per provider, the ids `models()` would give if it were the one chosen, with the env and
+        the dashboard's overrides as they are now (what the settings page shows before a save),
+        and its example ids."""
+        layered = _layer(self._env_models, self._chosen("models"))
+        by_provider: dict[ModelProvider, ProviderModels] = {}
+        for provider in get_args(ModelProvider):
+            models = layered.model_copy(update={"provider": provider}).resolved()
+            by_provider[provider] = ProviderModels(
+                model=models.model,
+                cheap_model=models.cheap_model,
+                local_model=models.local_model,
+                examples=list(MODEL_EXAMPLES[provider]),
+            )
+        return by_provider
 
     def host_views(self) -> list[HostSettingsView]:
         """Every host's rules and service settings in force: the hosts file's in its order, then
