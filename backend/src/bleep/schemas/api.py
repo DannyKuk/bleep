@@ -76,6 +76,23 @@ class WatchView(BaseModel):
     failures_to_open: int | None = None
 
 
+UnwatchedReason = Literal["paused", "created", "before_start", "after_incident", "unknown"]
+
+
+class UnwatchedView(BaseModel):
+    """Why a service that shows down opens no incident (#478): it is down, the watcher waits on
+    nothing for it, it has no incident open, it is not quiet and its host answers. `paused` and
+    `created`: a container in that state (no death event comes). `before_start`: a container
+    was already down in the watcher's first listing. `after_incident`: it has been down since
+    before its latest incident ended (`incident_id`, `incident_short_name`). `unknown`: none of
+    these. `container` is the container the reason is about, or the first one down."""
+
+    reason: UnwatchedReason
+    container: str | None = None
+    incident_id: str | None = None
+    incident_short_name: str | None = None
+
+
 class HostView(BaseModel):
     id: str
     name: str
@@ -138,6 +155,7 @@ class ServiceView(BaseModel):
     open_incident_id: str | None
     quiet: QuietView | None = None
     watching: list[WatchView] = []
+    unwatched: UnwatchedView | None = None
 
 
 ApprovalStatus = Literal["pending", "approved", "rejected", "instructed", "closed"]

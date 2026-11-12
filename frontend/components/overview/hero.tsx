@@ -1,14 +1,16 @@
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, MessageCircle } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { Bleep } from "@/components/bleep/bleep";
+import { useAskBleep } from "@/components/chat/chat-opener";
 import { isRefused } from "@/components/incident/headline";
-import { ShortNamePrefix } from "@/components/incident/short-name";
+import { ShortName, ShortNamePrefix } from "@/components/incident/short-name";
 import { IncidentStatusBadge } from "@/components/incident/status-badge";
 import { HealthBadge } from "@/components/overview/health-badge";
 import {
   joinNames,
+  unwatchedDetail,
   watchedNames,
   watchReason,
   type Situation,
@@ -31,7 +33,11 @@ interface Words {
   /** Monospace detail under the body, such as a host's error. */
   detail?: string;
   link?: { href: string; label: string };
+  /** A button in the link's place, such as opening the chat panel. */
+  action?: { label: string; onClick: () => void };
 }
+
+type Ask = (text: string) => void;
 
 /** The subject's name and health: a service's from the services list, a host's from the hosts. */
 function subjectOf(
@@ -195,12 +201,66 @@ function watchingWords(services: readonly ServiceView[], zone: Zone, language: L
   };
 }
 
+/** Why Bleep is not looking into a service shown down, as a sentence; the incident it stayed
+ * down through is named and linked. */
+function NotLookingLine({ service }: { service: ServiceView }) {
+  const t = useT().overview;
+  const unwatched = service.unwatched;
+  const ended = unwatched?.reason === "after_incident" ? unwatched.incident_id : null;
+  if (!unwatched || !ended) {
+    const reason =
+      !unwatched || unwatched.reason === "after_incident" ? "unknown" : unwatched.reason;
+    return <>{t.notLooking[reason]}</>;
+  }
+  const [before, after] = t.stillDownAfter;
+  return (
+    <>
+      {before}
+      <Link
+        href={`/incidents/${ended}`}
+        className="font-bold text-accent underline-offset-4 hover:underline"
+      >
+        {unwatched.incident_short_name ? (
+          <ShortName name={unwatched.incident_short_name} className="text-accent" />
+        ) : (
+          t.itsLastIncident
+        )}
+      </Link>
+      {after}
+    </>
+  );
+}
+
+function unwatchedWords(services: readonly ServiceView[], language: Language, ask: Ask): Words {
+  const t = MESSAGES[language];
+  const tag = <HealthBadge health="degraded" label={t.health.yourCall} />;
+  const [first] = services;
+  const action = { label: t.overview.askToLook, onClick: () => ask(t.overview.lookAt(first.name)) };
+  if (services.length > 1) {
+    return {
+      tag,
+      headline: t.overview.unwatchedMany(watchedNames(services, t)),
+      body: null,
+      action,
+    };
+  }
+  const detail = unwatchedDetail(first);
+  return {
+    tag,
+    headline: t.overview.unwatchedOne(first.name),
+    body: <NotLookingLine service={first} />,
+    detail: detail && showInvisible(detail),
+    action,
+  };
+}
+
 function wordsFor(
   situation: Situation,
   hosts: readonly HostView[],
   services: readonly ServiceView[],
   zone: Zone,
   language: Language,
+  ask: Ask,
 ): Words {
   const t = MESSAGES[language];
   switch (situation.kind) {
@@ -210,6 +270,8 @@ function wordsFor(
       return unreachableWords(situation, services, zone, language);
     case "watching":
       return watchingWords(situation.services, zone, language);
+    case "unwatched":
+      return unwatchedWords(situation.services, language, ask);
     case "quiet":
       return {
         tag: <HealthBadge health="ok" label={t.health.allQuiet} />,
@@ -243,7 +305,8 @@ export function OverviewHero({
   const zone = useTimeZone();
   const language = useLanguage();
   const t = useT();
-  const words = wordsFor(situation, hosts, services, zone, language);
+  const ask = useAskBleep();
+  const words = wordsFor(situation, hosts, services, zone, language, ask);
   const others = situation.kind === "incident" ? situation.others : 0;
   return (
     <section
@@ -267,7 +330,7 @@ export function OverviewHero({
         {words.detail && (
           <p className="font-mono text-[13px] break-words text-ink-2">{words.detail}</p>
         )}
-        {(words.link || others > 0) && (
+        {(words.link || words.action || others > 0) && (
           <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-2">
             {words.link && (
               <Link
@@ -277,6 +340,16 @@ export function OverviewHero({
                 {words.link.label}
                 <ArrowRight aria-hidden className="size-[18px]" />
               </Link>
+            )}
+            {words.action && (
+              <button
+                type="button"
+                onClick={words.action.onClick}
+                className="inline-flex min-h-12 items-center gap-2 rounded-full bg-accent px-5 text-base font-extrabold text-accent-ink transition-[filter] hover:brightness-110 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface focus-visible:outline-none"
+              >
+                <MessageCircle aria-hidden className="size-[18px]" />
+                {words.action.label}
+              </button>
             )}
             {others > 0 && (
               <Link

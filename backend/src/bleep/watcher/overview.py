@@ -1,13 +1,15 @@
 """The hosts and services as the overview shows them: each with its health, its quiet and its
-open incident, judged from what the watcher last saw.
+open incident, judged from what the watcher last saw. A service that shows down but that the
+watcher will open no incident for says why (`UnwatchedView`, #478).
 
 The dashboard's read routes and the conversation (`talk`) read the same views, so a chat answer
 never judges a service differently from the page (docs/design/watcher.md).
 """
 
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Collection, Iterable
 from datetime import datetime
 
+from bleep.hosts.discovery import expects_exit
 from bleep.hosts.registry import Registry
 from bleep.hosts.url_check import UrlCheck
 from bleep.incidents.quiet import QuietStore
@@ -19,15 +21,24 @@ from bleep.schemas.api import (
     HostView,
     QuietView,
     ServiceView,
+    UnwatchedView,
     WatchView,
 )
-from bleep.schemas.docker import HostBasics
-from bleep.schemas.incidents import Subject
+from bleep.schemas.docker import ContainerSummary, HostBasics
+from bleep.schemas.incidents import TERMINAL_STATUSES, Incident, Subject
 from bleep.schemas.quiet import QuietState
 from bleep.schemas.services import HostState, Service
 from bleep.watcher.detector import Pending
-from bleep.watcher.health import host_health, is_asleep, service_health, url_status
+from bleep.watcher.health import (
+    container_health,
+    host_health,
+    is_asleep,
+    service_health,
+    url_status,
+)
+from bleep.watcher.health_store import HealthStore
 from bleep.watcher.http_checks import UrlCheckStore
+from bleep.watcher.sightings import HostSightings, Sightings
 
 Checks = dict[tuple[str, str], tuple[UrlCheck, datetime]]
 Watched = dict[str, list[WatchView]]  # by subject key
@@ -78,9 +89,11 @@ def service_view(
     quiet: QuietState | None,
     asleep: bool = False,
     watching: list[WatchView] | None = None,
+    stopped_on_purpose: Collection[str] = (),
 ) -> ServiceView:
     urls = [url_status(u.url, checks.get((service.id, u.url)), now) for u in service.urls]
-    health = service_health(service.containers, (u.status for u in urls), service.exits)
+    statuses = (u.status for u in urls)
+    health = service_health(service.containers, statuses, service.exits, stopped_on_purpose)
     return ServiceView(
         id=service.id,
         host_id=service.host_id,
@@ -108,6 +121,57 @@ def service_view(
     )
 
 
+def is_unwatched(view: ServiceView, host: HostState) -> bool:
+    """Down, with nothing the watcher waits on, no incident open, not quiet, on a host Bleep
+    reaches: no incident will open for it unless someone asks for a look. The dashboard applies
+    the same rule (`unwatchedDownServices` in `lib/mood.ts`), so the reason only refines it."""
+    return (
+        view.health == "down"
+        and not view.watching
+        and view.open_incident_id is None
+        and view.quiet is None
+        and host.reachable
+        and not is_asleep(host)
+    )
+
+
+def down_containers(
+    service: Service, stopped_on_purpose: Collection[str]
+) -> list[ContainerSummary]:
+    """The service's containers that show down."""
+
+    def judged(c: ContainerSummary) -> str:
+        expected = expects_exit(service.exits, c.name, c.labels)
+        return container_health(c, expected, c.id in stopped_on_purpose)
+
+    return [c for c in service.containers if judged(c) == "down"]
+
+
+def unwatched_view(
+    down: list[ContainerSummary], seen: HostSightings, ended: Incident | None
+) -> UnwatchedView:
+    """Why the service opens nothing, the most telling reason first: a container paused, then
+    one created and never started (what Docker shows now), then the incident it has stayed down
+    through (`ended`), then a container already down when the watcher first listed the host;
+    else unknown. `down` are its containers that show down."""
+    first = down[0].name if down else None
+    for state in ("paused", "created"):
+        found = next((c for c in down if c.state == state), None)
+        if found is not None:
+            return UnwatchedView(reason=state, container=found.name)
+    if ended is not None:
+        return UnwatchedView(
+            reason="after_incident",
+            container=first,
+            incident_id=ended.id,
+            incident_short_name=ended.short_name,
+        )
+    before = next((c for c in down if c.id in seen.down_at_start), None)
+    if before is not None:
+        return UnwatchedView(reason="before_start", container=before.name)
+    return UnwatchedView(reason="unknown", container=first)
+
+
 def _basics(basics: HostBasics | None) -> BasicsView | None:
     if basics is None:
         return None
@@ -126,15 +190,22 @@ class Overview:
         url_checks: UrlCheckStore,
         clock: Callable[[], datetime] = utcnow,
         watching: Callable[[], Awaitable[list[Pending]]] | None = None,
+        sightings: Sightings | None = None,
+        health: HealthStore | None = None,
     ) -> None:
         """`watching` is the running watcher's `WatcherManager.watching`; without it no view
-        says what the watcher waits on."""
+        says what the watcher waits on, nor why one shown down opens nothing (`unwatched`).
+        `sightings` is what the watcher saw of the containers (shared with it), and `health` the
+        health it stored; without them a container stopped on purpose that exited 137 shows
+        down, and a reason needing them is not given."""
         self.registry = registry
         self.incidents = incidents
         self.quiet = quiet
         self.url_checks = url_checks
         self.clock = clock
         self._watching = watching
+        self.sightings = sightings or Sightings()
+        self._health = health
 
     async def watched(self) -> Watched:
         return watched_by_subject(await self._watching()) if self._watching else {}
@@ -157,27 +228,65 @@ class Overview:
             return []
         active = await self.quiet.active() if active is None else active
         watched = await self.watched() if watched is None else watched
-        now = self.clock()
         checks: dict[str, Checks] = {}
-        asleep = {h.config.id for h in self.registry.hosts() if is_asleep(h)}
+        hosts = {h.config.id: h for h in self.registry.hosts()}
         views = []
         for service in self.registry.services(host_id):
             if service.host_id not in checks:
                 checks[service.host_id] = await self.checks(service.host_id)
-            subject = Subject(kind="service", host_id=service.host_id, service_id=service.id)
-            open_id = await self.incidents.open_incident_id(subject)
-            views.append(
-                service_view(
-                    service,
-                    open_id,
-                    checks[service.host_id],
-                    now,
-                    quiet_of(service, active),
-                    service.host_id in asleep,
-                    watched.get(subject.key),
-                )
-            )
+            host = hosts[service.host_id]
+            views.append(await self.service(service, host, active, watched, checks[host.config.id]))
         return views
+
+    async def service(
+        self,
+        service: Service,
+        host: HostState,
+        active: list[QuietState] | None = None,
+        watched: Watched | None = None,
+        checks: Checks | None = None,
+    ) -> ServiceView:
+        """One service as the overview shows it."""
+        active = await self.quiet.active() if active is None else active
+        watched = await self.watched() if watched is None else watched
+        checks = await self.checks(service.host_id) if checks is None else checks
+        subject = Subject(kind="service", host_id=service.host_id, service_id=service.id)
+        seen = self.sightings.of(service.host_id)
+        view = service_view(
+            service,
+            await self.incidents.open_incident_id(subject),
+            checks,
+            self.clock(),
+            quiet_of(service, active),
+            is_asleep(host),
+            watched.get(subject.key),
+            seen.stopped_on_purpose,
+        )
+        # Without the running watcher's `watching`, a service it is about to open an incident for
+        # would look the same as one it never will.
+        if self._watching is None or not is_unwatched(view, host):
+            return view
+        down = down_containers(service, seen.stopped_on_purpose)
+        reason = unwatched_view(down, seen, await self._ended_while_down(service, seen))
+        return view.model_copy(update={"unwatched": reason})
+
+    async def _ended_while_down(self, service: Service, seen: HostSightings) -> Incident | None:
+        """The service's latest incident, when it ended while this watcher was running and the
+        service has been down since before it did (as the watcher stored its health), so it
+        stayed down through it. A stored health is kept across a restart of Bleep, and says
+        nothing about what happened while Bleep was not looking."""
+        if self._health is None or seen.first_listing is None:
+            return None
+        latest = await self.incidents.list(service_id=service.id, limit=1)
+        if not latest or latest[0].status not in TERMINAL_STATUSES:
+            return None
+        ended = latest[0].closed_at
+        if ended is None or ended < seen.first_listing:
+            return None
+        stored = await self._health.current(service.id)
+        if stored is None or stored[0] != "down" or stored[1] > ended:
+            return None
+        return latest[0]
 
     async def hosts(self) -> list[HostView]:
         result = []

@@ -6,11 +6,12 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 import { Bleep } from "@/components/bleep/bleep";
+import { useRegisterChatOpener } from "@/components/chat/chat-opener";
 import { useOverall } from "@/components/overall-state";
 import { usePinnedBarSpace } from "@/components/pinned-bar";
 import { ApiError } from "@/lib/api";
 import { type Messages, useT } from "@/lib/i18n";
-import { stateMood } from "@/lib/mood";
+import { faceMood } from "@/lib/mood";
 import { idFromSegment } from "@/lib/routes";
 import {
   MESSAGE_MAX_CHARS,
@@ -79,11 +80,11 @@ function exportFailure(error: unknown, t: Messages["chat"]): string {
  * with the conversation. It sits in the app layout, so the conversation stays across page
  * changes. Every word Bleep says comes from the backend, which shares the reading and the
  * actions with Telegram but keeps this conversation apart; an action comes back as two buttons
- * and only a press runs it.
+ * and only a press runs it. A page can open it with words already typed (`useAskBleep`).
  */
 export function ChatPanel() {
   const t = useT().chat;
-  const { state, incidents } = useOverall();
+  const { state, mood: overall, incidents } = useOverall();
   const pathname = usePathname();
   const barSpace = usePinnedBarSpace();
   const [open, setOpen] = useState(false);
@@ -102,7 +103,7 @@ export function ChatPanel() {
   const incidentId = segment && INCIDENT_ID.test(segment) ? segment : null;
   const about = incidentId && dismissed !== incidentId ? incidentId : null;
   const aboutName = incidents?.find((i) => i.id === about)?.short_name ?? null;
-  const mood = state ? stateMood(state) : "not_sure";
+  const mood = state && overall ? faceMood(state, overall) : "not_sure";
 
   const expired = (offer: Offer) => {
     if (Date.parse(offer.expires_at) <= now) return true;
@@ -130,6 +131,13 @@ export function ChatPanel() {
   useEffect(() => {
     if (open) input.current?.focus();
   }, [open]);
+
+  const openWith = useCallback((text: string) => {
+    setDraft(text);
+    setOpen(true);
+    input.current?.focus();
+  }, []);
+  useRegisterChatOpener(openWith);
 
   const add = (turn: NewTurn) =>
     setTurns((all) => [...all, { ...turn, key: nextKey.current++ } as Turn]);

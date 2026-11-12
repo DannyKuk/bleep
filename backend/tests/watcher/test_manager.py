@@ -1089,6 +1089,50 @@ async def test_a_service_still_down_when_its_snooze_ends_opens_one_incident(tmp_
     assert len(await r.incidents()) == 1
 
 
+async def stop_shop(r: Rig, exit_code: int, on_purpose: bool) -> None:
+    """shop-web-1 ends with `exit_code`: a `docker stop` it ignored, or a crash (the OOM killer)."""
+    at = r.clock.now + timedelta(seconds=1)
+    r.engine.history.append(die("shop-web-1", at, exit_code))
+    if on_purpose:
+        r.engine.history.append(
+            DockerEvent(
+                time=at,
+                type="container",
+                action="stop",
+                container_id="id-shop-web-1",
+                container_name="shop-web-1",
+            )
+        )
+    r.engine.container_list[0] = box(
+        "shop-web-1", "shop", state="exited", exit_code=exit_code, restart_policy="no"
+    )
+    for _ in range(6):
+        await r.pulse(urls=False)
+
+
+async def test_a_137_stop_on_purpose_opens_nothing_when_its_snooze_ends(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("service", SHOP, "snooze", T0 + timedelta(hours=1))
+    await r.pulse(urls=False)
+    await stop_shop(r, 137, on_purpose=True)
+    r.clock.advance(3600)
+    await r.quiet.expire()
+    assert await r.incidents() == []
+    assert r.runner.started == []
+
+
+async def test_a_137_crash_still_opens_an_incident_when_its_snooze_ends(tmp_path):
+    r = await Rig(tmp_path).boot()
+    await r.quiet.set("service", SHOP, "snooze", T0 + timedelta(hours=1))
+    await r.pulse(urls=False)
+    await stop_shop(r, 137, on_purpose=False)
+    r.clock.advance(3600)
+    await r.quiet.expire()
+    [incident] = await r.incidents()
+    signals = await r.repo.signals(incident.id)
+    assert [(s.kind, s.container) for s in signals] == [("down_past_grace", "shop-web-1")]
+
+
 async def test_watch_again_on_a_healthy_service_opens_nothing(tmp_path):
     r = await Rig(tmp_path).boot()
     await r.quiet.set("service", SHOP, "leave_alone", None)

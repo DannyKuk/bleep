@@ -111,6 +111,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 quiet=parts.quiet,
                 health=parts.service_health,
                 wake_grace_ticks=settings.wake_grace_ticks,
+                sightings=parts.sightings,
             )
             runner.host_answered = manager.answered
             reminders = ReminderLoop(

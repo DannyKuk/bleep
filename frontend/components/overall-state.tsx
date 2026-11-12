@@ -5,7 +5,7 @@ import { createContext, useCallback, useContext, useMemo, type ReactNode } from 
 import { usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
 import type { HostView, Incident, ServiceView } from "@/lib/api-types";
-import { overallState, type OverallState } from "@/lib/mood";
+import { overallMood, overallState, type Mood, type OverallState } from "@/lib/mood";
 
 /** The newest incidents the header reads: the API's largest page. An unfinished incident is
  * nearly always among them, since the newest come first. */
@@ -20,6 +20,8 @@ export interface Overall {
   services: ServiceView[] | undefined;
   /** Red, amber or green; undefined until the first read answers. */
   state: OverallState | undefined;
+  /** Bleep's overall mood from the same read, judged without the waiting plans' details. */
+  mood: Mood | undefined;
   /** The last refresh failed; the data above is then the last good read. */
   error: Error | undefined;
   /** The last read of the services failed; `services` is then the last good read. */
@@ -65,6 +67,9 @@ export function OverallProvider({ children }: { children: ReactNode }) {
       services: services.data,
       state: data
         ? overallState(data.incidents, data.hosts, data.readAt, services.data)
+        : undefined,
+      mood: data
+        ? overallMood(data.incidents, data.hosts, new Set(), data.readAt, services.data)
         : undefined,
       error,
       servicesError: services.error,

@@ -6,6 +6,7 @@ import type {
   HostHealth,
   IncidentStatus,
   Outcome,
+  UnwatchedReason,
 } from "@/lib/api-types";
 
 // The dashboard's English words; `de.ts` has the same keys (#376). A function takes the data a
@@ -375,6 +376,7 @@ export const en = {
     allQuiet: "All quiet",
     noHosts: "No hosts",
     watching: "Watching",
+    yourCall: "Your call",
   },
   counts: {
     hosts: (n: number) => `${n} host${n === 1 ? "" : "s"}`,
@@ -442,6 +444,20 @@ export const en = {
     lookIfOne: "I will look into it if it keeps failing.",
     lookIfMany: "I will look into each one that keeps failing.",
     showService: "Show me the service",
+    // A service shown down that the watcher opens no incident for (#478): no promise to look.
+    unwatchedOne: (name: string) => `${name} is down, and I am not looking into it.`,
+    unwatchedMany: (names: string) => `${names} are down, and I am not looking into them.`,
+    notLooking: {
+      paused: "It is paused.",
+      created: "It was created but never started.",
+      before_start: "It was already down when I started.",
+      unknown: "I did not see it go down, so I will not look into it on my own.",
+    } satisfies Record<Exclude<UnwatchedReason, "after_incident">, string>,
+    // The words around the incident's link: "It is still down after shop #14 ended."
+    stillDownAfter: ["It is still down after ", " ended."] as [string, string],
+    itsLastIncident: "its last incident",
+    askToLook: "Ask Bleep to look",
+    lookAt: (name: string) => `Look at ${name}`,
     nothingNeeds: "Nothing needs you right now.",
     watching: (hosts: string, services: string) => `I am watching ${hosts} and ${services}.`,
     noHostsToWatch: "I have no hosts to watch yet.",

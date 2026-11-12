@@ -28,7 +28,8 @@ describe("Bleep", () => {
     expect(svg).toHaveAttribute("data-figure", "head");
     expect(part("head")).not.toBeNull();
     expect(part("eyes")).not.toBeNull();
-    for (const name of ["headset", "hand-left", "hand-right", "body", "light", "question"]) {
+    const figureOnly = ["headset", "hand-left", "hand-right", "body", "light", "question", "ticks"];
+    for (const name of figureOnly) {
       expect(part(name), name).toBeNull();
     }
   });
@@ -45,6 +46,7 @@ describe("Bleep", () => {
     ["all_good", "ok", "float", "wave"],
     ["working", "warn", "float", "float2"],
     ["watching", "warn", "float", "chin"],
+    ["pointing", "warn", "float", "point"],
     ["needs_you", "down", "flailL", "flailR"],
     ["not_sure", "stop", "scratch", "float"],
     ["resting", "ok", "float", "float2"],
@@ -61,6 +63,17 @@ describe("Bleep", () => {
     expect(place.getAttribute("style")).toContain("translate(68px, 76px)");
     expect(watching.part("light")!.getAttribute("class")).not.toMatch(/pulse/);
     expect(draw("working", 132).part("light")!.getAttribute("class")).toMatch(/slowpulse/);
+  });
+
+  it("points out to the side with marks flashing beside the hand and a steady light", () => {
+    const pointing = draw("pointing", 132);
+    const place = pointing.part("hand-right")!.firstElementChild!;
+    expect(place.getAttribute("style")).toContain("translate(114px, 58px)");
+    expect(pointing.part("light")!.getAttribute("class")).not.toMatch(/pulse/);
+    expect(pointing.part("ticks")!.getAttribute("class")).toMatch(/stroke-warn/);
+    for (const mood of MOODS) {
+      expect(draw(mood, 72).part("ticks") !== null, mood).toBe(mood === "pointing");
+    }
   });
 
   it("floats a question mark only when it is not sure", () => {

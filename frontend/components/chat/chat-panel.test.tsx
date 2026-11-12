@@ -7,7 +7,7 @@ import { ChatPanel } from "@/components/chat/chat-panel";
 import { json } from "@/components/dev/fixtures";
 import { incident } from "@/components/incident/fixtures";
 import { OverallProvider } from "@/components/overall-state";
-import { host } from "@/components/overview/fixtures";
+import { host, service } from "@/components/overview/fixtures";
 import { PinnedBarProvider, useReportPinnedBar } from "@/components/pinned-bar";
 import type { Incident } from "@/lib/api-types";
 import { setLanguage } from "@/lib/i18n";
@@ -79,6 +79,21 @@ async function write(user: ReturnType<typeof userEvent.setup>, text: string) {
 describe("ChatPanel", () => {
   beforeEach(() => {
     pathname = "/";
+  });
+
+  it("shows Bleep pointing on its button while it points at a service shown down", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input) => {
+        const path = String(input);
+        if (path.startsWith("/api/incidents")) return json([]);
+        if (path.startsWith("/api/hosts")) return json([host()]);
+        return json([service({ health: "down" })]);
+      }),
+    );
+    renderPanel();
+    const face = () => screen.getByRole("button", { name: "Talk to Bleep" }).querySelector("svg");
+    await waitFor(() => expect(face()).toHaveAttribute("data-mood", "pointing"));
   });
 
   it("opens from Bleep's face and closes again", async () => {

@@ -59,21 +59,28 @@ describe("HomeLogo", () => {
 
   it("is amber, not green, while the watcher waits on a service (#358)", async () => {
     stubReads([], [host()], [service({ health: "down", watching: [watch()] })]);
-    renderHeader();
+    const svg = renderHeader();
     await vi.waitFor(() =>
       expect(screen.getByRole("link", { name: /Bleep/ })).toHaveAttribute("data-state", "amber"),
     );
+    expect(svg()).toHaveAttribute("data-mood", "working");
   });
 
-  it("stays green for a service that only shows down, or one that is quiet", async () => {
+  it("is amber for a service shown down that the watcher opens nothing for (#478)", async () => {
+    stubReads([incident({ status: "resolved" })], [host()], [service({ health: "down" })]);
+    const svg = renderHeader();
+    await vi.waitFor(() =>
+      expect(screen.getByRole("link", { name: /Bleep/ })).toHaveAttribute("data-state", "amber"),
+    );
+    expect(svg()).toHaveAttribute("data-mood", "pointing");
+  });
+
+  it("stays green for a quiet service, though it shows down and the watcher waits", async () => {
     const quiet = { scope: "service", mode: "snooze", until: null, since: "x" } as const;
     stubReads(
       [incident({ status: "resolved" })],
       [host()],
-      [
-        service({ health: "down" }),
-        service({ id: "b", health: "down", quiet, watching: [watch()] }),
-      ],
+      [service({ id: "b", health: "down", quiet, watching: [watch()] })],
     );
     renderHeader();
     expect(await screen.findByText("green from 1")).toBeInTheDocument();

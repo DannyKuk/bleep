@@ -8,11 +8,8 @@ from fastapi import APIRouter, Depends
 from bleep.api.deps import Watching, get_parts, get_watching
 from bleep.api.errors import Refusal
 from bleep.hosts.config import UrlCheckConfig
-from bleep.incidents.repository import utcnow
 from bleep.schemas.api import HostView, ServiceDetail, ServiceView, UrlHistory
-from bleep.schemas.incidents import Subject
-from bleep.watcher.health import is_asleep
-from bleep.watcher.overview import Overview, quiet_of, service_view
+from bleep.watcher.overview import Overview
 from bleep.wiring import AppParts
 
 router = APIRouter(tags=["hosts"])
@@ -20,7 +17,13 @@ router = APIRouter(tags=["hosts"])
 
 def _overview(parts: AppParts, watching: Watching | None) -> Overview:
     return Overview(
-        parts.registry, parts.incidents, parts.quiet, parts.url_checks, watching=watching
+        parts.registry,
+        parts.incidents,
+        parts.quiet,
+        parts.url_checks,
+        watching=watching,
+        sightings=parts.sightings,
+        health=parts.service_health,
     )
 
 
@@ -75,17 +78,7 @@ async def get_service(
     )
     if service is None or host is None:
         raise Refusal(404, "no_service")
-    subject = Subject(kind="service", host_id=service.host_id, service_id=service.id)
-    overview = _overview(parts, watching)
-    view = service_view(
-        service,
-        await parts.incidents.open_incident_id(subject),
-        await overview.checks(service.host_id),
-        utcnow(),
-        quiet_of(service, await parts.quiet.active()),
-        is_asleep(host),
-        (await overview.watched()).get(subject.key),
-    )
+    view = await _overview(parts, watching).service(service, host)
     history = await parts.url_checks.history(service.host_id, service.id)
     return ServiceDetail(
         service=view,

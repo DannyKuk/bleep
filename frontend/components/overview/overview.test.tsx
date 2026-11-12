@@ -8,7 +8,7 @@ import { approval, diagnosis, incident, proposal } from "@/components/incident/f
 import { OverallProvider } from "@/components/overall-state";
 import { host, service, watch } from "@/components/overview/fixtures";
 import { Overview, OverviewView } from "@/components/overview/overview";
-import type { IncidentDetail } from "@/lib/api-types";
+import type { IncidentDetail, ServiceView, UnwatchedReason, UnwatchedView } from "@/lib/api-types";
 import { setLanguage } from "@/lib/i18n";
 
 const NOW = Date.parse("2026-11-02T19:00:00Z");
@@ -374,25 +374,6 @@ describe("OverviewView hero while Bleep watches (#358)", () => {
     expect(mood(container)).toBe("watching");
   });
 
-  it.each([
-    ["stopped on purpose (exited 137)", { ...deadContainer, exit_code: 137 }],
-    ["paused", { ...deadContainer, state: "paused", exit_code: null }],
-    ["created and never started", { ...deadContainer, state: "created", exit_code: null }],
-    ["dead before Bleep started or after its incident ended", deadContainer],
-  ])("promises nothing for a container %s the watcher waits on nothing for", (_, dead) => {
-    const { container } = render(
-      <OverviewView
-        hosts={[host({ health: "down" })]}
-        services={[service({ health: "down", containers: [dead] })]}
-        incidents={[incident({ status: "closed" })]}
-        now={NOW}
-      />,
-    );
-    expect(headline()).toHaveTextContent("Nothing needs you right now.");
-    expect(hero()).not.toHaveTextContent("I will look into it");
-    expect(mood(container)).toBe("all_good");
-  });
-
   it("names every service it watches", () => {
     render(
       <OverviewView
@@ -469,6 +450,193 @@ describe("OverviewView hero while Bleep watches (#358)", () => {
     );
     expect(within(hero()).getByText("Unter Beobachtung")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Dienst ansehen/ })).toBeInTheDocument();
+  });
+});
+
+describe("OverviewView hero while Bleep points at a service (#478)", () => {
+  const dead = { ...service().containers[0], state: "exited", exit_code: 1 };
+  const unwatched = (reason: UnwatchedReason, overrides: Partial<UnwatchedView> = {}) => ({
+    reason,
+    container: "shop-web-1",
+    incident_id: null,
+    incident_short_name: null,
+    ...overrides,
+  });
+  const shownDown = (overrides: Partial<ServiceView> = {}) =>
+    service({ health: "down", containers: [dead], ...overrides });
+
+  it.each([
+    ["paused", { ...dead, state: "paused", exit_code: null }, "It is paused.", "paused"],
+    [
+      "created",
+      { ...dead, state: "created", exit_code: null },
+      "It was created but never started.",
+      "created",
+    ],
+    ["before_start", dead, "It was already down when I started.", "exited (1)"],
+  ] as const)("says it opens nothing for a container %s, and why", (reason, box, line, state) => {
+    const { container } = render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[shownDown({ containers: [box], unwatched: unwatched(reason) })]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("shop is down, and I am not looking into it.");
+    expect(hero()).toHaveTextContent(line);
+    expect(within(hero()).getByText(`shop-web-1 · ${state}`)).toHaveClass("font-mono");
+    expect(within(hero()).getByText("Your call")).toBeInTheDocument();
+    expect(within(hero()).getByRole("button", { name: "Ask Bleep to look" })).toBeInTheDocument();
+    expect(hero()).not.toHaveTextContent("Nothing needs you");
+    expect(hero()).not.toHaveTextContent("I will look into it");
+    expect(mood(container)).toBe("pointing");
+  });
+
+  it("names and links the incident it stayed down through", () => {
+    render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[
+          shownDown({
+            unwatched: unwatched("after_incident", {
+              incident_id: "inc_14",
+              incident_short_name: "shop #14",
+            }),
+          }),
+        ]}
+        incidents={[incident({ id: "inc_14", status: "failed", short_name: "shop #14" })]}
+        now={NOW + 2 * 24 * 60 * 60 * 1000}
+      />,
+    );
+    expect(headline()).toHaveTextContent("shop is down, and I am not looking into it.");
+    expect(hero()).toHaveTextContent("It is still down after shop #14 ended.");
+    expect(within(hero()).getByRole("link", { name: "shop #14" })).toHaveAttribute(
+      "href",
+      "/incidents/inc_14",
+    );
+  });
+
+  it("names an incident from before short names as its last one", () => {
+    render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[shownDown({ unwatched: unwatched("after_incident", { incident_id: "old" }) })]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(hero()).toHaveTextContent("It is still down after its last incident ended.");
+    expect(within(hero()).getByRole("link", { name: "its last incident" })).toHaveAttribute(
+      "href",
+      "/incidents/old",
+    );
+  });
+
+  it("promises nothing when it has no reason, and still never says nothing needs you", () => {
+    const { container } = render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[shownDown({ unwatched: null })]}
+        incidents={[incident({ status: "closed" })]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("shop is down, and I am not looking into it.");
+    expect(hero()).toHaveTextContent(
+      "I did not see it go down, so I will not look into it on my own.",
+    );
+    expect(within(hero()).getByText("shop-web-1 · exited (1)")).toBeInTheDocument();
+    expect(mood(container)).toBe("pointing");
+  });
+
+  it("shows the failing URL for a service down by its URL only, not a finished job", () => {
+    const job = { ...dead, name: "shop-migrate-1", exit_code: 0 };
+    const running = service().containers[0];
+    const failing = { ...service().urls[0], status: "failing", status_code: 503 } as const;
+    render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[
+          shownDown({
+            containers: [running, job],
+            urls: [failing],
+            unwatched: unwatched("after_incident", {
+              container: null,
+              incident_id: "inc_14",
+              incident_short_name: "shop #14",
+            }),
+          }),
+        ]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(within(hero()).getByText("http://localhost:8080/ · 503")).toHaveClass("font-mono");
+    expect(hero()).not.toHaveTextContent("shop-migrate-1");
+  });
+
+  it("names every service it points at", () => {
+    render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[
+          shownDown({ unwatched: unwatched("before_start") }),
+          shownDown({ id: "demo/compose:blog", name: "blog", unwatched: unwatched("paused") }),
+        ]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("shop and blog are down, and I am not looking into them.");
+    expect(within(hero()).getByRole("button", { name: "Ask Bleep to look" })).toBeInTheDocument();
+  });
+
+  it("watches first: a service the watcher waits on comes before one it points at", () => {
+    const { container } = render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[
+          shownDown({ unwatched: unwatched("paused") }),
+          shownDown({ id: "demo/compose:blog", name: "blog", watching: [watch()] }),
+        ]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("Watching blog");
+    expect(mood(container)).toBe("watching");
+  });
+
+  it("shows a container stopped on purpose as stopped, with nothing to point at", () => {
+    const { container } = render(
+      <OverviewView
+        hosts={[host()]}
+        services={[service({ health: "stopped", containers: [{ ...dead, exit_code: 137 }] })]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("Nothing needs you right now.");
+    expect(mood(container)).toBe("all_good");
+  });
+
+  it("says it in German", () => {
+    act(() => setLanguage("de"));
+    render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[shownDown({ unwatched: unwatched("before_start") })]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(headline()).toHaveTextContent("shop ist ausgefallen, und ich sehe ihn mir nicht an.");
+    expect(hero()).toHaveTextContent("Er war schon ausgefallen, als ich gestartet bin.");
+    expect(within(hero()).getByText("Deine Entscheidung")).toBeInTheDocument();
+    expect(
+      within(hero()).getByRole("button", { name: "Bleep nachsehen lassen" }),
+    ).toBeInTheDocument();
   });
 });
 

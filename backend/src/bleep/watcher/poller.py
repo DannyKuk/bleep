@@ -17,6 +17,7 @@ from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
 from bleep.watcher.events import EventKey, diff, event_key, translate
+from bleep.watcher.sightings import Sightings
 from bleep.watcher.wake import SleepWatch
 
 log = logging.getLogger(__name__)
@@ -37,7 +38,8 @@ class HostWatcher:
     host's containers grouped by service id after every successful tick, which is what the
     detector's `tick` wants. `sleep_watch`, when given, is asked before the tick pulls and again
     before its probe result goes out, so a wake of Bleep's own (also one in the middle of the
-    tick) is known before anything the tick saw is fed.
+    tick) is known before anything the tick saw is fed. `sightings` keeps what the ticks saw that
+    a listing alone does not say (stops on purpose, what was down at the first listing).
     """
 
     def __init__(
@@ -49,6 +51,7 @@ class HostWatcher:
         interval_s: float = INTERVAL_S,
         on_snapshot: Snapshot | None = None,
         sleep_watch: SleepWatch | None = None,
+        sightings: Sightings | None = None,
     ) -> None:
         self.host_id = host_id
         self.interval_s = interval_s
@@ -57,6 +60,7 @@ class HostWatcher:
         self._clock = clock
         self._on_snapshot = on_snapshot
         self._sleep_watch = sleep_watch
+        self.sightings = sightings or Sightings()
         self._cursor = clock()
         self._previous: list[ContainerSummary] | None = None
         self._service_of: dict[str, str] = {}  # container id -> service id, as of last tick
@@ -166,6 +170,7 @@ class HostWatcher:
                 self._covered[cid] = listed
             signals = [*signals, *reported]
 
+        self.sightings.saw(self.host_id, listed, fresh, current, translation.died_ids)
         self._previous = current
         grouped = _by_service(reg, self.host_id)
         self._service_of = {c.id: sid for sid, cs in grouped.items() for c in cs}

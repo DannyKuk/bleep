@@ -112,6 +112,16 @@ function Figure({ pose, mood }: { pose: Pose; mood: Mood }) {
           motion={pose.rightMotion}
           at={pose.handRight}
         />
+        {pose.ticks && (
+          <path
+            data-part="ticks"
+            d="M118 40l4-6 M122 50h7 M118 60l4 6"
+            fill="none"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            className={cn(styles.ticks, "stroke-warn")}
+          />
+        )}
         {pose.question && (
           <path
             data-part="question"
