@@ -104,6 +104,9 @@ _URL = re.compile(
 _PREVIEW_LABEL = re.compile(r"(?:^|-)pr-\d+$", re.IGNORECASE)
 # What follows the scheme of a domain `_URL` took: the host, a port and a path.
 _AUTHORITY = re.compile(r"(?P<host>\[[^\]]*\]|[^:/?#]*)(?::[0-9]{1,5})?(?P<path>[/?#].*)?")
+# What `_ascii_host` leaves of a host: DNS-style characters, or an IPv6 address once unbracketed.
+_COMPARED_HOST = re.compile(r"[a-z0-9_.-]+|[0-9a-f:.]+")
+_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
 _HEALTH_PATH = re.compile(r"/[\x21-\x22\x24-\x7e]{0,500}")  # printable, no space or `#`
 SUGGESTED_MAX = 20  # of one service's suggested checks: as many URLs as a service may have
 APPLICATIONS = (
@@ -455,23 +458,70 @@ def suggested_checks(service: Service, apps: list[CoolifyApplication]) -> list[U
     return found[:SUGGESTED_MAX]
 
 
+def _ascii_host(host: str) -> str | None:
+    """`host` as hosts compare: lower case, no final dot, a Unicode name in its punycode form;
+    None for an empty one, one IDNA refuses, or one with a character a host has none of (`*`)."""
+    host = host.lower().rstrip(".")
+    try:
+        host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+    if not _COMPARED_HOST.fullmatch(host):
+        return None
+    try:
+        return ipaddress.ip_address(host).compressed
+    except ValueError:
+        return host
+
+
 def _domain_host(item: str) -> str | None:
-    """The host of one domain item in lower case, without port or final dot; None when the item
-    is not a URL."""
-    url = _URL.fullmatch(item.strip())
-    parts = _AUTHORITY.fullmatch(url["rest"]) if url else None
-    return (parts["host"].lower().rstrip(".") or None) if parts else None
+    """The host of one domain item as `_ascii_host` writes it, from an item that may be Unicode
+    where `_domain_base` refuses one; None when it is not a URL with a host."""
+    text = item.strip()
+    if not _SCHEME.match(text) or any(c.isspace() for c in text):
+        return None
+    try:
+        host = urlsplit(text).hostname
+    except ValueError:
+        return None
+    return _ascii_host(host) if host else None
+
+
+def _compose_texts_complete(raw: str) -> dict[str, str] | None:
+    """Each Compose service's `domain` text of `raw`, as `_compose_domain_texts` reads them, but
+    None as soon as one entry could not be read (a name `_SERVICE` refuses, a service that is
+    no object, a `domain` that is no text), since the domains it holds are then unknown."""
+    if len(raw) > COMPOSE_DOMAINS_MAX:
+        return None
+    try:
+        services = json.loads(raw)
+    except ValueError, RecursionError:
+        return None
+    if not isinstance(services, dict):
+        return None
+    texts: dict[str, str] = {}
+    for name, service in services.items():
+        if not _SERVICE.fullmatch(name) or not isinstance(service, dict):
+            return None
+        domain = service.get("domain")
+        if domain is not None and not isinstance(domain, str):
+            return None
+        if domain:
+            texts[name] = domain
+    return texts
 
 
 def _current_hosts(app: CoolifyApplication) -> set[str]:
     """The hosts of every domain `app` has, preview domains and ones with a query included, for
     every Compose service Coolify keeps domains for and not only those that run now; empty when
-    it has none or when one item is not a URL (a wildcard), since the list cannot then be said
-    to be complete."""
+    it has none, or when the list cannot be said to be complete: an item that is not a URL (a
+    wildcard) or, in a Compose application, an entry that could not be read."""
     if app.fqdn:
         items = app.fqdn.split(",")
     elif app.docker_compose_domains is not None:
-        texts = _compose_domain_texts(app.docker_compose_domains)
+        texts = _compose_texts_complete(app.docker_compose_domains)
+        if texts is None:
+            return set()
         items = [item for text in texts.values() for item in text.split(",")]
     else:
         return set()
@@ -486,18 +536,23 @@ def _current_hosts(app: CoolifyApplication) -> set[str]:
     return hosts
 
 
-def _checked_domain(url: str) -> str | None:
-    """The host of a check's URL in lower case when it is a domain name (a dot, not an address);
-    a check on `localhost`, a Docker name or an IP address is no Coolify domain."""
+def _checked_host(url: str) -> str | None:
+    """The host of a check's URL as `_ascii_host` writes it, when Coolify could serve it: a
+    name with a dot or a public IP address. A check on `localhost`, a Docker name or a loopback,
+    private, CGNAT or link-local address is no Coolify domain."""
     try:
-        host = (urlsplit(url).hostname or "").rstrip(".")
+        host = urlsplit(url).hostname or ""
     except ValueError:
         return None
+    found = _ascii_host(host)
+    if found is None:
+        return None
     try:
-        ipaddress.ip_address(host)
+        address = ipaddress.ip_address(found)
     except ValueError:
-        return host if "." in host else None
-    return None
+        return found if "." in found else None
+    nearby = address.is_link_local or address.is_unspecified
+    return None if nearby or any(address in net for net in urls.NEARBY) else found
 
 
 def stale_checks(service: Service, apps: list[CoolifyApplication]) -> list[UrlCheckConfig]:
@@ -517,7 +572,7 @@ def stale_checks(service: Service, apps: list[CoolifyApplication]) -> list[UrlCh
     return [
         check
         for check in service.urls
-        if (host := _checked_domain(check.url)) is not None and host not in hosts
+        if (host := _checked_host(check.url)) is not None and host not in hosts
     ]
 
 

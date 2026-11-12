@@ -221,13 +221,22 @@ export function staleChecked(suggested: unknown, urls: UrlCheck[]): Set<string> 
 
 /**
  * The note under a check whose domain Coolify no longer has (#493), with the one click that
- * removes it: the URLs in force are saved without it, like any edit of them. Nothing is removed
- * before the click.
+ * removes it, and only that entry of the URLs in force (`index`; another check of the same address
+ * with other expectations stays): they are saved without it, like any edit of them. Nothing is
+ * removed before the click.
  */
-function StaleNote({ url, settings }: { url: string; settings: ServiceSettings }) {
+function StaleNote({
+  url,
+  index,
+  settings,
+}: {
+  url: string;
+  index: number;
+  settings: ServiceSettings;
+}) {
   const t = useT();
   const { saving, busy, problems, run } = useSaving(t.settings.urls.labels);
-  const remaining = settings.view.urls.filter((check) => sameUrl(check.url) !== sameUrl(url));
+  const remaining = settings.view.urls.filter((_, at) => at !== index);
   return (
     <div role="group" aria-label={t.service.staleFor(url)} className="flex flex-col gap-1.5">
       <p className="text-xs text-ink-2">{t.service.staleNote}</p>
@@ -342,14 +351,14 @@ export function CheckedUrls({
     <div className="flex flex-col gap-3">
       {shown.length > 0 ? (
         <ul className="flex flex-col gap-1.5" aria-label="URLs">
-          {shown.map((url) => (
+          {shown.map((url, index) => (
             <UrlRow
               key={url.url}
               url={url}
               checks={history.find((recent) => recent.url === url.url)?.checks ?? []}
               note={
                 settings && stale.has(sameUrl(url.url)) ? (
-                  <StaleNote url={url.url} settings={settings} />
+                  <StaleNote url={url.url} index={index} settings={settings} />
                 ) : undefined
               }
             />

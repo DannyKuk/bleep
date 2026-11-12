@@ -781,6 +781,32 @@ describe("ServicePage settings", () => {
       expect(within(urls).queryByText(gone.url)).toBeNull();
     });
 
+    it("removes only the clicked entry, not another check of the same address", async () => {
+      const twin: UrlCheck = {
+        url: "HTTPS://Old.shop.example.com/health/",
+        expect_status: 204,
+        body_contains: "ok",
+      };
+      const view = withGone();
+      view.hosts[0].services["compose:shop"].urls = [...inForce(), twin];
+      const fetchMock = settingsBackend({
+        reads: [view],
+        puts: [json(settingsView({ version: "v2" }))],
+        suggested: { offered: [], stale: [gone, twin] },
+      });
+      renderPage("m1/compose:shop");
+      const urls = await region("Checked from outside");
+
+      const buttons = await within(urls).findAllByRole("button", { name: "Remove this check" });
+      expect(buttons).toHaveLength(2);
+      await userEvent.click(buttons[0]);
+
+      const sent = sentBody(fetchMock, "PUT") as {
+        hosts: { m1: { services: { "compose:shop": { urls: UrlCheck[] } } } };
+      };
+      expect(sent.hosts.m1.services["compose:shop"].urls).toEqual([inForce()[0], twin]);
+    });
+
     it("shows why the removal was refused and keeps the note", async () => {
       settingsBackend({
         reads: [withGone()],

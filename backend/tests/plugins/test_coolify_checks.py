@@ -445,3 +445,49 @@ async def test_the_plugin_says_what_to_offer_and_what_is_stale_from_one_read():
         "https://example.com/shop/health",
     ]
     assert len(coolify.requests) == 1
+
+
+def test_a_compose_list_with_an_entry_that_cannot_be_read_flags_nothing():
+    mixed = '{"web":{"domain":"https://a.example.com"},"api":{"domain":["https://b.example.com"]}}'
+    odd_name = "s" * 65  # a valid Compose name that Bleep's service-name rule refuses
+    template = '{"web":{"domain":"https://a.example.com"},"%s":{"domain":"https://b.example.com"}}'
+    checks = ["https://b.example.com/", "https://c.example.com/"]
+    for raw in (mixed, template % odd_name):
+        odd = apps()[-1].model_copy(update={"docker_compose_domains": raw})
+        assert stale_checks(compose_app_service("web", urls=checks), [odd]) == []
+    fine = apps()[-1].model_copy(update={"docker_compose_domains": template % "api"})
+    assert urls(stale_checks(compose_app_service("web", urls=checks), [fine])) == [
+        "https://c.example.com/"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("fqdn", "check"),
+    [
+        ("https://xn--bcher-kva.example.com", "https://bücher.example.com/"),
+        ("https://bücher.example.com", "https://xn--bcher-kva.example.com/"),
+        ("https://Bücher.example.com:8443/x", "https://BÜCHER.example.com/"),
+    ],
+)
+def test_a_unicode_and_a_punycode_host_are_the_same_domain(fqdn, check):
+    app = apps()[0].model_copy(update={"fqdn": fqdn})
+    assert stale_checks(shop_with(check), [app]) == []
+
+
+def test_another_unicode_domain_is_flagged_and_a_wildcard_domain_still_flags_nothing():
+    app = apps()[0].model_copy(update={"fqdn": "https://bücher.example.com"})
+    assert urls(stale_checks(shop_with("https://bücherei.example.com/"), [app])) == [
+        "https://bücherei.example.com/"
+    ]
+    wild = apps()[0].model_copy(update={"fqdn": "https://*.example.com"})
+    assert stale_checks(shop_with("https://old.shop.example.com/"), [wild]) == []
+
+
+def test_an_ip_domain_coolify_offered_and_then_dropped_is_flagged():
+    notes = service_of(
+        box(f"{NOTES}-074501234567", labels=coolify_labels(NOTES, "notes")),
+        urls=["https://notes.example.com/", "http://203.0.113.7/", "http://192.168.1.5:3000/"],
+    )
+    dropped = apps()[2].model_copy(update={"fqdn": "https://notes.example.com"})
+    assert urls(stale_checks(notes, [dropped])) == ["http://203.0.113.7/"]
+    assert [c for c in stale_checks(notes, apps())] == []  # still listed: nothing flagged
