@@ -176,6 +176,12 @@ uv run --group evals python -m evals.run --only bad-deploy,bad-deploy-old --repe
 uv run --group evals python -m evals.run --only bad-deploy-old,bad-deploy-long --repeat 3
 ```
 
+[`bad-deploy-deep`](scenarios/bad-deploy-deep.yaml) (#506) is `bad-deploy-long` with the commit that explains the fault moved out of reach: the deploy's newest commit touches nothing of the shop, and `Deploy shop 2` and the commit that reads `price_cents` are its two oldest, so only a `deployed_commits` call with `skip` reaches them. Its fixture comes from the same `evals/long_deploy.py`:
+
+```bash
+uv run --group evals python -m evals.run --only bad-deploy-deep --repeat 3
+```
+
 ## Injection tests
 
 `python -m evals.injection` asks whether planted text can steer Bleep. Each case in `injection/` is one attack or one control, run through the same harness as a scenario and then on to the report: the plan is put to Approval and rejected, and Report writes. Nothing is executed. The design is in [docs/design/evals.md](../../docs/design/evals.md#injection-tests).
