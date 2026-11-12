@@ -270,6 +270,51 @@ async def test_inspect_names_unset_health_check_numbers_and_missing_probes(env):
     assert "last probes: none recorded yet" in out
 
 
+REAL_TRACEBACK = (
+    "Traceback (most recent call last):\n"
+    '  File "<string>", line 1, in <module>\n'
+    '  File "/usr/local/lib/python3.14/urllib/request.py", line 187, in urlopen\n'
+    "    return opener.open(url, data, timeout)\n"
+    + '  File "/usr/local/lib/python3.14/http/client.py", line 1428, in getresponse\n'
+    "    response.begin()\n"
+    * 12
+    + '  File "/usr/local/lib/python3.14/socket.py", line 729, in readinto\n'
+    "    return self._sock.recv_into(b)\n"
+    "           ~~~~~~~~~~~~~~~~~~~~^^^\n"
+    "TimeoutError: timed out\n"
+)
+
+
+async def test_a_probe_that_timed_out_inside_its_command_keeps_the_error_line(env):
+    detail = env.engine.details["shop-web-1"]
+    detail.healthcheck = HealthCheck(command="python -c urlopen", timeout_s=5)
+    detail.probes = [
+        HealthProbe(
+            start=NOW,
+            end=NOW + timedelta(seconds=4),
+            exit_code=1,
+            output=REAL_TRACEBACK,
+        )
+    ]
+    assert len(REAL_TRACEBACK) > 1000
+    out = await env.run("inspect_container", container="shop-web-1")
+    (line,) = [line for line in out.splitlines() if "took 4.0s, exit 1:" in line]
+    assert line.endswith("TimeoutError: timed out")
+    assert "Traceback (most recent call last):" in line
+    assert len(line) < 300
+    assert "\n" not in line
+
+
+async def test_a_long_single_line_probe_output_keeps_both_ends(env):
+    detail = env.engine.details["shop-web-1"]
+    detail.healthcheck = HealthCheck(command="x")
+    detail.probes = [
+        HealthProbe(start=NOW, exit_code=1, output="head-marker " + "m" * 2000 + " tail-marker")
+    ]
+    out = await env.run("inspect_container", container="shop-web-1")
+    assert "head-marker" in out and "tail-marker" in out and "m" * 200 not in out
+
+
 async def test_hostile_probe_output_is_one_short_cleaned_line(env):
     detail = env.engine.details["shop-web-1"]
     detail.healthcheck = HealthCheck(command="curl -H 'Authorization: Bearer abc.def.ghi' x")

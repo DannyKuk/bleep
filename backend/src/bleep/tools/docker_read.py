@@ -174,6 +174,23 @@ def _short(text: str, limit: int) -> str:
     return line if len(line) <= limit else line[:limit] + "…"
 
 
+def _probe_output(text: str, limit: int) -> str:
+    """One line of at most about `limit` characters that keeps the start and the last line.
+
+    A failed probe's output is often a traceback whose last line names the error, so a plain
+    cut at the start would drop the one line that matters. Redaction runs before the cut.
+    """
+    lines = [" ".join(line.split()) for line in redact_text(text).splitlines()]
+    lines = [line for line in lines if line]
+    flat = " ".join(lines)
+    if len(flat) <= limit:
+        return flat
+    if len(lines) == 1:
+        return f"{flat[: limit // 2]} … {flat[-(limit // 2) :]}"
+    last = lines[-1] if len(lines[-1]) <= limit // 2 else lines[-1][: limit // 2] + "…"
+    return f"{flat[: limit - len(last) - 3]} … {last}"
+
+
 def _seconds(value: float | None) -> str:
     return "default" if value is None else f"{value:g}s"
 
@@ -191,7 +208,7 @@ def _probe(probe: HealthProbe) -> str:
     took = ""
     if probe.start and probe.end:
         took = f" took {(probe.end - probe.start).total_seconds():.1f}s,"
-    output = _short(probe.output, PROBE_OUTPUT_CHARS) or "(no output)"
+    output = _probe_output(probe.output, PROBE_OUTPUT_CHARS) or "(no output)"
     code = "-" if probe.exit_code is None else probe.exit_code
     return f"  {_when(probe.start)}{took} exit {code}: {output}"
 
@@ -288,9 +305,12 @@ SPECS = [
             "restarting or is unhealthy. The health check runs its command every interval; "
             "the container turns unhealthy after retries failed probes in a row. A probe that "
             "ran longer than the timeout is recorded with exit code -1 and an output starting "
-            "'Health check exceeded timeout', so the probe command did not finish. A probe whose "
-            "command finished and failed has the command's own exit code (1 = unhealthy) and "
-            "output. Exit code -1 with another output means Docker could not run the probe. "
+            "'Health check exceeded timeout'. A probe can also time out inside its own command "
+            "when its client gives up first: the exit code is then the command's own (often 1) "
+            "and the output says so (for example 'timed out'). Both mean the service did not "
+            "answer in time. Any other failing probe has the command's exit code and output. "
+            "A probe's output is cut to about 200 characters, keeping its start and its last "
+            "line. Exit code -1 with another output means Docker could not run the probe. "
             "Environment "
             "variable values are hidden and only their names are shown, except that a URL to a "
             "common network service (http, postgres, redis, amqp and the like) keeps its scheme, "
