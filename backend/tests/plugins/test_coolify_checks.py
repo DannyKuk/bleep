@@ -16,7 +16,7 @@ from bleep.schemas.coolify import CoolifyApplication
 from bleep.schemas.plugins import PluginHealth
 from bleep.schemas.services import Service
 from bleep.tools.registry import ToolSpec
-from fakes import CoolifyAnswers
+from fakes import CoolifyAnswers, compose_labels
 from graph_env import box
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "coolify"
@@ -123,12 +123,135 @@ def test_an_app_from_coolify_4_1_is_found_by_its_container_name():
     "container",
     [
         box("shop-web-1", "shop"),  # a Compose project, not Coolify's
-        box(f"{FORUM}-0745", labels=coolify_labels(FORUM, "forum")),  # a Compose app: no fqdn
+        box(f"{FORUM}-0745", labels=coolify_labels(FORUM, "forum")),  # no Compose service label
         box("other-0745", labels=coolify_labels("gone0uuid000000000000099", "gone")),
     ],
 )
 def test_a_service_without_a_coolify_app_with_domains_is_offered_nothing(container):
     assert suggested_checks(service_of(container), apps()) == []
+
+
+def compose_app_service(*compose_services: str, urls: list[str] = ()) -> Service:
+    """The service of the `forum` Compose application with a container per Compose service, as
+    Coolify names and labels them."""
+    return service_of(
+        *(
+            box(
+                f"{name}-{FORUM}-074501234567",
+                labels=coolify_labels(FORUM, "forum") | compose_labels(FORUM, name),
+            )
+            for name in compose_services
+        ),
+        urls=urls,
+    )
+
+
+def test_a_compose_service_is_offered_the_domains_coolify_keeps_for_the_services_it_runs():
+    checks = suggested_checks(compose_app_service("web", "api", "worker", "admin"), apps())
+    assert urls(checks) == [
+        "https://forum.example.com/",
+        "https://www.forum.example.com/",
+        "https://api.forum.example.com/v1/",
+        "https://admin.forum.example.com/",
+    ]
+    # The app's health check (here on, at /health, expecting 204) describes no Compose service.
+    assert all(c.expect_status == 200 and c.body_contains is None for c in checks)
+
+
+@pytest.mark.parametrize(
+    ("running", "offered"),
+    [
+        (["web"], ["https://forum.example.com/", "https://www.forum.example.com/"]),
+        (["api"], ["https://api.forum.example.com/v1/"]),
+        (["worker"], []),  # its domain is empty
+        (["db"], []),  # Coolify keeps no domain for it
+        (["Web"], []),  # a Compose service name is exact
+    ],
+)
+def test_only_the_domains_of_the_compose_services_the_service_runs_are_offered(running, offered):
+    assert urls(suggested_checks(compose_app_service(*running), apps())) == offered
+
+
+def test_userinfo_preview_non_http_and_query_domains_of_a_compose_service_are_left_out():
+    suggested = urls(suggested_checks(compose_app_service("admin"), apps()))
+    assert suggested == ["https://admin.forum.example.com/"]
+    assert not any("fake-compose-pass" in url for url in suggested)
+
+
+def test_a_compose_label_without_the_config_hash_names_no_compose_service():
+    labels = coolify_labels(FORUM, "forum") | {"com.docker.compose.service": "web"}
+    forum = service_of(box(f"web-{FORUM}-074501234567", labels=labels))
+    assert suggested_checks(forum, apps()) == []
+
+
+def test_checks_a_compose_service_has_are_not_offered_again():
+    forum = compose_app_service("web", urls=["https://WWW.forum.example.com"])
+    assert urls(suggested_checks(forum, apps())) == ["https://forum.example.com/"]
+
+
+def test_a_preview_of_a_compose_app_is_offered_nothing():
+    labels = coolify_labels(FORUM, "forum", pr="3") | compose_labels(FORUM, "web")
+    preview = service_of(box(f"web-{FORUM}-pr-3-0745", labels=labels))
+    assert suggested_checks(preview, apps()) == []
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "",
+        "not json",
+        "[]",
+        '"web"',
+        '{"web": "https://a.example.com"}',
+        '{"web": {"domain": ["https://a.example.com"]}}',
+        '{"web": {"domain": null}}',
+        '{"we b": {"domain": "https://a.example.com"}}',
+        '{"web": {"domain": "https://a.example.com"}}' + " " * 16_000,
+        "[" * 100_000,
+    ],
+)
+def test_a_compose_field_that_is_not_what_coolify_writes_offers_nothing(raw):
+    odd = apps()[-1].model_copy(update={"docker_compose_domains": raw})
+    assert suggested_checks(compose_app_service("web", "we b"), [odd]) == []
+
+
+def test_an_odd_compose_service_does_not_hide_the_others():
+    raw = '{"web": 7, "api": {"domain": "https://api.forum.example.com"}}'
+    odd = apps()[-1].model_copy(update={"docker_compose_domains": raw})
+    forum = compose_app_service("web", "api")
+    assert urls(suggested_checks(forum, [odd])) == ["https://api.forum.example.com/"]
+
+
+def compose_domains_of(keys: dict[str, str]) -> list[CoolifyApplication]:
+    raw = json.dumps({key: {"domain": domain} for key, domain in keys.items()})
+    return [apps()[-1].model_copy(update={"docker_compose_domains": raw})]
+
+
+A = "https://a.example.com"
+
+
+@pytest.mark.parametrize(
+    ("running", "keys", "offered"),
+    [
+        # Older Coolify versions key a service `my-api` or `my.api` as `my_api`.
+        (["my-api"], {"my_api": A}, [A + "/"]),
+        (["my.api"], {"my_api": A}, [A + "/"]),
+        (["my-api"], {"my-api": A}, [A + "/"]),
+        # Both sides are normalized, so a service written with `_` finds a `-` key too.
+        (["my_api"], {"my-api": A}, [A + "/"]),
+        (["myapi"], {"my_api": A}, []),
+        # A filled original key wins over its twins; an empty one shadows nothing.
+        (["my-api"], {"my_api": "https://old.example.com", "my-api": A}, [A + "/"]),
+        (["my-api"], {"my-api": "", "my_api": A}, [A + "/"]),
+        (["my-api"], {"my-api": "", "my_api": ""}, []),
+        # Two present names share a normalized name: only an exact key is one service's alone.
+        (["my-api", "my.api"], {"my_api": A}, []),
+        (["my-api", "my.api"], {"my_api": "https://old.example.com", "my-api": A}, [A + "/"]),
+    ],
+)
+def test_a_compose_service_is_found_under_the_key_coolify_reads_for_it(running, keys, offered):
+    forum = compose_app_service(*running)
+    assert urls(suggested_checks(forum, compose_domains_of(keys))) == offered
 
 
 def context() -> PluginContext:
@@ -148,6 +271,8 @@ async def test_the_plugin_reads_the_applications_and_suggests_their_domains():
     plugin = answering(200, domains)
     shop = service_of(box(f"{SHOP}-074501234567", labels=coolify_labels(SHOP, "shop")))
     assert len(await plugin.suggested_checks(context(), shop)) == 3
+    forum = compose_app_service("web", "api")
+    assert len(await plugin.suggested_checks(context(), forum)) == 3
 
 
 @pytest.mark.parametrize("status", [401, 500, 404])

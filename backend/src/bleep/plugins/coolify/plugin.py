@@ -52,7 +52,7 @@ from bleep.guard.redact import redact_with_count
 from bleep.guard.sanitize import strip_control
 from bleep.hosts.config import UrlCheckConfig, check_url_syntax
 from bleep.hosts.coolify_names import COOLIFY_NAME, app_protected_by, name_matches
-from bleep.hosts.discovery import is_self
+from bleep.hosts.discovery import compose_service, is_self
 from bleep.hosts.registry import Registry
 from bleep.plugins import urls
 from bleep.plugins.base import Plugin, PluginContext
@@ -375,18 +375,74 @@ def _same_check(url: str) -> str:
     return f"{scheme.lower()}://{authority.lower()}{(slash + path).rstrip('/')}"
 
 
+def _compose_domain_texts(raw: str) -> dict[str, str]:
+    """Each Compose service's `domain` text of a Compose application's `docker_compose_domains`,
+    the services without one left out; empty when `raw` is not what Coolify writes there."""
+    if len(raw) > COMPOSE_DOMAINS_MAX:
+        return {}
+    try:
+        services = json.loads(raw)
+    except ValueError, RecursionError:
+        return {}
+    if not isinstance(services, dict):
+        return {}
+    return {
+        name: service["domain"]
+        for name, service in services.items()
+        if _SERVICE.fullmatch(name)
+        and isinstance(service, dict)
+        and isinstance(service.get("domain"), str)
+    }
+
+
+def _offered_domains(service: Service, app: CoolifyApplication) -> list[tuple[str, str, int]]:
+    """The `(domain, path, expected status)` of each domain `app` offers to `service`: its
+    `fqdn` with the health check, or, for a Compose application, the domains of each Compose
+    service the service has a container of, on `/` (the health check fields describe the one
+    container Coolify builds itself, not a Compose service)."""
+    if app.fqdn:
+        path, status = _health_check(app)
+        return [(item, path, status) for item in app.fqdn.split(",")]
+    if app.docker_compose_domains is None:
+        return []
+    present = {name for c in service.containers if (name := compose_service(c.labels))}
+    texts = _compose_domain_texts(app.docker_compose_domains)
+    keys = {_key_of(name, present, texts) for name in present}
+    return [(item, "/", 200) for key in texts if key in keys for item in texts[key].split(",")]
+
+
+def _normalized(name: str) -> str:
+    """A Compose service name as Coolify compares it with a `docker_compose_domains` key: `-`
+    and `.` written as `_`, the way older versions wrote the keys."""
+    return name.replace("-", "_").replace(".", "_")
+
+
+def _key_of(name: str, present: set[str], texts: dict[str, str]) -> str | None:
+    """The `docker_compose_domains` key whose domains Coolify reads for the Compose service
+    `name` (`getComposeServiceDomainString`): its own key when that has domains, else the first
+    key with domains that matches it once both are normalized. None when none has, or when
+    another service of `present` has the same normalized name, so the twin key is not its alone."""
+    if texts.get(name):
+        return name
+    if sum(_normalized(other) == _normalized(name) for other in present) > 1:
+        return None
+    return next(
+        (key for key, text in texts.items() if text and _normalized(key) == _normalized(name)), None
+    )
+
+
 def suggested_checks(service: Service, apps: list[CoolifyApplication]) -> list[UrlCheckConfig]:
     """The URL checks the domains of `service`'s application suggest (#348): each domain of its
-    `fqdn` with the health check path and the status Coolify expects there (#495), without the
-    ones `_domain_base` refuses and those the service has. Every one is an http(s) URL with a
-    host and no user or password, as a check set on the service page must be."""
+    `fqdn` with the health check path and the status Coolify expects there (#495), or, for a
+    Compose application, the domains Coolify keeps for each Compose service the service runs
+    (#494), without the ones `_domain_base` refuses and those the service has. Every one is an
+    http(s) URL with a host and no user or password, as a check set on the service page must be."""
     app = app_of(service, apps)
-    if app is None or not app.fqdn:
+    if app is None:
         return []
-    path, status = _health_check(app)
     taken = {_same_check(check.url) for check in service.urls}
     found: list[UrlCheckConfig] = []
-    for item in app.fqdn.split(","):
+    for item, path, status in _offered_domains(service, app):
         base = _domain_base(item)
         url = base + path if base is not None else None
         if url is None or check_url_syntax(url) is not None or has_userinfo(url):

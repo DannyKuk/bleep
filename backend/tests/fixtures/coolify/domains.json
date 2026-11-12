@@ -51,13 +51,13 @@
     "name": "forum",
     "status": "running:healthy",
     "fqdn": null,
-    "docker_compose_domains": "{\"web\": {\"domain\": \"https://forum.example.com\"}}",
-    "health_check_enabled": false,
-    "health_check_path": "/",
+    "docker_compose_domains": "{\"web\":{\"domain\":\"https://forum.example.com,https://www.forum.example.com:3000\",\"redirect\":\"both\"},\"api\":{\"domain\":\"https://api.forum.example.com/v1/\",\"redirect\":\"both\"},\"admin\":{\"domain\":\"https://admin.forum.example.com,https://root:fake-compose-pass-0105@admin.forum.example.com,https://pr-4.forum.example.com,ftp://files.forum.example.com,http://admin.forum.example.com/panel?x=1\",\"redirect\":\"both\"},\"worker\":{\"domain\":\"\"}}",
+    "health_check_enabled": true,
+    "health_check_path": "/health",
     "health_check_port": null,
     "health_check_host": "localhost",
     "health_check_method": "GET",
-    "health_check_return_code": 200,
+    "health_check_return_code": 204,
     "health_check_scheme": "http",
     "build_pack": "dockercompose"
   }
