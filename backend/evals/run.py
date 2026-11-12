@@ -32,7 +32,7 @@ from typing import Literal, Protocol, Self
 import httpx
 import openai
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from bleep.graph.build import build_graph, open_checkpointer
@@ -97,6 +97,12 @@ from evals.scenarios import (
     score_action,
     score_category,
     score_names,
+)
+from evals.stack_lock import (
+    DEFAULT_STACK_LOCK,
+    StackBusy,
+    eval_command,
+    holding_demo_stack,
 )
 
 log = logging.getLogger("evals")
@@ -163,7 +169,19 @@ class EvalSettings(BaseSettings):
     settle_s: float = 30  # wait between runs, so the stack is back to normal before the next
     watch_interval_s: float = 15  # Bleep's default, so the time to an incident is the real one
     language: Language = DEFAULT_LANGUAGE  # what the model writes the person-facing fields in
+    # Shared by every checkout and worktree on this machine, so one eval drives the shop at a time
+    stack_lock: Path = DEFAULT_STACK_LOCK
     models: ModelSettings = Field(default_factory=lambda: ModelSettings(_env_file=ENV_FILE))
+
+    @field_validator("stack_lock")
+    @classmethod
+    def _one_lock_for_every_checkout(cls, path: Path) -> Path:
+        """A `.env` does not expand `~`, and a relative path would name a different file in
+        each checkout, so every worktree would hold its own lock."""
+        path = path.expanduser()
+        if not path.is_absolute():
+            raise ValueError(f"EVAL_STACK_LOCK must be an absolute path, not {path}")
+        return path
 
     @model_validator(mode="after")
     def _model_server_from_this_machine(self) -> Self:
@@ -1106,8 +1124,10 @@ def main(argv: Sequence[str] | None = None, settings: EvalSettings | None = None
         now, model = utcnow(), tested_model(settings.models)
         batch = earlier_batch(REPO / args.append, now, model) if args.append else ([], now)
         judge = build_judge(settings.judge_model, settings.models)
-        return asyncio.run(_run(args, settings, scenarios, judge, batch))
-    except (EvalError, JudgeError, ScenarioError) as error:
+        command = eval_command("evals.run", sys.argv[1:] if argv is None else argv)
+        with holding_demo_stack(settings.stack_lock, command):
+            return asyncio.run(_run(args, settings, scenarios, judge, batch))
+    except (EvalError, JudgeError, ScenarioError, StackBusy) as error:
         print(f"evals: {error}", file=sys.stderr)
         return 2
 

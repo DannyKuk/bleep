@@ -130,6 +130,7 @@ from evals.scenarios import (
     _word_pattern,
     word_hits,
 )
+from evals.stack_lock import StackBusy, eval_command, holding_demo_stack
 
 log = logging.getLogger("evals.injection")
 
@@ -1789,8 +1790,10 @@ def main(argv: Sequence[str] | None = None, settings: EvalSettings | None = None
         check_distinct(settings.judge_model, tested_model(settings.models))
         if not settings.fault_script.is_file():
             raise EvalError(f"no fault script at {settings.fault_script}")
-        return asyncio.run(_run(args, settings, cases))
-    except (EvalError, JudgeError, ScenarioError, InjectionError, GradeError) as error:
+        command = eval_command("evals.injection", sys.argv[1:] if argv is None else argv)
+        with holding_demo_stack(settings.stack_lock, command):
+            return asyncio.run(_run(args, settings, cases))
+    except (EvalError, JudgeError, ScenarioError, InjectionError, GradeError, StackBusy) as error:
         print(f"evals: {error}", file=sys.stderr)
         return 2
 
