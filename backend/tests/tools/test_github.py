@@ -24,7 +24,7 @@ from bleep.tools.github import (
     github_specs,
 )
 from bleep.tools.registry import ToolContext
-from fakes import FakeEngine, compose_labels, ssh_host
+from fakes import FakeEngine, PagedCompare, compare_commit, compose_labels, ssh_host
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "github"
 NOW = datetime(2024, 12, 1, 12, 0, tzinfo=UTC)
@@ -655,9 +655,9 @@ async def labelled(labels: dict[str, dict[str, str]]) -> Registry:
     return registry
 
 
-async def deployed(registry, github, running=None, clock=lambda: NOW) -> str:
+async def deployed(registry, github, running=None, clock=lambda: NOW, **args) -> str:
     tools = build(registry, github, clock, Deploys(running) if running is not None else None)
-    return await tools["deployed_commits"].ainvoke({})
+    return await tools["deployed_commits"].ainvoke(args)
 
 
 async def test_a_coolify_deploy_lists_exactly_its_commits_newest_first(registry, github):
@@ -706,7 +706,10 @@ async def test_many_commits_are_cut_to_the_newest_and_the_rest_counted(registry,
     assert "body body" not in out  # a deploy's list shows each message's first line
     shown = len(re.findall(r"^- [0-9a-f]{7} ", out, re.M))
     assert 20 < shown < 250
-    assert out.splitlines()[-2] == f"({400 - shown} older commits of this deploy not shown)"
+    assert out.splitlines()[-2] == (
+        f"({400 - shown} older commits of this deploy not shown;"
+        f" call deployed_commits with skip={shown} for them)"
+    )
 
 
 async def test_a_rollback_says_it_brought_no_commits(registry, github):
@@ -893,3 +896,150 @@ async def test_a_hostile_message_in_a_deploy_cannot_forge_a_line(registry, githu
 
     assert out.count("</untrusted") == 1 and WRAPPED.match(out)
     assert not re.search(r"^- deadbee ", out, re.M) and "ghp_abc123" not in out
+
+
+def long_deploy(count: int, title=lambda i: f"Change number {i}") -> PagedCompare:
+    """A compare of `count` commits, oldest first, the newest being the running one."""
+    commits = [compare_commit(i, title(i)) for i in range(count)]
+    commits[-1]["sha"] = HEAD
+    return PagedCompare(commits)
+
+
+def listed(out: str) -> list[str]:
+    return re.findall(r"^- ([0-9a-f]{7}) ", out, re.M)
+
+
+def next_skip(out: str) -> int | None:
+    """The number the cut note of `out` names, as the model would read it."""
+    found = re.search(r"call deployed_commits with skip=(\d+) for them\)", out)
+    return int(found[1]) if found else None
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        lambda i: f"Change number {i}",
+        lambda i: f"Change number {i} " + "<b>long & loud</b> title " * 12,  # cut at 240, escaped
+    ],
+    ids=["short titles", "long titles"],
+)
+async def test_every_commit_of_a_deploy_of_over_250_is_read_in_parts(registry, title):
+    compare = long_deploy(700, title)
+    parts: list[str] = []
+    skip = 0
+
+    while skip is not None:
+        args = {"skip": skip} if skip else {}
+        out = await deployed(registry, compare, COOLIFY, **args)
+        assert WRAPPED.match(out) and len(out) < 8200  # the guard cut nothing
+        assert "this deploy brought 700 commits" in out
+        parts.append(out)
+        skip = next_skip(out)
+
+    shas = [sha for part in parts for sha in listed(part)]
+    assert len(parts) > 3
+    assert shas == [HEAD[:7]] + [f"{i:07x}" for i in range(698, -1, -1)]  # all 700, none twice
+    assert "older commits of this deploy not shown" not in parts[-1]
+    assert [r.url.params.get("page") for r in compare.requests[:1]] == [None]  # the first: unpaged
+
+
+async def test_a_part_after_skip_says_which_commits_it_holds(registry):
+    compare = long_deploy(400)
+
+    out = await deployed(registry, compare, COOLIFY, skip=100)
+
+    lines = out.splitlines()
+    assert lines[1].startswith("Running in encode/httpx: commit 4189b7f")  # the first line stays
+    assert lines[2] == (
+        "The deploy before it ran commit 80960fa; this deploy brought 400 commits."
+        " The 100 newest are skipped; these are the next ones, newest first:"
+    )
+    assert lines[3].startswith("- 000012b ")  # commit 299, the 101st newest
+    assert "does not start at the running commit" not in out
+
+
+async def test_skipping_past_the_oldest_commit_says_how_many_there_are(registry):
+    out = await deployed(registry, long_deploy(400), COOLIFY, skip=400)
+
+    assert "this deploy brought 400 commits, and skip=400 is past the oldest of them." in out
+    assert not re.search(r"^- ", out, re.M)
+
+
+async def test_a_rollback_with_skip_still_says_it_brought_no_commits(registry):
+    compare = PagedCompare([], status="behind", behind_by=3)
+
+    out = await deployed(registry, compare, COOLIFY, skip=10)
+
+    assert "this deploy went back (a rollback) and brought no new commits" in out
+
+
+async def test_a_diverged_deploy_read_with_skip_says_what_it_left_out(registry):
+    compare = long_deploy(400)
+    compare.status, compare.behind_by = "diverged", 2
+
+    out = await deployed(registry, compare, COOLIFY, skip=100)
+
+    assert out.splitlines()[2] == (
+        "The deploy before it ran commit 80960fa; this deploy brought 400 commits and left out"
+        " 2 commits that one ran (the branches diverged). The 100 newest are skipped; these are"
+        " the next ones, newest first:"
+    )
+    assert out.splitlines()[3].startswith("- 000012b ")  # commit 299, the 101st newest
+    assert next_skip(out) is not None
+
+
+async def test_a_long_deploy_costs_one_request_per_part_after_the_first(registry):
+    compare = long_deploy(1371)
+    tool = build(registry, compare, deploys=Deploys(COOLIFY))["deployed_commits"]  # one client
+    skip, parts = 0, 0
+
+    while skip is not None:
+        out = await tool.ainvoke({"skip": skip} if skip else {})
+        skip, parts = next_skip(out), parts + 1
+
+    assert [r.url.params.get("page") for r in compare.requests[:1]] == [None]  # unpaged first
+    assert len(compare.requests) == parts  # the total came with the first, then a page per part
+
+
+async def test_a_part_of_long_titles_is_read_from_a_page_of_about_what_the_last_one_showed(
+    registry,
+):
+    compare = long_deploy(1371, lambda i: f"Change number {i} " + "<b>long & loud</b> title " * 12)
+    tool = build(registry, compare, deploys=Deploys(COOLIFY))["deployed_commits"]
+    skip, shown = 0, []
+
+    while skip is not None:
+        out = await tool.ainvoke({"skip": skip} if skip else {})
+        shown.append(len(listed(out)))
+        skip = next_skip(out)
+
+    sizes = [int(r.url.params["per_page"]) for r in compare.requests[1:]]
+    assert len(shown) == 48 and shown[:3] == [30, 29, 29]  # about 29 titles fit the output
+    assert max(sizes) <= 70 and len(compare.requests) == len(shown)  # one page of ~50, not 100
+
+
+async def test_skip_below_zero_is_refused_before_github_is_asked(registry, github):
+    out = await deployed(registry, github, COOLIFY, skip=-1)
+
+    assert "skip" in out and github.requests == []
+
+
+async def test_skip_with_no_known_end_to_the_deploy_says_it_reads_nothing(registry, github):
+    out = await deployed(
+        registry, github, RunningCommit(sha=HEAD, how="coolify", since=LIVE), skip=30
+    )
+
+    assert "skip reads nothing here" in out
+    assert "- 4189b7f " in out and "skip=" not in out.split("skip reads nothing here")[1]
+
+
+def test_the_description_and_schema_name_skip():
+    ctx = ToolContext("inc-1", "a", None, None, service_id="a/compose:shop")
+    spec = next(s for s in github_specs(GithubClient(None)) if s.name == "deployed_commits")
+    tool = spec.build(ctx)
+
+    assert "skip" in tool.description and "oldest commits of a long deploy" in tool.description
+    assert "read the next part" in tool.description
+    assert "do not spend them all on commits" in tool.description
+    assert "do not read a long deploy" not in tool.description
+    assert set(tool.args) == {"skip"}
