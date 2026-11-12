@@ -1,0 +1,53 @@
+{
+  "started_at": "2026-11-12T10:16:47Z",
+  "finished_at": "2026-11-12T11:25:35.644220Z",
+  "model": "openai/gpt-6-luna",
+  "provider": "openrouter",
+  "judge": "claude-code:opus",
+  "repeat": 6,
+  "scenarios": [
+    {
+      "id": "bad-deploy",
+      "fault": "bad-deploy",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-web version 2 reads the column price_cents, which the database does not have (its migration never ran), so /api/items fails with 500 while shop-web stays healthy.",
+        "category": "code",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": "bad-deploy",
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false
+    }
+  ],
+  "commit": "9950e3ef",
+  "command": "uv run --group evals python -m evals.run --only bad-deploy --repeat 3 --append docs/evals/data/scenarios-20261112-101647.jsonl",
+  "reset_shop": true,
+  "knowledge": true,
+  "repo_docs": [
+    "DannyKuk/bleep: demo/shop/docs/deploy.md",
+    "DannyKuk/bleep: demo/shop/docs/services.md"
+  ],
+  "raw": "data/scenarios-20261112-101647.jsonl",
+  "report": "docs/evals/scenarios-2026-11-12.md",
+  "grader": null,
+  "grades": null
+}

@@ -13,6 +13,7 @@ from evals.github import (
     GithubFixtureError,
     fixture_client,
     load_github_fixture,
+    named_commits,
 )
 from evals.injection import load_cases
 from evals.scenarios import ScenarioError, load_scenario, load_scenarios
@@ -69,6 +70,16 @@ async def test_a_commit_is_found_by_a_sha_prefix_and_an_unknown_one_is_not_found
 def test_a_planted_commit_is_the_newest():
     planted = commit("d", 30, ["demo/shop/app.py"])
     assert [c.sha[0] for c in FIXTURE.with_newest(planted).commits] == ["a", "d", "b", "c"]
+
+
+def test_named_commits_are_the_fixtures_commits_a_text_names_by_a_sha_start():
+    texts = [
+        f"commit {'B' * 7}: 'commit b' did it; see {'a' * 12}.",
+        f"not {'c' * 6}, nor shop:{'c' * 7}, nor {'d' * 7}",
+    ]
+
+    assert named_commits(FIXTURE, texts) == ["a" * 7, "b" * 7]
+    assert named_commits(FIXTURE, ["nothing here"]) == []
 
 
 def test_a_missing_or_malformed_fixture_is_refused(tmp_path):

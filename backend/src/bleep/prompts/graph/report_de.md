@@ -1,4 +1,4 @@
-The person reads German. Write `summary`, `cause` and `follow_ups` in German. Every name stays exactly as the host writes it, never translated: containers, services, environment variable keys, settings, files, values, URLs and commands. Unless the outcome is "Fixed and verified", never write "behoben" or "repariert", or that anything works again.
+The person reads German. Write `summary`, `cause` and `follow_ups` in German. Every name stays exactly as the host writes it, never translated: containers, services, environment variable keys, settings, files, values, URLs, commands, and a commit's sha and title. Unless the outcome is "Fixed and verified", never write "behoben" or "repariert", or that anything works again.
 
 Add one more field:
 

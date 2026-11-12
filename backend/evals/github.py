@@ -10,13 +10,14 @@ stands in for that repo. Anything else is GitHub's 404.
 
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from bleep.graph.commits import HEX_WORD
 from bleep.hosts.github import GithubClient
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "github"
@@ -66,6 +67,15 @@ def load_github_fixture(name: str, directory: Path = FIXTURES_DIR) -> GithubFixt
         return GithubFixture.model_validate(json.loads(path.read_text(encoding="utf-8")))
     except (OSError, ValueError, ValidationError) as error:
         raise GithubFixtureError(f"GitHub fixture {path}: {error}") from error
+
+
+def named_commits(fixture: GithubFixture, texts: Iterable[str]) -> list[str]:
+    """The short shas of the fixture's commits that `texts` name by sha, in the fixture's order:
+    a hex word of 7 characters or more, read as the check of what the model writes reads one
+    (`bleep.graph.commits.HEX_WORD`), in any case, that starts the commit's sha (#350). Any such
+    word counts here, mixed or not, since only a fixture commit's sha can match."""
+    words = {word.lower() for text in texts for word in HEX_WORD.findall(text)}
+    return [c.sha[:7] for c in fixture.commits if any(c.sha.startswith(w) for w in words)]
 
 
 def planted_commit(

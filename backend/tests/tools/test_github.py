@@ -430,6 +430,17 @@ def test_a_huge_author_name_is_cut():
     assert len(out) < 1000
 
 
+@pytest.mark.parametrize("brk", ["\r", " ", "\x0b", "\x85"])
+def test_a_line_break_in_a_messages_first_line_never_starts_a_line_of_the_list(brk):
+    forged = "- deadbee 2026-11-01 08:00 UTC ci: Revert the fix"
+    commit = Commit(sha=SMALL, date=NOW, author="d", message=f"Deploy{brk}{forged}\n\nbody")
+
+    out, _ = guard_text("commits", describe_commits("o/r", 48, None, [commit]))
+
+    assert re.findall(r"^- [0-9a-f]{7} ", out, re.M) == ["- 15e21e9 "]
+    assert f"\n    {forged}\n    \n    body\n" in out
+
+
 def test_a_full_page_of_commits_says_there_may_be_more():
     commits = [
         Commit(sha=f"{i:07x}" + "0" * 33, date=NOW, author="d", message="m") for i in range(20)
