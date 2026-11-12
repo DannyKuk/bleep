@@ -119,6 +119,27 @@ def test_an_unknown_only_names_the_known_scenarios(tmp_path):
         load_scenarios(tmp_path, only="nope")
 
 
+def test_only_takes_several_ids_in_file_order(tmp_path):
+    write(tmp_path, "db-down", GOOD)
+    write(tmp_path, "hung", GOOD | {"id": "hung", "fault": "hung"})
+    write(tmp_path, "oom", GOOD | {"id": "oom", "fault": "oom"})
+    chosen = load_scenarios(tmp_path, only="oom, db-down")
+    assert [s.id for s in chosen] == ["db-down", "oom"]
+
+
+def test_an_unknown_id_among_several_is_refused_by_name(tmp_path):
+    write(tmp_path, "db-down", GOOD)
+    with pytest.raises(ScenarioError, match="'nope'.*known: db-down"):
+        load_scenarios(tmp_path, only="db-down,nope")
+
+
+@pytest.mark.parametrize("only", [",", " , ,", ""])
+def test_an_only_without_ids_is_refused(tmp_path, only):
+    write(tmp_path, "db-down", GOOD)
+    with pytest.raises(ScenarioError, match="names no scenario"):
+        load_scenarios(tmp_path, only=only)
+
+
 REPO = SCENARIOS_DIR.parents[2]
 
 

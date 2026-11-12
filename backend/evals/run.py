@@ -1,6 +1,6 @@
 """Run fault scenarios on the demo stack and score what Bleep diagnoses and proposes.
 
-    cd backend && uv run --group evals python -m evals.run [--model X] [--judge J] [--only id]
+    cd backend && uv run --group evals python -m evals.run [--model X] [--judge J] [--only id[,id]]
         [--repeat N] [--append raw.jsonl] [--no-reset]
 
 Each run builds Bleep's watcher and incident graph in this process, on a throwaway SQLite
@@ -20,6 +20,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -982,7 +983,7 @@ def _command(args: argparse.Namespace) -> str:
     if args.judge:
         parts.append(f"--judge {args.judge}")
     if args.only:
-        parts.append(f"--only {args.only}")
+        parts.append(f"--only {shlex.quote(args.only)}")
     parts.append(f"--repeat {args.repeat}")
     if args.append:
         parts.append(f"--append {args.append}")
@@ -1003,7 +1004,7 @@ def _parser() -> argparse.ArgumentParser:
         help="the root cause judge, as EVAL_JUDGE_MODEL: an OpenRouter model id, "
         "claude-code[:<model>], or manual (graded by hand afterwards with evals.report)",
     )
-    parser.add_argument("--only", help="run one scenario, by id")
+    parser.add_argument("--only", help="run only these scenarios, by id, comma-separated")
     parser.add_argument(
         "--language",
         choices=["en", "de"],

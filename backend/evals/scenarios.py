@@ -201,14 +201,21 @@ def load_scenario(path: Path) -> Scenario:
 
 
 def load_scenarios(directory: Path = SCENARIOS_DIR, only: str | None = None) -> list[Scenario]:
-    """Every scenario in `directory` by id, or just the one named `only`."""
+    """Every scenario in `directory` by id, or those `only` names (ids, comma-separated), in
+    file order."""
     paths = sorted(directory.glob("*.yaml"))
     if only is not None:
-        chosen = [p for p in paths if p.stem == only]
-        if not chosen:
-            known = ", ".join(p.stem for p in paths) or "none"
-            raise ScenarioError(f"no scenario {only!r} in {directory}; known: {known}")
-        paths = chosen
+        wanted = {name.strip() for name in only.split(",") if name.strip()}
+        known = ", ".join(p.stem for p in paths) or "none"
+        if not wanted:
+            raise ScenarioError(f"--only names no scenario; known: {known}")
+        unknown = sorted(wanted - {p.stem for p in paths})
+        if unknown:
+            raise ScenarioError(
+                f"no scenario {', '.join(repr(name) for name in unknown)} in {directory}; "
+                f"known: {known}"
+            )
+        paths = [p for p in paths if p.stem in wanted]
     return [load_scenario(p) for p in paths]
 
 

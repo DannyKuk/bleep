@@ -1037,6 +1037,18 @@ def test_the_reproduce_command_keeps_the_knowledge_switch():
     assert "--no-knowledge" not in _command(_parser().parse_args([]))
 
 
+def test_the_reproduce_command_runs_again_as_recorded_with_spaces_in_only():
+    import shlex
+
+    from evals.run import _command, _parser
+
+    command = _command(_parser().parse_args(["--only", "oom, db-down"]))
+    command_prefix_length = 7  # uv run --group evals python -m evals.run
+    assert "--only 'oom, db-down'" in command
+    argv = shlex.split(command)[command_prefix_length:]
+    assert _parser().parse_args(argv).only == "oom, db-down"
+
+
 def test_the_reproduce_command_keeps_the_language():
     from evals.run import _command, _parser
 
