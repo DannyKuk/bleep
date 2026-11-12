@@ -44,6 +44,30 @@ def _redact_env_entry(item: str) -> str:
     return entry if place is not None and redact_text(entry) == entry else f"{key}={REDACTED}"
 
 
+def secret_env_values(env: list[str]) -> list[str]:
+    """The values of the entries whose `KEY=value` the redaction would change (a secret key such
+    as `REDIS_PASSWORD`), longest first. Compose copies such a value into a health-check command,
+    where `hide_values` finds the same text; `PORT=8000` is no secret and is not in the list."""
+    values = {
+        item.partition("=")[2]
+        for item in env
+        if "=" in item and item.partition("=")[2] and redact_text(item) != item
+    }
+    return sorted(values, key=len, reverse=True)
+
+
+def redact_command(text: str) -> str:
+    """`redact_text` for a line known to be a command (a health check), which also hides the
+    attached password of a MySQL client (`mysqladmin -ppw`)."""
+    return redact_text(_CLIENT_COMMAND.sub(lambda m: _redact_client_command(m, True), text))
+
+
+def hide_values(text: str, values: list[str]) -> str:
+    for value in values:
+        text = text.replace(value, REDACTED)
+    return text
+
+
 _URL_SCHEME = re.compile(r"([A-Za-z][A-Za-z0-9+.-]{0,31})://")
 # Schemes that name a network service, whose host is where it runs. Notification URLs
 # (`pushbullet://<token>`, `pover://<user>@<token>`) put a token where the host goes.
@@ -765,6 +789,71 @@ _COOKIE = re.compile(
     _FLAGS,
 )
 
+_CLIENT_COMMAND = re.compile(
+    r"(?<![A-Za-z0-9_.-])(redis-cli|mysql(?:admin|dump|check|import|show)?|mariadb(?:-[a-z]+)?"
+    r"|mongosh?|curl)(?![A-Za-z0-9_-])[^\n]*"
+)
+# One word of a command line, written as shell words or as the items of a JSON list.
+_WORD = re.compile(r"\"(?:[^\"\\\n]|\\.)*+\"|'[^'\n]*+'|[^\s\"',\[\]]+")
+_SEPARATE_PASSWORD = {
+    "redis-cli": {"-a", "--pass"},
+    "mongosh": {"-p", "--password"},
+    "mongo": {"-p", "--password"},
+}
+_USER_FLAGS = {"-u", "--user", "--proxy-user"}
+
+
+def _hide_after(word: str, keep: int) -> str:
+    """The word with all but its first `keep` characters hidden, its quotes kept."""
+    quote = word[0] if word[0] in "\"'" else ""
+    inner = word[1:-1] if quote and len(word) > 1 and word.endswith(quote) else word.lstrip(quote)
+    if not inner[keep:] or inner[keep:].startswith(REDACTED):
+        return word
+    return f"{quote}{inner[:keep]}{REDACTED}{quote}"
+
+
+def _hide_user_password(word: str, skip: int) -> str:
+    """`user:password` with the password hidden; a word with no colon names a user only."""
+    colon = word.strip("\"'")[skip:].find(":")
+    return word if colon < 0 else _hide_after(word, skip + colon + 1)
+
+
+def _redact_client_command(match: re.Match[str], known_command: bool = False) -> str:
+    """The password a database or HTTP client takes on its command line: `redis-cli -a pw`,
+    `redis-cli --pass pw`, `mongosh -p pw`, `curl -u user:pw`, and with `known_command`
+    `mysqladmin -ppw`. It looks only after the client's own name, because `-a` and `-p` mean
+    other things elsewhere. Free text may hold `mysql -phUnt3rZq9` as a log line about a
+    database, where a corpus control keeps it readable; a health check is a command for certain."""
+    name, text = match.group(1), match.group(0)
+    after_name = match.end(1) - match.start()
+    if text[after_name : after_name + 1] in ("'", '"'):  # the name was a JSON item: close it
+        after_name += 1
+    words = list(_WORD.finditer(text, after_name))
+    changes: dict[int, str] = {}
+    for index, word in enumerate(words):
+        bare = word.group(0).strip("\"'")
+        following = index + 1 if index + 1 < len(words) else None
+        if following is not None and words[following].group(0).strip("\"'").startswith("-"):
+            following = None
+        if name.startswith(("mysql", "mariadb")):
+            if known_command and bare.startswith("-p") and len(bare) > 2 and bare[2] != "=":
+                changes[index] = _hide_after(word.group(0), 2)
+        elif name == "curl":
+            if bare in _USER_FLAGS and following is not None:
+                changes[following] = _hide_user_password(words[following].group(0), 0)
+            elif bare.startswith("-u") and len(bare) > 2 and not bare.startswith("--"):
+                changes[index] = _hide_user_password(word.group(0), 2)
+        elif bare in _SEPARATE_PASSWORD.get(name, ()) and following is not None:
+            changes[following] = _hide_after(words[following].group(0), 0)
+    out, kept = [], 0
+    for index in sorted(changes):
+        word = words[index]
+        if changes[index] != word.group(0):
+            out.append(text[kept : word.start()] + changes[index])
+            kept = word.end()
+    return "".join(out) + text[kept:]
+
+
 Replacement = str | Callable[[re.Match[str]], str]
 _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
     # <add key="Password" value="x"/>, <input name="password" value="x">, and the value first
@@ -790,6 +879,7 @@ _PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
     # redaction
     (_KEY_VALUE, _redact_line_pair),
     (_ELEMENT, _redact_element),
+    (_CLIENT_COMMAND, _redact_client_command),
     # --db-password hunter2, --api-key abc, --key abc: a secret option followed by its value
     (
         re.compile(

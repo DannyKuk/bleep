@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from bleep.hosts.config import ServiceOverrides
-from bleep.hosts.engine import EngineUnavailable
+from bleep.hosts.engine import EngineUnavailable, _detail
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import (
     ContainerDetail,
@@ -227,13 +227,14 @@ async def test_inspect_does_not_say_none_configured_for_an_unhealthy_container(e
     out = await env.run("inspect_container", container="shop-web-1")
     assert "health: unhealthy" in out
     assert "none configured" not in out
-    assert "health check: command not available" in out
+    assert "command not available" not in out
+    assert "health check" not in out and "last probes" not in out
 
 
 async def test_inspect_shows_the_health_check_and_timed_out_probes(env):
     detail = env.engine.details["shop-web-1"]
     detail.healthcheck = HealthCheck(
-        command="python -c 'import urllib.request'",
+        command=["python", "-c", "import urllib.request"],
         interval_s=10,
         timeout_s=5,
         retries=3,
@@ -250,7 +251,7 @@ async def test_inspect_shows_the_health_check_and_timed_out_probes(env):
     ]
     out = await env.run("inspect_container", container="shop-web-1")
     assert (
-        "health check: python -c 'import urllib.request' "
+        'health check, run without a shell: ["python", "-c", "import urllib.request"] '
         "(interval 10s, timeout 5s, retries 3, start period 10s)"
     ) in out
     assert "last probes (oldest first):" in out
@@ -261,10 +262,12 @@ async def test_inspect_shows_the_health_check_and_timed_out_probes(env):
 
 
 async def test_inspect_names_unset_health_check_numbers_and_missing_probes(env):
-    env.engine.details["shop-web-1"].healthcheck = HealthCheck(command="true")
+    detail = env.engine.details["shop-web-1"]
+    detail.healthcheck = HealthCheck(command=["true"], shell=True)
+    detail.summary.health = "starting"
     out = await env.run("inspect_container", container="shop-web-1")
     assert (
-        "health check: true (interval default, timeout default, retries default, "
+        "health check, run by a shell: true (interval default, timeout default, retries default, "
         "start period default)"
     ) in out
     assert "last probes: none recorded yet" in out
@@ -287,7 +290,7 @@ REAL_TRACEBACK = (
 
 async def test_a_probe_that_timed_out_inside_its_command_keeps_the_error_line(env):
     detail = env.engine.details["shop-web-1"]
-    detail.healthcheck = HealthCheck(command="python -c urlopen", timeout_s=5)
+    detail.healthcheck = HealthCheck(command=["python", "-c", "urlopen"], timeout_s=5)
     detail.probes = [
         HealthProbe(
             start=NOW,
@@ -307,7 +310,7 @@ async def test_a_probe_that_timed_out_inside_its_command_keeps_the_error_line(en
 
 async def test_a_long_single_line_probe_output_keeps_both_ends(env):
     detail = env.engine.details["shop-web-1"]
-    detail.healthcheck = HealthCheck(command="x")
+    detail.healthcheck = HealthCheck(command=["x"])
     detail.probes = [
         HealthProbe(start=NOW, exit_code=1, output="head-marker " + "m" * 2000 + " tail-marker")
     ]
@@ -315,9 +318,137 @@ async def test_a_long_single_line_probe_output_keeps_both_ends(env):
     assert "head-marker" in out and "tail-marker" in out and "m" * 200 not in out
 
 
+def hung_shop_web_payload() -> dict:
+    """`docker inspect` of the demo's shop-web while its event loop is blocked: the check's own
+    urllib timeout fires first, so each probe is exit 1 with a traceback."""
+    nanos = 1_000_000_000
+    return {
+        "Id": "id-shop-web-1",
+        "Name": "/shop-web-1",
+        "Created": "2026-11-12T09:00:00.5Z",
+        "RestartCount": 0,
+        "Config": {
+            "Image": "img:1",
+            "Env": ["PORT=8000", "REDIS_PASSWORD=s3cretpassw0rd"],
+            "Healthcheck": {
+                "Test": [
+                    "CMD",
+                    "python",
+                    "-c",
+                    "import urllib.request; "
+                    "urllib.request.urlopen('http://localhost:8000/health', timeout=3)",
+                ],
+                "Interval": 10 * nanos,
+                "Timeout": 5 * nanos,
+                "Retries": 3,
+                "StartPeriod": 10 * nanos,
+            },
+        },
+        "State": {
+            "Status": "running",
+            "ExitCode": 0,
+            "StartedAt": "2026-11-12T09:00:01.123456789Z",
+            "Health": {
+                "Status": "unhealthy",
+                "FailingStreak": 3,
+                "Log": [
+                    {
+                        "Start": f"2026-11-12T10:14:{7 + 10 * i:02d}.957207219Z",
+                        "End": f"2026-11-12T10:14:{11 + 10 * i:02d}.912345678Z",
+                        "ExitCode": 1,
+                        "Output": REAL_TRACEBACK,
+                    }
+                    for i in range(3)
+                ],
+            },
+        },
+        "HostConfig": {"RestartPolicy": {"Name": "unless-stopped"}},
+    }
+
+
+async def test_a_real_hung_payload_is_shown_with_its_arguments_and_its_error_line(env):
+    env.engine.details["shop-web-1"] = _detail(hung_shop_web_payload())
+    out = await env.run("inspect_container", container="shop-web-1")
+    assert (
+        'health check, run without a shell: ["python", "-c", "import urllib.request; '
+        "urllib.request.urlopen('http://localhost:8000/health', timeout=3)\"]"
+        " (interval 10s, timeout 5s, retries 3, start period 10s)"
+    ) in out
+    probes = [line for line in out.splitlines() if "exit 1:" in line]
+    assert len(probes) == 3
+    assert all(line.endswith("TimeoutError: timed out") for line in probes)
+    assert "2026-11-12T10:14:07.957207+00:00 took 4.0s, exit 1: Traceback" in probes[0]
+
+
+async def test_probe_times_keep_their_nanoseconds_on_a_real_payload(env):
+    raw = hung_shop_web_payload()
+    raw["State"]["Health"]["Log"] = [
+        {
+            "Start": "2026-11-12T10:14:37.957207219Z",
+            "End": "2026-11-12T10:14:42.457207219Z",
+            "ExitCode": -1,
+            "Output": "Health check exceeded timeout (5s)",
+        }
+    ]
+    env.engine.details["shop-web-1"] = _detail(raw)
+    out = await env.run("inspect_container", container="shop-web-1")
+    assert (
+        "  2026-11-12T10:14:37.957207+00:00 took 4.5s, exit -1: Health check exceeded timeout (5s)"
+    ) in out
+
+
+@pytest.mark.parametrize(
+    ("test", "shown"),
+    [
+        (["CMD", "redis-cli", "-a", "s3cretpassw0rd", "ping"], '"-a", "<redacted>", "ping"'),
+        (["CMD", "mysqladmin", "-uroot", "-ps3cretpassw0rd", "ping"], '"-p<redacted>", "ping"'),
+        (["CMD", "curl", "-u", "user:s3cretpassw0rd", "http://x"], '"user:<redacted>"'),
+        (["CMD-SHELL", "redis-cli -a s3cretpassw0rd ping"], "redis-cli -a <redacted> ping"),
+    ],
+)
+async def test_a_secret_in_the_health_check_command_never_reaches_the_model(env, test, shown):
+    raw = hung_shop_web_payload()
+    raw["Config"]["Healthcheck"]["Test"] = test
+    env.engine.details["shop-web-1"] = _detail(raw)
+    out = await env.run("inspect_container", container="shop-web-1")
+    assert "s3cretpassw0rd" not in out
+    assert shown in out
+
+
+async def test_an_env_secret_is_hidden_from_the_command_and_the_probe_output_not_plain_values(
+    env,
+):
+    raw = hung_shop_web_payload()
+    raw["Config"]["Env"] = ["PORT=8000", "CACHE_AUTH=zz-not-a-known-shape-77", "LEVEL=info"]
+    raw["Config"]["Healthcheck"]["Test"] = [
+        "CMD",
+        "probe",
+        "--thing=zz-not-a-known-shape-77",
+        "--port",
+        "8000",
+    ]
+    raw["State"]["Health"]["Log"] = [
+        {"ExitCode": 1, "Output": "auth failed with zz-not-a-known-shape-77 on port 8000"}
+    ]
+    env.engine.details["shop-web-1"] = _detail(raw)
+    out = await env.run("inspect_container", container="shop-web-1")
+    assert "zz-not-a-known-shape-77" not in out
+    assert '"--thing=<redacted>", "--port", "8000"' in out
+    assert "auth failed with <redacted> on port 8000" in out
+
+
+async def test_a_container_with_no_health_detail_gets_no_health_lines_unless_it_has_none(env):
+    for health in ("unhealthy", "healthy", "starting"):
+        env.engine.details["shop-web-1"].summary.health = health
+        out = await env.run("inspect_container", container="shop-web-1")
+        assert "health check" not in out and "last probes" not in out
+
+
 async def test_hostile_probe_output_is_one_short_cleaned_line(env):
     detail = env.engine.details["shop-web-1"]
-    detail.healthcheck = HealthCheck(command="curl -H 'Authorization: Bearer abc.def.ghi' x")
+    detail.healthcheck = HealthCheck(
+        command=["curl", "-H", "Authorization: Bearer abc.def.ghi", "x"]
+    )
     detail.probes = [
         HealthProbe(
             start=NOW,

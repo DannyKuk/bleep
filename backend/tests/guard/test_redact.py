@@ -4,7 +4,14 @@ import time
 
 import pytest
 
-from bleep.guard.redact import redact_env, redact_text, redact_with_count
+from bleep.guard.redact import (
+    hide_values,
+    redact_command,
+    redact_env,
+    redact_text,
+    redact_with_count,
+    secret_env_values,
+)
 
 JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
 TELEGRAM = "123456789:AAH" + "a" * 32
@@ -1558,3 +1565,73 @@ def test_json_with_a_pair_in_a_string_stays_json_and_hides_the_value(separators)
         out = redact_text(json.dumps(record, separators=separators))
         assert secret not in out
         assert json.loads(out) == {**record, "msg": "GET /cb?state=1&access_token=<redacted>"}
+
+
+@pytest.mark.parametrize(
+    ("line", "secret"),
+    [
+        ("redis-cli -a s3cretpassw0rd ping", "s3cretpassw0rd"),
+        ("redis-cli --pass s3cretpassw0rd ping", "s3cretpassw0rd"),
+        ("redis-cli -h cache -p 6379 -a 's3cretpassw0rd' ping", "s3cretpassw0rd"),
+        ("mongosh -p s3cretpassw0rd --quiet", "s3cretpassw0rd"),
+        ("mongosh --password s3cretpassw0rd --quiet", "s3cretpassw0rd"),
+        ("curl -u user:s3cretpassw0rd http://x/health", "s3cretpassw0rd"),
+        ("curl -uuser:s3cretpassw0rd http://x/health", "s3cretpassw0rd"),
+        ("curl --user user:s3cretpassw0rd http://x/health", "s3cretpassw0rd"),
+        ("sh -c 'echo up; redis-cli -a s3cretpassw0rd ping'", "s3cretpassw0rd"),
+        ('["redis-cli", "-a", "s3cretpassw0rd", "ping"]', "s3cretpassw0rd"),
+        ('["curl", "-u", "user:s3cretpassw0rd", "http://x"]', "s3cretpassw0rd"),
+    ],
+)
+def test_the_password_a_client_takes_on_its_command_line_is_redacted(line, secret):
+    out, count = redact_with_count(line)
+    assert secret not in out and count == 1
+    assert redact_with_count(out) == (out, 0)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "ls -a /tmp",
+        "redis-cli -h cache -p 6379 ping",
+        "redis-cli -a <redacted> ping",
+        "curl -u bob http://x",
+        "curl -fsS http://localhost:8000/health",
+        "mongosh -p",
+        "mysqladmin -p mydb",
+        "mysql -u root -phUnt3rZq9",
+        "pg_isready -U shop -d shop",
+        "user -a cache -p 8000",
+    ],
+)
+def test_a_command_line_without_a_client_password_is_left_alone(line):
+    assert redact_text(line) == line
+
+
+def test_redact_command_also_hides_the_attached_password_of_a_mysql_client():
+    assert redact_command("mysqladmin -uroot -ps3cretpassw0rd ping") == (
+        "mysqladmin -uroot -p<redacted> ping"
+    )
+    assert redact_command('["mysqladmin", "-ps3cretpassw0rd", "ping"]') == (
+        '["mysqladmin", "-p<redacted>", "ping"]'
+    )
+    assert redact_command("mysqladmin -P3306 -p mydb ping") == "mysqladmin -P3306 -p mydb ping"
+
+
+def test_secret_env_values_are_the_values_the_redaction_hides_longest_first():
+    env = [
+        "PORT=8000",
+        "REDIS_PASSWORD=s3cretpassw0rd",
+        "API_KEY=abc999",
+        "LEVEL=info",
+        "NOVALUE",
+        "EMPTY_SECRET=",
+        "DATABASE_URL=postgresql://shop:pw1234@db:5432/shop",
+    ]
+    values = secret_env_values(env)
+    assert "8000" not in values and "info" not in values
+    assert values[0] == "postgresql://shop:pw1234@db:5432/shop"
+    assert {"s3cretpassw0rd", "abc999"} <= set(values)
+    assert hide_values("redis-cli -a s3cretpassw0rd --port 8000", values) == (
+        "redis-cli -a <redacted> --port 8000"
+    )

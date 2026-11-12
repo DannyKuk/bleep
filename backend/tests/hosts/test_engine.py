@@ -732,7 +732,7 @@ async def test_inspect_reads_the_health_check_and_its_timed_out_probes(api, engi
     detail = await engine.inspect("c1")
     check = detail.healthcheck
     assert check is not None
-    assert check.command == "python -c import urllib.request"
+    assert (check.command, check.shell) == (["python", "-c", "import urllib.request"], False)
     assert (check.interval_s, check.timeout_s, check.retries, check.start_period_s) == (
         10.0,
         5.0,
@@ -752,7 +752,7 @@ async def test_inspect_reads_a_shell_health_check_and_unset_durations(api, engin
     api.inspects["c1"] = raw
     check = (await engine.inspect("c1")).healthcheck
     assert check is not None
-    assert check.command == "pg_isready -U shop"
+    assert (check.command, check.shell) == (["pg_isready -U shop"], True)
     assert (check.interval_s, check.timeout_s, check.retries, check.start_period_s) == (
         None,
         None,

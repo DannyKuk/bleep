@@ -37,7 +37,8 @@ class MountInfo(BaseModel):
 class HealthCheck(BaseModel):
     """A container's health check as configured. An unset number means Docker's default."""
 
-    command: str  # the arguments joined by spaces, or the `CMD-SHELL` string
+    command: list[str]  # the argv of a `CMD` check, or the one string of a `CMD-SHELL` check
+    shell: bool = False  # `CMD-SHELL`: a shell runs the string; otherwise argv runs as it is
     interval_s: float | None = None
     timeout_s: float | None = None
     retries: int | None = None

@@ -479,10 +479,11 @@ def _seconds(nanos: int | None) -> float | None:
 def _healthcheck(raw: dict) -> HealthCheck | None:
     check = (raw.get("Config") or {}).get("Healthcheck") or {}
     test = [str(part) for part in check.get("Test") or []]
-    if not test or test[0] == "NONE":
+    if not test or test[0] == "NONE" or not test[1:]:
         return None
     return HealthCheck(
-        command=" ".join(test[1:]) or " ".join(test),
+        command=test[1:],
+        shell=test[0] == "CMD-SHELL",
         interval_s=_seconds(check.get("Interval")),
         timeout_s=_seconds(check.get("Timeout")),
         retries=check.get("Retries") or None,

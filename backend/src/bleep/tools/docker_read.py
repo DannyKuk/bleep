@@ -5,6 +5,7 @@ redacted, cleaned, cut to a size budget and wrapped in `<untrusted>` (see `guard
 Every tool is scoped to the incident's host and cannot see another host.
 """
 
+import json
 import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -12,7 +13,14 @@ from datetime import UTC, datetime, timedelta
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from bleep.guard.redact import REDACTED, redact_env, redact_text
+from bleep.guard.redact import (
+    REDACTED,
+    hide_values,
+    redact_command,
+    redact_env,
+    redact_text,
+    secret_env_values,
+)
 from bleep.hosts.discovery import is_self
 from bleep.hosts.engine import ContainerNotFound, EngineError, EngineUnavailable
 from bleep.schemas.docker import (
@@ -168,19 +176,28 @@ def _describe(detail: ContainerDetail) -> str:
     return "\n".join(lines)
 
 
-def _short(text: str, limit: int) -> str:
-    """One line, secrets redacted before the cut so a cut cannot leave half a token behind."""
-    line = " ".join(redact_text(text).split())
-    return line if len(line) <= limit else line[:limit] + "…"
+def _command(check: HealthCheck, hidden: list[str]) -> str:
+    """The check's command on one line, secrets out before the cut so a cut cannot leave half a
+    token behind. Compose copies an env value into a command (`redis-cli -a $REDIS_PASSWORD`), so
+    the values the env lines hide are hidden here too, word by word, then the usual redaction."""
+    words = [hide_values(word, hidden) for word in check.command]
+    if check.shell:
+        head, body = "health check, run by a shell", " ".join(words)
+    else:
+        head, body = "health check, run without a shell", json.dumps(words, ensure_ascii=False)
+    line = " ".join(redact_command(body).split())
+    if len(line) > HEALTH_COMMAND_CHARS:
+        line = line[:HEALTH_COMMAND_CHARS] + "…"
+    return f"{head}: {line}"
 
 
-def _probe_output(text: str, limit: int) -> str:
+def _probe_output(text: str, limit: int, hidden: list[str]) -> str:
     """One line of at most about `limit` characters that keeps the start and the last line.
 
     A failed probe's output is often a traceback whose last line names the error, so a plain
     cut at the start would drop the one line that matters. Redaction runs before the cut.
     """
-    lines = [" ".join(line.split()) for line in redact_text(text).splitlines()]
+    lines = [" ".join(line.split()) for line in redact_text(hide_values(text, hidden)).splitlines()]
     lines = [line for line in lines if line]
     flat = " ".join(lines)
     if len(flat) <= limit:
@@ -195,34 +212,36 @@ def _seconds(value: float | None) -> str:
     return "default" if value is None else f"{value:g}s"
 
 
-def _check(check: HealthCheck) -> str:
+def _check(check: HealthCheck, hidden: list[str]) -> str:
     retries = "default" if check.retries is None else str(check.retries)
     return (
-        f"health check: {_short(check.command, HEALTH_COMMAND_CHARS)} (interval "
-        f"{_seconds(check.interval_s)}, timeout {_seconds(check.timeout_s)}, retries {retries}, "
+        f"{_command(check, hidden)} (interval {_seconds(check.interval_s)}, "
+        f"timeout {_seconds(check.timeout_s)}, retries {retries}, "
         f"start period {_seconds(check.start_period_s)})"
     )
 
 
-def _probe(probe: HealthProbe) -> str:
+def _probe(probe: HealthProbe, hidden: list[str]) -> str:
     took = ""
     if probe.start and probe.end:
         took = f" took {(probe.end - probe.start).total_seconds():.1f}s,"
-    output = _probe_output(probe.output, PROBE_OUTPUT_CHARS) or "(no output)"
+    output = _probe_output(probe.output, PROBE_OUTPUT_CHARS, hidden) or "(no output)"
     code = "-" if probe.exit_code is None else probe.exit_code
     return f"  {_when(probe.start)}{took} exit {code}: {output}"
 
 
 def _health_lines(detail: ContainerDetail) -> list[str]:
-    if detail.healthcheck is not None:
-        lines = [_check(detail.healthcheck)]
-    elif detail.summary.health == "none" and not detail.probes:
-        return ["health check: none configured"]
-    else:
-        lines = ["health check: command not available"]
-    if not detail.probes:
-        return lines + ["last probes: none recorded yet"]
-    return lines + ["last probes (oldest first):", *[_probe(p) for p in detail.probes]]
+    """Nothing when the engine gave no health detail for a container that has a health state, so
+    a fake or partial inspect never says the probes are unavailable."""
+    hidden = secret_env_values(detail.env)
+    if detail.healthcheck is None and not detail.probes:
+        return ["health check: none configured"] if detail.summary.health == "none" else []
+    lines = [_check(detail.healthcheck, hidden)] if detail.healthcheck else []
+    if detail.probes:
+        return lines + ["last probes (oldest first):", *[_probe(p, hidden) for p in detail.probes]]
+    return lines + (
+        ["last probes: none recorded yet"] if detail.summary.health == "starting" else []
+    )
 
 
 def _port(port) -> str:
