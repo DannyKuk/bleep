@@ -59,8 +59,29 @@ def test_each_domain_is_suggested_with_the_health_check_path_without_its_port():
         "https://example.com/shop/health",
     ]
     assert all(
-        c.expect_status == 200 and c.body_contains is None for c in suggested_checks(shop, apps())
+        c.expect_status == 204 and c.body_contains is None for c in suggested_checks(shop, apps())
     )
+
+
+def statuses(service: Service, applications: list[CoolifyApplication]) -> set[int]:
+    return {check.expect_status for check in suggested_checks(service, applications)}
+
+
+def test_a_check_on_the_health_path_expects_the_status_coolify_expects_and_slash_expects_200():
+    blog = service_of(box(f"{BLOG}-074501234567", labels=coolify_labels(BLOG, "blog")))
+    notes = service_of(box(f"{NOTES}-074501234567", labels=coolify_labels(NOTES, "notes")))
+    # Both apps carry a return code of 204, but their health check is off or its path no path.
+    assert statuses(blog, apps()) == statuses(notes, apps()) == {200}
+
+
+@pytest.mark.parametrize("code", [None, "204", 99, 100, 199, 301, 302, 399, 600, True, 2.5])
+def test_a_health_path_without_a_usable_return_code_expects_200(code):
+    raw = json.loads((FIXTURES / "domains.json").read_text(encoding="utf-8"))
+    raw[0]["health_check_return_code"] = code
+    shop = service_of(box(f"{SHOP}-074501234567", labels=coolify_labels(SHOP, "shop")))
+    applications = [CoolifyApplication.model_validate(item) for item in raw]
+    assert urls(suggested_checks(shop, applications))[0].endswith("/health")
+    assert statuses(shop, applications) == {200}
 
 
 def test_userinfo_preview_and_non_http_domains_are_never_suggested_and_off_means_slash():
@@ -173,3 +194,21 @@ def test_an_odd_health_check_field_reads_as_unknown_and_keeps_the_application(en
         {"uuid": SHOP, "health_check_enabled": enabled, "health_check_path": path}
     )
     assert (app.health_check_enabled, app.health_check_path) == read
+
+
+@pytest.mark.parametrize(
+    ("code", "read"),
+    [
+        (204, 204),
+        (404, 404),
+        (302, None),
+        (100, None),
+        ("204", None),
+        (700, None),
+        (True, None),
+        (None, None),
+    ],
+)
+def test_an_odd_health_check_return_code_reads_as_unknown_and_keeps_the_application(code, read):
+    app = CoolifyApplication.model_validate({"uuid": SHOP, "health_check_return_code": code})
+    assert app.health_check_return_code == read

@@ -98,7 +98,7 @@ def test_the_apps_domains_are_suggested_without_the_check_it_has(app):
     assert put_plugin(app, True).status_code == 200
     body = suggested(app).json()
     assert [check["url"] for check in body] == SUGGESTED
-    assert body[0] == {"url": SUGGESTED[0], "expect_status": 200, "body_contains": None}
+    assert body[0] == {"url": SUGGESTED[0], "expect_status": 204, "body_contains": None}
 
 
 def test_a_service_not_run_by_coolify_is_offered_nothing_and_an_unknown_one_is_404(app):
