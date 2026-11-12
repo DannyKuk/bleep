@@ -692,8 +692,8 @@ async def test_a_deploy_older_than_any_window_is_read_whole(registry, github):
 
 async def test_many_commits_are_cut_to_the_newest_and_the_rest_counted(registry, github):
     commits = [  # oldest first, as GitHub lists them
-        raw_commit(f"{i:07x}" + "a" * 33, f"change {i}\n\n" + "body " * 400) for i in range(250)
-    ]
+        raw_commit(f"{i:07x}" + "a" * 33, f"change {i}\n\n" + "body " * 400) for i in range(249)
+    ] + [raw_commit(HEAD, "the running one")]
     body = {"status": "ahead", "ahead_by": 400, "behind_by": 0, "total_commits": 400}
     compare_route(github, body | {"commits": commits})
 
@@ -701,7 +701,8 @@ async def test_many_commits_are_cut_to_the_newest_and_the_rest_counted(registry,
 
     assert len(out) < 8200
     assert "this deploy brought 400 commits" in out
-    assert out.splitlines()[3].startswith("- 00000f9 ")  # the newest, GitHub's last
+    assert out.splitlines()[3].startswith("- 4189b7f ")  # the newest, GitHub's last
+    assert out.splitlines()[4].startswith("- 00000f8 ")
     assert "body body" not in out  # a deploy's list shows each message's first line
     shown = len(re.findall(r"^- [0-9a-f]{7} ", out, re.M))
     assert 20 < shown < 250
@@ -807,6 +808,33 @@ async def test_a_running_commit_github_cannot_show_is_said_plainly(registry, git
     assert "Coolify deployed commit 4189b7f last and 80960fa before it" in out
     assert "GitHub cannot show both in encode/httpx" in out
     assert "no GitHub token (GITHUB_TOKEN) is set" in out
+
+
+async def test_a_coolify_commit_with_no_previous_one_github_cannot_show_is_one_commit(
+    registry, github
+):
+    alone = RunningCommit(sha=SMALL, how="coolify", since=LIVE)  # GitHub's list starts at HEAD
+    out = await deployed(registry, github, alone)
+    said = "Coolify deployed commit 15e21e9 last, which GitHub cannot show in encode/httpx:"
+    assert said in out and "before it" not in out and not re.search(r"^- ", out, re.M)
+
+    github.override = httpx.Response(404, json=fixture("not-found.json"))
+    out = await deployed(registry, github, alone)
+    assert said in out and "before it" not in out
+
+
+async def test_a_compare_list_that_does_not_end_at_the_running_commit_is_not_called_newest(
+    registry, github
+):
+    data = fixture("compare.json")
+    data["commits"] = data["commits"][:-1]  # GitHub's last is no longer the head
+    compare_route(github, data)
+
+    out = await deployed(registry, github, COOLIFY)
+
+    assert "does not start at the running commit, so it may leave out the newest:" in out
+    assert out.splitlines()[-2] == "(1 more commits of this deploy not shown)"
+    assert "older commits" not in out
 
 
 @pytest.mark.parametrize(

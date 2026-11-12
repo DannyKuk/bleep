@@ -111,7 +111,8 @@ class CommitsArgs(BaseModel):
 
 class DiffArgs(BaseModel):
     sha: str = Field(
-        pattern=r"^[0-9a-fA-F]{7,40}$", description="The commit's sha, as recent_commits shows it."
+        pattern=r"^[0-9a-fA-F]{7,40}$",
+        description="The commit's sha, as deployed_commits or recent_commits shows it.",
     )
     max_chars: int = Field(8000, ge=1000, le=8000, description="Cut the diff at this length.")
 
@@ -250,9 +251,9 @@ def _running_head(repo: str, running: RunningCommit) -> str:
     return f"Running in {_one_line(repo)}: commit {running.sha[:7].lower()}, {how}."
 
 
-def _left_out(total: int, shown: int) -> list[str]:
+def _left_out(total: int, shown: int, which: str = "older") -> list[str]:
     left = total - shown
-    return [f"({left} older commits of this deploy not shown)"] if left > 0 else []
+    return [f"({left} {which} commits of this deploy not shown)"] if left > 0 else []
 
 
 def describe_deploy(
@@ -277,12 +278,23 @@ def describe_deploy(
         if comparison.status == "diverged"
         else ""
     )
+    # Asked without pages, GitHub's list ends at the comparison's newest commit, the head
+    # (`GithubClient.compare`); a list that does not is not claimed to hold the newest.
+    newest = not comparison.commits or comparison.commits[0].sha.lower().startswith(
+        running.sha.lower()
+    )
+    order = (
+        "newest first:"
+        if newest
+        else "as GitHub listed them, newest first; the list does not start at the running"
+        " commit, so it may leave out the newest:"
+    )
     lines.append(
         f"The deploy before it ran commit {previous}; this deploy brought {total} commits"
-        f"{dropped}, newest first:"
+        f"{dropped}, {order}"
     )
     shown = _fit(lines, [_title_line(c) for c in comparison.commits])
-    return "\n".join([*lines, *_left_out(total, shown)])
+    return "\n".join([*lines, *_left_out(total, shown, "older" if newest else "more")])
 
 
 def describe_up_to(
@@ -490,9 +502,11 @@ def _not_shown(repo: str, running: RunningCommit, client: GithubClient) -> str:
     """Why the running commit is not in `repo` as GitHub shows it, in Bleep's own words, naming
     the token as `_failed` does: GitHub answers a missing sha and an unreadable repo alike."""
     sha, repo = running.sha[:7].lower(), _one_line(repo)
-    if running.how == "coolify":
-        said = f"Coolify deployed commit {sha} last and {(running.previous or '')[:7].lower()}"
+    if running.how == "coolify" and running.previous:
+        said = f"Coolify deployed commit {sha} last and {running.previous[:7].lower()}"
         said += f" before it, but GitHub cannot show both in {repo}"
+    elif running.how == "coolify":
+        said = f"Coolify deployed commit {sha} last, which GitHub cannot show in {repo}"
     else:
         container = _cut(_one_line(running.container or "?"), NAME_CHARS)
         said = (

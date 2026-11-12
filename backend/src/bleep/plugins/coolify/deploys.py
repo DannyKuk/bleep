@@ -1,6 +1,9 @@
 """Which commit a Coolify application runs, for `deployed_commits` (`tools/github.py`).
 
-The application is the one the service's containers name in `coolify.applicationUuid`. Only a
+The application is the one the service's containers name in `coolify.applicationUuid`; a preview
+deployment's containers carry its uuid too, with a `coolify.pullRequestId` that is not 0, and
+run a pull request's commit, so a preview is unknown. The deployments are ordered by their
+`created_at`, not by the order Coolify lists them in. Only a
 finished deployment ever ran; a failed, queued or cancelled one did not, and a preview's
 (`pull_request_id`) runs beside the application, not as it. The running commit is that of the
 newest finished deployment, live since the oldest finished deployment of that same commit in a
@@ -19,6 +22,8 @@ from bleep.schemas.services import Service
 from bleep.tools.github import SHA, DeployUnknown
 
 DEPLOYMENTS = 30  # the newest ones read to find the commit deployed before the running one
+PULL_REQUEST = "coolify.pullRequestId"
+OLDEST = datetime.min.replace(tzinfo=UTC)
 
 
 class CoolifyDeploys:
@@ -32,6 +37,11 @@ class CoolifyDeploys:
         uuids = {c.labels.get(COOLIFY_UUID) for c in service.containers} - {None, ""}
         if not uuids:
             return None
+        if any(c.labels.get(PULL_REQUEST, "0") not in ("", "0") for c in service.containers):
+            raise DeployUnknown(
+                "the service is a preview deployment of a Coolify application, which runs a pull"
+                " request's commit, not the application's"
+            )
         if len(uuids) > 1:
             raise DeployUnknown("the service's containers belong to several Coolify applications")
         (uuid,) = uuids
@@ -43,9 +53,11 @@ class CoolifyDeploys:
 
 
 def running_commit(deployments: list[CoolifyDeployment]) -> RunningCommit:
-    """The commit the newest finished deployment of `deployments` (newest first) runs, since
-    when, and the commit deployed before it when the list still holds one."""
-    finished = [d for d in deployments if d.status == "finished" and not d.pull_request_id]
+    """The commit the newest finished deployment of `deployments` runs, since when, and the
+    commit deployed before it when the list still holds one. Newest is by `created_at`; one
+    with no readable time counts as the oldest."""
+    ordered = sorted(deployments, key=lambda d: _time(d.created_at) or OLDEST, reverse=True)
+    finished = [d for d in ordered if d.status == "finished" and not d.pull_request_id]
     if not finished:
         raise DeployUnknown("Coolify lists no finished deployment of the application")
     sha = _sha(finished[0].commit)

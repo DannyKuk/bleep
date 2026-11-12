@@ -69,6 +69,24 @@ def test_the_running_commit_is_the_newest_finished_deploy_and_the_range_starts_a
     assert running.since == datetime(2025, 3, 1, 9, 2, 30, tzinfo=UTC)
 
 
+@pytest.mark.parametrize("order", [[5, 0, 3, 1, 4, 2], [2, 4, 1, 3, 0, 5], [0, 1, 2, 3, 4, 5]])
+def test_the_order_coolify_lists_them_in_is_not_relied_on(order):
+    found = deployments("deployments-history.json")
+
+    running = running_commit([found[i] for i in order])
+
+    assert (running.sha, running.previous) == (HEAD, BASE_SHA)
+    assert running.since == datetime(2025, 3, 1, 9, 2, 30, tzinfo=UTC)
+
+
+def test_a_deploy_with_no_readable_creation_time_counts_as_the_oldest():
+    found = deployments("deployments-history.json")
+    found[5] = found[5].model_copy(update={"created_at": "soon"})  # the base, listed last
+    shuffled = [found[5], *found[:5]]
+
+    assert running_commit(shuffled).previous == BASE_SHA
+
+
 def test_one_finished_deploy_gives_no_previous_commit():
     running = running_commit(deployments("deployments.json"))  # finished, then failed
 
@@ -126,6 +144,22 @@ async def test_containers_of_several_apps_are_unknown():
     deploys = CoolifyDeploys(client(Coolify()))
     with pytest.raises(DeployUnknown, match="several Coolify applications"):
         await deploys.running_commit(service(container("a"), container("b", "blog0uuid00000000b2")))
+
+
+async def test_a_preview_deployment_is_unknown_not_its_applications_commit():
+    coolify = Coolify()
+    preview = container("web").model_copy(
+        update={"labels": container("web").labels | {"coolify.pullRequestId": "12"}}
+    )
+    main = container("web").model_copy(
+        update={"labels": container("web").labels | {"coolify.pullRequestId": "0"}}
+    )
+
+    with pytest.raises(DeployUnknown, match="preview deployment"):
+        await CoolifyDeploys(client(coolify)).running_commit(service(preview))
+    assert coolify.requests == []
+    running = await CoolifyDeploys(client(coolify)).running_commit(service(main))
+    assert running is not None and running.sha == HEAD
 
 
 async def test_coolify_down_is_unknown_in_bleeps_words():
