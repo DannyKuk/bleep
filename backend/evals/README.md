@@ -34,6 +34,7 @@ From `backend/`:
 ```bash
 uv run --group evals python -m evals.run --repeat 3        # every scenario, three runs each
 uv run --group evals python -m evals.run --only db-down    # one scenario
+uv run --group evals python -m evals.run --only oom,db-down  # a chosen batch, ids comma-separated, run in file order
 uv run --group evals python -m evals.run --model other-model
 uv run --group evals python -m evals.run --judge manual    # root causes graded by hand later
 uv run --group evals python -m evals.run --no-knowledge    # without knowledge_search (on by default: the Docker docs snapshot and the shop's repo docs)
