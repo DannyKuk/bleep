@@ -359,10 +359,13 @@ def _domain_base(item: str) -> str | None:
     return url["scheme"].lower() + parts["host"] + (parts["path"] or "").rstrip("/")
 
 
-def _health_path(app: CoolifyApplication) -> str:
-    """The path Coolify's health check asks for when it is on and a plain path, else `/`."""
+def _health_check(app: CoolifyApplication) -> tuple[str, int]:
+    """The path and status Coolify's health check expects when it is on and the path a plain
+    one (200 when Coolify names no status), else `/` and 200."""
     path = (app.health_check_path or "").strip()
-    return path if app.health_check_enabled and _HEALTH_PATH.fullmatch(path) else "/"
+    if app.health_check_enabled and _HEALTH_PATH.fullmatch(path):
+        return path, app.health_check_return_code or 200
+    return "/", 200
 
 
 def _same_check(url: str) -> str:
@@ -374,13 +377,13 @@ def _same_check(url: str) -> str:
 
 def suggested_checks(service: Service, apps: list[CoolifyApplication]) -> list[UrlCheckConfig]:
     """The URL checks the domains of `service`'s application suggest (#348): each domain of its
-    `fqdn` with the health check path, without the ones `_domain_base` refuses and those the
-    service has. Every one is an http(s) URL with a host and no user or password, as a check set
-    on the service page must be."""
+    `fqdn` with the health check path and the status Coolify expects there (#495), without the
+    ones `_domain_base` refuses and those the service has. Every one is an http(s) URL with a
+    host and no user or password, as a check set on the service page must be."""
     app = app_of(service, apps)
     if app is None or not app.fqdn:
         return []
-    path = _health_path(app)
+    path, status = _health_check(app)
     taken = {_same_check(check.url) for check in service.urls}
     found: list[UrlCheckConfig] = []
     for item in app.fqdn.split(","):
@@ -390,7 +393,7 @@ def suggested_checks(service: Service, apps: list[CoolifyApplication]) -> list[U
             continue
         if _same_check(url) not in taken:
             taken.add(_same_check(url))
-            found.append(UrlCheckConfig(url=url))
+            found.append(UrlCheckConfig(url=url, expect_status=status))
     return found[:SUGGESTED_MAX]
 
 

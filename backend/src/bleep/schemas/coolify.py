@@ -30,6 +30,11 @@ def _flag(value: object) -> object:
     return bool(value) if value in (0, 1) else None
 
 
+def _status_code(value: object) -> object:
+    """An HTTP status as Coolify stores it (an integer), else None."""
+    return value if type(value) is int and 100 <= value <= 599 else None
+
+
 def _text(value: object) -> object:
     return value if isinstance(value, str) else None
 
@@ -47,10 +52,12 @@ class CoolifyApplication(BaseModel):
     git_commit_sha: str | None = None
     build_pack: str | None = None
     last_online_at: str | None = None
-    # The path Coolify's own health check asks the app for, and whether it asks at all (#348).
-    # Not booleans in every answer, so an odd value reads as unknown instead of losing the app.
+    # The path Coolify's own health check asks the app for, whether it asks at all (#348) and
+    # the status it expects (#495). Not booleans in every answer, so an odd value reads as
+    # unknown instead of losing the app.
     health_check_enabled: Annotated[bool | None, BeforeValidator(_flag)] = None
     health_check_path: Annotated[str | None, BeforeValidator(_text)] = None
+    health_check_return_code: Annotated[int | None, BeforeValidator(_status_code)] = None
 
 
 class CoolifyDeployment(BaseModel):

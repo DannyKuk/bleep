@@ -10,7 +10,7 @@
     "health_check_port": null,
     "health_check_host": "localhost",
     "health_check_method": "GET",
-    "health_check_return_code": 200,
+    "health_check_return_code": 204,
     "health_check_scheme": "http",
     "build_pack": "dockerfile",
     "manual_webhook_secret_github": "whsec-fake-github-0101"
@@ -26,7 +26,7 @@
     "health_check_port": null,
     "health_check_host": "localhost",
     "health_check_method": "GET",
-    "health_check_return_code": 200,
+    "health_check_return_code": 204,
     "health_check_scheme": "http",
     "build_pack": "nixpacks",
     "http_basic_auth_password": "basic-fake-password-0102"
@@ -42,7 +42,7 @@
     "health_check_port": null,
     "health_check_host": "localhost",
     "health_check_method": "GET",
-    "health_check_return_code": 200,
+    "health_check_return_code": 204,
     "health_check_scheme": "http",
     "build_pack": "dockerfile"
   },
