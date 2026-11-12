@@ -283,6 +283,137 @@ def test_a_password_across_the_cut_of_a_long_line_is_hidden(command):
         assert "1234XYZ" not in redact_text(line), offset
 
 
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            'INFO curl check {"cmd":"curl -u bob:pw1234XY","n":1}',
+            'INFO curl check {"cmd":"curl -u bob:<redacted>","n":1}',
+        ),
+        ('curl ok {"cmd":"redis-cli -a pw1234XY"}', 'curl ok {"cmd":"redis-cli -a <redacted>"}'),
+        (
+            '{"tool":"curl","cmd":"curl -u a:pw1234XY","n":1}',
+            '{"tool":"curl","cmd":"curl -u a:<redacted>","n":1}',
+        ),
+        (
+            '{"curl":1,"cmd":"redis-cli -a pw1234XY","n":1}',
+            '{"curl":1,"cmd":"redis-cli -a <redacted>","n":1}',
+        ),
+        (
+            '{"cmd":"curl -u bob:pw1234XY","msg":"curl -u al:pw1234XY"}',
+            '{"cmd":"curl -u bob:<redacted>","msg":"curl -u al:<redacted>"}',
+        ),
+        (
+            'mongo started; cmd="redis-cli -a pw1234XY"',
+            'mongo started; cmd="redis-cli -a <redacted>"',
+        ),
+        (
+            'curl -s x && sh -c "redis-cli -a pw1234XY ping"',
+            'curl -s x && sh -c "redis-cli -a <redacted> ping"',
+        ),
+        ('curl -s x; echo "curl -u a:pw1234XY"', 'curl -s x; echo "curl -u a:<redacted>"'),
+        (
+            'mysql said: run "curl -u a:pw1234XY" now',
+            'mysql said: run "curl -u a:<redacted>" now',
+        ),
+        ("redis-cli -a mongo ping", "redis-cli -a <redacted> ping"),
+        (
+            "curl -u bob:pw1234XY && redis-cli -a pw1234XY",
+            "curl -u bob:<redacted> && redis-cli -a <redacted>",
+        ),
+    ],
+)
+def test_every_client_command_on_a_line_is_read(line, expected):
+    """A line is read in pieces, from each client's name to the next, so an earlier name, a key
+    or a quote never hides a later command from the reading."""
+    out = _hidden_once(line)
+    assert out == expected
+    if "{" in line:
+        json.loads(out[out.index("{") :])
+
+
+# A value right after a client's password flag is its password, whatever it looks like.
+PASSWORDS_IN_ANY_SHAPE = [
+    ("redis-cli -a 123456 ping", "redis-cli -a <redacted> ping"),
+    ("redis-cli -a 2024:01:01 ping", "redis-cli -a <redacted> ping"),
+    ("curl -u bob:123456 http://x", "curl -u bob:<redacted> http://x"),
+    ("curl -u bob:123456:654321 http://x", "curl -u bob:<redacted> http://x"),
+    ("mysqladmin -p123456 ping", "mysqladmin -p<redacted> ping"),
+    ("mysql -p=s3cretpw db", "mysql -p<redacted> db"),
+    ("mysqlsh -ps3cretpw", "mysqlsh -p<redacted>"),
+    ("mongo -ps3cretpw --eval 1", "mongo -p<redacted> --eval 1"),
+    ("mongosh -p 27017 --quiet", "mongosh -p <redacted> --quiet"),
+    ("redis-cli -a -s3cretpw ping", "redis-cli -a <redacted> ping"),
+    ("redis-cli -a s3cret\\ pass ping", "redis-cli -a <redacted> ping"),
+    ("curl -U proxy:s3cretpw http://x", "curl -U proxy:<redacted> http://x"),
+    ("curl --proxy-user proxy:s3cretpw http://x", "curl --proxy-user proxy:<redacted> http://x"),
+    ("curl -su bob:s3cretpw http://x", "curl -su bob:<redacted> http://x"),
+    ("curl -fsSu bob:s3cretpw http://x", "curl -fsSu bob:<redacted> http://x"),
+    ("curl -sSubob:s3cretpw http://x", "curl -sSubob:<redacted> http://x"),
+]
+
+
+@pytest.mark.parametrize(("line", "expected"), PASSWORDS_IN_ANY_SHAPE)
+def test_redact_text_hides_a_password_whatever_it_looks_like(line, expected):
+    assert _hidden_once(line) == expected
+
+
+@pytest.mark.parametrize(("line", "expected"), PASSWORDS_IN_ANY_SHAPE)
+def test_redact_command_hides_a_health_check_password_whatever_it_looks_like(line, expected):
+    assert redact_command(line) == expected
+    assert redact_command(expected) == expected
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            '{"cmd":"redis-cli -a s3cret\\\\ pass ping","n":1}',
+            '{"cmd":"redis-cli -a <redacted> ping","n":1}',
+        ),
+        ('{"cmd":"redis-cli -a 123456","n":1}', '{"cmd":"redis-cli -a <redacted>","n":1}'),
+        ('["CMD", "redis-cli", "-a", "123456"]', '["CMD", "redis-cli", "-a", "<redacted>"]'),
+        ('{"argv":["curl","-U","p:123456"],"n":1}', '{"argv":["curl","-U","p:<redacted>"],"n":1}'),
+    ],
+)
+def test_a_password_in_any_shape_is_hidden_inside_json(line, expected):
+    out = _hidden_once(line)
+    assert out == expected
+    json.loads(out)
+    assert redact_command(line) == expected
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "docker run --name mongo -p 27017:27017/tcp mongo",
+        "docker run --name mongo -p 0.0.0.0:27017:27017/udp mongo",
+        "mongosh -u root -p --authenticationDatabase admin",
+        "mysqladmin -p ping",
+    ],
+)
+def test_a_port_mapping_or_a_missing_password_stays(line):
+    assert redact_with_count(line) == (line, 0)
+    assert redact_command(line) == line
+
+
+def test_a_long_line_that_hiding_brings_under_the_cut_is_not_cut():
+    line = "redis-cli -a " + "x" * 5000
+    assert redact_with_count(line) == ("redis-cli -a <redacted>", 1)
+
+
+def test_a_cut_line_counts_only_the_passwords_it_keeps():
+    line = "a " * 2100 + "redis-cli -a pw1234 " * 200 + "b " * 2100
+    out, count = redact_with_count(line)
+    assert "pw1234" not in out
+    assert count == out.count("<redacted>")
+    kept = "a " * 2500 + "redis-cli -a pw1234 ping " + "b " * 300
+    out, count = redact_with_count(kept)
+    assert "pw1234" not in out
+    assert count == out.count("<redacted>") == 1
+    assert redact_with_count(out) == (out, 0)
+
+
 @pytest.mark.parametrize("unit", ['\\"', "\\'", '"', "'", '"\\', "a '", 'x "y'])
 @pytest.mark.parametrize("client", ["curl -u a:", "redis-cli -a ", "mysqladmin -p"])
 def test_redact_text_is_linear_on_one_line_of_a_million_characters(client, unit):
@@ -327,10 +458,26 @@ def test_redact_text_is_linear_on_a_million_characters_of_client_lines(client, u
         json.dumps({"cmd": "redis-cli -a " * 300}),
         json.dumps(["curl"] * 450),
         json.dumps([f"curl -u a:{n}" for n in range(230)]),
+        "redis-cli -a x/" * 260,
+        "curl -u a:'mongo' " * 210,
+        "mysqladmin -p'curl" * 210,
+        'mongo started; cmd="redis-cli -a x" ' * 105,
+        'curl {"cmd":"curl -u a:b"} ' * 140,
+        json.dumps({"cmd": "redis-cli -a mongo " * 190}),
     ],
 )
 def test_redact_text_is_linear_on_lines_full_of_client_names(line):
     text = _lines_of(line)
+    started = time.perf_counter()
+    redact_text(text)
+    assert time.perf_counter() - started < 1.0
+
+
+@pytest.mark.parametrize(
+    "piece", ["curl ", "redis-cli -a x/", "curl -u a:'mongo' ", "mysqladmin -p'curl", 'x="curl ']
+)
+def test_redact_text_is_linear_on_one_line_full_of_client_names(piece):
+    text = piece * (1_000_000 // len(piece))
     started = time.perf_counter()
     redact_text(text)
     assert time.perf_counter() - started < 1.0
