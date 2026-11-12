@@ -36,6 +36,9 @@ PREFIXES = [
     'grep -c "a b"; ',
 ]
 KEEP = "KEEPME"
+# A password holding a quote and a blank, inside `sh -c '…'`, can still show a part (main too, a
+# known limit in docs/design/guard.md), so these forms draw none
+QUOTE_AND_BLANK_LEFT_OUT = {"sh -c quoted"}
 CORE = re.compile(r"Zq[0-9]{3}Xw")
 SHELL_SPECIAL = set(" '\"\\;`&|(")
 
@@ -85,9 +88,11 @@ def _quoted(rng: random.Random, value: str) -> str:
     return value
 
 
-def _command(rng: random.Random) -> tuple[str, str]:
+def _command(rng: random.Random, form: str) -> tuple[str, str]:
     """A client's command with a generated password."""
     value, core = _secret(rng, PIECES)
+    while form in QUOTE_AND_BLANK_LEFT_OUT and " " in value and set(value) & set("'\""):
+        value, core = _secret(rng, PIECES)
     quoted = _quoted(rng, value)
     user = _quoted(rng, "bob:" + value)
     commands = [
@@ -160,6 +165,9 @@ FORMS: dict[str, Callable[[str, str, random.Random], str]] = {
         _logfmt(_logfmt(f"cmd={line!r}"), "'") + f" {KEEP}"
     ),
     "bytes repr": lambda line, _, __: f"out={line.encode()!r} {KEEP}",
+    "bytes repr after a blank": lambda line, _, __: f"stdout: {line.encode()!r} {KEEP}",
+    "raw bytes repr after a blank": lambda line, _, __: f"stdout: r{line.encode()!r} {KEEP}",
+    "sh -c quoted": lambda line, _, __: "sh -c " + shlex.quote(line),
     "two values": lambda line, _, __: (
         _logfmt(line) + " other=" + _logfmt(f'redis-cli -a "x y" {KEEP}')
     ),
@@ -181,7 +189,7 @@ def _problems(form: str, seed: int) -> list[tuple[str, str, str]]:
     rng = random.Random(f"{form}/{seed}")
     problems = []
     for _ in range(LINES_PER_FORM):
-        command, core = _command(rng)
+        command, core = _command(rng, form)
         line = FORMS[form](rng.choice(PREFIXES) + command, command, rng)
         out, count = redact_with_count(line)
         if core in out:
