@@ -31,8 +31,9 @@ def _flag(value: object) -> object:
 
 
 def _status_code(value: object) -> object:
-    """An HTTP status as Coolify stores it (an integer), else None."""
-    return value if type(value) is int and 100 <= value <= 599 else None
+    """A final HTTP status as Coolify stores it (an integer), else None. 1xx and 3xx are not
+    one: a URL check follows redirects, so it never ends on either."""
+    return value if type(value) is int and (200 <= value < 300 or 400 <= value < 600) else None
 
 
 def _text(value: object) -> object:
