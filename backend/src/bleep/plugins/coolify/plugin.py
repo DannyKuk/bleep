@@ -407,29 +407,28 @@ def _offered_domains(service: Service, app: CoolifyApplication) -> list[tuple[st
         return []
     present = {name for c in service.containers if (name := compose_service(c.labels))}
     texts = _compose_domain_texts(app.docker_compose_domains)
-    return [
-        (item, "/", 200)
-        for key, text in texts.items()
-        if _runs_key(key, present, texts)
-        for item in text.split(",")
-    ]
+    keys = {_key_of(name, present, texts) for name in present}
+    return [(item, "/", 200) for key in texts if key in keys for item in texts[key].split(",")]
 
 
-def _legacy_key(name: str) -> str:
-    """A Compose service name as older Coolify versions key `docker_compose_domains` with it:
-    `-` and `.` written as `_`."""
+def _normalized(name: str) -> str:
+    """A Compose service name as Coolify compares it with a `docker_compose_domains` key: `-`
+    and `.` written as `_`, the way older versions wrote the keys."""
     return name.replace("-", "_").replace(".", "_")
 
 
-def _runs_key(key: str, present: set[str], keys: dict[str, str]) -> bool:
-    """Whether `key` of `docker_compose_domains` names a Compose service of `present`: by its
-    own name, or by the legacy form of one name when no other present name has it and the
-    service's own name is not a key too (as Coolify itself resolves the keys, preferring the
-    original name)."""
-    if key in present:
-        return True
-    named = [name for name in present if _legacy_key(name) == key]
-    return len(named) == 1 and named[0] not in keys
+def _key_of(name: str, present: set[str], texts: dict[str, str]) -> str | None:
+    """The `docker_compose_domains` key whose domains Coolify reads for the Compose service
+    `name` (`getComposeServiceDomainString`): its own key when that has domains, else the first
+    key with domains that matches it once both are normalized. None when none has, or when
+    another service of `present` has the same normalized name, so the twin key is not its alone."""
+    if texts.get(name):
+        return name
+    if sum(_normalized(other) == _normalized(name) for other in present) > 1:
+        return None
+    return next(
+        (key for key, text in texts.items() if text and _normalized(key) == _normalized(name)), None
+    )
 
 
 def suggested_checks(service: Service, apps: list[CoolifyApplication]) -> list[UrlCheckConfig]:

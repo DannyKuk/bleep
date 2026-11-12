@@ -227,29 +227,29 @@ def compose_domains_of(keys: dict[str, str]) -> list[CoolifyApplication]:
     return [apps()[-1].model_copy(update={"docker_compose_domains": raw})]
 
 
+A = "https://a.example.com"
+
+
 @pytest.mark.parametrize(
     ("running", "keys", "offered"),
     [
         # Older Coolify versions key a service `my-api` or `my.api` as `my_api`.
-        (["my-api"], {"my_api": "https://a.example.com"}, ["https://a.example.com/"]),
-        (["my.api"], {"my_api": "https://a.example.com"}, ["https://a.example.com/"]),
-        (["my-api"], {"my-api": "https://a.example.com"}, ["https://a.example.com/"]),
-        # The original name wins over its underscore twin, as in Coolify.
-        (
-            ["my-api"],
-            {"my_api": "https://old.example.com", "my-api": "https://a.example.com"},
-            ["https://a.example.com/"],
-        ),
-        # Two present names share the legacy key: Coolify cannot tell them apart, nor can Bleep.
-        (["my-api", "my.api"], {"my_api": "https://a.example.com"}, []),
-        # A name that is already written with `_` is only itself.
-        (["my_api"], {"my-api": "https://a.example.com"}, []),
-        (["myapi"], {"my_api": "https://a.example.com"}, []),
+        (["my-api"], {"my_api": A}, [A + "/"]),
+        (["my.api"], {"my_api": A}, [A + "/"]),
+        (["my-api"], {"my-api": A}, [A + "/"]),
+        # Both sides are normalized, so a service written with `_` finds a `-` key too.
+        (["my_api"], {"my-api": A}, [A + "/"]),
+        (["myapi"], {"my_api": A}, []),
+        # A filled original key wins over its twins; an empty one shadows nothing.
+        (["my-api"], {"my_api": "https://old.example.com", "my-api": A}, [A + "/"]),
+        (["my-api"], {"my-api": "", "my_api": A}, [A + "/"]),
+        (["my-api"], {"my-api": "", "my_api": ""}, []),
+        # Two present names share a normalized name: only an exact key is one service's alone.
+        (["my-api", "my.api"], {"my_api": A}, []),
+        (["my-api", "my.api"], {"my_api": "https://old.example.com", "my-api": A}, [A + "/"]),
     ],
 )
-def test_a_compose_service_named_with_dash_or_dot_is_found_under_its_legacy_key(
-    running, keys, offered
-):
+def test_a_compose_service_is_found_under_the_key_coolify_reads_for_it(running, keys, offered):
     forum = compose_app_service(*running)
     assert urls(suggested_checks(forum, compose_domains_of(keys))) == offered
 
