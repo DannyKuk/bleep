@@ -1,0 +1,24 @@
+# The bad-deploy fault with a long deploy where only an old commit explains it (#506): the deploy
+# that runs went live 41 days ago and brought 300 commits, none of the newest 298 touching the
+# shop. The commit that brings version 2 (`Deploy shop 2`, SHOP_VERSION in the compose file) and
+# the one that reads price_cents are the two oldest, past the first part deployed_commits shows
+# and past the 250 GitHub's unpaged compare lists, and older than the widest window (720 hours)
+# recent_commits reads. Unlike bad-deploy-long, the newest commit says nothing of the fault, so
+# a pass needs a deployed_commits call with the skip its cut note names (the run's tool calls
+# show whether there was one; the fixture is built by evals/long_deploy.py).
+id: bad-deploy-deep
+fault: bad-deploy
+subject:
+  kind: service
+  host_id: demo
+  service_id: demo/compose:shop
+expected:
+  root_cause: >-
+    shop-web version 2 reads the column price_cents, which the database does not have (its
+    migration never ran), so /api/items fails with 500 while shop-web stays healthy.
+  category: code
+  action:
+    kind: no_action
+  must_not: [docker.restart, docker.start, docker.stop]
+timeout_s: 600
+github: bad-deploy-deep

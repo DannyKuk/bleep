@@ -1,0 +1,4566 @@
+{
+ "commits": [
+  {
+   "sha": "48d21d0b20c053e14dcac563d678a1b86e786232",
+   "minutes_ago": 40,
+   "author": "bleep-dev",
+   "message": "Reword the setup guide's first steps",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "1349192c693a649b457618f2c6b2c19e9f9fa522",
+   "minutes_ago": 135,
+   "author": "bleep-dev",
+   "message": "Bump ruff to the latest release",
+   "files": [
+    {
+     "filename": "backend/pyproject.toml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "26f0c3e0932197f4c4b0ecc67a6bd6357c5fa9ea",
+   "minutes_ago": 230,
+   "author": "bleep-dev",
+   "message": "Show the host's uptime on the overview card",
+   "files": [
+    {
+     "filename": "frontend/src/app/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "34d87947e372d71b1075484e9b007d157948feb1",
+   "minutes_ago": 325,
+   "author": "bleep-dev",
+   "message": "Fix a typo in the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "58301bf245f81c5ccc822f30585217cd350b1cbf",
+   "minutes_ago": 420,
+   "author": "bleep-dev",
+   "message": "Test the event cursor across a restart",
+   "files": [
+    {
+     "filename": "backend/tests/watcher/test_events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "18253489c85020d2685feed79ec4577cee5136a9",
+   "minutes_ago": 515,
+   "author": "bleep-dev",
+   "message": "Sort the plugin list by title",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "74fa01b089012d73e6b069e1a3cf3c2a2dea3dd9",
+   "minutes_ago": 610,
+   "author": "bleep-dev",
+   "message": "Add a dark mode screenshot to the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "f63ab77ae878f2ecc5d620f3ef28f0e83708064c",
+   "minutes_ago": 705,
+   "author": "bleep-dev",
+   "message": "Name the Telegram bot in the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "a3a417be3dfb852f152fc577b9b6707c62fd29d4",
+   "minutes_ago": 800,
+   "author": "bleep-dev",
+   "message": "Cache the knowledge index between restarts",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "49e350c200188f22da570e36dd55858b140a1146",
+   "minutes_ago": 895,
+   "author": "bleep-dev",
+   "message": "Retry an SSH connect once before giving up",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "7ebeeb9d6a4943df0f18b8f2f25aeb0477cd4193",
+   "minutes_ago": 990,
+   "author": "bleep-dev",
+   "message": "Bump next to the latest patch release",
+   "files": [
+    {
+     "filename": "frontend/package.json",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "05d27755b983f52870281e8ea410e28676f85844",
+   "minutes_ago": 1085,
+   "author": "bleep-dev",
+   "message": "Explain the quiet hours in the docs",
+   "files": [
+    {
+     "filename": "docs/design/notify.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "c2e2a27a3859967e06a92e064ac483f9cc723248",
+   "minutes_ago": 1180,
+   "author": "bleep-dev",
+   "message": "Log the watcher's tick time at debug level",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/manager.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "5a6ad1def6cb4835aae29dfe32d9a391cf9d85e8",
+   "minutes_ago": 1275,
+   "author": "bleep-dev",
+   "message": "Align the incident timeline's icons",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "3fbce823d3b9415b528eb1c2aadb4b4205a1c248",
+   "minutes_ago": 1370,
+   "author": "bleep-dev",
+   "message": "Drop an unused helper from the prompts loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/__init__.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "69f036562b4d3893bfe9455f6a9e5c9a0caae455",
+   "minutes_ago": 1465,
+   "author": "bleep-dev",
+   "message": "Run the frontend tests in CI on Node 22",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "1566e6b6d43d1ceb48c3f3163270c4c2006c866d",
+   "minutes_ago": 1560,
+   "author": "bleep-dev",
+   "message": "Clarify the demo's fault script usage",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "277ccfd0a884b3af1362bf184226d5744a31cd35",
+   "minutes_ago": 1655,
+   "author": "bleep-dev",
+   "message": "Add a test for an empty hosts file",
+   "files": [
+    {
+     "filename": "backend/tests/hosts/test_config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "6cc1f789ccfc190f80593c4dc8e061469231ff1e",
+   "minutes_ago": 1750,
+   "author": "bleep-dev",
+   "message": "Shorten the approval message's footer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "127e507fe6a0334b12daa649d6d6f39a6ce4ba83",
+   "minutes_ago": 1845,
+   "author": "bleep-dev",
+   "message": "Keep the chat panel scrolled to the newest message",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "4e1a7229726843e23c497e0bb18ddd35c28dd2a8",
+   "minutes_ago": 1940,
+   "author": "bleep-dev",
+   "message": "Bump uvicorn to the latest release",
+   "files": [
+    {
+     "filename": "backend/pyproject.toml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "94f1192388e15a571d6d5782e6e721c245d4a3a1",
+   "minutes_ago": 2035,
+   "author": "bleep-dev",
+   "message": "Note the evals' cost in the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "68f4aabb60e2fc79afc354bb591837a62fe0b26c",
+   "minutes_ago": 2130,
+   "author": "bleep-dev",
+   "message": "Rename a test to say what it checks",
+   "files": [
+    {
+     "filename": "backend/tests/graph/test_report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "6d0cdc405f291e7ad0020a4528cd79a08ce27cac",
+   "minutes_ago": 2225,
+   "author": "bleep-dev",
+   "message": "Format the issue templates",
+   "files": [
+    {
+     "filename": ".github/ISSUE_TEMPLATE/bug.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "0af84d3e624cbc6778c3cb55f23cd36691b88cf7",
+   "minutes_ago": 59100,
+   "author": "bleep-dev",
+   "message": "Fix the setup guide",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "bbb4cfdf1855fba0c73ed55dee460e23783289d5",
+   "minutes_ago": 59300,
+   "author": "bleep-dev",
+   "message": "Tidy the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d6d09e2eccc579bc6688d4ba30df56bad3d47a3e",
+   "minutes_ago": 59400,
+   "author": "bleep-dev",
+   "message": "Document the hosts file loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "548eb191a13ea95a608c50ee370ad5a3c7cf104d",
+   "minutes_ago": 59500,
+   "author": "bleep-dev",
+   "message": "Test the event cursor",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "1b0e1f05f6956e4b62236546df7fea37f85bbd32",
+   "minutes_ago": 59600,
+   "author": "bleep-dev",
+   "message": "Rename the incident timeline",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d48bfe268d298f151a020198800697583468f04e",
+   "minutes_ago": 59700,
+   "author": "bleep-dev",
+   "message": "Bump the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "c76e1e5ed8de4a14bcff4983b37f68c8612f2aa3",
+   "minutes_ago": 59800,
+   "author": "bleep-dev",
+   "message": "Simplify the knowledge index",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "c201c578f8038ed42a1cc43928038d53bd268987",
+   "minutes_ago": 59900,
+   "author": "bleep-dev",
+   "message": "Clarify the approval message",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "20f8ca22aaa5bbb59050055520114c5ff6c7debc",
+   "minutes_ago": 60000,
+   "author": "bleep-dev",
+   "message": "Log the SSH reconnect",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "b5bcd6462004414210a22e5414badd4678589b19",
+   "minutes_ago": 60100,
+   "author": "bleep-dev",
+   "message": "Speed up the chat panel",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "eb4380ac90817ffd78a1c9c5996c5e2cc4bf24de",
+   "minutes_ago": 60200,
+   "author": "bleep-dev",
+   "message": "Reword the CI workflow",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "0407bc2fa3d5f8734321daca788fd5e655459177",
+   "minutes_ago": 60300,
+   "author": "bleep-dev",
+   "message": "Cover the demo script",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "951add789158b8f9ddec80bddc0fbd8764613740",
+   "minutes_ago": 60400,
+   "author": "bleep-dev",
+   "message": "Fix the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "2ce97bafdd5c07319bae74ea3a2d26fd20ebad73",
+   "minutes_ago": 60500,
+   "author": "bleep-dev",
+   "message": "Tidy the plugin list",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "3a50a4daa3c63d7b6359d25fff142b0a4dcb5897",
+   "minutes_ago": 60600,
+   "author": "bleep-dev",
+   "message": "Document the report writer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/graph/report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "3a8b7836aa6000713c5f231dab88a268a47ad42e",
+   "minutes_ago": 60700,
+   "author": "bleep-dev",
+   "message": "Test the Telegram formatter",
+   "files": [
+    {
+     "filename": "backend/src/bleep/notify/format.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "6f90b649de21e1401c253f66413aa8d9641fcc00",
+   "minutes_ago": 60800,
+   "author": "bleep-dev",
+   "message": "Rename the memory store",
+   "files": [
+    {
+     "filename": "backend/src/bleep/memory/store.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "de3b72640556af8571024396e6fb4f26b05c0041",
+   "minutes_ago": 60900,
+   "author": "bleep-dev",
+   "message": "Bump the URL checker",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/url_check.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "0d4137d347bb8823226c5817d04c8ae9d5f4808b",
+   "minutes_ago": 61000,
+   "author": "bleep-dev",
+   "message": "Simplify the overview card",
+   "files": [
+    {
+     "filename": "frontend/src/app/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "c84ec117400ff884a3c57985c242b84ac1589a77",
+   "minutes_ago": 61100,
+   "author": "bleep-dev",
+   "message": "Clarify the dev scripts",
+   "files": [
+    {
+     "filename": "scripts/board.sh",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "75aae781ce2ca05fe16fd4f86e7b2e6446b74739",
+   "minutes_ago": 61200,
+   "author": "bleep-dev",
+   "message": "Speed up the setup guide",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "0788d3bc433d15416cb5e21c5beb0bb599b91f86",
+   "minutes_ago": 61300,
+   "author": "bleep-dev",
+   "message": "Reword the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "384229e98c1cea3d4e64fc753d065eb735003cba",
+   "minutes_ago": 61400,
+   "author": "bleep-dev",
+   "message": "Cover the hosts file loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "79be015e885712b978050257b45863399f65eab1",
+   "minutes_ago": 61500,
+   "author": "bleep-dev",
+   "message": "Fix the event cursor",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "2f87e60b0856433a13b77a981ad3a225f7fd01dd",
+   "minutes_ago": 61600,
+   "author": "bleep-dev",
+   "message": "Tidy the incident timeline",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "dfd32e91f2e7082efa3a90864c2a439ca280d35f",
+   "minutes_ago": 61700,
+   "author": "bleep-dev",
+   "message": "Document the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d6ba29eb8ce0640ec34d43bc32f19dda41f0f7ba",
+   "minutes_ago": 61800,
+   "author": "bleep-dev",
+   "message": "Test the knowledge index",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "3345712dba88fed4af50fd31fc583cabf239b4f4",
+   "minutes_ago": 61900,
+   "author": "bleep-dev",
+   "message": "Rename the approval message",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "da99a0abcb176c5a2a3776a812e73e5b5d09e19e",
+   "minutes_ago": 62000,
+   "author": "bleep-dev",
+   "message": "Bump the SSH reconnect",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "9ec70e9e0370d58a1d5de4b0cca0b98ed23945dc",
+   "minutes_ago": 62100,
+   "author": "bleep-dev",
+   "message": "Simplify the chat panel",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "2ce8eb62b5e73ecd61a77e833a65be18a99507e8",
+   "minutes_ago": 62200,
+   "author": "bleep-dev",
+   "message": "Clarify the CI workflow",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "86baec2ef0a75f5943c342ff58942ce4f8bb3660",
+   "minutes_ago": 62300,
+   "author": "bleep-dev",
+   "message": "Log the demo script",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d90d65ee056c7f811dbb37df6dd341944e2778fc",
+   "minutes_ago": 62400,
+   "author": "bleep-dev",
+   "message": "Speed up the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "0bb652f609c8977c309ac491396f3aa81abae2ac",
+   "minutes_ago": 62500,
+   "author": "bleep-dev",
+   "message": "Reword the plugin list",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "645dc94cb9baec2c3b059add8444357256519d12",
+   "minutes_ago": 62600,
+   "author": "bleep-dev",
+   "message": "Cover the report writer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/graph/report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "f3c7190742cb9a1922a41dcf4a77f070a47b56be",
+   "minutes_ago": 62700,
+   "author": "bleep-dev",
+   "message": "Fix the Telegram formatter",
+   "files": [
+    {
+     "filename": "backend/src/bleep/notify/format.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "af71475408d26ab2da6ddb1b856451bb096c6773",
+   "minutes_ago": 62800,
+   "author": "bleep-dev",
+   "message": "Tidy the memory store",
+   "files": [
+    {
+     "filename": "backend/src/bleep/memory/store.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "17e06bb7e662041d0a5876e58eece1f23ee2061e",
+   "minutes_ago": 62900,
+   "author": "bleep-dev",
+   "message": "Document the URL checker",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/url_check.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "06a60d0bfd42b7530d8e22335371303835a41c0d",
+   "minutes_ago": 63000,
+   "author": "bleep-dev",
+   "message": "Test the overview card",
+   "files": [
+    {
+     "filename": "frontend/src/app/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "a97a224161240333c86e9b43a9729d51b9af6eb4",
+   "minutes_ago": 63100,
+   "author": "bleep-dev",
+   "message": "Rename the dev scripts",
+   "files": [
+    {
+     "filename": "scripts/board.sh",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "5c1af4cc11065229435baa596acfe559f0a319c4",
+   "minutes_ago": 63200,
+   "author": "bleep-dev",
+   "message": "Simplify the setup guide",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "f1c9d02b6f2add85582bf72974965cad4e099c37",
+   "minutes_ago": 63300,
+   "author": "bleep-dev",
+   "message": "Clarify the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "8c067781f06c32f4499676c118d29f4405ea33c0",
+   "minutes_ago": 63400,
+   "author": "bleep-dev",
+   "message": "Log the hosts file loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "2e4641ee57b44d328fd9c62ce159839582044ebe",
+   "minutes_ago": 63500,
+   "author": "bleep-dev",
+   "message": "Speed up the event cursor",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "fd6d7057d93e3904376385e0e3a2fb3f72128ad6",
+   "minutes_ago": 63600,
+   "author": "bleep-dev",
+   "message": "Reword the incident timeline",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "3921799b973c68f72fcdad58c70bbccaa95673cf",
+   "minutes_ago": 63700,
+   "author": "bleep-dev",
+   "message": "Cover the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "92ac07299a95f46301271b7f93b14d9db3a21d1e",
+   "minutes_ago": 63800,
+   "author": "bleep-dev",
+   "message": "Fix the knowledge index",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "19e1237ef0cdc6a5b39403a27674111f1abeb9e1",
+   "minutes_ago": 63900,
+   "author": "bleep-dev",
+   "message": "Tidy the approval message",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "e91f2978baeb4110337a95cdaa9676930e0fb93c",
+   "minutes_ago": 64000,
+   "author": "bleep-dev",
+   "message": "Document the SSH reconnect",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "1550398dfdac0bf9073e4ca2ba64432f10e724bd",
+   "minutes_ago": 64100,
+   "author": "bleep-dev",
+   "message": "Test the chat panel",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d1c2c1756943b4b3a4ccef9005795465809450dc",
+   "minutes_ago": 64200,
+   "author": "bleep-dev",
+   "message": "Rename the CI workflow",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "b92a94c421310967657420bed9abe1206ecd20fe",
+   "minutes_ago": 64300,
+   "author": "bleep-dev",
+   "message": "Bump the demo script",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "90916f9e7c2555025915d1a00a7d8a40121daa56",
+   "minutes_ago": 64400,
+   "author": "bleep-dev",
+   "message": "Simplify the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "39af565808bd61bcfb3a28a8b05f380d31695020",
+   "minutes_ago": 64500,
+   "author": "bleep-dev",
+   "message": "Clarify the plugin list",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "eb77ab3d9291f564b145b34276473af9d48b5a80",
+   "minutes_ago": 64600,
+   "author": "bleep-dev",
+   "message": "Log the report writer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/graph/report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "6aa63356bc54b02314abd9a87e9d132a6c8e6b0d",
+   "minutes_ago": 64700,
+   "author": "bleep-dev",
+   "message": "Speed up the Telegram formatter",
+   "files": [
+    {
+     "filename": "backend/src/bleep/notify/format.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "32013ab359158d995b10c0c276b32dbc5f07bc23",
+   "minutes_ago": 64800,
+   "author": "bleep-dev",
+   "message": "Reword the memory store",
+   "files": [
+    {
+     "filename": "backend/src/bleep/memory/store.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "4d7bae055bc3b7990d66b2999f87157f5cdd298c",
+   "minutes_ago": 64900,
+   "author": "bleep-dev",
+   "message": "Cover the URL checker",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/url_check.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "5eabac598c9e56c34e9d4803efa0b1a0e06c277e",
+   "minutes_ago": 65000,
+   "author": "bleep-dev",
+   "message": "Fix the overview card",
+   "files": [
+    {
+     "filename": "frontend/src/app/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "32ca3022882162ffa27383a105cc8a6c0c47752d",
+   "minutes_ago": 65100,
+   "author": "bleep-dev",
+   "message": "Tidy the dev scripts",
+   "files": [
+    {
+     "filename": "scripts/board.sh",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "1045b78b6f25082b007cf9f86a83223754d663f1",
+   "minutes_ago": 65200,
+   "author": "bleep-dev",
+   "message": "Test the setup guide",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "81be5d241c984fb78b79c45167947b2ed5b59384",
+   "minutes_ago": 65300,
+   "author": "bleep-dev",
+   "message": "Rename the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "4399f975fc5fe55fca8596b88ddeb95099cde084",
+   "minutes_ago": 65400,
+   "author": "bleep-dev",
+   "message": "Bump the hosts file loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "bfb3935588147cbeaa2467e0e21caac8aecd00e9",
+   "minutes_ago": 65500,
+   "author": "bleep-dev",
+   "message": "Simplify the event cursor",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "eb81135a8d799b3b8c218a482007f581964a76f0",
+   "minutes_ago": 65600,
+   "author": "bleep-dev",
+   "message": "Clarify the incident timeline",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "85a41994b2b97bf10e30fc37f93bc7e768f14c5a",
+   "minutes_ago": 65700,
+   "author": "bleep-dev",
+   "message": "Log the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "a9db5d4cc1b0845688152dc290fcbb18fc0092da",
+   "minutes_ago": 65800,
+   "author": "bleep-dev",
+   "message": "Speed up the knowledge index",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "8ab6db0c2bd66619540ed0c6720f046c3f84a6f4",
+   "minutes_ago": 65900,
+   "author": "bleep-dev",
+   "message": "Reword the approval message",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d96a999ca98c95d3514ff90cc9dc38cc2692545e",
+   "minutes_ago": 66000,
+   "author": "bleep-dev",
+   "message": "Cover the SSH reconnect",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "1e18d58d70cc30e568911e506ef425020e69a8b6",
+   "minutes_ago": 66100,
+   "author": "bleep-dev",
+   "message": "Fix the chat panel",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "1c35daf97cc45d97b27a903f0fa9d7d54a91404f",
+   "minutes_ago": 66200,
+   "author": "bleep-dev",
+   "message": "Tidy the CI workflow",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "9c2951d74a2fb514e7cf23e330c056931f1ad4da",
+   "minutes_ago": 66300,
+   "author": "bleep-dev",
+   "message": "Document the demo script",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "f9cc1be53a545370ba831081918dceab0872a777",
+   "minutes_ago": 66400,
+   "author": "bleep-dev",
+   "message": "Test the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "189b8ec74b860609cb2d5d1f6555de4cb03156d8",
+   "minutes_ago": 66500,
+   "author": "bleep-dev",
+   "message": "Rename the plugin list",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "9f752e49a728fe90cad9fd3c0d5b8cf6aa03cbae",
+   "minutes_ago": 66600,
+   "author": "bleep-dev",
+   "message": "Bump the report writer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/graph/report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "5574fe909f842c849f2edb117297931af26d7f60",
+   "minutes_ago": 66700,
+   "author": "bleep-dev",
+   "message": "Simplify the Telegram formatter",
+   "files": [
+    {
+     "filename": "backend/src/bleep/notify/format.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "465e46bec8522b85b68394ee06025d0daaad3a0a",
+   "minutes_ago": 66800,
+   "author": "bleep-dev",
+   "message": "Clarify the memory store",
+   "files": [
+    {
+     "filename": "backend/src/bleep/memory/store.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "4af4f8db9acbd7bc493187f8209c1348e17ae723",
+   "minutes_ago": 66900,
+   "author": "bleep-dev",
+   "message": "Log the URL checker",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/url_check.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "472aad895154f7c10d55dfd05952d709d22b742f",
+   "minutes_ago": 67000,
+   "author": "bleep-dev",
+   "message": "Speed up the overview card",
+   "files": [
+    {
+     "filename": "frontend/src/app/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "50242accff1a87630bd2b2c459bccc48bfcaa291",
+   "minutes_ago": 67100,
+   "author": "bleep-dev",
+   "message": "Reword the dev scripts",
+   "files": [
+    {
+     "filename": "scripts/board.sh",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "aa7d78a9e25d03bc620bd2c79b740e78923612ca",
+   "minutes_ago": 67200,
+   "author": "bleep-dev",
+   "message": "Fix the setup guide",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "0f966a4fbc1f41fd396cb24a182193f4bbd68f8e",
+   "minutes_ago": 67300,
+   "author": "bleep-dev",
+   "message": "Tidy the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "059573acb0a19a326c9801d5d57ec0f4cb570718",
+   "minutes_ago": 67400,
+   "author": "bleep-dev",
+   "message": "Document the hosts file loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "23eaebeb6a609d9e9d7fb167a05b5d75774d0199",
+   "minutes_ago": 67500,
+   "author": "bleep-dev",
+   "message": "Test the event cursor",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "31cd5b961a85ce90d8a3799b956024c79963d934",
+   "minutes_ago": 67600,
+   "author": "bleep-dev",
+   "message": "Rename the incident timeline",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "420bf5ec5e0d75eb36257af08078f5d2fa6f1045",
+   "minutes_ago": 67700,
+   "author": "bleep-dev",
+   "message": "Bump the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "b1262f59c234698bf7a06f7a5f77aaea52bbb8e1",
+   "minutes_ago": 67800,
+   "author": "bleep-dev",
+   "message": "Simplify the knowledge index",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "ff904ff84f89d2dc2560e92c6c434118c6aac1e6",
+   "minutes_ago": 67900,
+   "author": "bleep-dev",
+   "message": "Clarify the approval message",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "c683ef282a2782bf70b9e807847c097fbdc61e81",
+   "minutes_ago": 68000,
+   "author": "bleep-dev",
+   "message": "Log the SSH reconnect",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "afe29ee8d6ede2dbc18a144dda9eac9a3d234082",
+   "minutes_ago": 68100,
+   "author": "bleep-dev",
+   "message": "Speed up the chat panel",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "77cccb15b37122789e0f24fdafb96f45a0d0f85c",
+   "minutes_ago": 68200,
+   "author": "bleep-dev",
+   "message": "Reword the CI workflow",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "4832276852d0cb051464f85d8fde2e1bef16cd3a",
+   "minutes_ago": 68300,
+   "author": "bleep-dev",
+   "message": "Cover the demo script",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "bcb4f09545a6401d6bf704cfffdcfe8b0835d825",
+   "minutes_ago": 68400,
+   "author": "bleep-dev",
+   "message": "Fix the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "adc46520aa763f4312af60cdf0b1aa96422b56eb",
+   "minutes_ago": 68500,
+   "author": "bleep-dev",
+   "message": "Tidy the plugin list",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "681137a564dc7223d87ee1276bb1c2b171d8bd35",
+   "minutes_ago": 68600,
+   "author": "bleep-dev",
+   "message": "Document the report writer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/graph/report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "8b1f8ddca5e6add367394e75eb213fd7376a0ebf",
+   "minutes_ago": 68700,
+   "author": "bleep-dev",
+   "message": "Test the Telegram formatter",
+   "files": [
+    {
+     "filename": "backend/src/bleep/notify/format.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "a866e59859997b5b0c7b92384e33d76f4f9b858e",
+   "minutes_ago": 68800,
+   "author": "bleep-dev",
+   "message": "Rename the memory store",
+   "files": [
+    {
+     "filename": "backend/src/bleep/memory/store.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "b6cb9a1d50f937952826c82b71cfd9b153861e00",
+   "minutes_ago": 68900,
+   "author": "bleep-dev",
+   "message": "Bump the URL checker",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/url_check.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d9f5343a165a119550d9dc5c015d3e4dd65d3e38",
+   "minutes_ago": 69000,
+   "author": "bleep-dev",
+   "message": "Simplify the overview card",
+   "files": [
+    {
+     "filename": "frontend/src/app/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "cadfd881c8f4adaa70be232894986f8b0e3e9e1a",
+   "minutes_ago": 69100,
+   "author": "bleep-dev",
+   "message": "Clarify the dev scripts",
+   "files": [
+    {
+     "filename": "scripts/board.sh",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "0db8922934002853fe5918e6ad0e59b8f1132961",
+   "minutes_ago": 69200,
+   "author": "bleep-dev",
+   "message": "Speed up the setup guide",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "20c99a121b8c40c9b59222d2ee1a9f5667238ed3",
+   "minutes_ago": 69300,
+   "author": "bleep-dev",
+   "message": "Reword the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "e69398ff5a00d083a14ffb5b484b6a58680fe82e",
+   "minutes_ago": 69400,
+   "author": "bleep-dev",
+   "message": "Cover the hosts file loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "8c471393ca0f9e6229c250e05d218fedcacd0f79",
+   "minutes_ago": 69500,
+   "author": "bleep-dev",
+   "message": "Fix the event cursor",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "4cbf8051b22769eff0ef77e7586d318fd90e2529",
+   "minutes_ago": 69600,
+   "author": "bleep-dev",
+   "message": "Tidy the incident timeline",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "8574c38eb0107fc0aa045e3f7e54738c5ea600bb",
+   "minutes_ago": 69700,
+   "author": "bleep-dev",
+   "message": "Document the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "b25f8fcb06e9478a19e850946769c9b9ff4fb03e",
+   "minutes_ago": 69800,
+   "author": "bleep-dev",
+   "message": "Test the knowledge index",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "75b53941869053d2aa7b6f439a28387eb2442190",
+   "minutes_ago": 69900,
+   "author": "bleep-dev",
+   "message": "Rename the approval message",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "cff70407efebfd1011c880946ecad3c23d83efb8",
+   "minutes_ago": 70000,
+   "author": "bleep-dev",
+   "message": "Bump the SSH reconnect",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "92e1e3692e603389e09736af25f60fcd333ac99d",
+   "minutes_ago": 70100,
+   "author": "bleep-dev",
+   "message": "Simplify the chat panel",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "9359104075550a935f7c4013e5735a7573f6e717",
+   "minutes_ago": 70200,
+   "author": "bleep-dev",
+   "message": "Clarify the CI workflow",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "3cc7fe2401159c5a55ccd7ed06463533259da529",
+   "minutes_ago": 70300,
+   "author": "bleep-dev",
+   "message": "Log the demo script",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "fe2194bf2aeaba4319237aeb756936b395e0331a",
+   "minutes_ago": 70400,
+   "author": "bleep-dev",
+   "message": "Speed up the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "b2e18c303cc7bfeff63b4aa12ea243a6193d3177",
+   "minutes_ago": 70500,
+   "author": "bleep-dev",
+   "message": "Reword the plugin list",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "03ad4f2171e67f0681e9c171e12fbd27eb949545",
+   "minutes_ago": 70600,
+   "author": "bleep-dev",
+   "message": "Cover the report writer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/graph/report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "ce0815abd9b3e1b4061b2a3be2cf4171437ead91",
+   "minutes_ago": 70700,
+   "author": "bleep-dev",
+   "message": "Fix the Telegram formatter",
+   "files": [
+    {
+     "filename": "backend/src/bleep/notify/format.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "554cf54cc7a8963804df05d6728b9f2ec5fe1c88",
+   "minutes_ago": 70800,
+   "author": "bleep-dev",
+   "message": "Tidy the memory store",
+   "files": [
+    {
+     "filename": "backend/src/bleep/memory/store.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "b4ac02ab75da5c76c1c0a06c98391f33c08ba9e6",
+   "minutes_ago": 70900,
+   "author": "bleep-dev",
+   "message": "Document the URL checker",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/url_check.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "5b4a4270ebc6ef4b9c130658c282d7a1fdcdf21e",
+   "minutes_ago": 71000,
+   "author": "bleep-dev",
+   "message": "Test the overview card",
+   "files": [
+    {
+     "filename": "frontend/src/app/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "f185ca3d13cacbe2828d4bbe628c00ca2f2266e2",
+   "minutes_ago": 71100,
+   "author": "bleep-dev",
+   "message": "Rename the dev scripts",
+   "files": [
+    {
+     "filename": "scripts/board.sh",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "7933284f5049ad08b58bedb96f2ed5bb571dee06",
+   "minutes_ago": 71200,
+   "author": "bleep-dev",
+   "message": "Simplify the setup guide",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "58af98cd0c7ba9f0147fba3af2e0a78ede9e2baf",
+   "minutes_ago": 71300,
+   "author": "bleep-dev",
+   "message": "Clarify the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "5006c1119ecc430196542bb55fab136a9db6e8da",
+   "minutes_ago": 71400,
+   "author": "bleep-dev",
+   "message": "Log the hosts file loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "dcd0b54f186b962658f6250d0cd42d6e5f62057e",
+   "minutes_ago": 71500,
+   "author": "bleep-dev",
+   "message": "Speed up the event cursor",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "56dceb32d92b757af07990b08e14a23d8fa9c38d",
+   "minutes_ago": 71600,
+   "author": "bleep-dev",
+   "message": "Reword the incident timeline",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "b764026fdee4d9397c9a68c29688c69a7a4653a3",
+   "minutes_ago": 71700,
+   "author": "bleep-dev",
+   "message": "Cover the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "81c6db2f37221387ff0441226f7b0c235b63ff36",
+   "minutes_ago": 71800,
+   "author": "bleep-dev",
+   "message": "Fix the knowledge index",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "8d7b1cf4a600ba4a401de6b5af36240ced4e215b",
+   "minutes_ago": 71900,
+   "author": "bleep-dev",
+   "message": "Tidy the approval message",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "2b761140ee008db1b96c7bb56a1e4523dbbe5a99",
+   "minutes_ago": 72000,
+   "author": "bleep-dev",
+   "message": "Document the SSH reconnect",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "82e3affad0c98a1cad9c2fa780960a065cad3639",
+   "minutes_ago": 72100,
+   "author": "bleep-dev",
+   "message": "Test the chat panel",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "509ffc4c06bfbdbf179e32b781496a96b427b341",
+   "minutes_ago": 72200,
+   "author": "bleep-dev",
+   "message": "Rename the CI workflow",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "5314613ba1167eb4067a2e1d650a2e67d228e681",
+   "minutes_ago": 72300,
+   "author": "bleep-dev",
+   "message": "Bump the demo script",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "e574a7667858291beffd58b84208011611da8109",
+   "minutes_ago": 72400,
+   "author": "bleep-dev",
+   "message": "Simplify the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "fced142b5f0a606ac7515aae50f4073807abf69e",
+   "minutes_ago": 72500,
+   "author": "bleep-dev",
+   "message": "Clarify the plugin list",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "93a0974caed6c4b32584af39a62b66b367128284",
+   "minutes_ago": 72600,
+   "author": "bleep-dev",
+   "message": "Log the report writer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/graph/report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "f1e101dda1695b6aba10c65b51fa501a7911737b",
+   "minutes_ago": 72700,
+   "author": "bleep-dev",
+   "message": "Speed up the Telegram formatter",
+   "files": [
+    {
+     "filename": "backend/src/bleep/notify/format.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "73b4449e7b3c82b49e301a3092f11c890100d33e",
+   "minutes_ago": 72800,
+   "author": "bleep-dev",
+   "message": "Reword the memory store",
+   "files": [
+    {
+     "filename": "backend/src/bleep/memory/store.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "684234e1e33c34ef55349517386260667225fc62",
+   "minutes_ago": 72900,
+   "author": "bleep-dev",
+   "message": "Cover the URL checker",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/url_check.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "107a4ae5d1abf8a71c673da58307f26533f0792c",
+   "minutes_ago": 73000,
+   "author": "bleep-dev",
+   "message": "Fix the overview card",
+   "files": [
+    {
+     "filename": "frontend/src/app/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "3d9f85a4093b54b8892b0b451dd6ab36cd224cd1",
+   "minutes_ago": 73100,
+   "author": "bleep-dev",
+   "message": "Tidy the dev scripts",
+   "files": [
+    {
+     "filename": "scripts/board.sh",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "f6d3177d8ef0279836d00f373748e55a2c57eb78",
+   "minutes_ago": 73200,
+   "author": "bleep-dev",
+   "message": "Test the setup guide",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "bdfebf17042b41a59fcb0880b8be69b764298b8f",
+   "minutes_ago": 73300,
+   "author": "bleep-dev",
+   "message": "Rename the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "bc109e1df72fcaa14e25d3a267d3d02a95130c97",
+   "minutes_ago": 73400,
+   "author": "bleep-dev",
+   "message": "Bump the hosts file loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d1573200d882504a67218e2ae5d5df1c0f9333d3",
+   "minutes_ago": 73500,
+   "author": "bleep-dev",
+   "message": "Simplify the event cursor",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d7ba15ee580234924e9ba860360a8ebbc409a082",
+   "minutes_ago": 73600,
+   "author": "bleep-dev",
+   "message": "Clarify the incident timeline",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "93d056acc7821a036b42e20232df068b9032ef35",
+   "minutes_ago": 73700,
+   "author": "bleep-dev",
+   "message": "Log the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "49b56784f231ba83632ca3619e0f357d9cbdf45a",
+   "minutes_ago": 73800,
+   "author": "bleep-dev",
+   "message": "Speed up the knowledge index",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "bcb28eac99d9e009406b62208c9433e603c3aa7d",
+   "minutes_ago": 73900,
+   "author": "bleep-dev",
+   "message": "Reword the approval message",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "74b41ae6f12ed082549c8604849d7e165dfe09d9",
+   "minutes_ago": 74000,
+   "author": "bleep-dev",
+   "message": "Cover the SSH reconnect",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "a9a9ef8c1d84649559ca63a1e62144a9f45f9ee1",
+   "minutes_ago": 74100,
+   "author": "bleep-dev",
+   "message": "Fix the chat panel",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "8a496057dc85159d6984044718921a7fba740533",
+   "minutes_ago": 74200,
+   "author": "bleep-dev",
+   "message": "Tidy the CI workflow",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "a230d8b4b13d3382b34ff51e204a9604c80650c4",
+   "minutes_ago": 74300,
+   "author": "bleep-dev",
+   "message": "Document the demo script",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "f161eaafbcd2d6c63d77608ee150e4ffe015a9ce",
+   "minutes_ago": 74400,
+   "author": "bleep-dev",
+   "message": "Test the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "16c6580a8d552def204693c7e006ac3078573ddc",
+   "minutes_ago": 74500,
+   "author": "bleep-dev",
+   "message": "Rename the plugin list",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d067ad44d8bac782a26f93bdb1754211cf023d61",
+   "minutes_ago": 74600,
+   "author": "bleep-dev",
+   "message": "Bump the report writer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/graph/report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "c023c9ff39d562c7dc07dedda96ec83e3d7169cf",
+   "minutes_ago": 74700,
+   "author": "bleep-dev",
+   "message": "Simplify the Telegram formatter",
+   "files": [
+    {
+     "filename": "backend/src/bleep/notify/format.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "e2d667f3b85e009c7ebb09914ce6e60da31f3e29",
+   "minutes_ago": 74800,
+   "author": "bleep-dev",
+   "message": "Clarify the memory store",
+   "files": [
+    {
+     "filename": "backend/src/bleep/memory/store.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "fa2db93f807560d03a7f9cbec01919f1f4416a01",
+   "minutes_ago": 74900,
+   "author": "bleep-dev",
+   "message": "Log the URL checker",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/url_check.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "5e294e30f5b6b8f6bdeaefa07e9dbee9d9f04609",
+   "minutes_ago": 75000,
+   "author": "bleep-dev",
+   "message": "Speed up the overview card",
+   "files": [
+    {
+     "filename": "frontend/src/app/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "0c2cdb52df7a386e899de588486d8aca4777a8a3",
+   "minutes_ago": 75100,
+   "author": "bleep-dev",
+   "message": "Reword the dev scripts",
+   "files": [
+    {
+     "filename": "scripts/board.sh",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "14d41e6c07a2d693815eef6a687d4ac201f805dc",
+   "minutes_ago": 75200,
+   "author": "bleep-dev",
+   "message": "Fix the setup guide",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "0addd3b2725a538eb149c940632036bd84380d5b",
+   "minutes_ago": 75300,
+   "author": "bleep-dev",
+   "message": "Tidy the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "5dd09d28bac7a75149dba9728f2fc91c25159c9d",
+   "minutes_ago": 75400,
+   "author": "bleep-dev",
+   "message": "Document the hosts file loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "c9b08bd55d0fac2e834ba0e07ea84da673f88db3",
+   "minutes_ago": 75500,
+   "author": "bleep-dev",
+   "message": "Test the event cursor",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "7cba3875efe90df94f5c86bafa55e3f069802f10",
+   "minutes_ago": 75600,
+   "author": "bleep-dev",
+   "message": "Rename the incident timeline",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "6ba27d9aacc48b9ffe48b8b07f47a9d17bc5e55c",
+   "minutes_ago": 75700,
+   "author": "bleep-dev",
+   "message": "Bump the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "de226cc5e52f28b3587e0663c6c04a9892d2d447",
+   "minutes_ago": 75800,
+   "author": "bleep-dev",
+   "message": "Simplify the knowledge index",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "97b97d56cb84f764607452eff429527d7763122b",
+   "minutes_ago": 75900,
+   "author": "bleep-dev",
+   "message": "Clarify the approval message",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "787b2354f1d8db873a1900223b01d8ad32dca3b1",
+   "minutes_ago": 76000,
+   "author": "bleep-dev",
+   "message": "Log the SSH reconnect",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "baf65154019a714e85500786dd26f8adc218d87e",
+   "minutes_ago": 76100,
+   "author": "bleep-dev",
+   "message": "Speed up the chat panel",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "a7947aac08a936e0dd39026e627dd464105d0e01",
+   "minutes_ago": 76200,
+   "author": "bleep-dev",
+   "message": "Reword the CI workflow",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "5b1d14d20ba002da2cca45eda7640176aad7ee58",
+   "minutes_ago": 76300,
+   "author": "bleep-dev",
+   "message": "Cover the demo script",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "06ea426b58edc7c824ead950590d2d1b1f34019c",
+   "minutes_ago": 76400,
+   "author": "bleep-dev",
+   "message": "Fix the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "2e1c76486128a29cc282f2afa0a3f3a5cb969303",
+   "minutes_ago": 76500,
+   "author": "bleep-dev",
+   "message": "Tidy the plugin list",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "7f738743e710d0aa25613c20a1f0574aec8cebf9",
+   "minutes_ago": 76600,
+   "author": "bleep-dev",
+   "message": "Document the report writer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/graph/report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "a7476e32d4870b4145b0ad59940eb3aa7d9c829e",
+   "minutes_ago": 76700,
+   "author": "bleep-dev",
+   "message": "Test the Telegram formatter",
+   "files": [
+    {
+     "filename": "backend/src/bleep/notify/format.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "db4a3a85342a4934e4d3275752b6115650372b52",
+   "minutes_ago": 76800,
+   "author": "bleep-dev",
+   "message": "Rename the memory store",
+   "files": [
+    {
+     "filename": "backend/src/bleep/memory/store.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "876648001c2a4bf78917d90c3868a08b762a01ed",
+   "minutes_ago": 76900,
+   "author": "bleep-dev",
+   "message": "Bump the URL checker",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/url_check.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "94c55776d15cc7cfb82a6fb18a15162a1d6235e3",
+   "minutes_ago": 77000,
+   "author": "bleep-dev",
+   "message": "Simplify the overview card",
+   "files": [
+    {
+     "filename": "frontend/src/app/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "a6d654db7c481cb20048147d1056f88987eff55b",
+   "minutes_ago": 77100,
+   "author": "bleep-dev",
+   "message": "Clarify the dev scripts",
+   "files": [
+    {
+     "filename": "scripts/board.sh",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "560345d889d1c7aa009dba9191dd693ecf625da4",
+   "minutes_ago": 77200,
+   "author": "bleep-dev",
+   "message": "Speed up the setup guide",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "75f8a830e7e1575e9f6aa037c5eda66eb9b98cd4",
+   "minutes_ago": 77300,
+   "author": "bleep-dev",
+   "message": "Reword the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "b2b428eab070807e2d1693f71de9ee8336cb4de5",
+   "minutes_ago": 77400,
+   "author": "bleep-dev",
+   "message": "Cover the hosts file loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "1a176f7c48bf11709fdb5a359694b37d4589cc39",
+   "minutes_ago": 77500,
+   "author": "bleep-dev",
+   "message": "Fix the event cursor",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "80eefb004122a808ec89cc695edacb1310edfc78",
+   "minutes_ago": 77600,
+   "author": "bleep-dev",
+   "message": "Tidy the incident timeline",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "761211006aefffcd7c8bfea40d628313de145074",
+   "minutes_ago": 77700,
+   "author": "bleep-dev",
+   "message": "Document the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "50bea2f5e28e491c9296b49a01d0b5e3dc40f089",
+   "minutes_ago": 77800,
+   "author": "bleep-dev",
+   "message": "Test the knowledge index",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "1764b887bd2117b1a03366cfbe4113c64572417a",
+   "minutes_ago": 77900,
+   "author": "bleep-dev",
+   "message": "Rename the approval message",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "f97d7504b34744c862372d16808ec3d6e48405db",
+   "minutes_ago": 78000,
+   "author": "bleep-dev",
+   "message": "Bump the SSH reconnect",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "0633a61c9bb5941a228ec0709217a2235a1595cf",
+   "minutes_ago": 78100,
+   "author": "bleep-dev",
+   "message": "Simplify the chat panel",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "474dd629489f61d838b3176a416c3be39f7e7a22",
+   "minutes_ago": 78200,
+   "author": "bleep-dev",
+   "message": "Clarify the CI workflow",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "75327466e3975aa8ca139a7caed64d3b890cee4c",
+   "minutes_ago": 78300,
+   "author": "bleep-dev",
+   "message": "Log the demo script",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "8b989314fee845428266b59ef1cc1048870fceba",
+   "minutes_ago": 78400,
+   "author": "bleep-dev",
+   "message": "Speed up the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "873cef486b55543a327a50a6d9f378addde27a8c",
+   "minutes_ago": 78500,
+   "author": "bleep-dev",
+   "message": "Reword the plugin list",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "62e6b9c7845e38777fc838cae36845e7c6360b75",
+   "minutes_ago": 78600,
+   "author": "bleep-dev",
+   "message": "Cover the report writer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/graph/report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "2ae67aafde8970177c98d2175506800324ab6648",
+   "minutes_ago": 78700,
+   "author": "bleep-dev",
+   "message": "Fix the Telegram formatter",
+   "files": [
+    {
+     "filename": "backend/src/bleep/notify/format.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "805950441750f2fe95f8306eff5baf625f7bc826",
+   "minutes_ago": 78800,
+   "author": "bleep-dev",
+   "message": "Tidy the memory store",
+   "files": [
+    {
+     "filename": "backend/src/bleep/memory/store.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d32cefba17e645d6a96ddb9fda5baa08883f646a",
+   "minutes_ago": 78900,
+   "author": "bleep-dev",
+   "message": "Document the URL checker",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/url_check.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "36b3a64957753e64611767a32e8111e42b5eef58",
+   "minutes_ago": 79000,
+   "author": "bleep-dev",
+   "message": "Test the overview card",
+   "files": [
+    {
+     "filename": "frontend/src/app/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "645cc0aa192555bd1d5e77b971a82488a8b363ac",
+   "minutes_ago": 79100,
+   "author": "bleep-dev",
+   "message": "Rename the dev scripts",
+   "files": [
+    {
+     "filename": "scripts/board.sh",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "4e8fdc1ad33950e46193dab6e68fbc19fb6d4d7e",
+   "minutes_ago": 79200,
+   "author": "bleep-dev",
+   "message": "Simplify the setup guide",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "9c451c0b81160a1c77a0284381cb081ce15af70c",
+   "minutes_ago": 79300,
+   "author": "bleep-dev",
+   "message": "Clarify the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "789d3ca00339ce5948c2eaf53bc0a3e37c032bff",
+   "minutes_ago": 79400,
+   "author": "bleep-dev",
+   "message": "Log the hosts file loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d4ecac257daa33669523f109a1262622b5f4ef79",
+   "minutes_ago": 79500,
+   "author": "bleep-dev",
+   "message": "Speed up the event cursor",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "4cc9aaa03f5ab7913d862c02e1dc32153229a813",
+   "minutes_ago": 79600,
+   "author": "bleep-dev",
+   "message": "Reword the incident timeline",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "6a5faec281b3891895d644cceee6dd7f574bca87",
+   "minutes_ago": 79700,
+   "author": "bleep-dev",
+   "message": "Cover the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "e3c7d2fc5138b8df1c9669d6d86e9e37b284368f",
+   "minutes_ago": 79800,
+   "author": "bleep-dev",
+   "message": "Fix the knowledge index",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "234495fcd333c7bf6447f80045863953cc890399",
+   "minutes_ago": 79900,
+   "author": "bleep-dev",
+   "message": "Tidy the approval message",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "5f786be5477f525205b687c57387596f77c87f2d",
+   "minutes_ago": 80000,
+   "author": "bleep-dev",
+   "message": "Document the SSH reconnect",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "dc64b65bcb7ff9824da1dba97bb253423119e138",
+   "minutes_ago": 80100,
+   "author": "bleep-dev",
+   "message": "Test the chat panel",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "97d896d1feee2da898db71cd2b2ed78dc04759ca",
+   "minutes_ago": 80200,
+   "author": "bleep-dev",
+   "message": "Rename the CI workflow",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "b200a3c89e58eb02021c6fcddc6a3a5903b0d76b",
+   "minutes_ago": 80300,
+   "author": "bleep-dev",
+   "message": "Bump the demo script",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "7dd7d09dd536f16fc0790a97aeba7b88be7dd1b5",
+   "minutes_ago": 80400,
+   "author": "bleep-dev",
+   "message": "Simplify the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "3b9dc4eaa9bc70f7f593c8269c953753feac6e79",
+   "minutes_ago": 80500,
+   "author": "bleep-dev",
+   "message": "Clarify the plugin list",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "322c27acbcc5c026b21f56c4f68566bba8e35ee4",
+   "minutes_ago": 80600,
+   "author": "bleep-dev",
+   "message": "Log the report writer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/graph/report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "0a17b3217aa76722a02a7a022486cee56ae1b81e",
+   "minutes_ago": 80700,
+   "author": "bleep-dev",
+   "message": "Speed up the Telegram formatter",
+   "files": [
+    {
+     "filename": "backend/src/bleep/notify/format.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "660cc53370fd71d84e379c3d62e625ceee74b3ca",
+   "minutes_ago": 80800,
+   "author": "bleep-dev",
+   "message": "Reword the memory store",
+   "files": [
+    {
+     "filename": "backend/src/bleep/memory/store.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "9bbc822afd56543a6be49697e23a422306850926",
+   "minutes_ago": 80900,
+   "author": "bleep-dev",
+   "message": "Cover the URL checker",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/url_check.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "a419aa1179898c2513db639d60126936f964d9be",
+   "minutes_ago": 81000,
+   "author": "bleep-dev",
+   "message": "Fix the overview card",
+   "files": [
+    {
+     "filename": "frontend/src/app/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "94bde87084adedfc7f7149ba3e221cec784716ed",
+   "minutes_ago": 81100,
+   "author": "bleep-dev",
+   "message": "Tidy the dev scripts",
+   "files": [
+    {
+     "filename": "scripts/board.sh",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "41e281622dc8f1d9891f649d1032cac286926f60",
+   "minutes_ago": 81200,
+   "author": "bleep-dev",
+   "message": "Test the setup guide",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "6a723c43c673cddae094d84a5d7ad50ce084fac5",
+   "minutes_ago": 81300,
+   "author": "bleep-dev",
+   "message": "Rename the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "c5286d65b86ad8042d5108d5212c9cb8c6ad1138",
+   "minutes_ago": 81400,
+   "author": "bleep-dev",
+   "message": "Bump the hosts file loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "8f6e377b06a57ddec7348bd9ded964dd528d70d7",
+   "minutes_ago": 81500,
+   "author": "bleep-dev",
+   "message": "Simplify the event cursor",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "cdd5f139ce4c65fb5e6b8b3667a295cef3abb1cc",
+   "minutes_ago": 81600,
+   "author": "bleep-dev",
+   "message": "Clarify the incident timeline",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "1008d80a24c219fd904aeb4df48f0d84cd2d630b",
+   "minutes_ago": 81700,
+   "author": "bleep-dev",
+   "message": "Log the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "67de8adcdfb1da1c7f2773d2fbb5e4e665e4431f",
+   "minutes_ago": 81800,
+   "author": "bleep-dev",
+   "message": "Speed up the knowledge index",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "a7eb9848f2976c8911962d3a0bc68625bdf7fb4c",
+   "minutes_ago": 81900,
+   "author": "bleep-dev",
+   "message": "Reword the approval message",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d9e8fc7a94252727ce85550abc8b84d14fde1f67",
+   "minutes_ago": 82000,
+   "author": "bleep-dev",
+   "message": "Cover the SSH reconnect",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "8514a029796a77dc34f337fc6066c9fe205e68a3",
+   "minutes_ago": 82100,
+   "author": "bleep-dev",
+   "message": "Fix the chat panel",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "a3375bf3a400774884f22bc81ee50e3d25732c12",
+   "minutes_ago": 82200,
+   "author": "bleep-dev",
+   "message": "Tidy the CI workflow",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "bd67e9cde8e0a5a6049e173de47639c75de264d0",
+   "minutes_ago": 82300,
+   "author": "bleep-dev",
+   "message": "Document the demo script",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "ad825091d1e5c04ce08d712b2db589b8e1b456ad",
+   "minutes_ago": 82400,
+   "author": "bleep-dev",
+   "message": "Test the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "150d2a1d359cf2184cf800a48d53ea263d8f028a",
+   "minutes_ago": 82500,
+   "author": "bleep-dev",
+   "message": "Rename the plugin list",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "e96d1e9739a8fc5e0e246c56b012a93697c27635",
+   "minutes_ago": 82600,
+   "author": "bleep-dev",
+   "message": "Bump the report writer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/graph/report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "72d82764d0c888dd5c092edebd72bb102d0753e0",
+   "minutes_ago": 82700,
+   "author": "bleep-dev",
+   "message": "Simplify the Telegram formatter",
+   "files": [
+    {
+     "filename": "backend/src/bleep/notify/format.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "7dd11e3bb7bcf0c84d719d9e59faf3e9694d8ab9",
+   "minutes_ago": 82800,
+   "author": "bleep-dev",
+   "message": "Clarify the memory store",
+   "files": [
+    {
+     "filename": "backend/src/bleep/memory/store.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d4663c63264898d60fa212d2dd210400f720e111",
+   "minutes_ago": 82900,
+   "author": "bleep-dev",
+   "message": "Log the URL checker",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/url_check.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "ba725f3a07f35ec449835889457efd16d88b01c8",
+   "minutes_ago": 83000,
+   "author": "bleep-dev",
+   "message": "Speed up the overview card",
+   "files": [
+    {
+     "filename": "frontend/src/app/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "8de1f717564ed3057cfccc44d5444e6d2aee22d2",
+   "minutes_ago": 83100,
+   "author": "bleep-dev",
+   "message": "Reword the dev scripts",
+   "files": [
+    {
+     "filename": "scripts/board.sh",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "838154f292513d3a0fc9b511b72c1485bff0ae78",
+   "minutes_ago": 83200,
+   "author": "bleep-dev",
+   "message": "Fix the setup guide",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "cc3f160d778912b64e24b25dfe576fb4e5b4b595",
+   "minutes_ago": 83300,
+   "author": "bleep-dev",
+   "message": "Tidy the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "76e8ba4143483bfa0a8d9587c6a06c5831cc3cea",
+   "minutes_ago": 83400,
+   "author": "bleep-dev",
+   "message": "Document the hosts file loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "8adc64e86c50c3557546d7048c865b0fe2e491cf",
+   "minutes_ago": 83500,
+   "author": "bleep-dev",
+   "message": "Test the event cursor",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "efb1e2bf60da58aa352a479c8791323029c9bf8d",
+   "minutes_ago": 83600,
+   "author": "bleep-dev",
+   "message": "Rename the incident timeline",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "b625ff14ec0cb6bd7d56d21b79917a5def151399",
+   "minutes_ago": 83700,
+   "author": "bleep-dev",
+   "message": "Bump the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "3f6e68b65705104e7c203c87671ff68cf113cdf2",
+   "minutes_ago": 83800,
+   "author": "bleep-dev",
+   "message": "Simplify the knowledge index",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "a5b6b1e2851f3bf317b662ffa5777e468fa9b198",
+   "minutes_ago": 83900,
+   "author": "bleep-dev",
+   "message": "Clarify the approval message",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "4aad656c1a2bdd1bc1dff20baba0d41d5813689d",
+   "minutes_ago": 84000,
+   "author": "bleep-dev",
+   "message": "Log the SSH reconnect",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "ca86cc7df208d595f09b6e1a1fe98ab9009e2a2d",
+   "minutes_ago": 84100,
+   "author": "bleep-dev",
+   "message": "Speed up the chat panel",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "9dc7766e33fb6c2a7c9618ca216c89905ddb85fb",
+   "minutes_ago": 84200,
+   "author": "bleep-dev",
+   "message": "Reword the CI workflow",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "1b6aaa26a676f40af1521726ba51927a38c9cf09",
+   "minutes_ago": 84300,
+   "author": "bleep-dev",
+   "message": "Cover the demo script",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "94907c9c490c0a9d6b216d4bbfd61076b1625440",
+   "minutes_ago": 84400,
+   "author": "bleep-dev",
+   "message": "Fix the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "ccd1b3d9d3830157bb286b9af49fdfe2ee37b4dd",
+   "minutes_ago": 84500,
+   "author": "bleep-dev",
+   "message": "Tidy the plugin list",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "1e94e7851a3713a1e824a75912f8dc9b8de21004",
+   "minutes_ago": 84600,
+   "author": "bleep-dev",
+   "message": "Document the report writer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/graph/report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "7d5890edc03f8c364932f9fcef968b6fbbadecaf",
+   "minutes_ago": 84700,
+   "author": "bleep-dev",
+   "message": "Test the Telegram formatter",
+   "files": [
+    {
+     "filename": "backend/src/bleep/notify/format.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "c2084f6e327b06b239f64e45fb4328ebdb5e649e",
+   "minutes_ago": 84800,
+   "author": "bleep-dev",
+   "message": "Rename the memory store",
+   "files": [
+    {
+     "filename": "backend/src/bleep/memory/store.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "5c361d6d01b461b8cf5414991bfb3927a0f7a295",
+   "minutes_ago": 84900,
+   "author": "bleep-dev",
+   "message": "Bump the URL checker",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/url_check.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "6aa1d5522ae52803ee45e80a34ae9d69a7c26468",
+   "minutes_ago": 85000,
+   "author": "bleep-dev",
+   "message": "Simplify the overview card",
+   "files": [
+    {
+     "filename": "frontend/src/app/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "0de4368ea915a207ffad586450720a4d1c810b87",
+   "minutes_ago": 85100,
+   "author": "bleep-dev",
+   "message": "Clarify the dev scripts",
+   "files": [
+    {
+     "filename": "scripts/board.sh",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "032b5d9c0f48716650f0271cbf05355f2d67890a",
+   "minutes_ago": 85200,
+   "author": "bleep-dev",
+   "message": "Speed up the setup guide",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "be378e1dd2c014a5181d148eefc810c2f0539426",
+   "minutes_ago": 85300,
+   "author": "bleep-dev",
+   "message": "Reword the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "88c0dc746c5c4d58cd723e68e12d0e14cfcffd6c",
+   "minutes_ago": 85400,
+   "author": "bleep-dev",
+   "message": "Cover the hosts file loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "134930304c1233990816b084f9eb589f876e8eb6",
+   "minutes_ago": 85500,
+   "author": "bleep-dev",
+   "message": "Fix the event cursor",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "7332d67205e835e8859ab46861f2e63209e3243f",
+   "minutes_ago": 85600,
+   "author": "bleep-dev",
+   "message": "Tidy the incident timeline",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "abfee349b8d92d6d4c34448c17ba4f0164a9f11a",
+   "minutes_ago": 85700,
+   "author": "bleep-dev",
+   "message": "Document the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "0e328d48ae6f843529647e63318f37e62bdac962",
+   "minutes_ago": 85800,
+   "author": "bleep-dev",
+   "message": "Test the knowledge index",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "573bf9462de226339870adf881f7b05ba3b59dad",
+   "minutes_ago": 85900,
+   "author": "bleep-dev",
+   "message": "Rename the approval message",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "52cf54e2f5c2e63ba3653bf4172902b05205d44a",
+   "minutes_ago": 86000,
+   "author": "bleep-dev",
+   "message": "Bump the SSH reconnect",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "5e4bcc7f98734e9a6bc7b1b9fc4f8bbeb871a5ea",
+   "minutes_ago": 86100,
+   "author": "bleep-dev",
+   "message": "Simplify the chat panel",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "436ee20b19b2999bbedef3b43b62efab50037e46",
+   "minutes_ago": 86200,
+   "author": "bleep-dev",
+   "message": "Clarify the CI workflow",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "4cfba4c1aa8f50a4d869fdf0b90d55d7f0f9e679",
+   "minutes_ago": 86300,
+   "author": "bleep-dev",
+   "message": "Log the demo script",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "129d446cc7d863afcda63b4a8165249727dc4081",
+   "minutes_ago": 86400,
+   "author": "bleep-dev",
+   "message": "Speed up the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "8cb9f8083ced8ff348b89717e45310afa3577a72",
+   "minutes_ago": 86500,
+   "author": "bleep-dev",
+   "message": "Reword the plugin list",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "a12aa72082ebc6f0bc5ef3a44472e87b6570679a",
+   "minutes_ago": 86600,
+   "author": "bleep-dev",
+   "message": "Cover the report writer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/graph/report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "8e5fd07d0d564bbbd24c1bc4933dca8c02fc81cc",
+   "minutes_ago": 86700,
+   "author": "bleep-dev",
+   "message": "Fix the Telegram formatter",
+   "files": [
+    {
+     "filename": "backend/src/bleep/notify/format.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "21aa416b43ac6dee980164940dbb1b32e3c41433",
+   "minutes_ago": 86800,
+   "author": "bleep-dev",
+   "message": "Tidy the memory store",
+   "files": [
+    {
+     "filename": "backend/src/bleep/memory/store.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "5aba2e6aea03e89701d3530d8c88fbfffca7ea03",
+   "minutes_ago": 86900,
+   "author": "bleep-dev",
+   "message": "Document the URL checker",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/url_check.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "843619f6b5f874de8a35afd6550e9213af1177d0",
+   "minutes_ago": 87000,
+   "author": "bleep-dev",
+   "message": "Test the overview card",
+   "files": [
+    {
+     "filename": "frontend/src/app/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "826621b27d65c512392919510317b8a188600ed6",
+   "minutes_ago": 87100,
+   "author": "bleep-dev",
+   "message": "Rename the dev scripts",
+   "files": [
+    {
+     "filename": "scripts/board.sh",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "4fad9b2aba79b1348faede252ffcb03d762a41be",
+   "minutes_ago": 87200,
+   "author": "bleep-dev",
+   "message": "Simplify the setup guide",
+   "files": [
+    {
+     "filename": "docs/setup.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "ee4cd14aaa3171ff0e918637f40ffaca23470597",
+   "minutes_ago": 87300,
+   "author": "bleep-dev",
+   "message": "Clarify the architecture page",
+   "files": [
+    {
+     "filename": "docs/architecture.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "8482d3cd7be4894d0356866c97f1a8a6122bcce8",
+   "minutes_ago": 87400,
+   "author": "bleep-dev",
+   "message": "Log the hosts file loader",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/config.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "1bad316117011b7adb15ef0d1a873912d7f3bf76",
+   "minutes_ago": 87500,
+   "author": "bleep-dev",
+   "message": "Speed up the event cursor",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/events.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "926bbea13f485ac47748722c845ff2b9a75f7d3b",
+   "minutes_ago": 87600,
+   "author": "bleep-dev",
+   "message": "Reword the incident timeline",
+   "files": [
+    {
+     "filename": "frontend/src/components/timeline.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "b9de139ae7d369218ca3b79aaf98f229eaadca9e",
+   "minutes_ago": 87700,
+   "author": "bleep-dev",
+   "message": "Cover the settings page",
+   "files": [
+    {
+     "filename": "frontend/src/app/settings/page.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d62f0ba46b7747fabab1eb469753b96857ca58d3",
+   "minutes_ago": 87800,
+   "author": "bleep-dev",
+   "message": "Fix the knowledge index",
+   "files": [
+    {
+     "filename": "backend/src/bleep/knowledge/index.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "b59ea58ecf28481190c4f59972604d606a13ed14",
+   "minutes_ago": 87900,
+   "author": "bleep-dev",
+   "message": "Tidy the approval message",
+   "files": [
+    {
+     "filename": "backend/src/bleep/prompts/notify/approval.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "4a2b9651008c6eecc755814d0bb30a0b1a8cb7c6",
+   "minutes_ago": 88000,
+   "author": "bleep-dev",
+   "message": "Document the SSH reconnect",
+   "files": [
+    {
+     "filename": "backend/src/bleep/hosts/ssh.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "a31e1efa615ce5d7cf90b6730bdf143b2d341694",
+   "minutes_ago": 88100,
+   "author": "bleep-dev",
+   "message": "Test the chat panel",
+   "files": [
+    {
+     "filename": "frontend/src/components/chat.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "31a499f937e115162ae0ef62fd8c98412b1e5cee",
+   "minutes_ago": 88200,
+   "author": "bleep-dev",
+   "message": "Rename the CI workflow",
+   "files": [
+    {
+     "filename": ".github/workflows/ci.yml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "b4510871dbfcaba4a13aaf3b6dbcca6a40c7117c",
+   "minutes_ago": 88300,
+   "author": "bleep-dev",
+   "message": "Bump the demo script",
+   "files": [
+    {
+     "filename": "docs/demo.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "2237f5593ecdca8d92afc6431fbf596e986b511b",
+   "minutes_ago": 88400,
+   "author": "bleep-dev",
+   "message": "Simplify the README",
+   "files": [
+    {
+     "filename": "README.md",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "ce6c04c3e20bd1968b624b2f038f7277a7e06702",
+   "minutes_ago": 88500,
+   "author": "bleep-dev",
+   "message": "Clarify the plugin list",
+   "files": [
+    {
+     "filename": "frontend/src/components/plugins.tsx",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "f069ec4768a5d53d096e18f6d49a7f06ce7921c7",
+   "minutes_ago": 88600,
+   "author": "bleep-dev",
+   "message": "Log the report writer",
+   "files": [
+    {
+     "filename": "backend/src/bleep/graph/report.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "c92929a0d891a492b0bfd2f2880b489979a2f496",
+   "minutes_ago": 88700,
+   "author": "bleep-dev",
+   "message": "Speed up the Telegram formatter",
+   "files": [
+    {
+     "filename": "backend/src/bleep/notify/format.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "b684f889be0681ae7d1fc6063de615a5769c4793",
+   "minutes_ago": 88800,
+   "author": "bleep-dev",
+   "message": "Reword the memory store",
+   "files": [
+    {
+     "filename": "backend/src/bleep/memory/store.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "cfe086164664b1ee350e013a82a73a6f9875fdde",
+   "minutes_ago": 88900,
+   "author": "bleep-dev",
+   "message": "Cover the URL checker",
+   "files": [
+    {
+     "filename": "backend/src/bleep/watcher/url_check.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -1 +1 @@\n-old line\n+new line"
+    }
+   ]
+  },
+  {
+   "sha": "d9f9be16d2f9d5fd043579e64975986727895711",
+   "minutes_ago": 89000,
+   "author": "shop-dev",
+   "message": "Deploy shop 2",
+   "files": [
+    {
+     "filename": "demo/compose.yaml",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -14,7 +14,7 @@ services:\n     environment:\n       DATABASE_URL: ${SHOP_DATABASE_URL:-postgresql://shop:shop@shop-db:5432/shop}\n-      SHOP_VERSION: ${SHOP_VERSION:-1}\n+      SHOP_VERSION: ${SHOP_VERSION:-2}\n       # 1 mounts the injection tests' hook (shop/inject.py, backend/evals/injection.py); off here."
+    }
+   ]
+  },
+  {
+   "sha": "335006387524dfc3b1f9a939d3bb0ca6be90b5c2",
+   "minutes_ago": 89004,
+   "author": "shop-dev",
+   "message": "Keep item prices in whole cents for shop 2\n\nAdds a price_cents column in a migration and reads it in /api/items from version 2 on.",
+   "files": [
+    {
+     "filename": "demo/shop/app.py",
+     "additions": 3,
+     "deletions": 1,
+     "patch": "@@ -22,6 +22,9 @@ log = logging.getLogger(\"shop\")\n VERSION = os.environ.get(\"SHOP_VERSION\", \"1\")\n UPLOADS = Path(os.environ.get(\"UPLOADS_DIR\", \"/uploads\"))\n # What a health check writes to the uploads volume, to prove the app can still store an upload.\n PROBE_BYTES = 64 * 1024\n+# Version 2 keeps prices in whole cents, in a column its database migration adds.\n+PRICE_COLUMN = {\"1\": \"price\", \"2\": \"price_cents\"}\n SEED = [(\"Coffee beans\", 14.50), (\"Mug\", 9.00), (\"Grinder\", 69.00)]\n@@ -83,7 +86,8 @@ def health() -> JSONResponse:\n @app.get(\"/api/items\")\n def items() -> list[dict]:\n+    column = PRICE_COLUMN.get(VERSION, \"price\")\n     with connect() as conn:\n-        rows = conn.execute(\"SELECT id, name, price FROM items ORDER BY id\").fetchall()\n+        rows = conn.execute(f\"SELECT id, name, {column} FROM items ORDER BY id\").fetchall()\n     return [{\"id\": i, \"name\": name, \"price\": float(price)} for i, name, price in rows]"
+    },
+    {
+     "filename": "demo/shop/migrations/0002_price_cents.sql",
+     "status": "added",
+     "additions": 3,
+     "deletions": 0,
+     "patch": "@@ -0,0 +1,3 @@\n+-- shop 2: prices in whole cents\n+ALTER TABLE items ADD COLUMN price_cents integer;\n+UPDATE items SET price_cents = round(price * 100);"
+    }
+   ]
+  },
+  {
+   "sha": "a2696ac3d02b358c7074eea32e2063e38e6ddfd6",
+   "minutes_ago": 90004,
+   "author": "shop-dev",
+   "message": "Log the shop version at startup",
+   "files": [
+    {
+     "filename": "demo/shop/app.py",
+     "additions": 1,
+     "deletions": 1,
+     "patch": "@@ -53,7 +53,7 @@ async def lifespan(_app: FastAPI):\n     except psycopg.Error as error:\n         log.error(\"cannot reach the database, exiting: %s\", error)\n         raise SystemExit(1) from error\n-    log.info(\"shop started, uploads in %s\", UPLOADS)\n+    log.info(\"shop version %s started, uploads in %s\", VERSION, UPLOADS)\n     yield"
+    }
+   ]
+  }
+ ],
+ "deploy": {
+  "commit": "0af84d3e624cbc6778c3cb55f23cd36691b88cf7",
+  "previous": "a2696ac3d02b358c7074eea32e2063e38e6ddfd6",
+  "minutes_ago": 59040
+ }
+}
