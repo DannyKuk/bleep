@@ -9,8 +9,8 @@
 | Model under test | `openai/gpt-6-luna` (provider `openrouter`) |
 | Judge | `claude-code:opus` through DeepEval GEval; a root cause passes at 0.7 or more. Two judge calls failed (`KeyError: 'score'`, fixed since by #489); those runs are graded by hand below |
 | Before | `main` at `8d4a4f70`: hung, 4 runs ([batch report](scenarios-2026-11-12-2.md)) |
-| After, probes | the branch at its second commit set (now `9355ac11`): hung 3 runs, db-down and disk-full 1 each ([batch report](scenarios-2026-11-12-3.md)) |
-| After, probes and log age | the branch at `a15ccd10`, the code of this PR: hung 3 runs, db-down and disk-full 1 each ([batch report](scenarios-2026-11-12-4.md)) |
+| After, probes | the branch at `b5c16359` (rebased since as `9d969bac`): hung 3 runs, db-down and disk-full 1 each ([batch report](scenarios-2026-11-12-3.md)) |
+| After, probes and log age | the branch at `c460f8d9` (rebased since as `4b6a5820`), the code of this PR: hung 3 runs, db-down and disk-full 1 each ([batch report](scenarios-2026-11-12-4.md)) |
 | When | 2026-11-12 10:02 to 11:53 UTC |
 | Raw data | [`scenarios-20261112-100249.jsonl`](data/scenarios-20261112-100249.jsonl), [`scenarios-20261112-104541.jsonl`](data/scenarios-20261112-104541.jsonl), [`scenarios-20261112-114329.jsonl`](data/scenarios-20261112-114329.jsonl) |
 | Cost | $0.0102 + $0.0156 + $0.0181 = $0.044, the model under test; the judge is billed to a plan |
@@ -48,7 +48,7 @@ The lost run (hung before, run 2) timed out waiting for its incident: another ev
 ## Limits
 
 - Three runs per case before and after, one model; one before run was lost, so before has three.
-- The "after" rounds ran on the branch before it was rebased onto `main` at `e8110cd4`. The rebase brought #350, which changed one line of Diagnose's prompt about naming a commit by its sha; none of these faults involves a commit.
+- The "after" rounds ran on the branch before it was rebased onto `main` at `b19c0afe`. The rebase brought #350, which changed one line of Diagnose's prompt about naming a commit by its sha (none of these faults involves a commit), and eval-harness changes (#489, #491, #476) that do not touch what the model sees.
 - The judge failed on 2 of 13 diagnosed runs; both are graded by hand above, by the same model that wrote this report.
 - Whether a shallower health check (one that touches no dependency) would let the model name the hang was not tried: that changes the demo, not Bleep.
 
