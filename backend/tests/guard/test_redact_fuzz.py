@@ -145,6 +145,14 @@ FORMS: dict[str, Callable[[str, str, random.Random], str]] = {
     "repr in logfmt": lambda line, _, __: _logfmt(f"cmd={line!r}") + f" {KEEP}",
     "logfmt in repr": lambda line, _, __: f"cmd={_logfmt(line)!r} {KEEP}",
     "single in json": lambda line, _, __: json.dumps({"log": _logfmt(line, "'"), "k": KEEP}),
+    "single in single": lambda line, _, __: _logfmt(_logfmt(line, "'"), "'") + f" {KEEP}",
+    "repr in single in logfmt": lambda line, _, __: (
+        _logfmt(_logfmt(f"cmd={line!r}", "'")) + f" {KEEP}"
+    ),
+    "single in dotnet": lambda line, _, __: (
+        _logfmt(_dotnet({"cmd": _logfmt(line, "'")})) + f" {KEEP}"
+    ),
+    "bytes repr": lambda line, _, __: f"out={line.encode()!r} {KEEP}",
     "two values": lambda line, _, __: (
         _logfmt(line) + " other=" + _logfmt(f'redis-cli -a "x y" {KEEP}')
     ),

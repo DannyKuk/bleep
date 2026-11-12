@@ -696,6 +696,34 @@ def test_an_unclosed_quote_in_the_middle_of_a_password_hides_what_a_leading_one_
 
 
 @pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            'out=b\'redis-cli -a "a\\\\" s3cret" ping\' n=1',
+            "out=b'redis-cli -a \"<redacted>\" ping' n=1",
+        ),
+        (
+            "msg='msg=\\'redis-cli -a \"a\\\\\\\\\" s3cret\" ping\\'' n=1",
+            "msg='msg=\\'redis-cli -a \"<redacted>\" ping\\'' n=1",
+        ),
+        (
+            "msg='redis-cli -a \"p\\\\\" ping' other='x \"y\" z' n=1",
+            "msg='redis-cli -a \"<redacted>\" ping' other='x \"y\" z' n=1",
+        ),
+        (
+            'echo \'ok: \' && redis-cli -a "a\\\\" ping "x" n=1',
+            'echo \'ok: \' && redis-cli -a "<redacted>" ping "x" n=1',
+        ),
+    ],
+)
+def test_each_level_that_quotes_with_a_single_quote_is_read_inside_its_own_string(line, expected):
+    """A bytes `repr` (`b'…'`) is such a level too, two inside each other are two levels, a `"`
+    under them is closed before the string that gave the level ends, and the closing quote of
+    an earlier argument (`'ok: '`) gives none."""
+    assert _hidden_once(line) == expected
+
+
+@pytest.mark.parametrize(
     "line",
     [
         'msg="redis-cli -a pw1234" status=500',
@@ -736,6 +764,22 @@ def test_only_a_quote_before_text_opens_a_string_around_the_command(line, expect
     """The closing quote of an earlier argument (`'ok: '`, `-d','`) comes before a blank, so it
     opens no string a later quote could close; an escaped line break may come before one."""
     assert _hidden_once(line) == expected
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'msg="{\\"cmd\\": \\"redis-cli -a \\\\u0027\\\\u0027\\\\u0022\\\\u0027\\\\u0022\\\\u0027'
+        '.s3cret\\\\u0027 ping\\"}" n=1',
+        '{"log": "{\\"cmd\\": \\"curl -sS -u \\\\u0027bob:\\\\u0027\\\\u0022\\\\u0027\\\\u0022'
+        '\\\\u0027;s3cret\\\\u0027 http://x/h\\"}", "k": "KEEPME"}',
+    ],
+)
+def test_a_quote_written_u0027_in_a_password_does_not_end_the_string_around_the_command(line):
+    """`shlex.quote`'s `'"'"'` written by .NET's JSON: a `\\u0027` before punctuation is a quote
+    of the password, not the end of a string around the command."""
+    out = _hidden_once(line)
+    assert "s3cret" not in out and ("KEEPME" in out or "n=1" in out)
 
 
 def test_a_closing_quote_put_back_in_a_json_string_keeps_the_json():
@@ -988,6 +1032,29 @@ def test_redact_text_is_linear_on_escaped_quotes_of_every_width(form):
         text = _lines_of("redis-cli -a " + _widening_quotes(3900))
     else:
         text = _lines_of(json.dumps({"m": "redis-cli -a " + _widening_quotes(1800)}))
+    started = time.perf_counter()
+    redact_text(text)
+    assert time.perf_counter() - started < 1.0
+
+
+def _widening_singles(length: int) -> str:
+    """`'` quotes of many widths that each open a string, each before a client's name and a
+    `"`, so every name looks up the levels that quote with `'` around it."""
+    units, width = [], 0
+    while sum(map(len, units)) < length:
+        units.append("=" + "\\" * (width % 64) + "'x redis-cli -a \"y ")
+        width += 1
+    return "".join(units)[:length]
+
+
+@pytest.mark.parametrize("form", ["one", "lines", "json"])
+def test_redact_text_is_linear_on_single_quotes_of_every_width_before_names(form):
+    if form == "one":
+        text = _widening_singles(1_000_000)
+    elif form == "lines":
+        text = _lines_of(_widening_singles(3900))
+    else:
+        text = _lines_of(json.dumps({"m": _widening_singles(1800)}))
     started = time.perf_counter()
     redact_text(text)
     assert time.perf_counter() - started < 1.0
