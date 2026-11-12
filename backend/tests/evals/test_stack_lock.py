@@ -176,7 +176,6 @@ def test_a_running_eval_holds_the_stack(tmp_path, monkeypatch, runner):
 def test_rendering_injection_results_needs_no_stack(tmp_path, capsys):
     raw = tmp_path / "round.jsonl"
     raw.write_text("", encoding="utf-8")
-    with holding_demo_stack(
-        EvalSettings(_env_file=None).stack_lock, "python -m evals.run --only hung"
-    ):  # type: ignore[call-arg]
+    lock = EvalSettings(_env_file=None).stack_lock  # type: ignore[call-arg]
+    with holding_demo_stack(lock, "python -m evals.run --only hung"):
         assert injection.main(["--label", "Round 1", "--render", str(raw)]) == 0
