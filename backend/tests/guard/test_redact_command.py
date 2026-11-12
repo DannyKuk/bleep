@@ -795,9 +795,21 @@ def test_a_level_that_quotes_with_a_single_quote_counts_once_between_and_inside_
         'msg="msg=\\"redis-cli -a pw1234\\" status=500"',
         'error: "curl -u bob:pw1234", status=500',
         'run "curl -u bob:pw1234". status=500',
+        'msg="\\"redis-cli -a pw1234\\" failed" status=500',
+        json.dumps({"log": 'msg="\\"redis-cli -a pw1234\\" failed"', "n": "status=500"}),
+        "cmd='\"redis-cli -a pw1234\" failed' status=500",
+        "\"'redis-cli -a pw1234' failed\" status=500",
+        "sh -c $'redis-cli -a pw1234' status=500",
+        '>"redis-cli -a pw1234" status=500',
+        '**"redis-cli -a pw1234"** status=500',
+        '<cmd>"redis-cli -a pw1234"</cmd> status=500',
+        "it's 'redis-cli -a pw1234' status=500",
+        'out=b"redis-cli -a pw1234" status=500',
     ],
 )
 def test_a_quote_that_opened_a_string_before_the_command_still_closes_it(line):
+    """Also a quote inside another one, bash's `$'…'`, after a redirect or `**`, before a tag,
+    and after an apostrophe, which is no quote of its own."""
     out = _hidden_once(line)
     assert "pw1234" not in out and "status=500" in out
 
@@ -821,11 +833,27 @@ def test_a_quote_that_opened_a_string_before_the_command_still_closes_it(line):
             'msg="x\\n\\"redis-cli -a pw1234\\" y" n=1',
             'msg="x\\n\\"redis-cli -a <redacted>\\" y" n=1',
         ),
+        ('IFS=":"; redis-cli -a x" s3cret" ping', 'IFS=":"; redis-cli -a <redacted> ping'),
+        ("IFS=':'; redis-cli -a x' s3cret' ping", "IFS=':'; redis-cli -a <redacted> ping"),
+        (
+            'IFS=":"; curl -u bob:x" s3cret" http://x',
+            'IFS=":"; curl -u bob:<redacted> http://x',
+        ),
+        (
+            'grep -c "a b"; redis-cli -a x" s3cret" ping',
+            'grep -c "a b"; redis-cli -a <redacted> ping',
+        ),
+        (
+            'msg="{\\"cmd\\": \\"IFS=\\\\u0022:\\\\u0022; redis-cli -a x\\\\u0022 s3cret\\\\u0022'
+            ' ping\\"}" n=1',
+            'msg="{\\"cmd\\": \\"IFS=\\\\u0022:\\\\u0022; redis-cli -a <redacted> ping\\"}" n=1',
+        ),
     ],
 )
 def test_only_a_quote_before_text_opens_a_string_around_the_command(line, expected):
-    """The closing quote of an earlier argument (`'ok: '`, `-d','`) comes before a blank, so it
-    opens no string a later quote could close; an escaped line break may come before one."""
+    """The closing quote of an earlier argument (`'ok: '`, `-d','`, `IFS=":";`) closes the one
+    before it, so it opens no string a later quote could close, even before text; nor is the
+    `b` of `"a b"` a string prefix. An escaped line break may come before an opening quote."""
     assert _hidden_once(line) == expected
 
 
