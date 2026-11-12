@@ -103,7 +103,9 @@ _EMPTY = ("''", '""')  # an empty password, `-p''`, is evidence
 _CURL_SHORT_USER = re.compile(r"-[A-Za-z0-9]*?[uU]")  # -u, -U, and -su, -fsSu in a group
 # A run of a word with no quote; a backslash escapes the next character (`s3cret\ pass`)
 _PLAIN_RUN = re.compile(r"(?:[^\s\"'\\]++|\\.|\\\Z)++", re.DOTALL)
-_FREE_RUN = re.compile(r"(?:[^\s\"'`\\]++|\\.|\\\Z)++", re.DOTALL)
+# In free text an escaped quote is a quote too: logfmt writes `msg="redis-cli -a \"pa ss\""`
+_FREE_RUN = re.compile(r"(?:[^\s\"'`\\]++|\\[^\"']|\\\Z)++", re.DOTALL)
+_OPENING_QUOTE = re.compile(r"(\\?[\"'])\1*+")
 _QUOTE = re.compile(r"[\"']")
 _DOUBLE_QUOTED_END = re.compile(r"(?:[^\"\\]|\\.)*+\"", re.DOTALL)
 # What follows the closing quote of a string a command sits in (`msg="curl -u bob:pw" n=1`)
@@ -139,6 +141,17 @@ def _quote_end(text: str, at: int, no_closer: set[str], limit: int | None = None
     return end
 
 
+def _escaped_quote_end(text: str, at: int, no_closer: set[str], limit: int) -> int:
+    """Where the string an escaped quote (`\\"`, `\\'`) opens at `at` ends, at the same escaped
+    quote, before `limit`; or -1, looked for once per kind as `_quote_end` does."""
+    quote = text[at : at + 2]
+    end = -1 if quote in no_closer else text.find(quote, at + 2, limit)
+    if end < 0:
+        no_closer.add(quote)
+        return -1
+    return end + 2
+
+
 def _shell_words(
     text: str,
     start: int,
@@ -157,9 +170,11 @@ def _shell_words(
     In free text (`free`, a log line) a quote nothing closes is an ordinary character of its word
     and the words go on; the place returned is the first such quote. A quote or backtick right
     after a word and before a blank, a comma, a colon, a full stop or a closing bracket ends the
-    word: it closes a string or a code span the command sits in. `first_only` stops after the
-    first word, `limit` is where the text ends, and `no_closer` may be shared by calls that read
-    on to the same `limit` from later and later places (`_quote_end`).
+    word: it closes a string or a code span the command sits in. An escaped quote (`\\"`) is a
+    quote as well, closed by the same escaped quote, as logfmt escapes every quote in a value.
+    `first_only` stops after the first word, `limit` is where the text ends, and `no_closer` may
+    be shared by calls that read on to the same `limit` from later and later places
+    (`_quote_end`).
     """
     words, at = [], start
     no_closer = set[str]() if no_closer is None else no_closer
@@ -175,6 +190,14 @@ def _shell_words(
             run = plain_run.match(text, at, end)
             if run:
                 at = run.end()
+                continue
+            if free and text[at] == "\\":  # `\\"` or `\\'`: the run ends only there
+                if _closes_string(text, first, at, end, 2):
+                    break
+                closed = _escaped_quote_end(text, at, no_closer, end)
+                if closed < 0:
+                    unclosed = at if unclosed is None else unclosed
+                at = closed if closed >= 0 else at + 2
                 continue
             if free and _closes_string(text, first, at, end):
                 break
@@ -199,13 +222,14 @@ def _shell_words(
     return words, unclosed
 
 
-def _closes_string(text: str, first: int, at: int, end: int) -> bool:
-    """Whether the quote at `at`, in the word from `first`, closes a string the command sits in:
-    it follows the word and comes before a blank or punctuation, and does not open a password
-    right after its flag or its user (`-p'.pw'`, `bob:',pw'`)."""
+def _closes_string(text: str, first: int, at: int, end: int, width: int = 1) -> bool:
+    """Whether the quote at `at` (`width` characters, 2 for an escaped one), in the word from
+    `first`, closes a string the command sits in: it follows the word and comes before a blank
+    or punctuation, and does not open a password right after its flag or its user (`-p'.pw'`,
+    `bob:',pw'`)."""
     if at == first or text[at - 1] in ":=" or _SHORT_FLAG.fullmatch(text, first, at):
         return False
-    return _AFTER_STRING.match(text, at + 1, end) is not None
+    return _AFTER_STRING.match(text, at + width, end) is not None
 
 
 def _json_items(text: str, start: int) -> list[tuple[int, int]]:
@@ -236,22 +260,31 @@ def _hidden_part(word: str, keep: int) -> Edit | None:
     """The part of `word` after its first `keep` characters, its quotes kept: where it starts and
     ends in the word and what takes its place; None when nothing is left to hide, or when the
     part is a reference (`$REDIS_PASSWORD`), which holds no password."""
-    quote = word[0] if word[0] in "\"'" else ""
-    start = len(word) - len(word.lstrip(quote)) + keep  # `keep` counts after the opening quotes
-    if quote and len(word) > 1 and word.endswith(quote):
-        stop, closer = len(word) - 1, ""
+    quote, lead = _opening_quote(word)
+    start = lead + keep  # `keep` counts after the opening quotes
+    if quote and word.endswith(quote) and len(word) - len(quote) >= lead:
+        stop, closer = len(word) - len(quote), ""
     else:
         stop, closer = len(word), quote
-    hidden_already = word[start:stop].lstrip("\"'").startswith(REDACTED)  # `"-p"<redacted>`
+    hidden_already = word[start:stop].lstrip("\\\"'").startswith(REDACTED)  # `"-p"<redacted>`
     if start >= stop or hidden_already or _REFERENCE.fullmatch(word, start, stop):
         return None
     return start, stop, REDACTED + closer
 
 
+def _opening_quote(word: str) -> tuple[str, int]:
+    """The quote `word` opens with (`"`, `'`, or an escaped `\\"`, `\\'`), and how many characters
+    it and its repeats take; none and 0 when it opens with no quote."""
+    found = _OPENING_QUOTE.match(word)
+    return (found.group(1), found.end()) if found else ("", 0)
+
+
 def _user_password_part(word: str, skip: int) -> Edit | None:
-    """The password of `user:password`; a word with no colon names a user only."""
-    colon = word.strip("\"'")[skip:].find(":")
-    return None if colon < 0 else _hidden_part(word, skip + colon + 1)
+    """The password of `user:password`, `skip` characters after the opening quotes; a word with no
+    colon names a user only."""
+    lead = _opening_quote(word)[1]
+    colon = word.find(":", lead + skip)
+    return None if colon < 0 else _hidden_part(word, colon - lead + 1)
 
 
 def _value_part(word: str, pending: str, name: str) -> Edit | None:
@@ -573,7 +606,8 @@ def _hide_client_passwords_in_lines(text: str) -> tuple[str, int]:
         end = len(text) if end < 0 else end
         edits += _line_edits(text, start, end)
         at = end
-    return _edited(text, edits), len(edits)
+    swallowed = sum(text.count(REDACTED, start, stop) for start, stop, _ in edits)
+    return _edited(text, edits), len(edits) - swallowed
 
 
 _URL_SCHEME = re.compile(r"([A-Za-z][A-Za-z0-9+.-]{0,31})://")
@@ -1982,7 +2016,7 @@ def redact_with_count(text: str) -> tuple[str, int]:
         text, hidden = _hide_client_passwords_in_lines(text)
     finally:
         _json_strings.cache_clear()  # it holds the unredacted input
-    return text, total + hidden + found
+    return text, max(0, total + hidden + found)  # a password hidden to the end may take markers
 
 
 def _cut_long_line(line: str, next_line: str) -> tuple[str, int]:
@@ -1992,9 +2026,9 @@ def _cut_long_line(line: str, next_line: str) -> tuple[str, int]:
     counted."""
     hidden_line, hidden = _hide_client_passwords_in_lines(line)
     if len(hidden_line) <= MAX_LINE:
-        return hidden_line, hidden
+        return hidden_line, max(0, hidden)
     cut, count = _cut_line(hidden_line, next_line)
-    if not hidden:
+    if hidden_line == line:
         return cut, count
     return cut, max(0, cut.count(REDACTED) - line.count(REDACTED))
 

@@ -436,6 +436,52 @@ def test_a_quoted_password_holding_a_client_name_is_hidden_whole(line, expected)
 
 
 @pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            'msg="redis-cli -a \\"pa ss\\" ping" status=500',
+            'msg="redis-cli -a \\"<redacted>\\" ping" status=500',
+        ),
+        (
+            'time=x level=info msg="exec: curl -u \\"bob:my pass\\" http://x"',
+            'time=x level=info msg="exec: curl -u \\"bob:<redacted>\\" http://x"',
+        ),
+        (
+            'level=info msg="mysqladmin -p\\"pa ss\\" ping"',
+            'level=info msg="mysqladmin -p<redacted> ping"',
+        ),
+        (
+            "msg=\"redis-cli -a \\'pa ss\\' ping\" status=500",
+            "msg=\"redis-cli -a \\'<redacted>\\' ping\" status=500",
+        ),
+        (
+            'msg="redis-cli -a \\"pass with curl inside\\" ping" status=500',
+            'msg="redis-cli -a \\"<redacted>\\" ping" status=500',
+        ),
+        (
+            'msg="run \\"curl -u a:pw1234\\" now" n=1',
+            'msg="run \\"curl -u a:<redacted>\\" now" n=1',
+        ),
+        ('msg="redis-cli -a \\"pa ss ping" status=500', 'msg="redis-cli -a <redacted>'),
+    ],
+)
+def test_a_password_between_escaped_quotes_in_logfmt_is_hidden_whole(line, expected):
+    """logfmt (logrus, slog, the Docker daemon) escapes every quote in a value: an escaped quote
+    opens and closes a password as a quote does, and the line's own quotes and keys stay."""
+    out = _hidden_once(line)
+    assert out == expected
+    assert "ss" not in out.replace("pass", "") and "my pass" not in out
+
+
+def test_a_password_hidden_to_the_end_counts_only_the_markers_left():
+    line = "redis-cli -a 'pw mongo token=abc123 password=hunter22 x"
+    out, count = redact_with_count(line)
+    assert out == "redis-cli -a <redacted>"
+    assert count == out.count("<redacted>") == 1
+    assert redact_with_count(out) == (out, 0)
+
+
+@pytest.mark.parametrize(
     "line",
     [
         "mongo -p'mongo' x",
@@ -572,6 +618,9 @@ QUOTED_UNITS = [
     "curl -u 'b:mysql' ",
     'redis-cli -a x/curl" ',
     "redis-cli -a --",
+    'msg="redis-cli -a \\"x curl ',
+    'curl -u \\"b:curl \\" ',
+    "redis-cli -a \\'curl ",
 ]
 
 
