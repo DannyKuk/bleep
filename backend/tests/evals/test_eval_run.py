@@ -31,6 +31,7 @@ from evals.run import (
     FaultError,
     IncidentCatcher,
     ShopReset,
+    _judge,
     demo_containers,
     docker_endpoint,
     earlier_batch,
@@ -465,6 +466,23 @@ async def test_a_judge_that_fails_leaves_the_score_empty_and_the_exact_checks_st
     assert result.root_cause_score is None and result.root_cause_pass is False
     assert result.judge_reason == "the judge failed: no answer"
     assert result.action_correct is True
+
+
+async def test_a_judge_that_failed_after_retries_still_records_attempts_and_cost():
+    class Exhausted:
+        name = "fake-judge"
+
+        async def judge(self, expected: str, diagnosis: Diagnosis) -> Judgement:
+            raise JudgeError("unreadable (after 3 attempts)", attempts=3, usd=0.003)
+
+    result = ScenarioResult(
+        id="db-down", model="tiny", judge="fake-judge",
+        diagnosis=Diagnosis(root_cause="db stopped", category="dependency", confidence=0.8),
+    )  # fmt: skip
+    await _judge(SCENARIO, Exhausted(), result)
+    assert result.judge_reason == "the judge failed: unreadable (after 3 attempts)"
+    assert (result.judge_attempts, result.judge_usd) == (3, 0.003)
+    assert result.root_cause_score is None
 
 
 async def test_the_suite_numbers_the_runs_settles_between_them_and_hands_each_result_on(

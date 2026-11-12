@@ -91,6 +91,18 @@ RESULTS = [
 ]
 
 
+def test_the_report_shows_judge_attempts_only_above_one():
+    one, three = result(1), result(2, judge_attempts=3)
+    assert "attempts" not in render(INFO, [one])
+    assert "The judge was asked 3 times" in render(INFO, [one, three])
+
+
+def test_a_results_file_from_before_judge_attempts_still_loads():
+    old = result(1).model_dump(mode="json")
+    del old["judge_attempts"]
+    assert ScenarioResult.model_validate(old).judge_attempts == 1
+
+
 def test_the_report_is_named_by_the_day_it_ran(tmp_path):
     assert report_path(date(2026, 11, 3), tmp_path) == tmp_path / "scenarios-2026-11-03.md"
 

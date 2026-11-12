@@ -33,12 +33,18 @@ os.environ["DEEPEVAL_DISABLE_DOTENV"] = "1"
 DEFAULT_JUDGE = "openai/gpt-6-luna"
 CLAUDE_CODE = "claude-code"
 MANUAL = "manual"  # no judge call: the root cause is graded by hand afterwards
+JUDGE_ATTEMPTS = 3  # an answer GEval cannot read, or a failed call, is asked for again
 PASS_SCORE = 0.7  # the steps give a middling score to the right component for a wrong reason
 CLI_TIMEOUT_S = 300
 
 
 class JudgeError(Exception):
-    """The judge cannot be built or did not answer."""
+    """The judge cannot be built or did not answer. After retries it carries what they cost."""
+
+    def __init__(self, message: str = "", attempts: int = 1, usd: float | None = None) -> None:
+        super().__init__(message)
+        self.attempts = attempts
+        self.usd = usd
 
 
 class SameModel(JudgeError):
@@ -60,7 +66,8 @@ class Judgement(BaseModel):
     score: float  # 0-1
     passed: bool  # score >= PASS_SCORE
     reason: str
-    usd: float | None = None
+    usd: float | None = None  # all attempts added up
+    attempts: int = 1
 
 
 class Judge(Protocol):
@@ -211,14 +218,37 @@ def _adapter() -> type:
 
 
 class RootCauseJudge:
-    """`judge` makes one model call: the evaluation steps are fixed, so GEval does not ask the
-    model to write them."""
+    """`judge` makes one model call per attempt: the evaluation steps are fixed, so GEval does not
+    ask the model to write them. An answer GEval cannot read (a judge that leaves out the score) or
+    a failed call is asked for again, up to JUDGE_ATTEMPTS times in all."""
 
     def __init__(self, name: str, complete: Complete) -> None:
         self.name = name
         self._complete = complete
 
     async def judge(self, expected: str, diagnosis: Diagnosis) -> Judgement:
+        usd: float | None = None
+        last_error = "no attempt was made"
+        for attempt in range(1, JUDGE_ATTEMPTS + 1):
+            try:
+                score, reason, spent = await self._attempt(expected, diagnosis)
+            except _AttemptFailed as failed:
+                last_error = str(failed)
+                usd = _add(usd, failed.usd)
+                continue
+            return Judgement(
+                score=score,
+                passed=score >= PASS_SCORE,
+                reason=reason,
+                usd=_add(usd, spent),
+                attempts=attempt,
+            )
+        raise JudgeError(f"{last_error} (after {JUDGE_ATTEMPTS} attempts)", JUDGE_ATTEMPTS, usd)
+
+    async def _attempt(
+        self, expected: str, diagnosis: Diagnosis
+    ) -> tuple[float, str, float | None]:
+        """One GEval run on a fresh metric and model, so nothing half-parsed carries over."""
         from deepeval.metrics import GEval
         from deepeval.test_case import LLMTestCase, SingleTurnParams
 
@@ -234,11 +264,20 @@ class RootCauseJudge:
         case = LLMTestCase(input="", actual_output=describe(diagnosis), expected_output=expected)
         try:
             await metric.a_measure(case, _show_indicator=False)
-        except JudgeError:
-            raise
+        except JudgeError as error:
+            raise _AttemptFailed(str(error), model.usd) from error
         except Exception as error:  # an unparsable answer, a provider error
-            raise JudgeError(f"{type(error).__name__}: {error}") from error
-        score = float(metric.score or 0.0)
-        return Judgement(
-            score=score, passed=score >= PASS_SCORE, reason=metric.reason or "", usd=model.usd
-        )
+            raise _AttemptFailed(f"{type(error).__name__}: {error}", model.usd) from error
+        return float(metric.score or 0.0), metric.reason or "", model.usd
+
+
+class _AttemptFailed(Exception):
+    def __init__(self, message: str, usd: float | None) -> None:
+        super().__init__(message)
+        self.usd = usd
+
+
+def _add(total: float | None, more: float | None) -> float | None:
+    if more is None:
+        return total
+    return (total or 0.0) + more
