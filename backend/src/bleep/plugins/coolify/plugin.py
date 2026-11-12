@@ -463,12 +463,20 @@ def _domain_host(item: str) -> str | None:
     return (parts["host"].lower().rstrip(".") or None) if parts else None
 
 
-def _current_hosts(service: Service, app: CoolifyApplication) -> set[str]:
-    """The hosts of every domain `app` has for `service`, preview domains and ones with a query
-    included; empty when it has none or when one item is not a URL (a wildcard), since the list
-    cannot then be said to be complete."""
+def _current_hosts(app: CoolifyApplication) -> set[str]:
+    """The hosts of every domain `app` has, preview domains and ones with a query included, for
+    every Compose service Coolify keeps domains for and not only those that run now; empty when
+    it has none or when one item is not a URL (a wildcard), since the list cannot then be said
+    to be complete."""
+    if app.fqdn:
+        items = app.fqdn.split(",")
+    elif app.docker_compose_domains is not None:
+        texts = _compose_domain_texts(app.docker_compose_domains)
+        items = [item for text in texts.values() for item in text.split(",")]
+    else:
+        return set()
     hosts: set[str] = set()
-    for item, _, _ in _offered_domains(service, app):
+    for item in items:
         if not item.strip():
             continue
         host = _domain_host(item)
@@ -494,14 +502,16 @@ def _checked_domain(url: str) -> str | None:
 
 def stale_checks(service: Service, apps: list[CoolifyApplication]) -> list[UrlCheckConfig]:
     """The checks `service` has whose host is not among its application's current domains
-    (#493), by the same domains `suggested_checks` offers. Only hosts are compared, so a check
-    typed by hand on another domain of the service is flagged too. None when the service has
-    no single application, when the application lists no domain (a hand-typed check may be the
-    only way to reach it), or when its domain list is not readable as a whole."""
+    (#493). The domains are the application's, read as `suggested_checks` reads them but for a
+    Compose application those of every service Coolify keeps domains for, so a service whose
+    container is missing for a moment does not lose its check. Only hosts are compared, so a
+    check typed by hand on another domain is flagged too. None when the service has no single
+    application, when the application lists no domain (a hand-typed check may be the only way
+    to reach it), or when its domain list is not readable as a whole."""
     app = app_of(service, apps)
     if app is None:
         return []
-    hosts = _current_hosts(service, app)
+    hosts = _current_hosts(app)
     if not hosts:
         return []
     return [

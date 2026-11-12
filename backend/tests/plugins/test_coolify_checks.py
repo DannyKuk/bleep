@@ -415,21 +415,16 @@ def test_a_preview_deployment_and_a_service_without_an_app_flag_nothing():
     assert stale_checks(plain, apps()) == []
 
 
-def test_a_compose_service_is_flagged_only_against_the_domains_of_the_services_it_runs():
+def test_a_compose_check_is_flagged_against_the_apps_domains_not_those_of_running_services():
     forum = compose_app_service(
         "web",
         urls=[
             "https://forum.example.com/",
-            "https://api.forum.example.com/v1/",  # Coolify keeps it for `api`, which is not run
+            "https://api.forum.example.com/v1/",  # Coolify keeps it for `api`, not running now
             "https://old.forum.example.com/",
         ],
     )
-    assert urls(stale_checks(forum, apps())) == [
-        "https://api.forum.example.com/v1/",
-        "https://old.forum.example.com/",
-    ]
-    both = compose_app_service("web", "api", urls=["https://api.forum.example.com/v1/"])
-    assert stale_checks(both, apps()) == []
+    assert urls(stale_checks(forum, apps())) == ["https://old.forum.example.com/"]
 
 
 @pytest.mark.parametrize("raw", ["", "not json", "[]", '{"web": 7}', '{"web": {"domain": ""}}'])
