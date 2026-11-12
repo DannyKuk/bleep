@@ -112,6 +112,33 @@ def test_deployed_commits_gives_the_running_commit_and_those_it_lists():
     assert read_shas([deployed(up_to)]) == READ
 
 
+def test_a_part_read_with_skip_adds_its_commits_to_those_of_the_parts_before_it():
+    """Every part is its own tool result and keeps the running commit's first line; the shas the
+    run read over several parts are all still read (#497)."""
+    running = RunningCommit(sha=DEPLOY, how="coolify", since=AT, previous=PREVIOUS)
+    newest = Comparison(
+        status="ahead",
+        ahead_by=3,
+        total_commits=3,
+        commits=[commit(DEPLOY, "Deploy shop 2"), commit(EARLIER, "Mid")],
+    )
+    oldest_sha = "9a8b7c6d5e4f30211203f4e5d6c7b8a998877665"
+    older = Comparison(
+        status="ahead", ahead_by=3, total_commits=3, commits=[commit(oldest_sha, "Cents")]
+    )
+    parts = [
+        deployed(describe_deploy("o/shop", running, newest)),
+        deployed(describe_deploy("o/shop", running, older, skip=2)),
+    ]
+
+    assert read_shas(parts[1:]) == READ | {oldest_sha[:7]}
+    assert read_shas(parts) == READ | {EARLIER[:7], oldest_sha[:7]}
+    past = deployed(
+        describe_deploy("o/shop", running, older.model_copy(update={"commits": []}), skip=3)
+    )
+    assert read_shas([past]) == READ  # skipped past the end: no commit is listed
+
+
 def test_a_rollback_gives_only_the_running_commit_and_unknown_gives_none():
     running = RunningCommit(sha=DEPLOY, how="coolify", previous=PREVIOUS)
     back = Comparison(status="behind", behind_by=3)

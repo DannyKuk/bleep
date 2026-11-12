@@ -416,9 +416,11 @@ async def test_compare_older_reads_the_commits_after_the_newest_skip_newest_firs
     github, _ = paged(1371)  # as long as the range the fake was measured on
 
     assert await indexes(github, 0, 3) == [1370, 1369, 1368]
-    assert await indexes(github, 85) == list(range(1285, 1185, -1))  # across a page border
-    assert await indexes(github, 1271) == list(range(99, -1, -1))  # exactly one page, the oldest
     assert await indexes(github, 1300) == list(range(70, -1, -1))  # ends at GitHub's first
+    for skip in (0, 85, 500, 1271):
+        part = await indexes(github, skip)
+        assert part == list(range(1370 - skip, 1370 - skip - len(part), -1))  # right after skip
+        assert 80 <= len(part) <= 100  # one page holds most of what was asked for
 
 
 async def test_compare_older_walks_a_long_range_in_parts_without_gap_or_repeat():
@@ -431,24 +433,57 @@ async def test_compare_older_walks_a_long_range_in_parts_without_gap_or_repeat()
     assert seen == list(range(1370, -1, -1))
 
 
-async def test_compare_older_asks_the_total_without_the_file_list_then_the_wanted_pages():
+def asked(compare: PagedCompare) -> list[tuple[str, str]]:
+    return [(r.url.params["page"], r.url.params["per_page"]) for r in compare.requests]
+
+
+async def test_a_cold_compare_older_asks_the_total_without_the_file_list_then_one_page():
     github, compare = paged(1371)
 
     found = await github.compare_older(REPO, BASE, HEAD, 85)
 
     assert found.total_commits == 1371 and found.status == "ahead"
-    asked = [(r.url.params["page"], r.url.params["per_page"]) for r in compare.requests]
-    # The total from a page past the first (page 1 carries the whole file list), then the two
-    # pages of 100 that hold positions 1186 to 1285 (counted from the oldest): 12 and 13.
-    assert asked == [("2", "1"), ("12", "100"), ("13", "100")]
+    # The total from a page past the first (page 1 carries the whole file list), then the one
+    # page, 13 of 99, that holds positions 1188 to 1285 (counted from the oldest).
+    assert asked(compare) == [("2", "1"), ("13", "99")]
 
 
-async def test_compare_older_reads_one_page_when_the_part_lies_in_it():
+async def test_the_total_is_asked_once_for_the_same_shas():
+    github, compare = paged(1371)
+
+    await github.compare_older(REPO, BASE, HEAD, 0)
+    await github.compare_older(REPO, BASE, HEAD, 97)
+    await github.compare_older(REPO, BASE, HEAD, 195)
+
+    assert [page for page, _ in asked(compare)].count("2") == 1  # the probe, the first time
+    assert len(compare.requests) == 4
+
+
+async def test_the_unpaged_compare_tells_the_total_so_the_next_part_is_one_request():
+    github, compare = paged(1371)
+    await github.compare(REPO, BASE, HEAD)
+    compare.requests.clear()
+
+    await github.compare_older(REPO, BASE, HEAD, 85)
+
+    assert asked(compare) == [("13", "99")]
+
+
+async def test_when_no_one_page_holds_most_of_a_part_two_pages_of_100_are_read():
+    github, compare = paged(150)
+
+    part = await indexes(github, 0)
+
+    assert part == list(range(149, 49, -1))  # 100 commits, from the oldest page boundary
+    assert asked(compare) == [("2", "1"), ("1", "100"), ("2", "100")]
+
+
+async def test_compare_older_reads_the_oldest_part_from_page_one():
     github, compare = paged(1371)
 
     await github.compare_older(REPO, BASE, HEAD, 1300)
 
-    assert [r.url.params["page"] for r in compare.requests] == ["2", "1"]
+    assert asked(compare) == [("2", "1"), ("1", "71")]
 
 
 async def test_compare_older_past_the_oldest_is_empty_with_the_total():

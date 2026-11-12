@@ -37,6 +37,8 @@ API_VERSION = "2022-11-28"
 TIMEOUT_S = 10.0
 DEFAULT_TOKEN_NAME = "GITHUB_TOKEN"
 MAX_PER_PAGE = 100
+MIN_PART = 80  # fewest commits of a part one page may hold, else two pages of 100 are read
+MAX_RANGES = 64  # compares whose size is remembered
 # Folders `list_files` opens, one request each, so a deep tree cannot spend the rate limit.
 MAX_FOLDERS = 30
 MAX_PATH = 300
@@ -239,6 +241,8 @@ class GithubClient:
         self._transport = transport
         self._base_url = base_url
         self._timeout_s = timeout_s
+        # What a compare of two shas holds never changes, so its size is asked once.
+        self._ranges: dict[tuple[str, str, str], _RawComparison] = {}
 
     @property
     def authenticated(self) -> bool:
@@ -283,21 +287,34 @@ class GithubClient:
     ) -> Comparison:
         """Up to `count` of the commits `head` has that `base` lacks, newest first, after
         skipping the `skip` newest, however long the range: `commits` is empty when `skip` is
-        past the last one. GitHub pages a compare from the oldest commit and sends `total_commits`
-        with every page, so one small request (a page past the first holds no file list, the
-        heavy part) learns the total, and the one or two pages that hold the wanted positions
-        are then read. The shas are fixed, so the positions do not move between calls."""
+        past the last one. GitHub pages a compare from the oldest commit and sends
+        `total_commits` with every page. The total is remembered from an earlier compare of the
+        same shas (the unpaged one that started the read), else asked with a page of one past
+        the first, which holds no file list, the heavy part. The commits are then read from one
+        page, of the size that puts most of the wanted ones in it, or from two pages of 100 when
+        no one page holds `MIN_PART` of them. The shas are fixed, so the positions do not move."""
         count = max(1, min(count, MAX_PER_PAGE))
-        total = await self._compare(repo, base, head, (2, 1))
+        total = self._ranges.get(_range_key(repo, base, head))
+        if total is None:
+            total = await self._compare(repo, base, head, (2, 1))
         newest = total.total_commits - max(0, skip)  # one past the newest wanted, oldest first
         if total.status not in ("ahead", "diverged") or newest <= 0:
             return _comparison(total, [])
-        oldest = max(0, newest - count)
-        chronological: list[_RawCommit] = []
-        for page in range(oldest // MAX_PER_PAGE + 1, (newest - 1) // MAX_PER_PAGE + 2):
-            chronological += (await self._compare(repo, base, head, (page, MAX_PER_PAGE))).commits
-        start = oldest % MAX_PER_PAGE
-        return _comparison(total, chronological[start : start + (newest - oldest)])
+        wanted = min(count, newest)
+        per_page = _page_size_holding(newest, wanted)
+        first = (newest - 1) // per_page * per_page  # position of its oldest commit
+        if newest - first >= min(wanted, MIN_PART):
+            held = (
+                await self._compare(repo, base, head, (first // per_page + 1, per_page))
+            ).commits
+        else:
+            per_page = MAX_PER_PAGE
+            first = max(0, newest - wanted) // per_page * per_page
+            held = []
+            for page in range(first // per_page + 1, (newest - 1) // per_page + 2):
+                held += (await self._compare(repo, base, head, (page, per_page))).commits
+        oldest = max(first, newest - wanted)
+        return _comparison(total, held[oldest - first : newest - first])
 
     async def _compare(
         self, repo: str, base: str, head: str, paged: tuple[int, int] | None
@@ -309,7 +326,11 @@ class GithubClient:
         what = f"commit {base[:7]} or {head[:7]} in {repo}"
         params = {"page": str(paged[0]), "per_page": str(paged[1])} if paged else None
         data = await self._get(f"/repos/{repo}/compare/{base}...{head}", params, what, "commit")
-        return _parse(_RawComparison, data)
+        raw = _parse(_RawComparison, data)
+        if len(self._ranges) >= MAX_RANGES:
+            del self._ranges[next(iter(self._ranges))]
+        self._ranges[_range_key(repo, base, head)] = raw.model_copy(update={"commits": []})
+        return raw
 
     async def commit(self, repo: str, sha: str) -> CommitDetail:
         """One commit with every file it changed and each file's patch."""
@@ -439,6 +460,19 @@ class GithubClient:
         if status >= 500:
             raise GithubUnavailable(f"GitHub answered {status}")
         raise GithubError(f"GitHub answered {status} for {what}")
+
+
+def _range_key(repo: str, base: str, head: str) -> tuple[str, str, str]:
+    return repo.lower(), base.lower(), head.lower()
+
+
+def _page_size_holding(newest: int, wanted: int) -> int:
+    """The page size (up to 100) whose page, counted from the oldest commit, holds the most of
+    the `wanted` commits just below position `newest`; the smallest size on a tie."""
+    return max(
+        range(1, MAX_PER_PAGE + 1),
+        key=lambda size: (min((newest - 1) % size + 1, wanted), -size),
+    )
 
 
 def _comparison(raw: _RawComparison, oldest_first: list[_RawCommit]) -> Comparison:

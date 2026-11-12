@@ -1,0 +1,1296 @@
+{
+ "status": "ahead",
+ "ahead_by": 1371,
+ "behind_by": 0,
+ "total_commits": 1371,
+ "commits": [
+  {
+   "sha": "e465624fd02bc27824249e3c673151055dac4c39",
+   "commit": {
+    "author": {
+     "name": "Matheus Azzi",
+     "date": "2014-01-05T03:14:38Z"
+    },
+    "committer": {
+     "name": "Jonathan Ong",
+     "date": "2014-01-14T04:45:50Z"
+    },
+    "message": "Update layout.jade"
+   },
+   "author": {
+    "login": "matheusazzi"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/e465624fd02bc27824249e3c673151055dac4c39"
+  },
+  {
+   "sha": "1d97599f8b2f4ea6be0b7082ac1d9d93c8d00665",
+   "commit": {
+    "author": {
+     "name": "Doug Patti",
+     "date": "2014-01-02T18:05:23Z"
+    },
+    "committer": {
+     "name": "Jonathan Ong",
+     "date": "2014-01-14T04:46:07Z"
+    },
+    "message": "prevent incorrect automatic OPTIONS responses\n\nThe router has automatic handling of OPTIONS based on the registered\nroutes, but if you make an OPTIONS request for an endpoint that does\nnot exist, then it will still return a 200 with nothing allowed.\nInstead, we can let the request move on down the middleware chain. This\nhas two benefits: first, if the route was not defined and no other\nmiddleware handles it, it will return with a 404. Secondly, if multiple\nrouters are used and a later one has the route or a custom OPTIONS\ndefined, the first router will not respond incorrectly."
+   },
+   "author": {
+    "login": "dpatti"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/1d97599f8b2f4ea6be0b7082ac1d9d93c8d00665"
+  },
+  {
+   "sha": "ff23423d34d9d7f829d160aeb91b5c939ab4a4e1",
+   "commit": {
+    "author": {
+     "name": "Jonathan Ong",
+     "date": "2014-01-14T04:50:51Z"
+    },
+    "committer": {
+     "name": "Jonathan Ong",
+     "date": "2014-01-14T04:50:51Z"
+    },
+    "message": "3.4.8"
+   },
+   "author": {
+    "login": "jonathanong"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/ff23423d34d9d7f829d160aeb91b5c939ab4a4e1"
+  },
+  {
+   "sha": "8aff64f89a107673724367b7b0d5346c1776d821",
+   "commit": {
+    "author": {
+     "name": "Roman Shtylman",
+     "date": "2014-01-30T01:06:38Z"
+    },
+    "committer": {
+     "name": "Roman Shtylman",
+     "date": "2014-01-30T01:06:38Z"
+    },
+    "message": "backport dependency updates\n\n- range parser 1.0.0\n- fresh 0.2.1\n- send 0.2.0\n- cookie-signature 1.0.3\n- merge-descriptors 0.0.2"
+   },
+   "author": {
+    "login": "defunctzombie"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/8aff64f89a107673724367b7b0d5346c1776d821"
+  },
+  {
+   "sha": "4ce1ee458ec1e0580d53a1b9d060b900176b023b",
+   "commit": {
+    "author": {
+     "name": "Jonathan Ong",
+     "date": "2014-03-06T22:57:05Z"
+    },
+    "committer": {
+     "name": "Jonathan Ong",
+     "date": "2014-03-06T22:57:05Z"
+    },
+    "message": "bump deps"
+   },
+   "author": {
+    "login": "jonathanong"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/4ce1ee458ec1e0580d53a1b9d060b900176b023b"
+  },
+  {
+   "sha": "87912103c96d2032bbb93d0b3667a41714955dc5",
+   "commit": {
+    "author": {
+     "name": "Jonathan Ong",
+     "date": "2014-03-06T22:57:30Z"
+    },
+    "committer": {
+     "name": "Jonathan Ong",
+     "date": "2014-03-06T22:57:30Z"
+    },
+    "message": "3.5.0"
+   },
+   "author": {
+    "login": "jonathanong"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/87912103c96d2032bbb93d0b3667a41714955dc5"
+  },
+  {
+   "sha": "abd6b7c5c338ad1aa58c46ca95ba139cf3b5ac97",
+   "commit": {
+    "author": {
+     "name": "Roman Shtylman",
+     "date": "2014-03-25T20:55:57Z"
+    },
+    "committer": {
+     "name": "Roman Shtylman",
+     "date": "2014-03-25T20:55:57Z"
+    },
+    "message": "pin down less-middleware\n\nThings are broken in 0.2 version of less-middleware so use 0.1 line"
+   },
+   "author": {
+    "login": "defunctzombie"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/abd6b7c5c338ad1aa58c46ca95ba139cf3b5ac97"
+  },
+  {
+   "sha": "df50669092d3de0ec4bd041aabb3b2a4d2954e01",
+   "commit": {
+    "author": {
+     "name": "Roman Shtylman",
+     "date": "2014-03-25T20:56:54Z"
+    },
+    "committer": {
+     "name": "Roman Shtylman",
+     "date": "2014-03-25T20:56:54Z"
+    },
+    "message": "3.5.1"
+   },
+   "author": {
+    "login": "defunctzombie"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/df50669092d3de0ec4bd041aabb3b2a4d2954e01"
+  },
+  {
+   "sha": "b8dd60dec7aa927496b6a341a77d9e0bed5a4570",
+   "commit": {
+    "author": {
+     "name": "Roman Shtylman",
+     "date": "2014-04-10T13:57:30Z"
+    },
+    "committer": {
+     "name": "Roman Shtylman",
+     "date": "2014-04-10T13:57:30Z"
+    },
+    "message": "update readme to v4 release\n\n- remove 3.0.0 from logo\n- remove RC status for v4\n\nclose #2036"
+   },
+   "author": {
+    "login": "defunctzombie"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/b8dd60dec7aa927496b6a341a77d9e0bed5a4570"
+  },
+  {
+   "sha": "0dbaacfe12fab8801b4bb40ddfd288f32f3c0e90",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-10T20:57:00Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-10T20:57:00Z"
+    },
+    "message": "update history"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/0dbaacfe12fab8801b4bb40ddfd288f32f3c0e90"
+  },
+  {
+   "sha": "a802405e19bb36e648a7e33601a6d10333b82dee",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-10T19:37:49Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-10T20:59:36Z"
+    },
+    "message": "update type-is to 1.0.1"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/a802405e19bb36e648a7e33601a6d10333b82dee"
+  },
+  {
+   "sha": "c610902b671a1449aa15d9d7c3b051c9c01f221e",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-10T19:38:55Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-10T20:59:38Z"
+    },
+    "message": "update accepts to 1.0.1"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/c610902b671a1449aa15d9d7c3b051c9c01f221e"
+  },
+  {
+   "sha": "2377fc8bcf0a3dcdf02e5596b94e4180e7ba0523",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-10T19:41:40Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-10T20:59:40Z"
+    },
+    "message": "update serve-static to 1.0.4"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/2377fc8bcf0a3dcdf02e5596b94e4180e7ba0523"
+  },
+  {
+   "sha": "fb1232043da3aa42bea6bccc4cf3b1a07392703b",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-10T19:43:02Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-10T20:59:41Z"
+    },
+    "message": "update cookie to 0.1.1"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/fb1232043da3aa42bea6bccc4cf3b1a07392703b"
+  },
+  {
+   "sha": "260141ee089eb36335d1281f6a4b58933c75d863",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-10T21:04:19Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-10T21:04:19Z"
+    },
+    "message": "add soft testing on node.js 0.11"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/260141ee089eb36335d1281f6a4b58933c75d863"
+  },
+  {
+   "sha": "b79a2715538e377db9d96c25c662439e00182f98",
+   "commit": {
+    "author": {
+     "name": "Jonathan Ong",
+     "date": "2014-04-13T00:25:33Z"
+    },
+    "committer": {
+     "name": "Jonathan Ong",
+     "date": "2014-04-13T00:25:33Z"
+    },
+    "message": "update type-is@1.1.0"
+   },
+   "author": {
+    "login": "jonathanong"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/b79a2715538e377db9d96c25c662439e00182f98"
+  },
+  {
+   "sha": "6b1c44321245f62274d002ed861cf40c227c6745",
+   "commit": {
+    "author": {
+     "name": "Wang",
+     "date": "2014-04-13T14:05:49Z"
+    },
+    "committer": {
+     "name": "Wang",
+     "date": "2014-04-13T14:05:49Z"
+    },
+    "message": "remove one feature description"
+   },
+   "author": {
+    "login": "Pana"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/6b1c44321245f62274d002ed861cf40c227c6745"
+  },
+  {
+   "sha": "e1ab302234d82390f280ecfb478994cdff8809b6",
+   "commit": {
+    "author": {
+     "name": "Roman Shtylman",
+     "date": "2014-04-14T14:51:35Z"
+    },
+    "committer": {
+     "name": "Roman Shtylman",
+     "date": "2014-04-14T14:51:35Z"
+    },
+    "message": "Merge pull request #2047 from Pana/patch-1\n\nremove one feature description"
+   },
+   "author": {
+    "login": "defunctzombie"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/e1ab302234d82390f280ecfb478994cdff8809b6"
+  },
+  {
+   "sha": "19983272f3d43eba9e5afbc7af1b97972045033c",
+   "commit": {
+    "author": {
+     "name": "Ke Zhu",
+     "date": "2014-04-15T04:11:09Z"
+    },
+    "committer": {
+     "name": "Ke Zhu",
+     "date": "2014-04-15T04:11:20Z"
+    },
+    "message": "improve req.xhr test by verifying status code"
+   },
+   "author": null,
+   "html_url": "https://github.com/expressjs/express/commit/19983272f3d43eba9e5afbc7af1b97972045033c"
+  },
+  {
+   "sha": "5f1d57704e6307afbfa17d3ce1ab773c46e6aeed",
+   "commit": {
+    "author": {
+     "name": "Roman Shtylman",
+     "date": "2014-04-15T13:34:16Z"
+    },
+    "committer": {
+     "name": "Roman Shtylman",
+     "date": "2014-04-15T13:34:16Z"
+    },
+    "message": "Merge pull request #2053 from shawnzhu/fix-xhr-test\n\nimprove req.xhr test by verifying status code"
+   },
+   "author": {
+    "login": "defunctzombie"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/5f1d57704e6307afbfa17d3ce1ab773c46e6aeed"
+  },
+  {
+   "sha": "79cc5a4d2745cc96a481c133836e042852f178fe",
+   "commit": {
+    "author": {
+     "name": "Chris Andrejewski",
+     "date": "2014-04-16T00:12:23Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-16T12:49:08Z"
+    },
+    "message": "make old middleware properties configurable\n\ncloses #2054"
+   },
+   "author": {
+    "login": "andrejewski"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/79cc5a4d2745cc96a481c133836e042852f178fe"
+  },
+  {
+   "sha": "b9e957608383605d20f5a3e3803394f47c71bdf6",
+   "commit": {
+    "author": {
+     "name": "Jonathan Ong",
+     "date": "2014-04-18T07:28:43Z"
+    },
+    "committer": {
+     "name": "Jonathan Ong",
+     "date": "2014-04-18T07:28:43Z"
+    },
+    "message": "Readme: add Roman as lead maintainer\n\nso people start emailing him instead of TJ :D"
+   },
+   "author": {
+    "login": "jonathanong"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/b9e957608383605d20f5a3e3803394f47c71bdf6"
+  },
+  {
+   "sha": "56b672e6570e64f4536e72c76f92c0e2144c2afa",
+   "commit": {
+    "author": {
+     "name": "Andy VanWagoner",
+     "date": "2014-04-20T03:16:11Z"
+    },
+    "committer": {
+     "name": "Andy VanWagoner",
+     "date": "2014-04-20T03:16:11Z"
+    },
+    "message": "support non-ascii filenames in content-disposition headers"
+   },
+   "author": null,
+   "html_url": "https://github.com/expressjs/express/commit/56b672e6570e64f4536e72c76f92c0e2144c2afa"
+  },
+  {
+   "sha": "50158b851c441d6b7dcd360cde04f2eb9adafe18",
+   "commit": {
+    "author": {
+     "name": "Fernando Silveira",
+     "date": "2014-04-21T15:08:34Z"
+    },
+    "committer": {
+     "name": "Fernando Silveira",
+     "date": "2014-04-21T15:08:34Z"
+    },
+    "message": "Express 4 now uses \"method-override\" external library."
+   },
+   "author": {
+    "login": "swrh"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/50158b851c441d6b7dcd360cde04f2eb9adafe18"
+  },
+  {
+   "sha": "896609c859758e2f71fec7862bc666caea37b2ac",
+   "commit": {
+    "author": {
+     "name": "Fernando Silveira",
+     "date": "2014-04-21T15:10:21Z"
+    },
+    "committer": {
+     "name": "Fernando Silveira",
+     "date": "2014-04-21T15:10:21Z"
+    },
+    "message": "Fixing bug when updating pet name in MVC example."
+   },
+   "author": {
+    "login": "swrh"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/896609c859758e2f71fec7862bc666caea37b2ac"
+  },
+  {
+   "sha": "bdb3bb98f681a2cfdb705a4b1773e9a5031a91bc",
+   "commit": {
+    "author": {
+     "name": "Roman Shtylman",
+     "date": "2014-04-22T02:12:38Z"
+    },
+    "committer": {
+     "name": "Roman Shtylman",
+     "date": "2014-04-22T02:12:38Z"
+    },
+    "message": "Merge pull request #2058 from thetalecrafter/content-disposition\n\nsupport non-ascii filenames in content-disposition headers"
+   },
+   "author": {
+    "login": "defunctzombie"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/bdb3bb98f681a2cfdb705a4b1773e9a5031a91bc"
+  },
+  {
+   "sha": "4ac7474e4e83c3b5f8557e591bae9da54e4420d8",
+   "commit": {
+    "author": {
+     "name": "Andrea Giammarchi",
+     "date": "2014-04-23T00:02:54Z"
+    },
+    "committer": {
+     "name": "Andrea Giammarchi",
+     "date": "2014-04-23T00:02:54Z"
+    },
+    "message": "trim_prefix causing --use-strict flag to fail\n\nas specified in bug #2064 the `trim_prefix` function declaration within the `try/catch` causes problems when starting express with `--use_strict` directive."
+   },
+   "author": {
+    "login": "WebReflection"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/4ac7474e4e83c3b5f8557e591bae9da54e4420d8"
+  },
+  {
+   "sha": "af5f21b2e22bb4f41b0d3b87cd05565b5d63d091",
+   "commit": {
+    "author": {
+     "name": "Roman Shtylman",
+     "date": "2014-04-23T00:23:58Z"
+    },
+    "committer": {
+     "name": "Roman Shtylman",
+     "date": "2014-04-23T00:23:58Z"
+    },
+    "message": "Merge pull request #2065 from WebReflection/patch-1\n\ntrim_prefix causing --use-strict flag to fail"
+   },
+   "author": {
+    "login": "defunctzombie"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/af5f21b2e22bb4f41b0d3b87cd05565b5d63d091"
+  },
+  {
+   "sha": "8d8f44f352392758d4660becd1bce147a115bb2c",
+   "commit": {
+    "author": {
+     "name": "Fernando Silveira",
+     "date": "2014-04-23T01:46:52Z"
+    },
+    "committer": {
+     "name": "Fernando Silveira",
+     "date": "2014-04-23T01:46:52Z"
+    },
+    "message": "Fix \"method-override\" dependency.\n\nDepend on method-override@1.0.0 strictly, following the pattern for (almost) all other devDependencies."
+   },
+   "author": {
+    "login": "swrh"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/8d8f44f352392758d4660becd1bce147a115bb2c"
+  },
+  {
+   "sha": "b38ffd7376a97f249001c52481fea545b5b28ab1",
+   "commit": {
+    "author": {
+     "name": "Fernando Silveira",
+     "date": "2014-04-23T02:30:17Z"
+    },
+    "committer": {
+     "name": "Fernando Silveira",
+     "date": "2014-04-23T02:30:17Z"
+    },
+    "message": "Fixing bug in MVC example pet view."
+   },
+   "author": {
+    "login": "swrh"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/b38ffd7376a97f249001c52481fea545b5b28ab1"
+  },
+  {
+   "sha": "5480cb95716339e0a581db3b9e66bb6f8dc3b37f",
+   "commit": {
+    "author": {
+     "name": "Roman Shtylman",
+     "date": "2014-04-23T03:09:49Z"
+    },
+    "committer": {
+     "name": "Roman Shtylman",
+     "date": "2014-04-23T03:09:49Z"
+    },
+    "message": "Merge pull request #2060 from swrh/master\n\nexamples: Fix bugs in MVC example"
+   },
+   "author": {
+    "login": "defunctzombie"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/5480cb95716339e0a581db3b9e66bb6f8dc3b37f"
+  },
+  {
+   "sha": "ce17efd95babe62369e73fc843214bc94f1ecd37",
+   "commit": {
+    "author": {
+     "name": "Fernando Silveira",
+     "date": "2014-04-23T02:37:49Z"
+    },
+    "committer": {
+     "name": "Fernando Silveira",
+     "date": "2014-04-23T03:13:26Z"
+    },
+    "message": "MVC example: EJS -> Jade."
+   },
+   "author": {
+    "login": "swrh"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/ce17efd95babe62369e73fc843214bc94f1ecd37"
+  },
+  {
+   "sha": "29e8ccef4ec7cf3797b68193232451dfd3b6d52e",
+   "commit": {
+    "author": {
+     "name": "Roman Shtylman",
+     "date": "2014-04-23T14:21:26Z"
+    },
+    "committer": {
+     "name": "Roman Shtylman",
+     "date": "2014-04-23T14:21:26Z"
+    },
+    "message": "Merge pull request #2067 from swrh/mvc-example-ejs-to-jade\n\nMVC example: EJS -> Jade."
+   },
+   "author": {
+    "login": "defunctzombie"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/29e8ccef4ec7cf3797b68193232451dfd3b6d52e"
+  },
+  {
+   "sha": "6ac6305b533d3569f91ff411eee5e3c8918a4253",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T19:42:41Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T19:42:41Z"
+    },
+    "message": "Merge branch '3.x' into HEAD"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/6ac6305b533d3569f91ff411eee5e3c8918a4253"
+  },
+  {
+   "sha": "30d18888b952b0806b90b5863a609b3878760bad",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T19:45:50Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T19:50:54Z"
+    },
+    "message": "update connect to 2.14.5"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/30d18888b952b0806b90b5863a609b3878760bad"
+  },
+  {
+   "sha": "c7791a207bf463d752627c83b5f3a417694fcb8d",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T19:00:07Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T19:50:55Z"
+    },
+    "message": "update send to 0.3.0\n\nfixes #2024\ncloses #2071\ncloses #2072"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/c7791a207bf463d752627c83b5f3a417694fcb8d"
+  },
+  {
+   "sha": "55dea47b94b5c472c96a4d5d162c133fb3088204",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:20:31Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:20:31Z"
+    },
+    "message": "update mkdirp to 0.4.0"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/55dea47b94b5c472c96a4d5d162c133fb3088204"
+  },
+  {
+   "sha": "90fbc1a33ed60819d9beb4ef2dee747c9f281986",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:21:22Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:21:22Z"
+    },
+    "message": "update cookie to 0.1.2"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/90fbc1a33ed60819d9beb4ef2dee747c9f281986"
+  },
+  {
+   "sha": "5d8dba5fe0ffaca4843ca4822f1ab033c6a53afc",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:23:58Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:23:58Z"
+    },
+    "message": "update mocha to 1.18.2"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/5d8dba5fe0ffaca4843ca4822f1ab033c6a53afc"
+  },
+  {
+   "sha": "8894e30869e1015b0abc5d8efe202347314f0131",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:27:00Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:27:00Z"
+    },
+    "message": "Skip publishing benchmarks dir to npm"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/8894e30869e1015b0abc5d8efe202347314f0131"
+  },
+  {
+   "sha": "972c01afc993aa117d6f83e9f275deb8aee2830a",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:30:58Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:30:58Z"
+    },
+    "message": "update supertest to 0.11.0"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/972c01afc993aa117d6f83e9f275deb8aee2830a"
+  },
+  {
+   "sha": "d5815922caca984435cbd4d75aeaf12afe73b8cb",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:36:37Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:36:37Z"
+    },
+    "message": "3.5.2"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/d5815922caca984435cbd4d75aeaf12afe73b8cb"
+  },
+  {
+   "sha": "8ccceacf91bffc535ef9f05ab2084c7111529896",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:43:51Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:43:51Z"
+    },
+    "message": "Merge branch '3.x'"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/8ccceacf91bffc535ef9f05ab2084c7111529896"
+  },
+  {
+   "sha": "2fd3e72a19aaeca9c5916df643758bed8c1a8697",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T19:17:22Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:44:06Z"
+    },
+    "message": "Pass options from res.sendfile to send\n\nfixes #2017"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/2fd3e72a19aaeca9c5916df643758bed8c1a8697"
+  },
+  {
+   "sha": "9863fa0903b7094ef63d9d7a6681128b1bcdb86f",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:46:51Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:46:51Z"
+    },
+    "message": "update serve-static to 1.1.0"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/9863fa0903b7094ef63d9d7a6681128b1bcdb86f"
+  },
+  {
+   "sha": "ce8555c6906a5b5688c6802d206d4fc7cb0daf83",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:51:49Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T20:51:49Z"
+    },
+    "message": "update should to 3.3.1"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/ce8555c6906a5b5688c6802d206d4fc7cb0daf83"
+  },
+  {
+   "sha": "203fb05d3e90b7e22d3660aee6046b77577ff62c",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T21:05:20Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T21:05:20Z"
+    },
+    "message": "update example dependencies"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/203fb05d3e90b7e22d3660aee6046b77577ff62c"
+  },
+  {
+   "sha": "374e6c3789911c14b1e9c7b2150b80f934e6b5d3",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T21:50:20Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T21:50:20Z"
+    },
+    "message": "fix multipart example\n\ncloses #2061"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/374e6c3789911c14b1e9c7b2150b80f934e6b5d3"
+  },
+  {
+   "sha": "1536a2196e695523f991a5dab2d99d3702bd6007",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T21:58:54Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T22:00:43Z"
+    },
+    "message": "preserve casing of headers in res.header and res.set\n\nfixes #2063"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/1536a2196e695523f991a5dab2d99d3702bd6007"
+  },
+  {
+   "sha": "dbea8312bbd6b59e5d78e145696a876c7397a332",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T22:08:41Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-24T22:13:41Z"
+    },
+    "message": "4.1.0"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/dbea8312bbd6b59e5d78e145696a876c7397a332"
+  },
+  {
+   "sha": "c0545813706ffa17161293af00fe39b7f2f43fe2",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-27T23:44:05Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-27T23:46:53Z"
+    },
+    "message": "fix package.json to reflect supported node version\n\ncloses #2080"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/c0545813706ffa17161293af00fe39b7f2f43fe2"
+  },
+  {
+   "sha": "61f2929a35b7588ee707c02ab64512c3fac5f61f",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-27T23:49:05Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-27T23:49:05Z"
+    },
+    "message": "4.1.1"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/61f2929a35b7588ee707c02ab64512c3fac5f61f"
+  },
+  {
+   "sha": "3c7310ebcbee1d65f47e6c6115ade2fa4cbd5b59",
+   "commit": {
+    "author": {
+     "name": "Tiago Relvao",
+     "date": "2014-04-28T09:54:51Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-04-30T13:34:10Z"
+    },
+    "message": "Include ETag in HEAD requests\n\nfixes #2083"
+   },
+   "author": {
+    "login": "relvao"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/3c7310ebcbee1d65f47e6c6115ade2fa4cbd5b59"
+  },
+  {
+   "sha": "5c3852b91c17fa66d25527045f49aa6f50ee7e41",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-02T13:00:33Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-02T13:00:36Z"
+    },
+    "message": "tests: remove unused image fixture\n\ncloses #2091"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/5c3852b91c17fa66d25527045f49aa6f50ee7e41"
+  },
+  {
+   "sha": "be997fd654243a8633aa059343665cf2c88fe609",
+   "commit": {
+    "author": {
+     "name": "Alberto Leal",
+     "date": "2014-05-02T18:33:09Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-02T19:01:19Z"
+    },
+    "message": "Keep previous Content-Type for res.jsonp\n\ncloses #2094"
+   },
+   "author": null,
+   "html_url": "https://github.com/expressjs/express/commit/be997fd654243a8633aa059343665cf2c88fe609"
+  },
+  {
+   "sha": "0408e3727e15b89827ab2e4bdeeca1afc08550ca",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-02T21:02:28Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-02T21:02:28Z"
+    },
+    "message": "deps: debug@^0.8.0"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/0408e3727e15b89827ab2e4bdeeca1afc08550ca"
+  },
+  {
+   "sha": "f92ba6d0cf3773c8ce5e4f36177a0dd805fd8d72",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-05T04:35:43Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-05T04:35:43Z"
+    },
+    "message": "update connect to 2.15.0"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/f92ba6d0cf3773c8ce5e4f36177a0dd805fd8d72"
+  },
+  {
+   "sha": "0d468cbe6cf64598cb82a6ad193c58bd522dbfa3",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-05T04:42:30Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-05T04:42:50Z"
+    },
+    "message": "update history"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/0d468cbe6cf64598cb82a6ad193c58bd522dbfa3"
+  },
+  {
+   "sha": "c99fa6a19268e87b300c1775f90814a23095f199",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-07T18:07:59Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-07T18:08:08Z"
+    },
+    "message": "Fix req.host for IPv6 literals\n\nfixes #2102"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/c99fa6a19268e87b300c1775f90814a23095f199"
+  },
+  {
+   "sha": "fed0d5df5c72fea3fb4a7344f11484e14a98052b",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T02:57:05Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T02:57:05Z"
+    },
+    "message": "docs: use SVG badges"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/fed0d5df5c72fea3fb4a7344f11484e14a98052b"
+  },
+  {
+   "sha": "35757ed1f59c5544b93e47f803e7bd80b6ed61db",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T02:58:16Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T02:59:12Z"
+    },
+    "message": "docs: add NPM badge"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/35757ed1f59c5544b93e47f803e7bd80b6ed61db"
+  },
+  {
+   "sha": "4b646c2f8dd8cb9b9b97c55b86b962a245e9aab4",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T03:08:55Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T03:08:55Z"
+    },
+    "message": "docs: update core contributors"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/4b646c2f8dd8cb9b9b97c55b86b962a245e9aab4"
+  },
+  {
+   "sha": "d58ca520c8d30f65bb506dbd84009c405bd444e4",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T17:42:19Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T17:42:19Z"
+    },
+    "message": "Fix res.jsonp error if callback param is object\n\nfixes #2104"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/d58ca520c8d30f65bb506dbd84009c405bd444e4"
+  },
+  {
+   "sha": "dc31ea34b858f94b79690573db3f2fd632074a94",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T17:51:26Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T17:51:26Z"
+    },
+    "message": "3.5.3"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/dc31ea34b858f94b79690573db3f2fd632074a94"
+  },
+  {
+   "sha": "66b38b58bc17d6b6642ab3e91f12194ed9a27efe",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T17:55:00Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T17:55:00Z"
+    },
+    "message": "Merge branch '3.5.x' into 3.x"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/66b38b58bc17d6b6642ab3e91f12194ed9a27efe"
+  },
+  {
+   "sha": "2901bd6916f90accfcf0f1ae1ae3acf48de61038",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T18:01:02Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T18:01:02Z"
+    },
+    "message": "Merge branch '3.5.x' into 4.1.x"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/2901bd6916f90accfcf0f1ae1ae3acf48de61038"
+  },
+  {
+   "sha": "92d37671c52d89b37d1546677ad4f48b9bdaab42",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T18:42:44Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T18:42:44Z"
+    },
+    "message": "4.1.2"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/92d37671c52d89b37d1546677ad4f48b9bdaab42"
+  },
+  {
+   "sha": "0bbbc849593476764cae46f335f96b4894f8c7cc",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T18:45:47Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T18:45:47Z"
+    },
+    "message": "Merge branch '4.1.x'"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/0bbbc849593476764cae46f335f96b4894f8c7cc"
+  },
+  {
+   "sha": "165578a1dad1959b51453bd32ddb5d50bae3e382",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T18:48:24Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T18:48:24Z"
+    },
+    "message": "update history"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/165578a1dad1959b51453bd32ddb5d50bae3e382"
+  },
+  {
+   "sha": "555ffe37b290d4e9bb010f28417b9eb560f50201",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T18:57:44Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T18:57:44Z"
+    },
+    "message": "update history with dep history"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/555ffe37b290d4e9bb010f28417b9eb560f50201"
+  },
+  {
+   "sha": "17a739e35f0893a70bba9d06d98dc0bdf447d363",
+   "commit": {
+    "author": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T20:25:06Z"
+    },
+    "committer": {
+     "name": "Douglas Christopher Wilson",
+     "date": "2014-05-08T20:25:06Z"
+    },
+    "message": "update mkdirp to 0.5.0"
+   },
+   "author": {
+    "login": "dougwilson"
+   },
+   "html_url": "https://github.com/expressjs/express/commit/17a739e35f0893a70bba9d06d98dc0bdf447d363"
+  }
+ ],
+ "files": [
+  {
+   "filename": ".editorconfig",
+   "status": "added",
+   "additions": 11,
+   "deletions": 0,
+   "changes": 11
+  },
+  {
+   "filename": ".eslintignore",
+   "status": "added",
+   "additions": 2,
+   "deletions": 0,
+   "changes": 2
+  }
+ ]
+}

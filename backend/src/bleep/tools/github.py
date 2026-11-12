@@ -24,6 +24,7 @@ from bleep.guard.redact import redact_text
 from bleep.guard.sanitize import MAX_CHARS, strip_control
 from bleep.guard.untrusted import escape_untrusted
 from bleep.hosts.github import (
+    MAX_PER_PAGE,
     GithubClient,
     GithubError,
     GithubUnavailable,
@@ -41,6 +42,7 @@ Clock = Callable[[], datetime]
 
 COMMITS = 20  # asked for per call; the newest that fit are shown
 MAX_SKIP = 100_000
+MIN_ASKED = 30  # about the fewest commits a part of a deploy's list shows (240-character titles)
 UP_TO = 30  # commits asked for up to the running one when the deploy before it is unknown
 TITLE_CHARS = 240  # of one commit's line in a deploy's list: its message's first line only
 MESSAGE_CHARS = 600  # of one commit's message in the list
@@ -78,8 +80,10 @@ DEPLOYED_COMMITS = (
     "with commit_diff. When Bleep cannot tell which commit runs, it says so; use recent_commits "
     "then. It shows as many commits as fit and says how many older ones it left out, and the "
     "`skip` to read them: `skip` is how many of the newest commits to skip, so skip=80 lists "
-    "the commits after the 80 newest. Read every part before ruling a commit out; the oldest "
-    "commits of a long deploy are in the last part." + UNTRUSTED
+    "the commits after the 80 newest. The oldest commits of a long deploy are in its last "
+    "part. Read a further part only when the commits shown do not explain the failure and the "
+    "evidence points at an older change (what the error names, a file, a setting): each part "
+    "costs a tool call and a GitHub request, so do not read a long deploy to its end." + UNTRUSTED
 )
 RECENT_COMMITS = (
     "List the latest commits to this service's GitHub repo in a time window, newest first: short "
@@ -247,6 +251,15 @@ def describe_commits(repo: str, since_hours: int, path: str | None, commits: lis
     elif len(commits) >= COMMITS:
         lines.append(f"(only the newest {COMMITS} were asked for; narrow since_hours or path)")
     return "\n".join(lines)
+
+
+def part_size(last_shown: int) -> int:
+    """How many commits to read for the next part of a deploy: half as many again as the part
+    before showed (the `skip` it named is that part's end less the one before's), so a page holds
+    little more than fits; a whole page when that is not known."""
+    if last_shown <= 0:
+        return MAX_PER_PAGE
+    return min(MAX_PER_PAGE, max(MIN_ASKED, last_shown * 3 // 2))
 
 
 def _title_line(c: Commit) -> str:
@@ -574,6 +587,8 @@ def github_specs(
     `deploys` says which commit a service runs, when a deploy tool Bleep reads deployed it."""
 
     def deployed_tool(ctx: ToolContext) -> StructuredTool:
+        read_to: dict[tuple[str, str], int] = {}  # per deploy, the `skip` of the last part
+
         async def run(repo: str, skip: int = 0) -> str:
             service = ctx.registry.service(ctx.service_id) if ctx.service_id else None
             if service is None:
@@ -584,8 +599,11 @@ def github_specs(
             try:
                 if running.previous:
                     if skip:
+                        key = (repo, running.sha + running.previous)
+                        count = part_size(skip - read_to.get(key, 0))
+                        read_to[key] = skip
                         comparison = await client.compare_older(
-                            repo, running.previous, running.sha, skip
+                            repo, running.previous, running.sha, skip, count
                         )
                     else:
                         comparison = await client.compare(repo, running.previous, running.sha)

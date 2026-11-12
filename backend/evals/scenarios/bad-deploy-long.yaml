@@ -3,10 +3,10 @@
 # price_cents is the oldest of the deploy: more than 250 commits from the newest, so GitHub's
 # unpaged compare does not list it, and older than the widest window (720 hours) recent_commits
 # reads, so no recent_commits call finds it either. Only deployed_commits with the skip its cut
-# note names reaches it, in about four calls (the fixture is built by evals/long_deploy.py; the
-# harness hands the deploy in as Coolify's, as for bad-deploy-old). The run's tool calls show
-# whether it did: a pass with no deployed_commits call with skip set did not read the cause's
-# title from the tool.
+# note names reaches it, in 3 calls: the first, then skip=112 and skip=206 (the fixture is built
+# by evals/long_deploy.py; the harness hands the deploy in as Coolify's, as for bad-deploy-old).
+# The run's tool calls show whether it did: a pass with no deployed_commits call with skip set did
+# not read the cause's title from the tool.
 id: bad-deploy-long
 fault: bad-deploy
 subject:

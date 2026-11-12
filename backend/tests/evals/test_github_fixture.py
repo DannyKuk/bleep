@@ -6,7 +6,13 @@ import pytest
 
 from bleep.hosts.github import NotFound
 from bleep.schemas.services import Service
-from bleep.tools.github import COMMITS, describe_commits, describe_deploy, describe_diff
+from bleep.tools.github import (
+    COMMITS,
+    describe_commits,
+    describe_deploy,
+    describe_diff,
+    part_size,
+)
 from evals import long_deploy
 from evals.github import (
     FIXTURES_DIR,
@@ -245,12 +251,16 @@ async def test_following_the_notes_skip_reaches_the_cause_in_the_last_part():
     unpaged = await github.compare(REPO, running.previous, running.sha)
     parts = [describe_deploy(REPO, running, unpaged)]
 
+    skips = [0]
     while match := re.search(r"with skip=(\d+) for them\)", parts[-1]):
-        older = await github.compare_older(REPO, running.previous, running.sha, int(match[1]))
-        parts.append(describe_deploy(REPO, running, older, skip=int(match[1])))
+        skip = int(match[1])
+        count = part_size(skip - skips[-1])  # as the tool asks for it
+        older = await github.compare_older(REPO, running.previous, running.sha, skip, count)
+        parts.append(describe_deploy(REPO, running, older, skip=skip))
+        skips.append(skip)
 
     shas = [sha for part in parts for sha in re.findall(r"^- ([0-9a-f]{7}) ", part, re.M)]
     assert len(shas) == 300 and len(set(shas)) == 300  # the whole deploy, no gap, no repeat
-    assert 3 <= len(parts) <= 6
+    assert skips == [0, 112, 206]  # three deployed_commits calls read the whole deploy
     assert "whole cents" in parts[-1] and "whole cents" not in "".join(parts[:-1])
     assert shas[0] == "d9f9be1" and shas[-1] == "3350063"

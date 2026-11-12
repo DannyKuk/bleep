@@ -973,6 +973,51 @@ async def test_a_rollback_with_skip_still_says_it_brought_no_commits(registry):
     assert "this deploy went back (a rollback) and brought no new commits" in out
 
 
+async def test_a_diverged_deploy_read_with_skip_says_what_it_left_out(registry):
+    compare = long_deploy(400)
+    compare.status, compare.behind_by = "diverged", 2
+
+    out = await deployed(registry, compare, COOLIFY, skip=100)
+
+    assert out.splitlines()[2] == (
+        "The deploy before it ran commit 80960fa; this deploy brought 400 commits and left out"
+        " 2 commits that one ran (the branches diverged). The 100 newest are skipped; these are"
+        " the next ones, newest first:"
+    )
+    assert out.splitlines()[3].startswith("- 000012b ")  # commit 299, the 101st newest
+    assert next_skip(out) is not None
+
+
+async def test_a_long_deploy_costs_one_request_per_part_after_the_first(registry):
+    compare = long_deploy(1371)
+    tool = build(registry, compare, deploys=Deploys(COOLIFY))["deployed_commits"]  # one client
+    skip, parts = 0, 0
+
+    while skip is not None:
+        out = await tool.ainvoke({"skip": skip} if skip else {})
+        skip, parts = next_skip(out), parts + 1
+
+    assert [r.url.params.get("page") for r in compare.requests[:1]] == [None]  # unpaged first
+    assert len(compare.requests) == parts  # the total came with the first, then a page per part
+
+
+async def test_a_part_of_long_titles_is_read_from_a_page_of_about_what_the_last_one_showed(
+    registry,
+):
+    compare = long_deploy(1371, lambda i: f"Change number {i} " + "<b>long & loud</b> title " * 12)
+    tool = build(registry, compare, deploys=Deploys(COOLIFY))["deployed_commits"]
+    skip, shown = 0, []
+
+    while skip is not None:
+        out = await tool.ainvoke({"skip": skip} if skip else {})
+        shown.append(len(listed(out)))
+        skip = next_skip(out)
+
+    sizes = [int(r.url.params["per_page"]) for r in compare.requests[1:]]
+    assert len(shown) == 48 and shown[:3] == [30, 29, 29]  # about 29 titles fit the output
+    assert max(sizes) <= 70 and len(compare.requests) == len(shown)  # one page of ~50, not 100
+
+
 async def test_skip_below_zero_is_refused_before_github_is_asked(registry, github):
     out = await deployed(registry, github, COOLIFY, skip=-1)
 
@@ -994,4 +1039,5 @@ def test_the_description_and_schema_name_skip():
     tool = spec.build(ctx)
 
     assert "skip" in tool.description and "oldest commits of a long deploy" in tool.description
+    assert "do not read a long deploy to its end" in tool.description
     assert set(tool.args) == {"skip"}
