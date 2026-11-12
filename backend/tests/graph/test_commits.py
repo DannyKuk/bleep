@@ -197,6 +197,22 @@ def test_a_text_left_with_nothing_else_is_empty_for_the_callers_fallback(text):
 
 
 @pytest.mark.parametrize(
+    "cue",
+    ["commit id", "commit ID:", "Commit-ID", "Commit ID", "commit-id:", "commit hash"]
+    + ["Commit-Hash:", "commit sha", "commit-sha", "sha", "hash:", "SHA"],
+)
+def test_a_cue_written_with_a_space_or_a_hyphen_marks_a_long_sha(cue):
+    assert drop_unread(f"{cue} 9c0ffee1a2 broke it", READ) == (f"{cue} broke it", 1)
+    assert drop_unread(f"{cue} 3f204d3 broke it", READ) == (f"{cue} 3f204d3 broke it", 0)
+    assert drop_unread(f"{cue} 3f204d3a9c broke it", READ) == (f"{cue} 3f204d3 broke it", 0)
+
+
+@pytest.mark.parametrize("text", ["The commit ID 9c0ffee1.", "Commit-ID: 9c0ffee1a2"])
+def test_a_text_left_with_only_a_commit_id_is_empty(text):
+    assert drop_unread(text, READ) == ("", 1)
+
+
+@pytest.mark.parametrize(
     ("opens", "closes"),
     [("„", "“"), ("„", "”"), ("‚", "‘"), ("‚", "’"), ("“", "”"), ("‘", "’")]
     + [("«", "»"), ("»", "«"), ("‹", "›"), ("›", "‹")],

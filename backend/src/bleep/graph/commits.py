@@ -50,10 +50,10 @@ _PAIRS = {
     "›": "‹",
 }
 # Words that say the hex word after them is a commit: "commit 1234567", "Commit-Hash 9c0ffee1",
-# "sha 1234567", "Revert 3f204d3", "Commit „9c0ffee1“"; a space, a colon or an opening mark
-# may stand between them.
+# "commit ID: 9c0ffee1", "sha 1234567", "Revert 3f204d3", "Commit „9c0ffee1“"; a space, a colon
+# or an opening mark may stand between them.
 _CUE = re.compile(
-    r"\b(?:commits?|sha|hash|revert(?:s|ed)?)(?:-(?:hash|sha|id))?"
+    r"\b(?:commits?|sha|hash|revert(?:s|ed)?)(?:[-\s](?:hash|sha|id))?"
     rf"[\s:{re.escape(''.join(_PAIRS))}]{{1,3}}\Z",
     re.IGNORECASE,
 )
@@ -61,7 +61,7 @@ CUE_ROOM = 24  # characters before a hex word where its cue is looked for
 SHORT_SHA = 7  # the GitHub tools write the first 7 characters of a sha
 _ENDS_CLAUSE = " ,.;:!?)"
 # Words that say nothing once the sha after them is gone: the cues and the articles.
-_EMPTY_WORDS = {"commit", "commits", "sha", "hash", "revert", "reverts", "reverted"}
+_EMPTY_WORDS = {"commit", "commits", "sha", "hash", "id", "revert", "reverts", "reverted"}
 _EMPTY_WORDS |= {"a", "an", "the", "der", "die", "das", "ein", "eine", "einen"}
 _WORD = re.compile(r"[^\W\d_]+")
 
