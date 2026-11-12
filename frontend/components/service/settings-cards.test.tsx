@@ -6,6 +6,7 @@ import {
   CheckedUrls,
   ExpectedExits,
   FollowedRules,
+  notYetChecked,
   ProtectedContainers,
   settingsKey,
   withService,
@@ -106,5 +107,24 @@ describe("the service's settings cards in German", () => {
     expect(
       screen.getByText("Regel hinzufügen, zum Beispiel: die Datenbank tagsüber nie neu starten"),
     ).toBeInTheDocument();
+  });
+});
+
+describe("notYetChecked", () => {
+  const check = (url: string) => ({ url, expect_status: 200, body_contains: null });
+
+  it("leaves out a suggestion the service has, by scheme and host in any case and no final slash", () => {
+    const had = [check("HTTPS://Shop.Example.com/health/")];
+    expect(notYetChecked([check("https://shop.example.com/health")], had)).toEqual([]);
+  });
+
+  it("keeps a suggestion whose path differs only in case, as the backend does", () => {
+    const had = [check("https://shop.example.com/Health")];
+    const offered = [check("https://shop.example.com/health")];
+    expect(notYetChecked(offered, had)).toEqual(offered);
+  });
+
+  it("offers nothing for an answer that is not a list", () => {
+    expect(notYetChecked({ service: {} }, [])).toEqual([]);
   });
 });

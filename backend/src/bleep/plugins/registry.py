@@ -21,16 +21,19 @@ from bleep.guard.log import GuardLogger
 from bleep.guard.plan_check import KNOWN_ACTIONS
 from bleep.guard.redact import REDACTED, redact_text
 from bleep.guard.secret_fields import is_secret_field
+from bleep.hosts.config import UrlCheckConfig
 from bleep.plugins import urls
 from bleep.plugins.base import Plugin, PluginContext
 from bleep.plugins.urls import Resolver, UrlRefused, check_dashboard_url
 from bleep.schemas.plugins import PluginHealth, PluginSecret, PluginView
 from bleep.schemas.refusal import Reasons, Templated
+from bleep.schemas.services import Service
 from bleep.tools.registry import ActHandler, ToolSpec, check_kind
 
 log = logging.getLogger(__name__)
 
 HEALTH_TIMEOUT_S = 5.0
+SUGGEST_TIMEOUT_S = 10.0  # of one plugin's suggested checks, read when a service page opens
 # No `_` in a name, so one plugin's tool prefix (`a_`) is never inside another's (`a_b_`), and
 # never `docker`, the core actions' namespace.
 _PLUGIN_NAME = re.compile(r"[a-z][a-z0-9]{0,31}")
@@ -160,6 +163,20 @@ class PluginRegistry:
         return next(
             (a.handlers[action] for a in self._active.values() if action in a.handlers), None
         )
+
+    async def suggested_checks(self, service: Service) -> list[UrlCheckConfig]:
+        """The URL checks the switched-on plugins suggest for `service` (#348). A plugin that
+        fails or takes longer than `SUGGEST_TIMEOUT_S` suggests none: an offer is never worth a
+        broken service page."""
+        found: list[UrlCheckConfig] = []
+        for name, active in list(self._active.items()):
+            plugin = self._plugins[name]
+            try:
+                checks = plugin.suggested_checks(active.ctx, service)
+                found += await asyncio.wait_for(checks, SUGGEST_TIMEOUT_S)
+            except Exception as error:  # the plugin's text could quote a secret: its type only
+                log.warning("plugin %s suggested no checks: %s", name, type(error).__name__)
+        return found
 
     async def view(self, name: str, *, version: str, switched_on: bool | None = None) -> PluginView:
         """What the API shows: settings and which secrets are set, never a secret's value.

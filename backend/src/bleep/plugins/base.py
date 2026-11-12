@@ -14,8 +14,10 @@ from typing import ClassVar
 from pydantic import BaseModel, SecretStr
 
 from bleep.guard.log import GuardLogger
+from bleep.hosts.config import UrlCheckConfig
 from bleep.plugins.urls import Resolver
 from bleep.schemas.plugins import PluginHealth
+from bleep.schemas.services import Service
 from bleep.tools.registry import ActHandler, ToolSpec
 
 
@@ -62,6 +64,11 @@ class Plugin(ABC):
     def act_handlers(self, ctx: PluginContext) -> dict[str, ActHandler]:
         """The actions the plugin can run for an approved plan, by action name."""
         return {}
+
+    async def suggested_checks(self, ctx: PluginContext, service: Service) -> list[UrlCheckConfig]:
+        """URL checks the plugin's own records suggest for `service`, without those it has. They
+        are only offered on the service's page; nothing is checked until a person adds them."""
+        return []
 
     @abstractmethod
     async def health(self, ctx: PluginContext) -> PluginHealth:
