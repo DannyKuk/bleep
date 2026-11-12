@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 API = "https://api.github.com"
 API_VERSION = "2022-11-28"
 TIMEOUT_S = 10.0
+DEFAULT_TOKEN_NAME = "GITHUB_TOKEN"
 MAX_PER_PAGE = 100
 # Folders `list_files` opens, one request each, so a deep tree cannot spend the rate limit.
 MAX_FOLDERS = 30
@@ -133,6 +134,16 @@ def github_token(config: GithubConfig | None) -> SecretStr | None:
     return token if token.get_secret_value() else None
 
 
+def github_token_name(config: GithubConfig | None) -> str:
+    """How the model is told which token is meant: the variable's name, or the hosts file's token
+    file. Never the token's value or the file's path or content."""
+    if config is None:
+        return DEFAULT_TOKEN_NAME
+    if config.token.env is not None:
+        return config.token.env
+    return "the token file named in the hosts file"
+
+
 def check_repo(repo: str) -> None:
     if not REPO_NAME.fullmatch(repo):
         raise GithubError(f"{repo!r} is not a GitHub repo name (owner/name)")
@@ -205,7 +216,9 @@ class GithubClient:
         transport: httpx.AsyncBaseTransport | None = None,
         base_url: str = API,
         timeout_s: float = TIMEOUT_S,
+        token_name: str = DEFAULT_TOKEN_NAME,
     ) -> None:
+        self.token_name = token_name
         # A callable is read at every request, so a token changed on the dashboard is used next.
         self._token_source = token if callable(token) else lambda: token
         self._transport = transport

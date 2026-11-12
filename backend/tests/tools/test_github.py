@@ -5,11 +5,12 @@ from pathlib import Path
 
 import httpx
 import pytest
+from pydantic import SecretStr
 
 import bleep.tools.github as github_tools
 from bleep.guard.pipeline import guard_text
-from bleep.hosts.config import ServiceOverrides
-from bleep.hosts.github import GithubClient
+from bleep.hosts.config import GithubConfig, SecretRef, ServiceOverrides
+from bleep.hosts.github import GithubClient, github_token, github_token_name
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.github import Commit, CommitDetail, FileChange
@@ -290,6 +291,77 @@ async def test_a_refused_token_names_github_token_and_lets_the_model_go_on(
         " Go on without the repo."
     )
     assert "Bad credentials" not in out and "docs.github.com" not in out  # GitHub's words stay out
+
+
+def named_client(github, name: str) -> GithubClient:
+    return GithubClient(None, transport=httpx.MockTransport(github), token_name=name)
+
+
+def build_with(registry, client):
+    ctx = ToolContext("inc-1", "a", registry, GuardLog(), service_id="a/compose:shop")
+    return {s.name: s.build(ctx) for s in github_specs(client, lambda: NOW)}
+
+
+@pytest.mark.parametrize(
+    "name", ["GITHUB_TOKEN", "SHOP_GH_TOKEN", "the token file named in the hosts file"]
+)
+async def test_all_three_failures_name_the_token_as_configured(registry, github, name):
+    client = named_client(github, name)
+    reset = int(datetime(2024, 12, 1, 12, 40, tzinfo=UTC).timestamp())
+    answers = {
+        "refused": httpx.Response(401, json=fixture("unauthorized.json")),
+        "limit": httpx.Response(
+            403,
+            json=fixture("rate-limited.json"),
+            headers={"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(reset)},
+        ),
+        "private": httpx.Response(404, json=fixture("not-found.json")),
+    }
+    for response in answers.values():
+        github.override = response
+        out = await build_with(registry, client)["recent_commits"].ainvoke({})
+        assert f"({name})" in out
+        others = {"GITHUB_TOKEN", "SHOP_GH_TOKEN"} - {name}
+        assert not any(other in out for other in others)
+
+
+def test_the_name_comes_from_the_hosts_file_and_never_shows_the_secret(tmp_path):
+    secret_file = tmp_path / "gh-secret"
+    secret_file.write_text("ghp_" + "s" * 36)
+    named = github_token_name(GithubConfig(token=SecretRef(env="SHOP_GH_TOKEN")))
+    from_file = github_token_name(GithubConfig(token=SecretRef(file=secret_file)))
+    assert named == "SHOP_GH_TOKEN"
+    assert from_file == "the token file named in the hosts file"
+    assert github_token_name(None) == "GITHUB_TOKEN"
+    assert str(tmp_path) not in from_file and "ghp_" not in from_file
+
+
+async def test_a_refused_token_never_puts_its_value_in_the_sentence(registry, github):
+    token = "ghp_" + "v" * 36
+    github.override = httpx.Response(401, json=fixture("unauthorized.json"))
+    client = GithubClient(
+        SecretStr(token), transport=httpx.MockTransport(github), token_name="SHOP_GH_TOKEN"
+    )
+    out = await build_with(registry, client)["commit_diff"].ainvoke({"sha": SMALL})
+    assert "(SHOP_GH_TOKEN)" in out and token not in out
+
+
+async def test_a_token_read_from_a_file_never_reaches_the_model_nor_does_its_path(
+    registry, github, tmp_path
+):
+    secret = "ghp_" + "f" * 36
+    token_file = tmp_path / "gh-secret-file"
+    token_file.write_text(secret + "\n", encoding="utf-8")
+    config = GithubConfig(token=SecretRef(file=token_file))
+    client = GithubClient(
+        github_token(config),
+        transport=httpx.MockTransport(github),
+        token_name=github_token_name(config),
+    )
+    github.override = httpx.Response(401, json=fixture("unauthorized.json"))
+    out = await build_with(registry, client)["recent_commits"].ainvoke({})
+    assert "(the token file named in the hosts file)" in out
+    assert secret not in out and str(token_file) not in out and token_file.name not in out
 
 
 async def test_github_down_is_a_readable_result(registry, github):
