@@ -253,7 +253,7 @@ def _shell_words(
     limit: int | None = None,
     closers: _Closers | None = None,
     to_the_end: bool = False,
-    in_single: bool = False,
+    around: Callable[[str], bool] | None = None,
 ) -> tuple[list[tuple[int, int]], int | None]:
     """The words of a shell command from `start`, and where an unclosed quote opens, if one does.
 
@@ -265,18 +265,27 @@ def _shell_words(
     In free text (`free`, a log line) a quote nothing closes is an ordinary character of its word
     and the words go on; the place returned is the first such quote. A quote or backtick right
     after a word and before a blank, a comma, a colon, a full stop or a closing bracket ends the
-    word: it closes a string or a code span the command sits in. An escaped quote (`\\"`, or
-    `\\\\\\"` escaped twice: any run of backslashes and a quote, also `\\u0022`) is a quote as
-    well, closed by a run of at least its width (`_closes_escaped`), as logfmt escapes every
-    quote and backslash in a value. `in_single`, for a command in a string a level that quotes
-    with `'` opened (`_in_single_quotes`), reads a `"` under that level as well.
+    word when it closes a string or a code span the command sits in: when `around` says the same
+    quote opened a string before the command (`_Openers`), or it is a backtick; any other quote
+    in a word opens a quoted part of it, as in a shell (`x" s3cret"`, `'a'"'"' b'`). An escaped
+    quote (`\\"`, or `\\\\\\"` escaped twice: any run of backslashes and a quote, also `\\u0022`)
+    is a quote as well, closed by a run of at least its width (`_closes_escaped`), as logfmt
+    escapes every quote and backslash in a value. In a string that a `'` opened, `"` is read
+    under one more level, that of single-quoted logfmt or `repr`.
     `first_only` stops after the first word, `limit` is where the text ends, and `closers` may
     be shared by calls that read on to the same `limit` from later and later places. A reading
     `to_the_end` of the line reads an escaped quote nothing closes at its full width as escaped
     backslashes and the quote after them (`_Closers.backslashes_end`), and a `"` nothing closes
-    under the level of `in_single` as it reads without it, as a reading in pieces cannot tell
-    that nothing closes it.
+    under that level as it reads without it, as a reading in pieces cannot tell that nothing
+    closes it.
     """
+    single: list[bool] = []
+
+    def in_single() -> bool:
+        if not single:  # looked up once, and only when a quote asks
+            single.append(around is not None and around("'"))
+        return single[0]
+
     words, at = [], start
     closers = _Closers() if closers is None else closers
     end = len(text) if limit is None else limit
@@ -294,10 +303,10 @@ def _shell_words(
                 continue
             if free and (escaped := _ESCAPED_QUOTE.match(text, at, end)):
                 length = escaped.end() - at
-                if _closes_string(text, first, at, end, length):
+                if _closes_string(text, first, at, end, length, around):
                     break
-                closed = closers.escaped_end(text, at, length, end, levels=in_single)
-                if closed < 0 and to_the_end and in_single:
+                closed = closers.escaped_end(text, at, length, end, levels=in_single())
+                if closed < 0 and to_the_end and in_single():
                     closed = closers.escaped_end(text, at, length, end)
                 if closed < 0 and to_the_end:
                     quote, size = _innermost_quote(text, at, length)
@@ -305,7 +314,7 @@ def _shell_words(
                         at += length
                         continue
                     # an odd run as an escaped backslash and the quote of the string around it
-                    if size == 1 and _closes_string(text, first, quote, end):
+                    if size == 1 and _closes_string(text, first, quote, end, 1, around):
                         at = quote
                         break
                     closed = closers.backslashes_end(text, quote, size, end)
@@ -313,12 +322,12 @@ def _shell_words(
                     unclosed = at if unclosed is None else unclosed
                 at = closed if closed >= 0 else at + length
                 continue
-            if free and _closes_string(text, first, at, end):
+            if free and _closes_string(text, first, at, end, 1, around):
                 break
             if text[at] == "`":
                 at += 1
                 continue
-            if free and in_single and text[at] == '"':
+            if free and text[at] == '"' and in_single():
                 closed = closers.escaped_end(text, at, 1, end, levels=1)
                 if closed < 0 and to_the_end:
                     closed = _quote_end(text, at, closers.no_closer, end)
@@ -341,14 +350,23 @@ def _shell_words(
     return words, unclosed
 
 
-def _closes_string(text: str, first: int, at: int, end: int, width: int = 1) -> bool:
+def _closes_string(
+    text: str,
+    first: int,
+    at: int,
+    end: int,
+    width: int = 1,
+    around: Callable[[str], bool] | None = None,
+) -> bool:
     """Whether the quote at `at` (`width` characters, more for an escaped one), in the word from
     `first`, closes a string the command sits in: it follows the word and comes before a blank
-    or punctuation, and does not open a password right after its flag or its user (`-p'.pw'`,
-    `bob:',pw'`)."""
+    or punctuation, does not open a password right after its flag or its user (`-p'.pw'`,
+    `bob:',pw'`), and is a backtick or a quote that `around` says opened a string before."""
     if at == first or text[at - 1] in ":=" or _SHORT_FLAG.fullmatch(text, first, at):
         return False
-    return _AFTER_STRING.match(text, at + width, end) is not None
+    if _AFTER_STRING.match(text, at + width, end) is None:
+        return False
+    return around is None or text[at] == "`" or around(text[at : at + width])
 
 
 def _json_items(text: str, start: int) -> list[tuple[int, int]]:
@@ -396,10 +414,11 @@ def _opening_quote(word: str) -> tuple[str, int]:
     characters it and its repeats take; none and 0 when it opens with no quote, or with one whose
     width is no power of two (`\\\\"`), which escaped backslashes may lead."""
     found = _OPENING_QUOTE.match(word)
-    width = _quote_kind(found.group(1))[1] if found else 0
-    if not found or width & (width - 1):
+    if not found:
         return "", 0
-    return found.group(1), found.end()
+    quote = found.group(1)
+    width = len(quote) if quote[-1] in "\"'" else _quote_kind(quote)[1]
+    return ("", 0) if width & (width - 1) else (quote, found.end())
 
 
 def _user_password_part(word: str, skip: int) -> Edit | None:
@@ -556,20 +575,21 @@ def _free_edits(
     name's word as its value (`redis-cli -a mongo`). A password word that runs on past the next
     name, or holds a quote the piece does not close (`-a 'pass with curl inside'`, `-p'mysql'`),
     is read again whole, to the limit, and the names inside it are no pieces; when nothing closes
-    its quote even there it is hidden to the limit. A name in a string that opens with `'`, from
-    `start` on, has its `"` read under one more level (`_in_single_quotes`)."""
+    its quote even there it is hidden to the limit. The quotes that open a string before each
+    name, from `start` on, are the ones that may close a string around it (`_Openers`)."""
     limits = [end] * len(names) if limits is None else limits
     edits: list[Edit] = []
     closers: dict[int, _Closers] = {}
-    singles = [found.start() for found in _RAW_SINGLE.finditer(text, start, end)]
-    name, pending, read_from, limit, index, in_single = "", None, -1, end, 0, False
+    openers = _Openers(text, start, end)
+    name, pending, read_from, limit, index = "", None, -1, end, 0
+    around = openers.before(start)
     while index < len(names):
         if read_from < 0:
             if not read[index]:
                 index += 1
                 continue
             read_from, limit, pending = names[index][1], limits[index], None
-            in_single = _in_single_quotes(text, start, names[index][0], singles)
+            around = openers.before(names[index][0])
             name = text[names[index][0] : read_from]
             if text[read_from : read_from + 1] in ("'", '"'):  # the name was an item of a list
                 items = _list_items(text, read_from + 1, limit)
@@ -580,7 +600,7 @@ def _free_edits(
                     continue
         cut = _next_name(names, index, read_from)
         stop = min(names[cut][0] if cut < len(names) else end, limit)
-        spans, unclosed = _shell_words(text, read_from, True, limit=stop, in_single=in_single)
+        spans, unclosed = _shell_words(text, read_from, True, limit=stop, around=around)
         words = [text[a:b] for a, b in spans]
         slots, after_name, after_pending = _password_slots(words, name, pending)
         run_on = _run_on(spans, slots, after_pending, unclosed, stop, limit)
@@ -589,13 +609,13 @@ def _free_edits(
             index = cut
             if pending := after_pending if stop < limit else None:
                 read_from, name = stop, after_name
-                in_single = _in_single_quotes(text, start, stop, singles)
+                around = openers.before(stop)
             else:
                 index, read_from = _next_name(names, index - 1, stop), -1
             continue
         shared = closers.setdefault(limit, _Closers())
         whole, open_at = _shell_words(
-            text, spans[run_on][0], True, True, limit, shared, True, in_single
+            text, spans[run_on][0], True, True, limit, shared, True, around
         )
         first, last = whole[0]
         spans, words = spans[:run_on] + [(first, last)], words[:run_on] + [text[first:last]]
@@ -614,21 +634,40 @@ def _free_edits(
     return edits
 
 
-# A `'` no backslash escapes, and what may come before one that opens a string (`cmd='…'`)
-_RAW_SINGLE = re.compile(r"(?<!\\)'")
+# What may come before a quote that opens a string (`cmd='…'`, `msg="…"`, `["…"]`)
 _BEFORE_STRING = frozenset(" \t=:([{,")
 
 
-def _in_single_quotes(text: str, start: int, at: int, singles: list[int]) -> bool:
-    """Whether the client's name at `at` sits in a string that a level quoting with `'` opened
-    (`cmd='redis-cli …'` as Python's `repr` writes it, `msg='…'` in single-quoted logfmt): the
-    last `'` no backslash escapes before it, from `start`, opens a string. Such a level escapes
-    every `'` inside, so no other one is left between the two."""
-    index = bisect.bisect_left(singles, at) - 1
-    if index < 0:
-        return False
-    quote = singles[index]
-    return quote == start or text[quote - 1] in _BEFORE_STRING
+class _Openers:
+    """Every quote of a line, a whole run of backslashes and a quote as `_Closers` reads it, by
+    its text, so whether one opened a string before a command is found by one lookup."""
+
+    def __init__(self, text: str, start: int, end: int) -> None:
+        self._text, self._start, self._end = text, start, end
+        self._places: dict[str, list[int]] | None = None
+
+    def _at(self) -> dict[str, list[int]]:
+        if self._places is None:
+            self._places = {}
+            for found in _WHOLE_QUOTE.finditer(self._text, self._start, self._end):
+                self._places.setdefault(found.group(), []).append(found.start())
+        return self._places
+
+    def before(self, at: int) -> Callable[[str], bool]:
+        """Whether a string the quote `run` (`"`, `\\"`, `'`) opens is around a command at `at`:
+        the last such quote before it opens a string, as it follows `=`, `:`, a bracket, a comma,
+        a blank or the line's start (`msg="redis-cli …`, `cmd='redis-cli …`). A level that
+        quotes with that quote escapes every one inside, so no other one lies between."""
+
+        def opened(run: str) -> bool:
+            places = self._at().get(run, [])
+            index = bisect.bisect_left(places, at) - 1
+            if index < 0:
+                return False
+            quote = places[index]
+            return quote == self._start or self._text[quote - 1] in _BEFORE_STRING
+
+        return opened
 
 
 def _run_on(

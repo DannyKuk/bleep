@@ -569,7 +569,7 @@ def test_an_escaped_quote_is_closed_by_a_run_the_shell_would_close_it_with(line,
 @pytest.mark.parametrize(
     ("hide", "line", "expected"),
     [
-        (redact_text, 'msg="redis-cli -a pw\\\\" n=1', 'msg="redis-cli -a <redacted>\\\\" n=1'),
+        (redact_text, 'msg="redis-cli -a pw\\\\" n=1', 'msg="redis-cli -a <redacted>" n=1'),
         (redact_command, 'redis-cli -a \\\\"pw x" ping', "redis-cli -a <redacted> ping"),
         (hide_client_passwords, 'redis-cli -a \\\\"pw x" ping', "redis-cli -a <redacted> ping"),
         (
@@ -587,10 +587,11 @@ def test_an_escaped_quote_is_closed_by_a_run_the_shell_would_close_it_with(line,
 def test_a_run_of_backslashes_and_a_quote_keeps_its_backslashes_around_the_marker(
     hide, line, expected
 ):
-    """What reading a run as one quote changes: a password's trailing backslashes stay after
-    `<redacted>` with the quote they lead; an odd run (`\\\\"`, an escaped backslash and a quote)
-    opens no wide quote, so the word is hidden whole as before; and a wide quote that opens the
-    password is put back after `<redacted>`."""
+    """What reading a run as one quote changes: a password's trailing backslashes before the
+    plain quote that closes the string around the command are hidden with it, as only that quote
+    opened a string before the command (#509); an odd run (`\\\\"`, an escaped backslash and a
+    quote) opens no wide quote, so the word is hidden whole as before; and a wide quote that
+    opens the password is put back after `<redacted>`."""
     out = hide(line)
     assert out == expected
     assert hide(out) == out
@@ -659,6 +660,55 @@ def test_a_password_ending_in_a_backslash_still_ends_at_its_quote(line, expected
     level, and with one that does, a quote nothing closes under that level is closed as before:
     the password `a\\` keeps the words after it."""
     assert _hidden_once(line) == expected
+
+
+MID_WORD_QUOTES = [
+    ('redis-cli -a x" s3cret" ping', "redis-cli -a <redacted> ping"),
+    ("redis-cli -a 'a'\"'\"' s3cret' ping", "redis-cli -a '<redacted>' ping"),
+    ("curl -u bob': s3cret' http://x", "curl -u bob':<redacted> http://x"),
+]
+
+
+@pytest.mark.parametrize(("command", "expected"), MID_WORD_QUOTES)
+@pytest.mark.parametrize("form", ["plain", "json", "logfmt"])
+def test_a_quote_in_the_middle_of_a_password_word_joins_what_it_quotes_to_the_word(
+    command, expected, form
+):
+    """A quote anywhere in a shell word quotes on to its closer, as the shell reads it: only a
+    quote that opened a string before the command closes that string after a word."""
+    if form == "plain":
+        line, kept = command, expected
+    elif form == "json":
+        line, kept = json.dumps({"cmd": command, "n": 1}), json.dumps({"cmd": expected, "n": 1})
+    else:
+        line, kept = _logfmt(command) + " n=1", _logfmt(expected) + " n=1"
+    assert _hidden_once(line) == kept
+    assert redact_command(command) == expected
+
+
+@pytest.mark.parametrize("quote", ['x"', '"'])
+@pytest.mark.parametrize("form", ["plain", "logfmt"])
+def test_an_unclosed_quote_in_the_middle_of_a_password_hides_what_a_leading_one_does(quote, form):
+    command = f"redis-cli -a {quote} s3cret ping"
+    line = command if form == "plain" else _logfmt(command) + " n=1"
+    expected = "redis-cli -a <redacted>" if form == "plain" else 'msg="redis-cli -a <redacted>'
+    assert _hidden_once(line) == expected
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'msg="redis-cli -a pw1234" status=500',
+        "cmd='redis-cli -a pw1234' status=500",
+        'run ["sh", "-c", "redis-cli -a pw1234"] status=500',
+        'msg="msg=\\"redis-cli -a pw1234\\" status=500"',
+        'error: "curl -u bob:pw1234", status=500',
+        'run "curl -u bob:pw1234". status=500',
+    ],
+)
+def test_a_quote_that_opened_a_string_before_the_command_still_closes_it(line):
+    out = _hidden_once(line)
+    assert "pw1234" not in out and "status=500" in out
 
 
 def test_a_closing_quote_put_back_in_a_json_string_keeps_the_json():
@@ -816,6 +866,10 @@ QUOTED_UNITS = [
     'msg="redis-cli -a \\"x curl ',
     'curl -u \\"b:curl \\" ',
     "redis-cli -a \\'curl ",
+    'redis-cli -a x" curl ',
+    "redis-cli -a 'a'\"'\"' curl ",
+    'curl -u bob": mysql ',
+    'msg="redis-cli -a x\\" curl ',
 ]
 
 

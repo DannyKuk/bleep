@@ -22,7 +22,6 @@ PIECES = [*PLAIN_PIECES, "\\", "\\\\", '"']
 PREFIXES = ["", "+ ", "curl -s x && ", "mongo started; ", "echo ok; ", "INFO curl check ", "sh -c "]
 KEEP = "KEEPME"
 CORE = re.compile(r"Zq[0-9]{3}Xw")
-STRING_END = re.compile(rf"[\s,;:.)}}\]]|{'|'.join(NAMES)}")
 SHELL_SPECIAL = set(" '\"\\;`&|(")
 
 
@@ -43,35 +42,39 @@ def _double_quoted(value: str) -> str:
     return '"' + "".join("\\" + c if c in '\\"$`' else c for c in value) + '"'
 
 
-def _quoted(rng: random.Random, value: str, split: bool) -> str:
-    """`value` quoted as a shell would, or, when `split`, also as a double-quoted part and a
-    single-quoted one (`"pw\\\\"'" s3cret'`), cut outside the core. One holding `'` goes in double
-    quotes, as `shlex.quote` would put a quote in the middle of the word (`'a'"'"'b'`), and the
-    single-quoted part never starts with a blank, punctuation or a client's name: a quote there,
-    after a word and before a blank or the next command, is read as the end of a string around
-    the command (docs/design/guard.md)."""
+def _single_quoted(value: str) -> str:
+    """`value` as `shlex.quote` writes it inside single quotes, a `'` in it as `'"'"'`."""
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def _quoted(rng: random.Random, value: str) -> str:
+    """`value` quoted as a shell would: whole in single quotes (`shlex.quote`'s form, with a quote
+    in the middle of the word for a `'`: `'a'"'"' b'`) or double quotes, bare when it needs no
+    quotes, or in parts cut outside the core: a double-quoted part and a single-quoted one
+    (`"pw\\\\"'" s3cret'`), or a bare part and a quoted rest (`x" s3cret"`, `x' s3cret'`)."""
     draw = rng.random()
     core = CORE.search(value)
-    if split and core and draw < 0.2 and "'" not in value:
-        cuts = [*range(1, core.start() + 1), *range(core.end(), len(value))]
-        cuts = [cut for cut in cuts if not STRING_END.match(value, cut)]
-        if cuts:
-            cut = rng.choice(cuts)
-            return _double_quoted(value[:cut]) + f"'{value[cut:]}'"
-    if "'" in value or 0.4 <= draw < 0.7:
+    cuts = [*range(1, core.start() + 1), *range(core.end(), len(value))] if core else []
+    if draw < 0.15 and cuts and "'" not in value:
+        cut = rng.choice(cuts)
+        return _double_quoted(value[:cut]) + f"'{value[cut:]}'"
+    bare_cuts = [cut for cut in cuts if not set(value[:cut]) & SHELL_SPECIAL]
+    if draw < 0.3 and bare_cuts:
+        cut = rng.choice(bare_cuts)
+        quote = _double_quoted if rng.random() < 0.5 else _single_quoted
+        return value[:cut] + quote(value[cut:])
+    if draw < 0.5:
+        return _single_quoted(value)
+    if draw < 0.8 or set(value) & SHELL_SPECIAL:
         return _double_quoted(value)
-    if draw < 0.4:
-        return shlex.quote(value)
-    if not set(value) & SHELL_SPECIAL:
-        return value
-    return shlex.quote(value)
+    return value
 
 
 def _command(rng: random.Random) -> tuple[str, str]:
     """A client's command with a generated password."""
     value, core = _secret(rng, PIECES)
-    quoted = _quoted(rng, value, True)
-    user = _quoted(rng, "bob:" + value, True)
+    quoted = _quoted(rng, value)
+    user = _quoted(rng, "bob:" + value)
     commands = [
         f"redis-cli -h db -a {quoted} ping",
         f"redis-cli --pass {quoted} ping",
