@@ -30,6 +30,10 @@ PREFIXES = [
     "echo 'ok: ' && ",
     'echo "a, " ; ',
     "don't: ",
+    'IFS=":"; ',
+    "IFS=','; ",
+    'X=","; ',
+    'grep -c "a b"; ',
 ]
 KEEP = "KEEPME"
 CORE = re.compile(r"Zq[0-9]{3}Xw")

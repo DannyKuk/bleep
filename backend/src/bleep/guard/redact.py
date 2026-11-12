@@ -116,8 +116,9 @@ _WHOLE_QUOTE = re.compile(rf"(?<!\\)(?:\\*+[\"']|\\++{_U_QUOTE})")
 _OPENING_QUOTE = re.compile(rf"(\\*+[\"']|\\++{_U_QUOTE})\1*+")
 _QUOTE = re.compile(r"[\"']")
 _DOUBLE_QUOTED_END = re.compile(r"(?:[^\"\\]|\\.)*+\"", re.DOTALL)
-# What follows the closing quote of a string a command sits in (`msg="curl -u bob:pw" n=1`)
-_AFTER_STRING = re.compile(r"[\s,;:.)}\]]|\Z")
+# What follows the closing quote of a string a command sits in (`msg="curl -u bob:pw" n=1`), also
+# the quote, `**` or tag of a string around that one (`'"curl -u bob:pw"'`, `"…"</cmd>`)
+_AFTER_STRING = re.compile(r"[\s,;:.)}\]\"'*<]|\Z")
 _SHORT_FLAG = re.compile(r"-[A-Za-z]")
 # What `docker run --name mongo -p` publishes, a port mapping and no password
 _PORT_MAPPING = re.compile(
@@ -234,8 +235,11 @@ class _Closers:
         """`escaped_end` for a quote under the levels that quote with `'` around the command
         (`_Around.levels`), closed before the innermost of their strings ends; when nothing
         closes it there and `fall`, under one level fewer, down to none."""
-        kind = _quote_kind(text[at : at + length])[0]
-        levels, bound = around.levels(kind) if around is not None else (0, limit)
+        if around is None:
+            levels, bound = 0, limit
+        else:
+            last = text[at + length - 1]  # the quote, or the last digit of `u0022`, `u0027`
+            levels, bound = around.levels(last if last in "\"'" else "u" + "\"'"[last == "7"])
         for level in range(levels, -1, -1):
             if level == 0 and length == 1:
                 closed = _quote_end(text, at, self.no_closer, limit)
@@ -646,7 +650,9 @@ def _free_edits(
 
 # What may come before a quote that opens a string (`cmd='…'`, `msg="…"`, `["…"]`), also after
 # a JSON-escaped line break or tab, or a string prefix (Python's `b'…'`)
-_BEFORE_STRING = frozenset(" \t=:([{,")
+_BEFORE_STRING = frozenset(" \t=:([{,\"'$>*")  # also a quote around it, $'…', a redirect, `**`
+_BEFORE_PREFIX = frozenset("=:([{,")
+_APOSTROPHE = re.compile(r"[^\W\d_]'[^\W\d_]")
 _ESCAPED_BREAKS = ("\\n", "\\r", "\\t")
 _STRING_PREFIX = re.compile(r"[bBrRuUfF]{1,2}\Z")
 MAX_LEVEL_QUOTE = 16  # the widest `'` a level that quotes with it is looked for as
@@ -662,30 +668,48 @@ class _Openers:
         self._singles: dict[bool, list[str]] = {}
 
     def places(self) -> dict[str, list[int]]:
+        """Where each quote is, by its text; an apostrophe between two letters (`it's`), unless
+        the letters before it are a string prefix (`b'…'`), is none, so it cannot leave a `'`
+        unpaired."""
         if self._places is None:
             self._places = {}
             for found in _WHOLE_QUOTE.finditer(self.text, self.start, self.end):
-                self._places.setdefault(found.group(), []).append(found.start())
+                quote = found.start()
+                apostrophe = found.group() == "'" and _APOSTROPHE.match(self.text, quote - 1)
+                if apostrophe and self._prefix_start(quote) == quote:
+                    continue
+                self._places.setdefault(found.group(), []).append(quote)
         return self._places
+
+    def _prefix_start(self, quote: int) -> int:
+        """Where the string prefix before the quote at `quote` starts (`b` of `out=b'…'`): one or
+        two of its letters after `=`, `:`, a bracket, a comma or the line's start; or `quote`."""
+        text = self.text
+        prefix = _STRING_PREFIX.search(text, max(self.start, quote - 2), quote)
+        if prefix and (prefix.start() == self.start or text[prefix.start() - 1] in _BEFORE_PREFIX):
+            return prefix.start()
+        return quote
 
     def before(self, at: int) -> _Around:
         return _Around(self, at)
 
     def opens(self, run: str, at: int) -> bool:
-        """Whether the last quote `run` before `at` opens a string: it follows `=`, `:`, a
-        bracket, a comma, a blank, an escaped line break, a string prefix (`b'…'`) or the line's
-        start, and comes before text, not a blank (not the closing quote of `echo 'ok: ' && …`).
-        A level that quotes with that quote escapes every one inside, so none lies between."""
+        """Whether the last quote `run` before `at` opens a string: one such quote is left
+        unpaired before it (`IFS=":"; redis-cli …` has two, the second closing the first), and
+        that one follows `=`, `:`, a bracket, a comma, a blank, a quote, `$` (bash's `$'…'`),
+        `>`, an escaped line break, a string prefix after one of the first five (`b'…'`) or the
+        line's start, and comes before text, not a blank (not the closing quote of
+        `echo 'ok: ' && …`). A level that quotes with that quote escapes every one inside, so none
+        lies between."""
         places = self.places().get(run, [])
         index = bisect.bisect_left(places, at) - 1
-        if index < 0:
+        if index < 0 or index % 2:
             return False
         quote, text = places[index], self.text
         follows = quote + len(run)
         if follows >= len(text) or text[follows].isspace():
             return False
-        prefix = _STRING_PREFIX.search(text, max(self.start, quote - 2), quote)
-        lead = prefix.start() if prefix else quote
+        lead = self._prefix_start(quote)
         return (
             lead == self.start
             or text[lead - 1] in _BEFORE_STRING
