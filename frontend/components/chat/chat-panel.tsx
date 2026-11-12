@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 import { Bleep } from "@/components/bleep/bleep";
+import { useRegisterChatOpener } from "@/components/chat/chat-opener";
 import { useOverall } from "@/components/overall-state";
 import { usePinnedBarSpace } from "@/components/pinned-bar";
 import { ApiError } from "@/lib/api";
@@ -79,7 +80,7 @@ function exportFailure(error: unknown, t: Messages["chat"]): string {
  * with the conversation. It sits in the app layout, so the conversation stays across page
  * changes. Every word Bleep says comes from the backend, which shares the reading and the
  * actions with Telegram but keeps this conversation apart; an action comes back as two buttons
- * and only a press runs it.
+ * and only a press runs it. A page can open it with words already typed (`useAskBleep`).
  */
 export function ChatPanel() {
   const t = useT().chat;
@@ -130,6 +131,13 @@ export function ChatPanel() {
   useEffect(() => {
     if (open) input.current?.focus();
   }, [open]);
+
+  const openWith = useCallback((text: string) => {
+    setDraft(text);
+    setOpen(true);
+    input.current?.focus();
+  }, []);
+  useRegisterChatOpener(openWith);
 
   const add = (turn: NewTurn) =>
     setTurns((all) => [...all, { ...turn, key: nextKey.current++ } as Turn]);

@@ -369,6 +369,7 @@ export const de: Messages = {
     allQuiet: "Alles ruhig",
     noHosts: "Keine Hosts",
     watching: "Unter Beobachtung",
+    yourCall: "Deine Entscheidung",
   },
   counts: {
     hosts: (n) => `${n} Host${n === 1 ? "" : "s"}`,
@@ -433,6 +434,19 @@ export const de: Messages = {
     lookIfOne: "Hält das an, sehe ich ihn mir genauer an.",
     lookIfMany: "Bei jedem, bei dem das anhält, sehe ich genauer hin.",
     showService: "Dienst ansehen",
+    unwatchedOne: (name) => `${name} ist ausgefallen, und ich sehe ihn mir nicht an.`,
+    unwatchedMany: (names) => `${names} sind ausgefallen, und ich sehe sie mir nicht an.`,
+    notLooking: {
+      paused: "Er ist pausiert.",
+      created: "Er wurde erstellt, aber nie gestartet.",
+      before_start: "Er war schon ausgefallen, als ich gestartet bin.",
+      unknown:
+        "Ich habe nicht gesehen, wie er ausgefallen ist, deshalb sehe ich ihn mir nicht von selbst an.",
+    },
+    stillDownAfter: ["Er ist immer noch ausgefallen, nachdem ", " geendet hat."],
+    itsLastIncident: "sein letzter Vorfall",
+    askToLook: "Bleep nachsehen lassen",
+    lookAt: (name) => `Sieh dir ${name} an`,
     nothingNeeds: "Gerade braucht dich nichts.",
     watching: (hosts, services) => `Ich beobachte ${hosts} und ${services}.`,
     noHostsToWatch: "Ich habe noch keinen Host, den ich beobachten kann.",

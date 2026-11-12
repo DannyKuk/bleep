@@ -10,6 +10,7 @@ import {
   overallState,
   reportMood,
   stateMood,
+  unwatchedDownServices,
   watchedServices,
   type Mood,
   type OverallState,
@@ -180,9 +181,9 @@ describe("overallMood", () => {
 });
 
 describe("watching (#358)", () => {
-  it("sits between working and all good in the moods' order", () => {
+  it("sits between working and pointing in the moods' order", () => {
     expect(MOODS.indexOf("watching")).toBe(MOODS.indexOf("working") + 1);
-    expect(MOODS.indexOf("all_good")).toBe(MOODS.indexOf("watching") + 1);
+    expect(MOODS.indexOf("pointing")).toBe(MOODS.indexOf("watching") + 1);
   });
 
   type ServiceOf = Parameters<typeof watchedServices>[0][number];
@@ -204,11 +205,12 @@ describe("watching (#358)", () => {
     failures_to_open: null,
     opens_after: "2026-11-04T12:01:00Z",
   } as const;
-  const serviceOf = (overrides: Partial<ServiceOf> = {}): ServiceOf => ({
+  const serviceOf = (overrides: Partial<ServiceOf> = {}): ServiceOf & { health: "down" } => ({
     host_id: "demo",
     quiet: null,
     open_incident_id: null,
     watching: [urlWatch],
+    health: "down",
     ...overrides,
   });
   const quietHost = { ...SNOOZED };
@@ -235,20 +237,26 @@ describe("watching (#358)", () => {
     expect(overallMood([], unreachable, new Set(), NOW)).toBe("working");
   });
 
-  it("stays all good for a quiet host, or a service the watcher waits on nothing for", () => {
-    // A service shown down that the watcher waits on nothing for (stopped on purpose, dead
-    // before Bleep started, still dead after its incident ended) opens nothing: no promise.
+  it("does not watch a service the watcher waits on nothing for: it points at it", () => {
+    // Paused, dead before Bleep started or still dead after its incident ended: it opens
+    // nothing, so Bleep makes no promise to look (#478).
     const shownDown = serviceOf({ watching: [] });
-    const quiet = serviceOf({ quiet: { ...SNOOZED, scope: "service" } });
-    expect(overallMood([], reachable, new Set(), NOW, [shownDown, quiet])).toBe("all_good");
-    expect(overallState([], reachable, NOW, [shownDown, quiet])).toBe("green");
-    const asleep = [hostOf({ reachable: false, may_sleep: true })];
-    expect(overallMood([], asleep, new Set(), NOW, [shownDown])).toBe("all_good");
+    expect(watchedServices([shownDown], reachable)).toEqual([]);
+    expect(overallMood([], reachable, new Set(), NOW, [shownDown])).toBe("pointing");
   });
 
-  it("lets a failed run fall to green after its day, though its service still shows down", () => {
+  it("stays all good for a quiet service, and for one on an asleep host", () => {
+    const quiet = serviceOf({ quiet: { ...SNOOZED, scope: "service" } });
+    expect(overallMood([], reachable, new Set(), NOW, [quiet])).toBe("all_good");
+    expect(overallState([], reachable, NOW, [quiet])).toBe("green");
+    const asleep = [hostOf({ reachable: false, may_sleep: true })];
+    expect(overallMood([], asleep, new Set(), NOW, [serviceOf({ watching: [] })])).toBe("all_good");
+  });
+
+  it("lets a failed run leave needs you after its day, though its service still shows down", () => {
     const failed = incident("failed", "f", longAgo);
-    expect(overallState([failed], reachable, NOW, [serviceOf({ watching: [] })])).toBe("green");
+    const shownDown = serviceOf({ watching: [] });
+    expect(overallMood([failed], reachable, new Set(), NOW, [shownDown])).toBe("pointing");
   });
 
   it("does not watch a service whose incident is open: Bleep works on it", () => {
@@ -273,6 +281,65 @@ describe("watching (#358)", () => {
     const hosts = [hostOf({ reachable: false, quiet: quietHost })];
     expect(watchedServices([serviceOf()], hosts)).toEqual([]);
     expect(overallMood([], hosts, new Set(), NOW, [serviceOf()])).toBe("all_good");
+  });
+});
+
+describe("pointing (#478)", () => {
+  type ServiceOf = Parameters<typeof unwatchedDownServices>[0][number];
+  const shownDown = (overrides: Partial<ServiceOf> = {}): ServiceOf => ({
+    host_id: "demo",
+    quiet: null,
+    open_incident_id: null,
+    watching: [],
+    health: "down",
+    ...overrides,
+  });
+  const urlWatch = {
+    kind: "url",
+    since: "2026-11-04T11:59:30Z",
+    opens_after: null,
+    url: "http://shop/",
+    container: null,
+    failures: 1,
+    failures_to_open: 2,
+  } as const;
+
+  it("sits between watching and all good in the moods' order", () => {
+    expect(MOODS.indexOf("pointing")).toBe(MOODS.indexOf("watching") + 1);
+    expect(MOODS.indexOf("all_good")).toBe(MOODS.indexOf("pointing") + 1);
+  });
+
+  it("points at a service shown down that the watcher waits on nothing for, and is amber", () => {
+    expect(unwatchedDownServices([shownDown()], reachable)).toHaveLength(1);
+    expect(overallMood([], reachable, new Set(), NOW, [shownDown()])).toBe("pointing");
+    expect(overallState([], reachable, NOW, [shownDown()])).toBe("amber");
+  });
+
+  it("is what is left: watched, quiet, open, unreachable or not down is not pointed at", () => {
+    const quiet = { ...SNOOZED, scope: "service" } as const;
+    const left = [
+      shownDown({ watching: [urlWatch] }),
+      shownDown({ quiet }),
+      shownDown({ open_incident_id: "inc-1" }),
+      shownDown({ host_id: "other" }),
+      shownDown({ health: "stopped" }),
+      shownDown({ health: "degraded" }),
+      shownDown({ health: "asleep" }),
+    ];
+    expect(unwatchedDownServices(left, unreachable)).toEqual([]);
+    expect(overallState([], reachable, NOW, left.slice(1))).toBe("green");
+  });
+
+  it("ranks below watching, working and needs you", () => {
+    const watched = shownDown({ watching: [urlWatch] });
+    const services = [shownDown(), watched];
+    expect(overallMood([], reachable, new Set(), NOW, services)).toBe("watching");
+    expect(overallMood([incident("investigating")], reachable, new Set(), NOW, services)).toBe(
+      "working",
+    );
+    expect(overallMood([incident("awaiting_approval")], reachable, new Set(), NOW, services)).toBe(
+      "needs_you",
+    );
   });
 });
 

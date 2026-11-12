@@ -20,8 +20,10 @@ export interface Pose {
   headMotion?: "tilt" | "lean";
   eyesMotion: "blink" | "wander";
   leftMotion: "float" | "flailL" | "scratch";
-  rightMotion: "wave" | "float" | "float2" | "flailR" | "chin";
+  rightMotion: "wave" | "float" | "float2" | "flailR" | "chin" | "point";
   question: boolean;
+  /** Three short marks beside the right hand that flash with each tap of its point. */
+  ticks?: boolean;
 }
 
 const SMILE = "M42 48q6-7 12 0 M66 48q6-7 12 0";
@@ -70,6 +72,23 @@ export const POSES: Record<Mood, Pose> = {
     leftMotion: "float",
     rightMotion: "chin",
     question: false,
+  },
+  // "That one is down, have a look": the eyes look aside, one hand reaches out to the side and
+  // taps towards the trouble with marks flashing beside it, the other rests. Amber like
+  // watching, and the light holds steady.
+  pointing: {
+    eyes: "M53 46h2 M77 46h2",
+    eyeWidth: 8,
+    lcd: "#FFD36E",
+    light: "warn",
+    handLeft: [28, 92],
+    handRight: [114, 58],
+    hop: false,
+    eyesMotion: "blink",
+    leftMotion: "float",
+    rightMotion: "point",
+    question: false,
+    ticks: true,
   },
   needs_you: {
     eyes: ROUND,

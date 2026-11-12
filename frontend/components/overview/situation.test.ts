@@ -6,9 +6,11 @@ import {
   heroSituation,
   isHurting,
   reachLine,
+  unwatchedDetail,
   watchedNames,
   watchReason,
 } from "@/components/overview/situation";
+import { overallMood } from "@/lib/mood";
 import type { HostView, IncidentDetail, ServiceView } from "@/lib/api-types";
 import { MESSAGES } from "@/lib/i18n";
 
@@ -140,7 +142,7 @@ describe("heroSituation while Bleep watches (#358)", () => {
   });
 
   it("does not watch a service that only shows down: the watcher waits on nothing for it", () => {
-    expect(situation([down({ watching: [] })])).toEqual({ kind: "quiet" });
+    expect(situation([down({ watching: [] })])).toMatchObject({ kind: "unwatched" });
   });
 
   it("puts an incident Bleep works on and an unreachable host first", () => {
@@ -161,6 +163,68 @@ describe("heroSituation while Bleep watches (#358)", () => {
     expect(situation([down({ quiet }), down({ open_incident_id: "inc-1" })])).toEqual({
       kind: "quiet",
     });
+  });
+});
+
+describe("heroSituation for a service shown down that opens nothing (#478)", () => {
+  const shownDown = (overrides: Partial<ServiceView> = {}) =>
+    service({ health: "down", ...overrides });
+  const situation = (services: ServiceView[], hosts = [host()]) =>
+    heroSituation({ incidents: [], hosts, services, details: {}, now: NOW });
+
+  it("points at it after the services Bleep watches, whatever reason the backend gives", () => {
+    expect(situation([shownDown(), service({ id: "b" })])).toMatchObject({
+      kind: "unwatched",
+      services: [{ id: "demo/compose:shop" }],
+    });
+    expect(situation([shownDown(), shownDown({ id: "w", watching: [watch()] })])).toMatchObject({
+      kind: "watching",
+    });
+  });
+
+  it("leaves out a service quiet, with its incident open, or on a host out of reach", () => {
+    const quiet = { scope: "service", mode: "snooze", until: null, since: "x" } as const;
+    expect(situation([shownDown({ quiet }), shownDown({ open_incident_id: "inc-1" })])).toEqual({
+      kind: "quiet",
+    });
+    const asleep = host({ reachable: false, may_sleep: true });
+    expect(situation([shownDown()], [asleep])).toEqual({ kind: "quiet" });
+  });
+
+  it.each([
+    [[shownDown()], "pointing", "unwatched"],
+    [[shownDown({ watching: [watch()] })], "watching", "watching"],
+    [[shownDown({ open_incident_id: "inc-1" })], "all_good", "quiet"],
+    [[service()], "all_good", "quiet"],
+  ] as const)("agrees with Bleep's mood (%#)", (services, mood, kind) => {
+    expect(overallMood([], [host()], new Set(), NOW, services)).toBe(mood);
+    expect(situation([...services]).kind).toBe(kind);
+  });
+});
+
+describe("unwatchedDetail", () => {
+  const box = service().containers[0];
+  const exited = { ...box, name: "shop-worker-1", state: "exited", exit_code: 1 };
+  const named = (container: string | null) => ({
+    reason: "before_start" as const,
+    container,
+    incident_id: null,
+    incident_short_name: null,
+  });
+
+  it("shows the container the reason is about, else the first one down", () => {
+    const paused = { ...box, state: "paused" };
+    const both = service({ containers: [exited, paused], unwatched: named("shop-web-1") });
+    expect(unwatchedDetail(both)).toBe("shop-web-1 · paused");
+    expect(unwatchedDetail(service({ containers: [box, exited] }))).toBe(
+      "shop-worker-1 · exited (1)",
+    );
+  });
+
+  it("falls back to a failing URL, with its status code", () => {
+    const failing = { ...service().urls[0], status: "failing", status_code: 503 } as const;
+    expect(unwatchedDetail(service({ urls: [failing] }))).toBe("http://localhost:8080/ · 503");
+    expect(unwatchedDetail(service())).toBeUndefined();
   });
 });
 

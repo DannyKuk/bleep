@@ -32,6 +32,12 @@ describe("Bleep's motion", () => {
     expect(lean).toMatch(/^\s*transform: rotate\(5deg\);/m);
   });
 
+  it("leaves the pointing marks shown when motion is off: only their flash hides them", () => {
+    const ticks = css.slice(css.indexOf(".ticks {"), css.indexOf("}", css.indexOf(".ticks {")));
+    expect(ticks).toMatch(/animation: ticks /);
+    expect(ticks).not.toMatch(/opacity/);
+  });
+
   it("names only keyframes it defines", () => {
     const used = [...css.matchAll(/animation: (\w+) /g)]
       .map((m) => m[1])

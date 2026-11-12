@@ -84,6 +84,7 @@ from bleep.watcher.health_store import HealthStore
 from bleep.watcher.host_probe import HostProbe
 from bleep.watcher.http_checks import UrlCheckStore, UrlWatcher
 from bleep.watcher.poller import HostWatcher
+from bleep.watcher.sightings import Sightings
 from bleep.watcher.wake import SleepWatch
 
 log = logging.getLogger(__name__)
@@ -166,6 +167,7 @@ class WatcherManager:
         health: HealthStore | None = None,
         wake_grace_ticks: int = Settings.model_fields["wake_grace_ticks"].default,
         monotonic: Callable[[], float] = time.monotonic,
+        sightings: Sightings | None = None,
     ) -> None:
         self.registry = registry
         self.detector = detector
@@ -175,6 +177,7 @@ class WatcherManager:
         self._clock = clock
         self._quiet = quiet
         self._health = health
+        self.sightings = sightings or Sightings()
         self._models = models
         self._guard_log = guard_log
         self._ledger = ledger
@@ -216,6 +219,7 @@ class WatcherManager:
                 watch_s,
                 on_snapshot=self.snapshot,
                 sleep_watch=self.sleep_watch,
+                sightings=self.sightings,
             ),
             HostProbe(host_id, self.registry, self.sink, self._clock, probe_s),
             UrlWatcher(
@@ -308,6 +312,7 @@ class WatcherManager:
         self._deferred.pop(host_id, None)
         self._answered.pop(host_id, None)
         self._answered_at.pop(host_id, None)
+        self.sightings.forget(host_id)
 
     async def _stop_host(self, host_id: str) -> None:
         self.hosts.pop(host_id, None)
@@ -415,11 +420,13 @@ class WatcherManager:
         try:
             now = self._clock()
             stored = await self._stored_checks(host_id)
+            stopped = self.sightings.of(host_id).stopped_on_purpose
             for service in self.registry.services(host_id):
                 urls = [
                     url_status(u.url, stored.get((service.id, u.url)), now) for u in service.urls
                 ]
-                health = service_health(service.containers, (u.status for u in urls), service.exits)
+                statuses = (u.status for u in urls)
+                health = service_health(service.containers, statuses, service.exits, stopped)
                 await self._health.record(host_id, service.id, health, now)
         except Exception:
             log.exception("recording the health of host %s's services failed", host_id)

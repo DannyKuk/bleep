@@ -73,6 +73,7 @@ from bleep.tools.docker_act import docker_act_tools
 from bleep.watcher.health_store import HealthStore
 from bleep.watcher.http_checks import UrlCheckStore
 from bleep.watcher.overview import Overview
+from bleep.watcher.sightings import Sightings
 
 
 @dataclass
@@ -100,6 +101,8 @@ class AppParts:
     prompt_overrides: PromptOverrideStore
     url_checks: UrlCheckStore
     service_health: HealthStore
+    # What the watcher saw of the containers, in memory: its manager and every overview share it.
+    sightings: Sightings
     secrets: SecretStore
     dashboard_hosts: DashboardHosts
     talk: Talk
@@ -304,7 +307,11 @@ def build_parts(
         timezone=settings.timezone, embeddings=embeddings_env(settings), tracing=tracing_env(),
     )  # fmt: skip
     url_checks = UrlCheckStore(db)
-    overview = Overview(registry, incidents, quiet, url_checks)
+    service_health = HealthStore(db)
+    sightings = Sightings()
+    overview = Overview(
+        registry, incidents, quiet, url_checks, sightings=sightings, health=service_health
+    )
     # Before `talk`, which traces its readings. Built from the env here, and again once the
     # stored settings are loaded (`subscribe_reloads`).
     tracer = tracer or ReloadingTracer(secrets.get, store.tracing)
@@ -369,7 +376,8 @@ def build_parts(
         ),
         prompt_overrides=PromptOverrideStore(db, guard_log),
         url_checks=url_checks,
-        service_health=HealthStore(db),
+        service_health=service_health,
+        sightings=sightings,
         secrets=secrets,
         dashboard_hosts=dashboard_hosts,
         talk=talk,

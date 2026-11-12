@@ -53,6 +53,7 @@ const SHOP: ServiceView = {
   open_incident_id: null,
   quiet: null,
   watching: [],
+  unwatched: null,
 };
 const WORKER: ServiceView = { ...SHOP, id: "m1/compose:worker", name: "worker", health: "down" };
 const ELSEWHERE: ServiceView = { ...SHOP, id: "m2/compose:blog", host_id: "m2", name: "blog" };

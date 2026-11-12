@@ -84,6 +84,10 @@
 .chin {
   animation: chin 3.4s ease-in-out infinite;
 }
+/* A hand reaching out to the side, tapping towards the trouble twice, then a pause. */
+.point {
+  animation: point 2.4s ease-in-out infinite;
+}
 
 .light {
   transition: fill 0.4s ease;
@@ -96,6 +100,11 @@
 }
 .question {
   animation: question 1.6s ease-in-out infinite;
+}
+/* The marks beside the pointing hand flash with its tap. They are shown at rest, so with
+   reduced motion they stay as part of the pose. */
+.ticks {
+  animation: ticks 2.4s ease-in-out infinite;
 }
 
 @keyframes bob {
@@ -218,6 +227,31 @@
   68%,
   84% {
     transform: translateY(-2px);
+  }
+}
+@keyframes point {
+  0%,
+  50%,
+  100% {
+    transform: translateX(0);
+  }
+  60%,
+  70% {
+    transform: translateX(3px);
+  }
+  65% {
+    transform: translateX(0);
+  }
+}
+@keyframes ticks {
+  0%,
+  50%,
+  100% {
+    opacity: 0;
+  }
+  60%,
+  72% {
+    opacity: 1;
   }
 }
 @keyframes pulse {

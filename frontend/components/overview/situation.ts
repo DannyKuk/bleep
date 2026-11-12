@@ -6,7 +6,14 @@ import type {
   ServiceView,
 } from "@/lib/api-types";
 import type { Messages } from "@/lib/i18n";
-import { isAsleep, isOutOfReach, overallMood, watchedServices, type Mood } from "@/lib/mood";
+import {
+  isAsleep,
+  isOutOfReach,
+  overallMood,
+  unwatchedDownServices,
+  watchedServices,
+  type Mood,
+} from "@/lib/mood";
 
 /** What the overview's hero is about, picked in the order of Bleep's moods. */
 export type Situation =
@@ -17,6 +24,8 @@ export type Situation =
   | { kind: "unreachable"; host: HostView; incident: Incident | undefined }
   /** Services down with no incident open for them yet (`watchedServices`). */
   | { kind: "watching"; services: ServiceView[] }
+  /** Services shown down that the watcher opens no incident for (`unwatchedDownServices`). */
+  | { kind: "unwatched"; services: ServiceView[] }
   | { kind: "quiet" }
   | { kind: "no_hosts" };
 
@@ -44,7 +53,7 @@ const awaitingFirst = (a: Incident, b: Incident) =>
 /**
  * The hero's subject: what needs the human (a waiting plan before a failed run), then a waiting
  * plan Bleep is unsure of, then an unreachable host, then an incident Bleep works on, then the
- * services Bleep watches. Each incident's mood is the overall mood of that incident alone, so the
+ * services Bleep watches, then those shown down that it opens nothing for. Each incident's mood is the overall mood of that incident alone, so the
  * hero always agrees with the face Bleep shows beside it.
  */
 export function heroSituation({
@@ -84,6 +93,8 @@ export function heroSituation({
   }
   const watched = watchedServices(services, hosts);
   if (watched.length > 0) return { kind: "watching", services: watched };
+  const unwatched = unwatchedDownServices(services, hosts);
+  if (unwatched.length > 0) return { kind: "unwatched", services: unwatched };
   return hosts.length === 0 ? { kind: "no_hosts" } : { kind: "quiet" };
 }
 
@@ -92,6 +103,25 @@ function containerTrouble(container: ContainerView): string {
   if (container.state === "running") return `${container.name} · ${container.health}`;
   const code = container.exit_code === null ? "" : ` (${container.exit_code})`;
   return `${container.name} · ${container.state}${code}`;
+}
+
+const isDown = (container: ContainerView) =>
+  container.state !== "running" || container.health === "unhealthy";
+
+/**
+ * What a service shown down that the watcher opens nothing for shows in mono: the container its
+ * reason is about ("shop-web-1 · paused"), else its first container down, else its first
+ * failing URL.
+ */
+export function unwatchedDetail(service: ServiceView): string | undefined {
+  const named = service.unwatched?.container;
+  const container =
+    service.containers.find((candidate) => candidate.name === named) ??
+    service.containers.find(isDown);
+  if (container) return containerTrouble(container);
+  const failing = service.urls.find((url) => url.status === "failing");
+  if (!failing) return named ?? undefined;
+  return failing.status_code ? `${failing.url} · ${failing.status_code}` : failing.url;
 }
 
 export interface WatchWords {

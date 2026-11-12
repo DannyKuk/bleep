@@ -4,7 +4,7 @@ Shared by the dashboard's views and by the watcher, which judges a service again
 ends.
 """
 
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from datetime import datetime, timedelta
 
 from bleep.hosts.discovery import expects_exit, is_finished
@@ -25,7 +25,8 @@ _RANK: dict[Health, int] = {
 }
 
 # Exit codes of a process that was asked to stop (0, or killed by SIGTERM). 137 is left out: it
-# is also what the OOM killer leaves, so it counts as a crash.
+# is also what the OOM killer leaves, so it counts as a crash unless a stop event marked the
+# container as stopped on purpose (`watcher/sightings.py`).
 CLEAN_EXITS = (0, 143)
 
 
@@ -33,16 +34,19 @@ def _worst(healths: Iterable[Health]) -> Health:
     return max(healths, key=_RANK.__getitem__, default="unknown")
 
 
-def is_stopped(container: ContainerSummary) -> bool:
-    """Exited cleanly, so a human (or a job's end) did it, not a crash."""
-    return container.state == "exited" and container.exit_code in CLEAN_EXITS
+def is_stopped(container: ContainerSummary, on_purpose: bool = False) -> bool:
+    """Exited cleanly, or `on_purpose` (a stop event marked it), so a human (or a job's end) did
+    it, not a crash."""
+    return container.state == "exited" and (on_purpose or container.exit_code in CLEAN_EXITS)
 
 
-def container_health(container: ContainerSummary, expected_exit: bool = False) -> Health:
+def container_health(
+    container: ContainerSummary, expected_exit: bool = False, stopped_on_purpose: bool = False
+) -> Health:
     """One container's health: running and healthy (or no healthcheck) is ok; starting or
     restarting is degraded; a job that exited 0 (a one-shot, or `expected_exit`: its service
-    names it in `exits`) is done; another clean exit is stopped; unhealthy, crashed, dead,
-    created and paused are down."""
+    names it in `exits`) is done; another clean exit, or any exit `stopped_on_purpose`, is
+    stopped; unhealthy, crashed, dead, created and paused are down."""
     exited_clean = container.state == "exited" and container.exit_code == 0
     if exited_clean and (expected_exit or is_finished(container)):
         return "done"
@@ -52,7 +56,7 @@ def container_health(container: ContainerSummary, expected_exit: bool = False) -
         ]
     if container.state == "restarting":
         return "degraded"
-    if is_stopped(container):
+    if is_stopped(container, stopped_on_purpose):
         return "stopped"
     if container.state in ("exited", "dead", "created", "paused"):
         return "down"
@@ -63,15 +67,20 @@ def service_health(
     containers: Iterable[ContainerSummary],
     url_statuses: Iterable[str],
     exits: list[str] | None = None,
+    stopped_on_purpose: Collection[str] = (),
 ) -> Health:
     """The worst of its containers and its URLs (a failing URL is down); unknown with no data.
+    `stopped_on_purpose` holds the ids of containers a stop event marked (`watcher/sightings`).
 
     Finished jobs (`done`: exit 0 as a one-shot, or named in the service's `exits`) are left out
     while anything else is there, and a service of finished jobs only is `done`. When everything
     has exited cleanly the service is `stopped`, whatever its URLs say.
     """
     members = list(containers)
-    judged = [container_health(c, expects_exit(exits or [], c.name, c.labels)) for c in members]
+    judged = [
+        container_health(c, expects_exit(exits or [], c.name, c.labels), c.id in stopped_on_purpose)
+        for c in members
+    ]
     if members and all(h == "done" for h in judged):
         return "done"
     healths: list[Health] = [h for h in judged if h != "done"]

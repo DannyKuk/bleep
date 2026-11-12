@@ -9,12 +9,14 @@ import type {
 
 /** Bleep's moods, in the order that decides when several apply (first wins), plus resting.
  * `watching` is the "hmm": something fails and the watcher has seen it, but it has opened no
- * incident yet, since it waits to see whether the failure holds. */
+ * incident yet, since it waits to see whether the failure holds. `pointing` is "that one is
+ * down, have a look": a service shows down, but the watcher will open no incident for it. */
 export const MOODS = [
   "needs_you",
   "not_sure",
   "working",
   "watching",
+  "pointing",
   "all_good",
   "resting",
 ] as const;
@@ -88,14 +90,16 @@ export function isOutOfReach(host: Pick<HostView, "reachable" | "may_sleep" | "q
 }
 
 type WatchedService = Pick<ServiceView, "host_id" | "quiet" | "open_incident_id" | "watching">;
+type MoodService = WatchedService & Pick<ServiceView, "health">;
 
 /**
  * The services the watcher waits on before it opens an incident (their `watching`, from the
  * backend: a URL failing fewer times in a row than it needs, a death inside its grace window).
- * Only what the watcher reports counts, never a service that merely shows down: a container
- * stopped on purpose, one dead before Bleep started or one still dead after its incident ended
- * opens nothing, so Bleep must not say it waits on it. A quiet service, one with its incident
- * open and one on a host Bleep cannot reach (the host's trouble) are left out.
+ * Only what the watcher reports counts, never a service that merely shows down: a paused or
+ * created container, one dead before Bleep started or one still dead after its incident ended
+ * opens nothing, so Bleep must not say it waits on it (`unwatchedDownServices` has those). A
+ * quiet service, one with its incident open and one on a host Bleep cannot reach (the host's
+ * trouble) are left out.
  */
 export function watchedServices<S extends WatchedService>(
   services: readonly S[],
@@ -105,6 +109,27 @@ export function watchedServices<S extends WatchedService>(
   return services.filter(
     (service) =>
       service.watching.length > 0 &&
+      service.quiet === null &&
+      service.open_incident_id === null &&
+      reached.has(service.host_id),
+  );
+}
+
+/**
+ * The services that show down but that the watcher will open no incident for (#478): down, with
+ * nothing it waits on, no incident open, not quiet, on a host Bleep reaches. Defined as what is
+ * left, so Bleep never says nothing needs you beside a row shown down; the backend's
+ * `unwatched` only says why.
+ */
+export function unwatchedDownServices<S extends MoodService>(
+  services: readonly S[],
+  hosts: readonly Pick<HostView, "id" | "reachable">[],
+): S[] {
+  const reached = new Set(hosts.filter((host) => host.reachable).map((host) => host.id));
+  return services.filter(
+    (service) =>
+      service.health === "down" &&
+      service.watching.length === 0 &&
       service.quiet === null &&
       service.open_incident_id === null &&
       reached.has(service.host_id),
@@ -123,14 +148,15 @@ export function isWatchedHost(
  * waiting incidents whose diagnosis is unsure (read from their detail); without it every waiting
  * plan needs you. A quiet subject's failed run and a quiet host's unreachability do not count.
  * A host out of reach is Working, unless the watcher still waits out its window: then, as for a
- * service the watcher waits on (`watchedServices`), Bleep watches.
+ * service the watcher waits on (`watchedServices`), Bleep watches. A service shown down that the
+ * watcher opens nothing for (`unwatchedDownServices`) makes Bleep point at it.
  */
 export function overallMood(
   incidents: readonly Incident[],
   hosts: readonly QuietHost[],
   unsureIds: ReadonlySet<string> = new Set(),
   now: number = Date.now(),
-  services: readonly WatchedService[] = [],
+  services: readonly MoodService[] = [],
 ): Mood {
   const waiting = incidents.filter((incident) => incident.status === "awaiting_approval");
   const failedForYou = (incident: Incident) =>
@@ -142,20 +168,24 @@ export function overallMood(
   if (hosts.some((host) => isOutOfReach(host) && !isWatchedHost(host))) return "working";
   if (hosts.some(isWatchedHost)) return "watching";
   if (watchedServices(services, hosts).length > 0) return "watching";
+  if (unwatchedDownServices(services, hosts).length > 0) return "pointing";
   return "all_good";
 }
 
-/** The header's three-colour state; it has no Not sure, since a waiting plan is red either way,
- * and Watching is amber like Working, since Bleep's attention is on something. */
+const AMBER: ReadonlySet<Mood> = new Set(["working", "watching", "pointing"]);
+
+/** The header's three-colour state; it has no Not sure, since a waiting plan is red either way.
+ * Watching and Pointing are amber like Working: something is wrong and Bleep's attention is on
+ * it, though only the human can start a look at what Bleep points at. */
 export function overallState(
   incidents: readonly Incident[],
   hosts: readonly QuietHost[],
   now: number = Date.now(),
-  services: readonly WatchedService[] = [],
+  services: readonly MoodService[] = [],
 ): OverallState {
   const mood = overallMood(incidents, hosts, new Set(), now, services);
   if (mood === "needs_you") return "red";
-  if (mood === "working" || mood === "watching") return "amber";
+  if (AMBER.has(mood)) return "amber";
   return "green";
 }
 

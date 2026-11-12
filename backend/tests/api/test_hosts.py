@@ -59,6 +59,18 @@ def test_an_exited_container_is_stopped_only_after_a_clean_exit(exit_code, expec
     assert container_health(c("exited", exit_code=exit_code, policy="always")) == expected
 
 
+def test_an_exit_137_is_stopped_when_a_stop_event_marked_it_and_a_crash_otherwise():
+    ignored_sigterm = c("exited", exit_code=137, policy="always")
+    assert container_health(ignored_sigterm) == "down"  # the OOM killer leaves 137 too
+    assert container_health(ignored_sigterm, stopped_on_purpose=True) == "stopped"
+    assert container_health(c("paused"), stopped_on_purpose=True) == "down"
+    alone = [ignored_sigterm]
+    assert service_health(alone, [], stopped_on_purpose={"id-c1"}) == "stopped"
+    assert service_health(alone, [], stopped_on_purpose={"id-other"}) == "down"
+    beside = [ignored_sigterm, c("running", name="c2")]
+    assert service_health(beside, [], stopped_on_purpose={"id-c1"}) == "degraded"
+
+
 def test_a_job_that_exited_0_is_done_and_one_that_crashed_is_still_down():
     assert container_health(c("exited", exit_code=0)) == "done"  # a one-shot, no restart policy
     assert container_health(c("exited", exit_code=0, policy="on-failure"), True) == "done"
@@ -274,6 +286,7 @@ def test_services_shape(stocked):
         "open_incident_id": None,
         "quiet": None,
         "watching": [],
+        "unwatched": None,
     }
 
 
@@ -643,3 +656,29 @@ def test_an_unreachable_host_inside_its_window_says_the_watcher_waits_on_it(sett
     assert view["reachable"] is False
     assert view["watching"]["kind"] == "unreachable"
     assert view["watching"]["opens_after"] is not None
+
+
+# --- down, and the watcher opens nothing for it (#478) ---
+
+
+def test_a_down_service_the_watcher_opens_nothing_for_says_why_in_both_routes(settings, parts):
+    created = ContainerSummary(
+        id="1", name="shop-web-1", image="shop", state="created", labels=compose_labels("shop")
+    )
+
+    async def connect(host):
+        return None, FakeEngine("a", [created])
+
+    parts.registry = Registry([ssh_host(id="a")], connect, clock=lambda: T0)
+    with TestClient(create_app(settings, parts)) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        [listed] = client.get("/api/services").json()
+        detail = shop_detail(client)["service"]
+    assert listed["health"] == "down"
+    assert listed["unwatched"] == {
+        "reason": "created",
+        "container": "shop-web-1",
+        "incident_id": None,
+        "incident_short_name": None,
+    }
+    assert detail["unwatched"] == listed["unwatched"]

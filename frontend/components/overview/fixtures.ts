@@ -64,6 +64,7 @@ export function service(overrides: Partial<ServiceView> = {}): ServiceView {
     open_incident_id: null,
     quiet: null,
     watching: [],
+    unwatched: null,
     ...overrides,
   };
 }

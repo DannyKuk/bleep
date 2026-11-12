@@ -101,6 +101,20 @@ export interface ServiceView {
   quiet: QuietView | null;
   /** What the watcher waits on for this service before it opens an incident. */
   watching: WatchView[];
+  /** Why it shows down but opens no incident (#478); null unless that is so. */
+  unwatched: UnwatchedView | null;
+}
+
+/** Why a service shown down opens no incident (#478): a container paused or created, one down
+ * before the watcher started, or one still down after its latest incident ended. `container` is
+ * the one the reason is about, or the first one down. */
+export type UnwatchedReason = "paused" | "created" | "before_start" | "after_incident" | "unknown";
+
+export interface UnwatchedView {
+  reason: UnwatchedReason;
+  container: string | null;
+  incident_id: string | null;
+  incident_short_name: string | null;
 }
 
 // Incidents (Task 21's contract: schemas/incidents.py, schemas/graph.py, schemas/api.py).
