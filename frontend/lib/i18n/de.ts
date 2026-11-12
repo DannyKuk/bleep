@@ -547,6 +547,11 @@ export const de: Messages = {
     checkedAt: (time) => `geprüft um ${time}`,
     noUrls: "Es werden keine URLs geprüft.",
     editUrls: "URLs bearbeiten",
+    suggestedFor: (name) => `Von Coolify vorgeschlagene Prüfungen für ${name}`,
+    suggestedTitle: "Coolify stellt ihn unter diesen Adressen bereit",
+    suggestedNote: "Soll ich sie von außen prüfen? Ich prüfe keine davon, bevor du sie hinzufügst.",
+    addSuggested: (count) =>
+      count === 1 ? "Diese Prüfung hinzufügen" : `Diese ${count} Prüfungen hinzufügen`,
     thisService: "Dieser Dienst",
     itsHost: "Sein Host",
     noRules: "Noch keine Regeln.",

@@ -9,6 +9,7 @@ import { invalid, sentBody, settingsView } from "@/components/settings/fixtures"
 import type { IncidentListItem, ServiceDetail, UrlCheckPoint } from "@/lib/api-types";
 import { formatTime } from "@/lib/format";
 import { MESSAGES, setLanguage } from "@/lib/i18n";
+import type { UrlCheck } from "@/lib/settings-types";
 
 const SERVICE: ServiceDetail = {
   service: {
@@ -82,6 +83,7 @@ function stubBackend(service: Response, incidents: IncidentListItem[] = [pastInc
     const url = String(input);
     if (url === "/api/settings") return json(NO_SETTINGS);
     if (url.endsWith("/facts")) return json([]);
+    if (url.endsWith("/suggested-checks")) return json([]);
     if (url.startsWith("/api/incidents")) return json(incidents);
     return service.clone();
   });
@@ -350,10 +352,12 @@ function settingsBackend({
   service = json(SHOP),
   reads = [settingsView()],
   puts = [],
+  suggested = [],
 }: {
   service?: Response;
   reads?: (ReturnType<typeof settingsView> | Response)[];
   puts?: (Response | Promise<Response>)[];
+  suggested?: UrlCheck[];
 } = {}) {
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const overallReply = answerOverall(input);
@@ -365,6 +369,7 @@ function settingsBackend({
       return next instanceof Response ? next.clone() : json(next);
     }
     if (url.endsWith("/facts")) return json([]);
+    if (url.endsWith("/suggested-checks")) return json(suggested);
     if (url.startsWith("/api/incidents")) return json([]);
     return service.clone();
   });
@@ -630,6 +635,83 @@ describe("ServicePage settings", () => {
     expect(await within(urls).findByText(ready.url)).toBeInTheDocument();
     expect(within(urls).queryByRole("textbox")).toBeNull();
     expect(within(urls).getByText("Not checked yet")).toBeInTheDocument();
+  });
+
+  const SUGGESTED: UrlCheck[] = [
+    { url: "https://shop.example.test/health/", expect_status: 200, body_contains: null },
+    { url: "https://shop.example.com/health", expect_status: 200, body_contains: null },
+    { url: "https://www.shop.example.com/health", expect_status: 200, body_contains: null },
+  ];
+
+  it("offers the checks Coolify suggests that the service lacks, and adds them in one click", async () => {
+    const health = settingsView().hosts[0].services["compose:shop"].urls[0];
+    const added = [health, SUGGESTED[1], SUGGESTED[2]];
+    const saved = settingsView({ version: "v2" });
+    saved.hosts[0].services["compose:shop"].urls = added;
+    saved.overrides.hosts = {
+      m1: { services: { "compose:shop": { protected_containers: ["shop-cache-1"], urls: added } } },
+    };
+    const fetchMock = settingsBackend({ puts: [json(saved)], suggested: SUGGESTED });
+    renderPage("m1/compose:shop");
+    const urls = await region("Checked from outside");
+
+    const offer = await within(urls).findByRole("group", {
+      name: "Checks Coolify suggests for shop",
+    });
+    expect(
+      within(offer)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual([SUGGESTED[1].url, SUGGESTED[2].url]);
+    expect(offer).toHaveTextContent("I check none of them until you add them.");
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+
+    await userEvent.click(within(offer).getByRole("button", { name: "Add these 2 checks" }));
+
+    expect(sentBody(fetchMock, "PUT")).toEqual({
+      hosts: {
+        m1: {
+          services: {
+            "compose:shop": { protected_containers: ["shop-cache-1"], urls: added },
+          },
+        },
+      },
+    });
+    await waitFor(() => expect(within(urls).queryByRole("group")).toBeNull());
+    expect(within(urls).getAllByText("Not checked yet")).toHaveLength(2);
+  });
+
+  it("shows why adding the suggested checks was refused and keeps the offer", async () => {
+    settingsBackend({
+      puts: [
+        invalid(
+          ["hosts", "m1", "services", "compose:shop", "urls"],
+          "List should have at most 20 items after validation, not 21",
+        ),
+      ],
+      suggested: SUGGESTED.slice(1, 2),
+    });
+    renderPage("m1/compose:shop");
+    const urls = await region("Checked from outside");
+    const offer = await within(urls).findByRole("group");
+    await userEvent.click(within(offer).getByRole("button", { name: "Add this check" }));
+
+    expect(await within(offer).findByRole("alert")).toHaveTextContent(
+      "List should have at most 20 items after validation, not 21",
+    );
+  });
+
+  it("offers nothing when every suggested check is already in force", async () => {
+    const fetchMock = settingsBackend({ suggested: SUGGESTED.slice(0, 1) });
+    renderPage("m1/compose:shop");
+    const urls = await region("Checked from outside");
+    await within(urls).findByRole("button", { name: "Edit URLs" });
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([input]) => String(input).endsWith("/suggested-checks")),
+      ).toBe(true),
+    );
+    expect(within(urls).queryByRole("group")).toBeNull();
   });
 
   it("shows the API's reason when it refuses a URL, and keeps the draft open", async () => {

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 
 from bleep.api.deps import Watching, get_parts, get_watching
 from bleep.api.errors import Refusal
+from bleep.hosts.config import UrlCheckConfig
 from bleep.incidents.repository import utcnow
 from bleep.schemas.api import HostView, ServiceDetail, ServiceView, UrlHistory
 from bleep.schemas.incidents import Subject
@@ -38,6 +39,20 @@ async def list_services(
     host_id: str | None = None,
 ) -> list[ServiceView]:
     return await _overview(parts, watching).services(host_id)
+
+
+@router.get("/services/{service_id:path}/suggested-checks")
+async def suggested_checks(
+    service_id: str, parts: Annotated[AppParts, Depends(get_parts)]
+) -> list[UrlCheckConfig]:
+    """URL checks the switched-on plugins suggest for the service, such as its Coolify
+    application's domains, without those it has (#348); empty when no plugin suggests any. They
+    are offered on the service's page and saved like any URL set there; nothing is checked before.
+    Declared before `GET /services/{id}`, which would otherwise take this path too."""
+    service = parts.registry.service(service_id)
+    if service is None:
+        raise Refusal(404, "no_service")
+    return await parts.plugins.suggested_checks(service)
 
 
 @router.get("/services/{service_id:path}")

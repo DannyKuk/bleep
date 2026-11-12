@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import json
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import numpy as np
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun, CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel
@@ -520,6 +522,23 @@ class FakeCoolifyPlugin(Plugin):
     async def health(self, ctx: PluginContext) -> PluginHealth:
         token = ctx.secrets["COOLIFY_TOKEN"].get_secret_value()
         return PluginHealth(ok=True, detail=f"reached {ctx.settings.url} as {token}")
+
+
+class CoolifyAnswers(httpx.AsyncBaseTransport):
+    """A Coolify that answers its application list with `status` and `body`, handed over unread
+    as the network does: the client reads the raw stream, which `httpx.MockTransport` consumes
+    first. Every request is recorded."""
+
+    def __init__(self, status: int, body: object) -> None:
+        self.status, self.body = status, body
+        self.requests: list[httpx.Request] = []
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if request.url.path != "/api/v1/applications":
+            return httpx.Response(404, stream=httpx.ByteStream(b"{}"))
+        stream = httpx.ByteStream(json.dumps(self.body).encode())
+        return httpx.Response(self.status, stream=stream)
 
 
 class LowScoringEmbedder(FakeEmbedder):

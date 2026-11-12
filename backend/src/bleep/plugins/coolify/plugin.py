@@ -50,7 +50,8 @@ from bleep.guard.plan_check import (
 )
 from bleep.guard.redact import redact_with_count
 from bleep.guard.sanitize import strip_control
-from bleep.hosts.coolify_names import COOLIFY_NAME, name_matches
+from bleep.hosts.config import UrlCheckConfig, check_url_syntax
+from bleep.hosts.coolify_names import COOLIFY_NAME, app_protected_by, name_matches
 from bleep.hosts.discovery import is_self
 from bleep.hosts.registry import Registry
 from bleep.plugins import urls
@@ -59,6 +60,8 @@ from bleep.plugins.coolify.client import CoolifyClient, CoolifyError, CoolifyUna
 from bleep.schemas.coolify import CoolifyApplication, CoolifyDeployment, CoolifyEnvKey
 from bleep.schemas.graph import Action, ApprovalGrant, ApprovalRecord, PlanStep, StepResult
 from bleep.schemas.plugins import PluginHealth
+from bleep.schemas.services import Service
+from bleep.schemas.settings import has_userinfo
 from bleep.schemas.shown import Shown
 from bleep.tools.common import UNTRUSTED
 from bleep.tools.docker_act import StepRefused
@@ -94,6 +97,12 @@ _URL = re.compile(
     rf"(?P<rest>(?:{_LABEL}(?:\.{_LABEL})*\.?|\[[0-9A-Fa-f:.]+\])"
     r"(?::[0-9]{1,5})?(?:[/?#][\x21-\x2b\x2d-\x3a\x3c-\x7e]*)?)"
 )
+# A host label of a preview deployment's domain (`pr-12.shop.example.com`, `shop-pr-12.…`).
+_PREVIEW_LABEL = re.compile(r"(?:^|-)pr-\d+$", re.IGNORECASE)
+# What follows the scheme of a domain `_URL` took: the host, a port and a path.
+_AUTHORITY = re.compile(r"(?P<host>\[[^\]]*\]|[^:/?#]*)(?::[0-9]{1,5})?(?P<path>[/?#].*)?")
+_HEALTH_PATH = re.compile(r"/[\x21-\x22\x24-\x7e]{0,500}")  # printable, no space or `#`
+SUGGESTED_MAX = 20  # of one service's suggested checks: as many URLs as a service may have
 APPLICATIONS = (
     "List the Coolify applications: name, uuid, status (running:healthy, exited:unhealthy, ...),"
     " domains, git repo and branch, deployed commit and build pack. The ones whose containers"
@@ -305,6 +314,83 @@ def _domains(a: CoolifyApplication) -> str:
     if a.docker_compose_domains is not None:
         return _compose_domains(a.docker_compose_domains)
     return "none"
+
+
+def app_of(service: Service, apps: list[CoolifyApplication]) -> CoolifyApplication | None:
+    """The one application of `apps` whose containers make up `service`, by the uuid label or
+    the 4.1.x names (`app_protected_by`); None for a preview deployment, which carries its
+    application's uuid but answers on other domains, and when none or several match."""
+    if service.source != "coolify":
+        return None
+    if any(c.labels.get("coolify.pullRequestId", "0") not in ("", "0") for c in service.containers):
+        return None
+    uuids = {a.uuid for a in apps}
+    found = {app_protected_by(c, uuids) for c in service.containers} - {None}
+    if len(found) != 1:
+        return None
+    uuid = found.pop()
+    return next(a for a in apps if a.uuid == uuid)
+
+
+def _preview_host(host: str) -> bool:
+    """Whether `host` reads as a preview deployment's: a label `pr-<n>` or ending `-pr-<n>`, or
+    a first label of digits alone in a name, as Coolify's default preview template
+    `{{pr_id}}.{{domain}}` writes it (an IPv4 address is all digits and not one)."""
+    labels = host.split(".")
+    if any(_PREVIEW_LABEL.search(label) for label in labels):
+        return True
+    return labels[0].isdigit() and not all(label.isdigit() for label in labels if label)
+
+
+def _domain_base(item: str) -> str | None:
+    """One `fqdn` item as the address a check starts from, `scheme://host[/path]` without a
+    trailing `/`; None for one that is not a plain http(s) URL, names a user or password, has a
+    query or fragment, or is a preview deployment's. The port goes: in a Coolify domain it is
+    the container's port the proxy forwards to, not a public one."""
+    url = _URL.fullmatch(item.strip())
+    if url is None or url["userinfo"] or url["scheme"].lower() not in ("http://", "https://"):
+        return None
+    parts = _AUTHORITY.fullmatch(url["rest"])
+    if parts is None or not parts["host"] or any(c in (parts["path"] or "") for c in "?#"):
+        return None
+    if _preview_host(parts["host"]):
+        return None
+    return url["scheme"].lower() + parts["host"] + (parts["path"] or "").rstrip("/")
+
+
+def _health_path(app: CoolifyApplication) -> str:
+    """The path Coolify's health check asks for when it is on and a plain path, else `/`."""
+    path = (app.health_check_path or "").strip()
+    return path if app.health_check_enabled and _HEALTH_PATH.fullmatch(path) else "/"
+
+
+def _same_check(url: str) -> str:
+    """`url` as two checks of one address compare: scheme and host in lower case, no final `/`."""
+    scheme, _, rest = url.partition("://")
+    authority, slash, path = rest.partition("/")
+    return f"{scheme.lower()}://{authority.lower()}{(slash + path).rstrip('/')}"
+
+
+def suggested_checks(service: Service, apps: list[CoolifyApplication]) -> list[UrlCheckConfig]:
+    """The URL checks the domains of `service`'s application suggest (#348): each domain of its
+    `fqdn` with the health check path, without the ones `_domain_base` refuses and those the
+    service has. Every one is an http(s) URL with a host and no user or password, as a check set
+    on the service page must be."""
+    app = app_of(service, apps)
+    if app is None or not app.fqdn:
+        return []
+    path = _health_path(app)
+    taken = {_same_check(check.url) for check in service.urls}
+    found: list[UrlCheckConfig] = []
+    for item in app.fqdn.split(","):
+        base = _domain_base(item)
+        url = base + path if base is not None else None
+        if url is None or check_url_syntax(url) is not None or has_userinfo(url):
+            continue
+        if _same_check(url) not in taken:
+            taken.add(_same_check(url))
+            found.append(UrlCheckConfig(url=url))
+    return found[:SUGGESTED_MAX]
 
 
 def _failed(error: CoolifyError) -> str:
@@ -645,6 +731,18 @@ class CoolifyPlugin(Plugin):
             )
             for action in ("coolify.redeploy", "coolify.set_env")
         }
+
+    async def suggested_checks(self, ctx: PluginContext, service: Service) -> list[UrlCheckConfig]:
+        """The checks the domains of the service's Coolify application suggest; none when it has
+        no application or Coolify cannot be read."""
+        if service.source != "coolify":
+            return []
+        try:
+            apps = await self.client(ctx).applications()
+        except CoolifyError as error:
+            log.warning("coolify: no suggested checks: %s", type(error).__name__)
+            return []
+        return suggested_checks(service, apps)
 
     async def health(self, ctx: PluginContext) -> PluginHealth:
         """Coolify's version, read with the token; the error's own words when that fails."""

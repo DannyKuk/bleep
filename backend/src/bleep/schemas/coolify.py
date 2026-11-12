@@ -23,6 +23,17 @@ def _as_json(value: object) -> object:
     return value if value is None or isinstance(value, str) else json.dumps(value)
 
 
+def _flag(value: object) -> object:
+    """A flag as Coolify sends it (a bool, or 0/1 from an older database), else None."""
+    if isinstance(value, bool):
+        return value
+    return bool(value) if value in (0, 1) else None
+
+
+def _text(value: object) -> object:
+    return value if isinstance(value, str) else None
+
+
 class CoolifyApplication(BaseModel):
     uuid: str = Field(pattern=_UUID_FIELD)  # the API never shows an application's numeric id
     name: str | None = None
@@ -36,6 +47,10 @@ class CoolifyApplication(BaseModel):
     git_commit_sha: str | None = None
     build_pack: str | None = None
     last_online_at: str | None = None
+    # The path Coolify's own health check asks the app for, and whether it asks at all (#348).
+    # Not booleans in every answer, so an odd value reads as unknown instead of losing the app.
+    health_check_enabled: Annotated[bool | None, BeforeValidator(_flag)] = None
+    health_check_path: Annotated[str | None, BeforeValidator(_text)] = None
 
 
 class CoolifyDeployment(BaseModel):

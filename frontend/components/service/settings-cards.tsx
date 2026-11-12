@@ -1,12 +1,13 @@
 "use client";
 
-import { Lock } from "lucide-react";
+import { Loader2, Lock } from "lucide-react";
 import { useState } from "react";
 
 import { HealthBadge } from "@/components/overview/health-badge";
 import { CheckStrip } from "@/components/service/check-strip";
 import { useLoaded, useStaleSaving } from "@/components/settings/loaded";
 import { ListEditor } from "@/components/settings/rules";
+import { SaveError, useSaving } from "@/components/settings/save-error";
 import { UrlEditor } from "@/components/settings/urls";
 import { useTimeZone } from "@/components/preferences";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +23,7 @@ import type {
   ServiceOverrides,
   ServiceSettingsView,
   SettingsView,
+  UrlCheck,
 } from "@/lib/settings-types";
 
 const NOTHING: ServiceSettingsView = {
@@ -176,6 +178,64 @@ function UrlRow({ url, checks }: { url: UrlStatus; checks: UrlCheckPoint[] }) {
   );
 }
 
+const sameUrl = (url: string) => url.trim().replace(/\/+$/, "").toLowerCase();
+
+/** The suggested checks the service does not have yet, compared by their URLs. */
+export function notYetChecked(suggested: unknown, urls: UrlCheck[]): UrlCheck[] {
+  if (!Array.isArray(suggested)) return [];
+  const had = new Set(urls.map((check) => sameUrl(check.url)));
+  return (suggested as UrlCheck[]).filter((check) => !had.has(sameUrl(check.url)));
+}
+
+/**
+ * The checks Coolify suggests from the service's domains (#348), added in one click to the URLs
+ * in force and saved like any edit of them. Nothing is checked before.
+ */
+function SuggestedChecks({
+  name,
+  offered,
+  settings,
+}: {
+  name: string;
+  offered: UrlCheck[];
+  settings: ServiceSettings;
+}) {
+  const t = useT();
+  const { saving, busy, problems, run } = useSaving(t.settings.urls.labels);
+  return (
+    <div
+      role="group"
+      aria-label={t.service.suggestedFor(name)}
+      className="flex flex-col gap-2 rounded-row border border-dashed border-line px-3 py-2 text-sm"
+    >
+      <p className="font-bold">{t.service.suggestedTitle}</p>
+      <ul className="flex flex-col gap-1">
+        {offered.map((check) => (
+          <li key={check.url} className="font-mono break-all">
+            {check.url}
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs text-ink-2">{t.service.suggestedNote}</p>
+      <div>
+        <Button
+          wrap
+          type="button"
+          size="sm"
+          disabled={busy}
+          onClick={() =>
+            void run(() => settings.save({ urls: [...settings.view.urls, ...offered] }))
+          }
+        >
+          {saving && <Loader2 aria-hidden className="animate-spin" />}
+          {t.service.addSuggested(offered.length)}
+        </Button>
+      </div>
+      <SaveError problems={problems} />
+    </div>
+  );
+}
+
 /**
  * The URLs Bleep checks for the service, each with its last check and the strip of its recent
  * ones. With settings, the list is the one in force (a URL just added shows as not checked yet)
@@ -186,11 +246,14 @@ export function CheckedUrls({
   statuses,
   history = [],
   settings,
+  suggested,
 }: {
   name: string;
   statuses: UrlStatus[];
   history?: UrlHistory[];
   settings?: ServiceSettings;
+  /** The checks a plugin suggests for the service; offered only where the settings can be saved. */
+  suggested?: UrlCheck[];
 }) {
   const [editing, setEditing] = useState(false);
   const t = useT().service;
@@ -207,6 +270,7 @@ export function CheckedUrls({
       />
     );
   }
+  const offered = settings ? notYetChecked(suggested, settings.view.urls) : [];
   const shown = settings
     ? settings.view.urls.map(
         (check) => statuses.find((status) => status.url === check.url) ?? notChecked(check.url),
@@ -228,6 +292,9 @@ export function CheckedUrls({
         <p className="text-sm text-ink-2">{t.noUrls}</p>
       )}
       {settings && <EditButton onClick={() => setEditing(true)}>{t.editUrls}</EditButton>}
+      {settings && offered.length > 0 && (
+        <SuggestedChecks name={name} offered={offered} settings={settings} />
+      )}
     </div>
   );
 }
