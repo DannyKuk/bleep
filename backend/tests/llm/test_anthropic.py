@@ -96,7 +96,7 @@ def test_the_key_is_read_from_the_env_by_the_model_settings(monkeypatch):
 
 
 async def test_the_model_answers_through_the_messages_api_with_the_key_and_no_sampling():
-    model = chat_model(claude(), "main")
+    model = chat_model(claude(), "main", timeout_s=60)
     seen = over_transport(model, lambda request: httpx2.Response(200, json=message_body("hi")))
 
     reply = await model.ainvoke([HumanMessage("hello")])
@@ -149,7 +149,7 @@ def guard(sleep: Recorder) -> ModelGuard:
 
 
 async def test_an_overloaded_claude_is_retried_and_the_next_answer_is_used():
-    model = chat_model(claude(), "main")
+    model = chat_model(claude(), "main", timeout_s=60)
     answers = [httpx2.Response(200, json=message_body("back")), httpx2.Response(529, json={})]
     seen = over_transport(model, lambda request: answers.pop())
     sleep = Recorder()
@@ -161,7 +161,7 @@ async def test_an_overloaded_claude_is_retried_and_the_next_answer_is_used():
 
 @pytest.mark.parametrize("status", [429, 500, 529])
 async def test_a_claude_that_stays_down_ends_in_model_unavailable(status):
-    model = chat_model(claude(), "main")
+    model = chat_model(claude(), "main", timeout_s=60)
     seen = over_transport(model, lambda request: httpx2.Response(status, json={}))
     sleep = Recorder()
 
@@ -172,7 +172,7 @@ async def test_a_claude_that_stays_down_ends_in_model_unavailable(status):
 
 
 async def test_a_rejected_key_is_not_retried():
-    model = chat_model(claude(), "main")
+    model = chat_model(claude(), "main", timeout_s=60)
     seen = over_transport(model, lambda request: httpx2.Response(401, json={}))
 
     with pytest.raises(anthropic.AuthenticationError):
@@ -186,7 +186,7 @@ class Verdict(BaseModel):
 
 
 async def test_structured_output_asks_for_json_when_the_tool_call_fails_as_a_bad_request():
-    model = chat_model(claude(), "main")
+    model = chat_model(claude(), "main", timeout_s=60)
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         if "tools" in json.loads(request.content):
@@ -201,7 +201,7 @@ async def test_structured_output_asks_for_json_when_the_tool_call_fails_as_a_bad
 async def test_structured_output_on_sonnet_5_5_falls_back_to_json_without_forcing_the_tool():
     """Sonnet 5.5 refuses a forced tool choice; langchain-anthropic then leaves it out, and a
     reply without a tool call must end in the JSON fallback, not in an error."""
-    model = chat_model(claude(), "main")
+    model = chat_model(claude(), "main", timeout_s=60)
     bodies: list[dict] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -217,7 +217,7 @@ async def test_structured_output_on_sonnet_5_5_falls_back_to_json_without_forcin
 
 
 async def test_structured_output_reads_the_tool_call_claude_makes():
-    model = chat_model(claude(), "main")
+    model = chat_model(claude(), "main", timeout_s=60)
     body = message_body()
     body["content"] = [
         {"type": "tool_use", "id": "toolu_1", "name": "Verdict", "input": {"cause": "bad config"}}
@@ -276,7 +276,7 @@ async def test_claude_haiku_5_5_prices_the_whole_call_higher_for_a_prompt_over_1
 
 
 async def test_a_call_through_the_real_client_records_its_usage(ledger):
-    model = chat_model(claude(), "cheap")
+    model = chat_model(claude(), "cheap", timeout_s=60)
     over_transport(
         model,
         lambda request: httpx2.Response(
