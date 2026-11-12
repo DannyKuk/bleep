@@ -228,3 +228,20 @@ async def test_gather_says_nothing_about_the_last_line_when_the_engine_cannot(tm
     ctx = await run_gather(env, subject, [died(subject, "shop-web-1")])
 
     assert ctx.logs["shop-web-1"].startswith('<untrusted source="logs"')
+
+
+async def test_gather_keeps_the_logs_when_the_last_line_call_fails(tmp_path):
+    engine = shop_engine()
+    engine.log_text = {"shop-web-1": "web says hi\n"}
+
+    async def break_down(container):
+        raise TypeError("expected string or bytes-like object")
+
+    engine.last_log = break_down
+    env = await graph_env(tmp_path, engine=engine)
+    subject = Subject(kind="service", host_id="a", service_id=env.service_id("shop"))
+
+    ctx = await run_gather(env, subject, [died(subject, "shop-web-1")])
+
+    assert ctx.logs["shop-web-1"].startswith('<untrusted source="logs"')
+    assert "web says hi" in ctx.logs["shop-web-1"]

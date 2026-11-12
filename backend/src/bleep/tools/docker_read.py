@@ -283,7 +283,8 @@ async def last_line_header(engine, container: str) -> str:
         return ""
     try:
         last = await engine.last_log(container)
-    except EngineError:
+    # The header is a nicety: no failure of this extra call may cost the logs already read.
+    except Exception:
         return ""
     if last is None:
         return ""

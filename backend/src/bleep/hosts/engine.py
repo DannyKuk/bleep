@@ -627,9 +627,9 @@ def _info(raw: dict) -> EngineInfo:
 _LOG_STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})")
 
 
-def _log_time(stamp: str) -> datetime | None:
-    """A Docker RFC 3339 timestamp, or None when the text is not exactly one."""
-    if not _LOG_STAMP.fullmatch(stamp):
+def _log_time(stamp: object) -> datetime | None:
+    """A Docker RFC 3339 timestamp, or None when the value is not exactly one."""
+    if not isinstance(stamp, str) or not _LOG_STAMP.fullmatch(stamp):
         return None
     try:
         return _aware(datetime.fromisoformat(stamp))

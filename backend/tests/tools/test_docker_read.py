@@ -742,6 +742,15 @@ async def test_an_engine_that_fails_the_last_line_call_still_returns_the_logs(en
     assert out.startswith("<untrusted") and "retrying" in out
 
 
+async def test_any_failure_of_the_last_line_call_still_returns_the_logs(env):
+    async def break_down(container):
+        raise TypeError("expected string or bytes-like object")
+
+    env.engine.last_log = break_down
+    out = await env.run("container_logs", container="shop-web-1", tail=1000)
+    assert out.startswith("<untrusted") and "retrying" in out
+
+
 async def test_the_last_line_header_carries_nothing_the_container_wrote(env):
     """The header is built from the parsed time only: a hostile last line cannot reach it."""
     last_written(env, NOW - timedelta(seconds=10))

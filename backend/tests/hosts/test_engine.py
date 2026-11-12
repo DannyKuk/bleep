@@ -322,6 +322,11 @@ async def test_info_maps_engine_facts(engine):
     assert info.operating_system == "Docker Desktop"
 
 
+@pytest.mark.parametrize("value", [None, 123, "", "yesterday"])
+def test_an_engine_clock_that_is_no_timestamp_is_left_out(value):
+    assert engine_module._info({"SystemTime": value}).system_time is None
+
+
 async def test_act_calls_reach_the_api(api, engine):
     await engine.restart("c1")
     await engine.stop("c1")
