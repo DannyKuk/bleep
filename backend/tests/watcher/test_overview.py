@@ -256,6 +256,42 @@ async def test_an_ended_incident_is_named_only_while_the_service_stayed_down_thr
     assert (view.unwatched.reason, view.unwatched.incident_id) == ("before_start", None)
 
 
+async def test_after_a_restart_a_stop_on_purpose_that_exited_137_was_down_before_start(
+    tmp_path,
+):
+    # A fresh watcher never saw the stop event: the container is down in its first listing.
+    r = await Rig(tmp_path, shop=box("shop-web-1", state="exited", exit_code=137)).boot()
+    view = await r.shop()
+    assert view.health == "down"
+    assert view.unwatched is not None
+    assert (view.unwatched.reason, view.unwatched.container) == ("before_start", "shop-web-1")
+
+
+async def test_an_incident_that_ended_before_the_watcher_started_is_not_named(tmp_path):
+    r = Rig(tmp_path, shop=box("shop-web-1", state="exited", exit_code=1))
+    await r.db.migrate()
+    death = Signal(
+        kind="container_died",
+        subject=SHOP_SUBJECT,
+        at=r.clock.now,
+        container="shop-web-1",
+        detail={"exit_code": 1},
+    )
+    # Before a restart of Bleep: the incident ended while its stored health said down.
+    await r.health.record("h", SHOP, "down", r.clock.now)
+    old, _ = await r.repo.open_or_attach(SHOP_SUBJECT, [death], name="shop")
+    r.clock.now += timedelta(minutes=1)
+    await r.repo.set_status(old.id, "failed")
+    r.clock.now += timedelta(hours=1)
+    await r.registry.start()
+    await r.pulse()
+    stored = await r.health.current(SHOP)
+    assert stored is not None and stored[0] == "down"  # the stale "since" is still there
+    view = await r.shop()
+    assert view.unwatched is not None
+    assert (view.unwatched.reason, view.unwatched.incident_id) == ("before_start", None)
+
+
 async def test_a_down_service_the_watcher_waits_on_or_that_is_quiet_or_open_has_no_reason(
     tmp_path,
 ):

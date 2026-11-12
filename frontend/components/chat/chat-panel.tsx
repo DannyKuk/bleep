@@ -11,7 +11,7 @@ import { useOverall } from "@/components/overall-state";
 import { usePinnedBarSpace } from "@/components/pinned-bar";
 import { ApiError } from "@/lib/api";
 import { type Messages, useT } from "@/lib/i18n";
-import { stateMood } from "@/lib/mood";
+import { faceMood } from "@/lib/mood";
 import { idFromSegment } from "@/lib/routes";
 import {
   MESSAGE_MAX_CHARS,
@@ -84,7 +84,7 @@ function exportFailure(error: unknown, t: Messages["chat"]): string {
  */
 export function ChatPanel() {
   const t = useT().chat;
-  const { state, incidents } = useOverall();
+  const { state, mood: overall, incidents } = useOverall();
   const pathname = usePathname();
   const barSpace = usePinnedBarSpace();
   const [open, setOpen] = useState(false);
@@ -103,7 +103,7 @@ export function ChatPanel() {
   const incidentId = segment && INCIDENT_ID.test(segment) ? segment : null;
   const about = incidentId && dismissed !== incidentId ? incidentId : null;
   const aboutName = incidents?.find((i) => i.id === about)?.short_name ?? null;
-  const mood = state ? stateMood(state) : "not_sure";
+  const mood = state && overall ? faceMood(state, overall) : "not_sure";
 
   const expired = (offer: Offer) => {
     if (Date.parse(offer.expires_at) <= now) return true;

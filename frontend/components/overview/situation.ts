@@ -110,17 +110,19 @@ const isDown = (container: ContainerView) =>
 
 /**
  * What a service shown down that the watcher opens nothing for shows in mono: the container its
- * reason is about ("shop-web-1 · paused"), else its first container down, else its first
- * failing URL.
+ * reason is about ("shop-web-1 · paused"), else its first failing URL. The backend judged which
+ * containers are down (a finished job or one stopped on purpose is not), so its `unwatched`
+ * is trusted, a null container included; only without it is the first container that looks
+ * down guessed.
  */
 export function unwatchedDetail(service: ServiceView): string | undefined {
-  const named = service.unwatched?.container;
-  const container =
-    service.containers.find((candidate) => candidate.name === named) ??
-    service.containers.find(isDown);
+  const unwatched = service.unwatched;
+  const container = unwatched
+    ? service.containers.find((candidate) => candidate.name === unwatched.container)
+    : service.containers.find(isDown);
   if (container) return containerTrouble(container);
   const failing = service.urls.find((url) => url.status === "failing");
-  if (!failing) return named ?? undefined;
+  if (!failing) return unwatched?.container ?? undefined;
   return failing.status_code ? `${failing.url} · ${failing.status_code}` : failing.url;
 }
 

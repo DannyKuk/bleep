@@ -221,6 +221,13 @@ describe("unwatchedDetail", () => {
     );
   });
 
+  it("trusts the backend's reason over a guess: no container named shows the failing URL", () => {
+    const job = { ...box, name: "shop-migrate-1", state: "exited", exit_code: 0 };
+    const failing = { ...service().urls[0], status: "failing", status_code: 503 } as const;
+    const urlOnly = service({ containers: [box, job], urls: [failing], unwatched: named(null) });
+    expect(unwatchedDetail(urlOnly)).toBe("http://localhost:8080/ · 503");
+  });
+
   it("falls back to a failing URL, with its status code", () => {
     const failing = { ...service().urls[0], status: "failing", status_code: 503 } as const;
     expect(unwatchedDetail(service({ urls: [failing] }))).toBe("http://localhost:8080/ · 503");

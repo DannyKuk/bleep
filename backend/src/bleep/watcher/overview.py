@@ -267,20 +267,24 @@ class Overview:
         if self._watching is None or not is_unwatched(view, host):
             return view
         down = down_containers(service, seen.stopped_on_purpose)
-        reason = unwatched_view(down, seen, await self._ended_while_down(service))
+        reason = unwatched_view(down, seen, await self._ended_while_down(service, seen))
         return view.model_copy(update={"unwatched": reason})
 
-    async def _ended_while_down(self, service: Service) -> Incident | None:
-        """The service's latest incident, when it has ended and the service has been down since
-        before it did (as the watcher stored its health), so it stayed down through it."""
-        if self._health is None:
+    async def _ended_while_down(self, service: Service, seen: HostSightings) -> Incident | None:
+        """The service's latest incident, when it ended while this watcher was running and the
+        service has been down since before it did (as the watcher stored its health), so it
+        stayed down through it. A stored health is kept across a restart of Bleep, and says
+        nothing about what happened while Bleep was not looking."""
+        if self._health is None or seen.first_listing is None:
             return None
         latest = await self.incidents.list(service_id=service.id, limit=1)
         if not latest or latest[0].status not in TERMINAL_STATUSES:
             return None
         ended = latest[0].closed_at
+        if ended is None or ended < seen.first_listing:
+            return None
         stored = await self._health.current(service.id)
-        if ended is None or stored is None or stored[0] != "down" or stored[1] > ended:
+        if stored is None or stored[0] != "down" or stored[1] > ended:
             return None
         return latest[0]
 

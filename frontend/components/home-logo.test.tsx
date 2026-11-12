@@ -59,18 +59,20 @@ describe("HomeLogo", () => {
 
   it("is amber, not green, while the watcher waits on a service (#358)", async () => {
     stubReads([], [host()], [service({ health: "down", watching: [watch()] })]);
-    renderHeader();
+    const svg = renderHeader();
     await vi.waitFor(() =>
       expect(screen.getByRole("link", { name: /Bleep/ })).toHaveAttribute("data-state", "amber"),
     );
+    expect(svg()).toHaveAttribute("data-mood", "working");
   });
 
   it("is amber for a service shown down that the watcher opens nothing for (#478)", async () => {
     stubReads([incident({ status: "resolved" })], [host()], [service({ health: "down" })]);
-    renderHeader();
+    const svg = renderHeader();
     await vi.waitFor(() =>
       expect(screen.getByRole("link", { name: /Bleep/ })).toHaveAttribute("data-state", "amber"),
     );
+    expect(svg()).toHaveAttribute("data-mood", "pointing");
   });
 
   it("stays green for a quiet service, though it shows down and the watcher waits", async () => {

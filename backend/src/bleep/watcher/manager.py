@@ -515,7 +515,9 @@ class WatcherManager:
         stored = await self._stored_checks(service.host_id) if with_urls else {}
         configured = service.urls if with_urls else []
         urls = [url_status(u.url, stored.get((service.id, u.url)), now) for u in configured]
-        if service_health(service.containers, (u.status for u in urls), service.exits) != "down":
+        stopped = self.sightings.of(service.host_id).stopped_on_purpose
+        statuses = (u.status for u in urls)
+        if service_health(service.containers, statuses, service.exits, stopped) != "down":
             return []
         signals = [
             Signal(
@@ -526,7 +528,7 @@ class WatcherManager:
                 detail={"state": c.state, "exit_code": c.exit_code},
             )
             for c in service.containers
-            if container_health(c) == "down"
+            if container_health(c, stopped_on_purpose=c.id in stopped) == "down"
         ]
         signals += [
             Signal(kind="url_failed", subject=subject, at=now, detail={"url": u.url})

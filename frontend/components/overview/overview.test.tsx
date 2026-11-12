@@ -550,6 +550,32 @@ describe("OverviewView hero while Bleep points at a service (#478)", () => {
     expect(mood(container)).toBe("pointing");
   });
 
+  it("shows the failing URL for a service down by its URL only, not a finished job", () => {
+    const job = { ...dead, name: "shop-migrate-1", exit_code: 0 };
+    const running = service().containers[0];
+    const failing = { ...service().urls[0], status: "failing", status_code: 503 } as const;
+    render(
+      <OverviewView
+        hosts={[host({ health: "down" })]}
+        services={[
+          shownDown({
+            containers: [running, job],
+            urls: [failing],
+            unwatched: unwatched("after_incident", {
+              container: null,
+              incident_id: "inc_14",
+              incident_short_name: "shop #14",
+            }),
+          }),
+        ]}
+        incidents={[]}
+        now={NOW}
+      />,
+    );
+    expect(within(hero()).getByText("http://localhost:8080/ · 503")).toHaveClass("font-mono");
+    expect(hero()).not.toHaveTextContent("shop-migrate-1");
+  });
+
   it("names every service it points at", () => {
     render(
       <OverviewView

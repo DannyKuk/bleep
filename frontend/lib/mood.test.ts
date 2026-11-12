@@ -9,6 +9,7 @@ import {
   overallMood,
   overallState,
   reportMood,
+  faceMood,
   stateMood,
   unwatchedDownServices,
   watchedServices,
@@ -386,6 +387,16 @@ describe("quiet subjects", () => {
     expect(isQuietSubject(host, quietService)).toBe(false);
     expect(isQuietSubject(host, [hostOf({ quiet: { ...SNOOZED } })])).toBe(true);
     expect(isQuietSubject(service, [])).toBe(false);
+  });
+});
+
+describe("faceMood", () => {
+  it("points while the overall mood points, and shows the state's face otherwise", () => {
+    expect(faceMood("amber", "pointing")).toBe("pointing");
+    expect(faceMood("amber", "working")).toBe("working");
+    expect(faceMood("amber", "watching")).toBe("working");
+    expect(faceMood("red", "needs_you")).toBe("needs_you");
+    expect(faceMood("green", "all_good")).toBe("all_good");
   });
 });
 

@@ -189,6 +189,12 @@ export function overallState(
   return "green";
 }
 
+/** The face the header's logo and the chat button show: the state's own (`stateMood`), except
+ * that Bleep points while the overall mood is pointing (#478). */
+export function faceMood(state: OverallState, mood: Mood): Mood {
+  return mood === "pointing" ? mood : stateMood(state);
+}
+
 /** The mood the head-only Bleep shows for a state, so its eyes take the state's colour. */
 export function stateMood(state: OverallState): Mood {
   if (state === "red") return "needs_you";
