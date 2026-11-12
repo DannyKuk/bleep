@@ -25,11 +25,18 @@ describe("the Models panel", () => {
     const models = await panel();
 
     expect(within(models).getByLabelText("Provider")).toHaveValue("openrouter");
+    expect(
+      within(within(models).getByLabelText("Provider")).getAllByRole("option", { hidden: true }),
+    ).toHaveLength(3);
+    expect(within(models).getByRole("option", { name: "Anthropic" })).toBeInTheDocument();
     expect(within(models).getByLabelText("Model")).toHaveValue("openai/gpt-6-luna");
     expect(within(models).getByLabelText("Cheap model")).toHaveValue("openai/gpt-6-luna");
     expect(within(models).getByLabelText("Local model")).toHaveValue("openai/gpt-oss-20b");
     expect(within(models).getByRole("group", { name: "OPENROUTER_API_KEY" })).toHaveTextContent(
       "Set in .env",
+    );
+    expect(within(models).getByRole("group", { name: "ANTHROPIC_API_KEY" })).toHaveTextContent(
+      "Missing",
     );
     expect(within(models).getByRole("group", { name: "LOCAL_BASE_URL" })).toHaveTextContent(
       "may be private",
@@ -152,6 +159,7 @@ describe("the Models panel", () => {
 
     expect(within(models).getByRole("group", { name: "LOCAL_BASE_URL" })).toBeInTheDocument();
     expect(within(secrets).queryByRole("group", { name: "OPENROUTER_API_KEY" })).toBeNull();
+    expect(within(secrets).queryByRole("group", { name: "ANTHROPIC_API_KEY" })).toBeNull();
     expect(within(secrets).queryByRole("group", { name: "LOCAL_BASE_URL" })).toBeNull();
     expect(within(secrets).getByRole("group", { name: "TELEGRAM_BOT_TOKEN" })).toBeInTheDocument();
   });

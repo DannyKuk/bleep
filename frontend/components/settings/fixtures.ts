@@ -141,6 +141,7 @@ export function secretViews(): SecretView[] {
     secretView("COOLIFY_URL", { kind: "address", carries: "COOLIFY_TOKEN" }),
     secretView("COOLIFY_TOKEN"),
     secretView("LOCAL_BASE_URL", { kind: "address", private: true }),
+    secretView("ANTHROPIC_API_KEY"),
     secretView("EMBEDDINGS_BASE_URL", {
       kind: "address",
       carries: "EMBEDDINGS_API_KEY",

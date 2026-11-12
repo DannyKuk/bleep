@@ -13,6 +13,7 @@ dependencies = [
     "fastapi>=0.162.0",
     "fastembed>=0.9.1",
     "httpx>=0.28.1",
+    "langchain-anthropic>=1.7.10",
     "langchain-core>=1.7.4",
     "langchain-mcp-adapters>=0.3.2",
     "langchain-openai>=1.7.3",

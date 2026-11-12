@@ -1,6 +1,8 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 
+import anthropic
+import httpx2
 import pytest
 from langchain_core.callbacks import BaseCallbackHandler
 
@@ -606,6 +608,19 @@ class HangingModel(FakeChatModel):
         return await super()._agenerate(*args, **kwargs)
 
 
+class FailingModel(FakeChatModel):
+    """Raises `failure` on its first `failures` calls, then answers from the script."""
+
+    failure: Exception
+    failures: int = 0
+
+    async def _agenerate(self, *args, **kwargs):
+        if self.failures > 0:
+            self.failures -= 1
+            raise self.failure
+        return await super()._agenerate(*args, **kwargs)
+
+
 class WallClock:
     def __init__(self) -> None:
         self.now = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
@@ -674,6 +689,44 @@ async def test_a_model_that_stays_unavailable_pauses_the_run_instead_of_failing_
         ]
         assert len(notices) == 1 and "paused" in notices[0] and "TimeoutError" in notices[0]
         assert notifier.notices == [(incident.id, notices[0])]
+        await runner.close()
+
+
+@pytest.mark.parametrize("status", [429, 500, 529])
+async def test_a_claude_that_stays_down_pauses_the_run_instead_of_failing_it(tmp_path, status):
+    """The Anthropic API's outage errors (rate limit, 5xx, 529 overloaded) retry and then pause
+    the incident, as a hanging model does (#504)."""
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    error = {
+        429: anthropic.RateLimitError,
+        500: anthropic.InternalServerError,
+        529: anthropic.OverloadedError,
+    }[status]("down", response=httpx2.Response(status, request=request), body=None)
+    env = await graph_env(tmp_path)
+    env.models.model = FailingModel(
+        script=confident_model().script,
+        structured_output_unsupported=True,
+        failure=error,
+        failures=3,  # the call and its two retries
+    )
+    env.deps.model_sleep = no_wait
+    incident = await env.open(service(env), container="shop-web-1")
+    notifier, retry = NoticeNotifier(), Retry()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(
+            build_graph(env.deps, saver),
+            env.repo,
+            env.bus,
+            notifier=notifier,
+            settings=env.deps.settings_store,
+            sleep=retry,
+        )
+        await runner.start(incident)
+        await paused(runner, retry)
+
+        assert (await env.repo.get(incident.id)).status == "paused"
+        assert retry.delays == [300]
+        assert len(notifier.notices) == 1 and type(error).__name__ in notifier.notices[0][1]
         await runner.close()
 
 

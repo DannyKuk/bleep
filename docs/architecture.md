@@ -20,7 +20,7 @@ flowchart LR
     ACT["<b>Act tools</b><br/>grant · plan check"]
     PLUG["<b>Plugins</b><br/>Coolify · MCP"]
     NOTIFY["<b>Notifier</b><br/>dashboard · Telegram"]
-    LLM["<b>Models</b><br/>OpenRouter · local"]
+    LLM["<b>Models</b><br/>OpenRouter · Anthropic · local"]
     MEM["<b>Memory</b><br/>past incidents · facts"]
     KNOW["<b>Knowledge</b><br/>Docker docs · repo docs<br/>past reports"]
     DB[("<b>SQLite</b><br/>bleep.db<br/>checkpoints.sqlite")]
@@ -77,7 +77,7 @@ flowchart LR
 | **Knowledge search** | `knowledge/`, `tools/knowledge.py`, `backend/knowledge/docker-docs/` | A shipped snapshot of 27 Docker and Compose doc pages, the linked repos' README and `docs/`, and past incident reports, cut at headings into chunks of 300 tokens and embedded with memory's model. Ingested on first start and refreshed in the background, skipped by content hash; `knowledge_search(query, sources?)` returns the best section of the 5 closest pages as untrusted data. |
 | **Action log** | `incidents/action_log.py` | Execute's ledger in SQLite: each step `started` before its engine call and `done`, `failed` or `skipped` after, so a restart never runs a step twice. |
 | **Guard** | `guard/` | Redacts secrets, strips control characters, caps size and wraps untrusted text before anything reaches a model; checks every proposed plan before a human sees it (`guard/plan_check.py`); hashes plans and signs and checks approval grants (`guard/grant.py`); cuts log text out of every report (`guard/report_check.py`); builds incident titles with a label's text marked as host text (`guard/titles.py`); `guard/log.py` records what it refused, blocked or changed in the `guard_log` table. |
-| **Models** | `llm/` | One factory for OpenRouter and local models, structured output with a plain-JSON fallback, and a token and cost ledger with a daily cap. |
+| **Models** | `llm/` | One factory for OpenRouter, Anthropic and local models, structured output with a plain-JSON fallback, and a token and cost ledger with a daily cap. |
 | **Tracing** | `llm/tracing.py`, `docker-compose.observability.yaml` | Off by default; `TRACING=langfuse` or `langsmith` adds a tracer's callbacks to every graph run, one Langfuse trace per incident with the incident as its session, and stores the trace's link on the incident; each chat reading is a trace of its own in the session `talk-panel` or `talk-telegram`. `--profile observability` runs a self-hosted Langfuse. |
 | **Prompts** | `prompts/` | Every prompt is a `.md` file loaded with `prompts.load(name, **vars)`, which reads the dev panel's override instead when one is in force; a text a person reads has a German twin, loaded with `prompts.load_in(language, name, **vars)`. |
 | **Store** | `store/` | SQLite with numbered migrations. |
@@ -176,7 +176,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 - **Results are untrusted data**, guarded and wrapped like host output.
 
 **Agent and models** ([details](design/agent.md))
-- **One model factory for OpenRouter and local models**; structured output falls back to plain JSON for weak models.
+- **One model factory for OpenRouter, the Anthropic API and local models**; structured output falls back to plain JSON for weak models.
 - **`openai/gpt-6-luna` in the cloud, `openai/gpt-oss-20b` locally**: the local model is as accurate on the demo faults but never says unsure and acts more, so the checks and the approval gate carry its safety ([chat model](decisions/chat-model.md)).
 - **A cost ledger with a daily cap** stops a runaway incident before the next call.
 
