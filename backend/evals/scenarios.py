@@ -419,6 +419,7 @@ class ScenarioResult(BaseModel):
     structured_fallbacks: int = 0
     usd: float | None = None
     judge_usd: float | None = None
+    judge_attempts: int = 1  # model calls the judge needed; files from before it count as one
     seconds_to_incident: float | None = None
     seconds_to_diagnosis: float | None = None
     failure: Failure | None = None

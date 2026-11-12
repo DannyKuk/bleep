@@ -595,6 +595,7 @@ async def _judge(case: LoopBackCase, judge: Judge, run: ScenarioResult) -> None:
         return
     run.root_cause_score, run.root_cause_pass = judgement.score, judgement.passed
     run.judge_reason, run.judge_usd = judgement.reason, judgement.usd
+    run.judge_attempts = judgement.attempts
 
 
 def line(result: LoopBackResult) -> str:

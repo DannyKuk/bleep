@@ -766,6 +766,7 @@ async def _judge(scenario: Scenario, judge: Judge, result: ScenarioResult) -> No
     result.root_cause_pass = judgement.passed
     result.judge_reason = judgement.reason
     result.judge_usd = judgement.usd
+    result.judge_attempts = judgement.attempts
 
 
 def summary(result: ScenarioResult) -> str:

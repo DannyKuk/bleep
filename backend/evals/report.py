@@ -310,6 +310,10 @@ def _scenario_section(scenario: Scenario, results: list[ScenarioResult]) -> list
             lines.append(f"- Run {r.run} diagnosis: {_cell(r.diagnosis.root_cause)}")
         if r.judge_reason:
             lines.append(f"  - Judge: {_cell(r.judge_reason)}")
+        if r.judge_attempts > 1:
+            lines.append(
+                f"  - The judge needed {r.judge_attempts} attempts to give a readable answer"
+            )
         if r.forbidden:
             lines.append(f"  - Forbidden steps proposed: {', '.join(r.forbidden)}")
         if r.diagnosis_unnamed is not None or r.plan_unnamed is not None:
