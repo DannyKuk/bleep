@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2, Lock } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { HealthBadge } from "@/components/overview/health-badge";
 import { CheckStrip } from "@/components/service/check-strip";
@@ -153,7 +153,15 @@ const notChecked = (url: string): UrlStatus => ({
   latency_ms: null,
 });
 
-function UrlRow({ url, checks }: { url: UrlStatus; checks: UrlCheckPoint[] }) {
+function UrlRow({
+  url,
+  checks,
+  note,
+}: {
+  url: UrlStatus;
+  checks: UrlCheckPoint[];
+  note?: ReactNode;
+}) {
   const zone = useTimeZone();
   const language = useLanguage();
   const t = useT();
@@ -174,6 +182,7 @@ function UrlRow({ url, checks }: { url: UrlStatus; checks: UrlCheckPoint[] }) {
         {facts.length > 0 && <span className="text-xs text-ink-2">{facts.join(" · ")}</span>}
       </span>
       <CheckStrip url={url.url} checks={checks} />
+      {note}
     </li>
   );
 }
@@ -192,6 +201,51 @@ export function notYetChecked(suggested: unknown, urls: UrlCheck[]): UrlCheck[] 
   if (!Array.isArray(suggested)) return [];
   const had = new Set(urls.map((check) => sameUrl(check.url)));
   return (suggested as UrlCheck[]).filter((check) => !had.has(sameUrl(check.url)));
+}
+
+/** What the plugins say about the service's checks: the ones to offer and the ones it has on a
+ * domain Coolify no longer lists (#348, #493). */
+export interface CheckSuggestions {
+  offered: UrlCheck[];
+  stale: UrlCheck[];
+}
+
+/** The checks in force that a plugin flags as stale, as `sameUrl` writes them; none for an answer
+ * of another shape. */
+export function staleChecked(suggested: unknown, urls: UrlCheck[]): Set<string> {
+  const stale = (suggested as Partial<CheckSuggestions> | undefined)?.stale;
+  if (!Array.isArray(stale)) return new Set();
+  const had = new Set(urls.map((check) => sameUrl(check.url)));
+  return new Set(stale.map((check) => sameUrl(check.url)).filter((url) => had.has(url)));
+}
+
+/**
+ * The note under a check whose domain Coolify no longer has (#493), with the one click that
+ * removes it: the URLs in force are saved without it, like any edit of them. Nothing is removed
+ * before the click.
+ */
+function StaleNote({ url, settings }: { url: string; settings: ServiceSettings }) {
+  const t = useT();
+  const { saving, busy, problems, run } = useSaving(t.settings.urls.labels);
+  const remaining = settings.view.urls.filter((check) => sameUrl(check.url) !== sameUrl(url));
+  return (
+    <div role="group" aria-label={t.service.staleFor(url)} className="flex flex-col gap-1.5">
+      <p className="text-xs text-ink-2">{t.service.staleNote}</p>
+      <div>
+        <Button
+          wrap
+          type="button"
+          size="sm"
+          disabled={busy}
+          onClick={() => void run(() => settings.save({ urls: remaining }))}
+        >
+          {saving && <Loader2 aria-hidden className="animate-spin" />}
+          {t.service.removeStale}
+        </Button>
+      </div>
+      <SaveError problems={problems} />
+    </div>
+  );
 }
 
 /**
@@ -259,8 +313,8 @@ export function CheckedUrls({
   statuses: UrlStatus[];
   history?: UrlHistory[];
   settings?: ServiceSettings;
-  /** The checks a plugin suggests for the service; offered only where the settings can be saved. */
-  suggested?: UrlCheck[];
+  /** What the plugins say about the service's checks; shown only where the settings can be saved. */
+  suggested?: CheckSuggestions;
 }) {
   const [editing, setEditing] = useState(false);
   const t = useT().service;
@@ -277,7 +331,8 @@ export function CheckedUrls({
       />
     );
   }
-  const offered = settings ? notYetChecked(suggested, settings.view.urls) : [];
+  const offered = settings ? notYetChecked(suggested?.offered, settings.view.urls) : [];
+  const stale = settings ? staleChecked(suggested, settings.view.urls) : new Set<string>();
   const shown = settings
     ? settings.view.urls.map(
         (check) => statuses.find((status) => status.url === check.url) ?? notChecked(check.url),
@@ -292,6 +347,11 @@ export function CheckedUrls({
               key={url.url}
               url={url}
               checks={history.find((recent) => recent.url === url.url)?.checks ?? []}
+              note={
+                settings && stale.has(sameUrl(url.url)) ? (
+                  <StaleNote url={url.url} settings={settings} />
+                ) : undefined
+              }
             />
           ))}
         </ul>

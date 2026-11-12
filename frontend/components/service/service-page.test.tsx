@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { incident } from "@/components/incident/fixtures";
 import { OverallProvider } from "@/components/overall-state";
 import { ServicePage } from "@/components/service/service-page";
+import type { CheckSuggestions } from "@/components/service/settings-cards";
 import { invalid, sentBody, settingsView } from "@/components/settings/fixtures";
 import type { IncidentListItem, ServiceDetail, UrlCheckPoint } from "@/lib/api-types";
 import { formatTime } from "@/lib/format";
@@ -84,7 +85,7 @@ function stubBackend(service: Response, incidents: IncidentListItem[] = [pastInc
     const url = String(input);
     if (url === "/api/settings") return json(NO_SETTINGS);
     if (url.endsWith("/facts")) return json([]);
-    if (url.endsWith("/suggested-checks")) return json([]);
+    if (url.endsWith("/suggested-checks")) return json({ offered: [], stale: [] });
     if (url.startsWith("/api/incidents")) return json(incidents);
     return service.clone();
   });
@@ -353,12 +354,12 @@ function settingsBackend({
   service = json(SHOP),
   reads = [settingsView()],
   puts = [],
-  suggested = [],
+  suggested = { offered: [], stale: [] },
 }: {
   service?: Response;
   reads?: (ReturnType<typeof settingsView> | Response)[];
   puts?: (Response | Promise<Response>)[];
-  suggested?: UrlCheck[];
+  suggested?: CheckSuggestions;
 } = {}) {
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const overallReply = answerOverall(input);
@@ -652,7 +653,10 @@ describe("ServicePage settings", () => {
     saved.overrides.hosts = {
       m1: { services: { "compose:shop": { protected_containers: ["shop-cache-1"], urls: added } } },
     };
-    const fetchMock = settingsBackend({ puts: [json(saved)], suggested: SUGGESTED });
+    const fetchMock = settingsBackend({
+      puts: [json(saved)],
+      suggested: { offered: SUGGESTED, stale: [] },
+    });
     renderPage("m1/compose:shop");
     const urls = await region("Checked from outside");
 
@@ -690,7 +694,7 @@ describe("ServicePage settings", () => {
           "List should have at most 20 items after validation, not 21",
         ),
       ],
-      suggested: SUGGESTED.slice(1, 2),
+      suggested: { offered: SUGGESTED.slice(1, 2), stale: [] },
     });
     renderPage("m1/compose:shop");
     const urls = await region("Checked from outside");
@@ -703,7 +707,7 @@ describe("ServicePage settings", () => {
   });
 
   it("offers nothing when every suggested check is already in force", async () => {
-    const fetchMock = settingsBackend({ suggested: SUGGESTED.slice(0, 1) });
+    const fetchMock = settingsBackend({ suggested: { offered: SUGGESTED.slice(0, 1), stale: [] } });
     renderPage("m1/compose:shop");
     const urls = await region("Checked from outside");
     await within(urls).findByRole("button", { name: "Edit URLs" });
@@ -713,6 +717,107 @@ describe("ServicePage settings", () => {
       ).toBe(true),
     );
     expect(within(urls).queryByRole("group")).toBeNull();
+  });
+
+  describe("a check on a domain Coolify no longer has", () => {
+    const gone: UrlCheck = {
+      url: "https://old.shop.example.com/health",
+      expect_status: 200,
+      body_contains: null,
+    };
+    const inForce = () => [settingsView().hosts[0].services["compose:shop"].urls[0], gone];
+    const withGone = () => {
+      const view = settingsView();
+      view.hosts[0].services["compose:shop"].urls = inForce();
+      return view;
+    };
+
+    it("flags the check with a note and removes nothing until the button is clicked", async () => {
+      const fetchMock = settingsBackend({
+        reads: [withGone()],
+        suggested: { offered: SUGGESTED.slice(1, 2), stale: [gone] },
+      });
+      renderPage("m1/compose:shop");
+      const urls = await region("Checked from outside");
+
+      const note = await within(urls).findByRole("group", {
+        name: `Domain gone from Coolify: ${gone.url}`,
+      });
+      expect(note).toHaveTextContent("Coolify no longer has this domain.");
+      expect(within(urls).getAllByRole("button", { name: "Remove this check" })).toHaveLength(1);
+      expect(
+        within(urls).getByRole("group", { name: "Checks Coolify suggests for shop" }),
+      ).toBeInTheDocument(); // the new domain is offered as before
+      expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+    });
+
+    it("saves the checks in force without it on the click, and keeps the others", async () => {
+      const kept = inForce()[0];
+      const saved = settingsView({ version: "v2" });
+      saved.hosts[0].services["compose:shop"].urls = [kept];
+      saved.overrides.hosts = {
+        m1: {
+          services: { "compose:shop": { protected_containers: ["shop-cache-1"], urls: [kept] } },
+        },
+      };
+      const fetchMock = settingsBackend({
+        reads: [withGone()],
+        puts: [json(saved)],
+        suggested: { offered: [], stale: [gone] },
+      });
+      renderPage("m1/compose:shop");
+      const urls = await region("Checked from outside");
+
+      await userEvent.click(await within(urls).findByRole("button", { name: "Remove this check" }));
+
+      expect(sentBody(fetchMock, "PUT")).toEqual({
+        hosts: {
+          m1: {
+            services: { "compose:shop": { protected_containers: ["shop-cache-1"], urls: [kept] } },
+          },
+        },
+      });
+      await waitFor(() => expect(within(urls).queryByRole("group")).toBeNull());
+      expect(within(urls).queryByText(gone.url)).toBeNull();
+    });
+
+    it("shows why the removal was refused and keeps the note", async () => {
+      settingsBackend({
+        reads: [withGone()],
+        puts: [
+          invalid(["hosts", "m1", "services", "compose:shop", "urls"], "Not allowed right now"),
+        ],
+        suggested: { offered: [], stale: [gone] },
+      });
+      renderPage("m1/compose:shop");
+      const urls = await region("Checked from outside");
+      await userEvent.click(await within(urls).findByRole("button", { name: "Remove this check" }));
+
+      expect(await within(urls).findByRole("alert")).toHaveTextContent("Not allowed right now");
+      expect(within(urls).getByText(gone.url)).toBeInTheDocument();
+    });
+
+    it("says nothing about a flagged check the service no longer has", async () => {
+      const fetchMock = settingsBackend({ suggested: { offered: [], stale: [gone] } });
+      renderPage("m1/compose:shop");
+      const urls = await region("Checked from outside");
+      await within(urls).findByRole("button", { name: "Edit URLs" });
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(([input]) => String(input).endsWith("/suggested-checks")),
+        ).toBe(true),
+      );
+      expect(within(urls).queryByRole("button", { name: "Remove this check" })).toBeNull();
+    });
+
+    it("tells it in German in the German dashboard", async () => {
+      setLanguage("de");
+      settingsBackend({ reads: [withGone()], suggested: { offered: [], stale: [gone] } });
+      renderPage("m1/compose:shop");
+      const urls = await region("Von außen geprüft");
+      expect(await within(urls).findByText(/Coolify hat diese Domain nicht mehr/)).toBeVisible();
+      expect(within(urls).getByRole("button", { name: "Diese Prüfung entfernen" })).toBeVisible();
+    });
   });
 
   it("shows the API's reason when it refuses a URL, and keeps the draft open", async () => {
