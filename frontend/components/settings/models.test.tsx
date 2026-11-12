@@ -315,6 +315,24 @@ describe("the Models panel", () => {
     });
   });
 
+  it("saves a pasted id with a trailing space, trimmed, when a later pick runs the same id", async () => {
+    const fetchMock = settingsBackend();
+    render(<SettingsPage />);
+    const models = await panel();
+
+    const model = within(models).getByLabelText("Model");
+    await userEvent.clear(model);
+    await userEvent.click(model);
+    await userEvent.paste("claude-sonnet-5-5 ");
+    await userEvent.selectOptions(within(models).getByLabelText("Provider"), "anthropic");
+    expect(within(models).getByLabelText("Model")).toHaveValue("claude-sonnet-5-5 ");
+    await saveModels(models);
+
+    expect(sentBody(fetchMock, "PUT")).toEqual({
+      models: { provider: "anthropic", model: "claude-sonnet-5-5" },
+    });
+  });
+
   it("keeps Save and Cancel for a typed id after switching back to the saved provider", async () => {
     const fetchMock = settingsBackend();
     render(<SettingsPage />);

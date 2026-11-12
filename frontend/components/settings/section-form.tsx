@@ -253,14 +253,15 @@ export function SectionForm({
     else if (cancelled.current) saveButton.current?.focus();
     cancelled.current = false;
   }, [asking]);
-  // `change` drops text equal to what the field shows unedited, so an edit equal to it now came
-  // from picking another choice in a select: it is still what the person typed, and is sent.
+  // With `valuesFor`, what a field shows unedited moves with the draft's choices, so a typed text
+  // equal to it (as trimmed) is still what the person typed, and is sent; `change` drops only an
+  // exact match, so nothing jumps under the cursor. Without it, `isEdit` decides as it always has.
   const changed = fields.filter(
     (field) =>
       !fromEnv.includes(field.name) &&
       shown(field) &&
       field.name in edits &&
-      (edits[field.name] === base[field.name] ||
+      ((valuesFor !== undefined && edits[field.name].trim() === base[field.name]) ||
         isEdit(field, edits[field.name], base[field.name], field.name in overrides)),
   );
   const overridden = Object.keys(overrides).length > 0;
