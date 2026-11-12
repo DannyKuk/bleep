@@ -634,8 +634,10 @@ def _free_edits(
     return edits
 
 
-# What may come before a quote that opens a string (`cmd='…'`, `msg="…"`, `["…"]`)
+# What may come before a quote that opens a string (`cmd='…'`, `msg="…"`, `["…"]`), also a
+# JSON-escaped line break or tab (`"x\\n\\"redis-cli …`)
 _BEFORE_STRING = frozenset(" \t=:([{,")
+_ESCAPED_BREAKS = ("\\n", "\\r", "\\t")
 
 
 class _Openers:
@@ -656,16 +658,25 @@ class _Openers:
     def before(self, at: int) -> Callable[[str], bool]:
         """Whether a string the quote `run` (`"`, `\\"`, `'`) opens is around a command at `at`:
         the last such quote before it opens a string, as it follows `=`, `:`, a bracket, a comma,
-        a blank or the line's start (`msg="redis-cli …`, `cmd='redis-cli …`). A level that
-        quotes with that quote escapes every one inside, so no other one lies between."""
+        a blank, an escaped line break or the line's start and comes before text, not a blank
+        (`msg="redis-cli …`, `cmd='redis-cli …`; not the closing quote of `echo 'ok: ' && …`).
+        A level that quotes with that quote escapes every one inside, so no other one lies
+        between."""
 
         def opened(run: str) -> bool:
             places = self._at().get(run, [])
             index = bisect.bisect_left(places, at) - 1
             if index < 0:
                 return False
-            quote = places[index]
-            return quote == self._start or self._text[quote - 1] in _BEFORE_STRING
+            quote, text = places[index], self._text
+            follows = quote + len(run)
+            if follows >= len(text) or text[follows].isspace():
+                return False
+            return (
+                quote == self._start
+                or text[quote - 1] in _BEFORE_STRING
+                or text.endswith(_ESCAPED_BREAKS, self._start, quote)
+            )
 
         return opened
 

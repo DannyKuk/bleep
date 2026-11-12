@@ -19,7 +19,18 @@ LINES_PER_FORM = 1500
 NAMES = ["curl", "mysql", "mongo", "redis-cli", "mongosh", "mysqladmin"]
 PLAIN_PIECES = [*NAMES, "ab", "-p", "-a", "x/y", "é", "😀", ",", ";", "'"]
 PIECES = [*PLAIN_PIECES, "\\", "\\\\", '"']
-PREFIXES = ["", "+ ", "curl -s x && ", "mongo started; ", "echo ok; ", "INFO curl check ", "sh -c "]
+PREFIXES = [
+    "",
+    "+ ",
+    "curl -s x && ",
+    "mongo started; ",
+    "echo ok; ",
+    "INFO curl check ",
+    "sh -c ",
+    "echo 'ok: ' && ",
+    'echo "a, " ; ',
+    "don't: ",
+]
 KEEP = "KEEPME"
 CORE = re.compile(r"Zq[0-9]{3}Xw")
 SHELL_SPECIAL = set(" '\"\\;`&|(")

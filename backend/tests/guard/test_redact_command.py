@@ -711,6 +711,33 @@ def test_a_quote_that_opened_a_string_before_the_command_still_closes_it(line):
     assert "pw1234" not in out and "status=500" in out
 
 
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            "echo 'ok: ' && redis-cli -a x' s3cret' ping",
+            "echo 'ok: ' && redis-cli -a <redacted> ping",
+        ),
+        (
+            'echo "ok: " && redis-cli -a x" s3cret" ping',
+            'echo "ok: " && redis-cli -a <redacted> ping',
+        ),
+        (
+            "cut -d',' -f1 f | redis-cli -a 'a'\"'\"' s3cret' ping",
+            "cut -d',' -f1 f | redis-cli -a '<redacted>' ping",
+        ),
+        (
+            'msg="x\\n\\"redis-cli -a pw1234\\" y" n=1',
+            'msg="x\\n\\"redis-cli -a <redacted>\\" y" n=1',
+        ),
+    ],
+)
+def test_only_a_quote_before_text_opens_a_string_around_the_command(line, expected):
+    """The closing quote of an earlier argument (`'ok: '`, `-d','`) comes before a blank, so it
+    opens no string a later quote could close; an escaped line break may come before one."""
+    assert _hidden_once(line) == expected
+
+
 def test_a_closing_quote_put_back_in_a_json_string_keeps_the_json():
     line = json.dumps({"cmd": 'msg="redis-cli -a \\"pa ss\\"x ping"', "n": 1})
     out = _hidden_once(line)
