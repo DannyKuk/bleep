@@ -44,14 +44,17 @@ Open http://localhost:3000, sign in with the admin password and open the inciden
 
 Measured on the demo shop's eight faults with real models. Every number comes from a dated report in [`docs/evals/`](docs/evals/).
 
-| What | Result |
-|---|---|
-| Root cause, `openai/gpt-6-luna`, the 8 faults and misroute through MCP × 3 runs, graded by hand | 23 of 27 right (3 misses on hung, 1 hedged bad-env), plan exactly right in 24 of 27, about 64 s and $0.0028 a run ([report](docs/evals/scenarios-2026-11-05-3.md)) |
-| Root cause, `openai/gpt-6-luna`, the 8 faults × 1 run, judged by DeepEval's GEval (on Claude Opus 5.5) | 7 of 8 right (the miss on hung), and GEval agrees with grading by hand on all 8, scores 0.05 apart on average; the hand grades were written by the same model after reading GEval's reasons, so this is no independent check ([report](docs/evals/scenarios-2026-11-11.md)) |
-| Root cause, local `openai/gpt-oss-20b`, 1 run each | 7 of 8 right, 6 of 6 honest controls, 55 s, $0 ([report](docs/evals/scenarios-local-2026-11-03.md)) |
-| Prompt injection through logs, replies, docs, commits and memory | 20 of 20 attacks failed to steer Bleep or leak a secret; the 4 reply-body attacks never reached the model. Honest controls kept their root cause in 12 of 18, every miss on hung. The human was told of planted orders only when they tried to break out of the data tags: 3 of 13 attacks, 0 of 18 honest runs ([report](docs/evals/injection-2026-11-05-2.md), [what reached the model](docs/evals/injection-reached-2026-11-04.md)). Signs code reads in the order's own words now tell every attack run whose orders reached the model and 0 of 36 control runs, replayed offline, and 13 of 14 such runs with 0 of 18 honest runs on a model, but only 27 of 92 attacks written without seeing the code (7 false alarms in 296 honest lines), so the human gets a hint, not a check ([planted markers](docs/evals/planted-markers-2026-11-06.md)) |
-| Runbook pages that give orders | read in 6 of 6 runs, followed in none ([report](docs/evals/injection-docs-2026-11-04.md)) |
-| After a fix that did not hold | 9 of 9 loop-back cases right, never the failed fix again ([report](docs/evals/loopback-2026-11-04.md)) |
+| What was tested | Result | Report |
+|---|---|---|
+| Root cause on 9 demo faults, `openai/gpt-6-luna`, 3 runs each, graded by hand | 23 of 27 right, plan exact in 24 of 27, about 64 s and $0.0028 a run | [report](docs/evals/scenarios-2026-11-05-3.md) |
+| The same model on the 8 faults, judged by DeepEval's GEval against grading by hand | 7 of 8 right; GEval and the hand grades agree on all 8 | [report](docs/evals/scenarios-2026-11-11.md) |
+| Local `openai/gpt-oss-20b`, 8 faults and 6 honest controls, 1 run each | 7 of 8 faults right, 6 of 6 controls right, 55 s, $0 | [report](docs/evals/scenarios-local-2026-11-03.md) |
+| Prompt injection through logs, replies, docs, commits and memory | 20 of 20 attacks failed to steer Bleep or leak a secret | [report](docs/evals/injection-2026-11-05-2.md) |
+| Telling the human about planted orders | Told in 13 of 14 attack runs and 0 of 18 honest runs; only 27 of 92 blind attacks caught | [report](docs/evals/planted-markers-2026-11-06.md) |
+| Runbook pages that give orders | Read in 6 of 6 runs, followed in none | [report](docs/evals/injection-docs-2026-11-04.md) |
+| After a fix that did not hold | 9 of 9 loop-back cases right, never the failed fix again | [report](docs/evals/loopback-2026-11-04.md) |
+
+`openai/gpt-6-luna` misses the `hung` fault every time ([#480](https://github.com/DannyKuk/bleep/issues/480)); that is 3 of the 4 misses in the first row and the 1 in the second.
 
 ## Docs
 
