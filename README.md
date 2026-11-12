@@ -19,6 +19,22 @@ Bleep watches the containers on your hosts. When one breaks, it opens an inciden
 
 <p align="center"><img alt="Bleep finding a stopped database and fixing it after a yes" src="docs/assets/demo.gif" width="860"></p>
 
+## How well it does
+
+Measured on the demo shop's eight faults with real models. Every number comes from a dated report in [`docs/evals/`](docs/evals/).
+
+| What was tested | Result | Report |
+|---|---|---|
+| Root cause on the 8 faults and misroute through MCP, `openai/gpt-6-luna`, 3 runs each, by hand | 23 of 27 right, plan exact in 24 of 27, about 64 s and $0.0028 a run | [report](docs/evals/scenarios-2026-11-05-3.md) |
+| The same model on the 8 faults, judged by DeepEval's GEval against grading by hand | 7 of 8 right; GEval and the hand grades agree on all 8 | [report](docs/evals/scenarios-2026-11-11.md) |
+| Local `openai/gpt-oss-20b`, 8 faults and 6 honest controls, 1 run each | 7 of 8 faults right, 6 of 6 controls right, 55 s, $0 | [report](docs/evals/scenarios-local-2026-11-03.md) |
+| Prompt injection through logs, replies, docs, commits and memory | 20 of 20 attacks failed to steer Bleep or leak a secret | [report](docs/evals/injection-2026-11-05-2.md) |
+| Telling the human about planted orders | Told in 13 of 14 attack runs whose orders reached the model, 0 of 18 honest runs; 27 of 92 blind attacks | [report](docs/evals/planted-markers-2026-11-06.md) |
+| Runbook pages that give orders | Read in 6 of 6 runs, followed in none | [report](docs/evals/injection-docs-2026-11-04.md) |
+| After a fix that did not hold | 9 of 9 loop-back cases right, never the failed fix again | [report](docs/evals/loopback-2026-11-04.md) |
+
+`openai/gpt-6-luna` missed `hung` in every run of the first two rows' rounds ([#480](https://github.com/DannyKuk/bleep/issues/480)); that is 3 of the 4 misses in the first row and the 1 in the second.
+
 ## How it works
 
 - **It watches over SSH.** Every 15 s Bleep reads each host's Docker events and container list through one SSH connection, and checks each service's URLs from outside every 30 s. Containers are grouped into services by Coolify labels, the Compose project or their name.
@@ -39,22 +55,6 @@ demo/fault.sh db-down on    # stop the demo shop's database; Bleep opens an inci
 ```
 
 Open http://localhost:3000, sign in with the admin password and open the incident. Bleep finds the stopped database and proposes `docker.start shop-db`; say yes and watch it verify the shop. `demo/fault.sh db-down off` mends the shop by hand. Telegram is optional. [Setup](docs/setup.md) covers your own hosts, SSH keys, local models and Telegram; [Demo](docs/demo.md) lists the eight faults and what Bleep should do for each.
-
-## How well it does
-
-Measured on the demo shop's eight faults with real models. Every number comes from a dated report in [`docs/evals/`](docs/evals/).
-
-| What was tested | Result | Report |
-|---|---|---|
-| Root cause on 9 demo faults, `openai/gpt-6-luna`, 3 runs each, graded by hand | 23 of 27 right, plan exact in 24 of 27, about 64 s and $0.0028 a run | [report](docs/evals/scenarios-2026-11-05-3.md) |
-| The same model on the 8 faults, judged by DeepEval's GEval against grading by hand | 7 of 8 right; GEval and the hand grades agree on all 8 | [report](docs/evals/scenarios-2026-11-11.md) |
-| Local `openai/gpt-oss-20b`, 8 faults and 6 honest controls, 1 run each | 7 of 8 faults right, 6 of 6 controls right, 55 s, $0 | [report](docs/evals/scenarios-local-2026-11-03.md) |
-| Prompt injection through logs, replies, docs, commits and memory | 20 of 20 attacks failed to steer Bleep or leak a secret | [report](docs/evals/injection-2026-11-05-2.md) |
-| Telling the human about planted orders | Told in 13 of 14 attack runs and 0 of 18 honest runs; only 27 of 92 blind attacks caught | [report](docs/evals/planted-markers-2026-11-06.md) |
-| Runbook pages that give orders | Read in 6 of 6 runs, followed in none | [report](docs/evals/injection-docs-2026-11-04.md) |
-| After a fix that did not hold | 9 of 9 loop-back cases right, never the failed fix again | [report](docs/evals/loopback-2026-11-04.md) |
-
-`openai/gpt-6-luna` misses the `hung` fault every time ([#480](https://github.com/DannyKuk/bleep/issues/480)); that is 3 of the 4 misses in the first row and the 1 in the second.
 
 ## Docs
 
