@@ -73,7 +73,7 @@ export const OPENROUTER_IDS = {
   local_model: "openai/gpt-oss-20b",
 };
 export const CLAUDE_IDS = {
-  model: "claude-sonnet-5-5",
+  model: "claude-haiku-5-5",
   cheap_model: "claude-haiku-5-5",
   local_model: "openai/gpt-oss-20b",
 };
