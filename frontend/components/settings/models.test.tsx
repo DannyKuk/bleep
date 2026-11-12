@@ -299,6 +299,42 @@ describe("the Models panel", () => {
     });
   });
 
+  it("saves a typed id that a later pick's own id happens to equal", async () => {
+    const fetchMock = settingsBackend();
+    render(<SettingsPage />);
+    const models = await panel();
+
+    const model = within(models).getByLabelText("Model");
+    await userEvent.clear(model);
+    await userEvent.type(model, "claude-sonnet-5-5");
+    await userEvent.selectOptions(within(models).getByLabelText("Provider"), "anthropic");
+    await saveModels(models);
+
+    expect(sentBody(fetchMock, "PUT")).toEqual({
+      models: { provider: "anthropic", model: "claude-sonnet-5-5" },
+    });
+  });
+
+  it("keeps Save and Cancel for a typed id after switching back to the saved provider", async () => {
+    const fetchMock = settingsBackend();
+    render(<SettingsPage />);
+    const models = await panel();
+    const provider = within(models).getByLabelText("Provider");
+
+    await userEvent.selectOptions(provider, "anthropic");
+    const model = within(models).getByLabelText("Model");
+    await userEvent.clear(model);
+    await userEvent.type(model, "openai/gpt-6-luna");
+    await userEvent.selectOptions(provider, "openrouter");
+    expect(within(models).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    await userEvent.selectOptions(provider, "anthropic");
+    expect(within(models).getByLabelText("Model")).toHaveValue("openai/gpt-6-luna");
+    await userEvent.selectOptions(provider, "openrouter");
+    await saveModels(models);
+
+    expect(sentBody(fetchMock, "PUT")).toEqual({ models: { model: "openai/gpt-6-luna" } });
+  });
+
   it("puts the provider, the fields and the key row back with Cancel", async () => {
     settingsBackend();
     render(<SettingsPage />);

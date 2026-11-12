@@ -253,11 +253,15 @@ export function SectionForm({
     else if (cancelled.current) saveButton.current?.focus();
     cancelled.current = false;
   }, [asking]);
+  // `change` drops text equal to what the field shows unedited, so an edit equal to it now came
+  // from picking another choice in a select: it is still what the person typed, and is sent.
   const changed = fields.filter(
     (field) =>
       !fromEnv.includes(field.name) &&
       shown(field) &&
-      isEdit(field, draft[field.name], base[field.name], field.name in overrides),
+      field.name in edits &&
+      (edits[field.name] === base[field.name] ||
+        isEdit(field, edits[field.name], base[field.name], field.name in overrides)),
   );
   const overridden = Object.keys(overrides).length > 0;
 
