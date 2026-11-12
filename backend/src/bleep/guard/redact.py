@@ -103,9 +103,12 @@ _EMPTY = ("''", '""')  # an empty password, `-p''`, is evidence
 _CURL_SHORT_USER = re.compile(r"-[A-Za-z0-9]*?[uU]")  # -u, -U, and -su, -fsSu in a group
 # A run of a word with no quote; a backslash escapes the next character (`s3cret\ pass`)
 _PLAIN_RUN = re.compile(r"(?:[^\s\"'\\]++|\\.|\\\Z)++", re.DOTALL)
-# In free text an escaped quote is a quote too: logfmt writes `msg="redis-cli -a \"pa ss\""`
-_FREE_RUN = re.compile(r"(?:[^\s\"'`\\]++|\\[^\"']|\\\Z)++", re.DOTALL)
-_OPENING_QUOTE = re.compile(r"(\\?[\"'])\1*+")
+# In free text an escaped quote is a quote too: logfmt writes `msg="redis-cli -a \"pa ss\""`, and
+# logfmt inside logfmt `\\\"`, so a run of backslashes ending in a quote is left to the caller
+_FREE_RUN = re.compile(r"(?:[^\s\"'`\\]++|(?:\\\\)++(?![\\\"'])|(?:\\\\)*+\\[^\\\"']|\\++\Z)++")
+_ESCAPED_QUOTE = re.compile(r"\\++[\"']")
+_WHOLE_ESCAPED_QUOTE = re.compile(r"(?<!\\)\\++[\"']")
+_OPENING_QUOTE = re.compile(r"(\\*+[\"'])\1*+")
 _QUOTE = re.compile(r"[\"']")
 _DOUBLE_QUOTED_END = re.compile(r"(?:[^\"\\]|\\.)*+\"", re.DOTALL)
 # What follows the closing quote of a string a command sits in (`msg="curl -u bob:pw" n=1`)
@@ -141,15 +144,27 @@ def _quote_end(text: str, at: int, no_closer: set[str], limit: int | None = None
     return end
 
 
-def _escaped_quote_end(text: str, at: int, no_closer: set[str], limit: int) -> int:
-    """Where the string an escaped quote (`\\"`, `\\'`) opens at `at` ends, at the same escaped
-    quote, before `limit`; or -1, looked for once per kind as `_quote_end` does."""
-    quote = text[at : at + 2]
-    end = -1 if quote in no_closer else text.find(quote, at + 2, limit)
-    if end < 0:
-        no_closer.add(quote)
-        return -1
-    return end + 2
+class _Closers:
+    """What the scans for a closing quote up to one limit found: the quote kinds nothing closes
+    (`_quote_end`), and every escaped quote, a whole run of backslashes and a quote, by kind, from
+    one scan the first time one is looked for. Escaped quotes come in any width, so a line of
+    many widths costs that one scan, not one per width."""
+
+    def __init__(self) -> None:
+        self.no_closer: set[str] = set()
+        self._escaped: dict[str, list[int]] | None = None
+
+    def escaped_end(self, text: str, at: int, width: int, limit: int) -> int:
+        """Where the string the escaped quote of `width` characters at `at` opens (`\\"`, `\\'`,
+        `\\\\\\"`) ends, at the next escaped quote of the same width before `limit`; or -1. The
+        tail of a wider run (`\\"` in `\\\\\\"`) closes nothing."""
+        if self._escaped is None:
+            self._escaped = {}
+            for found in _WHOLE_ESCAPED_QUOTE.finditer(text, at, limit):
+                self._escaped.setdefault(found.group(), []).append(found.start())
+        places = self._escaped.get(text[at : at + width], [])
+        index = bisect.bisect_right(places, at)
+        return places[index] + width if index < len(places) else -1
 
 
 def _shell_words(
@@ -158,7 +173,7 @@ def _shell_words(
     free: bool = False,
     first_only: bool = False,
     limit: int | None = None,
-    no_closer: set[str] | None = None,
+    closers: _Closers | None = None,
 ) -> tuple[list[tuple[int, int]], int | None]:
     """The words of a shell command from `start`, and where an unclosed quote opens, if one does.
 
@@ -170,14 +185,14 @@ def _shell_words(
     In free text (`free`, a log line) a quote nothing closes is an ordinary character of its word
     and the words go on; the place returned is the first such quote. A quote or backtick right
     after a word and before a blank, a comma, a colon, a full stop or a closing bracket ends the
-    word: it closes a string or a code span the command sits in. An escaped quote (`\\"`) is a
-    quote as well, closed by the same escaped quote, as logfmt escapes every quote in a value.
-    `first_only` stops after the first word, `limit` is where the text ends, and `no_closer` may
-    be shared by calls that read on to the same `limit` from later and later places
-    (`_quote_end`).
+    word: it closes a string or a code span the command sits in. An escaped quote (`\\"`, or
+    `\\\\\\"` escaped twice: any run of backslashes and a quote) is a quote as well, closed by the
+    same run, as logfmt escapes every quote and backslash in a value.
+    `first_only` stops after the first word, `limit` is where the text ends, and `closers` may
+    be shared by calls that read on to the same `limit` from later and later places.
     """
     words, at = [], start
-    no_closer = set[str]() if no_closer is None else no_closer
+    closers = _Closers() if closers is None else closers
     end = len(text) if limit is None else limit
     plain_run = _FREE_RUN if free else _PLAIN_RUN
     unclosed = None
@@ -191,20 +206,21 @@ def _shell_words(
             if run:
                 at = run.end()
                 continue
-            if free and text[at] == "\\":  # `\\"` or `\\'`: the run ends only there
-                if _closes_string(text, first, at, end, 2):
+            if free and (escaped := _ESCAPED_QUOTE.match(text, at, end)):
+                width = escaped.end() - at
+                if _closes_string(text, first, at, end, width):
                     break
-                closed = _escaped_quote_end(text, at, no_closer, end)
+                closed = closers.escaped_end(text, at, width, end)
                 if closed < 0:
                     unclosed = at if unclosed is None else unclosed
-                at = closed if closed >= 0 else at + 2
+                at = closed if closed >= 0 else at + width
                 continue
             if free and _closes_string(text, first, at, end):
                 break
             if text[at] == "`":
                 at += 1
                 continue
-            closed = _quote_end(text, at, no_closer, end)
+            closed = _quote_end(text, at, closers.no_closer, end)
             if closed >= 0:
                 at = closed
             elif free:
@@ -223,7 +239,7 @@ def _shell_words(
 
 
 def _closes_string(text: str, first: int, at: int, end: int, width: int = 1) -> bool:
-    """Whether the quote at `at` (`width` characters, 2 for an escaped one), in the word from
+    """Whether the quote at `at` (`width` characters, more for an escaped one), in the word from
     `first`, closes a string the command sits in: it follows the word and comes before a blank
     or punctuation, and does not open a password right after its flag or its user (`-p'.pw'`,
     `bob:',pw'`)."""
@@ -273,8 +289,8 @@ def _hidden_part(word: str, keep: int) -> Edit | None:
 
 
 def _opening_quote(word: str) -> tuple[str, int]:
-    """The quote `word` opens with (`"`, `'`, or an escaped `\\"`, `\\'`), and how many characters
-    it and its repeats take; none and 0 when it opens with no quote."""
+    """The quote `word` opens with (`"`, `'`, or an escaped `\\"`, `\\'`, `\\\\\\"`), and how many
+    characters it and its repeats take; none and 0 when it opens with no quote."""
     found = _OPENING_QUOTE.match(word)
     return (found.group(1), found.end()) if found else ("", 0)
 
@@ -435,7 +451,7 @@ def _free_edits(
     its quote even there it is hidden to the limit."""
     limits = [end] * len(names) if limits is None else limits
     edits: list[Edit] = []
-    no_closers: dict[int, set[str]] = {}
+    closers: dict[int, _Closers] = {}
     name, pending, read_from, limit, index = "", None, -1, end, 0
     while index < len(names):
         if read_from < 0:
@@ -466,7 +482,7 @@ def _free_edits(
                 index, read_from = _next_name(names, index - 1, stop), -1
             continue
         whole, open_at = _shell_words(
-            text, spans[run_on][0], True, True, limit, no_closers.setdefault(limit, set())
+            text, spans[run_on][0], True, True, limit, closers.setdefault(limit, _Closers())
         )
         first, last = whole[0]
         spans, words = spans[:run_on] + [(first, last)], words[:run_on] + [text[first:last]]
@@ -552,7 +568,7 @@ def _string_edits(text: str, opens: int, closes: int) -> tuple[list[Edit], int]:
     names = [found.span() for found in _CLIENT_AT.finditer(decoded)]
     shift = opens + 1
     edits = [
-        (shift + raw(a), shift + raw(b), new.replace('"', '\\"'))
+        (shift + raw(a), shift + raw(b), new.replace("\\", "\\\\").replace('"', '\\"'))
         for a, b, new in _free_edits(decoded, names, len(decoded), [True] * len(names))
     ]
     return edits, closes

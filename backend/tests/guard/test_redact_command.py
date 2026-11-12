@@ -473,6 +473,76 @@ def test_a_password_between_escaped_quotes_in_logfmt_is_hidden_whole(line, expec
     assert "ss" not in out.replace("pass", "") and "my pass" not in out
 
 
+def _logfmt(text: str) -> str:
+    return 'msg="' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+TWICE_ESCAPED_COMMANDS = [
+    'redis-cli -a " s3cret" ping',
+    'redis-cli -a ";s3cret" ping',
+    'redis-cli -a ",s3cret x" ping',
+    'redis-cli -a ")s3cret" ping',
+    'mongo -p" s3cret" --quiet',
+    'mongosh -u root -p ":s3cret" --eval 1',
+    'curl -u "bob: s3cret" http://x/h',
+    'mysqladmin -uroot -p".s3cret" ping',
+]
+
+
+@pytest.mark.parametrize("command", TWICE_ESCAPED_COMMANDS)
+@pytest.mark.parametrize(
+    "form",
+    [
+        lambda c: _logfmt(_logfmt(c)) + " status=500",
+        lambda c: _logfmt(json.dumps({"cmd": c})) + " status=500",
+        lambda c: json.dumps({"log": _logfmt(_logfmt(c)), "status": 500}),
+        lambda c: json.dumps({"log": _logfmt(json.dumps({"cmd": c})), "status": 500}),
+    ],
+    ids=["logfmt in logfmt", "json in logfmt", "in json", "json in logfmt in json"],
+)
+def test_a_password_between_quotes_escaped_twice_is_hidden_whole(command, form):
+    """A run of backslashes and a quote (`\\\\\\"`) is one quote, closed by the same run, so a
+    password that starts with a blank or punctuation is not cut at the run's backslashes."""
+    line = form(command)
+    out = _hidden_once(line)
+    assert "s3cret" not in out
+    assert "status" in out
+    if line.startswith("{"):
+        assert json.loads(out).keys() == json.loads(line).keys()
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            'msg="msg=\\"redis-cli -a \\\\\\" s3cret\\\\\\" ping\\""',
+            'msg="msg=\\"redis-cli -a \\\\\\"<redacted>\\\\\\" ping\\""',
+        ),
+        (
+            'msg="{\\"cmd\\": \\"redis-cli -a \\\\\\" s3cret\\\\\\" ping\\"}"',
+            'msg="{\\"cmd\\": \\"redis-cli -a \\\\\\"<redacted>\\\\\\" ping\\"}"',
+        ),
+        (
+            'msg="msg=\\"mongo -p\\\\\\" s3cret\\\\\\" --quiet\\""',
+            'msg="msg=\\"mongo -p<redacted> --quiet\\""',
+        ),
+        (
+            'redis-cli -a \\"a \\\\\\"b\\\\\\" c\\" ping',
+            'redis-cli -a \\"<redacted>\\" ping',
+        ),
+    ],
+)
+def test_an_escaped_quote_is_closed_only_by_a_run_of_the_same_width(line, expected):
+    assert _hidden_once(line) == expected
+
+
+def test_a_closing_quote_put_back_in_a_json_string_keeps_the_json():
+    line = json.dumps({"cmd": 'msg="redis-cli -a \\"pa ss\\"x ping"', "n": 1})
+    out = _hidden_once(line)
+    assert "pa ss" not in out
+    assert json.loads(out)["n"] == 1
+
+
 def test_a_password_hidden_to_the_end_counts_only_the_markers_left():
     line = "redis-cli -a 'pw mongo token=abc123 password=hunter22 x"
     out, count = redact_with_count(line)
@@ -654,6 +724,59 @@ def test_hide_client_passwords_is_linear_on_a_million_characters(client, unit, j
     text = (f'["{client}", ' if json_form else f"{client} ") + unit * (1_000_000 // len(unit))
     started = time.perf_counter()
     hide_client_passwords(text)
+    assert time.perf_counter() - started < 1.0
+
+
+TWICE_ESCAPED_UNITS = [
+    '\\\\\\"',
+    "\\\\\\'",
+    '\\\\"',
+    '\\\\\\\\\\"',
+    'redis-cli -a \\\\\\"',
+    'redis-cli -a \\\\\\"x ',
+    'msg=\\"redis-cli -a \\\\\\"x ',
+    'mongo -p\\\\\\"',
+    'curl -u \\\\\\"b:curl ',
+    '\\\\\\" curl -u a:\\"',
+    "curl \\\\",
+]
+
+
+@pytest.mark.parametrize("unit", TWICE_ESCAPED_UNITS)
+@pytest.mark.parametrize("form", ["one", "after", "lines", "json"])
+def test_redact_text_is_linear_on_quotes_escaped_twice(unit, form):
+    if form == "one":
+        text = unit * (1_000_000 // len(unit))
+    elif form == "after":
+        text = "redis-cli -a " + unit * (1_000_000 // len(unit))
+    elif form == "lines":
+        text = _lines_of(unit * (3900 // len(unit)))
+    else:
+        text = _lines_of(json.dumps({"m": "redis-cli -a " + unit * (1500 // len(unit))}))
+    started = time.perf_counter()
+    redact_text(text)
+    assert time.perf_counter() - started < 1.0
+
+
+def _widening_quotes(length: int) -> str:
+    """Escaped quotes of every width, none closed: `\\" \\\\" \\\\\\" …`, each a kind of its own."""
+    units, width = [], 1
+    while sum(map(len, units)) < length:
+        units.append("\\" * width + '" ')
+        width += 1
+    return "".join(units)[:length]
+
+
+@pytest.mark.parametrize("form", ["one", "lines", "json"])
+def test_redact_text_is_linear_on_escaped_quotes_of_every_width(form):
+    if form == "one":
+        text = "redis-cli -a " + _widening_quotes(1_000_000)
+    elif form == "lines":
+        text = _lines_of("redis-cli -a " + _widening_quotes(3900))
+    else:
+        text = _lines_of(json.dumps({"m": "redis-cli -a " + _widening_quotes(1800)}))
+    started = time.perf_counter()
+    redact_text(text)
     assert time.perf_counter() - started < 1.0
 
 
