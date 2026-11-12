@@ -51,6 +51,10 @@ Before every run the harness recreates the whole shop, `docker compose -f demo/c
 
 The reset is test setup, not history of the incident, but its container events (die, destroy, create, start for every container) land a few minutes before the fault's first signal, inside `recent_events`' default 30 minutes, and the watcher and Gather read them too. So the harness records each reset's time span (the `up -d --force-recreate` plus the wait until healthy, starting 2 s early for the engine's clock running slightly off this machine's, and ending exactly when the reset does, so the fault's first events, which follow at once, are never hidden) and the engine it hands Bleep drops Docker events inside any recorded span (`evals/reset_spans.py`, #110). Events from `fault.sh`, which come after the span, and the watcher's own detections stay. A run therefore sees slightly less than the real engine would show. `--no-reset` records no span and filters nothing. The same applies to the injection runner.
 
+### One eval at a time
+
+`evals.run` and `evals.injection` drive the demo shop, so only one of them runs at a time on this machine, from any checkout or worktree. Each holds a lock on `~/.cache/bleep/demo-stack.lock` (`EVAL_STACK_LOCK`) for its whole round; a second one exits with 2 at once and names the eval that holds it (pid, command, folder, since when). Wait until that one finishes and start again. The lock goes with its process, so an eval stopped with Ctrl-C or killed frees the stack at once. `--render` and the other evals, which never touch the demo engine, take no lock (#486).
+
 Neither the reset nor `fault.sh` builds the shop's images. After a change under `demo/`, build them once before the next run: `docker compose -f demo/compose.yaml build` ([demo](../../docs/demo.md#run-it)).
 
 ## Settings
@@ -65,6 +69,7 @@ Read from the environment, then the repo's `.env`.
 | `EVAL_HOSTS_FILE` | `config/hosts.demo.yaml` | The hosts file the demo host's rules and URLs come from. |
 | `EVAL_HOST_ID` | `demo` | The host in that file. |
 | `EVAL_FAULT_SCRIPT` | `demo/fault.sh` | The fault switch, called as `<script> <fault> on\|off` from the repo root; exit 0 is switched, any other exit stops the run (`fault.sh` exits 2 on a fault it does not know). |
+| `EVAL_STACK_LOCK` | `~/.cache/bleep/demo-stack.lock` | The file the runners that drive the demo shop lock, one at a time; the same for every checkout and worktree. |
 | `EVAL_SETTLE_S` | `30` | Seconds between runs, for the stack to come back, with `--no-reset` only. |
 | `EVAL_WATCH_INTERVAL_S` | `15` | Seconds between watcher ticks, Bleep's own default. |
 
