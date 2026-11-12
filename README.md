@@ -49,7 +49,7 @@ Measured on the demo shop's eight faults with real models. Every number comes fr
 ## Quick start
 
 ```bash
-cp .env.example .env    # set BLEEP_ADMIN_PASSWORD, BLEEP_SECRET and OPENROUTER_API_KEY (or LLM_PROVIDER=local)
+cp .env.example .env    # set BLEEP_ADMIN_PASSWORD, BLEEP_SECRET and OPENROUTER_API_KEY (or LLM_PROVIDER=anthropic with ANTHROPIC_API_KEY, or LLM_PROVIDER=local)
 docker compose --profile demo up -d --build && docker compose -f demo/compose.yaml up -d --build
 demo/fault.sh db-down on    # stop the demo shop's database; Bleep opens an incident within a minute
 ```
