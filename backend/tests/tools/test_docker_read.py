@@ -437,6 +437,34 @@ async def test_an_env_secret_is_hidden_from_the_command_and_the_probe_output_not
     assert "auth failed with <redacted> on port 8000" in out
 
 
+async def test_a_one_character_secret_does_not_cut_words_out_of_the_probe_output(env):
+    raw = hung_shop_web_payload()
+    raw["Config"]["Env"] = ["SECRET_KEY=e"]
+    env.engine.details["shop-web-1"] = _detail(raw)
+    out = await env.run("inspect_container", container="shop-web-1")
+    assert "TimeoutError: timed out" in out
+    assert "Tim<redacted>" not in out
+
+
+async def test_the_demo_db_check_hides_a_password_that_is_also_its_user_and_database(env):
+    raw = hung_shop_web_payload()
+    raw["Name"] = "/shop-db-1"
+    raw["Config"]["Env"] = ["POSTGRES_USER=shop", "POSTGRES_PASSWORD=shop"]
+    raw["Config"]["Healthcheck"] = {
+        "Test": ["CMD", "pg_isready", "-U", "shop", "-d", "shop"],
+        "Interval": 5_000_000_000,
+        "Timeout": 3_000_000_000,
+        "Retries": 5,
+    }
+    raw["State"]["Health"] = {"Status": "healthy", "Log": []}
+    env.engine.details["shop-web-1"] = _detail(raw)
+    out = await env.run("inspect_container", container="shop-web-1")
+    assert (
+        'health check, run without a shell: ["pg_isready", "-U", "<redacted>", "-d", '
+        '"<redacted>"] (interval 5s, timeout 3s, retries 5, start period default)'
+    ) in out
+
+
 async def test_a_container_with_no_health_detail_gets_no_health_lines_unless_it_has_none(env):
     for health in ("unhealthy", "healthy", "starting"):
         env.engine.details["shop-web-1"].summary.health = health

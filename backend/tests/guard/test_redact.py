@@ -1635,3 +1635,91 @@ def test_secret_env_values_are_the_values_the_redaction_hides_longest_first():
     assert hide_values("redis-cli -a s3cretpassw0rd --port 8000", values) == (
         "redis-cli -a <redacted> --port 8000"
     )
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            "mongo -u root -p s3cretpassw0rd --eval 1",
+            "mongo -u root -p <redacted> --eval 1",
+        ),
+        ("mongo --password s3cretpassw0rd --eval 1", "mongo --password <redacted> --eval 1"),
+        ('["mongo", "-p", "s3cretpassw0rd"]', '["mongo", "-p", "<redacted>"]'),
+        ("mongos -p s3cretpassw0rd", "mongos -p <redacted>"),
+        ("redis-cli -a pa,ss ping", "redis-cli -a <redacted> ping"),
+        ("redis-cli -a 'pa ss' ping", "redis-cli -a '<redacted>' ping"),
+        ("curl -u user:pa,ss http://x", "curl -u user:<redacted> http://x"),
+        ('curl -u "user:pa ss" http://x', 'curl -u "user:<redacted>" http://x'),
+        (
+            '["redis-cli", "-a", "pa,ss", "ping"]',
+            '["redis-cli", "-a", "<redacted>", "ping"]',
+        ),
+        (
+            '["curl", "-u", "user:pa,ss", "http://x"]',
+            '["curl", "-u", "user:<redacted>", "http://x"]',
+        ),
+    ],
+)
+def test_a_client_password_is_hidden_whole_whatever_it_holds(line, expected):
+    assert redact_text(line) == expected
+    assert redact_text(expected) == expected
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "mysqladmin ping -uroot -p'secretpw'",
+        'mysqladmin ping -uroot -p"secretpw"',
+        "mysqladmin ping -uroot -p'pa ss'",
+        "mysqladmin ping -uroot -ppa,ss",
+        "mysqladmin ping -uroot -psecretpw",
+    ],
+)
+def test_redact_command_hides_a_quoted_or_odd_mysql_password(line):
+    out = redact_command(line)
+    assert out == "mysqladmin ping -uroot -p<redacted>"
+    assert redact_command(out) == out
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "curl: (7) Failed to connect to localhost port 8000",
+        "curl -sS http://localhost:8000/health -o /dev/null",
+        "mongodb://h:27017/db",
+        "mongo-express started on port 8081",
+        "ls -a",
+        "redis-cli -p 6379 ping",
+    ],
+)
+def test_normal_lines_about_these_clients_are_left_alone(line):
+    assert redact_text(line) == line and redact_command(line) == line
+
+
+def test_hide_values_never_cuts_a_short_value_out_of_a_word():
+    values = ["e"]
+    assert hide_values("TimeoutError: timed out", values) == "TimeoutError: timed out"
+    assert hide_values("key e here", values) == "key <redacted> here"
+    assert hide_values("--key=e", values) == "--key=<redacted>"
+
+
+def test_hide_values_makes_one_pass_so_a_marker_is_never_rewritten():
+    assert hide_values("ed t <redacted>", ["ed", "t"]) == "<redacted> <redacted> <redacted>"
+    assert hide_values("a <redacted> b", ["redacted"]) == "a <redacted> b"
+    once = hide_values("pw=abc-def abc", ["abc", "abc-def"])
+    assert once == "pw=<redacted> <redacted>"
+    assert hide_values(once, ["abc", "abc-def"]) == once
+
+
+def test_hide_values_hides_a_long_value_inside_a_word_but_a_short_one_only_whole():
+    assert hide_values("mysqladmin -ps3cretpassw0rd", ["s3cretpassw0rd"]) == (
+        "mysqladmin -p<redacted>"
+    )
+    assert hide_values("abcdefg abcdefgh", ["abcdefg"]) == "<redacted> abcdefgh"
+    assert hide_values("shopping", ["shop"]) == "shopping"
+
+
+def test_hide_values_hides_a_password_that_is_also_a_plain_word_in_the_command():
+    shop = '["pg_isready", "-U", "shop", "-d", "shop"]'
+    assert hide_values(shop, ["shop"]) == '["pg_isready", "-U", "<redacted>", "-d", "<redacted>"]'

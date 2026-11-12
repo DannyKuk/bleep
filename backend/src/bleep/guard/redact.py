@@ -62,10 +62,27 @@ def redact_command(text: str) -> str:
     return redact_text(_CLIENT_COMMAND.sub(lambda m: _redact_client_command(m, True), text))
 
 
+LONG_VALUE = 8  # from this length a value is hidden wherever it shows, inside a word too
+
+
 def hide_values(text: str, values: list[str]) -> str:
-    for value in values:
-        text = text.replace(value, REDACTED)
-    return text
+    """Every one of `values` in `text` hidden, in one pass so a marker already placed is never
+    rewritten. A value of 8 or more characters is hidden wherever it appears (`-ps3cretpassw0rd`:
+    inside a word it is still that secret). A shorter one only as a whole token, not inside a
+    word, so `SECRET_KEY=e` does not turn `timed out` into `tim<redacted>d out`. A value that is
+    also a plain word in the text (a password `shop` for the user `shop`) is hidden there too: it
+    is the password."""
+    alternatives = []
+    for value in sorted({v for v in values if v}, key=len, reverse=True):
+        escaped = re.escape(value)
+        if len(value) < LONG_VALUE:
+            escaped = (r"(?<!\w)" if re.match(r"\w", value[0]) else "") + escaped
+            escaped += r"(?!\w)" if re.match(r"\w", value[-1]) else ""
+        alternatives.append(escaped)
+    if not alternatives:
+        return text
+    pattern = re.compile("|".join([re.escape(REDACTED), *alternatives]))
+    return pattern.sub(lambda m: REDACTED, text)
 
 
 _URL_SCHEME = re.compile(r"([A-Za-z][A-Za-z0-9+.-]{0,31})://")
@@ -791,14 +808,18 @@ _COOKIE = re.compile(
 
 _CLIENT_COMMAND = re.compile(
     r"(?<![A-Za-z0-9_.-])(redis-cli|mysql(?:admin|dump|check|import|show)?|mariadb(?:-[a-z]+)?"
-    r"|mongosh?|curl)(?![A-Za-z0-9_-])[^\n]*"
+    r"|mongo(?:sh|s)?|curl)(?![A-Za-z0-9_-])[^\n]*"
 )
-# One word of a command line, written as shell words or as the items of a JSON list.
-_WORD = re.compile(r"\"(?:[^\"\\\n]|\\.)*+\"|'[^'\n]*+'|[^\s\"',\[\]]+")
+# One word of a command line. A shell word runs to whitespace, whatever its quotes and commas
+# (`-p'pa ss'`, `pa,ss`); the items of a JSON list (`["curl", "-u", "user:pw"]`) are the quoted
+# strings alone.
+_SHELL_WORD = re.compile(r"(?:\"(?:[^\"\\\n]|\\.)*+\"|'[^'\n]*+'|[^\s\"'])++")
+_JSON_ITEM = re.compile(r"\"(?:[^\"\\\n]|\\.)*+\"|'[^'\n]*+'")
 _SEPARATE_PASSWORD = {
     "redis-cli": {"-a", "--pass"},
     "mongosh": {"-p", "--password"},
     "mongo": {"-p", "--password"},
+    "mongos": {"-p", "--password"},
 }
 _USER_FLAGS = {"-u", "--user", "--proxy-user"}
 
@@ -826,9 +847,11 @@ def _redact_client_command(match: re.Match[str], known_command: bool = False) ->
     database, where a corpus control keeps it readable; a health check is a command for certain."""
     name, text = match.group(1), match.group(0)
     after_name = match.end(1) - match.start()
+    words_in = _SHELL_WORD
     if text[after_name : after_name + 1] in ("'", '"'):  # the name was a JSON item: close it
         after_name += 1
-    words = list(_WORD.finditer(text, after_name))
+        words_in = _JSON_ITEM
+    words = list(words_in.finditer(text, after_name))
     changes: dict[int, str] = {}
     for index, word in enumerate(words):
         bare = word.group(0).strip("\"'")
