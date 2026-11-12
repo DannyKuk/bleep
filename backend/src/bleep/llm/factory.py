@@ -12,7 +12,8 @@ from bleep.schemas.settings import ModelSettings
 
 CLIENT_MARGIN_S = 5
 # Claude takes max_tokens on every call; langchain-anthropic would fill in the model's own limit
-# (128,000), a call the SDK refuses to make without streaming. Bleep's replies are short.
+# (128,000), far above what Bleep's short replies need and enough for a runaway reply to run up
+# the bill. Thinking tokens count against it.
 ANTHROPIC_MAX_TOKENS = 16_000
 
 Role = Literal["main", "cheap"]

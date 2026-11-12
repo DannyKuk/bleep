@@ -56,7 +56,8 @@ def over_transport(model: ChatAnthropic, handler) -> list[httpx2.Request]:
 
     client = anthropic.AsyncAnthropic(
         api_key=KEY,
-        max_retries=0,
+        timeout=model.default_request_timeout,
+        max_retries=model.max_retries,
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(record)),
     )
     model.__dict__["_async_client"] = client
@@ -159,7 +160,7 @@ async def test_an_overloaded_claude_is_retried_and_the_next_answer_is_used():
 
 
 @pytest.mark.parametrize("status", [429, 500, 529])
-async def test_a_claude_that_stays_down_ends_in_model_unavailable_which_pauses_the_incident(status):
+async def test_a_claude_that_stays_down_ends_in_model_unavailable(status):
     model = chat_model(claude(), "main")
     seen = over_transport(model, lambda request: httpx2.Response(status, json={}))
     sleep = Recorder()

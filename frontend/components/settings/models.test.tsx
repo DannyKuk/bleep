@@ -25,6 +25,10 @@ describe("the Models panel", () => {
     const models = await panel();
 
     expect(within(models).getByLabelText("Provider")).toHaveValue("openrouter");
+    expect(
+      within(within(models).getByLabelText("Provider")).getAllByRole("option", { hidden: true }),
+    ).toHaveLength(3);
+    expect(within(models).getByRole("option", { name: "Anthropic" })).toBeInTheDocument();
     expect(within(models).getByLabelText("Model")).toHaveValue("openai/gpt-6-luna");
     expect(within(models).getByLabelText("Cheap model")).toHaveValue("openai/gpt-6-luna");
     expect(within(models).getByLabelText("Local model")).toHaveValue("openai/gpt-oss-20b");

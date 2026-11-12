@@ -69,7 +69,7 @@ Open http://localhost:3000, sign in with the admin password and open the inciden
 
 ## Stack
 
-- **Backend:** Python, FastAPI, LangGraph; models through OpenRouter or a local OpenAI-compatible server (LM Studio, Ollama)
+- **Backend:** Python, FastAPI, LangGraph; models through OpenRouter, the Anthropic API or a local OpenAI-compatible server (LM Studio, Ollama)
 - **Hosts:** asyncssh forwarding each host's Docker socket, the Docker SDK
 - **Storage:** SQLite for incidents, settings, memory and LangGraph checkpoints; fastembed for local embeddings
 - **Frontend:** Next.js
