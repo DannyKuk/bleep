@@ -405,13 +405,31 @@ def _offered_domains(service: Service, app: CoolifyApplication) -> list[tuple[st
         return [(item, path, status) for item in app.fqdn.split(",")]
     if app.docker_compose_domains is None:
         return []
-    present = {compose_service(c.labels) for c in service.containers}
+    present = {name for c in service.containers if (name := compose_service(c.labels))}
+    texts = _compose_domain_texts(app.docker_compose_domains)
     return [
         (item, "/", 200)
-        for name, text in _compose_domain_texts(app.docker_compose_domains).items()
-        if name in present
+        for key, text in texts.items()
+        if _runs_key(key, present, texts)
         for item in text.split(",")
     ]
+
+
+def _legacy_key(name: str) -> str:
+    """A Compose service name as older Coolify versions key `docker_compose_domains` with it:
+    `-` and `.` written as `_`."""
+    return name.replace("-", "_").replace(".", "_")
+
+
+def _runs_key(key: str, present: set[str], keys: dict[str, str]) -> bool:
+    """Whether `key` of `docker_compose_domains` names a Compose service of `present`: by its
+    own name, or by the legacy form of one name when no other present name has it and the
+    service's own name is not a key too (as Coolify itself resolves the keys, preferring the
+    original name)."""
+    if key in present:
+        return True
+    named = [name for name in present if _legacy_key(name) == key]
+    return len(named) == 1 and named[0] not in keys
 
 
 def suggested_checks(service: Service, apps: list[CoolifyApplication]) -> list[UrlCheckConfig]:

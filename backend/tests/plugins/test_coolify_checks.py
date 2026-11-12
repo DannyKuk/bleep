@@ -222,6 +222,38 @@ def test_an_odd_compose_service_does_not_hide_the_others():
     assert urls(suggested_checks(forum, [odd])) == ["https://api.forum.example.com/"]
 
 
+def compose_domains_of(keys: dict[str, str]) -> list[CoolifyApplication]:
+    raw = json.dumps({key: {"domain": domain} for key, domain in keys.items()})
+    return [apps()[-1].model_copy(update={"docker_compose_domains": raw})]
+
+
+@pytest.mark.parametrize(
+    ("running", "keys", "offered"),
+    [
+        # Older Coolify versions key a service `my-api` or `my.api` as `my_api`.
+        (["my-api"], {"my_api": "https://a.example.com"}, ["https://a.example.com/"]),
+        (["my.api"], {"my_api": "https://a.example.com"}, ["https://a.example.com/"]),
+        (["my-api"], {"my-api": "https://a.example.com"}, ["https://a.example.com/"]),
+        # The original name wins over its underscore twin, as in Coolify.
+        (
+            ["my-api"],
+            {"my_api": "https://old.example.com", "my-api": "https://a.example.com"},
+            ["https://a.example.com/"],
+        ),
+        # Two present names share the legacy key: Coolify cannot tell them apart, nor can Bleep.
+        (["my-api", "my.api"], {"my_api": "https://a.example.com"}, []),
+        # A name that is already written with `_` is only itself.
+        (["my_api"], {"my-api": "https://a.example.com"}, []),
+        (["myapi"], {"my_api": "https://a.example.com"}, []),
+    ],
+)
+def test_a_compose_service_named_with_dash_or_dot_is_found_under_its_legacy_key(
+    running, keys, offered
+):
+    forum = compose_app_service(*running)
+    assert urls(suggested_checks(forum, compose_domains_of(keys))) == offered
+
+
 def context() -> PluginContext:
     return PluginContext(
         settings=CoolifySettings(),
