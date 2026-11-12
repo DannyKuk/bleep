@@ -596,6 +596,71 @@ def test_a_run_of_backslashes_and_a_quote_keeps_its_backslashes_around_the_marke
     assert hide(out) == out
 
 
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            'msg="{\\"cmd\\": \\"redis-cli -a \\\\u0022 s3cret\\\\u0022 ping\\"}"',
+            'msg="{\\"cmd\\": \\"redis-cli -a \\\\u0022<redacted>\\\\u0022 ping\\"}"',
+        ),
+        (
+            '{"cmd": "redis-cli -a \\u0022 s3cret\\u0022 ping"}',
+            '{"cmd": "redis-cli -a \\u0022<redacted>\\u0022 ping"}',
+        ),
+        (
+            "INFO run redis-cli -a \\u0022 s3cret\\u0022 ping now",
+            "INFO run redis-cli -a \\u0022<redacted>\\u0022 ping now",
+        ),
+        (
+            'msg="{\\"cmd\\": \\"curl -u \\\\u0027bob: s3cret\\\\u0027 http://x\\"}" n=1',
+            'msg="{\\"cmd\\": \\"curl -u \\\\u0027bob:<redacted>\\\\u0027 http://x\\"}" n=1',
+        ),
+        (
+            'cmd=\'redis-cli -a "a\\\\" s3cret" ping\' n=1',
+            "cmd='redis-cli -a \"<redacted>\" ping' n=1",
+        ),
+        (
+            "msg='redis-cli -a \" s3cret\\\\\\\\\" ping' n=1",
+            "msg='redis-cli -a \"<redacted>\" ping' n=1",
+        ),
+        (
+            _logfmt("cmd=" + repr('redis-cli -a "a\\" s3cret" ping')) + " n=1",
+            'msg="cmd=\'redis-cli -a \\"<redacted>\\" ping\'" n=1',
+        ),
+    ],
+)
+def test_a_quote_written_as_u0022_or_left_as_it_is_under_a_single_quoting_level_is_hidden(
+    line, expected
+):
+    """.NET's System.Text.Json writes `"` as `\\u0022` (`\\\\u0022` in logfmt), a quote whose
+    backslashes double with each level around it; a level that quotes with `'` (single-quoted
+    logfmt, `repr`) leaves `"` as it is and doubles the backslash that escapes it (`\\\\"`)."""
+    assert _hidden_once(line) == expected
+    in_json = redact_text(json.dumps({"log": line, "n": 1}))
+    assert "s3cret" not in in_json and json.loads(in_json)["n"] == 1
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            "sh -c 'redis-cli -a \"a\\\\\" ping' n=1",
+            "sh -c 'redis-cli -a \"<redacted>\" ping' n=1",
+        ),
+        (
+            'don\'t: redis-cli -a "a\\\\" ping n=1',
+            'don\'t: redis-cli -a "<redacted>" ping n=1',
+        ),
+        ('redis-cli -a "a\\\\" ping "x" n=1', 'redis-cli -a "<redacted>" ping "x" n=1'),
+    ],
+)
+def test_a_password_ending_in_a_backslash_still_ends_at_its_quote(line, expected):
+    """A `'` that opens no string before the command (an apostrophe, a closing quote) adds no
+    level, and with one that does, a quote nothing closes under that level is closed as before:
+    the password `a\\` keeps the words after it."""
+    assert _hidden_once(line) == expected
+
+
 def test_a_closing_quote_put_back_in_a_json_string_keeps_the_json():
     line = json.dumps({"cmd": 'msg="redis-cli -a \\"pa ss\\"x ping"', "n": 1})
     out = _hidden_once(line)
@@ -799,6 +864,13 @@ TWICE_ESCAPED_UNITS = [
     'curl -u \\\\\\"b:curl ',
     '\\\\\\" curl -u a:\\"',
     "curl \\\\",
+    "\\u0022",
+    "\\\\u0022 ",
+    "redis-cli -a \\\\u0022x ",
+    "\\u0027 curl -u a:\\u0022",
+    'cmd=\'redis-cli -a "x\\\\" ',
+    'msg=\'curl -u "b:\\\\\\\\" ',
+    "'redis-cli -a \"",
 ]
 
 

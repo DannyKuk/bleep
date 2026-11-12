@@ -1,5 +1,6 @@
 """Generated client commands, quoted the ways a shell quotes them and written into a log the ways
-logs write them (plain, JSON, logfmt, logfmt or JSON inside logfmt, Python's repr): the password
+logs write them (plain, JSON, .NET's JSON, logfmt, single-quoted logfmt, logfmt or JSON inside
+logfmt, Python's repr, and these inside each other): the password
 never shows, what follows it stays, a JSON record stays JSON and a second pass changes nothing.
 
 Seeded, so a failure names the seed and the form and reproduces."""
@@ -66,12 +67,11 @@ def _quoted(rng: random.Random, value: str, split: bool) -> str:
     return shlex.quote(value)
 
 
-def _command(rng: random.Random, plain: bool) -> tuple[str, str]:
-    """A client's command with a generated password; a `plain` one holds no backslash or `"`
-    and is quoted in one part."""
-    value, core = _secret(rng, PLAIN_PIECES if plain else PIECES)
-    quoted = _quoted(rng, value, not plain)
-    user = _quoted(rng, "bob:" + value, not plain)
+def _command(rng: random.Random) -> tuple[str, str]:
+    """A client's command with a generated password."""
+    value, core = _secret(rng, PIECES)
+    quoted = _quoted(rng, value, True)
+    user = _quoted(rng, "bob:" + value, True)
     commands = [
         f"redis-cli -h db -a {quoted} ping",
         f"redis-cli --pass {quoted} ping",
@@ -87,6 +87,21 @@ def _command(rng: random.Random, plain: bool) -> tuple[str, str]:
 
 def _logfmt(text: str, quote: str = '"') -> str:
     return f"msg={quote}" + text.replace("\\", "\\\\").replace(quote, "\\" + quote) + quote
+
+
+def _dotnet_string(text: str) -> str:
+    """`text` as .NET's System.Text.Json writes a string: `"` as `\\u0022`, `'` as `\\u0027`, and
+    other characters HTML or non-ASCII as `\\uXXXX` too."""
+    escaped = json.dumps(text)[1:-1].replace('\\"', "\\u0022")
+    return '"' + "".join(f"\\u{ord(c):04X}" if c in "'<>&+`" else c for c in escaped) + '"'
+
+
+def _dotnet(record: dict[str, str]) -> str:
+    return (
+        "{"
+        + ", ".join(f"{_dotnet_string(k)}: {_dotnet_string(v)}" for k, v in record.items())
+        + "}"
+    )
 
 
 # Each form writes a line holding the command (and the bare command, for the argv list)
@@ -110,21 +125,34 @@ FORMS: dict[str, Callable[[str, str, random.Random], str]] = {
         {"log": _logfmt(_logfmt(line)), "k": KEEP}
     ),
     "repr": lambda line, _, __: f"cmd={line!r} {KEEP}",
+    "dotnet": lambda line, _, __: _dotnet({"cmd": line, "k": KEEP}),
+    "dotnet in logfmt": lambda line, _, __: _logfmt(_dotnet({"cmd": line})) + f" {KEEP}",
+    "dotnet in json": lambda line, _, __: json.dumps({"log": _dotnet({"cmd": line}), "k": KEEP}),
+    "repr in logfmt": lambda line, _, __: _logfmt(f"cmd={line!r}") + f" {KEEP}",
+    "logfmt in repr": lambda line, _, __: f"cmd={_logfmt(line)!r} {KEEP}",
+    "single in json": lambda line, _, __: json.dumps({"log": _logfmt(line, "'"), "k": KEEP}),
     "two values": lambda line, _, __: (
         _logfmt(line) + " other=" + _logfmt(f'redis-cli -a "x y" {KEEP}')
     ),
 }
-# Forms that quote with `'` and leave `"` as it is: the shell's double quote stays a plain quote
-# whose escaped backslashes they double, which the redaction does not read (docs/design/guard.md)
-DOUBLE_QUOTE_LEFT_PLAIN = {"logfmt single", "repr"}
-JSON_FORMS = {"json", "argv", "sh -c", "logfmt in json", "json in json", "logfmt twice in json"}
+JSON_FORMS = {
+    "json",
+    "argv",
+    "sh -c",
+    "logfmt in json",
+    "json in json",
+    "logfmt twice in json",
+    "dotnet",
+    "dotnet in json",
+    "single in json",
+}
 
 
 def _problems(form: str, seed: int) -> list[tuple[str, str, str]]:
     rng = random.Random(f"{form}/{seed}")
     problems = []
     for _ in range(LINES_PER_FORM):
-        command, core = _command(rng, form in DOUBLE_QUOTE_LEFT_PLAIN)
+        command, core = _command(rng)
         line = FORMS[form](rng.choice(PREFIXES) + command, command, rng)
         out, count = redact_with_count(line)
         if core in out:
