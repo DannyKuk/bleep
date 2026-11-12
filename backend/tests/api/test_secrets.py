@@ -216,10 +216,10 @@ def test_choosing_anthropic_on_the_dashboard_without_ids_gives_the_claude_ids(ap
     models = app.get("/api/settings").json()["models"]
     assert (models["provider"], models["model"], models["cheap_model"]) == (
         "anthropic",
-        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
         "claude-haiku-5-5",
     )
-    assert app.parts.settings_store.models().model == "claude-sonnet-5-5"
+    assert app.parts.settings_store.models().model == "claude-haiku-5-5"
 
 
 def test_an_id_saved_with_the_provider_stays_and_going_back_to_openrouter_restores_its_defaults(

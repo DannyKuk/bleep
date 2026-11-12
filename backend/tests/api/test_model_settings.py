@@ -521,7 +521,7 @@ def by_provider(client: TestClient) -> dict[str, dict[str, str]]:
 
 
 OPENROUTER_IDS = {"model": "openai/gpt-6-luna", "cheap_model": "openai/gpt-6-luna"}
-CLAUDE_IDS = {"model": "claude-sonnet-5-5", "cheap_model": "claude-haiku-5-5"}
+CLAUDE_IDS = {"model": "claude-haiku-5-5", "cheap_model": "claude-haiku-5-5"}
 
 
 @pytest.mark.parametrize("saved", ["openrouter", "anthropic", "local"])
@@ -548,7 +548,7 @@ def test_an_override_equal_to_the_openrouter_default_shows_claudes_default_under
     shown = by_provider(app)
 
     assert shown["openrouter"]["model"] == "openai/gpt-6-luna"
-    assert shown["anthropic"]["model"] == "claude-sonnet-5-5"
+    assert shown["anthropic"]["model"] == "claude-haiku-5-5"
 
 
 @pytest.mark.parametrize("saved", ["openrouter", "anthropic"])
@@ -570,10 +570,10 @@ def test_an_env_model_equal_to_the_openrouter_default_shows_claudes_default_unde
     app = start()
 
     assert "models.model" in app.get("/api/settings").json()["from_env"]
-    assert by_provider(app)["anthropic"]["model"] == "claude-sonnet-5-5"
+    assert by_provider(app)["anthropic"]["model"] == "claude-haiku-5-5"
     assert put_settings(app, {"models": {"provider": "anthropic"}}).status_code == 200
     assert by_provider(app)["openrouter"]["model"] == "openai/gpt-6-luna"
-    assert app.get("/api/settings").json()["models"]["model"] == "claude-sonnet-5-5"
+    assert app.get("/api/settings").json()["models"]["model"] == "claude-haiku-5-5"
 
 
 def test_a_custom_env_model_shows_under_every_provider(monkeypatch, start):

@@ -306,12 +306,12 @@ describe("the Models panel", () => {
 
     const model = within(models).getByLabelText("Model");
     await userEvent.clear(model);
-    await userEvent.type(model, "claude-sonnet-5-5");
+    await userEvent.type(model, "claude-haiku-5-5");
     await userEvent.selectOptions(within(models).getByLabelText("Provider"), "anthropic");
     await saveModels(models);
 
     expect(sentBody(fetchMock, "PUT")).toEqual({
-      models: { provider: "anthropic", model: "claude-sonnet-5-5" },
+      models: { provider: "anthropic", model: "claude-haiku-5-5" },
     });
   });
 
@@ -323,13 +323,13 @@ describe("the Models panel", () => {
     const model = within(models).getByLabelText("Model");
     await userEvent.clear(model);
     await userEvent.click(model);
-    await userEvent.paste("claude-sonnet-5-5 ");
+    await userEvent.paste("claude-haiku-5-5 ");
     await userEvent.selectOptions(within(models).getByLabelText("Provider"), "anthropic");
-    expect(within(models).getByLabelText("Model")).toHaveValue("claude-sonnet-5-5 ");
+    expect(within(models).getByLabelText("Model")).toHaveValue("claude-haiku-5-5 ");
     await saveModels(models);
 
     expect(sentBody(fetchMock, "PUT")).toEqual({
-      models: { provider: "anthropic", model: "claude-sonnet-5-5" },
+      models: { provider: "anthropic", model: "claude-haiku-5-5" },
     });
   });
 
@@ -369,7 +369,7 @@ describe("the Models panel", () => {
     expect(within(models).getByRole("group", { name: "OPENROUTER_API_KEY" })).toBeInTheDocument();
     expect(within(models).queryByRole("group", { name: "ANTHROPIC_API_KEY" })).toBeNull();
     await userEvent.selectOptions(within(models).getByLabelText("Provider"), "anthropic");
-    expect(within(models).getByLabelText("Model")).toHaveValue("claude-sonnet-5-5");
+    expect(within(models).getByLabelText("Model")).toHaveValue("claude-haiku-5-5");
   });
 
   it("no longer sends anyone to the dev panel for the models", async () => {

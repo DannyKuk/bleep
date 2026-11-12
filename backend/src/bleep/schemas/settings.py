@@ -29,7 +29,7 @@ MODEL_KEY_ENV = "OPENROUTER_API_KEY"  # `ModelSettings.openrouter_api_key`
 ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"  # `ModelSettings.anthropic_api_key`
 ModelProvider = Literal["openrouter", "anthropic", "local"]
 OPENROUTER_DEFAULT_MODEL = "openai/gpt-6-luna"
-ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-5-5"
+ANTHROPIC_DEFAULT_MODEL = "claude-haiku-5-5"
 ANTHROPIC_DEFAULT_CHEAP_MODEL = "claude-haiku-5-5"
 # Ids the settings page offers per provider as examples, so a person can pick one instead of
 # looking it up; any id can still be typed. From OpenRouter's public model list and Anthropic's
