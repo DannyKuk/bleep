@@ -93,7 +93,7 @@ class Budgets(BaseModel):
     # Times one run may go back to Propose from Approval or Execute (an instruction, a target that
     # cannot be read, a plan gone stale); one more ends the run with the outcome `replan_limit`.
     replans: int = 3
-    incident_tokens: int = 150_000
+    incident_tokens: int = 300_000
     daily_cost_usd: float = 1.0
     # Chat answers (`talk`) have a cap of their own and never count against the one above (#401).
     chat_daily_cost_usd: float = 0.2

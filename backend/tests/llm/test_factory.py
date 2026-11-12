@@ -28,7 +28,7 @@ def test_budget_defaults():
     assert budgets.investigate_tool_calls == 8
     assert budgets.low_confidence == 0.6
     assert budgets.verify_loops == 2
-    assert budgets.incident_tokens == 150_000
+    assert budgets.incident_tokens == 300_000
     assert budgets.daily_cost_usd == 1.0
 
 
