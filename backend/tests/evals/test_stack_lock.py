@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from bleep.schemas.settings import ModelSettings
 from evals import injection, run
@@ -106,11 +107,28 @@ def test_the_command_names_the_module_and_its_arguments():
     )
 
 
+def bare_settings(**fields) -> EvalSettings:
+    """Settings from the environment alone, never the checkout's `.env`."""
+    models = ModelSettings(provider="local", local_model="tiny-local")
+    return EvalSettings(_env_file=None, models=models, **fields)  # type: ignore[call-arg]
+
+
 def test_the_settings_lock_a_file_outside_any_checkout(monkeypatch):
     monkeypatch.delenv("EVAL_STACK_LOCK")
-    default = EvalSettings(_env_file=None).stack_lock  # type: ignore[call-arg]
+    default = bare_settings().stack_lock
     assert not default.is_relative_to(run.REPO)
     assert default.is_relative_to(Path.home())
+
+
+def test_a_lock_path_from_a_dotenv_has_its_home_folder_expanded(monkeypatch):
+    monkeypatch.setenv("EVAL_STACK_LOCK", "~/.cache/bleep/demo-stack.lock")
+    assert bare_settings().stack_lock == Path.home() / ".cache" / "bleep" / "demo-stack.lock"
+
+
+def test_a_relative_lock_path_is_refused(monkeypatch):
+    monkeypatch.setenv("EVAL_STACK_LOCK", "data/demo-stack.lock")
+    with pytest.raises(ValidationError, match="absolute path"):
+        bare_settings()
 
 
 def eval_settings(tmp_path: Path) -> EvalSettings:
@@ -176,6 +194,5 @@ def test_a_running_eval_holds_the_stack(tmp_path, monkeypatch, runner):
 def test_rendering_injection_results_needs_no_stack(tmp_path, capsys):
     raw = tmp_path / "round.jsonl"
     raw.write_text("", encoding="utf-8")
-    lock = EvalSettings(_env_file=None).stack_lock  # type: ignore[call-arg]
-    with holding_demo_stack(lock, "python -m evals.run --only hung"):
+    with holding_demo_stack(bare_settings().stack_lock, "python -m evals.run --only hung"):
         assert injection.main(["--label", "Round 1", "--render", str(raw)]) == 0

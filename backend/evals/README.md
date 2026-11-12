@@ -69,7 +69,7 @@ Read from the environment, then the repo's `.env`.
 | `EVAL_HOSTS_FILE` | `config/hosts.demo.yaml` | The hosts file the demo host's rules and URLs come from. |
 | `EVAL_HOST_ID` | `demo` | The host in that file. |
 | `EVAL_FAULT_SCRIPT` | `demo/fault.sh` | The fault switch, called as `<script> <fault> on\|off` from the repo root; exit 0 is switched, any other exit stops the run (`fault.sh` exits 2 on a fault it does not know). |
-| `EVAL_STACK_LOCK` | `~/.cache/bleep/demo-stack.lock` | The file the runners that drive the demo shop lock, one at a time; the same for every checkout and worktree. |
+| `EVAL_STACK_LOCK` | `~/.cache/bleep/demo-stack.lock` | The file the runners that drive the demo shop lock, one at a time; the same for every checkout and worktree. An absolute path (`~` is expanded); a relative one is refused, since it would name another file in each checkout. |
 | `EVAL_SETTLE_S` | `30` | Seconds between runs, for the stack to come back, with `--no-reset` only. |
 | `EVAL_WATCH_INTERVAL_S` | `15` | Seconds between watcher ticks, Bleep's own default. |
 

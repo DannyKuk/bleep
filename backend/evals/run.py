@@ -32,7 +32,7 @@ from typing import Literal, Protocol, Self
 import httpx
 import openai
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from bleep.graph.build import build_graph, open_checkpointer
@@ -172,6 +172,16 @@ class EvalSettings(BaseSettings):
     # Shared by every checkout and worktree on this machine, so one eval drives the shop at a time
     stack_lock: Path = DEFAULT_STACK_LOCK
     models: ModelSettings = Field(default_factory=lambda: ModelSettings(_env_file=ENV_FILE))
+
+    @field_validator("stack_lock")
+    @classmethod
+    def _one_lock_for_every_checkout(cls, path: Path) -> Path:
+        """A `.env` does not expand `~`, and a relative path would name a different file in
+        each checkout, so every worktree would hold its own lock."""
+        path = path.expanduser()
+        if not path.is_absolute():
+            raise ValueError(f"EVAL_STACK_LOCK must be an absolute path, not {path}")
+        return path
 
     @model_validator(mode="after")
     def _model_server_from_this_machine(self) -> Self:
