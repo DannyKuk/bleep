@@ -18,6 +18,7 @@ from bleep.hosts.config import UrlCheckConfig
 from bleep.plugins.urls import Resolver
 from bleep.schemas.plugins import PluginHealth
 from bleep.schemas.services import Service
+from bleep.tools.github import DeploySource
 from bleep.tools.registry import ActHandler, ToolSpec
 
 
@@ -69,6 +70,11 @@ class Plugin(ABC):
         """URL checks the plugin's own records suggest for `service`, without those it has. They
         are only offered on the service's page; nothing is checked until a person adds them."""
         return []
+
+    def deploys(self, ctx: PluginContext) -> DeploySource | None:
+        """Which commit a service the plugin deployed runs, for `deployed_commits`; None for a
+        plugin that deploys nothing."""
+        return None
 
     @abstractmethod
     async def health(self, ctx: PluginContext) -> PluginHealth:

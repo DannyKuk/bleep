@@ -936,7 +936,11 @@ async def test_a_scenario_with_a_github_fixture_gets_the_github_tools(tmp_path):
         judge=FakeJudge(), connector=connector(fake), models=Models(model),
     )  # fmt: skip
     assert plain.error is None
-    assert not {t.name for t in model.bound_tools} & {"recent_commits", "commit_diff"}
+    assert not {t.name for t in model.bound_tools} & {
+        "deployed_commits",
+        "recent_commits",
+        "commit_diff",
+    }
 
     fake = engine()
     model = FakeChatModel(script=script(), structured_output_unsupported=True)
@@ -946,7 +950,11 @@ async def test_a_scenario_with_a_github_fixture_gets_the_github_tools(tmp_path):
         judge=FakeJudge(), connector=connector(fake), models=Models(model),
     )  # fmt: skip
     assert result.error is None
-    assert {t.name for t in model.bound_tools} >= {"recent_commits", "commit_diff"}
+    assert {t.name for t in model.bound_tools} >= {
+        "deployed_commits",
+        "recent_commits",
+        "commit_diff",
+    }
 
 
 async def test_the_suite_offers_knowledge_search_over_the_snapshot_when_given_an_index(tmp_path):

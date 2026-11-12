@@ -56,6 +56,7 @@ _TOOLS = {
     "host_command": "host",
     "knowledge_search": "docs",
     "recall_incidents": "past",
+    "deployed_commits": "repo",
     "recent_commits": "repo",
     "commit_diff": "repo",
 }

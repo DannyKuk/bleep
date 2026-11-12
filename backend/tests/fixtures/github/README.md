@@ -12,6 +12,7 @@ Recorded from the GitHub REST API (`api.github.com`, version 2022-11-28) on 2026
 | `readme.json` | `GET /repos/encode/httpx/readme` |
 | `contents-docs.json`, `contents-docs-advanced.json` | `GET /repos/encode/httpx/contents/docs`, `.../contents/docs/advanced` |
 | `contents-docs-http2.json` | `GET /repos/encode/httpx/contents/docs/http2.md` |
+| `compare.json` | `GET /repos/encode/httpx/compare/80960fa31918d7663c3f4c3ad61661cf0e80628f...4189b7f051c6c51ce74c3bee1a5f269f9c50c6b2` (10 commits, oldest first as GitHub lists them); recorded on 2026-11-12 and trimmed to `status`, `ahead_by`, `behind_by`, `total_commits` and the commits' fields above, without the `files`, `base_commit` and `merge_base_commit` Bleep ignores (#351) |
 | `unauthorized.json` | `GET /repos/DannyKuk/bleep/commits` with a made-up token, answered 401 with no `x-ratelimit-*` headers; recorded on 2026-11-09 in the [GitHub live spike](../../../../docs/spikes/github-live/report.md) |
 
 `rate-limited.json` is not recorded: triggering the limit would have spent this machine's unauthenticated hour. It is the body GitHub documents for a spent primary rate limit, with a documentation address for the IP; the tests add the `x-ratelimit-*` or `retry-after` headers that GitHub sends with it.

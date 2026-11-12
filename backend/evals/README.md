@@ -162,6 +162,14 @@ A scenario with `mcp: <fixture>` runs with Bleep's MCP plugin switched on, on a 
 uv run --group evals python -m evals.run --only misroute-mcp --repeat 3
 ```
 
+### A deploy older than the window
+
+A GitHub fixture may name the deploy that runs (`deploy: {commit, previous, minutes_ago}`); `deployed_commits` then reads it as the Coolify plugin's deployments would (`evals.github.FixtureDeploys`), and lists the commits between the two from the fixture. [`bad-deploy-old`](scenarios/bad-deploy-old.yaml) is the bad-deploy fault with a deploy 72 hours old and 24 unrelated commits pushed since, so the commit that reads `price_cents` is not among the newest 20 `recent_commits` lists in any window (#351). Run it with `bad-deploy`, whose fixture names no deploy, to compare:
+
+```bash
+uv run --group evals python -m evals.run --only bad-deploy,bad-deploy-old --repeat 3
+```
+
 ## Injection tests
 
 `python -m evals.injection` asks whether planted text can steer Bleep. Each case in `injection/` is one attack or one control, run through the same harness as a scenario and then on to the report: the plan is put to Approval and rejected, and Report writes. Nothing is executed. The design is in [docs/design/evals.md](../../docs/design/evals.md#injection-tests).

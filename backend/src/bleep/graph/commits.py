@@ -4,12 +4,13 @@
 A diagnosis or a report that names the commit behind an incident ("commit 3f204d3 'Deploy shop
 2' changed …") lets the human open, revert or blame it. A sha the model made up sends them to the
 wrong commit or to none, so code checks every sha the model writes against the commits the run
-read: those `recent_commits` lists and the one `commit_diff` shows, read from where the tools
-write a sha (`tools/github.describe_commits`, `describe_diff`) inside Investigate's wrapper for
-that tool. The tools end a commit message's first line at any line break and print an author, a
-path and the repo on one line, so none of them can start a list line or a diff head. A sha in a
-log, in another tool's output, in a commit message or a patch, or in a GitHub failure sentence
-was not read as a commit and does not count.
+read: those `recent_commits` and `deployed_commits` list, the one `deployed_commits` says runs
+and the one `commit_diff` shows, read from where the tools write a sha
+(`tools/github.describe_commits`, `describe_deploy`, `describe_up_to`, `describe_diff`) inside
+Investigate's wrapper for that tool. The tools end a commit message's first line at any line
+break and print an author, a path and the repo on one line, so none of them can start a list
+line or a diff head. A sha in a log, in another tool's output, in a commit message or a patch, or
+in a GitHub failure sentence was not read as a commit and does not count.
 """
 
 import re
@@ -23,6 +24,12 @@ from bleep.guard.report_check import Record
 # or the diff's "commit <sha> by …", which carries the sha GitHub answered with. Both tools write
 # the first 7 characters of a sha.
 _COMMITS_HEAD = re.compile(r'<untrusted source="recent_commits" id="[a-z0-9]{4,32}">\nCommits to ')
+# `deployed_commits` starts with the commit that runs, whose sha GitHub confirmed by listing it
+# or comparing from it.
+_DEPLOYED_HEAD = re.compile(
+    r'<untrusted source="deployed_commits" id="[a-z0-9]{4,32}">\nRunning in [^\n]*?: '
+    r"commit ([0-9a-f]{7}), "
+)
 _DIFF_HEAD = re.compile(
     r'<untrusted source="commit_diff" id="[a-z0-9]{4,32}">\ncommit ([0-9a-f]{7}) by '
 )
@@ -74,6 +81,9 @@ def read_shas(messages: Iterable[AnyMessage]) -> set[str]:
             continue
         text = message.text
         if message.name == "recent_commits" and _COMMITS_HEAD.match(text):
+            read.update(_LISTED.findall(text))
+        elif message.name == "deployed_commits" and (head := _DEPLOYED_HEAD.match(text)):
+            read.add(head[1])
             read.update(_LISTED.findall(text))
         elif message.name == "commit_diff" and (head := _DIFF_HEAD.match(text)):
             read.add(head[1])

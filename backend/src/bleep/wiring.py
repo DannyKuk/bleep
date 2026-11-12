@@ -466,12 +466,13 @@ def graph_deps(
     `BLEEP_SECRET` it signs them with. `memory` is read by Gather and the `recall_incidents`
     tool and written by Report. The switched-on `plugins` add their read tools and act handlers,
     read at each use, and `settings_store` their actions to the plan check's enabled set.
-    With `github`, a service with a `repo` gets the GitHub tools; `knowledge` is searched by the
+    With `github`, a service with a `repo` gets the GitHub tools, which ask the switched-on
+    `plugins` which commit it runs (Coolify's deployments); `knowledge` is searched by the
     `knowledge_search` tool.
     """
     return GraphDeps(
         registry=registry,
-        tools=default_registry(memory, plugins, github, knowledge),
+        tools=default_registry(memory, plugins, github, knowledge, deploys=plugins),
         act_tools=plugins.act_tools(docker_act_tools(secret, guard_log)),
         models=model_factory(settings_store),
         bus=bus,

@@ -1,5 +1,5 @@
-"""A small read-only client for the GitHub REST API: a repo's recent commits, one commit with its
-diff, and the repo's README and docs files.
+"""A small read-only client for the GitHub REST API: a repo's recent commits, the commits between
+two, one commit with its diff, and the repo's README and docs files.
 
 The GitHub tools read commits through it, and the knowledge ingest reads READMEs and docs. It
 lives with the hosts file because the token and each service's `repo` are set there, and so that
@@ -21,7 +21,14 @@ import httpx
 from pydantic import BaseModel, SecretStr, TypeAdapter, ValidationError
 
 from bleep.hosts.config import REPO_NAME, GithubConfig, SecretMissing, resolve_secret
-from bleep.schemas.github import Commit, CommitDetail, FileChange, RepoEntry, RepoFile
+from bleep.schemas.github import (
+    Commit,
+    CommitDetail,
+    Comparison,
+    FileChange,
+    RepoEntry,
+    RepoFile,
+)
 
 log = logging.getLogger(__name__)
 
@@ -106,6 +113,14 @@ class _RawCommit(BaseModel):
             message=self.commit.message,
             url=self.html_url,
         )
+
+
+class _RawComparison(BaseModel):
+    status: Literal["ahead", "behind", "identical", "diverged"]
+    ahead_by: int = 0
+    behind_by: int = 0
+    total_commits: int = 0
+    commits: list[_RawCommit] = []
 
 
 class _RawEntry(BaseModel):
@@ -234,19 +249,45 @@ class GithubClient:
         return token if token is not None and token.get_secret_value() else None
 
     async def commits(
-        self, repo: str, since: datetime, path: str | None = None, limit: int = 20
+        self,
+        repo: str,
+        since: datetime | None,
+        path: str | None = None,
+        limit: int = 20,
+        sha: str | None = None,
     ) -> list[Commit]:
-        """The repo's commits on its default branch since `since`, newest first, optionally only
-        those touching `path` (a file or folder)."""
+        """The repo's commits on its default branch, or from the commit `sha` back, newest first;
+        since `since` when given, and only those touching `path` (a file or folder) when given.
+        GitHub answers an unknown `sha` like a missing repo."""
         check_repo(repo)
-        params = {
-            "since": since.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "per_page": str(max(1, min(limit, MAX_PER_PAGE))),
-        }
+        params = {"per_page": str(max(1, min(limit, MAX_PER_PAGE)))}
+        if since is not None:
+            params["since"] = since.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         if path:
             params["path"] = path[:MAX_PATH]
+        if sha is not None:
+            check_sha(sha)
+            params["sha"] = sha
         data = await self._get(f"/repos/{repo}/commits", params, f"repo {repo}", "repo")
         return [c.summary() for c in _parse(list[_RawCommit], data)]
+
+    async def compare(self, repo: str, base: str, head: str) -> Comparison:
+        """The commits `head` has that `base` lacks, newest first: GitHub lists them oldest first
+        and, asked without pages, at most 250 ending at the newest. A 404 is a missing sha or a
+        repo GitHub cannot show, which it does not tell apart."""
+        check_repo(repo)
+        check_sha(base)
+        check_sha(head)
+        what = f"commit {base[:7]} or {head[:7]} in {repo}"
+        data = await self._get(f"/repos/{repo}/compare/{base}...{head}", None, what, "commit")
+        raw = _parse(_RawComparison, data)
+        return Comparison(
+            status=raw.status,
+            ahead_by=raw.ahead_by,
+            behind_by=raw.behind_by,
+            total_commits=raw.total_commits,
+            commits=[c.summary() for c in reversed(raw.commits)],
+        )
 
     async def commit(self, repo: str, sha: str) -> CommitDetail:
         """One commit with every file it changed and each file's patch."""

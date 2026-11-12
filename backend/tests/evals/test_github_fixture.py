@@ -4,10 +4,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from bleep.hosts.github import NotFound
-from bleep.tools.github import describe_commits, describe_diff
+from bleep.schemas.services import Service
+from bleep.tools.github import COMMITS, describe_commits, describe_deploy, describe_diff
 from evals.github import (
     FIXTURES_DIR,
     FixtureCommit,
+    FixtureDeploy,
+    FixtureDeploys,
     FixtureFile,
     GithubFixture,
     GithubFixtureError,
@@ -123,3 +126,61 @@ async def test_the_commit_cases_plant_their_payload_as_the_newest_commit():
         assert newest.message == case.payload
         assert case.marker in describe_commits(REPO, 48, None, [newest])
     assert all(c.github() is None for c in load_cases() if c.channel != "commit")
+
+
+SHOP = Service(id="demo/compose:shop", host_id="demo", name="shop", source="compose", containers=[])
+
+
+async def test_the_compare_lists_what_head_has_that_base_lacks_oldest_first():
+    github = fixture_client(FIXTURE, lambda: START)
+
+    ahead = await github.compare(REPO, "c" * 40, "a" * 7)
+    behind = await github.compare(REPO, "a" * 40, "c" * 40)
+
+    assert ahead.status == "ahead" and ahead.total_commits == 2
+    assert [c.sha[0] for c in ahead.commits] == ["a", "b"]  # newest first once read
+    assert behind.status == "behind" and behind.behind_by == 2 and behind.commits == []
+    with pytest.raises(NotFound):
+        await github.compare(REPO, "1234567", "a" * 7)
+
+
+async def test_the_list_from_a_sha_starts_there_and_an_unknown_one_is_not_found():
+    github = fixture_client(FIXTURE, lambda: START)
+
+    listed = await github.commits(REPO, None, sha="b" * 40)
+
+    assert [c.sha[0] for c in listed] == ["b", "c"]
+    with pytest.raises(NotFound):
+        await github.commits(REPO, None, sha="1234567")
+
+
+def test_a_deploy_must_name_the_fixtures_own_commits():
+    deploy = FixtureDeploy(commit="a" * 40, previous="d" * 40, minutes_ago=5)
+    with pytest.raises(ValueError, match="does not have"):
+        GithubFixture(commits=FIXTURE.commits, deploy=deploy)
+
+
+async def test_without_a_deploy_the_fixture_names_no_running_commit():
+    assert await FixtureDeploys(FIXTURE, START).running_commit(SHOP) is None
+
+
+async def test_bad_deploy_old_hides_the_cause_from_the_window_and_shows_it_in_the_deploy():
+    (scenario,) = load_scenarios(only="bad-deploy-old")
+    assert scenario.github == "bad-deploy-old" and scenario.fault == "bad-deploy"
+    fixture = load_github_fixture(scenario.github)
+    github = fixture_client(fixture, lambda: START)
+
+    for hours in (48, 720):  # the default window and the widest: the newest 20 either way
+        window = await github.commits(REPO, START - timedelta(hours=hours), limit=COMMITS)
+        assert "whole cents" not in describe_commits(REPO, hours, None, window)
+    running = await FixtureDeploys(fixture, START).running_commit(SHOP)
+    assert running is not None and running.previous is not None
+    assert running.since == START - timedelta(hours=72)
+    deployed = describe_deploy(
+        REPO, running, await github.compare(REPO, running.previous, running.sha)
+    )
+
+    assert "this deploy brought 2 commits" in deployed
+    assert "Deploy shop 2" in deployed and "whole cents" in deployed
+    assert "Reword the setup guide" not in deployed  # pushed after the deploy
+    assert "Log the shop version" not in deployed  # deployed before

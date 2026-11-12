@@ -25,9 +25,11 @@ from bleep.hosts.config import UrlCheckConfig
 from bleep.plugins import urls
 from bleep.plugins.base import Plugin, PluginContext
 from bleep.plugins.urls import Resolver, UrlRefused, check_dashboard_url
+from bleep.schemas.github import RunningCommit
 from bleep.schemas.plugins import PluginHealth, PluginSecret, PluginView
 from bleep.schemas.refusal import Reasons, Templated
 from bleep.schemas.services import Service
+from bleep.tools.github import DeploySource
 from bleep.tools.registry import ActHandler, ToolSpec, check_kind
 
 log = logging.getLogger(__name__)
@@ -54,6 +56,7 @@ class _Active:
     ctx: PluginContext
     tools: list[ToolSpec]
     handlers: dict[str, ActHandler]
+    deploys: DeploySource | None = None
 
 
 class PluginRegistry:
@@ -159,6 +162,16 @@ class PluginRegistry:
         """`core` plus the switched-on plugins' act handlers, read at each lookup."""
         return _ActTools(core, self)
 
+    async def running_commit(self, service: Service) -> RunningCommit | None:
+        """The commit `service` runs by the first switched-on plugin that deployed it, read at the
+        call, so a plugin switched off no longer answers (`tools.github.DeploySource`)."""
+        for active in list(self._active.values()):
+            if active.deploys is not None:
+                found = await active.deploys.running_commit(service)
+                if found is not None:
+                    return found
+        return None
+
     def handler(self, action: str) -> ActHandler | None:
         return next(
             (a.handlers[action] for a in self._active.values() if action in a.handlers), None
@@ -244,6 +257,7 @@ class PluginRegistry:
         try:
             tools = plugin.tools(ctx)
             handlers = plugin.act_handlers(ctx)
+            deploys = plugin.deploys(ctx)
         except Exception as error:  # PluginError too: the plugin's text could quote a secret
             log.warning("plugin %s could not be built: %s", plugin.name, type(error).__name__)
             raise PluginError(
@@ -253,7 +267,7 @@ class PluginRegistry:
                 kind=type(error).__name__,
             ) from None
         _check_built(plugin, tools, handlers)  # Bleep's own words, so they pass through
-        return _Active(ctx, tools, handlers)
+        return _Active(ctx, tools, handlers, deploys)
 
     def _validate(self, plugin: Plugin, values: Mapping[str, Any]) -> BaseModel:
         try:
