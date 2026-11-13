@@ -926,7 +926,8 @@ export const en = {
       readAll: (read: number) => `Read ${read} repo${read === 1 ? "" : "s"}.`,
       readSome: (read: number, linked: number) =>
         `Read ${read} of ${linked} repos. The others could not be read and keep the docs they had; try again later.`,
-      failed: (message: string) => `Could not read the docs: ${message}`,
+      failed: "The docs could not be read. Bleep's log says why.",
+      requestFailed: (message: string) => `Could not ask Bleep to read the docs: ${message}`,
     },
     thresholds: {
       labels: {

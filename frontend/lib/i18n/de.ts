@@ -924,7 +924,9 @@ export const de: Messages = {
       readAll: (read) => `${read} ${read === 1 ? "Repo" : "Repos"} gelesen.`,
       readSome: (read, linked) =>
         `${read} von ${linked} Repos gelesen. Die anderen konnten nicht gelesen werden und behalten ihre bisherige Doku; versuche es später noch einmal.`,
-      failed: (message) => `Die Doku konnte nicht gelesen werden: ${message}`,
+      failed: "Die Doku konnte nicht gelesen werden. Das Protokoll von Bleep nennt den Grund.",
+      requestFailed: (message) =>
+        `Bleep konnte nicht um das Lesen der Doku gebeten werden: ${message}`,
     },
     thresholds: {
       labels: {

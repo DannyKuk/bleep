@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { CodeText } from "@/components/code-text";
 import { useTimeZone } from "@/components/preferences";
@@ -10,37 +10,63 @@ import { Fact } from "@/components/settings/secret";
 import { Button } from "@/components/ui/button";
 import { formatDateTime } from "@/lib/format";
 import { useLanguage, useT } from "@/lib/i18n";
-import { refreshRepoDocs, type RepoDocsRefreshed, type RepoDocsState } from "@/lib/knowledge-api";
+import { fetchRepoDocs, startRepoRefresh, type RepoDocsState } from "@/lib/knowledge-api";
+
+/** How often the page asks whether a read is over. */
+export const POLL_MS = 2000;
 
 /**
  * The docs of the repos services link, as Bleep holds them: when they were last read and the
- * chunks each repo has. "Re-read docs" reads them now, for a person who fixed their docs after an
- * incident and does not want to wait for the daily read.
+ * chunks each repo has. "Re-read docs" starts a read now, for a person who fixed their docs after
+ * an incident and does not want to wait for the daily read. A read can take over a minute, longer
+ * than a request may, so the press only starts it and the page asks again until it is over.
  */
-export function RepoDocs({ initial }: { initial: RepoDocsState }) {
+export function RepoDocs({
+  initial,
+  pollMs = POLL_MS,
+}: {
+  initial: RepoDocsState;
+  pollMs?: number;
+}) {
   const t = useT().settings.docs;
   const zone = useTimeZone();
   const language = useLanguage();
   const [state, setState] = useState<RepoDocsState>(initial);
-  const [done, setDone] = useState<RepoDocsRefreshed | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [reading, setReading] = useState(false);
+  const [starting, setStarting] = useState(false);
+
+  useEffect(() => {
+    if (!state.reading) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      fetchRepoDocs(controller.signal)
+        .then(setState)
+        .catch((failed: unknown) => {
+          if (controller.signal.aborted) return;
+          setError(failed instanceof Error ? failed.message : String(failed));
+          setState((now) => ({ ...now, reading: false }));
+        });
+    }, pollMs);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [state, pollMs]);
 
   async function readNow() {
-    setReading(true);
+    setStarting(true);
     setError(null);
     try {
-      const result = await refreshRepoDocs();
-      setState(result);
-      setDone(result);
+      setState(await startRepoRefresh());
     } catch (failed) {
-      setDone(null);
       setError(failed instanceof Error ? failed.message : String(failed));
     } finally {
-      setReading(false);
+      setStarting(false);
     }
   }
 
+  const busy = starting || state.reading;
+  const result = state.reading ? null : state.result;
   return (
     <div className="flex flex-col gap-3">
       <p className="text-sm text-muted-foreground">
@@ -75,17 +101,20 @@ export function RepoDocs({ initial }: { initial: RepoDocsState }) {
         </ul>
       )}
       <div className="flex flex-wrap items-center gap-3">
-        <Button wrap type="button" size="sm" disabled={reading} onClick={() => void readNow()}>
-          {reading && <Loader2 aria-hidden className="animate-spin" />}
-          {reading ? t.reading : t.button}
+        <Button wrap type="button" size="sm" disabled={busy} onClick={() => void readNow()}>
+          {busy && <Loader2 aria-hidden className="animate-spin" />}
+          {busy ? t.reading : t.button}
         </Button>
-        {done && (
+        {result && !result.failed && (
           <p role="status" className="text-sm text-muted-foreground">
-            {done.read === done.linked ? t.readAll(done.read) : t.readSome(done.read, done.linked)}
+            {result.read === result.linked
+              ? t.readAll(result.read)
+              : t.readSome(result.read, result.linked)}
           </p>
         )}
       </div>
-      {error && <Alert>{t.failed(error)}</Alert>}
+      {result?.failed && <Alert>{t.failed}</Alert>}
+      {error && <Alert>{t.requestFailed(error)}</Alert>}
     </div>
   );
 }

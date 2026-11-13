@@ -160,6 +160,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
             stack.push_async_callback(_cancel, app.state.watchdog_task)
             knowledge = asyncio.create_task(parts.knowledge_refresher.run(), name="knowledge")
             stack.push_async_callback(_cancel, knowledge)
+            stack.push_async_callback(parts.knowledge_refresher.close)  # a read a person started
             stack.push_async_callback(parts.notify.stop)
             parts.notify.use_expectations(app.state.expectations)
             parts.notify.use_looks(app.state.looks)

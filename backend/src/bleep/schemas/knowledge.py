@@ -37,18 +37,22 @@ class RepoDocsRepo(BaseModel):
     chunks: int  # what knowledge search holds of its docs; 0 until they are read
 
 
-class RepoDocsState(BaseModel):
-    """What Bleep holds of the linked repos' docs. `last_read_at` is when a refresh last read
-    the repos linked then; None before the first."""
+class RepoDocsResult(BaseModel):
+    """How the last read a person asked for ended: `read` of the `linked` repos could be read
+    and `embedded` documents were new or changed; or `failed`, with the reason in Bleep's log."""
 
-    last_read_at: datetime | None
-    repos: list[RepoDocsRepo]
-
-
-class RepoDocsRefreshed(RepoDocsState):
-    """The state after a refresh, with what the refresh did: `read` of the `linked` repos could
-    be read, and `embedded` documents were new or changed."""
-
+    failed: bool
     read: int
     linked: int
     embedded: int
+
+
+class RepoDocsState(BaseModel):
+    """What Bleep holds of the linked repos' docs. `last_read_at` is when a refresh last read
+    the repos linked then; None before the first. `reading` is true while a refresh runs, and
+    `result` is how the last one asked for ended, None until one has."""
+
+    last_read_at: datetime | None
+    repos: list[RepoDocsRepo]
+    reading: bool = False
+    result: RepoDocsResult | None = None

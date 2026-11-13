@@ -233,6 +233,8 @@ export function repoDocs(overrides: Partial<RepoDocsState> = {}): RepoDocsState 
       { repo: "acme/shop", chunks: 12 },
       { repo: "acme/blog", chunks: 1 },
     ],
+    reading: false,
+    result: null,
     ...overrides,
   };
 }

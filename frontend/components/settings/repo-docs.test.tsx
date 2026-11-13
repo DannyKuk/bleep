@@ -1,32 +1,35 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { json, repoDocs, stubBackend } from "@/components/settings/fixtures";
 import { RepoDocs } from "@/components/settings/repo-docs";
-import type { RepoDocsRefreshed } from "@/lib/knowledge-api";
+import type { RepoDocsResult } from "@/lib/knowledge-api";
 
 const REFRESH = "POST /api/knowledge/repos/refresh";
+const STATE = "GET /api/knowledge/repos";
+const BOTH_READ: RepoDocsResult = { failed: false, read: 2, linked: 2, embedded: 3 };
 
-function refreshed(overrides: Partial<RepoDocsRefreshed> = {}): RepoDocsRefreshed {
-  return {
-    ...repoDocs({
+const reading = () => json(repoDocs({ reading: true }), 202);
+const done = (result: RepoDocsResult = BOTH_READ) =>
+  json(
+    repoDocs({
       last_read_at: "2026-11-13T12:00:00Z",
       repos: [
         { repo: "acme/shop", chunks: 14 },
         { repo: "acme/blog", chunks: 1 },
       ],
+      result,
     }),
-    read: 2,
-    linked: 2,
-    embedded: 3,
-    ...overrides,
-  };
+  );
+
+function renderDocs(initial = repoDocs()) {
+  return render(<RepoDocs initial={initial} pollMs={5} />);
 }
 
 describe("RepoDocs", () => {
   it("shows the last read time and the chunks of each repo before any press", () => {
-    render(<RepoDocs initial={repoDocs()} />);
+    renderDocs();
 
     expect(screen.getByText(/2026/).closest("time")).toHaveAttribute(
       "datetime",
@@ -39,48 +42,60 @@ describe("RepoDocs", () => {
   });
 
   it("says the docs have not been read yet, and what to do when no repo is linked", () => {
-    render(<RepoDocs initial={repoDocs({ last_read_at: null, repos: [] })} />);
+    renderDocs(repoDocs({ last_read_at: null, repos: [] }));
 
     expect(screen.getByText("Not yet")).toBeInTheDocument();
     expect(screen.getByText(/No service links a repo/)).toBeInTheDocument();
     expect(screen.queryByRole("list")).toBeNull();
   });
 
-  it("reads the docs on a press and shows the new time, the chunks and what was read", async () => {
-    const fetchMock = stubBackend({ [REFRESH]: json(refreshed()) });
-    render(<RepoDocs initial={repoDocs()} />);
+  it("starts a read on a press, asks again while it runs, then shows the time, chunks and result", async () => {
+    const fetchMock = stubBackend({
+      [REFRESH]: reading(),
+      [STATE]: [reading(), reading(), done()],
+    });
+    renderDocs();
 
     await userEvent.click(screen.getByRole("button", { name: "Re-read docs" }));
 
+    expect(screen.getByRole("button", { name: "Reading the docs" })).toBeDisabled();
     expect(await screen.findByRole("status")).toHaveTextContent("Read 2 repos.");
+    expect(screen.getByRole("button", { name: "Re-read docs" })).toBeEnabled();
     expect(screen.getByText(/2026/).closest("time")).toHaveAttribute(
       "datetime",
       "2026-11-13T12:00:00Z",
     );
     expect(screen.getByText("acme/shop").closest("li")).toHaveTextContent("14 chunks");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][1]?.method).toBe("POST");
+    const methods = fetchMock.mock.calls.map(([, init]) => init?.method ?? "GET");
+    expect(methods).toEqual(["POST", "GET", "GET", "GET"]);
   });
 
-  it("is disabled while it reads, so a second press cannot start another", async () => {
-    let finish: (response: Response) => void = () => {};
-    const fetchMock = stubBackend({});
-    fetchMock.mockImplementation(() => new Promise<Response>((resolve) => (finish = resolve)));
-    render(<RepoDocs initial={repoDocs()} />);
+  it("stays disabled while the backend reads, and cannot start a second read", async () => {
+    const fetchMock = stubBackend({ [REFRESH]: reading(), [STATE]: [reading(), reading()] });
+    renderDocs();
 
     await userEvent.click(screen.getByRole("button", { name: "Re-read docs" }));
-    const reading = screen.getByRole("button", { name: "Reading the docs" });
-    expect(reading).toBeDisabled();
-    await userEvent.click(reading);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const button = await screen.findByRole("button", { name: "Reading the docs" });
+    await userEvent.click(button);
 
-    finish(json(refreshed()));
-    expect(await screen.findByRole("button", { name: "Re-read docs" })).toBeEnabled();
+    expect(button).toBeDisabled();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+  });
+
+  it("follows a read that was already running when the page loaded", async () => {
+    stubBackend({ [STATE]: [done()] });
+    renderDocs(repoDocs({ reading: true }));
+
+    expect(screen.getByRole("button", { name: "Reading the docs" })).toBeDisabled();
+    expect(await screen.findByRole("status")).toHaveTextContent("Read 2 repos.");
   });
 
   it("says when only some of the repos could be read", async () => {
-    stubBackend({ [REFRESH]: json(refreshed({ read: 1 })) });
-    render(<RepoDocs initial={repoDocs()} />);
+    stubBackend({
+      [REFRESH]: reading(),
+      [STATE]: [done({ failed: false, read: 1, linked: 2, embedded: 0 })],
+    });
+    renderDocs();
 
     await userEvent.click(screen.getByRole("button", { name: "Re-read docs" }));
 
@@ -89,17 +104,47 @@ describe("RepoDocs", () => {
     );
   });
 
-  it("shows a failed read and keeps what it showed", async () => {
-    stubBackend({ [REFRESH]: json({ detail: "the embedder is down" }, 500) });
-    render(<RepoDocs initial={repoDocs()} />);
+  it("says a failed read failed, without the backend's reason", async () => {
+    stubBackend({
+      [REFRESH]: reading(),
+      [STATE]: [done({ failed: true, read: 0, linked: 0, embedded: 0 })],
+    });
+    renderDocs();
 
     await userEvent.click(screen.getByRole("button", { name: "Re-read docs" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not read the docs: the embedder is down",
+      "The docs could not be read. Bleep's log says why.",
     );
-    await waitFor(() => expect(screen.getByRole("button", { name: "Re-read docs" })).toBeEnabled());
-    expect(screen.getByText("acme/shop").closest("li")).toHaveTextContent("12 chunks");
     expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("button", { name: "Re-read docs" })).toBeEnabled();
+  });
+
+  it("shows a refused press as it really comes, a plain-text 500, and keeps what it showed", async () => {
+    stubBackend({ [REFRESH]: new Response("Internal Server Error", { status: 500 }) });
+    renderDocs();
+
+    await userEvent.click(screen.getByRole("button", { name: "Re-read docs" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not ask Bleep to read the docs: HTTP 500",
+    );
+    expect(screen.getByRole("button", { name: "Re-read docs" })).toBeEnabled();
+    expect(screen.getByText("acme/shop").closest("li")).toHaveTextContent("12 chunks");
+  });
+
+  it("stops asking and says so when a poll fails", async () => {
+    const fetchMock = stubBackend({
+      [REFRESH]: reading(),
+      [STATE]: [new Response("Bad Gateway", { status: 502 })],
+    });
+    renderDocs();
+
+    await userEvent.click(screen.getByRole("button", { name: "Re-read docs" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 502");
+    expect(screen.getByRole("button", { name: "Re-read docs" })).toBeEnabled();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
