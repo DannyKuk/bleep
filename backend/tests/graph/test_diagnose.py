@@ -1,4 +1,5 @@
 import json
+import re
 import threading
 import typing
 
@@ -9,18 +10,20 @@ from langgraph.checkpoint.memory import InMemorySaver
 from bleep import prompts
 from bleep.graph.build import build_graph
 from bleep.graph.deps import StaticSettings
-from bleep.graph.nodes import diagnose
+from bleep.graph.nodes import diagnose, gather, investigate
 from bleep.graph.nodes.investigate import guard_result
 from bleep.graph.planted import planted_places, planted_shown
 from bleep.graph.state import checkpoint_serializer
 from bleep.guard.pipeline import guard_text
 from bleep.incidents.runner import IncidentRunner
+from bleep.schemas.docker import ContainerDetail
 from bleep.schemas.github import Commit
 from bleep.schemas.graph import Diagnosis, Evidence, GatherContext
 from bleep.schemas.incidents import Signal, Subject
+from bleep.schemas.settings import Budgets
 from bleep.tools.github import describe_commits
-from fakes import FakeChatModel
-from graph_env import T0, graph_env
+from fakes import FakeChatModel, FakeEngine
+from graph_env import T0, box, graph_env
 
 
 def reply(confidence: float, missing: str = "", **fields) -> AIMessage:
@@ -529,3 +532,78 @@ async def test_a_root_cause_that_was_only_a_made_up_sha_is_the_whole_fallback(tm
     ]
     assert diagnose.route({**state, **update}) == "investigate"
     assert "messages" in update
+
+
+# A Coolify app's container as #561 saw it: dozens of routing labels come before the env in
+# inspect_container's result, so the one setting that matters sits well past its start.
+ROUTING_LABELS = {
+    f"traefik.http.routers.http-{n}-shop.rule": f"Host(`shop.example`) && PathPrefix(`/{n}`)"
+    for n in range(30)
+}
+_WRAPPER_OPEN = re.compile(r'<untrusted source="[^"]+" id="(\w+)">')
+
+
+def bound_to_loopback() -> FakeEngine:
+    web = box("shop-web-1", "shop", restart_policy="unless-stopped")
+    web = web.model_copy(update={"labels": web.labels | ROUTING_LABELS})
+    detail = ContainerDetail(
+        summary=web, env=["PORT=3000", "HOST=127.0.0.1", "NODE_ENV=production"]
+    )
+    return FakeEngine("a", [web, box("shop-db-1", "shop")], details={"shop-web-1": detail})
+
+
+async def test_a_value_inspect_container_showed_past_its_labels_reaches_diagnose(tmp_path):
+    """#561: the round ended on its tool-call limit with no summary, and Diagnose cut every
+    message to 1,500 characters, so it never read HOST=127.0.0.1 nor the result's closing tag."""
+    env = await graph_env(tmp_path, engine=bound_to_loopback())
+    inspect = {"name": "inspect_container", "args": {"container": "shop-web-1"}, "id": "c1"}
+    env.models.model = FakeChatModel(
+        script=[AIMessage("", tool_calls=[inspect]), reply(0.9)],
+        structured_output_unsupported=True,
+    )
+    env.deps.settings_store = StaticSettings(budget_limits=Budgets(investigate_tool_calls=1))
+    subject = Subject(kind="service", host_id="a", service_id=env.service_id("shop"))
+    incident = await env.open(subject, kind="url_failed")
+    signals = [Signal(subject=subject, kind="url_failed", at=T0)]
+    state: dict = {"incident_id": incident.id, "subject": subject, "signals": signals}
+    state |= await gather.make(env.deps)(state)
+    state |= await investigate.make(env.deps)(state)
+
+    await diagnose.make(env.deps)(state)
+
+    [result] = [m for m in state["messages"] if isinstance(m, ToolMessage)]
+    assert result.text.index("HOST=127.0.0.1") > diagnose.MESSAGE_LIMIT
+    sent = env.models.model.seen[1][0].text
+    investigation = sent.split("What the investigation found so far:")[1]
+    assert "HOST=127.0.0.1" in investigation
+    opened = _WRAPPER_OPEN.findall(investigation)
+    assert opened and all(f'</untrusted id="{tag}">' in investigation for tag in opened)
+
+
+async def test_an_invalid_calls_error_is_still_cut_as_it_never_went_through_the_guard(tmp_path):
+    """The parser's error quotes the model's raw arguments, of any length and unwrapped."""
+    raw = '{"container": "' + "shop-web-1 " * 1000
+    bad = {
+        "name": "inspect_container",
+        "args": raw,
+        "id": "c1",
+        "error": f"Function inspect_container arguments:\n\n{raw}\n\nare not valid JSON.",
+        "type": "invalid_tool_call",
+    }
+    env = await graph_env(tmp_path)
+    env.models.model = FakeChatModel(
+        script=[AIMessage("", invalid_tool_calls=[bad]), AIMessage("done"), reply(0.9)],
+        structured_output_unsupported=True,
+    )
+    subject = Subject(kind="service", host_id="a", service_id=env.service_id("shop"))
+    incident = await env.open(subject)
+    state: dict = {"incident_id": incident.id, "subject": subject, "signals": []}
+    state |= await investigate.make(env.deps)(state)
+
+    await diagnose.make(env.deps)(state)
+
+    [error] = [m for m in state["messages"] if isinstance(m, ToolMessage)]
+    assert error.text.startswith("invalid arguments:") and len(error.text) > 10_000
+    sent = env.models.model.seen[2][0].text
+    line = next(s for s in sent.splitlines() if s.startswith("[tool] invalid arguments:"))
+    assert len(line) <= len("[tool] ") + diagnose.MESSAGE_LIMIT and line.endswith("...")

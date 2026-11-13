@@ -50,6 +50,7 @@ _COPIED_WRAPPER = re.compile(
     rf'&lt;untrusted source="{SOURCE.pattern}" id="({NONCE.pattern})">(.*?)&lt;/untrusted id="\1">',
     re.DOTALL,
 )
+_OPENING = re.compile(rf'<untrusted source="{SOURCE.pattern}" id="({NONCE.pattern})">\n')
 
 
 def fold(chunk: str) -> str:
@@ -120,6 +121,20 @@ def escape_untrusted(text: str) -> str:
     """
     text = _NUMERIC_ENTITY.sub("&amp;", text)
     return _CANDIDATE.sub(_neutralise, text)
+
+
+def is_wrapped(text: str) -> bool:
+    """Whether `text` is exactly one wrapper as `wrap_untrusted` writes it, and nothing else: its
+    opening tag, text with no tag of its own (`wrap_untrusted` escapes every one) and the closing
+    tag with the same id. Read without a regex over the text, so a long one costs one scan."""
+    opening = _OPENING.match(text)
+    if opening is None:
+        return False
+    closing = f'\n</untrusted id="{opening[1]}">'
+    if not text.endswith(closing) or len(text) < opening.end() + len(closing):
+        return False
+    body = text[opening.end() : len(text) - len(closing)]
+    return "<untrusted" not in body and "</untrusted" not in body
 
 
 def wrap_untrusted(source: str, text: str, nonce: str | None = None) -> str:
