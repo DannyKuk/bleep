@@ -328,6 +328,25 @@ def test_costs_match_the_ledger_per_incident_and_per_day(dev_client, parts):
     assert body["daily_cap_usd"] == 1.0
 
 
+def test_costs_show_the_spend_per_model_and_the_models_of_each_incident(dev_client, parts):
+    ledger = parts.graph_deps.ledger
+    call(dev_client, ledger.add, "inc-1", "openai/gpt-6-luna", 1000, 100, 0.25)
+    call(dev_client, ledger.add, "inc-1", "claude-sonnet-5-5", 400, 40, 0.5)
+    call(dev_client, ledger.add, "inc-2", "mystery/m", 400, 40, None)
+    call(dev_client, ledger.add, "inc-2", "mystery/m", 100, 10, None)
+
+    body = dev_client.get("/api/dev/costs").json()
+
+    by_model = {row["model"]: row for row in body["models"]}
+    assert [row["model"] for row in body["models"]][0] == "mystery/m"
+    assert (by_model["mystery/m"]["calls"], by_model["mystery/m"]["tokens_in"]) == (2, 500)
+    assert (by_model["mystery/m"]["usd"], by_model["mystery/m"]["unpriced"]) == (None, 2)
+    assert by_model["claude-sonnet-5-5"]["usd"] == pytest.approx(0.5)
+    assert body["models_today"] == body["models"]
+    by_id = {row["incident_id"]: row["models"] for row in body["incidents"]}
+    assert by_id == {"inc-1": ["openai/gpt-6-luna", "claude-sonnet-5-5"], "inc-2": ["mystery/m"]}
+
+
 def test_costs_say_how_many_of_todays_calls_have_no_price(dev_client, parts):
     ledger = parts.graph_deps.ledger
     call(dev_client, ledger.add, "inc-1", "openai/gpt-6-luna", 1000, 100, 0.25)

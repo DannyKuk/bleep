@@ -158,6 +158,36 @@ class CostLedger:
             (first.isoformat(),),
         )
 
+    async def by_model(self, days: int = 30) -> list[UsageSum]:
+        """Each model's sums over the last `days` local days (`days=1` is today), the one with
+        the most calls first."""
+        first = self.clock().date() - timedelta(days=days - 1)
+        return await self._sums(
+            f"SELECT model AS key, {_SUMS} FROM usage WHERE day >= ?"
+            " GROUP BY model ORDER BY calls DESC, model",
+            (first.isoformat(),),
+        )
+
+    async def models_of(self, incident_ids: list[str]) -> dict[str, list[str]]:
+        """The models each of the incidents' calls used, the first one used first."""
+        if not incident_ids:
+            return {}
+        marks = ", ".join("?" * len(incident_ids))
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                f"SELECT incident_id, model FROM usage WHERE incident_id IN ({marks})"
+                " GROUP BY incident_id, model ORDER BY MIN(id)",
+                incident_ids,
+            ) as cursor:
+                rows = await cursor.fetchall()
+        finally:
+            await conn.close()
+        models: dict[str, list[str]] = {}
+        for row in rows:
+            models.setdefault(row["incident_id"], []).append(row["model"])
+        return models
+
     async def _sums(self, query: str, args: tuple[object, ...]) -> list[UsageSum]:
         conn = await self.db.connect()
         try:

@@ -440,6 +440,8 @@ export interface IncidentCost extends Usage {
   /** The prompt overrides in force when the incident's run started: name to a hash of the text.
    * `null` when none was recorded (no incident, or a run that started before the record). */
   prompt_overrides: Record<string, string> | null;
+  /** The models its calls used, the first one used first. */
+  models: string[];
 }
 
 export interface DayCost extends Usage {
@@ -447,9 +449,17 @@ export interface DayCost extends Usage {
   day: string;
 }
 
+export interface ModelCost extends Usage {
+  /** As the provider answered; the id tells the providers apart. */
+  model: string;
+}
+
 export interface CostView {
   incidents: IncidentCost[];
   days: DayCost[];
+  /** Over the days asked for, the most calls first. */
+  models: ModelCost[];
+  models_today: ModelCost[];
   daily_cap_usd: number;
   /** The priced calls only, as the daily cap counts them. */
   spent_today_usd: number;

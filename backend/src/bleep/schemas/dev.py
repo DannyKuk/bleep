@@ -1,5 +1,5 @@
-"""What the dev panel reads and writes: prompt overrides, cost per incident and per day, and the
-guard log (#42). The model choice and the budgets go through `PUT /api/settings`."""
+"""What the dev panel reads and writes: prompt overrides, cost per incident, per day and per model,
+and the guard log (#42). The model choice and the budgets go through `PUT /api/settings`."""
 
 from datetime import date, datetime
 
@@ -51,15 +51,22 @@ class IncidentCost(Usage):
     trace_url: str | None = None
     # Prompt name to a hash of the override's text, as the run started; None when not recorded.
     prompt_overrides: dict[str, str] | None = None
+    models: list[str] = []  # the models its calls used, the first one used first
 
 
 class DayCost(Usage):
     day: date  # the machine's local day, as the daily cap counts it
 
 
+class ModelCost(Usage):
+    model: str  # as the provider answered; the id tells the providers apart
+
+
 class CostView(BaseModel):
     incidents: list[IncidentCost]
     days: list[DayCost]
+    models: list[ModelCost]  # over the days asked for, the most calls first
+    models_today: list[ModelCost]
     daily_cap_usd: float
     spent_today_usd: float  # the priced calls only, as the daily cap counts them
     unpriced_today: int  # today's calls without a known price, left out of `spent_today_usd`
