@@ -168,8 +168,8 @@ def _describe(detail: ContainerDetail) -> str:
             shown = shown[:LABEL_CHARS] + "…"
         lines.append(f"  {key}={shown}")
     lines.append(
-        "env (values hidden; a service URL keeps scheme, host and port, but one with another"
-        " scheme or a token-like host is hidden whole, so a bare <redacted> may still be a URL):"
+        "env (a plain value is shown; a secret or token-like value is hidden, and a service URL"
+        " keeps scheme, host and port, so a bare <redacted> may still be a URL):"
         + ("" if detail.env else " none")
     )
     lines += [f"  {item}" for item in redact_env(detail.env)]
@@ -369,7 +369,9 @@ SPECS = [
             "A probe's output is cut to about 200 characters, keeping its start and its last "
             "line. Exit code -1 with another output means Docker could not run the probe. "
             "Environment "
-            "variable values are hidden and only their names are shown, except that a URL to a "
+            "variable values that are plain settings are shown as they are (for example "
+            "HOST=127.0.0.1, PORT=3000, NODE_ENV=production); a value under a secret-sounding "
+            "name or one that looks like a token or key is hidden. A URL to a "
             "common network service (http, postgres, redis, amqp and the like) keeps its scheme, "
             "host and port, so you can see where a setting points (for example "
             "REDIS_URL=redis://<redacted>@cache.internal:6379/<redacted>); its user, password, "

@@ -200,12 +200,13 @@ def test_count():
     assert redact_with_count(out) == (out, 0)
 
 
-def test_redact_env_hides_every_value():
-    assert redact_env(["A=1", "B=", "C=x=y", "NOEQ"]) == [
-        "A=<redacted>",
+def test_redact_env_shows_plain_values_and_hides_secret_ones():
+    assert redact_env(["A=1", "B=", "C=x=y", "NOEQ", "API_KEY=1"]) == [
+        "A=1",
         "B=<redacted>",
-        "C=<redacted>",
+        "C=x=y",
         "NOEQ",
+        "API_KEY=<redacted>",
     ]
 
 

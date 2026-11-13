@@ -1284,3 +1284,17 @@ def test_hide_values_hides_a_long_value_inside_a_word_but_a_short_one_only_whole
 def test_hide_values_hides_a_password_that_is_also_a_plain_word_in_the_command():
     shop = '["pg_isready", "-U", "shop", "-d", "shop"]'
     assert hide_values(shop, ["shop"]) == '["pg_isready", "-U", "<redacted>", "-d", "<redacted>"]'
+
+
+def test_secret_env_values_also_hold_a_token_like_value_under_a_plain_key():
+    env = [
+        "HOST=127.0.0.1",
+        "BUILD_ID=xK9mQ2vL8pR4tW7zB3nC",
+        "HEALTH_URL=http://localhost:8080/health",
+        "JDBC=jdbc:postgresql://db:5432/shop",
+    ]
+    values = secret_env_values(env)
+    assert values == ["jdbc:postgresql://db:5432/shop", "xK9mQ2vL8pR4tW7zB3nC"]
+    assert hide_values("curl -H 'X-Salt: xK9mQ2vL8pR4tW7zB3nC' 127.0.0.1", values) == (
+        "curl -H 'X-Salt: <redacted>' 127.0.0.1"
+    )
