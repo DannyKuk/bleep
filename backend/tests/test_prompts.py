@@ -228,9 +228,11 @@ def test_the_prompts_with_a_fixed_part_render_as_they_did_before_it_moved_out(na
     `<name>`; `{mcp}` came later (#118) and is filled as it is with the MCP plugin off.
     `graph-diagnose.txt` was rendered again when #108 defined the categories in the prompt,
     when #105 narrowed the `planted_in` bullet, when #357 asked for exact names and when #364
-    asked for a setting's documented value, `graph-investigate.txt` when #364 asked for that
-    docs search, and `graph-propose.txt` when #276 kept Propose's plan to the steps the
-    diagnosis needs and when #365 asked for `could_run`. `{look}` (#410) and `{url_checks}`
+    asked for a setting's documented value and when #561 asked to name a value a tool showed
+    with that tool, `graph-investigate.txt` when #364 asked for that docs search, and
+    `graph-propose.txt` when #276 kept Propose's plan to the steps the diagnosis needs, when
+    #365 asked for `could_run` and when #561 kept it for a fix only the person can confirm.
+    `{look}` (#410) and `{url_checks}`
     (#423) are filled as they are for a run no look opened, and `{language}` (#374) as it is in
     English, so the fixtures also show that such a run's prompt did not change."""
     extra = {field: load(rule).strip() for field, rule in FIXED_PARTS.get(name, {}).items()}

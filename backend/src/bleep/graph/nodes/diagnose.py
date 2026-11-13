@@ -24,7 +24,7 @@ import logging
 import typing
 from typing import Literal
 
-from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import Field, field_validator
 
 from bleep import prompts
@@ -54,7 +54,7 @@ log = logging.getLogger(__name__)
 
 DETAIL_LIMIT = 300  # characters per evidence entry
 MAX_EVIDENCE = 8
-MESSAGE_LIMIT = 1500  # characters of each investigation message shown to the model
+MESSAGE_LIMIT = 1500  # characters of each investigation message but a tool result
 MISSING_LIMIT = 300
 FALLBACK_CAUSE = "I could not form a diagnosis"
 FALLBACK_SHOWN = Shown.of("diagnosis/fallback_cause")
@@ -162,11 +162,20 @@ def _describe_context(context: GatherContext, with_urls: bool = True) -> str:
 
 def _describe_investigation(messages: list[AnyMessage]) -> str:
     lines = [
-        f"[{m.type}] {_clip(m.text, MESSAGE_LIMIT)}"
+        f"[{m.type}] {_message_text(m)}"
         for m in messages
         if not isinstance(m, SystemMessage) and m.text
     ]
     return "\n".join(lines) or "(no investigation yet)"
+
+
+def _message_text(message: AnyMessage) -> str:
+    """A tool result as Investigate read it, since the guard already cut it to size and wrapped
+    it once: a cut here dropped its closing tag, and with it a value past the cut, such as an env
+    line after a long list of labels (#561). Any other message is cut to `MESSAGE_LIMIT`."""
+    if isinstance(message, ToolMessage):
+        return message.text
+    return _clip(message.text, MESSAGE_LIMIT)
 
 
 def _evidence(draft: Diagnosis, shas: ShaCheck) -> list[Evidence]:

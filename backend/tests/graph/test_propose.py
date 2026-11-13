@@ -479,6 +479,38 @@ async def test_a_fix_bleep_could_run_closes_when_no_replan_is_left(tmp_path):
     assert not update["proposal"].fix_runnable and propose.route(update) == "report"
 
 
+# #561: the app listens on 127.0.0.1, and whether it reads HOST is only the person's to confirm.
+BOUND_TO_LOOPBACK = Diagnosis(
+    root_cause="shop-web listens on 127.0.0.1:3000, so the proxy cannot reach it",
+    category="config",
+    evidence=[Evidence(source="inspect_container", detail="shop-web-1 has HOST=127.0.0.1")],
+    confidence=0.58,
+    unsure=True,
+)
+CONFIRM_HOST = "If the app reads HOST for its bind address, set HOST=0.0.0.0, then redeploy."
+
+
+async def test_a_value_the_diagnosis_saw_reaches_propose_with_its_source(tmp_path):
+    answer = could_run("coolify.set_env", "coolify.redeploy", instructions=CONFIRM_HOST)
+    env, state = await setup(tmp_path, answer, diagnosis=BOUND_TO_LOOPBACK)
+    env.deps.settings_store = StaticSettings(actions=COOLIFY_ACTIONS)
+
+    update = await propose.make(env.deps)(state)
+
+    assert "- inspect_container: shop-web-1 has HOST=127.0.0.1" in prompt(env)
+    assert update["proposal"].fix_runnable and propose.route(update) == "approval"
+
+
+async def test_the_propose_prompt_lists_the_actions_when_only_a_confirmation_is_left(tmp_path):
+    env, state = await setup(tmp_path, could_run())
+
+    await propose.make(env.deps)(state)
+
+    text = " ".join(prompt(env).split())
+    assert "Asking the person to confirm something first is no such part" in text
+    assert "still list `coolify.set_env` and `coolify.redeploy`" in text
+
+
 async def test_could_run_on_a_plan_that_acts_changes_nothing(tmp_path):
     answer = reply(
         kind="act", steps=[restart("shop-web-1")], reason="x", could_run=["docker.restart"]
