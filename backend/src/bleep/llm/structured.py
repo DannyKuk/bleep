@@ -8,6 +8,7 @@ from typing import Any
 
 import anthropic
 import openai
+from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
@@ -72,6 +73,13 @@ TOOLS_REJECTED = (
 )
 
 
+def _structured_options(model: BaseChatModel) -> dict[str, Any]:
+    """Claude takes the schema as its own structured output. Through a forced tool call (the
+    default) Sonnet 5.5 and any model with thinking on ignore the tool, and the JSON fallback
+    then costs a second call."""
+    return {"method": "json_schema"} if isinstance(model, ChatAnthropic) else {}
+
+
 async def _via_tools[T: BaseModel](
     model: BaseChatModel,
     schema: type[T],
@@ -80,7 +88,7 @@ async def _via_tools[T: BaseModel](
     guard: ModelGuard | None,
 ) -> T | None:
     try:
-        structured = model.with_structured_output(schema)
+        structured = model.with_structured_output(schema, **_structured_options(model))
         if guard is None:
             result = await structured.ainvoke(messages, config=config)
         else:
