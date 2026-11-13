@@ -1,7 +1,7 @@
 {
-  "target": "dannykukic@MacBook-Pro-M1.local",
+  "target": "me@Mac.local",
   "os": "darwin",
-  "socket": "/Users/dannykukic/.docker/run/docker.sock",
+  "socket": "/Users/me/.docker/run/docker.sock",
   "connect_ms": [
     275.2,
     184.9,

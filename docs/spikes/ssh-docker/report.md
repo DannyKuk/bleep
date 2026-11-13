@@ -6,12 +6,14 @@ Measured on 2026-11-02 with [`spike.py`](spike.py). Raw results: [`results-darwi
 
 ## Setup
 
+The Mac's user and host name are written as `me` and `Mac.local` here and in the captures (#482).
+
 | | M1 test server | Coolify production server |
 |---|---|---|
 | OS | macOS 27.2 arm64 (engine VM: Docker Desktop, kernel 7.0.14-linuxkit, aarch64) | Ubuntu 24.04.5 LTS, kernel 6.8.0-147, x86_64 |
 | Docker | Docker Desktop, engine 29.9.2, API 1.56 | Engine 29.9.2, API 1.56 |
-| Login | `dannykukic@MacBook-Pro-M1.local`, key `~/.ssh/id_ed25519` | `root@<coolify-server>` (address left out on purpose), same key |
-| Engine socket | `/Users/dannykukic/.docker/run/docker.sock` (there is no `/var/run/docker.sock`) | `/var/run/docker.sock` |
+| Login | `me@Mac.local`, key `~/.ssh/id_ed25519` | `root@<coolify-server>` (address left out on purpose), same key |
+| Engine socket | `/Users/me/.docker/run/docker.sock` (there is no `/var/run/docker.sock`) | `/var/run/docker.sock` |
 | Non-interactive SSH `PATH` | `/usr/bin:/bin:/usr/sbin:/sbin` (no `docker`) | `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin` (`docker` found) |
 | Containers | 0 before the run; one throwaway Compose container started by the script | 10 (9 running), Coolify and real apps |
 | Access | read, plus one throwaway container (`--allow-test-container`) | strictly read-only |
@@ -19,8 +21,8 @@ Measured on 2026-11-02 with [`spike.py`](spike.py). Raw results: [`results-darwi
 The client is the Mac running the spike (Python 3.14, asyncssh, docker SDK 7.x, paramiko), on the same network as the M1 and across the internet from the Linux host. The numbers include that distance.
 
 ```bash
-uv run docs/spikes/ssh-docker/spike.py dannykukic@MacBook-Pro-M1.local \
-  --socket /Users/dannykukic/.docker/run/docker.sock --os darwin --allow-test-container
+uv run docs/spikes/ssh-docker/spike.py me@Mac.local \
+  --socket /Users/me/.docker/run/docker.sock --os darwin --allow-test-container
 uv run docs/spikes/ssh-docker/spike.py root@<coolify-server> --display-name '<coolify-server>' \
   --socket /var/run/docker.sock --os linux --log-container coolify-proxy --label-prefix coolify \
   --label-prefix backend-hfys2 --label-prefix frontend- --label-prefix vclhwoxx --label-prefix cr2hzhk4

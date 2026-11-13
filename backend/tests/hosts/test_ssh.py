@@ -53,9 +53,9 @@ async def test_open_connects_with_key_known_hosts_and_keepalive(connect, session
 
 
 async def test_address_is_lowercased_for_the_known_hosts_lookup(connect):
-    sess = SshSession(ssh_host(address="MacBook-Pro-M1.local"), connect=connect)
+    sess = SshSession(ssh_host(address="Mac.local"), connect=connect)
     await sess.open()
-    assert connect.calls[0][0] == ("macbook-pro-m1.local",)
+    assert connect.calls[0][0] == ("mac.local",)
     await sess.close()
 
 
