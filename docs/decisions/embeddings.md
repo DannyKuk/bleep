@@ -122,5 +122,6 @@ docker build -f docs/spikes/embeddings/m3.Dockerfile --build-context spike=docs/
 docker run --rm --network none -e MODEL=m3 -v "$PWD/docs/spikes/embeddings:/bench:ro" \
     --entrypoint python bleep-spike-146:m3 /bench/embed_bench.py
 # the one test that runs the real model (it downloads it on a first run outside the image):
-cd backend && BLEEP_REAL_EMBEDDINGS=1 uv run pytest tests/memory -k real_local_model
+# (no per-test time limit: a first download can take over the suite's 60 s)
+cd backend && BLEEP_REAL_EMBEDDINGS=1 uv run pytest -o faulthandler_timeout=0 tests/memory -k real_local_model
 ```
