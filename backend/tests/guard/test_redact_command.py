@@ -667,6 +667,7 @@ def test_a_cut_line_counts_only_the_passwords_it_keeps():
     assert redact_with_count(out) == (out, 0)
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize("unit", ['\\"', "\\'", '"', "'", '"\\', "a '", 'x "y'])
 @pytest.mark.parametrize("client", ["curl -u a:", "redis-cli -a ", "mysqladmin -p"])
 def test_redact_text_is_linear_on_one_line_of_a_million_characters(client, unit):
@@ -691,6 +692,7 @@ def _hostile_line(client: str, unit: str, form: str) -> str:
     return f'["{client}", ' + units
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize("unit", ['\\"', "\\'", '"', "'", '"\\', "a '", 'x "y'])
 @pytest.mark.parametrize("client", ["curl", "redis-cli", "mysqladmin", "mongo"])
 @pytest.mark.parametrize("form", ["plain", "json", "list"])
@@ -701,6 +703,7 @@ def test_redact_text_is_linear_on_a_million_characters_of_client_lines(client, u
     assert time.perf_counter() - started < 1.0
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize(
     "line",
     [
@@ -726,6 +729,7 @@ def test_redact_text_is_linear_on_lines_full_of_client_names(line):
     assert time.perf_counter() - started < 1.0
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize(
     "piece", ["curl ", "redis-cli -a x/", "curl -u a:'mongo' ", "mysqladmin -p'curl", 'x="curl ']
 )
@@ -754,6 +758,7 @@ QUOTED_UNITS = [
 ]
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize("unit", QUOTED_UNITS)
 @pytest.mark.parametrize("form", ["one", "lines", "json"])
 def test_redact_text_is_linear_on_quoted_passwords_holding_names(unit, form):
@@ -768,6 +773,7 @@ def test_redact_text_is_linear_on_quoted_passwords_holding_names(unit, form):
     assert time.perf_counter() - started < 1.0
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize("form", ["one", "lines"])
 def test_redact_text_is_linear_on_json_keys_full_of_client_names(form):
     key = json.dumps({"curl -u a:'" * (330 if form == "lines" else 90_000): 1})
@@ -777,6 +783,7 @@ def test_redact_text_is_linear_on_json_keys_full_of_client_names(form):
     assert time.perf_counter() - started < 1.0
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize("unit", ['\\"', "\\'", '"', "'", '"\\', "a '", 'x "y'])
 @pytest.mark.parametrize("client", ["curl", "redis-cli", "mysqladmin", "mongo"])
 @pytest.mark.parametrize("json_form", [False, True])
@@ -802,6 +809,7 @@ TWICE_ESCAPED_UNITS = [
 ]
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize("unit", TWICE_ESCAPED_UNITS)
 @pytest.mark.parametrize("form", ["one", "after", "lines", "json"])
 def test_redact_text_is_linear_on_quotes_escaped_twice(unit, form):
@@ -827,6 +835,7 @@ def _widening_quotes(length: int) -> str:
     return "".join(units)[:length]
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize("form", ["one", "lines", "json"])
 def test_redact_text_is_linear_on_escaped_quotes_of_every_width(form):
     if form == "one":
@@ -840,6 +849,7 @@ def test_redact_text_is_linear_on_escaped_quotes_of_every_width(form):
     assert time.perf_counter() - started < 1.0
 
 
+@pytest.mark.timing
 def test_redact_command_is_fast_on_a_million_characters_of_quotes():
     text = "curl " + '\\"' * 500_000
     started = time.perf_counter()

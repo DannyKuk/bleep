@@ -648,6 +648,7 @@ async def test_an_at_sign_after_the_host_is_shown_as_it_is(env, field, value, sh
     assert "u:p" not in out
 
 
+@pytest.mark.timing
 async def test_a_huge_domain_list_is_judged_in_linear_time(env):
     # 300,000 spaces inside the text: a trim anchored at the end would take minutes here
     with_domain(env, "fqdn", "https://a.example" + " " * 300_000 + "x," * 100_000)

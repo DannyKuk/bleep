@@ -243,6 +243,7 @@ def test_an_escape_next_to_a_token_character_leaks_none_of_it(token, text):
     assert token[1:8] not in out
 
 
+@pytest.mark.timing
 def test_scrubbing_stays_fast_for_a_token_with_spaces_in_it():
     from bleep.plugins.mcp_url import _Server
 
@@ -254,6 +255,7 @@ def test_scrubbing_stays_fast_for_a_token_with_spaces_in_it():
     assert out.endswith("x <redacted>")
 
 
+@pytest.mark.timing
 def test_scrubbing_hostile_server_output_stays_fast():
     from bleep.plugins.mcp_url import _Server
 
