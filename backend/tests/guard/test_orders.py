@@ -5,6 +5,7 @@ import pytest
 from bleep.guard.orders import gives_orders, line_signs
 from bleep.guard.pipeline import guard_text
 from bleep.guard.untrusted import fold
+from linear_time import assert_linear
 
 
 @pytest.mark.parametrize(
@@ -142,7 +143,6 @@ def test_guarded_text_is_read_as_the_model_reads_it():
     assert not gives_orders(plain)
 
 
-@pytest.mark.timing
 @pytest.mark.parametrize(
     "text",
     [
@@ -153,10 +153,11 @@ def test_guarded_text_is_read_as_the_model_reads_it():
     ],
 )
 def test_a_hostile_result_is_checked_quickly(text):
-    started = time.perf_counter()
-    for line in text.splitlines():
-        line_signs(line)
-    assert time.perf_counter() - started < 1.0
+    assert_linear(_signs_of_every_line, text)
+
+
+def _signs_of_every_line(text: str) -> list:
+    return [line_signs(line) for line in text.splitlines()]
 
 
 def _best_of_five(text: str) -> float:

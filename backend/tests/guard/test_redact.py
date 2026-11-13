@@ -5,6 +5,7 @@ import time
 import pytest
 
 from bleep.guard.redact import redact_env, redact_text, redact_with_count
+from linear_time import assert_linear, benign_like
 
 JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
 TELEGRAM = "123456789:AAH" + "a" * 32
@@ -233,20 +234,19 @@ HOSTILE = {
 }
 
 
-@pytest.mark.timing
+def _guard_logs(text: str) -> tuple[str, int]:
+    return guard_text("logs", text)
+
+
 @pytest.mark.parametrize("name", list(HOSTILE))
 def test_hostile_input_is_fast(name):
-    start = time.perf_counter()
+    assert_linear(_guard_logs, HOSTILE[name])
     out, _ = guard_text("logs", HOSTILE[name])
-    assert time.perf_counter() - start < 1.0
     assert len(out) <= 8300
 
 
-@pytest.mark.timing
 def test_redact_alone_is_bounded_too():
-    start = time.perf_counter()
-    redact_with_count("-" * 1_000_000)
-    assert time.perf_counter() - start < 1.0
+    assert_linear(redact_with_count, "-" * 1_000_000)
 
 
 def test_stray_begin_does_not_wipe_the_log():
@@ -442,28 +442,13 @@ def test_secret_straddling_a_line_cut_is_redacted_at_every_offset():
                 assert secret not in out, k
 
 
-@pytest.mark.timing
 def test_cr_chunked_input_is_bounded():
-    text = "\r".join("token=abc " * 400 for _ in range(2500))
-    start = time.perf_counter()
-    guard_text("logs", text)
-    assert time.perf_counter() - start < 1.0
-
-
-def _best_of_three(text: str) -> float:
-    times = []
-    for _ in range(3):
-        start = time.perf_counter()
-        guard_text("logs", text)
-        times.append(time.perf_counter() - start)
-    return min(times)
+    assert_linear(_guard_logs, "\r".join("token=abc " * 400 for _ in range(2500)))
 
 
 def assert_no_slower_than_benign(text: str) -> None:
-    # Relative to benign text of the same shape and size, so a slow CI runner scales both sides;
-    # a quadratic regression is hundreds of times slower, the worst input here about 2 times.
-    benign = "\n".join(["hello world " * (len(line) // 12 + 1) for line in text.split("\n")])
-    assert _best_of_three(text) < 10 * _best_of_three(benign)
+    # the worst input here took about 3 times as long as plain words (2026-11-13)
+    assert_linear(_guard_logs, text, benign_like(text, "hello world "))
 
 
 @pytest.mark.parametrize(
@@ -521,31 +506,36 @@ def test_a_tail_window_reaching_far_back_is_fast(unit, mark):
 @pytest.mark.timing
 @pytest.mark.parametrize(("unit", "length"), [("token=abc ", 4000), ("-eyJ", 4001)])
 def test_event_loop_gap_stays_small_on_the_worst_input(unit, length):
+    # an absolute bar: a guard run in a thread must leave the loop free within 0.3 s on any
+    # machine, which a ratio to a benign run cannot say
     line = (unit * length)[:length]
     assert _event_loop_gap("\n".join([line] * 1000)) < 0.3
 
 
-@pytest.mark.timing
-@pytest.mark.parametrize(
-    ("opener", "unit"),
-    [
-        ("API_KEYS=", "a,"),
-        ("API_KEYS=", "-"),
-        ('"api_keys": "', "a "),
-        ('"api_keys": "', "\\"),
-        ("Cookie: ", "-"),
-        ("Cookie: ", "a=b; "),
-        ("", "cookie"),
-        ("", 'cookie="a" '),
-        ("", "pw=a "),
-        ("url=x?", "path="),
-    ],
-)
+FAR_BACK_VALUES = [
+    ("API_KEYS=", "a,"),
+    ("API_KEYS=", "-"),
+    ('"api_keys": "', "a "),
+    ('"api_keys": "', "\\"),
+    ("Cookie: ", "-"),
+    ("Cookie: ", "a=b; "),
+    ("", "cookie"),
+    ("", 'cookie="a" '),
+    ("", "pw=a "),
+    ("url=x?", "path="),
+]
+
+
+@pytest.mark.parametrize(("opener", "unit"), FAR_BACK_VALUES)
 def test_a_value_opened_far_back_on_a_long_line_is_fast(opener, unit):
     # the tail window reads the whole line once for the value open where it starts
-    line = (opener + unit * 512_000)[:512_000]
-    assert_no_slower_than_benign(line)
-    assert _event_loop_gap(line) < 0.3
+    assert_no_slower_than_benign((opener + unit * 512_000)[:512_000])
+
+
+@pytest.mark.timing
+@pytest.mark.parametrize(("opener", "unit"), FAR_BACK_VALUES)
+def test_a_value_opened_far_back_never_stalls_the_event_loop(opener, unit):
+    assert _event_loop_gap((opener + unit * 512_000)[:512_000]) < 0.3
 
 
 def _event_loop_gap(text: str) -> float:
@@ -718,13 +708,10 @@ def test_a_secret_inside_a_kept_value_or_under_a_place_after_a_secret_word_is_re
     assert redact_text(out) == out
 
 
-@pytest.mark.timing
 def test_pairs_nested_without_end_stay_bounded_and_redacted():
     text = "path=" * 800 + "token=abcdef123456"
-    started = time.perf_counter()
-    out = redact_text(text)
-    assert time.perf_counter() - started < 1
-    assert "abcdef123456" not in out
+    assert_linear(redact_text, text)
+    assert "abcdef123456" not in redact_text(text)
 
 
 @pytest.mark.parametrize(

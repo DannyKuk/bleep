@@ -1,8 +1,7 @@
-import time
-
 import pytest
 
 from bleep.guard.secret_fields import find_secrets, is_secret_field
+from linear_time import assert_linear
 
 
 @pytest.mark.parametrize(
@@ -141,7 +140,6 @@ def test_a_secret_split_between_two_long_lines_is_found_at_every_position(secret
         assert find_secrets(text) == ["body"], at
 
 
-@pytest.mark.timing
 @pytest.mark.parametrize(
     "text",
     [
@@ -150,7 +148,6 @@ def test_a_secret_split_between_two_long_lines_is_found_at_every_position(secret
         "\n".join(["x" * 3_500] * 28),
     ],
 )
-def test_a_100_000_character_text_is_checked_in_well_under_a_second(text):
-    started = time.perf_counter()
+def test_a_100_000_character_text_is_checked_in_linear_time(text):
     assert find_secrets(text) == []
-    assert time.perf_counter() - started < 1.0
+    assert_linear(find_secrets, text)

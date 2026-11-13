@@ -1,5 +1,4 @@
 import gzip
-import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -41,6 +40,7 @@ from bleep.tools.registry import ActCatalog, PlanRules, ToolContext
 from fakes import FakeEngine
 from graph_env import SECRET as GRAPH_SECRET
 from graph_env import RecordingGuardLog, box, graph_env, shop_host
+from linear_time import assert_linear
 
 URL = "https://mcp.test/mcp"
 TOKEN = "mcp-test-token-4b1d0c9e7a"
@@ -243,33 +243,28 @@ def test_an_escape_next_to_a_token_character_leaks_none_of_it(token, text):
     assert token[1:8] not in out
 
 
-@pytest.mark.timing
 def test_scrubbing_stays_fast_for_a_token_with_spaces_in_it():
     from bleep.plugins.mcp_url import _Server
 
     server = _Server(URL, McpSettings(), SecretStr("a  b"))
-    started = time.perf_counter()
-    out = server.scrub("a" + " " * 40_000 + "x a b")
+    text = "a" + " " * 40_000 + "x a b"
 
-    assert time.perf_counter() - started < 2.0
-    assert out.endswith("x <redacted>")
+    assert_linear(server.scrub, text)
+    assert server.scrub(text).endswith("x <redacted>")
 
 
-@pytest.mark.timing
-def test_scrubbing_hostile_server_output_stays_fast():
-    from bleep.plugins.mcp_url import _Server
-
-    server = _Server(URL, McpSettings(), SecretStr(TOKEN))
-    hostile = [
+@pytest.mark.parametrize(
+    "hostile",
+    [
         f"{TOKEN[0]}\x1b[ " * 250_000,  # escape codes whose final byte is the token's first
         (TOKEN[:-1] + " " * 50) * 20_000,  # the token all but its last character, again and again
         TOKEN[0] + " " * 1_000_000,
-    ]
-    started = time.perf_counter()
-    for text in hostile:
-        server.scrub(text)
+    ],
+)
+def test_scrubbing_hostile_server_output_stays_fast(hostile):
+    from bleep.plugins.mcp_url import _Server
 
-    assert time.perf_counter() - started < 2.0
+    assert_linear(_Server(URL, McpSettings(), SecretStr(TOKEN)).scrub, hostile)
 
 
 @pytest.mark.parametrize(

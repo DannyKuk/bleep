@@ -50,7 +50,7 @@ pythonpath = ["src", "."]
 # group) one that prints a summary after every run; Bleep's tests use neither
 addopts = "-p no:langsmith_plugin -p no:deepeval"
 markers = [
-    "timing: asserts a wall-clock bar, so scripts/test.sh runs it alone after the parallel run",
+    "timing: asserts an absolute wall-clock bar, so scripts/test.sh runs it alone after the parallel run",
 ]
 filterwarnings = [
     # langsmith (pulled in by langchain-core) still calls the deprecated asyncio helper

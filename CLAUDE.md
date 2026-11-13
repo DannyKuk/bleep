@@ -107,8 +107,10 @@ One arrow goes the other way, held to one module: `schemas` uses the hosts file'
 - Run the suite with `scripts/test.sh` (in parallel, then the `timing` tests alone; one run at a
   time per machine). `uv run pytest <path>` in `backend/` runs one file or test. Every module with
   logic gets tests.
-- A test that asserts a wall-clock bar ("under 1 s") gets `@pytest.mark.timing`, so it never runs
-  beside the parallel pass. A bar relative to a benign input needs no mark.
+- A linear-time test times the hostile input against a benign one of the same size
+  (`assert_linear` in `tests/linear_time.py`), never against a fixed number of seconds, so it
+  holds on a busy machine and runs in the parallel pass. Only an absolute wall-clock bar (the
+  event loop stays free within 0.3 s) gets `@pytest.mark.timing`, so it runs alone afterwards.
 - **Tests never touch the network or a real Docker engine.** Use fakes for engines, SSH shells and
   chat models (`tests/fakes.py`), `httpx.MockTransport` for HTTP, and recorded fixtures for
   GitHub, Coolify and Telegram. Real-model and real-engine checks belong in `backend/evals/` and
