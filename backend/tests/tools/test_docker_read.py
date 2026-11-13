@@ -639,13 +639,14 @@ async def test_sources_used_by_tools_are_valid(env):
 
 async def test_bleeps_own_containers_are_invisible_to_every_read_tool(tmp_path):
     own = box("bleep-backend-1", labels={"bleep.self": "true"})
+    now = datetime.now(UTC)
     engine = FakeEngine(
         "a",
         [box("shop-web-1"), own],
         logs={"bleep-backend-1": "secret own log\n", "shop-web-1": "ok\n"},
         events=[
-            DockerEvent(time=NOW, type="container", action="die", container_name="bleep-backend-1"),
-            DockerEvent(time=NOW, type="container", action="die", container_name="shop-web-1"),
+            DockerEvent(time=now, type="container", action="die", container_name="bleep-backend-1"),
+            DockerEvent(time=now, type="container", action="die", container_name="shop-web-1"),
         ],
     )
 
@@ -666,18 +667,19 @@ async def test_bleeps_own_containers_are_invisible_to_every_read_tool(tmp_path):
 
 
 async def test_events_labelled_bleep_self_are_dropped_even_when_not_in_the_snapshot():
+    now = datetime.now(UTC)
     engine = FakeEngine(
         "a",
         [box("shop-web-1")],
         events=[
             DockerEvent(
-                time=NOW,
+                time=now,
                 type="container",
                 action="die",
                 container_name="bleep-gone-1",
                 attributes={"bleep.self": "true"},
             ),
-            DockerEvent(time=NOW, type="container", action="die", container_name="shop-web-1"),
+            DockerEvent(time=now, type="container", action="die", container_name="shop-web-1"),
         ],
     )
 
