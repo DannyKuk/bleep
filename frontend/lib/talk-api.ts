@@ -98,9 +98,17 @@ function escaped(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// A link an answer kept, to a URL Bleep watches (#543): no name inside it becomes a link.
+const URL_IN_TEXT = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
+
+function inUrl(text: string): (at: number) => boolean {
+  const spans = [...text.matchAll(URL_IN_TEXT)].map((m) => [m.index, m.index + m[0].length]);
+  return (at) => spans.some(([start, end]) => start <= at && at < end);
+}
+
 /**
  * The answer cut into text and links: each label where it stands alone (not inside a longer word
- * or name), the longest first, as the backend found them (`talk/links.py`).
+ * or name, nor inside a URL), the longest first, as the backend found them (`talk/links.py`).
  */
 export function splitLinks(text: string, links: readonly TalkLink[]): Piece[] {
   const byLabel = new Map<string, TalkLink>();
@@ -109,10 +117,12 @@ export function splitLinks(text: string, links: readonly TalkLink[]): Piece[] {
   if (byLabel.size === 0) return [text];
   const labels = [...byLabel.keys()].sort((a, b) => b.length - a.length).map(escaped);
   const pattern = new RegExp(`(?<![\\w-])(?:${labels.join("|")})(?![\\w-])`, "g");
+  const inside = inUrl(text);
   const pieces: Piece[] = [];
   let last = 0;
   for (const match of text.matchAll(pattern)) {
     const start = match.index ?? 0;
+    if (inside(start)) continue;
     if (start > last) pieces.push(text.slice(last, start));
     pieces.push({ text: match[0], link: byLabel.get(match[0])! });
     last = start + match[0].length;

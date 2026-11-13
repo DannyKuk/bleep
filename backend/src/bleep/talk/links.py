@@ -20,6 +20,8 @@ CUT = "…"  # how the snapshot ends a name or id it cut: such an id names no pa
 # path of plain characters. No query, `@`, `\`, quote or bracket, which browsers and Telegram
 # read in ways of their own, so the link cannot point at any other host.
 _PLAIN_PATH = re.compile(r"(?:/[A-Za-z0-9._~%/-]*)?")
+# A link an answer kept (#543): a name inside it is no page's link.
+_URL_IN_TEXT = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.IGNORECASE)
 
 
 def known_links(snapshot: Snapshot, facts: IncidentFacts | None = None) -> list[TalkLink]:
@@ -50,7 +52,8 @@ def offer_links(offer: Offer) -> list[TalkLink]:
 
 
 def links_in(text: str, candidates: Iterable[TalkLink]) -> list[TalkLink]:
-    """The candidates whose label stands in `text`, once each, in the order they first stand."""
+    """The candidates whose label stands in `text`, outside a URL, once each, in the order they
+    first stand."""
     by_label: dict[str, TalkLink] = {}
     for link in candidates:
         if link.label.strip():
@@ -60,9 +63,11 @@ def links_in(text: str, candidates: Iterable[TalkLink]) -> list[TalkLink]:
     labels = sorted(by_label, key=len, reverse=True)
     names = "|".join(map(re.escape, labels))
     pattern = re.compile(rf"(?<![\w-])(?:{names})(?![\w-])", re.ASCII)
+    urls = [m.span() for m in _URL_IN_TEXT.finditer(text)]
     found: dict[str, TalkLink] = {}
     for match in pattern.finditer(text):
-        found.setdefault(match.group(0), by_label[match.group(0)])
+        if not any(start <= match.start() < end for start, end in urls):
+            found.setdefault(match.group(0), by_label[match.group(0)])
     return list(found.values())
 
 

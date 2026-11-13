@@ -56,6 +56,11 @@ def test_names_two_services_share_and_cut_ones_link_nothing():
     assert known_links(snapshot) == [SHOP, SHOP_14]
 
 
+def test_a_name_inside_a_url_is_no_link_but_the_same_name_outside_one_is():
+    assert links_in("checked https://shop.example/shop and HTTP://SHOP.local", [SHOP]) == []
+    assert links_in("https://shop.example answers; shop is fine.", [SHOP]) == [SHOP]
+
+
 WATCHED = ["https://dkwebsite.de", "http://shop.local:8080/health?full=1"]
 
 

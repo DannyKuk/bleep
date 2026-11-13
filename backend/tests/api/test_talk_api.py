@@ -85,6 +85,7 @@ def test_an_answer_keeps_a_link_to_a_watched_url_and_takes_out_any_other(client,
 
     removed = prompts.load("talk/link_removed").strip()
     assert body["answer"] == f"https://shop.example/health answers; {removed} does not."
+    assert body["links"] == []  # "shop" inside the kept URL links nothing
 
 
 def test_a_snooze_is_only_an_offer_until_yes_is_pressed_once(client, model):
