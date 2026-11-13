@@ -22,5 +22,6 @@ async def usage(
     """Model calls, tokens and cost per model and provider and per day, how incidents ended, what
     the action log and the guard log hold, and today against the daily caps, over the last `days`
     local days (1, 7, 30 or 90; 1 is today)."""
-    await parts.guard_log.flush()  # the report reads the table, so writes in flight land first
-    return await usage_report(parts.graph_deps.ledger, parts.settings_store.budgets(), days)
+    return await usage_report(
+        parts.graph_deps.ledger, parts.settings_store.budgets(), days, parts.guard_log.counts_since
+    )

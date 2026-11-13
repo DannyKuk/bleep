@@ -139,6 +139,21 @@ class GuardLog:
             await conn.close()
         return [_entry(r) for r in rows]
 
+    async def counts_since(self, first_day: str) -> dict[str, int]:
+        """How many entries each kind has from the local day `first_day` (YYYY-MM-DD) on."""
+        await self.flush()
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                "SELECT kind, COUNT(*) AS n FROM guard_log WHERE date(at, 'localtime') >= ?"
+                " GROUP BY kind ORDER BY kind",
+                (first_day,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        finally:
+            await conn.close()
+        return {r["kind"]: r["n"] for r in rows}
+
 
 def _entry(row: sqlite3.Row) -> GuardEntry:
     return GuardEntry(

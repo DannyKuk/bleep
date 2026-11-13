@@ -1,6 +1,7 @@
 from datetime import datetime
 from importlib import resources
 
+from bleep.guard.log import GuardLog
 from bleep.llm.usage import CostLedger
 from bleep.llm.usage_report import usage_report
 from bleep.schemas.settings import Budgets
@@ -35,7 +36,7 @@ async def test_rows_from_before_the_provider_column_keep_it_empty_and_report_it_
     ledger = CostLedger(db, clock=lambda: NOW)
     await ledger.add("inc1", "claude-sonnet-5-5", 10, 1, 0.01, provider="anthropic")
 
-    view = await usage_report(ledger, Budgets(), 7)
+    view = await usage_report(ledger, Budgets(), 7, GuardLog(db).counts_since)
 
     assert [(m.model, m.provider, m.calls) for m in view.models] == [
         ("claude-sonnet-5-5", "anthropic", 1),

@@ -1,11 +1,12 @@
 """The numbers of the Usage page: one range of the usage ledger, the incidents and their reports,
 the action log and the guard log, summed in SQL (#547).
 
-It reads those tables itself because every number must come from one database read path and one
-local-day boundary: the ledger's `day` is the machine's local date, and the other tables' UTC
-timestamps are put on the same days with SQLite's `localtime`.
+It reads those tables itself (the guard log's counts come through `GuardLog.counts_since`) because
+every number must sit on one local-day boundary: the ledger's `day` is the machine's local date,
+and the other tables' UTC timestamps are put on the same days with SQLite's `localtime`.
 """
 
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import get_args
 
@@ -33,9 +34,17 @@ from bleep.schemas.usage import (
 _PROVIDERS: tuple[str, ...] = ("anthropic", "openrouter", "local")
 
 
-async def usage_report(ledger: CostLedger, budgets: Budgets, days: UsageRange) -> UsageView:
-    """Everything in the last `days` local days (1 is today); the caps are always today's."""
+GuardCounts = Callable[[str], Awaitable[dict[str, int]]]
+
+
+async def usage_report(
+    ledger: CostLedger, budgets: Budgets, days: UsageRange, guard_counts: GuardCounts
+) -> UsageView:
+    """Everything in the last `days` local days (1 is today); the caps are always today's.
+    `guard_counts` answers how many entries each kind has in the guard log from a local day on
+    (`GuardLog.counts_since`, which first waits for the writes in flight)."""
     first = (ledger.clock().date() - timedelta(days=days - 1)).isoformat()
+    guard = [GuardCount(kind=k, count=n) for k, n in (await guard_counts(first)).items()]
     conn = await ledger.db.connect()
     try:
         totals = await _totals(conn, first)
@@ -43,7 +52,6 @@ async def usage_report(ledger: CostLedger, budgets: Budgets, days: UsageRange) -
         per_day = await _per_day(conn, first)
         incidents, endings = await _incidents(conn, first)
         actions = await _actions(conn, first)
-        guard = await _guard(conn, first)
     finally:
         await conn.close()
     return UsageView(
@@ -70,6 +78,7 @@ async def _totals(conn: aiosqlite.Connection, first: str) -> UsageTotals:
         " COALESCE(SUM(incident_id = ?), 0) AS chat_calls,"
         " COALESCE(SUM(usd), 0) AS usd, COUNT(*) - COUNT(usd) AS unpriced,"
         " COALESCE(SUM(provider = 'local'), 0) AS local_calls,"
+        " COALESCE(SUM(provider = 'local' AND usd IS NULL), 0) AS unpriced_local,"
         " COALESCE(SUM(tokens_in), 0) AS tokens_in, COALESCE(SUM(tokens_out), 0) AS tokens_out,"
         " COALESCE(SUM(cache_read_tokens), 0) AS cache_read,"
         " COALESCE(SUM(cache_write_tokens), 0) AS cache_write"
@@ -84,6 +93,7 @@ async def _totals(conn: aiosqlite.Connection, first: str) -> UsageTotals:
         chat_calls=row["chat_calls"],
         unpriced_calls=row["unpriced"],
         local_calls=row["local_calls"],
+        unpriced_local_calls=row["unpriced_local"],
         tokens_in=row["tokens_in"],
         tokens_out=row["tokens_out"],
         cache_read_tokens=row["cache_read"],
@@ -199,13 +209,3 @@ async def _actions(conn: aiosqlite.Connection, first: str) -> list[ActionCount]:
     ) as cursor:
         rows = await cursor.fetchall()
     return [ActionCount(action=r["action"], status=r["status"], count=r["n"]) for r in rows]
-
-
-async def _guard(conn: aiosqlite.Connection, first: str) -> list[GuardCount]:
-    async with conn.execute(
-        "SELECT kind, COUNT(*) AS n FROM guard_log WHERE date(at, 'localtime') >= ?"
-        " GROUP BY kind ORDER BY kind",
-        (first,),
-    ) as cursor:
-        rows = await cursor.fetchall()
-    return [GuardCount(kind=r["kind"], count=r["n"]) for r in rows]

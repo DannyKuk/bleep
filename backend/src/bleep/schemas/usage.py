@@ -12,10 +12,11 @@ UsageRange = Literal[1, 7, 30, 90]
 
 
 class UsageTotals(BaseModel):
-    """`cost_usd` sums the calls whose cost is known; `unpriced_calls` counts the others.
-    `local_calls` counts the calls to a local model, which are free: one of a model Bleep has no
-    price for is unpriced too. `chat_calls` are the answers in `talk`; the other calls
-    (`incident_calls`) belong to an incident or to a recovery line."""
+    """`cost_usd` sums the calls whose cost is known. `unpriced_calls` counts the calls with no
+    known cost, of any provider. `local_calls` counts every call to a local model (free), and
+    `unpriced_local_calls` those of them with no price, a local model Bleep has no price entry
+    for. `chat_calls` are the answers in `talk`; the
+    other calls (`incident_calls`) belong to an incident or to a recovery line."""
 
     cost_usd: float
     calls: int
@@ -23,6 +24,7 @@ class UsageTotals(BaseModel):
     chat_calls: int
     unpriced_calls: int
     local_calls: int
+    unpriced_local_calls: int
     tokens_in: int
     tokens_out: int
     cache_read_tokens: int

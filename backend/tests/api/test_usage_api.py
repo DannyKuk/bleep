@@ -1,5 +1,6 @@
 """`GET /api/usage`: every number of the Usage page, summed from a seeded database (#547)."""
 
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -28,8 +29,8 @@ class World:
     def call(self, fn, *args, **kwargs):
         return self.client.portal.call(lambda: fn(*args, **kwargs))
 
-    def open(self, service: str, days_ago: int = 0) -> str:
-        self.opened = OPENED - timedelta(days=days_ago)
+    def open(self, service: str, days_ago: int = 0, at: datetime | None = None) -> str:
+        self.opened = at or OPENED - timedelta(days=days_ago)
         subject = Subject(kind="service", host_id="a", service_id=service)
         signal = Signal(subject=subject, kind="container_died", at=self.opened, container="web-1")
         incident, _ = self.call(self.parts.incidents.open_or_attach, subject, [signal])
@@ -85,6 +86,7 @@ def test_an_empty_range_is_all_zeros_and_the_caps_are_still_there(world):
         "chat_calls": 0,
         "unpriced_calls": 0,
         "local_calls": 0,
+        "unpriced_local_calls": 0,
         "tokens_in": 0,
         "tokens_out": 0,
         "cache_read_tokens": 0,
@@ -112,11 +114,14 @@ def test_local_calls_are_free_and_a_local_model_without_a_price_is_counted_unpri
     world.spend(inc, "my-own-model", None, "local")
     world.spend(inc, "my-own-model", None, "local")
     world.spend(inc, "claude-sonnet-5-5", 0.25, "anthropic")
+    world.spend(inc, "mystery/m", None, "openrouter")  # unpriced, but not a local call
+    world.spend(inc, "old-model", None, None)  # from before the provider column
 
     body = world.usage()
 
     totals = body["totals"]
-    assert (totals["calls"], totals["local_calls"], totals["unpriced_calls"]) == (4, 3, 2)
+    assert (totals["calls"], totals["local_calls"], totals["unpriced_calls"]) == (6, 3, 4)
+    assert totals["unpriced_local_calls"] == 2
     assert totals["cost_usd"] == pytest.approx(0.25)
     by = {(m["model"], m["provider"]): m for m in body["models"]}
     assert (
@@ -307,6 +312,102 @@ def test_actions_are_counted_by_action_and_status_and_the_guard_by_kind(world):
         {"kind": "refused_command", "count": 2},
     ]
     assert world.usage(1)["actions"] == body["actions"]
+
+
+def test_actions_and_guard_entries_from_before_the_range_are_left_out(world):
+    old, new = world.open("a/old", days_ago=10), world.open("a/new")
+    log, guard = world.parts.graph_deps.action_log, world.parts.guard_log
+    restart = PlanStep(action="docker.restart", host_id="a", target="web-1")
+    stop = PlanStep(action="docker.stop", host_id="a", target="web-1")
+    start = PlanStep(action="docker.start", host_id="a", target="web-1")
+    log.clock, guard.clock = (
+        lambda: OPENED - timedelta(days=10),
+        lambda: OPENED - timedelta(days=10),
+    )
+    world.call(log.start, old, "k1", 0, restart)
+    guard.record(old, "refused_command", "rm -rf /")
+    world.call(log.skip, old, "k1", 1, stop, "an earlier step failed")  # no time: its incident's
+    log.clock, guard.clock = lambda: OPENED, lambda: OPENED
+    world.call(log.start, new, "k2", 0, start)
+    world.call(log.skip, new, "k2", 1, stop, "an earlier step failed")
+    guard.record(new, "redacted", "a token")
+
+    week, month = world.usage(7), world.usage(30)
+
+    assert week["actions"] == [
+        {"action": "docker.start", "status": "started", "count": 1},
+        {"action": "docker.stop", "status": "skipped", "count": 1},
+    ]
+    assert week["guard"] == [{"kind": "redacted", "count": 1}]
+    assert month["actions"] == [
+        {"action": "docker.restart", "status": "started", "count": 1},
+        {"action": "docker.start", "status": "started", "count": 1},
+        {"action": "docker.stop", "status": "skipped", "count": 2},
+    ]
+    assert month["guard"] == [
+        {"kind": "redacted", "count": 1},
+        {"kind": "refused_command", "count": 1},
+    ]
+
+
+@pytest.fixture
+def zone(monkeypatch):
+    """Sets the process's time zone, which SQLite's `localtime` reads, and puts it back."""
+
+    def set_zone(name: str) -> None:
+        monkeypatch.setenv("TZ", name)
+        time.tzset()
+
+    yield set_zone
+    monkeypatch.undo()
+    time.tzset()
+
+
+def seed_at(world: World, service: str, stamp: datetime, spent: bool) -> str:
+    """An incident opened at `stamp` with one action started and one guard entry at `stamp`; the
+    included ones restart and are redacted, the left-out ones stop and are refused."""
+    incident = world.open(service, at=stamp)
+    log, guard = world.parts.graph_deps.action_log, world.parts.guard_log
+    log.clock = guard.clock = lambda: stamp
+    action = "docker.restart" if spent else "docker.stop"
+    world.call(log.start, incident, "k", 0, PlanStep(action=action, host_id="a", target="web-1"))
+    guard.record(incident, "redacted" if spent else "refused_command", "x")
+    if spent:
+        world.spend(incident, "m", 1.0)
+    return incident
+
+
+@pytest.mark.parametrize(
+    ("name", "left_out", "kept"),
+    [
+        # UTC+10: 20:00Z on the 12th is already the 13th, 13:00Z is 23:00 on the 12th.
+        (
+            "Etc/GMT-10",
+            datetime(2026, 11, 12, 13, 0, tzinfo=UTC),
+            datetime(2026, 11, 12, 20, 0, tzinfo=UTC),
+        ),
+        # UTC-8: 05:00Z on the 13th is 21:00 on the 12th, 09:00Z is 01:00 on the 13th.
+        (
+            "Etc/GMT+8",
+            datetime(2026, 11, 13, 5, 0, tzinfo=UTC),
+            datetime(2026, 11, 13, 9, 0, tzinfo=UTC),
+        ),
+    ],
+)
+def test_incidents_actions_and_guard_entries_fall_on_local_days_not_utc_days(
+    world, zone, name, left_out, kept
+):
+    zone(name)
+    assert left_out.date() == kept.date()  # the same UTC day, on two local ones
+    seed_at(world, "a/before", left_out, spent=False)
+    included = seed_at(world, "a/after", kept, spent=True)
+
+    body = world.usage(1)  # the local day of `NOW`, 2026-11-13
+
+    assert body["incidents"]["count"] == 1
+    assert body["incidents"]["most_expensive"]["incident_id"] == included
+    assert body["actions"] == [{"action": "docker.restart", "status": "started", "count": 1}]
+    assert body["guard"] == [{"kind": "redacted", "count": 1}]
 
 
 def test_a_day_that_is_not_a_choice_is_422(world):
