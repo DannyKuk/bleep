@@ -3,6 +3,7 @@ the cost Claude calls record. The real `ChatAnthropic` runs against a mock trans
 touches the network."""
 
 import json
+import warnings
 from datetime import datetime
 
 import anthropic
@@ -215,50 +216,53 @@ class Verdict(BaseModel):
     cause: str
 
 
-async def test_structured_output_asks_for_json_when_the_tool_call_fails_as_a_bad_request():
+def sends_structured_output(request: httpx2.Request) -> bool:
+    return "format" in json.loads(request.content).get("output_config", {})
+
+
+async def test_structured_output_goes_through_claudes_json_schema_in_one_call():
+    """Not a tool: Sonnet 5.5 ignores an unforced one, and Bleep would ask a second time."""
+    model = chat_model(claude(), "main", timeout_s=60)
+    seen = over_transport(
+        model, lambda request: httpx2.Response(200, json=message_body('{"cause": "bad config"}'))
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # langchain-anthropic warns about forced tool calling
+        result = await invoke_structured(model, Verdict, [HumanMessage("why")])
+
+    assert result == Verdict(cause="bad config")
+    assert len(seen) == 1  # no JSON fallback
+    body = json.loads(seen[0].content)
+    assert body["output_config"]["format"]["type"] == "json_schema"
+    assert body["output_config"]["format"]["schema"]["properties"]["cause"]["type"] == "string"
+    assert "tools" not in body and "tool_choice" not in body
+
+
+async def test_the_json_fallback_still_runs_when_the_json_schema_reply_does_not_parse():
+    model = chat_model(claude(), "main", timeout_s=60)
+    replies = [message_body("Probably the disk."), message_body('{"cause": "disk full"}')]
+    seen = over_transport(model, lambda request: httpx2.Response(200, json=replies.pop(0)))
+
+    result = await invoke_structured(model, Verdict, [HumanMessage("why")])
+
+    assert result == Verdict(cause="disk full")
+    assert [sends_structured_output(request) for request in seen] == [True, False]
+
+
+async def test_structured_output_asks_for_json_when_claude_rejects_the_schema_as_a_bad_request():
     model = chat_model(claude(), "main", timeout_s=60)
 
     def handler(request: httpx2.Request) -> httpx2.Response:
-        if "tools" in json.loads(request.content):
-            return httpx2.Response(400, json={"type": "error", "error": {"message": "no tools"}})
+        if sends_structured_output(request):
+            return httpx2.Response(
+                400, json={"type": "error", "error": {"message": "schema not supported"}}
+            )
         return httpx2.Response(200, json=message_body('{"cause": "oom"}'))
 
     over_transport(model, handler)
 
     assert await invoke_structured(model, Verdict, [HumanMessage("why")]) == Verdict(cause="oom")
-
-
-async def test_structured_output_on_sonnet_5_5_falls_back_to_json_without_forcing_the_tool():
-    """Sonnet 5.5 refuses a forced tool choice; langchain-anthropic then leaves it out, and a
-    reply without a tool call must end in the JSON fallback, not in an error."""
-    model = chat_model(claude(), "main", timeout_s=60)
-    bodies: list[dict] = []
-
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        bodies.append(json.loads(request.content))
-        return httpx2.Response(200, json=message_body('{"cause": "disk full"}'))
-
-    over_transport(model, handler)
-
-    result = await invoke_structured(model, Verdict, [HumanMessage("why")])
-
-    assert result == Verdict(cause="disk full")
-    assert all("tool_choice" not in body for body in bodies)
-
-
-async def test_structured_output_reads_the_tool_call_claude_makes():
-    model = chat_model(claude(), "main", timeout_s=60)
-    body = message_body()
-    body["content"] = [
-        {"type": "tool_use", "id": "toolu_1", "name": "Verdict", "input": {"cause": "bad config"}}
-    ]
-    body["stop_reason"] = "tool_use"
-    seen = over_transport(model, lambda request: httpx2.Response(200, json=body))
-
-    assert await invoke_structured(model, Verdict, [HumanMessage("why")]) == Verdict(
-        cause="bad config"
-    )
-    assert len(seen) == 1  # no JSON fallback
 
 
 @pytest.fixture
