@@ -4,7 +4,6 @@ import inspect
 import json
 import logging
 import re
-import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -44,6 +43,7 @@ from bleep.tools.docker_act import StepRefused
 from bleep.tools.registry import ToolContext
 from fakes import FakeEngine
 from graph_env import RecordingGuardLog, box, graph_env, shop_host
+from linear_time import assert_linear_async
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "coolify"
 BASE = "https://coolify.example.com"
@@ -648,15 +648,17 @@ async def test_an_at_sign_after_the_host_is_shown_as_it_is(env, field, value, sh
     assert "u:p" not in out
 
 
-@pytest.mark.timing
 async def test_a_huge_domain_list_is_judged_in_linear_time(env):
     # 300,000 spaces inside the text: a trim anchored at the end would take minutes here
-    with_domain(env, "fqdn", "https://a.example" + " " * 300_000 + "x," * 100_000)
-    started = time.perf_counter()
+    hostile = "https://a.example" + " " * 300_000 + "x," * 100_000
+    benign = "https://a.example" + "x," * 250_000
 
-    out = await env.read("coolify_applications")
+    async def listing(domains: str) -> str:
+        with_domain(env, "fqdn", domains)
+        return await env.read("coolify_applications")
 
-    assert time.perf_counter() - started < 5
+    await assert_linear_async(listing, hostile, benign)
+    out = await listing(hostile)
     assert f"blog uuid={BLOG} status=running:healthy domains=? " in out
 
 

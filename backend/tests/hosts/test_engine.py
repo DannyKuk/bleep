@@ -569,6 +569,7 @@ async def test_stream_end_after_a_deliberate_ssh_close_is_not_a_drop(api, factor
     await eng.close()
 
 
+# an absolute bar, not a linear-time one: 20 sleeps of 5 ms finish within a second
 @pytest.mark.timing
 async def test_stream_events_does_not_block_the_event_loop(api, engine):
     seen = []

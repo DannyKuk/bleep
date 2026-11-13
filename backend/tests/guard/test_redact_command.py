@@ -7,7 +7,6 @@ quote nothing closes does not hide the rest of an ordinary line (see docs/design
 """
 
 import json
-import time
 
 import pytest
 
@@ -20,6 +19,7 @@ from bleep.guard.redact import (
     secret_env_values,
 )
 from bleep.guard.sanitize import MAX_LINE
+from linear_time import assert_linear, benign_like
 
 
 @pytest.mark.parametrize(
@@ -1044,14 +1044,11 @@ def test_a_cut_line_counts_only_the_passwords_it_keeps():
     assert redact_with_count(out) == (out, 0)
 
 
-@pytest.mark.timing
 @pytest.mark.parametrize("unit", ['\\"', "\\'", '"', "'", '"\\', "a '", 'x "y'])
 @pytest.mark.parametrize("client", ["curl -u a:", "redis-cli -a ", "mysqladmin -p"])
 def test_redact_text_is_linear_on_one_line_of_a_million_characters(client, unit):
     text = client + unit * (1_000_000 // len(unit))
-    started = time.perf_counter()
-    redact_text(text)
-    assert time.perf_counter() - started < 1.0
+    assert_linear(redact_text, text)
 
 
 def _lines_of(line: str) -> str:
@@ -1069,18 +1066,14 @@ def _hostile_line(client: str, unit: str, form: str) -> str:
     return f'["{client}", ' + units
 
 
-@pytest.mark.timing
 @pytest.mark.parametrize("unit", ['\\"', "\\'", '"', "'", '"\\', "a '", 'x "y'])
 @pytest.mark.parametrize("client", ["curl", "redis-cli", "mysqladmin", "mongo"])
 @pytest.mark.parametrize("form", ["plain", "json", "list"])
 def test_redact_text_is_linear_on_a_million_characters_of_client_lines(client, unit, form):
     text = _lines_of(_hostile_line(client, unit, form))
-    started = time.perf_counter()
-    redact_text(text)
-    assert time.perf_counter() - started < 1.0
+    assert_linear(redact_text, text)
 
 
-@pytest.mark.timing
 @pytest.mark.parametrize(
     "line",
     [
@@ -1101,20 +1094,15 @@ def test_redact_text_is_linear_on_a_million_characters_of_client_lines(client, u
 )
 def test_redact_text_is_linear_on_lines_full_of_client_names(line):
     text = _lines_of(line)
-    started = time.perf_counter()
-    redact_text(text)
-    assert time.perf_counter() - started < 1.0
+    assert_linear(redact_text, text)
 
 
-@pytest.mark.timing
 @pytest.mark.parametrize(
     "piece", ["curl ", "redis-cli -a x/", "curl -u a:'mongo' ", "mysqladmin -p'curl", 'x="curl ']
 )
 def test_redact_text_is_linear_on_one_line_full_of_client_names(piece):
     text = piece * (1_000_000 // len(piece))
-    started = time.perf_counter()
-    redact_text(text)
-    assert time.perf_counter() - started < 1.0
+    assert_linear(redact_text, text)
 
 
 # Quoted passwords holding names, read again to the limit, and names in a JSON key
@@ -1139,7 +1127,6 @@ QUOTED_UNITS = [
 ]
 
 
-@pytest.mark.timing
 @pytest.mark.parametrize("unit", QUOTED_UNITS)
 @pytest.mark.parametrize("form", ["one", "lines", "json"])
 def test_redact_text_is_linear_on_quoted_passwords_holding_names(unit, form):
@@ -1149,30 +1136,25 @@ def test_redact_text_is_linear_on_quoted_passwords_holding_names(unit, form):
         text = _lines_of(unit * (3900 // len(unit)))
     else:
         text = _lines_of(json.dumps({"cmd": unit * (3000 // len(unit)), "n": 1}))
-    started = time.perf_counter()
-    redact_text(text)
-    assert time.perf_counter() - started < 1.0
+    assert_linear(redact_text, text)
 
 
-@pytest.mark.timing
 @pytest.mark.parametrize("form", ["one", "lines"])
 def test_redact_text_is_linear_on_json_keys_full_of_client_names(form):
     key = json.dumps({"curl -u a:'" * (330 if form == "lines" else 90_000): 1})
     text = key if form == "one" else _lines_of(key)
-    started = time.perf_counter()
-    redact_text(text)
-    assert time.perf_counter() - started < 1.0
+    assert_linear(redact_text, text)
 
 
-@pytest.mark.timing
 @pytest.mark.parametrize("unit", ['\\"', "\\'", '"', "'", '"\\', "a '", 'x "y'])
 @pytest.mark.parametrize("client", ["curl", "redis-cli", "mysqladmin", "mongo"])
 @pytest.mark.parametrize("json_form", [False, True])
 def test_hide_client_passwords_is_linear_on_a_million_characters(client, unit, json_form):
-    text = (f'["{client}", ' if json_form else f"{client} ") + unit * (1_000_000 // len(unit))
-    started = time.perf_counter()
-    hide_client_passwords(text)
-    assert time.perf_counter() - started < 1.0
+    start = f'["{client}", ' if json_form else f"{client} "
+    text = start + unit * (1_000_000 // len(unit))
+    # the client's name first, as in the hostile text, or there is nothing to look for
+    benign = start + benign_like(text[len(start) :], '"hello", ' if json_form else "hello ")
+    assert_linear(hide_client_passwords, text, benign)
 
 
 TWICE_ESCAPED_UNITS = [
@@ -1197,7 +1179,6 @@ TWICE_ESCAPED_UNITS = [
 ]
 
 
-@pytest.mark.timing
 @pytest.mark.parametrize("unit", TWICE_ESCAPED_UNITS)
 @pytest.mark.parametrize("form", ["one", "after", "lines", "json"])
 def test_redact_text_is_linear_on_quotes_escaped_twice(unit, form):
@@ -1209,9 +1190,7 @@ def test_redact_text_is_linear_on_quotes_escaped_twice(unit, form):
         text = _lines_of(unit * (3900 // len(unit)))
     else:
         text = _lines_of(json.dumps({"m": "redis-cli -a " + unit * (1500 // len(unit))}))
-    started = time.perf_counter()
-    redact_text(text)
-    assert time.perf_counter() - started < 1.0
+    assert_linear(redact_text, text)
 
 
 def _widening_quotes(length: int) -> str:
@@ -1223,7 +1202,6 @@ def _widening_quotes(length: int) -> str:
     return "".join(units)[:length]
 
 
-@pytest.mark.timing
 @pytest.mark.parametrize("form", ["one", "lines", "json"])
 def test_redact_text_is_linear_on_escaped_quotes_of_every_width(form):
     if form == "one":
@@ -1232,9 +1210,7 @@ def test_redact_text_is_linear_on_escaped_quotes_of_every_width(form):
         text = _lines_of("redis-cli -a " + _widening_quotes(3900))
     else:
         text = _lines_of(json.dumps({"m": "redis-cli -a " + _widening_quotes(1800)}))
-    started = time.perf_counter()
-    redact_text(text)
-    assert time.perf_counter() - started < 1.0
+    assert_linear(redact_text, text)
 
 
 def _widening_singles(length: int) -> str:
@@ -1247,7 +1223,6 @@ def _widening_singles(length: int) -> str:
     return "".join(units)[:length]
 
 
-@pytest.mark.timing
 @pytest.mark.parametrize("form", ["one", "lines", "json"])
 def test_redact_text_is_linear_on_single_quotes_of_every_width_before_names(form):
     if form == "one":
@@ -1256,17 +1231,12 @@ def test_redact_text_is_linear_on_single_quotes_of_every_width_before_names(form
         text = _lines_of(_widening_singles(3900))
     else:
         text = _lines_of(json.dumps({"m": _widening_singles(1800)}))
-    started = time.perf_counter()
-    redact_text(text)
-    assert time.perf_counter() - started < 1.0
+    assert_linear(redact_text, text)
 
 
-@pytest.mark.timing
 def test_redact_command_is_fast_on_a_million_characters_of_quotes():
     text = "curl " + '\\"' * 500_000
-    started = time.perf_counter()
-    redact_command(text)
-    assert time.perf_counter() - started < 1.0
+    assert_linear(redact_command, text)
 
 
 def test_secret_env_values_are_the_values_the_redaction_hides_longest_first():

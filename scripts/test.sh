@@ -21,8 +21,8 @@ fi
 
 cd "$(git rev-parse --show-toplevel)/backend"
 
-# A test marked `timing` asserts a bar such as "under 1 s"; with every core busy it would fail
-# for the load, not the code, so it runs after the parallel run, on a quiet machine.
+# A test marked `timing` asserts an absolute bar, such as the event loop staying free within
+# 0.3 s; with every core busy it would fail for the load, not the code, so it runs afterwards.
 status=0
 run() {
   local code=0
