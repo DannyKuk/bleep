@@ -1,0 +1,126 @@
+{
+  "started_at": "2026-11-13T14:14:01.129742Z",
+  "finished_at": "2026-11-13T14:18:31.820000Z",
+  "model": "openai/gpt-6-luna",
+  "provider": "openrouter",
+  "judge": "claude-code",
+  "repeat": 1,
+  "scenarios": [
+    {
+      "id": "bad-env",
+      "fault": "bad-env",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-web's DATABASE_URL names the host `db`, which does not exist on the shop's network (the database is shop-db), so shop-web cannot reach its database, exits at startup and keeps being restarted.",
+        "category": "config",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [
+          "DATABASE_URL"
+        ],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false
+    },
+    {
+      "id": "hung",
+      "fault": "hung",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-web hangs: the container runs but answers no request, so its health check times out.",
+        "category": "code",
+        "action": {
+          "kind": "act",
+          "steps": [
+            {
+              "action": "docker.restart",
+              "target": "shop-web",
+              "tool": null,
+              "arguments": null
+            }
+          ],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false
+    },
+    {
+      "id": "oom",
+      "fault": "oom",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-worker's batch size (WORKER_BATCH_MB=256) is past its 64 MB memory limit, so it is OOM-killed on every batch and restarts in a loop.",
+        "category": "resource",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [
+          "WORKER_BATCH_MB"
+        ],
+        "must_set": {
+          "WORKER_BATCH_MB": "8"
+        }
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false
+    }
+  ],
+  "commit": "f66434cf",
+  "command": "uv run --group evals python -m evals.run --only bad-env,oom,hung --repeat 1",
+  "reset_shop": true,
+  "knowledge": true,
+  "repo_docs": [
+    "DannyKuk/bleep: demo/shop/docs/deploy.md",
+    "DannyKuk/bleep: demo/shop/docs/services.md"
+  ],
+  "raw": "../../data/evals/scenarios-20261113-141401.jsonl",
+  "report": "docs/evals/scenarios-2026-11-13-2.md",
+  "grader": null,
+  "grades": null
+}
