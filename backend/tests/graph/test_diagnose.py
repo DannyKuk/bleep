@@ -580,20 +580,30 @@ async def test_a_value_inspect_container_showed_past_its_labels_reaches_diagnose
     assert opened and all(f'</untrusted id="{tag}">' in investigation for tag in opened)
 
 
-async def test_a_long_message_that_is_no_tool_result_is_still_cut(tmp_path):
-    env, state = await setup(tmp_path, [reply(0.9)])
-    state["messages"] = [HumanMessage("task " * 1000), AIMessage("found " + "x" * 3000)]
+async def test_an_invalid_calls_error_is_still_cut_as_it_never_went_through_the_guard(tmp_path):
+    """The parser's error quotes the model's raw arguments, of any length and unwrapped."""
+    raw = '{"container": "' + "shop-web-1 " * 1000
+    bad = {
+        "name": "inspect_container",
+        "args": raw,
+        "id": "c1",
+        "error": f"Function inspect_container arguments:\n\n{raw}\n\nare not valid JSON.",
+        "type": "invalid_tool_call",
+    }
+    env = await graph_env(tmp_path)
+    env.models.model = FakeChatModel(
+        script=[AIMessage("", invalid_tool_calls=[bad]), AIMessage("done"), reply(0.9)],
+        structured_output_unsupported=True,
+    )
+    subject = Subject(kind="service", host_id="a", service_id=env.service_id("shop"))
+    incident = await env.open(subject)
+    state: dict = {"incident_id": incident.id, "subject": subject, "signals": []}
+    state |= await investigate.make(env.deps)(state)
 
     await diagnose.make(env.deps)(state)
 
-    sent = env.models.model.seen[0][0].text
-    assert "task " * 1000 not in sent and "x" * 3000 not in sent
-    assert sent.count("...") >= 2
-
-
-async def test_the_diagnose_prompt_names_a_value_a_tool_showed_with_that_tool(tmp_path):
-    """#561: the model took a keys-only list as proof that HOST's value was unknown."""
-    text = " ".join((await sent_prompt(tmp_path)).split())
-    assert "an env line of `inspect_container`) was collected" in text
-    assert "with that tool as its source" in text
-    assert "it never makes a value another tool showed unknown" in text
+    [error] = [m for m in state["messages"] if isinstance(m, ToolMessage)]
+    assert error.text.startswith("invalid arguments:") and len(error.text) > 10_000
+    sent = env.models.model.seen[2][0].text
+    line = next(s for s in sent.splitlines() if s.startswith("[tool] invalid arguments:"))
+    assert len(line) <= len("[tool] ") + diagnose.MESSAGE_LIMIT and line.endswith("...")

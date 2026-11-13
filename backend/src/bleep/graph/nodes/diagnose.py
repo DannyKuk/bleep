@@ -42,6 +42,7 @@ from bleep.graph.planted import (
 )
 from bleep.graph.state import IncidentState, Node
 from bleep.guard.log import GuardKind
+from bleep.guard.untrusted import is_wrapped
 from bleep.llm.structured import StructuredOutputFailed, invoke_structured
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.memory.text import describe_fact, describe_past
@@ -54,7 +55,7 @@ log = logging.getLogger(__name__)
 
 DETAIL_LIMIT = 300  # characters per evidence entry
 MAX_EVIDENCE = 8
-MESSAGE_LIMIT = 1500  # characters of each investigation message but a tool result
+MESSAGE_LIMIT = 1500  # characters of each investigation message but a guarded tool result
 MISSING_LIMIT = 300
 FALLBACK_CAUSE = "I could not form a diagnosis"
 FALLBACK_SHOWN = Shown.of("diagnosis/fallback_cause")
@@ -170,10 +171,12 @@ def _describe_investigation(messages: list[AnyMessage]) -> str:
 
 
 def _message_text(message: AnyMessage) -> str:
-    """A tool result as Investigate read it, since the guard already cut it to size and wrapped
-    it once: a cut here dropped its closing tag, and with it a value past the cut, such as an env
-    line after a long list of labels (#561). Any other message is cut to `MESSAGE_LIMIT`."""
-    if isinstance(message, ToolMessage):
+    """A tool result that is one guard wrapper, whole, as Investigate read it: the guard already
+    cut it to size and wrapped it, and a cut here dropped its closing tag and any value past the
+    cut, such as an env line after a long list of labels (#561). Anything else, Bleep's own
+    tool-message text included (an invalid call's error, a call not run), is cut to
+    `MESSAGE_LIMIT`."""
+    if isinstance(message, ToolMessage) and is_wrapped(message.text):
         return message.text
     return _clip(message.text, MESSAGE_LIMIT)
 
