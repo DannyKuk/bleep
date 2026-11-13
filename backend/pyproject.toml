@@ -49,6 +49,10 @@ pythonpath = ["src", "."]
 # langsmith ships a pytest plugin that warns on import under Python 3.14, and deepeval (the evals
 # group) one that prints a summary after every run; Bleep's tests use neither
 addopts = "-p no:langsmith_plugin -p no:deepeval"
+# A test still running after a minute (the slowest takes under 5 s) prints its traceback and
+# ends its process, so a hang fails the run and names the test instead of idling forever (#538)
+faulthandler_timeout = 60
+faulthandler_exit_on_timeout = true
 markers = [
     "timing: asserts an absolute wall-clock bar, so scripts/test.sh runs it alone after the parallel run",
 ]
