@@ -17,7 +17,33 @@ const COSTS: CostView = {
   days: [
     { day: "2026-11-03", calls: 1234, tokens_in: 15000, tokens_out: 1500, usd: 0.375, unpriced: 1 },
   ],
-  incidents: [],
+  models: [
+    {
+      model: "openai/gpt-6-luna",
+      calls: 1234,
+      tokens_in: 15000,
+      tokens_out: 1500,
+      usd: 0.375,
+      unpriced: 0,
+    },
+  ],
+  models_today: [],
+  incidents: [
+    {
+      incident_id: "inc_shop",
+      title: "Container gestorben",
+      status: "open",
+      opened_at: "2026-11-03T10:00:00Z",
+      trace_url: null,
+      prompt_overrides: {},
+      models: ["claude-sonnet-5-5"],
+      calls: 1,
+      tokens_in: 1,
+      tokens_out: 1,
+      usd: 0,
+      unpriced: 0,
+    },
+  ],
 };
 
 describe("the developer panel in German", () => {
@@ -75,7 +101,13 @@ describe("the developer panel in German", () => {
     expect(day.getByText("15.000")).toBeVisible();
     expect(day.getByText("$0,38 + 1 ohne Preis")).toBeVisible();
     expect(screen.getByText(/Die Dollar-Beträge summieren nur/)).toBeVisible();
-    expect(screen.getByText("Noch kein Vorfall hat ein Modell aufgerufen.")).toBeVisible();
+    const models = within(screen.getByRole("table", { name: "Kosten pro Modell" }));
+    expect(models.getByText("openai/gpt-6-luna")).toBeVisible();
+    expect(models.getByText("Heute")).toBeVisible();
+    expect(models.getByText("keine")).toBeVisible();
+    const incidents = within(screen.getByRole("table", { name: "Kosten pro Vorfall" }));
+    expect(incidents.getByText("Modelle")).toBeVisible();
+    expect(incidents.getByText("claude-sonnet-5-5")).toBeVisible();
   });
 
   it("names a guard entry's kind and time in German", async () => {

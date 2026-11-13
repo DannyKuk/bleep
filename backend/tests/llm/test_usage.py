@@ -200,6 +200,42 @@ async def test_cost_per_day_keeps_only_the_days_asked_for(tmp_path):
     assert [d.key for d in await ledger.by_day(days=1)] == ["2026-11-03"]
 
 
+async def test_cost_per_model_sums_each_models_calls_and_counts_the_unpriced(tmp_path):
+    ledger = await three_incidents_over_two_days(tmp_path)
+
+    models = await ledger.by_model(days=30)
+
+    assert [(m.key, m.calls, m.tokens_in, m.tokens_out, m.unpriced) for m in models] == [
+        ("openai/gpt-6-luna", 3, 3500, 350, 0),
+        ("mystery/m", 1, 300, 30, 1),
+        ("openai/gpt-oss-20b", 1, 10, 1, 0),
+    ]
+    assert models[0].usd == pytest.approx(0.875)
+    assert models[1].usd is None
+    assert sum(m.calls for m in models) == sum(r.calls for r in await ledger.by_incident())
+
+
+async def test_cost_per_model_for_today_leaves_out_earlier_days(tmp_path):
+    ledger = await three_incidents_over_two_days(tmp_path)
+
+    today = await ledger.by_model(days=1)
+
+    assert [(m.key, m.calls) for m in today] == [
+        ("mystery/m", 1),
+        ("openai/gpt-6-luna", 1),
+        ("openai/gpt-oss-20b", 1),
+    ]
+
+
+async def test_the_models_of_each_incident_come_in_one_query_first_used_first(tmp_path):
+    ledger = await three_incidents_over_two_days(tmp_path)
+
+    models = await ledger.models_of(["inc-1", "inc-3", "nobody"])
+
+    assert models == {"inc-1": ["openai/gpt-6-luna"], "inc-3": ["mystery/m", "openai/gpt-oss-20b"]}
+    assert await ledger.models_of([]) == {}
+
+
 async def test_a_day_of_unpriced_calls_only_has_no_cost(tmp_path):
     db = Database(tmp_path / "bleep.db")
     await db.migrate()

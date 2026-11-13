@@ -6,7 +6,7 @@ import { useState } from "react";
 
 import { Failed, formatUsd, Loading, useGet } from "@/components/dev/status";
 import { Button } from "@/components/ui/button";
-import type { CostView, Usage } from "@/lib/api-types";
+import type { CostView, ModelCost, Usage } from "@/lib/api-types";
 import { formatCount } from "@/lib/format";
 import { MESSAGES, useLanguage, useT } from "@/lib/i18n";
 import type { Language } from "@/lib/settings-types";
@@ -83,6 +83,51 @@ function UsageHeads() {
   );
 }
 
+/** The models' table: each model's calls over the days covered, with what it did today. */
+function ModelTable({ costs }: { costs: CostView }) {
+  const t = useT().dev.costs;
+  const language = useLanguage();
+  const today = new Map<string, ModelCost>(costs.models_today.map((row) => [row.model, row]));
+  return (
+    <div className="overflow-x-auto">
+      <table aria-label={t.perModel} className="w-full text-sm">
+        <thead className="border-b border-border">
+          <tr>
+            <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">{t.model}</th>
+            <UsageHeads />
+            <th className={head}>{t.todayColumn}</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {costs.models.length === 0 && (
+            <tr>
+              <td colSpan={6} className="px-2 py-3 text-muted-foreground">
+                {t.noModels(DAYS)}
+              </td>
+            </tr>
+          )}
+          {costs.models.map((row) => {
+            const now = today.get(row.model);
+            return (
+              <tr key={row.model}>
+                <td className="px-2 py-1.5 font-mono text-xs break-all">{row.model}</td>
+                <UsageCells usage={row} />
+                <td className={cell}>
+                  {now ? (
+                    `${formatCount(now.calls, language)} / ${costText(now, language)}`
+                  ) : (
+                    <span className="text-muted-foreground">{t.none}</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function CostTables({ costs }: { costs: CostView }) {
   const t = useT().dev.costs;
   const language = useLanguage();
@@ -114,6 +159,7 @@ export function CostTables({ costs }: { costs: CostView }) {
           </tbody>
         </table>
       </div>
+      <ModelTable costs={costs} />
       <div className="overflow-x-auto">
         <table aria-label={t.perIncident} className="w-full text-sm">
           <thead className="border-b border-border">
@@ -124,6 +170,9 @@ export function CostTables({ costs }: { costs: CostView }) {
               <UsageHeads />
               <th className={head}>{t.trace}</th>
               <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">
+                {t.models}
+              </th>
+              <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">
                 {t.overrides}
               </th>
             </tr>
@@ -131,7 +180,7 @@ export function CostTables({ costs }: { costs: CostView }) {
           <tbody className="divide-y divide-border">
             {costs.incidents.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-2 py-3 text-muted-foreground">
+                <td colSpan={8} className="px-2 py-3 text-muted-foreground">
                   {t.noIncidents}
                 </td>
               </tr>
@@ -172,6 +221,15 @@ export function CostTables({ costs }: { costs: CostView }) {
                   )}
                 </td>
                 <td className="px-2 py-1.5">
+                  <ul className="flex flex-col gap-0.5">
+                    {row.models.map((model) => (
+                      <li key={model} className="font-mono text-xs break-all">
+                        {model}
+                      </li>
+                    ))}
+                  </ul>
+                </td>
+                <td className="px-2 py-1.5">
                   <OverrideList overrides={row.prompt_overrides} />
                 </td>
               </tr>
@@ -189,7 +247,7 @@ const hasUnpriced = (costs: CostView) =>
   costs.days.some((day) => day.unpriced > 0) ||
   costs.incidents.some((row) => row.unpriced > 0);
 
-/** Tokens and dollars from the usage ledger, per day and per incident. */
+/** Tokens and dollars from the usage ledger, per day, per model and per incident. */
 export function CostsPanel() {
   const t = useT().dev.costs;
   const [reload, setReload] = useState(0);

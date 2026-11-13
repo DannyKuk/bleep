@@ -15,6 +15,8 @@ function stubRoutes(dev: Response) {
       return json({
         incidents: [],
         days: [],
+        models: [],
+        models_today: [],
         daily_cap_usd: 1,
         spent_today_usd: 0,
         unpriced_today: 0,
@@ -100,6 +102,8 @@ describe("DevPanel", () => {
         return json({
           incidents: [],
           days: [],
+          models: [],
+          models_today: [],
           daily_cap_usd: 1,
           spent_today_usd: 0,
           unpriced_today: 0,

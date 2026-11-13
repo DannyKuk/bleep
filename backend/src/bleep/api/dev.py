@@ -31,6 +31,7 @@ from bleep.schemas.dev import (
     DevStatus,
     GuardEntryView,
     IncidentCost,
+    ModelCost,
     PromptOverrideBody,
     PromptView,
 )
@@ -151,13 +152,15 @@ async def costs(
     limit: Annotated[int, Query(ge=1, le=MAX_ROWS)] = 100,
 ) -> CostView:
     """Tokens and dollars from the usage ledger, per incident (the latest first, with the link to
-    its trace and the prompt overrides its run started with) and per local day (today first)."""
+    its trace, the prompt overrides its run started with and the models its calls used), per local
+    day (today first) and per model (over those days, and today alone)."""
     ledger = parts.graph_deps.ledger
     sums = await ledger.by_incident(limit)
     incidents = await parts.incidents.get_many([row.key for row in sums])
+    models = await ledger.models_of([row.key for row in sums])
     rows = []
     for row in sums:
-        cost = IncidentCost(incident_id=row.key, **_usage(row))
+        cost = IncidentCost(incident_id=row.key, models=models.get(row.key, []), **_usage(row))
         incident = incidents.get(row.key)
         if incident is not None:
             cost.title, cost.status = incident.title, incident.status
@@ -169,6 +172,8 @@ async def costs(
     return CostView(
         incidents=rows,
         days=day_rows,
+        models=[ModelCost(model=row.key, **_usage(row)) for row in await ledger.by_model(days)],
+        models_today=[ModelCost(model=row.key, **_usage(row)) for row in await ledger.by_model(1)],
         daily_cap_usd=parts.settings_store.budgets().daily_cost_usd,
         spent_today_usd=await ledger.spent_today(),
         unpriced_today=next((d.unpriced for d in day_rows if d.day == today), 0),

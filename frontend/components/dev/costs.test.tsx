@@ -13,6 +13,11 @@ const COSTS: CostView = {
   spent_today_usd: 0.375,
   unpriced_today: 1,
   days: [{ day: "2026-11-03", ...usage, calls: 3, tokens_in: 1900, unpriced: 1 }],
+  models: [
+    { model: "openai/gpt-6-luna", ...usage, calls: 5, tokens_in: 12000 },
+    { model: "claude-sonnet-5-5", ...usage, usd: null, unpriced: 2 },
+  ],
+  models_today: [{ model: "claude-sonnet-5-5", ...usage, usd: null, unpriced: 2 }],
   incidents: [
     {
       incident_id: "inc_shop",
@@ -21,6 +26,7 @@ const COSTS: CostView = {
       opened_at: "2026-11-03T10:00:00Z",
       trace_url: "http://localhost:3001/project/bleep/traces/abc",
       prompt_overrides: { "graph/propose": "0123456789abcdef" },
+      models: ["openai/gpt-6-luna", "claude-sonnet-5-5"],
       ...usage,
     },
     {
@@ -30,6 +36,7 @@ const COSTS: CostView = {
       opened_at: "2026-11-03T10:00:00Z",
       trace_url: null,
       prompt_overrides: {},
+      models: ["mystery/m"],
       ...usage,
       usd: null,
       unpriced: 1,
@@ -42,6 +49,7 @@ const COSTS: CostView = {
       opened_at: null,
       trace_url: null,
       prompt_overrides: null,
+      models: [],
       ...usage,
     },
     {
@@ -51,6 +59,7 @@ const COSTS: CostView = {
       opened_at: null,
       trace_url: "javascript:alert(1)",
       prompt_overrides: null,
+      models: [],
       ...usage,
       usd: 0,
     },
@@ -126,9 +135,35 @@ describe("CostTables", () => {
     expect(other).toHaveTextContent("not recorded");
   });
 
+  it("shows each model's calls, tokens and cost, and what it did today", () => {
+    render(<CostTables costs={COSTS} />);
+    const [, luna, sonnet] = within(
+      screen.getByRole("table", { name: "Cost per model" }),
+    ).getAllByRole("row");
+    expect(luna).toHaveTextContent("openai/gpt-6-luna");
+    expect(luna).toHaveTextContent("12,000");
+    expect(luna).toHaveTextContent("$0.38");
+    expect(luna).toHaveTextContent("none");
+    expect(sonnet).toHaveTextContent("claude-sonnet-5-5");
+    expect(sonnet).toHaveTextContent("unknown + 2 unpriced");
+    expect(sonnet).toHaveTextContent("2 / unknown + 2 unpriced");
+  });
+
+  it("names the models each incident's calls used", () => {
+    render(<CostTables costs={COSTS} />);
+    const table = screen.getByRole("table", { name: "Cost per incident" });
+    const [, shop, worker, devPanel] = within(table).getAllByRole("row");
+    expect(shop).toHaveTextContent("openai/gpt-6-luna");
+    expect(shop).toHaveTextContent("claude-sonnet-5-5");
+    expect(worker).toHaveTextContent("mystery/m");
+    expect(within(devPanel).queryByText("mystery/m")).not.toBeInTheDocument();
+  });
+
   it("says so when nothing has called a model", () => {
-    render(<CostTables costs={{ ...COSTS, days: [], incidents: [] }} />);
-    expect(screen.getByText("No model calls in the last 30 days.")).toBeInTheDocument();
+    render(
+      <CostTables costs={{ ...COSTS, days: [], models: [], models_today: [], incidents: [] }} />,
+    );
+    expect(screen.getAllByText("No model calls in the last 30 days.")).toHaveLength(2);
     expect(screen.getByText("No incident has called a model yet.")).toBeInTheDocument();
   });
 
