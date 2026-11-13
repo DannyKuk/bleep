@@ -506,3 +506,92 @@ def test_langfuse_switched_off_on_the_page_or_its_keys_cleared_stops_at_once(app
     assert app.delete("/api/secrets/LANGFUSE_SECRET_KEY").status_code == 200
     assert isinstance(inner_tracer(app), NoTracing)
     assert app.get("/api/settings").json()["restart_needed"] == []
+
+
+def by_provider(client: TestClient) -> dict[str, dict[str, str]]:
+    view = client.get("/api/settings").json()
+    in_force = view["models"]
+    ids = view["models_by_provider"][in_force["provider"]]
+    for name in ("model", "cheap_model", "local_model"):
+        assert ids[name] == in_force[name]
+    return {
+        provider: {"model": ids["model"], "cheap_model": ids["cheap_model"]}
+        for provider, ids in view["models_by_provider"].items()
+    }
+
+
+OPENROUTER_IDS = {"model": "openai/gpt-6-luna", "cheap_model": "openai/gpt-6-luna"}
+CLAUDE_IDS = {"model": "claude-haiku-5-5", "cheap_model": "claude-haiku-5-5"}
+
+
+@pytest.mark.parametrize("saved", ["openrouter", "anthropic", "local"])
+def test_the_view_shows_each_providers_models_with_nothing_stored(app, saved):
+    assert put_settings(app, {"models": {"provider": saved}}).status_code == 200
+
+    assert by_provider(app) == {
+        "openrouter": OPENROUTER_IDS,
+        "anthropic": CLAUDE_IDS,
+        "local": OPENROUTER_IDS,
+    }
+    assert app.get("/api/settings").json()["models_by_provider"]["local"]["local_model"] == (
+        "openai/gpt-oss-20b"
+    )
+
+
+@pytest.mark.parametrize("saved", ["openrouter", "anthropic"])
+def test_an_override_equal_to_the_openrouter_default_shows_claudes_default_under_anthropic(
+    app, saved
+):
+    body = {"provider": saved, "model": "openai/gpt-6-luna"}
+    assert put_settings(app, {"models": body}).status_code == 200
+
+    shown = by_provider(app)
+
+    assert shown["openrouter"]["model"] == "openai/gpt-6-luna"
+    assert shown["anthropic"]["model"] == "claude-haiku-5-5"
+
+
+@pytest.mark.parametrize("saved", ["openrouter", "anthropic"])
+def test_a_custom_override_shows_under_every_provider(app, saved):
+    body = {"provider": saved, "model": "x/mine", "local_model": "my/local"}
+    assert put_settings(app, {"models": body}).status_code == 200
+
+    shown = app.get("/api/settings").json()["models_by_provider"]
+
+    assert {ids["model"] for ids in shown.values()} == {"x/mine"}
+    assert shown["anthropic"]["cheap_model"] == "claude-haiku-5-5"
+    assert {ids["local_model"] for ids in shown.values()} == {"my/local"}
+
+
+def test_an_env_model_equal_to_the_openrouter_default_shows_claudes_default_under_anthropic(
+    monkeypatch, start
+):
+    monkeypatch.setenv("LLM_MODEL", "openai/gpt-6-luna")
+    app = start()
+
+    assert "models.model" in app.get("/api/settings").json()["from_env"]
+    assert by_provider(app)["anthropic"]["model"] == "claude-haiku-5-5"
+    assert put_settings(app, {"models": {"provider": "anthropic"}}).status_code == 200
+    assert by_provider(app)["openrouter"]["model"] == "openai/gpt-6-luna"
+    assert app.get("/api/settings").json()["models"]["model"] == "claude-haiku-5-5"
+
+
+def test_a_custom_env_model_shows_under_every_provider(monkeypatch, start):
+    monkeypatch.setenv("LLM_MODEL", "openai/env-model")
+    app = start()
+    assert put_settings(app, {"models": {"provider": "anthropic"}}).status_code == 200
+
+    shown = by_provider(app)
+
+    assert {ids["model"] for ids in shown.values()} == {"openai/env-model"}
+    assert shown["anthropic"]["cheap_model"] == "claude-haiku-5-5"
+
+
+def test_the_view_offers_example_ids_for_each_provider(app):
+    shown = app.get("/api/settings").json()["models_by_provider"]
+
+    assert {provider: ids["examples"] for provider, ids in shown.items()} == {
+        "openrouter": ["openai/gpt-6-luna", "openai/gpt-6.1-terra", "openai/gpt-6.1-sol"],
+        "anthropic": ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"],
+        "local": ["openai/gpt-oss-20b"],
+    }

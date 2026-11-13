@@ -53,6 +53,7 @@ from bleep.plugins.mcp_url import McpUrlPlugin
 from bleep.plugins.registry import PluginRegistry
 from bleep.plugins.urls import Resolver
 from bleep.schemas.settings import (
+    ANTHROPIC_KEY_ENV,
     EMBEDDINGS_URL_ENV,
     ENV_NAMES,
     LOCAL_URL_ENV,
@@ -126,6 +127,7 @@ def secret_names(plugins: Sequence[Plugin], tracing: str) -> list[SecretName]:
     needed = TRACING_KEYS.get(tracing, ())
     names = [
         SecretName(MODEL_KEY_ENV),
+        SecretName(ANTHROPIC_KEY_ENV),
         SecretName(TELEGRAM_TOKEN_ENV),
         SecretName(CHAT_ID_ENV, kind="id"),
         SecretName(GITHUB_TOKEN_ENV),

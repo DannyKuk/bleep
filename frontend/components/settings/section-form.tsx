@@ -27,6 +27,10 @@ export interface Field {
   /** A number: sent as one when it is, as typed (for the API to refuse) when it is not. */
   number?: boolean;
   hint?: string;
+  /** Ids offered as examples on a text input; any other text can still be typed. */
+  examples?: string[];
+  /** Shown, and counted in a save, only while this holds of the draft; hidden keeps its stored value. */
+  visibleWhen?: (draft: Record<string, string>) => boolean;
 }
 
 export interface Group {
@@ -108,7 +112,10 @@ function FieldRow({
 }) {
   const t = useT().settings.section;
   const id = useId();
-  const described = field.hint ? `${id}-hint` : undefined;
+  const examples = !field.options && field.examples?.length ? field.examples : undefined;
+  const described =
+    [field.hint && `${id}-hint`, examples && `${id}-examples`].filter(Boolean).join(" ") ||
+    undefined;
   const head = (
     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
       {fromEnv ? (
@@ -159,12 +166,25 @@ function FieldRow({
           autoComplete="off"
           spellCheck={false}
           className={field.number ? "max-w-32" : "max-w-xl font-mono"}
+          list={examples && `${id}-list`}
           onChange={(changed) => onChange(changed.target.value)}
         />
       )}
+      {examples && (
+        <datalist id={`${id}-list`}>
+          {examples.map((example) => (
+            <option key={example} value={example} />
+          ))}
+        </datalist>
+      )}
       {field.hint && (
-        <p id={described} className="text-xs text-muted-foreground">
+        <p id={`${id}-hint`} className="text-xs text-muted-foreground">
           {field.hint}
+        </p>
+      )}
+      {examples && (
+        <p id={`${id}-examples`} className="text-xs break-words text-muted-foreground">
+          {t.examples(examples.join(", "))}
         </p>
       )}
     </div>
@@ -175,9 +195,13 @@ function FieldRow({
  * The form of one settings section (models, embeddings, tracing). `values` are those in force,
  * as text; `overrides` are what the database holds, which a save sends again with the changed
  * fields on top (an emptied field is left out, so the layer below shows). A field in `fromEnv`
- * has no input: the environment wins, and the API refuses a change to it. `confirm`, when it
- * returns a text, makes a save ask first, inline; the save goes only on the second click.
- * `children` come after the fields, before the buttons.
+ * has no input: the environment wins, and the API refuses a change to it. `valuesFor` gives the
+ * values that would be in force with the draft's choices (the Models panel: the ids of the
+ * provider in its select); a field the person has not edited shows them, and so does a field the
+ * environment sets. A field is edited while it holds text the person typed that differs from
+ * what it would show unedited; only edited fields that are shown count in a save. `confirm`,
+ * when it returns a text, makes a save ask first, inline; the save goes only on the second
+ * click. `onDraft` hears the draft.
  */
 export function SectionForm({
   groups,
@@ -187,6 +211,8 @@ export function SectionForm({
   what,
   confirm,
   confirmLabel,
+  valuesFor,
+  onDraft,
   onSave,
 }: {
   groups: Group[];
@@ -197,12 +223,23 @@ export function SectionForm({
   what: string;
   confirm?: (change: Change) => string | null;
   confirmLabel?: string;
+  valuesFor?: (draft: Record<string, string>) => Record<string, string>;
+  onDraft?: (draft: Record<string, string>) => void;
   onSave: (body: Record<string, unknown>) => Promise<unknown>;
 }) {
   const { section: t, save: saveWord, cancel } = useT().settings;
   const fields = groups.flatMap((group) => group.fields);
   const labels = Object.fromEntries(fields.map((field) => [field.name, field.label]));
-  const [draft, setDraft] = useState(values);
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const unedited = (typed: Record<string, string>) => ({
+    ...values,
+    ...valuesFor?.({ ...values, ...typed }),
+  });
+  const base = unedited(edits);
+  const draft = { ...base, ...edits };
+  const shown = (field: Field) => field.visibleWhen?.(draft) ?? true;
+  const draftKey = JSON.stringify(draft);
+  useEffect(() => onDraft?.(draft), [draftKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const [asking, setAsking] = useState<{ body: Record<string, unknown>; text: string } | null>(
     null,
   );
@@ -216,9 +253,16 @@ export function SectionForm({
     else if (cancelled.current) saveButton.current?.focus();
     cancelled.current = false;
   }, [asking]);
-  const editable = fields.filter((field) => !fromEnv.includes(field.name));
-  const changed = editable.filter((field) =>
-    isEdit(field, draft[field.name], values[field.name], field.name in overrides),
+  // With `valuesFor`, what a field shows unedited moves with the draft's choices, so a typed text
+  // equal to it (as trimmed) is still what the person typed, and is sent; `change` drops only an
+  // exact match, so nothing jumps under the cursor. Without it, `isEdit` decides as it always has.
+  const changed = fields.filter(
+    (field) =>
+      !fromEnv.includes(field.name) &&
+      shown(field) &&
+      field.name in edits &&
+      ((valuesFor !== undefined && edits[field.name].trim() === base[field.name]) ||
+        isEdit(field, edits[field.name], base[field.name], field.name in overrides)),
   );
   const overridden = Object.keys(overrides).length > 0;
 
@@ -230,6 +274,13 @@ export function SectionForm({
       else update[field.name] = field.number ? parsed(text) : text;
     }
     return update;
+  }
+
+  function change(name: string, value: string) {
+    setAsking(null);
+    const typed = { ...edits, [name]: value };
+    if (value === unedited(typed)[name]) delete typed[name];
+    setEdits(typed);
   }
 
   async function save(update: Record<string, unknown>) {
@@ -252,19 +303,18 @@ export function SectionForm({
       }}
     >
       {groups.map((group, at) => {
-        const rows = group.fields.map((field) => (
-          <FieldRow
-            key={field.name}
-            field={field}
-            value={values[field.name]}
-            draft={draft[field.name]}
-            fromEnv={fromEnv.includes(field.name)}
-            onChange={(value) => {
-              setAsking(null);
-              setDraft({ ...draft, [field.name]: value });
-            }}
-          />
-        ));
+        const rows = group.fields
+          .filter(shown)
+          .map((field) => (
+            <FieldRow
+              key={field.name}
+              field={field}
+              value={base[field.name]}
+              draft={draft[field.name]}
+              fromEnv={fromEnv.includes(field.name)}
+              onChange={(value) => change(field.name, value)}
+            />
+          ));
         return group.title ? (
           <fieldset key={at} className="flex flex-col gap-3 border-t border-line pt-3">
             <legend className="pr-2 text-sm font-bold">{group.title}</legend>
@@ -332,7 +382,7 @@ export function SectionForm({
               size="sm"
               variant="ghost"
               disabled={saving}
-              onClick={() => setDraft(values)}
+              onClick={() => setEdits({})}
             >
               {cancel}
             </Button>

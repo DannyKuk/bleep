@@ -1,5 +1,8 @@
-"""Builds `fixtures/github/bad-deploy-long.json`, the GitHub fixture of the `bad-deploy-long`
-scenario (#497): the bad-deploy fault with a deploy 41 days old that brought 300 commits.
+"""Builds the GitHub fixtures of the long-deploy scenarios: the bad-deploy fault with a deploy 41
+days old that brought 300 commits. `bad-deploy-long` (#497) puts the cause at the oldest end and
+keeps the commit that explains the fault (`Deploy shop 2`) as the newest of the deploy;
+`bad-deploy-deep` (#506) makes the newest commit one more that touches nothing of the shop and
+moves `Deploy shop 2` next to the cause, so only a commit past the first part explains the fault.
 
 It takes the commits of `bad-deploy-old.json` (the 24 pushed since the deploy, the deploy's own
 commit, the commit that reads `price_cents` and the one deployed before) and puts 298 commits that
@@ -20,6 +23,8 @@ from evals.github import FIXTURES_DIR
 
 SOURCE = "bad-deploy-old"
 TARGET = "bad-deploy-long"
+DEEP_TARGET = "bad-deploy-deep"
+TARGETS = (TARGET, DEEP_TARGET)
 FILLERS = 298  # between the deploy's commit and the cause: the deploy brings 298 + 2 commits
 DEPLOY_COMMIT = "d9f9be16d2f9d5fd043579e64975986727895711"
 CAUSE_COMMIT = "335006387524dfc3b1f9a939d3bb0ca6be90b5c2"
@@ -66,11 +71,11 @@ THINGS: list[tuple[str, str]] = [
 ]
 
 
-def _filler(i: int) -> dict:
+def _filler(i: int, target: str = TARGET) -> dict:
     verb = VERBS[(i + i // len(THINGS)) % len(VERBS)]
     thing, path = THINGS[i % len(THINGS)]
     return {
-        "sha": hashlib.sha1(f"{TARGET}-{i}".encode()).hexdigest(),
+        "sha": hashlib.sha1(f"{target}-{i}".encode()).hexdigest(),
         "minutes_ago": FIRST_FILLER_MINUTES + i * FILLER_STEP_MINUTES,
         "author": "bleep-dev",
         "message": f"{verb} {thing}",
@@ -85,32 +90,40 @@ def _filler(i: int) -> dict:
     }
 
 
-def build() -> dict:
+def build(target: str = TARGET) -> dict:
     """The fixture: commits newest first, with the deploy and its previous commit."""
     source = json.loads((FIXTURES_DIR / f"{SOURCE}.json").read_text(encoding="utf-8"))
     commits = {c["sha"]: c for c in source["commits"]}
     deployed_at = commits[DEPLOY_COMMIT]["minutes_ago"]
     since = [c for c in source["commits"] if c["minutes_ago"] < deployed_at]
-    fillers = [_filler(i) for i in range(FILLERS)]
+    fillers = [_filler(i, target) for i in range(FILLERS)]
     oldest = fillers[-1]["minutes_ago"] + FILLER_STEP_MINUTES
+    if target == DEEP_TARGET:
+        running = fillers[0] | {"minutes_ago": DEPLOY_AGE_MINUTES + 60}
+        newest, fillers = [running], fillers[1:]
+        older = [commits[DEPLOY_COMMIT] | {"minutes_ago": oldest}]
+        oldest += 4  # the cause is the oldest of the deploy, just under the commit that deploys 2
+    else:
+        running = commits[DEPLOY_COMMIT] | {"minutes_ago": DEPLOY_AGE_MINUTES + 60}
+        newest, older = [running], []
     cause = commits[CAUSE_COMMIT] | {"minutes_ago": oldest}
     previous = commits[PREVIOUS_COMMIT] | {"minutes_ago": oldest + 1000}
-    deploy = commits[DEPLOY_COMMIT] | {"minutes_ago": DEPLOY_AGE_MINUTES + 60}
     return {
-        "commits": [*since, deploy, *fillers, cause, previous],
+        "commits": [*since, *newest, *fillers, *older, cause, previous],
         "deploy": {
-            "commit": DEPLOY_COMMIT,
+            "commit": running["sha"],
             "previous": PREVIOUS_COMMIT,
             "minutes_ago": DEPLOY_AGE_MINUTES,
         },
     }
 
 
-def render() -> str:
-    return json.dumps(build(), indent=1) + "\n"
+def render(target: str = TARGET) -> str:
+    return json.dumps(build(target), indent=1) + "\n"
 
 
 if __name__ == "__main__":
-    path = Path(FIXTURES_DIR) / f"{TARGET}.json"
-    path.write_text(render(), encoding="utf-8")
-    print(f"wrote {path}")
+    for target in TARGETS:
+        path = Path(FIXTURES_DIR) / f"{target}.json"
+        path.write_text(render(target), encoding="utf-8")
+        print(f"wrote {path}")

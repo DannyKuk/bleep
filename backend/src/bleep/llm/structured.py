@@ -6,6 +6,7 @@ import re
 from functools import partial
 from typing import Any
 
+import anthropic
 import openai
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -53,7 +54,8 @@ def parse_reply[T: BaseModel](schema: type[T], text: str) -> T:
 
 
 # A provider refusing tools or response_format. ChatOpenRouter does not wrap errors: it raises the
-# openrouter SDK's own (400, 404 "no endpoint supports tools", 422); ChatOpenAI raises openai's.
+# openrouter SDK's own (400, 404 "no endpoint supports tools", 422); ChatOpenAI raises openai's and
+# ChatAnthropic anthropic's.
 # Auth, rate-limit and connection errors are deliberately absent so they propagate.
 TOOLS_REJECTED = (
     NotImplementedError,
@@ -61,6 +63,9 @@ TOOLS_REJECTED = (
     openai.BadRequestError,
     openai.NotFoundError,
     openai.UnprocessableEntityError,
+    anthropic.BadRequestError,
+    anthropic.NotFoundError,
+    anthropic.UnprocessableEntityError,
     openrouter_errors.BadRequestResponseError,
     openrouter_errors.NotFoundResponseError,
     openrouter_errors.UnprocessableEntityResponseError,

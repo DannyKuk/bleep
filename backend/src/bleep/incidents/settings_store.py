@@ -18,7 +18,7 @@ import os
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, tzinfo
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ValidationError
@@ -35,10 +35,12 @@ from bleep.schemas.plugins import PluginUpdate, PluginView
 from bleep.schemas.refusal import Reasons, Templated
 from bleep.schemas.services import Service
 from bleep.schemas.settings import (
+    ANTHROPIC_KEY_ENV,
     DEFAULT_LANGUAGE,
     EMBEDDINGS_URL_ENV,
     ENV_NAMES,
     LOCAL_URL_ENV,
+    MODEL_EXAMPLES,
     MODEL_KEY_ENV,
     TRACER_OF_ENDPOINT,
     TRACING_ENDPOINTS,
@@ -53,7 +55,9 @@ from bleep.schemas.settings import (
     Language,
     ModelChoice,
     ModelOverrides,
+    ModelProvider,
     ModelSettings,
+    ProviderModels,
     SecretStatus,
     ServiceSettings,
     ServiceSettingsView,
@@ -187,11 +191,14 @@ class SettingsStore:
         the key and the local model's base URL as the secret store has them, read at each call."""
         models = _layer(self._env_models, self._chosen("models"))
         if self._secrets is None:
-            return models
-        update: dict[str, Any] = {"openrouter_api_key": self._secrets.get(MODEL_KEY_ENV)}
+            return models.resolved()
+        update: dict[str, Any] = {
+            "openrouter_api_key": self._secrets.get(MODEL_KEY_ENV),
+            "anthropic_api_key": self._secrets.get(ANTHROPIC_KEY_ENV),
+        }
         if (local_url := self._secrets.get(LOCAL_URL_ENV)) is not None:
             update["local_base_url"] = local_url.get_secret_value()
-        return models.model_copy(update=update)
+        return models.model_copy(update=update).resolved()
 
     def embeddings(self) -> EmbeddingsChoice:
         """The embedder chosen: the env's fields, else the dashboard's. It is built once, at the
@@ -326,6 +333,22 @@ class SettingsStore:
     def model_choice(self) -> ModelChoice:
         models = self.models()
         return ModelChoice(**{name: getattr(models, name) for name in ModelChoice.model_fields})
+
+    def models_by_provider(self) -> dict[ModelProvider, ProviderModels]:
+        """Per provider, the ids `models()` would give if it were the one chosen, with the env and
+        the dashboard's overrides as they are now (what the settings page shows before a save),
+        and its example ids."""
+        layered = _layer(self._env_models, self._chosen("models"))
+        by_provider: dict[ModelProvider, ProviderModels] = {}
+        for provider in get_args(ModelProvider):
+            models = layered.model_copy(update={"provider": provider}).resolved()
+            by_provider[provider] = ProviderModels(
+                model=models.model,
+                cheap_model=models.cheap_model,
+                local_model=models.local_model,
+                examples=list(MODEL_EXAMPLES[provider]),
+            )
+        return by_provider
 
     def host_views(self) -> list[HostSettingsView]:
         """Every host's rules and service settings in force: the hosts file's in its order, then

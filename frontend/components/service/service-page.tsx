@@ -16,6 +16,7 @@ import { SaveLockProvider } from "@/components/save-lock";
 import { Failed, Loading } from "@/components/status-notes";
 import { MemoryPanel } from "@/components/service/memory-panel";
 import {
+  type CheckSuggestions,
   CheckedUrls,
   FollowedRules,
   nameIn,
@@ -37,7 +38,7 @@ import { formatDateTime, formatSince } from "@/lib/format";
 import { MESSAGES, useLanguage, useT } from "@/lib/i18n";
 import { sinceWords, untilWords } from "@/lib/quiet-api";
 import { hostHref } from "@/lib/routes";
-import type { Language, UrlCheck } from "@/lib/settings-types";
+import type { Language } from "@/lib/settings-types";
 import { cn } from "@/lib/utils";
 import type { Zone } from "@/lib/zone";
 
@@ -240,7 +241,7 @@ function Service({ id }: { id: string }) {
   };
   const detail = useOnce<ServiceDetail>(`/api/services/${encoded}`, reloads);
   // Read once, not with the reloads: each read asks Coolify for its applications.
-  const suggested = useOnce<UrlCheck[]>(`/api/services/${encoded}/suggested-checks`);
+  const suggested = useOnce<CheckSuggestions>(`/api/services/${encoded}/suggested-checks`);
   const incidents = useOnce<IncidentListItem[]>(
     `/api/incidents?service_id=${encoded}&limit=${PAST_INCIDENTS}`,
     reloads,

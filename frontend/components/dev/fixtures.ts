@@ -24,7 +24,7 @@ export const BUDGETS: Budgets = {
   low_confidence: 0.6,
   verify_loops: 2,
   replans: 3,
-  incident_tokens: 150_000,
+  incident_tokens: 300_000,
   daily_cost_usd: 1,
   approval_reminder_min: 60,
   model_timeout_s: 120,

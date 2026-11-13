@@ -62,10 +62,18 @@ export interface HostSettingsView {
 }
 
 export interface ModelChoice {
-  provider: "openrouter" | "local";
+  provider: "openrouter" | "anthropic" | "local";
   model: string;
   cheap_model: string;
   local_model: string;
+}
+
+/** The ids that would run with one provider, and example ids it takes. */
+export interface ProviderModels {
+  model: string;
+  cheap_model: string;
+  local_model: string;
+  examples: string[];
 }
 
 export type EmbeddingsProvider = "local" | "openai" | "server";
@@ -131,7 +139,9 @@ export interface SettingsOverrides {
 
 export interface SettingsView {
   models: ModelChoice;
-  /** The OpenRouter key's variable; a local model needs none. */
+  /** Per provider, the ids that would run if it were chosen with what is stored now. */
+  models_by_provider: Record<ModelChoice["provider"], ProviderModels>;
+  /** The key's variable of the provider in force; a local model needs none. */
   model_key: SecretStatus;
   budgets: Record<string, number>;
   thresholds: Thresholds;

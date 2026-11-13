@@ -1,6 +1,7 @@
 """Token and cost accounting per incident, with a daily cap."""
 
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -17,11 +18,22 @@ from bleep.store.db import Database
 log = logging.getLogger(__name__)
 
 # USD per million tokens (input, output). OpenRouter reports the real cost of each call, so
-# this table is only the fallback; local models are free. Unknown cloud models cost None.
+# for it this table is only the fallback; the Anthropic API reports no cost, so the Claude models
+# are priced here (Anthropic's pricing page, platform.claude.com/docs/en/about-claude/pricing,
+# read 2026-11-12); local models are free. Unknown cloud models cost None.
 PRICES: dict[str, tuple[float, float]] = {
     "openai/gpt-6-luna": (0.10, 0.50),  # measured on OpenRouter, see molecula chat-model notes
     "openai/gpt-oss-20b": (0.0, 0.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-haiku-5-5": (0.10, 0.50),
+    "claude-opus-5-5": (4.0, 20.0),
 }
+# Claude Haiku 5.5 charges more for a call whose prompt is over 100,000 tokens: the price of the
+# whole call, not of the tokens past the line.
+LONG_PROMPT_PRICES: dict[str, tuple[int, tuple[float, float]]] = {
+    "claude-haiku-5-5": (100_000, (0.50, 2.50)),
+}
+_SNAPSHOT_SUFFIX = re.compile(r"-\d{8}$")
 _warned: set[str] = set()
 
 
@@ -162,8 +174,12 @@ class CostLedger:
 def _cost(model: str, metadata: dict[str, Any], tokens_in: int, tokens_out: int) -> float | None:
     if isinstance(metadata.get("cost"), int | float):
         return float(metadata["cost"])
-    if model in PRICES:
-        price_in, price_out = PRICES[model]
+    priced = _SNAPSHOT_SUFFIX.sub("", model)  # the API may answer with a dated id of the alias
+    if priced in PRICES:
+        price_in, price_out = PRICES[priced]
+        threshold, long_prices = LONG_PROMPT_PRICES.get(priced, (None, None))
+        if threshold is not None and long_prices is not None and tokens_in > threshold:
+            price_in, price_out = long_prices
         return (tokens_in * price_in + tokens_out * price_out) / 1_000_000
     if model not in _warned:
         _warned.add(model)

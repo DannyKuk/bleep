@@ -161,7 +161,7 @@ async def test_evidence_details_are_cut_to_300_characters(tmp_path):
 
 async def test_spent_budget_gives_the_fallback_without_a_model_call(tmp_path):
     env, state = await setup(tmp_path, [reply(0.9)])
-    await env.deps.ledger.add("inc-1", "m", 200_000, 0, None)
+    await env.deps.ledger.add("inc-1", "m", 400_000, 0, None)
 
     d = (await diagnose.make(env.deps)(state))["diagnosis"]
 
