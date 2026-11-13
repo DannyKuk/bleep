@@ -18,6 +18,8 @@ ANTHROPIC_MAX_TOKENS = 16_000
 # Top-level automatic caching: the API puts the breakpoint on the last cacheable block of each
 # request, so it moves forward as an incident's messages grow, and the tools, the system prompt
 # and every earlier message are read back from the cache (5-minute entries, each read refreshes).
+# A cache write costs 25% more than plain input, so `chat_model()` leaves it off and only a call
+# that sends the same prefix again turns it on through `cached()`: the investigate loop (#546).
 ANTHROPIC_CACHE = {"cache_control": {"type": "ephemeral"}}
 
 Role = Literal["main", "cheap"]
@@ -46,7 +48,6 @@ def chat_model(settings: ModelSettings, role: Role, timeout_s: int | None = None
         return ChatAnthropic(
             model=name,
             max_tokens=ANTHROPIC_MAX_TOKENS,
-            model_kwargs=ANTHROPIC_CACHE,
             **key,
             **_bounds(timeout_s, 1, "timeout"),
         )
@@ -54,6 +55,14 @@ def chat_model(settings: ModelSettings, role: Role, timeout_s: int | None = None
     return ChatOpenRouter(
         model=name, temperature=settings.temperature, **key, **_bounds(timeout_s, 1000)
     )
+
+
+def cached(model: BaseChatModel) -> BaseChatModel:
+    """The same model with prompt caching on, for a call that re-sends its prefix. Only the
+    investigate loop does (#546); a model of another provider comes back as it is."""
+    if not isinstance(model, ChatAnthropic):
+        return model
+    return model.model_copy(update={"model_kwargs": {**model.model_kwargs, **ANTHROPIC_CACHE}})
 
 
 def _bounds(

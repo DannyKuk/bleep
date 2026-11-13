@@ -13,7 +13,7 @@ from langchain_core.tools import tool
 from pydantic import SecretStr
 from test_anthropic import claude, message_body, over_transport
 
-from bleep.llm.factory import chat_model
+from bleep.llm.factory import cached, chat_model
 from bleep.llm.usage import CostLedger, UsageTracker, call_costs
 from bleep.schemas.settings import ModelSettings
 from bleep.store.db import Database
@@ -49,13 +49,13 @@ async def call(body: dict, ledger: CostLedger, role="main") -> None:
     await model.ainvoke([HumanMessage("a")], config={"callbacks": [UsageTracker("i", ledger)]})
 
 
-async def test_every_claude_request_carries_a_cache_breakpoint_beside_the_tools():
+async def test_a_cached_claude_request_carries_a_cache_breakpoint_beside_the_tools():
     @tool
     def ping(host: str) -> str:
         """Ping a host."""
         return host
 
-    model = chat_model(claude(), "main", timeout_s=60)
+    model = cached(chat_model(claude(), "main", timeout_s=60))
     seen = over_transport(model, lambda request: httpx2.Response(200, json=message_body()))
 
     await model.bind_tools([ping]).ainvoke([HumanMessage("hello")])
