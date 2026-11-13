@@ -1,61 +1,31 @@
 """Which Anthropic calls ask for prompt caching (#546): only the investigate loop, the one call
 site that sends the same prefix again. The real `ChatAnthropic` runs against a mock transport and
-the requests are read; nothing touches the network."""
+the requests are read; nothing touches the network. Talk and the watcher's explain are in
+`tests/talk/test_talk_cache_call.py` and `tests/watcher/test_explain_cache_call.py`."""
 
 import json
 import re
 from pathlib import Path
 
-import anthropic
-import httpx2
 import pytest
-from pydantic import SecretStr
 from test_diagnose import reply as diagnosis_reply
 from test_diagnose import setup as diagnose_setup
 from test_investigate import setup as investigate_setup
+from test_propose import restart
+from test_propose import setup as propose_setup
+from test_report import ACT, RESULT, decide, written
+from test_report import setup as report_setup
 
-from bleep.graph.nodes import diagnose, investigate
+from bleep.graph.nodes import diagnose, investigate, propose, report
 from bleep.llm.factory import ANTHROPIC_CACHE, cached, chat_model
 from bleep.schemas.settings import ModelSettings
+from claude_fake import claude_answering, sent_no_cache_control
 
-KEY = "sk-ant-api03-test-key-0123456789"
-
-
-def claude(model: str = "claude-sonnet-5-5") -> ModelSettings:
-    return ModelSettings(
-        provider="anthropic", model=model, cheap_model=model, anthropic_api_key=SecretStr(KEY)
-    )
+BLEEP = Path(investigate.__file__).parents[2]
 
 
-def answering(text: str) -> tuple[object, list[dict]]:
-    """A `ChatAnthropic` whose every reply is `text`, and the request bodies it was sent."""
-    model = chat_model(claude(), "main", timeout_s=60)
-    bodies: list[dict] = []
-
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        bodies.append(json.loads(request.content))
-        return httpx2.Response(
-            200,
-            json={
-                "id": "msg_01",
-                "type": "message",
-                "role": "assistant",
-                "model": "claude-sonnet-5-5",
-                "content": [{"type": "text", "text": text}],
-                "stop_reason": "end_turn",
-                "stop_sequence": None,
-                "usage": {"input_tokens": 100, "output_tokens": 20},
-            },
-        )
-
-    client = anthropic.AsyncAnthropic(
-        api_key=KEY,
-        timeout=model.default_request_timeout,
-        max_retries=model.max_retries,
-        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
-    )
-    model.__dict__["_async_client"] = client
-    return model, bodies
+def claude() -> ModelSettings:
+    return ModelSettings(provider="anthropic", anthropic_api_key="sk-ant-api03-test-key-0123456789")
 
 
 @pytest.mark.parametrize("role", ["main", "cheap"])
@@ -79,7 +49,7 @@ def test_a_model_of_another_provider_comes_back_as_it_is():
 
 async def test_the_investigate_loop_sends_cache_control(tmp_path):
     env, state = await investigate_setup(tmp_path, [])
-    env.models.model, bodies = answering("Nothing more to look at.")
+    env.models.model, bodies = claude_answering("Nothing more to look at.")
 
     await investigate.make(env.deps)(state)
 
@@ -89,20 +59,51 @@ async def test_the_investigate_loop_sends_cache_control(tmp_path):
 
 async def test_diagnose_does_not_send_cache_control(tmp_path):
     env, state = await diagnose_setup(tmp_path, [])
-    env.models.model, bodies = answering(diagnosis_reply(0.9).text)
+    env.models.model, bodies = claude_answering(diagnosis_reply(0.9).text)
 
     await diagnose.make(env.deps)(state)
 
-    assert bodies and all("cache_control" not in body for body in bodies)
+    assert sent_no_cache_control(bodies)
+
+
+async def test_propose_does_not_send_cache_control(tmp_path):
+    env, state = await propose_setup(tmp_path)
+    plan = {"kind": "act", "steps": [restart("shop-web-1")], "reason": "restart it"}
+    env.models.model, bodies = claude_answering(json.dumps(plan | {"verification": {}}))
+
+    update = await propose.make(env.deps)(state)
+
+    assert update["proposal"].kind == "act"  # the model's reply was used
+    assert sent_no_cache_control(bodies)
+
+
+async def test_report_does_not_send_cache_control(tmp_path):
+    env, state, _ = await report_setup(tmp_path)
+    env.models.model, bodies = claude_answering(written().text)
+    state |= {
+        "proposal": ACT,
+        "decision": decide("approve"),
+        "step_results": [RESULT],
+        "outcome": "resolved",
+    }
+
+    update = await report.make(env.deps)(state)
+
+    assert update["report"].summary == "shop-web was down and Bleep started it again."
+    assert sent_no_cache_control(bodies)
 
 
 def test_only_the_investigate_node_asks_for_caching():
-    """Propose, report, talk and the watcher's explain build their calls like diagnose does, so
-    what keeps them uncached is that nothing but investigate turns it on."""
-    source = Path(investigate.__file__).parents[2]  # bleep/
-    callers = {
-        path.relative_to(source).as_posix()
-        for path in source.rglob("*.py")
-        if re.search(r"(?<![\w.])cached\(", path.read_text()) and path.name != "factory.py"
+    """Talk, the watcher's explain and the rest build their calls through `chat_model()`, so what
+    keeps them uncached is that nothing but investigate turns caching on. Read the sources: any
+    call of `cached` (bare, qualified or aliased) or use of `ANTHROPIC_CACHE` or `cache_control`
+    outside the factory is a way around it."""
+    ways = re.compile(
+        r"\bcached\(|import[^\n(]*\bcached\b|^\s+cached,?$|ANTHROPIC_CACHE|cache_control", re.M
+    )
+    users = {
+        path.relative_to(BLEEP).as_posix()
+        for path in BLEEP.rglob("*.py")
+        if path.relative_to(BLEEP).as_posix() != "llm/factory.py" and ways.search(path.read_text())
     }
-    assert callers == {"graph/nodes/investigate.py"}
+    assert users == {"graph/nodes/investigate.py"}
