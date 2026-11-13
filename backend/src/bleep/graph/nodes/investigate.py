@@ -32,6 +32,7 @@ from bleep.guard.redact import redact_with_count
 from bleep.guard.sanitize import MAX_CHARS, strip_control
 from bleep.guard.untrusted import SOURCE, wrap_untrusted
 from bleep.hosts.shell import CommandNotAllowed
+from bleep.llm.factory import cached
 from bleep.llm.usage import BudgetExceeded, UsageTracker, check_budget, tracked
 from bleep.memory.text import describe_fact, describe_past
 from bleep.schemas.graph import GatherContext
@@ -165,7 +166,7 @@ def make(deps: GraphDeps) -> Node:
                     )
                 return update(outcome="budget")
             if model is None:
-                model = deps.models("main").bind_tools(list(tools.values()))
+                model = cached(deps.models("main")).bind_tools(list(tools.values()))
             reply = await deps.guard().call(
                 partial(model.ainvoke, history, config=tracked(tracker))
             )
