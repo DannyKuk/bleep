@@ -15,6 +15,14 @@ from fakes import FakeEngine, ssh_host
 NOW = datetime.now(UTC)
 
 
+@pytest.fixture(autouse=True)
+def fresh_now():
+    """`recent_events` looks back from the real clock, so events are placed from the test's own
+    time: a suite that runs long after import cannot push them out of the window (#530)."""
+    global NOW
+    NOW = datetime.now(UTC)
+
+
 def at(minutes_ago: float, action: str) -> DockerEvent:
     return DockerEvent(
         time=NOW - timedelta(minutes=minutes_ago),
