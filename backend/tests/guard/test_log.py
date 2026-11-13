@@ -146,3 +146,14 @@ def test_flush_under_a_new_event_loop_writes_what_an_old_one_left(tmp_path):
 
     assert [e.detail for e in asyncio.run(flush_then_read())] == ["left pending"]
     first_loop.close()
+
+
+async def test_counts_since_waits_for_the_records_still_queued_and_cuts_at_the_day(tmp_path):
+    log = await guard_log(tmp_path)
+
+    log.record("inc-1", "refused_command", "rm -rf /")  # in a running loop: queued, not written
+    log.record("inc-1", "refused_command", "dd if=/dev/zero")
+    log.record("inc-2", "redacted", "a token")
+
+    assert await log.counts_since("2026-11-02") == {"redacted": 1, "refused_command": 2}
+    assert await log.counts_since("2026-11-03") == {}
