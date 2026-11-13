@@ -10,7 +10,7 @@ from bleep.graph.nodes.report import OUTCOME_TEXT
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
-from bleep.schemas.api import ContainerView, HostView, QuietView, ServiceView
+from bleep.schemas.api import ContainerView, HostView, QuietView, ServiceView, UrlStatus
 from bleep.schemas.graph import Decision, PlanStep, Proposal
 from bleep.schemas.incidents import LOOK_REQUESTED, Signal, Subject
 from bleep.store.db import Database
@@ -374,3 +374,21 @@ async def test_an_incident_in_the_snapshots_lists_carries_no_checks(world):
     snapshot = await world.state(FakeHealth([], [])).snapshot()
 
     assert snapshot.open_incidents and "list_containers" not in snapshot.model_dump_json()
+
+
+async def test_the_url_checks_of_every_service_are_kept_for_the_answer_but_never_shown(world):
+    def watching(name: str, *urls: str) -> ServiceView:
+        statuses = [
+            UrlStatus(url=u, status="ok", last_checked=None, status_code=None, latency_ms=None)
+            for u in urls
+        ]
+        return service(name, urls=statuses)
+
+    calm = [service(f"svc{n}") for n in range(65)]
+    services = [*calm, watching("site", "https://dkwebsite.de", "https://dkwebsite.de/health")]
+
+    snapshot = await world.state(FakeHealth([host("laptop")], services)).snapshot()
+
+    assert "site" not in {s.name for s in snapshot.services}  # cut from the list the model reads
+    assert snapshot.watched_urls == ["https://dkwebsite.de", "https://dkwebsite.de/health"]
+    assert "dkwebsite" not in snapshot.model_dump_json()

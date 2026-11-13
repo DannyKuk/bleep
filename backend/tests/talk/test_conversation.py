@@ -488,6 +488,70 @@ async def test_a_link_in_an_answer_is_taken_out(link):
     assert fixed("link_removed") in reply.answer and "14:02, v1.2." in reply.answer
 
 
+WATCHING = SNAPSHOT.model_copy(update={"watched_urls": ["https://dkwebsite.de"]})
+
+
+async def answered(answer: str, snapshot: Snapshot = WATCHING) -> str:
+    reply = await talk(Models(reading(kind="question", answer=answer)), FakeState(snapshot)).reply(
+        "what did you check?", surface="panel"
+    )
+    return reply.answer
+
+
+@pytest.mark.parametrize(
+    ("link", "after"),
+    [
+        ("https://dkwebsite.de", " returned HTTP 200."),
+        ("https://dkwebsite.de/health", ", which returned HTTP 200."),
+        ("https://dkwebsite.de", "."),
+        ("(https://dkwebsite.de/)", " returned HTTP 200."),
+        ("`https://dkwebsite.de`", " returned HTTP 200."),
+        ("<https://dkwebsite.de>", " returned HTTP 200."),
+        ("**https://dkwebsite.de/health**", " returned HTTP 200."),
+    ],
+)
+async def test_a_link_to_a_watched_url_stays_in_the_answer(link, after):
+    answer = f"I checked {link}{after}"
+
+    assert await answered(answer) == answer
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        "https://dkwebsite.de.evil.com/login",
+        "https://dkwebsite.de@evil.com",
+        "https://evil.com/?u=https://dkwebsite.de",
+        "http://dkwebsite.de",
+        "https://dkwеbsite.de",  # a Cyrillic "е"
+        "www.dkwebsite.de",
+    ],
+)
+async def test_a_look_alike_of_a_watched_url_is_still_taken_out(link):
+    said = await answered(f"I checked {link} and it answered.")
+
+    assert said == f"I checked {fixed('link_removed')} and it answered."
+
+
+async def test_with_no_url_checks_a_link_to_the_site_is_taken_out_as_before():
+    said = await answered("I checked https://dkwebsite.de.", SNAPSHOT)
+
+    assert said == f"I checked {fixed('link_removed')}"
+
+
+async def test_a_watched_url_with_a_token_in_its_query_is_taken_out():
+    said = await answered("See https://dkwebsite.de/?token=sk-ant-api03-abcdefghijklmnopqrstuv now")
+
+    assert "sk-ant" not in said and said == f"See {fixed('link_removed')} now"
+
+
+async def test_a_long_answer_is_cut_before_a_kept_link_not_inside_it():
+    head = "x " * 740
+    said = await answered(f"{head}see https://dkwebsite.de/status for the details.")
+
+    assert said.endswith("see…") and "dkwebsite" not in said and len(said) <= 1500
+
+
 async def test_each_call_is_counted_in_the_usage_ledger_under_talk(tmp_path):
     ledger = await ledger_at(tmp_path)
 

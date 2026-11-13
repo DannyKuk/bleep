@@ -160,6 +160,7 @@ class BleepState:
             open_incidents=[await self._incident_line(i) for i in open_incidents[-OPEN_KEPT:]],
             ended_last_24h=[await self._incident_line(i) for i in recent[:ENDED_KEPT]],
             left_out={part: n for part, n in left_out.items() if n > 0},
+            watched_urls=sorted({u.url for s in services for u in s.urls}),
         )
 
     def _host(self, host: HostView) -> HostLine:

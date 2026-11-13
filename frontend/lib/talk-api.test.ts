@@ -6,6 +6,17 @@ const SHOP: TalkLink = { kind: "service", id: "demo/compose:shop", label: "shop"
 const SHOP_14: TalkLink = { kind: "incident", id: "inc_14", label: "shop #14" };
 
 describe("splitLinks", () => {
+  it("never links a name inside a URL the answer kept (#543)", () => {
+    expect(splitLinks("https://shop.example/shop answers; shop is fine.", [SHOP])).toEqual([
+      "https://shop.example/shop answers; ",
+      { text: "shop", link: SHOP },
+      " is fine.",
+    ]);
+    expect(splitLinks("checked HTTPS://SHOP.example", [SHOP])).toEqual([
+      "checked HTTPS://SHOP.example",
+    ]);
+  });
+
   it("links the longest name first and never a name inside a longer word", () => {
     expect(
       splitLinks("shop #14 waits; shop-web and shopping are fine; shop too.", [SHOP, SHOP_14]),

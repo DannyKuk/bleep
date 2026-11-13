@@ -32,7 +32,7 @@ from bleep.incidents.repository import IncidentRepo
 from bleep.llm.usage import CostLedger
 from bleep.notify.notifier import Notifier, NotifySetup, setup
 from bleep.notify.telegram import MessageLog, OnIt, TelegramBot
-from bleep.schemas.api import HostView, QuietView, ServiceView
+from bleep.schemas.api import HostView, QuietView, ServiceView, UrlStatus
 from bleep.schemas.graph import Decision, Proposal
 from bleep.schemas.incidents import Incident, Signal, Subject
 from bleep.schemas.services import HostState, Service
@@ -58,10 +58,12 @@ class NoHealth:
 
 
 class Health:
-    """One host, `demo`, with one service, shop, quiet as the quiet store says."""
+    """One host, `demo`, with one service, shop, quiet as the quiet store says and checking
+    `urls`."""
 
     def __init__(self, quiet: QuietStore) -> None:
         self.quiet = quiet
+        self.urls: list[str] = []
 
     async def hosts(self) -> list[HostView]:
         return [
@@ -76,7 +78,7 @@ class Health:
         return [
             ServiceView(
                 id=SHOP, host_id="demo", name="shop", source="compose", health="down",
-                containers=[], urls=[], open_incident_id=None,
+                containers=[], urls=[url_status(u) for u in self.urls], open_incident_id=None,
                 quiet=QuietView.of(state) if state is not None else None,
             )
         ]  # fmt: skip
@@ -115,6 +117,10 @@ def said(name: str, **values: str) -> str:
     return prompts.load(f"notify/{name}", **values).strip()
 
 
+def url_status(url: str) -> UrlStatus:
+    return UrlStatus(url=url, status="ok", last_checked=None, status_code=200, latency_ms=40)
+
+
 class Env(SimpleNamespace):
     pass
 
@@ -130,7 +136,8 @@ async def env(tmp_path) -> Env:
     e.repo, e.quiet = IncidentRepo(e.db), QuietStore(e.db, clock=e.clock)
     e.model = FakeChatModel(script=[])
     e.guard = GuardLog(e.db)
-    state = BleepState(Health(e.quiet), e.repo, e.approvals, e.bus, clock=e.clock)
+    e.health = Health(e.quiet)
+    state = BleepState(e.health, e.repo, e.approvals, e.bus, clock=e.clock)
 
     async def no_sleep(_: float) -> None:
         return None
@@ -234,6 +241,17 @@ async def test_a_status_question_is_answered_as_a_plain_reply(env):
     assert sent["reply_parameters"]["message_id"] == 321
     assert "parse_mode" not in sent and "reply_markup" not in sent  # plain text, no buttons
     await nothing_changed(env)
+
+
+async def test_an_answer_keeps_a_link_to_a_watched_url_and_takes_out_any_other(env):
+    env.health.urls = ["https://dkwebsite.de"]
+    answer = "I checked that https://dkwebsite.de returned HTTP 200, not https://evil.example."
+
+    [sent] = await say(env, "how did you check?", None, reading(kind="question", answer=answer))
+
+    removed = prompts.load("talk/link_removed").strip()
+    assert sent["text"] == f"I checked that https://dkwebsite.de returned HTTP 200, not {removed}"
+    assert "parse_mode" not in sent
 
 
 async def test_a_question_sent_as_a_reply_to_a_waiting_plan_is_answered_not_sent_to_it(env):

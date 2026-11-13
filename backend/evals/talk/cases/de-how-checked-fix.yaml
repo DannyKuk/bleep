@@ -18,6 +18,7 @@ expect:
     - URL
   - - läuft
     - laufen
+    - laufend
     - lief
     - liefen
     - gelaufen

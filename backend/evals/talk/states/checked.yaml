@@ -7,6 +7,8 @@
 # `verify_*` lines use Verify's own details (`graph/nodes/verify.py`). `tests/evals/test_talk_eval.py`
 # runs those tools and checks that the other lines are what they make.
 snapshot:
+  # The URL check shop's verify_url ran, kept in an answer (#543); the model never reads it here.
+  watched_urls: ["https://shop.example.com/"]
   now: "2026-11-10 10:20"
   zone: Europe/Vienna
   hosts:
