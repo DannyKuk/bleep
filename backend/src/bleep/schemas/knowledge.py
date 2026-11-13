@@ -1,6 +1,7 @@
 """What knowledge search keeps and finds: documents from three sources and the hits a search
 returns."""
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -29,3 +30,25 @@ class KnowledgeHit(BaseModel):
     heading: str  # the headings above the chunk, "A > B"; empty above the first heading
     text: str
     score: float
+
+
+class RepoDocsRepo(BaseModel):
+    repo: str  # "owner/name"
+    chunks: int  # what knowledge search holds of its docs; 0 until they are read
+
+
+class RepoDocsState(BaseModel):
+    """What Bleep holds of the linked repos' docs. `last_read_at` is when a refresh last read
+    the repos linked then; None before the first."""
+
+    last_read_at: datetime | None
+    repos: list[RepoDocsRepo]
+
+
+class RepoDocsRefreshed(RepoDocsState):
+    """The state after a refresh, with what the refresh did: `read` of the `linked` repos could
+    be read, and `embedded` documents were new or changed."""
+
+    read: int
+    linked: int
+    embedded: int

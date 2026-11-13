@@ -23,7 +23,12 @@ from bleep.hosts.github import RateLimited
 from bleep.knowledge.index import KnowledgeIndex, SyncResult
 from bleep.schemas.github import RepoFile
 from bleep.schemas.graph import IncidentRecord
-from bleep.schemas.knowledge import KnowledgeDocument
+from bleep.schemas.knowledge import (
+    KnowledgeDocument,
+    RepoDocsRefreshed,
+    RepoDocsRepo,
+    RepoDocsState,
+)
 
 log = logging.getLogger(__name__)
 
@@ -180,6 +185,7 @@ class KnowledgeRefresher:
         self.sleep = sleep
         self.monotonic = monotonic
         self._failing: dict[str, str] = {}
+        self._refreshing: asyncio.Task[RepoRefresh] | None = None
 
     async def refresh_docker(self) -> SyncResult:
         if self.snapshot_dir is None:
@@ -193,6 +199,18 @@ class KnowledgeRefresher:
         return await self.index.sync("incident", [incident_document(r) for r in records])
 
     async def refresh_repos(self) -> RepoRefresh:
+        """Sync every linked repo's docs now. A refresh already running (the daily one, or a
+        person's press) is joined, not repeated: both get its result."""
+        if self._refreshing is None:
+            task = asyncio.ensure_future(self._read_repos())
+            task.add_done_callback(self._refresh_done)
+            self._refreshing = task
+        return await self._refreshing
+
+    def _refresh_done(self, _task: asyncio.Task[RepoRefresh]) -> None:
+        self._refreshing = None
+
+    async def _read_repos(self) -> RepoRefresh:
         """Sync every linked repo's docs. A repo that cannot be read keeps the docs it had, and so
         does a file that could not be read; a repo no longer linked loses them. A rate limit stops
         the refresh there: without a token GitHub allows 60 requests an hour, and the rest would
@@ -227,6 +245,28 @@ class KnowledgeRefresher:
         if read or not linked:
             await self.index.mark_refresh(REPOS_REFRESH, _scope(read))
         return RepoRefresh(embedded=embedded, read=len(read), linked=len(linked))
+
+    async def repo_docs_state(self) -> RepoDocsState:
+        """When the repos were last read and the chunks each linked repo has in search."""
+        last = await self.index.last_refresh(REPOS_REFRESH)
+        linked = await self.repos.linked_repos() if self.repos is not None else []
+        counts = await self.index.repo_chunk_counts()
+        return RepoDocsState(
+            last_read_at=last[0] if last else None,
+            repos=[RepoDocsRepo(repo=repo, chunks=counts.get(repo, 0)) for repo in sorted(linked)],
+        )
+
+    async def refresh_repos_now(self) -> RepoDocsRefreshed:
+        """Read the repos' docs now, though they were read a moment ago, and report the state
+        after."""
+        refresh = await self.refresh_repos()
+        state = await self.repo_docs_state()
+        return RepoDocsRefreshed(
+            **state.model_dump(),
+            read=refresh.read,
+            linked=refresh.linked,
+            embedded=refresh.embedded,
+        )
 
     def _failed(self, repo: str, why: str) -> None:
         """Log why `repo` could not be read, once until the reason changes: a bad token or an

@@ -676,6 +676,7 @@ export const de: Messages = {
       plugins: "Plugins",
       secrets: "Zugangsdaten",
       telegram: "Telegram",
+      docs: "Repo-Doku",
     },
     load: {
       settings: {
@@ -693,6 +694,10 @@ export const de: Messages = {
       telegram: {
         failed: (message) => `Der Telegram-Status konnte nicht geladen werden: ${message}`,
         loading: "Telegram-Status wird geladen",
+      },
+      docs: {
+        failed: (message) => `Die Repo-Doku konnte nicht geladen werden: ${message}`,
+        loading: "Repo-Doku wird geladen",
       },
     },
     notSaved:
@@ -906,6 +911,20 @@ export const de: Messages = {
       notYet: "Noch nicht",
       without:
         "Ohne Telegram läuft jede Freigabe hier. Setze `TELEGRAM_BOT_TOKEN` und `TELEGRAM_CHAT_ID` unten unter Zugangsdaten oder in der `.env` und starte Bleep neu, um Nachrichten zu bekommen und im Chat freizugeben.",
+    },
+    docs: {
+      note: "Bleep liest die README und die `docs/` jedes Repos, das ein Dienst in der Hosts-Datei mit `repo` verknüpft, und findet sie bei der Untersuchung. Es liest sie einmal am Tag; lies sie jetzt, nachdem du deine Doku korrigiert hast.",
+      lastRead: "Zuletzt gelesen",
+      notYet: "Noch nicht",
+      none: "Kein Dienst verknüpft ein Repo. Setze `repo` bei einem Dienst in der Hosts-Datei.",
+      repos: "Verknüpfte Repos",
+      chunks: (n) => `${n} ${n === 1 ? "Abschnitt" : "Abschnitte"}`,
+      button: "Doku neu lesen",
+      reading: "Doku wird gelesen",
+      readAll: (read) => `${read} ${read === 1 ? "Repo" : "Repos"} gelesen.`,
+      readSome: (read, linked) =>
+        `${read} von ${linked} Repos gelesen. Die anderen konnten nicht gelesen werden und behalten ihre bisherige Doku; versuche es später noch einmal.`,
+      failed: (message) => `Die Doku konnte nicht gelesen werden: ${message}`,
     },
     thresholds: {
       labels: {

@@ -12,6 +12,7 @@ from bleep.api import (
     host_settings,
     hosts,
     incidents,
+    knowledge,
     memory,
     plugins,
     quiet,
@@ -188,6 +189,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
     protected.include_router(host_settings.router)
     protected.include_router(quiet.router)
     protected.include_router(plugins.router)
+    protected.include_router(knowledge.router)
     protected.include_router(secrets.router)
     protected.include_router(telegram.router)
     protected.include_router(talk.router)

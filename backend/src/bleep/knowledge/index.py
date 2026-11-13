@@ -188,6 +188,24 @@ class KnowledgeIndex:
         finally:
             await conn.close()
 
+    async def repo_chunk_counts(self) -> dict[str, int]:
+        """The chunks knowledge search holds of each repo's docs, by `owner/name`."""
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                "SELECT d.id, COUNT(c.document_id) AS chunks FROM knowledge_documents d"
+                " LEFT JOIN knowledge_chunks c ON c.document_id = d.id"
+                " WHERE d.source = 'repo' GROUP BY d.id"
+            ) as cursor:
+                rows = await cursor.fetchall()
+        finally:
+            await conn.close()
+        counts: dict[str, int] = {}
+        for row in rows:
+            repo = row["id"].split(":", 2)[1]  # "repo:owner/name:path"; a repo name has no ":"
+            counts[repo] = counts.get(repo, 0) + row["chunks"]
+        return counts
+
     async def has_other_model(self, prefix: str) -> bool:
         """Whether a document whose id starts with `prefix` was embedded by another embedder than
         the one in force: search leaves it out until it is embedded again."""

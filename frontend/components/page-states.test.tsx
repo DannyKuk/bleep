@@ -9,7 +9,14 @@ import { OverallProvider } from "@/components/overall-state";
 import { Overview } from "@/components/overview/overview";
 import { Recoveries } from "@/components/overview/recoveries";
 import { ServicePage } from "@/components/service/service-page";
-import { json, plugin, secretViews, settingsView, telegram } from "@/components/settings/fixtures";
+import {
+  json,
+  plugin,
+  repoDocs,
+  secretViews,
+  settingsView,
+  telegram,
+} from "@/components/settings/fixtures";
 import { SettingsPage } from "@/components/settings/settings-page";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -225,6 +232,7 @@ describe("the settings page", () => {
     render(<SettingsPage />);
     expect(await screen.findByText(/Could not load the settings:/)).toBeInTheDocument();
     expect(await screen.findByText(/Could not load the plugins:/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load the repo docs:/)).toBeInTheDocument();
   });
 
   it("says there are no hosts yet", async () => {
@@ -233,6 +241,7 @@ describe("the settings page", () => {
       if (path === "/api/plugins") return json([plugin()]);
       if (path === "/api/telegram/status") return json(telegram());
       if (path === "/api/secrets") return json(secretViews());
+      if (path === "/api/knowledge/repos") return json(repoDocs());
       return undefined;
     });
     render(<SettingsPage />);

@@ -12,6 +12,7 @@ import { Alert, Status, useLoaded, useStaleSaving } from "@/components/settings/
 import { EMBEDDING_KEYS, EmbeddingSettings } from "@/components/settings/embeddings";
 import { MODEL_KEYS, ModelSettings } from "@/components/settings/models";
 import { PluginList } from "@/components/settings/plugins";
+import { RepoDocs } from "@/components/settings/repo-docs";
 import { TelegramSettings } from "@/components/settings/telegram";
 import { SecretFields } from "@/components/settings/secret-field";
 import { ThresholdsForm } from "@/components/settings/thresholds";
@@ -29,6 +30,7 @@ import {
   type SecretView,
 } from "@/lib/secrets-api";
 import { hostHref } from "@/lib/routes";
+import type { RepoDocsState } from "@/lib/knowledge-api";
 import { putPlugin, putSettings } from "@/lib/settings-api";
 import type {
   GeneralOverrides,
@@ -110,7 +112,7 @@ function Hosts({
 
 /**
  * What is Bleep-wide: the hosts as links to their own pages, thresholds, plugins, secrets,
- * models, embeddings, tracing and Telegram. Secrets are set and cleared here or in the
+ * models, embeddings, tracing, the repo docs and Telegram. Secrets are set and cleared here or in the
  * environment, and shown only as set or missing.
  */
 export function SettingsPage() {
@@ -127,6 +129,7 @@ function Settings() {
   const plugins = useLoaded<PluginView[]>("/api/plugins");
   const telegram = useLoaded<TelegramStatus>("/api/telegram/status");
   const secrets = useLoaded<SecretView[]>("/api/secrets");
+  const docs = useLoaded<RepoDocsState>("/api/knowledge/repos");
   const { notice, setNotice, saving } = useStaleSaving();
   const setZone = useSetTimeZone();
   const zoneInForce = settings.data?.timezone;
@@ -300,6 +303,12 @@ function Settings() {
               actions={secretActions}
             />
           )}
+        </Status>
+      </Panel>
+
+      <Panel title={t.panels.docs}>
+        <Status loaded={docs} what="docs">
+          {(state) => <RepoDocs initial={state} />}
         </Status>
       </Panel>
 
