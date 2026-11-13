@@ -6,12 +6,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
+from uuid import UUID
 
 from langchain_core.callbacks import AsyncCallbackHandler
+from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 from langchain_core.runnables import RunnableConfig
 from langchain_core.runnables.config import ensure_config, merge_configs
 
+from bleep.llm.factory import PROVIDER_METADATA
 from bleep.schemas.settings import Budgets
 from bleep.store.db import Database
 
@@ -102,16 +105,18 @@ class CostLedger:
         usd: float | None,
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
+        provider: str | None = None,
     ) -> None:
-        """`tokens_in` counts every input token; the cache reads and writes are parts of it."""
+        """`tokens_in` counts every input token; the cache reads and writes are parts of it.
+        `provider` is `anthropic`, `openrouter` or `local`; None when the call did not say."""
         now = self.clock()
         conn = await self.db.connect()
         try:
             await conn.execute(
                 "INSERT INTO usage"
                 " (incident_id, model, tokens_in, tokens_out, usd, day, created_at,"
-                " cache_read_tokens, cache_write_tokens)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " cache_read_tokens, cache_write_tokens, provider)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     incident_id,
                     model,
@@ -122,6 +127,7 @@ class CostLedger:
                     now.isoformat(),
                     cache_read_tokens,
                     cache_write_tokens,
+                    provider,
                 ),
             )
             await conn.commit()
@@ -317,8 +323,26 @@ class UsageTracker(AsyncCallbackHandler):
     def __init__(self, incident_id: str, ledger: CostLedger) -> None:
         self.incident_id = incident_id
         self.ledger = ledger
+        self._providers: dict[UUID, str] = {}
 
-    async def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
+    async def on_chat_model_start(
+        self,
+        serialized: dict[str, Any],
+        messages: list[list[BaseMessage]],
+        *,
+        run_id: UUID,
+        metadata: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        provider = (metadata or {}).get(PROVIDER_METADATA)
+        if isinstance(provider, str):
+            self._providers[run_id] = provider
+
+    async def on_llm_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
+        self._providers.pop(run_id, None)
+
+    async def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
+        provider = self._providers.pop(run_id, None)
         for call in call_costs(response):
             await self.ledger.add(
                 self.incident_id,
@@ -328,6 +352,7 @@ class UsageTracker(AsyncCallbackHandler):
                 call.usd,
                 call.cache_read_tokens,
                 call.cache_write_tokens,
+                provider,
             )
 
 
