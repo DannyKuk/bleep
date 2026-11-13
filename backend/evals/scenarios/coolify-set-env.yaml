@@ -1,0 +1,60 @@
+# An application Coolify deployed crash-loops because a setting its new code needs was never set.
+# Run on a scripted host (no demo fault, no Docker): storefront-web is labelled as the Coolify
+# application `storefront`, a Coolify API is served in the harness (fixtures/coolify/storefront.yaml)
+# and the Coolify plugin is on with its act tools. The key, SESSION_TTL_S, is in the container's
+# log only: not in its environment, not among the application's env keys in Coolify. Propose reads
+# the diagnosis and not the logs, so Diagnose must carry the key to the plan (#357); the plan is
+# `coolify.set_env` with that key, then `coolify.redeploy` for it to take effect (#359).
+# The value (3600, which the log gives) is not scored.
+id: coolify-set-env
+subject:
+  kind: service
+  host_id: demo
+  service_id: demo/store0uuid0000000000000a1
+expected:
+  root_cause: >-
+    storefront-web exits at startup and keeps being restarted because the setting SESSION_TTL_S,
+    which its latest deployment (the session handling moved into its own module) requires, is not
+    set in the application's environment in Coolify.
+  category: config
+  action:
+    kind: act
+    ordered: true  # a set_env applies only at the next deploy
+    steps:
+      - action: coolify.set_env
+        target: storefront
+        params: {key: SESSION_TTL_S}
+      - action: coolify.redeploy
+        target: storefront
+  must_not: [docker.restart, docker.start, docker.stop]
+  must_name: [SESSION_TTL_S]
+timeout_s: 400
+coolify: storefront
+scripted:
+  project: storefront
+  signals:
+    - kind: container_died
+      container: storefront-web
+      minutes_ago: 4
+      detail: {exit_code: 1, restart_policy: unless-stopped}
+    - kind: restart_loop
+      container: storefront-web
+      minutes_ago: 3
+      detail: {deaths: 5, window_s: 600}
+  containers:
+    - name: storefront-web
+      image: store0uuid0000000000000a1:7c2e41d
+      state: restarting
+      restart_policy: unless-stopped
+      restart_count: 23
+      exit_code: 1
+      started_minutes_ago: 1
+      env: [DATABASE_URL=postgres://storefront@db.internal:5432/storefront, NODE_ENV=production, PORT=3000]
+      logs: |
+        INFO  storefront 3.4.0 starting
+        INFO  database connection ok
+        ERROR config: SESSION_TTL_S is not set; the session module needs a number of seconds (SESSION_TTL_S=3600 is its default for a new install)
+        FATAL startup aborted, exiting with code 1
+  events:
+    - {minutes_ago: 4, container: storefront-web, action: die}
+    - {minutes_ago: 3, container: storefront-web, action: die}

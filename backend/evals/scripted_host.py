@@ -10,10 +10,11 @@ was made, so a run reads as recent whatever day it runs.
 import asyncio
 from collections.abc import AsyncIterator, Callable, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from bleep.hosts.config import HostConfig, ServiceOverrides
 from bleep.hosts.engine import ContainerNotFound
 from bleep.schemas.docker import (
     ContainerDetail,
@@ -22,6 +23,7 @@ from bleep.schemas.docker import (
     DockerEvent,
     EngineInfo,
 )
+from bleep.schemas.incidents import SignalKind
 
 COMPOSE_PROJECT = "com.docker.compose.project"
 COMPOSE_SERVICE = "com.docker.compose.service"
@@ -70,7 +72,18 @@ class ScriptedContainer(_Strict):
     mem_usage_mib: float = 50
     oom_killed: bool = False
     logs: str = ""
+    # Labels beside the Compose ones, as a platform on the host (Coolify) writes its own.
+    labels: dict[str, str] = Field(default_factory=dict)
     after: After | None = None
+
+
+class ScriptedSignal(_Strict):
+    """What the watcher saw, as an incident's first signal."""
+
+    kind: SignalKind
+    container: str | None = None
+    minutes_ago: float = 5
+    detail: dict[str, Any] = Field(default_factory=dict)
 
 
 def container_id(name: str) -> str:
@@ -94,6 +107,40 @@ class ScriptedEvent(_Strict):
     minutes_ago: float
     container: str
     action: str  # Docker's word: die, start, oom, "health_status: unhealthy", ...
+
+
+class ScriptedHost(_Strict):
+    """A host in memory for a scenario: the containers and events it shows, the signals that
+    open the incident, and the hosts file rules for it. The containers are one Compose project's,
+    unless their labels say otherwise."""
+
+    project: str
+    containers: list[ScriptedContainer] = Field(min_length=1)
+    events: list[ScriptedEvent] = Field(default_factory=list)
+    signals: list[ScriptedSignal] = Field(min_length=1)
+    rules: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _names_fit(self) -> Self:
+        names = {c.name for c in self.containers}
+        named = [s.container for s in self.signals if s.container]
+        unknown = sorted({*named, *(e.container for e in self.events)} - names)
+        if unknown:
+            raise ValueError(f"names containers the host does not have: {', '.join(unknown)}")
+        return self
+
+    def config(self, host_id: str) -> HostConfig:
+        """The host's hosts file entry: a socket host that is never connected to."""
+        return HostConfig(
+            id=host_id,
+            name="Scripted host",
+            kind="socket",
+            endpoint="tcp://scripted:2375",
+            services={self.project: ServiceOverrides(rules=self.rules)},
+        )
+
+    def engine(self, host_id: str) -> ScriptedEngine:
+        return ScriptedEngine(host_id, self.project, self.containers, self.events)
 
 
 class ScriptedEngine:
@@ -262,7 +309,8 @@ def _summary(c: ScriptedContainer, project: str, now: datetime) -> ContainerSumm
             COMPOSE_PROJECT: project,
             COMPOSE_SERVICE: c.name.removeprefix(f"{project}-"),
             COMPOSE_CONFIG_HASH: "0" * 64,
-        },
+        }
+        | c.labels,
         restart_policy=c.restart_policy,
         restart_count=c.restart_count,
         exit_code=c.exit_code,

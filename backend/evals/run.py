@@ -5,7 +5,10 @@
 
 Each run builds Bleep's watcher and incident graph in this process, on a throwaway SQLite
 database, with Telegram off, no memory and no act tools, but the MCP plugin's for a scenario that
-serves an MCP fixture (`evals/mcp_server.py`), which nothing ever calls. Before each run it
+serves an MCP fixture (`evals/mcp_server.py`) or the Coolify plugin's for one that serves a Coolify
+fixture (`evals/coolify.py`), which nothing ever calls. A scenario on a scripted host
+(`evals/scripted_host.py`, #359) skips the rest of this paragraph's demo stack: no fault, no
+watcher, no reset, no Docker; it opens its incident from its own signals. Before each other run it
 recreates the demo shop's containers, so no earlier run's log reaches this one (#104). It switches
 the scenario's fault on with `demo/fault.sh`, waits for the watcher to open the scenario's
 incident, runs the graph to the end of Propose and stops there: evals never execute anything.
@@ -26,7 +29,7 @@ import sys
 import tempfile
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, Protocol, Self
 
@@ -65,7 +68,7 @@ from bleep.llm.usage import CostLedger
 from bleep.memory.embeddings import Embedder, FastEmbedEmbedder
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.github import RepoFile
-from bleep.schemas.incidents import Incident, Subject
+from bleep.schemas.incidents import Incident, Signal, Subject
 from bleep.schemas.knowledge import KnowledgeDocument
 from bleep.schemas.services import Service
 from bleep.schemas.settings import DEFAULT_LANGUAGE, Language, ModelSettings, Thresholds
@@ -76,6 +79,8 @@ from bleep.tools.knowledge import Searcher
 from bleep.watcher.detector import Detector
 from bleep.watcher.http_checks import UrlCheckStore
 from bleep.watcher.manager import WatcherManager
+from evals.coolify import ServedCoolify, load_coolify_fixture
+from evals.coolify import serve as serve_coolify
 from evals.github import FixtureDeploys, fixture_client, load_github_fixture
 from evals.judge import DEFAULT_JUDGE, MANUAL, Judge, JudgeError, build_judge, check_distinct
 from evals.judge import model_under_test as tested_model
@@ -100,6 +105,7 @@ from evals.scenarios import (
     score_category,
     score_names,
 )
+from evals.scripted_host import ScriptedEngine
 from evals.stack_lock import (
     DEFAULT_STACK_LOCK,
     StackBusy,
@@ -483,15 +489,18 @@ def _graph_deps(
     knowledge: Searcher | None = None,
     mcp: ServedMcp | None = None,
     deploys: DeploySource | None = None,
+    coolify: ServedCoolify | None = None,
 ) -> GraphDeps:
     """Bleep's graph parts, minus everything that reaches past Propose or out of the process:
-    no act tools but the MCP plugin's when the run serves its server (`evals.mcp_server`; Execute
-    never runs, so none is called), no memory unless a test plants one (each run starts blank),
+    no act tools but the MCP plugin's when the run serves its server (`evals.mcp_server`) or the
+    Coolify plugin's when it serves a Coolify API (`evals.coolify`; Execute never runs, so none is
+    called), no memory unless a test plants one (each run starts blank),
     no Telegram, no GitHub tools unless the run serves a fixture (`evals.github`, with its deploy
     as the running commit when it names one), and no
     knowledge search unless a case gives one."""
     guard_log = GuardLog(db)
-    plugins = mcp.plugins(guard_log) if mcp is not None else None
+    served = mcp or coolify
+    plugins = served.plugins(guard_log) if served is not None else None
     actions = CORE_ACTIONS | (plugins.actions() if plugins is not None else set())
     store = StaticSettings(
         model_settings=settings.models, actions=actions, written_in=settings.language
@@ -584,6 +593,7 @@ async def run_scenario(
     after: AfterPropose | None = None,
     github: GithubClient | None = None,
     mcp: ServedMcp | None = None,
+    coolify: ServedCoolify | None = None,
     make_registry: Callable[[list[HostConfig], Connector], Registry] = Registry,
 ) -> ScenarioResult:
     """One run: fault on, the scenario's incident to the end of Propose, fault off, scored.
@@ -595,8 +605,12 @@ async def run_scenario(
     run's, like one before. `github` is the GitHub the tools read; without it they are absent,
     and a scenario with a `github` fixture gets one dated from the run's start. `mcp` is the MCP
     server the plugin is switched on for; without it, a scenario with an `mcp` fixture gets that
-    fixture served in this process for the run, and one without has the plugin off.
-    `knowledge` is what the `knowledge_search` tool searches (no tool by default).
+    fixture served in this process for the run, and one without has the plugin off. `coolify`
+    is the Coolify API the Coolify plugin is switched on for, as `mcp` is for the MCP one; a
+    scenario with a `coolify` fixture gets it served for the run. A scenario on a `scripted`
+    host replaces the demo host and `connector` with its own engine, switches no fault, starts no
+    watcher and opens its incident from its signals; a Coolify request that is not a read fails
+    the run. `knowledge` is what the `knowledge_search` tool searches (no tool by default).
     `make_registry` builds the host registry, so an injection case can plant text in what it
     reads from the host (`evals.injection.PlantedBasics`).
     """
@@ -613,9 +627,15 @@ async def run_scenario(
             mcp = await stack.enter_async_context(
                 serve(load_mcp_fixture(scenario.mcp), scenario.mcp_purpose)
             )
+        if coolify is None and scenario.coolify is not None:
+            coolify = serve_coolify(load_coolify_fixture(scenario.coolify))
         db = Database(Path(folder) / "bleep.db")
         await db.migrate()
-        host = eval_host(settings)
+        if scenario.scripted is not None:
+            host = scenario.scripted.config(scenario.subject.host_id)
+            connector = _scripted_connector(scenario, coolify)
+        else:
+            host = eval_host(settings)
         if scenario.no_urls:
             host = without_urls(host)
         registry = make_registry([host], connector)
@@ -628,21 +648,23 @@ async def run_scenario(
                     github = fixture_client(fixture, lambda: start)
                     deploys = FixtureDeploys(fixture, start)
                 deps = _graph_deps(
-                    db, registry, settings, models, memory, github, knowledge, mcp, deploys
+                    db, registry, settings, models, memory, github, knowledge, mcp, deploys, coolify
                 )
                 graph = build_graph(deps, saver)
                 catcher = IncidentCatcher(graph, deps.incidents, deps.bus)
-                manager = WatcherManager(
-                    registry,
-                    Detector(Thresholds(), utcnow),
-                    deps.incidents,
-                    catcher,
-                    deps.bus,
-                    guard_log=deps.guard_log,
-                    store=UrlCheckStore(db),
-                    watch_interval_s=settings.watch_interval_s,
-                )
-                await manager.start()
+                manager = None
+                if scenario.scripted is None:
+                    manager = WatcherManager(
+                        registry,
+                        Detector(Thresholds(), utcnow),
+                        deps.incidents,
+                        catcher,
+                        deps.bus,
+                        guard_log=deps.guard_log,
+                        store=UrlCheckStore(db),
+                        watch_interval_s=settings.watch_interval_s,
+                    )
+                    await manager.start()
                 try:
                     await _fault_run(
                         scenario, settings, faults, result, graph, deps, db, catcher, registry
@@ -657,8 +679,11 @@ async def run_scenario(
                             await after(graph, deps, result)
                         except Exception as error:  # as in _fault_run: a result, not a crash
                             _failed(scenario, result, error)
+                    if coolify is not None and coolify.writes:
+                        _fail_on_writes(scenario, result, coolify)
                 finally:
-                    await manager.stop()
+                    if manager is not None:
+                        await manager.stop()
                     if isinstance(deps.guard_log, GuardLog):
                         await deps.guard_log.flush()
         finally:
@@ -667,6 +692,54 @@ async def run_scenario(
     if result.diagnosis is not None and judge is not None:
         await _judge(scenario, judge, result)
     return result
+
+
+def _scripted_connector(scenario: Scenario, coolify: ServedCoolify | None) -> Connector:
+    """Connects the run's host to the scenario's scripted engine, its container the Coolify
+    fixture names labelled as that application's."""
+    scripted = scenario.scripted
+    assert scripted is not None
+    if coolify is not None:
+        labels = coolify.fixture.labels()
+        containers = [
+            c.model_copy(update={"labels": c.labels | labels})
+            if c.name == coolify.fixture.container
+            else c
+            for c in scripted.containers
+        ]
+        scripted = scripted.model_copy(update={"containers": containers})
+    engine = scripted.engine(scenario.subject.host_id)
+
+    async def connect(_host: HostConfig) -> tuple[None, ScriptedEngine]:
+        return None, engine
+
+    return connect
+
+
+async def _open_scripted(scenario: Scenario, deps: GraphDeps) -> Incident:
+    """The scenario's incident, opened from its scripted signals as the watcher would open it."""
+    assert scenario.scripted is not None
+    now = utcnow()
+    signals = [
+        Signal(
+            subject=scenario.subject,
+            kind=s.kind,
+            at=now - timedelta(minutes=s.minutes_ago),
+            detail=s.detail,
+            container=s.container,
+        )
+        for s in scenario.scripted.signals
+    ]
+    incident, _ = await deps.incidents.open_or_attach(scenario.subject, signals)
+    return incident
+
+
+def _fail_on_writes(scenario: Scenario, result: ScenarioResult, coolify: ServedCoolify) -> None:
+    """Evals stop after Propose, so a Coolify request that is not a read means a step ran."""
+    asked = ", ".join(f"{r.method} {r.url.path}" for r in coolify.writes)
+    result.failure = "error"
+    result.error = f"the Coolify fixture was asked to write: {asked}"
+    log.error("scenario %s run %d: %s", scenario.id, result.run, result.error)
 
 
 async def _fault_run(
@@ -688,7 +761,10 @@ async def _fault_run(
         async with asyncio.timeout(scenario.timeout_s):
             if scenario.look:
                 await ask_for_look(scenario.subject, registry, db, catcher)
-            incident = await catcher.wait_for(scenario.subject, since=fault_on)
+            if scenario.scripted is not None:
+                incident = await _open_scripted(scenario, deps)
+            else:
+                incident = await catcher.wait_for(scenario.subject, since=fault_on)
             result.incident_id = incident.id
             result.seconds_to_incident = (incident.opened_at - fault_on).total_seconds()
             await _until_propose(graph, deps, incident)
@@ -885,21 +961,28 @@ async def run_suite(
     done: Mapping[str, int] | None = None,
     reset: Callable[[], Awaitable[None]] | None = None,
     knowledge: Searcher | None = None,
+    scripted_knowledge: Searcher | None = None,
 ) -> list[ScenarioResult]:
     """Every scenario `repeat` times, one after another, with `settle_s` between runs. `done`
     is how many runs each scenario already has from an earlier batch: its runs are numbered
     after them. `reset` (a `ShopReset`) runs before every run instead of the settle wait: it
-    returns once the shop answers again. `knowledge` is what `knowledge_search` searches."""
+    returns once the shop answers again. `knowledge` is what `knowledge_search` searches in a
+    demo run, and `scripted_knowledge` in a scripted one, whose host links no repo. A
+    scenario on a scripted host leaves the shop alone, so it is neither preceded by a reset nor
+    waited for, and the wait after a run that did touch it still comes before the next such run."""
     done = done or {}
     results: list[ScenarioResult] = []
+    shop_disturbed = False
     for scenario in scenarios:
         first = done.get(scenario.id, 0) + 1
         for run in range(first, first + repeat):
-            if reset is not None:
-                log.info("resetting the shop")
-                await reset()
-            elif results:
-                await sleep(settings.settle_s)
+            if scenario.scripted is None:
+                if reset is not None:
+                    log.info("resetting the shop")
+                    await reset()
+                elif shop_disturbed:
+                    await sleep(settings.settle_s)
+                shop_disturbed = True
             log.info("scenario %s, run %d of %d", scenario.id, run, first + repeat - 1)
             result = await run_scenario(
                 scenario,
@@ -909,7 +992,7 @@ async def run_suite(
                 run=run,
                 connector=connector,
                 models=models,
-                knowledge=knowledge,
+                knowledge=scripted_knowledge if scenario.scripted is not None else knowledge,
             )
             on_result(result)
             results.append(result)
@@ -1050,7 +1133,8 @@ async def _run(
 ) -> int:
     """`batch` is the earlier runs this one continues (`--append`) and when the suite started:
     none and now for a new suite."""
-    if live_backend(await demo_containers(settings)):
+    uses_demo_stack = any(s.scripted is None for s in scenarios)
+    if uses_demo_stack and live_backend(await demo_containers(settings)):
         log.warning(
             "Bleep's backend is running on this engine: it will see the faults too, open its own "
             "incidents and page you. Stop it first: docker compose stop backend"
@@ -1065,18 +1149,26 @@ async def _run(
     host = eval_host(settings)
     docker_host = fault_docker_host(settings, host)
     spans = ResetSpans()
-    reset = None if args.no_reset else ShopReset(
+    reset = None if args.no_reset or not uses_demo_stack else ShopReset(
         DEMO_COMPOSE, shop_items_url(host), docker_host=docker_host, spans=spans
     )  # fmt: skip
     with tempfile.TemporaryDirectory(prefix="bleep-knowledge-") as folder:
-        knowledge = None
-        repo_docs = [] if args.no_knowledge else checkout_repo_docs(host)
+        knowledge = scripted_knowledge = None
+        repo_docs: list[KnowledgeDocument] = []
         if not args.no_knowledge:
-            log.info(
-                "embedding the Docker docs snapshot and %d repo docs for knowledge search",
-                len(repo_docs),
-            )
-            knowledge = await snapshot_index(Path(folder), FastEmbedEmbedder(), repo_docs)
+            embedder = FastEmbedEmbedder()
+            if uses_demo_stack:
+                repo_docs = checkout_repo_docs(host)
+                log.info(
+                    "embedding the Docker docs snapshot and %d repo docs for knowledge search",
+                    len(repo_docs),
+                )
+                (Path(folder) / "demo").mkdir()
+                knowledge = await snapshot_index(Path(folder) / "demo", embedder, repo_docs)
+            if any(s.scripted is not None for s in scenarios):
+                log.info("embedding the Docker docs snapshot for the scripted scenarios")
+                (Path(folder) / "scripted").mkdir()
+                scripted_knowledge = await snapshot_index(Path(folder) / "scripted", embedder)
         results = await run_suite(
             scenarios,
             settings,
@@ -1087,6 +1179,7 @@ async def _run(
             done=done,
             reset=reset,
             knowledge=knowledge,
+            scripted_knowledge=scripted_knowledge,
             connector=hide_resets(connect_host, spans),
         )
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1130,13 +1223,18 @@ def main(argv: Sequence[str] | None = None, settings: EvalSettings | None = None
             raise EvalError("--repeat must be 1 or more")
         check_distinct(settings.judge_model, tested_model(settings.models))
         scenarios = load_scenarios(only=args.only)
-        if not settings.fault_script.is_file():
+        uses_demo_stack = any(s.scripted is None for s in scenarios)
+        if uses_demo_stack and not settings.fault_script.is_file():
             raise EvalError(f"no fault script at {settings.fault_script}")
         now, model = utcnow(), tested_model(settings.models)
         batch = earlier_batch(REPO / args.append, now, model) if args.append else ([], now)
         judge = build_judge(settings.judge_model, settings.models)
         command = eval_command("evals.run", sys.argv[1:] if argv is None else argv)
-        with holding_demo_stack(settings.stack_lock, command):
+        with (
+            holding_demo_stack(settings.stack_lock, command)
+            if uses_demo_stack
+            else contextlib.nullcontext()
+        ):
             return asyncio.run(_run(args, settings, scenarios, judge, batch))
     except (EvalError, JudgeError, ScenarioError, StackBusy) as error:
         print(f"evals: {error}", file=sys.stderr)
