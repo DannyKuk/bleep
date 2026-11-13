@@ -92,8 +92,8 @@ _CUT_HEAD = re.compile(r"\[… [0-9]+ chars cut\]\n")  # `guard.sanitize.cut_tai
 _LINK = re.compile(
     r"\b(?:[a-z][a-z0-9+.-]*://|www\.)\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)+/\S*", re.IGNORECASE
 )
-# What ends a sentence or a bracket after a link, not part of it (#543).
-_AFTER_LINK = ".,;:!?)]}'\"…"
+# What ends a sentence, a bracket or the model's Markdown after a link, not part of it (#543).
+_AFTER_LINK = ".,;:!?)]}>'\"`*…"
 ModelFactory = Callable[[Role], BaseChatModel]
 
 

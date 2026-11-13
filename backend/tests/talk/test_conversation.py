@@ -505,6 +505,9 @@ async def answered(answer: str, snapshot: Snapshot = WATCHING) -> str:
         ("https://dkwebsite.de/health", ", which returned HTTP 200."),
         ("https://dkwebsite.de", "."),
         ("(https://dkwebsite.de/)", " returned HTTP 200."),
+        ("`https://dkwebsite.de`", " returned HTTP 200."),
+        ("<https://dkwebsite.de>", " returned HTTP 200."),
+        ("**https://dkwebsite.de/health**", " returned HTTP 200."),
     ],
 )
 async def test_a_link_to_a_watched_url_stays_in_the_answer(link, after):
