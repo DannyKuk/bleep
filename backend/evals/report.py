@@ -539,15 +539,17 @@ def render(info: RunInfo, results: list[ScenarioResult], regrade: str | None = N
             else ""
         )
         + (
-            " The shop's containers were recreated before every run, volumes kept, so no earlier "
-            "run's log reached the next."
+            " The shop's containers were recreated before every "
+            + ("demo-fault " if scripted else "")
+            + "run, volumes kept, so no earlier run's log reached the next."
             if info.reset_shop
             else ""
         )
         + (
             " Knowledge search was offered over the shipped Docker docs snapshot, as in the app"
             + (
-                f", and the linked repo docs {_names(info.repo_docs)}, read from this checkout."
+                f", and the linked repo docs {_names(info.repo_docs)}, read from this checkout"
+                + (" for the demo faults (a scripted host links no repo)." if scripted else ".")
                 if info.repo_docs
                 else "."
             )

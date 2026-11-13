@@ -961,11 +961,13 @@ async def run_suite(
     done: Mapping[str, int] | None = None,
     reset: Callable[[], Awaitable[None]] | None = None,
     knowledge: Searcher | None = None,
+    scripted_knowledge: Searcher | None = None,
 ) -> list[ScenarioResult]:
     """Every scenario `repeat` times, one after another, with `settle_s` between runs. `done`
     is how many runs each scenario already has from an earlier batch: its runs are numbered
     after them. `reset` (a `ShopReset`) runs before every run instead of the settle wait: it
-    returns once the shop answers again. `knowledge` is what `knowledge_search` searches. A
+    returns once the shop answers again. `knowledge` is what `knowledge_search` searches in a
+    demo run, and `scripted_knowledge` in a scripted one, whose host links no repo. A
     scenario on a scripted host leaves the shop alone, so it is neither preceded by a reset nor
     waited for, and the wait after a run that did touch it still comes before the next such run."""
     done = done or {}
@@ -990,7 +992,7 @@ async def run_suite(
                 run=run,
                 connector=connector,
                 models=models,
-                knowledge=knowledge,
+                knowledge=scripted_knowledge if scenario.scripted is not None else knowledge,
             )
             on_result(result)
             results.append(result)
@@ -1151,14 +1153,22 @@ async def _run(
         DEMO_COMPOSE, shop_items_url(host), docker_host=docker_host, spans=spans
     )  # fmt: skip
     with tempfile.TemporaryDirectory(prefix="bleep-knowledge-") as folder:
-        knowledge = None
-        repo_docs = [] if args.no_knowledge else checkout_repo_docs(host)
+        knowledge = scripted_knowledge = None
+        repo_docs: list[KnowledgeDocument] = []
         if not args.no_knowledge:
-            log.info(
-                "embedding the Docker docs snapshot and %d repo docs for knowledge search",
-                len(repo_docs),
-            )
-            knowledge = await snapshot_index(Path(folder), FastEmbedEmbedder(), repo_docs)
+            embedder = FastEmbedEmbedder()
+            if uses_demo_stack:
+                repo_docs = checkout_repo_docs(host)
+                log.info(
+                    "embedding the Docker docs snapshot and %d repo docs for knowledge search",
+                    len(repo_docs),
+                )
+                (Path(folder) / "demo").mkdir()
+                knowledge = await snapshot_index(Path(folder) / "demo", embedder, repo_docs)
+            if any(s.scripted is not None for s in scenarios):
+                log.info("embedding the Docker docs snapshot for the scripted scenarios")
+                (Path(folder) / "scripted").mkdir()
+                scripted_knowledge = await snapshot_index(Path(folder) / "scripted", embedder)
         results = await run_suite(
             scenarios,
             settings,
@@ -1169,6 +1179,7 @@ async def _run(
             done=done,
             reset=reset,
             knowledge=knowledge,
+            scripted_knowledge=scripted_knowledge,
             connector=hide_resets(connect_host, spans),
         )
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
