@@ -662,10 +662,7 @@ def _free_edits(
 # What may come before a quote that opens a string (`cmd='…'`, `msg="…"`, `["…"]`), also after
 # a JSON-escaped line break or tab, or a string prefix (Python's `b'…'`)
 _BEFORE_STRING = frozenset(" \t=:([{,\"'$>*")  # also a quote around it, $'…', a redirect, `**`
-_BEFORE_PREFIX = frozenset("=:([{,")
-# At the line's start or after a blank `b'`, `rb'` is a string prefix (`stdout: b'…'`) unless what
-# follows reads as a contraction (`f's`, `U'll`)
-_CONTRACTION = re.compile(r"'(?:[sStTdDmM]|re|RE|ll|LL|ve|VE)(?!\w)")
+_BEFORE_PREFIX = frozenset(" \t=:([{,")  # `stdout: b'…'`, so also a word like `f's`
 _APOSTROPHE = re.compile(r"[^\W\d_]'[^\W\d_]")
 _ESCAPED_BREAKS = ("\\n", "\\r", "\\t")
 _STRING_PREFIX = re.compile(r"[bBrRuUfF]{1,2}\Z")
@@ -697,17 +694,12 @@ class _Openers:
 
     def _prefix_start(self, quote: int) -> int:
         """Where the string prefix before the quote at `quote` starts (`b` of `out=b'…'`): one or
-        two of its letters after `=`, `:`, a bracket or a comma, or after a blank or at the line's
-        start when no contraction follows; or `quote`."""
+        two of its letters after `=`, `:`, a bracket, a comma, a blank or the line's start; or
+        `quote`."""
         text = self.text
         prefix = _STRING_PREFIX.search(text, max(self.start, quote - 2), quote)
-        if prefix is None:
-            return quote
-        lead = prefix.start()
-        if lead > self.start and text[lead - 1] in _BEFORE_PREFIX:
-            return lead
-        if (lead == self.start or text[lead - 1] in " \t") and not _CONTRACTION.match(text, quote):
-            return lead
+        if prefix and (prefix.start() == self.start or text[prefix.start() - 1] in _BEFORE_PREFIX):
+            return prefix.start()
         return quote
 
     def before(self, at: int) -> _Around:
