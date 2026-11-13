@@ -3,9 +3,7 @@
 Working rules for Claude sessions in this repo. Read in this order:
 
 1. `docs/superpowers/specs/2026-11-02-bleep-design.md`: the design, the approved source of truth.
-2. `IDEA.md`: how the idea came about, the quality bar from Danny's previous two projects
-   (`~/Desktop/molecula`, `~/Desktop/ai-interview`), and the decisions made so far.
-3. `docs/superpowers/plans/2026-11-02-bleep.md`: the implementation plan, one task per GitHub issue,
+2. `docs/superpowers/plans/2026-11-02-bleep.md`: the implementation plan, one task per GitHub issue,
    grouped into six milestones (github.com/DannyKuk/bleep/milestones).
 
 Treat this as a standalone portfolio project: code, docs, commits and the README talk about Bleep

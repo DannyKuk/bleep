@@ -20,7 +20,7 @@ tools over real systems, a guard, evals with numbers, and a polished UI. Danny i
 number one and will run it against his real servers; anyone else can run it against a
 bundled demo stack.
 
-Quality bar: Danny's previous projects `~/Desktop/molecula` and `~/Desktop/ai-interview`
+Quality bar: Danny's previous projects molecula and ai-interview
 (real data, tools instead of guessing, guard, dated eval reports, local-first option,
 Docker Compose, thorough docs with decision records). The builder should look at both.
 
