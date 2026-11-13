@@ -355,6 +355,10 @@ class TelegramBot:
         self._shown: dict[str, int] = {}  # an offer's id: the message its buttons are on
         self._talking: set[asyncio.Task[None]] = set()
         self._talk_turn = asyncio.Lock()
+        # Cleared while a batch is handled: text is read only after every press beside it is
+        # decided, so a reply never offers to change a plan its own batch approves (#563).
+        self._batch_handled = asyncio.Event()
+        self._batch_handled.set()
         self._offset: int | None = None
         self.last_poll: datetime | None = None  # the last getUpdates that Telegram answered
 
@@ -404,14 +408,18 @@ class TelegramBot:
         updates = await self.client.get_updates(self._offset)
         self.last_poll = self.clock()
         await self._clear_expired()
-        for update in updates:
-            self._offset = update["update_id"] + 1  # confirmed even if handling fails below
-            try:
-                await self.handle(update)
-            except TelegramError as error:
-                log.warning("telegram: could not answer an update: %s", error)
-            except Exception:
-                log.exception("telegram: handling an update failed")
+        self._batch_handled.clear()
+        try:
+            for update in updates:
+                self._offset = update["update_id"] + 1  # confirmed even if handling fails below
+                try:
+                    await self.handle(update)
+                except TelegramError as error:
+                    log.warning("telegram: could not answer an update: %s", error)
+                except Exception:
+                    log.exception("telegram: handling an update failed")
+        finally:
+            self._batch_handled.set()
 
     async def handle(self, update: dict[str, Any]) -> None:
         callback = update.get("callback_query")
@@ -595,8 +603,10 @@ class TelegramBot:
 
     async def _answer_safely(self, text: str, reply: int, known: tuple[str, str] | None) -> None:
         """`_answer` in the background, one at a time in the order they came. An error is
-        logged, as `poll_once` logs one, and never reaches the poller."""
+        logged, as `poll_once` logs one, and never reaches the poller. It starts once the rest of
+        its batch is handled."""
         try:
+            await self._batch_handled.wait()
             async with self._talk_turn:
                 await self._answer(text, reply, known)
         except TelegramError as error:
@@ -629,7 +639,7 @@ class TelegramBot:
         bound to the plan the replied-to message showed, else to the one that waits now; a yes
         to a plan shows that plan's own buttons again. An offer about an incident is logged with
         it, so its buttons go when the incident ends or, for an instruction, when its plan is
-        decided."""
+        decided; one whose plan was decided before it was logged loses its buttons at once."""
         shown = known[1] if known is not None and known[0] == offer.incident_id else ""
         bound = await self.actions.bind(offer, shown)
         if isinstance(bound, str):
@@ -648,6 +658,10 @@ class TelegramBot:
         )
         self._shown[confirm_id] = message_id
         await self._log_offer(message_id, offer.incident_id, offer.plan_id or "")
+        if offer.plan_id and not await self.actions.plan_open(
+            offer.incident_id or "", offer.plan_id
+        ):
+            await self._edit(message_id, [])
         return line, confirm_id
 
     async def _log_offer(self, message_id: int, incident_id: str | None, plan_id: str) -> None:
