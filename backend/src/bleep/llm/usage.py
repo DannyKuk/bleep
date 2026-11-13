@@ -33,6 +33,15 @@ PRICES: dict[str, tuple[float, float]] = {
 LONG_PROMPT_PRICES: dict[str, tuple[int, tuple[float, float]]] = {
     "claude-haiku-5-5": (100_000, (0.50, 2.50)),
 }
+# What a cache read and a cache write cost as a multiple of the model's input price (the same
+# multiples apply to Haiku 5.5's long-prompt prices): Sonnet 5.5 and Opus 5.5 read at 5%, Haiku 5.5
+# at 10%, and a 5-minute write is 1.25x for all of them (same pricing page). Bleep asks for the
+# 5-minute entry only. A model in `PRICES` but not here has its cache tokens priced as input.
+CACHE_RATES: dict[str, tuple[float, float]] = {
+    "claude-sonnet-5-5": (0.05, 1.25),
+    "claude-haiku-5-5": (0.10, 1.25),
+    "claude-opus-5-5": (0.05, 1.25),
+}
 _SNAPSHOT_SUFFIX = re.compile(r"-\d{8}$")
 _warned: set[str] = set()
 
@@ -85,15 +94,24 @@ class CostLedger:
         self.clock = clock
 
     async def add(
-        self, incident_id: str, model: str, tokens_in: int, tokens_out: int, usd: float | None
+        self,
+        incident_id: str,
+        model: str,
+        tokens_in: int,
+        tokens_out: int,
+        usd: float | None,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
     ) -> None:
+        """`tokens_in` counts every input token; the cache reads and writes are parts of it."""
         now = self.clock()
         conn = await self.db.connect()
         try:
             await conn.execute(
                 "INSERT INTO usage"
-                " (incident_id, model, tokens_in, tokens_out, usd, day, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                " (incident_id, model, tokens_in, tokens_out, usd, day, created_at,"
+                " cache_read_tokens, cache_write_tokens)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     incident_id,
                     model,
@@ -102,6 +120,8 @@ class CostLedger:
                     usd,
                     now.date().isoformat(),
                     now.isoformat(),
+                    cache_read_tokens,
+                    cache_write_tokens,
                 ),
             )
             await conn.commit()
@@ -171,7 +191,16 @@ class CostLedger:
         ]
 
 
-def _cost(model: str, metadata: dict[str, Any], tokens_in: int, tokens_out: int) -> float | None:
+def _cost(
+    model: str,
+    metadata: dict[str, Any],
+    tokens_in: int,
+    tokens_out: int,
+    *,
+    cache_read: int = 0,
+    cache_write: int = 0,
+) -> float | None:
+    """`tokens_in` counts the cache reads and writes too, as the providers' prompt sizes do."""
     if isinstance(metadata.get("cost"), int | float):
         return float(metadata["cost"])
     priced = _SNAPSHOT_SUFFIX.sub("", model)  # the API may answer with a dated id of the alias
@@ -180,7 +209,12 @@ def _cost(model: str, metadata: dict[str, Any], tokens_in: int, tokens_out: int)
         threshold, long_prices = LONG_PROMPT_PRICES.get(priced, (None, None))
         if threshold is not None and long_prices is not None and tokens_in > threshold:
             price_in, price_out = long_prices
-        return (tokens_in * price_in + tokens_out * price_out) / 1_000_000
+        read_rate, write_rate = CACHE_RATES.get(priced, (1.0, 1.0))
+        plain = max(tokens_in - cache_read - cache_write, 0)
+        return (
+            (plain + cache_read * read_rate + cache_write * write_rate) * price_in
+            + tokens_out * price_out
+        ) / 1_000_000
     if model not in _warned:
         _warned.add(model)
         log.warning("no price known for model %s; recording tokens without cost", model)
@@ -193,6 +227,21 @@ class CallCost:
     tokens_in: int
     tokens_out: int
     usd: float | None
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+
+
+def _cache_tokens(tokens_in: int, details: dict[str, Any]) -> tuple[int, int]:
+    """The cache reads and writes inside `tokens_in`, from what LangChain reports. For Claude
+    `input_tokens` already adds both to the plain input, so they are parts of it, not extra.
+    A write is reported under `cache_creation`, or split by lifetime when the API says it."""
+    read = details.get("cache_read") or 0
+    write = sum(
+        details.get(key) or 0
+        for key in ("cache_creation", "ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens")
+    )
+    read = min(read, tokens_in)
+    return read, min(write, tokens_in - read)
 
 
 def call_costs(response: LLMResult) -> list[CallCost]:
@@ -214,8 +263,18 @@ def call_costs(response: LLMResult) -> list[CallCost]:
                 # Some servers report reasoning beside the completion, not inside it; more
                 # reasoning than output cannot be a part of it.
                 tokens_out += reasoning
-            usd = _cost(model, metadata, tokens_in, tokens_out)
-            costs.append(CallCost(model, tokens_in, tokens_out, usd))
+            cache_read, cache_write = _cache_tokens(
+                tokens_in, tokens.get("input_token_details") or {}
+            )
+            usd = _cost(
+                model,
+                metadata,
+                tokens_in,
+                tokens_out,
+                cache_read=cache_read,
+                cache_write=cache_write,
+            )
+            costs.append(CallCost(model, tokens_in, tokens_out, usd, cache_read, cache_write))
     return costs
 
 
@@ -232,7 +291,13 @@ class UsageTracker(AsyncCallbackHandler):
     async def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
         for call in call_costs(response):
             await self.ledger.add(
-                self.incident_id, call.model, call.tokens_in, call.tokens_out, call.usd
+                self.incident_id,
+                call.model,
+                call.tokens_in,
+                call.tokens_out,
+                call.usd,
+                call.cache_read_tokens,
+                call.cache_write_tokens,
             )
 
 

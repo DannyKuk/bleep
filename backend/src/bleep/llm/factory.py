@@ -15,6 +15,10 @@ CLIENT_MARGIN_S = 5
 # (128,000), far above what Bleep's short replies need and enough for a runaway reply to run up
 # the bill. Thinking tokens count against it.
 ANTHROPIC_MAX_TOKENS = 16_000
+# Top-level automatic caching: the API puts the breakpoint on the last cacheable block of each
+# request, so it moves forward as an incident's messages grow, and the tools, the system prompt
+# and every earlier message are read back from the cache (5-minute entries, each read refreshes).
+ANTHROPIC_CACHE = {"cache_control": {"type": "ephemeral"}}
 
 Role = Literal["main", "cheap"]
 
@@ -40,7 +44,11 @@ def chat_model(settings: ModelSettings, role: Role, timeout_s: int | None = None
         # raises on it), and a model that takes one is better left at its own.
         key = {"api_key": settings.anthropic_api_key} if settings.anthropic_api_key else {}
         return ChatAnthropic(
-            model=name, max_tokens=ANTHROPIC_MAX_TOKENS, **key, **_bounds(timeout_s, 1, "timeout")
+            model=name,
+            max_tokens=ANTHROPIC_MAX_TOKENS,
+            model_kwargs=ANTHROPIC_CACHE,
+            **key,
+            **_bounds(timeout_s, 1, "timeout"),
         )
     key = {"api_key": settings.openrouter_api_key} if settings.openrouter_api_key else {}
     return ChatOpenRouter(
