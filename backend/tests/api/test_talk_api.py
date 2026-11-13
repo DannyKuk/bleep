@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 
 from bleep import prompts
+from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.registry import Registry
 from bleep.incidents.repository import utcnow
 from bleep.main import create_app
@@ -46,7 +47,8 @@ def app(settings, model):
     async def connect(host):
         return None, engines[host.id]
 
-    registry = Registry([ssh_host(id="a", name="Host A")], connect)
+    site = ServiceOverrides(urls=[UrlCheckConfig(url="https://shop.example")])
+    registry = Registry([ssh_host(id="a", name="Host A", services={"shop": site})], connect)
     parts = build_parts(settings, registry, embedder=FakeEmbedder())
     parts.talk.models = lambda role: model
     return create_app(settings, parts)
@@ -73,6 +75,16 @@ def test_a_question_comes_back_with_links_built_from_bleeps_state(client, model)
     assert body["answer"] == "shop is down; api is fine."
     assert {"kind": "service", "id": SHOP, "label": "shop"} in body["links"]
     assert body["confirm"] is None
+
+
+def test_an_answer_keeps_a_link_to_a_watched_url_and_takes_out_any_other(client, model):
+    answer = "https://shop.example/health answers; https://shop.example.evil.example does not."
+    model.script.append(reading(kind="question", answer=answer))
+
+    body = client.post(MESSAGES, json={"text": "is the site up?"}).json()
+
+    removed = prompts.load("talk/link_removed").strip()
+    assert body["answer"] == f"https://shop.example/health answers; {removed} does not."
 
 
 def test_a_snooze_is_only_an_offer_until_yes_is_pressed_once(client, model):

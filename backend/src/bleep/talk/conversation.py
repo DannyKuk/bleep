@@ -17,7 +17,7 @@ import asyncio
 import json
 import logging
 import re
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, tzinfo
 from typing import Any, Protocol, runtime_checkable
@@ -61,7 +61,7 @@ from bleep.schemas.talk import (
     TalkUsage,
     Turn,
 )
-from bleep.talk.links import known_links, links_in, offer_links
+from bleep.talk.links import known_links, links_in, offer_links, watched_link
 from bleep.talk.log import TalkLog
 from bleep.talk.looks import look_offer
 from bleep.talk.offers import check, confirm_line, instruction
@@ -92,6 +92,8 @@ _CUT_HEAD = re.compile(r"\[… [0-9]+ chars cut\]\n")  # `guard.sanitize.cut_tai
 _LINK = re.compile(
     r"\b(?:[a-z][a-z0-9+.-]*://|www\.)\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)+/\S*", re.IGNORECASE
 )
+# What ends a sentence or a bracket after a link, not part of it (#543).
+_AFTER_LINK = ".,;:!?)]}'\"…"
 ModelFactory = Callable[[Role], BaseChatModel]
 
 
@@ -124,12 +126,28 @@ def _fixed(name: str, language: str, /, **values: str) -> str:
     return prompts.load_in(language, f"talk/{name}", **values).strip()
 
 
-def clean_answer(text: str, language: str = "en") -> str:
+def clean_answer(text: str, language: str = "en", watched: Collection[str] = ()) -> str:
     """The model's answer as a chat may show it: no control characters, secrets redacted, no
-    links (each said removed, in `language`), capped."""
-    clean = redact_text(strip_control(text)).strip()
-    clean = _LINK.sub(_fixed("link_removed", language), clean)
-    return clean if len(clean) <= ANSWER_CHARS else clean[: ANSWER_CHARS - 1].rstrip() + "…"
+    links but those to the `watched` URLs (each other said removed, in `language`), capped."""
+    removed = _fixed("link_removed", language)
+
+    def link(match: re.Match[str]) -> str:
+        found = match.group(0)
+        trimmed = found.rstrip(_AFTER_LINK)
+        return found if watched_link(trimmed, watched) else removed
+
+    clean = _LINK.sub(link, redact_text(strip_control(text)).strip())
+    return clean if len(clean) <= ANSWER_CHARS else _capped(clean)
+
+
+def _capped(clean: str) -> str:
+    """`clean` cut to `ANSWER_CHARS`, before a kept link the cut would fall in: a link cut short
+    may name another host (`https://shop.example.co…`). Every link left in `clean` is kept."""
+    cut = ANSWER_CHARS - 1
+    for match in _LINK.finditer(clean):
+        if match.start() < cut < match.end():
+            cut = match.start()
+    return clean[:cut].rstrip() + "…"
 
 
 def logged_text(text: str) -> str:
@@ -406,7 +424,10 @@ class Talk:
                 offer=offer,
             )
 
-        if reading.kind == "question" and (answer := clean_answer(reading.answer, language)):
+        watched = snapshot.watched_urls
+        if reading.kind == "question" and (
+            answer := clean_answer(reading.answer, language, watched)
+        ):
             return reply("question", answer)
         if reading.kind == "refusal" and reading.refusal == "secret":
             return reply("refusal", _fixed("refused_secret", language))

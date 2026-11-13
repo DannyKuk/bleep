@@ -10,11 +10,16 @@ way (`frontend/lib/talk-links.ts`).
 
 import re
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
+from urllib.parse import urlsplit
 
 from bleep.schemas.talk import IncidentFacts, Offer, Snapshot, TalkLink
 
 CUT = "…"  # how the snapshot ends a name or id it cut: such an id names no page exactly
+# What may follow a watched URL's scheme and host in a link an answer keeps (#543): nothing, or a
+# path of plain characters. No query, `@`, `\`, quote or bracket, which browsers and Telegram
+# read in ways of their own, so the link cannot point at any other host.
+_PLAIN_PATH = re.compile(r"(?:/[A-Za-z0-9._~%/-]*)?")
 
 
 def known_links(snapshot: Snapshot, facts: IncidentFacts | None = None) -> list[TalkLink]:
@@ -59,3 +64,30 @@ def links_in(text: str, candidates: Iterable[TalkLink]) -> list[TalkLink]:
     for match in pattern.finditer(text):
         found.setdefault(match.group(0), by_label[match.group(0)])
     return list(found.values())
+
+
+def watched_link(link: str, watched: Collection[str]) -> bool:
+    """Whether an answer may keep `link` (#543): it is one of the `watched` URLs (the URL checks
+    the person set, from Bleep's state), or that URL's scheme and host (in any letter case)
+    followed by a plain path. A host that only contains a watched one, a link that hides one
+    behind a user or in its query, another scheme, and anything non-ASCII are not kept."""
+    if link in watched:
+        return True
+    if not link.isascii():
+        return False
+    lowered = link.lower()
+    origins = {o for url in watched if (o := _origin(url)) is not None}
+    return any(lowered.startswith(o) and _PLAIN_PATH.fullmatch(link[len(o) :]) for o in origins)
+
+
+def _origin(url: str) -> str | None:
+    """`scheme://host[:port]` of `url` in lower case; None for one with a user or no host."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or not parts.netloc or "@" in parts.netloc:
+        return None
+    if not url.isascii():
+        return None
+    return f"{parts.scheme}://{parts.netloc}".lower()

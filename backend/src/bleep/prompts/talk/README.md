@@ -36,7 +36,8 @@ How Bleep reads what a person writes in its chat, and the fixed lines it answers
   Telegram's messages. `button_*` are the labels under an offer (Yes, Send, No).
 - Every fixed line has a German twin in `de/` with the same placeholders, chosen by the
   `language` setting (#375). `read`, `message` and the `log_*` export stay English and have none.
-- `link_removed` stands in for a link taken out of an answer.
+- `link_removed` stands in for a link taken out of an answer: any link but one to a URL Bleep
+  watches (#543).
 - `log_*` build the Markdown transcript of the talk log (#411, `talk/log.py`), which the person
   exports to review answers: the heading (`log_head`), a heading per surface (`log_panel`,
   `log_telegram`, `log_empty`), each message (`log_exchange`, `log_about`) and the lines under

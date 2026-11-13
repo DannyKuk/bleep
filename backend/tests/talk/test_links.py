@@ -1,7 +1,10 @@
-"""Links in an answer are found by code, from names in Bleep's own state (#391)."""
+"""Links in an answer are found by code, from names in Bleep's own state (#391), and a link
+an answer keeps is one to a URL Bleep watches (#543)."""
+
+import pytest
 
 from bleep.schemas.talk import IncidentLine, ServiceLine, Snapshot, TalkLink
-from bleep.talk.links import known_links, links_in
+from bleep.talk.links import known_links, links_in, watched_link
 
 SHOP = TalkLink(kind="service", id="laptop/compose:shop", label="shop")
 SHOP_14 = TalkLink(kind="incident", id="inc_14", label="shop #14")
@@ -51,3 +54,64 @@ def test_names_two_services_share_and_cut_ones_link_nothing():
     )
 
     assert known_links(snapshot) == [SHOP, SHOP_14]
+
+
+WATCHED = ["https://dkwebsite.de", "http://shop.local:8080/health?full=1"]
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        "https://dkwebsite.de",
+        "https://dkwebsite.de/",
+        "https://dkwebsite.de/blog/2026-11/post.html",
+        "HTTPS://DKWEBSITE.DE/About",
+        "http://shop.local:8080/health?full=1",
+        "http://shop.local:8080/status",
+    ],
+)
+def test_a_watched_url_or_a_plain_path_under_its_host_is_kept(link):
+    assert watched_link(link, WATCHED)
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        "https://dkwebsite.de.evil.com",
+        "https://dkwebsite.de.evil.com/x",
+        "https://evildkwebsite.de",
+        "https://dkwebsite.dev",
+        "https://evil.com/?u=https://dkwebsite.de",
+        "https://dkwebsite.de@evil.com",
+        "https://dkwebsite.de:443@evil.com",
+        "https://user@dkwebsite.de",
+        "https://dkwebsite.de\\@evil.com",
+        "https://dkwebsite.de/\\evil.com",
+        "https://dkwebsite.de/?next=https://evil.com",
+        "https://dkwebsite.de/#evil",
+        "https://dkwebsite.de:8443",
+        "http://dkwebsite.de",
+        "ftp://dkwebsite.de",
+        "javascript://dkwebsite.de/%0aalert(1)",
+        "dkwebsite.de/blog",
+        "www.dkwebsite.de",
+        "https://dkwеbsite.de",  # a Cyrillic "е"
+        "https://xn--dkwbsite-3fg.de",
+        "https://dkwebsite.de/blоg",  # a Cyrillic "о" in the path
+        "http://shop.local:8080/health?full=2",
+        "http://shop.local/health",
+    ],
+)
+def test_any_other_link_and_every_look_alike_is_not_kept(link):
+    assert not watched_link(link, WATCHED)
+
+
+def test_with_no_url_checks_no_link_is_kept():
+    assert not watched_link("https://dkwebsite.de", [])
+
+
+def test_a_watched_url_with_a_user_keeps_only_itself():
+    watched = ["https://user@dkwebsite.de/"]
+
+    assert watched_link("https://user@dkwebsite.de/", watched)
+    assert not watched_link("https://user@dkwebsite.de/x", watched)

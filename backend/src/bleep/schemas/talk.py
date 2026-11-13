@@ -332,3 +332,6 @@ class Snapshot(BaseModel):
     ended_last_24h: list[IncidentLine] = Field(default_factory=list)
     # How many of each list were left out to keep the snapshot small; only parts that lost some.
     left_out: dict[str, int] = Field(default_factory=dict)
+    # The URL checks of every service, for a chat answer to keep links to (#543); never shown to
+    # the model.
+    watched_urls: list[str] = Field(default_factory=list, exclude=True)
