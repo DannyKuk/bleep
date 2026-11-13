@@ -28,30 +28,58 @@ from bleep.schemas.graph import PlanStep, Proposal
 REDACTED = "<redacted>"
 
 
+MAX_PLAIN_ENV_VALUE = 200
+
+
 def redact_env(env: list[str]) -> list[str]:
-    """`KEY=value` becomes `KEY=<redacted>`, except that a URL keeps its scheme, host and port
-    (`KEY=postgresql://<redacted>@db:5432/<redacted>`); a bare `KEY` stays as it is."""
+    """`KEY=value` stays as it is when the value is plain (`HOST=127.0.0.1`, `PORT=3000`); a URL
+    keeps its scheme, host and port (`KEY=postgresql://<redacted>@db:5432/<redacted>`); any
+    other value becomes `<redacted>`. A bare `KEY` stays as it is."""
     return [_redact_env_entry(item) if "=" in item else item for item in env]
 
 
 def _redact_env_entry(item: str) -> str:
-    """The URL's place is kept only when `redact_text` would keep the whole entry as it is, so a
-    host that looks like a token, or a value under a secret key (`REDIS_PASSWORD=redis://…`), is
-    hidden here as well and not only by the pipeline later."""
+    """The URL's place, or the plain value, is kept only when `redact_text` would keep the whole
+    entry as it is, so a host that looks like a token, or a value under a secret key
+    (`REDIS_PASSWORD=redis://…`), is hidden here as well and not only by the pipeline later."""
     key, _, value = item.partition("=")
-    place = _url_place(value)
-    entry = f"{key}={place}"
-    return entry if place is not None and redact_text(entry) == entry else f"{key}={REDACTED}"
+    if _URL_LIKE.search(value):
+        place = _url_place(value)
+        entry = f"{key}={place}"
+        return entry if place is not None and redact_text(entry) == entry else f"{key}={REDACTED}"
+    return (
+        item
+        if _is_plain_env_value(key, value) and redact_text(item) == item
+        else (f"{key}={REDACTED}")
+    )
+
+
+def _is_plain_env_value(key: str, value: str) -> bool:
+    """A value shown whole: not under a secret key, printable ASCII of at most 200 characters,
+    with no word that looks like a token or a UUID (#554). A secret under a harmless key whose
+    value reads as a word (`APP_CODE=hunter2`) is shown; Danny accepted that risk, since logs
+    carry it too and a Bleep that cannot see `HOST=127.0.0.1` cannot fix it."""
+    if not value or len(value) > MAX_PLAIN_ENV_VALUE or not _PRINTABLE_SPACED.fullmatch(value):
+        return False
+    if _is_secret_key(key) or _UUID.search(value):
+        return False
+    return not any(_is_token_segment(word) for word in _ENV_WORD_SPLIT.split(value))
 
 
 def secret_env_values(env: list[str]) -> list[str]:
-    """The values of the entries whose `KEY=value` the redaction would change (a secret key such
-    as `REDIS_PASSWORD`), longest first. Compose copies such a value into a health-check command,
-    where `hide_values` finds the same text; `PORT=8000` is no secret and is not in the list."""
+    """The values of the entries the redaction would change (a secret key such as
+    `REDIS_PASSWORD`) and the other values the env lines hide (a token-like value), longest
+    first. Compose copies such a value into a health-check command, where `hide_values` finds the
+    same text; `PORT=8000` is shown and is not in the list, nor is a URL whose place is shown."""
     values = {
-        item.partition("=")[2]
+        value
         for item in env
-        if "=" in item and item.partition("=")[2] and redact_text(item) != item
+        if "=" in item
+        and (value := item.partition("=")[2])
+        and (
+            redact_text(item) != item
+            or (not _URL_LIKE.search(value) and _redact_env_entry(item) != item)
+        )
     }
     return sorted(values, key=len, reverse=True)
 
@@ -921,6 +949,11 @@ _HOST_NAME = re.compile(rf"{_DNS_LABEL}(?:\.{_DNS_LABEL})*")
 _IPV6 = re.compile(r"\[([0-9A-Fa-f:.]{2,45})\]")
 _PORT = re.compile(r"[0-9]{1,5}")
 _PRINTABLE = re.compile(r"[!-~]*")
+_PRINTABLE_SPACED = re.compile(r"[ -~]*")
+_ENV_WORD_SPLIT = re.compile(r"[^A-Za-z0-9]+")
+# A value any client could read as a URL with userinfo (`jdbc:postgresql://u:pw@db`,
+# `mailto:ops@example.com`, `//db/x`) is never plain: it is shown by `_url_place` or not at all.
+_URL_LIKE = re.compile(r"://|@|^//")
 MAX_HOST = 253
 
 

@@ -63,12 +63,8 @@ def test_a_url_keeps_its_scheme_host_and_port(value, expected):
 @pytest.mark.parametrize(
     "value",
     [
-        "hunter2",
         "",
-        "db:5432",
-        "shop-db",
         "mailto:ops@example.com",
-        "redis:hunter2",
         "jdbc:postgresql://db:5432/shop",
         "//db:5432/shop",
         "file:///etc/passwd",
@@ -76,8 +72,6 @@ def test_a_url_keeps_its_scheme_host_and_port(value, expected):
         "postgresql:///shop?host=/run/postgresql",
         "http://user:pw@",
         "http://:8080",
-        "http:/db",
-        "http:db",
         "http:///db",
     ],
 )
@@ -261,9 +255,61 @@ def test_names_and_entries_without_a_value_stay():
     assert redact_env(["NOEQ", "EMPTY=", "C=x=y", "U=http://db:1=2"]) == [
         "NOEQ",
         "EMPTY=<redacted>",
-        "C=<redacted>",
+        "C=x=y",
         "U=<redacted>",
     ]
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "HOST=127.0.0.1",
+        "PORT=3000",
+        "NODE_ENV=production",
+        "LOG_LEVEL=debug",
+        "DB_HOST=shop-db",
+        "UPSTREAM=db:5432",
+        "TESTAPP_FAIL_AFTER_S=180",
+        "JAVA_OPTS=-Xmx512m -XX:+UseG1GC",
+        "TZ=Europe/Berlin",
+        "PaymentGatewayService=on",
+        "SERVICE=PaymentGatewayService",
+        "CONTAINER=4f2a9c0d1e3b",
+        "PWD=/app",
+    ],
+)
+def test_a_plain_value_is_shown(entry):
+    assert redact_env([entry]) == [entry]
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "DB_PASSWORD=shop",
+        "STRIPE_KEY=hello",
+        "JWT_SECRET=x",
+        "GITHUB_TOKEN=abc",
+        "SECRET_HOST=127.0.0.1",
+        "APP_KEY=base64:abc",
+        f"SESSION={GITHUB}",
+        f"BUILD_REF={HEX40}",
+        "ID=0b6a1f3e-2c4d-4e5f-8a9b-0c1d2e3f4a5b",
+        "BUILD_ID=xK9mQ2vL8pR4tW7zB3nC",
+        "SIGNATURE=aBcDeFgHiJkLmNoPqRsT",
+        "NOTE=" + "a" * 201,
+        "GREETING=grüezi",
+        "LINE=a\tb\x1b",
+        "OPTS=-Dpassword=hunter2",
+        "CMD=redis-cli -a hunter2",
+    ],
+)
+def test_a_secret_or_token_like_value_is_hidden_whole(entry):
+    key = entry.partition("=")[0]
+    assert redact_env([entry]) == [f"{key}=<redacted>"]
+
+
+def test_a_value_of_two_hundred_characters_is_still_shown():
+    assert redact_env(["NOTE=" + "a b " * 50]) == ["NOTE=" + "a b " * 50]
 
 
 def test_the_value_starts_after_the_first_equals_sign():
