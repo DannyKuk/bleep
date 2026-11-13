@@ -1,9 +1,18 @@
-# Started by hand from the Actions tab: the repo is private, so nothing runs on push or PR.
+# Runs on every push to main and every pull request, and by hand from the Actions tab. The repo is
+# public, so standard runners (ubuntu-latest) cost nothing; larger runners would be billed (#483).
 # No secrets are used. Tests use fakes, so nothing needs the network, a model key or a host.
 name: CI
 
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
+
+# A newer push to the same branch or pull request cancels the run it supersedes.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

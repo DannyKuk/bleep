@@ -8,6 +8,7 @@
 <p align="center"><b>An on-call agent for Docker hosts that fixes things only after you say yes.</b></p>
 
 <p align="center">
+  <a href="https://github.com/DannyKuk/bleep/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/DannyKuk/bleep/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <a href="LICENSE"><img alt="Code: MIT" src="https://img.shields.io/badge/code-MIT-blue"></a>
   <a href="backend/pyproject.toml"><img alt="Python 3.14" src="https://img.shields.io/badge/python-3.14-3776AB?logo=python&logoColor=white"></a>
   <a href="backend/"><img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white"></a>

@@ -240,7 +240,7 @@ A test that runs for over a minute (the slowest takes under 5 s) prints its trac
 
 ## CI
 
-`.github/workflows/ci.yml` proves the repo builds and its checks pass on a clean `ubuntu-latest` machine. The repo is private, so it does not run on push or pull request: open the **Actions** tab, pick **CI** and choose **Run workflow** (or `gh workflow run ci.yml`). It needs no secrets and no `.env`.
+`.github/workflows/ci.yml` proves the repo builds and its checks pass on a clean `ubuntu-latest` machine. It runs on every push to `main` and every pull request; a newer push to the same branch or pull request cancels the run it supersedes. It can still be started by hand: open the **Actions** tab, pick **CI** and choose **Run workflow** (or `gh workflow run ci.yml`). It needs no secrets and no `.env`. The repo is public, so standard runners cost nothing; it uses only `ubuntu-latest`, since larger runners are billed even on public repos (#483).
 
 | Job | Runs |
 |---|---|
