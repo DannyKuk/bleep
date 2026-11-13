@@ -23,6 +23,10 @@ ANTHROPIC_MAX_TOKENS = 16_000
 ANTHROPIC_CACHE = {"cache_control": {"type": "ephemeral"}}
 
 Role = Literal["main", "cheap"]
+# The key of a model's `metadata` that names its provider: LangChain hands the metadata to every
+# callback of the model's calls, so the usage ledger can record where a call went (#547). The
+# client's own `ls_provider` cannot say it: a local server is a `ChatOpenAI` too.
+PROVIDER_METADATA = "bleep_provider"
 
 
 def chat_model(settings: ModelSettings, role: Role, timeout_s: int | None = None) -> BaseChatModel:
@@ -37,6 +41,7 @@ def chat_model(settings: ModelSettings, role: Role, timeout_s: int | None = None
             model=settings.local_model,
             api_key="local",
             temperature=settings.temperature,
+            metadata={PROVIDER_METADATA: "local"},
             **_bounds(timeout_s, 1),
         )
     settings = settings.resolved()
@@ -48,12 +53,17 @@ def chat_model(settings: ModelSettings, role: Role, timeout_s: int | None = None
         return ChatAnthropic(
             model=name,
             max_tokens=ANTHROPIC_MAX_TOKENS,
+            metadata={PROVIDER_METADATA: "anthropic"},
             **key,
             **_bounds(timeout_s, 1, "timeout"),
         )
     key = {"api_key": settings.openrouter_api_key} if settings.openrouter_api_key else {}
     return ChatOpenRouter(
-        model=name, temperature=settings.temperature, **key, **_bounds(timeout_s, 1000)
+        model=name,
+        temperature=settings.temperature,
+        metadata={PROVIDER_METADATA: "openrouter"},
+        **key,
+        **_bounds(timeout_s, 1000),
     )
 
 

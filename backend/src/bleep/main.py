@@ -19,6 +19,7 @@ from bleep.api import (
     stream,
     talk,
     telegram,
+    usage,
 )
 from bleep.api import settings as settings_api
 from bleep.api.body_limit import BodyLimitMiddleware
@@ -191,6 +192,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
     protected.include_router(secrets.router)
     protected.include_router(telegram.router)
     protected.include_router(talk.router)
+    protected.include_router(usage.router)
     if settings.dev_panel:  # left out, every /api/dev path is a 404, signed in or not
         protected.include_router(dev.router)
     api.include_router(protected)
