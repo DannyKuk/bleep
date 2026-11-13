@@ -34,6 +34,7 @@ PREFIXES = [
     "IFS=','; ",
     'X=","; ',
     'grep -c "a b"; ',
+    "re: ",
 ]
 KEEP = "KEEPME"
 # A password holding a quote and a blank, inside `sh -c '…'`, can still show a part (main too, a

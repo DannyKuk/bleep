@@ -875,6 +875,11 @@ QUOTES_AROUND_AND_IN_THE_WORD = [
     ),
     ("stdout: b'redis-cli -a pw1234' n=1 KEEP", "stdout: b'redis-cli -a <redacted>' n=1 KEEP"),
     ("stdout: rb'redis-cli -a pw1234' n=1 KEEP", "stdout: rb'redis-cli -a <redacted>' n=1 KEEP"),
+    (
+        'stdout: b\'re: redis-cli -a "a\\\\" s3cret" ping\' n=1 KEEP',
+        "stdout: b're: redis-cli -a \"<redacted>\" ping' n=1 KEEP",
+    ),
+    ("stdout: b's redis-cli -a pw1234' n=1 KEEP", "stdout: b's redis-cli -a <redacted>' n=1 KEEP"),
     ('redis-cli -a x" s3cret" ping', "redis-cli -a <redacted> ping"),
     ("redis-cli -a 'a'\"'\"' b' ping", "redis-cli -a '<redacted>' ping"),
 ]
@@ -901,15 +906,14 @@ def test_quotes_around_a_command_and_in_its_password_word_are_told_apart(line, e
     "line",
     [
         "x f's: 'redis-cli -a pw1234' n=1 KEEP",
-        "u're ok: cmd='redis-cli -a pw1234' n=1 KEEP",
         "the 3 R's: cmd='redis-cli -a pw1234' n=1 KEEP",
         "FB's cmd='redis-cli -a pw1234' n=1 KEEP",
-        "U'll see: cmd='redis-cli -a pw1234' n=1 KEEP",
     ],
 )
-def test_a_contraction_after_a_blank_is_no_string_prefix(line):
-    """`f's` and `U'll` read like `b'…'` after a blank, but a contraction follows their `'`."""
-    assert _hidden_once(line) == line.replace("pw1234", "<redacted>")
+def test_a_word_that_reads_as_a_string_prefix_hides_the_rest_of_the_line(line):
+    """`f's` after a blank reads like `stdout: b's …'`, which nothing in the line tells apart, so
+    its `'` opens a string and the password's word runs to the line's end: hidden, never shown."""
+    assert _hidden_once(line) == line.split("pw1234")[0] + "<redacted>"
 
 
 def test_a_closing_quote_put_back_in_a_json_string_keeps_the_json():
