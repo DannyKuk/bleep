@@ -233,6 +233,7 @@ HOSTILE = {
 }
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize("name", list(HOSTILE))
 def test_hostile_input_is_fast(name):
     start = time.perf_counter()
@@ -241,6 +242,7 @@ def test_hostile_input_is_fast(name):
     assert len(out) <= 8300
 
 
+@pytest.mark.timing
 def test_redact_alone_is_bounded_too():
     start = time.perf_counter()
     redact_with_count("-" * 1_000_000)
@@ -440,6 +442,7 @@ def test_secret_straddling_a_line_cut_is_redacted_at_every_offset():
                 assert secret not in out, k
 
 
+@pytest.mark.timing
 def test_cr_chunked_input_is_bounded():
     text = "\r".join("token=abc " * 400 for _ in range(2500))
     start = time.perf_counter()
@@ -515,12 +518,14 @@ def test_a_tail_window_reaching_far_back_is_fast(unit, mark):
     assert len(out) <= 8300
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize(("unit", "length"), [("token=abc ", 4000), ("-eyJ", 4001)])
 def test_event_loop_gap_stays_small_on_the_worst_input(unit, length):
     line = (unit * length)[:length]
     assert _event_loop_gap("\n".join([line] * 1000)) < 0.3
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize(
     ("opener", "unit"),
     [
@@ -713,6 +718,7 @@ def test_a_secret_inside_a_kept_value_or_under_a_place_after_a_secret_word_is_re
     assert redact_text(out) == out
 
 
+@pytest.mark.timing
 def test_pairs_nested_without_end_stay_bounded_and_redacted():
     text = "path=" * 800 + "token=abcdef123456"
     started = time.perf_counter()

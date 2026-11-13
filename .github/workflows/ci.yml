@@ -24,7 +24,8 @@ jobs:
       - run: uv sync --all-groups
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run pytest -q
+      # In parallel, then the wall-clock tests alone (scripts/test.sh, #532)
+      - run: ../scripts/test.sh -q
       # deepeval is only in the evals group; this run executes the GEval judge tests that skip above.
       - run: uv run --group evals pytest tests/evals
 

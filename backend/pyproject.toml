@@ -49,6 +49,9 @@ pythonpath = ["src", "."]
 # langsmith ships a pytest plugin that warns on import under Python 3.14, and deepeval (the evals
 # group) one that prints a summary after every run; Bleep's tests use neither
 addopts = "-p no:langsmith_plugin -p no:deepeval"
+markers = [
+    "timing: asserts a wall-clock bar, so scripts/test.sh runs it alone after the parallel run",
+]
 filterwarnings = [
     # langsmith (pulled in by langchain-core) still calls the deprecated asyncio helper
     "ignore:.asyncio.iscoroutinefunction. is deprecated:DeprecationWarning",
@@ -59,6 +62,7 @@ dev = [
     "httpx2>=2.16.0",
     "pytest>=9.2.0",
     "pytest-asyncio>=1.4.1.post1",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.17.3",
 ]
 evals = [

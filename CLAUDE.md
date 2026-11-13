@@ -104,7 +104,11 @@ One arrow goes the other way, held to one module: `schemas` uses the hosts file'
 
 ## Tests
 
-- Run `uv run pytest` in `backend/`. Every module with logic gets tests.
+- Run the suite with `scripts/test.sh` (in parallel, then the `timing` tests alone; one run at a
+  time per machine). `uv run pytest <path>` in `backend/` runs one file or test. Every module with
+  logic gets tests.
+- A test that asserts a wall-clock bar ("under 1 s") gets `@pytest.mark.timing`, so it never runs
+  beside the parallel pass. A bar relative to a benign input needs no mark.
 - **Tests never touch the network or a real Docker engine.** Use fakes for engines, SSH shells and
   chat models (`tests/fakes.py`), `httpx.MockTransport` for HTTP, and recorded fixtures for
   GitHub, Coolify and Telegram. Real-model and real-engine checks belong in `backend/evals/` and
@@ -203,6 +207,8 @@ These are the guard rules; the code enforces them and the tests prove it.
 
 ## Scripts
 
+- `scripts/test.sh [pytest args]`: the backend suite, in parallel and then the `timing` tests,
+  behind a machine-wide lock.
 - `scripts/board.sh <issue#> <Backlog|Ready|In progress|In review>`: sets the issue's Status on
   the "Bleep roadmap" board (project 4).
 - `uv run --project backend python scripts/check_docs.py`: broken relative links and stale

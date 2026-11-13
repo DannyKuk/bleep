@@ -141,6 +141,7 @@ def test_a_secret_split_between_two_long_lines_is_found_at_every_position(secret
         assert find_secrets(text) == ["body"], at
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize(
     "text",
     [

@@ -142,6 +142,7 @@ def test_guarded_text_is_read_as_the_model_reads_it():
     assert not gives_orders(plain)
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize(
     "text",
     [
