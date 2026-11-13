@@ -7,13 +7,14 @@ from datetime import datetime
 
 import httpx2
 import pytest
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.outputs import ChatGeneration, LLMResult
 from langchain_core.tools import tool
 from pydantic import SecretStr
 from test_anthropic import claude, message_body, over_transport
 
 from bleep.llm.factory import chat_model
-from bleep.llm.usage import CostLedger, UsageTracker
+from bleep.llm.usage import CostLedger, UsageTracker, call_costs
 from bleep.schemas.settings import ModelSettings
 from bleep.store.db import Database
 
@@ -127,3 +128,42 @@ async def test_cache_reads_count_in_full_against_the_incident_token_cap(ledger):
     with pytest.raises(BudgetExceeded) as spent:
         await check_budget(ledger, "i", Budgets())
     assert spent.value.kind == "incident_tokens"
+
+
+def other_provider_result(model: str, details: dict, **metadata) -> LLMResult:
+    """What an OpenAI-protocol client (OpenRouter, a local server) makes of a reply whose usage
+    reports cached prompt tokens."""
+    message = AIMessage(
+        content="ok",
+        usage_metadata={
+            "input_tokens": 1_000_000,
+            "output_tokens": 0,
+            "total_tokens": 1_000_000,
+            "input_token_details": details,
+        },
+        response_metadata={"model_name": model, **metadata},
+    )
+    return LLMResult(generations=[[ChatGeneration(message=message)]])
+
+
+def test_the_cost_openrouter_reports_is_taken_as_given_whatever_the_cache_tokens():
+    details = {"cache_read": 800_000, "cache_creation": 100_000}
+    result = other_provider_result("anthropic/claude-sonnet-5-5", details, cost=0.42)
+
+    [cost] = call_costs(result)
+
+    assert cost.usd == 0.42
+    assert (cost.cache_read_tokens, cost.cache_write_tokens) == (800_000, 100_000)
+
+
+def test_a_priced_model_without_cache_rates_costs_what_it_did_before_caching_was_priced():
+    details = {"cache_read": 800_000, "cache_creation": 100_000}
+
+    [cost] = call_costs(other_provider_result("openai/gpt-6-luna", details))
+
+    assert cost.usd == pytest.approx(0.10)  # 1,000,000 tokens at $0.10; cache tokens as plain input
+    assert (cost.tokens_in, cost.cache_read_tokens, cost.cache_write_tokens) == (
+        1_000_000,
+        800_000,
+        100_000,
+    )
