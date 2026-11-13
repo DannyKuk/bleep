@@ -26,6 +26,19 @@ def _env(name: str, field: str) -> AliasChoices:
 
 
 MODEL_KEY_ENV = "OPENROUTER_API_KEY"  # `ModelSettings.openrouter_api_key`
+ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"  # `ModelSettings.anthropic_api_key`
+ModelProvider = Literal["openrouter", "anthropic", "local"]
+OPENROUTER_DEFAULT_MODEL = "openai/gpt-6-luna"
+ANTHROPIC_DEFAULT_MODEL = "claude-haiku-5-5"
+ANTHROPIC_DEFAULT_CHEAP_MODEL = "claude-haiku-5-5"
+# Ids the settings page offers per provider as examples, so a person can pick one instead of
+# looking it up; any id can still be typed. From OpenRouter's public model list and Anthropic's
+# model ids, read 2026-11-12 (#517).
+MODEL_EXAMPLES: dict[ModelProvider, tuple[str, ...]] = {
+    "openrouter": ("openai/gpt-6-luna", "openai/gpt-6.1-terra", "openai/gpt-6.1-sol"),
+    "anthropic": ("claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"),
+    "local": ("openai/gpt-oss-20b",),
+}
 
 
 class ModelSettings(BaseSettings):
@@ -33,12 +46,10 @@ class ModelSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_ignore_empty=True, extra="ignore", populate_by_name=True)
 
-    provider: Literal["openrouter", "local"] = Field(
-        "openrouter", validation_alias=_env("LLM_PROVIDER", "provider")
-    )
-    model: str = Field("openai/gpt-6-luna", validation_alias=_env("LLM_MODEL", "model"))
+    provider: ModelProvider = Field("openrouter", validation_alias=_env("LLM_PROVIDER", "provider"))
+    model: str = Field(OPENROUTER_DEFAULT_MODEL, validation_alias=_env("LLM_MODEL", "model"))
     cheap_model: str = Field(
-        "openai/gpt-6-luna", validation_alias=_env("LLM_CHEAP_MODEL", "cheap_model")
+        OPENROUTER_DEFAULT_MODEL, validation_alias=_env("LLM_CHEAP_MODEL", "cheap_model")
     )
     local_base_url: str = Field(
         "http://host.docker.internal:1234/v1",
@@ -51,6 +62,26 @@ class ModelSettings(BaseSettings):
     openrouter_api_key: SecretStr | None = Field(
         None, validation_alias=_env("OPENROUTER_API_KEY", "openrouter_api_key")
     )
+    anthropic_api_key: SecretStr | None = Field(
+        None, validation_alias=_env("ANTHROPIC_API_KEY", "anthropic_api_key")
+    )
+
+    def resolved(self) -> ModelSettings:
+        """With the Anthropic provider, an id that is still the OpenRouter default is Claude's:
+        the default follows the provider. Any other id is the person's own and stays. The OpenRouter
+        default is not an Anthropic id, so an id equal to it can only be one nobody chose for
+        Anthropic: unset in `.env`, or left as it was when the provider was switched."""
+        if self.provider != "anthropic":
+            return self
+        update = {
+            name: claude
+            for name, claude in (
+                ("model", ANTHROPIC_DEFAULT_MODEL),
+                ("cheap_model", ANTHROPIC_DEFAULT_CHEAP_MODEL),
+            )
+            if getattr(self, name) == OPENROUTER_DEFAULT_MODEL
+        }
+        return self.model_copy(update=update)
 
 
 class Budgets(BaseModel):
@@ -62,7 +93,7 @@ class Budgets(BaseModel):
     # Times one run may go back to Propose from Approval or Execute (an instruction, a target that
     # cannot be read, a plan gone stale); one more ends the run with the outcome `replan_limit`.
     replans: int = 3
-    incident_tokens: int = 150_000
+    incident_tokens: int = 300_000
     daily_cost_usd: float = 1.0
     # Chat answers (`talk`) have a cap of their own and never count against the one above (#401).
     chat_daily_cost_usd: float = 0.2
@@ -123,7 +154,7 @@ class ModelOverrides(_Overrides):
     """The model choice. The local model's base URL and every API key are kept in the secret
     file, not here (`store/secrets.py`, #372)."""
 
-    provider: Literal["openrouter", "local"] | None = None
+    provider: ModelProvider | None = None
     model: ModelName | None = None
     cheap_model: ModelName | None = None
     local_model: ModelName | None = None
@@ -352,10 +383,20 @@ class SettingsUpdate(_Overrides):
 
 
 class ModelChoice(BaseModel):
-    provider: Literal["openrouter", "local"]
+    provider: ModelProvider
     model: str
     cheap_model: str
     local_model: str
+
+
+class ProviderModels(BaseModel):
+    """The ids that would run with one provider (`model` and `cheap_model` for a hosted one,
+    `local_model` for a local server), and example ids it takes."""
+
+    model: str
+    cheap_model: str
+    local_model: str
+    examples: list[str]
 
 
 class EmbeddingsChoice(BaseModel):
@@ -429,7 +470,10 @@ class SettingsView(BaseModel):
     """`GET /api/settings`: the values in force, and the database's overrides that changed them."""
 
     models: ModelChoice
-    model_key: SecretStatus  # the OpenRouter key's variable; a local model needs none
+    # Per provider, the ids that would run if it were chosen with what is stored now, so the page
+    # shows what runs for the provider in its select before a save (#517).
+    models_by_provider: dict[ModelProvider, ProviderModels]
+    model_key: SecretStatus  # the key's variable of the provider in force; a local model needs none
     budgets: Budgets
     thresholds: Thresholds
     hosts: list[HostSettingsView]

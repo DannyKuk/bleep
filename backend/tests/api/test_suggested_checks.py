@@ -90,20 +90,20 @@ def test_nothing_is_suggested_and_coolify_is_not_asked_while_the_plugin_is_off(a
     assert app.get(f"/api/services/{SHOP_ID}").status_code == 200  # the service is there
     response = suggested(app)
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json() == {"offered": [], "stale": []}
     assert coolify.requests == []
 
 
 def test_the_apps_domains_are_suggested_without_the_check_it_has(app):
     assert put_plugin(app, True).status_code == 200
-    body = suggested(app).json()
+    body = suggested(app).json()["offered"]
     assert [check["url"] for check in body] == SUGGESTED
     assert body[0] == {"url": SUGGESTED[0], "expect_status": 204, "body_contains": None}
 
 
 def test_a_service_not_run_by_coolify_is_offered_nothing_and_an_unknown_one_is_404(app):
     put_plugin(app, True)
-    assert suggested(app, "a/compose:blog").json() == []
+    assert suggested(app, "a/compose:blog").json() == {"offered": [], "stale": []}
     assert suggested(app, "a/nothing-here").status_code == 404
 
 
@@ -113,13 +113,13 @@ def test_coolify_failing_suggests_nothing_and_never_shows_its_answer(app, coolif
     with caplog.at_level(logging.DEBUG):
         response = suggested(app)
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json() == {"offered": [], "stale": []}
     assert "stack trace with a secret" not in caplog.text
 
 
 def test_accepted_suggestions_are_stored_as_service_page_checks_and_not_offered_again(app):
     put_plugin(app, True)
-    offered = suggested(app).json()
+    offered = suggested(app).json()["offered"]
     view = app.get("/api/settings").json()
     in_force = view["hosts"][0]["services"][SHOP]["urls"]
     body = {"hosts": {"a": {"services": {SHOP: {"urls": in_force + offered}}}}}
@@ -130,4 +130,41 @@ def test_accepted_suggestions_are_stored_as_service_page_checks_and_not_offered_
     assert [u["url"] for u in stored] == [HAD, *SUGGESTED]
     shown = app.get(f"/api/services/{SHOP_ID}").json()
     assert [u["url"] for u in shown["service"]["urls"]] == [HAD, *SUGGESTED]
-    assert suggested(app).json() == []
+    assert suggested(app).json()["offered"] == []
+
+
+GONE = "https://old.shop.example.com/health"
+
+
+def save_checks(client: TestClient, urls: list[str]):
+    view = client.get("/api/settings").json()
+    checks = [{"url": url} for url in urls]
+    body = {"hosts": {"a": {"services": {SHOP: {"urls": checks}}}}}
+    saved = client.put("/api/settings", json=body, headers={"If-Match": f'"{view["version"]}"'})
+    assert saved.status_code == 200
+
+
+def test_a_check_on_a_domain_the_app_dropped_is_flagged_and_nothing_is_removed(app):
+    save_checks(app, [HAD, GONE])
+    put_plugin(app, True)
+    body = suggested(app).json()
+    assert [check["url"] for check in body["stale"]] == [GONE]
+    assert [check["url"] for check in body["offered"]] == SUGGESTED
+
+    shown = app.get(f"/api/services/{SHOP_ID}").json()
+    assert [u["url"] for u in shown["service"]["urls"]] == [HAD, GONE]
+
+
+def test_nothing_is_flagged_while_the_plugin_is_off(app, coolify):
+    save_checks(app, [HAD, GONE])
+    assert suggested(app).json() == {"offered": [], "stale": []}
+    assert coolify.requests == []
+
+
+def test_a_flagged_check_goes_with_the_services_own_save_and_the_offer_stays(app):
+    save_checks(app, [HAD, GONE])
+    put_plugin(app, True)
+    save_checks(app, [HAD])
+    body = suggested(app).json()
+    assert body["stale"] == []
+    assert [check["url"] for check in body["offered"]] == SUGGESTED

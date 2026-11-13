@@ -264,3 +264,35 @@ async def test_following_the_notes_skip_reaches_the_cause_in_the_last_part():
     assert skips == [0, 112, 206]  # three deployed_commits calls read the whole deploy
     assert "whole cents" in parts[-1] and "whole cents" not in "".join(parts[:-1])
     assert shas[0] == "d9f9be1" and shas[-1] == "3350063"
+
+
+async def test_bad_deploy_deep_puts_the_only_explaining_commits_past_the_first_part():
+    (scenario,) = load_scenarios(only="bad-deploy-deep")
+    assert scenario.github == "bad-deploy-deep" and scenario.fault == "bad-deploy"
+    committed = (FIXTURES_DIR / "bad-deploy-deep.json").read_text(encoding="utf-8")
+    assert committed == long_deploy.render("bad-deploy-deep")
+    fixture = load_github_fixture("bad-deploy-deep")
+    github = fixture_client(fixture, lambda: START)
+    running = await FixtureDeploys(fixture, START).running_commit(SHOP)
+    assert running is not None and running.previous is not None
+    unpaged = await github.compare(REPO, running.previous, running.sha)
+    parts = [describe_deploy(REPO, running, unpaged)]
+
+    skips = [0]
+    while match := re.search(r"with skip=(\d+) for them\)", parts[-1]):
+        skip = int(match[1])
+        older = await github.compare_older(
+            REPO, running.previous, running.sha, skip, part_size(skip - skips[-1])
+        )
+        parts.append(describe_deploy(REPO, running, older, skip=skip))
+        skips.append(skip)
+
+    explaining = ("Deploy shop 2", "whole cents", "SHOP_VERSION", "price")
+    assert all(word not in "".join(parts[:-1]) for word in explaining)
+    assert "Deploy shop 2" in parts[-1] and "whole cents" in parts[-1]
+    assert skips == [0, 112, 206]
+    shas = [sha for part in parts for sha in re.findall(r"^- ([0-9a-f]{7}) ", part, re.M)]
+    assert len(shas) == 300 and len(set(shas)) == 300
+    assert shas[-1] == "3350063" and shas[-2] == "d9f9be1"
+    assert len(unpaged.commits) == 250 and unpaged.total_commits == 300
+    assert "d9f9be1" not in parts[0]

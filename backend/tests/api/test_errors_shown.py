@@ -342,8 +342,8 @@ def test_a_literal_lists_its_choices_in_the_picked_language(signed_in, parts, mo
     german = settings_put(signed_in, {"models": {"provider": "nobody"}}).json()["detail"]
 
     assert [e["type"] for e in german] == ["literal_error"]
-    assert english[0]["msg"] == "Input should be 'openrouter' or 'local'"
-    assert german[0]["msg"] == "Die Eingabe muss 'openrouter' oder 'local' sein"
+    assert english[0]["msg"] == "Input should be 'openrouter', 'anthropic' or 'local'"
+    assert german[0]["msg"] == "Die Eingabe muss 'openrouter', 'anthropic' oder 'local' sein"
 
 
 def test_a_validator_of_bleeps_own_reads_in_german_and_keeps_its_field(

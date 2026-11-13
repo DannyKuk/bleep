@@ -10,11 +10,16 @@ from pydantic import SecretStr
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.discovery import group_services
 from bleep.plugins.base import Plugin, PluginContext
-from bleep.plugins.coolify.plugin import CoolifyPlugin, CoolifySettings, suggested_checks
+from bleep.plugins.coolify.plugin import (
+    CoolifyPlugin,
+    CoolifySettings,
+    stale_checks,
+    suggested_checks,
+)
 from bleep.plugins.registry import PluginRegistry
 from bleep.schemas.coolify import CoolifyApplication
 from bleep.schemas.plugins import PluginHealth
-from bleep.schemas.services import Service
+from bleep.schemas.services import CheckSuggestions, Service
 from bleep.tools.registry import ToolSpec
 from fakes import CoolifyAnswers, compose_labels
 from graph_env import box
@@ -270,16 +275,16 @@ async def test_the_plugin_reads_the_applications_and_suggests_their_domains():
     domains = json.loads((FIXTURES / "domains.json").read_text(encoding="utf-8"))
     plugin = answering(200, domains)
     shop = service_of(box(f"{SHOP}-074501234567", labels=coolify_labels(SHOP, "shop")))
-    assert len(await plugin.suggested_checks(context(), shop)) == 3
+    assert len((await plugin.check_suggestions(context(), shop)).offered) == 3
     forum = compose_app_service("web", "api")
-    assert len(await plugin.suggested_checks(context(), forum)) == 3
+    assert len((await plugin.check_suggestions(context(), forum)).offered) == 3
 
 
 @pytest.mark.parametrize("status", [401, 500, 404])
 async def test_a_coolify_failure_suggests_nothing(status):
     plugin = answering(status, {"message": "nope"})
     shop = service_of(box(f"{SHOP}-074501234567", labels=coolify_labels(SHOP, "shop")))
-    assert await plugin.suggested_checks(context(), shop) == []
+    assert await plugin.check_suggestions(context(), shop) == CheckSuggestions()
 
 
 class Broken(Plugin):
@@ -290,7 +295,7 @@ class Broken(Plugin):
     def tools(self, ctx: PluginContext) -> list[ToolSpec]:
         return []
 
-    async def suggested_checks(self, ctx, service) -> list[UrlCheckConfig]:
+    async def check_suggestions(self, ctx, service) -> CheckSuggestions:
         raise RuntimeError("echoes a secret")
 
     async def health(self, ctx: PluginContext) -> PluginHealth:
@@ -303,11 +308,11 @@ async def test_the_registry_asks_only_switched_on_plugins_and_a_broken_one_sugge
     env = {"COOLIFY_URL": BASE, "COOLIFY_TOKEN": "cool-token"}
     registry = PluginRegistry([coolify, Broken()], SecretStr("test-secret"), env=env)
     shop = service_of(box(f"{SHOP}-074501234567", labels=coolify_labels(SHOP, "shop")))
-    assert await registry.suggested_checks(shop) == []
+    assert await registry.check_suggestions(shop) == CheckSuggestions()
     registry.enable("broken", True)
-    assert await registry.suggested_checks(shop) == []
+    assert await registry.check_suggestions(shop) == CheckSuggestions()
     registry.enable("coolify", True)
-    assert len(await registry.suggested_checks(shop)) == 3
+    assert len((await registry.check_suggestions(shop)).offered) == 3
 
 
 @pytest.mark.parametrize(
@@ -337,3 +342,152 @@ def test_an_odd_health_check_field_reads_as_unknown_and_keeps_the_application(en
 def test_an_odd_health_check_return_code_reads_as_unknown_and_keeps_the_application(code, read):
     app = CoolifyApplication.model_validate({"uuid": SHOP, "health_check_return_code": code})
     assert app.health_check_return_code == read
+
+
+def shop_with(*checks: str) -> Service:
+    return service_of(
+        box(f"{SHOP}-074501234567", labels=coolify_labels(SHOP, "shop")), urls=list(checks)
+    )
+
+
+def test_a_check_on_a_domain_the_app_no_longer_has_is_flagged_and_the_others_are_not():
+    shop = shop_with(
+        "https://old.shop.example.com/health",
+        "https://shop.example.com/health",
+        "https://SHOP.example.com:8443/any/path",  # case, port and path do not matter
+        "https://www.shop.example.com/health",  # the domain's `:3000` is no part of the host
+        "https://example.com/shop/health",
+    )
+    assert urls(stale_checks(shop, apps())) == ["https://old.shop.example.com/health"]
+
+
+def test_the_flagged_check_is_the_one_the_service_has_not_a_copy():
+    gone = UrlCheckConfig(
+        url="https://old.shop.example.com/", expect_status=204, body_contains="ok"
+    )
+    shop = shop_with().model_copy(update={"urls": [gone]})
+    assert stale_checks(shop, apps()) == [gone]
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        "http://localhost:3000/health",
+        "http://shop:8080/health",  # a Docker name, no dot
+        "http://10.0.0.5:3000/",
+        "http://[::1]:3000/",
+    ],
+)
+def test_a_check_on_an_address_or_a_name_without_a_dot_is_no_coolify_domain_and_not_flagged(check):
+    assert stale_checks(shop_with(check), apps()) == []
+
+
+def test_a_service_with_every_domain_still_there_has_nothing_flagged():
+    notes = service_of(
+        box(f"{NOTES}-074501234567", labels=coolify_labels(NOTES, "notes")),
+        urls=["https://notes.example.com/", "http://203.0.113.7/"],
+    )
+    assert stale_checks(notes, apps()) == []
+
+
+def test_an_app_whose_domain_list_has_an_item_that_is_no_url_flags_nothing():
+    # `blog`'s fqdn holds `blog.example.com` with no scheme: the list is not read as a whole.
+    blog = service_of(
+        box(f"{BLOG}-074501234567", labels=coolify_labels(BLOG, "blog")),
+        urls=["https://old.blog.example.com/"],
+    )
+    assert stale_checks(blog, apps()) == []
+
+
+@pytest.mark.parametrize("fqdn", [None, "", " , "])
+def test_an_app_with_no_domain_at_all_flags_nothing(fqdn):
+    bare = [apps()[0].model_copy(update={"fqdn": fqdn})]
+    assert stale_checks(shop_with("https://old.shop.example.com/"), bare) == []
+
+
+def test_a_preview_deployment_and_a_service_without_an_app_flag_nothing():
+    preview = service_of(
+        box(f"{SHOP}-pr-12-0745", labels=coolify_labels(SHOP, "shop", pr="12")),
+        urls=["https://old.shop.example.com/"],
+    )
+    assert stale_checks(preview, apps()) == []
+    plain = service_of(box("shop-web-1", "shop"), urls=["https://old.shop.example.com/"])
+    assert stale_checks(plain, apps()) == []
+
+
+def test_a_compose_check_is_flagged_against_the_apps_domains_not_those_of_running_services():
+    forum = compose_app_service(
+        "web",
+        urls=[
+            "https://forum.example.com/",
+            "https://api.forum.example.com/v1/",  # Coolify keeps it for `api`, not running now
+            "https://old.forum.example.com/",
+        ],
+    )
+    assert urls(stale_checks(forum, apps())) == ["https://old.forum.example.com/"]
+
+
+@pytest.mark.parametrize("raw", ["", "not json", "[]", '{"web": 7}', '{"web": {"domain": ""}}'])
+def test_a_compose_app_whose_domains_cannot_be_read_flags_nothing(raw):
+    odd = apps()[-1].model_copy(update={"docker_compose_domains": raw})
+    forum = compose_app_service("web", urls=["https://old.forum.example.com/"])
+    assert stale_checks(forum, [odd]) == []
+
+
+async def test_the_plugin_says_what_to_offer_and_what_is_stale_from_one_read():
+    domains = json.loads((FIXTURES / "domains.json").read_text(encoding="utf-8"))
+    coolify = CoolifyAnswers(200, domains)
+    shop = shop_with("https://old.shop.example.com/health", "https://shop.example.com/health")
+    said = await CoolifyPlugin(transport=coolify).check_suggestions(context(), shop)
+    assert urls(said.stale) == ["https://old.shop.example.com/health"]
+    assert urls(said.offered) == [
+        "https://WWW.shop.example.com/health",
+        "https://example.com/shop/health",
+    ]
+    assert len(coolify.requests) == 1
+
+
+def test_a_compose_list_with_an_entry_that_cannot_be_read_flags_nothing():
+    mixed = '{"web":{"domain":"https://a.example.com"},"api":{"domain":["https://b.example.com"]}}'
+    odd_name = "s" * 65  # a valid Compose name that Bleep's service-name rule refuses
+    template = '{"web":{"domain":"https://a.example.com"},"%s":{"domain":"https://b.example.com"}}'
+    checks = ["https://b.example.com/", "https://c.example.com/"]
+    for raw in (mixed, template % odd_name):
+        odd = apps()[-1].model_copy(update={"docker_compose_domains": raw})
+        assert stale_checks(compose_app_service("web", urls=checks), [odd]) == []
+    fine = apps()[-1].model_copy(update={"docker_compose_domains": template % "api"})
+    assert urls(stale_checks(compose_app_service("web", urls=checks), [fine])) == [
+        "https://c.example.com/"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("fqdn", "check"),
+    [
+        ("https://xn--bcher-kva.example.com", "https://bücher.example.com/"),
+        ("https://bücher.example.com", "https://xn--bcher-kva.example.com/"),
+        ("https://Bücher.example.com:8443/x", "https://BÜCHER.example.com/"),
+    ],
+)
+def test_a_unicode_and_a_punycode_host_are_the_same_domain(fqdn, check):
+    app = apps()[0].model_copy(update={"fqdn": fqdn})
+    assert stale_checks(shop_with(check), [app]) == []
+
+
+def test_another_unicode_domain_is_flagged_and_a_wildcard_domain_still_flags_nothing():
+    app = apps()[0].model_copy(update={"fqdn": "https://bücher.example.com"})
+    assert urls(stale_checks(shop_with("https://bücherei.example.com/"), [app])) == [
+        "https://bücherei.example.com/"
+    ]
+    wild = apps()[0].model_copy(update={"fqdn": "https://*.example.com"})
+    assert stale_checks(shop_with("https://old.shop.example.com/"), [wild]) == []
+
+
+def test_an_ip_domain_coolify_offered_and_then_dropped_is_flagged():
+    notes = service_of(
+        box(f"{NOTES}-074501234567", labels=coolify_labels(NOTES, "notes")),
+        urls=["https://notes.example.com/", "http://203.0.113.7/", "http://192.168.1.5:3000/"],
+    )
+    dropped = apps()[2].model_copy(update={"fqdn": "https://notes.example.com"})
+    assert urls(stale_checks(notes, [dropped])) == ["http://203.0.113.7/"]
+    assert [c for c in stale_checks(notes, apps())] == []  # still listed: nothing flagged
