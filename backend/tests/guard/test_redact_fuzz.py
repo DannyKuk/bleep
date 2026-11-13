@@ -1,5 +1,6 @@
 """Generated client commands, quoted the ways a shell quotes them and written into a log the ways
-logs write them (plain, JSON, logfmt, logfmt or JSON inside logfmt, Python's repr): the password
+logs write them (plain, JSON, .NET's JSON, logfmt, single-quoted logfmt, logfmt or JSON inside
+logfmt, Python's repr, and these inside each other): the password
 never shows, what follows it stays, a JSON record stays JSON and a second pass changes nothing.
 
 Seeded, so a failure names the seed and the form and reproduces."""
@@ -18,10 +19,28 @@ LINES_PER_FORM = 1500
 NAMES = ["curl", "mysql", "mongo", "redis-cli", "mongosh", "mysqladmin"]
 PLAIN_PIECES = [*NAMES, "ab", "-p", "-a", "x/y", "é", "😀", ",", ";", "'"]
 PIECES = [*PLAIN_PIECES, "\\", "\\\\", '"']
-PREFIXES = ["", "+ ", "curl -s x && ", "mongo started; ", "echo ok; ", "INFO curl check ", "sh -c "]
+PREFIXES = [
+    "",
+    "+ ",
+    "curl -s x && ",
+    "mongo started; ",
+    "echo ok; ",
+    "INFO curl check ",
+    "sh -c ",
+    "echo 'ok: ' && ",
+    'echo "a, " ; ',
+    "don't: ",
+    'IFS=":"; ',
+    "IFS=','; ",
+    'X=","; ',
+    'grep -c "a b"; ',
+    "re: ",
+]
 KEEP = "KEEPME"
+# A password holding a quote and a blank, inside `sh -c '…'`, can still show a part (main too, a
+# known limit in docs/design/guard.md), so these forms draw none
+QUOTE_AND_BLANK_LEFT_OUT = {"sh -c quoted"}
 CORE = re.compile(r"Zq[0-9]{3}Xw")
-STRING_END = re.compile(rf"[\s,;:.)}}\]]|{'|'.join(NAMES)}")
 SHELL_SPECIAL = set(" '\"\\;`&|(")
 
 
@@ -42,36 +61,41 @@ def _double_quoted(value: str) -> str:
     return '"' + "".join("\\" + c if c in '\\"$`' else c for c in value) + '"'
 
 
-def _quoted(rng: random.Random, value: str, split: bool) -> str:
-    """`value` quoted as a shell would, or, when `split`, also as a double-quoted part and a
-    single-quoted one (`"pw\\\\"'" s3cret'`), cut outside the core. One holding `'` goes in double
-    quotes, as `shlex.quote` would put a quote in the middle of the word (`'a'"'"'b'`), and the
-    single-quoted part never starts with a blank, punctuation or a client's name: a quote there,
-    after a word and before a blank or the next command, is read as the end of a string around
-    the command (docs/design/guard.md)."""
+def _single_quoted(value: str) -> str:
+    """`value` as `shlex.quote` writes it inside single quotes, a `'` in it as `'"'"'`."""
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def _quoted(rng: random.Random, value: str) -> str:
+    """`value` quoted as a shell would: whole in single quotes (`shlex.quote`'s form, with a quote
+    in the middle of the word for a `'`: `'a'"'"' b'`) or double quotes, bare when it needs no
+    quotes, or in parts cut outside the core: a double-quoted part and a single-quoted one
+    (`"pw\\\\"'" s3cret'`), or a bare part and a quoted rest (`x" s3cret"`, `x' s3cret'`)."""
     draw = rng.random()
     core = CORE.search(value)
-    if split and core and draw < 0.2 and "'" not in value:
-        cuts = [*range(1, core.start() + 1), *range(core.end(), len(value))]
-        cuts = [cut for cut in cuts if not STRING_END.match(value, cut)]
-        if cuts:
-            cut = rng.choice(cuts)
-            return _double_quoted(value[:cut]) + f"'{value[cut:]}'"
-    if "'" in value or 0.4 <= draw < 0.7:
+    cuts = [*range(1, core.start() + 1), *range(core.end(), len(value))] if core else []
+    if draw < 0.15 and cuts and "'" not in value:
+        cut = rng.choice(cuts)
+        return _double_quoted(value[:cut]) + f"'{value[cut:]}'"
+    bare_cuts = [cut for cut in cuts if not set(value[:cut]) & SHELL_SPECIAL]
+    if draw < 0.3 and bare_cuts:
+        cut = rng.choice(bare_cuts)
+        quote = _double_quoted if rng.random() < 0.5 else _single_quoted
+        return value[:cut] + quote(value[cut:])
+    if draw < 0.5:
+        return _single_quoted(value)
+    if draw < 0.8 or set(value) & SHELL_SPECIAL:
         return _double_quoted(value)
-    if draw < 0.4:
-        return shlex.quote(value)
-    if not set(value) & SHELL_SPECIAL:
-        return value
-    return shlex.quote(value)
+    return value
 
 
-def _command(rng: random.Random, plain: bool) -> tuple[str, str]:
-    """A client's command with a generated password; a `plain` one holds no backslash or `"`
-    and is quoted in one part."""
-    value, core = _secret(rng, PLAIN_PIECES if plain else PIECES)
-    quoted = _quoted(rng, value, not plain)
-    user = _quoted(rng, "bob:" + value, not plain)
+def _command(rng: random.Random, form: str) -> tuple[str, str]:
+    """A client's command with a generated password."""
+    value, core = _secret(rng, PIECES)
+    while form in QUOTE_AND_BLANK_LEFT_OUT and " " in value and set(value) & set("'\""):
+        value, core = _secret(rng, PIECES)
+    quoted = _quoted(rng, value)
+    user = _quoted(rng, "bob:" + value)
     commands = [
         f"redis-cli -h db -a {quoted} ping",
         f"redis-cli --pass {quoted} ping",
@@ -87,6 +111,21 @@ def _command(rng: random.Random, plain: bool) -> tuple[str, str]:
 
 def _logfmt(text: str, quote: str = '"') -> str:
     return f"msg={quote}" + text.replace("\\", "\\\\").replace(quote, "\\" + quote) + quote
+
+
+def _dotnet_string(text: str) -> str:
+    """`text` as .NET's System.Text.Json writes a string: `"` as `\\u0022`, `'` as `\\u0027`, and
+    other characters HTML or non-ASCII as `\\uXXXX` too."""
+    escaped = json.dumps(text)[1:-1].replace('\\"', "\\u0022")
+    return '"' + "".join(f"\\u{ord(c):04X}" if c in "'<>&+`" else c for c in escaped) + '"'
+
+
+def _dotnet(record: dict[str, str]) -> str:
+    return (
+        "{"
+        + ", ".join(f"{_dotnet_string(k)}: {_dotnet_string(v)}" for k, v in record.items())
+        + "}"
+    )
 
 
 # Each form writes a line holding the command (and the bare command, for the argv list)
@@ -110,21 +149,48 @@ FORMS: dict[str, Callable[[str, str, random.Random], str]] = {
         {"log": _logfmt(_logfmt(line)), "k": KEEP}
     ),
     "repr": lambda line, _, __: f"cmd={line!r} {KEEP}",
+    "dotnet": lambda line, _, __: _dotnet({"cmd": line, "k": KEEP}),
+    "dotnet in logfmt": lambda line, _, __: _logfmt(_dotnet({"cmd": line})) + f" {KEEP}",
+    "dotnet in json": lambda line, _, __: json.dumps({"log": _dotnet({"cmd": line}), "k": KEEP}),
+    "repr in logfmt": lambda line, _, __: _logfmt(f"cmd={line!r}") + f" {KEEP}",
+    "logfmt in repr": lambda line, _, __: f"cmd={_logfmt(line)!r} {KEEP}",
+    "single in json": lambda line, _, __: json.dumps({"log": _logfmt(line, "'"), "k": KEEP}),
+    "single in single": lambda line, _, __: _logfmt(_logfmt(line, "'"), "'") + f" {KEEP}",
+    "repr in single in logfmt": lambda line, _, __: (
+        _logfmt(_logfmt(f"cmd={line!r}", "'")) + f" {KEEP}"
+    ),
+    "single in dotnet": lambda line, _, __: (
+        _logfmt(_dotnet({"cmd": _logfmt(line, "'")})) + f" {KEEP}"
+    ),
+    "repr in logfmt in single": lambda line, _, __: (
+        _logfmt(_logfmt(f"cmd={line!r}"), "'") + f" {KEEP}"
+    ),
+    "bytes repr": lambda line, _, __: f"out={line.encode()!r} {KEEP}",
+    "bytes repr after a blank": lambda line, _, __: f"stdout: {line.encode()!r} {KEEP}",
+    "raw bytes repr after a blank": lambda line, _, __: f"stdout: r{line.encode()!r} {KEEP}",
+    "sh -c quoted": lambda line, _, __: "sh -c " + shlex.quote(line),
     "two values": lambda line, _, __: (
         _logfmt(line) + " other=" + _logfmt(f'redis-cli -a "x y" {KEEP}')
     ),
 }
-# Forms that quote with `'` and leave `"` as it is: the shell's double quote stays a plain quote
-# whose escaped backslashes they double, which the redaction does not read (docs/design/guard.md)
-DOUBLE_QUOTE_LEFT_PLAIN = {"logfmt single", "repr"}
-JSON_FORMS = {"json", "argv", "sh -c", "logfmt in json", "json in json", "logfmt twice in json"}
+JSON_FORMS = {
+    "json",
+    "argv",
+    "sh -c",
+    "logfmt in json",
+    "json in json",
+    "logfmt twice in json",
+    "dotnet",
+    "dotnet in json",
+    "single in json",
+}
 
 
 def _problems(form: str, seed: int) -> list[tuple[str, str, str]]:
     rng = random.Random(f"{form}/{seed}")
     problems = []
     for _ in range(LINES_PER_FORM):
-        command, core = _command(rng, form in DOUBLE_QUOTE_LEFT_PLAIN)
+        command, core = _command(rng, form)
         line = FORMS[form](rng.choice(PREFIXES) + command, command, rng)
         out, count = redact_with_count(line)
         if core in out:

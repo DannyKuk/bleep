@@ -398,6 +398,63 @@ def test_a_port_mapping_or_a_missing_password_stays(line):
     assert redact_command(line) == line
 
 
+def _in_form(command: str, form: str) -> str:
+    if form == "json":
+        return json.dumps({"cmd": command, "n": 1})
+    if form == "logfmt":
+        return _logfmt(command) + " n=1"
+    if form == "logfmt twice":
+        return _logfmt(_logfmt(command)) + " n=1"
+    return command
+
+
+@pytest.mark.parametrize(
+    "mapping", ["27017:27017", "27017:27017/tcp", "127.0.0.1:27017:27017/udp", ":27017"]
+)
+@pytest.mark.parametrize("quote", ['"', "'"])
+@pytest.mark.parametrize("form", ["plain", "json", "logfmt", "logfmt twice"])
+def test_a_quoted_port_mapping_after_mongo_p_stays_inside_escaped_quotes(mapping, quote, form):
+    """`msg="docker run --name mongo -p \\"27017:27017\\" mongo"`: the escaped quotes around the
+    mapping are no part of it (#510)."""
+    line = _in_form(f"docker run --name mongo -p {quote}{mapping}{quote} mongo", form)
+    assert redact_with_count(line) == (line, 0)
+
+
+@pytest.mark.parametrize(
+    "password", ["27017:27017x", "27017:27017 s3cret", "27017:27017/s3cret", "s3cret:27017"]
+)
+@pytest.mark.parametrize("quote", ['"', "'"])
+@pytest.mark.parametrize("form", ["plain", "json", "logfmt", "logfmt twice"])
+def test_a_password_that_only_looks_like_a_port_mapping_is_hidden_in_escaped_quotes(
+    password, quote, form
+):
+    line = _in_form(f"docker run --name mongo -p {quote}{password}{quote} mongo", form)
+    out = _hidden_once(line)
+    assert "s3cret" not in out and "27017x" not in out
+    assert out.count("mongo") == line.count("mongo")
+
+
+# The quote of .NET's JSON (`"`, `\\u0022` in logfmt) and an escaped `\'` in logfmt
+WRITTEN_QUOTES = [
+    ('msg="docker run --name mongo -p \\\\u0022{}\\\\u0022 mongo" n=1', "docker"),
+    ('{{"cmd": "docker run --name mongo -p \\u0022{}\\u0022 mongo", "n": 1}}', "docker"),
+    ("msg=\"mongosh -p \\'{}\\' --quiet\" n=1", "mongosh"),
+]
+
+
+@pytest.mark.parametrize(("template", "client"), WRITTEN_QUOTES)
+def test_a_port_mapping_in_a_quote_json_or_logfmt_writes_stays(template, client):
+    line = template.format("27017:27017")
+    assert redact_with_count(line) == (line, 0)
+
+
+@pytest.mark.parametrize(("template", "client"), WRITTEN_QUOTES)
+def test_a_password_that_looks_like_a_mapping_in_such_a_quote_is_hidden(template, client):
+    line = template.format("27017:27017x")
+    out = _hidden_once(line)
+    assert "27017x" not in out and client in out and "n" in out.rsplit("<redacted>", 1)[1]
+
+
 @pytest.mark.parametrize(
     ("line", "expected"),
     [
@@ -569,7 +626,7 @@ def test_an_escaped_quote_is_closed_by_a_run_the_shell_would_close_it_with(line,
 @pytest.mark.parametrize(
     ("hide", "line", "expected"),
     [
-        (redact_text, 'msg="redis-cli -a pw\\\\" n=1', 'msg="redis-cli -a <redacted>\\\\" n=1'),
+        (redact_text, 'msg="redis-cli -a pw\\\\" n=1', 'msg="redis-cli -a <redacted>" n=1'),
         (redact_command, 'redis-cli -a \\\\"pw x" ping', "redis-cli -a <redacted> ping"),
         (hide_client_passwords, 'redis-cli -a \\\\"pw x" ping', "redis-cli -a <redacted> ping"),
         (
@@ -587,13 +644,333 @@ def test_an_escaped_quote_is_closed_by_a_run_the_shell_would_close_it_with(line,
 def test_a_run_of_backslashes_and_a_quote_keeps_its_backslashes_around_the_marker(
     hide, line, expected
 ):
-    """What reading a run as one quote changes: a password's trailing backslashes stay after
-    `<redacted>` with the quote they lead; an odd run (`\\\\"`, an escaped backslash and a quote)
-    opens no wide quote, so the word is hidden whole as before; and a wide quote that opens the
-    password is put back after `<redacted>`."""
+    """What reading a run as one quote changes: a password's trailing backslashes before the
+    plain quote that closes the string around the command are hidden with it, as only that quote
+    opened a string before the command (#509); an odd run (`\\\\"`, an escaped backslash and a
+    quote) opens no wide quote, so the word is hidden whole as before; and a wide quote that
+    opens the password is put back after `<redacted>`."""
     out = hide(line)
     assert out == expected
     assert hide(out) == out
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            'msg="{\\"cmd\\": \\"redis-cli -a \\\\u0022 s3cret\\\\u0022 ping\\"}"',
+            'msg="{\\"cmd\\": \\"redis-cli -a \\\\u0022<redacted>\\\\u0022 ping\\"}"',
+        ),
+        (
+            '{"cmd": "redis-cli -a \\u0022 s3cret\\u0022 ping"}',
+            '{"cmd": "redis-cli -a \\u0022<redacted>\\u0022 ping"}',
+        ),
+        (
+            "INFO run redis-cli -a \\u0022 s3cret\\u0022 ping now",
+            "INFO run redis-cli -a \\u0022<redacted>\\u0022 ping now",
+        ),
+        (
+            'msg="{\\"cmd\\": \\"curl -u \\\\u0027bob: s3cret\\\\u0027 http://x\\"}" n=1',
+            'msg="{\\"cmd\\": \\"curl -u \\\\u0027bob:<redacted>\\\\u0027 http://x\\"}" n=1',
+        ),
+        (
+            'cmd=\'redis-cli -a "a\\\\" s3cret" ping\' n=1',
+            "cmd='redis-cli -a \"<redacted>\" ping' n=1",
+        ),
+        (
+            "msg='redis-cli -a \" s3cret\\\\\\\\\" ping' n=1",
+            "msg='redis-cli -a \"<redacted>\" ping' n=1",
+        ),
+        (
+            _logfmt("cmd=" + repr('redis-cli -a "a\\" s3cret" ping')) + " n=1",
+            'msg="cmd=\'redis-cli -a \\"<redacted>\\" ping\'" n=1',
+        ),
+    ],
+)
+def test_a_quote_written_as_u0022_or_left_as_it_is_under_a_single_quoting_level_is_hidden(
+    line, expected
+):
+    """.NET's System.Text.Json writes `"` as `\\u0022` (`\\\\u0022` in logfmt), a quote whose
+    backslashes double with each level around it; a level that quotes with `'` (single-quoted
+    logfmt, `repr`) leaves `"` as it is and doubles the backslash that escapes it (`\\\\"`)."""
+    assert _hidden_once(line) == expected
+    in_json = redact_text(json.dumps({"log": line, "n": 1}))
+    assert "s3cret" not in in_json and json.loads(in_json)["n"] == 1
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            "sh -c 'redis-cli -a \"a\\\\\" ping' n=1",
+            "sh -c 'redis-cli -a \"<redacted>\" ping' n=1",
+        ),
+        (
+            'don\'t: redis-cli -a "a\\\\" ping n=1',
+            'don\'t: redis-cli -a "<redacted>" ping n=1',
+        ),
+        ('redis-cli -a "a\\\\" ping "x" n=1', 'redis-cli -a "<redacted>" ping "x" n=1'),
+    ],
+)
+def test_a_password_ending_in_a_backslash_still_ends_at_its_quote(line, expected):
+    """A `'` that opens no string before the command (an apostrophe, a closing quote) adds no
+    level, and with one that does, a quote nothing closes under that level is closed as before:
+    the password `a\\` keeps the words after it."""
+    assert _hidden_once(line) == expected
+
+
+MID_WORD_QUOTES = [
+    ('redis-cli -a x" s3cret" ping', "redis-cli -a <redacted> ping"),
+    ("redis-cli -a 'a'\"'\"' s3cret' ping", "redis-cli -a '<redacted>' ping"),
+    ("curl -u bob': s3cret' http://x", "curl -u bob':<redacted> http://x"),
+]
+
+
+@pytest.mark.parametrize(("command", "expected"), MID_WORD_QUOTES)
+@pytest.mark.parametrize("form", ["plain", "json", "logfmt"])
+def test_a_quote_in_the_middle_of_a_password_word_joins_what_it_quotes_to_the_word(
+    command, expected, form
+):
+    """A quote anywhere in a shell word quotes on to its closer, as the shell reads it: only a
+    quote that opened a string before the command closes that string after a word."""
+    if form == "plain":
+        line, kept = command, expected
+    elif form == "json":
+        line, kept = json.dumps({"cmd": command, "n": 1}), json.dumps({"cmd": expected, "n": 1})
+    else:
+        line, kept = _logfmt(command) + " n=1", _logfmt(expected) + " n=1"
+    assert _hidden_once(line) == kept
+    assert redact_command(command) == expected
+
+
+@pytest.mark.parametrize("quote", ['x"', '"'])
+@pytest.mark.parametrize("form", ["plain", "logfmt"])
+def test_an_unclosed_quote_in_the_middle_of_a_password_hides_what_a_leading_one_does(quote, form):
+    command = f"redis-cli -a {quote} s3cret ping"
+    line = command if form == "plain" else _logfmt(command) + " n=1"
+    expected = "redis-cli -a <redacted>" if form == "plain" else 'msg="redis-cli -a <redacted>'
+    assert _hidden_once(line) == expected
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            'out=b\'redis-cli -a "a\\\\" s3cret" ping\' n=1',
+            "out=b'redis-cli -a \"<redacted>\" ping' n=1",
+        ),
+        (
+            "msg='msg=\\'redis-cli -a \"a\\\\\\\\\" s3cret\" ping\\'' n=1",
+            "msg='msg=\\'redis-cli -a \"<redacted>\" ping\\'' n=1",
+        ),
+        (
+            "msg='redis-cli -a \"p\\\\\" ping' other='x \"y\" z' n=1",
+            "msg='redis-cli -a \"<redacted>\" ping' other='x \"y\" z' n=1",
+        ),
+        (
+            'echo \'ok: \' && redis-cli -a "a\\\\" ping "x" n=1',
+            'echo \'ok: \' && redis-cli -a "<redacted>" ping "x" n=1',
+        ),
+    ],
+)
+def test_each_level_that_quotes_with_a_single_quote_is_read_inside_its_own_string(line, expected):
+    """A bytes `repr` (`b'…'`) is such a level too, two inside each other are two levels, a `"`
+    under them is closed before the string that gave the level ends, and the closing quote of
+    an earlier argument (`'ok: '`) gives none."""
+    assert _hidden_once(line) == expected
+
+
+def _single_logfmt(text: str) -> str:
+    return "msg='" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        lambda c: _single_logfmt(_logfmt(f"cmd={c!r}")),
+        lambda c: "cmd=" + repr(_logfmt(_single_logfmt(c))),
+        lambda c: _single_logfmt(_logfmt(_single_logfmt(c))),
+    ],
+    ids=["repr in logfmt in single", "single in logfmt in repr", "single, logfmt, single"],
+)
+@pytest.mark.parametrize(
+    "command",
+    ['redis-cli -a "a\\" s3cret" ping', 'redis-cli -a "a\\\\\\" s3cret\\\\" ping'],
+)
+def test_a_level_that_quotes_with_a_single_quote_counts_once_between_and_inside_others(
+    form, command
+):
+    """A `'` level between two that escape `"` shows in the width of the quote (`\\\\"`, a 0 in
+    its binary count); one inside them all does not, and each counts once."""
+    line = form(command) + " n=1"
+    out = _hidden_once(line)
+    assert "s3cret" not in out and "n=1" in out
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'msg="redis-cli -a pw1234" status=500',
+        "cmd='redis-cli -a pw1234' status=500",
+        'run ["sh", "-c", "redis-cli -a pw1234"] status=500',
+        'msg="msg=\\"redis-cli -a pw1234\\" status=500"',
+        'error: "curl -u bob:pw1234", status=500',
+        'run "curl -u bob:pw1234". status=500',
+        'msg="\\"redis-cli -a pw1234\\" failed" status=500',
+        json.dumps({"log": 'msg="\\"redis-cli -a pw1234\\" failed"', "n": "status=500"}),
+        "cmd='\"redis-cli -a pw1234\" failed' status=500",
+        "\"'redis-cli -a pw1234' failed\" status=500",
+        "sh -c $'redis-cli -a pw1234' status=500",
+        '>"redis-cli -a pw1234" status=500',
+        '**"redis-cli -a pw1234"** status=500',
+        '<cmd>"redis-cli -a pw1234"</cmd> status=500',
+        "it's 'redis-cli -a pw1234' status=500",
+        'out=b"redis-cli -a pw1234" status=500',
+    ],
+)
+def test_a_quote_that_opened_a_string_before_the_command_still_closes_it(line):
+    """Also a quote inside another one, bash's `$'…'`, after a redirect or `**`, before a tag,
+    and after an apostrophe, which is no quote of its own."""
+    out = _hidden_once(line)
+    assert "pw1234" not in out and "status=500" in out
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            "echo 'ok: ' && redis-cli -a x' s3cret' ping",
+            "echo 'ok: ' && redis-cli -a <redacted> ping",
+        ),
+        (
+            'echo "ok: " && redis-cli -a x" s3cret" ping',
+            'echo "ok: " && redis-cli -a <redacted> ping',
+        ),
+        (
+            "cut -d',' -f1 f | redis-cli -a 'a'\"'\"' s3cret' ping",
+            "cut -d',' -f1 f | redis-cli -a '<redacted>' ping",
+        ),
+        (
+            'msg="x\\n\\"redis-cli -a pw1234\\" y" n=1',
+            'msg="x\\n\\"redis-cli -a <redacted>\\" y" n=1',
+        ),
+        ('IFS=":"; redis-cli -a x" s3cret" ping', 'IFS=":"; redis-cli -a <redacted> ping'),
+        ("IFS=':'; redis-cli -a x' s3cret' ping", "IFS=':'; redis-cli -a <redacted> ping"),
+        (
+            'IFS=":"; curl -u bob:x" s3cret" http://x',
+            'IFS=":"; curl -u bob:<redacted> http://x',
+        ),
+        (
+            'grep -c "a b"; redis-cli -a x" s3cret" ping',
+            'grep -c "a b"; redis-cli -a <redacted> ping',
+        ),
+        (
+            'msg="{\\"cmd\\": \\"IFS=\\\\u0022:\\\\u0022; redis-cli -a x\\\\u0022 s3cret\\\\u0022'
+            ' ping\\"}" n=1',
+            'msg="{\\"cmd\\": \\"IFS=\\\\u0022:\\\\u0022; redis-cli -a <redacted> ping\\"}" n=1',
+        ),
+    ],
+)
+def test_only_a_quote_before_text_opens_a_string_around_the_command(line, expected):
+    """The closing quote of an earlier argument (`'ok: '`, `-d','`, `IFS=":";`) closes the one
+    before it, so it opens no string a later quote could close, even before text; nor is the
+    `b` of `"a b"` a string prefix. An escaped line break may come before an opening quote."""
+    assert _hidden_once(line) == expected
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'msg="{\\"cmd\\": \\"redis-cli -a \\\\u0027\\\\u0027\\\\u0022\\\\u0027\\\\u0022\\\\u0027'
+        '.s3cret\\\\u0027 ping\\"}" n=1',
+        '{"log": "{\\"cmd\\": \\"curl -sS -u \\\\u0027bob:\\\\u0027\\\\u0022\\\\u0027\\\\u0022'
+        '\\\\u0027;s3cret\\\\u0027 http://x/h\\"}", "k": "KEEPME"}',
+    ],
+)
+def test_a_quote_written_u0027_in_a_password_does_not_end_the_string_around_the_command(line):
+    """`shlex.quote`'s `'"'"'` written by .NET's JSON: a `\\u0027` before punctuation is a quote
+    of the password, not the end of a string around the command."""
+    out = _hidden_once(line)
+    assert "s3cret" not in out and ("KEEPME" in out or "n=1" in out)
+
+
+QUOTES_AROUND_AND_IN_THE_WORD = [
+    (
+        'msg="\\"redis-cli -a pw1234\\" failed" n=1 KEEP',
+        'msg="\\"redis-cli -a <redacted>\\" failed" n=1 KEEP',
+    ),
+    (
+        json.dumps({"msg": '"redis-cli -a pw1234" failed', "k": "KEEP"}),
+        json.dumps({"msg": '"redis-cli -a <redacted>" failed', "k": "KEEP"}),
+    ),
+    (
+        "cmd='\"redis-cli -a pw1234\" failed' KEEP",
+        "cmd='\"redis-cli -a <redacted>\" failed' KEEP",
+    ),
+    (
+        "\"'redis-cli -a pw1234' failed\" KEEP",
+        "\"'redis-cli -a <redacted>' failed\" KEEP",
+    ),
+    ("sh -c $'redis-cli -a pw1234' n=1 KEEP", "sh -c $'redis-cli -a <redacted>' n=1 KEEP"),
+    ('>"redis-cli -a pw1234" KEEP', '>"redis-cli -a <redacted>" KEEP'),
+    ('IFS=":"; redis-cli -a x" s3cret" ping', 'IFS=":"; redis-cli -a <redacted> ping'),
+    ("IFS=':'; redis-cli -a x' s3cret' ping", "IFS=':'; redis-cli -a <redacted> ping"),
+    ('IFS=":"; curl -u bob:x" s3cret" http://x', 'IFS=":"; curl -u bob:<redacted> http://x'),
+    ('grep -c "a b"; redis-cli -a x" s3cret" ping', 'grep -c "a b"; redis-cli -a <redacted> ping'),
+    (
+        'msg="{\\"cmd\\": \\"IFS=\\\\u0022:\\\\u0022; redis-cli -a x\\\\u0022 s3cret\\\\u0022'
+        ' ping\\"}" KEEP',
+        'msg="{\\"cmd\\": \\"IFS=\\\\u0022:\\\\u0022; redis-cli -a <redacted> ping\\"}" KEEP',
+    ),
+    (
+        "sh -c 'redis-cli -a '\"'\"'x '\"'\"'\"'\"'\"'\"'\"'\"'s3cret'\"'\"' ping' n=1",
+        "sh -c 'redis-cli -a '<redacted>",
+    ),
+    (
+        'stdout: b\'redis-cli -a "a\\\\" s3cret" ping\' n=1 KEEP',
+        "stdout: b'redis-cli -a \"<redacted>\" ping' n=1 KEEP",
+    ),
+    ("stdout: b'redis-cli -a pw1234' n=1 KEEP", "stdout: b'redis-cli -a <redacted>' n=1 KEEP"),
+    ("stdout: rb'redis-cli -a pw1234' n=1 KEEP", "stdout: rb'redis-cli -a <redacted>' n=1 KEEP"),
+    (
+        'stdout: b\'re: redis-cli -a "a\\\\" s3cret" ping\' n=1 KEEP',
+        "stdout: b're: redis-cli -a \"<redacted>\" ping' n=1 KEEP",
+    ),
+    ("stdout: b's redis-cli -a pw1234' n=1 KEEP", "stdout: b's redis-cli -a <redacted>' n=1 KEEP"),
+    ('redis-cli -a x" s3cret" ping', "redis-cli -a <redacted> ping"),
+    ("redis-cli -a 'a'\"'\"' b' ping", "redis-cli -a '<redacted>' ping"),
+]
+
+
+@pytest.mark.parametrize(("line", "expected"), QUOTES_AROUND_AND_IN_THE_WORD)
+@pytest.mark.parametrize("form", ["plain", "json", "logfmt"])
+def test_quotes_around_a_command_and_in_its_password_word_are_told_apart(line, expected, form):
+    """A quote inside or around another, `$'…'`, a redirect and a bytes `repr` after a blank
+    (`stdout: b'…'`) open a string a quote after the password closes; an earlier argument's quotes
+    pair up; a quote in the word quotes on. In `sh -c '…'` around `shlex.quote`'s `'"'"'` the `'`
+    before a `"` closes nothing, so a password holding one hides the rest of the line."""
+    kept = expected
+    if form == "json":
+        line, kept = json.dumps({"log": line, "n": 1}), json.dumps({"log": expected, "n": 1})
+    elif form == "logfmt" and expected.endswith("<redacted>"):
+        line, kept = _logfmt(line) + " n=1", _logfmt(expected)[:-1]
+    elif form == "logfmt":
+        line, kept = _logfmt(line) + " n=1", _logfmt(expected) + " n=1"
+    assert _hidden_once(line) == kept
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "x f's: 'redis-cli -a pw1234' n=1 KEEP",
+        "the 3 R's: cmd='redis-cli -a pw1234' n=1 KEEP",
+        "FB's cmd='redis-cli -a pw1234' n=1 KEEP",
+    ],
+)
+def test_a_word_that_reads_as_a_string_prefix_hides_the_rest_of_the_line(line):
+    """`f's` after a blank reads like `stdout: b's …'`, which nothing in the line tells apart, so
+    its `'` opens a string and the password's word runs to the line's end: hidden, never shown."""
+    assert _hidden_once(line) == line.split("pw1234")[0] + "<redacted>"
 
 
 def test_a_closing_quote_put_back_in_a_json_string_keeps_the_json():
@@ -755,6 +1132,10 @@ QUOTED_UNITS = [
     'msg="redis-cli -a \\"x curl ',
     'curl -u \\"b:curl \\" ',
     "redis-cli -a \\'curl ",
+    'redis-cli -a x" curl ',
+    "redis-cli -a 'a'\"'\"' curl ",
+    'curl -u bob": mysql ',
+    'msg="redis-cli -a x\\" curl ',
 ]
 
 
@@ -806,6 +1187,13 @@ TWICE_ESCAPED_UNITS = [
     'curl -u \\\\\\"b:curl ',
     '\\\\\\" curl -u a:\\"',
     "curl \\\\",
+    "\\u0022",
+    "\\\\u0022 ",
+    "redis-cli -a \\\\u0022x ",
+    "\\u0027 curl -u a:\\u0022",
+    'cmd=\'redis-cli -a "x\\\\" ',
+    'msg=\'curl -u "b:\\\\\\\\" ',
+    "'redis-cli -a \"",
 ]
 
 
@@ -844,6 +1232,30 @@ def test_redact_text_is_linear_on_escaped_quotes_of_every_width(form):
         text = _lines_of("redis-cli -a " + _widening_quotes(3900))
     else:
         text = _lines_of(json.dumps({"m": "redis-cli -a " + _widening_quotes(1800)}))
+    started = time.perf_counter()
+    redact_text(text)
+    assert time.perf_counter() - started < 1.0
+
+
+def _widening_singles(length: int) -> str:
+    """`'` quotes of many widths that each open a string, each before a client's name and a
+    `"`, so every name looks up the levels that quote with `'` around it."""
+    units, width = [], 0
+    while sum(map(len, units)) < length:
+        units.append("=" + "\\" * (width % 64) + "'x redis-cli -a \"y ")
+        width += 1
+    return "".join(units)[:length]
+
+
+@pytest.mark.timing
+@pytest.mark.parametrize("form", ["one", "lines", "json"])
+def test_redact_text_is_linear_on_single_quotes_of_every_width_before_names(form):
+    if form == "one":
+        text = _widening_singles(1_000_000)
+    elif form == "lines":
+        text = _lines_of(_widening_singles(3900))
+    else:
+        text = _lines_of(json.dumps({"m": _widening_singles(1800)}))
     started = time.perf_counter()
     redact_text(text)
     assert time.perf_counter() - started < 1.0
