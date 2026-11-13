@@ -12,7 +12,7 @@
     "com.docker.compose.oneoff": "False",
     "com.docker.compose.project": "bleepspike",
     "com.docker.compose.project.config_files": "-",
-    "com.docker.compose.project.working_dir": "/Users/dannykukic",
+    "com.docker.compose.project.working_dir": "/Users/me",
     "com.docker.compose.service": "probe",
     "com.docker.compose.version": "5.6.1"
   }

@@ -282,7 +282,7 @@ class SshSession:
                     address = await vetted_address(address, self.host.port, self._resolve)
                 conn = await self._connect(
                     # OpenSSH lowercases the name before the known_hosts lookup; asyncssh does not,
-                    # so "MacBook-Pro-M1.local" would miss the "macbook-pro-m1.local" entry.
+                    # so "Mac.local" would miss the "mac.local" entry.
                     address,
                     port=self.host.port,
                     username=self.host.user,
