@@ -117,8 +117,9 @@ _OPENING_QUOTE = re.compile(rf"(\\*+[\"']|\\++{_U_QUOTE})\1*+")
 _QUOTE = re.compile(r"[\"']")
 _DOUBLE_QUOTED_END = re.compile(r"(?:[^\"\\]|\\.)*+\"", re.DOTALL)
 # What follows the closing quote of a string a command sits in (`msg="curl -u bob:pw" n=1`), also
-# the quote, `**` or tag of a string around that one (`'"curl -u bob:pw"'`, `"…"</cmd>`)
-_AFTER_STRING = re.compile(r"[\s,;:.)}\]\"'*<]|\Z")
+# the `'`, `**` or tag of a string around that one (`'"curl -u bob:pw"'`, `"…"</cmd>`); not a `"`,
+# which follows every `'` of `shlex.quote`'s `'"'"'`
+_AFTER_STRING = re.compile(r"[\s,;:.)}\]'*<]|\Z")
 _SHORT_FLAG = re.compile(r"-[A-Za-z]")
 # What `docker run --name mongo -p` publishes, a port mapping and no password
 _PORT_MAPPING = re.compile(
@@ -662,6 +663,9 @@ def _free_edits(
 # a JSON-escaped line break or tab, or a string prefix (Python's `b'…'`)
 _BEFORE_STRING = frozenset(" \t=:([{,\"'$>*")  # also a quote around it, $'…', a redirect, `**`
 _BEFORE_PREFIX = frozenset("=:([{,")
+# At the line's start or after a blank `b'`, `rb'` is a string prefix (`stdout: b'…'`) unless what
+# follows reads as a contraction (`f's`, `U'll`)
+_CONTRACTION = re.compile(r"'(?:[sStTdDmM]|re|RE|ll|LL|ve|VE)(?!\w)")
 _APOSTROPHE = re.compile(r"[^\W\d_]'[^\W\d_]")
 _ESCAPED_BREAKS = ("\\n", "\\r", "\\t")
 _STRING_PREFIX = re.compile(r"[bBrRuUfF]{1,2}\Z")
@@ -693,11 +697,17 @@ class _Openers:
 
     def _prefix_start(self, quote: int) -> int:
         """Where the string prefix before the quote at `quote` starts (`b` of `out=b'…'`): one or
-        two of its letters after `=`, `:`, a bracket, a comma or the line's start; or `quote`."""
+        two of its letters after `=`, `:`, a bracket or a comma, or after a blank or at the line's
+        start when no contraction follows; or `quote`."""
         text = self.text
         prefix = _STRING_PREFIX.search(text, max(self.start, quote - 2), quote)
-        if prefix and (prefix.start() == self.start or text[prefix.start() - 1] in _BEFORE_PREFIX):
-            return prefix.start()
+        if prefix is None:
+            return quote
+        lead = prefix.start()
+        if lead > self.start and text[lead - 1] in _BEFORE_PREFIX:
+            return lead
+        if (lead == self.start or text[lead - 1] in " \t") and not _CONTRACTION.match(text, quote):
+            return lead
         return quote
 
     def before(self, at: int) -> _Around:
@@ -707,8 +717,8 @@ class _Openers:
         """Whether the last quote `run` before `at` opens a string: one such quote is left
         unpaired before it (`IFS=":"; redis-cli …` has two, the second closing the first), and
         that one follows `=`, `:`, a bracket, a comma, a blank, a quote, `$` (bash's `$'…'`),
-        `>`, an escaped line break, a string prefix after one of the first five (`b'…'`) or the
-        line's start, and comes before text, not a blank (not the closing quote of
+        `>`, an escaped line break, a string prefix (`b'…'`, `_prefix_start`) or the line's
+        start, and comes before text, not a blank (not the closing quote of
         `echo 'ok: ' && …`). A level that quotes with that quote escapes every one inside, so none
         lies between."""
         places = self.places().get(run, [])

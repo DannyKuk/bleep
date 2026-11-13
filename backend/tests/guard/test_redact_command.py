@@ -894,6 +894,81 @@ def test_a_quote_written_u0027_in_a_password_does_not_end_the_string_around_the_
     assert "s3cret" not in out and ("KEEPME" in out or "n=1" in out)
 
 
+QUOTES_AROUND_AND_IN_THE_WORD = [
+    (
+        'msg="\\"redis-cli -a pw1234\\" failed" n=1 KEEP',
+        'msg="\\"redis-cli -a <redacted>\\" failed" n=1 KEEP',
+    ),
+    (
+        json.dumps({"msg": '"redis-cli -a pw1234" failed', "k": "KEEP"}),
+        json.dumps({"msg": '"redis-cli -a <redacted>" failed', "k": "KEEP"}),
+    ),
+    (
+        "cmd='\"redis-cli -a pw1234\" failed' KEEP",
+        "cmd='\"redis-cli -a <redacted>\" failed' KEEP",
+    ),
+    (
+        "\"'redis-cli -a pw1234' failed\" KEEP",
+        "\"'redis-cli -a <redacted>' failed\" KEEP",
+    ),
+    ("sh -c $'redis-cli -a pw1234' n=1 KEEP", "sh -c $'redis-cli -a <redacted>' n=1 KEEP"),
+    ('>"redis-cli -a pw1234" KEEP', '>"redis-cli -a <redacted>" KEEP'),
+    ('IFS=":"; redis-cli -a x" s3cret" ping', 'IFS=":"; redis-cli -a <redacted> ping'),
+    ("IFS=':'; redis-cli -a x' s3cret' ping", "IFS=':'; redis-cli -a <redacted> ping"),
+    ('IFS=":"; curl -u bob:x" s3cret" http://x', 'IFS=":"; curl -u bob:<redacted> http://x'),
+    ('grep -c "a b"; redis-cli -a x" s3cret" ping', 'grep -c "a b"; redis-cli -a <redacted> ping'),
+    (
+        'msg="{\\"cmd\\": \\"IFS=\\\\u0022:\\\\u0022; redis-cli -a x\\\\u0022 s3cret\\\\u0022'
+        ' ping\\"}" KEEP',
+        'msg="{\\"cmd\\": \\"IFS=\\\\u0022:\\\\u0022; redis-cli -a <redacted> ping\\"}" KEEP',
+    ),
+    (
+        "sh -c 'redis-cli -a '\"'\"'x '\"'\"'\"'\"'\"'\"'\"'\"'s3cret'\"'\"' ping' n=1",
+        "sh -c 'redis-cli -a '<redacted>",
+    ),
+    (
+        'stdout: b\'redis-cli -a "a\\\\" s3cret" ping\' n=1 KEEP',
+        "stdout: b'redis-cli -a \"<redacted>\" ping' n=1 KEEP",
+    ),
+    ("stdout: b'redis-cli -a pw1234' n=1 KEEP", "stdout: b'redis-cli -a <redacted>' n=1 KEEP"),
+    ("stdout: rb'redis-cli -a pw1234' n=1 KEEP", "stdout: rb'redis-cli -a <redacted>' n=1 KEEP"),
+    ('redis-cli -a x" s3cret" ping', "redis-cli -a <redacted> ping"),
+    ("redis-cli -a 'a'\"'\"' b' ping", "redis-cli -a '<redacted>' ping"),
+]
+
+
+@pytest.mark.parametrize(("line", "expected"), QUOTES_AROUND_AND_IN_THE_WORD)
+@pytest.mark.parametrize("form", ["plain", "json", "logfmt"])
+def test_quotes_around_a_command_and_in_its_password_word_are_told_apart(line, expected, form):
+    """A quote inside or around another, `$'…'`, a redirect and a bytes `repr` after a blank
+    (`stdout: b'…'`) open a string a quote after the password closes; an earlier argument's quotes
+    pair up; a quote in the word quotes on. In `sh -c '…'` around `shlex.quote`'s `'"'"'` the `'`
+    before a `"` closes nothing, so a password holding one hides the rest of the line."""
+    kept = expected
+    if form == "json":
+        line, kept = json.dumps({"log": line, "n": 1}), json.dumps({"log": expected, "n": 1})
+    elif form == "logfmt" and expected.endswith("<redacted>"):
+        line, kept = _logfmt(line) + " n=1", _logfmt(expected)[:-1]
+    elif form == "logfmt":
+        line, kept = _logfmt(line) + " n=1", _logfmt(expected) + " n=1"
+    assert _hidden_once(line) == kept
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "x f's: 'redis-cli -a pw1234' n=1 KEEP",
+        "u're ok: cmd='redis-cli -a pw1234' n=1 KEEP",
+        "the 3 R's: cmd='redis-cli -a pw1234' n=1 KEEP",
+        "FB's cmd='redis-cli -a pw1234' n=1 KEEP",
+        "U'll see: cmd='redis-cli -a pw1234' n=1 KEEP",
+    ],
+)
+def test_a_contraction_after_a_blank_is_no_string_prefix(line):
+    """`f's` and `U'll` read like `b'…'` after a blank, but a contraction follows their `'`."""
+    assert _hidden_once(line) == line.replace("pw1234", "<redacted>")
+
+
 def test_a_closing_quote_put_back_in_a_json_string_keeps_the_json():
     line = json.dumps({"cmd": 'msg="redis-cli -a \\"pa ss\\"x ping"', "n": 1})
     out = _hidden_once(line)
