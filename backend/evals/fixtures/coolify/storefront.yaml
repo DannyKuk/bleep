@@ -1,0 +1,39 @@
+# A Coolify server with one application, storefront, for the coolify-set-env scenario. Shaped as
+# Coolify v4.6.0 answers (tests/fixtures/coolify/README.md) and made up from the uuid on: nothing
+# here was read from a real server. The application has no SESSION_TTL_S among its env keys; its
+# container's log is the only place that names it. A deployment gives `minutes_ago` for when it
+# started (it ran for three minutes), which `serve` turns into the dates Coolify writes, so the
+# history reads as recent whatever day the scenario runs. The newest deployment is ordinary and
+# finished, and the crash loop began after it.
+container: storefront-web
+application:
+  uuid: store0uuid0000000000000a1
+  name: storefront
+  status: "restarting:unhealthy"
+  fqdn: https://storefront.example.com
+  git_repository: example/storefront
+  git_branch: main
+  git_commit_sha: 7c2e41d90b5a6f83c1d0e9a4b2f7385a6c0de1f2
+  build_pack: nixpacks
+env_keys: [DATABASE_URL, NODE_ENV, PORT]
+deployments:
+  - deployment_uuid: dep0uuid00000000000000201
+    status: finished
+    commit: 7c2e41d90b5a6f83c1d0e9a4b2f7385a6c0de1f2
+    commit_message: Move session handling into its own module
+    minutes_ago: 20
+    is_webhook: true
+    is_api: false
+    restart_only: false
+    rollback: false
+    pull_request_id: 0
+  - deployment_uuid: dep0uuid00000000000000200
+    status: finished
+    commit: 3a9f0be7c15d284e6f01b7d9a3c5e8f2d4b6a017
+    commit_message: Add the order export page
+    minutes_ago: 3000
+    is_webhook: true
+    is_api: false
+    restart_only: false
+    rollback: false
+    pull_request_id: 0

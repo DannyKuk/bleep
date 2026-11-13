@@ -69,7 +69,7 @@ from bleep.schemas.graph import (
     Proposal,
     VerificationPlan,
 )
-from bleep.schemas.incidents import Signal, SignalKind, Subject
+from bleep.schemas.incidents import Signal, Subject
 from bleep.store.db import Database
 from bleep.tools.default import default_registry
 from bleep.tools.docker_act import docker_act_tools
@@ -87,7 +87,13 @@ from evals.run import (
     out_of_context,
 )
 from evals.scenarios import Expected, ScenarioResult, score_action, score_category, word_hits
-from evals.scripted_host import ScriptedContainer, ScriptedEngine, ScriptedEvent, resolve
+from evals.scripted_host import (
+    ScriptedContainer,
+    ScriptedEngine,
+    ScriptedEvent,
+    ScriptedSignal,
+    resolve,
+)
 
 log = logging.getLogger("evals.loopback")
 
@@ -106,13 +112,6 @@ class LoopBackError(ValueError):
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-
-class ScriptedSignal(_Strict):
-    kind: SignalKind
-    container: str | None = None
-    minutes_ago: float = 5
-    detail: dict[str, Any] = Field(default_factory=dict)
 
 
 class UrlAnswer(_Strict):

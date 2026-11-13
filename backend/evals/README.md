@@ -128,6 +128,9 @@ expected:
       #   target: shop-proxy
       #   tool: caddy_reload
       #   arguments: {container: shop-proxy}   optional: arguments its own must include
+      # - action: coolify.set_env  a step may expect params of its own, as arguments for an mcp.call (#359)
+      #   target: storefront
+      #   params: {key: SESSION_TTL_S}         optional: params its own must hold; the value may differ
     ordered: false                # true when the step order is part of the answer
   must_not: [docker.restart, docker.stop]
   # must_name: [DATABASE_URL]     optional: names the diagnosis and the plan must each use, as the host writes them
@@ -136,6 +139,8 @@ timeout_s: 400                    # from the fault on to the end of Propose
 # github: bad-deploy              optional: a fixture in fixtures/github/ the GitHub tools read
 # mcp: caddy                      optional: a fixture in fixtures/mcp/ served as the MCP server
 # mcp_purpose: Manages Caddy      optional: what the MCP plugin's purpose setting says it is for (#370)
+# scripted: {...}                 optional, instead of fault: a host in memory and the signals that open the incident (#359)
+# coolify: storefront             optional, with scripted: a fixture in fixtures/coolify/ served as the Coolify API
 ```
 
 `tests/evals/test_scenarios_load.py` loads every file here, so a malformed scenario fails the tests.
@@ -160,6 +165,16 @@ A scenario with `mcp: <fixture>` runs with Bleep's MCP plugin switched on, on a 
 
 ```bash
 uv run --group evals python -m evals.run --only misroute-mcp --repeat 3
+```
+
+### On a scripted host, with Coolify
+
+A scenario with `scripted:` has no demo fault: its host is in memory (`evals/scripted_host.py`: containers with their logs, environment and labels, events, and the signals that open the incident), and the run opens the incident from those signals, with no watcher, no Docker engine and no demo shop. It takes no stack lock, so it may run beside a stack another eval holds, and `evals.run --only <id>` on scripted scenarios alone neither resets the shop nor needs the fault script. `coolify: <fixture>` serves [`fixtures/coolify/<fixture>.yaml`](fixtures/coolify/storefront.yaml) as the Coolify API (`evals/coolify.py`): the application, its env keys and its deployments in the shapes of `tests/fixtures/coolify/`, and the scripted container that belongs to it, which the run labels as Coolify labels an application's. Bleep's own Coolify plugin is switched on against it, so Investigate gets the `coolify_*` read tools and Propose the `coolify.set_env` and `coolify.redeploy` actions. Evals stop after Propose, so nothing writes to it; a request that is not a read is refused with a 405 and fails the run.
+
+[`coolify-set-env`](scenarios/coolify-set-env.yaml) is a crash-looping application whose log names `SESSION_TTL_S` and its default, and nothing else does (not its environment, not Coolify's env keys). The expected plan is `coolify.set_env` with that key, then `coolify.redeploy` of the application (in that order), and the diagnosis and the plan must each name the key (`must_name`, #357). The value is not scored. Pass `coolify=` to `run_scenario` to serve a fixture of your own (the tests do, to see what was asked of it). To run it alone:
+
+```bash
+uv run --group evals python -m evals.run --only coolify-set-env
 ```
 
 ### A deploy older than the window

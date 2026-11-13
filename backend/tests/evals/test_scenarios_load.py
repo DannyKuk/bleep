@@ -163,6 +163,8 @@ def test_every_shipped_scenario_fits_the_demo_shop():
     }
     assert compose["name"] == "shop" and "demo/compose:shop" in services
     for scenario in load_scenarios():
+        if scenario.scripted is not None:
+            continue  # a host in memory, not the demo shop (#359)
         assert scenario.look or scenario.fault in _demo_faults(), scenario.id
         assert services.get(scenario.subject.service_id) == scenario.subject.host_id, scenario.id
         assert {t for _, t, _ in scenario.expected.action.keys} <= containers, scenario.id
@@ -175,7 +177,8 @@ def test_what_a_shipped_scenario_must_name_is_a_key_or_container_of_the_demo_sho
     services = compose["services"].values()
     known = {s["container_name"] for s in services}
     known |= {key for s in services for key in s.get("environment", {})}
-    named = {s.id: s.expected.must_name for s in load_scenarios() if s.expected.must_name}
+    shop = [s for s in load_scenarios() if s.scripted is None]
+    named = {s.id: s.expected.must_name for s in shop if s.expected.must_name}
     assert named == {"bad-env": ["DATABASE_URL"], "oom": ["WORKER_BATCH_MB"]}
     for scenario_id, names in named.items():
         assert set(names) <= known, scenario_id

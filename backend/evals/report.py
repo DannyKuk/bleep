@@ -231,9 +231,11 @@ def _step(action: str, target: str, tool: str | None) -> str:
 
 def _expected_step(step: ExpectedStep) -> str:
     shown = _step(*step.key)
-    if step.arguments is None:
-        return shown
-    return f"{shown} with {json.dumps(step.arguments, separators=(', ', ': '))}"
+    if step.arguments is not None:
+        return f"{shown} with {json.dumps(step.arguments, separators=(', ', ': '))}"
+    if step.params is not None:
+        return f"{shown} with params {json.dumps(step.params, separators=(', ', ': '))}"
+    return shown
 
 
 def _expected_plan(scenario: Scenario) -> str:
@@ -469,13 +471,12 @@ def render(info: RunInfo, results: list[ScenarioResult], regrade: str | None = N
     minutes = (info.finished_at - info.started_at).total_seconds() / 60
     ids = ", ".join(s.id for s in info.scenarios)
     looks = sum(s.look for s in info.scenarios)
+    scripted = sum(s.scripted is not None for s in info.scenarios)
+    demo = len(info.scenarios) - looks - scripted
     opened = [
-        *(
-            [_plural(len(info.scenarios) - looks, "demo fault")]
-            if looks < len(info.scenarios)
-            else []
-        ),
+        *([_plural(demo, "demo fault")] if demo else []),
         *([_plural(looks, "look on request")] if looks else []),
+        *([_plural(scripted, "scripted host")] if scripted else []),
     ]
     faults, runs = " and ".join(opened), _plural(info.repeat, "run")
     tested_note = " (a local model costs nothing per call)" if info.provider == "local" else ""
@@ -511,9 +512,15 @@ def render(info: RunInfo, results: list[ScenarioResult], regrade: str | None = N
         f"| Reproduce | `{info.command}` (in `backend/`) |",
         *([f"| Graded | `{regrade}` (in `backend/`) |"] if regrade else []),
         "",
-        "Each run switches the fault on, lets Bleep's watcher open the incident and runs the graph "
-        "to the end of Propose, then switches the fault off. Nothing is executed. Times count from "
-        "the fault going on; steps are the model's tool calls, and tools lists them in order with "
+        (
+            "Each run opens the incident from the scenario's scripted signals and runs the graph "
+            "to the end of Propose. Nothing is executed. Times count from the incident opening"
+            if scripted == len(info.scenarios)
+            else "Each run switches the fault on, lets Bleep's watcher open the incident and runs "
+            "the graph to the end of Propose, then switches the fault off. Nothing is executed. "
+            "Times count from the fault going on"
+        )
+        + "; steps are the model's tool calls, and tools lists them in order with "
         "their arguments cut short (n/a for a run recorded before they were kept); peak prompt is "
         "the largest single "
         "prompt of the run; fallbacks are model calls that gave no structured output through "
@@ -523,6 +530,12 @@ def render(info: RunInfo, results: list[ScenarioResult], regrade: str | None = N
             "service healthy, the run asks for a look as a person's tap does, times count from "
             "then, and a look whose plan is no action goes on to Report, whose text is quoted."
             if looks
+            else ""
+        )
+        + (
+            " A scripted host switches no fault and touches no Docker engine: the run opens the "
+            "incident from the host's scripted signals, and times count from then."
+            if scripted
             else ""
         )
         + (

@@ -15,12 +15,14 @@ from typing import Any, Literal, Self
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from bleep.guard.plan_check import mcp_arguments
+from bleep.guard.plan_check import ACTION_PARAMS, mcp_arguments
 from bleep.plugins.mcp_url import Purpose
 from bleep.schemas.graph import Action, Diagnosis, PlanStep, Proposal, Report
 from bleep.schemas.incidents import Subject
+from evals.coolify import CoolifyFixtureError, load_coolify_fixture
 from evals.github import GithubFixtureError, load_github_fixture
 from evals.mcp_server import McpFixtureError, load_mcp_fixture
+from evals.scripted_host import ScriptedHost
 
 SCENARIOS_DIR = Path(__file__).parent / "scenarios"
 CATEGORIES: tuple[str, ...] = typing.get_args(Diagnosis.model_fields["category"].annotation)
@@ -43,6 +45,9 @@ class ExpectedStep(_Strict):
     tool: str | None = None  # an mcp.call's tool, which it must name; no other action has one
     # Arguments an mcp.call's must contain, each with this value; others may come beside them.
     arguments: dict[str, Any] | None = None
+    # Params a coolify.set_env's own must hold, each with this value (its `key`); others may
+    # come beside them.
+    params: dict[str, str] | None = None
 
     @model_validator(mode="after")
     def _tool_only_for_mcp_call(self) -> Self:
@@ -52,14 +57,28 @@ class ExpectedStep(_Strict):
             raise ValueError("only an mcp.call step has arguments")
         return self
 
+    @model_validator(mode="after")
+    def _params_are_ones_the_step_takes(self) -> Self:
+        if self.params is None:
+            return self
+        takes = set() if self.action == "mcp.call" else ACTION_PARAMS.get(self.action, set())
+        if not takes:
+            raise ValueError(f"{self.action} has no params to expect; an mcp.call has arguments")
+        if not self.params or not set(self.params) <= takes:
+            raise ValueError(f"params names some of {', '.join(sorted(takes))}")
+        return self
+
     @property
     def key(self) -> tuple[str, str, str | None]:
         return (self.action, self.target, self.tool)
 
     def matches(self, step: PlanStep) -> bool:
-        """The step is this one: action, target and tool, and its arguments a JSON object that
-        holds every expected argument with its value."""
+        """The step is this one: action, target and tool, its params holding every expected
+        param with its value, and its arguments a JSON object that holds every expected argument
+        with its value."""
         if step_key(step) != self.key:
+            return False
+        if self.params is not None and any(step.params.get(k) != v for k, v in self.params.items()):
             return False
         if self.arguments is None:
             return True
@@ -137,8 +156,9 @@ class Expected(_Strict):
 
 
 class Scenario(_Strict):
-    """A fault the demo stack breaks with, or a look on request at a service that is fine
-    (`look`, #410): the run opens the incident as a person's tap does, nothing switched."""
+    """A fault the demo stack breaks with, a look on request at a service that is fine (`look`,
+    #410): the run opens the incident as a person's tap does, nothing switched, or a host in
+    memory (`scripted`, #359): the run opens the incident from its scripted signals."""
 
     id: str
     fault: str | None = None  # the name `demo/fault.sh` switches
@@ -156,6 +176,13 @@ class Scenario(_Strict):
     # The service has no URL in Bleep's settings for this run (#445): the hosts file's URLs are
     # dropped from the host the run watches, so a look finds none to check. Looks only.
     no_urls: bool = False
+    # A host in memory instead of the demo stack (#359): its containers, and the signals that open
+    # the incident, which the run opens itself. No fault, no Docker, no demo shop.
+    scripted: ScriptedHost | None = None
+    # A fixture in evals/fixtures/coolify/ served as the Coolify API, the plugin switched on with
+    # its act tools, and the fixture's container, in the scripted host, labelled as its
+    # application's; without one the plugin is off.
+    coolify: str | None = None
 
     @model_validator(mode="after")
     def _a_purpose_needs_a_server(self) -> Self:
@@ -164,9 +191,20 @@ class Scenario(_Strict):
         return self
 
     @model_validator(mode="after")
-    def _a_fault_or_a_look(self) -> Self:
-        if (self.fault is None) == (not self.look):
-            raise ValueError("a scenario switches a fault or asks for a look, one of the two")
+    def _one_plugin_server(self) -> Self:
+        if self.coolify is not None and self.mcp is not None:
+            raise ValueError("a scenario serves an mcp fixture or a coolify one, not both")
+        if self.coolify is not None and self.scripted is None:
+            raise ValueError("a coolify fixture labels a container of a scripted host")
+        return self
+
+    @model_validator(mode="after")
+    def _a_fault_a_look_or_a_scripted_host(self) -> Self:
+        if [self.fault is not None, self.look, self.scripted is not None].count(True) != 1:
+            raise ValueError(
+                "a scenario switches a fault or asks for a look or runs on a scripted host, "
+                "one of the three"
+            )
         if self.no_urls and not self.look:
             raise ValueError("no_urls only changes what a look checks")
         if self.look and self.subject.kind != "service":
@@ -176,6 +214,8 @@ class Scenario(_Strict):
     @property
     def opener(self) -> str:
         """What opens the scenario's incident, as a report names it."""
+        if self.scripted is not None:
+            return "the signals of a scripted host"
         return "a look on request" if self.look else f"the fault `{self.fault}`"
 
 
@@ -197,6 +237,17 @@ def load_scenario(path: Path) -> Scenario:
             load_mcp_fixture(scenario.mcp)
         except McpFixtureError as error:
             raise ScenarioError(f"scenario {path}: {error}") from error
+    if scenario.coolify is not None:
+        assert scenario.scripted is not None  # `_one_plugin_server`
+        try:
+            container = load_coolify_fixture(scenario.coolify).container
+        except CoolifyFixtureError as error:
+            raise ScenarioError(f"scenario {path}: {error}") from error
+        if container not in {c.name for c in scenario.scripted.containers}:
+            raise ScenarioError(
+                f"scenario {path}: the coolify fixture's container {container!r} is not in "
+                "the scripted host"
+            )
     return scenario
 
 
