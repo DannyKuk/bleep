@@ -1,6 +1,6 @@
 import { apiFetch } from "@/lib/api";
 
-/** How the last read a person asked for ended: `failed`, or `read` of the `linked` repos. */
+/** How the last read ended, whoever started it: `failed`, or `read` of the `linked` repos. */
 export interface RepoDocsResult {
   failed: boolean;
   read: number;
@@ -15,7 +15,7 @@ export interface RepoDocsState {
   repos: { repo: string; chunks: number }[];
   /** A read is running; it can take over a minute, so the page asks again until it is false. */
   reading: boolean;
-  /** How the last read a person asked for ended; null until one has. */
+  /** How the last read ended, whoever started it; null until one has. */
   result: RepoDocsResult | null;
 }
 

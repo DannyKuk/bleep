@@ -17,7 +17,7 @@ Parts = Annotated[AppParts, Depends(get_parts)]
 @router.get("/knowledge/repos")
 async def repo_docs(parts: Parts) -> RepoDocsState:
     """When the repos' docs were last read, the chunks each linked repo has, whether a read is
-    running and how the last one a person asked for ended."""
+    running and how the last one ended, whoever started it."""
     return await parts.knowledge_refresher.repo_docs_state()
 
 

@@ -38,7 +38,7 @@ class RepoDocsRepo(BaseModel):
 
 
 class RepoDocsResult(BaseModel):
-    """How the last read a person asked for ended: `read` of the `linked` repos could be read
+    """How the last read ended, whoever started it: `read` of the `linked` repos could be read
     and `embedded` documents were new or changed; or `failed`, with the reason in Bleep's log."""
 
     failed: bool
@@ -50,7 +50,7 @@ class RepoDocsResult(BaseModel):
 class RepoDocsState(BaseModel):
     """What Bleep holds of the linked repos' docs. `last_read_at` is when a refresh last read
     the repos linked then; None before the first. `reading` is true while a refresh runs, and
-    `result` is how the last one asked for ended, None until one has."""
+    `result` is how the last one ended, None until one has."""
 
     last_read_at: datetime | None
     repos: list[RepoDocsRepo]

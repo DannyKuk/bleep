@@ -272,7 +272,7 @@ class KnowledgeRefresher:
 
     async def repo_docs_state(self) -> RepoDocsState:
         """When the repos were last read, the chunks each linked repo has in search, whether a
-        refresh is running, and how the last one a person asked for ended."""
+        refresh is running, and how the last one ended, whoever started it."""
         # Taken first: a state that says it is not reading holds what the read left, never what
         # was there before it.
         reading, result = self._is_reading(), self._outcome
