@@ -40,6 +40,7 @@ from bleep.schemas.settings import Budgets
 from bleep.schemas.shown import Shown
 from bleep.schemas.talk import TalkReply
 from bleep.store.db import Database
+from bleep.talk.actions import Actions
 from bleep.talk.confirms import CONFIRM_TTL
 from bleep.talk.conversation import Talk
 from bleep.talk.log import TalkLog
@@ -640,7 +641,20 @@ async def test_a_reply_to_an_incident_with_no_plan_waiting_is_answered_not_decid
     assert env.runner.resumed == []
 
 
+class DecisionsSeen:
+    """`talk` that notes the decisions already taken as it starts to read a message."""
+
+    def __init__(self, talk: Talk, runner: FakeRunner) -> None:
+        self.talk, self.runner, self.log = talk, runner, talk.log
+        self.seen: list[list[str]] = []
+
+    async def reply(self, *args, **kwargs):
+        self.seen.append([d.kind for _, d in self.runner.resumed])
+        return await self.talk.reply(*args, **kwargs)
+
+
 async def test_an_approve_pressed_right_after_a_reply_wins_and_the_reply_offers_nothing(env):
+    env.bot.talk = talk = DecisionsSeen(env.talk, env.runner)
     reply = fixture("reply_instruction")
     press_approve = fixture("callback_approve", APPROVAL_ID=env.approval_id)
     env.model.script.append(reading(kind="action", action={"kind": "instruct"}))
@@ -649,12 +663,29 @@ async def test_an_approve_pressed_right_after_a_reply_wins_and_the_reply_offers_
     await env.bot.poll_once()
     await env.bot.settle()
 
-    assert [d.kind for _, d in env.runner.resumed] == ["approve"]
+    assert talk.seen == [["approve"]]  # the press in its batch was decided before the reply
     [answer] = env.api.sent("sendMessage")
-    # The reply is read in the background, before or after the press is decided: either way it
-    # learns the plan no longer waits, and offers nothing.
-    no_plan, decided = fixed("no_plan", incident="shop #1"), "Already decided on Telegram"
-    assert answer["text"] in (no_plan, decided) and "reply_markup" not in answer
+    assert answer["text"] == fixed("no_plan", incident="shop #1")
+    assert "reply_markup" not in answer
+
+
+async def test_an_offer_whose_plan_is_decided_as_it_is_sent_loses_its_buttons(env, monkeypatch):
+    bind = Actions.bind
+
+    async def bind_then_decide_elsewhere(actions, offer, shown_plan=""):
+        bound = await bind(actions, offer, shown_plan)
+        decision = Decision(kind="approve", via="dashboard", at=T0)
+        assert await env.approvals.resolve(env.incident.id, decision, env.approval_id)
+        return bound
+
+    monkeypatch.setattr(Actions, "bind", bind_then_decide_elsewhere)
+    instruct = reading(kind="action", action={"kind": "instruct"})
+    [sent] = await say(env, "Restart the database first", 311, instruct)
+
+    offer_of(sent)  # it was offered, the plan still waiting
+    [cleared] = env.api.sent("editMessageReplyMarkup")
+    assert cleared["message_id"] == 401  # the offer's own message
+    assert cleared["reply_markup"] == {"inline_keyboard": []}
 
 
 async def test_send_after_an_approve_on_the_same_plan_wins_nothing(env):
