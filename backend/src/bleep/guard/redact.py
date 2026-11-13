@@ -68,9 +68,10 @@ def _is_plain_env_value(key: str, value: str) -> bool:
 
 def secret_env_values(env: list[str]) -> list[str]:
     """The values of the entries the redaction would change (a secret key such as
-    `REDIS_PASSWORD`) and the other values the env lines hide (a token-like value), longest
-    first. Compose copies such a value into a health-check command, where `hide_values` finds the
-    same text; `PORT=8000` is shown and is not in the list, nor is a URL whose place is shown."""
+    `REDIS_PASSWORD`) and every other value the env lines hide whole (a token-like value, a URL
+    that cannot be read unambiguously), longest first. Compose copies such a value into a
+    health-check command, where `hide_values` finds the same text; `PORT=8000` is shown and is
+    not in the list, nor is a URL whose place is shown."""
     values = {
         value
         for item in env
@@ -78,7 +79,7 @@ def secret_env_values(env: list[str]) -> list[str]:
         and (value := item.partition("=")[2])
         and (
             redact_text(item) != item
-            or (not _URL_LIKE.search(value) and _redact_env_entry(item) != item)
+            or _redact_env_entry(item) == f"{item.partition('=')[0]}={REDACTED}"
         )
     }
     return sorted(values, key=len, reverse=True)

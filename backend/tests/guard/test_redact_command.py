@@ -1291,9 +1291,10 @@ def test_secret_env_values_also_hold_a_token_like_value_under_a_plain_key():
         "HOST=127.0.0.1",
         "BUILD_ID=xK9mQ2vL8pR4tW7zB3nC",
         "HEALTH_URL=http://localhost:8080/health",
+        "JDBC=jdbc:postgresql://db:5432/shop",
     ]
     values = secret_env_values(env)
-    assert values == ["xK9mQ2vL8pR4tW7zB3nC"]
+    assert values == ["jdbc:postgresql://db:5432/shop", "xK9mQ2vL8pR4tW7zB3nC"]
     assert hide_values("curl -H 'X-Salt: xK9mQ2vL8pR4tW7zB3nC' 127.0.0.1", values) == (
         "curl -H 'X-Salt: <redacted>' 127.0.0.1"
     )
