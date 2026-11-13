@@ -172,7 +172,7 @@ One line each; the full reasoning and issue numbers are on the design page named
 **Knowledge search** ([details](design/knowledge.md))
 - **A curated Docker docs snapshot ships with Bleep**, with each page's source, commit, fetch date and licence; a script refreshes it.
 - **Chunks are cut at headings and at 300 tokens, one hit per page**: the right page came first for 20 of 20 questions ([knowledge chunks](decisions/knowledge-chunks.md)).
-- **Re-ingest is skipped by content hash**, so only the first start embeds the snapshot; past incidents refresh every 10 minutes, repo docs daily.
+- **Re-ingest is skipped by content hash**, so only the first start embeds the snapshot; past incidents refresh every 10 minutes, repo docs daily, or at once when a person presses "Re-read docs" in Settings.
 - **Results are untrusted data**, guarded and wrapped like host output.
 
 **Agent and models** ([details](design/agent.md))

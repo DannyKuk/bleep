@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   json,
   plugin,
+  repoDocs,
   secretViews,
   settingsView,
   sshHost,
@@ -20,6 +21,7 @@ function backend(put: Response[] = [], view = settingsView()) {
     "GET /api/plugins": json([plugin()]),
     "GET /api/telegram/status": json(telegram()),
     "GET /api/secrets": json(secretViews()),
+    "GET /api/knowledge/repos": json(repoDocs()),
     "PUT /api/settings": put,
   });
 }
@@ -52,6 +54,14 @@ describe("SettingsPage", () => {
     expect(screen.getByText("env TELEGRAM_BOT_TOKEN").closest("span")).toHaveTextContent(
       "Set: env TELEGRAM_BOT_TOKEN",
     );
+  });
+
+  it("has a Repo docs panel with the repos' chunks and the button to re-read them", async () => {
+    backend();
+    render(<SettingsPage />);
+    const panel = await screen.findByRole("region", { name: "Repo docs" });
+    expect(within(panel).getByText("acme/shop").closest("li")).toHaveTextContent("12 chunks");
+    expect(within(panel).getByRole("button", { name: "Re-read docs" })).toBeEnabled();
   });
 
   it("says socket and loopback hosts go in the hosts file", async () => {

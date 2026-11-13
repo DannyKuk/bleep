@@ -1,5 +1,6 @@
 import { vi } from "vitest";
 
+import type { RepoDocsState } from "@/lib/knowledge-api";
 import type { SecretView } from "@/lib/secrets-api";
 import type {
   HostSettingsView,
@@ -225,6 +226,19 @@ export function telegram(overrides: Partial<TelegramStatus> = {}): TelegramStatu
   };
 }
 
+export function repoDocs(overrides: Partial<RepoDocsState> = {}): RepoDocsState {
+  return {
+    last_read_at: "2026-11-13T09:30:00Z",
+    repos: [
+      { repo: "acme/shop", chunks: 12 },
+      { repo: "acme/blog", chunks: 1 },
+    ],
+    reading: false,
+    result: null,
+    ...overrides,
+  };
+}
+
 export function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -267,6 +281,7 @@ export function settingsBackend(
     "GET /api/plugins": json([plugin()]),
     "GET /api/telegram/status": json(telegram()),
     "GET /api/secrets": json(secrets),
+    "GET /api/knowledge/repos": json(repoDocs()),
     "PUT /api/settings": put,
   });
 }

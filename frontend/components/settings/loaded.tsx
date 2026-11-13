@@ -47,7 +47,7 @@ export function Status<T>({
   children,
 }: {
   loaded: Loaded<T>;
-  what: "settings" | "plugins" | "secrets" | "telegram";
+  what: "settings" | "plugins" | "secrets" | "telegram" | "docs";
   children: (data: T) => React.ReactNode;
 }) {
   const t = useT().settings.load[what];

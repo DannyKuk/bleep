@@ -684,6 +684,7 @@ export const en = {
       plugins: "Plugins",
       secrets: "Secrets",
       telegram: "Telegram",
+      docs: "Repo docs",
     },
     load: {
       settings: {
@@ -701,6 +702,10 @@ export const en = {
       telegram: {
         failed: (message: string) => `Could not load the Telegram status: ${message}`,
         loading: "Loading the Telegram status",
+      },
+      docs: {
+        failed: (message: string) => `Could not load the repo docs: ${message}`,
+        loading: "Loading the repo docs",
       },
     },
     notSaved: "Not saved: the settings changed elsewhere since this page read them.",
@@ -908,6 +913,21 @@ export const en = {
       notYet: "Not yet",
       without:
         "Without Telegram every approval happens here. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` under Secrets below, or in `.env` and restart Bleep, to get messages and approve from the chat.",
+    },
+    docs: {
+      note: "Bleep reads the README and the `docs/` of every repo a service links with `repo` in the hosts file, and finds them when it investigates. It reads them once a day; read them now after you have fixed your docs.",
+      lastRead: "Last read",
+      notYet: "Not yet",
+      none: "No service links a repo. Set `repo` on a service in the hosts file.",
+      repos: "Linked repos",
+      chunks: (n: number) => `${n} chunk${n === 1 ? "" : "s"}`,
+      button: "Re-read docs",
+      reading: "Reading the docs",
+      readAll: (read: number) => `Read ${read} repo${read === 1 ? "" : "s"}.`,
+      readSome: (read: number, linked: number) =>
+        `Read ${read} of ${linked} repos. The others could not be read and keep the docs they had; try again later.`,
+      failed: "The docs could not be read. Bleep's log says why.",
+      requestFailed: (message: string) => `Could not ask Bleep to read the docs: ${message}`,
     },
     thresholds: {
       labels: {

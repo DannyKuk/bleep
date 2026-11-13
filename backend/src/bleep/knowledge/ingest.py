@@ -23,7 +23,12 @@ from bleep.hosts.github import RateLimited
 from bleep.knowledge.index import KnowledgeIndex, SyncResult
 from bleep.schemas.github import RepoFile
 from bleep.schemas.graph import IncidentRecord
-from bleep.schemas.knowledge import KnowledgeDocument
+from bleep.schemas.knowledge import (
+    KnowledgeDocument,
+    RepoDocsRepo,
+    RepoDocsResult,
+    RepoDocsState,
+)
 
 log = logging.getLogger(__name__)
 
@@ -180,6 +185,9 @@ class KnowledgeRefresher:
         self.sleep = sleep
         self.monotonic = monotonic
         self._failing: dict[str, str] = {}
+        self._refreshing: asyncio.Task[RepoRefresh] | None = None
+        self._closed = False
+        self._outcome: RepoDocsResult | None = None
 
     async def refresh_docker(self) -> SyncResult:
         if self.snapshot_dir is None:
@@ -193,6 +201,40 @@ class KnowledgeRefresher:
         return await self.index.sync("incident", [incident_document(r) for r in records])
 
     async def refresh_repos(self) -> RepoRefresh:
+        """Sync every linked repo's docs now. A refresh already running (the daily one, or a
+        person's press) is joined, not repeated: both get its result. A caller that is cancelled
+        leaves the refresh running for the others; `close` stops it, and after it a refresh is
+        cancelled at once, so none outlives the app."""
+        return await asyncio.shield(self._running())
+
+    def _running(self) -> asyncio.Task[RepoRefresh]:
+        """The refresh in flight, started when none is."""
+        if self._closed:
+            raise asyncio.CancelledError  # the app is shutting down: nothing may start now
+        if self._refreshing is None or self._refreshing.done():
+            task = asyncio.ensure_future(self._read_and_note())
+            task.add_done_callback(self._refresh_done)
+            self._refreshing = task
+        return self._refreshing
+
+    def _refresh_done(self, task: asyncio.Task[RepoRefresh]) -> None:
+        if self._refreshing is task:
+            self._refreshing = None
+
+    async def _read_and_note(self) -> RepoRefresh:
+        """`_read_repos`, noting how it ended: every read does, the daily one and a person's, so
+        the result shown is always the last read's. A read that is cancelled notes nothing."""
+        try:
+            refresh = await self._read_repos()
+        except Exception:
+            self._outcome = RepoDocsResult(failed=True, read=0, linked=0, embedded=0)
+            raise
+        self._outcome = RepoDocsResult(
+            failed=False, read=refresh.read, linked=refresh.linked, embedded=refresh.embedded
+        )
+        return refresh
+
+    async def _read_repos(self) -> RepoRefresh:
         """Sync every linked repo's docs. A repo that cannot be read keeps the docs it had, and so
         does a file that could not be read; a repo no longer linked loses them. A rate limit stops
         the refresh there: without a token GitHub allows 60 requests an hour, and the rest would
@@ -227,6 +269,47 @@ class KnowledgeRefresher:
         if read or not linked:
             await self.index.mark_refresh(REPOS_REFRESH, _scope(read))
         return RepoRefresh(embedded=embedded, read=len(read), linked=len(linked))
+
+    async def repo_docs_state(self) -> RepoDocsState:
+        """When the repos were last read, the chunks each linked repo has in search, whether a
+        refresh is running, and how the last one ended, whoever started it."""
+        # Taken first: a state that says it is not reading holds what the read left, never what
+        # was there before it.
+        reading, result = self._is_reading(), self._outcome
+        last = await self.index.last_refresh(REPOS_REFRESH)
+        linked = await self.repos.linked_repos() if self.repos is not None else []
+        counts = await self.index.repo_chunk_counts()
+        return RepoDocsState(
+            last_read_at=last[0] if last else None,
+            repos=[RepoDocsRepo(repo=repo, chunks=counts.get(repo, 0)) for repo in sorted(linked)],
+            reading=reading,
+            result=result,
+        )
+
+    def _is_reading(self) -> bool:
+        return self._refreshing is not None and not self._refreshing.done()
+
+    def start_repo_refresh(self) -> None:
+        """Read the repos' docs in the background, at once and though they were read a moment
+        ago, or join the read already running. It returns before the read does: a read can take
+        over a minute, longer than a request may. `repo_docs_state` shows how it ended."""
+        if self._closed:
+            return
+        running = self._is_reading()
+        task = self._running()
+        if not running:  # one that is joined is logged by whoever started it
+            task.add_done_callback(self._log_failure)
+
+    def _log_failure(self, task: asyncio.Task[RepoRefresh]) -> None:
+        if not task.cancelled() and (error := task.exception()) is not None:
+            log.warning("knowledge: reading the repo docs on request failed (%s)", error)
+
+    async def close(self) -> None:
+        """Stop a refresh in flight, and start no other."""
+        self._closed = True
+        if self._refreshing is not None and not self._refreshing.done():
+            self._refreshing.cancel()
+            await asyncio.gather(self._refreshing, return_exceptions=True)
 
     def _failed(self, repo: str, why: str) -> None:
         """Log why `repo` could not be read, once until the reason changes: a bad token or an

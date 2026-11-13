@@ -222,6 +222,24 @@ async def test_a_repo_doc_is_redacted_before_it_is_stored_or_embedded(env):
     assert not await env.index.ingest(readme)  # the same README again embeds nothing
 
 
+async def test_repo_chunks_are_counted_per_repo_and_leave_other_sources_out(env):
+    long_readme = SHOP_README.model_copy(
+        update={
+            "id": "repo:acme/shop:docs/setup.md",
+            "text": "# Setup\n\n" + "Run the setup steps in order. " * 400,
+        }
+    )
+    blog = SHOP_README.model_copy(update={"id": "repo:acme/blog:README.md"})
+    for doc in (SHOP_README, long_readme, blog, VOLUMES, PAST):
+        await env.index.ingest(doc)
+
+    counts = await env.index.repo_chunk_counts()
+
+    assert set(counts) == {"acme/shop", "acme/blog"}
+    assert counts["acme/blog"] == 1
+    assert counts["acme/shop"] > counts["acme/blog"] + 1
+
+
 async def test_the_docker_snapshot_keeps_its_examples_as_written(env):
     example = VOLUMES.model_copy(update={"text": "# Volumes\n\nPOSTGRES_PASSWORD: example\n"})
 
