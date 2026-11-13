@@ -186,7 +186,7 @@ class KnowledgeRefresher:
         self.monotonic = monotonic
         self._failing: dict[str, str] = {}
         self._refreshing: asyncio.Task[RepoRefresh] | None = None
-        self._watching: asyncio.Task[None] | None = None
+        self._closed = False
         self._outcome: RepoDocsResult | None = None
 
     async def refresh_docker(self) -> SyncResult:
@@ -203,13 +203,16 @@ class KnowledgeRefresher:
     async def refresh_repos(self) -> RepoRefresh:
         """Sync every linked repo's docs now. A refresh already running (the daily one, or a
         person's press) is joined, not repeated: both get its result. A caller that is cancelled
-        leaves the refresh running for the others; `close` stops it."""
+        leaves the refresh running for the others; `close` stops it, and after it a refresh is
+        cancelled at once, so none outlives the app."""
         return await asyncio.shield(self._running())
 
     def _running(self) -> asyncio.Task[RepoRefresh]:
         """The refresh in flight, started when none is."""
+        if self._closed:
+            raise asyncio.CancelledError  # the app is shutting down: nothing may start now
         if self._refreshing is None or self._refreshing.done():
-            task = asyncio.ensure_future(self._read_repos())
+            task = asyncio.ensure_future(self._read_and_note())
             task.add_done_callback(self._refresh_done)
             self._refreshing = task
         return self._refreshing
@@ -217,6 +220,19 @@ class KnowledgeRefresher:
     def _refresh_done(self, task: asyncio.Task[RepoRefresh]) -> None:
         if self._refreshing is task:
             self._refreshing = None
+
+    async def _read_and_note(self) -> RepoRefresh:
+        """`_read_repos`, noting how it ended: every read does, the daily one and a person's, so
+        the result shown is always the last read's. A read that is cancelled notes nothing."""
+        try:
+            refresh = await self._read_repos()
+        except Exception:
+            self._outcome = RepoDocsResult(failed=True, read=0, linked=0, embedded=0)
+            raise
+        self._outcome = RepoDocsResult(
+            failed=False, read=refresh.read, linked=refresh.linked, embedded=refresh.embedded
+        )
+        return refresh
 
     async def _read_repos(self) -> RepoRefresh:
         """Sync every linked repo's docs. A repo that cannot be read keeps the docs it had, and so
@@ -271,34 +287,29 @@ class KnowledgeRefresher:
         )
 
     def _is_reading(self) -> bool:
-        return any(t is not None and not t.done() for t in (self._refreshing, self._watching))
+        return self._refreshing is not None and not self._refreshing.done()
 
     def start_repo_refresh(self) -> None:
         """Read the repos' docs in the background, at once and though they were read a moment
-        ago, or join the read already running, and note how it ends for `repo_docs_state`. It
-        returns before the read does: a read can take over a minute, longer than a request may."""
-        task = self._running()
-        if self._watching is None or self._watching.done():
-            self._outcome = None
-            self._watching = asyncio.ensure_future(self._note_outcome(task))
-
-    async def _note_outcome(self, task: asyncio.Task[RepoRefresh]) -> None:
-        try:
-            refresh = await asyncio.shield(task)
-        except Exception as error:  # the person sees that it failed, the log why
-            log.warning("knowledge: reading the repo docs on request failed (%s)", error)
-            self._outcome = RepoDocsResult(failed=True, read=0, linked=0, embedded=0)
+        ago, or join the read already running. It returns before the read does: a read can take
+        over a minute, longer than a request may. `repo_docs_state` shows how it ended."""
+        if self._closed:
             return
-        self._outcome = RepoDocsResult(
-            failed=False, read=refresh.read, linked=refresh.linked, embedded=refresh.embedded
-        )
+        running = self._is_reading()
+        task = self._running()
+        if not running:  # one that is joined is logged by whoever started it
+            task.add_done_callback(self._log_failure)
+
+    def _log_failure(self, task: asyncio.Task[RepoRefresh]) -> None:
+        if not task.cancelled() and (error := task.exception()) is not None:
+            log.warning("knowledge: reading the repo docs on request failed (%s)", error)
 
     async def close(self) -> None:
-        """Stop a refresh in flight, and the note of how it ends."""
-        pending = [t for t in (self._refreshing, self._watching) if t is not None and not t.done()]
-        for task in pending:
-            task.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
+        """Stop a refresh in flight, and start no other."""
+        self._closed = True
+        if self._refreshing is not None and not self._refreshing.done():
+            self._refreshing.cancel()
+            await asyncio.gather(self._refreshing, return_exceptions=True)
 
     def _failed(self, repo: str, why: str) -> None:
         """Log why `repo` could not be read, once until the reason changes: a bad token or an

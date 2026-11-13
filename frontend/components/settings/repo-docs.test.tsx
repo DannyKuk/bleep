@@ -82,12 +82,20 @@ describe("RepoDocs", () => {
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
   });
 
-  it("follows a read that was already running when the page loaded", async () => {
+  it("follows a read that was running when the page loaded, a daily one or another's press, and shows how it ended", async () => {
     stubBackend({ [STATE]: [done()] });
-    renderDocs(repoDocs({ reading: true }));
+    renderDocs(repoDocs({ reading: true, result: { ...BOTH_READ, read: 1 } }));
 
     expect(screen.getByRole("button", { name: "Reading the docs" })).toBeDisabled();
+    expect(screen.queryByRole("status")).toBeNull(); // the earlier read's result waits for this one
     expect(await screen.findByRole("status")).toHaveTextContent("Read 2 repos.");
+  });
+
+  it("shows how the last read ended, whoever started it, before any press", () => {
+    renderDocs(repoDocs({ result: { failed: true, read: 0, linked: 0, embedded: 0 } }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("The docs could not be read.");
+    expect(screen.getByRole("button", { name: "Re-read docs" })).toBeEnabled();
   });
 
   it("says when only some of the repos could be read", async () => {

@@ -40,11 +40,6 @@ async def pressed(refresher: KnowledgeRefresher) -> RepoDocsState:
     return state
 
 
-class UnreadableLinks(Repos):
-    async def linked_repos(self) -> list[str]:
-        raise RuntimeError("the hosts file is unreadable")
-
-
 async def test_a_press_returns_before_the_read_ends_and_the_state_shows_it_reading(index):
     repos = GatedRepos({"acme/shop": [readme("acme/shop")]})
     refresher = KnowledgeRefresher(index, repos=repos, snapshot_dir=None)
@@ -131,19 +126,82 @@ async def test_close_stops_a_refresh_in_flight(index):
     assert not (await refresher.repo_docs_state()).reading
 
 
-async def test_a_refresh_that_failed_is_noted_without_the_error_and_does_not_block_the_next(
-    index, caplog
-):
-    refresher = KnowledgeRefresher(index, repos=UnreadableLinks({}), snapshot_dir=None)
-    with caplog.at_level("WARNING", logger="bleep.knowledge.ingest"):
-        refresher.start_repo_refresh()
-        while refresher._watching is not None and not refresher._watching.done():
-            await asyncio.sleep(0)
+@pytest.fixture
+def embedder_down(index) -> dict[str, bool]:
+    """A switch for the embedder: a read that has something new to embed fails while it is down."""
+    real = index.embedder.embed
+    switch = {"down": False}
 
-    assert "the hosts file is unreadable" in caplog.text
-    refresher.repos = Repos({"acme/shop": [readme("acme/shop")]})
+    def embed(texts):
+        if switch["down"]:
+            raise ConnectionError("the embedder is down")
+        return real(texts)
+
+    index.embedder.embed = embed  # type: ignore[method-assign]
+    return switch
+
+
+async def test_a_refresh_that_failed_is_noted_and_logged_and_does_not_block_the_next(
+    index, embedder_down, caplog
+):
+    repos = Repos({"acme/shop": [readme("acme/shop")]})
+    refresher = KnowledgeRefresher(index, repos=repos, snapshot_dir=None)
+    embedder_down["down"] = True
+    with caplog.at_level("WARNING", logger="bleep.knowledge.ingest"):
+        failed = await pressed(refresher)
+
+    assert failed.result is not None and failed.result.failed
+    assert caplog.text.count("the embedder is down") == 1
+    embedder_down["down"] = False
     state = await pressed(refresher)
     assert state.result is not None and not state.result.failed and state.result.read == 1
+
+
+async def test_the_result_is_the_last_reads_whoever_started_it(index, embedder_down):
+    repos = Repos({"acme/shop": [readme("acme/shop")]})
+    refresher = KnowledgeRefresher(index, repos=repos, snapshot_dir=None)
+    embedder_down["down"] = True
+    failed = await pressed(refresher)  # a press fails ...
+    assert failed.result is not None and failed.result.failed
+
+    embedder_down["down"] = False
+    await refresher.refresh_repos()  # ... and the daily read after it works
+    daily = await refresher.repo_docs_state()
+    assert daily.result is not None and not daily.result.failed and daily.result.read == 1
+
+    repos.files = {"acme/shop": [readme("acme/shop", "# Shop\n\nchanged")]}
+    embedder_down["down"] = True
+    with pytest.raises(ConnectionError):
+        await refresher.refresh_repos()  # the daily read fails after a read that worked
+    state = await refresher.repo_docs_state()
+    assert state.result is not None and state.result.failed
+
+
+async def test_a_read_cancelled_notes_nothing_and_none_starts_after_close(index):
+    repos = GatedRepos({"acme/shop": [readme("acme/shop")]})
+    refresher = KnowledgeRefresher(index, repos=repos, snapshot_dir=None)
+    refresher.start_repo_refresh()
+    await asyncio.sleep(0)
+
+    await refresher.close()
+
+    assert (await refresher.repo_docs_state()).result is None
+    refresher.start_repo_refresh()  # a press landing at shutdown
+    with pytest.raises(asyncio.CancelledError):  # the daily loop asking for its read
+        await refresher.refresh_repos()
+    assert not (await refresher.repo_docs_state()).reading
+    assert repos.asked == []
+
+
+async def test_a_press_just_after_a_read_ended_starts_a_new_read_that_is_noted(index):
+    repos = Repos({"acme/shop": [readme("acme/shop")]})
+    refresher = KnowledgeRefresher(index, repos=repos, snapshot_dir=None)
+    await refresher.refresh_repos()  # the task is done, though its callback may not have run yet
+
+    repos.files = {"acme/shop": [readme("acme/shop", "# Shop\n\nchanged")]}
+    state = await pressed(refresher)
+
+    assert state.result is not None and state.result.embedded == 1
 
 
 async def test_the_state_lists_each_linked_repo_with_its_chunks_and_when_they_were_read(index):
