@@ -1258,6 +1258,8 @@ describe("ServicePage in German", () => {
   });
 });
 
+const DETAIL_URL = "/api/services/demo%2Fcompose%3Ashop";
+
 describe("ServicePage poll (#577)", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
@@ -1278,19 +1280,47 @@ describe("ServicePage poll (#577)", () => {
     renderPage("demo/compose:shop");
     const reads = (path: string) =>
       fetchMock.mock.calls.filter(([input]) => String(input).includes(path)).length;
+    const detailReads = () =>
+      fetchMock.mock.calls.filter(([input]) => String(input) === DETAIL_URL).length;
     await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
     expect(screen.getByRole("heading", { level: 1, name: "shop" })).toBeInTheDocument();
-    expect(reads("/api/services/demo%2Fcompose%3Ashop?")).toBe(0);
+    expect(detailReads()).toBe(1);
     expect(reads("service_id=")).toBe(1);
 
     health = "down";
     await act(async () => void (await vi.advanceTimersByTimeAsync(10_000)));
+    expect(detailReads()).toBe(2);
     expect(reads("service_id=")).toBe(2);
     expect(screen.getAllByText("Down").length).toBeGreaterThan(0);
     expect(screen.queryByText(MESSAGES.en.service.loading)).toBeNull();
 
     await act(async () => void (await vi.advanceTimersByTimeAsync(10_000)));
+    expect(detailReads()).toBe(3);
     expect(reads("service_id=")).toBe(3);
     expect(reads("/suggested-checks")).toBe(1);
+  });
+
+  it("keeps the last good service and its panels when a later poll answers 404", async () => {
+    let gone = false;
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const overallReply = answerOverall(input);
+      if (overallReply) return overallReply;
+      const url = String(input);
+      if (url === "/api/settings") return json(NO_SETTINGS);
+      if (url.endsWith("/facts")) return json([]);
+      if (url.endsWith("/suggested-checks")) return json({ offered: [], stale: [] });
+      if (url.startsWith("/api/incidents")) return json([]);
+      return gone ? json({ detail: "no such service" }, 404) : json(SERVICE);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPage("demo/compose:shop");
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(screen.getByRole("list", { name: "Containers" })).toBeInTheDocument();
+
+    gone = true;
+    await act(async () => void (await vi.advanceTimersByTimeAsync(10_000)));
+    expect(screen.getByRole("list", { name: "Containers" })).toBeInTheDocument();
+    expect(screen.getByText("shop-web-1")).toBeInTheDocument();
+    expect(screen.queryByText(MESSAGES.en.service.missing)).toBeNull();
   });
 });

@@ -258,8 +258,8 @@ function Service({ id }: { id: string }) {
   };
   // Read once, not polled: each read asks Coolify for its applications.
   const suggested = useOnce<CheckSuggestions>(`/api/services/${encoded}/suggested-checks`);
-  const missing = detail.error instanceof ApiError && detail.error.status === 404;
-  const data = missing ? undefined : detail.data;
+  const data = detail.data;
+  const missing = detail.error instanceof ApiError && detail.error.status === 404 && !data;
   const service = data?.service;
   const name = service?.name ?? nameIn(id);
   const { settings, error: settingsError, notice } = useServiceSettings(id, service);
