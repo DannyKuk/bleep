@@ -28,6 +28,35 @@ export function formatCount(count: number, language: Language): string {
   return count.toLocaleString(language === "en" ? "en-US" : FIXED_LOCALE[language]);
 }
 
+/** "$0.38", or "$0.0042" below a cent (German "$0,38"). */
+export function formatDollars(usd: number, language: Language): string {
+  const digits = usd > 0 && usd < 0.01 ? 4 : 2;
+  const amount = usd.toLocaleString(language === "en" ? "en-US" : FIXED_LOCALE[language], {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+    useGrouping: false,
+  });
+  return `$${amount}`;
+}
+
+/** "1,284", then "12.9K" and "4.2M" (German "12,9K"), so a token total fits a tile. */
+export function formatCompact(count: number, language: Language): string {
+  if (Math.abs(count) < 10_000) return formatCount(count, language);
+  return count.toLocaleString(language === "en" ? "en-US" : FIXED_LOCALE[language], {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  });
+}
+
+/** "37%" of a whole; "0%" when the whole is nothing. */
+export function formatShare(part: number, whole: number, language: Language): string {
+  const share = whole > 0 ? part / whole : 0;
+  return share.toLocaleString(language === "en" ? "en-US" : FIXED_LOCALE[language], {
+    style: "percent",
+    maximumFractionDigits: 0,
+  });
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
