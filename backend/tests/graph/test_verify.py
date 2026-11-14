@@ -2060,3 +2060,88 @@ async def test_a_looks_check_of_a_service_bleep_no_longer_knows_is_no_pass(tmp_p
     result = await verify.check_look(env.deps, looked(state) | {"subject": gone})
 
     assert not result.ok and result.checks == []
+
+
+# --- the checks of a service healthy again on its own while its plan waits (#571) ---
+
+
+async def recovery(tmp_path, replies, engine=None):
+    env, state = await setup(tmp_path, replies, engine=engine)
+    died = Signal(subject=state["subject"], kind="container_died", at=T0, container="shop-web-1")
+    return env, state, [died]
+
+
+async def test_a_recovery_check_proves_nothing_at_its_first_reads_and_passes_at_the_next(tmp_path):
+    env, state, signals = await recovery(tmp_path, Replies(200))
+    first_running: dict = {}
+
+    first = await verify.check_recovery(env.deps, state["subject"], signals, first_running)
+    again = await verify.check_recovery(env.deps, state["subject"], signals, first_running)
+
+    assert not first.ok
+    assert {c.detail for c in first.checks if c.kind == "container"} == {verify.CAME_UP}
+    assert again.ok
+    assert {c.target for c in again.checks} == {"shop-web-1", "shop-db-1", URL}
+    assert await env.bus.history(state["incident_id"]) == []  # no verification event
+    assert env.deps.notifier.results == []
+
+
+async def test_a_container_started_again_between_the_reads_fails_the_recovery_check(tmp_path):
+    engine = healthy_engine()
+    env, state, signals = await recovery(tmp_path, Replies(200), engine=engine)
+    first_running: dict = {}
+    await verify.check_recovery(env.deps, state["subject"], signals, first_running)
+    engine.container_list[0] = box("shop-web-1", "shop", health="healthy", restart_count=1)
+
+    result = await verify.check_recovery(env.deps, state["subject"], signals, first_running)
+
+    assert not result.ok
+    web = next(c for c in result.checks if c.target == "shop-web-1")
+    assert not web.ok and web.detail.startswith("restarted by its restart policy")
+
+
+async def test_a_failing_url_of_the_service_fails_the_recovery_check(tmp_path):
+    env, state, signals = await recovery(tmp_path, Replies(200, 503))
+    first_running: dict = {}
+    await verify.check_recovery(env.deps, state["subject"], signals, first_running)
+
+    result = await verify.check_recovery(env.deps, state["subject"], signals, first_running)
+
+    assert not result.ok
+    assert [c.ok for c in result.checks if c.kind == "url"] == [False]
+
+
+async def test_a_signalled_container_that_is_gone_fails_the_recovery_check(tmp_path):
+    env, state, _ = await recovery(tmp_path, Replies(200))
+    subject = state["subject"]
+    gone = [Signal(subject=subject, kind="container_died", at=T0, container="shop-worker-1")]
+    first_running: dict = {}
+    await verify.check_recovery(env.deps, subject, gone, first_running)
+
+    result = await verify.check_recovery(env.deps, subject, gone, first_running)
+
+    assert not result.ok
+    worker = next(c for c in result.checks if c.target == "shop-worker-1")
+    assert (worker.ok, worker.detail) == (False, "not found")
+
+
+async def test_a_url_the_signals_saw_fail_is_checked_too(tmp_path):
+    env, state, signals = await recovery(tmp_path, Replies(200))
+    subject, other = state["subject"], "https://shop.example/api"
+    failed = Signal(subject=subject, kind="url_failed", at=T0, detail={"url": other, "ok": False})
+    first_running: dict = {}
+    await verify.check_recovery(env.deps, subject, [*signals, failed], first_running)
+
+    result = await verify.check_recovery(env.deps, subject, [*signals, failed], first_running)
+
+    assert result.ok
+    assert {c.target for c in result.checks if c.kind == "url"} == {URL, other}
+
+
+async def test_a_recovery_check_of_a_service_bleep_no_longer_knows_is_no_pass(tmp_path):
+    env, _, signals = await recovery(tmp_path, Replies(200))
+    gone = Subject(kind="service", host_id="a", service_id="a/compose:gone")
+
+    result = await verify.check_recovery(env.deps, gone, signals, {})
+
+    assert not result.ok and result.checks == []

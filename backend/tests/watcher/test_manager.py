@@ -18,7 +18,7 @@ from bleep.incidents.quiet import QuietStore
 from bleep.incidents.repository import IncidentRepo
 from bleep.llm.usage import CostLedger
 from bleep.schemas.docker import ContainerSummary, DockerEvent
-from bleep.schemas.graph import PlanStep, Proposal
+from bleep.schemas.graph import PlanStep, Proposal, VerificationResult
 from bleep.schemas.incidents import Incident, Signal, Subject
 from bleep.schemas.quiet import QuietState
 from bleep.schemas.settings import Budgets, Language, Thresholds
@@ -103,6 +103,13 @@ class FakeRunner:
         self.ended.append((incident_id, english(text)))
         self.endings.append(ending)
 
+    async def healthy_again(self, incident_id: str, text: Shown) -> bool:
+        if self.repo is None or not await self.repo.close_unanswered(incident_id):
+            return False
+        self.ended.append((incident_id, english(text)))
+        self.endings.append("recovered")
+        return True
+
     async def close(self) -> None:
         return None
 
@@ -136,6 +143,7 @@ class Rig:
         model: FakeChatModel | None = None,
         budgets: Budgets | None = None,
         may_sleep: bool = False,
+        check_recovery=None,
     ) -> None:
         self.clock = Clock()
         self.engine = FakeEngine(
@@ -196,6 +204,7 @@ class Rig:
             language=lambda: self.language,
             quiet=self.quiet,
             health=self.health,
+            check_recovery=check_recovery,
         )
         self.quiet.subscribe(self.manager.quiet_changed)
 
@@ -2024,3 +2033,131 @@ async def test_a_url_failure_that_outlived_its_incident_is_not_watched_while_hel
     await minutes(r, 1)  # one failure of the next streak, inside the hour's hold
     assert r.detector.pending() != []
     assert await r.manager.watching() == []
+
+
+# -- a service healthy again on its own while its plan waits (#571) -----------------------------
+
+
+class RecoveryCheck:
+    """Verify's checks, faked: the first call of a hold takes the first reads and proves
+    nothing; a later one passes. The real checks are tested in tests/graph/test_verify.py."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def __call__(self, subject, signals, first_running) -> VerificationResult:
+        self.calls += 1
+        if not first_running:
+            first_running["shop-web-1"] = box("shop-web-1", "shop")
+            return VerificationResult(ok=False)
+        return VerificationResult(ok=True)
+
+
+RECOVERED = english(Shown.of("notice/recovered", name="shop"))
+
+
+async def waiting_for_a_yes(r: Rig, incident: Incident) -> ApprovalStore:
+    approvals = ApprovalStore(r.db, "secret")
+    await approvals.request(incident.id, PLAN, [])
+    await r.repo.set_status(incident.id, "awaiting_approval")
+    return approvals
+
+
+def shop_back(r: Rig) -> None:
+    """The fault is switched off: shop-web-1 runs again."""
+    r.engine.container_list[0] = box(
+        "shop-web-1", "shop", restart_policy="no", started_at=r.clock.now
+    )
+
+
+async def test_an_incident_waiting_for_a_yes_closes_once_its_service_stays_healthy(tmp_path):
+    """shop #10 on 2026-11-13: the fault was put back while the plan waited for a yes."""
+    check = RecoveryCheck()
+    r = await Rig(tmp_path, check_recovery=check).boot()
+    incident = await open_shop_incident(r)
+    approvals = await waiting_for_a_yes(r, incident)
+    shop_back(r)
+
+    await minutes(r, 4)
+    assert (await r.repo.get(incident.id)).status == "awaiting_approval"
+    await minutes(r, 2)
+
+    assert (await r.repo.get(incident.id)).status == "closed"
+    assert r.runner.ended == [(incident.id, RECOVERED)]
+    assert r.runner.endings == ["recovered"]
+    assert (await approvals.current(incident.id)).closed
+    assert check.calls == 2
+
+
+async def test_a_service_whose_url_still_fails_is_not_held_healthy(tmp_path):
+    check = RecoveryCheck()
+    r = await Rig(tmp_path, check_recovery=check).boot()
+    incident = await open_shop_incident(r)
+    await waiting_for_a_yes(r, incident)
+    shop_back(r)
+    r.not_found.add("shop")  # its containers run, its page answers 404
+
+    await minutes(r, 10)
+
+    assert (await r.repo.get(incident.id)).status == "awaiting_approval"
+    assert check.calls == 0
+
+
+async def test_a_service_whose_url_was_not_checked_lately_is_not_held_healthy(tmp_path):
+    check = RecoveryCheck()
+    r = await Rig(tmp_path, check_recovery=check).boot()
+    incident = await open_shop_incident(r)
+    await waiting_for_a_yes(r, incident)
+    shop_back(r)
+
+    for _ in range(40):
+        await r.pulse(urls=False)  # its containers run, no URL round has said it answers
+
+    assert (await r.repo.get(incident.id)).status == "awaiting_approval"
+    assert check.calls == 0
+
+
+async def test_bleeps_own_wake_ends_the_hold(tmp_path):
+    check = RecoveryCheck()
+    r = await Rig(tmp_path, check_recovery=check).boot()
+    incident = await open_shop_incident(r)
+    await waiting_for_a_yes(r, incident)
+    shop_back(r)
+    await minutes(r, 4)
+    await r.manager.woke(r.clock())
+    await r.pulse()  # inside the grace window after the wake nothing is judged
+
+    await minutes(r, 4)
+
+    assert (await r.repo.get(incident.id)).status == "awaiting_approval"
+    await minutes(r, 2)
+    assert (await r.repo.get(incident.id)).status == "closed"
+
+
+async def test_a_relapse_after_a_recovery_on_its_own_opens_at_once(tmp_path):
+    """Held healthy for five minutes and checked, the loop is over, as after a verified fix."""
+    r = await Rig(tmp_path, check_recovery=RecoveryCheck()).boot()
+    r.engine.container_list[0] = box("shop-web-1", "shop", restart_policy="always")
+    await r.pulse(urls=False)
+    await crashing(r, 3, back=True)
+    [loop] = r.runner.started
+    await waiting_for_a_yes(r, loop)
+    await minutes(r, 6)
+    assert (await r.repo.get(loop.id)).status == "closed"
+
+    crash(r)
+    await minutes(r, 2)
+
+    [_, relapse] = r.runner.started
+    assert "down_past_grace" in await kinds_of(r, relapse)
+
+
+async def test_without_a_recovery_check_nothing_is_closed_on_its_own(tmp_path):
+    r = await Rig(tmp_path).boot()
+    incident = await open_shop_incident(r)
+    await waiting_for_a_yes(r, incident)
+    shop_back(r)
+
+    await minutes(r, 10)
+
+    assert (await r.repo.get(incident.id)).status == "awaiting_approval"

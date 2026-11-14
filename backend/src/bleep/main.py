@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import logging
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -27,6 +28,7 @@ from bleep.api.body_limit import BodyLimitMiddleware
 from bleep.api.deps import require_session
 from bleep.config import Settings, check_settings
 from bleep.graph.build import build_graph, open_checkpointer
+from bleep.graph.nodes.verify import check_recovery
 from bleep.hosts.dashboard import HostChange
 from bleep.incidents.expectations import Expectations
 from bleep.incidents.looks import Looks
@@ -114,6 +116,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 health=parts.service_health,
                 wake_grace_ticks=settings.wake_grace_ticks,
                 sightings=parts.sightings,
+                check_recovery=functools.partial(check_recovery, parts.graph_deps),
             )
             runner.host_answered = manager.answered
             reminders = ReminderLoop(

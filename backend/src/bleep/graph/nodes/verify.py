@@ -35,7 +35,9 @@ so it is at once when there was nothing to check. Nothing here says "fixed": tha
 passing check. The clock that waits is `deps.sleep`, so tests never sleep.
 Each check publishes a `verification` event; the notifier hears the round's final result once.
 `check_look` checks a look's service once, with these checks, for a look on request that ended
-with no action (#421); Report decides with it whether the look ends `healthy`.
+with no action (#421); Report decides with it whether the look ends `healthy`. `check_recovery`
+checks, with them too, a service whose incident waits for a yes, for the watcher to close it as
+healthy again on its own (#571).
 """
 
 import logging
@@ -62,7 +64,7 @@ from bleep.hosts.ssh import SshUnavailable
 from bleep.hosts.url_check import check_url
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import Check, Proposal, StepResult, VerificationResult
-from bleep.schemas.incidents import Signal
+from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Thresholds
 from bleep.schemas.shown import Shown
 
@@ -752,6 +754,42 @@ async def check_look(deps: GraphDeps, state: IncidentState) -> VerificationResul
         for c in result.checks
     ]
     return result.model_copy(update={"checks": checks})
+
+
+async def check_recovery(
+    deps: GraphDeps,
+    subject: Subject,
+    signals: list[Signal],
+    first_running: dict[str, ContainerSummary],
+) -> VerificationResult:
+    """One check of a service whose incident waits for a yes, to close it as healthy again on
+    its own (#571), by Verify's own checks and publishing nothing: no model call, no event.
+
+    What is checked is what a fix would have to pass: every container of the service (Bleep's
+    own and a job that finished as its service allows left out) and every container the
+    incident's signals name, every URL the hosts file gives the service and every URL the
+    signals saw fail. `first_running` is kept by the caller from one check to the next, as
+    Verify keeps it between its checks: the first check that finds a container running records
+    it and fails, and a later one fails it if it was started again since, so a crash-looper
+    caught while it is up never passes. Nothing to check is no pass."""
+    service = deps.registry.service(subject.service_id) if subject.service_id else None
+    if service is None:
+        return VerificationResult(ok=False)
+    host_id = subject.host_id
+    signalled, failing_urls = _symptoms(signals)
+    own = [
+        c.name
+        for c in service.containers
+        if not is_self(c.labels) and _finished_job(deps, host_id, c) is None
+    ]
+    known = {**host_urls(deps.registry, host_id), **{cfg.url: cfg for cfg in service.urls}}
+    by_key = {_url_key(u): cfg for u, cfg in known.items()}
+    urls = _unique_urls([*(cfg.url for cfg in service.urls), *failing_urls])
+    checks = [by_key.get(_url_key(u)) or UrlCheckConfig(url=u) for u in urls]
+    plan = _Plan(list(dict.fromkeys([*own, *signalled])), checks, [])
+    if plan.empty():
+        return VerificationResult(ok=False)
+    return await _one_check(deps, host_id, plan, [], first_running, 1, set())
 
 
 def make(deps: GraphDeps) -> Node:
