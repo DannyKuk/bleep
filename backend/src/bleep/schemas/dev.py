@@ -1,5 +1,5 @@
-"""What the dev panel reads and writes: prompt overrides, cost per incident, per day and per model,
-and the guard log (#42). The model choice and the budgets go through `PUT /api/settings`."""
+"""What the dev panel reads and writes: prompt overrides, cost per incident, and the guard log
+(#42). The model choice and the budgets go through `PUT /api/settings`."""
 
 from datetime import datetime
 
