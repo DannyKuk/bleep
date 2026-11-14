@@ -338,12 +338,14 @@ async def test_a_compose_edit_passes_only_when_it_still_closes():
     [
         FIX_COMPOSE | {"reason": "Once supplied, coolify.set_env can apply the value."},
         FIX_COMPOSE | {"human_instructions": "Set DATABASE_URL to shop-db, then redeploy shop."},
+        FIX_COMPOSE
+        | {"reason": "Once the value is supplied, the enabled Coolify actions can apply it."},
         FIX_COMPOSE | {"reason": "Redeployed the application would not help."},
         FIX_COMPOSE
         | {"human_instructions": "Fix DATABASE_URL and re-deploy; redeployment is easy."},
         FIX_COMPOSE | {"human_instructions": "Use coolify.redeploy after the edit."},
     ],
-    ids=["set_env", "redeploy", "redeployed", "re-deploy", "coolify.redeploy"],
+    ids=["set_env", "redeploy", "coolify-actions", "redeployed", "re-deploy", "coolify.redeploy"],
 )
 async def test_a_compose_edit_that_names_a_coolify_action_or_a_redeploy_fails(plan):
     models = look(BAD_URL, plan, category="config")
@@ -382,6 +384,13 @@ def test_the_compose_case_is_a_compose_service_and_the_coolify_case_a_coolify_on
     assert coolify.subject.service_id == f"lab/{coolify.service}"
     own = {c.name for c in coolify.scripted() if c.labels.get("coolify.type") == "application"}
     assert own == set(coolify.own())
+
+
+def test_a_case_with_a_bad_must_not_say_pattern_is_refused_as_a_case_error(tmp_path):
+    data = case(COMPOSE_EDIT).model_dump(mode="json") | {"id": "x", "plan_must_not_say": ["("]}
+    (tmp_path / "x.yaml").write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(LookError, match="not a pattern"):
+        load_case(tmp_path / "x.yaml")
 
 
 def test_a_case_whose_could_run_names_an_action_it_does_not_enable_is_refused(tmp_path):

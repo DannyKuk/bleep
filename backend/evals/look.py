@@ -114,7 +114,12 @@ class LookCase(BaseModel):
     @model_validator(mode="after")
     def _fits(self) -> Self:
         for pattern in self.plan_must_not_say:
-            re.compile(pattern)
+            try:
+                re.compile(pattern)
+            except re.error as error:
+                raise ValueError(
+                    f"plan_must_not_say {pattern!r} is not a pattern: {error}"
+                ) from error
         if not self.own():
             raise ValueError("the service has no container of its own")
         if self.could_run and not set(self.could_run) <= set(self.enabled or CORE_ACTIONS):
