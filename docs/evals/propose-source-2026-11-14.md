@@ -26,7 +26,7 @@
 | `compose-env-closes` | failing | 0 of 3 | 0 of 3 | 3 of 3 | 0 of 3 | 0 of 3 |
 | `coolify-env-could-run` | failing | 3 of 3 | 3 of 3 | 3 of 3 | 0 of 3 | 1 of 3 |
 
-"Plan names a Coolify action or a redeploy" is the case's `plan_must_not_say`, checked on `reason`, `human_instructions` and `could_run`. The runs were scored at `0c722ecb`; re-read against `31ed0a7b`'s added `coolify actions?` pattern, no reason or instruction says "Coolify" at all, so the count stays 0 of 3.
+"Plan names a Coolify action or a redeploy" is the case's `plan_must_not_say`, checked on `reason`, `human_instructions` and `could_run`. The runs were scored at `0c722ecb`; re-read against the later patterns for a plan that says the enabled Coolify actions can apply the fix, no reason or instruction says "Coolify" at all, so the count stays 0 of 3.
 
 - **Compose service:** every plan is no action with an empty `could_run`, so the incident closes. The instructions say to check the Compose configuration, correct the host in `shop-web`'s `DATABASE_URL` or the network alias, and apply it with `docker compose up -d shop-web` (runs 1 and 2 add `shop-db`). All three diagnoses name `DATABASE_URL`'s host `db`, but hedge between a wrong host and a missing network alias and choose category `unknown`, which the look scorer fails on a failing case. That failure is Diagnose's and the same as on 2026-11-11 (0 of 3 said it right), not part of #572.
 - **Coolify application:** all three name `TESTAPP_FAIL_AFTER_S=180`, category `config`, and plan no action with `could_run: [coolify.set_env, coolify.redeploy]`, so the incident waits for the person. Run 2 also read `coolify-proxy`'s log.
