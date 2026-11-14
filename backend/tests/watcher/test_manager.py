@@ -163,12 +163,16 @@ class Rig:
         self.quiet = QuietStore(self.db, self.clock)
         self.web_up = True
         self.not_found: set[str] = set()  # projects whose URL answers 404 while the host is up
+        self.answers: dict[str, int] = {}  # projects whose URL answers with this status instead
         self.roles: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             if not self.web_up:
                 raise httpx.ConnectError("no route to host", request=request)
-            if request.url.host.split(".")[0] in self.not_found:
+            project = request.url.host.split(".")[0]
+            if project in self.answers:
+                return httpx.Response(self.answers[project], text="failing")
+            if project in self.not_found:
                 return httpx.Response(404, text="no such page")
             return httpx.Response(200, text="ok")
 
@@ -1152,6 +1156,40 @@ async def test_watch_again_on_a_healthy_service_opens_nothing(tmp_path):
     assert r.runner.started == []
 
 
+async def test_a_url_failing_when_its_quiet_ends_is_judged_by_how_it_failed(tmp_path):
+    """The recheck takes the stored check as the watcher's own round does, so the same 500
+    after a fixed one is a repeat and a 502 is not (#579)."""
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    shop = Subject(kind="service", host_id="h", service_id=SHOP)
+    r.answers["shop"] = 500
+    await minutes(r, 2)
+    first = await r.repo.open_incident_id(shop)
+    assert first is not None
+    await r.repo.set_status(first, "resolved")
+    del r.answers["shop"]
+    await minutes(r, 1)
+
+    opened = []
+    for status in (500, 502):
+        await r.quiet.set("service", SHOP, "leave_alone", None)
+        r.answers["shop"] = status
+        await minutes(r, 2)
+        await r.quiet.clear("service", SHOP)
+        incident_id = await r.repo.open_incident_id(shop)
+        assert incident_id is not None
+        [signal] = [s for s in await r.repo.signals(incident_id) if s.kind == "url_failed"]
+        assert signal.detail["status"] == status
+        assert signal.detail["error"] == f"expected status 200, got {status}"
+        await r.repo.set_status(incident_id, "resolved")
+        del r.answers["shop"]
+        await minutes(r, 1)
+        opened.append(await r.repo.get(incident_id))
+    [same, other] = opened
+    assert same is not None and same.fold_of == first and "(seen 2 times since" in same.title
+    assert other is not None and other.fold_of is None and "seen" not in other.title
+
+
 async def test_ending_a_hosts_quiet_leaves_a_service_quiet_on_its_own(tmp_path):
     r = await Rig(tmp_path).boot()
     await r.quiet.set("host", "h", "leave_alone", None)
@@ -1472,6 +1510,29 @@ async def test_a_url_that_passed_once_since_its_incident_opens_again_at_once(tmp
     await minutes(r, 2)
     assert len(r.runner.started) == 2
     assert r.runner.started[-1].subject.service_id == SHOP
+
+
+async def test_another_status_on_a_url_after_its_verified_fix_is_no_repeat(tmp_path):
+    """The demo app on 14 Nov (#579): its 500 fixed twice, then the proxy's 502."""
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    shop = Subject(kind="service", host_id="h", service_id=SHOP)
+    titles = []
+    for status in (500, 500, 502):
+        r.answers["shop"] = status
+        await minutes(r, 2)
+        incident_id = await r.repo.open_incident_id(shop)
+        assert incident_id is not None
+        await r.repo.set_status(incident_id, "resolved")
+        del r.answers["shop"]
+        await minutes(r, 1)  # Verify saw it answer, and so does the watcher
+        incident = await r.repo.get(incident_id)
+        assert incident is not None
+        titles.append((incident.title, incident.fold_of))
+    [(_, root), (again, again_root), (other, other_root)] = titles
+    assert root is None and again_root is not None
+    assert "(seen 2 times since" in again
+    assert other_root is None and "seen" not in other
 
 
 async def test_an_open_incident_still_takes_the_failures_that_go_on(tmp_path):

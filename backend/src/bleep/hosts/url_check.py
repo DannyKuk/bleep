@@ -6,7 +6,7 @@
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import httpx
 from pydantic import BaseModel
@@ -19,6 +19,14 @@ MAX_REDIRECTS = 20  # httpx's own default
 TIMEOUT_S = 10
 SLOW_MS = 5000
 
+# How each failure's error text starts; `failure_class` reads them back.
+WRONG_STATUS = "expected status"
+SLOW = "slow:"
+NO_TEXT = "the reply does not contain the expected text"
+COMPRESSED = "the reply is compressed although plain text was asked for"
+NO_COMPLETE_REPLY = "no complete reply within"
+TIMED_OUT = "timed out after"
+
 
 class UrlCheck(BaseModel):
     url: str
@@ -30,6 +38,38 @@ class UrlCheck(BaseModel):
     # `error` as the template it was made from (`prompts/shown/url/`), to show it in the person's
     # language (#454); the English `error` is what the watcher and the models read.
     shown: Shown | None = None
+
+    def signal_detail(self) -> dict[str, object]:
+        """The check as a `url_failed` signal's detail (the kind means "a URL check result")."""
+        return {
+            "ok": self.ok,
+            "latency_ms": self.latency_ms,
+            "url": self.url,
+            "status": self.status,
+            "error": self.error,
+        }
+
+
+def failure_class(detail: Mapping[str, object]) -> str:
+    """How a failed check failed, read from its `signal_detail`, so one failure of a URL is told
+    from another (#579): the status of a wrong-status answer; `slow` for a reply over the time
+    limit, one that stalled after its status came, or a check that passed but that the watcher
+    judged slow (its `url_slow_ms` can be below this module's limit); `text` when the body could
+    not show the expected text (missing, or compressed and so never read); else `no_reply`
+    (refused, DNS, TLS, a timeout before any status, a reply cut off by an error)."""
+    if detail.get("ok") is True:
+        return "slow"
+    status = detail.get("status")
+    error = str(detail.get("error") or "")
+    if error.startswith(WRONG_STATUS) and status is not None:
+        return str(status)
+    if error.startswith(SLOW):
+        return "slow"
+    if error in (NO_TEXT, COMPRESSED):
+        return "text"
+    if status is not None and error.startswith((NO_COMPLETE_REPLY, TIMED_OUT)):
+        return "slow"
+    return "no_reply"
 
 
 async def check_url(
@@ -58,17 +98,17 @@ async def check_url(
                 if cfg.body_contains is not None and status == cfg.expect_status:
                     encoding = response.headers.get("content-encoding", "identity")
                     if encoding.strip().lower() not in ("", "identity"):
-                        error = "the reply is compressed although plain text was asked for"
+                        error = COMPRESSED
                         why = Shown.of("url/compressed")
                     else:
                         matched = cfg.body_contains in await _read_capped(response)
             finally:
                 await response.aclose()
     except TimeoutError:
-        error = f"no complete reply within {timeout_s:g} s"
+        error = f"{NO_COMPLETE_REPLY} {timeout_s:g} s"
         why = Shown.of("url/no_complete_reply", seconds=f"{timeout_s:g}")
     except httpx.TimeoutException:
-        error = f"timed out after {timeout_s:g} s"
+        error = f"{TIMED_OUT} {timeout_s:g} s"
         why = Shown.of("url/timed_out", seconds=f"{timeout_s:g}")
     except Exception as problem:  # httpx.HTTPError, InvalidURL, a bad header: this URL failed
         error = f"request failed ({type(problem).__name__})"  # never the text: a server wrote it
@@ -76,13 +116,13 @@ async def check_url(
     latency_ms = round((clock() - started) * 1000)
     if error is None:
         if status != cfg.expect_status:
-            error = f"expected status {cfg.expect_status}, got {status}"
+            error = f"{WRONG_STATUS} {cfg.expect_status}, got {status}"
             why = Shown.of("url/wrong_status", expected=str(cfg.expect_status), status=str(status))
         elif matched is False:
-            error = "the reply does not contain the expected text"
+            error = NO_TEXT
             why = Shown.of("url/no_text")
         elif latency_ms > slow_ms:
-            error = f"slow: {latency_ms} ms (limit {slow_ms} ms)"
+            error = f"{SLOW} {latency_ms} ms (limit {slow_ms} ms)"
             why = Shown.of("url/slow", latency=str(latency_ms), limit=str(slow_ms))
     return UrlCheck(
         url=cfg.url,

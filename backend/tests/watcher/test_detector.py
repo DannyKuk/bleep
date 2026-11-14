@@ -5,6 +5,8 @@ import httpx
 from langchain_core.messages import AIMessage, HumanMessage
 
 from bleep import prompts
+from bleep.hosts.url_check import UrlCheck
+from bleep.incidents.repository import fold_key
 from bleep.llm.guard import ModelGuard
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.incidents import Signal, Subject
@@ -237,6 +239,19 @@ def test_url_success_resets_the_streak_and_slow_counts_as_failed():
     assert det.feed(sig(SVC, "url_failed", clock)) == []
     out = det.feed(sig(SVC, "url_failed", clock, ok=True, latency_ms=5001))
     assert isinstance(out[0], OpenIncident)
+
+
+def test_a_check_that_passed_but_is_over_the_watchers_slow_limit_opens_as_slow():
+    """`url_slow_ms` may sit below the check's own 5 s: the check passes, the watcher fails it,
+    and its incident's key says slow, not no reply (#579)."""
+    clock = Clock()
+    det = Detector(Thresholds(url_slow_ms=500), clock)
+    check = UrlCheck(url="https://x/", ok=True, status=200, latency_ms=800)
+    signals = [Signal(subject=SVC, kind="url_failed", at=clock.now, detail=check.signal_detail())]
+    assert det.feed(signals[0]) == []
+    [out] = det.feed(signals[0])
+    assert isinstance(out, OpenIncident)
+    assert fold_key(SVC, out.signals).endswith("|url_failed|https://x/|slow")
 
 
 def test_disk_signal_opens_on_host_subject():

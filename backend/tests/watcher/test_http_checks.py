@@ -6,7 +6,7 @@ import pytest
 
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
 from bleep.hosts.registry import Registry
-from bleep.hosts.url_check import MAX_BODY_BYTES, UrlCheck, check_url
+from bleep.hosts.url_check import MAX_BODY_BYTES, UrlCheck, check_url, failure_class
 from bleep.store.db import Database
 from bleep.watcher.http_checks import HISTORY_PER_URL, UrlCheckStore, UrlWatcher
 from fakes import FakeEngine, socket_host
@@ -109,6 +109,73 @@ async def test_missing_body_text_fails_and_present_text_passes():
     assert not check.ok
     assert check.body_matched is False
     assert check.error == "the reply does not contain the expected text"
+
+
+class StallingBody(httpx.AsyncByteStream):
+    async def __aiter__(self):
+        yield b"the first bytes"
+        await asyncio.sleep(30)
+
+
+def answering(status: int, **response) -> object:
+    return lambda request: httpx.Response(status, **response)
+
+
+def raising(error: type[httpx.HTTPError]) -> object:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise error("no", request=request)
+
+    return handler
+
+
+async def hanging(request: httpx.Request) -> httpx.Response:
+    await asyncio.sleep(30)
+    return httpx.Response(200)
+
+
+@pytest.mark.parametrize(
+    ("handler", "cfg", "ticks", "failure"),
+    [
+        (answering(500), {}, None, "500"),
+        (answering(502), {}, None, "502"),
+        (answering(200, text="hello"), {}, [0.0, 5.2], "slow"),
+        (answering(200, stream=StallingBody()), {"body_contains": "x"}, None, "slow"),
+        (answering(200, text="hello"), {"body_contains": "welcome"}, None, "text"),
+        (
+            answering(200, text="x", headers={"content-encoding": "gzip"}),
+            {"body_contains": "x"},
+            None,
+            "text",
+        ),
+        (raising(httpx.ConnectError), {}, None, "no_reply"),
+        (raising(httpx.ConnectTimeout), {}, None, "no_reply"),
+        (hanging, {}, None, "no_reply"),
+    ],
+    ids=[
+        "500",
+        "502",
+        "slow",
+        "stalled-body",
+        "no-text",
+        "compressed",
+        "refused",
+        "timeout",
+        "hung",
+    ],
+)
+async def test_each_failed_check_has_one_failure_class(handler, cfg, ticks, failure):
+    times = iter(ticks or [])
+    kwargs = {"clock": lambda: next(times)} if ticks else {"timeout_s": 0.05}
+    check = await check_url(client(handler), UrlCheckConfig(url=URL, **cfg), **kwargs)
+    assert not check.ok
+    assert failure_class(check.signal_detail()) == failure
+
+
+async def test_a_check_that_passed_here_but_the_watcher_judged_slow_is_slow():
+    ticks = iter([0.0, 0.8])  # under this check's 5 s, over a `url_slow_ms` of 500
+    check = await check_url(client(ok_handler), UrlCheckConfig(url=URL), clock=lambda: next(ticks))
+    assert check.ok
+    assert failure_class(check.signal_detail()) == "slow"
 
 
 async def test_redirects_are_followed():

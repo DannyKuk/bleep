@@ -293,7 +293,7 @@ def test_the_fold_key_is_the_incidents_most_telling_kind_in_the_detectors_order(
     url = Signal(subject=svc(), kind="url_failed", at=T0, detail={"url": "https://x/"})
     assert fold_key(svc(), [*deaths, loop]).endswith("|restart_loop|web-1")
     assert fold_key(svc(), [deaths[0], unhealthy]).endswith("|unhealthy|web-1")
-    assert fold_key(svc(), [deaths[0], url]).endswith("|url_failed|https://x/")
+    assert fold_key(svc(), [deaths[0], url]).endswith("|url_failed|https://x/|no_reply")
     assert fold_key(svc(), deaths).endswith("|death|web-1")
 
 
@@ -406,6 +406,120 @@ async def test_a_new_kind_folds_into_the_incident_it_outlived_unless_its_own_kin
     window["h"] = 0
     off, _ = await repo.open_or_attach(svc(), [url], repeat_of=late.id)
     assert off.fold_of is None
+
+
+HEALTH = "https://demo.example/health"
+
+
+def answered(status: int | None, error: str | None = None) -> Signal:
+    """A failed check of the service's URL, as the watcher's URL check reports it."""
+    if error is None:
+        error = f"expected status 200, got {status}" if status else "request failed (ConnectError)"
+    detail = {"ok": False, "url": HEALTH, "status": status, "error": error, "latency_ms": 90}
+    return Signal(subject=svc(), kind="url_failed", at=T0, detail=detail)
+
+
+async def fixed_after(repo, clock, minutes: float, *signals: Signal):
+    """Open the subject's next incident `minutes` after the last, then resolve it."""
+    clock.later(minutes / 60)
+    incident, created = await repo.open_or_attach(svc(), list(signals))
+    assert created
+    await repo.set_status(incident.id, "resolved")
+    return incident
+
+
+SLOW = answered(200, "slow: 6100 ms (limit 5000 ms)")
+SLOWER = answered(200, "slow: 9400 ms (limit 5000 ms)")
+STALLED = answered(200, "no complete reply within 10 s")
+NO_TEXT = answered(200, "the reply does not contain the expected text")
+COMPRESSED = answered(200, "the reply is compressed although plain text was asked for")
+REFUSED = answered(None)
+TIMED_OUT = answered(None, "timed out after 10 s")
+# The check passed, but over the watcher's `url_slow_ms`, which may be below the check's 5 s.
+SLOW_FOR_THE_WATCHER = Signal(
+    subject=svc(),
+    kind="url_failed",
+    at=T0,
+    detail={"ok": True, "url": HEALTH, "status": 200, "error": None, "latency_ms": 800},
+)
+
+
+def test_a_failed_urls_fold_key_holds_how_it_failed():
+    def failure(signal: Signal) -> str:
+        key = fold_key(svc(), [signal])
+        assert key.startswith(f"{svc().key}|url_failed|{HEALTH}|")
+        return key.rsplit("|", 1)[1]
+
+    assert [failure(s) for s in (answered(500), answered(502))] == ["500", "502"]
+    assert [failure(s) for s in (SLOW, SLOWER, STALLED, SLOW_FOR_THE_WATCHER)] == ["slow"] * 4
+    assert [failure(s) for s in (NO_TEXT, COMPRESSED)] == ["text"] * 2
+    assert [failure(s) for s in (REFUSED, TIMED_OUT)] == ["no_reply"] * 2
+
+
+async def test_a_url_failing_another_way_starts_its_own_group_and_the_same_way_joins_it(folding):
+    repo, clock, _ = folding
+    slow = await fixed_after(repo, clock, 0, SLOW)
+    for other in (answered(500), NO_TEXT, REFUSED):
+        assert (await fixed_after(repo, clock, 10, other)).fold_of is None
+    slower = await fixed_after(repo, clock, 10, SLOWER)
+    stalled = await fixed_after(repo, clock, 10, STALLED)
+    assert slower.fold_of == stalled.fold_of == slow.id
+    assert stalled.title.endswith("(seen 3 times since 02 Nov 12:00 UTC)")
+    assert (await fixed_after(repo, clock, 10, TIMED_OUT)).title.endswith(
+        "(seen 2 times since 02 Nov 12:30 UTC)"
+    )
+    judged_slow = await fixed_after(repo, clock, 10, SLOW_FOR_THE_WATCHER)
+    assert judged_slow.fold_of == slow.id  # not with the refused one, though it has no error
+    assert judged_slow.title.endswith("(seen 4 times since 02 Nov 12:00 UTC)")
+
+
+async def test_a_url_group_from_before_579_is_not_joined_by_any_failure(folding):
+    repo, clock, _ = folding
+    bare = Signal(subject=svc(), kind="url_failed", at=T0, detail={"url": HEALTH})
+    old = await fixed_after(repo, clock, 0, bare)
+    conn = await repo.db.connect()
+    try:  # its key as fold_key wrote it before #579: the URL alone
+        await conn.execute(
+            "UPDATE incidents SET fold_key = ? WHERE id = ?",
+            (f"{svc().key}|url_failed|{HEALTH}", old.id),
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
+    for signal in (answered(500), SLOW, NO_TEXT, REFUSED, bare):
+        assert (await fixed_after(repo, clock, 10, signal)).fold_of != old.id
+
+
+async def test_another_fault_failing_the_same_url_is_no_repeat_of_a_verified_fix(folding):
+    # The demo app on 14 Nov (#579): its Error state (500) fixed by a restart, back 3 minutes
+    # later and fixed again, then a HOST bound to loopback (the proxy's 502).
+    repo, clock, _ = folding
+    error = await fixed_after(repo, clock, 0, answered(500), answered(500))
+    back = await fixed_after(repo, clock, 3.5, answered(500), answered(500))
+    loopback = await fixed_after(repo, clock, 4, answered(502), answered(502))
+    assert back.fold_of == error.id
+    assert back.title == "url failed on web (seen 2 times since 02 Nov 12:00 UTC)"
+    assert loopback.fold_of is None
+    assert loopback.title == "url failed on web"
+    assert await repo.groups([loopback]) == {}
+
+
+async def test_the_same_failure_back_after_a_verified_fix_is_counted_once_per_incident(folding):
+    repo, clock, _ = folding
+    first, _ = await repo.open_or_attach(svc(), [answered(500)])
+    for _ in range(3):  # failed checks that attach to the open incident add no count
+        _, created = await repo.open_or_attach(svc(), [answered(500)])
+        assert not created
+    await repo.set_status(first.id, "resolved")
+    unrelated = await fixed_after(repo, clock, 10, answered(None))
+    last = None
+    for n in range(2, 5):
+        last = await fixed_after(repo, clock, 10, answered(500))
+        assert last.title.endswith(f"(seen {n} times since 02 Nov 12:00 UTC)")
+    assert unrelated.fold_of is None
+    grouped = await repo.list(fold_of=first.id)
+    assert len(grouped) + 1 == 4
+    assert (await repo.groups([last]))[last.id].count == 4
 
 
 # --- a service name that is not plain, shown as host text in the title (#311) ---
