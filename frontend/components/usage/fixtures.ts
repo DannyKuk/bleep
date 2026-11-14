@@ -1,8 +1,5 @@
 import type { UsageView } from "@/lib/api-types";
 
-/** The moment the fixtures were read: the afternoon of Friday 13 Nov 2026. */
-export const NOW = new Date(2026, 10, 13, 15, 0);
-
 const NO_OUTCOMES = {
   resolved: 0,
   healthy: 0,
@@ -17,6 +14,7 @@ const NO_OUTCOMES = {
 /** An empty range: no call, no incident, nothing in either log. */
 export const EMPTY: UsageView = {
   days: 30,
+  through: "2026-11-13",
   totals: {
     cost_usd: 0,
     calls: 0,
@@ -42,6 +40,7 @@ export const EMPTY: UsageView = {
 /** A busy range: two paid models, a local one and a row from before the provider column. */
 export const BUSY: UsageView = {
   days: 30,
+  through: "2026-11-13",
   totals: {
     cost_usd: 1.5,
     calls: 24,

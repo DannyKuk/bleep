@@ -577,6 +577,8 @@ export interface TodayCaps {
 
 export interface UsageView {
   days: UsageRange;
+  /** The server's local today, "2026-11-13": the last day of the range. */
+  through: string;
   totals: UsageTotals;
   models: ModelUsage[];
   per_day: DayUsage[];

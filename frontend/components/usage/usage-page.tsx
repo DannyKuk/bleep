@@ -3,7 +3,6 @@
 import { Loader2, TriangleAlert } from "lucide-react";
 import { useCallback, useState } from "react";
 
-import { useTimeZone } from "@/components/preferences";
 import { DayChart } from "@/components/usage/day-chart";
 import { ModelsTable } from "@/components/usage/models-table";
 import { UsageCards } from "@/components/usage/usage-cards";
@@ -16,7 +15,6 @@ import { formatCount, formatDollars } from "@/lib/format";
 import { useLanguage, useT } from "@/lib/i18n";
 import { modelSlots } from "@/lib/model-colours";
 import { cn } from "@/lib/utils";
-import { dayIn } from "@/lib/zone";
 
 const RANGES: readonly UsageRange[] = [1, 7, 30, 90];
 const DEFAULT_RANGE: UsageRange = 30;
@@ -58,24 +56,23 @@ function RangePicker({
   );
 }
 
-function Charts({ usage, now }: { usage: UsageView; now: Date }) {
+function Charts({ usage }: { usage: UsageView }) {
   const language = useLanguage();
-  const zone = useTimeZone();
   const t = useT().usage;
   const slots = modelSlots(usage.models.map((row) => row.model));
-  const days = dayAxis(usage.days, dayIn(now, zone), usage.per_day);
+  const days = dayAxis(usage.days, usage.through);
   const spend = modelSeries(usage.per_day, slots, (row) => row.cost_usd, t.charts.other);
   const calls: Series[] = [
     {
       key: "incidents",
       label: t.charts.incidents,
-      colour: "var(--accent)",
+      colour: "var(--viz-incidents)",
       values: sumPerDay(usage, (row) => row.incident_calls),
     },
     {
       key: "chat",
       label: t.charts.chat,
-      colour: "var(--viz-2)",
+      colour: "var(--viz-chat)",
       values: sumPerDay(usage, (row) => row.chat_calls),
     },
   ];
@@ -114,8 +111,8 @@ function sumPerDay(usage: UsageView, value: (row: UsageView["per_day"][number]) 
   return sums;
 }
 
-/** The page's numbers for one range; `now` is when they were read, which ends the day axis. */
-export function UsageContent({ usage, now }: { usage: UsageView; now: Date }) {
+/** The page's numbers for one range. */
+export function UsageContent({ usage }: { usage: UsageView }) {
   const t = useT().usage;
   if (nothingHappened(usage)) {
     return (
@@ -139,7 +136,7 @@ export function UsageContent({ usage, now }: { usage: UsageView; now: Date }) {
       ) : (
         <>
           <ModelsTable models={usage.models} colourOf={colourOf} />
-          <Charts usage={usage} now={now} />
+          <Charts usage={usage} />
         </>
       )}
       <UsageCards usage={usage} />
@@ -147,22 +144,46 @@ export function UsageContent({ usage, now }: { usage: UsageView; now: Date }) {
   );
 }
 
-/** The Usage page: a range picker and what Bleep spent and did over that range. */
-export function UsagePage() {
+/** One range's numbers, read now and every minute. Keyed by the range, so a range never shows
+ * the data or the failure of another. */
+function UsageRead({ range }: { range: UsageRange }) {
   const messages = useT();
   const t = messages.usage;
-  const c = messages.common;
-  const [range, setRange] = useState<UsageRange>(DEFAULT_RANGE);
   const fetchUsage = useCallback(
-    async (signal: AbortSignal) => ({
-      usage: await apiFetch<UsageView>(`/api/usage?days=${range}`, { signal }),
-      readAt: new Date(),
-    }),
+    (signal: AbortSignal) => apiFetch<UsageView>(`/api/usage?days=${range}`, { signal }),
     [range],
   );
   const { data, error } = usePoll(fetchUsage, POLL_MS);
-  // The poll keeps the last data while the next range loads; it must not stand for the new one.
-  const current = data && data.usage.days === range ? data : undefined;
+  if (!data) {
+    return error ? (
+      <p role="alert" className="flex items-center gap-2 text-sm text-down">
+        <TriangleAlert aria-hidden className="size-4" />
+        {t.loadFailed(error.message)}
+      </p>
+    ) : (
+      <p role="status" className="flex items-center gap-2 text-sm text-ink-2">
+        <Loader2 aria-hidden className="size-4 animate-spin" />
+        {t.loading}
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-4">
+      {error && (
+        <p role="alert" className="flex items-center gap-2 text-xs text-health-degraded">
+          <TriangleAlert aria-hidden className="size-3.5" />
+          {messages.common.refreshFailed(error.message)}
+        </p>
+      )}
+      <UsageContent usage={data} />
+    </div>
+  );
+}
+
+/** The Usage page: a range picker and what Bleep spent and did over that range. */
+export function UsagePage() {
+  const t = useT().usage;
+  const [range, setRange] = useState<UsageRange>(DEFAULT_RANGE);
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -170,25 +191,7 @@ export function UsagePage() {
         <p className="mt-1 text-sm text-ink-2">{t.intro}</p>
       </div>
       <RangePicker range={range} onChange={setRange} />
-      {error && !current && (
-        <p role="alert" className="flex items-center gap-2 text-sm text-down">
-          <TriangleAlert aria-hidden className="size-4" />
-          {t.loadFailed(error.message)}
-        </p>
-      )}
-      {!current && !error && (
-        <p role="status" className="flex items-center gap-2 text-sm text-ink-2">
-          <Loader2 aria-hidden className="size-4 animate-spin" />
-          {t.loading}
-        </p>
-      )}
-      {error && current && (
-        <p role="alert" className="flex items-center gap-2 text-xs text-health-degraded">
-          <TriangleAlert aria-hidden className="size-3.5" />
-          {c.refreshFailed(error.message)}
-        </p>
-      )}
-      {current && <UsageContent usage={current.usage} now={current.readAt} />}
+      <UsageRead key={range} range={range} />
     </div>
   );
 }

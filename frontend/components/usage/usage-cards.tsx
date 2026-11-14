@@ -20,7 +20,7 @@ function Count({ label, count }: { label: string; count: number }) {
 function Cap({ label, spent, cap }: { label: string; spent: number; cap: number }) {
   const language = useLanguage();
   const t = useT().usage.cards;
-  const reached = cap > 0 && spent >= cap;
+  const reached = spent >= cap; // a cap of 0 stops everything from the first call
   const share = shareOf(spent, cap);
   return (
     <div className="flex flex-col gap-1.5">

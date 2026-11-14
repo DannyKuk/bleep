@@ -79,6 +79,7 @@ def test_an_empty_range_is_all_zeros_and_the_caps_are_still_there(world):
     body = world.usage()
 
     assert body["days"] == 30
+    assert body["through"] == "2026-11-13"
     assert body["totals"] == {
         "cost_usd": 0,
         "calls": 0,
