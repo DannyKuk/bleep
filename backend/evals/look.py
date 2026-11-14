@@ -25,12 +25,14 @@ whose `could_run` names exactly those actions, marked to wait for the person whe
 whose reason, instructions or `could_run` uses one of those words, "Coolify" for a Compose
 service. `source: coolify` runs the case as a Coolify application, not a Compose service. A case
 with `named_value` (#568) also needs an evidence entry of the diagnosis that gives that setting's
-key and value with that tool as its source. See docs/design/evals.md.
+key and value, as whole words and the key in its case, with that tool as its source, and a call
+of that tool on one of the service's containers in the run. See docs/design/evals.md.
 """
 
 import argparse
 import asyncio
 import logging
+import re
 import secrets
 import sys
 import tempfile
@@ -278,19 +280,39 @@ def _could_run_right(case: LookCase, proposal: Proposal | None) -> bool | None:
     return named and proposal.fix_runnable == bool(case.could_run)
 
 
-def _named_value_right(case: LookCase, diagnosis: Diagnosis | None) -> bool | None:
-    """For a case with `named_value`: an evidence entry has the tool as its source and gives the
-    setting's key and its value (#568)."""
+def _inspected(case: LookCase, calls: Sequence[ToolCall], tool: str) -> bool:
+    """The model called `tool` on one of the service's own containers."""
+    own = set(case.own())
+    return any(
+        call.name == tool
+        and isinstance(call.args.get("container"), str)
+        and resolve(case.containers, call.args["container"]) in own
+        for call in calls
+    )
+
+
+def _whole(word: str, text: str, *, before: str) -> bool:
+    """`word` in `text`, case-sensitive and not part of a longer token (`before` are the
+    characters that must not precede it): an env key is case-sensitive, so `HOST` is not "host"
+    nor "localhost", and `127.0.0.1` is not `127.0.0.10`."""
+    return re.search(rf"(?<![{before}]){re.escape(word)}(?!\.?\w)", text) is not None
+
+
+def _named_value_right(case: LookCase, result: LookResult) -> bool | None:
+    """For a case with `named_value`: the model called the tool on the service's container, and
+    an evidence entry has that tool as its source and gives the setting's key and value as
+    whole words (#568). The tool call is checked in the run, not only the label the model wrote
+    on its evidence, since Gather never calls `inspect_container`."""
     wanted = case.named_value
     if wanted is None:
         return None
-    if diagnosis is None:
+    if result.diagnosis is None or not _inspected(case, result.tool_calls, wanted.tool):
         return False
     return any(
         wanted.tool.casefold() in e.source.casefold()
-        and wanted.key.casefold() in e.detail.casefold()
-        and wanted.value.casefold() in e.detail.casefold()
-        for e in diagnosis.evidence
+        and _whole(wanted.key, e.detail, before=r"\w")
+        and _whole(wanted.value, e.detail, before=r"\w.")
+        for e in result.diagnosis.evidence
     )
 
 
@@ -312,7 +334,7 @@ def score(case: LookCase, result: LookResult) -> LookResult:
     result.forbidden = [f"{s.action} {s.target}" for s in steps if s.action in case.must_not]
     result.said_right = _said_right(case, result)
     result.could_run_right = _could_run_right(case, result.proposal)
-    result.named_value_right = _named_value_right(case, result.diagnosis)
+    result.named_value_right = _named_value_right(case, result)
     result.named_in_plan = _named_in_plan(case, result.proposal)
     ended_early = result.failure is not None or result.diagnosis is None
     read_all = not result.unread_logs and not result.unchecked_urls

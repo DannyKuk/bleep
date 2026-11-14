@@ -293,7 +293,7 @@ A case may also set `enabled`, the actions the run may use (Bleep's core three w
 uv run --group evals python -m evals.look --only coolify-env-could-run,compose-env-closes --repeat 3
 ```
 
-A failing case may also set `named_value` (`key`, `value`, `tool`, #568): an evidence entry of the diagnosis must give that setting's key and value with that tool as its source. [`coolify-env-value-past-labels`](look/coolify-env-value-past-labels.yaml) is #482's second Coolify run: `HOST=127.0.0.1` in the env only, after about 1,800 characters of labels in `inspect_container`'s result, with `coolify.set_env` and `coolify.redeploy` enabled; its `source: coolify` makes it a Coolify application as discovery groups one, not a Compose project. A lean round on it:
+A failing case may also set `named_value` (`key`, `value`, `tool`, #568): the model must have called that tool on one of the service's containers, and an evidence entry of the diagnosis must give that setting's key (case-sensitive, a whole word) and value with that tool as its source. [`coolify-env-value-past-labels`](look/coolify-env-value-past-labels.yaml) is #482's second Coolify run: `HOST=127.0.0.1` in the env only, after about 1,800 characters of labels in `inspect_container`'s result, with `coolify.set_env` and `coolify.redeploy` enabled; its `source: coolify` makes it a Coolify application as discovery groups one, not a Compose project. A lean round on it:
 
 ```bash
 uv run --group evals python -m evals.look --only coolify-env-value-past-labels --repeat 3

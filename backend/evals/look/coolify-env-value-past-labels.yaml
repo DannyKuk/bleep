@@ -69,7 +69,7 @@ containers:
     logs: |
       time="2026-11-11T09:30:40Z" level=info msg="Configuration loaded from flags."
       time="2026-11-11T09:30:41Z" level=info msg="Server configuration reloaded on :80"
-failure_words: [127.0.0.1, loopback]
+failure_words: [127.0.0.1, localhost, loopback]
 wrong_words: [nothing is wrong, no failure, no fault, working normally, service is healthy, app is healthy]
 must_not: [docker.restart, docker.stop, docker.start]
 enabled: [docker.restart, docker.stop, docker.start, coolify.set_env, coolify.redeploy]

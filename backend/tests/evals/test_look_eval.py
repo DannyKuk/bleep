@@ -399,14 +399,23 @@ SET_HOST = {
 }
 
 
-def look_with_evidence(plan: dict, evidence: list[dict]) -> Models:
+def look_with_evidence(
+    plan: dict, evidence: list[dict], inspect: str | None = "own", cause: str = LOOPBACK_CAUSE
+) -> Models:
+    """Investigate (calling inspect_container on the service's container, on `inspect` when it
+    names another one, not at all when None), Diagnose and Propose."""
     diagnosis = {
-        "root_cause": LOOPBACK_CAUSE,
+        "root_cause": cause,
         "category": "config",
         "confidence": 0.9,
         "evidence": evidence,
     }
-    script = [reply("found it"), reply(json.dumps(diagnosis)), reply(json.dumps(plan))]
+    script = []
+    if inspect is not None:
+        container = case(PAST_LABELS).own()[0] if inspect == "own" else inspect
+        call = {"name": "inspect_container", "args": {"container": container}, "id": "call-1"}
+        script.append(reply(tool_calls=[call]))
+    script += [reply("found it"), reply(json.dumps(diagnosis)), reply(json.dumps(plan))]
     return Models(script)
 
 
@@ -479,9 +488,23 @@ async def test_a_diagnosis_that_gives_the_value_with_its_tool_and_a_could_run_pl
         [],
         [HOST_EVIDENCE[1]],  # the log's address, not the setting
         [{"source": "inspect_container", "detail": "The app's HOST setting is wrong."}],
+        # An env key is case-sensitive and a whole word: not the proxy's host, not localhost.
+        [{"source": "inspect_container", "detail": "Routes host inventory.example to port 3000."}],
+        [{"source": "inspect_container", "detail": "It binds to localhost 127.0.0.1 only."}],
+        [{"source": "inspect_container", "detail": "NEXT_HOST=127.0.0.1 is in its env."}],
+        [{"source": "inspect_container", "detail": "HOST=127.0.0.10 is in its env."}],
         [{"source": "container_logs", "detail": "HOST=127.0.0.1 is in the env."}],  # wrong tool
     ],
-    ids=["none", "log-only", "no-value", "other-tool"],
+    ids=[
+        "none",
+        "log-only",
+        "no-value",
+        "host-word",
+        "localhost",
+        "longer-key",
+        "longer-value",
+        "other-tool",
+    ],
 )
 async def test_a_diagnosis_that_drops_the_value_or_its_tool_fails(evidence):
     c = case(PAST_LABELS)
@@ -491,6 +514,40 @@ async def test_a_diagnosis_that_drops_the_value_or_its_tool_fails(evidence):
     assert result.could_run_right and result.said_right
     assert result.named_value_right is False and result.passed is False
     assert "no evidence gives the setting's value" in line(result)
+
+
+@pytest.mark.parametrize("inspect", [None, "coolify-proxy"], ids=["no-call", "other-container"])
+async def test_right_evidence_without_an_inspect_call_on_the_service_fails(inspect):
+    """Gather never calls inspect_container: a model that guessed HOST from the log's address
+    and labelled it inspect_container did not take the path the case measures."""
+    models = look_with_evidence(SET_HOST, HOST_EVIDENCE, inspect=inspect)
+
+    result = await run_case(case(PAST_LABELS), settings(), models=models)
+
+    assert result.could_run_right and result.said_right
+    assert result.named_value_right is False and result.passed is False
+
+
+async def test_a_value_named_in_prose_with_the_key_in_quotes_still_counts():
+    evidence = [{"source": "inspect_container", "detail": "Its env sets `HOST` to 127.0.0.1."}]
+
+    result = await run_case(
+        case(PAST_LABELS), settings(), models=look_with_evidence(SET_HOST, evidence)
+    )
+
+    assert result.named_value_right and result.passed
+
+
+async def test_a_root_cause_that_says_localhost_instead_of_the_address_passes():
+    cause = "The app binds to localhost only, so the proxy cannot reach it."
+
+    result = await run_case(
+        case(PAST_LABELS),
+        settings(),
+        models=look_with_evidence(SET_HOST, HOST_EVIDENCE, cause=cause),
+    )
+
+    assert result.said_right and result.passed
 
 
 @pytest.mark.parametrize("could_run", [[], ["coolify.redeploy"]], ids=["none", "redeploy-only"])
