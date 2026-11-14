@@ -1482,6 +1482,7 @@ async def test_a_service_healthy_again_closes_its_waiting_incident_once_and_runs
         record = await approvals.current(incident.id)
 
     assert (await env.repo.get(incident.id)).status == "closed"
+    assert await env.repo.closed_outcome(incident.id) == "recovered"  # never `resolved`
     assert late is None and record.closed and record.decision is None
     assert await approvals.pending() == []  # no reminder comes for it
     assert await approvals.grant(incident.id) is None
@@ -1514,6 +1515,7 @@ async def test_a_yes_that_won_before_the_recovery_close_runs_its_plan(tmp_path, 
 
     assert "execute" in await env.nodes(incident.id)
     assert english(RECOVERED) not in await notices(env, incident.id)
+    assert await env.repo.closed_outcome(incident.id) is None
 
 
 async def test_a_recovery_close_cancelled_after_it_committed_still_says_why(tmp_path, acting):
@@ -1545,6 +1547,7 @@ async def test_a_recovery_close_cancelled_after_it_committed_still_says_why(tmp_
             await asyncio.sleep(0.01)
 
     assert (await env.repo.get(incident.id)).status == "closed"
+    assert await env.repo.closed_outcome(incident.id) == "recovered"
     assert await notices(env, incident.id) == [english(RECOVERED)]
     assert channels.endings == ["recovered"]
 

@@ -112,7 +112,10 @@ export function headline(
     case "failed":
       return say(words.failed);
     case "closed":
-      if (outcome === "healthy") return { ...lookedAt(incident, t), text: words.ended.healthy };
+      // A healthy look and a service back on its own (#571) both follow the subject's name.
+      if (outcome === "healthy" || outcome === "recovered") {
+        return { ...lookedAt(incident, t), text: words.ended[outcome] };
+      }
       return say(outcome ? words.ended[outcome] : words.closed);
   }
 }

@@ -84,6 +84,7 @@ _END_OF = {
     "no_action": "end_no_action",
     "budget": "end_stopped",
     "replan_limit": "end_stopped",
+    "recovered": "end_recovered",  # no report carries it: its close sends its own end (#571)
 }
 # The ends that come after a check; a look's plan of no action is checked too (#421), so its
 # end says which check failed.
@@ -326,7 +327,11 @@ class Notifier:
         language = self.language()
         report = report_in(report, language)
         took = fmt.duration(self.clock() - incident.opened_at, language)
-        values = {"end_fixed": {"took": took}, "end_healthy": {"took": took}}.get(name, {})
+        values = {
+            "end_fixed": {"took": took},
+            "end_healthy": {"took": took},
+            "end_recovered": {"took": took, "text": fmt.prose_line(report.outcome)},
+        }.get(name, {})
         if name == "end_stopped":
             values = {"outcome": report.outcome}
         checks = await self._last_checks(incident.id) if name in _CHECKED else []
