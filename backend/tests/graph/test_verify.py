@@ -2071,41 +2071,62 @@ async def recovery(tmp_path, replies, engine=None):
     return env, state, [died]
 
 
-async def test_a_recovery_check_proves_nothing_at_its_first_reads_and_passes_at_the_next(tmp_path):
+async def test_the_first_reads_of_a_hold_read_the_containers_and_request_no_url(tmp_path):
+    replies = Replies(200)
+    env, state, signals = await recovery(tmp_path, replies)
+
+    reads = await verify.recovery_reads(env.deps, state["subject"], signals)
+
+    assert set(reads) == {"shop-web-1", "shop-db-1"}
+    assert replies.seen == 0
+
+
+async def test_a_recovery_check_against_its_first_reads_passes_and_publishes_nothing(tmp_path):
     env, state, signals = await recovery(tmp_path, Replies(200))
-    first_running: dict = {}
+    reads = await verify.recovery_reads(env.deps, state["subject"], signals)
 
-    first = await verify.check_recovery(env.deps, state["subject"], signals, first_running)
-    again = await verify.check_recovery(env.deps, state["subject"], signals, first_running)
+    result = await verify.check_recovery(env.deps, state["subject"], signals, reads)
 
-    assert not first.ok
-    assert {c.detail for c in first.checks if c.kind == "container"} == {verify.CAME_UP}
-    assert again.ok
-    assert {c.target for c in again.checks} == {"shop-web-1", "shop-db-1", URL}
+    assert result.ok
+    assert {c.target for c in result.checks} == {"shop-web-1", "shop-db-1", URL}
     assert await env.bus.history(state["incident_id"]) == []  # no verification event
     assert env.deps.notifier.results == []
 
 
-async def test_a_container_started_again_between_the_reads_fails_the_recovery_check(tmp_path):
+async def test_a_container_started_again_since_the_first_reads_fails_the_recovery_check(tmp_path):
     engine = healthy_engine()
     env, state, signals = await recovery(tmp_path, Replies(200), engine=engine)
-    first_running: dict = {}
-    await verify.check_recovery(env.deps, state["subject"], signals, first_running)
+    reads = await verify.recovery_reads(env.deps, state["subject"], signals)
     engine.container_list[0] = box("shop-web-1", "shop", health="healthy", restart_count=1)
 
-    result = await verify.check_recovery(env.deps, state["subject"], signals, first_running)
+    result = await verify.check_recovery(env.deps, state["subject"], signals, reads)
 
     assert not result.ok
     web = next(c for c in result.checks if c.target == "shop-web-1")
     assert not web.ok and web.detail.startswith("restarted by its restart policy")
 
 
-async def test_a_failing_url_of_the_service_fails_the_recovery_check(tmp_path):
-    env, state, signals = await recovery(tmp_path, Replies(200, 503))
-    first_running: dict = {}
-    await verify.check_recovery(env.deps, state["subject"], signals, first_running)
+async def test_a_container_not_running_at_the_first_reads_fails_the_recovery_check(tmp_path):
+    """Seen running only at the end, it may be a crash-looper caught while it is up."""
+    engine = healthy_engine()
+    engine.container_list[0] = box("shop-web-1", "shop", state="restarting")
+    env, state, signals = await recovery(tmp_path, Replies(200), engine=engine)
+    reads = await verify.recovery_reads(env.deps, state["subject"], signals)
+    engine.container_list[0] = box("shop-web-1", "shop", health="healthy")
 
-    result = await verify.check_recovery(env.deps, state["subject"], signals, first_running)
+    result = await verify.check_recovery(env.deps, state["subject"], signals, reads)
+
+    assert not result.ok
+    web = next(c for c in result.checks if c.target == "shop-web-1")
+    assert (web.ok, web.detail) == (False, verify.CAME_UP)
+    assert "shop-web-1" not in reads  # the caller's reads are left as they were
+
+
+async def test_a_failing_url_of_the_service_fails_the_recovery_check(tmp_path):
+    env, state, signals = await recovery(tmp_path, Replies(503))
+    reads = await verify.recovery_reads(env.deps, state["subject"], signals)
+
+    result = await verify.check_recovery(env.deps, state["subject"], signals, reads)
 
     assert not result.ok
     assert [c.ok for c in result.checks if c.kind == "url"] == [False]
@@ -2115,10 +2136,9 @@ async def test_a_signalled_container_that_is_gone_fails_the_recovery_check(tmp_p
     env, state, _ = await recovery(tmp_path, Replies(200))
     subject = state["subject"]
     gone = [Signal(subject=subject, kind="container_died", at=T0, container="shop-worker-1")]
-    first_running: dict = {}
-    await verify.check_recovery(env.deps, subject, gone, first_running)
+    reads = await verify.recovery_reads(env.deps, subject, gone)
 
-    result = await verify.check_recovery(env.deps, subject, gone, first_running)
+    result = await verify.check_recovery(env.deps, subject, gone, reads)
 
     assert not result.ok
     worker = next(c for c in result.checks if c.target == "shop-worker-1")
@@ -2129,10 +2149,9 @@ async def test_a_url_the_signals_saw_fail_is_checked_too(tmp_path):
     env, state, signals = await recovery(tmp_path, Replies(200))
     subject, other = state["subject"], "https://shop.example/api"
     failed = Signal(subject=subject, kind="url_failed", at=T0, detail={"url": other, "ok": False})
-    first_running: dict = {}
-    await verify.check_recovery(env.deps, subject, [*signals, failed], first_running)
+    reads = await verify.recovery_reads(env.deps, subject, [*signals, failed])
 
-    result = await verify.check_recovery(env.deps, subject, [*signals, failed], first_running)
+    result = await verify.check_recovery(env.deps, subject, [*signals, failed], reads)
 
     assert result.ok
     assert {c.target for c in result.checks if c.kind == "url"} == {URL, other}
@@ -2140,8 +2159,9 @@ async def test_a_url_the_signals_saw_fail_is_checked_too(tmp_path):
 
 async def test_a_recovery_check_of_a_service_bleep_no_longer_knows_is_no_pass(tmp_path):
     env, _, signals = await recovery(tmp_path, Replies(200))
-    gone = Subject(kind="service", host_id="a", service_id="a/compose:gone")
+    unknown = Subject(kind="service", host_id="a", service_id="a/compose:unknown")
 
-    result = await verify.check_recovery(env.deps, gone, signals, {})
+    assert await verify.recovery_reads(env.deps, unknown, signals) == {}
+    result = await verify.check_recovery(env.deps, unknown, signals, {})
 
     assert not result.ok and result.checks == []

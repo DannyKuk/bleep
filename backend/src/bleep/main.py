@@ -28,7 +28,7 @@ from bleep.api.body_limit import BodyLimitMiddleware
 from bleep.api.deps import require_session
 from bleep.config import Settings, check_settings
 from bleep.graph.build import build_graph, open_checkpointer
-from bleep.graph.nodes.verify import check_recovery
+from bleep.graph.nodes.verify import check_recovery, recovery_reads
 from bleep.hosts.dashboard import HostChange
 from bleep.incidents.expectations import Expectations
 from bleep.incidents.looks import Looks
@@ -38,6 +38,7 @@ from bleep.incidents.runner import IncidentRunner
 from bleep.incidents.watchdog import Watchdog
 from bleep.watcher.detector import Detector
 from bleep.watcher.manager import WatcherManager
+from bleep.watcher.recovery import Checks
 from bleep.wiring import AppParts, build_parts
 
 log = logging.getLogger(__name__)
@@ -116,7 +117,10 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 health=parts.service_health,
                 wake_grace_ticks=settings.wake_grace_ticks,
                 sightings=parts.sightings,
-                check_recovery=functools.partial(check_recovery, parts.graph_deps),
+                recovery_checks=Checks(
+                    first_reads=functools.partial(recovery_reads, parts.graph_deps),
+                    check=functools.partial(check_recovery, parts.graph_deps),
+                ),
             )
             runner.host_answered = manager.answered
             reminders = ReminderLoop(

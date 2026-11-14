@@ -38,6 +38,7 @@ from bleep.watcher.manager import (
     quiet_notice,
     repeat_hold,
 )
+from bleep.watcher.recovery import Checks
 from fakes import FakeChatModel, FakeEngine, compose_labels, socket_host
 
 T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
@@ -143,7 +144,7 @@ class Rig:
         model: FakeChatModel | None = None,
         budgets: Budgets | None = None,
         may_sleep: bool = False,
-        check_recovery=None,
+        recovery_checks=None,
     ) -> None:
         self.clock = Clock()
         self.engine = FakeEngine(
@@ -204,7 +205,7 @@ class Rig:
             language=lambda: self.language,
             quiet=self.quiet,
             health=self.health,
-            check_recovery=check_recovery,
+            recovery_checks=recovery_checks,
         )
         self.quiet.subscribe(self.manager.quiet_changed)
 
@@ -2038,22 +2039,32 @@ async def test_a_url_failure_that_outlived_its_incident_is_not_watched_while_hel
 # -- a service healthy again on its own while its plan waits (#571) -----------------------------
 
 
-class RecoveryCheck:
-    """Verify's checks, faked: the first call of a hold takes the first reads and proves
-    nothing; a later one passes. The real checks are tested in tests/graph/test_verify.py."""
+class RecoveryChecks:
+    """Verify's checks, faked: they pass. The real ones are tested in tests/graph/test_verify.py."""
 
     def __init__(self) -> None:
-        self.calls = 0
+        self.reads = 0
+        self.checks = 0
 
-    async def __call__(self, subject, signals, first_running) -> VerificationResult:
-        self.calls += 1
-        if not first_running:
-            first_running["shop-web-1"] = box("shop-web-1", "shop")
-            return VerificationResult(ok=False)
+    async def first_reads(self, subject, signals) -> dict:
+        self.reads += 1
+        return {"shop-web-1": box("shop-web-1", "shop")}
+
+    async def check(self, subject, signals, first_running) -> VerificationResult:
+        self.checks += 1
         return VerificationResult(ok=True)
+
+    def checks_for(self) -> Checks:
+        return Checks(first_reads=self.first_reads, check=self.check)
 
 
 RECOVERED = english(Shown.of("notice/recovered", name="shop"))
+
+
+async def recovery_rig(tmp_path, **rig) -> tuple[Rig, RecoveryChecks]:
+    fake = RecoveryChecks()
+    r = await Rig(tmp_path, recovery_checks=fake.checks_for(), **rig).boot()
+    return r, fake
 
 
 async def waiting_for_a_yes(r: Rig, incident: Incident) -> ApprovalStore:
@@ -2070,94 +2081,157 @@ def shop_back(r: Rig) -> None:
     )
 
 
+async def settled_minutes(r: Rig, n: int) -> None:
+    """`minutes`, letting the recovery checks each one starts run to their end."""
+    for _ in range(n):
+        await r.pulse(60)
+        await r.manager.drain()
+
+
+async def status_of(r: Rig, incident: Incident) -> str:
+    return (await r.repo.get(incident.id)).status
+
+
 async def test_an_incident_waiting_for_a_yes_closes_once_its_service_stays_healthy(tmp_path):
     """shop #10 on 2026-11-13: the fault was put back while the plan waited for a yes."""
-    check = RecoveryCheck()
-    r = await Rig(tmp_path, check_recovery=check).boot()
+    r, fake = await recovery_rig(tmp_path)
     incident = await open_shop_incident(r)
     approvals = await waiting_for_a_yes(r, incident)
     shop_back(r)
 
-    await minutes(r, 4)
-    assert (await r.repo.get(incident.id)).status == "awaiting_approval"
-    await minutes(r, 2)
+    await settled_minutes(r, 4)
+    assert await status_of(r, incident) == "awaiting_approval"
+    await settled_minutes(r, 2)
 
-    assert (await r.repo.get(incident.id)).status == "closed"
+    assert await status_of(r, incident) == "closed"
     assert r.runner.ended == [(incident.id, RECOVERED)]
     assert r.runner.endings == ["recovered"]
     assert (await approvals.current(incident.id)).closed
-    assert check.calls == 2
+    assert (fake.reads, fake.checks) == (1, 1)
 
 
 async def test_a_service_whose_url_still_fails_is_not_held_healthy(tmp_path):
-    check = RecoveryCheck()
-    r = await Rig(tmp_path, check_recovery=check).boot()
+    r, fake = await recovery_rig(tmp_path)
     incident = await open_shop_incident(r)
     await waiting_for_a_yes(r, incident)
     shop_back(r)
     r.not_found.add("shop")  # its containers run, its page answers 404
 
-    await minutes(r, 10)
+    await settled_minutes(r, 10)
 
-    assert (await r.repo.get(incident.id)).status == "awaiting_approval"
-    assert check.calls == 0
+    assert await status_of(r, incident) == "awaiting_approval"
+    assert fake.reads == 0
 
 
 async def test_a_service_whose_url_was_not_checked_lately_is_not_held_healthy(tmp_path):
-    check = RecoveryCheck()
-    r = await Rig(tmp_path, check_recovery=check).boot()
+    r, fake = await recovery_rig(tmp_path)
     incident = await open_shop_incident(r)
     await waiting_for_a_yes(r, incident)
     shop_back(r)
 
     for _ in range(40):
         await r.pulse(urls=False)  # its containers run, no URL round has said it answers
+        await r.manager.drain()
 
-    assert (await r.repo.get(incident.id)).status == "awaiting_approval"
-    assert check.calls == 0
+    assert await status_of(r, incident) == "awaiting_approval"
+    assert fake.reads == 0
 
 
 async def test_bleeps_own_wake_ends_the_hold(tmp_path):
-    check = RecoveryCheck()
-    r = await Rig(tmp_path, check_recovery=check).boot()
+    r, _ = await recovery_rig(tmp_path)
     incident = await open_shop_incident(r)
     await waiting_for_a_yes(r, incident)
     shop_back(r)
-    await minutes(r, 4)
+    await settled_minutes(r, 4)
     await r.manager.woke(r.clock())
     await r.pulse()  # inside the grace window after the wake nothing is judged
 
-    await minutes(r, 4)
+    await settled_minutes(r, 4)
 
-    assert (await r.repo.get(incident.id)).status == "awaiting_approval"
-    await minutes(r, 2)
-    assert (await r.repo.get(incident.id)).status == "closed"
+    assert await status_of(r, incident) == "awaiting_approval"
+    await settled_minutes(r, 2)
+    assert await status_of(r, incident) == "closed"
 
 
-async def test_a_relapse_after_a_recovery_on_its_own_opens_at_once(tmp_path):
-    """Held healthy for five minutes and checked, the loop is over, as after a verified fix."""
-    r = await Rig(tmp_path, check_recovery=RecoveryCheck()).boot()
+async def test_a_host_out_of_contact_holds_nothing_healthy(tmp_path):
+    """Its listing is stale, so its containers only look running; its URLs still answer."""
+    r, fake = await recovery_rig(tmp_path)
+    incident = await open_shop_incident(r)
+    await waiting_for_a_yes(r, incident)
+    shop_back(r)
+    await r.pulse()
+    r.engine.drop()  # SSH is gone; the page still answers from outside
+
+    await settled_minutes(r, 10)
+
+    assert await status_of(r, incident) == "awaiting_approval"
+    assert r.runner.ended == []
+
+
+async def test_an_asleep_host_ends_the_hold(tmp_path):
+    r, _ = await recovery_rig(tmp_path, may_sleep=True)
+    incident = await open_shop_incident(r)
+    await waiting_for_a_yes(r, incident)
+    shop_back(r)
+    await settled_minutes(r, 4)
+    r.engine.drop()  # the laptop's lid is closed for a moment
+    await r.pulse()
+    r.engine.restore()
+
+    await settled_minutes(r, 2)
+    assert await status_of(r, incident) == "awaiting_approval"  # five minutes from the start
+    await settled_minutes(r, 4)
+    assert await status_of(r, incident) == "closed"
+
+
+async def test_a_crash_loop_after_a_recovery_on_its_own_still_waits_out_its_hold(tmp_path):
+    """Only a verified fix ends a loop early (#356): five quiet minutes are no fix, so the next
+    crashes of the same loop do not open an incident each."""
+    r, _ = await recovery_rig(tmp_path)
     r.engine.container_list[0] = box("shop-web-1", "shop", restart_policy="always")
     await r.pulse(urls=False)
     await crashing(r, 3, back=True)
     [loop] = r.runner.started
     await waiting_for_a_yes(r, loop)
-    await minutes(r, 6)
-    assert (await r.repo.get(loop.id)).status == "closed"
+    await settled_minutes(r, 6)
+    assert await status_of(r, loop) == "closed"
 
     crash(r)
     await minutes(r, 2)
 
-    [_, relapse] = r.runner.started
-    assert "down_past_grace" in await kinds_of(r, relapse)
+    assert r.runner.started == [loop]
 
 
-async def test_without_a_recovery_check_nothing_is_closed_on_its_own(tmp_path):
+async def test_without_recovery_checks_nothing_is_closed_on_its_own(tmp_path):
     r = await Rig(tmp_path).boot()
     incident = await open_shop_incident(r)
     await waiting_for_a_yes(r, incident)
     shop_back(r)
 
-    await minutes(r, 10)
+    await settled_minutes(r, 10)
 
-    assert (await r.repo.get(incident.id)).status == "awaiting_approval"
+    assert await status_of(r, incident) == "awaiting_approval"
+
+
+async def test_a_slow_recovery_check_does_not_hold_up_the_poll_tick(tmp_path):
+    r, fake = await recovery_rig(tmp_path)
+    incident = await open_shop_incident(r)
+    await waiting_for_a_yes(r, incident)
+    shop_back(r)
+    await settled_minutes(r, 4)
+    gate = asyncio.Event()
+    check = fake.check
+
+    async def slow(subject, signals, first_running):
+        await gate.wait()  # a host whose engine takes its time
+        return await check(subject, signals, first_running)
+
+    r.manager.recoveries.checks = Checks(first_reads=fake.first_reads, check=slow)
+
+    for _ in range(3):
+        await asyncio.wait_for(r.pulse(60), 1)  # the ticks go on while the check waits
+
+    assert await status_of(r, incident) == "awaiting_approval"
+    gate.set()
+    await r.manager.drain()
+    assert await status_of(r, incident) == "closed"

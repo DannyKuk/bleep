@@ -84,7 +84,7 @@ from bleep.watcher.health_store import HealthStore
 from bleep.watcher.host_probe import HostProbe
 from bleep.watcher.http_checks import UrlCheckStore, UrlWatcher
 from bleep.watcher.poller import HostWatcher
-from bleep.watcher.recovery import RecoveryCheck, RecoveryWatch
+from bleep.watcher.recovery import Checks, RecoveryWatch
 from bleep.watcher.sightings import Sightings
 from bleep.watcher.wake import SleepWatch
 
@@ -169,7 +169,7 @@ class WatcherManager:
         wake_grace_ticks: int = Settings.model_fields["wake_grace_ticks"].default,
         monotonic: Callable[[], float] = time.monotonic,
         sightings: Sightings | None = None,
-        check_recovery: RecoveryCheck | None = None,
+        recovery_checks: Checks | None = None,
     ) -> None:
         self.registry = registry
         self.detector = detector
@@ -211,10 +211,8 @@ class WatcherManager:
         repo.on_finished(self._fixed)
         self.recoveries = (
             None
-            if check_recovery is None
-            else RecoveryWatch(
-                repo, runner, check_recovery, clock, self._display_name, closed=self._loops_over
-            )
+            if recovery_checks is None
+            else RecoveryWatch(repo, runner, recovery_checks, clock, self._display_name)
         )
 
     def _host_tasks(self, host_id: str) -> _HostTasks:
@@ -265,13 +263,15 @@ class WatcherManager:
             tasks.append(asyncio.create_task(self._supervised(name, run), name=name))
 
     async def stop(self) -> None:
-        """Cancel the watching; runs in flight stay with the runner."""
+        """Cancel the watching and the recovery checks; runs in flight stay with the runner."""
         tasks = [task for host in self._tasks.values() for task in host] + [*self._background]
         self._tasks = {}
         self._started = False
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        if self.recoveries is not None:
+            await self.recoveries.stop()
         if self._owns_http:
             await self._http.aclose()
 
@@ -333,10 +333,13 @@ class WatcherManager:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def drain(self) -> None:
-        """Wait for the recovery explanations in flight (tests, and a clean shutdown)."""
+        """Wait for the recovery explanations and the recovery checks in flight (tests, and a
+        clean shutdown)."""
         while self._background:
             await asyncio.gather(*list(self._background), return_exceptions=True)
             await asyncio.sleep(0)
+        if self.recoveries is not None:
+            await self.recoveries.drain()
 
     @staticmethod
     async def _supervised(name: str, run: Callable[[], Awaitable[None]]) -> None:
@@ -451,8 +454,10 @@ class WatcherManager:
             log.exception("recording the health of host %s's services failed", host_id)
             healthy = set()
         if self.recoveries is not None:
-            # A host out of contact has a stale listing: nothing on it counts as healthy.
-            await self.recoveries.judge(host_id, healthy if self._reachable(host_id) else set())
+            # A host out of contact has a stale listing: nothing on it counts as healthy, from
+            # its first failed tick on (the registry marks it unreachable only a tick later).
+            in_contact = self._reachable(host_id) and self._answered.get(host_id) is not False
+            await self.recoveries.judge(host_id, healthy if in_contact else set())
 
     async def _stored_checks(
         self, host_id: str
@@ -760,14 +765,8 @@ class WatcherManager:
         incident = await self.repo.get(incident_id)
         if incident is None or incident.status != "resolved" or incident.subject.kind != "service":
             return
-        await self._loops_over(incident, incident.closed_at)
-
-    async def _loops_over(self, incident: Incident, at: datetime | None = None) -> None:
-        """End the loops of the incident's containers in the detector, at `at` (now when not
-        given): a verified fix (`_fixed`), or a service held healthy again on its own and
-        checked by Verify's checks (#571), is the pass the detector cannot see."""
-        at = at or self._clock()
-        for container in {s.container for s in await self.repo.signals(incident.id)}:
+        at = incident.closed_at or self._clock()
+        for container in {s.container for s in await self.repo.signals(incident_id)}:
             if container is not None:
                 self.detector.recovered(incident.subject.host_id, container, at)
 

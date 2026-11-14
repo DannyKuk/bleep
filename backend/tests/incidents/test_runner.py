@@ -1516,6 +1516,39 @@ async def test_a_yes_that_won_before_the_recovery_close_runs_its_plan(tmp_path, 
     assert english(RECOVERED) not in await notices(env, incident.id)
 
 
+async def test_a_recovery_close_cancelled_after_it_committed_still_says_why(tmp_path, acting):
+    """The watcher's check task is cancelled (a host forgotten, a shutdown) just as the close
+    is committed: the notice and the message still go out."""
+    env = await graph_env(tmp_path)
+    channels = ChannelLog()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner, incident, _ = await waiting_for_a_yes(tmp_path, env, saver, channels)
+        committed, release = asyncio.Event(), asyncio.Event()
+        close = env.repo.close_unanswered
+
+        async def close_then_stall(incident_id: str) -> bool:
+            closed = await close(incident_id)
+            committed.set()
+            await release.wait()
+            return closed
+
+        env.repo.close_unanswered = close_then_stall
+        caller = asyncio.create_task(runner.healthy_again(incident.id, RECOVERED))
+        await asyncio.wait_for(committed.wait(), 5)
+        caller.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        for _ in range(50):  # the shielded rest runs on without its caller
+            if channels.endings:
+                break
+            await asyncio.sleep(0.01)
+
+    assert (await env.repo.get(incident.id)).status == "closed"
+    assert await notices(env, incident.id) == [english(RECOVERED)]
+    assert channels.endings == ["recovered"]
+
+
 @pytest.mark.parametrize("yes_first", [True, False])
 async def test_a_yes_and_the_recovery_close_at_once_leave_exactly_one_outcome(
     tmp_path, acting, yes_first
