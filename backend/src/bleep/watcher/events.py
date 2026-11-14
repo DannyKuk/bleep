@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
 
-from bleep.hosts.discovery import compose_service, is_self
+from bleep.hosts.discovery import compose_service, is_build_helper, is_self
 from bleep.schemas.docker import ContainerSummary, DockerEvent
 from bleep.schemas.incidents import Signal, Subject
 
@@ -38,7 +38,13 @@ class Translation:
 
 
 def _is_self(event: DockerEvent, known: ContainerSummary | None) -> bool:
-    return is_self(event.attributes) or (known is not None and is_self(known.labels))
+    if is_self(event.attributes) or is_build_helper(
+        event.attributes, event.attributes.get("image", "")
+    ):
+        return True
+    return known is not None and (
+        is_self(known.labels) or is_build_helper(known.labels, known.image)
+    )
 
 
 def _exit_code(event: DockerEvent) -> int | None:
@@ -63,7 +69,7 @@ def translate(
       its `die` and `restart` make no signal. For a job its service `expects` to exit, only `stop`
       counts: a `compose run --rm` job is removed after every run, a failed one included.
     - A death of such a job carries `expected_exit` in its detail.
-    - `bleep.self` containers make nothing.
+    - `bleep.self` containers and Coolify's build helpers make nothing.
     - `covered` maps a container id to the time the snapshot diff already reported its death; an
       event at or before that time is that same death and is skipped.
     """
@@ -143,7 +149,11 @@ def diff(
     now_by_id = {c.id: c for c in current}
     signals: list[Signal] = []
     for before in previous:
-        if is_self(before.labels) or before.state != "running":
+        if (
+            is_self(before.labels)
+            or is_build_helper(before.labels, before.image)
+            or before.state != "running"
+        ):
             continue
         if before.id in handled or before.id in deliberate:
             continue
