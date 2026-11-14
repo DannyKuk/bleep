@@ -165,3 +165,13 @@ def test_diff_names_no_compose_service_for_an_image_only_container():
     after = [box("a", "shop-canary", state="exited", exit_code=1, labels=canary)]
     [signal] = diff(before, after, T0, subject_of, set(), set())
     assert "compose_service" not in signal.detail
+
+
+def test_a_coolify_build_helper_makes_no_signal_by_event_or_by_snapshot():
+    labels = {"coolify.managed": "true"}
+    image = "docker.io/coollabsio/coolify-helper:1.0.19"
+    by_event = event("die", exitCode="1", image=image, **labels)
+    assert run([by_event]).signals == []
+    helper = ContainerSummary(id="c1", name="web-1", image=image, state="running", labels=labels)
+    assert run([event("die", exitCode="1")], known=[helper]).signals == []
+    assert diff([helper], [], datetime.now(UTC), subject_of, set(), set()) == []

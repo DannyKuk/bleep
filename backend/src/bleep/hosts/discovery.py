@@ -8,6 +8,7 @@ from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.services import Service
 
 SELF_LABEL = "bleep.self"
+COOLIFY_HELPER_IMAGE = "coollabsio/coolify-helper"
 COMPOSE_PROJECT = "com.docker.compose.project"
 COMPOSE_SERVICE = "com.docker.compose.service"
 COMPOSE_CONFIG_HASH = "com.docker.compose.config-hash"
@@ -16,6 +17,18 @@ COMPOSE_CONFIG_HASH = "com.docker.compose.config-hash"
 def is_self(labels: dict[str, str]) -> bool:
     """Whether these labels mark a container as Bleep's own."""
     return labels.get(SELF_LABEL) == "true"
+
+
+def is_build_helper(labels: dict[str, str], image: str) -> bool:
+    """Whether this is the helper container Coolify runs a build in: managed by Coolify, no
+    `coolify.type`, and the `coollabsio/coolify-helper` image (any registry prefix, tag or
+    digest). Coolify's own containers carry `coolify.managed` too, so the label is not enough."""
+    if labels.get("coolify.managed") != "true" or "coolify.type" in labels:
+        return False
+    repository = image.split("@", 1)[0]
+    if ":" in repository.rsplit("/", 1)[-1]:
+        repository = repository.rsplit(":", 1)[0]
+    return repository == COOLIFY_HELPER_IMAGE or repository.endswith(f"/{COOLIFY_HELPER_IMAGE}")
 
 
 def protected_by(container: ContainerSummary, protected: Collection[str]) -> str | None:
@@ -114,7 +127,7 @@ def group_services(
     """Group containers into services, in order of first appearance. Pure."""
     groups: dict[str, tuple[str, str, list[ContainerSummary]]] = {}
     for container in containers:
-        if is_self(container.labels):
+        if is_self(container.labels) or is_build_helper(container.labels, container.image):
             continue
         key, name, source = _classify(container.name, container.labels)
         if key not in groups:

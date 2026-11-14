@@ -9,6 +9,7 @@ from bleep.hosts.discovery import (
     compose_service,
     expects_exit,
     group_services,
+    is_build_helper,
 )
 from bleep.schemas.docker import ContainerSummary
 from fakes import compose_labels
@@ -432,3 +433,45 @@ def test_a_service_takes_exits_from_its_override_like_its_urls():
         "h", [box("molecula-fetch-1", labels)], {"molecula": ServiceOverrides(exits=["fetch"])}
     )
     assert service.exits == ["fetch"]
+
+
+def coolify_box(name: str, image: str, labels: dict[str, str]) -> ContainerSummary:
+    return ContainerSummary(id=f"id-{name}", name=name, image=image, state="running", labels=labels)
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "docker.io/coollabsio/coolify-helper:1.0.19",
+        "coollabsio/coolify-helper",
+        "ghcr.io/coollabsio/coolify-helper:latest",
+        "coollabsio/coolify-helper@sha256:abc",
+        "localhost:5000/coollabsio/coolify-helper:1.0.19",
+    ],
+)
+def test_a_coolify_build_helper_is_not_a_service(image):
+    helper = coolify_box("aj4kwljzjzkmhtjcraajblsr", image, {"coolify.managed": "true"})
+    assert is_build_helper(helper.labels, helper.image)
+    assert group_services("h", [helper], {}) == []
+
+
+def test_coolify_own_containers_stay_services():
+    proxy = coolify_box("coolify-proxy", "traefik:v3.1", {"coolify.managed": "true"})
+    assert [s.id for s in group_services("h", [proxy], {})] == ["h/container:coolify-proxy"]
+
+
+def test_the_helper_image_without_the_managed_label_stays_a_service():
+    other = coolify_box("helper", "coollabsio/coolify-helper:1.0", {})
+    assert [s.id for s in group_services("h", [other], {})] == ["h/container:helper"]
+
+
+def test_a_coolify_app_container_is_unaffected():
+    labels = {
+        "coolify.managed": "true",
+        "coolify.type": "application",
+        "coolify.applicationUuid": "u1",
+        "coolify.resourceName": "shop",
+    }
+    app = coolify_box("u1-123", "coollabsio/coolify-helper:1.0", labels)
+    assert not is_build_helper(app.labels, app.image)
+    assert [s.id for s in group_services("h", [app], {})] == ["h/u1"]
