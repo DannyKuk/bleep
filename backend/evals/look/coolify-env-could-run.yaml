@@ -5,9 +5,11 @@
 # `coolify.set_env` and `coolify.redeploy` are enabled, so the right plan is no action with the
 # instruction to remove or change the variable and redeploy, and `could_run` naming exactly those
 # two actions: the incident then waits for the person's instruction instead of closing (#365).
-# The case is Coolify-shaped by its names only: it runs as a Compose service on the scripted host,
-# without the Coolify plugin, so a plan that acts on the app is refused and the run fails.
+# The service is a Coolify application as discovery sees it (`source: coolify` labels its
+# containers), so Propose is told its source is `coolify` (#572); the run has no Coolify plugin,
+# so a plan that acts on the app is refused and the run fails.
 id: coolify-env-could-run
+source: coolify
 service: 8jmqebrstxvyypkrteclkd2r
 healthy: false
 urls:

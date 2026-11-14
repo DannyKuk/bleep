@@ -231,8 +231,9 @@ def test_the_prompts_with_a_fixed_part_render_as_they_did_before_it_moved_out(na
     asked for a setting's documented value and when #561 asked to name a setting's current
     value with the tool that showed it, `graph-investigate.txt` when #364 asked for that docs
     search, and `graph-propose.txt` when #276 kept Propose's plan to the steps the diagnosis
-    needs, when #365 asked for `could_run` and when #561 kept it for a fix only the person can
-    confirm. `{look}` (#410) and `{url_checks}` (#423) are filled as they are for a run no look
+    needs, when #365 asked for `could_run`, when #561 kept it for a fix only the person can
+    confirm and when #572 told it the service's source and kept Coolify actions to Coolify's.
+    `{look}` (#410) and `{url_checks}` (#423) are filled as they are for a run no look
     opened, and `{language}` (#374) as it is in English, so the fixtures also show that such a
     run's prompt did not change."""
     extra = {field: load(rule).strip() for field, rule in FIXED_PARTS.get(name, {}).items()}

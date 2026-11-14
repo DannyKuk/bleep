@@ -21,9 +21,11 @@ root cause before `wrong_words` are looked for, so "no fault" does not count as 
 that ends early (a timeout, an error, no diagnosis) fails. Reads of containers outside the
 service are counted, not failed. A case with `could_run` (#365) also needs a plan of no action
 whose `could_run` names exactly those actions, marked to wait for the person when it names any;
-`enabled` sets the actions the run may use. A case with `named_value` (#568) also needs an
-evidence entry of the diagnosis that gives that setting's key and value with that tool as its
-source. See docs/design/evals.md.
+`enabled` sets the actions the run may use. A case with `plan_must_not_name` (#572) fails a plan
+whose reason, instructions or `could_run` uses one of those words, "Coolify" for a Compose
+service. `source: coolify` runs the case as a Coolify application, not a Compose service. A case
+with `named_value` (#568) also needs an evidence entry of the diagnosis that gives that setting's
+key and value with that tool as its source. See docs/design/evals.md.
 """
 
 import argparse
@@ -34,7 +36,7 @@ import sys
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
 
 import httpx
 import yaml
@@ -88,17 +90,17 @@ class NamedValue(BaseModel):
 
     key: str
     value: str
-    source: str  # the tool that showed it, such as `inspect_container`
+    tool: str  # the tool that showed it, such as `inspect_container`
 
 
 class LookCase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
-    service: str  # the Compose project; the look is at its service
-    # The service as discovery groups its containers, `compose:<service>` when not given; a
-    # Coolify application (labels `coolify.type` and `coolify.applicationId`) is `id:<N>` (#568).
-    service_key: str | None = None
+    service: str  # the Compose project, or the Coolify application's uuid; the look is at it
+    # How the service is run, as discovery tells it apart: a Coolify application's containers
+    # carry the labels Coolify writes.
+    source: Literal["compose", "coolify"] = "compose"
     healthy: bool  # the right answer
     urls: list[UrlCheckConfig] = Field(default_factory=list)  # the service's, as in a hosts file
     url_answers: dict[str, UrlAnswer] = Field(default_factory=dict)  # one not listed answers 503
@@ -113,6 +115,9 @@ class LookCase(BaseModel):
     enabled: list[Action] | None = None
     could_run: list[Action] | None = None
     named_value: NamedValue | None = None
+    # Words the plan's reason, instructions and `could_run` must not use (#572): "Coolify" for a
+    # Compose service, which no Coolify action can reach.
+    plan_must_not_name: list[str] = Field(default_factory=list)
     timeout_s: int = Field(400, gt=0)
 
     @model_validator(mode="after")
@@ -139,15 +144,29 @@ class LookCase(BaseModel):
     def own(self) -> list[str]:
         return [c.name for c in self.containers if c.project in (None, self.service)]
 
-    def key(self) -> str:
-        return self.service_key or f"compose:{self.service}"
-
     def actions(self) -> frozenset[str]:
         return frozenset(self.enabled) if self.enabled is not None else CORE_ACTIONS
 
     @property
     def subject(self) -> Subject:
-        return Subject(kind="service", host_id=HOST_ID, service_id=f"{HOST_ID}/{self.key()}")
+        key = self.service if self.source == "coolify" else f"compose:{self.service}"
+        return Subject(kind="service", host_id=HOST_ID, service_id=f"{HOST_ID}/{key}")
+
+    def scripted(self) -> list[ScriptedContainer]:
+        """The containers as the engine lists them: a Coolify application's own carry the labels
+        that make discovery group them as that application."""
+        if self.source == "compose":
+            return self.containers
+        app = {
+            "coolify.type": "application",
+            "coolify.applicationUuid": self.service,
+            "coolify.resourceName": self.service,
+        }
+        own = set(self.own())
+        return [
+            c.model_copy(update={"labels": app | c.labels}) if c.name in own else c
+            for c in self.containers
+        ]
 
     def host(self) -> HostConfig:
         return HostConfig(
@@ -155,7 +174,7 @@ class LookCase(BaseModel):
             name="Scripted host",
             kind="socket",
             endpoint="tcp://scripted:2375",
-            services={self.key(): ServiceOverrides(urls=self.urls)},
+            services={self.service: ServiceOverrides(urls=self.urls)},
         )
 
 
@@ -210,6 +229,7 @@ class LookResult(BaseModel):
     said_right: bool | None = None
     could_run_right: bool | None = None  # None for a case that does not score it
     named_value_right: bool | None = None  # likewise
+    named_in_plan: list[str] = Field(default_factory=list)  # `plan_must_not_name` words found
     passed: bool = False
 
 
@@ -267,11 +287,19 @@ def _named_value_right(case: LookCase, diagnosis: Diagnosis | None) -> bool | No
     if diagnosis is None:
         return False
     return any(
-        wanted.source.casefold() in e.source.casefold()
+        wanted.tool.casefold() in e.source.casefold()
         and wanted.key.casefold() in e.detail.casefold()
         and wanted.value.casefold() in e.detail.casefold()
         for e in diagnosis.evidence
     )
+
+
+def _named_in_plan(case: LookCase, proposal: Proposal | None) -> list[str]:
+    """The case's `plan_must_not_name` words the plan's own text uses (#572)."""
+    if proposal is None:
+        return []
+    text = " ".join([proposal.reason, proposal.human_instructions or "", *proposal.could_run])
+    return word_hits(text, case.plan_must_not_name)
 
 
 def score(case: LookCase, result: LookResult) -> LookResult:
@@ -285,6 +313,7 @@ def score(case: LookCase, result: LookResult) -> LookResult:
     result.said_right = _said_right(case, result)
     result.could_run_right = _could_run_right(case, result.proposal)
     result.named_value_right = _named_value_right(case, result.diagnosis)
+    result.named_in_plan = _named_in_plan(case, result.proposal)
     ended_early = result.failure is not None or result.diagnosis is None
     read_all = not result.unread_logs and not result.unchecked_urls
     result.passed = (
@@ -294,6 +323,7 @@ def score(case: LookCase, result: LookResult) -> LookResult:
         and result.said_right
         and result.could_run_right is not False
         and result.named_value_right is not False
+        and not result.named_in_plan
     )
     return result
 
@@ -315,7 +345,7 @@ async def run_case(
     result = LookResult(
         run_id=f"{case.id}/{run}", case=case.id, run=run, model=tested_model(settings.models)
     )
-    engine = ScriptedEngine(HOST_ID, case.service, case.containers)
+    engine = ScriptedEngine(HOST_ID, case.service, case.scripted())
 
     async def connect(_host: HostConfig) -> tuple[None, ScriptedEngine]:
         return None, engine
@@ -434,6 +464,7 @@ def line(result: LookResult) -> str:
         found.append("could_run is not the case's")
     if result.named_value_right is False:
         found.append("no evidence gives the setting's value with its tool")
+    found += [f"the plan names {word}" for word in result.named_in_plan]
     return head + f"{verdict}; plan {_plan(result.proposal)}" + "".join(f"; {f}" for f in found)
 
 

@@ -8,11 +8,11 @@
 # inspect_container as the source, and a plan of no action: the value to use is not known, but
 # `coolify.set_env` and `coolify.redeploy` are enabled, so `could_run` names exactly those two
 # and the incident waits for the person's instruction instead of closing (#365). The service is
-# a Coolify application as discovery groups it (`service_key: id:11`, source `coolify`), but the
+# a Coolify application as discovery groups it (`source: coolify`), but the
 # Coolify plugin is not on the host: a plan that acts on the app is refused and the run fails.
 id: coolify-env-value-past-labels
 service: gvl3xk8r6vd0uq2z7p5rtwhm
-service_key: id:11
+source: coolify
 healthy: false
 urls:
   - url: https://inventory.example/
@@ -40,7 +40,6 @@ containers:
       coolify.projectName: websites
       coolify.pullRequestId: "0"
       coolify.resourceName: inventory
-      coolify.type: application
       coolify.version: 4.0.0-beta.380
       traefik.enable: "true"
       traefik.http.middlewares.gzip.compress: "true"
@@ -75,4 +74,4 @@ wrong_words: [nothing is wrong, no failure, no fault, working normally, service 
 must_not: [docker.restart, docker.stop, docker.start]
 enabled: [docker.restart, docker.stop, docker.start, coolify.set_env, coolify.redeploy]
 could_run: [coolify.set_env, coolify.redeploy]
-named_value: {key: HOST, value: 127.0.0.1, source: inspect_container}
+named_value: {key: HOST, value: 127.0.0.1, tool: inspect_container}
