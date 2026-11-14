@@ -975,7 +975,7 @@ async def test_a_watcher_signal_that_attached_first_never_changes_a_looks_opener
     assert "unhealthy" not in text
 
 
-async def test_a_bare_look_is_no_earlier_incident_for_the_next_ones_again(env, looks):
+async def test_a_bare_look_is_no_earlier_incident_for_the_next_ones_after(env, looks):
     await env.repo.set_status(env.incident.id, "closed")
     await press(env, await look_offered(env))
     [look_id] = looks.started
@@ -986,7 +986,7 @@ async def test_a_bare_look_is_no_earlier_incident_for_the_next_ones_again(env, l
 
     text = await opener_of(env, incident)
 
-    assert text.startswith("*🔁 Again: shop #3 ·") and text.split("*")[1].endswith("shop #1")
+    assert text.startswith("*🔴 New: shop #3 ·") and text.split("*")[1].endswith("after shop #1")
     assert "shop #2" not in text
 
 

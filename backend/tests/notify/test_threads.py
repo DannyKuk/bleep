@@ -15,6 +15,7 @@ from bleep import prompts
 from bleep.config import Settings
 from bleep.graph.replan import PLANNING_AGAIN
 from bleep.graph.shown import english
+from bleep.hosts.url_check import WRONG_STATUS
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.bus import EventBus
 from bleep.incidents.repository import IncidentRepo
@@ -388,14 +389,13 @@ async def test_a_repeat_within_a_day_opens_as_again_quoting_how_the_last_one_end
     await env.notifier.report(second, report(OUTCOME_TEXT["no_action"]))  # no opener: folded
 
     _, first_end, again = env.chat.sent()
-    assert first_line(again) == "*🔁 Again: shop \\#2 · 1 h after shop \\#1*"
+    assert first_line(again) == "*🔁 Again: shop \\#2 · same failure as shop \\#1 · seen 2 times*"
     assert again["text"].split("\n")[1] == "shop\\-web died\\."
     assert "*⚠️ Needs you · no action*" in again["text"]  # it is its own end too
     assert replied_to(again) == first_end["id"]
-    assert "seen" not in again["text"]
 
 
-async def test_a_repeat_of_another_kind_within_a_day_is_again_with_its_own_opener(env):
+async def test_a_different_failure_within_a_day_is_new_with_how_long_after_and_replies(env):
     first = await env.open(kind="restart_loop")
     await env.notifier.incident_opened(first)
     await env.close(first)
@@ -405,11 +405,80 @@ async def test_a_repeat_of_another_kind_within_a_day_is_again_with_its_own_opene
     await env.notifier.incident_opened(second)
     request = await env.ask(second)
 
-    first_opener, again, proposal = env.chat.sent()
-    assert first_line(again).startswith("*🔁 Again: shop \\#2 · 2 min after shop \\#1")
-    assert replied_to(again) == first_opener["id"]  # the first one's last message
-    assert replied_to(proposal) == again["id"]
+    first_opener, opener, proposal = env.chat.sent()
+    assert first_line(opener) == "*🔴 New: shop \\#2 · 2 min after shop \\#1*"
+    assert replied_to(opener) == first_opener["id"]  # the first one's last message
+    assert replied_to(proposal) == opener["id"]
     assert request is not None
+
+
+async def open_url_failure(env: Env, status: int, name: str = "shop"):
+    detail = {"url": "https://shop.example/", "status": status, "error": WRONG_STATUS}
+    signal = Signal(subject=SHOP, kind="url_failed", at=env.now, detail=detail)
+    incident, _ = await env.repo.open_or_attach(SHOP, [signal], name=name)
+    return incident
+
+
+async def test_a_500_back_is_again_and_a_502_four_minutes_later_is_new_after(env):
+    first = await open_url_failure(env, 500)
+    await env.notifier.incident_opened(first)
+    await env.notifier.report(first, report(OUTCOME_TEXT["resolved"]))
+    await env.close(first)
+    env.now = T0 + timedelta(minutes=30)
+    second = await open_url_failure(env, 500)
+    assert second.fold_of == first.id
+    await env.notifier.report(second, report(OUTCOME_TEXT["resolved"]))  # folded: no opener
+    await env.close(second)
+    env.now = T0 + timedelta(minutes=34)
+    third = await open_url_failure(env, 502)
+    assert third.fold_of is None
+    await env.notifier.incident_opened(third)
+
+    _, first_end, again, third_opener = env.chat.sent()
+    assert first_line(again) == "*🔁 Again: shop \\#2 · same failure as shop \\#1 · seen 2 times*"
+    assert replied_to(again) == first_end["id"]
+    assert first_line(third_opener) == "*🔴 New: shop \\#3 · 4 min after shop \\#2*"
+    assert replied_to(third_opener) == again["id"]  # how the 500 ended
+    assert "seen" not in third_opener["text"].split("\n", 1)[0]
+
+
+async def test_a_repeat_names_the_first_incident_of_its_failure_even_after_another_came(env):
+    first = await open_url_failure(env, 500)
+    await env.close(first)
+    env.now = T0 + timedelta(minutes=10)
+    other = await open_url_failure(env, 502)
+    await env.close(other)
+    env.now = T0 + timedelta(minutes=20)
+    third = await open_url_failure(env, 500)
+    assert third.fold_of == first.id and third.title.endswith("UTC)")
+    await env.notifier.report(third, report(OUTCOME_TEXT["resolved"]))
+
+    [again] = env.chat.sent()
+    assert first_line(again) == "*🔁 Again: shop \\#3 · same failure as shop \\#1 · seen 2 times*"
+
+
+async def test_a_folded_repeat_without_the_note_in_its_title_counts_its_group(env):
+    first = await open_url_failure(env, 500)
+    await env.close(first)
+    env.now = T0 + timedelta(minutes=10)
+    second = await open_url_failure(env, 500)
+    plain = second.model_copy(update={"title": "url failed on shop"})
+    await env.notifier.report(plain, report(OUTCOME_TEXT["resolved"]))
+
+    [again] = env.chat.sent()
+    assert first_line(again).endswith("seen 2 times*")
+
+
+async def test_a_new_incident_in_german_says_how_long_after(env):
+    env.notifier.language = lambda: "de"
+    first = await open_url_failure(env, 500)
+    await env.close(first)
+    env.now = T0 + timedelta(minutes=4)
+    second = await open_url_failure(env, 502)
+    await env.notifier.incident_opened(second)
+
+    [opener] = env.chat.sent()
+    assert first_line(opener) == "*🔴 Neu: shop \\#2 · 4 Min\\. nach shop \\#1*"
 
 
 async def test_an_incident_after_more_than_a_day_is_new(env):
