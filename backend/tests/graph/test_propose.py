@@ -435,8 +435,8 @@ def could_run(*actions: str, instructions: str | None = REMOVE_FAIL_AFTER, **ext
 async def test_a_no_action_plan_whose_fix_the_enabled_actions_could_run_goes_to_approval(
     tmp_path,
 ):
-    env, state = await setup(tmp_path, could_run("coolify.set_env", "coolify.redeploy"))
-    env.deps.settings_store = StaticSettings(actions=COOLIFY_ACTIONS)
+    env, state = await setup_web(tmp_path, could_run("coolify.set_env", "coolify.redeploy"))
+    state = on_web(state)
 
     update = await propose.make(env.deps)(state)
 
@@ -468,6 +468,64 @@ async def test_any_other_no_action_plan_still_closes_at_once(tmp_path, answer, w
     plan = update["proposal"]
     assert plan.kind == "no_action" and not plan.fix_runnable and not plan.instruct_only, why
     assert propose.route(update) == "report"
+
+
+async def test_propose_is_told_the_source_of_the_service(tmp_path):
+    env, state = await setup(tmp_path, acting(restart("shop-web-1")))
+    await propose.make(env.deps)(state)
+    assert "(its source): compose" in prompt(env)
+
+    env, state = await setup_web(
+        tmp_path, acting(restart("shop-web-1")), acting(restart("shop-web-1"))
+    )
+    await propose.make(env.deps)(on_web(state))
+    assert "(its source): coolify" in prompt(env)
+
+    host = state["subject"].model_copy(update={"kind": "host", "service_id": None})
+    await propose.make(env.deps)(state | {"subject": host})
+    assert "(its source): none (" in prompt(env, 1)
+
+
+async def test_coolify_actions_in_could_run_are_dropped_for_a_compose_service(tmp_path):
+    env, state = await setup(tmp_path, could_run("coolify.set_env", "coolify.redeploy"))
+    env.deps.settings_store = StaticSettings(actions=COOLIFY_ACTIONS)
+
+    update = await propose.make(env.deps)(state)
+
+    plan = update["proposal"]
+    assert plan.could_run == [] and not plan.fix_runnable and not plan.instruct_only
+    assert plan.human_instructions == REMOVE_FAIL_AFTER
+    assert propose.route(update) == "report"
+
+
+async def test_a_host_incident_does_not_wait_for_a_coolify_action(tmp_path):
+    env, state = await setup(tmp_path, could_run("coolify.redeploy"))
+    env.deps.settings_store = StaticSettings(actions=COOLIFY_ACTIONS)
+    host = state["subject"].model_copy(update={"kind": "host", "service_id": None})
+
+    plan = (await propose.make(env.deps)(state | {"subject": host}))["proposal"]
+
+    assert plan.could_run == [] and not plan.fix_runnable
+
+
+async def test_a_service_the_registry_does_not_list_has_no_source_and_no_coolify_action(tmp_path):
+    env, state = await setup(tmp_path, could_run("coolify.redeploy"))
+    env.deps.settings_store = StaticSettings(actions=COOLIFY_ACTIONS)
+    gone = state["subject"].model_copy(update={"service_id": "a/gone"})
+
+    plan = (await propose.make(env.deps)(state | {"subject": gone}))["proposal"]
+
+    assert "(its source): none (" in prompt(env)
+    assert plan.could_run == [] and not plan.fix_runnable
+
+
+async def test_only_the_coolify_actions_are_dropped_from_could_run_of_a_compose_service(tmp_path):
+    env, state = await setup(tmp_path, could_run("docker.restart", "coolify.redeploy"))
+    env.deps.settings_store = StaticSettings(actions=COOLIFY_ACTIONS)
+
+    plan = (await propose.make(env.deps)(state))["proposal"]
+
+    assert plan.could_run == ["docker.restart"] and plan.fix_runnable
 
 
 async def test_a_fix_bleep_could_run_closes_when_no_replan_is_left(tmp_path):
@@ -969,6 +1027,12 @@ def set_env_plan(value: str) -> AIMessage:
         reason="web reads a new variable",
         verification={"containers": [WEB_BOX, "shop-db-1"]},
     )
+
+
+def on_web(state: dict) -> dict:
+    """Propose's input state with the incident on the Coolify application `web`."""
+    subject = Subject(kind="service", host_id="a", service_id="a/web0uuid")
+    return state | {"subject": subject}
 
 
 async def setup_web(tmp_path, *script: AIMessage):

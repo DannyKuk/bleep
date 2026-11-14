@@ -3,6 +3,8 @@
 # its restart policy loops it. The fix is an edit to the Compose file and a recreate, which no
 # action Bleep has can do, even with the Coolify actions enabled (the shop is no Coolify app). The
 # right plan is no action with an empty `could_run`: the incident still closes at once (#365).
+# The plan also names no Coolify action and does not tell the person to redeploy (saying the
+# shop is no Coolify application is fine): Propose is told the service's source is `compose` (#572).
 id: compose-env-closes
 service: shop
 healthy: false
@@ -39,3 +41,8 @@ wrong_words: [nothing is wrong, no failure, no fault, working normally]
 must_not: [docker.restart, docker.stop, docker.start]
 enabled: [docker.restart, docker.stop, docker.start, coolify.set_env, coolify.redeploy]
 could_run: []
+plan_must_not_say:
+  - 'coolify\.\w+'
+  - 'enabled coolify actions?'
+  - '(?<!no )coolify actions? (can|could|will|would) (apply|run|set|fix|make|redeploy)'
+  - 're-?deploy\w*'
