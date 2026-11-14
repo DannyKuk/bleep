@@ -3,7 +3,8 @@
 The manager hands each judgement of a host's services to `RecoveryWatch.judge`, after every poll
 tick and every round of URL checks: which of them are healthy now by the watcher's own reads
 (`service_health` is `ok` and every URL of the service passed its last check, not gone stale).
-For a service incident that waits for a yes (`awaiting_approval`), the first such judgement
+For a service incident that waits for a yes (`awaiting_approval`) and is not a look a person
+asked for (its service may have been healthy all along), the first such judgement
 starts a hold and takes Verify's first reads (`verify.check_recovery`, injected as `check`). Any
 judgement that is not healthy, a new signal on the incident, or a host that cannot be judged
 (Bleep just woke, the host is asleep or out of contact) ends the hold. Once it has lasted
@@ -24,7 +25,7 @@ from bleep.incidents.repository import IncidentRepo
 from bleep.incidents.runner import IncidentRunner
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import VerificationResult
-from bleep.schemas.incidents import Incident, Signal, Subject
+from bleep.schemas.incidents import LOOK_REQUESTED, Incident, Signal, Subject
 from bleep.schemas.shown import Shown
 
 log = logging.getLogger(__name__)
@@ -107,6 +108,8 @@ class RecoveryWatch:
             return
         now = self.clock()
         signals = await self.repo.signals(incident.id)
+        if any(s.kind == LOOK_REQUESTED for s in signals):
+            return  # a look's plan answers the person's question, not a failure that went away
         hold = self._holds.get(incident.id)
         if hold is None or len(signals) > hold.signals:  # a new failure starts the hold again
             hold = _Hold(incident.subject.host_id, now, len(signals))

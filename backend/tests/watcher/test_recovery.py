@@ -5,7 +5,7 @@ from bleep.graph.shown import english
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.repository import IncidentRepo
 from bleep.schemas.graph import Decision, PlanStep, Proposal, VerificationResult
-from bleep.schemas.incidents import Incident, Signal, Subject
+from bleep.schemas.incidents import LOOK_REQUESTED, Incident, Signal, Subject
 from bleep.schemas.shown import Shown
 from bleep.store.db import Database
 from bleep.watcher.recovery import HOLD, RecoveryWatch
@@ -87,8 +87,11 @@ class Rig:
         await self.db.migrate()
         return self
 
-    async def incident(self, subject: Subject = SHOP, status: str = "awaiting_approval"):
-        incident, _ = await self.repo.open_or_attach(subject, [self.signal(subject)])
+    async def incident(
+        self, subject: Subject = SHOP, status: str = "awaiting_approval", kind="container_died"
+    ):
+        signal = self.signal(subject).model_copy(update={"kind": kind})
+        incident, _ = await self.repo.open_or_attach(subject, [signal])
         await self.approvals.request(incident.id, PLAN, [])
         await self.repo.set_status(incident.id, status)
         return incident
@@ -259,3 +262,14 @@ async def test_another_service_on_the_host_being_healthy_does_not_hold_this_one(
 
     assert await r.status(incident.id) == "awaiting_approval"
     assert r.check.calls == 0
+
+
+async def test_a_look_a_person_asked_for_is_never_closed_as_healthy_again(tmp_path):
+    """A look's service may have been healthy all along: its plan answers the person (#403)."""
+    r = await Rig(tmp_path).boot()
+    look = await r.incident(kind=LOOK_REQUESTED)
+
+    await r.healthy_for(2 * HOLD.total_seconds())
+
+    assert await r.status(look.id) == "awaiting_approval"
+    assert r.check.calls == 0 and r.runner.told == []
