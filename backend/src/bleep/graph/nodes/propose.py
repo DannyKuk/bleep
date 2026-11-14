@@ -474,7 +474,7 @@ def _prompt(
     return prompts.load(
         "graph/propose",
         subject=_subject(subject, context),
-        source=_source(deps, subject) or "none (the host as a whole, or a service not listed now)",
+        source=_source(deps, subject) or "none",
         diagnosis=_diagnosis(diagnosis),
         containers=_containers(context),
         off_limits=_off_limits(deps, subject.host_id),
