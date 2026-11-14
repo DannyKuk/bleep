@@ -24,8 +24,10 @@ whose `could_run` names exactly those actions, marked to wait for the person whe
 `enabled` sets the actions the run may use. A case with `plan_must_not_say` (#572) fails a plan
 whose reason, instructions or `could_run` matches one of those patterns: a Coolify action or a
 redeploy, for a Compose service no Coolify action can reach. `source: coolify` runs the case as
-a Coolify application, not a Compose service. See
-docs/design/evals.md.
+a Coolify application, not a Compose service. A case with `named_value` (#568) also needs an
+evidence entry of the diagnosis that gives that setting's key and value, as whole words and the
+key in its case, with that tool as its source, and a call of that tool on one of the service's
+containers in the run. See docs/design/evals.md.
 """
 
 import argparse
@@ -84,6 +86,16 @@ class LookError(ValueError):
     """A case file is missing, malformed, or not the one asked for."""
 
 
+class NamedValue(BaseModel):
+    """A setting's current value that a tool showed and the diagnosis must give as evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    value: str
+    tool: str  # the tool that showed it, such as `inspect_container`
+
+
 class LookCase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -105,6 +117,7 @@ class LookCase(BaseModel):
     # (none: a fix Bleep cannot run, which must still close).
     enabled: list[Action] | None = None
     could_run: list[Action] | None = None
+    named_value: NamedValue | None = None
     # Regular expressions (any case) the plan's reason, instructions and `could_run` must not
     # match (#572): a Coolify action or a redeploy, for a Compose service no Coolify action can
     # reach. A plain mention such as "not a Coolify application" is no such match.
@@ -126,6 +139,8 @@ class LookCase(BaseModel):
             raise ValueError("could_run names an action the case does not enable")
         if self.could_run is not None and self.healthy:
             raise ValueError("a healthy case has no fix to run")
+        if self.named_value is not None and self.healthy:
+            raise ValueError("a healthy case has no setting to name")
         if len(self.own()) == len(self.containers):
             raise ValueError("a look case has a container outside the service, such as a proxy")
         if self.healthy and not self.healthy_words:
@@ -224,6 +239,7 @@ class LookResult(BaseModel):
     forbidden: list[str] = Field(default_factory=list)
     said_right: bool | None = None
     could_run_right: bool | None = None  # None for a case that does not score it
+    named_value_right: bool | None = None  # likewise
     named_in_plan: list[str] = Field(default_factory=list)  # what `plan_must_not_say` found
     passed: bool = False
 
@@ -273,6 +289,42 @@ def _could_run_right(case: LookCase, proposal: Proposal | None) -> bool | None:
     return named and proposal.fix_runnable == bool(case.could_run)
 
 
+def _inspected(case: LookCase, calls: Sequence[ToolCall], tool: str) -> bool:
+    """The model called `tool` on one of the service's own containers."""
+    own = set(case.own())
+    return any(
+        call.name == tool
+        and isinstance(call.args.get("container"), str)
+        and resolve(case.containers, call.args["container"]) in own
+        for call in calls
+    )
+
+
+def _whole(word: str, text: str, *, before: str) -> bool:
+    """`word` in `text`, case-sensitive and not part of a longer token (`before` are the
+    characters that must not precede it): an env key is case-sensitive, so `HOST` is not "host"
+    nor "localhost", and `127.0.0.1` is not `127.0.0.10`."""
+    return re.search(rf"(?<![{before}]){re.escape(word)}(?!\.?\w)", text) is not None
+
+
+def _named_value_right(case: LookCase, result: LookResult) -> bool | None:
+    """For a case with `named_value`: the model called the tool on the service's container, and
+    an evidence entry has that tool as its source and gives the setting's key and value as
+    whole words (#568). The tool call is checked in the run, not only the label the model wrote
+    on its evidence, since Gather never calls `inspect_container`."""
+    wanted = case.named_value
+    if wanted is None:
+        return None
+    if result.diagnosis is None or not _inspected(case, result.tool_calls, wanted.tool):
+        return False
+    return any(
+        wanted.tool.casefold() in e.source.casefold()
+        and _whole(wanted.key, e.detail, before=r"\w")
+        and _whole(wanted.value, e.detail, before=r"\w.")
+        for e in result.diagnosis.evidence
+    )
+
+
 def _named_in_plan(case: LookCase, proposal: Proposal | None) -> list[str]:
     """What the plan's own text says that the case's `plan_must_not_say` forbids (#572)."""
     if proposal is None:
@@ -292,6 +344,7 @@ def score(case: LookCase, result: LookResult) -> LookResult:
     result.forbidden = [f"{s.action} {s.target}" for s in steps if s.action in case.must_not]
     result.said_right = _said_right(case, result)
     result.could_run_right = _could_run_right(case, result.proposal)
+    result.named_value_right = _named_value_right(case, result)
     result.named_in_plan = _named_in_plan(case, result.proposal)
     ended_early = result.failure is not None or result.diagnosis is None
     read_all = not result.unread_logs and not result.unchecked_urls
@@ -301,6 +354,7 @@ def score(case: LookCase, result: LookResult) -> LookResult:
         and not result.forbidden
         and result.said_right
         and result.could_run_right is not False
+        and result.named_value_right is not False
         and not result.named_in_plan
     )
     return result
@@ -440,6 +494,8 @@ def line(result: LookResult) -> str:
         found.append("root cause says the wrong thing")
     if result.could_run_right is False:
         found.append("could_run is not the case's")
+    if result.named_value_right is False:
+        found.append("no evidence gives the setting's value with its tool")
     found += [f"the plan names {word}" for word in result.named_in_plan]
     return head + f"{verdict}; plan {_plan(result.proposal)}" + "".join(f"; {f}" for f in found)
 
@@ -448,8 +504,9 @@ def render(cases: Sequence[LookCase], results: Sequence[LookResult]) -> str:
     """The tables for docs/evals/: one row per case, then one per run."""
     lines = [
         "| Case | Right answer | Passed | Own logs read | URLs checked | Said it right "
-        "| Could run right | Forbidden step | Read outside the service | Ended early |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| Could run right | Named the value | Forbidden step | Read outside the service "
+        "| Ended early |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for case in cases:
         rs = [r for r in results if r.case == case.id]
@@ -460,11 +517,13 @@ def render(cases: Sequence[LookCase], results: Sequence[LookResult]) -> str:
             return f"{sum(bool(flag(r)) for r in rs)} of {len(rs)}"
 
         could_run = "n/a" if case.could_run is None else of(lambda r: r.could_run_right)
+        named = "n/a" if case.named_value is None else of(lambda r: r.named_value_right)
         lines.append(
             f"| `{case.id}` | {'healthy' if case.healthy else 'failing'} "
             f"| {of(lambda r: r.passed)} | {of(lambda r: not r.unread_logs)} "
             f"| {of(lambda r: not r.unchecked_urls)} | {of(lambda r: r.said_right)} "
-            f"| {could_run} | {of(lambda r: r.forbidden)} | {of(lambda r: r.outside_reads)} "
+            f"| {could_run} | {named} | {of(lambda r: r.forbidden)} "
+            f"| {of(lambda r: r.outside_reads)} "
             f"| {sum(r.failure is not None or r.diagnosis is None for r in rs)} |"
         )
     lines += [
