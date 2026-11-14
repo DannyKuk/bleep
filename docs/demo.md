@@ -1,6 +1,6 @@
 # Demo
 
-A small shop for Bleep to watch, and a script that breaks it in eight ways. Each fault below says what breaks, what Bleep sees, what the cause is and what Bleep should propose. The eval scenarios are written from this page.
+A small shop for Bleep to watch, and a script that breaks it in eight ways. Each fault below says what breaks, what Bleep sees, what the cause is and what Bleep should propose. The eval scenarios are written from this page. For a demo on a real Coolify server there is a separate app, [the demo app on Coolify](#the-demo-app-on-coolify).
 
 ## Run it
 
@@ -143,7 +143,40 @@ docker compose -f demo/compose.yaml down -v --rmi all
 
 The host's entry in the hosts file names the service `shop`, with the same rules as [`config/hosts.demo.yaml`](../config/hosts.demo.yaml) and URLs on the host's own name, `http://m1.local:8080/health` and `http://m1.local:8080/api/items`, each with its `body_contains` check (`"status":"ok"` and `Coffee beans`). Without them port-conflict's canary passes both URLs, since it answers 200.
 
+## The demo app on Coolify
+
+A permanent target on a real Coolify server, for demos and live checks that need Coolify: [DannyKuk/bleep-demo-app](https://github.com/DannyKuk/bleep-demo-app), one FastAPI container with a `/health` URL, deployed from its Dockerfile in its own Coolify project, `Bleep demo` (#558). Its README documents every setting with its safe value, the way a real app's would, so knowledge search finds the fix there.
+
+How it is set up: Coolify's Dockerfile build pack, port 3000, a memory limit and a memory-and-swap limit of `256m` (so the memory leak ends in an out-of-memory kill), `DEMO_PASSWORD` set in Coolify. Coolify's own health check stays off: it runs `curl` or `wget` inside the container, which the image does not have, so Coolify uses the Dockerfile's `HEALTHCHECK` instead. The hosts file links the app under its Coolify uuid, with a URL check on `/health` (`body_contains: ok`) and `repo: DannyKuk/bleep-demo-app`; the server's live apps stay in `protected_containers`.
+
+**Faults from the page** (the buttons ask for `DEMO_PASSWORD`). Each lasts until the container restarts:
+
+| Button | What Bleep sees | What it should propose |
+|---|---|---|
+| Error state | `/health` answers 500, the container turns `unhealthy`, the log repeats `cache connection pool exhausted` | `docker.restart` of the app's container |
+| Hang | `/health` stops answering, the container turns `unhealthy` | `docker.restart` |
+| Memory leak | memory grows 8 MB a second until the container is killed out of memory; the restart policy brings it back | nothing for one kill; a restart loop if it keeps happening |
+| Crash | the process exits with code 1 and a stack trace; the restart policy brings it back in about a second | nothing: a death its restart policy brings back within `container_grace_s` (60 s) opens no incident, three deaths in ten minutes are a restart loop |
+
+**Faults from Coolify.** Set the variable on the app's Environment Variables page and redeploy. A restart does not clear them:
+
+| Setting | What Bleep sees | What it should propose |
+|---|---|---|
+| `HOST=127.0.0.1` | the app binds the container's loopback; its own health check passes, so Coolify rolls it out, and the proxy answers 502 | `coolify.set_env HOST=0.0.0.0`, then `coolify.redeploy` |
+| `FAIL_AFTER_S=60` | healthy for 60 s after each start, then `/health` answers 500 | `coolify.set_env FAIL_AFTER_S=0` (or empty), then `coolify.redeploy` |
+
+For a demo, use Error state for a fault a restart fixes and `HOST` for a fault that needs a setting changed. After a config fault, check that Bleep's fix removed it: the variable is set to its safe value, not deleted, so the page lists it.
+
 ## Full runs
+
+**The demo app on Coolify, 2026-11-14 (#558).** The live backend watched the Coolify server over SSH, with the demo app linked as above.
+
+- **Crash:** pressed at 20:30:00 UTC. The process exited with code 1 at 20:30:01, and Docker started it again at 20:30:02 (restart policy `unless-stopped`). No incident: one death its restart policy brought back within the grace window.
+- **Error state:** the incident opened on `url_failed` at 20:33:00, and Investigate made 8 tool calls (containers, inspect, logs, events, Coolify applications and deployments, deployed commit and its diff). The plan, `docker.restart` of the app's container, verifying the container and `/health`, was waiting for a yes at 20:33:27, 27 s after opening. Approved on the dashboard at 20:34:16; the restart took under a second, the first check passed 21 s later, and the incident was resolved as fixed and verified at 20:34:40.
+- **`HOST=127.0.0.1`:** set in Coolify and redeployed at 20:39:38, live at about 20:40:00 with the proxy answering 502. The incident opened on `url_failed` at 20:40:38, and Investigate made 8 tool calls. The plan, `coolify.set_env bleep-demo-app HOST=0.0.0.0`, then `coolify.redeploy bleep-demo-app`, verifying `/health`, with the reason "The app is bound to loopback, preventing the reverse proxy from reaching it. Set the documented HOST value and redeploy", was waiting for a yes at 20:41:05, 27 s after opening. Approved on the dashboard at 20:42:32; `set_env` finished at once, the redeploy was waited for (31 s), the first check passed 21 s later (one running container, `/health` answering 200), and the incident was resolved as fixed and verified at 20:43:27. The report names the cause from the app's README: "The service README documents HOST=0.0.0.0 for access from external containers such as the reverse proxy." Its title said "seen 3 times since 14 Nov 20:33 UTC", since the incident folds in with the earlier Error state one, which failed the same URL.
+- **Compared with #482:** the same fault on a throwaway copy of a real site took three rounds to reach a plan. Here the first round acted, because the app's README names the setting, its safe value and the symptom.
+
+**A staged fault on a real Coolify server, 2026-11-13 (#482).** Not the demo shop: a throwaway copy of a real site (a Nuxt app, Dockerfile build) deployed on the Coolify server from its private GitHub repo as `dkwebsite-482`, in its own Coolify project, on Coolify's generated domain. Bleep (the live backend, `openai/gpt-6-luna` through OpenRouter) watched the server over SSH and grouped the copy as its own Coolify service, with a URL check on its `/health`; the live site and the server's other apps were in `protected_containers` by name and uuid. The server had no fault of its own, so one was staged: `HOST=127.0.0.1` set on the copy in Coolify and redeployed. The server then binds the container's loopback only; the Dockerfile's health check runs inside the container and passes, so Coolify rolls the deploy out, and the proxy answers 502. The fix is `coolify.set_env HOST=0.0.0.0` and `coolify.redeploy`. It took three rounds:
 
 **A staged fault on a real Coolify server, 2026-11-13 (#482).** Not the demo shop: a throwaway copy of a real site (a Nuxt app, Dockerfile build) deployed on the Coolify server from its private GitHub repo as `dkwebsite-482`, in its own Coolify project, on Coolify's generated domain. Bleep (the live backend, `openai/gpt-6-luna` through OpenRouter) watched the server over SSH and grouped the copy as its own Coolify service, with a URL check on its `/health`; the live site and the server's other apps were in `protected_containers` by name and uuid. The server had no fault of its own, so one was staged: `HOST=127.0.0.1` set on the copy in Coolify and redeployed. The server then binds the container's loopback only; the Dockerfile's health check runs inside the container and passes, so Coolify rolls the deploy out, and the proxy answers 502. The fix is `coolify.set_env HOST=0.0.0.0` and `coolify.redeploy`. It took three rounds:
 
