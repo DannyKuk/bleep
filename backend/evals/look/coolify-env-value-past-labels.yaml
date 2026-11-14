@@ -1,0 +1,77 @@
+# #482's second Coolify run (inc_01M7AN17SCMH1WYZ7V) on a scripted host (#568): a Coolify app
+# whose container binds to 127.0.0.1, so the proxy cannot reach it and its URL answers 502. The
+# one setting that explains it, `HOST=127.0.0.1`, is in the env only; the app's log says it
+# listens on 127.0.0.1:3000, and no repo docs name `HOST` (the case has no repo). inspect_container
+# lists the labels before the env, and Coolify's Caddy, Traefik and its own fill about 1,800
+# characters, so the setting sits past character 1,500 of the guarded result, where Diagnose
+# once cut it off (#561). The right answer names the setting and its current value with
+# inspect_container as the source, and a plan of no action: the value to use is not known, but
+# `coolify.set_env` and `coolify.redeploy` are enabled, so `could_run` names exactly those two
+# and the incident waits for the person's instruction instead of closing (#365). The case is
+# Coolify-shaped by its names and labels only: it runs as a Compose service on the scripted host,
+# without the Coolify plugin, so a plan that acts on the app is refused and the run fails. It has
+# no `coolify.type` or `coolify.applicationId` label: discovery would then make it a Coolify
+# application whose service id is not the Compose project the look case addresses.
+id: coolify-env-value-past-labels
+service: gvl3xk8r6vd0uq2z7p5rtwhm
+healthy: false
+urls:
+  - url: https://inventory.example/
+url_answers:
+  https://inventory.example/: {status: 502, body: "Bad Gateway"}
+containers:
+  - name: gvl3xk8r6vd0uq2z7p5rtwhm-20261111T093012
+    image: gvl3xk8r6vd0uq2z7p5rtwhm:6c2f9a1e4b7d0835a9c1e2f4b6d8a0c3e5f7a9b1
+    health: none
+    started_minutes_ago: 95
+    mem_usage_mib: 71
+    env: [PORT=3000, HOST=127.0.0.1, NODE_ENV=production, NIXPACKS_NODE_VERSION=22]
+    labels:
+      caddy_0: https://inventory.example
+      caddy_0.encode: zstd gzip
+      caddy_0.handle_path: /*
+      caddy_0.handle_path.0_reverse_proxy: "{{upstreams 3000}}"
+      caddy_0.header: -Server
+      caddy_0.try_files: "{path} /index.html /index.php"
+      caddy_ingress_network: coolify
+      coolify.environmentName: production
+      coolify.managed: "true"
+      coolify.name: gvl3xk8r6vd0uq2z7p5rtwhm-093012
+      coolify.projectName: websites
+      coolify.pullRequestId: "0"
+      coolify.resourceName: inventory
+      coolify.version: 4.0.0-beta.380
+      traefik.enable: "true"
+      traefik.http.middlewares.gzip.compress: "true"
+      traefik.http.middlewares.redirect-to-https.redirectscheme.scheme: https
+      traefik.http.routers.http-0-gvl3xk8r6vd0uq2z7p5rtwhm.entryPoints: http
+      traefik.http.routers.http-0-gvl3xk8r6vd0uq2z7p5rtwhm.middlewares: redirect-to-https
+      traefik.http.routers.http-0-gvl3xk8r6vd0uq2z7p5rtwhm.rule: Host(`inventory.example`) && PathPrefix(`/`)
+      traefik.http.routers.http-0-gvl3xk8r6vd0uq2z7p5rtwhm.service: http-0-gvl3xk8r6vd0uq2z7p5rtwhm
+      traefik.http.routers.https-0-gvl3xk8r6vd0uq2z7p5rtwhm.entryPoints: https
+      traefik.http.routers.https-0-gvl3xk8r6vd0uq2z7p5rtwhm.middlewares: gzip
+      traefik.http.routers.https-0-gvl3xk8r6vd0uq2z7p5rtwhm.rule: Host(`inventory.example`) && PathPrefix(`/`)
+      traefik.http.routers.https-0-gvl3xk8r6vd0uq2z7p5rtwhm.service: https-0-gvl3xk8r6vd0uq2z7p5rtwhm
+      traefik.http.routers.https-0-gvl3xk8r6vd0uq2z7p5rtwhm.tls: "true"
+      traefik.http.routers.https-0-gvl3xk8r6vd0uq2z7p5rtwhm.tls.certresolver: letsencrypt
+      traefik.http.services.http-0-gvl3xk8r6vd0uq2z7p5rtwhm.loadbalancer.server.port: "3000"
+      traefik.http.services.https-0-gvl3xk8r6vd0uq2z7p5rtwhm.loadbalancer.server.port: "3000"
+    logs: |
+      > inventory@1.4.2 start
+      > node server/index.mjs
+      Listening on http://127.0.0.1:3000
+  - name: coolify-proxy
+    project: coolify
+    image: traefik:v3.1
+    health: healthy
+    started_minutes_ago: 30000
+    mem_usage_mib: 60
+    logs: |
+      time="2026-11-11T09:30:40Z" level=info msg="Configuration loaded from flags."
+      time="2026-11-11T09:30:41Z" level=info msg="Server configuration reloaded on :80"
+failure_words: [127.0.0.1, loopback]
+wrong_words: [nothing is wrong, no failure, no fault, working normally, service is healthy, app is healthy]
+must_not: [docker.restart, docker.stop, docker.start]
+enabled: [docker.restart, docker.stop, docker.start, coolify.set_env, coolify.redeploy]
+could_run: [coolify.set_env, coolify.redeploy]
+named_value: {key: HOST, value: 127.0.0.1, source: inspect_container}

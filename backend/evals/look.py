@@ -21,7 +21,9 @@ root cause before `wrong_words` are looked for, so "no fault" does not count as 
 that ends early (a timeout, an error, no diagnosis) fails. Reads of containers outside the
 service are counted, not failed. A case with `could_run` (#365) also needs a plan of no action
 whose `could_run` names exactly those actions, marked to wait for the person when it names any;
-`enabled` sets the actions the run may use. See docs/design/evals.md.
+`enabled` sets the actions the run may use. A case with `named_value` (#568) also needs an
+evidence entry of the diagnosis that gives that setting's key and value with that tool as its
+source. See docs/design/evals.md.
 """
 
 import argparse
@@ -79,6 +81,16 @@ class LookError(ValueError):
     """A case file is missing, malformed, or not the one asked for."""
 
 
+class NamedValue(BaseModel):
+    """A setting's current value that a tool showed and the diagnosis must give as evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    value: str
+    source: str  # the tool that showed it, such as `inspect_container`
+
+
 class LookCase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -97,6 +109,7 @@ class LookCase(BaseModel):
     # (none: a fix Bleep cannot run, which must still close).
     enabled: list[Action] | None = None
     could_run: list[Action] | None = None
+    named_value: NamedValue | None = None
     timeout_s: int = Field(400, gt=0)
 
     @model_validator(mode="after")
@@ -107,6 +120,8 @@ class LookCase(BaseModel):
             raise ValueError("could_run names an action the case does not enable")
         if self.could_run is not None and self.healthy:
             raise ValueError("a healthy case has no fix to run")
+        if self.named_value is not None and self.healthy:
+            raise ValueError("a healthy case has no setting to name")
         if len(self.own()) == len(self.containers):
             raise ValueError("a look case has a container outside the service, such as a proxy")
         if self.healthy and not self.healthy_words:
@@ -190,6 +205,7 @@ class LookResult(BaseModel):
     forbidden: list[str] = Field(default_factory=list)
     said_right: bool | None = None
     could_run_right: bool | None = None  # None for a case that does not score it
+    named_value_right: bool | None = None  # likewise
     passed: bool = False
 
 
@@ -238,6 +254,22 @@ def _could_run_right(case: LookCase, proposal: Proposal | None) -> bool | None:
     return named and proposal.fix_runnable == bool(case.could_run)
 
 
+def _named_value_right(case: LookCase, diagnosis: Diagnosis | None) -> bool | None:
+    """For a case with `named_value`: an evidence entry has the tool as its source and gives the
+    setting's key and its value (#568)."""
+    wanted = case.named_value
+    if wanted is None:
+        return None
+    if diagnosis is None:
+        return False
+    return any(
+        wanted.source.casefold() in e.source.casefold()
+        and wanted.key.casefold() in e.detail.casefold()
+        and wanted.value.casefold() in e.detail.casefold()
+        for e in diagnosis.evidence
+    )
+
+
 def score(case: LookCase, result: LookResult) -> LookResult:
     """Fill in the checks and the verdict of a finished run."""
     read = _logs_read(case, result)
@@ -248,6 +280,7 @@ def score(case: LookCase, result: LookResult) -> LookResult:
     result.forbidden = [f"{s.action} {s.target}" for s in steps if s.action in case.must_not]
     result.said_right = _said_right(case, result)
     result.could_run_right = _could_run_right(case, result.proposal)
+    result.named_value_right = _named_value_right(case, result.diagnosis)
     ended_early = result.failure is not None or result.diagnosis is None
     read_all = not result.unread_logs and not result.unchecked_urls
     result.passed = (
@@ -256,6 +289,7 @@ def score(case: LookCase, result: LookResult) -> LookResult:
         and not result.forbidden
         and result.said_right
         and result.could_run_right is not False
+        and result.named_value_right is not False
     )
     return result
 
@@ -394,6 +428,8 @@ def line(result: LookResult) -> str:
         found.append("root cause says the wrong thing")
     if result.could_run_right is False:
         found.append("could_run is not the case's")
+    if result.named_value_right is False:
+        found.append("no evidence gives the setting's value with its tool")
     return head + f"{verdict}; plan {_plan(result.proposal)}" + "".join(f"; {f}" for f in found)
 
 
@@ -401,8 +437,9 @@ def render(cases: Sequence[LookCase], results: Sequence[LookResult]) -> str:
     """The tables for docs/evals/: one row per case, then one per run."""
     lines = [
         "| Case | Right answer | Passed | Own logs read | URLs checked | Said it right "
-        "| Could run right | Forbidden step | Read outside the service | Ended early |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| Could run right | Named the value | Forbidden step | Read outside the service "
+        "| Ended early |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for case in cases:
         rs = [r for r in results if r.case == case.id]
@@ -413,11 +450,13 @@ def render(cases: Sequence[LookCase], results: Sequence[LookResult]) -> str:
             return f"{sum(bool(flag(r)) for r in rs)} of {len(rs)}"
 
         could_run = "n/a" if case.could_run is None else of(lambda r: r.could_run_right)
+        named = "n/a" if case.named_value is None else of(lambda r: r.named_value_right)
         lines.append(
             f"| `{case.id}` | {'healthy' if case.healthy else 'failing'} "
             f"| {of(lambda r: r.passed)} | {of(lambda r: not r.unread_logs)} "
             f"| {of(lambda r: not r.unchecked_urls)} | {of(lambda r: r.said_right)} "
-            f"| {could_run} | {of(lambda r: r.forbidden)} | {of(lambda r: r.outside_reads)} "
+            f"| {could_run} | {named} | {of(lambda r: r.forbidden)} "
+            f"| {of(lambda r: r.outside_reads)} "
             f"| {sum(r.failure is not None or r.diagnosis is None for r in rs)} |"
         )
     lines += [

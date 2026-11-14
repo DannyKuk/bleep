@@ -7,9 +7,13 @@ import json
 import pytest
 from langchain_core.messages import AIMessage
 
+from bleep.hosts.registry import Registry
 from bleep.schemas.settings import ModelSettings
+from bleep.tools.default import default_registry
+from bleep.tools.registry import ToolContext
 from evals.look import (
     CASES_DIR,
+    HOST_ID,
     LookCase,
     LookError,
     line,
@@ -22,6 +26,7 @@ from evals.look import (
     score,
 )
 from evals.run import EvalSettings
+from evals.scripted_host import ScriptedEngine
 from fakes import FakeChatModel
 
 HEALTHY = "coolify-healthy"
@@ -337,4 +342,129 @@ def test_a_case_whose_could_run_names_an_action_it_does_not_enable_is_refused(tm
     data = case(COULD_RUN).model_dump(mode="json") | {"id": "x", "enabled": None}
     (tmp_path / "x.yaml").write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(LookError, match="does not enable"):
+        load_case(tmp_path / "x.yaml")
+
+
+# A setting's value past a long label block, fixed through Coolify (#568, #561).
+PAST_LABELS = "coolify-env-value-past-labels"
+LOOPBACK_CAUSE = "The app binds to 127.0.0.1, so the proxy cannot reach it and the URL answers 502."
+HOST_EVIDENCE = [
+    {"source": "inspect_container", "detail": "The container has HOST=127.0.0.1 in its env."},
+    {"source": "container_logs", "detail": "Its log says it listens on 127.0.0.1:3000."},
+]
+SET_HOST = {
+    "kind": "no_action",
+    "reason": "The address to bind is not known.",
+    "human_instructions": "Confirm the app reads HOST, set it to 0.0.0.0, then redeploy.",
+    "could_run": ["coolify.set_env", "coolify.redeploy"],
+}
+
+
+def look_with_evidence(plan: dict, evidence: list[dict]) -> Models:
+    diagnosis = {
+        "root_cause": LOOPBACK_CAUSE,
+        "category": "config",
+        "confidence": 0.9,
+        "evidence": evidence,
+    }
+    script = [reply("found it"), reply(json.dumps(diagnosis)), reply(json.dumps(plan))]
+    return Models(script)
+
+
+async def inspect_result(c: LookCase) -> str:
+    """What the model gets back from inspect_container on the case's scripted host."""
+    engine = ScriptedEngine(HOST_ID, c.service, c.containers)
+
+    async def connect(_host):
+        return None, engine
+
+    registry = Registry([c.host()], connect)
+    await registry.start()
+    try:
+        context = ToolContext("inc-1", HOST_ID, registry, QuietGuardLog())
+        [inspect] = [
+            t for t in default_registry().read_tools(context) if t.name == "inspect_container"
+        ]
+        return await inspect.ainvoke({"container": c.own()[0]})
+    finally:
+        await registry.close()
+
+
+class QuietGuardLog:
+    def record(self, incident_id, kind, detail) -> None:
+        pass
+
+
+async def test_the_value_sits_past_the_label_block_where_the_old_diagnose_cut_the_result():
+    out = await inspect_result(case(PAST_LABELS))
+
+    labels = out[out.index("labels:") : out.index("env (")]
+    assert 1_700 < len(labels) < 2_100  # about 1,800: Compose, Caddy, Coolify and Traefik labels
+    assert out.index("HOST=127.0.0.1") > 1_500
+    assert "</untrusted" in out[out.index("HOST=127.0.0.1") :]  # one wrapper, closed after it
+
+
+async def test_a_diagnosis_that_gives_the_value_with_its_tool_and_a_could_run_plan_passes():
+    c = case(PAST_LABELS)
+
+    result = await run_case(c, settings(), models=look_with_evidence(SET_HOST, HOST_EVIDENCE))
+
+    assert result.failure is None, result.error
+    assert result.named_value_right and result.could_run_right and result.said_right
+    assert result.passed and "passed" in line(result)
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        [],
+        [HOST_EVIDENCE[1]],  # the log's address, not the setting
+        [{"source": "inspect_container", "detail": "The app's HOST setting is wrong."}],
+        [{"source": "container_logs", "detail": "HOST=127.0.0.1 is in the env."}],  # wrong tool
+    ],
+    ids=["none", "log-only", "no-value", "other-tool"],
+)
+async def test_a_diagnosis_that_drops_the_value_or_its_tool_fails(evidence):
+    c = case(PAST_LABELS)
+
+    result = await run_case(c, settings(), models=look_with_evidence(SET_HOST, evidence))
+
+    assert result.could_run_right and result.said_right
+    assert result.named_value_right is False and result.passed is False
+    assert "no evidence gives the setting's value" in line(result)
+
+
+@pytest.mark.parametrize("could_run", [[], ["coolify.redeploy"]], ids=["none", "redeploy-only"])
+async def test_a_plan_that_leaves_could_run_without_the_fix_fails(could_run):
+    plan = SET_HOST | {"could_run": could_run}
+
+    result = await run_case(
+        case(PAST_LABELS), settings(), models=look_with_evidence(plan, HOST_EVIDENCE)
+    )
+
+    assert result.named_value_right and result.said_right
+    assert result.could_run_right is False and result.passed is False
+
+
+async def test_the_named_value_column_counts_the_runs_and_is_n_a_for_other_cases():
+    c = case(PAST_LABELS)
+    good = await run_case(c, settings(), models=look_with_evidence(SET_HOST, HOST_EVIDENCE))
+    bad = await run_case(c, settings(), models=look_with_evidence(SET_HOST, []), run=2)
+
+    table = render([c, case(COULD_RUN)], [good, bad])
+
+    assert "Named the value" in table
+    [row] = [r for r in table.splitlines() if r.startswith(f"| `{PAST_LABELS}`")]
+    assert row.startswith(f"| `{PAST_LABELS}` | failing | 1 of 2 |")
+    assert row.split(" | ")[7] == "1 of 2"
+    other = good.model_copy(update={"case": COULD_RUN})
+    [row] = [r for r in render([case(COULD_RUN)], [other]).splitlines() if "`" + COULD_RUN in r]
+    assert row.split(" | ")[7] == "n/a"
+
+
+def test_a_healthy_case_cannot_name_a_value(tmp_path):
+    data = case(HEALTHY).model_dump(mode="json") | {"id": "x"}
+    data["named_value"] = {"key": "HOST", "value": "127.0.0.1", "source": "inspect_container"}
+    (tmp_path / "x.yaml").write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(LookError, match="no setting to name"):
         load_case(tmp_path / "x.yaml")
