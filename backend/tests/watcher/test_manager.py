@@ -163,12 +163,16 @@ class Rig:
         self.quiet = QuietStore(self.db, self.clock)
         self.web_up = True
         self.not_found: set[str] = set()  # projects whose URL answers 404 while the host is up
+        self.answers: dict[str, int] = {}  # projects whose URL answers with this status instead
         self.roles: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             if not self.web_up:
                 raise httpx.ConnectError("no route to host", request=request)
-            if request.url.host.split(".")[0] in self.not_found:
+            project = request.url.host.split(".")[0]
+            if project in self.answers:
+                return httpx.Response(self.answers[project], text="failing")
+            if project in self.not_found:
                 return httpx.Response(404, text="no such page")
             return httpx.Response(200, text="ok")
 
@@ -1472,6 +1476,29 @@ async def test_a_url_that_passed_once_since_its_incident_opens_again_at_once(tmp
     await minutes(r, 2)
     assert len(r.runner.started) == 2
     assert r.runner.started[-1].subject.service_id == SHOP
+
+
+async def test_another_status_on_a_url_after_its_verified_fix_is_no_repeat(tmp_path):
+    """The demo app on 14 Nov (#579): its 500 fixed twice, then the proxy's 502."""
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    shop = Subject(kind="service", host_id="h", service_id=SHOP)
+    titles = []
+    for status in (500, 500, 502):
+        r.answers["shop"] = status
+        await minutes(r, 2)
+        incident_id = await r.repo.open_incident_id(shop)
+        assert incident_id is not None
+        await r.repo.set_status(incident_id, "resolved")
+        del r.answers["shop"]
+        await minutes(r, 1)  # Verify saw it answer, and so does the watcher
+        incident = await r.repo.get(incident_id)
+        assert incident is not None
+        titles.append((incident.title, incident.fold_of))
+    [(_, root), (again, again_root), (other, other_root)] = titles
+    assert root is None and again_root is not None
+    assert "(seen 2 times since" in again
+    assert other_root is None and "seen" not in other
 
 
 async def test_an_open_incident_still_takes_the_failures_that_go_on(tmp_path):
