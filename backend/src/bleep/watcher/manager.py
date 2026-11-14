@@ -558,8 +558,13 @@ class WatcherManager:
             for c in service.containers
             if container_health(c, stopped_on_purpose=c.id in stopped) == "down"
         ]
-        signals += [
-            Signal(kind="url_failed", subject=subject, at=now, detail={"url": u.url})
+        signals += [  # a failing URL is one with a fresh stored check that failed
+            Signal(
+                kind="url_failed",
+                subject=subject,
+                at=now,
+                detail=stored[(service.id, u.url)][0].signal_detail(),
+            )
             for u in urls
             if u.status == "failing"
         ]

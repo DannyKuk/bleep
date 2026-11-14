@@ -193,13 +193,7 @@ class UrlWatcher:
             subject=Subject(kind="service", host_id=self.host_id, service_id=service_id),
             kind="url_failed",  # the kind means "a URL check result"; detail.ok says which
             at=at,
-            detail={
-                "ok": check.ok,
-                "latency_ms": check.latency_ms,
-                "url": check.url,
-                "status": check.status,
-                "error": check.error,
-            },
+            detail=check.signal_detail(),
         )
         try:
             await self._sink(signal)

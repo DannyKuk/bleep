@@ -12,6 +12,7 @@ import aiosqlite
 from pydantic import ValidationError
 
 from bleep.guard.titles import build_title, split_service_id, title_name
+from bleep.hosts.url_check import failure_class
 from bleep.schemas.graph import Outcome
 from bleep.schemas.incidents import (
     LOOK_REQUESTED,
@@ -81,15 +82,14 @@ def primary_signal(signals: list[Signal]) -> Signal | None:
 def fold_key(subject: Subject, signals: list[Signal]) -> str:
     """What makes an incident a repeat of another: its subject, its primary kind (a restart
     loop, then `unhealthy`, then any other kind, then a death) and that signal's target (the
-    container, or the URL and the HTTP status it answered with, if it answered: a 502 from the
-    proxy is another failure than a 500 from the app, #579)."""
+    container, or the URL and how it failed, `failure_class`: a 502 from the proxy is another
+    failure than a 500 from the app, #579)."""
     primary = primary_signal(signals)
     kind = "death" if primary is None or primary.kind in _DEATHS else primary.kind
     target = ""
     if primary is not None and primary.kind == "url_failed":
-        target = str(primary.detail.get("url"))
-        if (status := primary.detail.get("status")) is not None:
-            target += f"|{status}"
+        failure = failure_class(primary.detail.get("status"), primary.detail.get("error"))
+        target = f"{primary.detail.get('url')}|{failure}"
     elif primary is not None:
         target = primary.container or ""
     return _fold_key(subject, kind, target)

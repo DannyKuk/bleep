@@ -1156,6 +1156,40 @@ async def test_watch_again_on_a_healthy_service_opens_nothing(tmp_path):
     assert r.runner.started == []
 
 
+async def test_a_url_failing_when_its_quiet_ends_is_judged_by_how_it_failed(tmp_path):
+    """The recheck takes the stored check as the watcher's own round does, so the same 500
+    after a fixed one is a repeat and a 502 is not (#579)."""
+    r = await Rig(tmp_path).boot()
+    await r.pulse()
+    shop = Subject(kind="service", host_id="h", service_id=SHOP)
+    r.answers["shop"] = 500
+    await minutes(r, 2)
+    first = await r.repo.open_incident_id(shop)
+    assert first is not None
+    await r.repo.set_status(first, "resolved")
+    del r.answers["shop"]
+    await minutes(r, 1)
+
+    opened = []
+    for status in (500, 502):
+        await r.quiet.set("service", SHOP, "leave_alone", None)
+        r.answers["shop"] = status
+        await minutes(r, 2)
+        await r.quiet.clear("service", SHOP)
+        incident_id = await r.repo.open_incident_id(shop)
+        assert incident_id is not None
+        [signal] = [s for s in await r.repo.signals(incident_id) if s.kind == "url_failed"]
+        assert signal.detail["status"] == status
+        assert signal.detail["error"] == f"expected status 200, got {status}"
+        await r.repo.set_status(incident_id, "resolved")
+        del r.answers["shop"]
+        await minutes(r, 1)
+        opened.append(await r.repo.get(incident_id))
+    [same, other] = opened
+    assert same is not None and same.fold_of == first and "(seen 2 times since" in same.title
+    assert other is not None and other.fold_of is None and "seen" not in other.title
+
+
 async def test_ending_a_hosts_quiet_leaves_a_service_quiet_on_its_own(tmp_path):
     r = await Rig(tmp_path).boot()
     await r.quiet.set("host", "h", "leave_alone", None)
