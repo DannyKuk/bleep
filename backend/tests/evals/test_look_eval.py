@@ -333,6 +333,45 @@ async def test_a_compose_edit_passes_only_when_it_still_closes():
     assert result.passed is False
 
 
+@pytest.mark.parametrize(
+    "plan",
+    [
+        FIX_COMPOSE
+        | {"reason": "Once the value is supplied, the enabled Coolify actions can apply it."},
+        FIX_COMPOSE | {"human_instructions": "Set DATABASE_URL to shop-db, then redeploy shop."},
+        FIX_COMPOSE | {"human_instructions": "Use coolify.set_env to set DATABASE_URL."},
+    ],
+    ids=["reason", "redeploy", "instructions"],
+)
+async def test_a_compose_edit_that_names_a_coolify_action_fails(plan):
+    models = look(BAD_URL, plan, category="config")
+
+    result = await run_case(case(COMPOSE_EDIT), settings(), models=models)
+
+    assert result.could_run_right and result.passed is False
+    assert result.named_in_plan and "the plan names" in line(result)
+
+
+async def test_a_compose_edit_that_lists_coolify_actions_is_closed_by_code_and_passes():
+    plan = FIX_COMPOSE | {"could_run": ["coolify.set_env", "coolify.redeploy"]}
+
+    result = await run_case(
+        case(COMPOSE_EDIT), settings(), models=look(BAD_URL, plan, category="config")
+    )
+
+    assert result.proposal.could_run == [] and not result.proposal.fix_runnable
+    assert result.named_in_plan == [] and result.passed
+
+
+def test_the_compose_case_is_a_compose_service_and_the_coolify_case_a_coolify_one():
+    assert case(COMPOSE_EDIT).subject.service_id == "lab/compose:shop"
+    assert case(COMPOSE_EDIT).plan_must_not_name
+    coolify = case(COULD_RUN)
+    assert coolify.subject.service_id == f"lab/{coolify.service}"
+    own = {c.name for c in coolify.scripted() if c.labels.get("coolify.type") == "application"}
+    assert own == set(coolify.own())
+
+
 def test_a_case_whose_could_run_names_an_action_it_does_not_enable_is_refused(tmp_path):
     data = case(COULD_RUN).model_dump(mode="json") | {"id": "x", "enabled": None}
     (tmp_path / "x.yaml").write_text(json.dumps(data), encoding="utf-8")
