@@ -2,7 +2,7 @@
 
 import { Lock, ThumbsDown, ThumbsUp } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { HealthBadge } from "@/components/overview/health-badge";
 import { ENDED } from "@/components/incident/proposal-card";
@@ -25,6 +25,7 @@ import {
   useServiceSettings,
 } from "@/components/service/settings-cards";
 import { useTimeZone } from "@/components/preferences";
+import { usePoll } from "@/hooks/use-poll";
 import { ApiError, apiFetch } from "@/lib/api";
 import type {
   ContainerView,
@@ -43,6 +44,7 @@ import { cn } from "@/lib/utils";
 import type { Zone } from "@/lib/zone";
 
 const PAST_INCIDENTS = 20;
+const POLL_MS = 10_000;
 
 interface Loaded<T> {
   data?: T;
@@ -50,7 +52,7 @@ interface Loaded<T> {
 }
 
 /** One GET, read once when `path` changes. */
-function useOnce<T>(path: string, version = 0): Loaded<T> {
+function useOnce<T>(path: string): Loaded<T> {
   const [state, setState] = useState<Loaded<T>>({});
   useEffect(() => {
     const controller = new AbortController();
@@ -61,7 +63,7 @@ function useOnce<T>(path: string, version = 0): Loaded<T> {
         setState({ error: error instanceof Error ? error : new Error(String(error)) });
       });
     return () => controller.abort();
-  }, [path, version]);
+  }, [path]);
   return state;
 }
 
@@ -233,22 +235,32 @@ function Service({ id }: { id: string }) {
   const messages = useT();
   const t = messages.service;
   const encoded = encodeURIComponent(id);
-  const [reloads, setReloads] = useState(0);
   const overall = useOverall();
+  const fetchDetail = useCallback(
+    (signal: AbortSignal) => apiFetch<ServiceDetail>(`/api/services/${encoded}`, { signal }),
+    [encoded],
+  );
+  const detail = usePoll(fetchDetail, POLL_MS);
+  const fetchIncidents = useCallback(
+    (signal: AbortSignal) =>
+      apiFetch<IncidentListItem[]>(`/api/incidents?service_id=${encoded}&limit=${PAST_INCIDENTS}`, {
+        signal,
+      }),
+    [encoded],
+  );
+  const incidents = usePoll(fetchIncidents, POLL_MS);
+  const { refresh: refreshDetail } = detail;
+  const { refresh: refreshIncidents } = incidents;
   const reload = () => {
-    setReloads((n) => n + 1);
+    refreshDetail();
+    refreshIncidents();
     overall.refresh();
   };
-  const detail = useOnce<ServiceDetail>(`/api/services/${encoded}`, reloads);
-  // Read once, not with the reloads: each read asks Coolify for its applications.
+  // Read once, not polled: each read asks Coolify for its applications.
   const suggested = useOnce<CheckSuggestions>(`/api/services/${encoded}/suggested-checks`);
-  const incidents = useOnce<IncidentListItem[]>(
-    `/api/incidents?service_id=${encoded}&limit=${PAST_INCIDENTS}`,
-    reloads,
-  );
   const data = detail.data;
+  const missing = detail.error instanceof ApiError && detail.error.status === 404 && !data;
   const service = data?.service;
-  const missing = detail.error instanceof ApiError && detail.error.status === 404;
   const name = service?.name ?? nameIn(id);
   const { settings, error: settingsError, notice } = useServiceSettings(id, service);
   const shown = service !== undefined || (missing && settings !== undefined);
