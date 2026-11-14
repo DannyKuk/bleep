@@ -7,6 +7,7 @@
 import asyncio
 import time
 from collections.abc import Callable, Mapping
+from importlib.metadata import version
 
 import httpx
 from pydantic import BaseModel
@@ -18,6 +19,7 @@ MAX_BODY_BYTES = 64 * 1024
 MAX_REDIRECTS = 20  # httpx's own default
 TIMEOUT_S = 10
 SLOW_MS = 5000
+USER_AGENT = f"Bleep/{version('bleep')} (health check; +https://github.com/DannyKuk/bleep)"
 
 # How each failure's error text starts; `failure_class` reads them back.
 WRONG_STATUS = "expected status"
@@ -141,7 +143,10 @@ async def _get_following_redirects(
     """The final reply, streamed. Redirects are followed here, not by httpx, because httpx reads
     (and decompresses) the body of every 3xx reply it follows; each one is closed unread."""
     request: httpx.Request | None = client.build_request(
-        "GET", url, headers={"Accept-Encoding": "identity"}, timeout=timeout_s
+        "GET",
+        url,
+        headers={"Accept-Encoding": "identity", "User-Agent": USER_AGENT},
+        timeout=timeout_s,
     )
     for _ in range(MAX_REDIRECTS + 1):
         assert request is not None
