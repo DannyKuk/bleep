@@ -57,6 +57,7 @@ export const de: Messages = {
     unverified: "nicht bestätigt",
     budget: "Budget aufgebraucht",
     replan_limit: "kein erlaubter Plan",
+    recovered: "von selbst wieder da",
   },
   category: {
     code: "Code",
@@ -89,6 +90,7 @@ export const de: Messages = {
       unverified: "Ich habe den Plan ausgeführt, konnte die Behebung aber nicht bestätigen.",
       budget: "Ich habe aufgehört: Dieser Lauf hat sein Budget aufgebraucht.",
       replan_limit: "Ich habe keinen Plan gefunden, den ich ausführen darf.",
+      recovered: " ist von selbst wieder da. Nichts wurde geändert.",
     },
   },
   incidents: {

@@ -33,6 +33,8 @@ def test_the_lifespan_wires_one_approval_store_the_guard_log_and_the_reminders(
         assert reminders.notifier is parts.notify.notifier  # the one real notifier, not a Null
         assert app.state.runner.notifier is parts.notify.notifier  # announces new incidents
         assert isinstance(reminders.notifier, Notifier)
+        # A waiting incident whose service is healthy again closes on its own (#571).
+        assert app.state.watcher.recoveries is not None
         task = app.state.reminder_task
         assert not task.done()
         assert not flushed

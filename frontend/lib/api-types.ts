@@ -256,7 +256,9 @@ export type Outcome =
   | "no_action"
   | "unverified"
   | "budget"
-  | "replan_limit";
+  | "replan_limit"
+  /** Closed while its plan waited: its service was healthy again on its own, nothing ran (#571). */
+  | "recovered";
 
 export interface TimelineEntry {
   at: string;

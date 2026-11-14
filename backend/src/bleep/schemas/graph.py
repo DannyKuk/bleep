@@ -14,8 +14,17 @@ from pydantic.json_schema import SkipJsonSchema
 from bleep.schemas.docker import ContainerSummary, HostBasics
 from bleep.schemas.shown import Shown
 
+# `recovered` is the one outcome no run sets: an incident closed while its plan waited, because
+# its service was healthy again on its own and nothing was run (#571).
 Outcome = Literal[
-    "resolved", "healthy", "rejected", "no_action", "unverified", "budget", "replan_limit"
+    "resolved",
+    "healthy",
+    "rejected",
+    "no_action",
+    "unverified",
+    "budget",
+    "replan_limit",
+    "recovered",
 ]
 # What the report says for each outcome; only `resolved` may ever say fixed
 # (`graph/nodes/report.outcome_text`). Here, not in the graph, so a surface that words the end of
@@ -28,6 +37,7 @@ OUTCOME_TEXT: dict[Outcome, str] = {
     "no_action": "No action proposed, nothing was done",
     "budget": "Stopped, the model budget is spent",
     "replan_limit": "Stopped after too many new plans",
+    "recovered": "Back on its own, nothing was changed",
 }
 # `resolved` when the checks passed but no step of the plan succeeded: the service came back on its
 # own (a restart policy, Coolify), so it is not "Fixed".

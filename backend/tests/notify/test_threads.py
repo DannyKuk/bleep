@@ -662,6 +662,42 @@ async def test_a_folded_host_repeat_ends_with_a_silent_back(env):
     assert "disable_notification" not in first_back
 
 
+RECOVERED = Shown.of("notice/recovered", name="shop")
+
+
+@pytest.mark.parametrize(
+    ("language", "head"),
+    [("en", "*✅ Back on its own after 8 min*"), ("de", "*✅ Von selbst wieder da nach 8 Min\\.*")],
+)
+async def test_a_service_healthy_again_on_its_own_ends_its_thread_once(env, language, head):
+    """#571: one message in the thread, which says nothing was changed and never "fixed"."""
+    env.notifier.language = lambda: language
+    incident = await env.open()
+    await env.notifier.incident_opened(incident)
+    env.now = T0 + timedelta(minutes=8)
+    await env.notifier.notice(incident.id, RECOVERED, ending="recovered")
+
+    opener, end = env.chat.sent()
+    assert first_line(end) == head and replied_to(end) == opener["id"]
+    assert ends(env.chat.sent()) == [end]
+    assert "fixed" not in end["text"].lower() and "behoben" not in end["text"].lower()
+
+
+async def test_a_folded_repeat_healthy_again_on_its_own_is_not_silent(env):
+    """Unlike a host's return, the repeat's plan was told: its end rings like any other."""
+    first = await env.open()
+    await env.notifier.incident_opened(first)
+    await env.close(first)
+    second = await env.open()
+    assert second.fold_of == first.id
+    await env.notifier.notice(second.id, PAUSED)  # its thread is open: the plan went there
+    await env.notifier.notice(second.id, RECOVERED, ending="recovered")
+
+    end = env.chat.sent()[-1]
+    assert first_line(end).startswith("*✅ Back on its own after")
+    assert "disable_notification" not in end
+
+
 async def test_two_messages_sent_at_once_give_one_opener_and_one_reply(env):
     incident = await env.open()
     await asyncio.gather(

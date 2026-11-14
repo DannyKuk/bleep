@@ -12,6 +12,7 @@ import aiosqlite
 from pydantic import ValidationError
 
 from bleep.guard.titles import build_title, split_service_id, title_name
+from bleep.schemas.graph import Outcome
 from bleep.schemas.incidents import (
     LOOK_REQUESTED,
     TERMINAL_STATUSES,
@@ -466,6 +467,45 @@ class IncidentRepo:
             await conn.close()
         await self._tell_finished(incident_id)
         return row["status"]
+
+    async def close_unanswered(self, incident_id: str) -> bool:
+        """Close an incident that waits for a yes nobody gave, on a plan none of whose steps ever
+        ran (#571); whether this call closed it. Waiting means `awaiting_approval` with its
+        approval still pending, so a decision that won first (its resume not driven yet) keeps
+        the incident open, and one that comes after finds the approval closed with it (migration
+        0026). A step in the action log, from an earlier plan of the incident, leaves it open
+        too. The check and the close are one statement, which also records the outcome
+        `recovered`, so the incident never shows closed without it."""
+        conn = await self.db.connect()
+        try:
+            cursor = await conn.execute(
+                "UPDATE incidents SET status = 'closed', closed_at = ?, outcome = 'recovered'"
+                " WHERE id = ? AND status = 'awaiting_approval'"
+                " AND EXISTS (SELECT 1 FROM approvals a"
+                " WHERE a.incident_id = incidents.id AND a.status = 'pending')"
+                " AND NOT EXISTS (SELECT 1 FROM action_log l WHERE l.incident_id = incidents.id)",
+                (self.clock().isoformat(), incident_id),
+            )
+            closed = cursor.rowcount == 1
+            await conn.commit()
+        finally:
+            await conn.close()
+        if closed:
+            await self._tell_finished(incident_id)
+        return closed
+
+    async def closed_outcome(self, incident_id: str) -> Outcome | None:
+        """The outcome the incident closed with outside its run (`recovered`, #571); None for
+        any other, whose run keeps its outcome in its checkpoint."""
+        conn = await self.db.connect()
+        try:
+            async with conn.execute(
+                "SELECT outcome FROM incidents WHERE id = ?", (incident_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+        finally:
+            await conn.close()
+        return row["outcome"] if row is not None else None
 
     async def set_trace_url(self, incident_id: str, url: str) -> None:
         conn = await self.db.connect()

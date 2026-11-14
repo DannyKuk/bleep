@@ -84,6 +84,7 @@ _END_OF = {
     "no_action": "end_no_action",
     "budget": "end_stopped",
     "replan_limit": "end_stopped",
+    "recovered": "end_recovered",  # no report carries it: its close sends its own end (#571)
 }
 # The ends that come after a check; a look's plan of no action is checked too (#421), so its
 # end says which check failed.
@@ -326,7 +327,11 @@ class Notifier:
         language = self.language()
         report = report_in(report, language)
         took = fmt.duration(self.clock() - incident.opened_at, language)
-        values = {"end_fixed": {"took": took}, "end_healthy": {"took": took}}.get(name, {})
+        values = {
+            "end_fixed": {"took": took},
+            "end_healthy": {"took": took},
+            "end_recovered": {"took": took, "text": fmt.prose_line(report.outcome)},
+        }.get(name, {})
         if name == "end_stopped":
             values = {"outcome": report.outcome}
         checks = await self._last_checks(incident.id) if name in _CHECKED else []
@@ -382,7 +387,8 @@ class Notifier:
         """A note in the middle of a run, or, with `ending`, the end message of an incident that
         closed outside its run's report; one that comes after the end message is a note. A
         folded repeat's return (`back`) arrives silently: its wait was told, the end is
-        only so the thread does not stop at "waits"."""
+        only so the thread does not stop at "waits". A service healthy again on its own while
+        its plan waited (`recovered`, #571) is never silent: its plan was told."""
         if self.telegram is not None:
             await self._safely(self._notice(incident_id, text, ending))
 
@@ -399,9 +405,9 @@ class Notifier:
             await self._send(incident, note, language)
             return
         until = await self._quiet_until(incident, language) if ending == "quiet" else None
-        if ending == "back":
+        if ending in ("back", "recovered"):
             took = fmt.duration(self.clock() - incident.opened_at, language)
-            rendered = fmt.render("end_back", language=language, took=took, text=text)
+            rendered = fmt.render(f"end_{ending}", language=language, took=took, text=text)
         elif until is not None:
             rendered = fmt.render("end_quiet_until", language=language, until=until, text=text)
         else:

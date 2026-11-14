@@ -205,6 +205,27 @@ class IncidentRunner:
         await self.bus.publish(incident.id, "notice", shown_payload(BACK_NOTICE))
         await self._tell(incident.id, BACK_NOTICE, ending="back")
 
+    async def healthy_again(self, incident_id: str, text: Shown) -> bool:
+        """The incident's service is healthy again on its own while its plan waits for a yes
+        (#571): close it with `text`, on its timeline and once to the channels, and return
+        whether this call closed it. Only an incident still waiting on an undecided approval,
+        with no step of any plan of it ever run, is closed (`IncidentRepo.close_unanswered`):
+        a yes that won first is driven as usual, and one that comes after finds the approval
+        closed. Nothing runs at the interrupt, so there is no run to cancel; a resume queued
+        meanwhile is refused (`_resume`, `_drive`). The close, the notice and the message are
+        shielded together: a caller cancelled once the close is committed still has them go
+        out, so the incident never ends without saying why."""
+        return await asyncio.shield(self._healthy_again(incident_id, text))
+
+    async def _healthy_again(self, incident_id: str, text: Shown) -> bool:
+        if not await self.repo.close_unanswered(incident_id):
+            return False
+        self._ended.add(incident_id)
+        self._forget_pauses(incident_id)
+        await self.bus.publish(incident_id, "notice", shown_payload(text))
+        await self._tell(incident_id, text, ending="recovered")
+        return True
+
     async def end(
         self,
         incident_id: str,
