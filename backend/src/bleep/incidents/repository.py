@@ -88,8 +88,7 @@ def fold_key(subject: Subject, signals: list[Signal]) -> str:
     kind = "death" if primary is None or primary.kind in _DEATHS else primary.kind
     target = ""
     if primary is not None and primary.kind == "url_failed":
-        failure = failure_class(primary.detail.get("status"), primary.detail.get("error"))
-        target = f"{primary.detail.get('url')}|{failure}"
+        target = f"{primary.detail.get('url')}|{failure_class(primary.detail)}"
     elif primary is not None:
         target = primary.container or ""
     return _fold_key(subject, kind, target)

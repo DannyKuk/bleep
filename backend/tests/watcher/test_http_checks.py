@@ -168,7 +168,14 @@ async def test_each_failed_check_has_one_failure_class(handler, cfg, ticks, fail
     kwargs = {"clock": lambda: next(times)} if ticks else {"timeout_s": 0.05}
     check = await check_url(client(handler), UrlCheckConfig(url=URL, **cfg), **kwargs)
     assert not check.ok
-    assert failure_class(check.status, check.error) == failure
+    assert failure_class(check.signal_detail()) == failure
+
+
+async def test_a_check_that_passed_here_but_the_watcher_judged_slow_is_slow():
+    ticks = iter([0.0, 0.8])  # under this check's 5 s, over a `url_slow_ms` of 500
+    check = await check_url(client(ok_handler), UrlCheckConfig(url=URL), clock=lambda: next(ticks))
+    assert check.ok
+    assert failure_class(check.signal_detail()) == "slow"
 
 
 async def test_redirects_are_followed():

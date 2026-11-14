@@ -6,7 +6,7 @@
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import httpx
 from pydantic import BaseModel
@@ -50,13 +50,17 @@ class UrlCheck(BaseModel):
         }
 
 
-def failure_class(status: int | None, error: str | None) -> str:
-    """How a failed check failed, so one failure of a URL is told from another (#579): the
-    status of a wrong-status answer; `slow` for a reply over the time limit or one that stalled
-    after its status came; `text` when the body could not show the expected text (missing, or
-    compressed and so never read); else `no_reply` (refused, DNS, TLS, a timeout before any
-    status, a reply cut off by an error)."""
-    error = error or ""
+def failure_class(detail: Mapping[str, object]) -> str:
+    """How a failed check failed, read from its `signal_detail`, so one failure of a URL is told
+    from another (#579): the status of a wrong-status answer; `slow` for a reply over the time
+    limit, one that stalled after its status came, or a check that passed but that the watcher
+    judged slow (its `url_slow_ms` can be below this module's limit); `text` when the body could
+    not show the expected text (missing, or compressed and so never read); else `no_reply`
+    (refused, DNS, TLS, a timeout before any status, a reply cut off by an error)."""
+    if detail.get("ok") is True:
+        return "slow"
+    status = detail.get("status")
+    error = str(detail.get("error") or "")
     if error.startswith(WRONG_STATUS) and status is not None:
         return str(status)
     if error.startswith(SLOW):

@@ -435,6 +435,13 @@ NO_TEXT = answered(200, "the reply does not contain the expected text")
 COMPRESSED = answered(200, "the reply is compressed although plain text was asked for")
 REFUSED = answered(None)
 TIMED_OUT = answered(None, "timed out after 10 s")
+# The check passed, but over the watcher's `url_slow_ms`, which may be below the check's 5 s.
+SLOW_FOR_THE_WATCHER = Signal(
+    subject=svc(),
+    kind="url_failed",
+    at=T0,
+    detail={"ok": True, "url": HEALTH, "status": 200, "error": None, "latency_ms": 800},
+)
 
 
 def test_a_failed_urls_fold_key_holds_how_it_failed():
@@ -444,7 +451,7 @@ def test_a_failed_urls_fold_key_holds_how_it_failed():
         return key.rsplit("|", 1)[1]
 
     assert [failure(s) for s in (answered(500), answered(502))] == ["500", "502"]
-    assert [failure(s) for s in (SLOW, SLOWER, STALLED)] == ["slow"] * 3
+    assert [failure(s) for s in (SLOW, SLOWER, STALLED, SLOW_FOR_THE_WATCHER)] == ["slow"] * 4
     assert [failure(s) for s in (NO_TEXT, COMPRESSED)] == ["text"] * 2
     assert [failure(s) for s in (REFUSED, TIMED_OUT)] == ["no_reply"] * 2
 
@@ -461,6 +468,9 @@ async def test_a_url_failing_another_way_starts_its_own_group_and_the_same_way_j
     assert (await fixed_after(repo, clock, 10, TIMED_OUT)).title.endswith(
         "(seen 2 times since 02 Nov 12:30 UTC)"
     )
+    judged_slow = await fixed_after(repo, clock, 10, SLOW_FOR_THE_WATCHER)
+    assert judged_slow.fold_of == slow.id  # not with the refused one, though it has no error
+    assert judged_slow.title.endswith("(seen 4 times since 02 Nov 12:00 UTC)")
 
 
 async def test_a_url_group_from_before_579_is_not_joined_by_any_failure(folding):
