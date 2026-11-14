@@ -9,7 +9,9 @@ Any judgement that is not healthy, a new signal on the incident, or a host that 
 (Bleep just woke, the host is asleep or out of contact) ends the hold. Once it has lasted
 `HOLD`, Verify's checks run against the first reads taken when it started, so a container
 started again meanwhile fails, and only when they pass is the incident closed through
-`IncidentRunner.healthy_again`, which leaves it open if a decision won first.
+`IncidentRunner.healthy_again`, which leaves it open if a decision won first. While that close
+is under way the incident is judged no more, so a judgement that still finds it waiting starts no
+new hold (#583).
 
 `judge` only reads the database and keeps the holds: the engine and URL reads Verify's checks
 make (`Checks`, from `graph/nodes/verify.py`) run in one background task per hold, so a slow
@@ -85,6 +87,7 @@ class RecoveryWatch:
         self._holds: dict[str, _Hold] = {}  # incident id -> its hold
         self._locks: dict[str, asyncio.Lock] = {}  # host id -> one judgement at a time
         self._tasks: set[asyncio.Task[None]] = set()  # every check in flight
+        self._closing: set[str] = set()  # incident ids whose checks passed, closing now
 
     def forget_host(self, host_id: str) -> None:
         """End every hold on the host: nothing can be judged there now."""
@@ -132,6 +135,8 @@ class RecoveryWatch:
                     self._end(incident.id)
 
     async def _judge(self, incident: Incident, healthy: bool) -> None:
+        if incident.id in self._closing:
+            return  # still waiting until the close is committed: a new hold would read for nothing
         if not healthy:
             self._end(incident.id)
             return
@@ -185,7 +190,11 @@ class RecoveryWatch:
             log.info("incident %s: its service looked healthy, Verify's checks fail", incident.id)
             return
         text = Shown.of("notice/recovered", name=self.name_of(incident.subject))
-        await self.runner.healthy_again(incident.id, text)
+        self._closing.add(incident.id)
+        try:
+            await self.runner.healthy_again(incident.id, text)
+        finally:
+            self._closing.discard(incident.id)
 
     def _drop(self, hold: _Hold) -> None:
         """Forget `hold` from inside its own task, unless a newer one took its place."""
