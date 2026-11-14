@@ -127,6 +127,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 parts.bus,
                 parts.graph_deps.notifier,
                 parts.graph_deps.settings_store,
+                clock=parts.incidents.clock,
                 skip=runner.retrying,
             )
             app.state.runner, app.state.reminders = runner, reminders
