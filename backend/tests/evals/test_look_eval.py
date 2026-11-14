@@ -356,8 +356,16 @@ async def test_a_compose_edit_that_names_a_coolify_action_or_a_redeploy_fails(pl
     assert result.named_in_plan and "the plan names" in line(result)
 
 
-async def test_a_compose_edit_that_says_the_shop_is_no_coolify_application_passes():
-    plan = FIX_COMPOSE | {"reason": "The shop is not a Coolify application; Bleep cannot edit it."}
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "The shop is not a Coolify application; Bleep cannot edit it.",
+        "No Coolify action can reach the shop, so the person edits the Compose file.",
+    ],
+    ids=["no-coolify-application", "no-coolify-action"],
+)
+async def test_a_compose_edit_that_says_the_shop_is_no_coolify_application_passes(reason):
+    plan = FIX_COMPOSE | {"reason": reason}
 
     result = await run_case(
         case(COMPOSE_EDIT), settings(), models=look(BAD_URL, plan, category="config")

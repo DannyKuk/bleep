@@ -41,4 +41,8 @@ wrong_words: [nothing is wrong, no failure, no fault, working normally]
 must_not: [docker.restart, docker.stop, docker.start]
 enabled: [docker.restart, docker.stop, docker.start, coolify.set_env, coolify.redeploy]
 could_run: []
-plan_must_not_say: ['coolify\.\w+', 'coolify actions?', 're-?deploy\w*']
+plan_must_not_say:
+  - 'coolify\.\w+'
+  - 'enabled coolify actions?'
+  - '(?<!no )coolify actions? (can|could|will|would) (apply|run|set|fix|make|redeploy)'
+  - 're-?deploy\w*'
