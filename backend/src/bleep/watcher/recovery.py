@@ -9,9 +9,9 @@ Any judgement that is not healthy, a new signal on the incident, or a host that 
 (Bleep just woke, the host is asleep or out of contact) ends the hold. Once it has lasted
 `HOLD`, Verify's checks run against the first reads taken when it started, so a container
 started again meanwhile fails, and only when they pass is the incident closed through
-`IncidentRunner.healthy_again`, which leaves it open if a decision won first. While that close
-is under way the incident is judged no more, so a judgement that still finds it waiting starts no
-new hold (#583).
+`IncidentRunner.healthy_again`, which leaves it open if a decision won first. From the passed
+check on, the incident is judged no more until a judgement's read no longer finds it waiting: a
+read taken before the close was committed still lists it, and must start no new hold (#583).
 
 `judge` only reads the database and keeps the holds: the engine and URL reads Verify's checks
 make (`Checks`, from `graph/nodes/verify.py`) run in one background task per hold, so a slow
@@ -87,7 +87,8 @@ class RecoveryWatch:
         self._holds: dict[str, _Hold] = {}  # incident id -> its hold
         self._locks: dict[str, asyncio.Lock] = {}  # host id -> one judgement at a time
         self._tasks: set[asyncio.Task[None]] = set()  # every check in flight
-        self._closing: set[str] = set()  # incident ids whose checks passed, closing now
+        # incident id -> host id, from a passed check until a judgement no longer finds it waiting
+        self._closing: dict[str, str] = {}
 
     def forget_host(self, host_id: str) -> None:
         """End every hold on the host: nothing can be judged there now."""
@@ -107,6 +108,9 @@ class RecoveryWatch:
         """Wait for the checks in flight (tests)."""
         while self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
+            # A finished task leaves the set only in its done callback, which runs on a later
+            # turn of the loop; gathering only finished tasks never yields to it.
+            await asyncio.sleep(0)
 
     async def judge(self, host_id: str, healthy: Collection[str]) -> None:
         """Judge the host's waiting service incidents by the ids of its services that are
@@ -124,6 +128,9 @@ class RecoveryWatch:
                 self.forget_host(host_id)
                 return
             ids = {i.id for i in waiting}
+            for incident_id, closing_on in list(self._closing.items()):
+                if closing_on == host_id and incident_id not in ids:
+                    del self._closing[incident_id]
             for incident_id, hold in list(self._holds.items()):
                 if hold.incident.subject.host_id == host_id and incident_id not in ids:
                     self._end(incident_id)
@@ -136,7 +143,7 @@ class RecoveryWatch:
 
     async def _judge(self, incident: Incident, healthy: bool) -> None:
         if incident.id in self._closing:
-            return  # still waiting until the close is committed: a new hold would read for nothing
+            return  # read before its close was committed: a new hold would read for nothing
         if not healthy:
             self._end(incident.id)
             return
@@ -190,11 +197,13 @@ class RecoveryWatch:
             log.info("incident %s: its service looked healthy, Verify's checks fail", incident.id)
             return
         text = Shown.of("notice/recovered", name=self.name_of(incident.subject))
-        self._closing.add(incident.id)
+        self._closing[incident.id] = incident.subject.host_id
+        closed = False
         try:
-            await self.runner.healthy_again(incident.id, text)
+            closed = await self.runner.healthy_again(incident.id, text)
         finally:
-            self._closing.discard(incident.id)
+            if not closed:  # a yes won first, or it raised: the next healthy judgement holds it
+                self._closing.pop(incident.id, None)
 
     def _drop(self, hold: _Hold) -> None:
         """Forget `hold` from inside its own task, unless a newer one took its place."""
