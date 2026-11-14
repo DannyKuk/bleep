@@ -7,13 +7,12 @@
 # once cut it off (#561). The right answer names the setting and its current value with
 # inspect_container as the source, and a plan of no action: the value to use is not known, but
 # `coolify.set_env` and `coolify.redeploy` are enabled, so `could_run` names exactly those two
-# and the incident waits for the person's instruction instead of closing (#365). The case is
-# Coolify-shaped by its names and labels only: it runs as a Compose service on the scripted host,
-# without the Coolify plugin, so a plan that acts on the app is refused and the run fails. It has
-# no `coolify.type` or `coolify.applicationId` label: discovery would then make it a Coolify
-# application whose service id is not the Compose project the look case addresses.
+# and the incident waits for the person's instruction instead of closing (#365). The service is
+# a Coolify application as discovery groups it (`service_key: id:11`, source `coolify`), but the
+# Coolify plugin is not on the host: a plan that acts on the app is refused and the run fails.
 id: coolify-env-value-past-labels
 service: gvl3xk8r6vd0uq2z7p5rtwhm
+service_key: id:11
 healthy: false
 urls:
   - url: https://inventory.example/
@@ -34,12 +33,14 @@ containers:
       caddy_0.header: -Server
       caddy_0.try_files: "{path} /index.html /index.php"
       caddy_ingress_network: coolify
+      coolify.applicationId: "11"
       coolify.environmentName: production
       coolify.managed: "true"
       coolify.name: gvl3xk8r6vd0uq2z7p5rtwhm-093012
       coolify.projectName: websites
       coolify.pullRequestId: "0"
       coolify.resourceName: inventory
+      coolify.type: application
       coolify.version: 4.0.0-beta.380
       traefik.enable: "true"
       traefik.http.middlewares.gzip.compress: "true"

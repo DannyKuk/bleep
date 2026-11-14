@@ -395,6 +395,31 @@ class QuietGuardLog:
         pass
 
 
+async def test_the_case_addresses_the_service_as_discovery_groups_a_coolify_application():
+    c = case(PAST_LABELS)
+    engine = ScriptedEngine(HOST_ID, c.service, c.containers)
+
+    async def connect(_host):
+        return None, engine
+
+    registry = Registry([c.host()], connect)
+    await registry.start()
+    try:
+        service = registry.service(c.subject.service_id)
+    finally:
+        await registry.close()
+
+    assert c.subject.service_id == f"{HOST_ID}/id:11"
+    assert service is not None and service.source == "coolify"
+    assert [x.name for x in service.containers] == c.own()
+    assert [u.url for u in service.urls] == [u.url for u in c.urls]
+
+
+async def test_a_case_without_a_service_key_is_the_compose_project():
+    c = case(FAILING)
+    assert c.service_key is None and c.subject.service_id == f"{HOST_ID}/compose:{c.service}"
+
+
 async def test_the_value_sits_past_the_label_block_where_the_old_diagnose_cut_the_result():
     out = await inspect_result(case(PAST_LABELS))
 

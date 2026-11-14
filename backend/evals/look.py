@@ -96,6 +96,9 @@ class LookCase(BaseModel):
 
     id: str
     service: str  # the Compose project; the look is at its service
+    # The service as discovery groups its containers, `compose:<service>` when not given; a
+    # Coolify application (labels `coolify.type` and `coolify.applicationId`) is `id:<N>` (#568).
+    service_key: str | None = None
     healthy: bool  # the right answer
     urls: list[UrlCheckConfig] = Field(default_factory=list)  # the service's, as in a hosts file
     url_answers: dict[str, UrlAnswer] = Field(default_factory=dict)  # one not listed answers 503
@@ -136,14 +139,15 @@ class LookCase(BaseModel):
     def own(self) -> list[str]:
         return [c.name for c in self.containers if c.project in (None, self.service)]
 
+    def key(self) -> str:
+        return self.service_key or f"compose:{self.service}"
+
     def actions(self) -> frozenset[str]:
         return frozenset(self.enabled) if self.enabled is not None else CORE_ACTIONS
 
     @property
     def subject(self) -> Subject:
-        return Subject(
-            kind="service", host_id=HOST_ID, service_id=f"{HOST_ID}/compose:{self.service}"
-        )
+        return Subject(kind="service", host_id=HOST_ID, service_id=f"{HOST_ID}/{self.key()}")
 
     def host(self) -> HostConfig:
         return HostConfig(
@@ -151,7 +155,7 @@ class LookCase(BaseModel):
             name="Scripted host",
             kind="socket",
             endpoint="tcp://scripted:2375",
-            services={self.service: ServiceOverrides(urls=self.urls)},
+            services={self.key(): ServiceOverrides(urls=self.urls)},
         )
 
 
