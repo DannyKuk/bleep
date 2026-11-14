@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -15,6 +16,7 @@ from bleep.guard.redact import redacted_step
 from bleep.hosts.registry import Registry
 from bleep.incidents.expectations import DECISION_TEXT
 from bleep.incidents.repository import IncidentRepo
+from bleep.incidents.watchdog import Watchdog
 from bleep.main import create_app
 from bleep.memory.embeddings import FakeEmbedder
 from bleep.schemas.graph import (
@@ -930,3 +932,24 @@ def test_the_picked_language_changes_nothing_that_is_stored_and_nothing_a_model_
     assert any(line.startswith("incidents ") for line in english_stored)
     assert german_read == english_read
     assert "graph/propose" in english_read and "talk/read" in english_read
+
+
+def test_the_app_watchdog_reads_the_clock_the_incident_repo_does(
+    settings, parts, clock, monkeypatch
+):
+    """With a fixed clock the incident must not look days stuck to the watchdog, or a late tick
+    stores a notice in one run and not in another."""
+    seen: list[datetime] = []
+    done = asyncio.Event()
+
+    async def tick(self, now: datetime) -> list[str]:
+        seen.append(now)
+        done.set()
+        return []
+
+    monkeypatch.setattr(Watchdog, "tick", tick)
+    parts.incidents = IncidentRepo(parts.db, clock)
+    with TestClient(create_app(settings, parts)) as client:
+        call(client, done.wait)
+
+    assert seen[0] == clock.now

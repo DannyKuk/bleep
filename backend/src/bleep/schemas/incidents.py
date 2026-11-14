@@ -55,7 +55,7 @@ EventKind = Literal[
 
 
 # How an incident closed outside its run's report, for the channel's end message (#380).
-Ending = Literal["back", "quiet", "expected", "removed", "error"]
+Ending = Literal["back", "recovered", "quiet", "expected", "removed", "error"]
 
 
 class Subject(BaseModel):

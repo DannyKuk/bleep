@@ -165,7 +165,8 @@ async def _incidents(
         "SELECT i.id AS id, i.status AS status, COALESCE(i.short_name, i.title) AS name,"
         " (SELECT SUM(usd) FROM usage u WHERE u.incident_id = i.id) AS usd,"
         " (SELECT json_extract(e.payload, '$.outcome') FROM incident_events e"
-        "  WHERE e.incident_id = i.id AND e.kind = 'report' ORDER BY e.seq DESC LIMIT 1) AS outcome"
+        "  WHERE e.incident_id = i.id AND e.kind = 'report' ORDER BY e.seq DESC LIMIT 1)"
+        " AS outcome, i.outcome AS closed_outcome"
         " FROM incidents i WHERE date(i.opened_at, 'localtime') >= ? ORDER BY i.opened_at",
         (first,),
     ) as cursor:
@@ -173,7 +174,7 @@ async def _incidents(
     outcomes: dict[Outcome, int] = dict.fromkeys(get_args(Outcome), 0)  # type: ignore[arg-type]
     failed = still_open = other = 0
     for row in rows:
-        ended = _ending(row["outcome"])
+        ended = _ending(row["outcome"]) or row["closed_outcome"]  # `recovered` has no report
         if ended is not None:
             outcomes[ended] += 1
         elif row["outcome"] is None and row["status"] == "failed":

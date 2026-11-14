@@ -423,8 +423,10 @@ def test_outcome_rules_hold():
 
 
 def test_every_outcome_has_its_fixed_text():
-    assert report.OUTCOME_TEXT == OUTCOMES
-    assert set(OUTCOMES) == set(get_args(Outcome))
+    # `recovered` closes an incident outside its run (#571): no report is written for it.
+    every = {**OUTCOMES, "recovered": "Back on its own, nothing was changed"}
+    assert every == report.OUTCOME_TEXT
+    assert set(every) == set(get_args(Outcome))
 
 
 async def test_a_plan_that_ran_before_a_rejected_one_is_unverified_not_nothing_done(tmp_path):

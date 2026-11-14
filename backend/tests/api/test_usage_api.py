@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from bleep.incidents.repository import IncidentRepo
 from bleep.main import create_app
-from bleep.schemas.graph import HEALTHY_ANYWAY, OUTCOME_TEXT, PlanStep
+from bleep.schemas.graph import HEALTHY_ANYWAY, OUTCOME_TEXT, PlanStep, Proposal
 from bleep.schemas.incidents import Signal, Subject
 
 NOW = datetime(2026, 11, 13, 12, 0)  # the machine's local time the ledger sees
@@ -262,11 +262,15 @@ def test_every_incident_is_in_one_count_by_the_outcome_its_report_states(world):
     world.report(world.open("a/healthy-anyway"), HEALTHY_ANYWAY)
     world.report(world.open("a/odd"), "Some text no outcome starts")
     world.call(world.parts.incidents.set_status, world.open("a/closed-quietly"), "closed")
+    back = world.open("a/back-on-its-own")  # closed while its plan waited, with no report (#571)
+    world.call(world.parts.incidents.set_status, back, "awaiting_approval")
+    world.call(world.parts.approvals.request, back, Proposal(kind="no_action", reason="r"), [])
+    assert world.call(world.parts.incidents.close_unanswered, back)
 
     body = world.usage()
 
     outcomes = body["endings"]["outcomes"]
-    assert outcomes == {kind: 2 if kind == "healthy" else 1 for kind in texts}
+    assert outcomes == {kind: 2 if kind == "healthy" else 1 for kind in [*texts, "recovered"]}
     assert body["endings"]["other"] == 2  # the odd text, and a close with no report
     assert body["endings"]["open"] == body["endings"]["failed"] == 0
     assert body["incidents"]["count"] == sum(outcomes.values()) + 2
