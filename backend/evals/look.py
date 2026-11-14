@@ -21,12 +21,13 @@ root cause before `wrong_words` are looked for, so "no fault" does not count as 
 that ends early (a timeout, an error, no diagnosis) fails. Reads of containers outside the
 service are counted, not failed. A case with `could_run` (#365) also needs a plan of no action
 whose `could_run` names exactly those actions, marked to wait for the person when it names any;
-`enabled` sets the actions the run may use. A case with `plan_must_not_name` (#572) fails a plan
-whose reason, instructions or `could_run` uses one of those words, "Coolify" for a Compose
-service. `source: coolify` runs the case as a Coolify application, not a Compose service. A case
-with `named_value` (#568) also needs an evidence entry of the diagnosis that gives that setting's
-key and value, as whole words and the key in its case, with that tool as its source, and a call
-of that tool on one of the service's containers in the run. See docs/design/evals.md.
+`enabled` sets the actions the run may use. A case with `plan_must_not_say` (#572) fails a plan
+whose reason, instructions or `could_run` matches one of those patterns: a Coolify action or a
+redeploy, for a Compose service no Coolify action can reach. `source: coolify` runs the case as
+a Coolify application, not a Compose service. A case with `named_value` (#568) also needs an
+evidence entry of the diagnosis that gives that setting's key and value, as whole words and the
+key in its case, with that tool as its source, and a call of that tool on one of the service's
+containers in the run. See docs/design/evals.md.
 """
 
 import argparse
@@ -117,13 +118,16 @@ class LookCase(BaseModel):
     enabled: list[Action] | None = None
     could_run: list[Action] | None = None
     named_value: NamedValue | None = None
-    # Words the plan's reason, instructions and `could_run` must not use (#572): "Coolify" for a
-    # Compose service, which no Coolify action can reach.
-    plan_must_not_name: list[str] = Field(default_factory=list)
+    # Regular expressions (any case) the plan's reason, instructions and `could_run` must not
+    # match (#572): a Coolify action or a redeploy, for a Compose service no Coolify action can
+    # reach. A plain mention such as "not a Coolify application" is no such match.
+    plan_must_not_say: list[str] = Field(default_factory=list)
     timeout_s: int = Field(400, gt=0)
 
     @model_validator(mode="after")
     def _fits(self) -> Self:
+        for pattern in self.plan_must_not_say:
+            re.compile(pattern)
         if not self.own():
             raise ValueError("the service has no container of its own")
         if self.could_run and not set(self.could_run) <= set(self.enabled or CORE_ACTIONS):
@@ -231,7 +235,7 @@ class LookResult(BaseModel):
     said_right: bool | None = None
     could_run_right: bool | None = None  # None for a case that does not score it
     named_value_right: bool | None = None  # likewise
-    named_in_plan: list[str] = Field(default_factory=list)  # `plan_must_not_name` words found
+    named_in_plan: list[str] = Field(default_factory=list)  # what `plan_must_not_say` found
     passed: bool = False
 
 
@@ -317,11 +321,12 @@ def _named_value_right(case: LookCase, result: LookResult) -> bool | None:
 
 
 def _named_in_plan(case: LookCase, proposal: Proposal | None) -> list[str]:
-    """The case's `plan_must_not_name` words the plan's own text uses (#572)."""
+    """What the plan's own text says that the case's `plan_must_not_say` forbids (#572)."""
     if proposal is None:
         return []
     text = " ".join([proposal.reason, proposal.human_instructions or "", *proposal.could_run])
-    return word_hits(text, case.plan_must_not_name)
+    found = (re.search(pattern, text, re.IGNORECASE) for pattern in case.plan_must_not_say)
+    return [m.group(0) for m in found if m]
 
 
 def score(case: LookCase, result: LookResult) -> LookResult:

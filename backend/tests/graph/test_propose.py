@@ -483,7 +483,7 @@ async def test_propose_is_told_the_source_of_the_service(tmp_path):
 
     host = state["subject"].model_copy(update={"kind": "host", "service_id": None})
     await propose.make(env.deps)(state | {"subject": host})
-    assert "(its source): none (the host as a whole" in prompt(env, 1)
+    assert "(its source): none (" in prompt(env, 1)
 
 
 async def test_coolify_actions_in_could_run_are_dropped_for_a_compose_service(tmp_path):
@@ -505,6 +505,17 @@ async def test_a_host_incident_does_not_wait_for_a_coolify_action(tmp_path):
 
     plan = (await propose.make(env.deps)(state | {"subject": host}))["proposal"]
 
+    assert plan.could_run == [] and not plan.fix_runnable
+
+
+async def test_a_service_the_registry_does_not_list_has_no_source_and_no_coolify_action(tmp_path):
+    env, state = await setup(tmp_path, could_run("coolify.redeploy"))
+    env.deps.settings_store = StaticSettings(actions=COOLIFY_ACTIONS)
+    gone = state["subject"].model_copy(update={"service_id": "a/gone"})
+
+    plan = (await propose.make(env.deps)(state | {"subject": gone}))["proposal"]
+
+    assert "(its source): none (" in prompt(env)
     assert plan.could_run == [] and not plan.fix_runnable
 
 
