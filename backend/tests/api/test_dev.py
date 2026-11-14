@@ -295,7 +295,7 @@ def test_a_save_and_a_reset_are_in_the_guard_log_by_name_never_with_the_text(dev
 # --- costs ---
 
 
-def test_costs_match_the_ledger_per_incident_and_per_day(dev_client, parts):
+def test_costs_match_the_ledger_per_incident(dev_client, parts):
     shop = open_incident(dev_client, parts, "a/shop")
     worker = open_incident(dev_client, parts, "a/worker")
     call(
@@ -321,53 +321,23 @@ def test_costs_match_the_ledger_per_incident_and_per_day(dev_client, parts):
     for incident_id, row in by_id.items():
         total = call(dev_client, ledger.incident_total, incident_id)
         assert (row["tokens_in"] + row["tokens_out"], row["usd"]) == (total.tokens, total.usd)
-    [today] = body["days"]
-    assert (today["calls"], today["tokens_in"], today["unpriced"]) == (3, 1900, 1)
-    assert today["usd"] == pytest.approx(call(dev_client, ledger.spent_today))
-    assert body["spent_today_usd"] == pytest.approx(0.375)
-    assert body["daily_cap_usd"] == 1.0
+    assert set(body) == {"incidents"}
 
 
-def test_costs_show_the_spend_per_model_and_the_models_of_each_incident(dev_client, parts):
+def test_costs_name_the_models_each_incident_used_first_used_first(dev_client, parts):
     ledger = parts.graph_deps.ledger
-    now = [datetime(2026, 11, 2, 9, 0)]
-    ledger.clock = lambda: now[0]
     call(dev_client, ledger.add, "inc-1", "openai/gpt-6-luna", 1000, 100, 0.25)
     call(dev_client, ledger.add, "inc-1", "mystery/m", 50, 5, None)
-    now[0] = datetime(2026, 11, 3, 9, 0)
     call(dev_client, ledger.add, "inc-1", "claude-sonnet-5-5", 400, 40, 0.5)
     call(dev_client, ledger.add, "inc-2", "mystery/m", 400, 40, None)
-    call(dev_client, ledger.add, "inc-2", "mystery/m", 100, 10, None)
 
     body = dev_client.get("/api/dev/costs").json()
 
-    by_model = {row["model"]: row for row in body["models"]}
-    assert [row["model"] for row in body["models"]][0] == "mystery/m"
-    assert (by_model["mystery/m"]["calls"], by_model["mystery/m"]["tokens_in"]) == (3, 550)
-    assert (by_model["mystery/m"]["usd"], by_model["mystery/m"]["unpriced"]) == (None, 3)
-    assert by_model["openai/gpt-6-luna"]["usd"] == pytest.approx(0.25)
-    assert by_model["claude-sonnet-5-5"]["usd"] == pytest.approx(0.5)
-    today = {row["model"]: row for row in body["models_today"]}
-    assert set(today) == {"mystery/m", "claude-sonnet-5-5"}
-    assert (today["mystery/m"]["calls"], today["mystery/m"]["unpriced"]) == (2, 2)
-    one_day = dev_client.get("/api/dev/costs?days=1").json()
-    assert {row["model"] for row in one_day["models"]} == {"mystery/m", "claude-sonnet-5-5"}
-    assert one_day["models"] == one_day["models_today"]
     by_id = {row["incident_id"]: row["models"] for row in body["incidents"]}
     assert by_id == {
         "inc-1": ["openai/gpt-6-luna", "mystery/m", "claude-sonnet-5-5"],
         "inc-2": ["mystery/m"],
     }
-
-
-def test_costs_say_how_many_of_todays_calls_have_no_price(dev_client, parts):
-    ledger = parts.graph_deps.ledger
-    call(dev_client, ledger.add, "inc-1", "openai/gpt-6-luna", 1000, 100, 0.25)
-    call(dev_client, ledger.add, "inc-1", "mystery/m", 400, 40, None)
-    call(dev_client, ledger.add, "inc-2", "mystery/m", 400, 40, None)
-    body = dev_client.get("/api/dev/costs").json()
-    assert body["spent_today_usd"] == pytest.approx(0.25)
-    assert body["unpriced_today"] == 2
 
 
 def test_costs_read_every_incident_in_one_query(dev_client, parts, monkeypatch):
@@ -406,17 +376,6 @@ def test_a_ledger_row_without_an_incident_is_listed_without_one(dev_client, part
     call(dev_client, parts.graph_deps.ledger.add, "not-an-incident", "m", 1, 1, 0.0)
     [row] = dev_client.get("/api/dev/costs").json()["incidents"]
     assert (row["incident_id"], row["title"], row["trace_url"]) == ("not-an-incident", None, None)
-
-
-def test_a_budget_saved_through_the_settings_is_the_cap_the_costs_show(dev_client):
-    version = dev_client.get("/api/settings").json()["version"]
-    response = dev_client.put(
-        "/api/settings",
-        json={"budgets": {"daily_cost_usd": 2.5}},
-        headers={"If-Match": f'"{version}"'},
-    )
-    assert response.status_code == 200
-    assert dev_client.get("/api/dev/costs").json()["daily_cap_usd"] == 2.5
 
 
 # --- guard log ---

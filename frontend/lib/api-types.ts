@@ -446,27 +446,8 @@ export interface IncidentCost extends Usage {
   models: string[];
 }
 
-export interface DayCost extends Usage {
-  /** The backend's local day, as the daily cap counts it. */
-  day: string;
-}
-
-export interface ModelCost extends Usage {
-  /** As the provider answered; the id tells the providers apart. */
-  model: string;
-}
-
 export interface CostView {
   incidents: IncidentCost[];
-  days: DayCost[];
-  /** Over the days asked for, the most calls first. */
-  models: ModelCost[];
-  models_today: ModelCost[];
-  daily_cap_usd: number;
-  /** The priced calls only, as the daily cap counts them. */
-  spent_today_usd: number;
-  /** Today's calls without a known price, left out of `spent_today_usd`. */
-  unpriced_today: number;
 }
 
 /** What the guard refused, blocked or changed (`guard/log.py` `GuardKind`). */

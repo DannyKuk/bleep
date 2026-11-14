@@ -108,6 +108,20 @@ def test_an_empty_range_is_all_zeros_and_the_caps_are_still_there(world):
     }
 
 
+def test_a_budget_saved_through_the_settings_is_the_cap_the_page_shows(settings, parts):
+    settings.dev_panel = True  # budgets are saved from the dev panel
+    with TestClient(create_app(settings, parts)) as client:
+        assert client.post("/api/auth/login", json={"password": "test-password"}).status_code == 204
+        version = client.get("/api/settings").json()["version"]
+        response = client.put(
+            "/api/settings",
+            json={"budgets": {"daily_cost_usd": 2.5}},
+            headers={"If-Match": f'"{version}"'},
+        )
+        assert response.status_code == 200
+        assert client.get("/api/usage").json()["today"]["daily_cap_usd"] == 2.5
+
+
 def test_local_calls_are_free_and_a_local_model_without_a_price_is_counted_unpriced(world):
     inc = world.open("a/shop")
     world.spend(inc, "openai/gpt-oss-20b", 0.0, "local")  # in the price table: priced at 0

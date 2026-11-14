@@ -9,15 +9,6 @@ const UNPRICED_NOTE = MESSAGES.en.dev.costs.note;
 const usage = { calls: 2, tokens_in: 1500, tokens_out: 150, usd: 0.375, unpriced: 0 };
 
 const COSTS: CostView = {
-  daily_cap_usd: 1,
-  spent_today_usd: 0.375,
-  unpriced_today: 1,
-  days: [{ day: "2026-11-03", ...usage, calls: 3, tokens_in: 1900, unpriced: 1 }],
-  models: [
-    { model: "openai/gpt-6-luna", ...usage, calls: 5, tokens_in: 12000 },
-    { model: "claude-sonnet-5-5", ...usage, usd: null, unpriced: 2 },
-  ],
-  models_today: [{ model: "claude-sonnet-5-5", ...usage, usd: null, unpriced: 2 }],
   incidents: [
     {
       incident_id: "inc_shop",
@@ -67,15 +58,12 @@ const COSTS: CostView = {
 };
 
 describe("CostTables", () => {
-  it("shows today's spend against the cap and the cost per day", () => {
+  it("shows only the per-incident table, and points at the Usage page for the rest", () => {
     render(<CostTables costs={COSTS} />);
-    expect(screen.getByText(/^Today: \$0\.38 of the \$1\.00 daily cap\./)).toHaveTextContent(
-      "Today: $0.38 of the $1.00 daily cap. 1 call today has no known price and is not in that sum.",
-    );
-    const [, row] = within(screen.getByRole("table", { name: "Cost per day" })).getAllByRole("row");
-    expect(row).toHaveTextContent("2026-11-033");
-    expect(row).toHaveTextContent("1,900");
-    expect(row).toHaveTextContent("$0.38 + 1 unpriced");
+    expect(screen.getAllByRole("table")).toHaveLength(1);
+    expect(screen.getByRole("table", { name: "Cost per incident" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Usage page" })).toHaveAttribute("href", "/usage");
+    expect(screen.queryByText(/^Today:/)).not.toBeInTheDocument();
   });
 
   it("links each incident and its trace when there is one", () => {
@@ -102,23 +90,13 @@ describe("CostTables", () => {
   });
 
   it("says plainly that dollars leave out the unpriced calls", () => {
-    render(<CostTables costs={{ ...COSTS, unpriced_today: 0 }} />);
-    expect(screen.getByText("Today: $0.38 of the $1.00 daily cap.")).toBeInTheDocument();
+    render(<CostTables costs={COSTS} />);
     expect(screen.getByText(UNPRICED_NOTE)).toBeInTheDocument();
   });
 
   it("leaves the note out when every call has a price", () => {
     const priced = (row: IncidentCost) => ({ ...row, usd: 0, unpriced: 0 });
-    render(
-      <CostTables
-        costs={{
-          ...COSTS,
-          unpriced_today: 0,
-          days: [{ day: "2026-11-03", ...usage }],
-          incidents: COSTS.incidents.map(priced),
-        }}
-      />,
-    );
+    render(<CostTables costs={{ incidents: COSTS.incidents.map(priced) }} />);
     expect(screen.queryByText(UNPRICED_NOTE)).not.toBeInTheDocument();
   });
 
@@ -135,20 +113,6 @@ describe("CostTables", () => {
     expect(other).toHaveTextContent("not recorded");
   });
 
-  it("shows each model's calls, tokens and cost, and what it did today", () => {
-    render(<CostTables costs={COSTS} />);
-    const [, luna, sonnet] = within(
-      screen.getByRole("table", { name: "Cost per model" }),
-    ).getAllByRole("row");
-    expect(luna).toHaveTextContent("openai/gpt-6-luna");
-    expect(luna).toHaveTextContent("12,000");
-    expect(luna).toHaveTextContent("$0.38");
-    expect(luna).toHaveTextContent("none");
-    expect(sonnet).toHaveTextContent("claude-sonnet-5-5");
-    expect(sonnet).toHaveTextContent("unknown + 2 unpriced");
-    expect(sonnet).toHaveTextContent("2 / unknown + 2 unpriced");
-  });
-
   it("names the models each incident's calls used", () => {
     render(<CostTables costs={COSTS} />);
     const table = screen.getByRole("table", { name: "Cost per incident" });
@@ -159,11 +123,8 @@ describe("CostTables", () => {
     expect(within(devPanel).queryByText("mystery/m")).not.toBeInTheDocument();
   });
 
-  it("says so when nothing has called a model", () => {
-    render(
-      <CostTables costs={{ ...COSTS, days: [], models: [], models_today: [], incidents: [] }} />,
-    );
-    expect(screen.getAllByText("No model calls in the last 30 days.")).toHaveLength(2);
+  it("says so when no incident has called a model", () => {
+    render(<CostTables costs={{ incidents: [] }} />);
     expect(screen.getByText("No incident has called a model yet.")).toBeInTheDocument();
   });
 

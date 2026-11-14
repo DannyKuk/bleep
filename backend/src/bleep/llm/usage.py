@@ -4,7 +4,7 @@ import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -173,25 +173,6 @@ class CostLedger:
             f"SELECT incident_id AS key, {_SUMS} FROM usage"
             " GROUP BY incident_id ORDER BY MAX(id) DESC LIMIT ?",
             (limit,),
-        )
-
-    async def by_day(self, days: int = 30) -> list[UsageSum]:
-        """Each local day's sums over the last `days` days, today first; days without a model
-        call are left out."""
-        first = self.clock().date() - timedelta(days=days - 1)
-        return await self._sums(
-            f"SELECT day AS key, {_SUMS} FROM usage WHERE day >= ? GROUP BY day ORDER BY day DESC",
-            (first.isoformat(),),
-        )
-
-    async def by_model(self, days: int = 30) -> list[UsageSum]:
-        """Each model's sums over the last `days` local days (`days=1` is today), the one with
-        the most calls first."""
-        first = self.clock().date() - timedelta(days=days - 1)
-        return await self._sums(
-            f"SELECT model AS key, {_SUMS} FROM usage WHERE day >= ?"
-            " GROUP BY model ORDER BY calls DESC, model",
-            (first.isoformat(),),
         )
 
     async def models_of(self, incident_ids: list[str]) -> dict[str, list[str]]:
