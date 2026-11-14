@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { json } from "@/components/dev/fixtures";
-import { BUSY, EMPTY, forRange, LOCAL_ONLY, NOW } from "@/components/usage/fixtures";
+import { BUSY, EMPTY, forRange, LOCAL_ONLY } from "@/components/usage/fixtures";
 import { UsageContent, UsagePage } from "@/components/usage/usage-page";
 import type { UsageView } from "@/lib/api-types";
 import { setLanguage } from "@/lib/i18n";
@@ -23,7 +23,7 @@ const row = (table: HTMLElement, text: string) =>
 
 describe("a busy range", () => {
   beforeEach(() => {
-    render(<UsageContent usage={BUSY} now={NOW} />);
+    render(<UsageContent usage={BUSY} />);
   });
 
   it("shows the five tiles", () => {
@@ -108,6 +108,16 @@ describe("a busy range", () => {
     ).toHaveTextContent("IncidentsChat");
   });
 
+  it("keeps the calls chart's colours apart from every model's", () => {
+    const calls = bars("Model calls per day");
+    const colours = ["incidents", "chat"].map((key) =>
+      calls.querySelector(`[data-series="${key}"]`)?.getAttribute("style"),
+    );
+    expect(colours.join(" ")).toContain("var(--viz-incidents)");
+    expect(colours.join(" ")).toContain("var(--viz-chat)");
+    expect(colours.join(" ")).not.toMatch(/var\(--viz-\d\)|var\(--accent\)/);
+  });
+
   it("shows today against both caps and links the most expensive incident", () => {
     const card = screen.getByRole("region", { name: "Today against the caps" });
     expect(within(card).getByText("$0.85 of $1.00")).toBeInTheDocument();
@@ -143,9 +153,21 @@ describe("a busy range", () => {
   });
 });
 
+describe("a daily cap of zero", () => {
+  it("reads as reached, as the backend stops on spent >= cap", () => {
+    const today = { spent_usd: 0, daily_cap_usd: 0, chat_spent_usd: 0, chat_daily_cap_usd: 0.2 };
+    render(<UsageContent usage={{ ...BUSY, today }} />);
+    const card = screen.getByRole("region", { name: "Today against the caps" });
+    expect(within(card).getByText("$0.00 of $0.00")).toBeInTheDocument();
+    expect(within(card).getAllByText("Cap reached")).toHaveLength(1);
+    expect(within(card).queryByRole("meter", { name: "Incidents and recoveries" })).toBeNull();
+    expect(within(card).getByRole("meter", { name: "Chat answers" })).toBeInTheDocument();
+  });
+});
+
 describe("an empty range", () => {
   it("is one quiet line, with no table or chart", () => {
-    render(<UsageContent usage={EMPTY} now={NOW} />);
+    render(<UsageContent usage={EMPTY} />);
     expect(screen.getByRole("status")).toHaveTextContent(
       "Bleep made no model calls and handled no incident in this range.",
     );
@@ -158,7 +180,7 @@ describe("an empty range", () => {
 
 describe("a range with only local calls", () => {
   beforeEach(() => {
-    render(<UsageContent usage={LOCAL_ONLY} now={NOW} />);
+    render(<UsageContent usage={LOCAL_ONLY} />);
   });
 
   it("shows nothing spent, the calls as free and no division by nothing", () => {
@@ -191,7 +213,7 @@ describe("a range with an incident but no model call", () => {
       incidents: { count: 1, average_cost_usd: null, most_expensive: null },
       endings: { ...EMPTY.endings, outcomes: { ...EMPTY.endings.outcomes, healthy: 1 } },
     };
-    render(<UsageContent usage={usage} now={NOW} />);
+    render(<UsageContent usage={usage} />);
     expect(screen.getByText("No model calls in this range.")).toBeInTheDocument();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "How incidents ended" })).toHaveTextContent(
@@ -242,6 +264,39 @@ describe("the Usage page", () => {
     await user.click(screen.getByRole("button", { name: "90 days" }));
     expect(screen.getByRole("status")).toHaveTextContent("Loading the usage");
     expect(screen.queryByRole("table", { name: "Models" })).not.toBeInTheDocument();
+  });
+
+  it("does not carry a failed range's error over to the range picked next", async () => {
+    const user = userEvent.setup();
+    stubUsage((days) =>
+      days === "30" ? json({ detail: "boom" }, 500) : new Promise<Response>(() => undefined),
+    );
+    render(<UsagePage />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not load the usage");
+    await user.click(screen.getByRole("button", { name: "7 days" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Loading the usage");
+  });
+
+  it("charts the server's today even when the browser's date is another", async () => {
+    const today = { ...forRange(BUSY, 1), through: "2026-11-13" };
+    stubUsage(() => json(today));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 14, 0, 30));
+    try {
+      render(<UsagePage />);
+      const spend = await screen.findByRole("region", {
+        name: "Model calls per day, one bar per day",
+      });
+      expect(
+        [...spend.querySelectorAll("[data-day]")].map((d) => d.getAttribute("data-day")),
+      ).toEqual(["2026-11-13"]);
+      expect(
+        spend.querySelectorAll('[data-day="2026-11-13"] [data-series]').length,
+      ).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("says so when the backend cannot answer", async () => {

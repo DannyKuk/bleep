@@ -24,6 +24,30 @@ describe("modelSlots", () => {
     expect(new Set(Object.values(slots).filter(Boolean)).size).toBe(8);
   });
 
+  it("gives a new model a slot of a model that is not in the response when all eight are taken", () => {
+    const old = Array.from({ length: 8 }, (_, i) => `old${i}`);
+    modelSlots(old);
+    expect(modelSlots(["new"])).toEqual({ new: 1 });
+    expect(modelSlots(["new", "other"])).toEqual({ new: 1, other: 2 });
+  });
+
+  it("keeps the colour of every model still in the response when it frees slots", () => {
+    const old = Array.from({ length: 8 }, (_, i) => `old${i}`);
+    modelSlots(old);
+    const slots = modelSlots(["old5", "new", "old2"]);
+    expect(slots.old5).toBe(6);
+    expect(slots.old2).toBe(3);
+    expect(slots.new).toBe(1);
+  });
+
+  it("gives two models that come after many others two different slots", () => {
+    modelSlots(Array.from({ length: 8 }, (_, i) => `old${i}`));
+    const slots = modelSlots(["a", "b"]);
+    expect(slots.a).not.toBeNull();
+    expect(slots.b).not.toBeNull();
+    expect(slots.a).not.toBe(slots.b);
+  });
+
   it("remembers the slots for the next visit", () => {
     modelSlots(["a", "b"]);
     expect(JSON.parse(localStorage.getItem("bleep.usage.model-colours") ?? "{}")).toEqual({

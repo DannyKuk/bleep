@@ -7,13 +7,12 @@ export function addDays(day: string, days: number): string {
 }
 
 /**
- * The days a chart spans, oldest first: `range` days ending on today. The API's days are the
- * machine's local days and `today` is the browser's, so the axis ends at the later of today and
- * the latest day with a call; a zone difference then never cuts the newest bar off.
+ * The days a chart spans, oldest first: `range` days ending on `through`, the server's own
+ * today (`UsageView.through`). The API's days are the machine's local days, which are not always
+ * the browser's, so the axis never counts from the browser's date.
  */
-export function dayAxis(range: UsageRange, today: string, rows: readonly DayUsage[]): string[] {
-  const last = rows.reduce((latest, row) => (row.day > latest ? row.day : latest), today);
-  return Array.from({ length: range }, (_, i) => addDays(last, i - range + 1));
+export function dayAxis(range: UsageRange, through: string): string[] {
+  return Array.from({ length: range }, (_, i) => addDays(through, i - range + 1));
 }
 
 /** The top of a chart's value axis: the next 1, 2 or 5 times a power of ten above `max`. */
@@ -35,7 +34,7 @@ export interface Series {
 }
 
 export const OTHER_KEY = "other";
-export const OTHER_COLOUR = "var(--stop)";
+export const OTHER_COLOUR = "var(--viz-other)";
 
 /**
  * A series for each model that had a call, in colour order, the models without a colour slot

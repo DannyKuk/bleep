@@ -29,9 +29,8 @@ describe("addDays", () => {
 });
 
 describe("dayAxis", () => {
-  it("is the range's days, oldest first, ending today", () => {
-    const days = dayAxis(7, "2026-11-13", []);
-    expect(days).toEqual([
+  it("is the range's days, oldest first, ending on the server's today", () => {
+    expect(dayAxis(7, "2026-11-13")).toEqual([
       "2026-11-07",
       "2026-11-08",
       "2026-11-09",
@@ -40,12 +39,13 @@ describe("dayAxis", () => {
       "2026-11-12",
       "2026-11-13",
     ]);
-    expect(dayAxis(1, "2026-11-13", [])).toEqual(["2026-11-13"]);
-    expect(dayAxis(90, "2026-11-13", [])).toHaveLength(90);
+    expect(dayAxis(1, "2026-11-13")).toEqual(["2026-11-13"]);
+    expect(dayAxis(90, "2026-11-13")).toHaveLength(90);
   });
 
-  it("ends on a later day the server counted, so its newest bar is not cut off", () => {
-    expect(dayAxis(1, "2026-11-13", [row("2026-11-14", "m", 1)])).toEqual(["2026-11-14"]);
+  it("counts from the server's day, never from the browser's", () => {
+    expect(dayAxis(1, "2026-11-13")).toEqual(["2026-11-13"]);
+    expect(dayAxis(30, "2026-11-13")[0]).toBe("2026-10-15");
   });
 });
 

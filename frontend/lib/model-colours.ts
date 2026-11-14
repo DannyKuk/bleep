@@ -21,21 +21,31 @@ function load(): Record<string, number> {
 }
 
 /**
- * The chart colour slot (1 to 8) of each model, or null for the ninth and later, which a chart
- * folds into "Other". A model takes the first free slot when it is first seen and keeps it, so
- * a change of range, or a model that stops being called, never repaints the others; the
- * assignment is kept in this browser for the next visit.
+ * The chart colour slot (1 to 8) of each of `models`, the models of the response on screen, or
+ * null for the ninth of them and later, which a chart folds into "Other". A model takes a free
+ * slot when it is first seen and keeps it, so a change of range never repaints the models still
+ * in it. A slot held by a model that is not in `models` is taken back only when no other slot is
+ * free, so a model that comes back usually has its colour again, and a browser that has seen more
+ * than eight models over time still colours the eight on screen. The assignment is kept in this
+ * browser for the next visit.
  */
 export function modelSlots(models: readonly string[]): Record<string, number | null> {
   const slots = load();
-  const used = new Set(Object.values(slots));
+  const present = new Set(models);
   let changed = false;
   for (const model of models) {
     if (model in slots) continue;
-    const free = Array.from({ length: SERIES_SLOTS }, (_, i) => i + 1).find((n) => !used.has(n));
-    if (free === undefined) continue;
+    const taken = new Set(Object.values(slots));
+    let free = Array.from({ length: SERIES_SLOTS }, (_, i) => i + 1).find((n) => !taken.has(n));
+    if (free === undefined) {
+      const absent = Object.entries(slots)
+        .filter(([other]) => !present.has(other))
+        .sort(([, a], [, b]) => a - b)[0];
+      if (absent === undefined) continue;
+      free = absent[1];
+      delete slots[absent[0]];
+    }
     slots[model] = free;
-    used.add(free);
     changed = true;
   }
   if (changed) {
