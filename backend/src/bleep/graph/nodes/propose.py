@@ -151,6 +151,7 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
     named = _named_containers(deps, state)
     incident = named | _service_containers(deps, state)
     rules = _step_rules(deps)
+    source = _source(deps, state["subject"])
 
     def check(plan: Proposal) -> list[Violation]:
         found = check_plan(
@@ -168,7 +169,7 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
     mcp = await _mcp_section(deps, incident_id, enabled)
     messages: list[BaseMessage] = [HumanMessage(_prompt(deps, state, diagnosis, enabled, mcp))]
     can_instruct = replans_left(deps, state)
-    proposal = _read(await _ask(deps, incident_id, messages), deps.registry, host_id)
+    proposal = _read(await _ask(deps, incident_id, messages), deps.registry, host_id, source)
     violations = check(proposal)
     if not violations:
         return _answerable(proposal, enabled, can_instruct=can_instruct)
@@ -177,7 +178,7 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
         AIMessage(proposal.model_dump_json(include=set(ProposalDraft.model_fields))),
         HumanMessage(prompts.load("graph/propose_retry", violations=_bullets(violations))),
     ]
-    retry = _read(await _ask(deps, incident_id, messages), deps.registry, host_id)
+    retry = _read(await _ask(deps, incident_id, messages), deps.registry, host_id, source)
     again = check(retry)
     if not again:
         return _answerable(retry, enabled, can_instruct=can_instruct)
@@ -200,6 +201,13 @@ def _answerable(proposal: Proposal, enabled: set[str], *, can_instruct: bool) ->
         and can_instruct
     )
     return proposal.model_copy(update={"fix_runnable": True}) if runnable else proposal
+
+
+def _source(deps: GraphDeps, subject: Subject) -> str | None:
+    """The service's source (`coolify`, `compose` or `single`); None for a host as a whole or a
+    service the registry no longer lists."""
+    service = deps.registry.service(subject.service_id) if subject.service_id else None
+    return service.source if service else None
 
 
 def _step_rules(deps: GraphDeps) -> dict[str, StepRule]:
@@ -225,10 +233,27 @@ async def _mcp_section(deps: GraphDeps, incident_id: str, enabled: set[str]) -> 
     )
 
 
-def _read(proposal: Proposal, registry: Registry, host_id: str) -> Proposal:
+def _read(proposal: Proposal, registry: Registry, host_id: str, source: str | None) -> Proposal:
     """The model's plan as Bleep checks it and the human approves it."""
     read = _without_replaced(_by_name(proposal, registry), registry)
-    return _known_checks(read, registry, host_id) if read.kind == "no_action" else read
+    if read.kind != "no_action":
+        return read
+    return _known_checks(_without_coolify_actions(read, source), registry, host_id)
+
+
+def _without_coolify_actions(proposal: Proposal, source: str | None) -> Proposal:
+    """A plan of no action without Coolify actions in `could_run` unless the service is a Coolify
+    application: no Coolify action can reach a Compose service or a host, so naming one would
+    make Bleep wait for an instruction it can never carry out (#572). The actions are dropped in
+    code, as `_known_checks` drops what a plan of no action could not name, so a wrong name costs
+    the plan only the wait."""
+    if source == "coolify":
+        return proposal
+    kept = [a for a in proposal.could_run if not a.startswith("coolify.")]
+    if kept == proposal.could_run:
+        return proposal
+    log.info("propose: dropped Coolify actions from could_run of a service that is not Coolify's")
+    return proposal.model_copy(update={"could_run": kept})
 
 
 def _known_checks(proposal: Proposal, registry: Registry, host_id: str) -> Proposal:
@@ -449,6 +474,7 @@ def _prompt(
     return prompts.load(
         "graph/propose",
         subject=_subject(subject, context),
+        source=_source(deps, subject) or "none",
         diagnosis=_diagnosis(diagnosis),
         containers=_containers(context),
         off_limits=_off_limits(deps, subject.host_id),
