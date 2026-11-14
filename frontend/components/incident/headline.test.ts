@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { approval, detail, diagnosis, incident, proposal } from "@/components/incident/fixtures";
 import { headline, headlineText, lookedAt, subjectName } from "@/components/incident/headline";
+import { de } from "@/lib/i18n/de";
 import { en } from "@/lib/i18n/en";
 import type { IncidentStatus, Outcome } from "@/lib/api-types";
+import type { Messages } from "@/lib/i18n";
 
 const at = (status: IncidentStatus, outcome: Outcome | null = null) =>
   headlineText(headline(detail({ incident: incident({ status }), outcome }), en));
@@ -121,11 +123,34 @@ describe("headline", () => {
       "unverified",
       "budget",
       "replan_limit",
+      "recovered",
     ];
     for (const outcome of outcomes) expect(at("closed", outcome)).not.toMatch(/fixed/i);
     expect(at("closed", "rejected")).toBe("Okay, I left it as it is.");
     expect(at("closed", "unverified")).toBe("I ran the plan, but could not confirm the fix.");
     expect(at("closed")).toBe("Closed.");
+  });
+
+  it("says a service back on its own while its plan waited changed nothing (#571)", () => {
+    const back = (fields: Parameters<typeof incident>[0], t: Messages = en) =>
+      headline(
+        detail({ incident: incident({ status: "closed", ...fields }), outcome: "recovered" }),
+        t,
+      );
+    expect(back({})).toEqual({
+      lead: "",
+      name: "shop",
+      text: " is back on its own. Nothing was changed.",
+    });
+    const coolify = { kind: "service" as const, host_id: "vps", service_id: "vps/abc" };
+    expect(headlineText(back({ subject: coolify, short_name: null }))).toBe(
+      "This service is back on its own. Nothing was changed.",
+    );
+    expect(headlineText(back({}, de))).toBe(
+      "shop ist von selbst wieder da. Nichts wurde geändert.",
+    );
+    expect(headlineText(back({}))).not.toMatch(/fixed|resolved/i);
+    expect(headlineText(back({}, de))).not.toMatch(/behoben/i);
   });
 
   it("says it waits for a host that does not answer, and promises no plan", () => {

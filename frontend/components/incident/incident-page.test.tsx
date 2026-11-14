@@ -168,6 +168,14 @@ describe("IncidentPage", () => {
     expect(screen.queryByRole("region", { name: "Report" })).not.toBeInTheDocument();
   });
 
+  it("says a service back on its own changed nothing, and never that it was fixed", async () => {
+    stubBackend(detail({ incident: incident({ status: "closed" }), outcome: "recovered" }));
+    renderPage();
+    await screen.findByRole("heading", { name: "shop is back on its own. Nothing was changed." });
+    expect(screen.getByText("back on its own")).toBeInTheDocument();
+    expect(screen.queryByText(/fixed|resolved/i)).not.toBeInTheDocument();
+  });
+
   it("reads the incident again when a step event arrives, not on tool events", async () => {
     const decidedOnTelegram = detail({
       approval: approval({

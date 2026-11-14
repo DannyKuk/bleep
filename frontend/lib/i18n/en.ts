@@ -64,6 +64,7 @@ export const en = {
     unverified: "unverified",
     budget: "budget",
     replan_limit: "replan limit",
+    recovered: "back on its own",
   } satisfies Record<Outcome, string>,
   category: {
     code: "code",
@@ -96,6 +97,7 @@ export const en = {
       unverified: "I ran the plan, but could not confirm the fix.",
       budget: "I stopped: this run used up its budget.",
       replan_limit: "I found no plan I may run.",
+      recovered: " is back on its own. Nothing was changed.",
     } satisfies Record<Outcome, string>,
   },
   incidents: {

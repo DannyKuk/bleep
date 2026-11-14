@@ -84,6 +84,7 @@ from bleep.watcher.health_store import HealthStore
 from bleep.watcher.host_probe import HostProbe
 from bleep.watcher.http_checks import UrlCheckStore, UrlWatcher
 from bleep.watcher.poller import HostWatcher
+from bleep.watcher.recovery import Checks, RecoveryWatch
 from bleep.watcher.sightings import Sightings
 from bleep.watcher.wake import SleepWatch
 
@@ -168,6 +169,7 @@ class WatcherManager:
         wake_grace_ticks: int = Settings.model_fields["wake_grace_ticks"].default,
         monotonic: Callable[[], float] = time.monotonic,
         sightings: Sightings | None = None,
+        recovery_checks: Checks | None = None,
     ) -> None:
         self.registry = registry
         self.detector = detector
@@ -207,6 +209,11 @@ class WatcherManager:
             state.config.id: self._host_tasks(state.config.id) for state in registry.hosts()
         }
         repo.on_finished(self._fixed)
+        self.recoveries = (
+            None
+            if recovery_checks is None
+            else RecoveryWatch(repo, runner, recovery_checks, clock, self._display_name)
+        )
 
     def _host_tasks(self, host_id: str) -> _HostTasks:
         watch_s, probe_s, url_s, store = self._intervals
@@ -256,13 +263,15 @@ class WatcherManager:
             tasks.append(asyncio.create_task(self._supervised(name, run), name=name))
 
     async def stop(self) -> None:
-        """Cancel the watching; runs in flight stay with the runner."""
+        """Cancel the watching and the recovery checks; runs in flight stay with the runner."""
         tasks = [task for host in self._tasks.values() for task in host] + [*self._background]
         self._tasks = {}
         self._started = False
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        if self.recoveries is not None:
+            await self.recoveries.stop()
         if self._owns_http:
             await self._http.aclose()
 
@@ -313,6 +322,8 @@ class WatcherManager:
         self._answered.pop(host_id, None)
         self._answered_at.pop(host_id, None)
         self.sightings.forget(host_id)
+        if self.recoveries is not None:
+            self.recoveries.forget_host(host_id)
 
     async def _stop_host(self, host_id: str) -> None:
         self.hosts.pop(host_id, None)
@@ -322,10 +333,13 @@ class WatcherManager:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def drain(self) -> None:
-        """Wait for the recovery explanations in flight (tests, and a clean shutdown)."""
+        """Wait for the recovery explanations and the recovery checks in flight (tests, and a
+        clean shutdown)."""
         while self._background:
             await asyncio.gather(*list(self._background), return_exceptions=True)
             await asyncio.sleep(0)
+        if self.recoveries is not None:
+            await self.recoveries.drain()
 
     @staticmethod
     async def _supervised(name: str, run: Callable[[], Awaitable[None]]) -> None:
@@ -414,9 +428,14 @@ class WatcherManager:
 
     async def record_health(self, host_id: str) -> None:
         """Judge each of the host's services as the services API does and keep the result, quiet
-        ones too (quiet only stops incidents). Never raises: it must not cost the tick."""
-        if self._health is None or self.waking() or self._asleep_host(host_id):
+        ones too (quiet only stops incidents), then hand the services that are healthy now, with
+        every URL passing, to the recovery watch (#571). Never raises: it must not cost the
+        tick."""
+        if self.waking() or self._asleep_host(host_id):
+            if self.recoveries is not None:
+                self.recoveries.forget_host(host_id)
             return  # nothing is known about it now, and `unknown` is never stored either
+        healthy: set[str] = set()
         try:
             now = self._clock()
             stored = await self._stored_checks(host_id)
@@ -425,11 +444,20 @@ class WatcherManager:
                 urls = [
                     url_status(u.url, stored.get((service.id, u.url)), now) for u in service.urls
                 ]
-                statuses = (u.status for u in urls)
+                statuses = [u.status for u in urls]
                 health = service_health(service.containers, statuses, service.exits, stopped)
-                await self._health.record(host_id, service.id, health, now)
+                if self._health is not None:
+                    await self._health.record(host_id, service.id, health, now)
+                if health == "ok" and all(status == "ok" for status in statuses):
+                    healthy.add(service.id)
         except Exception:
             log.exception("recording the health of host %s's services failed", host_id)
+            healthy = set()
+        if self.recoveries is not None:
+            # A host out of contact has a stale listing: nothing on it counts as healthy, from
+            # its first failed tick on (the registry marks it unreachable only a tick later).
+            in_contact = self._reachable(host_id) and self._answered.get(host_id) is not False
+            await self.recoveries.judge(host_id, healthy if in_contact else set())
 
     async def _stored_checks(
         self, host_id: str
@@ -741,6 +769,11 @@ class WatcherManager:
         for container in {s.container for s in await self.repo.signals(incident_id)}:
             if container is not None:
                 self.detector.recovered(incident.subject.host_id, container, at)
+
+    def _display_name(self, subject: Subject) -> str:
+        """The service's name as a notice shows it."""
+        name = self._service_name(subject)
+        return title_name(name) if name is not None else subject.service_id or subject.host_id
 
     def _hold_until(self, outlived: Repeats) -> datetime | None:
         """Until when a failure that outlived these incidents waits; None once that is over."""

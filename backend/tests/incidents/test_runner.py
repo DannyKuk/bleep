@@ -1436,6 +1436,177 @@ async def test_a_host_back_before_the_run_parks_is_caught_by_the_next_good_tick(
     assert (await env.repo.get(incident.id)).status == "closed"
 
 
+# -- a service healthy again on its own while its plan waits (#571) -----------------------------
+
+
+RECOVERED = Shown.of("notice/recovered", name="shop")
+
+
+async def waiting_for_a_yes(tmp_path, env, saver, channels=None):
+    """An incident whose act plan waits for a yes, over the SQLite approval store."""
+    env.deps.approvals = ApprovalStore(env.db, "test-secret")
+    incident = await env.open(service(env), container="shop-web-1")
+    runner = IncidentRunner(
+        build_graph(env.deps, saver),
+        env.repo,
+        env.bus,
+        approvals=env.deps.approvals,
+        notifier=channels,
+    )
+    await runner.start(incident)
+    await runner.join()
+    assert (await env.repo.get(incident.id)).status == "awaiting_approval"
+    return runner, incident, await runner.waiting_for(incident.id)
+
+
+async def test_a_service_healthy_again_closes_its_waiting_incident_once_and_runs_nothing(
+    tmp_path, acting
+):
+    env = await graph_env(tmp_path)
+    channels = ChannelLog()
+    finished: list[str] = []
+
+    async def heard_finished(incident_id: str) -> None:
+        finished.append(incident_id)
+
+    env.repo.on_finished(heard_finished)  # how the Telegram buttons go (#291)
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner, incident, approval_id = await waiting_for_a_yes(tmp_path, env, saver, channels)
+        approvals = env.deps.approvals
+
+        assert await runner.healthy_again(incident.id, RECOVERED)
+        assert not await runner.healthy_again(incident.id, RECOVERED)  # the next tick's try
+        late = await approvals.resolve(incident.id, decide("approve"), approval_id)
+        await runner.resume(incident.id, decide("approve"), approval_id)
+        await runner.join()
+        record = await approvals.current(incident.id)
+
+    assert (await env.repo.get(incident.id)).status == "closed"
+    assert await env.repo.closed_outcome(incident.id) == "recovered"  # never `resolved`
+    assert late is None and record.closed and record.decision is None
+    assert await approvals.pending() == []  # no reminder comes for it
+    assert await approvals.grant(incident.id) is None
+    assert "execute" not in await env.nodes(incident.id)
+    assert await notices(env, incident.id) == [english(RECOVERED)]
+    assert channels.heard == [("opened", "open"), ("notice", english(RECOVERED))]
+    assert channels.endings == ["recovered"]
+    assert finished == [incident.id]
+
+
+async def test_the_recovery_notice_says_nothing_was_changed_and_never_fixed():
+    for language in ("en", "de"):
+        shown = prompts.show(RECOVERED, language)
+        assert "shop" in shown and "fixed" not in shown.lower() and "behoben" not in shown.lower()
+    assert "nothing was changed" in english(RECOVERED)
+    assert "was not run" in english(RECOVERED)
+
+
+async def test_a_yes_that_won_before_the_recovery_close_runs_its_plan(tmp_path, acting):
+    """The yes won the approval; its resume is not driven yet, so the incident still says
+    `awaiting_approval`. The recovery close must not take it: the person was told it runs."""
+    env = await graph_env(tmp_path)
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner, incident, approval_id = await waiting_for_a_yes(tmp_path, env, saver)
+        won = await env.deps.approvals.resolve(incident.id, decide("approve"), approval_id)
+
+        assert not await runner.healthy_again(incident.id, RECOVERED)
+        await runner.resume(incident.id, won, approval_id)
+        await runner.join()
+
+    assert "execute" in await env.nodes(incident.id)
+    assert english(RECOVERED) not in await notices(env, incident.id)
+    assert await env.repo.closed_outcome(incident.id) is None
+
+
+async def test_a_recovery_close_cancelled_after_it_committed_still_says_why(tmp_path, acting):
+    """The watcher's check task is cancelled (a host forgotten, a shutdown) just as the close
+    is committed: the notice and the message still go out."""
+    env = await graph_env(tmp_path)
+    channels = ChannelLog()
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner, incident, _ = await waiting_for_a_yes(tmp_path, env, saver, channels)
+        committed, release = asyncio.Event(), asyncio.Event()
+        close = env.repo.close_unanswered
+
+        async def close_then_stall(incident_id: str) -> bool:
+            closed = await close(incident_id)
+            committed.set()
+            await release.wait()
+            return closed
+
+        env.repo.close_unanswered = close_then_stall
+        caller = asyncio.create_task(runner.healthy_again(incident.id, RECOVERED))
+        await asyncio.wait_for(committed.wait(), 5)
+        caller.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        for _ in range(50):  # the shielded rest runs on without its caller
+            if channels.endings:
+                break
+            await asyncio.sleep(0.01)
+
+    assert (await env.repo.get(incident.id)).status == "closed"
+    assert await env.repo.closed_outcome(incident.id) == "recovered"
+    assert await notices(env, incident.id) == [english(RECOVERED)]
+    assert channels.endings == ["recovered"]
+
+
+@pytest.mark.parametrize("yes_first", [True, False])
+async def test_a_yes_and_the_recovery_close_at_once_leave_exactly_one_outcome(
+    tmp_path, acting, yes_first
+):
+    env = await graph_env(tmp_path)
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner, incident, approval_id = await waiting_for_a_yes(tmp_path, env, saver)
+        yes = env.deps.approvals.resolve(incident.id, decide("approve"), approval_id)
+        close = runner.healthy_again(incident.id, RECOVERED)
+        if yes_first:
+            won, closed = await asyncio.gather(yes, close)
+        else:
+            closed, won = await asyncio.gather(close, yes)
+        if won is not None:
+            await runner.resume(incident.id, won, approval_id)
+        await runner.join()
+
+    assert (won is not None) != closed
+    ran = "execute" in await env.nodes(incident.id)
+    told = english(RECOVERED) in await notices(env, incident.id)
+    assert (ran, told) == (won is not None, closed)
+
+
+@pytest.mark.parametrize("status", ["open", "investigating", "paused", "executing", "verifying"])
+async def test_the_recovery_close_takes_only_an_incident_waiting_for_a_yes(tmp_path, status):
+    env = await graph_env(tmp_path)
+    env.deps.approvals = ApprovalStore(env.db, "test-secret")
+    incident = await env.open(service(env), container="shop-web-1")
+    await env.deps.approvals.request(incident.id, Proposal(kind="no_action", reason="r"), [])
+    await env.repo.set_status(incident.id, status)
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner = IncidentRunner(build_graph(env.deps, saver), env.repo, env.bus)
+        assert not await runner.healthy_again(incident.id, RECOVERED)
+
+    assert (await env.repo.get(incident.id)).status == status
+    assert await notices(env, incident.id) == []
+
+
+async def test_an_incident_whose_earlier_plan_ran_a_step_is_not_closed_as_recovered(
+    tmp_path, acting
+):
+    """Back at Approval after Verify's loop-back: something was changed, so "nothing was
+    changed" would be false."""
+    env = await graph_env(tmp_path)
+    async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
+        runner, incident, _ = await waiting_for_a_yes(tmp_path, env, saver)
+        step = PlanStep(action="docker.restart", host_id="a", target="shop-web-1")
+        await env.deps.action_log.start(incident.id, "earlier:plan", 0, step)
+
+        assert not await runner.healthy_again(incident.id, RECOVERED)
+
+    assert (await env.repo.get(incident.id)).status == "awaiting_approval"
+    assert (await env.deps.approvals.current(incident.id)).closed is False
+
+
 # -- folded repeats ------------------------------------------------------------------------------
 
 

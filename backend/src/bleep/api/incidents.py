@@ -149,7 +149,7 @@ async def get_incident(
         if (proposal := state.get("proposal"))
         else None,
         approval=_approval(await parts.approvals.current(incident_id), language),
-        outcome=state.get("outcome"),
+        outcome=state.get("outcome") or await parts.incidents.closed_outcome(incident_id),
         report=report_in(report, language) if (report := state.get("report")) else None,
         feedback=await parts.memory.feedback(incident_id),
         expectation=prompts.show(expectation.said(), language) if expectation else None,

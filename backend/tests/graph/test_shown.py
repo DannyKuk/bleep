@@ -163,6 +163,7 @@ def test_the_outcomes_read_as_they_did_before():
         "no_action": "No action proposed, nothing was done",
         "budget": "Stopped, the model budget is spent",
         "replan_limit": "Stopped after too many new plans",
+        "recovered": "Back on its own, nothing was changed",
     }
     assert HEALTHY_ANYWAY == "Healthy again (verified); no step of the plan succeeded"
 
