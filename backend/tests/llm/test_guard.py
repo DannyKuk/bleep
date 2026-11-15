@@ -97,26 +97,30 @@ class Verdict(BaseModel):
 
 
 class HangingModel(FakeChatModel):
-    hangs: int = 0
+    """Hangs on every call while `down`, then answers from the script."""
+
+    down: bool = True
 
     async def _agenerate(self, *args, **kwargs):
-        if self.hangs > 0:
-            self.hangs -= 1
+        if self.down:
             await hang()
         return await super()._agenerate(*args, **kwargs)
 
 
 async def test_a_hanging_model_is_cut_off_by_invoke_structured_and_a_later_call_works():
     reply = AIMessage('{"cause": "oom"}')
-    model = HangingModel(script=[reply], structured_output_unsupported=True, hangs=3)
+    model = HangingModel(script=[reply], structured_output_unsupported=True)
     sleep = Recorder()
     ask = [HumanMessage("why?")]
 
-    with pytest.raises(ModelUnavailable):
+    with pytest.raises(ModelUnavailable) as caught:
         await invoke_structured(model, Verdict, ask, guard=guard(sleep))
-    assert model.hangs == 0 and sleep.delays == [2.0, 4.0]
+    assert caught.value.reason == "TimeoutError" and sleep.delays == [2.0, 4.0]
 
-    assert await invoke_structured(model, Verdict, ask, guard=guard(sleep)) == Verdict(cause="oom")
+    # Only a hang gets the 10 ms bound: under load a call that answers runs past it (#597).
+    model.down = False
+    answered = await invoke_structured(model, Verdict, ask, guard=guard(sleep, timeout_s=30))
+    assert answered == Verdict(cause="oom") and sleep.delays == [2.0, 4.0]
 
 
 def openrouter_error(cls, status: int, body: str = "", content_type: str = "text/html"):
