@@ -253,6 +253,17 @@ A test that runs for over a minute (the slowest takes under 5 s) prints its trac
 
 Tests use fakes, so nothing touches the network or a real model. Real-model evals are not part of CI.
 
+## The landing page
+
+`site/` is the public page that explains Bleep to someone who has never seen it. It is a static page with no backend, deployed on its own domain, apart from the dashboard; `docker compose up` does not build it. It draws Bleep from the dashboard's own component, so it builds from the repository root:
+
+```bash
+docker build -f site/Dockerfile -t bleep-site .
+docker run --rm -p 8080:80 bleep-site   # http://localhost:8080
+```
+
+In Coolify, add the repository as an application with the Dockerfile build pack, base directory `/`, Dockerfile location `/site/Dockerfile` and port 80, and give it the page's domain. For local work, `npm ci` and then `npm run dev` in `site/` serve it at http://localhost:3170.
+
 ## Not built
 
 - **Always-on on a small machine that stays up** (a spare Mac or a mini PC), so Bleep watches its hosts while your laptop sleeps.
