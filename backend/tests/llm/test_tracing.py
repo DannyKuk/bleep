@@ -5,6 +5,7 @@ import pytest
 from langchain_core.tracers.langchain import LangChainTracer
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
+from opentelemetry import trace as otel_trace
 from pydantic import SecretStr
 
 from bleep.config import SettingsError
@@ -18,6 +19,7 @@ from bleep.llm.tracing import (
 )
 from bleep.schemas.incidents import Incident, Subject
 from bleep.schemas.settings import TracingChoice
+from tests.langfuse_guard import langfuse_exports_blocked
 
 PUBLIC, SECRET = "pk-lf-test-public", "sk-lf-test-secret"
 
@@ -347,3 +349,42 @@ async def test_langfuse_back_on_with_a_key_used_before_waits_for_a_restart(no_tr
     await tracer.reload()
     assert isinstance(tracer.current(), LangfuseTracing) and not tracer.restart_needed()
     assert tracer.current()._client._resources.base_url == "https://cloud.example.test"
+
+
+def emit_anthropic_span() -> None:
+    """What the Anthropic SDK does on every model call: a `gen_ai.*` span on the global provider,
+    which Langfuse's span processor exports by default."""
+    sdk = otel_trace.get_tracer("com.anthropic.sdk.python")
+    with sdk.start_as_current_span(
+        "anthropic.messages.create", attributes={"gen_ai.provider.name": "anthropic"}
+    ):
+        pass
+
+
+@pytest.mark.parametrize("change", ["off", "key cleared"])
+async def test_langfuse_switched_off_or_without_a_key_exports_no_later_model_call(
+    no_tracing_env, change
+):
+    """The processor Langfuse added to the process-wide provider outlives its client, so after
+    the switch neither a model call nor a run already going may reach it (#604)."""
+    public = f"pk-lf-{uuid.uuid4().hex}"
+    chosen = TracingChoice(tracing="langfuse", langfuse_base_url="https://cloud.example.test")
+    keys = {"LANGFUSE_PUBLIC_KEY": SecretStr(public), "LANGFUSE_SECRET_KEY": SecretStr("sk-1")}
+    tracer = ReloadingTracer(keys.get, lambda: chosen)
+    with langfuse_exports_blocked() as sent:
+        client = tracer.current()._client  # what a run already going traces with
+        emit_anthropic_span()
+        client.start_observation(name="a node").end()
+        otel_trace.get_tracer_provider().force_flush()
+        assert len(sent) >= 1, "with Langfuse on, a model call and a run's span are exported"
+        sent.clear()
+
+        if change == "off":
+            chosen = TracingChoice(tracing="off")
+        else:
+            del keys["LANGFUSE_SECRET_KEY"]
+        await tracer.reload()
+        emit_anthropic_span()
+        client.start_observation(name="a node").end()
+        otel_trace.get_tracer_provider().force_flush()
+        assert sent == []

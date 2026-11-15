@@ -11,7 +11,7 @@ surface it came from, `talk-panel` or `talk-telegram` (#411).
 import asyncio
 import logging
 from collections.abc import Callable
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tracers.langchain import LangChainTracer
@@ -23,6 +23,9 @@ from bleep.config import SettingsError
 from bleep.schemas.incidents import Incident
 from bleep.schemas.settings import TracingChoice
 from bleep.schemas.talk import TalkSurface
+
+if TYPE_CHECKING:
+    from opentelemetry.sdk.trace import ReadableSpan
 
 log = logging.getLogger(__name__)
 
@@ -102,6 +105,10 @@ class LangfuseTracing:
     perhaps by another process. Every invocation is pinned to the trace whose id is derived from
     the incident id, so the start and every resume land in the same trace, and its link is known
     before the first span is sent.
+
+    Langfuse adds its span processor to the process-wide OpenTelemetry provider, where it also
+    takes the Anthropic SDK's own spans, and nothing removes it again. So it exports only while
+    this tracer is open: after `close` no span reaches the old address (#604).
     """
 
     def __init__(self, settings: TracingSettings) -> None:
@@ -109,10 +116,12 @@ class LangfuseTracing:
 
         assert settings.langfuse_public_key and settings.langfuse_secret_key
         self._public_key = settings.langfuse_public_key.get_secret_value()
+        self._open = True
         self._client = Langfuse(
             public_key=self._public_key,
             secret_key=settings.langfuse_secret_key.get_secret_value(),
             base_url=settings.langfuse_base_url,
+            should_export_span=self._should_export,
         )
         self._ui_url = settings.langfuse_ui_url.rstrip("/")
         self._project_id = settings.langfuse_project_id
@@ -154,7 +163,14 @@ class LangfuseTracing:
             return None
         return f"{self._ui_url}/project/{self._project_id}/traces/{self.trace_id(incident)}"
 
+    def _should_export(self, span: ReadableSpan) -> bool:
+        from langfuse import is_default_export_span
+
+        return self._open and is_default_export_span(span)
+
     async def close(self) -> None:
+        """Stop exporting, then send the spans that ended before."""
+        self._open = False
         await asyncio.to_thread(self._client.shutdown)
 
 
@@ -283,8 +299,9 @@ class ReloadingTracer:
 
     async def reload(self) -> None:
         """Build the tracer with the settings in force now, then close the old one, which sends
-        what it still holds. A run already going keeps the callbacks it was given. Not built yet,
-        nothing to do: the first use builds it.
+        what it still holds. A run already going keeps the callbacks it was given, but a closed
+        Langfuse tracer exports nothing more, theirs included. Not built yet, nothing to do: the
+        first use builds it.
 
         Langfuse off, or one of its keys gone, applies at once: never trace on with a key that
         was cleared. A running Langfuse tracer whose keys, address or project changed stays as it
