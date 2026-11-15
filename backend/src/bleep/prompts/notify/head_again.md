@@ -1,1 +1,1 @@
-🔁 Again: {incident} · {after} after {earlier}
+🔁 Again: {incident} · same failure as {earlier} · seen {count} times
