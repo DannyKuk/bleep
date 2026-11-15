@@ -12,9 +12,9 @@
         }
         .ran {
           position: absolute;
-          left: 360px;
+          left: 160px;
           top: 190px;
-          width: 1200px;
+          width: 1100px;
           display: flex;
           align-items: center;
           gap: 20px;
@@ -36,9 +36,9 @@
         }
         .list {
           position: absolute;
-          left: 360px;
+          left: 160px;
           top: 280px;
-          width: 1200px;
+          width: 1100px;
           padding: 30px 40px 18px;
           border-radius: 32px;
           background: var(--surface);
@@ -84,8 +84,8 @@
         }
         .stamp {
           position: absolute;
-          left: 0;
-          right: 0;
+          left: 160px;
+          width: 1100px;
           top: 770px;
           text-align: center;
         }
@@ -122,7 +122,14 @@
               '<svg viewBox="0 0 48 48"><circle class="dot" cx="24" cy="24" r="24" fill="#1c7448"/>' +
               '<path class="tick" d="M14 25l7 7 13-15" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1"/></svg>';
           }
+          // The phone again, locked: Bleep's last message lands when the checks have passed.
+          const phone = BF.phone(root.querySelector(".half"));
+          const done = BF.note(window.BLEEP_PHONE[2].html);
+          phone.querySelector(".notes").appendChild(done);
           const tl = gsap.timeline({ paused: true });
+          tl.set(done, { opacity: 0 }, 0);
+          tl.fromTo(done, { opacity: 0, y: -40, scale: 0.94 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "back.out(1.6)" }, 4.0);
+          tl.fromTo(phone, { rotate: 0 }, { keyframes: { rotate: [0, -1.6, 1.6, -1.2, 1.2, 0] }, duration: 0.45, ease: "none" }, 4.0);
           tl.fromTo(q(".ran"), { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 0.1);
           tl.fromTo(q(".list"), { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 0.3);
           tl.set(q(".detail"), { opacity: 0 }, 0);

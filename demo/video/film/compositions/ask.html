@@ -1,0 +1,125 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        #root {
+          position: absolute;
+          inset: 0;
+        }
+        .say {
+          position: absolute;
+          left: 160px;
+          width: 1080px;
+          font-weight: 900;
+          letter-spacing: -0.02em;
+          line-height: 1.1;
+        }
+        .s-1 {
+          top: 210px;
+          font-size: 68px;
+        }
+        .s-1 em,
+        .s-2 em {
+          font-style: normal;
+          color: var(--accent);
+        }
+        .s-2 {
+          top: 690px;
+          font-size: 56px;
+        }
+        .s-3 {
+          top: 786px;
+          font-size: 40px;
+          font-weight: 800;
+          color: var(--ink-2);
+        }
+        /* The plan line of Bleep's message, pulled out of the phone, large. */
+        .plan {
+          position: absolute;
+          left: 160px;
+          top: 340px;
+          width: 1080px;
+          padding: 26px 34px 30px;
+          border-radius: 30px;
+          background: var(--surface);
+          border: 2px solid var(--line);
+          box-shadow: 0 20px 50px rgba(20, 19, 42, 0.09);
+        }
+        .plan-head {
+          font-size: 30px;
+          font-weight: 800;
+          color: var(--ink-2);
+        }
+        .plan-step {
+          margin-top: 10px;
+          font-family: "JetBrains Mono", monospace;
+          font-size: 40px;
+          font-weight: 700;
+        }
+        .plan-why {
+          margin-top: 14px;
+          font-size: 30px;
+          font-weight: 600;
+          line-height: 1.35;
+        }
+      </style>
+      <div id="root" data-composition-id="ask" data-width="1920" data-height="1080">
+        <div class="half light" data-layout-allow-overlap data-layout-allow-occlusion>
+          <div class="say s-1">Bleep asks you on <em>Telegram</em>.</div>
+          <!-- From Bleep's "Your call" message for this run (phone.json). -->
+          <div class="plan">
+            <div class="plan-head">Plan</div>
+            <div class="plan-step">1. docker.start shop-db on web-01</div>
+            <div class="plan-why">
+              Why: shop-db is stopped, and starting it restores the database hostname that shop-web
+              needs.
+            </div>
+          </div>
+          <div class="say s-2">One tap on <em>Approve</em>, and it runs.</div>
+          <div class="say s-3">No dashboard, no laptop.</div>
+        </div>
+      </div>
+      <script>
+        (() => {
+          const root = document.querySelector('[data-composition-id="ask"]');
+          const half = root.querySelector(".half");
+          const phone = BF.phone(half);
+          const ask = BF.note(window.BLEEP_PHONE[1].html);
+          phone.querySelector(".notes").appendChild(ask);
+          const q = (s) => [...root.querySelectorAll(s)];
+          const tl = gsap.timeline({ paused: true });
+
+          // The plan's buttons stay; the opener's are already gone (it was asked for later).
+          tl.set(q(".msg-0 .buttons, .msg-2"), { display: "none" }, 0);
+          tl.fromTo(phone, { x: 700 }, { x: 0, duration: 0.7, ease: "expo.out" }, 0);
+          tl.fromTo(q(".s-1"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 0.3);
+
+          // The notification lands on the locked phone, which buzzes.
+          tl.fromTo(ask, { opacity: 0, y: -40, scale: 0.94 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "back.out(1.6)" }, 0.9);
+          tl.fromTo(phone, { rotate: 0 }, { keyframes: { rotate: [0, -1.6, 1.6, -1.2, 1.2, 0] }, duration: 0.45, ease: "none" }, 0.9);
+
+          // A tap on it opens the chat at the plan.
+          BF.tap(tl, ask.querySelector(".touch"), 2.1);
+          tl.to(q(".chatview"), { opacity: 1, duration: 0.3, ease: "power2.out" }, 2.25);
+          tl.fromTo(q(".chatview"), { scale: 0.92 }, { scale: 1, duration: 0.4, ease: "power3.out" }, 2.25);
+          tl.fromTo(q(".plan"), { opacity: 0, x: -40 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, 2.6);
+
+          // Approve, with one tap.
+          tl.fromTo(q(".s-2"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 3.9);
+          const approve = q(".msg-1 .button")[0];
+          BF.tap(tl, approve.querySelector(".touch"), 4.9);
+          tl.to(approve, { backgroundColor: "#5847e0", color: "#ffffff", duration: 0.12 }, 4.9);
+          tl.to(q(".msg-1 .buttons"), { height: 0, opacity: 0, duration: 0.35, ease: "power2.inOut" }, 5.35);
+          tl.fromTo(q(".s-3"), { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 5.7);
+          tl.to(phone, { y: -18, duration: 3.6, ease: "sine.inOut" }, 5.8);
+          tl.to(q(".plan"), { scale: 1.02, duration: 3.6, ease: "sine.inOut", transformOrigin: "0 50%" }, 5.8);
+          window.__timelines["ask"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

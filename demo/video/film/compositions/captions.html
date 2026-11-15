@@ -28,11 +28,9 @@
         }
       </style>
       <div id="root" data-composition-id="captions" data-width="1920" data-height="1080">
-        <div class="cap" id="c1">It watches your hosts and jumps in when something breaks.</div>
+        <div class="cap" id="c1">It opens an incident and gets to work on its own.</div>
         <div class="cap" id="c2">It investigates the way you would.</div>
         <div class="cap" id="c3">It finds the cause, and says how sure it is.</div>
-        <div class="cap" id="c4">It asks before it changes anything.</div>
-        <div class="cap" id="c5">One click, and it runs the fix.</div>
         <div class="cap" id="c6">Then it checks that the fix really worked.</div>
       </div>
       <script>
@@ -42,9 +40,7 @@
             ["#c1", 13.6, 16.6],
             ["#c2", 17.4, 26.9],
             ["#c3", 27.8, 35.4],
-            ["#c4", 36.1, 38.2],
-            ["#c5", 38.6, 42.4],
-            ["#c6", 43.2, 47.5],
+            ["#c6", 45.7, 49.6],
           ];
           for (const [sel, from, to] of caps) {
             tl.fromTo(sel, { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, from);

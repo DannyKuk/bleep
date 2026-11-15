@@ -38,16 +38,15 @@
           const { all } = BF.split(root);
           const tl = gsap.timeline({ paused: true });
           const cams = all(".cam");
-          const wide = { x: 1440, y: 830, w: 2880 };
-          const close = { x: 1200, y: 640, w: 2000 };
-          BF.cam(tl, cams, wide, 0);
-          tl.set(all(".st-watching, .st-down"), { opacity: 0 }, 0);
-          BF.cam(tl, cams, close, 0.15, 2.6, "sine.inOut");
-          BF.swap(tl, all(".st-watching"), all(".st-quiet"), 0.9, 0.07);
-          BF.swap(tl, all(".st-down"), all(".st-watching"), 1.9, 0.07);
-          const follow = BF.onFrame(close, 927, 574);
-          BF.cursorTo(tl, all(".cursor"), { x: 1500, y: 1180 }, follow, 2.05, 2.95);
-          BF.cam(tl, cams, { x: 927, y: 574, w: 1500, dx: follow.x - 960, dy: follow.y - 540 }, 3.0, 0.3, "power2.in");
+          // Straight on the incident: the dashboard's home says what Bleep is doing. A slow drift,
+          // the cursor clicks Follow along, and the film cuts to the investigation.
+          tl.set(all(".st-quiet, .st-watching"), { opacity: 0 }, 0);
+          const start = { x: 1300, y: 640, w: 2500 };
+          const end = { x: 1250, y: 620, w: 2300 };
+          BF.cam(tl, cams, start, 0);
+          BF.cam(tl, cams, end, 0, 2.6, "sine.inOut");
+          const follow = BF.onFrame(end, 927, 574);
+          BF.cursorTo(tl, all(".cursor"), { x: 1500, y: 1180 }, follow, 1.8, 2.8);
           window.__timelines["overview"] = tl;
         })();
       </script>

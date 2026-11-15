@@ -72,5 +72,49 @@
     );
   }
 
-  window.BF = { W, H, split, view, onFrame, cam, swap, cursorTo };
+
+  // Bleep's message html (phone.py) as a lock-screen notification: its bold head and first line.
+  function note(html) {
+    const [head, ...rest] = html.split("<br>");
+    const el = document.createElement("div");
+    el.className = "pnote";
+    el.innerHTML =
+      `<div class="pnote-head"><span>Bleep</span><span>now</span></div>` +
+      `<div class="pnote-title">${head.replace(/<\/?b>/g, "")}</div><div class="pnote-text">${rest.join(" ")}</div>` +
+      `<div class="touch"></div>`;
+    return el;
+  }
+
+  // The phone: a lock screen and the chat with Bleep, built from window.BLEEP_PHONE.
+  function phone(parent) {
+    const el = document.createElement("div");
+    el.className = "phone";
+    el.setAttribute("data-layout-ignore", "");
+    el.innerHTML = `<div class="phone-screen"><div class="phone-island"></div>
+      <div class="lock"><div class="lock-time">21:03</div><div class="lock-date">Sunday, 15 November</div><div class="notes"></div></div>
+      <div class="chatview"><div class="phone-bar">
+        <svg viewBox="0 0 120 120" aria-hidden="true"><rect x="10" y="18" width="100" height="84" rx="38" fill="#b9afff"/><rect x="22" y="36" width="76" height="44" rx="22" fill="#27234A"/><path d="M45 58h0 M75 58h0" fill="none" stroke="#7CF2B8" stroke-width="20" stroke-linecap="round"/></svg>
+        <div><div class="phone-name">Bleep</div><div class="phone-sub">bot</div></div></div>
+        <div class="chat"></div></div></div>`;
+    const chat = el.querySelector(".chat");
+    window.BLEEP_PHONE.forEach((m, i) => {
+      const msg = document.createElement("div");
+      msg.className = `msg msg-${i}`;
+      const rows = m.buttons
+        .map((row) => `<div class="button-row">${row.map((b) => `<div class="button">${b}<div class="touch"></div></div>`).join("")}</div>`)
+        .join("");
+      msg.innerHTML = `<div class="bubble">${m.html}</div><div class="buttons">${rows}</div>`;
+      chat.appendChild(msg);
+    });
+    parent.appendChild(el);
+    return el;
+  }
+
+  // A finger's tap: the touch ring appears, presses and fades.
+  function tap(tl, touch, at) {
+    tl.fromTo(touch, { opacity: 0, scale: 1.4 }, { opacity: 1, scale: 0.85, duration: 0.18, ease: "power2.out" }, at - 0.18);
+    tl.to(touch, { scale: 1.5, opacity: 0, duration: 0.35, ease: "power2.out" }, at + 0.05);
+  }
+
+  window.BF = { W, H, split, view, onFrame, cam, swap, cursorTo, note, phone, tap };
 })();

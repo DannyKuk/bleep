@@ -9,4 +9,4 @@ assets/audio/pop.mp3      track 3f7016321284f57b                  "single soft p
 assets/audio/whoosh.mp3   track a4855a82116cd4cc                  "soft airy whoosh transition"
 
 The delivery file: render, then a 2-pass H.264 encode sized to stay under GitHub's 10 MB attachment
-limit (about 1150k for the 60.7 s cut), with frame 0 replaced by a settled frame, the thumbnail.
+limit (about 1050k for the 64.7 s cut), with frame 0 replaced by a settled frame, the thumbnail.
