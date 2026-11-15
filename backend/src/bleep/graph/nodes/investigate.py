@@ -44,7 +44,9 @@ from bleep.tools.registry import ToolBriefing, ToolContext
 log = logging.getLogger(__name__)
 
 MCP_TOOLS_SHOWN = 20  # read tools of the MCP server named in the prompt, at most
-SUMMARY_CHARS = 160  # the first line of a result, as the live view shows it
+SUMMARY_CHARS = 160  # one line of a result, as the live view shows it
+HEAD_LINES = 10  # the start of a result the live view folds under its call
+HEAD_CHARS = 1_000
 CUT_NOTE_CHARS = 40  # room for the guard's "[… N chars cut]" line
 UNWRAP_CHARS = 4 * MAX_CHARS  # longer output is not a guarded one: guard it whole, no regex pass
 NOT_RUN = "not run: the tool-call budget for this round is spent"
@@ -80,11 +82,33 @@ def guard_result(source: str, out: str) -> tuple[str, int, bool]:
     return text, redactions, result_holds_tag(source, text)
 
 
+def _cut(line: str) -> str:
+    return line if len(line) <= SUMMARY_CHARS else line[: SUMMARY_CHARS - 1] + "…"
+
+
 def first_line(guarded: str) -> str:
     """The first non-empty line inside the wrapper, for the live view."""
     body = guarded.split("\n")[1:-1]
-    line = next((s.strip() for s in body if s.strip()), "")
-    return line if len(line) <= SUMMARY_CHARS else line[: SUMMARY_CHARS - 1] + "…"
+    return _cut(next((s.strip() for s in body if s.strip()), ""))
+
+
+def head(guarded: str) -> tuple[str, int]:
+    """The first lines inside the wrapper, each cut like `first_line`, and how many lines are
+    left out. Indentation is kept, since tables and tracebacks read by it."""
+    body = [line.rstrip() for line in guarded.split("\n")[1:-1]]
+    while body and not body[0]:
+        body.pop(0)
+    while body and not body[-1]:
+        body.pop()
+    shown: list[str] = []
+    used = 0
+    for line in body[:HEAD_LINES]:
+        cut = _cut(line)
+        if shown and used + len(cut) > HEAD_CHARS:
+            break
+        shown.append(cut)
+        used += len(cut) + 1
+    return "\n".join(shown), len(body) - len(shown)
 
 
 def _budget_text(spent: BudgetExceeded, budgets: Budgets) -> Shown:
@@ -125,6 +149,7 @@ def make(deps: GraphDeps) -> Node:
                 record("redacted", f"{redactions} secret(s) redacted from {source} output")
             if marked:
                 record("injection_marker", f"a wrapper tag in {source} output was escaped")
+            summary_head, more_lines = head(text)
             await deps.bus.publish(
                 incident_id,
                 "tool_result",
@@ -133,6 +158,8 @@ def make(deps: GraphDeps) -> Node:
                     "id": call["id"],
                     "chars": len(text),
                     "summary_first_line": first_line(text),
+                    "summary_head": summary_head,
+                    "more_lines": more_lines,
                 },
             )
             return ToolMessage(text, tool_call_id=call["id"], name=name)

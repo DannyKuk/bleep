@@ -326,6 +326,8 @@ export const en = {
     empty: "I have not looked at anything yet.",
     result: (chars: string) => `Result, ${chars} characters`,
     emptyResult: "(empty)",
+    moreLines: (count: number, shown: string) =>
+      `… ${shown} more ${count === 1 ? "line" : "lines"}`,
     running: "Running",
     // Never quotes the call's arguments: the model chose them, and a hostile log could be in
     // them, which must not read as Bleep's own words.

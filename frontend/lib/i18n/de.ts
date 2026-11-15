@@ -320,6 +320,7 @@ export const de: Messages = {
     empty: "Ich habe mir noch nichts angesehen.",
     result: (chars) => `Ergebnis, ${chars} Zeichen`,
     emptyResult: "(leer)",
+    moreLines: (count, shown) => `… ${shown} ${count === 1 ? "weitere Zeile" : "weitere Zeilen"}`,
     running: "Läuft",
     tools: {
       list_containers: "Ich habe die Container auf dem Host aufgelistet",
