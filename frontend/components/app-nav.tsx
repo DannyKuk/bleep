@@ -30,7 +30,7 @@ export function AppNav() {
             href={href}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "inline-flex h-11 flex-1 items-center justify-center rounded-full px-1.5 text-sm font-bold whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:flex-none sm:px-4 sm:text-[15px] pointer-fine:h-9",
+              "inline-flex h-11 flex-1 items-center justify-center rounded-full px-1 text-[13px] font-bold whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:flex-none sm:px-4 sm:text-[15px] pointer-fine:h-9",
               active ? "bg-ink text-surface" : "text-ink-2 hover:bg-soft hover:text-ink",
             )}
           >
