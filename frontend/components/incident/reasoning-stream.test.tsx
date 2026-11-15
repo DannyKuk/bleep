@@ -80,6 +80,44 @@ describe("ReasoningStream", () => {
     expect(within(inspect).queryByText(/Result/)).toBeNull();
   });
 
+  it("shows the start of a result with its line breaks and how many lines are left out", () => {
+    render(
+      <ReasoningStream
+        events={[
+          event("tool_call", { name: "list_containers", args: {} }),
+          event("tool_result", {
+            name: "list_containers",
+            chars: 900,
+            summary_first_line: "name | state",
+            summary_head: "name | state\nshop-web-1 | exited\nshop-db-1 | running",
+            more_lines: 1234,
+          }),
+        ]}
+      />,
+    );
+    const head = screen.getByText(/shop-web-1 \| exited/);
+    expect(head.textContent).toBe("name | state\nshop-web-1 | exited\nshop-db-1 | running");
+    expect(head).toHaveClass("whitespace-pre-wrap", "break-all");
+    expect(screen.getByText("… 1,234 more lines")).toBeInTheDocument();
+  });
+
+  it("shows only the first line of a result from before the head was sent", () => {
+    render(
+      <ReasoningStream
+        events={[
+          event("tool_call", { name: "container_logs", args: {} }),
+          event("tool_result", {
+            name: "container_logs",
+            chars: 40,
+            summary_first_line: "boot ok",
+          }),
+        ]}
+      />,
+    );
+    expect(screen.getByText("boot ok")).toBeInTheDocument();
+    expect(screen.queryByText(/more line/)).toBeNull();
+  });
+
   it("pairs results with calls of the same name in order", () => {
     render(
       <ReasoningStream

@@ -8,7 +8,9 @@ import { useLanguage, useT } from "@/lib/i18n";
 
 interface ToolResult {
   chars: number;
-  firstLine: string;
+  /** The start of the guarded result; incidents from before #607 carry only its first line. */
+  head: string;
+  moreLines: number;
 }
 
 interface ToolStep {
@@ -38,7 +40,8 @@ export function toolSteps(events: IncidentEvent[]): ToolStep[] {
       if (step) {
         step.result = {
           chars: Number(payload.chars ?? 0),
-          firstLine: String(payload.summary_first_line ?? ""),
+          head: String(payload.summary_head ?? payload.summary_first_line ?? ""),
+          moreLines: Number(payload.more_lines ?? 0),
         };
       }
     }
@@ -96,9 +99,19 @@ function Step({ step }: { step: ToolStep }) {
             />
             {t.reasoning.result(formatCount(step.result.chars, language))}
           </summary>
-          <p className="mt-1 rounded-field bg-surface px-3 py-2 font-mono break-all whitespace-pre-wrap">
-            {step.result.firstLine || t.reasoning.emptyResult}
-          </p>
+          <div className="mt-1 rounded-field bg-surface px-3 py-2 font-mono">
+            <p className="break-all whitespace-pre-wrap">
+              {step.result.head || t.reasoning.emptyResult}
+            </p>
+            {step.result.moreLines > 0 && (
+              <p className="mt-1 text-ink-2">
+                {t.reasoning.moreLines(
+                  step.result.moreLines,
+                  formatCount(step.result.moreLines, language),
+                )}
+              </p>
+            )}
+          </div>
         </details>
       ) : (
         <p className="flex items-center gap-1 text-xs text-ink-2">
@@ -113,7 +126,8 @@ function Step({ step }: { step: ToolStep }) {
 /**
  * How Bleep got to its diagnosis: each tool call as a plain sentence, with the tool's name, its
  * arguments and the time in mono, and the result folded under it. Only the result's size and
- * first line reach the dashboard; the full output stays with the run.
+ * its first lines, as the guard passed them to the model, reach the dashboard; the full output
+ * stays with the run.
  */
 export function ReasoningStream({ events }: { events: IncidentEvent[] }) {
   const t = useT();
