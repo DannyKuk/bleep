@@ -124,7 +124,10 @@ function Section({
 export default function Page() {
   return (
     <>
-      <header className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-4 pt-5 sm:px-6">
+      <header
+        id="top"
+        className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-4 pt-5 sm:px-6"
+      >
         <a href="#top" className="flex items-center gap-2 text-lg font-extrabold">
           <Bleep mood="all_good" size={30} />
           Bleep
@@ -145,7 +148,7 @@ export default function Page() {
         </nav>
       </header>
 
-      <main id="top">
+      <main>
         <section className="mx-auto grid w-full max-w-6xl items-center gap-12 px-4 pt-14 pb-16 sm:px-6 lg:grid-cols-[1fr_1.1fr] lg:gap-14 lg:pt-20">
           <div>
             <h1 className="text-[2.75rem] leading-[1.02] font-black tracking-[-0.03em] text-balance sm:text-6xl lg:text-[4.25rem]">
