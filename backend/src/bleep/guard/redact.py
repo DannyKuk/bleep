@@ -1472,12 +1472,36 @@ _CUT_NOTE_LINE = r"[^\[\]\n]{0,200}+\[… [0-9]+ chars cut\]\n"
 # A flow list's `]` ends the value when closers and at most one quote follow it, then whitespace or
 # the end; otherwise the value runs on to the next whitespace (`[aB3],xY9` is a password).
 _LIST_END = r"\](?:(?=[,;})\]]*+[\"']?(?:\s|\Z))|\S*+)"
+# `{"password":null,"a":1}`: a JSON literal (`null`, `true`, `false`, a number, or `<redacted>`
+# that a first pass put there) right after a quoted key's colon ends where the next member starts:
+# a comma and a whole quoted key with its colon, or `}` and more closers before whitespace, the
+# end, or a comma and such a key, an object (`{` and such a key, or `{}` and a closer or comma) or
+# a list (`[]` and a closer or comma, or `[` and an object, or a short string, a number or a literal
+# before `,` or `]`). The members after it
+# are then read as pairs of their own (#593). Anything else after it (`"token":12,34`,
+# `"token":123abc`, `"token":1,"x9secret"`, `"token":1},s3cret`, `"token":1},{s3cret`) leaves the
+# value running to whitespace, hidden whole.
+_JSON_NUMBER = r"-?[0-9]++(?:\.[0-9]++)?(?:[eE][+-]?[0-9]++)?"
+_JSON_SHORT_STRING = r"\"(?:[^\"\\\n]|\\.){0,128}+\""
+_NEXT_JSON_KEY = rf"{_JSON_SHORT_STRING}[ \t]*+:"
+_NEXT_JSON_OBJECT = rf"\{{(?:{_NEXT_JSON_KEY}|\}}[,}}\]])"
+_NEXT_JSON_LIST = (
+    rf"\[(?:\][,}}\]]|{_NEXT_JSON_OBJECT}"
+    rf"|(?:{_JSON_SHORT_STRING}|{_JSON_NUMBER}|(?-i:true|false|null))[,\]])"
+)
+_JSON_LITERAL_VALUE = (
+    r"(?:(?<=\":)|(?<=\": ))"
+    rf"(?:(?-i:{_JSON_NUMBER}|true|false|null)|<redacted>)"
+    rf"(?=,{_NEXT_JSON_KEY}"
+    rf"|\}}[}}\]]*+(?:\s|\Z|,(?:{_NEXT_JSON_KEY}|{_NEXT_JSON_OBJECT}|{_NEXT_JSON_LIST})))"
+)
 # password=x, "password": "x y", password: x, [password] => x, SECRET_KEY_BASE=x, X-Api-Key: x,
 # api_keys: ["a", "b"]. The key is judged by `_is_secret_key`; the cheap lookahead keeps Python
 # out of unrelated pairs. An unquoted value runs to whitespace (so it fails safe on `&`, `,`,
 # quotes; `_end_in_string` gives back the closing quote of a string it sits in), a flow list to a
 # `]` that ends the value (`_LIST_END`, so compact JSON after a list goes too), or to the line's
-# end when it has no `]`. Neither starts with a cut note.
+# end when it has no `]`. Neither starts with a cut note. A JSON literal after a quoted key ends
+# where compact JSON goes on after it (`_JSON_LITERAL_VALUE`).
 #
 # A list left open at the end of its line runs on to its `]` over at most 20 lines, stepping over
 # a cut note, unless another `[` or `]` or a new log record comes first; each scan stops at the
@@ -1501,6 +1525,7 @@ _KEY_VALUE = re.compile(
     rf"(?:(?=[,;}})\]]*+[\"']?(?:\s|\Z|{_NEXT_KEY}))|(?:(?!{_NEXT_KEY})\S)*+)"
     rf"|\[[^\]\n]*+(?:{_LIST_END}|(?=\n|\Z))"
     rf"|<redacted>(?=[,;}})\]]*+[\"']?(?:\s|\Z|{_NEXT_KEY}))"
+    rf"|{_JSON_LITERAL_VALUE}"
     r"|[^\s\"'][^\s]*+)",
     _FLAGS,
 )
