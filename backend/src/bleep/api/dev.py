@@ -1,4 +1,4 @@
-"""The dev panel's routes: prompt overrides, cost per incident and per day, and the guard log.
+"""The dev panel's routes: prompt overrides, cost per incident, and the guard log.
 
 `create_app` includes this router only when `BLEEP_DEV_PANEL=true`, behind the session like the
 rest of `/api`; otherwise every path here is a 404. See docs/design/dev-panel.md.
@@ -27,11 +27,9 @@ from bleep.incidents.prompt_overrides import (
 from bleep.llm.usage import UsageSum
 from bleep.schemas.dev import (
     CostView,
-    DayCost,
     DevStatus,
     GuardEntryView,
     IncidentCost,
-    ModelCost,
     PromptOverrideBody,
     PromptView,
 )
@@ -148,12 +146,11 @@ def _usage(row: UsageSum) -> dict[str, Any]:
 @router.get("/costs")
 async def costs(
     parts: Parts,
-    days: Annotated[int, Query(ge=1, le=366)] = 30,
     limit: Annotated[int, Query(ge=1, le=MAX_ROWS)] = 100,
 ) -> CostView:
-    """Tokens and dollars from the usage ledger, per incident (the latest first, with the link to
-    its trace, the prompt overrides its run started with and the models its calls used), per local
-    day (today first) and per model (over those days, and today alone)."""
+    """Tokens and dollars from the usage ledger per incident, the latest first, with the link to
+    its trace, the prompt overrides its run started with and the models its calls used. Per day
+    and per model is the Usage page's (`GET /api/usage`)."""
     ledger = parts.graph_deps.ledger
     sums = await ledger.by_incident(limit)
     incidents = await parts.incidents.get_many([row.key for row in sums])
@@ -167,17 +164,7 @@ async def costs(
             cost.opened_at, cost.trace_url = incident.opened_at, incident.trace_url
             cost.prompt_overrides = incident.prompt_overrides
         rows.append(cost)
-    day_rows = [DayCost(day=row.key, **_usage(row)) for row in await ledger.by_day(days)]
-    today = ledger.clock().date()
-    return CostView(
-        incidents=rows,
-        days=day_rows,
-        models=[ModelCost(model=row.key, **_usage(row)) for row in await ledger.by_model(days)],
-        models_today=[ModelCost(model=row.key, **_usage(row)) for row in await ledger.by_model(1)],
-        daily_cap_usd=parts.settings_store.budgets().daily_cost_usd,
-        spent_today_usd=await ledger.spent_today(),
-        unpriced_today=next((d.unpriced for d in day_rows if d.day == today), 0),
-    )
+    return CostView(incidents=rows)
 
 
 @router.get("/guard-log")

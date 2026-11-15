@@ -11,16 +11,7 @@ function stubRoutes(dev: Response) {
     if (path === "/api/dev") return dev;
     if (path === "/api/settings") return json(settingsView());
     if (path === "/api/dev/prompts") return json([prompt()]);
-    if (path.startsWith("/api/dev/costs"))
-      return json({
-        incidents: [],
-        days: [],
-        models: [],
-        models_today: [],
-        daily_cap_usd: 1,
-        spent_today_usd: 0,
-        unpriced_today: 0,
-      });
+    if (path.startsWith("/api/dev/costs")) return json({ incidents: [] });
     return json([]);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -98,16 +89,7 @@ describe("DevPanel", () => {
         return (init?.method === "PUT" ? puts : reads).shift() ?? json({}, 500);
       }
       if (path === "/api/dev/prompts") return json([prompt()]);
-      if (path.startsWith("/api/dev/costs"))
-        return json({
-          incidents: [],
-          days: [],
-          models: [],
-          models_today: [],
-          daily_cap_usd: 1,
-          spent_today_usd: 0,
-          unpriced_today: 0,
-        });
+      if (path.startsWith("/api/dev/costs")) return json({ incidents: [] });
       return json([]);
     });
     vi.stubGlobal("fetch", fetchMock);

@@ -11,23 +11,6 @@ import type { CostView } from "@/lib/api-types";
 import { setLanguage } from "@/lib/i18n";
 
 const COSTS: CostView = {
-  daily_cap_usd: 1,
-  spent_today_usd: 0.375,
-  unpriced_today: 2,
-  days: [
-    { day: "2026-11-03", calls: 1234, tokens_in: 15000, tokens_out: 1500, usd: 0.375, unpriced: 1 },
-  ],
-  models: [
-    {
-      model: "openai/gpt-6-luna",
-      calls: 1234,
-      tokens_in: 15000,
-      tokens_out: 1500,
-      usd: 0.375,
-      unpriced: 0,
-    },
-  ],
-  models_today: [],
   incidents: [
     {
       incident_id: "inc_shop",
@@ -37,11 +20,11 @@ const COSTS: CostView = {
       trace_url: null,
       prompt_overrides: {},
       models: ["claude-sonnet-5-5"],
-      calls: 1,
-      tokens_in: 1,
-      tokens_out: 1,
-      usd: 0,
-      unpriced: 0,
+      calls: 1234,
+      tokens_in: 15000,
+      tokens_out: 1500,
+      usd: 0.375,
+      unpriced: 1,
     },
   ],
 };
@@ -69,9 +52,7 @@ describe("the developer panel in German", () => {
         if (path === "/api/dev") return json({ enabled: true });
         if (path === "/api/settings") return json(settingsView());
         if (path === "/api/dev/prompts") return json([prompt()]);
-        if (path.startsWith("/api/dev/costs")) {
-          return json({ ...COSTS, days: [], unpriced_today: 0 });
-        }
+        if (path.startsWith("/api/dev/costs")) return json(COSTS);
         return json([]);
       }),
     );
@@ -91,23 +72,14 @@ describe("the developer panel in German", () => {
     await act(async () => setLanguage("de"));
     render(<CostTables costs={COSTS} />);
 
-    expect(
-      screen.getByText(
-        "Heute: $0,38 vom Tageslimit von $1,00. 2 Aufrufe heute haben keinen bekannten Preis und sind nicht in dieser Summe.",
-      ),
-    ).toBeVisible();
-    const day = within(screen.getByRole("table", { name: "Kosten pro Tag" }));
-    expect(day.getByText("1.234")).toBeVisible();
-    expect(day.getByText("15.000")).toBeVisible();
-    expect(day.getByText("$0,38 + 1 ohne Preis")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Nutzung" })).toHaveAttribute("href", "/usage");
     expect(screen.getByText(/Die Dollar-Beträge summieren nur/)).toBeVisible();
-    const models = within(screen.getByRole("table", { name: "Kosten pro Modell" }));
-    expect(models.getByText("openai/gpt-6-luna")).toBeVisible();
-    expect(models.getByText("Heute")).toBeVisible();
-    expect(models.getByText("keine")).toBeVisible();
     const incidents = within(screen.getByRole("table", { name: "Kosten pro Vorfall" }));
     expect(incidents.getByText("Modelle")).toBeVisible();
     expect(incidents.getByText("claude-sonnet-5-5")).toBeVisible();
+    expect(incidents.getByText("1.234")).toBeVisible();
+    expect(incidents.getByText("15.000")).toBeVisible();
+    expect(incidents.getByText("$0,38 + 1 ohne Preis")).toBeVisible();
   });
 
   it("names a guard entry's kind and time in German", async () => {
@@ -149,7 +121,7 @@ describe("the developer panel in German", () => {
       if (path === "/api/dev") return json({ enabled: true });
       if (path === "/api/dev/prompts") return json({ detail: "boom" }, 500);
       if (path === "/api/settings") return json({ detail: "boom" }, 500);
-      if (path.startsWith("/api/dev/costs")) return json({ ...COSTS, days: [], unpriced_today: 0 });
+      if (path.startsWith("/api/dev/costs")) return json(COSTS);
       return json([]);
     });
     vi.stubGlobal("fetch", fetchMock);
