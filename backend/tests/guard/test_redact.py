@@ -1552,3 +1552,85 @@ def test_json_with_a_pair_in_a_string_stays_json_and_hides_the_value(separators)
         out = redact_text(json.dumps(record, separators=separators))
         assert secret not in out
         assert json.loads(out) == {**record, "msg": "GET /cb?state=1&access_token=<redacted>"}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected", "count"),
+    [
+        ('{"password":null,"a":1}', '{"password":null,"a":1}', 0),
+        ('{"api_token":null,"a":1}', '{"api_token":null,"a":1}', 0),
+        ('{"password":false,"a":1}', '{"password":false,"a":1}', 0),
+        ('{"password":true}', '{"password":true}', 0),
+        ('{"password": null,"a":1}', '{"password": null,"a":1}', 0),
+        ('{"password":"","a":1}', '{"password":"","a":1}', 0),
+        ('{"token":"abcdefgh12","a":1}', '{"token":"<redacted>","a":1}', 1),
+        ('{"password":12345678,"a":1}', '{"password":<redacted>,"a":1}', 1),
+        ('{"password":-1.5e3,"a":1}', '{"password":<redacted>,"a":1}', 1),
+        ('[{"password":null},{"a":1}]', '[{"password":null},{"a":1}]', 0),
+        ('{"a":{"password":null}}', '{"a":{"password":null}}', 0),
+        ('{"a":{"pw":12345678}},"b":2', '{"a":{"pw":<redacted>}},"b":2', 1),
+    ],
+)
+def test_a_json_literal_under_a_secret_key_ends_at_the_next_member(text, expected, count):
+    """#593: `null`, `true`, `false` and a number end where compact JSON goes on, so the members
+    after them are kept; a number that is no small integer is hidden, it may be a PIN."""
+    assert redact_with_count(text) == (expected, count)
+    assert redact_with_count(expected) == (expected, 0)
+
+
+def test_many_json_literals_under_secret_keys_keep_the_line_and_hide_a_real_secret():
+    record = {f"password_{i}": None for i in range(8)} | {"api_key": "s3cretvalue", "z": 1}
+    out, count = redact_with_count(json.dumps(record, separators=(",", ":")))
+    assert json.loads(out) == {**record, "api_key": "<redacted>"}
+    assert count == 1 and redact_with_count(out) == (out, 0)
+
+
+@pytest.mark.parametrize(
+    ("text", "secret"),
+    [
+        ("password=1234,hunter2 x", "hunter2"),
+        ("password=null,hunter2", "hunter2"),
+        ("TOKEN: abc def", "abc"),
+        ("DB_PASSWORD=null,hunter2", "hunter2"),
+        ("password: 12,hunter2", "hunter2"),
+        ("  api_token: false,hunter2", "hunter2"),
+        ('"password":1234,hunter2', "hunter2"),
+        ('"password":null,hunter2', "hunter2"),
+        ('"password":12,34567', "34567"),
+        ('{"token":123abc,"a":1}', "abc"),
+        ('{"token":nullable,"a":1}', "able"),
+        ('{"token":1.2.3,"a":1}', ".3"),
+        ('{"token":null}x9secret', "x9secret"),
+        ("{'password':null,'hunter2'}", "hunter2"),
+    ],
+)
+def test_an_unquoted_secret_after_a_secret_key_is_still_hidden(text, secret):
+    """Only a literal after a quoted key and its colon, followed by more compact JSON, ends there;
+    anything else still runs to whitespace and is hidden whole."""
+    out = redact_text(text)
+    assert secret not in out
+    assert redact_with_count(out) == (out, 0)
+
+
+def test_a_long_json_line_keeps_the_members_after_each_literal_in_its_head_and_tail():
+    """A compact JSON line over 4,000 characters, as an MCP server returns it, is cut; the head
+    and tail it keeps lose nothing after a `null` under a secret key."""
+    record = {}
+    for i in range(400):
+        record[f"field_{i}"] = "v"
+        record[f"http_basic_auth_password_{i}"] = None
+    line = json.dumps(record, separators=(",", ":"))
+    out, count = redact_with_count(line)
+    head, note, tail = out.split("\n")
+    assert note.endswith("chars cut]") and count == 0
+    assert line.startswith(head) and line.endswith(tail)
+    assert len(head) > 1_500 and len(tail) > 1_500
+    assert tail in guard_text("logs", line)[0]
+
+
+@pytest.mark.parametrize(
+    "line", ['"token":1', '"token":null,', '{"token":1' + "}" * 3_000, '"token":null' + "}" * 500]
+)
+def test_json_literals_under_secret_keys_stay_linear(line):
+    repeated = (line * (3_900 // len(line) + 1))[:3_900]
+    assert_no_slower_than_benign("\n".join([repeated] * 120))

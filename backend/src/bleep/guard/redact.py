@@ -1472,12 +1472,23 @@ _CUT_NOTE_LINE = r"[^\[\]\n]{0,200}+\[… [0-9]+ chars cut\]\n"
 # A flow list's `]` ends the value when closers and at most one quote follow it, then whitespace or
 # the end; otherwise the value runs on to the next whitespace (`[aB3],xY9` is a password).
 _LIST_END = r"\](?:(?=[,;})\]]*+[\"']?(?:\s|\Z))|\S*+)"
+# `{"password":null,"a":1}`: a JSON literal (`null`, `true`, `false`, a number, or `<redacted>`
+# that a first pass put there) right after a quoted key's colon ends where compact JSON goes on,
+# at `,"` or at `}` and more closers before a comma, whitespace or the end, so the members after
+# it are read as pairs of their own (#593). Anything else after it (`"token":12,34`,
+# `"token":123abc`, `"token":nullable`) leaves the value running to whitespace, hidden whole.
+_JSON_LITERAL_VALUE = (
+    r"(?:(?<=\":)|(?<=\": ))"
+    r"(?:(?-i:-?[0-9]++(?:\.[0-9]++)?(?:[eE][+-]?[0-9]++)?|true|false|null)|<redacted>)"
+    r"(?=,\"|\}[}\]]*+(?:,|\s|\Z))"
+)
 # password=x, "password": "x y", password: x, [password] => x, SECRET_KEY_BASE=x, X-Api-Key: x,
 # api_keys: ["a", "b"]. The key is judged by `_is_secret_key`; the cheap lookahead keeps Python
 # out of unrelated pairs. An unquoted value runs to whitespace (so it fails safe on `&`, `,`,
 # quotes; `_end_in_string` gives back the closing quote of a string it sits in), a flow list to a
 # `]` that ends the value (`_LIST_END`, so compact JSON after a list goes too), or to the line's
-# end when it has no `]`. Neither starts with a cut note.
+# end when it has no `]`. Neither starts with a cut note. A JSON literal after a quoted key ends
+# where compact JSON goes on after it (`_JSON_LITERAL_VALUE`).
 #
 # A list left open at the end of its line runs on to its `]` over at most 20 lines, stepping over
 # a cut note, unless another `[` or `]` or a new log record comes first; each scan stops at the
@@ -1501,6 +1512,7 @@ _KEY_VALUE = re.compile(
     rf"(?:(?=[,;}})\]]*+[\"']?(?:\s|\Z|{_NEXT_KEY}))|(?:(?!{_NEXT_KEY})\S)*+)"
     rf"|\[[^\]\n]*+(?:{_LIST_END}|(?=\n|\Z))"
     rf"|<redacted>(?=[,;}})\]]*+[\"']?(?:\s|\Z|{_NEXT_KEY}))"
+    rf"|{_JSON_LITERAL_VALUE}"
     r"|[^\s\"'][^\s]*+)",
     _FLAGS,
 )
