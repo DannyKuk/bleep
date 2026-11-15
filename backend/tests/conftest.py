@@ -29,7 +29,7 @@ from bleep.schemas.shown import Shown
 from bleep.tools.docker_act import StepRefused
 from bleep.wiring import AppParts, build_parts
 from tests.langfuse_guard import langfuse_exports_blocked
-from tests.network_guard import take_violations
+from tests.network_guard import allow_network, take_violations
 
 
 @pytest.fixture(autouse=True)
@@ -48,12 +48,17 @@ def no_langfuse_exporter_left_running():
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(request, monkeypatch):
     """A connection or name lookup outside this machine fails the test it happens in, even from a
     thread that swallows the error (#602). A LangSmith client asks `/info` from a background
-    thread the moment it is built, so it is given the answer an unreachable API gets."""
+    thread the moment it is built, so it is given the answer an unreachable API gets. Only a test
+    marked `network` may reach out."""
     monkeypatch.setattr(LangSmithClient, "info", property(lambda self: LangSmithInfo()))
-    yield
+    if request.node.get_closest_marker("network"):
+        with allow_network():
+            yield
+    else:
+        yield
     assert not (attempts := take_violations()), f"network used in tests: {attempts}"
 
 

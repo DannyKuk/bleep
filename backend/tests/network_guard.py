@@ -3,13 +3,17 @@ fails where it is made, and the test that was running (or the one before it, for
 thread that outlived its test) fails at its end, because a thread swallows the error (#602).
 
 The patches are installed once for the process and stay, so a thread a test left behind is
-refused too. Loopback and unix sockets keep working.
+refused too. Loopback and unix sockets keep working. A test marked `network` (the opt-in one that
+downloads the real embedding model) may reach out: `allow_network` opens the guard for its run.
 """
 
 import ipaddress
 import socket
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 _violations: list[str] = []
+_open = 0
 
 
 class NetworkUsed(OSError):
@@ -46,14 +50,14 @@ def _address_host(sock: socket.socket, address: object) -> object:
 
 def _connect(self: socket.socket, address: object) -> None:
     host = _address_host(self, address)
-    if not _is_local(host):
+    if not _open and not _is_local(host):
         raise _refuse("connect to", host)
     return _real_connect(self, address)  # type: ignore[arg-type]
 
 
 def _connect_ex(self: socket.socket, address: object) -> int:
     host = _address_host(self, address)
-    if not _is_local(host):
+    if not _open and not _is_local(host):
         raise _refuse("connect to", host)
     return _real_connect_ex(self, address)  # type: ignore[arg-type]
 
@@ -62,7 +66,7 @@ def _getaddrinfo(host: object, *args: object, **kwargs: object):  # type: ignore
     # an IP literal, or a call that only parses one (asyncssh's), needs no lookup
     positional_flags = args[4] if len(args) > 4 else 0
     flags = int(kwargs.get("flags", positional_flags))  # type: ignore[call-overload]
-    if flags & socket.AI_NUMERICHOST:
+    if _open or flags & socket.AI_NUMERICHOST:
         return _real_getaddrinfo(host, *args, **kwargs)  # type: ignore[arg-type]
     try:
         ipaddress.ip_address(str(host).split("%")[0])
@@ -79,6 +83,16 @@ socket.getaddrinfo = _getaddrinfo  # type: ignore[assignment]
 
 def take_violations() -> list[str]:
     """The attempts since the last call, cleared."""
-    taken = list(_violations)
-    _violations.clear()
+    global _violations
+    taken, _violations = _violations, []
     return taken
+
+
+@contextmanager
+def allow_network() -> Iterator[None]:
+    global _open
+    _open += 1
+    try:
+        yield
+    finally:
+        _open -= 1

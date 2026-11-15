@@ -537,6 +537,7 @@ def test_the_local_embedder_loads_nothing_until_it_is_used():
     assert embedder._model is None
 
 
+@pytest.mark.network
 @pytest.mark.skipif(
     not os.environ.get("BLEEP_REAL_EMBEDDINGS"),
     reason="downloads and runs the real model; set BLEEP_REAL_EMBEDDINGS=1",

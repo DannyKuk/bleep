@@ -4,6 +4,7 @@ import threading
 
 import pytest
 
+from tests import network_guard
 from tests.network_guard import NetworkUsed, take_violations
 
 
@@ -41,3 +42,16 @@ def test_loopback_and_unix_sockets_keep_working():
     right.close()
     socket.getaddrinfo("localhost", 80)
     assert take_violations() == []
+
+
+@pytest.mark.network
+def test_a_test_marked_network_may_look_a_name_up(monkeypatch):
+    """The opt-in real-model test downloads from the hub; the lookup goes through to the stub."""
+    answer = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.9", 443))]
+    monkeypatch.setattr(network_guard, "_real_getaddrinfo", lambda *args, **kwargs: answer)
+    assert socket.getaddrinfo("huggingface.co", 443) == answer
+    assert take_violations() == []
+
+
+def test_the_network_is_closed_again_for_the_next_test():
+    assert not network_guard._open
