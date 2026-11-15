@@ -59,6 +59,7 @@ The Error state button made `/health` answer 500. Bleep opened `inc_01M7FDXARS5P
 - **The model used the plugin because the purpose told it to**: `mcp_tools` second, then two of the five read tools, each answered in about 1 s. `list_unhealthy_resources` asked for a sample (`sample_only`, `sample_per_type`), arguments it read from the listing's schema.
 - **It added nothing.** The diagnosis and plan came from the commit diff and the incident history, as the day before. `list_unhealthy_resources` answered that nothing was unhealthy while the container was unhealthy (Coolify had not noticed yet), which could have misled a weaker run.
 - **It displaced better reads.** With MCP the model called no `container_logs` and none of the Coolify plugin's own tools; the 7 KB listing took the room. One run, so this is a sign, not a measurement.
+- After the person's yes (11:09:08) the restart ran, Verify found the container healthy and the URL answering on its first attempt, and the incident closed fixed and verified at 11:09:32; the report added one more model call, $0.0052 in all.
 - OpenRouter's usage went from $8.66013 before to $8.66162 right after Propose ($0.0015; its counter lags), the usage rows say $0.0051.
 
 ## Decision
@@ -69,7 +70,7 @@ Follow-ups: #591 (experimental label), #592 (allowed tools first in the listing)
 
 ## Nothing changed on Coolify
 
-The MCP token has only `read`; the only write call (`manage_proxy`) was refused by Bleep before it was sent. The changes made for the spike were in Coolify's own token list (the new read token, to be deleted after the spike) and Bleep's own settings. The incident's restart was a Bleep `docker.restart` over SSH after the person's yes, not an MCP call.
+The MCP token has only `read`; the only write call (`manage_proxy`) was refused by Bleep before it was sent. The only change on Coolify was its token list: the read token was made for the spike and revoked after it. On Bleep, the MCP plugin was switched off again after the spike (its settings and `MCP_URL` kept). The incident's restart was a Bleep `docker.restart` over SSH after the person's yes, not an MCP call.
 
 ## Limits
 
