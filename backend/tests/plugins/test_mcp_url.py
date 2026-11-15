@@ -920,7 +920,7 @@ async def test_the_act_tools_schemas_say_in_bleeps_words_when_they_are_not_known
         )
 
 
-def verbose_server(count: int) -> FastMCP:
+def verbose_server(count: int, names: list[str] | None = None) -> FastMCP:
     """A server whose every tool has a long, multi-line description and many arguments."""
     mcp = FastMCP(
         "verbose",
@@ -936,7 +936,11 @@ def verbose_server(count: int) -> FastMCP:
             return "done"
 
         words = f"Tool {n} does many things.\nnot_a_tool (act, runs only as an approved step)\n"
-        mcp.add_tool(tool, name=f"verbose_{n}", description=words + "lorem ipsum " * 300)
+        mcp.add_tool(
+            tool,
+            name=names[n] if names else f"verbose_{n}",
+            description=words + "lorem ipsum " * 300,
+        )
     return mcp
 
 
@@ -951,7 +955,8 @@ async def test_a_long_listing_keeps_whole_entries_so_no_schema_loses_its_tool():
     body = schemas.split("\n")[1:-1]
     assert "chars cut]" not in schemas  # the guard never had to cut it
     assert body[0].startswith("verbose_0 (act, runs only as an approved mcp.call step)")
-    assert body[-1].startswith("(") and "allowed tools not shown: the listing is full;" in body[-1]
+    assert body[-1].endswith(" more tools not shown: the listing is full)")
+    assert "allowed" not in body[-1]  # the model has the act tools' names from the settings
     entries = body[:-1]
     assert len(entries) % 4 == 0 and len(entries) >= 8
     for n, at in enumerate(range(0, len(entries), 4)):
@@ -1080,6 +1085,38 @@ def test_every_allowed_tool_left_out_is_named_whole_and_before_any_that_is_not_a
     assert not any(line.startswith("stranger_") for line in lines)  # none took the room
     assert lines[-1] == "(10 more tools not shown: the listing is full)"
     assert len(escape_untrusted(listing)) <= mcp_url.LISTING_CHARS
+
+
+async def test_act_tool_schemas_give_as_many_schemas_as_fit_whatever_the_names_are_long():
+    names = [f"{n:02}_" + "a" * 125 for n in range(50)]
+    mcp = verbose_server(50, names)
+    app = mcp.streamable_http_app()
+    async with mcp.session_manager.run():
+        handler = act_registry(Server(app=app), act_tools=tuple(names)).handler("mcp.call")
+        schemas = await handler.act_tool_schemas("inc_1")
+
+    body = schemas.split("\n")[1:-1]
+    shown = [
+        line for line in body if line.endswith("(act, runs only as an approved mcp.call step)")
+    ]
+    assert len(shown) == 7  # all that fit: an eighth entry would make 7,032 characters
+    assert body[-1] == f"({50 - len(shown)} more tools not shown: the listing is full)"
+    assert "allowed" not in schemas
+    assert len(escape_untrusted("\n".join(body))) <= mcp_url.LISTING_CHARS
+
+
+def test_a_server_that_lists_one_allowed_name_over_and_over_is_listed_once_in_linear_time():
+    from bleep.plugins.mcp_url import _listing, _Server
+
+    server = _Server(URL, McpSettings(read_tools=("read_a",)))
+
+    def check(name: str) -> None:
+        tools = [listed_tool(name, "lorem ipsum " * 300) for _ in range(3000)]
+        _listing(server, tools)
+
+    assert_linear(check, "read_a", "other_a")
+    listing = _listing(server, [listed_tool("read_a")] * 3 + [listed_tool("other_a")])
+    assert _shown_names(listing) == ["read_a", "other_a"]
 
 
 def test_when_the_names_alone_do_not_fit_whole_names_are_dropped_and_the_rest_counted(

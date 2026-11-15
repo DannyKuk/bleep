@@ -467,32 +467,54 @@ def _count_line(count: int) -> str:
 
 def _allowed_left_line(names: list[str], room: int) -> str:
     """Every allowed tool left out, by its whole name, so the model can still call it. Only when
-    the names alone would not fit `room` are whole names dropped from the end and counted."""
+    the names alone would not fit `room` are whole names dropped from the end and counted.
+    One pass over the names, with running lengths."""
     word = "tool" if len(names) == 1 else "tools"
-    shown = list(names)
-    while True:
-        more = len(names) - len(shown)
-        tail = f", and {more} more" if more else ""
-        names_text = ", ".join(shown)
-        line = f"({len(names)} allowed {word} not shown: the listing is full; {names_text}{tail})"
-        if _size(line) <= room or not shown:
-            return line
-        shown.pop()
+    head = f"({len(names)} allowed {word} not shown: the listing is full; "
+    base = _size(head + ")")
+    sizes = [len(escape_untrusted(name)) + 2 for name in names]  # each with its ", "
+    if base + sum(sizes) - 2 <= room:
+        return head + ", ".join(names) + ")"
+    reserve = len(f"and {len(names)} more")
+    shown = 0
+    used = base + reserve
+    for size in sizes:
+        if used + size > room:
+            break
+        used += size
+        shown += 1
+    return head + ", ".join([*names[:shown], f"and {len(names) - shown} more"]) + ")"
 
 
-def _listing(server: _Server, tools: list[BaseTool]) -> str:
+def _distinct(tools: list[BaseTool]) -> list[BaseTool]:
+    """The first tool of each name: a server can list the same name again and again, and a
+    second entry says nothing more about it."""
+    first: dict[str, BaseTool] = {}
+    for tool in tools:
+        first.setdefault(tool.name, tool)
+    return list(first.values())
+
+
+def _listing(server: _Server, tools: list[BaseTool], *, name_allowed_left: bool = True) -> str:
     """Whole entries only, up to `LISTING_CHARS`, so no schema is left without its tool's name.
     The tools Bleep may run (read and act) go first, in the server's order, then the others fill
-    what is left. When something does not fit, the closing lines (the allowed tools left out,
-    by name; a count of the others) are paid for before any entry that is not allowed."""
+    what is left. When something does not fit, the closing lines are paid for before any entry
+    that is not allowed: the allowed tools left out by name (`name_allowed_left`) and a count of
+    the others. Without the names, every tool left out is only counted."""
     if not tools:
         return "(the server lists no tools)"
+    tools = _distinct(tools)
     allowed = [t for t in tools if server.kind(t) in ("read", "act")]
     rest = [t for t in tools if server.kind(t) not in ("read", "act")]
     entries = [_entry(server, t) for t in (*allowed, *rest)]
     sizes = [_size(e) for e in entries]
     if sum(sizes) <= LISTING_CHARS:
         return "\n".join(entries)
+
+    if not name_allowed_left:
+        fits = _fit(sizes, LISTING_CHARS - _size(_count_line(len(entries))))
+        shown = [e for e, fit in zip(entries, fits, strict=True) if fit]
+        return "\n".join([*shown, _count_line(fits.count(False))])
 
     count_cost = _size(_count_line(len(rest))) if rest else 0
     n = len(allowed)
@@ -705,7 +727,12 @@ class McpCall:
         acts = [t for t in tools if self.server.kind(t) == "act"]
         if not acts:
             return "not known: the MCP server lists none of these tools now"
-        return await _guard(self.server, self.guard_log, incident_id, _listing(self.server, acts))
+        return await _guard(
+            self.server,
+            self.guard_log,
+            incident_id,
+            _listing(self.server, acts, name_allowed_left=False),
+        )
 
     def _blocked(self, plan: ApprovalRecord, text: str) -> None:
         if self.guard_log is not None:
