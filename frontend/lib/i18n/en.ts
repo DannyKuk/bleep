@@ -662,6 +662,7 @@ export const en = {
   },
   login: {
     title: "Log in · Bleep",
+    tagline: "The on-call agent for your Docker hosts. Log in to see what it is watching.",
     password: "Password",
     submit: "Log in",
     wrongPassword: "wrong password",
