@@ -1576,6 +1576,12 @@ def test_json_with_a_pair_in_a_string_stays_json_and_hides_the_value(separators)
         ('{"pw":12345678}', '{"pw":<redacted>}', 1),
         ('{"pw":12345678} next', '{"pw":<redacted>} next', 1),
         ('{"password":null,"a b\\"c" :1}', '{"password":null,"a b\\"c" :1}', 0),
+        ('[{"password":null},{}]', '[{"password":null},{}]', 0),
+        ('[{"password":null},[]]', '[{"password":null},[]]', 0),
+        ('[{"password":null},["a","b"]]', '[{"password":null},["a","b"]]', 0),
+        ('[{"password":null},[-1.5,2]]', '[{"password":null},[-1.5,2]]', 0),
+        ('[{"password":null},[true]]', '[{"password":null},[true]]', 0),
+        ('[{"password":null},[{"a":1}]]', '[{"password":null},[{"a":1}]]', 0),
     ],
 )
 def test_a_json_literal_under_a_secret_key_ends_at_the_next_member(text, expected, count):
@@ -1621,6 +1627,14 @@ def test_many_json_literals_under_secret_keys_keep_the_line_and_hide_a_real_secr
         ('"password":null,"}hunter2', "hunter2"),
         ('"password": 12345678,"x9secret', "x9secret"),
         ('"password":null,"' + "a" * 200 + '":hunter2', "hunter2"),
+        ('"password":1},{hunter2', "hunter2"),
+        ('"password":1},[hunter2', "hunter2"),
+        ('"password":1},[1hunter2', "hunter2"),
+        ('"password":1},["hunter2', "hunter2"),
+        ('"password":1},[nullhunter2', "hunter2"),
+        ('"password":1},[[hunter2', "hunter2"),
+        ('"password":1},{}hunter2', "hunter2"),
+        ('"password":1},[]hunter2', "hunter2"),
     ],
 )
 def test_an_unquoted_secret_after_a_secret_key_is_still_hidden(text, secret):
@@ -1657,6 +1671,10 @@ def test_a_long_json_line_keeps_the_members_after_each_literal_in_its_head_and_t
         '"token":null,"' + "a" * 120,
         '"token":null,"a"' + ',"a"' * 900,
         '"token":null},"' + "\\x" * 60,
+        '"token":null},{"' + "a" * 120,
+        '"token":null},["' + "a" * 120,
+        '"token":null},[{"' + "a" * 120,
+        '"token":null},[' + "1" * 120,
     ],
 )
 def test_json_literals_under_secret_keys_stay_linear(line):
