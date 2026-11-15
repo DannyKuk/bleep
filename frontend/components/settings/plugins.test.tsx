@@ -1,10 +1,11 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { plugin } from "@/components/settings/fixtures";
 import { kindOf, PluginList } from "@/components/settings/plugins";
 import { ApiError } from "@/lib/api";
+import { setLanguage } from "@/lib/i18n";
 
 describe("PluginList", () => {
   it("builds the settings form from the schema and shows secrets only as set or missing", () => {
@@ -212,6 +213,34 @@ describe("PluginList", () => {
       { settings: { read_tools: ["caddy_config"], act_tools: [] } },
       "p1",
     );
+  });
+
+  it("marks an experimental plugin with a badge and a may-not-work line, and only that one", () => {
+    render(
+      <PluginList
+        plugins={[
+          plugin(),
+          plugin({ name: "mcp", title: "MCP server by URL", experimental: true }),
+        ]}
+        onSave={vi.fn()}
+      />,
+    );
+    const mcp = screen.getByRole("region", { name: "Plugin MCP server by URL" });
+    expect(within(mcp).getByText("Experimental")).toBeInTheDocument();
+    expect(within(mcp).getByTestId("experimental-icon")).toBeInTheDocument();
+    expect(within(mcp).getByText(/Tested live only against Coolify's own/)).toBeInTheDocument();
+    const coolify = screen.getByRole("region", { name: "Plugin Coolify" });
+    expect(within(coolify).queryByText("Experimental")).toBeNull();
+    expect(within(coolify).queryByTestId("experimental-icon")).toBeNull();
+    expect(within(coolify).queryByText(/may not work/)).toBeNull();
+  });
+
+  it("says the same in German", () => {
+    act(() => setLanguage("de"));
+    render(<PluginList plugins={[plugin({ experimental: true })]} onSave={vi.fn()} />);
+    expect(screen.getByText("Experimentell")).toBeInTheDocument();
+    expect(screen.getByText(/bei anderen funktioniert es womöglich nicht/)).toBeInTheDocument();
+    act(() => setLanguage("en"));
   });
 
   it("says when Bleep has no plugins", () => {
