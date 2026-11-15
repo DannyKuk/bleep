@@ -1473,14 +1473,16 @@ _CUT_NOTE_LINE = r"[^\[\]\n]{0,200}+\[… [0-9]+ chars cut\]\n"
 # the end; otherwise the value runs on to the next whitespace (`[aB3],xY9` is a password).
 _LIST_END = r"\](?:(?=[,;})\]]*+[\"']?(?:\s|\Z))|\S*+)"
 # `{"password":null,"a":1}`: a JSON literal (`null`, `true`, `false`, a number, or `<redacted>`
-# that a first pass put there) right after a quoted key's colon ends where compact JSON goes on,
-# at `,"` or at `}` and more closers before a comma, whitespace or the end, so the members after
-# it are read as pairs of their own (#593). Anything else after it (`"token":12,34`,
-# `"token":123abc`, `"token":nullable`) leaves the value running to whitespace, hidden whole.
+# that a first pass put there) right after a quoted key's colon ends where the next member starts:
+# a comma and a whole quoted key with its colon, or `}` and more closers before whitespace, the
+# end, or a comma and such a key, `{` or `[`. The members after it are then read as pairs of their
+# own (#593). Anything else after it (`"token":12,34`, `"token":123abc`, `"token":1,"x9secret"`,
+# `"token":1},s3cret`) leaves the value running to whitespace, hidden whole.
+_NEXT_JSON_KEY = r"\"(?:[^\"\\\n]|\\.){0,128}+\"[ \t]*+:"
 _JSON_LITERAL_VALUE = (
     r"(?:(?<=\":)|(?<=\": ))"
     r"(?:(?-i:-?[0-9]++(?:\.[0-9]++)?(?:[eE][+-]?[0-9]++)?|true|false|null)|<redacted>)"
-    r"(?=,\"|\}[}\]]*+(?:,|\s|\Z))"
+    rf"(?=,{_NEXT_JSON_KEY}|\}}[}}\]]*+(?:\s|\Z|,(?:{_NEXT_JSON_KEY}|[{{\[])))"
 )
 # password=x, "password": "x y", password: x, [password] => x, SECRET_KEY_BASE=x, X-Api-Key: x,
 # api_keys: ["a", "b"]. The key is judged by `_is_secret_key`; the cheap lookahead keeps Python
