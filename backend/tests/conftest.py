@@ -14,6 +14,8 @@ from dataclasses import dataclass
 
 import pytest
 from fastapi.testclient import TestClient
+from langsmith import Client as LangSmithClient
+from langsmith.schemas import LangSmithInfo
 from pydantic import SecretStr
 
 from bleep import prompts
@@ -27,6 +29,7 @@ from bleep.schemas.shown import Shown
 from bleep.tools.docker_act import StepRefused
 from bleep.wiring import AppParts, build_parts
 from tests.langfuse_guard import langfuse_exports_blocked
+from tests.network_guard import take_violations
 
 
 @pytest.fixture(autouse=True)
@@ -42,6 +45,16 @@ def no_langfuse_exporter_left_running():
     of the test, so its exporter never logs into another test (#602)."""
     with langfuse_exports_blocked():
         yield
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """A connection or name lookup outside this machine fails the test it happens in, even from a
+    thread that swallows the error (#602). A LangSmith client asks `/info` from a background
+    thread the moment it is built, so it is given the answer an unreachable API gets."""
+    monkeypatch.setattr(LangSmithClient, "info", property(lambda self: LangSmithInfo()))
+    yield
+    assert not (attempts := take_violations()), f"network used in tests: {attempts}"
 
 
 @pytest.fixture(autouse=True)

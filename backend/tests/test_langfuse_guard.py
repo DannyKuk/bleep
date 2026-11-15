@@ -22,7 +22,6 @@ def emit_sdk_span() -> None:
         "anthropic.messages.create", attributes={"gen_ai.provider.name": "anthropic"}
     ):
         pass
-    trace.get_tracer_provider().force_flush()
 
 
 def test_a_span_reaching_a_langfuse_exporter_fails_the_test_instead_of_the_network():

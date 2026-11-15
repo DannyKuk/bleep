@@ -15,6 +15,7 @@ from unittest import mock
 
 from langfuse._client.resource_manager import LangfuseResourceManager
 from langfuse._client.span_processor import LangfuseSpanProcessor
+from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace.export import SpanExportResult
 
@@ -54,11 +55,15 @@ def langfuse_exports_blocked() -> Iterator[list[str]]:
             yield sent
         finally:
             LangfuseResourceManager.reset()
+            provider = trace.get_tracer_provider()
+            if not isinstance(provider, trace.ProxyTracerProvider):
+                # spans a processor queued in a test that built no client of its own
+                provider.force_flush()
             for processor in processors:
                 processor.shutdown()
             _listening.remove(sent)
     if sent:
         raise LeakedExporter(
             f"a Langfuse exporter received spans and would have sent them to {sorted(set(sent))}: "
-            "a test left a tracer running (#602)"
+            "a tracer built in this test, or one an earlier test left running, exported them (#602)"
         )
