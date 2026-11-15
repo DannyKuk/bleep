@@ -1111,7 +1111,7 @@ def test_a_server_that_lists_one_allowed_name_over_and_over_is_listed_once_in_li
     server = _Server(URL, McpSettings(read_tools=("read_a",)))
 
     def check(name: str) -> None:
-        tools = [listed_tool(name, "lorem ipsum " * 300) for _ in range(3000)]
+        tools = [listed_tool(name, "lorem ipsum " * 300) for _ in range(8000)]
         _listing(server, tools)
 
     assert_linear(check, "read_a", "other_a")
