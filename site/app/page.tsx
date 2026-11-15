@@ -124,14 +124,11 @@ function Section({
 export default function Page() {
   return (
     <>
-      <header
-        id="top"
-        className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-4 pt-5 sm:px-6"
-      >
-        <a href="#top" className="flex items-center gap-2 text-lg font-extrabold">
+      <header className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-4 pt-5 sm:px-6">
+        <p className="flex items-center gap-2 text-lg font-extrabold">
           <Bleep mood="all_good" size={30} />
           Bleep
-        </a>
+        </p>
         <nav aria-label="Page" className="flex items-center gap-1 text-sm font-bold text-ink-2">
           <a href="#how" className="hidden rounded-full px-3 py-2 hover:bg-soft sm:block">
             How it works
