@@ -24,7 +24,7 @@ from bleep import prompts
 from bleep.config import Settings
 from bleep.graph.deps import Approvals
 from bleep.guard.log import GuardLogger
-from bleep.guard.titles import split_service_id, title_name
+from bleep.guard.titles import seen_since, split_service_id, title_name
 from bleep.incidents.bus import EventBus
 from bleep.incidents.quiet import QuietStore, quiet_target
 from bleep.incidents.repository import IncidentRepo, primary_signal, utcnow
@@ -500,27 +500,52 @@ class Notifier:
         return [(fmt.phrase("button_on_it", language=language), ON_IT_VERB)]
 
     async def _opening(self, incident: Incident, language: str) -> tuple[str, int | None]:
-        """The opener's head line, and the message it replies to: none for a new incident, the
-        previous incident's last message for a repeat (`Again`). A look the person asked for
-        (#403) is new, whatever came before it."""
+        """The opener's head line, and the message it replies to. A repeat of the same failure
+        (folded) is `Again`; a different incident within a day of the last one is `New` with how
+        long after; both reply to the previous incident's last message. A look the person asked
+        for (#403) is new, whatever came before it, and so is any other with nothing close
+        before it."""
         name = incident.short_name or incident.id
         before = await self.incidents.previous(incident) if self.incidents is not None else None
         if before is not None and before.closed_at is not None and not await self._asked(incident):
             gap = incident.opened_at - before.closed_at
-            if incident.fold_of is not None or gap < AGAIN_WITHIN:
+            earlier = before.short_name or before.id
+            head = None
+            if incident.fold_of is not None:
                 head = fmt.render(
                     "head_again",
                     language=language,
                     incident=name,
-                    after=fmt.duration(gap, language),
-                    earlier=before.short_name or before.id,
+                    earlier=await self._same_failure_as(incident, earlier),
+                    count=await self._times_seen(incident),
                 )
+            elif gap < AGAIN_WITHIN:
+                after = fmt.duration(gap, language)
+                head = fmt.render(
+                    "head_new_after", language=language, incident=name, after=after, earlier=earlier
+                )
+            if head is not None:
                 quoted = await self.messages.last_for(before.id) if self.messages else None
                 return fmt.bold_first_line(head), quoted
         host = incident.subject.kind == "host"
         where = fmt.phrase("where_host", language=language) if host else incident.subject.host_id
         head = fmt.render("head_new", language=language, incident=name, where=where)
         return fmt.bold_first_line(head), None
+
+    async def _same_failure_as(self, incident: Incident, fallback: str) -> str:
+        """The first incident of the failure's group, which the fold key says is the same
+        failure, even when another one came in between."""
+        root = None
+        if self.incidents is not None and incident.fold_of is not None:
+            root = await self.incidents.get(incident.fold_of)
+        return (root.short_name or root.id) if root is not None else fallback
+
+    async def _times_seen(self, incident: Incident) -> str:
+        """N of the title's "(seen N times since …)"; the group's size for a title without it."""
+        if (seen := seen_since(incident.title)) is not None:
+            return seen[0]
+        groups = await self.incidents.groups([incident]) if self.incidents is not None else {}
+        return str(groups[incident.id].count if incident.id in groups else 2)
 
     async def _asked(self, incident: Incident) -> bool:
         """Whether the person asked for the incident (#403), by the kind stored when it opened:
