@@ -108,6 +108,29 @@
   }
 }
 
+/* The sticky header: at the very top it is see-through, so the glow behind the replay is never cut
+   at its edge; once the page scrolls it fills in with the page colour, a line and a shadow. Where
+   the browser cannot tie an animation to the scroll position it is filled from the start. */
+@supports (animation-timeline: scroll()) {
+  .site-header {
+    animation: lift linear both;
+    animation-timeline: scroll();
+    animation-range: 0 64px;
+  }
+}
+@keyframes lift {
+  from {
+    background-color: transparent;
+    border-color: transparent;
+    box-shadow: none;
+  }
+  to {
+    background-color: var(--bg);
+    border-color: var(--line);
+    box-shadow: 0 8px 24px -18px rgb(40 30 120 / 0.35);
+  }
+}
+
 /* The replay's motion: Bleep's words pop in, each tool call slides in, and the yes button
    breathes while it waits. Reduced motion keeps the story and drops the movement. */
 .bubble {

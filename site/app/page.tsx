@@ -105,7 +105,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section id={id} className="mx-auto w-full max-w-6xl scroll-mt-8 px-4 py-16 sm:px-6 sm:py-24">
+    <section id={id} className="mx-auto w-full max-w-6xl scroll-mt-16 px-4 py-16 sm:px-6 sm:py-24">
       <h2 className="max-w-2xl text-3xl leading-tight font-extrabold tracking-tight text-balance sm:text-4xl">
         {title}
       </h2>
@@ -124,29 +124,31 @@ function Section({
 export default function Page() {
   return (
     <>
-      <header className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-4 pt-5 sm:px-6">
-        <p className="flex items-center gap-2 text-lg font-extrabold">
-          <Bleep mood="all_good" size={30} />
-          Bleep
-        </p>
-        <nav aria-label="Page" className="flex items-center gap-1 text-sm font-bold text-ink-2">
-          <a href="#how" className="hidden rounded-full px-3 py-2 hover:bg-soft sm:block">
-            How it works
+      <header className="site-header sticky top-0 z-40 border-b border-line bg-bg">
+        <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
+          <a href="#" className="flex items-center gap-2 text-lg font-extrabold">
+            <Bleep mood="all_good" size={30} />
+            Bleep
           </a>
-          <a href="#safety" className="hidden rounded-full px-3 py-2 hover:bg-soft sm:block">
-            Safety
-          </a>
-          <a
-            href={REPO}
-            className="rounded-full bg-ink px-4 py-2 text-bg transition-opacity hover:opacity-85"
-          >
-            GitHub
-          </a>
-        </nav>
+          <nav aria-label="Page" className="flex items-center gap-1 text-sm font-bold text-ink-2">
+            <a href="#how" className="hidden rounded-full px-3 py-2 hover:bg-soft sm:block">
+              How it works
+            </a>
+            <a href="#safety" className="hidden rounded-full px-3 py-2 hover:bg-soft sm:block">
+              Safety
+            </a>
+            <a
+              href={REPO}
+              className="rounded-full bg-ink px-4 py-2 text-bg transition-opacity hover:opacity-85"
+            >
+              GitHub
+            </a>
+          </nav>
+        </div>
       </header>
 
       <main>
-        <section className="mx-auto grid w-full max-w-6xl items-center gap-12 px-4 pt-14 pb-16 sm:px-6 lg:grid-cols-[1fr_1.1fr] lg:gap-14 lg:pt-20">
+        <section className="mx-auto grid w-full max-w-6xl items-center gap-12 px-4 pt-10 pb-16 sm:px-6 lg:grid-cols-[1fr_1.1fr] lg:gap-14 lg:pt-16">
           <div>
             <h1 className="text-[2.75rem] leading-[1.02] font-black tracking-[-0.03em] text-balance sm:text-6xl lg:text-[4.25rem]">
               The <span className="whitespace-nowrap">on-call</span> bot that asks before it fixes.
