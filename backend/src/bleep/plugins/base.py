@@ -47,7 +47,8 @@ class Plugin(ABC):
     `connection` names the address among them and the token sent to it: set from the dashboard,
     a new address clears the token (`store/secrets.py`). Tool
     names start with `<name>_` and act actions with `<name>.`, so a plugin can neither shadow a
-    core tool nor add a Docker action.
+    core tool nor add a Docker action. `experimental` marks one whose reach is only partly tested;
+    the dashboard says so.
     """
 
     name: ClassVar[str]
@@ -56,6 +57,7 @@ class Plugin(ABC):
     secrets: ClassVar[tuple[str, ...]] = ()
     optional_secrets: ClassVar[tuple[str, ...]] = ()
     connection: ClassVar[tuple[str, str] | None] = None
+    experimental: ClassVar[bool] = False
 
     @abstractmethod
     def tools(self, ctx: PluginContext) -> list[ToolSpec]:

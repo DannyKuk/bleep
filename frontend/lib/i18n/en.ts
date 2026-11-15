@@ -986,6 +986,9 @@ export const en = {
         `Switched on, but it does not run until ${names} is set, here or in .env (a value in .env needs a restart of Bleep).`,
       couldNotStart:
         "Switched on, but it could not be started; switch it off and on again to see why.",
+      experimental: "Experimental",
+      experimentalNote:
+        "Connects any MCP server over Streamable HTTP. Tested live only against Coolify's own, so it may not work with others.",
       healthy: "Healthy",
       unhealthy: "Unhealthy",
       switchOn: "Switch on",

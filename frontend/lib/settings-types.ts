@@ -205,6 +205,8 @@ export interface PluginSettingsSchema {
 export interface PluginView {
   name: string;
   title: string;
+  /** Only partly tested; the card says so. Set by the plugin itself, never guessed from its name. */
+  experimental: boolean;
   /** On and running: its tools and actions are in use. */
   enabled: boolean;
   /** The person's toggle as stored. On while `enabled` is off, the plugin is waiting: for a

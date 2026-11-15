@@ -983,6 +983,9 @@ export const de: Messages = {
         `Eingeschaltet, läuft aber erst, wenn ${names} gesetzt ist, hier oder in der .env (ein Wert in der .env braucht einen Neustart von Bleep).`,
       couldNotStart:
         "Eingeschaltet, konnte aber nicht gestartet werden; schalte es aus und wieder an, um den Grund zu sehen.",
+      experimental: "Experimentell",
+      experimentalNote:
+        "Verbindet jeden MCP-Server über Streamable HTTP. Nur mit dem von Coolify live getestet, bei anderen funktioniert es womöglich nicht.",
       healthy: "Gesund",
       unhealthy: "Nicht gesund",
       switchOn: "Einschalten",

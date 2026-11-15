@@ -699,6 +699,7 @@ class McpUrlPlugin(Plugin):
 
     name = NAME
     title = "MCP server by URL"
+    experimental = True
     settings_model = McpSettings
     secrets = (URL_ENV,)
     optional_secrets = (TOKEN_ENV,)
