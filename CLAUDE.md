@@ -47,6 +47,7 @@ backend/
   tests/           mirrors src/bleep/; fakes.py; fixtures/ holds recorded responses
   evals/           scenarios, runners, judges (real models; not part of pytest)
 frontend/          Next.js app
+site/              public landing page, static export (not part of docker compose)
 demo/              the demo stack (Compose, shop, worker, proxy, fault script)
 config/            hosts.example.yaml, hosts.demo.yaml
 docs/              architecture, setup, demo, design/, decisions/, evals/, spikes/

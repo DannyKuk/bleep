@@ -1,0 +1,10 @@
+# The build context is the repository root; only these parts of it go into the image.
+*
+!site/
+!frontend/components/bleep/
+!frontend/lib/
+!frontend/app/globals.css
+!frontend/app/icon.svg
+site/node_modules/
+site/.next/
+site/out/

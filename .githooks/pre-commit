@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The fast checks before every commit. Enable once per clone: git config core.hooksPath .githooks
-# The backend and frontend checks run only when the commit touches that folder; the docs check always.
+# The backend, frontend and site checks run only when the commit touches them; the docs check always.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -12,6 +12,11 @@ fi
 
 if grep -q '^frontend/' <<<"$staged"; then
   (cd frontend && npm run format:check && npm run lint && npm run typecheck)
+fi
+
+# The landing page also draws on the dashboard's Bleep, tokens and icon.
+if grep -qE '^site/|^frontend/(components/bleep/|lib/(mood|utils)\.ts|app/(globals\.css|icon\.svg))' <<<"$staged"; then
+  (cd site && npm run format:check && npm run lint && npm run typecheck)
 fi
 
 uv run --project backend python scripts/check_docs.py

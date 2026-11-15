@@ -1,0 +1,165 @@
+@import "tailwindcss";
+
+/* Bleep's drawing comes from the dashboard's component; Tailwind has to see its classes. */
+@source "../../frontend/components/bleep";
+
+@theme inline {
+  --font-sans: var(--font-nunito), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-soft: var(--soft);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-down: var(--down);
+  --color-down-bg: var(--down-bg);
+  --color-stop: var(--stop);
+  --color-stop-bg: var(--stop-bg);
+  --color-blob: var(--blob);
+  --color-hand: var(--hand);
+  --color-cup: var(--cup);
+  --color-screen: var(--screen);
+  --color-band: var(--band);
+
+  --radius-row: 20px;
+  --radius-card: 28px;
+}
+
+/* The dashboard's tokens (frontend/app/globals.css), the same values in both themes; a test in
+   lib/tokens.test.ts fails when the two files disagree. The page follows the system theme. */
+:root {
+  --bg: #f3f3fa;
+  --surface: #ffffff;
+  --soft: #eeedf8;
+  --line: #e2e1ef;
+  --ink: #1c1b33;
+  --ink-2: #5a5873;
+  --accent: #5847e0;
+  --accent-ink: #ffffff;
+  --ok: #1c7448;
+  --ok-bg: #e2f4ea;
+  --warn: #835400;
+  --warn-bg: #fbefd6;
+  --down: #be2f22;
+  --down-bg: #fde8e5;
+  --stop: #566075;
+  --stop-bg: #eceef3;
+  --blob: #b9afff;
+  --hand: #9f93f7;
+  --cup: #6b5ce7;
+  --screen: #27234a;
+  /* The safety band: Bleep's visor colour in light, a raised surface in dark, where the visor
+     colour is the page itself. */
+  --band: #27234a;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14132a;
+    --surface: #1d1c37;
+    --soft: #262447;
+    --line: #2e2c4e;
+    --ink: #eeedf9;
+    --ink-2: #aba9c8;
+    --accent: #a99eff;
+    --accent-ink: #14132a;
+    --ok: #66d6a3;
+    --ok-bg: color-mix(in srgb, var(--ok) 13%, var(--surface));
+    --warn: #f3c557;
+    --warn-bg: color-mix(in srgb, var(--warn) 13%, var(--surface));
+    --down: #ff8473;
+    --down-bg: color-mix(in srgb, var(--down) 14%, var(--surface));
+    --stop: #a9b1c3;
+    --stop-bg: color-mix(in srgb, var(--stop) 13%, var(--surface));
+    --blob: #9d92ff;
+    --hand: #b6adff;
+    --cup: #c4bcff;
+    --screen: #14122b;
+    --band: #1d1c37;
+  }
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-bg font-sans text-ink antialiased;
+  }
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+  ::selection {
+    background: var(--blob);
+    color: var(--screen);
+  }
+}
+
+/* The replay's motion: Bleep's words pop in, each tool call slides in, and the yes button
+   breathes while it waits. Reduced motion keeps the story and drops the movement. */
+.bubble {
+  animation: pop 320ms cubic-bezier(0.2, 0.9, 0.3, 1.25) both;
+  transform-origin: 0 0;
+}
+.bubble::before {
+  content: "";
+  position: absolute;
+  left: -7px;
+  top: 0;
+  width: 14px;
+  height: 14px;
+  background: inherit;
+  clip-path: polygon(100% 0, 0 0, 100% 100%);
+}
+.tool-line {
+  animation: slide 360ms ease-out both;
+}
+.yes {
+  animation: waiting 1.8s ease-in-out infinite;
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
+@keyframes slide {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+}
+@keyframes waiting {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .bubble,
+  .tool-line,
+  .yes {
+    animation: none;
+  }
+}
