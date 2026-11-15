@@ -44,3 +44,35 @@ BANNED:  a dark void with floating elements; glow, gradients, glass; a title ove
          in a corner; any number or label not from the run (or the staged history).
 QA:      frames at 1.0, 2.9, 4.5, 6.4, 8.5, 11.0, 12.5, 15.0, 16.5, 19.0, 21.5 and the
          transitions at 3.3, 6.7, 9.7, 17.7, the toggle at 19.2-20.1: captions inside title-safe, nothing clipped, readable at 830 px wide.
+
+## Round 2 (2026-11-15): the 60 s cut
+
+Owner's note on the 25 s cut: hard to understand what Bleep does; it jumps through and undersells.
+Causes: Bleep was named only in the last 4 s; each scene was ~3 s of dense UI, so the proof (tool
+calls, the cause, the checks) flew past unread; the captions were vague and left out the run's own
+numbers. Owner's answer: longer is fine, and the key parts may be taken out of the dashboard and
+drawn large, as long as the dashboard is still shown.
+
+So the rule "captures only, never redrawn" is dropped for the beats that must be read. Every drawn
+word is the run's own (events.json, incident.json, phone.json); only the short headline lines and
+captions are written for the film.
+
+TIME:    60.7 s. Music: HeyGen track 310662767a134b208b6bf1eb21f03efa, 122 bpm, its drop on "Meet
+         Bleep" (8.0 s; the track's drop is at 7.875 s).
+STAGES:  from 16.8 s to 47.8 s the incident page's own stage bar (Gather ... Report) sits on top,
+         drawn large, and moves on with the run.
+SHOTS:
+  1 hook        0.0-8.0   web-01's six containers; shop-db goes exited, shop-web unhealthy;
+                          "The shop's database just stopped."; Bleep's real first message lands.
+  2 intro       8.0-13.5  the bot (working pose), "Meet Bleep", "An on-call agent for your Docker
+                          hosts.", "This is what it did next, in a real run."
+  3 overview   13.5-16.8  the dashboard (captures); cursor clicks Follow along.
+  4 investigate 16.8-27.3 the incident page's capture scrolls in a window at left; five of the
+                          run's tool calls as cards at right, each with the line that mattered;
+                          a counter to 8 tool calls.
+  5 cause      27.3-35.8  shop-proxy -> shop-web -x- shop-db; "dependency", 98% sure; the
+                          report's cause sentence.
+  6 decide     35.8-42.8  the plan card and the phone (captures and phone.py), the yes click.
+  7 checks     42.8-47.8  "Ran docker.start shop-db"; the four checks tick; "Fixed and verified".
+  8 numbers    47.8-53.3  54 s, 8 tool calls, $0.003, 1 yes from you.
+  9 end        53.3-60.7  overview all quiet, the theme toggle, the end card (as before).

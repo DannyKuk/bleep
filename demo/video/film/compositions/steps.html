@@ -1,0 +1,111 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        #root {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+        }
+        /* The incident page's own stage bar (Gather ... Report), drawn large, so the viewer always
+           knows where in the loop Bleep is. */
+        .bar {
+          position: absolute;
+          left: 96px;
+          top: 44px;
+          width: 1290px;
+          height: 96px;
+          padding: 16px 18px 0;
+          border-radius: 26px;
+          background: #ffffff;
+          border: 2px solid #e2e1ef;
+          box-shadow: 0 14px 34px rgba(20, 19, 42, 0.1);
+          display: flex;
+          gap: 8px;
+        }
+        .step {
+          flex: 1;
+        }
+        .track {
+          position: relative;
+          height: 10px;
+          border-radius: 5px;
+          background: #e2e1ef;
+          overflow: hidden;
+        }
+        .track i {
+          position: absolute;
+          inset: 0;
+          border-radius: 5px;
+          transform-origin: 0 50%;
+          transform: scaleX(0);
+        }
+        .track .on {
+          background: #5847e0;
+        }
+        .track .done {
+          background: #1c7448;
+        }
+        .name {
+          margin-top: 12px;
+          font-size: 25px;
+          font-weight: 800;
+          letter-spacing: -0.01em;
+          color: #7f7d9c;
+          white-space: nowrap;
+          text-align: center;
+        }
+      </style>
+      <div id="root" data-composition-id="steps" data-width="1920" data-height="1080">
+        <div class="bar"></div>
+      </div>
+      <script>
+        (() => {
+          const root = document.querySelector('[data-composition-id="steps"]');
+          const names = ["Gather", "Investigate", "Diagnose", "Plan", "Your yes", "Fix", "Check", "Report"];
+          const bar = root.querySelector(".bar");
+          for (const n of names) {
+            const s = document.createElement("div");
+            s.className = "step";
+            s.innerHTML = `<div class="track"><i class="on"></i><i class="done"></i></div><div class="name" data-layout-ignore>${n}</div>`;
+            bar.appendChild(s);
+          }
+          const steps = [...root.querySelectorAll(".step")];
+          const tl = gsap.timeline({ paused: true });
+          tl.fromTo(bar, { y: -150 }, { y: 0, duration: 0.6, ease: "expo.out" }, 0);
+          const active = (i, at) => {
+            tl.to(steps[i].querySelector(".on"), { scaleX: 1, duration: 0.35, ease: "power2.out" }, at);
+            tl.to(steps[i].querySelector(".name"), { color: "#5847e0", duration: 0.2 }, at);
+          };
+          const done = (i, at) => {
+            tl.to(steps[i].querySelector(".done"), { scaleX: 1, duration: 0.3, ease: "power2.out" }, at);
+            tl.to(steps[i].querySelector(".name"), { color: "#1c7448", duration: 0.2 }, at);
+          };
+          // Times in this composition (it starts with the investigate scene).
+          tl.set(steps[0].querySelector(".done"), { scaleX: 1 }, 0);
+          tl.set(steps[0].querySelector(".name"), { color: "#1c7448" }, 0);
+          active(1, 0.3);
+          done(1, 10.5);
+          active(2, 10.5);
+          done(2, 19.0);
+          active(3, 19.0);
+          done(3, 20.3);
+          active(4, 20.3);
+          done(4, 21.6);
+          active(5, 21.6);
+          done(5, 21.8);
+          active(6, 21.8);
+          done(6, 29.6);
+          active(7, 29.6);
+          done(7, 30.4);
+          tl.to(bar, { y: -150, duration: 0.4, ease: "power2.in" }, 30.6);
+          window.__timelines["steps"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

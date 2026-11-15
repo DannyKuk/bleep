@@ -1,0 +1,200 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        #root {
+          position: absolute;
+          inset: 0;
+        }
+        /* The dashboard's incident page, the real capture, in a window at left. */
+        .window {
+          position: absolute;
+          left: 96px;
+          top: 176px;
+          width: 640px;
+          height: 690px;
+          border-radius: 28px;
+          overflow: hidden;
+          background: var(--page);
+          border: 2px solid var(--line);
+          box-shadow: 0 24px 60px rgba(20, 19, 42, 0.12);
+        }
+        .window .cam {
+          width: 2880px;
+        }
+        .window .cam img {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 2880px;
+        }
+        .tag {
+          position: absolute;
+          left: 800px;
+          top: 176px;
+          display: flex;
+          gap: 14px;
+          align-items: center;
+          font-size: 30px;
+          font-weight: 800;
+          color: var(--ink-2);
+        }
+        .tag b {
+          display: inline-block;
+          min-width: 36px;
+          padding: 4px 14px;
+          border-radius: 20px;
+          background: var(--accent);
+          color: #fff;
+          text-align: center;
+          font-variant-numeric: tabular-nums;
+        }
+        .cards {
+          position: absolute;
+          left: 800px;
+          top: 226px;
+          width: 1024px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .card {
+          padding: 12px 24px 14px;
+          border-radius: 24px;
+          background: var(--surface);
+          border: 2px solid var(--line);
+          box-shadow: 0 14px 34px rgba(20, 19, 42, 0.08);
+        }
+        .card-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: baseline;
+          gap: 20px;
+        }
+        .card-title {
+          font-size: 28px;
+          line-height: 34px;
+          font-weight: 800;
+        }
+        .tool {
+          font-family: "JetBrains Mono", monospace;
+          font-size: 19px;
+          font-weight: 600;
+          color: var(--ink-2);
+          white-space: nowrap;
+        }
+        .line {
+          margin-top: 8px;
+          padding: 7px 14px;
+          border-radius: 12px;
+          background: #fde2e2;
+          color: #8f1d14;
+          font-family: "JetBrains Mono", monospace;
+          font-size: 21px;
+          font-weight: 700;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .line.calm {
+          background: var(--soft);
+          color: var(--ink);
+        }
+      </style>
+      <div id="root" data-composition-id="investigate" data-width="1920" data-height="1080">
+        <div class="half light" data-layout-allow-overlap data-layout-allow-occlusion>
+          <div class="window">
+            <div class="cam">
+              <img data-shot="look1" class="st-1" alt="" />
+              <img data-shot="look2" class="st-2" alt="" />
+              <img data-shot="look3" class="st-3" alt="" />
+              <img data-shot="look4" class="st-4" alt="" />
+              <img data-shot="look5" class="st-5" alt="" />
+            </div>
+          </div>
+          <div class="tag">Tool calls <b class="count">0</b></div>
+          <!-- The run's own tool calls: the dashboard's sentence for each, and the line of the result
+               that mattered (events.json). -->
+          <div class="cards">
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title">I listed the containers on the host</div>
+                <div class="tool" data-layout-ignore>list_containers · 20:03:15</div>
+              </div>
+              <div class="line">shop-db | shop | exited | unhealthy | postgres:17-alpine</div>
+            </div>
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title">I looked at the host's recent Docker events</div>
+                <div class="tool" data-layout-ignore>recent_events · 20:03:17</div>
+              </div>
+              <div class="line">2026-11-15T20:02:48 container stop shop-db</div>
+            </div>
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title">I read a container's logs</div>
+                <div class="tool" data-layout-ignore>container_logs shop-db</div>
+              </div>
+              <div class="line">last line written 28 s ago (2026-11-15T20:02:48Z)</div>
+            </div>
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title">I looked closely at a container</div>
+                <div class="tool" data-layout-ignore>inspect_container shop-web</div>
+              </div>
+              <div class="line">health: unhealthy · exit 1: Traceback (most recent call last)</div>
+            </div>
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title">I looked at recent commits</div>
+                <div class="tool" data-layout-ignore>recent_commits · 20:03:23</div>
+              </div>
+              <div class="line calm">newest change to the shop: ff8e2c0, 2026-11-04</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <script>
+        (() => {
+          const root = document.querySelector('[data-composition-id="investigate"]');
+          const { all } = (() => {
+            for (const img of root.querySelectorAll("img[data-shot]")) {
+              img.src = `assets/shots/${img.dataset.shot}.light.jpg`;
+            }
+            return { all: (s) => [...root.querySelectorAll(s)] };
+          })();
+          const tl = gsap.timeline({ paused: true });
+          const cam = all(".window .cam");
+          // The "How I got there" column of the capture, scrolling as the calls come in.
+          const scale = 640 / 1010;
+          const at = (y) => ({ x: -236 * scale, y: -y * scale, scale, transformOrigin: "0 0" });
+          tl.set(cam, at(170), 0);
+          tl.set(all(".st-2, .st-3, .st-4, .st-5"), { opacity: 0 }, 0);
+          tl.to(cam, { ...at(860), duration: 1.2, ease: "power3.inOut" }, 0.3);
+          tl.to(cam, { ...at(2500), duration: 8.4, ease: "sine.inOut" }, 1.5);
+          [1.9, 3.7, 5.5, 7.3].forEach((t, i) => BF.swap(tl, all(`.st-${i + 2}`), all(`.st-${i + 1}`), t, 0.15));
+
+          // One card per call, the newest bright, the older ones stepping back.
+          const cards = all(".card");
+          tl.fromTo(all(".tag"), { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, 0.3);
+          const counts = [1, 3, 5, 6, 7];
+          cards.forEach((card, i) => {
+            const t = 0.6 + i * 1.8;
+            tl.fromTo(card, { opacity: 0, x: 80 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, t);
+            tl.fromTo(card.querySelector(".line"), { clipPath: "inset(0 100% 0 0)" }, { clipPath: "inset(0 0% 0 0)", duration: 0.5, ease: "power2.out" }, t + 0.35);
+            if (i > 0) tl.to(cards[i - 1], { opacity: 0.55, duration: 0.3 }, t);
+            tl.set(all(".count"), { textContent: counts[i] }, t);
+          });
+          tl.set(all(".count"), { textContent: 8 }, 9.0);
+          tl.fromTo(all(".count"), { scale: 1.35 }, { scale: 1, duration: 0.3, ease: "power2.out" }, 9.0);
+          tl.to(cards, { opacity: 1, duration: 0.3 }, 9.0);
+          window.__timelines["investigate"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>
