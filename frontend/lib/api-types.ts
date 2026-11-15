@@ -486,3 +486,105 @@ export interface GuardEntry {
   detail: string;
   at: string;
 }
+
+// The Usage page (#547: schemas/usage.py), read from `GET /api/usage?days=N`.
+
+export type UsageRange = 1 | 7 | 30 | 90;
+
+/** `unknown` is a row written before the ledger recorded the provider. */
+export type UsageProvider = "anthropic" | "openrouter" | "local" | "unknown";
+
+export interface UsageTotals {
+  /** The calls with a known cost only. */
+  cost_usd: number;
+  calls: number;
+  incident_calls: number;
+  chat_calls: number;
+  unpriced_calls: number;
+  /** Every call to a local model, which is free. */
+  local_calls: number;
+  /** The local calls whose model has no price entry. */
+  unpriced_local_calls: number;
+  /** Every input token; the cache reads and writes are parts of it. */
+  tokens_in: number;
+  tokens_out: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+}
+
+export interface ModelUsage {
+  model: string;
+  provider: UsageProvider;
+  calls: number;
+  tokens_in: number;
+  tokens_out: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  cost_usd: number;
+  unpriced_calls: number;
+}
+
+/** One local day's calls of one model; a day or model without a call has no row. */
+export interface DayUsage {
+  day: string;
+  model: string;
+  cost_usd: number;
+  incident_calls: number;
+  chat_calls: number;
+}
+
+export interface CostliestIncident {
+  incident_id: string;
+  /** Its short name, or its title for an incident opened before there were any. */
+  name: string;
+  cost_usd: number;
+}
+
+export interface IncidentUsage {
+  count: number;
+  /** Over the incidents with a priced call; null when none has one. */
+  average_cost_usd: number | null;
+  most_expensive: CostliestIncident | null;
+}
+
+export interface IncidentEndings {
+  outcomes: Record<Outcome, number>;
+  failed: number;
+  open: number;
+  /** Finished with no report, or a report whose outcome is none of the fixed ones. */
+  other: number;
+}
+
+/** Steps in the action log by action and status (`started`, `done`, `failed`, `skipped`). */
+export interface ActionCount {
+  action: string;
+  status: string;
+  count: number;
+}
+
+export interface GuardCount {
+  kind: string;
+  count: number;
+}
+
+/** Today against the daily caps, whatever the range. */
+export interface TodayCaps {
+  spent_usd: number;
+  daily_cap_usd: number;
+  chat_spent_usd: number;
+  chat_daily_cap_usd: number;
+}
+
+export interface UsageView {
+  days: UsageRange;
+  /** The server's local today, "2026-11-13": the last day of the range. */
+  through: string;
+  totals: UsageTotals;
+  models: ModelUsage[];
+  per_day: DayUsage[];
+  incidents: IncidentUsage;
+  endings: IncidentEndings;
+  actions: ActionCount[];
+  guard: GuardCount[];
+  today: TodayCaps;
+}

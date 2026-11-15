@@ -18,6 +18,7 @@ import {
   telegram,
 } from "@/components/settings/fixtures";
 import { SettingsPage } from "@/components/settings/settings-page";
+import { UsagePage } from "@/components/usage/usage-page";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
@@ -107,6 +108,19 @@ describe("the incidents list", () => {
     backend(() => "down");
     withHeader(<IncidentList />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not load incidents");
+  });
+});
+
+describe("the usage page", () => {
+  it("is loading, then says so when the backend is down", async () => {
+    backend((path) => (path.startsWith("/api/usage") ? "pending" : undefined));
+    const { unmount } = render(<UsagePage />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading the usage");
+    unmount();
+
+    backend(() => "down");
+    render(<UsagePage />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not load the usage");
   });
 });
 

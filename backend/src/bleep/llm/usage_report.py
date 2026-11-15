@@ -43,7 +43,8 @@ async def usage_report(
     """Everything in the last `days` local days (1 is today); the caps are always today's.
     `guard_counts` answers how many entries each kind has in the guard log from a local day on
     (`GuardLog.counts_since`, which first waits for the writes in flight)."""
-    first = (ledger.clock().date() - timedelta(days=days - 1)).isoformat()
+    through = ledger.clock().date()
+    first = (through - timedelta(days=days - 1)).isoformat()
     guard = [GuardCount(kind=k, count=n) for k, n in (await guard_counts(first)).items()]
     conn = await ledger.db.connect()
     try:
@@ -56,6 +57,7 @@ async def usage_report(
         await conn.close()
     return UsageView(
         days=days,
+        through=through.isoformat(),
         totals=totals,
         models=models,
         per_day=per_day,

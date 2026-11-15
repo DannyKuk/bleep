@@ -28,6 +28,14 @@
   --color-hand: var(--hand);
   --color-cup: var(--cup);
   --color-screen: var(--screen);
+  --color-viz-1: var(--viz-1);
+  --color-viz-2: var(--viz-2);
+  --color-viz-3: var(--viz-3);
+  --color-viz-4: var(--viz-4);
+  --color-viz-5: var(--viz-5);
+  --color-viz-6: var(--viz-6);
+  --color-viz-7: var(--viz-7);
+  --color-viz-8: var(--viz-8);
 
   /* The names the existing components use, mapped onto the tokens above. */
   --color-background: var(--bg);
@@ -85,6 +93,21 @@
   --cup: #6b5ce7;
   --screen: #27234a;
 
+  /* Chart series, in the order a model takes them; this order keeps each neighbouring pair apart
+     for colour-blind readers (checked with the dataviz palette validator on both surfaces). */
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-4: #eda100;
+  --viz-5: #e87ba4;
+  --viz-6: #008300;
+  --viz-7: #6250d6;
+  --viz-8: #e34948;
+  /* Neutrals no model takes: the models past the eighth, and the calls chart's two series. */
+  --viz-other: #8e8da8;
+  --viz-incidents: #1c1b33;
+  --viz-chat: #5a5873;
+
   --health-ok: var(--ok);
   --health-ok-bg: var(--ok-bg);
   --health-degraded: var(--warn);
@@ -118,6 +141,18 @@
   --hand: #b6adff;
   --cup: #c4bcff;
   --screen: #14122b;
+
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-3: #199e70;
+  --viz-4: #c98500;
+  --viz-5: #d55181;
+  --viz-6: #008300;
+  --viz-7: #9085e9;
+  --viz-8: #e66767;
+  --viz-other: #6e6c98;
+  --viz-incidents: #eeedf9;
+  --viz-chat: #aba9c8;
 }
 
 @layer base {

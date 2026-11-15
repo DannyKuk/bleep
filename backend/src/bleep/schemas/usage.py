@@ -108,6 +108,7 @@ class TodayCaps(BaseModel):
 
 class UsageView(BaseModel):
     days: UsageRange
+    through: str  # YYYY-MM-DD: the machine's local today, the last day of the range
     totals: UsageTotals
     models: list[ModelUsage]
     per_day: list[DayUsage]

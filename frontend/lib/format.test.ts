@@ -1,6 +1,35 @@
 import { describe, expect, it } from "vitest";
 
-import { formatCount, formatDateTime, formatSince, formatTime } from "@/lib/format";
+import {
+  formatCompact,
+  formatCount,
+  formatDateTime,
+  formatDollars,
+  formatShare,
+  formatSince,
+  formatTime,
+} from "@/lib/format";
+
+describe("the usage numbers", () => {
+  it("writes dollars with four decimals below a cent, in either language", () => {
+    expect(formatDollars(0.375, "en")).toBe("$0.38");
+    expect(formatDollars(0.0042, "en")).toBe("$0.0042");
+    expect(formatDollars(0, "en")).toBe("$0.00");
+    expect(formatDollars(0.375, "de")).toBe("$0,38");
+  });
+
+  it("shortens a large count", () => {
+    expect(formatCompact(9_999, "en")).toBe("9,999");
+    expect(formatCompact(34_000, "en")).toBe("34K");
+    expect(formatCompact(1_200_000, "en")).toBe("1.2M");
+    expect(formatCompact(1_200_000, "de")).toMatch(/^1,2\s?M(io\.)?$/);
+  });
+
+  it("writes a share, and 0% of nothing", () => {
+    expect(formatShare(1, 4, "en")).toBe("25%");
+    expect(formatShare(1, 0, "en")).toBe("0%");
+  });
+});
 
 /** A local wall-clock time, as the ISO string the API sends. */
 const local = (y: number, m: number, d: number, h: number, min: number) =>
