@@ -1,8 +1,8 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { LoginForm } from "@/components/login-form";
+import { DOUBT_MS, LoginForm } from "@/components/login-form";
 import { setLanguage } from "@/lib/i18n";
 
 const replace = vi.fn();
@@ -62,6 +62,61 @@ describe("LoginForm", () => {
     render(<LoginForm next="//evil.test" />);
     await submit();
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
+  });
+});
+
+function mood(): string | null {
+  return document.querySelector("svg[data-mood]")?.getAttribute("data-mood") ?? null;
+}
+
+describe("Bleep on the login page", () => {
+  beforeEach(() => {
+    replace.mockReset();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("rests, works while the login is checked, and doubts a wrong password for a moment", async () => {
+    let answer: (response: Response) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>((resolve) => (answer = resolve))),
+    );
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<LoginForm next="/" />);
+    expect(mood()).toBe("resting");
+
+    await user.type(screen.getByLabelText(/password/i), "pw");
+    await user.click(screen.getByRole("button", { name: /log in/i }));
+    expect(mood()).toBe("working");
+
+    await act(async () =>
+      answer(
+        new Response(JSON.stringify({ detail: "wrong password" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("wrong password");
+    expect(mood()).toBe("not_sure");
+
+    act(() => vi.advanceTimersByTime(DOUBT_MS));
+    expect(mood()).toBe("resting");
+    expect(screen.getByRole("alert")).toHaveTextContent("wrong password");
+  });
+
+  it("rests again as soon as the person types", async () => {
+    reply(401, { detail: "wrong password" });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<LoginForm next="/" />);
+    await user.type(screen.getByLabelText(/password/i), "pw");
+    await user.click(screen.getByRole("button", { name: /log in/i }));
+    await screen.findByRole("alert");
+    expect(mood()).toBe("not_sure");
+
+    await user.type(screen.getByLabelText(/password/i), "x");
+    expect(mood()).toBe("resting");
   });
 });
 

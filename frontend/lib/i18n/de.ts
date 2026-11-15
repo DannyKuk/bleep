@@ -651,6 +651,8 @@ export const de: Messages = {
   },
   login: {
     title: "Anmelden · Bleep",
+    tagline:
+      "Der Bereitschaftsagent für deine Docker-Hosts. Melde dich an, um zu sehen, was er beobachtet.",
     password: "Passwort",
     submit: "Anmelden",
     wrongPassword: "falsches Passwort",
