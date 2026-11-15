@@ -84,8 +84,6 @@ REQUIRED_CHARS = 200  # the names of a tool's required arguments, at most
 # The whole listing, measured as the guard will escape it, so `guard_text` (which keeps the tail
 # past MAX_CHARS) never cuts into it; the margin covers what redaction can add.
 LISTING_CHARS = MAX_CHARS - 1000
-LEFT_NAMES_CHARS = 500  # the names of the allowed tools left out, at most
-CLOSING_CHARS = LEFT_NAMES_CHARS + 150  # kept free of entries for the lines that close the listing
 MAX_BYTES = 2_000_000  # of one HTTP answer, counted before any decompression
 
 PURPOSE_CHARS = 200  # one sentence on what the server is for; it is read on every Investigate round
@@ -444,52 +442,80 @@ def _entry(server: _Server, tool: BaseTool) -> str:
     )
 
 
+def _size(text: str) -> int:
+    """What a listing line takes of `LISTING_CHARS`: escaped as the guard will, plus its break."""
+    return len(escape_untrusted(text)) + 1
+
+
+def _fit(sizes: list[int], budget: int) -> list[bool]:
+    """Which entries go in, in order: one that does not fit is skipped, a later smaller one may
+    still go in."""
+    used = 0
+    fits = []
+    for size in sizes:
+        fit = used + size <= budget
+        if fit:
+            used += size
+        fits.append(fit)
+    return fits
+
+
+def _count_line(count: int) -> str:
+    word = "tool" if count == 1 else "tools"
+    return f"({count} more {word} not shown: the listing is full)"
+
+
+def _allowed_left_line(names: list[str], room: int) -> str:
+    """Every allowed tool left out, by its whole name, so the model can still call it. Only when
+    the names alone would not fit `room` are whole names dropped from the end and counted."""
+    word = "tool" if len(names) == 1 else "tools"
+    shown = list(names)
+    while True:
+        more = len(names) - len(shown)
+        tail = f", and {more} more" if more else ""
+        names_text = ", ".join(shown)
+        line = f"({len(names)} allowed {word} not shown: the listing is full; {names_text}{tail})"
+        if _size(line) <= room or not shown:
+            return line
+        shown.pop()
+
+
 def _listing(server: _Server, tools: list[BaseTool]) -> str:
-    """Whole entries only, up to `LISTING_CHARS` less the room for the closing lines, so no
-    schema is left without its tool's name. The tools Bleep may run (read and act) go first, in
-    the server's order, then the others fill what is left; an entry that does not fit is
-    skipped, a later smaller one may still go in. The closing lines name the allowed tools left
-    out and count the others."""
+    """Whole entries only, up to `LISTING_CHARS`, so no schema is left without its tool's name.
+    The tools Bleep may run (read and act) go first, in the server's order, then the others fill
+    what is left. When something does not fit, the closing lines (the allowed tools left out,
+    by name; a count of the others) are paid for before any entry that is not allowed."""
     if not tools:
         return "(the server lists no tools)"
     allowed = [t for t in tools if server.kind(t) in ("read", "act")]
     rest = [t for t in tools if server.kind(t) not in ("read", "act")]
-    entries: list[str] = []
-    allowed_left: list[str] = []
-    others_left = 0
-    used = 0
-    for tool in (*allowed, *rest):
-        entry = _entry(server, tool)
-        size = len(escape_untrusted(entry)) + 1
-        if used + size > LISTING_CHARS - CLOSING_CHARS:
-            if tool in allowed:
-                allowed_left.append(_cut(tool.name, NAME_CHARS))
-            else:
-                others_left += 1
-            continue
-        entries.append(entry)
-        used += size
-    if allowed_left:
-        entries.append(_allowed_left_line(allowed_left))
-    if others_left:
-        tools_word = "tool" if others_left == 1 else "tools"
-        entries.append(f"({others_left} more {tools_word} not shown: the listing is full)")
-    return "\n".join(entries)
+    entries = [_entry(server, t) for t in (*allowed, *rest)]
+    sizes = [_size(e) for e in entries]
+    if sum(sizes) <= LISTING_CHARS:
+        return "\n".join(entries)
 
-
-def _allowed_left_line(names: list[str]) -> str:
-    """The names of the allowed tools left out, as many as fit `LEFT_NAMES_CHARS`."""
-    shown: list[str] = []
-    used = 0
-    for name in names:
-        used += len(escape_untrusted(name)) + 2
-        if used > LEFT_NAMES_CHARS:
+    count_cost = _size(_count_line(len(rest))) if rest else 0
+    n = len(allowed)
+    names_cost = 0
+    while True:
+        fits = _fit(sizes[:n], LISTING_CHARS - count_cost - names_cost)
+        left = [t.name for t, fit in zip(allowed, fits, strict=True) if not fit]
+        names_line = _allowed_left_line(left, LISTING_CHARS - count_cost) if left else ""
+        cost = _size(names_line) if names_line else 0
+        if cost <= names_cost:
             break
-        shown.append(name)
-    more = len(names) - len(shown)
-    tail = f", and {more} more" if more else ""
-    word = "tool" if len(names) == 1 else "tools"
-    return f"({len(names)} allowed {word} not shown: the listing is full; {', '.join(shown)}{tail})"
+        names_cost = cost
+
+    room = LISTING_CHARS - cost - sum(s for s, fit in zip(sizes[:n], fits, strict=True) if fit)
+    rest_fits = _fit(sizes[n:], room)
+    if not all(rest_fits):
+        rest_fits = _fit(sizes[n:], room - count_cost)
+    shown = [e for e, fit in zip(entries, [*fits, *rest_fits], strict=True) if fit]
+    if names_line:
+        shown.append(names_line)
+    if not all(rest_fits):
+        shown.append(_count_line(rest_fits.count(False)))
+    return "\n".join(shown)
 
 
 def _guarded(server: _Server, text: str) -> tuple[str, int]:
