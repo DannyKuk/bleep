@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        #root {
+          position: absolute;
+          inset: 0;
+        }
+      </style>
+      <div id="root" data-composition-id="overview" data-width="1920" data-height="1080">
+        <div class="half dark" data-layout-allow-overlap data-layout-allow-occlusion>
+          <div class="cam">
+            <img data-shot="quiet" class="st-quiet" alt="" />
+            <img data-shot="watching" class="st-watching" alt="" />
+            <img data-shot="down" class="st-down" alt="" />
+          </div>
+          <div class="cursor">
+            <div class="ring"></div>
+            <svg class="press" viewBox="0 0 32 32">
+              <path
+                d="M3 2 L3 25 L9 19.5 L13 29 L17.2 27.2 L13.3 18 L21 18 Z"
+                fill="#ffffff"
+                stroke="#1c1b33"
+                stroke-width="1.8"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+        </div>
+      </div>
+      <script>
+        (() => {
+          const root = document.querySelector('[data-composition-id="overview"]');
+          const { all } = BF.split(root);
+          const tl = gsap.timeline({ paused: true });
+          const cams = all(".cam");
+          // Straight on the incident: the dashboard's home says what Bleep is doing. A slow drift,
+          // the cursor clicks Follow along, and the film cuts to the investigation.
+          tl.set(all(".st-quiet, .st-watching"), { opacity: 0 }, 0);
+          const start = { x: 1300, y: 640, w: 2500 };
+          const end = { x: 1250, y: 620, w: 2300 };
+          BF.cam(tl, cams, start, 0);
+          BF.cam(tl, cams, end, 0, 2.6, "sine.inOut");
+          const follow = BF.onFrame(end, 927, 574);
+          BF.cursorTo(tl, all(".cursor"), { x: 1500, y: 1180 }, follow, 1.8, 2.8);
+          window.__timelines["overview"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

@@ -1,0 +1,219 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        #root {
+          position: absolute;
+          inset: 0;
+        }
+        .when {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 120px;
+          text-align: center;
+          font-family: "JetBrains Mono", monospace;
+          font-size: 30px;
+          font-weight: 600;
+          color: var(--ink-2);
+        }
+        .headline {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 168px;
+          text-align: center;
+          font-size: 76px;
+          font-weight: 900;
+          letter-spacing: -0.02em;
+        }
+        .host {
+          position: absolute;
+          left: 440px;
+          top: 300px;
+          width: 1040px;
+          padding: 30px 34px 20px;
+          border-radius: 30px;
+          background: var(--surface);
+          border: 2px solid var(--line);
+          box-shadow: 0 20px 50px rgba(20, 19, 42, 0.08);
+        }
+        .host-name {
+          font-size: 40px;
+          font-weight: 900;
+          margin-bottom: 14px;
+        }
+        .host-name span {
+          font-size: 28px;
+          font-weight: 700;
+          color: var(--ink-2);
+          margin-left: 10px;
+        }
+        .row {
+          position: relative;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          height: 88px;
+          padding: 0 26px;
+          margin-bottom: 12px;
+          border-radius: 18px;
+          background: var(--page);
+          font-family: "JetBrains Mono", monospace;
+          font-size: 36px;
+          font-weight: 600;
+        }
+        .row .tint {
+          position: absolute;
+          inset: 0;
+          border-radius: 18px;
+          background: #fde2e2;
+          opacity: 0;
+        }
+        .row .tint.warn {
+          background: #fdf0d5;
+        }
+        .row > span {
+          position: relative;
+        }
+        .chip {
+          position: relative;
+          width: 270px;
+          height: 60px;
+          font-family: "Nunito", sans-serif;
+          font-size: 32px;
+          font-weight: 800;
+        }
+        .chip div {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 30px;
+        }
+        .ok {
+          background: #dff3e8;
+          color: #1c7448;
+        }
+        .bad {
+          background: #fbd5d5;
+          color: #b42318;
+          opacity: 0;
+        }
+        .warn-chip {
+          background: #fbe7bf;
+          color: #8a5300;
+          opacity: 0;
+        }
+        .note {
+          position: absolute;
+          left: 380px;
+          top: 40px;
+          width: 1160px;
+          padding: 30px 36px;
+          border-radius: 30px;
+          background: rgba(255, 255, 255, 0.97);
+          box-shadow:
+            0 30px 70px rgba(20, 19, 42, 0.22),
+            0 4px 14px rgba(20, 19, 42, 0.12);
+          display: flex;
+          gap: 22px;
+          align-items: flex-start;
+        }
+        .note svg {
+          flex: none;
+          width: 96px;
+          height: 96px;
+          border-radius: 24px;
+          background: #eeedf8;
+        }
+        .note-top {
+          display: flex;
+          justify-content: space-between;
+          font-size: 28px;
+          font-weight: 700;
+          color: var(--ink-2);
+        }
+        .note-title {
+          font-size: 40px;
+          font-weight: 900;
+          margin-top: 4px;
+        }
+        .note-text {
+          font-size: 36px;
+          font-weight: 600;
+          line-height: 1.3;
+          margin-top: 4px;
+        }
+      </style>
+      <div id="root" data-composition-id="hook" data-width="1920" data-height="1080">
+        <div class="half light" data-layout-allow-overlap data-layout-allow-occlusion>
+          <div class="when">web-01 · 20:02:48</div>
+          <div class="headline">The shop's database just stopped.</div>
+          <div class="host">
+            <div class="host-name">web-01 <span>6 containers</span></div>
+            <div class="row"><span>edge-proxy</span><div class="chip"><div class="ok">running</div></div></div>
+            <div class="row"><span>docs-site</span><div class="chip"><div class="ok">running</div></div></div>
+            <div class="row"><span>shop-proxy</span><div class="chip"><div class="ok">running</div></div></div>
+            <div class="row"><span>shop-worker</span><div class="chip"><div class="ok">running</div></div></div>
+            <div class="row r-web">
+              <div class="tint warn"></div>
+              <span>shop-web</span>
+              <div class="chip"><div class="ok">healthy</div><div class="warn-chip">unhealthy</div></div>
+            </div>
+            <div class="row r-db">
+              <div class="tint"></div>
+              <span>shop-db</span>
+              <div class="chip"><div class="ok">healthy</div><div class="bad">exited</div></div>
+            </div>
+          </div>
+          <!-- Bleep's real first message for this incident (demo/video/phone.py). -->
+          <div class="note">
+            <svg viewBox="0 0 120 120" aria-hidden="true">
+              <rect x="14" y="24" width="92" height="74" rx="34" fill="#b9afff" />
+              <rect x="25" y="40" width="70" height="40" rx="20" fill="#27234A" />
+              <path d="M45 60h0 M75 60h0" fill="none" stroke="#7CF2B8" stroke-width="18" stroke-linecap="round" />
+            </svg>
+            <div>
+              <div class="note-top"><span>Bleep</span><span>now</span></div>
+              <div class="note-title"></div>
+              <div class="note-text"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <script>
+        (() => {
+          const root = document.querySelector('[data-composition-id="hook"]');
+          const opener = window.BLEEP_PHONE[0].html.split("<br>");
+          root.querySelector(".note-title").innerHTML = opener[0].replace(/<\/?b>/g, "");
+          root.querySelector(".note-text").innerHTML = opener[1];
+          const tl = gsap.timeline({ paused: true });
+          const q = (s) => root.querySelectorAll(s);
+          tl.fromTo(q(".half"), { scale: 1 }, { scale: 1.05, duration: 8, ease: "sine.inOut", transformOrigin: "50% 40%" }, 0);
+          // shop-db stops.
+          tl.to(q(".r-db .ok"), { opacity: 0, duration: 0.12 }, 0.75);
+          tl.fromTo(q(".r-db .bad"), { opacity: 0, scale: 0.7 }, { opacity: 1, scale: 1, duration: 0.35, ease: "back.out(2.5)" }, 0.75);
+          tl.to(q(".r-db .tint"), { opacity: 1, duration: 0.25 }, 0.75);
+          tl.fromTo(q(".r-db"), { x: 0 }, { keyframes: { x: [0, -10, 9, -6, 4, 0] }, duration: 0.4, ease: "none" }, 0.75);
+          tl.fromTo(q(".when"), { opacity: 0 }, { opacity: 1, duration: 0.3 }, 0.9);
+          tl.fromTo(q(".headline"), { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 1.0);
+          // shop-web follows: it can't reach its database.
+          tl.to(q(".r-web .ok"), { opacity: 0, duration: 0.12 }, 1.9);
+          tl.fromTo(q(".r-web .warn-chip"), { opacity: 0, scale: 0.7 }, { opacity: 1, scale: 1, duration: 0.35, ease: "back.out(2.5)" }, 1.9);
+          tl.to(q(".r-web .tint"), { opacity: 1, duration: 0.25 }, 1.9);
+          // Bleep's message lands on top.
+          tl.to(q(".when, .headline"), { opacity: 0, y: -20, duration: 0.3, ease: "power2.in" }, 3.0);
+          tl.fromTo(q(".note"), { y: -420 }, { y: 0, duration: 0.6, ease: "expo.out" }, 3.15);
+          tl.to(q(".host"), { y: 90, scale: 0.75, duration: 0.6, ease: "power3.out" }, 3.15);
+          window.__timelines["hook"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

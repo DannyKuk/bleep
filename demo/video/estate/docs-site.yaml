@@ -1,0 +1,10 @@
+# A small real service beside the demo shop on the video's host web-01 (demo/video/stage.sh).
+# Its own Compose project, so Bleep shows it as the service docs-site.
+name: docs-site
+services:
+  web:
+    image: nginx:1.27-alpine
+    container_name: docs-site
+    ports:
+      - "8082:80"
+    restart: unless-stopped

@@ -1,0 +1,148 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        #root {
+          position: absolute;
+          inset: 0;
+        }
+        .ran {
+          position: absolute;
+          left: 160px;
+          top: 190px;
+          width: 1100px;
+          display: flex;
+          align-items: center;
+          gap: 20px;
+          font-size: 30px;
+          font-weight: 800;
+          color: var(--ink-2);
+        }
+        .ran code {
+          padding: 8px 18px;
+          border-radius: 14px;
+          background: var(--soft);
+          color: var(--ink);
+          font-family: "JetBrains Mono", monospace;
+          font-size: 28px;
+          font-weight: 700;
+        }
+        .ran .done {
+          color: #1c7448;
+        }
+        .list {
+          position: absolute;
+          left: 160px;
+          top: 280px;
+          width: 1100px;
+          padding: 30px 40px 18px;
+          border-radius: 32px;
+          background: var(--surface);
+          border: 2px solid var(--line);
+          box-shadow: 0 22px 56px rgba(20, 19, 42, 0.09);
+        }
+        .list-title {
+          font-size: 40px;
+          font-weight: 900;
+          margin-bottom: 16px;
+        }
+        .check {
+          display: flex;
+          align-items: center;
+          gap: 24px;
+          height: 82px;
+          border-top: 2px solid var(--line);
+        }
+        .mark {
+          position: relative;
+          flex: none;
+          width: 48px;
+          height: 48px;
+          border-radius: 50%;
+          border: 3px solid var(--line);
+        }
+        .mark svg {
+          position: absolute;
+          inset: -3px;
+          width: 48px;
+          height: 48px;
+        }
+        .target {
+          font-family: "JetBrains Mono", monospace;
+          font-size: 29px;
+          font-weight: 700;
+        }
+        .detail {
+          margin-left: auto;
+          font-size: 28px;
+          font-weight: 800;
+          color: #1c7448;
+        }
+        .stamp {
+          position: absolute;
+          left: 160px;
+          width: 1100px;
+          top: 770px;
+          text-align: center;
+        }
+        .stamp span {
+          display: inline-block;
+          padding: 14px 40px;
+          border-radius: 40px;
+          background: #1c7448;
+          color: #fff;
+          font-size: 44px;
+          font-weight: 900;
+        }
+      </style>
+      <div id="root" data-composition-id="checks" data-width="1920" data-height="1080">
+        <div class="half light" data-layout-allow-overlap data-layout-allow-occlusion>
+          <div class="ran">Ran <code>docker.start shop-db</code> on web-01 <span class="done">done</span></div>
+          <!-- The run's verification, check by check (events.json, kind "verification"). -->
+          <div class="list">
+            <div class="list-title">Then I checked it worked</div>
+            <div class="check"><div class="mark"></div><div class="target">shop-db</div><div class="detail">running, healthy</div></div>
+            <div class="check"><div class="mark"></div><div class="target">shop-web</div><div class="detail">running, healthy</div></div>
+            <div class="check"><div class="mark"></div><div class="target">http://web-01:8080/health</div><div class="detail">answering 200</div></div>
+            <div class="check"><div class="mark"></div><div class="target">http://web-01:8080/api/items</div><div class="detail">answering 200</div></div>
+          </div>
+          <div class="stamp"><span>Fixed and verified</span></div>
+        </div>
+      </div>
+      <script>
+        (() => {
+          const root = document.querySelector('[data-composition-id="checks"]');
+          const q = (s) => [...root.querySelectorAll(s)];
+          for (const m of q(".mark")) {
+            m.innerHTML =
+              '<svg viewBox="0 0 48 48"><circle class="dot" cx="24" cy="24" r="24" fill="#1c7448"/>' +
+              '<path class="tick" d="M14 25l7 7 13-15" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1"/></svg>';
+          }
+          // The phone again, locked: Bleep's last message lands when the checks have passed.
+          const phone = BF.phone(root.querySelector(".half"));
+          const done = BF.note(window.BLEEP_PHONE[2].html);
+          phone.querySelector(".notes").appendChild(done);
+          const tl = gsap.timeline({ paused: true });
+          tl.set(done, { opacity: 0 }, 0);
+          tl.fromTo(done, { opacity: 0, y: -40, scale: 0.94 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "back.out(1.6)" }, 4.0);
+          tl.fromTo(phone, { rotate: 0 }, { keyframes: { rotate: [0, -1.6, 1.6, -1.2, 1.2, 0] }, duration: 0.45, ease: "none" }, 4.0);
+          tl.fromTo(q(".ran"), { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 0.1);
+          tl.fromTo(q(".list"), { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 0.3);
+          tl.set(q(".detail"), { opacity: 0 }, 0);
+          q(".check").forEach((c, i) => {
+            const t = 1.0 + i * 0.55;
+            tl.fromTo(c.querySelector(".dot"), { scale: 0, transformOrigin: "24px 24px" }, { scale: 1, duration: 0.3, ease: "back.out(2.2)" }, t);
+            tl.to(c.querySelector(".tick"), { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, t + 0.1);
+            tl.fromTo(c.querySelector(".detail"), { opacity: 0, x: 20 }, { opacity: 1, x: 0, duration: 0.3, ease: "power3.out" }, t + 0.1);
+          });
+          tl.fromTo(q(".stamp span"), { scale: 0.6, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.5, ease: "back.out(2)" }, 3.4);
+          window.__timelines["checks"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

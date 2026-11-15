@@ -1,0 +1,54 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        #root {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+        }
+        .cap {
+          position: absolute;
+          left: 96px;
+          bottom: 84px;
+          padding: 24px 40px 26px;
+          border-radius: 28px;
+          background: #5847e0;
+          color: #ffffff;
+          font-size: 58px;
+          font-weight: 800;
+          letter-spacing: -0.01em;
+          line-height: 1.1;
+          box-shadow: 0 18px 40px rgba(20, 19, 42, 0.3);
+          opacity: 0;
+        }
+      </style>
+      <div id="root" data-composition-id="captions" data-width="1920" data-height="1080">
+        <div class="cap" id="c1">It opens an incident and gets to work on its own.</div>
+        <div class="cap" id="c2">It investigates the way you would.</div>
+        <div class="cap" id="c3">It finds the cause, and says how sure it is.</div>
+        <div class="cap" id="c6">Then it checks that the fix really worked.</div>
+      </div>
+      <script>
+        (() => {
+          const tl = gsap.timeline({ paused: true });
+          const caps = [
+            ["#c1", 13.6, 16.6],
+            ["#c2", 17.4, 26.9],
+            ["#c3", 27.8, 35.4],
+            ["#c6", 45.7, 49.6],
+          ];
+          for (const [sel, from, to] of caps) {
+            tl.fromTo(sel, { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, from);
+            tl.to(sel, { opacity: 0, duration: 0.2, ease: "none" }, to);
+          }
+          window.__timelines["captions"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

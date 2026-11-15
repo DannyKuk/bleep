@@ -1,0 +1,9 @@
+{
+  "name": "bleep-video-capture",
+  "private": true,
+  "type": "module",
+  "description": "Screenshots of the throwaway Bleep in light and dark for the README video (docs/demo.md).",
+  "dependencies": {
+    "playwright": "1.63.0"
+  }
+}

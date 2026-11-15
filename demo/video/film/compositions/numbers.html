@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        #root {
+          position: absolute;
+          inset: 0;
+        }
+        .intro {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 200px;
+          text-align: center;
+          font-size: 44px;
+          font-weight: 800;
+          color: var(--ink-2);
+        }
+        .stats {
+          position: absolute;
+          left: 96px;
+          right: 96px;
+          top: 340px;
+          display: flex;
+          justify-content: space-between;
+        }
+        .stat {
+          width: 432px;
+          text-align: center;
+        }
+        .num {
+          font-size: 118px;
+          font-weight: 900;
+          letter-spacing: -0.04em;
+          line-height: 1;
+          font-variant-numeric: tabular-nums;
+        }
+        .stat:nth-child(4) .num {
+          color: var(--accent);
+        }
+        .label {
+          margin-top: 18px;
+          font-size: 32px;
+          font-weight: 800;
+          color: var(--ink-2);
+          line-height: 1.25;
+        }
+        .foot {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 760px;
+          text-align: center;
+          font-size: 30px;
+          font-weight: 700;
+          color: var(--ink-2);
+        }
+      </style>
+      <div id="root" data-composition-id="numbers" data-width="1920" data-height="1080">
+        <div class="half light" data-layout-allow-overlap data-layout-allow-occlusion>
+          <div class="intro">The whole incident, start to finish</div>
+          <!-- incident.json: opened 20:03:13, closed 20:04:07; 8 tool calls; $0.0034. -->
+          <div class="stats">
+            <div class="stat"><div class="num n-time">0 s</div><div class="label">from incident<br />to fixed</div></div>
+            <div class="stat"><div class="num n-calls">0</div><div class="label">tool calls<br />to find the cause</div></div>
+            <div class="stat"><div class="num">$0.003</div><div class="label">in model calls</div></div>
+            <div class="stat"><div class="num">1</div><div class="label">yes from you</div></div>
+          </div>
+          <div class="foot">Bleep never changes anything on your host without that yes.</div>
+        </div>
+      </div>
+      <script>
+        (() => {
+          const root = document.querySelector('[data-composition-id="numbers"]');
+          const q = (s) => [...root.querySelectorAll(s)];
+          const tl = gsap.timeline({ paused: true });
+          tl.fromTo(q(".intro"), { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 0.1);
+          q(".stat").forEach((s, i) => {
+            tl.fromTo(s, { opacity: 0, y: 50 }, { opacity: 1, y: 0, duration: 0.5, ease: "back.out(1.5)" }, 0.4 + i * 0.35);
+          });
+          const count = (sel, to, fmt, at) => {
+            const o = { v: 0 };
+            const el = q(sel)[0];
+            tl.fromTo(o, { v: 0 }, { v: to, duration: 0.9, ease: "power2.out", onUpdate: () => (el.textContent = fmt(Math.round(o.v))) }, at);
+          };
+          count(".n-time", 54, (v) => `${v} s`, 0.4);
+          count(".n-calls", 8, (v) => `${v}`, 0.75);
+          tl.fromTo(q(".foot"), { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 2.0);
+          window.__timelines["numbers"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

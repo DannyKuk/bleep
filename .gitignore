@@ -39,3 +39,6 @@ secrets/*
 .dev/
 .claude/worktrees/
 config/hosts.yaml
+
+# The demo video's throwaway instance and capture output
+demo/video/.local/
