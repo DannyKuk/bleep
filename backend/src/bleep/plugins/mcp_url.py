@@ -84,6 +84,8 @@ REQUIRED_CHARS = 200  # the names of a tool's required arguments, at most
 # The whole listing, measured as the guard will escape it, so `guard_text` (which keeps the tail
 # past MAX_CHARS) never cuts into it; the margin covers what redaction can add.
 LISTING_CHARS = MAX_CHARS - 1000
+LEFT_NAMES_CHARS = 500  # the names of the allowed tools left out, at most
+CLOSING_CHARS = LEFT_NAMES_CHARS + 150  # kept free of entries for the lines that close the listing
 MAX_BYTES = 2_000_000  # of one HTTP answer, counted before any decompression
 
 PURPOSE_CHARS = 200  # one sentence on what the server is for; it is read on every Investigate round
@@ -443,25 +445,51 @@ def _entry(server: _Server, tool: BaseTool) -> str:
 
 
 def _listing(server: _Server, tools: list[BaseTool]) -> str:
-    """Whole entries only, up to `LISTING_CHARS`, so no schema is left without its tool's
-    name; an entry that does not fit is skipped, a later smaller one may still go in, and the
-    tools left out are counted at the end."""
+    """Whole entries only, up to `LISTING_CHARS` less the room for the closing lines, so no
+    schema is left without its tool's name. The tools Bleep may run (read and act) go first, in
+    the server's order, then the others fill what is left; an entry that does not fit is
+    skipped, a later smaller one may still go in. The closing lines name the allowed tools left
+    out and count the others."""
     if not tools:
         return "(the server lists no tools)"
+    allowed = [t for t in tools if server.kind(t) in ("read", "act")]
+    rest = [t for t in tools if server.kind(t) not in ("read", "act")]
     entries: list[str] = []
+    allowed_left: list[str] = []
+    others_left = 0
     used = 0
-    for tool in tools:
+    for tool in (*allowed, *rest):
         entry = _entry(server, tool)
         size = len(escape_untrusted(entry)) + 1
-        if used + size > LISTING_CHARS:
+        if used + size > LISTING_CHARS - CLOSING_CHARS:
+            if tool in allowed:
+                allowed_left.append(_cut(tool.name, NAME_CHARS))
+            else:
+                others_left += 1
             continue
         entries.append(entry)
         used += size
-    left = len(tools) - len(entries)
-    if left:
-        tools_word = "tool" if left == 1 else "tools"
-        entries.append(f"({left} more {tools_word} not shown: the listing is full)")
+    if allowed_left:
+        entries.append(_allowed_left_line(allowed_left))
+    if others_left:
+        tools_word = "tool" if others_left == 1 else "tools"
+        entries.append(f"({others_left} more {tools_word} not shown: the listing is full)")
     return "\n".join(entries)
+
+
+def _allowed_left_line(names: list[str]) -> str:
+    """The names of the allowed tools left out, as many as fit `LEFT_NAMES_CHARS`."""
+    shown: list[str] = []
+    used = 0
+    for name in names:
+        used += len(escape_untrusted(name)) + 2
+        if used > LEFT_NAMES_CHARS:
+            break
+        shown.append(name)
+    more = len(names) - len(shown)
+    tail = f", and {more} more" if more else ""
+    word = "tool" if len(names) == 1 else "tools"
+    return f"({len(names)} allowed {word} not shown: the listing is full; {', '.join(shown)}{tail})"
 
 
 def _guarded(server: _Server, text: str) -> tuple[str, int]:

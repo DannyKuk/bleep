@@ -19,6 +19,7 @@ from bleep.graph.nodes import execute
 from bleep.guard.grant import GrantInvalid, grant_token, plan_hash
 from bleep.guard.plan_check import MAX_ARGUMENTS, check_plan
 from bleep.guard.secret_fields import find_secrets
+from bleep.guard.untrusted import escape_untrusted
 from bleep.hosts.config import ServiceOverrides
 from bleep.hosts.registry import Registry
 from bleep.plugins import mcp_url
@@ -950,7 +951,7 @@ async def test_a_long_listing_keeps_whole_entries_so_no_schema_loses_its_tool():
     body = schemas.split("\n")[1:-1]
     assert "chars cut]" not in schemas  # the guard never had to cut it
     assert body[0].startswith("verbose_0 (act, runs only as an approved mcp.call step)")
-    assert body[-1].endswith("more tools not shown: the listing is full)")
+    assert body[-1].startswith("(") and "allowed tools not shown: the listing is full;" in body[-1]
     entries = body[:-1]
     assert len(entries) % 4 == 0 and len(entries) >= 8
     for n, at in enumerate(range(0, len(entries), 4)):
@@ -994,6 +995,79 @@ def test_a_long_tool_name_is_cut_and_a_tool_past_the_cap_does_not_hide_later_one
     )
     one = _listing(server, verbose[: fits + 1])
     assert one.endswith("(1 more tool not shown: the listing is full)")
+
+
+def _shown_names(listing: str) -> list[str]:
+    return [line.split(" (")[0] for line in listing.split("\n") if not line.startswith(("  ", "("))]
+
+
+def test_the_tools_bleep_may_run_come_first_whole_whatever_the_servers_order():
+    from bleep.plugins.mcp_url import _listing, _Server
+
+    long = "lorem ipsum " * 300
+    server = _Server(URL, McpSettings(read_tools=("late_read",), act_tools=("late_act",)))
+    others = [listed_tool(f"other_{n}", long) for n in range(40)]
+    tools = [*others, listed_tool("late_read"), listed_tool("late_act")]
+
+    listing = _listing(server, tools)
+
+    shown = _shown_names(listing)
+    assert shown[:2] == ["late_read", "late_act"]
+    assert "late_read (read, mcp_call runs it)" in listing
+    assert "allowed" not in listing.split("\n")[-1]  # none of them was left out
+    assert shown[2] == "other_0"  # the others fill what is left, in the server's order
+    left = len(tools) - len(shown)
+    assert left >= 1 and listing.endswith(
+        f"({left} more tool{'s' if left > 1 else ''} not shown: the listing is full)"
+    )
+
+
+def test_a_tool_the_server_marks_as_changing_something_is_listed_after_those_that_may_run():
+    from bleep.plugins.mcp_url import _listing, _Server
+
+    marked = listed_tool("marked_one")
+    marked.metadata = {"destructiveHint": True}
+    server = _Server(URL, McpSettings(read_tools=("marked_one", "fine_read")))
+
+    listing = _listing(server, [listed_tool("stranger"), marked, listed_tool("fine_read")])
+
+    assert _shown_names(listing) == ["fine_read", "stranger", "marked_one"]
+
+
+def test_allowed_tools_that_overflow_the_listing_alone_are_named_and_the_others_only_counted():
+    from bleep.plugins.mcp_url import _listing, _Server
+
+    long = "lorem ipsum " * 300
+    names = tuple(f"read_{n}" for n in range(40))
+    server = _Server(URL, McpSettings(read_tools=names))
+    tools = [listed_tool("stranger", long), *(listed_tool(n, long) for n in names)]
+
+    listing = _listing(server, tools)
+
+    lines = listing.split("\n")
+    shown = _shown_names(listing)
+    assert shown == [f"read_{n}" for n in range(len(shown))]  # no stranger took the room
+    missing = [n for n in names if n not in shown]
+    assert missing
+    assert lines[-2] == (
+        f"({len(missing)} allowed tools not shown: the listing is full; {', '.join(missing)})"
+    )
+    assert lines[-1] == "(1 more tool not shown: the listing is full)"
+
+
+def test_the_names_of_the_allowed_tools_left_out_are_capped_and_the_rest_counted():
+    from bleep.plugins.mcp_url import _listing, _Server
+
+    long = "lorem ipsum " * 300
+    names = tuple(f"{n:03}_" + "x" * 100 for n in range(50))
+    server = _Server(URL, McpSettings(read_tools=names))
+
+    listing = _listing(server, [listed_tool(n, long) for n in names])
+
+    last = listing.split("\n")[-1]
+    assert last.startswith("(") and ", and " in last and last.endswith(" more)")
+    assert len(last) < mcp_url.LEFT_NAMES_CHARS + 150
+    assert len(escape_untrusted(listing)) <= mcp_url.LISTING_CHARS
 
 
 @pytest.mark.parametrize(
