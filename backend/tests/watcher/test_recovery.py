@@ -1,6 +1,8 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from bleep.graph.shown import english
 from bleep.incidents.approvals import ApprovalStore
 from bleep.incidents.repository import IncidentRepo
@@ -66,13 +68,47 @@ class FakeChecks:
         return Checks(first_reads=self.first_reads, check=self.check)
 
 
+class Repo(IncidentRepo):
+    """`snapshot_gate`, when set, holds the next `open_on_host` after its read until it is
+    opened, as a read whose result comes back late would."""
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self.snapshot_gate: asyncio.Event | None = None
+        self.snapshot_taken = asyncio.Event()
+
+    async def open_on_host(self, host_id: str):
+        incidents = await super().open_on_host(host_id)
+        gate, self.snapshot_gate = self.snapshot_gate, None
+        if gate is not None:
+            self.snapshot_taken.set()
+            await gate.wait()
+        return incidents
+
+
 class Runner:
+    """`gate`, when set, holds the close until it is opened: before the close is committed, or
+    after it with `gate_after_close`, as a slow database would."""
+
     def __init__(self, repo: IncidentRepo) -> None:
         self.repo = repo
         self.told: list[tuple[str, str]] = []
+        self.gate: asyncio.Event | None = None
+        self.gate_after_close = False
+        self.entered = asyncio.Event()
+
+    async def _wait(self) -> None:
+        self.entered.set()
+        if self.gate is not None:
+            await self.gate.wait()
 
     async def healthy_again(self, incident_id: str, text: Shown) -> bool:
-        if not await self.repo.close_unanswered(incident_id):
+        if not self.gate_after_close:
+            await self._wait()
+        closed = await self.repo.close_unanswered(incident_id)
+        if self.gate_after_close:
+            await self._wait()
+        if not closed:
             return False
         self.told.append((incident_id, english(text)))
         return True
@@ -82,7 +118,7 @@ class Rig:
     def __init__(self, tmp_path) -> None:
         self.clock = Clock()
         self.db = Database(tmp_path / "bleep.sqlite")
-        self.repo = IncidentRepo(self.db, self.clock)
+        self.repo = Repo(self.db, self.clock)
         self.approvals = ApprovalStore(self.db, "test-secret", self.clock)
         self.runner = Runner(self.repo)
         self.fake = FakeChecks()
@@ -240,6 +276,8 @@ async def test_a_yes_that_won_first_keeps_the_incident_open_and_hears_nothing(tm
 
     assert await r.status(incident.id) == "awaiting_approval"  # its resume drives it on
     assert r.runner.told == []
+    await r.judge({SHOP.service_id})  # a close that did not happen leaves it to be held again
+    assert r.fake.reads == 2
 
 
 async def test_the_poll_tick_and_the_url_round_at_once_close_it_once(tmp_path):
@@ -253,6 +291,64 @@ async def test_the_poll_tick_and_the_url_round_at_once_close_it_once(tmp_path):
 
     assert await r.status(incident.id) == "closed"
     assert len(r.runner.told) == 1 and r.fake.checks == 1
+
+
+@pytest.mark.parametrize("gate_after_close", [False, True], ids=["before", "after"])
+async def test_a_judgement_while_the_incident_closes_starts_no_new_hold(tmp_path, gate_after_close):
+    """The poll tick's judgement found the hold over and its checks passed; the URL round's
+    judged the service healthy while the close was not yet committed, or just after (#583)."""
+    r = await Rig(tmp_path).boot()
+    incident = await r.incident()
+    await r.healthy_for(HOLD.total_seconds() - 15)
+    r.runner.gate, r.runner.gate_after_close = asyncio.Event(), gate_after_close
+    r.clock.advance(15)
+    await r.watch.judge("h", {SHOP.service_id})
+    await asyncio.wait_for(r.runner.entered.wait(), 1)
+
+    await r.watch.judge("h", {SHOP.service_id})
+    r.runner.gate.set()
+    await r.watch.drain()
+    await r.healthy_for(60)
+
+    assert await r.status(incident.id) == "closed"
+    assert r.runner.told == [(incident.id, RECOVERED)]
+    assert (r.fake.reads, r.fake.checks) == (1, 1)
+
+
+async def test_a_judgement_read_before_the_close_and_judged_after_it_starts_no_new_hold(tmp_path):
+    """The URL round read the waiting incidents before the poll tick's close was committed and
+    judged them after the close was done (#583)."""
+    r = await Rig(tmp_path).boot()
+    incident = await r.incident()
+    await r.healthy_for(HOLD.total_seconds() - 15)
+    r.runner.gate = close = asyncio.Event()
+    r.clock.advance(15)
+    await r.watch.judge("h", {SHOP.service_id})
+    await asyncio.wait_for(r.runner.entered.wait(), 1)
+    r.repo.snapshot_gate = late = asyncio.Event()
+    stale = asyncio.create_task(r.watch.judge("h", {SHOP.service_id}))
+    await asyncio.wait_for(r.repo.snapshot_taken.wait(), 1)
+
+    close.set()
+    await r.watch.drain()
+    late.set()
+    await stale
+    await r.watch.drain()
+
+    assert await r.status(incident.id) == "closed"
+    assert r.runner.told == [(incident.id, RECOVERED)]
+    assert (r.fake.reads, r.fake.checks) == (1, 1)
+
+
+async def test_a_closed_incident_is_forgotten_once_a_judgement_no_longer_finds_it(tmp_path):
+    r = await Rig(tmp_path).boot()
+    incident = await r.incident()
+    await r.healthy_for(HOLD.total_seconds())
+    assert await r.status(incident.id) == "closed"
+
+    await r.judge({SHOP.service_id})
+
+    assert incident.id not in r.watch._closing
 
 
 async def test_a_check_that_raises_costs_nothing_but_its_hold(tmp_path):
