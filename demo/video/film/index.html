@@ -31,7 +31,7 @@
         position: absolute;
         inset: 0;
       }
-      /* Every scene: a dark half, and the light copy BF.split makes above the diagonal. */
+      /* Every scene: a dark half, and the light copy BF.split puts on top of it. */
       .half {
         position: absolute;
         inset: 0;
@@ -71,7 +71,14 @@
         --ok: #1c7448;
         background: var(--page);
         color: var(--ink);
-        clip-path: polygon(0 0, 100% 0, 0 100%);
+      }
+      /* The film plays in light; only the end scene shows its dark half (the theme toggle). */
+      .half.dark {
+        visibility: hidden;
+      }
+      .half.dark.shown {
+        visibility: visible;
+        z-index: 2;
       }
       .cam {
         position: absolute;
@@ -125,7 +132,7 @@
       id="root"
       data-composition-id="main"
       data-start="0"
-      data-duration="23.9"
+      data-duration="24.7"
       data-width="1920"
       data-height="1080"
     >
@@ -178,7 +185,7 @@
         data-composition-id="end"
         data-composition-src="compositions/end.html"
         data-start="17.7"
-        data-duration="6.2"
+        data-duration="7"
         data-track-index="1"
         data-track-kind="graphics"
         data-width="1920"

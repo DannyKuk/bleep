@@ -2,8 +2,9 @@
 //
 // A scene is written once, dark: its root holds `.half.dark` with the captures as
 // `<img data-shot="key">` and the drawn parts. `BF.split(root)` copies that half into a light
-// one, clipped to the triangle above the bottom-left to top-right diagonal, so both themes play
-// the same moment. Captures are 2x screenshots, 2880 px wide; `BF.cam` frames a point of them.
+// one on top, so the film plays in light; the end scene reveals its dark half when the cursor
+// clicks the theme toggle. Captures are 2x screenshots, 2880 px wide; `BF.cam` frames a point of
+// them.
 (() => {
   const W = 1920;
   const H = 1080;
