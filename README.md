@@ -18,7 +18,7 @@
 
 Bleep watches the containers on your hosts. When one breaks, it opens an incident, reads the logs and the host the way you would, says what is wrong, and proposes a fix. Nothing changes on a host until you say yes; then it runs the fix and checks that the service is healthy again before it calls it fixed.
 
-<p align="center"><img alt="Bleep finding a stopped database and fixing it after a yes" src="docs/assets/demo.gif" width="860"></p>
+https://github.com/user-attachments/assets/a3fd906c-4b35-498e-bbbb-c9f7c85a612a
 
 ## How well it does
 
