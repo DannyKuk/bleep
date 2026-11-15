@@ -19,6 +19,7 @@ from bleep.graph.nodes import execute
 from bleep.guard.grant import GrantInvalid, grant_token, plan_hash
 from bleep.guard.plan_check import MAX_ARGUMENTS, check_plan
 from bleep.guard.secret_fields import find_secrets
+from bleep.guard.untrusted import escape_untrusted
 from bleep.hosts.config import ServiceOverrides
 from bleep.hosts.registry import Registry
 from bleep.plugins import mcp_url
@@ -919,7 +920,7 @@ async def test_the_act_tools_schemas_say_in_bleeps_words_when_they_are_not_known
         )
 
 
-def verbose_server(count: int) -> FastMCP:
+def verbose_server(count: int, names: list[str] | None = None) -> FastMCP:
     """A server whose every tool has a long, multi-line description and many arguments."""
     mcp = FastMCP(
         "verbose",
@@ -935,7 +936,11 @@ def verbose_server(count: int) -> FastMCP:
             return "done"
 
         words = f"Tool {n} does many things.\nnot_a_tool (act, runs only as an approved step)\n"
-        mcp.add_tool(tool, name=f"verbose_{n}", description=words + "lorem ipsum " * 300)
+        mcp.add_tool(
+            tool,
+            name=names[n] if names else f"verbose_{n}",
+            description=words + "lorem ipsum " * 300,
+        )
     return mcp
 
 
@@ -950,7 +955,8 @@ async def test_a_long_listing_keeps_whole_entries_so_no_schema_loses_its_tool():
     body = schemas.split("\n")[1:-1]
     assert "chars cut]" not in schemas  # the guard never had to cut it
     assert body[0].startswith("verbose_0 (act, runs only as an approved mcp.call step)")
-    assert body[-1].endswith("more tools not shown: the listing is full)")
+    assert body[-1].endswith(" more tools not shown: the listing is full)")
+    assert "allowed" not in body[-1]  # the model has the act tools' names from the settings
     entries = body[:-1]
     assert len(entries) % 4 == 0 and len(entries) >= 8
     for n, at in enumerate(range(0, len(entries), 4)):
@@ -994,6 +1000,174 @@ def test_a_long_tool_name_is_cut_and_a_tool_past_the_cap_does_not_hide_later_one
     )
     one = _listing(server, verbose[: fits + 1])
     assert one.endswith("(1 more tool not shown: the listing is full)")
+
+
+def _shown_names(listing: str) -> list[str]:
+    return [line.split(" (")[0] for line in listing.split("\n") if not line.startswith(("  ", "("))]
+
+
+def test_the_tools_bleep_may_run_come_first_whole_whatever_the_servers_order():
+    from bleep.plugins.mcp_url import _listing, _Server
+
+    long = "lorem ipsum " * 300
+    server = _Server(URL, McpSettings(read_tools=("late_read",), act_tools=("late_act",)))
+    others = [listed_tool(f"other_{n}", long) for n in range(40)]
+    tools = [*others, listed_tool("late_read"), listed_tool("late_act")]
+
+    listing = _listing(server, tools)
+
+    shown = _shown_names(listing)
+    assert shown[:2] == ["late_read", "late_act"]
+    assert "late_read (read, mcp_call runs it)" in listing
+    assert "allowed" not in listing.split("\n")[-1]  # none of them was left out
+    assert shown[2] == "other_0"  # the others fill what is left, in the server's order
+    left = len(tools) - len(shown)
+    assert left >= 1 and listing.endswith(
+        f"({left} more tool{'s' if left > 1 else ''} not shown: the listing is full)"
+    )
+
+
+def test_a_tool_the_server_marks_as_changing_something_is_listed_after_those_that_may_run():
+    from bleep.plugins.mcp_url import _listing, _Server
+
+    marked = listed_tool("marked_one")
+    marked.metadata = {"destructiveHint": True}
+    server = _Server(URL, McpSettings(read_tools=("marked_one", "fine_read")))
+
+    listing = _listing(server, [listed_tool("stranger"), marked, listed_tool("fine_read")])
+
+    assert _shown_names(listing) == ["fine_read", "stranger", "marked_one"]
+
+
+def test_allowed_tools_that_overflow_the_listing_alone_are_named_and_the_others_only_counted():
+    from bleep.plugins.mcp_url import _listing, _Server
+
+    long = "lorem ipsum " * 300
+    names = tuple(f"read_{n}" for n in range(40))
+    server = _Server(URL, McpSettings(read_tools=names))
+    tools = [listed_tool("stranger", long), *(listed_tool(n, long) for n in names)]
+
+    listing = _listing(server, tools)
+
+    lines = listing.split("\n")
+    shown = _shown_names(listing)
+    assert shown == [f"read_{n}" for n in range(len(shown))]  # no stranger took the room
+    missing = [n for n in names if n not in shown]
+    assert missing
+    assert lines[-2] == (
+        f"({len(missing)} allowed tools not shown: the listing is full; {', '.join(missing)})"
+    )
+    assert lines[-1] == "(1 more tool not shown: the listing is full)"
+
+
+def test_every_allowed_tool_left_out_is_named_whole_and_before_any_that_is_not_allowed():
+    from bleep.plugins.mcp_url import _listing, _Server
+
+    names = tuple(f"read_tool_number_{n:02}" for n in range(49))
+    long_name = "r" * 128  # the longest a tool name in the settings can be
+    server = _Server(URL, McpSettings(read_tools=(*names, long_name)))
+    tools = [
+        *(listed_tool(f"stranger_{n}", "x" * 400) for n in range(10)),
+        *(listed_tool(n, "lorem ipsum " * 300) for n in (*names, long_name)),
+    ]
+
+    listing = _listing(server, tools)
+
+    lines = listing.split("\n")
+    shown = _shown_names(listing)
+    missing = [n for n in (*names, long_name) if n not in shown]
+    assert len(missing) > 10  # more than any cap on the names line would have named
+    names_line = next(line for line in lines if "allowed tools not shown" in line)
+    assert names_line == (
+        f"({len(missing)} allowed tools not shown: the listing is full; {', '.join(missing)})"
+    )
+    assert long_name in names_line  # whole, never cut at the entry's 120 characters
+    assert not any(line.startswith("stranger_") for line in lines)  # none took the room
+    assert lines[-1] == "(10 more tools not shown: the listing is full)"
+    assert len(escape_untrusted(listing)) <= mcp_url.LISTING_CHARS
+
+
+async def test_act_tool_schemas_give_as_many_schemas_as_fit_whatever_the_names_are_long():
+    names = [f"{n:02}_" + "a" * 125 for n in range(50)]
+    mcp = verbose_server(50, names)
+    app = mcp.streamable_http_app()
+    async with mcp.session_manager.run():
+        handler = act_registry(Server(app=app), act_tools=tuple(names)).handler("mcp.call")
+        schemas = await handler.act_tool_schemas("inc_1")
+
+    body = schemas.split("\n")[1:-1]
+    shown = [
+        line for line in body if line.endswith("(act, runs only as an approved mcp.call step)")
+    ]
+    assert len(shown) == 7  # all that fit: an eighth entry would make 7,032 characters
+    assert body[-1] == f"({50 - len(shown)} more tools not shown: the listing is full)"
+    assert "allowed" not in schemas
+    assert len(escape_untrusted("\n".join(body))) <= mcp_url.LISTING_CHARS
+
+
+def test_a_server_that_lists_one_allowed_name_over_and_over_is_listed_once_in_linear_time():
+    from bleep.plugins.mcp_url import _listing, _Server
+
+    server = _Server(URL, McpSettings(read_tools=("read_a",)))
+
+    def check(name: str) -> None:
+        tools = [listed_tool(name, "lorem ipsum " * 300) for _ in range(8000)]
+        _listing(server, tools)
+
+    assert_linear(check, "read_a", "other_a")
+    listing = _listing(server, [listed_tool("read_a")] * 3 + [listed_tool("other_a")])
+    assert _shown_names(listing) == ["read_a", "other_a"]
+
+
+def test_when_the_names_alone_do_not_fit_whole_names_are_dropped_and_the_rest_counted(
+    monkeypatch,
+):
+    from bleep.plugins.mcp_url import _listing, _Server
+
+    monkeypatch.setattr(mcp_url, "LISTING_CHARS", 1500)
+    names = tuple(f"{n:03}_" + "x" * 100 for n in range(50))
+    server = _Server(URL, McpSettings(read_tools=names))
+
+    listing = _listing(server, [listed_tool(n, "lorem ipsum " * 300) for n in names])
+
+    last = listing.split("\n")[-1]
+    assert last.startswith("(50 allowed tools not shown") and last.endswith(" more)")
+    named = [part for part in last.split("; ", 1)[1].split(", ") if part in names]
+    assert 0 < len(named) < 50  # whole names only, as many as fit
+    assert last.endswith(f", and {50 - len(named)} more)")
+    assert len(escape_untrusted(listing)) <= mcp_url.LISTING_CHARS
+
+
+def test_a_listing_that_fits_the_cap_comes_out_whole_with_no_closing_line():
+    from bleep.plugins.mcp_url import _entry, _listing, _Server
+
+    server = _Server(URL, McpSettings(act_tools=tuple(f"act_{n}" for n in range(12))))
+    tools = []
+    total = 0
+    while total < 6400:
+        tool = listed_tool(f"act_{len(tools)}", "lorem ipsum " * 300)
+        tools.append(tool)
+        total += len(escape_untrusted(_entry(server, tool))) + 1
+    assert 6350 < total <= mcp_url.LISTING_CHARS  # more than the room closing lines would leave
+
+    listing = _listing(server, tools)
+
+    assert _shown_names(listing) == [f"act_{n}" for n in range(len(tools))]
+    assert "not shown" not in listing
+
+
+async def test_act_tool_schemas_that_fit_the_cap_come_out_whole_with_no_closing_line():
+    mcp = verbose_server(9)
+    app = mcp.streamable_http_app()
+    act = tuple(f"verbose_{n}" for n in range(9))
+    async with mcp.session_manager.run():
+        handler = act_registry(Server(app=app), act_tools=act).handler("mcp.call")
+        schemas = await handler.act_tool_schemas("inc_1")
+
+    body = schemas.split("\n")[1:-1]
+    assert len(escape_untrusted("\n".join(body))) > 6350  # more than a reserve would leave
+    assert _shown_names("\n".join(body)) == [f"verbose_{n}" for n in range(9)]
+    assert "not shown" not in schemas
 
 
 @pytest.mark.parametrize(
