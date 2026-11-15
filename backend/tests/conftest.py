@@ -26,6 +26,7 @@ from bleep.memory.embeddings import FakeEmbedder, FastEmbedEmbedder
 from bleep.schemas.shown import Shown
 from bleep.tools.docker_act import StepRefused
 from bleep.wiring import AppParts, build_parts
+from tests.langfuse_guard import langfuse_exports_blocked
 
 
 @pytest.fixture(autouse=True)
@@ -33,6 +34,14 @@ def no_tracing_from_the_shell(monkeypatch):
     """A `TRACING` exported to try the Langfuse profile must not make the tests send traces."""
     for name in ("TRACING", "LANGSMITH_TRACING", "LANGCHAIN_TRACING_V2"):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def no_langfuse_exporter_left_running():
+    """A Langfuse client a test builds sends nothing over the network and is shut down at the end
+    of the test, so its exporter never logs into another test (#602)."""
+    with langfuse_exports_blocked():
+        yield
 
 
 @pytest.fixture(autouse=True)
