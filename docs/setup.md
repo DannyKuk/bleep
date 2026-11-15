@@ -120,6 +120,8 @@ The dashboard (port 3000) is for a trusted LAN only. It has one admin password, 
 
 The watcher checks every host every 15 s; `BLEEP_WATCH_INTERVAL_S` in `.env` changes that. When the machine Bleep runs on wakes from sleep, a host that does not answer is not counted for the next 4 checks (`BLEEP_WAKE_GRACE_TICKS`), so the network can come back first.
 
+Bleep's URL checks identify themselves: every request, and each redirect it follows, sends `User-Agent: Bleep/<version> (health check; +https://github.com/DannyKuk/bleep)` (for example `Bleep/0.1.0`). A site owner can filter that out of analytics or allowlist it in a firewall or bot filter by matching `Bleep/` ([design](design/watcher.md)).
+
 The dev panel (prompts, budgets, cost per incident and per day, the guard log) is off; set `BLEEP_DEV_PANEL=true` in `.env` and restart to get it under Dev in the dashboard ([dev panel](design/dev-panel.md)).
 
 The session cookie is not `Secure` by default, because the dashboard is plain http on the LAN. If you put it behind https, set `BLEEP_COOKIE_SECURE=true` in `.env`.
