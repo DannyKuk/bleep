@@ -203,6 +203,7 @@ class PluginRegistry:
         return PluginView(
             name=name,
             title=plugin.title,
+            experimental=plugin.experimental,
             enabled=active is not None,
             switched_on=switched_on if switched_on is not None else active is not None,
             settings=self._shown_settings(name),
