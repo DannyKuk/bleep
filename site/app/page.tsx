@@ -149,7 +149,7 @@ export default function Page() {
         <section className="mx-auto grid w-full max-w-6xl items-center gap-12 px-4 pt-14 pb-16 sm:px-6 lg:grid-cols-[1fr_1.1fr] lg:gap-14 lg:pt-20">
           <div>
             <h1 className="text-[2.75rem] leading-[1.02] font-black tracking-[-0.03em] text-balance sm:text-6xl lg:text-[4.25rem]">
-              The on-call bot that asks before it fixes.
+              The <span className="whitespace-nowrap">on-call</span> bot that asks before it fixes.
             </h1>
             <p className="mt-6 max-w-xl text-lg leading-relaxed text-ink-2 sm:text-xl">
               Bleep watches the containers on your Docker hosts. When one breaks, it finds out why
