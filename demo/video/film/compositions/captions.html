@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        #root {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+        }
+        .cap {
+          position: absolute;
+          left: 96px;
+          bottom: 84px;
+          padding: 24px 40px 26px;
+          border-radius: 28px;
+          background: #5847e0;
+          color: #ffffff;
+          font-size: 58px;
+          font-weight: 800;
+          letter-spacing: -0.01em;
+          line-height: 1.1;
+          box-shadow: 0 18px 40px rgba(20, 19, 42, 0.3);
+          opacity: 0;
+        }
+      </style>
+      <div id="root" data-composition-id="captions" data-width="1920" data-height="1080">
+        <div class="cap" id="cap-stopped">shop-db just stopped.</div>
+        <div class="cap" id="cap-reads">Bleep reads the logs, like you would.</div>
+        <div class="cap" id="cap-cause">It finds the cause.</div>
+        <div class="cap" id="cap-yes">Nothing changes until you say yes.</div>
+        <div class="cap" id="cap-checked">Fixed, and checked before it says so.</div>
+      </div>
+      <script>
+        (() => {
+          const tl = gsap.timeline({ paused: true });
+          const caps = [
+            ["#cap-stopped", 0.45, 3.0],
+            ["#cap-reads", 3.55, 6.45],
+            ["#cap-cause", 6.95, 9.5],
+            ["#cap-yes", 10.0, 13.1],
+            ["#cap-checked", 13.5, 17.45],
+          ];
+          for (const [sel, from, to] of caps) {
+            tl.fromTo(sel, { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, from);
+            tl.to(sel, { opacity: 0, duration: 0.2, ease: "none" }, to);
+          }
+          window.__timelines["captions"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

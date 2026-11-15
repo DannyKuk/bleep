@@ -1,0 +1,118 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        #root {
+          position: absolute;
+          inset: 0;
+        }
+        .card {
+          position: absolute;
+          inset: 0;
+          background: var(--page);
+        }
+        .lockup {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 250px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 36px;
+        }
+        .bot {
+          width: 260px;
+          height: 260px;
+          overflow: visible;
+        }
+        .wordmark {
+          font-size: 168px;
+          font-weight: 900;
+          letter-spacing: -0.03em;
+          line-height: 1;
+        }
+        .tagline {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 600px;
+          text-align: center;
+          font-size: 50px;
+          font-weight: 800;
+          letter-spacing: -0.01em;
+          line-height: 1.25;
+        }
+        .link {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 800px;
+          text-align: center;
+          font-size: 40px;
+          font-weight: 800;
+          color: var(--accent);
+        }
+      </style>
+      <div id="root" data-composition-id="end" data-width="1920" data-height="1080">
+        <div class="half dark" data-layout-allow-overlap data-layout-allow-occlusion>
+          <div class="cam">
+            <img data-shot="allquiet" alt="" />
+          </div>
+          <div class="card">
+            <div class="lockup">
+              <!-- Bleep in its all_good pose, drawn from frontend/components/bleep. -->
+              <svg class="bot" viewBox="0 0 120 120" aria-hidden="true">
+                <g class="bot-figure">
+                  <rect x="40" y="76" width="40" height="28" rx="12" fill="var(--blob)" />
+                  <circle cx="60" cy="90" r="4" fill="#7CF2B8" />
+                  <path d="M24 44Q24 8 60 8T96 44" fill="none" stroke-width="5" stroke-linecap="round" stroke="var(--cup)" />
+                  <rect x="26" y="22" width="68" height="50" rx="24" fill="var(--blob)" />
+                  <rect x="34" y="33" width="52" height="26" rx="13" fill="var(--screen)" />
+                  <path d="M42 48q6-7 12 0 M66 48q6-7 12 0" fill="none" stroke-width="4" stroke-linecap="round" stroke="#7CF2B8" />
+                  <rect x="15" y="34" width="14" height="22" rx="7" fill="var(--cup)" />
+                  <rect x="91" y="34" width="14" height="22" rx="7" fill="var(--cup)" />
+                  <path d="M99 55q1 13-18 14" fill="none" stroke-width="3.5" stroke-linecap="round" stroke="var(--cup)" />
+                  <circle cx="80" cy="69" r="4.5" fill="var(--ok)" />
+                  <path class="hand-left" d="M26 92h0" stroke-width="13" stroke-linecap="round" stroke="var(--hand)" />
+                  <path class="hand-right" d="M108 72h0" stroke-width="13" stroke-linecap="round" stroke="var(--hand)" />
+                </g>
+              </svg>
+              <div class="wordmark">Bleep</div>
+            </div>
+            <div class="tagline">An on-call agent for Docker hosts<br />that fixes things only after you say yes.</div>
+            <div class="link">github.com/DannyKuk/bleep</div>
+          </div>
+        </div>
+      </div>
+      <script>
+        (() => {
+          const root = document.querySelector('[data-composition-id="end"]');
+          const { all } = BF.split(root);
+          const tl = gsap.timeline({ paused: true });
+          const cams = all(".cam");
+          // The overview again, all quiet, then the end card rises over it.
+          BF.cam(tl, cams, { x: 1250, y: 560, w: 2000 }, 0);
+          BF.cam(tl, cams, { x: 1350, y: 700, w: 2700 }, 0.05, 1.5, "sine.inOut");
+          tl.fromTo(all(".card"), { yPercent: 100 }, { yPercent: 0, duration: 0.7, ease: "power3.inOut" }, 1.4);
+          tl.fromTo(all(".bot"), { y: 60, scale: 0.6, opacity: 0 }, { y: 0, scale: 1, opacity: 1, duration: 0.6, ease: "back.out(1.6)" }, 1.85);
+          tl.fromTo(all(".wordmark"), { clipPath: "inset(0 100% 0 0)" }, { clipPath: "inset(0 0% 0 0)", duration: 0.5, ease: "power3.out" }, 2.1);
+          tl.fromTo(all(".tagline"), { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power3.out" }, 2.35);
+          tl.fromTo(all(".link"), { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power3.out" }, 2.6);
+          // Bleep waves, as on the dashboard when all is quiet.
+          const hand = all(".hand-right");
+          tl.set(hand, { transformOrigin: "108px 72px" }, 0);
+          for (let i = 0; i < 3; i++) {
+            tl.to(hand, { x: 4, y: -8, duration: 0.18, ease: "sine.inOut" }, 2.3 + i * 0.4);
+            tl.to(hand, { x: 0, y: 0, duration: 0.18, ease: "sine.inOut" }, 2.48 + i * 0.4);
+          }
+          window.__timelines["end"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

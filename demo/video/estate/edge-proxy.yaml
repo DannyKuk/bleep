@@ -1,0 +1,11 @@
+# A small real service beside the demo shop on the video's host web-01 (demo/video/stage.sh).
+# Its own Compose project, so Bleep shows it as the service edge-proxy.
+name: edge-proxy
+services:
+  edge:
+    image: caddy:2.11.7-alpine
+    container_name: edge-proxy
+    command: ["caddy", "respond", "--listen", ":80", "--body", "ok"]
+    ports:
+      - "8081:80"
+    restart: unless-stopped

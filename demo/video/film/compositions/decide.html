@@ -1,0 +1,222 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        #root {
+          position: absolute;
+          inset: 0;
+        }
+        /* After the yes the page loses a row above the plan, so later captures sit 138 px
+           lower to keep the plan card where it was. */
+        .decide-after {
+          top: 138px !important;
+        }
+        .phone {
+          position: absolute;
+          left: 1426px;
+          top: 64px;
+          width: 452px;
+          height: 952px;
+          border-radius: 62px;
+          background: #0e0d1c;
+          padding: 14px;
+          box-shadow:
+            0 30px 60px rgba(20, 19, 42, 0.28),
+            0 4px 12px rgba(20, 19, 42, 0.18);
+        }
+        .phone-screen {
+          position: relative;
+          width: 100%;
+          height: 100%;
+          border-radius: 48px;
+          overflow: hidden;
+          background: var(--page);
+        }
+        .phone-bar {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 0;
+          height: 132px;
+          padding: 56px 26px 0;
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          background: var(--surface);
+          border-bottom: 1px solid var(--line);
+          z-index: 2;
+        }
+        .phone-bar svg {
+          width: 52px;
+          height: 52px;
+        }
+        .phone-name {
+          font-size: 25px;
+          font-weight: 800;
+          line-height: 1.1;
+        }
+        .phone-sub {
+          font-size: 17px;
+          font-weight: 600;
+          color: var(--ink-2);
+        }
+        .phone-island {
+          position: absolute;
+          left: 50%;
+          top: 14px;
+          width: 120px;
+          height: 34px;
+          margin-left: -60px;
+          border-radius: 20px;
+          background: #0e0d1c;
+          z-index: 3;
+        }
+        .chat {
+          position: absolute;
+          left: 18px;
+          right: 18px;
+          bottom: 22px;
+          display: flex;
+          flex-direction: column;
+          justify-content: flex-end;
+          gap: 0;
+        }
+        .msg {
+          overflow: hidden;
+        }
+        .msg-in {
+          padding-top: 14px;
+        }
+        .bubble {
+          background: var(--surface);
+          border: 1px solid var(--line);
+          border-radius: 22px 22px 22px 8px;
+          padding: 14px 18px;
+          font-size: 20px;
+          line-height: 1.34;
+          font-weight: 600;
+          overflow-wrap: anywhere;
+        }
+        .bubble b {
+          font-weight: 900;
+        }
+        .buttons {
+          overflow: hidden;
+        }
+        .button-row {
+          display: flex;
+          gap: 8px;
+          padding-top: 8px;
+        }
+        .button {
+          flex: 1;
+          text-align: center;
+          padding: 11px 0;
+          border-radius: 16px;
+          background: var(--soft);
+          color: var(--accent);
+          font-size: 19px;
+          font-weight: 800;
+        }
+      </style>
+      <div id="root" data-composition-id="decide" data-width="1920" data-height="1080">
+        <div class="half dark" data-layout-allow-overlap data-layout-allow-occlusion>
+          <div class="cam">
+            <img data-shot="plan" class="st-plan" alt="" />
+            <img data-shot="checking" class="st-checking decide-after" alt="" />
+            <img data-shot="passed" class="st-passed decide-after" alt="" />
+          </div>
+          <div class="phone" data-layout-ignore>
+            <div class="phone-screen">
+              <div class="phone-island"></div>
+              <div class="phone-bar">
+                <svg viewBox="0 0 120 120" aria-hidden="true">
+                  <rect x="10" y="18" width="100" height="84" rx="38" fill="var(--blob)" />
+                  <rect x="22" y="36" width="76" height="44" rx="22" fill="#27234A" />
+                  <path
+                    d="M45 58h0 M75 58h0"
+                    fill="none"
+                    stroke="#7CF2B8"
+                    stroke-width="20"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                <div>
+                  <div class="phone-name">Bleep</div>
+                  <div class="phone-sub">bot</div>
+                </div>
+              </div>
+              <div class="chat"></div>
+            </div>
+          </div>
+          <div class="cursor">
+            <div class="ring"></div>
+            <svg class="press" viewBox="0 0 32 32">
+              <path
+                d="M3 2 L3 25 L9 19.5 L13 29 L17.2 27.2 L13.3 18 L21 18 Z"
+                fill="#ffffff"
+                stroke="#1c1b33"
+                stroke-width="1.8"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+        </div>
+      </div>
+      <script>
+        (() => {
+          const root = document.querySelector('[data-composition-id="decide"]');
+          // The chat: Bleep's own messages for this incident (demo/video/phone.py).
+          const chat = root.querySelector(".chat");
+          window.BLEEP_PHONE.forEach((m, i) => {
+            const msg = document.createElement("div");
+            msg.className = `msg msg-${i}`;
+            const rows = m.buttons
+              .map((row) => `<div class="button-row">${row.map((b) => `<div class="button">${b}</div>`).join("")}</div>`)
+              .join("");
+            msg.innerHTML = `<div class="msg-in"><div class="bubble">${m.html}</div><div class="buttons">${rows}</div></div>`;
+            chat.appendChild(msg);
+          });
+          const { all } = BF.split(root);
+          const tl = gsap.timeline({ paused: true });
+          const cams = all(".cam");
+          const found = { x: 1080, y: 1920, w: 1560 };
+          const plan = { x: 1367, y: 1192, w: 2133 };
+          const checks = { x: 1151, y: 1330, w: 1600 };
+
+          tl.set(all(".st-checking, .st-passed"), { opacity: 0 }, 0);
+          BF.cam(tl, cams, found, 0);
+          BF.cam(tl, cams, plan, 0.1, 0.9);
+
+          // The phone slides in holding the opener; the plan arrives as a new message.
+          tl.fromTo(all(".phone"), { x: 620 }, { x: 0, duration: 0.7, ease: "expo.out" }, 0.55);
+          tl.set(all(".msg-1, .msg-2"), { maxHeight: 0, opacity: 0 }, 0);
+          tl.to(all(".msg-1"), { maxHeight: 900, duration: 0.5, ease: "power3.out" }, 1.25);
+          tl.to(all(".msg-1"), { opacity: 1, duration: 0.3, ease: "none" }, 1.3);
+
+          // The yes, on the dashboard: the plan runs, Bleep checks it, and the phone's buttons go.
+          const yes = BF.onFrame(plan, 592, 1353);
+          BF.cursorTo(tl, all(".cursor"), { x: 900, y: 1180 }, yes, 1.75, 2.6);
+          BF.swap(tl, all(".st-checking"), all(".st-plan"), 2.6, 0.12);
+          tl.to(all(".msg-1 .buttons"), { maxHeight: 0, opacity: 0, duration: 0.35, ease: "power2.inOut" }, 2.85);
+          tl.to(all(".cursor"), { opacity: 0, duration: 0.25 }, 3.1);
+
+          // Checking, then every check passed.
+          BF.cam(tl, cams, checks, 3.35, 0.8);
+          BF.swap(tl, all(".st-passed"), all(".st-checking"), 4.9);
+
+          // The end message.
+          tl.to(all(".msg-2"), { maxHeight: 900, duration: 0.55, ease: "power3.out" }, 5.6);
+          tl.to(all(".msg-2"), { opacity: 1, duration: 0.3, ease: "none" }, 5.65);
+          tl.to(all(".msg-0 .buttons"), { maxHeight: 0, opacity: 0, duration: 0.3 }, 5.6);
+          BF.cam(tl, cams, { ...checks, w: 1680 }, 5.0, 3.0, "sine.inOut");
+          window.__timelines["decide"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

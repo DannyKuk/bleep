@@ -1,0 +1,30 @@
+# The throwaway Bleep the demo video is filmed from (docs/demo.md "The README video"): its own
+# Compose project, ports, env and empty volume, on the images the main stack built. Used only by
+# demo/video/stage.sh, on top of the root docker-compose.yaml.
+services:
+  backend:
+    image: bleep-backend:latest
+    pull_policy: never
+    build: !reset null
+    ports: !override
+      - "127.0.0.1:8100:8000"
+    env_file: !override
+      - path: demo/video/.local/video.env
+    environment:
+      BLEEP_HOSTS_FILE: /video/hosts.video.yaml
+    volumes:
+      - ./demo/video/.local:/video:ro
+    extra_hosts:
+      # The host's name as the video shows it; its URL checks reach the demo shop's port 8080.
+      - "web-01:host-gateway"
+
+  frontend:
+    image: bleep-frontend:latest
+    pull_policy: never
+    build: !reset null
+    ports: !override
+      - "127.0.0.1:3100:3000"
+
+  socket-proxy:
+    volumes:
+      - ./demo/video/socket-proxy.cfg.template:/usr/local/etc/haproxy/haproxy.cfg.template:ro
