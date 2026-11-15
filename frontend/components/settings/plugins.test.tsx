@@ -227,9 +227,11 @@ describe("PluginList", () => {
     );
     const mcp = screen.getByRole("region", { name: "Plugin MCP server by URL" });
     expect(within(mcp).getByText("Experimental")).toBeInTheDocument();
+    expect(within(mcp).getByTestId("experimental-icon")).toBeInTheDocument();
     expect(within(mcp).getByText(/Tested live only against Coolify's own/)).toBeInTheDocument();
     const coolify = screen.getByRole("region", { name: "Plugin Coolify" });
     expect(within(coolify).queryByText("Experimental")).toBeNull();
+    expect(within(coolify).queryByTestId("experimental-icon")).toBeNull();
     expect(within(coolify).queryByText(/may not work/)).toBeNull();
   });
 
