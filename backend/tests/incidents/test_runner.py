@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import anthropic
@@ -597,15 +598,28 @@ async def test_a_failing_tracer_never_stops_the_run(tmp_path):
 
 
 class HangingModel(FakeChatModel):
-    """Hangs on its first `hangs` calls, then answers from the script."""
+    """Hangs on every call while `down`, then answers from the script."""
 
-    hangs: int = 0
+    down: bool = True
 
     async def _agenerate(self, *args, **kwargs):
-        if self.hangs > 0:
-            self.hangs -= 1
+        if self.down:
             await asyncio.Event().wait()
         return await super()._agenerate(*args, **kwargs)
+
+
+@dataclass
+class OutageSettings(StaticSettings):
+    """Cuts a model call off after 10 ms while `model` is down, so a hang costs no real time, and
+    keeps the default timeout once it is up: a 10 ms bound on a scripted reply fails under load
+    (#597), and a call can even be cut off before it reaches the model."""
+
+    model: HangingModel = field(kw_only=True)
+
+    def budgets(self) -> Budgets:
+        if self.model.down:
+            return self.budget_limits.model_copy(update={"model_timeout_s": 0.01})
+        return self.budget_limits
 
 
 class FailingModel(FakeChatModel):
@@ -648,26 +662,30 @@ class Retry:
         self.waiting.clear()
 
 
-async def model_down(tmp_path, hangs: int):
-    """An environment whose model hangs for `hangs` calls, cut off after 10 ms with no waiting."""
+async def model_down(tmp_path, **budgets):
+    """An environment whose model hangs until the test sets `env.models.model.down = False`, with
+    no waiting between retries. `budgets` override the defaults."""
     env = await graph_env(tmp_path)
-    script = confident_model().script
-    env.models.model = HangingModel(script=script, structured_output_unsupported=True, hangs=hangs)
-    env.deps.settings_store = StaticSettings(
-        budget_limits=Budgets.model_construct(
-            **(Budgets().model_dump() | {"model_timeout_s": 0.01})
-        )
-    )
+    model = HangingModel(script=confident_model().script, structured_output_unsupported=True)
+    env.models.model = model
+    env.deps.settings_store = OutageSettings(budget_limits=Budgets(**budgets), model=model)
     env.deps.model_sleep = no_wait
     return env
 
 
-async def paused(runner: IncidentRunner, retry: Retry) -> None:
-    await asyncio.wait_for(retry.waiting.wait(), 5)
+async def paused(runner: IncidentRunner, retry: Retry, times: int = 1) -> None:
+    """Wait until the run has paused `times` times in all and waits to be let go."""
+
+    async def until_paused() -> None:
+        while len(retry.delays) < times:
+            await retry.waiting.wait()
+            await asyncio.sleep(0)  # a pause just let go clears `waiting` once it runs
+
+    await asyncio.wait_for(until_paused(), 5)
 
 
 async def test_a_model_that_stays_unavailable_pauses_the_run_instead_of_failing_it(tmp_path):
-    env = await model_down(tmp_path, hangs=3)  # the call and its two retries
+    env = await model_down(tmp_path)
     incident = await env.open(service(env), container="shop-web-1")
     notifier, retry = NoticeNotifier(), Retry()
     async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
@@ -731,7 +749,7 @@ async def test_a_claude_that_stays_down_pauses_the_run_instead_of_failing_it(tmp
 
 
 async def test_a_paused_run_goes_on_from_its_checkpoint_and_finishes(tmp_path):
-    env = await model_down(tmp_path, hangs=3)
+    env = await model_down(tmp_path)
     incident = await env.open(service(env), container="shop-web-1")
     notifier, retry = NoticeNotifier(), Retry()
     async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
@@ -745,6 +763,7 @@ async def test_a_paused_run_goes_on_from_its_checkpoint_and_finishes(tmp_path):
         )
         await runner.start(incident)
         await paused(runner, retry)
+        env.models.model.down = False
         retry.release.set()
         await runner.join()
 
@@ -756,7 +775,7 @@ async def test_a_paused_run_goes_on_from_its_checkpoint_and_finishes(tmp_path):
 
 
 async def test_a_run_paused_twice_in_a_row_tells_the_channels_once(tmp_path):
-    env = await model_down(tmp_path, hangs=6)
+    env = await model_down(tmp_path)
     incident = await env.open(service(env), container="shop-web-1")
     notifier, retry = NoticeNotifier(), Retry()
     async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
@@ -771,8 +790,9 @@ async def test_a_run_paused_twice_in_a_row_tells_the_channels_once(tmp_path):
         await runner.start(incident)
         await paused(runner, retry)
         retry.release.set()
-        await asyncio.wait_for(retry.waiting.wait(), 5)  # paused again, after the second attempt
+        await paused(runner, retry, times=2)  # paused again, after the second attempt
         assert (await env.repo.get(incident.id)).status == "paused"
+        env.models.model.down = False
         retry.release.set()
         await runner.join()
 
@@ -795,7 +815,7 @@ async def test_recover_on_boot_picks_up_a_paused_run(tmp_path):
 async def test_a_long_outage_gives_the_pause_notice_and_one_at_an_hour_and_the_watchdog_none(
     tmp_path,
 ):
-    env = await model_down(tmp_path, hangs=3 * 7)  # seven pauses
+    env = await model_down(tmp_path)
     incident = await env.open(service(env), container="shop-web-1")
     notifier, retry = NoticeNotifier(), Retry()
     async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
@@ -812,15 +832,14 @@ async def test_a_long_outage_gives_the_pause_notice_and_one_at_an_hour_and_the_w
             env.repo, env.bus, notifier, env.deps.settings_store, retry.clock, skip=runner.retrying
         )
         await runner.start(incident)
-        for _ in range(6):
-            await paused(runner, retry)
+        for pause in range(1, 7):
+            await paused(runner, retry, times=pause)
             assert await dog.tick(retry.clock.now + timedelta(hours=3)) == []
             await env.repo.set_status(incident.id, "investigating")  # a retry in progress
             assert await dog.tick(retry.clock.now + timedelta(hours=3)) == []
             await env.repo.set_status(incident.id, "paused")
             retry.release.set()
-            await asyncio.sleep(0.05)
-        await paused(runner, retry)
+        await paused(runner, retry, times=7)
         assert retry.delays == [300, 600, 1200, 2400, 3600, 3600, 3600]
         # The pause notice, and one at the first pause after an hour (5+10+20+40 min is 75).
         assert len(notifier.notices) == 2
@@ -833,12 +852,7 @@ async def test_a_long_outage_gives_the_pause_notice_and_one_at_an_hour_and_the_w
 
 
 async def test_the_retry_ceiling_is_never_below_the_configured_first_wait(tmp_path):
-    env = await model_down(tmp_path, hangs=6)
-    env.deps.settings_store = StaticSettings(
-        budget_limits=Budgets.model_construct(
-            **(Budgets().model_dump() | {"model_timeout_s": 0.01, "paused_retry_min": 240})
-        )
-    )
+    env = await model_down(tmp_path, paused_retry_min=240)
     incident = await env.open(service(env), container="shop-web-1")
     retry = Retry()
     async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
@@ -853,14 +867,13 @@ async def test_the_retry_ceiling_is_never_below_the_configured_first_wait(tmp_pa
         await runner.start(incident)
         await paused(runner, retry)
         retry.release.set()
-        await asyncio.sleep(0.05)
-        await paused(runner, retry)
+        await paused(runner, retry, times=2)
         assert retry.delays == [240 * 60, 240 * 60]
         await runner.close()
 
 
 async def test_a_failed_run_forgets_its_pauses(tmp_path):
-    env = await model_down(tmp_path, hangs=3)
+    env = await model_down(tmp_path)
     incident = await env.open(service(env), container="shop-web-1")
     retry = Retry()
     async with open_checkpointer(tmp_path / "checkpoints.sqlite") as saver:
