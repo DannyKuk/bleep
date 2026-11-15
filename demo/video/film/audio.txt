@@ -1,0 +1,12 @@
+The film's sound, from HeyGen's audio catalog (npx hyperframes media-use resolve, with a HeyGen
+sign-in and the heygen CLI). The files are not in git; resolve them again into .media/ and copy
+them to assets/audio/ under these names.
+
+assets/audio/music.wav    track 2e15b4d401c648b585a2fedb8deee350  "calm confident minimal electronic, warm synth plucks over a light pulse, building gently to a bright resolve, 110 bpm"
+assets/audio/click.mp3    track 4558aa1365870399                  "soft UI pop notification"
+assets/audio/message.mp3  track d9b59db7ed5ee90a                  "gentle bubble pop"
+assets/audio/pop.mp3      track 3f7016321284f57b                  "single soft pop, short"
+assets/audio/whoosh.mp3   track a4855a82116cd4cc                  "soft airy whoosh transition"
+
+The delivery file: render, then a 2-pass H.264 encode at 2600k (under GitHub's 10 MB attachment
+limit) with frame 0 replaced by the frame at 11.9 s, the player's thumbnail.

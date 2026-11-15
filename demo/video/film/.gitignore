@@ -4,3 +4,5 @@ renders/
 snapshots/
 .thumbnails/
 .hyperframes/
+.media/
+assets/audio/
