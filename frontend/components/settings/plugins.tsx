@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Power, PowerOff } from "lucide-react";
+import { FlaskConical, Loader2, Power, PowerOff } from "lucide-react";
 import { useId, useState } from "react";
 
 import { HealthBadge } from "@/components/overview/health-badge";
@@ -193,7 +193,17 @@ export function PluginSettings({
   return (
     <section aria-label={t.plugin(plugin.title)} className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="text-sm font-medium">{plugin.title}</h3>
+        <h3 className="inline-flex items-center gap-1.5 text-sm font-medium">
+          {plugin.experimental && (
+            <FlaskConical
+              aria-hidden
+              data-testid="experimental-icon"
+              className="size-4 shrink-0 text-muted-foreground"
+            />
+          )}
+          {plugin.title}
+        </h3>
+        {plugin.experimental && <Badge className="border-dashed">{t.experimental}</Badge>}
         <Badge>{state(plugin, t)}</Badge>
         {plugin.health && (
           <HealthBadge
@@ -214,6 +224,7 @@ export function PluginSettings({
           {on ? t.switchOff : t.switchOn}
         </Button>
       </div>
+      {plugin.experimental && <p className="text-xs text-muted-foreground">{t.experimentalNote}</p>}
       {waitingNote(plugin, t) && (
         <p className="text-xs text-muted-foreground">{waitingNote(plugin, t)}</p>
       )}

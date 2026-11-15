@@ -21,6 +21,7 @@ class PluginSecret(BaseModel):
 class PluginView(BaseModel):
     name: str
     title: str
+    experimental: bool = False  # only partly tested; the dashboard says so
     enabled: bool  # on and running: its tools and actions are in use
     # The person's toggle as stored. On while `enabled` is off, the plugin is waiting: for a
     # required secret not set in the env (see `secrets`), or for code that failed to build.

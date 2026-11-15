@@ -56,6 +56,9 @@ class After(_Strict):
 
 class ScriptedContainer(_Strict):
     name: str
+    # Docker's id, as a case that names a container by id or id prefix needs it fixed (#339);
+    # `container_id(name)` when not given.
+    id: str | None = Field(None, pattern=r"^[0-9a-f]{64}$")
     # The Compose project it belongs to, when not the case's service: another service on the
     # host, such as a proxy in front of it.
     project: str | None = None
@@ -76,6 +79,11 @@ class ScriptedContainer(_Strict):
     labels: dict[str, str] = Field(default_factory=dict)
     after: After | None = None
 
+    @property
+    def engine_id(self) -> str:
+        """The id the scripted engine gives it."""
+        return self.id or container_id(self.name)
+
 
 class ScriptedSignal(_Strict):
     """What the watcher saw, as an incident's first signal."""
@@ -87,7 +95,7 @@ class ScriptedSignal(_Strict):
 
 
 def container_id(name: str) -> str:
-    """The id the scripted engine gives a container."""
+    """The id the scripted engine gives a container that has no id of its own."""
     return f"{name}-0123456789ab"
 
 
@@ -95,10 +103,10 @@ def resolve(containers: Sequence[ScriptedContainer], ref: str) -> str | None:
     """The name of the container `ref` names, as the registry finds it: by name or id, or by an id
     prefix of 12 characters or more that only one container has."""
     for c in containers:
-        if ref in (c.name, container_id(c.name)):
+        if ref in (c.name, c.engine_id):
             return c.name
     if len(ref) >= 12:
-        prefixed = [c.name for c in containers if container_id(c.name).startswith(ref)]
+        prefixed = [c.name for c in containers if c.engine_id.startswith(ref)]
         return prefixed[0] if len(prefixed) == 1 else None
     return None
 
@@ -119,10 +127,16 @@ class ScriptedHost(_Strict):
     events: list[ScriptedEvent] = Field(default_factory=list)
     signals: list[ScriptedSignal] = Field(min_length=1)
     rules: list[str] = Field(default_factory=list)
+    # The hosts file's protected entries: a container's name, or a Coolify application's uuid or
+    # name, which protects the containers labelled as its own.
+    protected: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _names_fit(self) -> Self:
         names = {c.name for c in self.containers}
+        ids = [c.engine_id for c in self.containers]
+        if len(set(ids)) < len(ids):
+            raise ValueError("two containers have the same id")
         named = [s.container for s in self.signals if s.container]
         unknown = sorted({*named, *(e.container for e in self.events)} - names)
         if unknown:
@@ -136,7 +150,11 @@ class ScriptedHost(_Strict):
             name="Scripted host",
             kind="socket",
             endpoint="tcp://scripted:2375",
-            services={self.project: ServiceOverrides(rules=self.rules)},
+            services={
+                self.project: ServiceOverrides(
+                    rules=self.rules, protected_containers=self.protected
+                )
+            },
         )
 
     def engine(self, host_id: str) -> ScriptedEngine:
@@ -300,7 +318,7 @@ class ScriptedEngine:
 def _summary(c: ScriptedContainer, project: str, now: datetime) -> ContainerSummary:
     started = now - timedelta(minutes=c.started_minutes_ago)
     return ContainerSummary(
-        id=container_id(c.name),
+        id=c.engine_id,
         name=c.name,
         image=c.image,
         state=c.state,

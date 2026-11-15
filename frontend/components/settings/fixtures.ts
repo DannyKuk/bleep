@@ -162,6 +162,7 @@ export function plugin(overrides: Partial<PluginView> = {}): PluginView {
   return {
     name: "coolify",
     title: "Coolify",
+    experimental: false,
     enabled: false,
     switched_on: false,
     settings: {},

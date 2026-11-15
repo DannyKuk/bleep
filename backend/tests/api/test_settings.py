@@ -603,6 +603,16 @@ def test_a_settings_save_leaves_a_plugin_version_alone(app):
     assert app.get("/api/plugins").json()[0]["version"] == version
 
 
+def test_the_plugins_list_says_which_plugin_is_experimental(settings):
+    parts = build_parts(
+        settings, Registry([]), FakeEmbedder(), plugins=[FakeCoolifyPlugin(), McpUrlPlugin()]
+    )
+    with TestClient(create_app(settings, parts)) as client:
+        client.post("/api/auth/login", json={"password": "test-password"})
+        listed = {p["name"]: p["experimental"] for p in client.get("/api/plugins").json()}
+        assert listed == {"coolify": False, "mcp": True}
+
+
 def test_the_mcp_purpose_is_saved_shown_and_cleared_from_the_plugins_page(settings):
     parts = build_parts(settings, Registry([]), FakeEmbedder(), plugins=[McpUrlPlugin()])
     with TestClient(create_app(settings, parts)) as client:
