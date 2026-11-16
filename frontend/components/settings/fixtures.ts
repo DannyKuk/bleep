@@ -65,18 +65,18 @@ export function sshHost(overrides: Partial<HostSettingsView> = {}): HostSettings
 export const MODEL_EXAMPLES = {
   openrouter: ["openai/gpt-6-luna", "openai/gpt-6.1-terra", "openai/gpt-6.1-sol"],
   anthropic: ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"],
-  local: ["openai/gpt-oss-20b"],
+  local: ["qwen/qwen3.8-27b", "openai/gpt-oss-20b"],
 };
 /** The ids each provider runs with nothing stored, as `GET /api/settings` gives them. */
 export const OPENROUTER_IDS = {
   model: "openai/gpt-6-luna",
   cheap_model: "openai/gpt-6-luna",
-  local_model: "openai/gpt-oss-20b",
+  local_model: "qwen/qwen3.8-27b",
 };
 export const CLAUDE_IDS = {
   model: "claude-haiku-5-5",
   cheap_model: "claude-haiku-5-5",
-  local_model: "openai/gpt-oss-20b",
+  local_model: "qwen/qwen3.8-27b",
 };
 
 type Provider = ModelChoice["provider"];
@@ -123,7 +123,7 @@ export function settingsView(overrides: Partial<SettingsView> = {}): SettingsVie
       provider: "openrouter",
       model: "openai/gpt-6-luna",
       cheap_model: "openai/gpt-6-luna",
-      local_model: "openai/gpt-oss-20b",
+      local_model: "qwen/qwen3.8-27b",
     },
     models_by_provider: {
       openrouter: { ...OPENROUTER_IDS, examples: MODEL_EXAMPLES.openrouter },

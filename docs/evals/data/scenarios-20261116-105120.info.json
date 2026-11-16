@@ -1,0 +1,233 @@
+{
+  "started_at": "2026-11-16T10:51:20.056603Z",
+  "finished_at": "2026-11-16T10:59:00.039345Z",
+  "model": "openai/gpt-oss-20b",
+  "provider": "local",
+  "judge": "claude-code",
+  "repeat": 1,
+  "scenarios": [
+    {
+      "id": "bad-deploy",
+      "fault": "bad-deploy",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-web version 2 reads the column price_cents, which the database does not have (its migration never ran), so /api/items fails with 500 while shop-web stays healthy.",
+        "category": "code",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": "bad-deploy",
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false,
+      "scripted": null,
+      "coolify": null
+    },
+    {
+      "id": "bad-env",
+      "fault": "bad-env",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-web's DATABASE_URL names the host `db`, which does not exist on the shop's network (the database is shop-db), so shop-web cannot reach its database, exits at startup and keeps being restarted.",
+        "category": "config",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [
+          "DATABASE_URL"
+        ],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false,
+      "scripted": null,
+      "coolify": null
+    },
+    {
+      "id": "db-down",
+      "fault": "db-down",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "The database container shop-db is stopped, so shop-web cannot connect to its database and the shop's API fails.",
+        "category": "dependency",
+        "action": {
+          "kind": "act",
+          "steps": [
+            {
+              "action": "docker.start",
+              "target": "shop-db",
+              "tool": null,
+              "arguments": null,
+              "params": null
+            }
+          ],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false,
+      "scripted": null,
+      "coolify": null
+    },
+    {
+      "id": "look-healthy",
+      "fault": null,
+      "look": true,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "Nothing is wrong with the shop: every container runs, none is unhealthy, and nothing shows a failure.",
+        "category": "unknown",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false,
+      "scripted": null,
+      "coolify": null
+    },
+    {
+      "id": "misroute",
+      "fault": "misroute",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-proxy forwards to shop-web:8001, where nothing listens (shop-web listens on 8000), so every request through the proxy gets a 502 while shop-web itself is healthy.",
+        "category": "config",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false,
+      "scripted": null,
+      "coolify": null
+    },
+    {
+      "id": "oom",
+      "fault": "oom",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-worker's batch size (WORKER_BATCH_MB=256) is past its 64 MB memory limit, so it is OOM-killed on every batch and restarts in a loop.",
+        "category": "resource",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [
+          "WORKER_BATCH_MB"
+        ],
+        "must_set": {
+          "WORKER_BATCH_MB": "8"
+        }
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false,
+      "scripted": null,
+      "coolify": null
+    }
+  ],
+  "commit": "25d85a22",
+  "command": "uv run --group evals python -m evals.run --only db-down,oom,bad-env,misroute,bad-deploy,look-healthy --repeat 1",
+  "reset_shop": true,
+  "knowledge": true,
+  "repo_docs": [
+    "DannyKuk/bleep: demo/shop/docs/deploy.md",
+    "DannyKuk/bleep: demo/shop/docs/services.md"
+  ],
+  "raw": "data/scenarios-20261116-105120.jsonl",
+  "report": "docs/evals/scenarios-2026-11-16.md",
+  "grader": null,
+  "grades": null
+}

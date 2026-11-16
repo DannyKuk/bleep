@@ -184,7 +184,7 @@ describe("the Models panel", () => {
     expect(within(models).queryByLabelText("Local model")).toBeNull();
 
     await userEvent.selectOptions(provider, "local");
-    expect(within(models).getByLabelText("Local model")).toHaveValue("openai/gpt-oss-20b");
+    expect(within(models).getByLabelText("Local model")).toHaveValue("qwen/qwen3.8-27b");
     expect(within(models).getByRole("group", { name: "LOCAL_BASE_URL" })).toBeInTheDocument();
     expect(within(models).queryByRole("group", { name: "ANTHROPIC_API_KEY" })).toBeNull();
     expect(within(models).queryByLabelText("Model")).toBeNull();
