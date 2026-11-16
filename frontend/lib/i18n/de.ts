@@ -664,6 +664,8 @@ export const de: Messages = {
     title: "Einstellungen",
     intro:
       "Schlüssel, Tokens und Adressen setzt du unten oder in der .env; diese Seite zeigt, ob sie gesetzt sind, nie ihren Wert. Eine Änderung gilt sofort, außer bei den Embeddings und einem laufenden Langfuse-Tracer; sie sagen dir, wann Bleep neu starten muss. Eine Einstellung in der .env gilt vor dieser Seite und sagt das auch.",
+    loginOff:
+      "Bleeps eigene Anmeldung ist aus (BLEEP_LOGIN_ENABLED=false). Wer dieses Dashboard erreicht, kann es bedienen; was es ausliefert, etwa die Basic Auth eines Proxys, muss deshalb selbst nach einer Anmeldung fragen.",
     save: "Speichern",
     cancel: "Abbrechen",
     add: "Hinzufügen",

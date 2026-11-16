@@ -64,7 +64,7 @@ def _too_deep(body: Any) -> bool:
     return False
 
 
-def settings_view(parts: AppParts) -> SettingsView:
+def settings_view(parts: AppParts, settings: Settings) -> SettingsView:
     store = parts.settings_store
     models = store.models()
     key_env, key = (
@@ -90,6 +90,7 @@ def settings_view(parts: AppParts) -> SettingsView:
         restart_needed=store.restart_needed(),
         overrides=store.overrides().model_dump(mode="json", exclude_none=True),
         version=store.version(),
+        login_enabled=settings.login_enabled,
     )
 
 
@@ -106,8 +107,10 @@ def shown_tracing(tracing: TracingChoice, from_env: list[str]) -> TracingChoice:
 
 
 @router.get("/settings")
-async def get_settings(parts: Parts, response: Response) -> SettingsView:
-    view = settings_view(parts)
+async def get_settings(
+    parts: Parts, settings: Annotated[Settings, Depends(app_settings)], response: Response
+) -> SettingsView:
+    view = settings_view(parts, settings)
     response.headers["ETag"] = f'"{view.version}"'
     return view
 
@@ -136,7 +139,7 @@ async def put_settings(
         raise stale(changed.current, "stale_settings") from None
     except SettingsRefused as refusal:
         raise Refusal.of(422, refusal) from None
-    view = settings_view(parts)
+    view = settings_view(parts, settings)
     response.headers["ETag"] = f'"{view.version}"'
     return view
 

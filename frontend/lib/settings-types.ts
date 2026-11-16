@@ -160,6 +160,8 @@ export interface SettingsView {
   overrides: SettingsOverrides;
   /** Of `overrides`; a `PUT /api/settings` built from this view sends it back (`putSettings`). */
   version: string;
+  /** BLEEP_LOGIN_ENABLED: false when whatever serves the dashboard asks for the login (#611). */
+  login_enabled: boolean;
 }
 
 export type Language = "en" | "de";

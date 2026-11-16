@@ -27,6 +27,15 @@ function backend(view = settingsView(), plugins = [plugin()]) {
 }
 
 describe("the settings page in German", () => {
+  it("says in German when Bleep's login is off", async () => {
+    backend(settingsView({ language: "de", login_enabled: false }));
+    await act(async () => setLanguage("de"));
+    render(<SettingsPage />);
+    expect(await screen.findByRole("note")).toHaveTextContent(
+      "Bleeps eigene Anmeldung ist aus (BLEEP_LOGIN_ENABLED=false).",
+    );
+  });
+
   it("shows its headings, panels and forms in German", async () => {
     backend(settingsView({ language: "de" }));
     await act(async () => setLanguage("de"));
