@@ -1,6 +1,6 @@
 # Several shop copies at once, 2026-11-16
 
-> **Answer:** 4 copies of the demo shop, each a `docker:dind` engine, ran the whole shop set once (14 scenarios and 33 injection cases, 47 runs) in 23.0 minutes from the first run to the last, 23.7 minutes for the whole command. The same 47 runs take about 87 minutes one at a time, so a round runs 3.8 times faster on 4 copies. The 7 comparison cases gave the same verdicts as on Docker Desktop: every plan exact, the same 6 root causes passing by hand, the attack passed and the category scores matched. Each incident opened at the same watcher tick on both. The diagnosis came between 6 s sooner and 26 s later on a copy (#657).
+> **Answer:** 4 copies of the demo shop, each a `docker:dind` engine, ran the whole shop set once (14 scenarios and 33 injection cases, 47 runs) in 23.0 minutes from the first run to the last, 23.7 minutes for the whole command. One at a time they would take an estimated 69 to 87 minutes (not run: 69 at the pace Docker Desktop's 7 comparison runs kept, 87 adding up the copies' own busy minutes under load), so a round runs about 3 to 3.8 times faster on 4 copies. The 7 comparison cases gave the same verdicts as on Docker Desktop: every plan exact, the same 6 root causes passing by hand, the attack passed and the category scores matched. Each incident opened at the same watcher tick on both. The diagnosis came between 6 s sooner and 26 s later on a copy (#657).
 
 ## Setup
 
@@ -11,7 +11,7 @@
 | When | 2026-11-16, Docker Desktop 22:18 to 22:28 UTC, the launcher 22:29 to 22:52 UTC |
 | Code | branch `feat/657-parallel-shop-evals` on `f11c0404`, before its first commit |
 | Machine | 14 CPUs, 48 GB; Docker Desktop 29.9.3 with 14 CPUs and 7.7 GiB; `docker:29.9.3-dind` |
-| Bleep's live backend | stopped for the Docker Desktop runs, running through the launcher's round (it opened no incident) |
+| Bleep's live backend | stopped for the Docker Desktop runs, running through the launcher's round and the engines' removal; its incident store has no incident opened after 2026-11-15 |
 | Cost | $0.21 in the runs' own `usd` (Docker Desktop $0.023, the launcher's round $0.188). OpenRouter's key usage went from $10.1148 to $10.3305. |
 
 | Round | Report | Raw data |
@@ -54,10 +54,10 @@ Two differences show in what the model wrote. On a copy, the port-conflict diagn
 | Engines up, images loaded, shop healthy | 38 s for all 4 at once |
 | First run to last | 23.0 min; per engine 19.7, 22.4, 23.0 and 21.6 min |
 | Whole command | 23.7 min, engines removed at the end |
-| One at a time, estimated | 86.7 min: the 4 engines' busy minutes added up, 1.84 min a run |
+| One at a time, estimated | 69 min at Docker Desktop's pace (7 runs in 10.3 min, 1.47 min a run, each runner's docs embedding included); 86.7 min adding up the 4 engines' busy minutes (1.84 min a run, slowed by the load itself). Neither was run: the 47 runs were not repeated one at a time |
 | One copy at rest | 245 MiB of Docker Desktop's memory, 1.5 GB in its volume |
 
-At 1.84 minutes a run, #649's 144 shop runs (every suite three times) take about 66 minutes on 4 copies. More than 4 copies was not measured. Memory leaves room: 6 copies at rest hold about 1.5 GB of the 7.7 GiB. More copies also mean more runs waiting on the model at once and more CPU shared between them, so a larger N will give noisier diagnosis times.
+At the copies' 1.84 minutes a run, #649's 144 shop runs (every suite three times) take about 66 minutes on 4 copies; one at a time they would take about 3.5 to 4.4 hours at the two paces above. More than 4 copies was not measured. Memory leaves room: 6 copies at rest hold about 1.5 GB of the 7.7 GiB. More copies also mean more runs waiting on the model at once and more CPU shared between them, so a larger N will give noisier diagnosis times.
 
 ## Stopped halfway
 

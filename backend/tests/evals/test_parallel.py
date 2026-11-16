@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 import pytest
 
 from bleep.hosts.config import load_hosts_file
+from bleep.schemas.settings import ModelSettings
 from evals.injection import InjectionResult
 from evals.injection import append_jsonl as inj_append
 from evals.parallel import (
@@ -20,6 +21,7 @@ from evals.parallel import (
     chosen,
     hosts_file_for,
     main,
+    model_env,
     publish_injection,
     publish_scenarios,
     run_share,
@@ -27,7 +29,7 @@ from evals.parallel import (
     split,
 )
 from evals.report import RunInfo, append_jsonl, read_info, write_info
-from evals.run import EvalError
+from evals.run import EvalError, EvalSettings
 from evals.scenarios import ScenarioResult, load_scenarios
 
 
@@ -76,10 +78,9 @@ def test_each_engines_runners_get_its_own_engine_hosts_file_lock_tag_and_report_
 
 def test_an_engine_runs_its_scenarios_then_its_injection_cases():
     share = Share(scenarios=["db-down", "oom"], injection=["log-base64"])
-    commands = runner_commands(share, args(repeat=3, judge="manual", model="m", label="R1"))
+    commands = runner_commands(share, args(repeat=3, judge="manual", label="R1"))
     assert [c[1:] for c in commands] == [
-        ["-m", "evals.run", "--only", "db-down,oom", "--repeat", "3", "--judge", "manual",
-         "--model", "m"],
+        ["-m", "evals.run", "--only", "db-down,oom", "--repeat", "3", "--judge", "manual"],
         ["-m", "evals.injection", "--only", "log-base64", "--repeat", "3", "--judge", "manual",
          "--label", "R1"],
     ]  # fmt: skip
@@ -95,7 +96,7 @@ def test_a_runner_that_fails_does_not_stop_the_next_on_its_engine(tmp_path):
         return 1 if argv[2] == "evals.run" else 0
 
     share = Share(scenarios=["db-down"], injection=["log-base64"])
-    outcome = asyncio.run(run_share(Engine(3, tmp_path), share, args(), spawn))
+    outcome = asyncio.run(run_share(Engine(3, tmp_path), share, args(), {}, spawn))
 
     assert [r[0] for r in ran] == ["evals.run", "evals.injection"]
     assert {r[1] for r in ran} == {"e3"} and {r[2] for r in ran} == {tmp_path / "e3.log"}
@@ -303,3 +304,24 @@ def test_the_rounds_injection_batches_are_published_with_one_set_of_tables(tmp_p
     assert "### R" in text and "log-base64" in text and "control-db-down-restart" in text
     assert "injection-20261116-100002-e2.jsonl" in text.splitlines()[0]
     assert {p.name for p in (tmp_path / "data").glob("*.jsonl")} == {r.name for r in raws}
+
+
+def test_the_model_under_test_reaches_both_runners_through_the_environment(tmp_path):
+    """evals.injection has no --model, so `--model` is the provider's model setting for both."""
+    seen = []
+
+    async def spawn(argv, env, _log_file):
+        seen.append((argv[2], env.get("LLM_MODEL"), env.get("LOCAL_MODEL"), "--model" in argv))
+        return 0
+
+    cloud = EvalSettings(models=ModelSettings(provider="openrouter"))
+    local = EvalSettings(models=ModelSettings(provider="local"))
+    assert model_env("vendor/x", local) == {"LOCAL_MODEL": "vendor/x"}
+    assert model_env(None, cloud) == {}
+    share = Share(scenarios=["db-down"], injection=["log-base64"])
+    base = {"PATH": "/bin"} | model_env("vendor/x", cloud)
+    asyncio.run(run_share(Engine(1, tmp_path), share, args(model="vendor/x"), base, spawn))
+    assert seen == [
+        ("evals.run", "vendor/x", None, False),
+        ("evals.injection", "vendor/x", None, False),
+    ]

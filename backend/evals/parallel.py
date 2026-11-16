@@ -146,10 +146,7 @@ def runner_commands(share: Share, args: argparse.Namespace) -> list[list[str]]:
     python = [sys.executable, "-m"]
     commands = []
     if share.scenarios:
-        model = ["--model", args.model] if args.model else []
-        commands.append(
-            [*python, "evals.run", "--only", ",".join(share.scenarios), *common, *model]
-        )
+        commands.append([*python, "evals.run", "--only", ",".join(share.scenarios), *common])
     if share.injection:
         label = ["--label", args.label] if args.label else []
         commands.append(
@@ -273,14 +270,27 @@ class Outcome:
     seconds: float
 
 
+def model_env(model: str | None, settings: EvalSettings) -> dict[str, str]:
+    """`--model` as the environment both runners read it from (`evals.injection` has no
+    `--model`): the model setting of the provider in use."""
+    if not model:
+        return {}
+    return {"LOCAL_MODEL" if settings.models.provider == "local" else "LLM_MODEL": model}
+
+
 async def run_share(
-    engine: Engine, share: Share, args: argparse.Namespace, spawn: Spawn = _spawn
+    engine: Engine,
+    share: Share,
+    args: argparse.Namespace,
+    base: Mapping[str, str],
+    spawn: Spawn = _spawn,
 ) -> Outcome:
-    """An engine's runners, one after the other; a runner that fails does not stop the next."""
+    """An engine's runners, one after the other, in `base`'s environment and its own; a runner
+    that fails does not stop the next."""
     started = asyncio.get_running_loop().time()
     codes = []
     for argv in runner_commands(share, args):
-        codes.append(await spawn(argv, engine.env(os.environ), engine.log_file))
+        codes.append(await spawn(argv, engine.env(base), engine.log_file))
     seconds = asyncio.get_running_loop().time() - started
     return Outcome(engine, share, codes, seconds)
 
@@ -360,7 +370,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--injection", help="evals.injection cases: ids, comma-separated, or all")
     parser.add_argument("--repeat", type=int, default=1, help="runs per case (default 1)")
-    parser.add_argument("--model", help="the model under test, as evals.run's --model")
+    parser.add_argument(
+        "--model", help="the model under test for both runners, as evals.run's --model"
+    )
     parser.add_argument("--judge", help="the judge, as the runners' --judge")
     parser.add_argument("--label", default="", help="the injection round's heading")
     return parser
@@ -407,11 +419,12 @@ async def run_round(
         engine.hosts_file.write_text(hosts_file_for(template, engine.shop_port), encoding="utf-8")
     log.info("building the shop's images on this machine's engine")
     await _check(["docker", "compose", "-p", "shop", "-f", str(DEMO_COMPOSE), "build"])
+    base = dict(os.environ) | model_env(args.model, settings)
     async with Engines(engines).started():
         log.info("%d engines up; logs in %s", len(engines), folder.relative_to(REPO))
         ran = asyncio.get_running_loop().time()
         outcomes = await asyncio.gather(
-            *(run_share(e, s, args) for e, s in zip(engines, shares, strict=True))
+            *(run_share(e, s, args, base) for e, s in zip(engines, shares, strict=True))
         )
         wall = asyncio.get_running_loop().time() - ran
     model = tested_model(settings.models)
