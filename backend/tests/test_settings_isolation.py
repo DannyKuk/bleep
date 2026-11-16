@@ -14,8 +14,10 @@ from tests.settings_env import SETTINGS_CLASSES, clear_settings_env, names_read
 def test_settings_read_no_dotenv_file():
     for cls in SETTINGS_CLASSES:
         assert cls.model_config.get("env_file") is None
+    # The harness's model settings read `evals.run.ENV_FILE` when they are built, so that name
+    # must not point at the repo's `.env` while a test runs.
+    assert Path(evals.run.ENV_FILE) != evals.run.REPO / ".env"
     assert not Path(evals.run.ENV_FILE).exists()
-    assert EvalSettings().models.model_config.get("env_file") is None
 
 
 def test_the_names_cover_every_spelling_the_classes_read():
