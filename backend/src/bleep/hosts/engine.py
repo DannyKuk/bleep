@@ -517,6 +517,16 @@ def _healthcheck(raw: dict) -> HealthCheck | None:
     )
 
 
+def _start_command(raw: dict) -> list[str]:
+    """The entrypoint, then the command, as the engine starts the container every time."""
+    config = raw.get("Config") or {}
+    words: list[str] = []
+    for key in ("Entrypoint", "Cmd"):
+        value = config.get(key) or []
+        words += [value] if isinstance(value, str) else [str(word) for word in value]
+    return words
+
+
 def _probes(state: dict) -> list[HealthProbe]:
     return [
         HealthProbe(
@@ -554,6 +564,7 @@ def _detail(raw: dict) -> ContainerDetail:
         oom_killed=bool(state.get("OOMKilled")),
         restart_count=raw.get("RestartCount", 0),
         error=state.get("Error") or None,
+        command=_start_command(raw),
         healthcheck=_healthcheck(raw),
         probes=_probes(state),
     )

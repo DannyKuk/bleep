@@ -43,7 +43,7 @@ from bleep.tools.registry import ToolContext, ToolSpec
 
 LABEL_CHARS = 80
 PROBE_OUTPUT_CHARS = 200
-HEALTH_COMMAND_CHARS = 300
+COMMAND_CHARS = 300
 _SECRET_LABEL = re.compile(r"auth|password|passwd|secret|token|key|users", re.IGNORECASE)
 
 
@@ -151,6 +151,7 @@ def _describe(detail: ContainerDetail) -> str:
     lines = [
         f"name: {c.name}",
         f"image: {c.image}",
+        *_start_lines(detail),
         f"state: {c.state}",
         f"health: {c.health}",
         *_health_lines(detail),
@@ -185,19 +186,44 @@ def _describe(detail: ContainerDetail) -> str:
     return "\n".join(lines)
 
 
-def _command(check: HealthCheck, hidden: list[str]) -> str:
-    """The check's command on one line, secrets out before the cut so a cut cannot leave half a
-    token behind. Compose copies an env value into a command (`redis-cli -a $REDIS_PASSWORD`), so
-    the values the env lines hide are hidden here too, word by word, then the usual redaction."""
-    words = [hide_values(word, hidden) for word in check.command]
-    if check.shell:
-        head, body = "health check, run by a shell", " ".join(words)
-    else:
-        head, body = "health check, run without a shell", json.dumps(words, ensure_ascii=False)
+def _argv(command: list[str], hidden: list[str], *, shell: bool = False) -> str:
+    """A command on one line, secrets out before the cut so a cut cannot leave half a token
+    behind. Compose copies an env value into a command (`redis-cli -a $REDIS_PASSWORD`), so the
+    values the env lines hide are hidden here too, word by word, then the usual redaction."""
+    words = _hide_flag_values([hide_values(word, hidden) for word in command])
+    body = " ".join(words) if shell else json.dumps(words, ensure_ascii=False)
     line = " ".join(redact_command(body).split())
-    if len(line) > HEALTH_COMMAND_CHARS:
-        line = line[:HEALTH_COMMAND_CHARS] + "…"
-    return f"{head}: {line}"
+    if len(line) > COMMAND_CHARS:
+        line = line[:COMMAND_CHARS] + "…"
+    return line
+
+
+def _hide_flag_values(words: list[str]) -> list[str]:
+    """Each word the base redaction hides only after the word before it (`--password hunter`,
+    `--token abc`), hidden whole. A JSON list keeps the two apart (`"--password", "hunter"`), so
+    the rule that reads them as a pair never sees them together; hiding the whole word keeps a
+    value with a space in it (`--secret "pa ss"`) from showing its end."""
+    shown = list(words)
+    for i in range(1, len(words)):
+        head = redact_text(words[i - 1]) + " "
+        pair = redact_text(head + words[i])
+        if pair.startswith(head) and pair[len(head) :] != redact_text(words[i]):
+            shown[i] = REDACTED
+    return shown
+
+
+def _command(check: HealthCheck, hidden: list[str]) -> str:
+    head = "health check, run by a shell" if check.shell else "health check, run without a shell"
+    return f"{head}: {_argv(check.command, hidden, shell=check.shell)}"
+
+
+def _start_lines(detail: ContainerDetail) -> list[str]:
+    """What the container runs at every start, so a restart is known to load the config it
+    starts from, not one loaded while it ran (#642). Nothing when the engine gave none."""
+    if not detail.command:
+        return []
+    hidden = secret_env_values(detail.env)
+    return [f"start command (run again by every restart): {_argv(detail.command, hidden)}"]
 
 
 def _probe_output(text: str, limit: int, hidden: list[str]) -> str:

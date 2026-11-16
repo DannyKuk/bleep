@@ -292,6 +292,40 @@ async def test_inspect_of_a_running_container_without_healthcheck(api, engine):
     assert detail.mem_limit is None
 
 
+async def test_inspect_reads_the_start_command_entrypoint_first(api, engine):
+    raw = inspect_dict(Status="running", ExitCode=0)
+    raw["Config"]["Entrypoint"] = ["/docker-entrypoint.sh"]
+    raw["Config"]["Cmd"] = ["caddy", "run", "--resume", "--config", "/etc/caddy/Caddyfile"]
+    api.inspects["c1"] = raw
+    detail = await engine.inspect("c1")
+    assert detail.command == [
+        "/docker-entrypoint.sh",
+        "caddy",
+        "run",
+        "--resume",
+        "--config",
+        "/etc/caddy/Caddyfile",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("entrypoint", "cmd", "expected"),
+    [
+        (None, ["postgres"], ["postgres"]),
+        ("/bin/sh -c 'run'", None, ["/bin/sh -c 'run'"]),
+        (None, None, []),
+    ],
+)
+async def test_inspect_reads_a_missing_or_string_start_command(
+    api, engine, entrypoint, cmd, expected
+):
+    raw = inspect_dict(Status="running", ExitCode=0)
+    raw["Config"]["Entrypoint"] = entrypoint
+    raw["Config"]["Cmd"] = cmd
+    api.inspects["c1"] = raw
+    assert (await engine.inspect("c1")).command == expected
+
+
 async def test_unknown_container_is_container_not_found(engine):
     with pytest.raises(ContainerNotFound) as caught:
         await engine.inspect("ghost")

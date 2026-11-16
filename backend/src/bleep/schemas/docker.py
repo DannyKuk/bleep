@@ -58,7 +58,8 @@ class ContainerDetail(BaseModel):
     """One container's full inspect, as Bleep uses it.
 
     `env` holds the raw `KEY=value` strings straight from the engine, secrets included. It must
-    never reach a model, a log or the database without `guard.redact_env` first.
+    never reach a model, a log or the database without `guard.redact_env` first. `command` is raw
+    too: Compose copies env values into it, so it is shown only as `inspect_container` shows it.
     """
 
     summary: ContainerSummary
@@ -69,6 +70,8 @@ class ContainerDetail(BaseModel):
     oom_killed: bool = False
     restart_count: int = 0
     error: str | None = None
+    # What the container runs at every start, a restart included: the entrypoint, then the command
+    command: list[str] = Field(default_factory=list)
     healthcheck: HealthCheck | None = None  # None when the container has no health check
     probes: list[HealthProbe] = Field(default_factory=list)  # oldest first; Docker keeps 5
 

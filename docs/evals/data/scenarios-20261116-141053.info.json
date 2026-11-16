@@ -1,0 +1,56 @@
+{
+  "started_at": "2026-11-16T14:10:53.973322Z",
+  "finished_at": "2026-11-16T14:17:43.865328Z",
+  "model": "claude-haiku-5-5",
+  "provider": "anthropic",
+  "judge": "claude-code",
+  "repeat": 3,
+  "scenarios": [
+    {
+      "id": "misroute",
+      "fault": "misroute",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-proxy forwards to shop-web:8001, where nothing listens (shop-web listens on 8000), so every request through the proxy gets a 502 while shop-web itself is healthy.",
+        "category": "config",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false,
+      "scripted": null,
+      "coolify": null
+    }
+  ],
+  "commit": "3a995f19",
+  "command": "uv run --group evals python -m evals.run --only misroute --repeat 3",
+  "reset_shop": true,
+  "knowledge": true,
+  "repo_docs": [
+    "DannyKuk/bleep: demo/shop/docs/deploy.md",
+    "DannyKuk/bleep: demo/shop/docs/services.md"
+  ],
+  "timeout_s": null,
+  "raw": "../../data/evals/scenarios-20261116-141053.jsonl",
+  "report": "docs/evals/scenarios-2026-11-16-8.md",
+  "grader": null,
+  "grades": null
+}
