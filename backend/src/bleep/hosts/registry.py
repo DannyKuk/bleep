@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from bleep.hosts.config import HostConfig, ServiceOverrides
 from bleep.hosts.discovery import AmbiguousOverride, group_services
 from bleep.hosts.engine import Engine, EngineError, EngineUnavailable, connect_engine
-from bleep.hosts.shell import HostShell, engine_basics, host_basics
+from bleep.hosts.shell import AllowedShell, engine_basics, host_basics
 from bleep.hosts.ssh import KeysFor, Resolve, SshSession
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.services import HostState, Service
@@ -244,10 +244,13 @@ class Registry:
             if entry.state.reachable:  # an unreachable host's error is its connection failure
                 self._mark(entry, error=error)
 
-    def shell(self, host_id: str) -> HostShell | None:
-        """The host's allowlisted shell: its ssh session, or None for a socket host."""
+    def shell(self, host_id: str) -> AllowedShell | None:
+        """The host's allowlisted shell over its ssh session, or None for a socket host. The
+        session itself never leaves the registry."""
         entry = self._entries.get(host_id)
-        return entry.session if entry is not None else None
+        if entry is None or entry.session is None:
+            return None
+        return AllowedShell(entry.session)
 
     def engine(self, host_id: str) -> Engine:
         entry = self._entries.get(host_id)
@@ -306,7 +309,7 @@ class Registry:
         entry.basics_wait = BASICS_RETRY_S  # until a read succeeds
         try:
             if entry.session is not None:
-                basics = await host_basics(entry.session)
+                basics = await host_basics(AllowedShell(entry.session))
             elif entry.state.config.kind == "socket" and entry.engine is not None:
                 basics = engine_basics(await entry.engine.info())
             else:
