@@ -278,7 +278,7 @@ docker run --rm -p 8080:80 bleep-site   # http://localhost:8080
 
 In Coolify, add the repository as an application with the Dockerfile build pack, base directory `/`, Dockerfile location `/site/Dockerfile` and port 80, and give it the page's domain. For local work, `npm ci` and then `npm run dev` in `site/` serve it at http://localhost:3170.
 
-`/benchmarks` reads the latest six-model eval round from `site/lib/benchmarks/round.json` when the page is built. After a new round is merged into that file, press Redeploy on the Coolify app: it has no webhook, so it does not rebuild on its own.
+`/benchmarks` is built from the files in `site/lib/benchmarks/`: `round.json` for the six-model round and `data/` for every suite, which the tests write from the raw batches in `docs/evals/data/`. A new round reaches the page this way: commit its raw `.jsonl` (and `.info.json`, `.grades.jsonl` or rendered `.md`) files and its dated report, name the batches and the report in `site/lib/benchmarks/sources.ts`, run `npm test -- -u lib/benchmarks` in `site/` to rewrite `data/`, read the diff, and commit it. A test refuses a run with no verdict or a report that does not name its batches. After the change is merged, press Redeploy on the Coolify app: it has no webhook, so it does not rebuild on its own.
 
 ## Not built
 

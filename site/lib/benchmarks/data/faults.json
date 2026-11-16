@@ -1,0 +1,76 @@
+{
+  "model": "openai/gpt-6-luna",
+  "dates": [
+    "2026-11-09"
+  ],
+  "commit": "6561c91",
+  "judge": "manual",
+  "batches": [
+    "scenarios-20261109-075810"
+  ],
+  "cases": [
+    {
+      "name": "bad-deploy",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "bad-env",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "db-down",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "disk-full",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "hung",
+      "group": null,
+      "runs": [
+        "fail"
+      ]
+    },
+    {
+      "name": "misroute",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "misroute-mcp",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "oom",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "port-conflict",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    }
+  ]
+}

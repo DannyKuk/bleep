@@ -1,0 +1,568 @@
+{
+  "bad-deploy/1": {
+    "type": "agent",
+    "expected": "shop-web version 2 reads the column price_cents, which the database does not have (its migration never ran), so /api/items fails with 500 while shop-web stays healthy.",
+    "diagnosis": {
+      "rootCause": "shop-web was deployed as version 2, which queries the new price_cents column, but the existing shop database schema lacks that column because the version 2 migration was not applied. The items API therefore returns 500 errors.",
+      "category": "code",
+      "confidence": 0.99,
+      "unsure": false
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "The failure is caused by a missing database migration, and restarting shop-web would leave the schema unchanged. No enabled action can apply the migration; shop-db must not be restarted.",
+      "instructions": "Apply the version 2 shop database migration included with the shop deployment so shop-db has the price_cents column, then apply the Compose configuration with `docker compose up -d shop-web` from the demo Compose project. The migration command itself is not specified in the incident details, so use the migration procedure supplied by the shop application rather than guessing a command."
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "recent_commits",
+        "args": "since_hours: 48"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 30"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "commit_diff",
+        "args": "max_chars: 8000, sha: d9f9be1"
+      },
+      {
+        "name": "commit_diff",
+        "args": "max_chars: 8000, sha: 3350063"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-web, since_minutes: 60, tail: 100"
+      },
+      {
+        "name": "knowledge_search",
+        "args": "{\"query\": \"How are database migrations applied for shop, especially migration 0…"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Found the cause",
+        "ok": true
+      },
+      {
+        "label": "Proposed the expected plan",
+        "ok": true
+      },
+      {
+        "label": "No step it did not need",
+        "ok": true
+      }
+    ],
+    "note": "names version 2 reading price_cents, which the schema lacks because the migration was not applied, so /api/items answers 500",
+    "failure": null
+  },
+  "bad-env/1": {
+    "type": "agent",
+    "expected": "shop-web's DATABASE_URL names the host `db`, which does not exist on the shop's network (the database is shop-db), so shop-web cannot reach its database, exits at startup and keeps being restarted.",
+    "diagnosis": {
+      "rootCause": "shop-web exits during startup because it cannot resolve the database hostname `db`. The evidence does not establish whether `db` is an incorrect configured hostname or an intended alias missing from shop-web's Docker network.",
+      "category": "unknown",
+      "confidence": 0.45,
+      "unsure": true
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "I am not sure: shop-web fails because the hostname `db` cannot be resolved, while shop-db is running and healthy. The evidence does not show whether `db` is the intended hostname with a missing network alias or whether shop-web is configured with the wrong hostname, so restarting it would not address the unresolved configuration issue.",
+      "instructions": "Inspect `demo/compose.yaml` and determine the intended database hostname and network. Make `db` (the hostname shop-web currently tries to resolve) resolve to shop-db on shop-web's network—by adding the `db` network alias to shop-db if that is the intended name, or by changing shop-web's database-host setting to shop-db's actual service/network name if not. The evidence does not identify that actual name or which choice is correct, so do not guess. After editing the Compose file, apply it with `docker compose up -d shop-web` from the Compose project directory."
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-db"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 30"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-worker"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-worker, since_minutes: 60, tail: 100"
+      },
+      {
+        "name": "knowledge_search",
+        "args": "{\"query\": \"How does Docker Compose provide DNS names for services on a network,…"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Found the cause",
+        "ok": true
+      },
+      {
+        "label": "Proposed the expected plan",
+        "ok": true
+      },
+      {
+        "label": "No step it did not need",
+        "ok": true
+      }
+    ],
+    "note": "names the unresolvable host db that shop-web exits on at startup; hedges between a wrong name and a missing network alias, and calls the category unknown",
+    "failure": null
+  },
+  "db-down/1": {
+    "type": "agent",
+    "expected": "The database container shop-db is stopped, so shop-web cannot connect to its database and the shop's API fails.",
+    "diagnosis": {
+      "rootCause": "The shop-db dependency exited cleanly and was left stopped. shop-web could no longer resolve its database host, causing health checks and item requests to fail.",
+      "category": "dependency",
+      "confidence": 0.97,
+      "unsure": false
+    },
+    "plan": {
+      "kind": "act",
+      "steps": [
+        "docker.start shop-db"
+      ],
+      "reason": "shop-db is stopped, and its clean exit caused shop-web's database-resolution failures. Start the database; shop-web should recover on its own once the dependency is available.",
+      "instructions": null
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-db"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 60"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-db, tail: 200"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-worker"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-worker, tail: 100"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 240"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Found the cause",
+        "ok": true
+      },
+      {
+        "label": "Proposed the expected plan",
+        "ok": true
+      },
+      {
+        "label": "No step it did not need",
+        "ok": true
+      }
+    ],
+    "note": "names shop-db exited and left stopped, so shop-web cannot resolve its database",
+    "failure": null
+  },
+  "disk-full/1": {
+    "type": "agent",
+    "expected": "The shop's 20 MB uploads volume is full (No space left on device), so shop-web cannot write to it and its health check fails.",
+    "diagnosis": {
+      "rootCause": "The shop_uploads volume backing /uploads ran out of space, causing shop-web's health check to fail and mark the service unhealthy.",
+      "category": "resource",
+      "confidence": 0.87,
+      "unsure": false
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "The diagnosed cause is a full persistent `shop_uploads` volume; restarting `shop-web` would not create space, and no enabled action can safely resize or clean that volume. Have a human free or increase its available storage before bringing the web service back up.",
+      "instructions": "In `demo/compose.yaml`, adjust the `shop_uploads` backing-storage allocation to provide more capacity if that volume configuration supports it; no specific size is supported by the evidence, so choose one appropriate to the deployment. Apply the change with `docker compose -f demo/compose.yaml up -d shop-web`. If the existing volume cannot be expanded through Compose, have an operator safely free space in `shop_uploads` or expand its backing storage first, then run that same Compose command. Do not stop or restart `shop-db`."
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-worker"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-worker, since_minutes: 30, tail: 100"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 30"
+      },
+      {
+        "name": "knowledge_search",
+        "args": "{\"query\": \"shop worker batch size uploads volume fills disk 8 MB batch\", \"sourc…"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Found the cause",
+        "ok": true
+      },
+      {
+        "label": "Proposed the expected plan",
+        "ok": true
+      },
+      {
+        "label": "No step it did not need",
+        "ok": true
+      }
+    ],
+    "note": "names the full shop_uploads volume behind /uploads failing the health check",
+    "failure": null
+  },
+  "hung/1": {
+    "type": "agent",
+    "expected": "shop-web hangs: the container runs but answers no request, so its health check times out.",
+    "diagnosis": {
+      "rootCause": "The evidence does not establish why Docker marks shop-web unhealthy. The application returns successful health requests, but the configured Docker health check and its failure output are missing.",
+      "category": "unknown",
+      "confidence": 0.45,
+      "unsure": true
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "I am not sure: shop-web is unhealthy even though application logs show successful health and API requests, but the Docker health-check configuration and failure output are unknown. A restart would not address an unknown or incorrect probe, so there is no safe corrective action to take yet.",
+      "instructions": "Inspect the shop-web healthcheck in demo/compose.yaml and collect its Docker health-check failure output (for example, `docker inspect shop-web`); the evidence does not identify which setting is wrong or what value it should have, so I cannot prescribe a specific change. Once the intended probe is established, correct that healthcheck in demo/compose.yaml and apply it with `docker compose up -d shop-web`."
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-web, since_minutes: 60, tail: 200"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 60"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-db"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-proxy, since_minutes: 60, tail: 100"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-worker, since_minutes: 60, tail: 100"
+      },
+      {
+        "name": "knowledge_search",
+        "args": "{\"query\": \"shop-web unhealthy healthcheck returns HTTP 200 shop app health endp…"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Found the cause",
+        "ok": false
+      },
+      {
+        "label": "Proposed the expected plan",
+        "ok": false
+      },
+      {
+        "label": "No step it did not need",
+        "ok": true
+      }
+    ],
+    "note": "says the cause is undetermined and that the application answers its health requests; does not find that shop-web hangs, as in every round since #106",
+    "failure": null
+  },
+  "misroute-mcp/1": {
+    "type": "agent",
+    "expected": "shop-proxy forwards to shop-web:8001, where nothing listens (shop-web listens on 8000), so every request through the proxy gets a 502 while shop-web itself is healthy.",
+    "diagnosis": {
+      "rootCause": "The live Caddy configuration sends shop-proxy traffic to shop-web on port 8001, but shop-web listens on port 8000. The proxy therefore gets connection refusals and returns 502s; the on-disk Caddyfile has the correct upstream, so the loaded live configuration is misrouted.",
+      "category": "config",
+      "confidence": 0.99,
+      "unsure": false
+    },
+    "plan": {
+      "kind": "act",
+      "steps": [
+        "mcp.call shop-proxy (tool: caddy_reload, arguments: {\"container\":\"shop-proxy\",\"config\":\"/etc/caddy/Caddyfile\"})"
+      ],
+      "reason": "Reload Caddy from the on-disk Caddyfile, which already points shop-web to its listening port 8000. This replaces the incorrect live upstream without changing the Compose configuration or restarting the database.",
+      "instructions": null
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-proxy"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 30"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-proxy, tail: 100"
+      },
+      {
+        "name": "mcp_tools",
+        "args": ""
+      },
+      {
+        "name": "mcp_call",
+        "args": "arguments: {\"container\":\"shop-proxy\"}, tool: caddy_config"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-web, tail: 1000"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Found the cause",
+        "ok": true
+      },
+      {
+        "label": "Proposed the expected plan",
+        "ok": true
+      },
+      {
+        "label": "No step it did not need",
+        "ok": true
+      }
+    ],
+    "note": "names the live Caddy config sending to port 8001 while shop-web listens on 8000, the on-disk Caddyfile being right",
+    "failure": null
+  },
+  "misroute/1": {
+    "type": "agent",
+    "expected": "shop-proxy forwards to shop-web:8001, where nothing listens (shop-web listens on 8000), so every request through the proxy gets a 502 while shop-web itself is healthy.",
+    "diagnosis": {
+      "rootCause": "The proxy’s active Caddy configuration routes requests to 172.23.0.4:8001, but the healthy shop-web service listens on port 8000. This incorrect upstream configuration causes the proxy to return 502 responses.",
+      "category": "config",
+      "confidence": 0.99,
+      "unsure": false
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "The proxy’s upstream port is misconfigured, and restarting it would reload the same bad configuration. The enabled actions cannot edit the Compose configuration or apply a corrected proxy configuration.",
+      "instructions": "In demo/compose.yaml, change the shop-proxy upstream for shop-web from port 8001 to port 8000, then apply it with `docker compose up -d shop-proxy`."
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-proxy"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 20"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-proxy, since_minutes: 30, tail: 100"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-web, since_minutes: 30, tail: 100"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Found the cause",
+        "ok": true
+      },
+      {
+        "label": "Proposed the expected plan",
+        "ok": true
+      },
+      {
+        "label": "No step it did not need",
+        "ok": true
+      }
+    ],
+    "note": "names the proxy's active upstream on port 8001 while shop-web listens on 8000, so the proxy answers 502",
+    "failure": null
+  },
+  "oom/1": {
+    "type": "agent",
+    "expected": "shop-worker's batch size (WORKER_BATCH_MB=256) is past its 64 MB memory limit, so it is OOM-killed on every batch and restarts in a loop.",
+    "diagnosis": {
+      "rootCause": "shop-worker is repeatedly OOM-killed because its 256 MB batch workload exceeds the container's 64 MiB memory limit. The restart policy then repeatedly restarts it; the other shop services remain healthy.",
+      "category": "resource",
+      "confidence": 0.96,
+      "unsure": false
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "Restarting shop-worker would leave its 64 MiB limit unchanged, so the 256 MB batch will OOM-kill it again. Bleep cannot edit or recreate this plain Compose service with the enabled actions.",
+      "instructions": "In demo/compose.yaml, raise shop-worker's memory limit from 64 MiB to a value above the reported 256 MB batch size (with room for overhead). Then apply it with: docker compose -f demo/compose.yaml up -d --force-recreate shop-worker."
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-worker"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 30"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-worker, since_minutes: 30, tail: 200"
+      },
+      {
+        "name": "knowledge_search",
+        "args": "{\"query\": \"shop-worker batch size 256 MB WORKER_BATCH_MB and Docker memory limi…"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Found the cause",
+        "ok": true
+      },
+      {
+        "label": "Proposed the expected plan",
+        "ok": true
+      },
+      {
+        "label": "No step it did not need",
+        "ok": true
+      }
+    ],
+    "note": "names 256 MB batches against the 64 MiB limit, OOM-killed and restarted by its policy",
+    "failure": null
+  },
+  "port-conflict/1": {
+    "type": "agent",
+    "expected": "shop-canary holds port 8080, so shop-proxy cannot publish its port (port is already allocated) and does not start; the shop's URLs answer the canary instead.",
+    "diagnosis": {
+      "rootCause": "A separate shop-canary container published host port 8080, so shop-proxy could not bind its required port and exited. Requests to localhost:8080 were consequently served by the canary rather than the shop proxy, producing unexpected successful responses.",
+      "category": "network",
+      "confidence": 0.99,
+      "unsure": false
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "The port conflict is caused by shop-canary publishing host port 8080, and restarting shop-proxy would leave the conflict in place. Bleep cannot change the Compose configuration or recreate the service with the enabled actions.",
+      "instructions": "In demo/compose.yaml, change the shop-canary port mapping so it no longer publishes host port 8080 (the specific replacement port is not established by the diagnosis). Then apply the Compose change and recreate the affected services with `docker compose up -d --force-recreate shop-canary shop-proxy`."
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 45"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-proxy"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-canary"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-canary, tail: 100"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-worker"
+      },
+      {
+        "name": "container_stats",
+        "args": "container: shop-worker"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Found the cause",
+        "ok": true
+      },
+      {
+        "label": "Proposed the expected plan",
+        "ok": true
+      },
+      {
+        "label": "No step it did not need",
+        "ok": true
+      }
+    ],
+    "note": "names shop-canary holding host port 8080, so shop-proxy could not bind it and the canary answers",
+    "failure": null
+  }
+}
