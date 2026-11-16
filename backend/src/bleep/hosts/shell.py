@@ -110,6 +110,27 @@ def _check(command: str, os: OS) -> list[str]:
     )
 
 
+class AllowedShell:
+    """A host's shell that runs only argvs matching an `ALLOWED` template, whoever calls it.
+
+    `Registry.shell` hands this out instead of the ssh session, so code outside `hosts/` has no
+    way to run an argv the allowlist does not hold.
+    """
+
+    __slots__ = ("_session",)
+
+    def __init__(self, session: HostShell) -> None:
+        self._session = session
+
+    async def run(self, argv: list[str], timeout: float) -> CommandResult:
+        """Run `argv` if it is exactly an allowlisted argv, else raise `CommandNotAllowed`."""
+        if not any(_matches(template, argv) for template in ALLOWED.values()):
+            raise CommandNotAllowed(
+                f"command not allowed. Only these exact commands may run:\n{allowed_text()}"
+            )
+        return await self._session.run(argv, timeout)
+
+
 async def run_allowed(shell: HostShell, command: str, os: OS) -> str:
     """Run `command` if it is exactly an allowlisted argv, else raise `CommandNotAllowed`."""
     argv = _check(command, os)
