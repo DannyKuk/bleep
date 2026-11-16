@@ -1,4 +1,5 @@
 from collections.abc import Awaitable, Callable
+from urllib.parse import urlsplit
 
 from fastapi import Request, Response
 
@@ -79,16 +80,46 @@ def get_look_follower(request: Request) -> LookFollower:
     )
 
 
+def _origin_host(origin: str) -> str | None:
+    parts = urlsplit(origin)
+    return parts.netloc.lower() if parts.scheme in ("http", "https") and parts.netloc else None
+
+
+def _own_hosts(request: Request) -> set[str]:
+    """The host:port a page of this dashboard has: the Host the backend sees, the host the
+    Next.js rewrite in front forwards as X-Forwarded-Host (it sets its own address as Host), and
+    BLEEP_DASHBOARD_URL. Another site's page cannot set these headers on a browser request."""
+    named = [
+        request.headers.get("host", ""),
+        *request.headers.get("x-forwarded-host", "").split(","),
+    ]
+    dashboard_url = get_settings(request).dashboard_url
+    if dashboard_url is not None:
+        named.append(urlsplit(str(dashboard_url)).netloc)
+    return {host.strip().lower() for host in named if host.strip()}
+
+
+def refuse_cross_site(request: Request) -> None:
+    """403 for a change sent from a page of another site, login on or off (#611, #619): a
+    browser sends the session cookie (SameSite=Lax) with a post from a sibling subdomain, and
+    a proxy's basic auth with any site's post. `Sec-Fetch-Site` decides; a browser too old to
+    send it is judged by its `Origin`, and a request with neither is not a browser's."""
+    if request.method in SAFE_METHODS:
+        return
+    site = request.headers.get("sec-fetch-site")
+    if site is not None:
+        if site not in ("same-origin", "none"):
+            raise Refusal(403, "cross_site")
+        return
+    origin = request.headers.get("origin")
+    if origin is not None and _origin_host(origin) not in _own_hosts(request):
+        raise Refusal(403, "cross_site")
+
+
 async def require_session(request: Request, response: Response) -> str | None:
     """401 unless the request carries a live session cookie; returns the raw token. With the
-    login off there is no token, and only a change sent from another site is refused (#611)."""
+    login off there is no token and every request passes (#611)."""
     if not get_settings(request).login_enabled:
-        # No SameSite cookie guards a change now, and a browser sends a proxy's basic auth along
-        # with another site's form post, so a change must come from a page of this origin.
-        if request.method not in SAFE_METHODS and request.headers.get(
-            "sec-fetch-site", "same-origin"
-        ) not in ("same-origin", "none"):
-            raise Refusal(403, "cross_site")
         return None
     token = request.cookies.get(COOKIE_NAME)
     check = await get_parts(request).sessions.check(token) if token else None

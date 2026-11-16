@@ -599,7 +599,7 @@ def test_a_choices_data_says_when_its_snooze_ends():
 
 def settings(tmp_path, **values) -> Settings:
     return Settings(
-        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s"),
+        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s" * 32),
         TELEGRAM_BOT_TOKEN="7001:token", TELEGRAM_CHAT_ID=CHAT, **values,
     )  # fmt: skip
 

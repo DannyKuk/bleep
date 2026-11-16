@@ -2,7 +2,7 @@
 
 ## Running Bleep
 
-The [README's quick start](../README.md#quick-start) runs Bleep with the demo profile, which lets it watch the Docker engine of the machine it runs on through a filtered socket proxy ([why](decisions/socket-host.md)), and the demo shop for it to watch ([Demo](demo.md)). `BLEEP_ADMIN_PASSWORD` (unless `BLEEP_LOGIN_ENABLED=false`) needs at least 12 characters, or Bleep refuses to start; a random `BLEEP_SECRET`: `openssl rand -hex 32`.
+The [README's quick start](../README.md#quick-start) runs Bleep with the demo profile, which lets it watch the Docker engine of the machine it runs on through a filtered socket proxy ([why](decisions/socket-host.md)), and the demo shop for it to watch ([Demo](demo.md)). `BLEEP_ADMIN_PASSWORD` (unless `BLEEP_LOGIN_ENABLED=false`) needs at least 12 characters and `BLEEP_SECRET` at least 32, or Bleep refuses to start; make the secret random: `openssl rand -hex 32`. Changing either one and restarting logs everyone out of the dashboard; a session also ends 30 days after its login, however often it is used.
 
 Without the `demo` profile only the backend and the dashboard start, and the hosts file has to name a host you reach some other way.
 
@@ -132,7 +132,7 @@ When the dashboard sits behind a proxy that asks for a login itself, such as Coo
 
 - Every `/api` route answers without a session, `/login` sends the browser to the overview, and the dashboard has no Log out button. `BLEEP_ADMIN_PASSWORD` is not needed.
 - Startup logs a warning that the login is off, and the settings page says so at the top.
-- A change (anything but a read) sent from another site's page is refused with 403, because the browser would send the proxy's login along with it. Browsers tell Bleep where a request came from only over https, so serve the dashboard over https (Coolify does, with its domain's certificate); over plain http this check lets every change through.
+- A change (anything but a read) sent from another site's page is refused with 403, because the browser would send the proxy's login along with it. The same check runs with the login on. Over https browsers say where a request came from in `Sec-Fetch-Site`; over plain http Bleep compares the request's `Origin` with the dashboard's address instead. If a proxy in front rewrites the `Host` over plain http, set `BLEEP_DASHBOARD_URL` to the address the browser uses, or every change is refused. Serve the dashboard over https anyway (Coolify does, with its domain's certificate).
 - Telegram, the approvals and every guard rule are unchanged; only who may open the dashboard changes.
 
 Turn it off only when the proxy really is in front, and on every way in. Bleep cannot tell whether it is. If the proxy's rule is ever removed, or the dashboard is reached some other way, anyone who reaches it can read every incident and approve a plan. With compose, the dashboard's port 3000 is published on every interface of the machine, so close it to the outside (a firewall, or `127.0.0.1:3000:3000`) and let only the proxy reach it; under Coolify, publish no port and give only the dashboard's domain the basic auth. Without a proxy, leave the setting alone: the login stays on.

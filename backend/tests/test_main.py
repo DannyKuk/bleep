@@ -276,7 +276,10 @@ def test_embeddings_provider_server_is_read_from_the_env(monkeypatch):
     from bleep.wiring import embeddings_env
 
     monkeypatch.setenv("EMBEDDINGS_PROVIDER", "server")
-    loaded = Settings(admin_password=SecretStr("p" * 12), secret=SecretStr("s"))
+    loaded = Settings(
+        admin_password=SecretStr("p" * 12),
+        secret=SecretStr("test-secret-that-is-at-least-32-characters"),
+    )
 
     assert loaded.embeddings_provider == "server"
     assert embeddings_env(loaded).provider == "server"
@@ -309,7 +312,10 @@ def test_the_embeddings_settings_are_read_from_their_env_names(monkeypatch, tmp_
     monkeypatch.setenv("EMBEDDINGS_MODEL", "m")
     monkeypatch.setenv("EMBEDDINGS_API_KEY", "k")
     monkeypatch.setenv("EMBEDDINGS_MIN_SCORE", "0.35")
-    loaded = Settings(admin_password=SecretStr("p" * 12), secret=SecretStr("s"))
+    loaded = Settings(
+        admin_password=SecretStr("p" * 12),
+        secret=SecretStr("test-secret-that-is-at-least-32-characters"),
+    )
 
     assert loaded.embeddings_min_score == 0.35
     assert loaded.embeddings_provider == "openai"
@@ -326,7 +332,10 @@ def test_a_min_score_outside_zero_to_one_is_refused(monkeypatch, value):
 
     monkeypatch.setenv("EMBEDDINGS_MIN_SCORE", value)
     with pytest.raises(ValidationError, match="embeddings_min_score|EMBEDDINGS_MIN_SCORE"):
-        Settings(admin_password=SecretStr("p" * 12), secret=SecretStr("s"))
+        Settings(
+            admin_password=SecretStr("p" * 12),
+            secret=SecretStr("test-secret-that-is-at-least-32-characters"),
+        )
 
 
 def test_the_runner_traces_with_the_parts_tracer_and_it_is_flushed_at_shutdown(settings, parts):
