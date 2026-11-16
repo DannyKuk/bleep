@@ -137,8 +137,10 @@ One arrow goes the other way, held to one module: `schemas` uses the hosts file'
 - Code explains itself through names and small functions. **Comments only where the flow is
   otherwise hard to follow** (a non-obvious reason, a workaround, a domain fact). No comments that
   restate the code, no section banners, no commented-out code.
-- Short docstrings on public functions whose name doesn't say everything. Docstrings never reach
-  the model: a tool's description is its prompt file under `prompts/tools/` or `prompts/plugins/`.
+- Short docstrings on public functions whose name doesn't say everything. A tool's description is
+  its prompt file under `prompts/tools/` or `prompts/plugins/`, not a docstring; only a pydantic
+  model sent as a tool's arguments or a structured output's schema still shows the model its
+  docstring and field descriptions.
 - Type hints everywhere; pydantic models at every boundary.
 - Ruff with line length 100. Errors are typed; no bare `except`.
 
