@@ -9,6 +9,7 @@ import json
 import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -30,7 +31,14 @@ from bleep.schemas.docker import (
     HealthCheck,
     HealthProbe,
 )
-from bleep.tools.common import guard_result, invalid_arguments, say, untrusted_rule
+from bleep.tools.common import (
+    ArgText,
+    described,
+    guard_result,
+    invalid_arguments,
+    say,
+    untrusted_rule,
+)
 from bleep.tools.registry import ToolContext, ToolSpec
 
 LABEL_CHARS = 80
@@ -44,18 +52,18 @@ class NoArgs(BaseModel):
 
 
 class ContainerArgs(BaseModel):
-    container: str = Field(description="Container name or id, as shown by list_containers.")
+    container: Annotated[str, ArgText("tools/args/container")]
 
 
 class LogsArgs(ContainerArgs):
-    tail: int = Field(200, ge=1, le=1000, description="How many of the last lines to read.")
-    since_minutes: int | None = Field(
-        None, ge=1, le=1440, description="Only lines from the last N minutes (max 1440)."
+    tail: Annotated[int, ArgText("tools/args/tail")] = Field(200, ge=1, le=1000)
+    since_minutes: Annotated[int | None, ArgText("tools/args/since_minutes")] = Field(
+        None, ge=1, le=1440
     )
 
 
 class EventsArgs(BaseModel):
-    minutes: int = Field(30, ge=1, le=240, description="How far back to look (max 240).")
+    minutes: Annotated[int, ArgText("tools/args/minutes")] = Field(30, ge=1, le=240)
 
 
 def _tool(
@@ -80,7 +88,7 @@ def _tool(
     return StructuredTool(
         name=name,
         description=description,
-        args_schema=schema,
+        args_schema=described(ctx, schema),
         coroutine=call,
         handle_validation_error=invalid_arguments(ctx),
     )

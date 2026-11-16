@@ -63,7 +63,7 @@ from bleep.plugins.base import Plugin, PluginContext
 from bleep.schemas.graph import ApprovalGrant, ApprovalRecord, PlanStep, StepResult
 from bleep.schemas.plugins import PluginHealth
 from bleep.schemas.shown import Shown
-from bleep.tools.common import say, untrusted_rule
+from bleep.tools.common import ArgText, described, say, untrusted_rule
 from bleep.tools.docker_act import StepRefused
 from bleep.tools.registry import ActHandler, ToolBriefing, ToolContext, ToolSpec
 
@@ -145,9 +145,9 @@ class McpSettings(BaseModel):
 
 
 class CallArgs(BaseModel):
-    tool: str = Field(description="The tool's name, exactly as mcp_tools lists it.")
-    arguments: dict[str, Any] = Field(
-        default_factory=dict, description="The tool's arguments, as its input schema in mcp_tools."
+    tool: Annotated[str, ArgText("plugins/args/tool")]
+    arguments: Annotated[dict[str, Any], ArgText("plugins/args/arguments")] = Field(
+        default_factory=dict
     )
 
 
@@ -545,7 +545,7 @@ def _read_tools(server: _Server) -> list[ToolSpec]:
         return StructuredTool(
             name="mcp_tools",
             description=say(ctx, "plugins/mcp_tools", untrusted_rule=untrusted_rule(ctx)),
-            args_schema=NoArgs,
+            args_schema=described(ctx, NoArgs),
             coroutine=run,
         )
 
@@ -574,7 +574,7 @@ def _read_tools(server: _Server) -> list[ToolSpec]:
         return StructuredTool(
             name="mcp_call",
             description=say(ctx, "plugins/mcp_call", untrusted_rule=untrusted_rule(ctx)),
-            args_schema=CallArgs,
+            args_schema=described(ctx, CallArgs),
             coroutine=run,
             handle_validation_error=True,
         )

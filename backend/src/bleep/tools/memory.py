@@ -5,14 +5,14 @@ Memory is Bleep's own record, but this tool's answer reaches the model like ever
 redacted, capped and wrapped once as untrusted data by Investigate.
 """
 
-from typing import Protocol
+from typing import Annotated, Protocol
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from bleep.memory.text import describe_past
 from bleep.schemas.graph import PastIncident
-from bleep.tools.common import invalid_arguments, say
+from bleep.tools.common import ArgText, described, invalid_arguments, say
 from bleep.tools.registry import ToolContext, ToolSpec
 
 RECALL_K = 5
@@ -25,9 +25,7 @@ class Recall(Protocol):
 
 
 class RecallArgs(BaseModel):
-    query: str = Field(
-        min_length=1, max_length=500, description="What happened, in a sentence or a few words."
-    )
+    query: Annotated[str, ArgText("tools/args/recall_query")] = Field(min_length=1, max_length=500)
 
 
 def recall_specs(memory: Recall) -> list[ToolSpec]:
@@ -44,7 +42,7 @@ def recall_specs(memory: Recall) -> list[ToolSpec]:
         return StructuredTool(
             name="recall_incidents",
             description=say(ctx, "tools/recall_incidents", k=str(RECALL_K)),
-            args_schema=RecallArgs,
+            args_schema=described(ctx, RecallArgs),
             coroutine=call,
             handle_validation_error=invalid_arguments(ctx),
         )

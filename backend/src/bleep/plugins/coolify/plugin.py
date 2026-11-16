@@ -34,6 +34,7 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 from urllib.parse import urlsplit
 
 import httpx
@@ -66,7 +67,7 @@ from bleep.schemas.plugins import PluginHealth
 from bleep.schemas.services import CheckSuggestions, Service
 from bleep.schemas.settings import has_userinfo
 from bleep.schemas.shown import Shown
-from bleep.tools.common import said, say, untrusted_rule
+from bleep.tools.common import ArgText, described, said, say, untrusted_rule
 from bleep.tools.docker_act import StepRefused
 from bleep.tools.registry import ActHandler, Texts, ToolContext, ToolSpec
 
@@ -134,7 +135,7 @@ def check_url(raw: str) -> str:
 
 
 class AppArgs(BaseModel):
-    app: str = Field(min_length=1, max_length=200, description="The application's uuid or name.")
+    app: Annotated[str, ArgText("plugins/args/app")] = Field(min_length=1, max_length=200)
 
 
 class NoArgs(BaseModel):
@@ -667,7 +668,7 @@ def _tool(
     return StructuredTool(
         name=name,
         description=say(ctx, f"plugins/{name}", untrusted_rule=untrusted_rule(ctx)),
-        args_schema=schema,
+        args_schema=described(ctx, schema),
         coroutine=call,
         handle_validation_error=True,
     )
