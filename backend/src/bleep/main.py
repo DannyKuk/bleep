@@ -25,7 +25,7 @@ from bleep.api import (
 )
 from bleep.api import settings as settings_api
 from bleep.api.body_limit import BodyLimitMiddleware
-from bleep.api.deps import require_session
+from bleep.api.deps import refuse_cross_site, require_session
 from bleep.config import Settings, check_settings
 from bleep.graph.build import build_graph, open_checkpointer
 from bleep.graph.nodes.verify import check_recovery, recovery_reads
@@ -80,6 +80,10 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
             stack.push_async_callback(parts.notify.close)  # last: runs and reminders still send
             stack.push_async_callback(parts.notify.notifier.drain)  # clears in flight finish first
             await parts.db.migrate()
+            if await parts.sessions.bind_password():
+                log.warning(
+                    "login: the admin password or BLEEP_SECRET changed; ended every session"
+                )
             if settings.dev_panel:  # with the panel off, every prompt is read from its file
                 await parts.prompt_overrides.load()
                 stack.callback(parts.prompt_overrides.close)
@@ -191,7 +195,7 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    api = APIRouter(prefix="/api")
+    api = APIRouter(prefix="/api", dependencies=[Depends(refuse_cross_site)])
     if settings.login_enabled:  # the only route open without a session; left out, a 404
         api.include_router(auth.login_router)
     protected = APIRouter(dependencies=[Depends(require_session)])

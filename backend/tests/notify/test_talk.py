@@ -777,7 +777,7 @@ async def test_stopping_cuts_off_an_answer_in_flight(env):
 async def test_setup_gives_the_bot_the_conversation(tmp_path):
     db = Database(tmp_path / "bleep.sqlite")
     settings = Settings(
-        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s"),
+        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s" * 32),
         TELEGRAM_BOT_TOKEN=TOKEN, TELEGRAM_CHAT_ID=CHAT,
     )  # fmt: skip
     state = BleepState(NoHealth(), IncidentRepo(db), ApprovalStore(db, "s"), EventBus(db))
