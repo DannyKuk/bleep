@@ -6,6 +6,7 @@ import BenchmarksPage from "~/app/benchmarks/page";
 import attackDetails from "~/lib/benchmarks/data/attacks.runs.json";
 import faultDetails from "~/lib/benchmarks/data/faults.runs.json";
 import roundDetails from "~/lib/benchmarks/data/round.runs.json";
+import talkDetails from "~/lib/benchmarks/data/talk.runs.json";
 import type { AgentRun, Details } from "~/lib/benchmarks/extract";
 import { round } from "~/lib/benchmarks/round";
 import { SUITES, listed, runsPerCase, tally } from "~/lib/benchmarks/suites";
@@ -118,4 +119,20 @@ describe("a dot", () => {
     expect(await within(dialog()).findByText(run.diagnosis?.rootCause ?? "")).toBeInTheDocument();
     expect(within(dialog()).getByText(new RegExp(model.name))).toBeInTheDocument();
   });
+});
+
+it("says when a run was scored again with today's case files", async () => {
+  const user = userEvent.setup();
+  render(<BenchmarksPage />);
+  const talk = SUITES.find((suite) => suite.kind === "talk");
+  const [key] =
+    Object.entries(talkDetails as Details).find(([, run]) => run.type === "talk" && run.note) ?? [];
+  expect(key, "a talk run scored again").toBeDefined();
+  const [name, run] = (key ?? "").split("/");
+  await user.click(
+    within(section(talk?.question ?? "")).getByRole("button", {
+      name: new RegExp(`^${name}, run ${run}:`),
+    }),
+  );
+  expect(await within(dialog()).findByText(/Scored again with the case files/)).toBeVisible();
 });

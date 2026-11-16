@@ -147,20 +147,26 @@ function Checks({ checks }: { checks: Check[] }) {
         {checks.map((check) => (
           <li key={check.label} className="flex items-start gap-2">
             <span
-              aria-hidden
+              role="img"
+              aria-label={check.ok === false ? "No" : check.ok ? "Yes" : "Not scored"}
               className={`mt-0.5 font-black ${check.ok === false ? "text-down" : check.ok ? "text-ok" : "text-ink-2"}`}
             >
               {check.ok === false ? "✕" : check.ok ? "✓" : "–"}
             </span>
-            <span>
-              <span className="sr-only">
-                {check.ok === false ? "No: " : check.ok ? "Yes: " : "Not scored: "}
-              </span>
-              {check.label}
-            </span>
+            <span>{check.label}</span>
           </li>
         ))}
       </ul>
+    </Part>
+  );
+}
+
+/** Why a verdict differs from the checks of the day, when the case files changed since. */
+function Rescored({ note }: { note: string | null }) {
+  if (!note) return null;
+  return (
+    <Part title="Scored again">
+      <p className="text-ink-2">{note}</p>
     </Part>
   );
 }
@@ -264,6 +270,7 @@ function Talk({ run }: { run: TalkRun }) {
         </Part>
       )}
       <Checks checks={run.checks} />
+      <Rescored note={run.note} />
     </>
   );
 }
@@ -276,6 +283,7 @@ function Line({ run }: { run: LineRun }) {
         <p className="font-bold">{run.line ?? "None."}</p>
       </Part>
       <Checks checks={run.checks} />
+      <Rescored note={run.note} />
     </>
   );
 }
