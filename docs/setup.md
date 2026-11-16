@@ -132,7 +132,7 @@ When the dashboard sits behind a proxy that asks for a login itself, such as Coo
 
 - Every `/api` route answers without a session, `/login` sends the browser to the overview, and the dashboard has no Log out button. `BLEEP_ADMIN_PASSWORD` is not needed.
 - Startup logs a warning that the login is off, and the settings page says so at the top.
-- A change (anything but a read) sent from another site's page is refused with 403, because the browser would send the proxy's login along with it.
+- A change (anything but a read) sent from another site's page is refused with 403, because the browser would send the proxy's login along with it. Browsers tell Bleep where a request came from only over https, so serve the dashboard over https (Coolify does, with its domain's certificate); over plain http this check lets every change through.
 - Telegram, the approvals and every guard rule are unchanged; only who may open the dashboard changes.
 
 Turn it off only when the proxy really is in front, and on every way in. Bleep cannot tell whether it is. If the proxy's rule is ever removed, or the dashboard is reached some other way, anyone who reaches it can read every incident and approve a plan. With compose, the dashboard's port 3000 is published on every interface of the machine, so close it to the outside (a firewall, or `127.0.0.1:3000:3000`) and let only the proxy reach it; under Coolify, publish no port and give only the dashboard's domain the basic auth. Without a proxy, leave the setting alone: the login stays on.
