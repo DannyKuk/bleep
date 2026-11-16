@@ -1037,6 +1037,28 @@ def earlier_batch(raw: Path, now: datetime, model: str) -> tuple[list[ScenarioRe
     return earlier, started
 
 
+def with_timeout(scenarios: Sequence[Scenario], timeout_s: int | None) -> list[Scenario]:
+    """The scenarios with every run's time limit set to `timeout_s` (`--timeout-s`), for a model
+    that takes longer than the scenario files allow; unchanged when it is None."""
+    if timeout_s is None:
+        return list(scenarios)
+    return [s.model_copy(update={"timeout_s": timeout_s}) for s in scenarios]
+
+
+def check_same_timeout(raw: Path, timeout_s: int | None) -> None:
+    """Refuse to continue a batch with another `--timeout-s` than it ran with: its report names
+    one time limit for every run."""
+    earlier = read_info(raw)
+    if earlier is not None and earlier.timeout_s != timeout_s:
+        raise EvalError(
+            f"{raw} ran with {_timeout_flag(earlier.timeout_s)}, not {_timeout_flag(timeout_s)}"
+        )
+
+
+def _timeout_flag(timeout_s: int | None) -> str:
+    return f"--timeout-s {timeout_s}" if timeout_s is not None else "no --timeout-s"
+
+
 def suite_scenarios(raw: Path, scenarios: Sequence[Scenario]) -> list[Scenario]:
     """The scenarios a suite's report covers: an earlier batch's (from the raw file's
     `.info.json`), then this batch's new ones. A suite run one scenario per batch (`--only` with
@@ -1087,6 +1109,8 @@ def _command(args: argparse.Namespace) -> str:
         parts.append("--no-knowledge")
     if args.language:
         parts.append(f"--language {args.language}")
+    if args.timeout_s is not None:
+        parts.append(f"--timeout-s {args.timeout_s}")
     return " ".join(parts)
 
 
@@ -1121,6 +1145,13 @@ def _parser() -> argparse.ArgumentParser:
         "--no-reset",
         action="store_true",
         help="do not recreate the shop's containers before each run; wait EVAL_SETTLE_S instead",
+    )
+    parser.add_argument(
+        "--timeout-s",
+        type=int,
+        metavar="SECONDS",
+        help="every run's time limit, from the fault on to the end of Propose, in place of each "
+        "scenario's timeout_s (for a slow model, e.g. one partly on the CPU)",
     )
     return parser
 
@@ -1198,6 +1229,7 @@ async def _run(
         reset_shop=reset is not None,
         knowledge=not args.no_knowledge,
         repo_docs=[d.title for d in repo_docs],
+        timeout_s=args.timeout_s,
         raw=os.path.relpath(raw, report.parent),
         report=str(report.relative_to(REPO)) if report.is_relative_to(REPO) else str(report),
     )
@@ -1222,13 +1254,17 @@ def main(argv: Sequence[str] | None = None, settings: EvalSettings | None = None
     try:
         if args.repeat < 1:
             raise EvalError("--repeat must be 1 or more")
+        if args.timeout_s is not None and args.timeout_s < 1:
+            raise EvalError("--timeout-s must be 1 or more")
         check_distinct(settings.judge_model, tested_model(settings.models))
-        scenarios = load_scenarios(only=args.only)
+        scenarios = with_timeout(load_scenarios(only=args.only), args.timeout_s)
         uses_demo_stack = any(s.scripted is None for s in scenarios)
         if uses_demo_stack and not settings.fault_script.is_file():
             raise EvalError(f"no fault script at {settings.fault_script}")
         now, model = utcnow(), tested_model(settings.models)
         batch = earlier_batch(REPO / args.append, now, model) if args.append else ([], now)
+        if args.append:
+            check_same_timeout(REPO / args.append, args.timeout_s)
         judge = build_judge(settings.judge_model, settings.models)
         command = eval_command("evals.run", sys.argv[1:] if argv is None else argv)
         with (

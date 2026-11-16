@@ -39,7 +39,8 @@ class RunInfo(BaseModel):
     from before the reset have it false. `knowledge` says the model was offered
     `knowledge_search` over the Docker docs snapshot (#39); batches from before it have it false.
     `repo_docs` names the linked repo docs it searched as well, read from this checkout (#364);
-    batches from before them have none."""
+    batches from before them have none. `timeout_s` is the time limit `--timeout-s` set for every
+    run in place of each scenario's own; None when the scenarios kept theirs."""
 
     started_at: datetime
     finished_at: datetime
@@ -53,6 +54,7 @@ class RunInfo(BaseModel):
     reset_shop: bool = False
     knowledge: bool = False
     repo_docs: list[str] = Field(default_factory=list)
+    timeout_s: int | None = None
     raw: str
     report: str | None = None
     grader: str | None = None
@@ -508,6 +510,14 @@ def render(info: RunInfo, results: list[ScenarioResult], regrade: str | None = N
         f"| Scenarios | {ids}, {runs} each |",
         f"| When | {info.started_at:%Y-%m-%d %H:%M} UTC, {minutes:.0f} min |",
         f"| Commit | `{info.commit or 'unknown'}` |",
+        *(
+            [
+                f"| Time limit | {info.timeout_s} s a run, set with `--timeout-s` in place of each "
+                "scenario's own |"
+            ]
+            if info.timeout_s is not None
+            else []
+        ),
         f"| Raw data | {_link(info.raw)} |",
         f"| Reproduce | `{info.command}` (in `backend/`) |",
         *([f"| Graded | `{regrade}` (in `backend/`) |"] if regrade else []),

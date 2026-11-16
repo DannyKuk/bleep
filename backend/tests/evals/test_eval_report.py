@@ -496,3 +496,9 @@ def test_a_look_is_named_as_a_look_and_its_report_is_quoted():
     assert "- Opened by the fault `db-down`" in text and "- Opened by a look on request" in text
     assert "A look on request switches no fault" in text
     assert "Report (No action proposed, nothing was done): The shop was healthy." in text
+
+
+def test_the_setup_names_a_timeout_override_only_when_one_was_set():
+    assert "Time limit" not in render(INFO, RESULTS)
+    text = render(INFO.model_copy(update={"timeout_s": 900}), RESULTS)
+    assert "| Time limit | 900 s a run, set with `--timeout-s`" in text
