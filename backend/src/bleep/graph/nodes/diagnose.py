@@ -28,8 +28,10 @@ from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage, Too
 from pydantic import Field, field_validator
 
 from bleep import prompts
+from bleep.graph import describe
 from bleep.graph.commits import ShaCheck, read_shas
 from bleep.graph.deps import GraphDeps
+from bleep.graph.describe import part
 from bleep.graph.host_text import describe_basics, describe_urls, service_name
 from bleep.graph.language import language_rule
 from bleep.graph.look import look_rule
@@ -40,6 +42,7 @@ from bleep.graph.planted import (
     planted_shown,
     read_sources,
 )
+from bleep.graph.shown import english
 from bleep.graph.state import IncidentState, Node
 from bleep.guard.log import GuardKind
 from bleep.guard.untrusted import is_wrapped
@@ -57,8 +60,8 @@ DETAIL_LIMIT = 300  # characters per evidence entry
 MAX_EVIDENCE = 8
 MESSAGE_LIMIT = 1500  # characters of each investigation message but a guarded tool result
 MISSING_LIMIT = 300
-FALLBACK_CAUSE = "I could not form a diagnosis"
 FALLBACK_SHOWN = Shown.of("diagnosis/fallback_cause")
+FALLBACK_CAUSE = english(FALLBACK_SHOWN)
 
 
 SOURCES: tuple[PlantedSource, ...] = typing.get_args(PlantedSource)
@@ -111,16 +114,23 @@ def _clip(text: str, limit: int) -> str:
 
 def _describe_subject(subject: Subject, context: GatherContext) -> str:
     if subject.kind == "service":
-        return f"the service {service_name(subject, context)} on host {subject.host_id}"
-    return f"the host {subject.host_id}"
+        name = service_name(subject, context)
+        return part("diagnose_subject_service", name=name, host=subject.host_id)
+    return part("diagnose_subject_host", host=subject.host_id)
 
 
 def _describe_signals(signals: list[Signal]) -> str:
-    lines = [
-        f"- {s.kind}" + (f" ({s.container})" if s.container else "") + f" at {s.at:%H:%M:%S}"
-        for s in signals
-    ]
-    return "\n".join(lines) or "(none recorded)"
+    return describe.bullets(
+        [
+            part(
+                "diagnose_signal",
+                kind=s.kind,
+                container=f" ({s.container})" if s.container else "",
+                time=f"{s.at:%H:%M:%S}",
+            )
+            for s in signals
+        ]
+    )
 
 
 def _describe_context(context: GatherContext, with_urls: bool = True) -> str:
@@ -128,37 +138,24 @@ def _describe_context(context: GatherContext, with_urls: bool = True) -> str:
     they are from before it, and Verify's checks say how the URLs are now."""
     parts: list[str] = []
     if context.containers:
-        parts.append(
-            "Containers:\n"
-            + "\n".join(
-                f"- {c.name}: {c.state}"
-                + (f", exit code {c.exit_code}" if c.exit_code is not None else "")
-                for c in context.containers
-            )
-        )
+        parts.append(part("diagnose_containers", containers=describe.containers(context)))
     for name, text in context.logs.items():
-        parts.append(f"Recent log of {name}:\n{text}")
+        parts.append(part("diagnose_log", name=name, log=text))
     if context.urls and with_urls:
         checks = describe_urls(context.urls)
         parts.append(prompts.load("graph/url_checks_diagnose", checks=checks).strip())
     elif context.no_urls and with_urls:
         parts.append(prompts.load("graph/url_checks_none_diagnose").strip())
     if context.basics is not None:
-        parts.append("Host basics:\n" + "\n".join(describe_basics(context.basics)))
+        basics = "\n".join(describe_basics(context.basics))
+        parts.append(part("diagnose_basics", basics=basics))
     if context.top_memory:
-        parts.append(
-            "Containers using the most memory:\n"
-            + "\n".join(f"- {m.name}: {m.mem_percent:.0f}%" for m in context.top_memory)
-        )
-    for rule in [*context.host_rules, *context.service_rules]:
-        parts.append(f"Rule from the owner: {rule}")
-    for past in context.similar:
-        parts.append(f"Similar past incident (Bleep's own record): {describe_past(past)}")
-    for fact in context.facts:
-        parts.append(f"Fact about this service (Bleep's own record): {describe_fact(fact)}")
-    for gap in context.gaps:
-        parts.append(f"Could not read: {gap}")
-    return "\n\n".join(parts) or "(nothing was collected)"
+        parts.append(describe.top_memory(context))
+    parts += [part("diagnose_rule", rule=r) for r in [*context.host_rules, *context.service_rules]]
+    parts += [part("diagnose_past", past=describe_past(p)) for p in context.similar]
+    parts += [part("diagnose_fact", fact=describe_fact(f)) for f in context.facts]
+    parts += [part("diagnose_gap", gap=gap) for gap in context.gaps]
+    return "\n\n".join(parts) or part("diagnose_nothing")
 
 
 def _describe_investigation(messages: list[AnyMessage]) -> str:
@@ -167,7 +164,7 @@ def _describe_investigation(messages: list[AnyMessage]) -> str:
         for m in messages
         if not isinstance(m, SystemMessage) and m.text
     ]
-    return "\n".join(lines) or "(no investigation yet)"
+    return "\n".join(lines) or part("diagnose_no_investigation")
 
 
 def _message_text(message: AnyMessage) -> str:
@@ -199,7 +196,8 @@ def _fallback(context: GatherContext | None) -> Diagnosis:
             if c.state != "running":
                 evidence.append(Evidence(source="gather", detail=_clip(_state(c), DETAIL_LIMIT)))
         for gap in context.gaps:
-            evidence.append(Evidence(source="gather", detail=_clip(f"could not read: {gap}", 300)))
+            detail = _clip(part("diagnose_fallback_gap", gap=gap), DETAIL_LIMIT)
+            evidence.append(Evidence(source="gather", detail=detail))
     return Diagnosis(
         root_cause=FALLBACK_CAUSE,
         shown=FALLBACK_SHOWN,
@@ -211,8 +209,12 @@ def _fallback(context: GatherContext | None) -> Diagnosis:
 
 
 def _state(container: ContainerSummary) -> str:
-    code = f" with exit code {container.exit_code}" if container.exit_code is not None else ""
-    return f"container {container.name} is {container.state}{code}"
+    name, state = container.name, container.state
+    if container.exit_code is None:
+        return part("diagnose_fallback_state", name=name, state=state)
+    return part(
+        "diagnose_fallback_state_exit", name=name, state=state, code=str(container.exit_code)
+    )
 
 
 def make(deps: GraphDeps) -> Node:
@@ -287,7 +289,7 @@ def make(deps: GraphDeps) -> Node:
                     prompts.load(
                         "graph/diagnose_missing",
                         root_cause=diagnosis.root_cause,
-                        missing=missing or "anything that separates the possible causes",
+                        missing=missing or part("diagnose_missing_default"),
                     )
                 )
             ]

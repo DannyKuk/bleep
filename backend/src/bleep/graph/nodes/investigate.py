@@ -20,8 +20,10 @@ from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage, Too
 from langchain_core.tools import BaseTool
 
 from bleep import prompts
+from bleep.graph import describe
 from bleep.graph.deps import GraphDeps
-from bleep.graph.host_text import describe_basics, describe_urls, gib, service_name
+from bleep.graph.describe import part
+from bleep.graph.host_text import describe_basics, describe_urls, service_name
 from bleep.graph.look import look_rule
 from bleep.graph.planted import result_holds_tag
 from bleep.graph.shown import shown_payload
@@ -49,7 +51,6 @@ HEAD_LINES = 10  # the start of a result the live view folds under its call
 HEAD_CHARS = 1_000
 CUT_NOTE_CHARS = 40  # room for the guard's "[… N chars cut]" line
 UNWRAP_CHARS = 4 * MAX_CHARS  # longer output is not a guarded one: guard it whole, no regex pass
-NOT_RUN = "not run: the tool-call budget for this round is spent"
 
 # One wrapper as `guard.untrusted.wrap_untrusted` writes it. Text from a host has every tag
 # escaped, so a match in a tool's output is a wrapper the tool itself put there.
@@ -209,9 +210,10 @@ def make(deps: GraphDeps) -> Node:
             for bad in invalid:
                 if used < limit:
                     used += 1
-                    text = f"invalid arguments: {bad.get('error') or 'could not be parsed'}"
+                    error = bad.get("error") or part("investigate_unparsed")
+                    text = part("investigate_invalid", error=error)
                 else:
-                    text = NOT_RUN
+                    text = part("investigate_not_run")
                 message = ToolMessage(text, tool_call_id=bad["id"], name=bad.get("name") or "")
                 new.append(message)
                 history.append(message)
@@ -220,7 +222,8 @@ def make(deps: GraphDeps) -> Node:
                     used += 1
                     message = await run_tool(call)
                 else:  # every call needs an answer, or the next model call is refused
-                    message = ToolMessage(NOT_RUN, tool_call_id=call["id"], name=call["name"])
+                    text = part("investigate_not_run")
+                    message = ToolMessage(text, tool_call_id=call["id"], name=call["name"])
                 new.append(message)
                 history.append(message)
         return update()
@@ -235,8 +238,8 @@ async def _invoke(
     if tool is None:
         if name in act_tools:
             record("blocked_action", f"{name} asked for while investigating")
-            return f"{name} is not available while investigating: only read tools are."
-        return f"there is no tool named {name}."
+            return part("investigate_read_only", name=name)
+        return part("investigate_no_tool", name=name)
     try:
         out = await tool.ainvoke(args)
     except CommandNotAllowed as refusal:
@@ -244,7 +247,7 @@ async def _invoke(
         return str(refusal)
     except Exception as error:
         log.warning("investigate: tool %s failed: %s", name, type(error).__name__)
-        return f"the tool failed ({type(error).__name__})."
+        return part("investigate_tool_failed", error=type(error).__name__)
     return out if isinstance(out, str) else json.dumps(out, default=str)
 
 
@@ -276,7 +279,7 @@ def _tool_names(names: tuple[str, ...]) -> str:
     `mcp_tools` lists them all."""
     shown = ", ".join(f"`{name}`" for name in names[:MCP_TOOLS_SHOWN])
     left = len(names) - MCP_TOOLS_SHOWN
-    return f"{shown}, and {left} more" if left > 0 else shown
+    return part("investigate_more_tools", tools=shown, left=str(left)) if left > 0 else shown
 
 
 def _mcp_section(briefings: list[ToolBriefing]) -> str:
@@ -298,11 +301,12 @@ def _task(state: IncidentState, limit: int, clock: Callable[[], datetime], mcp: 
     subject = state["subject"]
     context = state.get("context")
     if context is None:
-        context = GatherContext(at=clock(), gaps=["Gather did not run"])
+        context = GatherContext(at=clock(), gaps=[part("investigate_no_gather")])
     if subject.kind == "service":
-        what = f"Service {service_name(subject, context)} on host {subject.host_id}."
+        name = service_name(subject, context)
+        what = part("investigate_subject_service", name=name, host=subject.host_id)
     else:
-        what = f"Host {subject.host_id}."
+        what = part("investigate_subject_host", host=subject.host_id)
     return prompts.load(
         "graph/investigate",
         subject=what,
@@ -313,18 +317,14 @@ def _task(state: IncidentState, limit: int, clock: Callable[[], datetime], mcp: 
         logs=_logs(context),
         url_checks=_url_checks(context),
         host=_host(context),
-        host_rules=_bullets(context.host_rules),
-        service_rules=_bullets(context.service_rules),
-        similar=_similar(context),
-        facts=_facts(context),
-        gaps=_bullets(context.gaps),
+        host_rules=describe.bullets(context.host_rules),
+        service_rules=describe.bullets(context.service_rules),
+        similar=describe.bullets([describe_past(p) for p in context.similar]),
+        facts=describe.bullets([describe_fact(f) for f in context.facts]),
+        gaps=describe.bullets(context.gaps),
         budget=str(limit),
         untrusted_rule=prompts.load("untrusted/investigate").strip(),
     )
-
-
-def _bullets(lines: list[str]) -> str:
-    return "\n".join(f"- {line}" for line in lines) or "(none)"
 
 
 def _signals(signals: list[Signal]) -> str:
@@ -335,24 +335,18 @@ def _signals(signals: list[Signal]) -> str:
         + (f" {json.dumps(s.detail, default=str, sort_keys=True)}" if s.detail else "")
         for s in signals
     ]
-    return guard_text("signals", "\n".join(lines) or "(none)")[0]
+    return guard_text("signals", "\n".join(lines) or part("none"))[0]
 
 
 def _containers(context: GatherContext) -> str:
     if not context.containers:
-        return "(none)"
-    rows = ["name | state | health | image | restarts | exit code"]
-    rows += [
-        f"{c.name} | {c.state} | {c.health} | {c.image} | {c.restart_count}"
-        f" | {c.exit_code if c.exit_code is not None else '-'}"
-        for c in context.containers
-    ]
-    return guard_text("containers", "\n".join(rows))[0]
+        return part("none")
+    return guard_text("containers", describe.containers(context))[0]
 
 
 def _logs(context: GatherContext) -> str:
     # Gather guarded each excerpt already (`guard_text`), so it goes in as it is.
-    return "\n\n".join(f"{name}:\n{text}" for name, text in context.logs.items()) or "(none)"
+    return "\n\n".join(f"{name}:\n{text}" for name, text in context.logs.items()) or part("none")
 
 
 def _url_checks(context: GatherContext) -> str:
@@ -368,22 +362,8 @@ def _url_checks(context: GatherContext) -> str:
 def _host(context: GatherContext) -> str:
     lines = describe_basics(context.basics) if context.basics is not None else []
     if context.top_memory:
-        lines.append("containers using the most memory:")
-        lines += [
-            f"  {m.name}: {gib(m.mem_usage)}"
-            + (f" of {gib(m.mem_limit)}" if m.mem_limit else "")
-            + f" ({m.mem_percent:.0f}%)"
-            for m in context.top_memory
-        ]
-    return "\n".join(lines) or "(no basics read)"
-
-
-def _similar(context: GatherContext) -> str:
-    return _bullets([describe_past(p) for p in context.similar])
-
-
-def _facts(context: GatherContext) -> str:
-    return _bullets([describe_fact(f) for f in context.facts])
+        lines.append(describe.top_memory(context))
+    return "\n".join(lines) or part("investigate_no_basics")
 
 
 def route(state: IncidentState) -> Literal["diagnose", "report"]:

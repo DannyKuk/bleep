@@ -32,8 +32,8 @@ What triggered it:
 
 What was collected:
 Containers:
-- shop-web-1: exited, exit code 1
-- shop-db-1: running
+- shop-web-1: exited (exit 1), health none, restarts 0, image img:1
+- shop-db-1: running, health none, restarts 0, image img:1
 
 Recent log of shop-web-1:
 <untrusted source="logs" id="X">
