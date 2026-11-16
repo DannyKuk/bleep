@@ -502,3 +502,53 @@ def test_the_setup_names_a_timeout_override_only_when_one_was_set():
     assert "Time limit" not in render(INFO, RESULTS)
     text = render(INFO.model_copy(update={"timeout_s": 900}), RESULTS)
     assert "| Time limit | 900 s a run, set with `--timeout-s`" in text
+
+
+OOM = SCENARIO.model_copy(update={"id": "oom"})
+
+
+def test_a_batch_of_a_round_on_several_engines_reports_on_the_whole_round(tmp_path, capsys):
+    """Each engine's batch names the others; rendering any one of them covers every run, from
+    the first start to the last finish (#657)."""
+    data = tmp_path / "docs" / "evals" / "data"
+    first = data / "scenarios-20261103-140000-e1.jsonl"
+    second = data / "scenarios-20261103-140001-e2.jsonl"
+    out = tmp_path / "docs" / "evals" / "scenarios-2026-11-03.md"
+    for r in PENDING:
+        append_jsonl(first, r)
+    append_jsonl(second, PENDING[0].model_copy(update={"id": "oom"}))
+    write_info(
+        first, MANUAL.model_copy(update={"batches": [f"data/{second.name}"], "report": str(out)})
+    )
+    write_info(
+        second,
+        MANUAL.model_copy(
+            update={
+                "scenarios": [OOM],
+                "repeat": 1,
+                "started_at": datetime(2026, 11, 3, 14, 0, 1, tzinfo=UTC),
+                "finished_at": datetime(2026, 11, 3, 14, 45, tzinfo=UTC),
+                "batches": [f"data/{first.name}"],
+                "report": str(out),
+            }
+        ),
+    )
+    grades = grades_file(
+        data,
+        {"run_id": "db-down/1", "root_cause_pass": True, "root_cause_score": 1.0, "note": "db"},
+        {"run_id": "oom/1", "root_cause_pass": True, "root_cause_score": 0.9, "note": "oom"},
+    )
+
+    code = main([str(second), "--grades", str(grades), "--grader", "Claude", "--out", str(out)])
+
+    assert code == 0
+    text = out.read_text(encoding="utf-8")
+    assert f"[`{second.name}`](data/{second.name}), [`{first.name}`](data/{first.name})" in text
+    assert "| Engines | 2 shop copies at once" in text
+    assert "| Scenarios | oom, db-down, 2 runs each |" in text
+    assert "2026-11-03 14:00 UTC, 45 min" in text
+    assert "## db-down" in text and "## oom" in text
+
+
+def test_a_report_of_one_batch_has_no_engines_row():
+    assert "| Engines |" not in render(INFO, RESULTS)

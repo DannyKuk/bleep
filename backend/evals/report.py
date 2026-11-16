@@ -40,7 +40,9 @@ class RunInfo(BaseModel):
     `knowledge_search` over the Docker docs snapshot (#39); batches from before it have it false.
     `repo_docs` names the linked repo docs it searched as well, read from this checkout (#364);
     batches from before them have none. `timeout_s` is the time limit `--timeout-s` set for every
-    run in place of each scenario's own; None when the scenarios kept theirs."""
+    run in place of each scenario's own; None when the scenarios kept theirs. `batches` are the
+    raw files of the other batches of the same round, run at once on other engines
+    (`evals.parallel`, #657), as the report links them: the report covers them all."""
 
     started_at: datetime
     finished_at: datetime
@@ -57,6 +59,7 @@ class RunInfo(BaseModel):
     timeout_s: int | None = None
     raw: str
     report: str | None = None
+    batches: list[str] = Field(default_factory=list)
     grader: str | None = None
     grades: str | None = None
 
@@ -167,6 +170,30 @@ def report_path(day: date, docs_dir: Path) -> Path:
         path = docs_dir / f"scenarios-{day.isoformat()}-{n}.md"
         n += 1
     return path
+
+
+def other_batches(raw: Path, info: RunInfo) -> list[Path]:
+    """The raw files of the round's other batches (`info.batches`), which are named relative to
+    the batch's report, else to `raw`'s folder."""
+    base = (REPO / info.report).parent if info.report else raw.resolve().parent
+    return [(base / batch).resolve() for batch in info.batches]
+
+
+def round_info(info: RunInfo, others: Sequence[RunInfo]) -> RunInfo:
+    """One batch's setup widened to its whole round: from the first start to the last finish,
+    with every batch's scenarios. The batches ran the same model, judge and commit at once."""
+    batches = [info, *others]
+    scenarios: list[Scenario] = []
+    for batch in batches:
+        scenarios += [s for s in batch.scenarios if s.id not in {k.id for k in scenarios}]
+    return info.model_copy(
+        update={
+            "started_at": min(b.started_at for b in batches),
+            "finished_at": max(b.finished_at for b in batches),
+            "repeat": max(b.repeat for b in batches),
+            "scenarios": scenarios,
+        }
+    )
 
 
 def append_jsonl(path: Path, result: ScenarioResult) -> None:
@@ -518,7 +545,15 @@ def render(info: RunInfo, results: list[ScenarioResult], regrade: str | None = N
             if info.timeout_s is not None
             else []
         ),
-        f"| Raw data | {_link(info.raw)} |",
+        f"| Raw data | {', '.join(_link(r) for r in [info.raw, *info.batches])} |",
+        *(
+            [
+                f"| Engines | {len(info.batches) + 1} shop copies at once, one batch each "
+                "(`evals.parallel`) |"
+            ]
+            if info.batches
+            else []
+        ),
         f"| Reproduce | `{info.command}` (in `backend/`) |",
         *([f"| Graded | `{regrade}` (in `backend/`) |"] if regrade else []),
         "",
@@ -596,6 +631,13 @@ def render(info: RunInfo, results: list[ScenarioResult], regrade: str | None = N
     return "\n".join(lines)
 
 
+def _batch_info(raw: Path) -> RunInfo:
+    info = read_info(raw)
+    if info is None:
+        raise GradeError(f"no batch setup at {info_path(raw)}")
+    return info
+
+
 def _from_backend(path: Path) -> str:
     """`path` as a command run in `backend/` names it."""
     path = path.resolve()
@@ -607,7 +649,11 @@ def _parser() -> argparse.ArgumentParser:
         prog="python -m evals.report",
         description="Render a batch's report again from its raw file, with grades by hand.",
     )
-    parser.add_argument("raw", type=Path, help="the batch's raw JSONL; its .info.json next to it")
+    parser.add_argument(
+        "raw", type=Path,
+        help="the batch's raw JSONL, its .info.json next to it; the report covers the other "
+        "batches of its round too",
+    )  # fmt: skip
     parser.add_argument("--grades", type=Path, help="grades by hand, one JSON line per run")
     parser.add_argument("--grader", help="who graded, as the report names them")
     parser.add_argument(
@@ -630,9 +676,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             out = REPO / info.report
         else:
             raise GradeError("the batch names no report; give --out")
-        results = read_jsonl(args.raw)
+        others = other_batches(args.raw, info)
+        info = round_info(info, [_batch_info(path) for path in others])
+        results = [r for path in [args.raw, *others] for r in read_jsonl(path)]
         here = out.resolve().parent
-        update: dict[str, str | None] = {"raw": os.path.relpath(args.raw.resolve(), here)}
+        update: dict[str, str | list[str] | None] = {
+            "raw": os.path.relpath(args.raw.resolve(), here),
+            "batches": [os.path.relpath(path, here) for path in others],
+        }
         regrade = None
         if args.grades:
             results = apply_grades(results, read_grades(args.grades))
