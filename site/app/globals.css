@@ -89,7 +89,9 @@
 }
 
 @layer base {
-  html {
+  /* Only once the page has loaded (components/smooth-scroll.tsx), so a link from another page
+     lands at once. */
+  html.smooth {
     scroll-behavior: smooth;
   }
   body {
@@ -177,7 +179,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  html {
+  html.smooth {
     scroll-behavior: auto;
   }
   .bubble,

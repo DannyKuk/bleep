@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono, Nunito } from "next/font/google";
 
+import { SmoothScroll } from "~/components/smooth-scroll";
+
 import "./globals.css";
 
 const nunito = Nunito({
@@ -33,7 +35,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${nunito.variable} ${jetbrainsMono.variable}`}>
-      <body>{children}</body>
+      <body>
+        <SmoothScroll />
+        {children}
+      </body>
     </html>
   );
 }
