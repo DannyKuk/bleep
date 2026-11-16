@@ -491,3 +491,5 @@ class SettingsView(BaseModel):
     restart_needed: list[str] = []
     overrides: dict[str, Any]  # a `SettingsUpdate` without the fields left at the layers below
     version: str  # of `overrides`; a `PUT /api/settings` sends it back in `If-Match`
+    # BLEEP_LOGIN_ENABLED: false, the page says the dashboard is open to whoever reaches it (#611).
+    login_enabled: bool = True

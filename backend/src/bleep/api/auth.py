@@ -29,6 +29,7 @@ async def login(
     if wait is not None:
         raise Refusal(429, "too_many_attempts", headers={"Retry-After": str(wait)})
     settings = get_settings(request)
+    assert settings.admin_password is not None  # check_settings, and mounted only with a login
     expected = settings.admin_password.get_secret_value().encode()
     if not hmac.compare_digest(body.password.encode(), expected):
         parts.login_limiter.fail(client)
@@ -40,10 +41,11 @@ async def login(
 
 @session_router.post("/logout", status_code=204)
 async def logout(
-    token: Annotated[str, Depends(require_session)],
+    token: Annotated[str | None, Depends(require_session)],
     parts: Annotated[AppParts, Depends(get_parts)],
 ) -> Response:
-    await parts.sessions.revoke(token)
+    if token is not None:
+        await parts.sessions.revoke(token)
     response = Response(status_code=204)
     response.delete_cookie(COOKIE_NAME, path="/")
     return response

@@ -148,6 +148,7 @@ export function settingsView(overrides: Partial<SettingsView> = {}): SettingsVie
     },
     from_env: [],
     restart_needed: [],
+    login_enabled: true,
     overrides: {
       hosts: {
         m1: { services: { "compose:shop": { protected_containers: ["shop-cache-1"] } } },

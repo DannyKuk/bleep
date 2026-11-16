@@ -13,6 +13,8 @@ from bleep.watcher.detector import Pending
 from bleep.watcher.manager import WatcherManager
 from bleep.wiring import AppParts
 
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
 
 def get_parts(request: Request) -> AppParts:
     return request.app.state.parts
@@ -77,8 +79,17 @@ def get_look_follower(request: Request) -> LookFollower:
     )
 
 
-async def require_session(request: Request, response: Response) -> str:
-    """401 unless the request carries a live session cookie; returns the raw token."""
+async def require_session(request: Request, response: Response) -> str | None:
+    """401 unless the request carries a live session cookie; returns the raw token. With the
+    login off there is no token, and only a change sent from another site is refused (#611)."""
+    if not get_settings(request).login_enabled:
+        # No SameSite cookie guards a change now, and a browser sends a proxy's basic auth along
+        # with another site's form post, so a change must come from a page of this origin.
+        if request.method not in SAFE_METHODS and request.headers.get(
+            "sec-fetch-site", "same-origin"
+        ) not in ("same-origin", "none"):
+            raise Refusal(403, "cross_site")
+        return None
     token = request.cookies.get(COOKIE_NAME)
     check = await get_parts(request).sessions.check(token) if token else None
     if token is None or check is None:

@@ -20,7 +20,10 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("/data")
     hosts_file: Path = Path("/config/hosts.yaml")
-    admin_password: SecretStr
+    # Off only when whatever serves the dashboard asks for a login itself (a proxy's basic auth):
+    # every /api route then answers without a session and no password is read (#611).
+    login_enabled: bool = True
+    admin_password: SecretStr | None = None
     secret: SecretStr
     watch_interval_s: float = 15  # seconds between watcher ticks per host
     # Ticks after Bleep's own machine wakes in which a host not answering is not counted.
@@ -87,9 +90,17 @@ class Settings(BaseSettings):
 
 
 def check_settings(settings: Settings) -> None:
-    """Refuse to start with a login password that is quick to guess. An embeddings endpoint
-    that is only half configured is not refused here: its base URL and model may come from the
-    dashboard (#372), and until both are set the local model embeds (`wiring.build_embedder`)."""
+    """Refuse to start with the login on and a password missing or quick to guess. An embeddings
+    endpoint that is only half configured is not refused here: its base URL and model may come
+    from the dashboard (#372), and until both are set the local model embeds
+    (`wiring.build_embedder`)."""
+    if not settings.login_enabled:
+        return
+    if settings.admin_password is None:
+        raise SettingsError(
+            "BLEEP_ADMIN_PASSWORD is not set; set one in .env, or set BLEEP_LOGIN_ENABLED=false "
+            "if whatever serves the dashboard asks for a login itself"
+        )
     if len(settings.admin_password.get_secret_value()) < MIN_ADMIN_PASSWORD:
         raise SettingsError(
             f"BLEEP_ADMIN_PASSWORD must be at least {MIN_ADMIN_PASSWORD} characters; "

@@ -27,6 +27,19 @@ function backend(put: Response[] = [], view = settingsView()) {
 }
 
 describe("SettingsPage", () => {
+  it("says the dashboard is open to whoever reaches it when Bleep's login is off", async () => {
+    backend([], settingsView({ login_enabled: false }));
+    render(<SettingsPage />);
+    expect(await screen.findByRole("note")).toHaveTextContent(MESSAGES.en.settings.loginOff);
+  });
+
+  it("says nothing about the login while it is on", async () => {
+    backend();
+    render(<SettingsPage />);
+    await screen.findByRole("list", { name: "Hosts" });
+    expect(screen.queryByText(/BLEEP_LOGIN_ENABLED/)).toBeNull();
+  });
+
   it("lists the hosts as links to their pages, with no host settings of their own", async () => {
     const box = sshHost({ id: "box", name: "Box", services: {} });
     box.connection = { ...box.connection, source: "dashboard" };

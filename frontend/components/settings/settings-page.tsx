@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, KeyRound } from "lucide-react";
+import { ChevronRight, KeyRound, ShieldOff } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -221,6 +221,15 @@ function Settings() {
       <Status loaded={settings} what="settings">
         {(view) => (
           <>
+            {!view.login_enabled && (
+              <p
+                role="note"
+                className="flex items-start gap-2 rounded-row border border-line bg-soft px-3 py-2 text-sm text-ink"
+              >
+                <ShieldOff aria-hidden className="mt-0.5 size-4 shrink-0 text-health-down" />
+                <span>{t.loginOff}</span>
+              </p>
+            )}
             <Hosts hosts={view.hosts} onChanged={readSettings} />
             <Panel title={t.panels.timeZone}>
               <TimeZoneForm

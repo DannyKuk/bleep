@@ -1,10 +1,11 @@
+import logging
 import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from bleep.auth.sessions import LoginLimiter
 from bleep.config import Settings, SettingsError
@@ -178,3 +179,93 @@ def test_cookie_secure_defaults_off():
     assert (
         Settings(admin_password=SecretStr("x" * 12), secret=SecretStr("s")).cookie_secure is False
     )
+
+
+@pytest.fixture
+def open_settings(settings) -> Settings:
+    """The login off, behind a proxy that asks for one (#611): no password in the env."""
+    return settings.model_copy(update={"login_enabled": False, "admin_password": None})
+
+
+def test_the_login_is_on_by_default(monkeypatch):
+    monkeypatch.delenv("BLEEP_LOGIN_ENABLED", raising=False)
+    assert Settings(admin_password=SecretStr("x" * 12), secret=SecretStr("s")).login_enabled
+
+
+def test_an_unreadable_login_switch_refuses_to_start(monkeypatch):
+    monkeypatch.setenv("BLEEP_LOGIN_ENABLED", "perhaps")
+    with pytest.raises(ValidationError, match="login_enabled"):
+        Settings(admin_password=SecretStr("x" * 12), secret=SecretStr("s"))
+
+
+def test_with_the_login_on_a_missing_password_is_refused_at_startup(settings, parts):
+    without = settings.model_copy(update={"admin_password": None})
+    with pytest.raises(SettingsError, match="BLEEP_ADMIN_PASSWORD is not set"):
+        create_app(without, parts)
+
+
+def test_with_the_login_off_bleep_starts_without_a_password_and_says_so(
+    open_settings, parts, caplog
+):
+    with caplog.at_level(logging.WARNING, logger="bleep.main"):
+        create_app(open_settings, parts)
+    assert "BLEEP_LOGIN_ENABLED is false" in caplog.text
+
+
+def test_with_the_login_off_a_short_password_left_in_the_env_does_not_matter(open_settings, parts):
+    create_app(open_settings.model_copy(update={"admin_password": SecretStr("short")}), parts)
+
+
+def test_with_the_login_off_every_api_route_answers_without_a_session(open_settings, parts):
+    with TestClient(create_app(open_settings, parts)) as client:
+        routes = api_routes(client.app)
+        assert len(routes) >= 13
+        for method, path in routes:
+            # The stream of every incident never ends; an unknown one answers at once.
+            query = {"incident_id": "inc_nope"} if path == "/api/stream" else None
+            response = client.request(method, path, params=query)
+            assert response.status_code != 401, (method, path)
+            assert response.status_code < 500, (method, path)
+        assert client.get("/api/auth/me").json() == {"authenticated": True}
+        assert client.get("/api/settings").json()["login_enabled"] is False
+
+
+def test_with_the_login_off_there_is_no_login_to_post_to(open_settings, parts):
+    with TestClient(create_app(open_settings, parts)) as client:
+        assert login(client).status_code == 404
+        assert "/api/auth/login" not in client.app.openapi()["paths"]
+
+
+def test_with_the_login_off_logout_only_clears_the_cookie(open_settings, parts):
+    with TestClient(create_app(open_settings, parts)) as client:
+        assert client.post("/api/auth/logout").status_code == 204
+
+
+def test_the_settings_say_the_login_is_on(client):
+    login(client)
+    assert client.get("/api/settings").json()["login_enabled"] is True
+
+
+@pytest.mark.parametrize("site", ["cross-site", "same-site"])
+def test_with_the_login_off_a_change_from_another_site_is_refused(open_settings, parts, site):
+    """A browser sends the proxy's basic auth with another site's form post, and no SameSite
+    cookie stands in the way any more."""
+    with TestClient(create_app(open_settings, parts)) as client:
+        response = client.post("/api/knowledge/repos/refresh", headers={"sec-fetch-site": site})
+        assert response.status_code == 403
+        assert response.json() == {"detail": "not from this dashboard"}
+        assert client.get("/api/hosts", headers={"sec-fetch-site": site}).status_code == 200
+
+
+@pytest.mark.parametrize("site", ["same-origin", "none", None])
+def test_with_the_login_off_a_change_from_the_dashboard_goes_through(open_settings, parts, site):
+    headers = {"sec-fetch-site": site} if site else {}
+    with TestClient(create_app(open_settings, parts)) as client:
+        response = client.post("/api/knowledge/repos/refresh", headers=headers)
+        assert response.status_code == 202
+
+
+def test_with_the_login_on_the_site_header_changes_nothing(client):
+    login(client)
+    response = client.post("/api/knowledge/repos/refresh", headers={"sec-fetch-site": "cross-site"})
+    assert response.status_code == 202  # the SameSite cookie is the guard here

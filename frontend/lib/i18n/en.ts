@@ -674,6 +674,8 @@ export const en = {
     title: "Settings",
     intro:
       "Keys, tokens and addresses are set below or in .env; this page shows whether each one is set, never its value. A change takes effect at once, except the embeddings and a running Langfuse tracer, which say when Bleep needs a restart. A setting in .env wins over this page and says so.",
+    loginOff:
+      "Bleep's own login is off (BLEEP_LOGIN_ENABLED=false). Anyone who reaches this dashboard can use it, so whatever serves it, such as a proxy's basic auth, must ask for a login.",
     save: "Save",
     cancel: "Cancel",
     add: "Add",

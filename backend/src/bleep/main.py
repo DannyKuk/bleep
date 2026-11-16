@@ -65,6 +65,11 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
     """Build the app. Tests pass prebuilt `parts` (a fake-engine registry, a temp database)."""
     settings = settings or Settings()
     check_settings(settings)
+    if not settings.login_enabled:
+        log.warning(
+            "login: BLEEP_LOGIN_ENABLED is false, so the dashboard and /api answer without a "
+            "login; whatever serves them must ask for one"
+        )
     parts = parts or build_parts(settings)
 
     @asynccontextmanager
@@ -187,7 +192,8 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
         return {"status": "ok"}
 
     api = APIRouter(prefix="/api")
-    api.include_router(auth.login_router)  # the only route open without a session
+    if settings.login_enabled:  # the only route open without a session; left out, a 404
+        api.include_router(auth.login_router)
     protected = APIRouter(dependencies=[Depends(require_session)])
     protected.include_router(auth.session_router)
     # Before hosts: a service id holds a "/", and `GET /services/{id:path}` would take ".../facts".
