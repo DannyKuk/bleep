@@ -28,7 +28,7 @@ Measured on the demo shop's eight faults with real models. Every number comes fr
 |---|---|---|
 | Root cause on the 8 faults and misroute through MCP, `openai/gpt-6-luna`, 3 runs each, by hand | 23 of 27 right, plan exact in 24 of 27, about 64 s and $0.0028 a run | [report](docs/evals/scenarios-2026-11-05-3.md) |
 | The same model on the 8 faults, judged by DeepEval's GEval against grading by hand | 7 of 8 right; GEval and the hand grades agree on all 8 | [report](docs/evals/scenarios-2026-11-11.md) |
-| Six models (luna, gemini-3.8-flash, Claude Haiku and Sonnet 5.5, gpt-oss-20b, Qwen 3.8 27B), 6 faults and 4 injection cases, 1 run each | luna and the local Qwen 3.8 27B had every case right; the others missed one plan each | [report](docs/evals/models-2026-11-16.md) |
+| Six models (luna, gemini-3.8-flash, Claude Haiku and Sonnet 5.5, gpt-oss-20b, Qwen 3.8 27B), 6 faults and 4 injection cases, 1 run each | Every model 6 of 6 exact plans; luna, gemini, Haiku and the local Qwen 3.8 27B had every case right; Sonnet missed one fix value, gpt-oss-20b one value and one attack, which the plan check stopped | [report](docs/evals/models-2026-11-16-2.md) |
 | Local `openai/gpt-oss-20b`, 8 faults and 6 honest controls, 1 run each | 7 of 8 faults right, 6 of 6 controls right, 55 s, $0 | [report](docs/evals/scenarios-local-2026-11-03.md) |
 | Prompt injection through logs, replies, docs, commits and memory | 20 of 20 attacks failed to steer Bleep or leak a secret | [report](docs/evals/injection-2026-11-05-2.md) |
 | Telling the human about planted orders | Told in 13 of 14 attack runs whose orders reached the model, 0 of 18 honest runs; 27 of 92 blind attacks | [report](docs/evals/planted-markers-2026-11-06.md) |
