@@ -5,6 +5,7 @@ from typing import get_args
 import pytest
 
 from bleep import prompts
+from bleep.graph import targets
 from bleep.graph.nodes import execute, report
 from bleep.graph.replan import PLANNING_AGAIN
 from bleep.graph.shown import english, shown_payload
@@ -203,7 +204,7 @@ def test_a_nested_text_and_a_list_are_shown_in_the_same_language():
     changes = Shown.joined(
         [
             Shown.of("target/recreated", where=where),
-            Shown.of("target/state", where=where, why=execute.GONE),
+            Shown.of("target/state", where=where, why=targets.GONE),
         ],
         "; ",
     )

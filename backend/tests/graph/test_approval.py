@@ -11,7 +11,7 @@ from bleep.incidents.runner import IncidentRunner
 from bleep.schemas.graph import Decision, PlanStep, Proposal, VerificationPlan
 from bleep.schemas.incidents import Subject
 from bleep.schemas.settings import Budgets
-from fakes import FakeEngine
+from fakes import REFUSAL, FakeEngine
 from graph_env import GraphEnv, box, graph_env
 
 SECRET = "test-secret"
@@ -359,7 +359,7 @@ async def test_a_coolify_target_naming_no_single_application_is_not_put_to_the_h
     )
 
     assert snapshots == []
-    assert [english(line) for line in unread] == ["shop on a: names no single Coolify application"]
+    assert [english(line) for line in unread] == ["shop on a names no single Coolify application"]
 
 
 async def test_a_coolify_target_on_an_unreachable_host_is_not_put_to_the_human(tmp_path):
@@ -373,8 +373,26 @@ async def test_a_coolify_target_on_an_unreachable_host_is_not_put_to_the_human(t
     )
 
     assert [english(line) for line in unread] == [
-        "shop on a: cannot be read, the host is unreachable"
+        "shop on a cannot be read, the host is unreachable"
     ]
+
+
+async def test_a_target_the_engine_refuses_to_inspect_is_not_put_to_the_human_and_does_not_fail(
+    run, plans
+):
+    plans[0].append(restart())
+    run.env.engine.refuse_inspect = True
+
+    incident_id = await run.start()
+
+    assert await run.store.current(incident_id) is None
+    state = await run.state(incident_id)
+    assert state["outcome"] == "replan_limit"
+    assert (await run.env.repo.get(incident_id)).status == "closed"
+    notices = [e["text"] for e in await run.events(incident_id, "notice")]
+    reason = "shop-web-1 on a cannot be read, the host's engine refused the request"
+    assert any(reason in text for text in notices)
+    assert not any(REFUSAL in text for text in notices)
 
 
 # A plan the plan check refused twice (#113): the human instructs or lets it go, never approves.

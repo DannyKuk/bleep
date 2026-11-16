@@ -15,7 +15,7 @@ from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import Decision, PlanStep, Proposal, StepResult
 from bleep.schemas.incidents import Subject
 from bleep.schemas.settings import Budgets
-from fakes import FakeEngine
+from fakes import REFUSAL, FakeEngine
 from graph_env import SECRET, T0, box, graph_env
 
 APPROVED_AT = T0
@@ -215,6 +215,36 @@ async def test_a_target_gone_since_approval_is_stale(env):
     assert (
         "shop-db-1 on a is gone" in (await env.events(state["incident_id"], "notice"))[-1]["text"]
     )
+
+
+async def test_a_target_the_engine_refuses_to_inspect_is_stale_with_a_fixed_reason(env):
+    state = await env.approve(restart("shop-db-1"))
+    env.engine.refuse_inspect = True
+
+    update, route = await env.run(state)
+
+    assert env.acts() == [] and route == "propose" and update["grant"] is None
+    text = (await env.events(state["incident_id"], "notice"))[-1]["text"]
+    assert "shop-db-1 on a cannot be read, the host's engine refused the request" in text
+    assert REFUSAL not in text
+
+
+async def test_a_crashed_step_the_engine_refuses_to_read_back_fails_with_a_fixed_reason(env):
+    state = await env.approve(restart("shop-db-1"))
+    plan = await env.deps.approvals.current(state["incident_id"])
+    key = f"{plan.plan_hash}:{plan.id}"
+    await env.deps.action_log.start(state["incident_id"], key, 0, restart("shop-db-1"))
+    env.engine.refuse_inspect = True
+
+    update, route = await env.run(state)
+
+    (result,) = update["step_results"]
+    assert not result.ok and route == "verify"
+    assert result.detail == (
+        "not confirmed after a restart (the container cannot be read, the host's engine refused"
+        " the request); not run again"
+    )
+    assert await env.logged(state["incident_id"]) == [(0, "failed")]
 
 
 async def test_a_failed_step_skips_the_rest_and_goes_to_verify(env, monkeypatch):

@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 
 from bleep.hosts.config import HostConfig, ServiceOverrides
 from bleep.hosts.discovery import AmbiguousOverride, group_services
-from bleep.hosts.engine import Engine, EngineUnavailable, connect_engine
+from bleep.hosts.engine import Engine, EngineError, EngineUnavailable, connect_engine
 from bleep.hosts.shell import HostShell, engine_basics, host_basics
 from bleep.hosts.ssh import KeysFor, Resolve, SshSession
 from bleep.schemas.docker import ContainerSummary
@@ -19,6 +19,9 @@ log = logging.getLogger(__name__)
 BASICS_EVERY_S = 60  # the host probe cadence
 BASICS_RETRY_S = 10  # after a failed read
 MIN_ID_PREFIX = 12  # the short id Docker prints; a shorter prefix names no container here
+
+ENGINE_REFUSED = "the engine refused to list the containers"
+LISTING_UNREADABLE = "the engine's container listing could not be read"
 
 Connector = Callable[[HostConfig], Awaitable[tuple[SshSession | None, Engine]]]
 
@@ -250,6 +253,12 @@ class Registry:
             containers = await entry.engine.containers()
         except EngineUnavailable as error:
             self._mark(entry, reachable=False, error=str(error))
+            return
+        except EngineError:  # the engine's own text is the host's, so the error is a fixed one
+            self._mark(entry, reachable=False, error=ENGINE_REFUSED)
+            return
+        except KeyError, TypeError, ValueError:
+            self._mark(entry, reachable=False, error=LISTING_UNREADABLE)
             return
         entry.containers = containers
         error = self._group(host_id, entry)

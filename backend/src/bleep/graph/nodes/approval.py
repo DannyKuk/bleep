@@ -29,10 +29,9 @@ from bleep.graph.deps import GraphDeps
 from bleep.graph.replan import replan, replans_left
 from bleep.graph.shown import shown_payload
 from bleep.graph.state import IncidentState, Node
-from bleep.graph.targets import read_app_uuid
+from bleep.graph.targets import read_app_uuid, read_container
 from bleep.guard.grant import binds_app
 from bleep.guard.redact import redacted_proposal
-from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.graph import ApprovalRecord, Decision, PlanStep, Proposal, TargetSnapshot
 from bleep.schemas.shown import Shown
 
@@ -46,17 +45,9 @@ class ApprovalNotDecided(RuntimeError):
     tell what the human chose, so it stops rather than guess."""
 
 
-def _why(error: Exception) -> Shown:
-    """A short, fixed reason: engine messages are host text and do not belong in Bleep's own."""
-    if isinstance(error, ContainerNotFound):
-        return Shown.of("target/not_found")
-    if isinstance(error, EngineUnavailable):
-        return Shown.of("target/host_unreachable")
-    return Shown.of("target/host_unknown")  # KeyError from the registry
-
-
 def _unread(step: PlanStep, why: Shown) -> Shown:
-    return Shown.of("target/unread", target=step.target, host=step.host_id, why=why)
+    where = Shown.of("target/where", target=step.target, host=step.host_id)
+    return Shown.of("target/state", where=where, why=why)
 
 
 async def _snapshots(
@@ -85,10 +76,9 @@ async def _snapshots(
                     TargetSnapshot(host_id=step.host_id, target=step.target, app_uuid=uuid)
                 )
             continue
-        try:
-            summary = (await deps.registry.engine(step.host_id).inspect(step.target)).summary
-        except (ContainerNotFound, EngineUnavailable, KeyError) as error:
-            unread.append(_unread(step, _why(error)))
+        summary, why = await read_container(deps.registry, step.host_id, step.target)
+        if summary is None:
+            unread.append(_unread(step, why))
             continue
         snapshots.append(
             TargetSnapshot(

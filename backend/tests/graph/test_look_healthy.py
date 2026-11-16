@@ -3,8 +3,6 @@ check of its service passes (#421): the service's own containers against Gather'
 URLs from the hosts file, and nothing a model named that is not the service's. Every other run
 ends as before."""
 
-import logging
-
 import httpx
 from test_report import Notified, written
 
@@ -12,7 +10,6 @@ from bleep.graph.nodes import gather, report
 from bleep.graph.nodes.diagnose import FALLBACK_CAUSE
 from bleep.graph.nodes.propose import NO_PLAN
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
-from bleep.hosts.engine import EngineError
 from bleep.schemas.graph import Decision, Diagnosis, PlanStep, Proposal, VerificationPlan
 from bleep.schemas.incidents import LOOK_REQUESTED, Signal, Subject
 from fakes import FakeChatModel, FakeEngine
@@ -257,19 +254,17 @@ async def test_a_look_whose_host_stops_answering_during_the_check_ends_as_no_act
     assert {c["detail"] for c in containers} == {"host not reachable"}
 
 
-async def test_an_engine_error_during_the_check_ends_as_no_action_and_is_logged(tmp_path, caplog):
+async def test_an_engine_error_during_the_check_fails_its_container_checks_and_ends_as_no_action(
+    tmp_path,
+):
     env, state, _ = await setup(tmp_path)
+    env.engine.refuse_inspect = True
 
-    async def refused(name: str):
-        raise EngineError("a", "engine refused: 500")
-
-    env.engine.inspect = refused  # type: ignore[method-assign]
-
-    with caplog.at_level(logging.WARNING, logger="bleep.graph.nodes.report"):
-        update = await run(env, state)
+    update = await run(env, state)
 
     assert update["outcome"] == "no_action"
-    assert "checking the look" in caplog.text and "EngineError" in caplog.text
+    containers = [c for c in await checks(env, state) if c["kind"] == "container"]
+    assert {c["detail"] for c in containers} == {"the host's engine refused the request"}
 
 
 # --- runs that are never checked ---

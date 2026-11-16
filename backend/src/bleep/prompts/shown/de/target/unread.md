@@ -1,1 +1,0 @@
-{target} auf {host}: {why}
