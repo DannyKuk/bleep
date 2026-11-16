@@ -44,7 +44,7 @@ uv run --group evals python -m evals.run --append data/evals/scenarios-20261103-
 
 `--append` continues an earlier batch: its runs go into that batch's raw file, numbered after the runs already there, and the report covers all of them. A suite can so run one repeat at a time, with the demo shop and the model server free for something else in between, and still end in one report: each batch writes the same report again (the one named in the raw file's `.info.json`), with every run so far. The harness refuses a raw file of another model under test.
 
-`--model` replaces the model for the provider in use (`LOCAL_MODEL` for `local`, `LLM_MODEL` for `openrouter`). Each run takes up to its scenario's `timeout_s`.
+`--model` replaces the model for the provider in use (`LOCAL_MODEL` for `local`, `LLM_MODEL` for `openrouter`). Each run takes up to its scenario's `timeout_s`; `--timeout-s N` sets every run's limit to N seconds instead, for a model that is slower than the scenario files allow (one partly on the CPU). The report's Setup names the override, and `--append` refuses a batch that ran with another one.
 
 ### The shop reset
 

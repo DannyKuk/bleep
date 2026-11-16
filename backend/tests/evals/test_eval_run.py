@@ -32,6 +32,7 @@ from evals.run import (
     IncidentCatcher,
     ShopReset,
     _judge,
+    check_same_timeout,
     demo_containers,
     docker_endpoint,
     earlier_batch,
@@ -46,6 +47,7 @@ from evals.run import (
     shop_items_url,
     suite_scenarios,
     summary,
+    with_timeout,
     without_urls,
 )
 from evals.scenarios import ExpectedAction, ExpectedStep, Scenario, ScenarioResult
@@ -1168,3 +1170,53 @@ async def test_without_an_mcp_fixture_the_plugin_stays_off(tmp_path):
     assert result.error is None
     assert not {"mcp_tools", "mcp_call"} & {t.name for t in model.bound_tools}
     assert "- `mcp.call`" not in "\n".join(m.text for m in model.seen[-1])
+
+
+def test_a_timeout_override_sets_every_runs_limit_and_none_keeps_each_scenarios_own():
+    quick = SCENARIO.model_copy(update={"id": "quick", "timeout_s": 30})
+
+    assert [s.timeout_s for s in with_timeout([SCENARIO, quick], 900)] == [900, 900]
+    assert [s.timeout_s for s in with_timeout([SCENARIO, quick], None)] == [20, 30]
+    assert SCENARIO.timeout_s == 20
+
+
+async def test_a_run_under_the_override_times_out_at_the_override(tmp_path):
+    fake = engine()
+    [slow] = with_timeout([SCENARIO], 1)
+
+    result = await run_scenario(
+        slow, settings(tmp_path), faults=FakeFaults(fake, symptoms=["blog-web"]),
+        judge=FakeJudge(), connector=connector(fake), models=Models(FakeChatModel(script=[])),
+    )  # fmt: skip
+
+    assert result.failure == "timeout"
+    assert result.error == "timed out after 1 s waiting for the incident"
+
+
+def test_main_refuses_a_timeout_below_one_second(tmp_path, capsys):
+    assert main(["--timeout-s", "0"], settings=settings(tmp_path)) == 2
+    assert "--timeout-s must be 1 or more" in capsys.readouterr().err
+
+
+def test_a_batch_continues_only_with_the_timeout_it_ran_with(tmp_path):
+    raw = tmp_path / "scenarios-20261116-120000.jsonl"
+    append_jsonl(raw, ScenarioResult(id="db-down", model="tiny-local", judge="j"))
+    when = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)
+    info = RunInfo(
+        started_at=when, finished_at=when, model="tiny-local", provider="local", judge="j",
+        repeat=1, scenarios=[SCENARIO], command="c", raw=raw.name, timeout_s=900,
+    )  # fmt: skip
+    write_info(raw, info)
+
+    check_same_timeout(raw, 900)
+    with pytest.raises(EvalError, match="ran with --timeout-s 900, not no --timeout-s"):
+        check_same_timeout(raw, None)
+    with pytest.raises(EvalError, match="ran with --timeout-s 900, not --timeout-s 600"):
+        check_same_timeout(raw, 600)
+
+
+def test_the_reproduce_command_keeps_the_timeout_override():
+    from evals.run import _command, _parser
+
+    assert _command(_parser().parse_args(["--timeout-s", "900"])).endswith("--timeout-s 900")
+    assert "--timeout-s" not in _command(_parser().parse_args([]))
