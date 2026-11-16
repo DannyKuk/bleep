@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from langsmith import Client as LangSmithClient
 from langsmith.schemas import LangSmithInfo
-from pydantic import SecretStr
+from pydantic import AliasChoices, SecretStr
 
 from bleep import prompts
 from bleep.config import Settings
@@ -37,6 +37,29 @@ def no_tracing_from_the_shell(monkeypatch):
     """A `TRACING` exported to try the Langfuse profile must not make the tests send traces."""
     for name in ("TRACING", "LANGSMITH_TRACING", "LANGCHAIN_TRACING_V2"):
         monkeypatch.delenv(name, raising=False)
+
+
+def _names_settings_reads() -> set[str]:
+    prefix = Settings.model_config["env_prefix"]
+    names: set[str] = set()
+    for field_name, field in Settings.model_fields.items():
+        alias = field.validation_alias
+        if alias is None:
+            names.add(f"{prefix}{field_name}")
+        elif isinstance(alias, AliasChoices):
+            names.update(choice for choice in alias.choices if isinstance(choice, str))
+        elif isinstance(alias, str):
+            names.add(alias)
+    return names
+
+
+@pytest.fixture(autouse=True)
+def no_settings_from_the_shell(monkeypatch):
+    """A `BLEEP_*`, `TELEGRAM_*` or `EMBEDDINGS_*` value exported in the shell must not reach a
+    test's `Settings` (#620). Names are derived from the model, so a new field is covered."""
+    for name in _names_settings_reads():
+        for variant in {name, name.upper(), name.lower()}:
+            monkeypatch.delenv(variant, raising=False)
 
 
 @pytest.fixture(autouse=True)
