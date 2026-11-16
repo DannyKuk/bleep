@@ -335,19 +335,12 @@ async def _events(ctx: ToolContext, minutes: int = 30) -> str:
     return await guard_result(ctx, "events", "\n".join(lines))
 
 
-def _described(
-    name: str,
-    schema: type[BaseModel],
-    run: Callable[..., Awaitable[str]],
-    *,
-    untrusted: bool = True,
-) -> ToolSpec:
-    """The spec of the Docker read tool `name`, its description `tools/<name>`; `untrusted` when
-    what it returns came from the host."""
+def _described(name: str, schema: type[BaseModel], run: Callable[..., Awaitable[str]]) -> ToolSpec:
+    """The spec of the Docker read tool `name`, its description `tools/<name>`."""
 
     def build(ctx: ToolContext) -> StructuredTool:
-        rule = {"untrusted_rule": untrusted_rule(ctx)} if untrusted else {}
-        return _tool(ctx, name, say(ctx, f"tools/{name}", **rule), schema, run)
+        description = say(ctx, f"tools/{name}", untrusted_rule=untrusted_rule(ctx))
+        return _tool(ctx, name, description, schema, run)
 
     return ToolSpec(name, "read", "docker", build)
 
@@ -356,6 +349,6 @@ SPECS = [
     _described("list_containers", NoArgs, _list),
     _described("inspect_container", ContainerArgs, _inspect),
     _described("container_logs", LogsArgs, _logs),
-    _described("container_stats", ContainerArgs, _stats, untrusted=False),
+    _described("container_stats", ContainerArgs, _stats),
     _described("recent_events", EventsArgs, _events),
 ]

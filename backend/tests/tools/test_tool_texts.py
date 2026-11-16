@@ -14,27 +14,28 @@ from bleep.plugins.registry import PluginRegistry
 from bleep.tools.default import default_registry
 from bleep.tools.registry import ToolContext, ToolRegistry
 
-# Every tool Bleep has, core and plugin, and whether what it returns is text from outside Bleep
-# (a host, a container, a repo, a doc page, a plugin's server) rather than Bleep's own records
-# or numbers.
-OUTSIDE_TEXT = {
-    "list_containers": True,
-    "inspect_container": True,
-    "container_logs": True,
-    "container_stats": False,
-    "recent_events": True,
-    "host_command": True,
-    "recall_incidents": False,
-    "deployed_commits": True,
-    "recent_commits": True,
-    "commit_diff": True,
-    "knowledge_search": True,
-    "mcp_tools": True,
-    "mcp_call": True,
-    "coolify_applications": True,
-    "coolify_deployments": True,
-    "coolify_env_keys": True,
-}
+# Every tool Bleep has, core and plugin. Each returns text from outside Bleep: a host's or a
+# container's output, a repo, a doc page or a plugin's server, and even `container_stats` (a
+# container's name, an engine error) and `recall_incidents` (a past incident's title from a
+# container label, quoted stretches of its cause).
+TOOLS = (
+    "list_containers",
+    "inspect_container",
+    "container_logs",
+    "container_stats",
+    "recent_events",
+    "host_command",
+    "recall_incidents",
+    "deployed_commits",
+    "recent_commits",
+    "commit_diff",
+    "knowledge_search",
+    "mcp_tools",
+    "mcp_call",
+    "coolify_applications",
+    "coolify_deployments",
+    "coolify_env_keys",
+)
 
 
 class Memory:
@@ -71,15 +72,15 @@ def descriptions() -> dict[str, str]:
 
 
 def test_the_table_names_every_registered_tool():
-    assert descriptions().keys() == OUTSIDE_TEXT.keys()
+    assert sorted(descriptions()) == sorted(TOOLS)
 
 
-@pytest.mark.parametrize("name", OUTSIDE_TEXT)
-def test_every_tool_has_a_description_with_the_untrusted_note_where_it_returns_outside_text(name):
+@pytest.mark.parametrize("name", TOOLS)
+def test_every_tool_has_a_description_with_the_untrusted_note(name):
     note = prompts.load("untrusted/tool_output").strip()
     description = descriptions()[name]
     assert description.strip()
-    assert (note in description) == OUTSIDE_TEXT[name]
+    assert note in description
 
 
 def test_the_untrusted_note_is_one_text_and_says_how_the_output_is_wrapped():
@@ -135,4 +136,4 @@ def test_every_tool_text_file_is_a_description_or_said_somewhere():
     for path in prompts.all_prompt_files():
         name = path.relative_to(prompts.PROMPTS_DIR).with_suffix("").as_posix()
         if name.startswith(("tools/", "plugins/")):
-            assert name in said or name.split("/")[-1] in OUTSIDE_TEXT, name
+            assert name in said or name.split("/")[-1] in TOOLS, name
