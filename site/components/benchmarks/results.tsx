@@ -1,3 +1,4 @@
+import type { Outcome as RunOutcome } from "~/lib/benchmarks/extract";
 import {
   type Attack,
   type Fault,
@@ -6,30 +7,53 @@ import {
   formatCost,
 } from "~/lib/benchmarks/round";
 
+import { DotLegend } from "./dot";
+import { DotButton, RovingGroup } from "./dot-grid";
+
 type Outcome = "right" | "wrong" | "unmet";
 
-/** One dot per case run, so a reader sees which case a model missed, not only how many. */
-function Dots({ cases }: { cases: [string, Outcome][] }) {
+/** Where a column's dots find their runs: the model's batch for that suite. */
+type Source = { model: ModelResult; batch: string; column: string };
+
+const RUN: Record<Outcome, RunOutcome> = { right: "pass", wrong: "fail", unmet: "unmet" };
+const VERDICT: Record<Outcome, string> = {
+  right: "right",
+  wrong: "missed",
+  unmet: "never reached the model",
+};
+
+/** One dot per case run, so a reader sees which case a model missed, not only how many; each
+ * opens that run. */
+function Dots({ cases, source }: { cases: [string, Outcome][]; source: Source }) {
   return (
-    <span aria-hidden className="flex gap-1">
+    <RovingGroup className="flex gap-2">
       {cases.map(([name, outcome]) => (
-        <span
+        <DotButton
           key={name}
-          title={`${name}: ${outcome === "right" ? "right" : outcome === "wrong" ? "missed" : "never reached the model"}`}
-          className={`size-2.5 rounded-full ${
-            outcome === "right"
-              ? "bg-ok"
-              : outcome === "wrong"
-                ? "bg-down"
-                : "border-[1.5px] border-dashed border-stop"
-          }`}
+          label={`${source.model.name}, ${name}: ${VERDICT[outcome]}`}
+          run={{
+            set: "round",
+            key: `${source.batch}/${name}/1`,
+            title: name,
+            subtitle: `${source.model.name}, ${source.column.toLowerCase()}`,
+            outcome: RUN[outcome],
+            verdict: `${source.column}: ${VERDICT[outcome]}`,
+          }}
         />
       ))}
-    </span>
+    </RovingGroup>
   );
 }
 
-function Score({ cases, note }: { cases: [string, Outcome][]; note?: string }) {
+function Score({
+  cases,
+  source,
+  note,
+}: {
+  cases: [string, Outcome][];
+  source: Source;
+  note?: string;
+}) {
   const right = cases.filter(([, outcome]) => outcome !== "wrong").length;
   const missed = cases.filter(([, outcome]) => outcome === "wrong").map(([name]) => name);
   return (
@@ -37,7 +61,7 @@ function Score({ cases, note }: { cases: [string, Outcome][]; note?: string }) {
       <span className="font-extrabold whitespace-nowrap">
         {right} of {cases.length}
       </span>
-      <Dots cases={cases} />
+      <Dots cases={cases} source={source} />
       {missed.length > 0 && (
         <span className="text-sm whitespace-nowrap text-down">missed {missed.join(", ")}</span>
       )}
@@ -76,12 +100,34 @@ function unnecessary(model: ModelResult) {
 }
 
 const COLUMNS: { title: string; cell: (model: ModelResult) => React.ReactNode }[] = [
-  { title: "Cause found", cell: (m) => <Score cases={faultCases(m, (f) => f.rootCause)} /> },
-  { title: "Exact plan", cell: (m) => <Score cases={faultCases(m, (f) => f.exactPlan)} /> },
+  {
+    title: "Cause found",
+    cell: (m) => (
+      <Score
+        cases={faultCases(m, (f) => f.rootCause)}
+        source={{ model: m, batch: m.scenarios, column: "Cause found" }}
+      />
+    ),
+  },
+  {
+    title: "Exact plan",
+    cell: (m) => (
+      <Score
+        cases={faultCases(m, (f) => f.exactPlan)}
+        source={{ model: m, batch: m.scenarios, column: "Exact plan" }}
+      />
+    ),
+  },
   { title: "Unneeded actions", cell: unnecessary },
   {
     title: "Attacks resisted",
-    cell: (m) => <Score cases={attackCases(m)} note={unmetNote(m)} />,
+    cell: (m) => (
+      <Score
+        cases={attackCases(m)}
+        source={{ model: m, batch: m.injection, column: "Attacks resisted" }}
+        note={unmetNote(m)}
+      />
+    ),
   },
   {
     title: "Control",
@@ -178,17 +224,11 @@ export function Results({ models }: { models: ModelResult[] }) {
 
 /** What the dots mean, under the results. */
 export function Legend() {
-  const item = (dot: string, text: string) => (
-    <li className="flex items-center gap-2">
-      <span aria-hidden className={`size-2.5 rounded-full ${dot}`} />
-      {text}
-    </li>
-  );
   return (
-    <ul className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-ink-2">
-      {item("bg-ok", "One case, right")}
-      {item("bg-down", "One case, missed")}
-      {item("border-[1.5px] border-dashed border-stop", "An attack the model never met")}
-    </ul>
+    <DotLegend
+      pass="One case, right"
+      fail="One case, missed"
+      unmet="An attack the model never met"
+    />
   );
 }

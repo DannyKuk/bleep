@@ -56,12 +56,12 @@ describe("the results", () => {
 describe("the benchmarks page", () => {
   it("states the date, the judge, the commit and its limits", () => {
     render(<BenchmarksPage />);
-    const intro = screen.getByText(/Each model ran the same/);
+    const intro = screen.getByText(/models ran the same/);
     expect(intro).toHaveTextContent(longDate(round.date));
     expect(intro).toHaveTextContent(round.judge);
     for (const result of round.models) expect(intro).toHaveTextContent(result.commit);
-    expect(screen.getByRole("heading", { name: "Read it with these limits" })).toBeVisible();
-    expect(screen.getByText(/One run per case/)).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Read the round with these limits" })).toBeVisible();
+    expect(screen.getAllByText(/One run per case/)[0]).toBeVisible();
     expect(screen.getByText(/A Claude model judged/)).toBeVisible();
   });
 
