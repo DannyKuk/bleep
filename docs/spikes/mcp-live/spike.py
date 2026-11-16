@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+from bleep import prompts
 from bleep.guard.sanitize import MAX_CHARS
 from bleep.plugins import urls
 from bleep.plugins.mcp_url import (
@@ -136,6 +137,7 @@ async def main() -> dict:
         host_id="coolify",
         registry=NoContainers(),  # type: ignore[arg-type]
         guard_log=recorder,  # type: ignore[arg-type]
+        texts=prompts.load,
     )
     specs = {spec.name: spec.build(ctx) for spec in _read_tools(server)}
     listing, ms = await timed(specs["mcp_tools"].ainvoke({}))
