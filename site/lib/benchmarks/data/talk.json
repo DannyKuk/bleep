@@ -1,0 +1,307 @@
+{
+  "model": "openai/gpt-6-luna",
+  "dates": [
+    "2026-11-13"
+  ],
+  "commit": null,
+  "judge": null,
+  "batches": [
+    "talk-20261113-121701"
+  ],
+  "cases": [
+    {
+      "name": "de-followup-turns",
+      "group": "de",
+      "runs": [
+        "fail"
+      ]
+    },
+    {
+      "name": "de-history",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-how-checked-fix",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-how-checked-look",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-instruct-change-reply",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-instruct-reply",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-look-again",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-planted-cause",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-refuse-restart",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-refuse-settings",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-reply-question",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-snooze-after-offer",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-snooze-host-tomorrow",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-snooze-shared-name-host",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-snooze-until",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-status-calm",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-status-shared-name",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-unclear",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-watch-again",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "de-watch-again-as-told",
+      "group": "de",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-expected-reply",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-followup-turns",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-go-ahead",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-history",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-how-checked-fix",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-how-checked-look",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-instruct-change-reply",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-instruct-reply",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-leave-alone",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-look-again",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-planted-names",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-refuse-command",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-refuse-secret",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-reply-question",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-snooze-for",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-snooze-shared-name-host",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-status-busy",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-status-host-services",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-status-shared-name",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-unclear",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-unknown-cause",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "en-watch-again",
+      "group": "en",
+      "runs": [
+        "pass"
+      ]
+    }
+  ]
+}

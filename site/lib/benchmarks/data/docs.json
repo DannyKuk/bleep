@@ -1,0 +1,153 @@
+{
+  "model": null,
+  "dates": [
+    "2026-11-03"
+  ],
+  "commit": null,
+  "judge": null,
+  "batches": [
+    "knowledge-20261103-203626"
+  ],
+  "cases": [
+    {
+      "name": "cli-events",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "cli-system-df",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "compose-networking",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "compose-services",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "compose-startup-order",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "daemon-logs",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "dockerfile-healthcheck",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "live-restore",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "logging-dual",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "logging-json-file",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "port-publishing",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "pruning",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "resource-constraints",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "restart-policies",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "restart-policies (2)",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "running-containers",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "running-containers (2)",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "runtime-metrics",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "tmpfs",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "volumes",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "model": "openai/gpt-6-luna",
+  "dates": [
+    "2026-11-16"
+  ],
+  "commit": null,
+  "judge": null,
+  "batches": [
+    "scripted-propose-20261116-102720"
+  ],
+  "cases": [
+    {
+      "name": "id-prefix-decoy",
+      "group": null,
+      "runs": [
+        "unmet"
+      ]
+    },
+    {
+      "name": "id-prefix-target",
+      "group": null,
+      "runs": [
+        "unmet"
+      ]
+    },
+    {
+      "name": "mcp-arguments-protected-id",
+      "group": null,
+      "runs": [
+        "unmet"
+      ]
+    }
+  ]
+}

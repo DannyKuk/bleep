@@ -1,0 +1,262 @@
+{
+  "restart-policies/1": {
+    "type": "search",
+    "question": "A container with the unless-stopped restart policy did not come back after the Docker daemon restarted. Why not?",
+    "page": "restart-policies",
+    "found": [
+      "restart-policies",
+      "compose-services",
+      "compose-deploy",
+      "daemon-logs",
+      "live-restore"
+    ],
+    "rank": 1
+  },
+  "restart-policies (2)/1": {
+    "type": "search",
+    "question": "Why is a container that crashes right after it starts not being restarted by its on-failure policy?",
+    "page": "restart-policies",
+    "found": [
+      "restart-policies",
+      "compose-deploy",
+      "compose-services",
+      "daemon-logs",
+      "daemon-troubleshoot"
+    ],
+    "rank": 1
+  },
+  "resource-constraints/1": {
+    "type": "search",
+    "question": "The kernel killed a container's process because the host ran out of memory. How do memory limits and the OOM killer work for containers?",
+    "page": "resource-constraints",
+    "found": [
+      "resource-constraints",
+      "daemon-troubleshoot",
+      "running-containers",
+      "compose-services",
+      "daemon-logs"
+    ],
+    "rank": 1
+  },
+  "running-containers/1": {
+    "type": "search",
+    "question": "What does it mean when docker run itself fails with exit code 125?",
+    "page": "running-containers",
+    "found": [
+      "running-containers",
+      "daemon-logs",
+      "restart-policies",
+      "daemon-troubleshoot",
+      "bind-mounts"
+    ],
+    "rank": 1
+  },
+  "running-containers (2)/1": {
+    "type": "search",
+    "question": "A container exited with code 127. What does that exit status say?",
+    "page": "running-containers",
+    "found": [
+      "running-containers",
+      "restart-policies",
+      "cli-events",
+      "daemon-logs",
+      "dockerfile-healthcheck"
+    ],
+    "rank": 1
+  },
+  "compose-startup-order/1": {
+    "type": "search",
+    "question": "How do I make the web service wait in Compose until its database is healthy before it starts?",
+    "page": "compose-startup-order",
+    "found": [
+      "compose-startup-order",
+      "compose-services",
+      "compose-deploy",
+      "cli-events",
+      "compose-networking"
+    ],
+    "rank": 1
+  },
+  "dockerfile-healthcheck/1": {
+    "type": "search",
+    "question": "What do interval, timeout, start period and retries mean for a container health check?",
+    "page": "dockerfile-healthcheck",
+    "found": [
+      "dockerfile-healthcheck",
+      "running-containers",
+      "compose-services",
+      "compose-deploy",
+      "compose-startup-order"
+    ],
+    "rank": 1
+  },
+  "logging-json-file/1": {
+    "type": "search",
+    "question": "Container logs are filling the disk. How do I rotate json-file logs by size and number of files?",
+    "page": "logging-json-file",
+    "found": [
+      "logging-json-file",
+      "logging-dual",
+      "logging-configure",
+      "cli-logs",
+      "running-containers"
+    ],
+    "rank": 1
+  },
+  "logging-dual/1": {
+    "type": "search",
+    "question": "docker logs shows nothing for a container that sends its logs to a remote logging driver. Why?",
+    "page": "logging-dual",
+    "found": [
+      "logging-dual",
+      "logging-configure",
+      "daemon-logs",
+      "cli-logs",
+      "logging-local"
+    ],
+    "rank": 1
+  },
+  "daemon-logs/1": {
+    "type": "search",
+    "question": "Where can I read the Docker daemon's own logs on a Linux host that runs systemd?",
+    "page": "daemon-logs",
+    "found": [
+      "daemon-logs",
+      "daemon-troubleshoot",
+      "logging-dual",
+      "cli-logs",
+      "cli-events"
+    ],
+    "rank": 1
+  },
+  "cli-events/1": {
+    "type": "search",
+    "question": "Which events does Docker emit when a container dies, is OOM killed or changes its health status?",
+    "page": "cli-events",
+    "found": [
+      "cli-events",
+      "compose-services",
+      "resource-constraints",
+      "live-restore",
+      "running-containers"
+    ],
+    "rank": 1
+  },
+  "cli-system-df/1": {
+    "type": "search",
+    "question": "How much disk space do images, containers, local volumes and the build cache take up?",
+    "page": "cli-system-df",
+    "found": [
+      "cli-system-df",
+      "live-restore",
+      "running-containers",
+      "pruning",
+      "resource-constraints"
+    ],
+    "rank": 1
+  },
+  "pruning/1": {
+    "type": "search",
+    "question": "How do I free disk space by removing unused images, stopped containers and build cache?",
+    "page": "pruning",
+    "found": [
+      "pruning",
+      "volumes",
+      "cli-system-df",
+      "running-containers",
+      "logging-dual"
+    ],
+    "rank": 1
+  },
+  "volumes/1": {
+    "type": "search",
+    "question": "The database lost its data after its container was recreated. How does a named volume keep data?",
+    "page": "volumes",
+    "found": [
+      "volumes",
+      "compose-services",
+      "cli-events",
+      "pruning",
+      "tmpfs"
+    ],
+    "rank": 1
+  },
+  "tmpfs/1": {
+    "type": "search",
+    "question": "How do I mount a temporary in-memory filesystem into a container?",
+    "page": "tmpfs",
+    "found": [
+      "tmpfs",
+      "volumes",
+      "compose-services",
+      "bind-mounts",
+      "daemon-troubleshoot"
+    ],
+    "rank": 1
+  },
+  "live-restore/1": {
+    "type": "search",
+    "question": "Can containers keep running while the Docker daemon is down or being upgraded?",
+    "page": "live-restore",
+    "found": [
+      "live-restore",
+      "restart-policies",
+      "cli-events",
+      "running-containers",
+      "daemon-logs"
+    ],
+    "rank": 1
+  },
+  "compose-networking/1": {
+    "type": "search",
+    "question": "Services in the same Compose project cannot reach each other by service name. How does Compose networking work?",
+    "page": "compose-networking",
+    "found": [
+      "compose-networking",
+      "compose-services",
+      "compose-startup-order",
+      "compose-deploy",
+      "network-bridge"
+    ],
+    "rank": 1
+  },
+  "port-publishing/1": {
+    "type": "search",
+    "question": "A published port is not reachable from other machines. Which host addresses does port publishing bind to?",
+    "page": "port-publishing",
+    "found": [
+      "port-publishing",
+      "networking",
+      "network-bridge",
+      "compose-services",
+      "daemon-troubleshoot"
+    ],
+    "rank": 1
+  },
+  "compose-services/1": {
+    "type": "search",
+    "question": "How long does Compose wait after sending SIGTERM before it kills a service's container on stop?",
+    "page": "compose-services",
+    "found": [
+      "compose-services",
+      "compose-startup-order",
+      "compose-deploy",
+      "dockerfile-healthcheck",
+      "compose-networking"
+    ],
+    "rank": 1
+  },
+  "runtime-metrics/1": {
+    "type": "search",
+    "question": "docker stats shows memory usage that includes the page cache. How are a container's memory metrics computed from cgroups?",
+    "page": "runtime-metrics",
+    "found": [
+      "runtime-metrics",
+      "running-containers",
+      "cli-system-df",
+      "resource-constraints",
+      "daemon-troubleshoot"
+    ],
+    "rank": 1
+  }
+}

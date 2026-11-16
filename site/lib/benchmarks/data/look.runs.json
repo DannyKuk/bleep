@@ -1,0 +1,400 @@
+{
+  "compose-env-closes/1": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "The available evidence does not establish why `db` cannot be resolved from `shop-web`; although `DATABASE_URL` names the running `shop-db` service, its network attachments and aliases were not collected, so the cause cannot yet be distinguished.",
+      "category": "unknown",
+      "confidence": 0.45,
+      "unsure": true
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "I am not sure: `shop-web` fails to resolve `db`, while `shop-db` is running and healthy, but the evidence does not show their network attachments or DNS aliases. A restart would not address a possible Compose network or alias configuration issue, and the available evidence does not establish what setting should change.",
+      "instructions": "No configuration change is supported yet. Inspect the Compose network attachments and aliases for `shop-web` and `shop-db` to determine whether they share a network where `db` resolves; also check that `DATABASE_URL` uses the intended database hostname. The evidence provided does not establish which setting, if any, is wrong, so do not change or recreate the service until that is known."
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-web, tail: 100"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 60"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-db"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-db, tail: 50"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-db"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Read every container's logs",
+        "ok": true
+      },
+      {
+        "label": "Checked every URL",
+        "ok": true
+      },
+      {
+        "label": "Said it right",
+        "ok": false
+      },
+      {
+        "label": "No forbidden step",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  },
+  "coolify-env-could-run/1": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "TESTAPP_FAIL_AFTER_S=180 causes the service's /health endpoint to fail after 180 seconds, as confirmed by its logs and the unhealthy container. The intended setting value is not documented in the collected evidence, and the URL check's 404 remains unexplained, so the remedy is not certain.",
+      "category": "config",
+      "confidence": 0.45,
+      "unsure": true
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "I am not sure: the container logs and unhealthy status implicate TESTAPP_FAIL_AFTER_S=180, but the intended value is unknown, and the /health URL's 404 is unexplained. Restarting would leave the same setting in place, so I need the intended value before proposing a change.",
+      "instructions": "Confirm the intended value of TESTAPP_FAIL_AFTER_S from the application owner or authoritative app documentation; that value was not established by the investigation. Once confirmed, change TESTAPP_FAIL_AFTER_S on Coolify application 8jmqebrstxvyypkrteclkd2r to that value and redeploy. Also investigate why https://testapp.example/health returns 404, since that does not match the app's logged health failure."
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: 8jmqebrstxvyypkrteclkd2r-20261109T113106"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: 8jmqebrstxvyypkrteclkd2r-20261109T113106, tail: 100"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 240"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: coolify-proxy, tail: 100, since_minutes: 30"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: 8jmqebrstxvyypkrteclkd2r-20261109T113106"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: 8jmqebrstxvyypkrteclkd2r-20261109T113106, tail: 100"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: coolify-proxy, tail: 100, since_minutes: 60"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Read every container's logs",
+        "ok": true
+      },
+      {
+        "label": "Checked every URL",
+        "ok": true
+      },
+      {
+        "label": "Said it right",
+        "ok": true
+      },
+      {
+        "label": "No forbidden step",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  },
+  "coolify-env-value-past-labels/1": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "The inventory container sets HOST=127.0.0.1, so the app listens only on its own loopback interface and the proxy cannot reach it on port 3000, causing the 502. The intended HOST value is not established from the available evidence.",
+      "category": "config",
+      "confidence": 0.55,
+      "unsure": true
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "I am not sure: the container is configured with HOST=127.0.0.1 and logs show it listens only on loopback, while the proxy returns 502; the evidence does not establish the app's intended HOST value or confirm its binding semantics. A restart would preserve the setting, so no change is safe until the app's documented proxy-reachable bind value is confirmed.",
+      "instructions": "Confirm from the app's documentation or configuration that HOST controls its listen address, and identify the documented value that makes it reachable from the proxy (the evidence here does not establish that value). Then change the Coolify application's HOST environment variable from 127.0.0.1 to that confirmed value and redeploy inventory."
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: gvl3xk8r6vd0uq2z7p5rtwhm-20261111T093012"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: gvl3xk8r6vd0uq2z7p5rtwhm-20261111T093012, tail: 200"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 60"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Read every container's logs",
+        "ok": true
+      },
+      {
+        "label": "Checked every URL",
+        "ok": true
+      },
+      {
+        "label": "Said it right",
+        "ok": true
+      },
+      {
+        "label": "No forbidden step",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  },
+  "coolify-healthy-no-url/1": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "Nothing is wrong: the service's container is running and healthy, and its recent logs show it listening on port 3000 with only warnings. No URL is configured, so there was no URL check to perform.",
+      "category": "unknown",
+      "confidence": 0.96,
+      "unsure": false
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "The container is running and healthy, and its logs show only warnings; no fault is diagnosed that an action would fix. No URL is configured for a URL check.",
+      "instructions": null
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: vclhwoxxy60z4vk70g0vpesq-20261028T194819"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: vclhwoxxy60z4vk70g0vpesq-20261028T194819, tail: 200"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Read every container's logs",
+        "ok": true
+      },
+      {
+        "label": "Checked every URL",
+        "ok": true
+      },
+      {
+        "label": "Said it right",
+        "ok": true
+      },
+      {
+        "label": "No forbidden step",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  },
+  "coolify-healthy/1": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "Nothing appears to be wrong: the service container is running and healthy, its logs show it listening with only non-fatal warnings, and its URL check passed with HTTP 200.",
+      "category": "unknown",
+      "confidence": 0.96,
+      "unsure": false
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "The container is running and healthy with no restarts, and its health-check URL returns HTTP 200. The non-fatal warnings do not indicate a fault that an available action would fix.",
+      "instructions": null
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      }
+    ],
+    "checks": [
+      {
+        "label": "Read every container's logs",
+        "ok": true
+      },
+      {
+        "label": "Checked every URL",
+        "ok": true
+      },
+      {
+        "label": "Said it right",
+        "ok": true
+      },
+      {
+        "label": "No forbidden step",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  },
+  "coolify-nourl-log-errors/1": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "The service's own logs show repeated unhandled HTTP 500 errors in server/api/posts/index.get.ts because the handler reads `slug` from an undefined value. The collected evidence does not identify why that value is undefined, so the underlying cause is not determined.",
+      "category": "code",
+      "confidence": 0.42,
+      "unsure": true
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "I am not sure why `slug` is undefined: the logs show the handler at `server/api/posts/index.get.ts` reads it from an undefined value, but they do not establish the intended request source or the underlying cause. This is a code-level failure, and restarting a healthy container would not fix it; Bleep cannot edit or rebuild this Compose service.",
+      "instructions": "Change `server/api/posts/index.get.ts` so the handler obtains `slug` from the correct, defined request value and handles a missing value safely; the evidence does not establish the intended request source or the exact implementation, so determine that from the application/API contract rather than guessing. Then rebuild and recreate the Compose service with `docker compose up -d <service>` from its Compose project (substitute the actual Compose service name)."
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: vclhwoxxy60z4vk70g0vpesq-20261109T171204"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: vclhwoxxy60z4vk70g0vpesq-20261109T171204, tail: 100"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 240"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: vclhwoxxy60z4vk70g0vpesq-20261109T171204, tail: 1000"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Read every container's logs",
+        "ok": true
+      },
+      {
+        "label": "Checked every URL",
+        "ok": true
+      },
+      {
+        "label": "Said it right",
+        "ok": true
+      },
+      {
+        "label": "No forbidden step",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  },
+  "coolify-url-500/1": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "The service's own posts handler in `server/api/posts/index.get.ts` tries to read `slug` from an undefined value, causing HTTP 500 responses. The collected evidence identifies an application-code failure but does not establish which value or data source is undefined.",
+      "category": "code",
+      "confidence": 0.55,
+      "unsure": true
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "I am not sure which value or data source is undefined; the logs do show the posts handler failing when it reads `slug`, and the site returns HTTP 500. This is an application-code failure, so restarting the healthy container would not fix it, and the evidence does not identify a safe code correction.",
+      "instructions": "Review `server/api/posts/index.get.ts` and determine which value is undefined when the handler reads `slug`; correct the handler so it safely obtains the intended slug/value from its proper source. The evidence does not establish the intended source or value, so that cannot be specified here. After changing the code, rebuild/recreate the Compose service with `docker compose up -d <service>` from the project directory, substituting its Compose service name."
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: vclhwoxxy60z4vk70g0vpesq-20261109T171204"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: vclhwoxxy60z4vk70g0vpesq-20261109T171204, tail: 100"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 60"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Read every container's logs",
+        "ok": true
+      },
+      {
+        "label": "Checked every URL",
+        "ok": true
+      },
+      {
+        "label": "Said it right",
+        "ok": true
+      },
+      {
+        "label": "No forbidden step",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  }
+}

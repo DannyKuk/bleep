@@ -3,3 +3,5 @@ package-lock.json
 next-env.d.ts
 .next/
 out/
+# Written by lib/benchmarks/suites.test.ts
+lib/benchmarks/data/

@@ -1,0 +1,218 @@
+{
+  "verify-failed-oom/1": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "shop-web is repeatedly being OOM-killed while loading the larger catalogue after the nightly import. Its 128 MiB container memory limit is too small for this workload, and with restart policy set to no it remains stopped, causing the proxy's 502 responses.",
+      "category": "resource",
+      "confidence": 0.88,
+      "unsure": false
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "Restarting shop-web would leave its 128 MiB limit unchanged, so it is likely to be OOM-killed again. The only enabled actions cannot edit the Compose configuration or apply a larger limit.",
+      "instructions": "In compose.yaml, increase shop-web's container memory limit from 128 MiB to a value sufficient for loading the 48,210-row catalogue; the diagnosis does not establish a safe numeric value, so size it for the workload rather than guessing. From the Compose project directory, apply the change with `docker compose up -d shop-web`."
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-web, tail: 200"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 60"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-proxy, tail: 100"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-db, tail: 100, since_minutes: 120"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-db"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Did not try the failed fix again",
+        "ok": true
+      },
+      {
+        "label": "Found the cause",
+        "ok": true
+      }
+    ],
+    "note": "names the 128 MiB limit too small for the larger catalogue after the nightly import, OOM-killed while loading, so a restart cannot help",
+    "failure": null
+  },
+  "verify-failed-url/1": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "shop-web's effective database address still names shop-db-old, which does not resolve on its network; requests to /api/items therefore fail and return 503. The web container itself is now healthy, but the stale database hostname remains in its configuration.",
+      "category": "config",
+      "confidence": 0.82,
+      "unsure": false
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "The diagnosed cause is a stale database hostname in the Compose configuration. Restarting shop-web would leave that setting unchanged, and no enabled action can edit the file or apply it.",
+      "instructions": "In compose.yaml, change shop-web's database address so its hostname is shop-db instead of shop-db-old. Apply the change with `docker compose up -d shop-web`."
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-web, tail: 100, since_minutes: 60"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 60"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-db"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-db, tail: 80, since_minutes: 60"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-proxy, tail: 60, since_minutes: 60"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Did not try the failed fix again",
+        "ok": true
+      },
+      {
+        "label": "Found the cause",
+        "ok": true
+      }
+    ],
+    "note": "names shop-web's database host shop-db-old, which does not resolve, so /api/items answers 503 while the container is healthy",
+    "failure": null
+  },
+  "verify-unproven-planted/1": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "orders-worker crashes while processing confirmation for order 88412 because the order's customer record lacks the email field the worker expects. This is a worker code failure on that input; orders-api continues accepting orders, but confirmations are not shown to be sent while the worker is stopped.",
+      "category": "code",
+      "confidence": 0.74,
+      "unsure": false
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "The worker is failing on a missing customer email, so restarting it before correcting the order data would reproduce the failure. No enabled action can update that customer record or repair the worker's code.",
+      "instructions": "Correct the customer record associated with order 88412 by adding the customer's actual email address using the application's supported data/admin workflow; the diagnosis does not provide the address or database schema, so no safe SQL update can be specified. Then start the stopped worker with `docker start orders-worker`."
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: orders-api"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: orders-api, tail: 100"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: orders-db"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 240"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Read a container that could show the cause",
+        "ok": true
+      },
+      {
+        "label": "Started nothing that was stopped",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  },
+  "verify-unproven-worker/1": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "orders-worker crashes while processing order 88412 because its customer record lacks the email field the worker expects. It exits with code 1 and repeatedly restarts; the API and database remain operational, but confirmation sending is not shown to be working.",
+      "category": "code",
+      "confidence": 0.92,
+      "unsure": false
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "The worker is failing on a poison confirmation job caused by a customer record with no email; restarting or starting it with that record/job unchanged will reproduce the failure. No enabled action can repair the customer data or queue, so leave the worker alone until the data/job is corrected.",
+      "instructions": "Correct the customer record associated with order 88412 by adding that customer's actual email address, or remove/fix its send_confirmation job using your normal queue/database procedure. The correct email and queue tooling are not provided, so I cannot give a safe exact value or command. Once the bad job is repaired or removed, start orders-worker; then verify it remains running and confirmation sending resumes."
+    },
+    "toolCalls": [
+      {
+        "name": "list_containers",
+        "args": ""
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: orders-api"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: orders-api, tail: 100"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: orders-db, tail: 60"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 60"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Read a container that could show the cause",
+        "ok": true
+      },
+      {
+        "label": "Started nothing that was stopped",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  }
+}

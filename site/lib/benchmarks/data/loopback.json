@@ -1,0 +1,41 @@
+{
+  "model": "openai/gpt-6-luna",
+  "dates": [
+    "2026-11-09"
+  ],
+  "commit": null,
+  "judge": "manual",
+  "batches": [
+    "loopback-20261109-082230"
+  ],
+  "cases": [
+    {
+      "name": "verify-failed-oom",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "verify-failed-url",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "verify-unproven-planted",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "verify-unproven-worker",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    }
+  ]
+}
