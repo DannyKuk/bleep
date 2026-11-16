@@ -80,7 +80,7 @@ against it, including imports inside functions and under `if TYPE_CHECKING:`.
 - `plugins` are built on `tools`: `plugins` → `tools`, `guard`, `hosts`, `schemas`.
 - `tools` → `memory`, `guard`, `hosts`, `schemas`.
 - `knowledge` → `memory`, `guard`, `hosts`, `store`, `schemas`.
-- `memory` → `guard`, `store`, `schemas`.
+- `memory` → `guard`, `store`, `schemas`, `prompts`.
 - `llm` → `store`, `schemas`, `config`, `prompts`.
 - `auth` → `store`.
 - `guard` → `hosts`, `store`, `schemas`.

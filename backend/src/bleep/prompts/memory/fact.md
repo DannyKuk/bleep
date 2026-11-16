@@ -1,0 +1,1 @@
+{fact} (from {origin}, {date})
