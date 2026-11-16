@@ -1,6 +1,6 @@
 # Restarting a proxy whose bad config survives a restart, 2026-11-16
 
-> **Answer:** a missing fact and a prompt gap together. `inspect_container` never showed a container's start command, so none of the six models in the #616 round could see that shop-proxy runs `caddy run --resume`, which starts from the last config Caddy loaded. Every run inspected shop-proxy. The three that proposed `docker.restart shop-proxy` (gemini-3.8-flash, Claude Haiku 5.5, Claude Sonnet 5.5) used Caddy's default behaviour: they said a config loaded through the admin API "lives only in memory" and that a restart reloads the Caddyfile. The three that proposed no action were guessing too, just the other way: gpt-oss-20b blamed a "baked Caddyfile", Qwen said a restart "would likely reload the same faulty configuration", and luna said it "would reload the same misroute" without anything it had read showing that. Propose also had no rule about a config loaded while the container runs. #642 adds the start command to `inspect_container`. It also asks Diagnose to record what such a container loads when it starts, and tells Propose that a restart fixes a config loaded at runtime only when the evidence shows the container starts from the right one. Whether this moves the three models is measured in the eval round below.
+> **Answer:** a missing fact and a prompt gap together. `inspect_container` never showed a container's start command, so none of the six models in the #616 round could see that shop-proxy runs `caddy run --resume`, which starts from the last config Caddy loaded. Every run inspected shop-proxy. The three that proposed `docker.restart shop-proxy` (gemini-3.8-flash, Claude Haiku 5.5, Claude Sonnet 5.5) used Caddy's default behaviour: they said a config loaded through the admin API "lives only in memory" and that a restart reloads the Caddyfile. The three that proposed no action were guessing too, just the other way: gpt-oss-20b blamed a "baked Caddyfile", Qwen said a restart "would likely reload the same faulty configuration", and luna said it "would reload the same misroute" without anything it had read showing that. Propose also had no rule about a config loaded while the container runs. #642 adds the start command to `inspect_container`. It also asks Diagnose to quote such a container's start command in its evidence, and tells Propose that a restart fixes a config loaded at runtime only when the evidence shows the container starts from the right one. Whether this moves the three models is measured in the eval round below.
 
 ## Question
 
@@ -53,13 +53,15 @@ The rule is general, not about Caddy or misroute. It applies only when the cause
 
 ## Eval round
 
-Pending: the main session runs this round on the branch and fills in this section. The plan:
+Pending: the main session runs this round on the branch and fills in this section. The start command is new evidence, and it could push a run the wrong way: a model that reads `--config /etc/caddy/Caddyfile` and misses `--resume` could now argue for the restart. luna is right today without the fact, so it is in the round. `hung` is the only scenario that expects a `docker.restart`, and `misroute-mcp` checks the "another enabled action" clause. The plan:
 
 | Case | Models | Runs | What it checks |
 |---|---|---|---|
 | misroute | `openai/gpt-6-luna`, `claude-haiku-5-5` | 3 each | no action, no restart; whether the diagnosis names `--resume` from `inspect_container` |
 | db-down | `openai/gpt-6-luna`, `claude-haiku-5-5` | 1 each | still `docker.start shop-db` |
 | bad-env | `openai/gpt-6-luna`, `claude-haiku-5-5` | 1 each | still no action with the `DATABASE_URL` change |
+| hung | `openai/gpt-6-luna` | 1 | still `docker.restart shop-web` |
+| misroute-mcp | `openai/gpt-6-luna` | 1 | still one `mcp.call` of `caddy_reload` on shop-proxy |
 
 From `backend/`, Bleep's backend stopped and the demo shop up:
 
@@ -69,6 +71,8 @@ export EVAL_JUDGE_MODEL=claude-code
 # Anthropic: LLM_PROVIDER=anthropic LLM_MODEL=claude-haiku-5-5 LLM_CHEAP_MODEL=claude-haiku-5-5
 uv run --group evals python -m evals.run --only misroute --repeat 3
 uv run --group evals python -m evals.run --only db-down,bad-env --repeat 1
+# luna only
+uv run --group evals python -m evals.run --only hung,misroute-mcp --repeat 1
 ```
 
 Results: not run yet.

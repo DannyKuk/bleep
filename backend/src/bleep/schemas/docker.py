@@ -58,7 +58,8 @@ class ContainerDetail(BaseModel):
     """One container's full inspect, as Bleep uses it.
 
     `env` holds the raw `KEY=value` strings straight from the engine, secrets included. It must
-    never reach a model, a log or the database without `guard.redact_env` first.
+    never reach a model, a log or the database without `guard.redact_env` first. `command` is raw
+    too: Compose copies env values into it, so it is shown only as `inspect_container` shows it.
     """
 
     summary: ContainerSummary
