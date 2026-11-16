@@ -1,6 +1,6 @@
 # Restarting a proxy whose bad config survives a restart, 2026-11-16
 
-> **Answer:** a missing fact and a prompt gap together. `inspect_container` never showed a container's start command, so none of the six models in the #616 round could see that shop-proxy runs `caddy run --resume`, which starts from the last config Caddy loaded. Every run inspected shop-proxy. The three that proposed `docker.restart shop-proxy` (gemini-3.8-flash, Claude Haiku 5.5, Claude Sonnet 5.5) used Caddy's default behaviour: they said a config loaded through the admin API "lives only in memory" and that a restart reloads the Caddyfile. The three that proposed no action were guessing too, just the other way: gpt-oss-20b blamed a "baked Caddyfile", Qwen said a restart "would likely reload the same faulty configuration", and luna said it "would reload the same misroute" without anything it had read showing that. Propose also had no rule about a config loaded while the container runs. #642 adds the start command to `inspect_container`. It also asks Diagnose to quote such a container's start command in its evidence, and tells Propose that a restart fixes a config loaded at runtime only when the evidence shows the container starts from the right one. In the eval round below, Haiku went from a restart to no action in 3 of 3 `misroute` runs; luna proposed no action in 2 of 3, and in the third read `--config` over `--resume` and restarted; `db-down` and `bad-env` held on both.
+> **Answer:** a missing fact and a prompt gap together. `inspect_container` never showed a container's start command, so none of the six models in the #616 round could see that shop-proxy runs `caddy run --resume`, which starts from the last config Caddy loaded. Every run inspected shop-proxy. The three that proposed `docker.restart shop-proxy` (gemini-3.8-flash, Claude Haiku 5.5, Claude Sonnet 5.5) used Caddy's default behaviour: they said a config loaded through the admin API "lives only in memory" and that a restart reloads the Caddyfile. The three that proposed no action were guessing too, just the other way: gpt-oss-20b blamed a "baked Caddyfile", Qwen said a restart "would likely reload the same faulty configuration", and luna said it "would reload the same misroute" without anything it had read showing that. Propose also had no rule about a config loaded while the container runs. #642 adds the start command to `inspect_container`. It also asks Diagnose to quote such a container's start command in its evidence, and tells Propose that a restart fixes a config loaded at runtime only when the evidence shows the container starts from the right one. In the eval round below, Haiku went from a restart to no action in 3 of 3 `misroute` runs; luna proposed no action in 2 of 3, and in the third read `--config` over `--resume` and restarted; `db-down` and `bad-env` held on both. #645 then added one sentence to Propose's rule: a config file named in the start command does not show what a restart loads when the same command also has a flag or state volume that may start the program from its last saved state. After it, luna proposed no action in 3 of 3 `misroute` runs, each time because of `--resume`, and `db-down` held.
 
 ## Question
 
@@ -72,6 +72,27 @@ Every `misroute` run found the root cause (0.90) and put the start command, with
 **What it shows:** the missing fact was the main cause for Haiku, and giving it the fact fixed the case. For luna the remaining miss is a reading of a flag it does not know well. One run per case elsewhere, so the `db-down`/`bad-env` result is a no-regression check, not a rate.
 
 Spend: OpenRouter (luna) $9.4238 → $9.4446 used, +$0.021, matching the runs' own $0.0208; the backend was stopped, so nothing else used the key. Anthropic (Haiku) $0.042 by the runs' own costs (the console was not read). The judge ran on `claude-code`, $0. Raw data: [`scenarios-20261116-140340`](data/scenarios-20261116-140340.jsonl), [`-141053`](data/scenarios-20261116-141053.jsonl), [`-141757`](data/scenarios-20261116-141757.jsonl), [`-142045`](data/scenarios-20261116-142045.jsonl).
+
+## Follow-up: a config file next to a resume flag (#645)
+
+luna's third run above shows the fact reaching Propose and being misread. The start command names both `--resume` and `--config /etc/caddy/Caddyfile`, and Propose's rule counted "its start command" as evidence of what the container starts from, so luna took the `--config` file as that evidence. #645 added one sentence to the rule, after the one about a file in the image or on disk: a config file named in the start command does not show it either when the same command also has a flag or a state volume that may start the program from its last saved state (resume, restore, keep state), unless the evidence shows which of the two wins. It sits before "Otherwise…", so another enabled action that loads the right config stays open. It names no program and no flag. Diagnose was not changed: all three luna runs above already quoted the start command word for word.
+
+Run on the #645 branch (commit `5177536a`) on 2026-11-16, Bleep's backend stopped, judge `claude-code`, luna only. #645 asked for `misroute` ×3 and `db-down` ×1.
+
+| Case | Model | Runs | Plan right | Before #645 | Report |
+|---|---|---|---|---|---|
+| misroute | `openai/gpt-6-luna` | 3 | 3 of 3, root cause 1.00 each | 2 of 3 | [scenarios-2026-11-16-11](scenarios-2026-11-16-11.md) |
+| db-down | `openai/gpt-6-luna` | 1 | exact (`docker.start shop-db`), root cause 1.00 | 1 of 1 | [scenarios-2026-11-16-12](scenarios-2026-11-16-12.md) |
+
+Each `misroute` plan gave the resume flag as its reason:
+
+- Run 1: "restarting may resume the saved config, so no enabled action is a reliable fix."
+- Run 2: "Restarting shop-proxy may resume the misrouted configuration saved through Caddy's admin API; the evidence does not establish that its start command loads the intended file instead."
+- Run 3: "shop-proxy starts with Caddy's `--resume` flag, and the evidence does not show that startup will prefer the documented route over the saved misroute."
+
+**What it shows:** with the extra sentence, luna weighed `--resume` against `--config` in all three runs and did not restart. Three runs are not a rate: they show the misreading from the run before did not come back, not that it never will. `db-down` is one run, a no-regression check. Haiku, gemini, Sonnet, gpt-oss-20b and Qwen were not run on this change; the next full round covers them.
+
+Spend: OpenRouter $9.4446 → $9.4607 used, +$0.016; the runs' own costs add up to $0.018. The backend was stopped, so nothing else used the key. Judge on `claude-code`, $0. Raw data: [`scenarios-20261116-143733`](data/scenarios-20261116-143733.jsonl), [`-144431`](data/scenarios-20261116-144431.jsonl).
 
 ## Reproduce
 
