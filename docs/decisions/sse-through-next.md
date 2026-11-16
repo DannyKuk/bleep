@@ -43,6 +43,12 @@ Seconds from the request until each event arrived (Next.js 16.4.4, Node 22.23, s
 - **`no-transform` is what turns compression off.** Next's compression skips a response that says `no-transform`. The backend could send it instead, and that was measured to work through the rewrite too. The route handler was chosen because the dashboard then does not depend on a header the backend has to remember, and it states in the frontend code why this path is special.
 - **The route handler needs the backend address at runtime,** so `next.config.ts` puts `BACKEND_URL` into `env`, which Next inlines at build time. It is the same build argument the rewrite already uses, so the Docker image needs nothing new.
 
+## Decided along the way
+
+- **A route handler, not a `no-transform` header from the backend.** Both worked in the measurements; the handler keeps the dashboard independent of a header the backend has to remember, and says in the frontend code why this path is special.
+- **The handler forwards only `cookie`, `last-event-id` and `accept`**, and passes the browser's abort on to its upstream fetch, so a closed tab closes the backend's stream.
+- **`BACKEND_URL` is inlined at build time** through `env` in `next.config.ts`, the same build argument the rewrite already uses, so the Docker image needs nothing new.
+
 ## Limits
 
 - Measured on one machine over loopback. A proxy in front of the dashboard (none today; it is LAN-only) could buffer again; sse-starlette's `X-Accel-Buffering: no` is passed on for nginx.
