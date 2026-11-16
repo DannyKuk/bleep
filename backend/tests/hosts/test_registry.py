@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from bleep.hosts.config import ServiceOverrides, UrlCheckConfig
-from bleep.hosts.engine import EngineUnavailable
+from bleep.hosts.engine import EngineError, EngineUnavailable
 from bleep.hosts.registry import ENGINE_REFUSED, LISTING_UNREADABLE, Registry
 from bleep.schemas.docker import ContainerSummary
 from fakes import REFUSAL, FakeEngine, compose_labels, socket_host, ssh_host
@@ -107,9 +107,12 @@ async def test_a_refused_refresh_keeps_the_snapshot_and_marks_the_host_unreachab
     assert [s.id for s in reg.services("a")] == ["a/compose:shop"]
 
 
-@pytest.mark.parametrize("failure", [KeyError("Id"), ValueError("bad"), TypeError("bad")])
+@pytest.mark.parametrize(
+    "failure",
+    [KeyError("Id"), ValueError("bad"), TypeError("bad"), AttributeError("'str' has no get")],
+)
 async def test_a_listing_that_cannot_be_parsed_marks_the_host_with_a_fixed_error(
-    monkeypatch, failure
+    monkeypatch, caplog, failure
 ):
     reg, engines, _ = make()
 
@@ -120,8 +123,43 @@ async def test_a_listing_that_cannot_be_parsed_marks_the_host_with_a_fixed_error
 
     await reg.start()
 
+    states = {h.config.id: h for h in reg.hosts()}
+    assert states["a"].reachable
+    assert not states["b"].reachable and states["b"].error == LISTING_UNREADABLE
+    assert any(r.exc_info and r.exc_info[1] is failure for r in caplog.records)  # a traceback
+
+
+async def test_a_refusal_at_reconnect_is_recorded_as_the_fixed_text_not_the_daemons():
+    reg, engines, _ = make()
+    await reg.start()
+
+    async def refuse() -> None:
+        raise EngineError("b", REFUSAL)
+
+    engines["b"].reconnect = refuse  # type: ignore[method-assign]
+    engines["b"].drop()
+
+    assert await reg.reconnect("b") is False
+
     state = {h.config.id: h for h in reg.hosts()}["b"]
-    assert not state.reachable and state.error == LISTING_UNREADABLE
+    assert state.error == ENGINE_REFUSED
+
+
+async def test_start_never_raises_whatever_one_host_does(monkeypatch, caplog):
+    reg, _, _ = make()
+    real = reg.reconnect
+
+    async def explode_for_b(host_id: str) -> bool:
+        if host_id == "b":
+            raise RuntimeError("boom")
+        return await real(host_id)
+
+    monkeypatch.setattr(reg, "reconnect", explode_for_b)
+
+    await reg.start()
+
+    assert {h.config.id: h for h in reg.hosts()}["a"].reachable
+    assert "connecting host b failed" in caplog.text
 
 
 async def test_container_lookup_by_name_or_id():

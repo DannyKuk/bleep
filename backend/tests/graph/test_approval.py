@@ -395,6 +395,47 @@ async def test_a_target_the_engine_refuses_to_inspect_is_not_put_to_the_human_an
     assert not any(REFUSAL in text for text in notices)
 
 
+async def test_a_target_the_engine_refuses_after_the_yes_makes_the_plan_stale_not_failed(
+    run, plans
+):
+    plans[0].append(restart())
+    incident_id = await run.start()
+    run.env.engine.refuse_inspect = True
+
+    await run.decide(incident_id, decide("approve"))
+
+    assert run.env.engine.acts == []  # Execute never acted on a target it could not read
+    assert (await run.env.repo.get(incident_id)).status != "failed"
+    notices = [e["text"] for e in await run.events(incident_id, "notice")]
+    assert any("cannot be read, the host's engine refused the request" in t for t in notices)
+    assert not any(REFUSAL in t for t in notices)
+
+
+async def test_an_engine_refusing_after_the_restart_fails_the_check_and_the_run_goes_on(
+    run, plans, monkeypatch
+):
+    plans[0].append(restart())
+    incident_id = await run.start()
+    engine = run.env.engine
+    real_restart = engine.restart
+
+    async def restart_then_refuse(container: str) -> None:
+        await real_restart(container)
+        engine.refuse_inspect = True  # the daemon starts refusing once the step has run
+
+    monkeypatch.setattr(engine, "restart", restart_then_refuse)
+
+    await run.decide(incident_id, decide("approve"))
+
+    assert [(a.action, a.container) for a in engine.acts] == [("restart", "shop-web-1")]
+    checks = [c for e in await run.events(incident_id, "verification") for c in e["checks"]]
+    assert {c["detail"] for c in checks if c["kind"] == "container"} == {
+        "the host's engine refused the request"
+    }
+    assert (await run.env.repo.get(incident_id)).status != "failed"
+    assert (await run.state(incident_id))["outcome"] == "replan_limit"  # looped back, then ended
+
+
 # A plan the plan check refused twice (#113): the human instructs or lets it go, never approves.
 
 

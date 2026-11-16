@@ -31,7 +31,7 @@ from bleep.schemas.graph import (
     StepResult,
     VerificationPlan,
 )
-from bleep.schemas.incidents import Signal, Subject
+from bleep.schemas.incidents import IncidentEvent, Signal, Subject
 from bleep.schemas.settings import Budgets
 from bleep.schemas.shown import Shown
 from bleep.tools.github import describe_commits
@@ -1097,3 +1097,26 @@ def test_the_german_drafts_schema_tells_the_model_only_what_the_field_is():
         "The same root cause as `cause`, in English."
     )
     assert "#" not in json.dumps(schema)
+
+
+def test_a_stored_notice_naming_a_template_this_version_lacks_shows_its_stored_text(caplog):
+    stored = {
+        "text": "web on a: container not found",
+        "shown": {"name": "target/removed_in_a_later_version"},
+    }
+    event = IncidentEvent(incident_id="i", seq=1, kind="notice", payload=stored, at=T0)
+
+    with caplog.at_level("WARNING", logger="bleep.graph.nodes.report"):
+        entries = report.timeline([], [event])
+
+    assert [(e.text, e.shown) for e in entries] == [("web on a: container not found", None)]
+    assert "template this version lacks" in caplog.text
+
+
+def test_a_notice_stored_before_the_engine_error_fix_still_renders():
+    stored = shown_payload(Shown.of("target/not_found"))
+    event = IncidentEvent(incident_id="i", seq=1, kind="notice", payload=stored, at=T0)
+
+    (entry,) = report.timeline([], [event])
+
+    assert entry.text == "container not found"
