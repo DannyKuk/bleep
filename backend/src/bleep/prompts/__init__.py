@@ -56,8 +56,9 @@ OVERRIDABLE = frozenset(
 # `talk/` reads what the person writes and holds the fixed lines that refuse it (#401). `shown/`
 # holds the fixed texts other parts write for the person, stored in English (#427). `api/` holds
 # the API's error texts, which a person reads and no model does (#456). `tools/` and `plugins/`
-# hold the tool descriptions and the sentences a tool answers with, which say what a tool may do
-# and are filled with `untrusted/tool_output`, the one rule on untrusted tool output (#624).
+# hold the tool descriptions, their arguments' (`args/`, #636) and the sentences a tool answers
+# with, which say what a tool may do and are filled with `untrusted/tool_output`, the one rule on
+# untrusted tool output (#624).
 NOT_OVERRIDABLE_AREAS = (
     "api/",
     "evals/",

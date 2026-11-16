@@ -16,7 +16,7 @@ from bleep.tools.registry import Texts, ToolContext
 
 def said(texts: Texts, name: str, /, **values: str) -> str:
     """The prompt file `name` filled with `values`, without its closing line break: a tool's
-    description, or a sentence it answers with instead of data."""
+    description, an argument's, or a sentence it answers with instead of data."""
     return texts(name, **values).strip()
 
 
