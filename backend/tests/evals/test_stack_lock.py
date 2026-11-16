@@ -196,3 +196,7 @@ def test_rendering_injection_results_needs_no_stack(tmp_path, capsys):
     raw.write_text("", encoding="utf-8")
     with holding_demo_stack(bare_settings().stack_lock, "python -m evals.run --only hung"):
         assert injection.main(["--label", "Round 1", "--render", str(raw)]) == 0
+
+
+def test_the_stack_lock_of_a_test_survives_the_clearing_of_the_shell(tmp_path):
+    assert EvalSettings().stack_lock == tmp_path / "demo-stack.lock"

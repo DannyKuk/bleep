@@ -30,13 +30,16 @@ from bleep.tools.docker_act import StepRefused
 from bleep.wiring import AppParts, build_parts
 from tests.langfuse_guard import langfuse_exports_blocked
 from tests.network_guard import allow_network, take_violations
+from tests.settings_env import clear_settings_env, keep_dotenv_out
 
 
 @pytest.fixture(autouse=True)
-def no_tracing_from_the_shell(monkeypatch):
-    """A `TRACING` exported to try the Langfuse profile must not make the tests send traces."""
-    for name in ("TRACING", "LANGSMITH_TRACING", "LANGCHAIN_TRACING_V2"):
-        monkeypatch.delenv(name, raising=False)
+def no_settings_from_the_shell(monkeypatch):
+    """A name any `BaseSettings` class reads (`BLEEP_*`, `TELEGRAM_*`, `LLM_*`, `TRACING`, in any
+    letter case) exported in the shell must not reach a test (#620). The names come from the
+    models, so a new field is covered."""
+    clear_settings_env(monkeypatch)
+    keep_dotenv_out(monkeypatch)
 
 
 @pytest.fixture(autouse=True)
