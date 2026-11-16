@@ -51,7 +51,7 @@ Seconds from the request until each event arrived (Next.js 16.4.4, Node 22.23, s
 
 ## Limits
 
-- Measured on one machine over loopback. A proxy in front of the dashboard (none today; it is LAN-only) could buffer again; sse-starlette's `X-Accel-Buffering: no` is passed on for nginx.
+- Measured on one machine over loopback. A proxy in front of the dashboard (not measured; the setup with a login proxy is in [setup](../setup.md#behind-a-login-proxy)) could buffer again; sse-starlette's `X-Accel-Buffering: no` is passed on for nginx.
 - The route handler forwards only `cookie`, `last-event-id` and `accept`. A future header the backend's stream needs has to be added to its list.
 - Measured with `curl`-like clients (Python `urllib`), not a browser's `EventSource`; the request headers that matter (`Accept-Encoding`, `Last-Event-ID`, the cookie) were set the way a browser sets them.
 
