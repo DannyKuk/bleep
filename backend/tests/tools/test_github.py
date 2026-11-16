@@ -8,6 +8,7 @@ import pytest
 from pydantic import SecretStr
 
 import bleep.tools.github as github_tools
+from bleep import prompts
 from bleep.guard.pipeline import guard_text
 from bleep.hosts.config import GithubConfig, SecretRef, ServiceOverrides
 from bleep.hosts.github import GithubClient, github_token, github_token_name
@@ -108,14 +109,16 @@ def github():
 
 def tools(registry, github, service_id: str | None = "a/compose:shop", log=None):
     client = GithubClient(None, transport=httpx.MockTransport(github))
-    specs = default_registry(github=client)
+    specs = default_registry(prompts.load, github=client)
     ctx = ToolContext("inc-1", "a", registry, log, service_id=service_id)
     return {t.name: t for t in specs.read_tools(ctx)}
 
 
 def build(registry, github, clock=lambda: NOW, deploys=None):
     client = GithubClient(None, transport=httpx.MockTransport(github))
-    ctx = ToolContext("inc-1", "a", registry, GuardLog(), service_id="a/compose:shop")
+    ctx = ToolContext(
+        "inc-1", "a", registry, GuardLog(), service_id="a/compose:shop", texts=prompts.load
+    )
     return {s.name: s.build(ctx) for s in github_specs(client, clock, deploys)}
 
 
@@ -128,7 +131,7 @@ async def test_offered_only_for_a_service_with_a_repo(registry, github):
 
 
 def test_absent_without_a_client():
-    names = {s.name for s in default_registry().specs()}
+    names = {s.name for s in default_registry(prompts.load).specs()}
     assert not names & {"deployed_commits", "recent_commits", "commit_diff"}
 
 
@@ -170,7 +173,7 @@ async def test_a_hostile_commit_message_stays_inside_one_wrapper(registry, githu
     github.override = httpx.Response(200, json=commits)
     log = GuardLog()
     client = GithubClient(None, transport=httpx.MockTransport(github))
-    ctx = ToolContext("inc-1", "a", registry, log, service_id="a/compose:shop")
+    ctx = ToolContext("inc-1", "a", registry, log, service_id="a/compose:shop", texts=prompts.load)
     tool = next(s for s in github_specs(client) if s.name == "recent_commits").build(ctx)
 
     out = await tool.ainvoke({})
@@ -307,7 +310,9 @@ def named_client(github, name: str) -> GithubClient:
 
 
 def build_with(registry, client):
-    ctx = ToolContext("inc-1", "a", registry, GuardLog(), service_id="a/compose:shop")
+    ctx = ToolContext(
+        "inc-1", "a", registry, GuardLog(), service_id="a/compose:shop", texts=prompts.load
+    )
     return {s.name: s.build(ctx) for s in github_specs(client, lambda: NOW)}
 
 
@@ -857,7 +862,9 @@ async def test_deployed_commits_names_the_token_as_configured_in_every_failure(
         ),
         httpx.Response(404, json=fixture("not-found.json")),
     ]
-    ctx = ToolContext("inc-1", "a", registry, GuardLog(), service_id="a/compose:shop")
+    ctx = ToolContext(
+        "inc-1", "a", registry, GuardLog(), service_id="a/compose:shop", texts=prompts.load
+    )
     specs = github_specs(client, lambda: NOW, Deploys(COOLIFY))
     tool = next(s for s in specs if s.name == "deployed_commits").build(ctx)
     for response in answers:
@@ -869,7 +876,9 @@ async def test_deployed_commits_names_the_token_as_configured_in_every_failure(
 
 async def test_with_a_token_a_commit_github_cannot_show_blames_no_missing_token(registry, github):
     client = GithubClient(SecretStr("ghp_" + "t" * 36), transport=httpx.MockTransport(github))
-    ctx = ToolContext("inc-1", "a", registry, GuardLog(), service_id="a/compose:shop")
+    ctx = ToolContext(
+        "inc-1", "a", registry, GuardLog(), service_id="a/compose:shop", texts=prompts.load
+    )
     specs = github_specs(client, lambda: NOW, Deploys(COOLIFY))
 
     out = await next(s for s in specs if s.name == "deployed_commits").build(ctx).ainvoke({})
@@ -1034,7 +1043,7 @@ async def test_skip_with_no_known_end_to_the_deploy_says_it_reads_nothing(regist
 
 
 def test_the_description_and_schema_name_skip():
-    ctx = ToolContext("inc-1", "a", None, None, service_id="a/compose:shop")
+    ctx = ToolContext("inc-1", "a", None, None, service_id="a/compose:shop", texts=prompts.load)
     spec = next(s for s in github_specs(GithubClient(None)) if s.name == "deployed_commits")
     tool = spec.build(ctx)
 

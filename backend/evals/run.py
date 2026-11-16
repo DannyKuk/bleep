@@ -39,6 +39,7 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from bleep import prompts
 from bleep.graph.build import build_graph, open_checkpointer
 from bleep.graph.deps import (
     CORE_ACTIONS,
@@ -508,7 +509,7 @@ def _graph_deps(
     return GraphDeps(
         registry=registry,
         tools=default_registry(
-            plugins=plugins, github=github, knowledge=knowledge, deploys=deploys
+            prompts.load, plugins=plugins, github=github, knowledge=knowledge, deploys=deploys
         ),
         act_tools=plugins.act_tools({}) if plugins is not None else {},
         models=models or model_factory(store),

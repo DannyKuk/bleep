@@ -1,0 +1,1 @@
+Show a Coolify application's latest deployments, newest first: when, status (queued, in_progress, finished, failed, cancelled-by-user), commit, what started it and the commit message. Use it when the incident could follow a deploy. `app` is the application's uuid or name from coolify_applications. {untrusted_rule}

@@ -15,6 +15,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import SecretStr
 
+from bleep import prompts
 from bleep.graph.nodes import execute
 from bleep.guard.grant import GrantInvalid, grant_token, plan_hash
 from bleep.guard.plan_check import MAX_ARGUMENTS, check_plan
@@ -130,7 +131,7 @@ def plugins(server: Server | None, env: dict[str, str] | None = None, **settings
 
 def read_tools(registry: PluginRegistry, host: Registry | None = None) -> dict[str, Any]:
     ctx = ToolContext(incident_id="inc_1", host_id="a", registry=host or Registry([]))
-    return {t.name: t for t in default_registry(plugins=registry).read_tools(ctx)}
+    return {t.name: t for t in default_registry(prompts.load, plugins=registry).read_tools(ctx)}
 
 
 class Recorder(AsyncCallbackHandler):
@@ -552,7 +553,7 @@ async def test_the_purpose_is_stored_and_shown_with_the_settings_and_its_cap_in_
 
 def briefings(registry: PluginRegistry) -> list:
     ctx = ToolContext(incident_id="inc_1", host_id="a", registry=Registry([]))
-    return default_registry(plugins=registry).briefings(ctx)
+    return default_registry(prompts.load, plugins=registry).briefings(ctx)
 
 
 def test_a_purpose_and_read_tools_make_a_briefing_for_investigate_while_the_plugin_is_on():

@@ -7,6 +7,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage
 
+from bleep import prompts
 from bleep.graph.nodes import gather, investigate, report
 from bleep.memory.embeddings import FakeEmbedder
 from bleep.memory.store import MemoryStore
@@ -173,7 +174,7 @@ async def test_recall_incidents_is_a_read_tool_over_memory(tmp_path):
     here = await closed_incident(env, shop(env))
     await store.add_report(here, past_report("container died on shop", "the db was down"))
     ctx = ToolContext("inc-new", "a", env.registry)
-    registry = default_registry(store)
+    registry = default_registry(prompts.load, store)
 
     [spec] = [s for s in registry.specs() if s.name == "recall_incidents"]
     tools = {t.name: t for t in registry.read_tools(ctx)}
@@ -186,7 +187,7 @@ async def test_recall_incidents_is_a_read_tool_over_memory(tmp_path):
     )
     assert "the db was down" in answer
     assert nothing == "No past incident is like this one."
-    assert "recall_incidents" not in {s.name for s in default_registry().specs()}
+    assert "recall_incidents" not in {s.name for s in default_registry(prompts.load).specs()}
 
 
 async def test_gather_and_the_tool_both_recall_with_the_embedders_min_score(tmp_path):
@@ -200,7 +201,7 @@ async def test_gather_and_the_tool_both_recall_with_the_embedders_min_score(tmp_
         here = await closed_incident(env, shop(env))
         await store.add_report(here, past_report("container died on shop", "the db was down"))
         ctx = ToolContext("inc-new", "a", env.registry)
-        tools = {t.name: t for t in default_registry(store).read_tools(ctx)}
+        tools = {t.name: t for t in default_registry(prompts.load, store).read_tools(ctx)}
         answer = await tools["recall_incidents"].ainvoke({"query": "container died: db was down"})
         return await gather_for(env, shop(env)), answer
 

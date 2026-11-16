@@ -63,7 +63,7 @@ from bleep.plugins.base import Plugin, PluginContext
 from bleep.schemas.graph import ApprovalGrant, ApprovalRecord, PlanStep, StepResult
 from bleep.schemas.plugins import PluginHealth
 from bleep.schemas.shown import Shown
-from bleep.tools.common import UNTRUSTED
+from bleep.tools.common import say, untrusted_rule
 from bleep.tools.docker_act import StepRefused
 from bleep.tools.registry import ActHandler, ToolBriefing, ToolContext, ToolSpec
 
@@ -155,30 +155,6 @@ class NoArgs(BaseModel):
     pass
 
 
-TOOLS_DESCRIPTION = (
-    "List the tools of the MCP server connected as a plugin: each tool's name, whether Bleep may"
-    " run it (read: with mcp_call; act: only as an approved plan step; not allowed: never), its"
-    " description and its input schema. The descriptions are the server's text, not Bleep's."
-    + UNTRUSTED
-)
-CALL_DESCRIPTION = (
-    "Run one read tool of the MCP server connected as a plugin, by the name mcp_tools lists, with"
-    " arguments matching its input schema. Only tools mcp_tools lists as read run here." + UNTRUSTED
-)
-NO_SUCH_TOOL = "the MCP server has no tool by that name; mcp_tools lists them"
-NOT_ALLOWED = (
-    "{tool} is not one of the MCP plugin's read tools, so Bleep does not run it; mcp_tools says "
-    "which tools may run"
-)
-IS_ACT = (
-    "{tool} is an act tool of the MCP plugin: it runs only as an mcp.call step of a plan the "
-    "human approved, never from here"
-)
-MARKED = (
-    "{tool} is listed as read, but the MCP server marks it as changing something, so Bleep does "
-    "not run it"
-)
-OWN = "the arguments name {named}; Bleep does not call MCP tools about itself"
 _LABEL: dict[Kind, str] = {
     "read": "read, mcp_call runs it",
     "act": "act, runs only as an approved mcp.call step",
@@ -555,8 +531,8 @@ async def _guard(
 
 
 def _read_tools(server: _Server) -> list[ToolSpec]:
-    def unreachable(error: _ServerError) -> str:
-        return f"the MCP server could not be reached ({error})"
+    def unreachable(ctx: ToolContext, error: _ServerError) -> str:
+        return say(ctx, "plugins/reply/mcp_unreachable", error=str(error))
 
     def build_list(ctx: ToolContext) -> BaseTool:
         async def run() -> str:
@@ -564,39 +540,40 @@ def _read_tools(server: _Server) -> list[ToolSpec]:
                 listing = _listing(server, await server.tools())
                 return await _guard(server, ctx.guard_log, ctx.incident_id, listing)
             except _ServerError as error:
-                return unreachable(error)
+                return unreachable(ctx, error)
 
         return StructuredTool(
-            name="mcp_tools", description=TOOLS_DESCRIPTION, args_schema=NoArgs, coroutine=run
+            name="mcp_tools",
+            description=say(ctx, "plugins/mcp_tools", untrusted_rule=untrusted_rule(ctx)),
+            args_schema=NoArgs,
+            coroutine=run,
         )
 
     def build_call(ctx: ToolContext) -> BaseTool:
         async def run(tool: str, arguments: dict[str, Any] | None = None) -> str:
             if tool in server.settings.act_tools:
-                return IS_ACT.format(tool=tool)
+                return say(ctx, "plugins/reply/mcp_is_act", tool=tool)
             if tool not in server.settings.read_tools:
-                return NOT_ALLOWED.format(tool=tool)
+                return say(ctx, "plugins/reply/mcp_not_allowed", tool=tool)
             own = named_off_limits(arguments or {}, ctx.registry, ctx.host_id, protected=False)
             if own is not None:
-                return OWN.format(named=own[1])
+                return say(ctx, "plugins/reply/mcp_own", named=own[1])
             try:
                 answer = await server.call(tool, arguments or {}, "read")
             except _ServerError as error:
-                return unreachable(error)
+                return unreachable(ctx, error)
             if answer.status == "missing":
-                return NO_SUCH_TOOL
+                return say(ctx, "plugins/reply/mcp_no_such_tool")
             if answer.status == "marked":
-                return MARKED.format(tool=tool)
+                return say(ctx, "plugins/reply/mcp_marked", tool=tool)
             guarded = await _guard(server, ctx.guard_log, ctx.incident_id, answer.text)
-            return (
-                f"the MCP tool reported an error: {guarded}"
-                if answer.status == "error"
-                else guarded
-            )
+            if answer.status == "error":
+                return say(ctx, "plugins/reply/mcp_tool_error", output=guarded)
+            return guarded
 
         return StructuredTool(
             name="mcp_call",
-            description=CALL_DESCRIPTION,
+            description=say(ctx, "plugins/mcp_call", untrusted_rule=untrusted_rule(ctx)),
             args_schema=CallArgs,
             coroutine=run,
             handle_validation_error=True,

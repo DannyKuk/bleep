@@ -1,0 +1,1 @@
+List every container on this incident's host as a table: name, service, state, health, image and restart count. Use it first to see what is running, what is unhealthy and which names to pass to the other tools. {untrusted_rule}

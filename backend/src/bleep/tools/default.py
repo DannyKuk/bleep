@@ -6,21 +6,23 @@ from bleep.tools.github import DeploySource, github_specs
 from bleep.tools.host_read import SPECS as HOST_READ
 from bleep.tools.knowledge import Searcher, knowledge_specs
 from bleep.tools.memory import Recall, recall_specs
-from bleep.tools.registry import ToolRegistry, ToolSource
+from bleep.tools.registry import Texts, ToolRegistry, ToolSource
 
 
 def default_registry(
+    texts: Texts,
     memory: Recall | None = None,
     plugins: ToolSource | None = None,
     github: GithubClient | None = None,
     knowledge: Searcher | None = None,
     deploys: DeploySource | None = None,
 ) -> ToolRegistry:
-    """The read tools; `recall_incidents` too when there is a memory to read, the tools of the
-    plugins switched on at the moment the catalogue is read, the GitHub tools when there is
-    a client (each service with a `repo` is then offered them; `deploys` tells them which commit
-    runs), and `knowledge_search` when there is a knowledge index."""
-    registry = ToolRegistry(plugins)
+    """The read tools, which load their descriptions and replies with `texts` (`prompts.load`);
+    `recall_incidents` too when there is a memory to read, the tools of the plugins switched on
+    at the moment the catalogue is read, the GitHub tools when there is a client (each service
+    with a `repo` is then offered them; `deploys` tells them which commit runs), and
+    `knowledge_search` when there is a knowledge index."""
+    registry = ToolRegistry(texts, plugins)
     for spec in [
         *DOCKER_READ,
         *HOST_READ,

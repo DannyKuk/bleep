@@ -1,7 +1,7 @@
 """The catalogue of agent tools, each labelled read or act."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Protocol, runtime_checkable
 
 from langchain_core.tools import BaseTool
@@ -14,15 +14,29 @@ from bleep.schemas.graph import ApprovalGrant, ApprovalRecord, PlanStep, StepRes
 ToolKind = Literal["read", "act"]
 
 
+class Texts(Protocol):
+    """Loads a prompt file by name and fills its placeholders: `prompts.load`, which `wiring`
+    hands the tool registry, since `tools` and `plugins` cannot import `prompts`. Every tool
+    description and every sentence a tool answers with instead of data is such a file."""
+
+    def __call__(self, name: str, /, **values: str) -> str: ...
+
+
+def _no_texts(name: str, /, **values: str) -> str:
+    raise LookupError(f"no texts to load {name!r}: a tool gets them from ToolRegistry.read_tools")
+
+
 @dataclass(frozen=True)
 class ToolContext:
-    """What a tool is scoped to: one incident on one host, and its service when it has one."""
+    """What a tool is scoped to: one incident on one host, and its service when it has one.
+    `texts` loads its description and replies; `ToolRegistry.read_tools` sets it."""
 
     incident_id: str
     host_id: str
     registry: Registry
     guard_log: GuardLogger | None = None
     service_id: str | None = None
+    texts: Texts = _no_texts
 
 
 @dataclass(frozen=True)
@@ -106,10 +120,12 @@ class ActCatalog(Protocol):
 
 class ToolRegistry:
     """The core tools, plus those of `plugins` as they are each time the catalogue is read, so a
-    plugin switched off is gone from the next Investigate round."""
+    plugin switched off is gone from the next Investigate round. The tools it builds load their
+    texts with `texts`."""
 
-    def __init__(self, plugins: ToolSource | None = None) -> None:
+    def __init__(self, texts: Texts, plugins: ToolSource | None = None) -> None:
         self._specs: dict[str, ToolSpec] = {}
+        self._texts = texts
         self._plugins = plugins
 
     def register(self, spec: ToolSpec) -> None:
@@ -124,6 +140,7 @@ class ToolRegistry:
 
     def read_tools(self, ctx: ToolContext) -> list[BaseTool]:
         """The read-only tools offered on `ctx`'s host. Act tools are never returned here."""
+        ctx = replace(ctx, texts=self._texts)
         return [
             s.build(ctx)
             for s in self.specs()

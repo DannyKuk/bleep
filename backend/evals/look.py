@@ -45,6 +45,7 @@ import httpx
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from bleep import prompts
 from bleep.graph.build import build_graph, open_checkpointer
 from bleep.graph.deps import (
     CORE_ACTIONS,
@@ -396,7 +397,7 @@ async def run_case(
             ):
                 deps = GraphDeps(
                     registry=registry,
-                    tools=default_registry(),
+                    tools=default_registry(prompts.load),
                     act_tools=docker_act_tools(secret, guard_log),
                     models=models or default_models(StaticSettings(model_settings=settings.models)),
                     bus=EventBus(db),

@@ -1,0 +1,1 @@
+Read the most recent log lines of one container (tail, default 200, max 1000; optionally only the last since_minutes, max 1440). Use it to find the error behind an incident. Secrets are redacted, repeated lines are collapsed and long output is cut to its end. The result starts with how long ago the container last wrote a log line, when the engine can tell. {untrusted_rule}

@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from test_eval_run import COMPOSE, ITEMS, FakeDockerCli, items_server, no_sleep
 
+from bleep import prompts
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary, DockerEvent
 from bleep.tools.default import default_registry
@@ -45,7 +46,7 @@ async def read_events(spans: ResetSpans, *events: DockerEvent) -> str:
 
     registry = Registry([ssh_host(id="demo", name="Demo")], connector=hide_resets(connect, spans))
     await registry.start()
-    tools = default_registry().read_tools(ToolContext("inc-1", "demo", registry, None))
+    tools = default_registry(prompts.load).read_tools(ToolContext("inc-1", "demo", registry, None))
     tool = next(t for t in tools if t.name == "recent_events")
     return await tool.ainvoke({"minutes": 60})
 

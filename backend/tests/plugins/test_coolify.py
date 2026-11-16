@@ -12,6 +12,7 @@ import pytest
 import zstandard
 from pydantic import SecretStr
 
+from bleep import prompts
 from bleep.guard.grant import GrantInvalid, grant_token, plan_hash
 from bleep.guard.pipeline import guard_text
 from bleep.hosts.config import ServiceOverrides
@@ -182,7 +183,7 @@ class Env:
         self.handlers = plugin.act_handlers(ctx)
 
     def tool_ctx(self, host_id: str = "a") -> ToolContext:
-        return ToolContext("inc_1", host_id, self.registry, self.guard_log)
+        return ToolContext("inc_1", host_id, self.registry, self.guard_log, texts=prompts.load)
 
     async def read(self, name: str, **args) -> str:
         return await self.tools[name].build(self.tool_ctx()).ainvoke(args)

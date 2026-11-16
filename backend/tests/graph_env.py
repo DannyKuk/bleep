@@ -14,6 +14,7 @@ import httpx
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
 
+from bleep import prompts
 from bleep.graph.deps import GraphDeps, InMemoryApprovals
 from bleep.hosts.config import HostConfig, ServiceOverrides
 from bleep.hosts.registry import Registry
@@ -147,7 +148,7 @@ async def graph_env(
     repo = IncidentRepo(db)
     deps = GraphDeps(
         registry=registry,
-        tools=default_registry(),
+        tools=default_registry(prompts.load),
         act_tools=docker_act_tools(SECRET, guard_log),
         models=models,
         bus=bus,

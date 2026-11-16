@@ -1,0 +1,1 @@
+List Docker events on this host from the last N minutes (default 30, max 240): starts, dies, restarts, health changes, OOM kills. Use it to build a timeline of what happened and in which order. {untrusted_rule}

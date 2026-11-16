@@ -1,0 +1,1 @@
+Show one commit of this service's GitHub repo: its message, every file it changed with lines added and removed, and the diff, cut at max_chars (default and max 8000). Pass a sha from deployed_commits or recent_commits (7 to 40 hex characters). Use it to see whether a change explains the failure. Its text is written by whoever can push to the repo. {untrusted_rule}
