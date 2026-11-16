@@ -20,7 +20,7 @@ from bleep.schemas.graph import (
 )
 from bleep.schemas.incidents import Signal, Subject
 from bleep.schemas.settings import Budgets, Thresholds
-from fakes import FakeEngine
+from fakes import REFUSAL, FakeEngine
 from graph_env import box, graph_env, shop_host
 
 URL = "https://shop.example/health"
@@ -637,6 +637,37 @@ async def test_a_host_that_is_down_fails_the_container_check(tmp_path):
     assert update["verification"].checks[0].detail == "host not reachable"
 
 
+async def test_a_container_the_engine_refuses_to_inspect_fails_its_check_with_a_fixed_reason(
+    tmp_path,
+):
+    engine = healthy_engine()
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+    engine.refuse_inspect = True
+
+    update, route = await run(env, state)
+
+    (check,) = update["verification"].checks[:1]
+    assert (check.ok, check.detail) == (False, "the host's engine refused the request")
+    assert route == "investigate"  # judged and sent back, not raised into the runner
+    assert REFUSAL not in str(update)
+
+
+async def test_a_stopped_container_the_engine_refuses_to_inspect_fails_its_check_the_same_way(
+    tmp_path,
+):
+    engine = healthy_engine()
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+    stop = PlanStep(action="docker.stop", host_id="a", target="shop-db-1")
+    state["proposal"] = state["proposal"].model_copy(update={"steps": [stop]})
+    state["signals"] = symptoms(state["subject"], container="shop-db-1")
+    engine.refuse_inspect = True
+
+    update, _ = await run(env, state)
+
+    stopped = [c for c in update["verification"].checks if "stopped by the plan" in c.target]
+    assert [(c.ok, c.detail) for c in stopped] == [(False, "the host's engine refused the request")]
+
+
 async def test_each_check_publishes_an_event_and_the_notifier_hears_the_final_result_once(tmp_path):
     env, state = await setup(tmp_path, Replies(503, 200))
 
@@ -734,6 +765,19 @@ async def test_a_redeployed_application_is_checked_by_its_new_containers(tmp_pat
     assert update["outcome"] == "resolved"
     checks = [(c.target, c.ok, c.detail) for c in update["verification"].checks]
     assert checks[0] == ("web (Coolify application)", True, "1 running")
+
+
+async def test_an_application_listing_the_engine_refuses_fails_the_check_with_a_fixed_reason(
+    tmp_path,
+):
+    engine = FakeEngine("a", [web(health="healthy"), box("shop-db-1", "shop")])
+    env, state = await setup(tmp_path, Replies(200), engine=engine)
+    engine.refuse_listing = True
+
+    update, _ = await run(env, redeployed(state))
+
+    first = update["verification"].checks[0]
+    assert (first.ok, first.detail) == (False, "the host's engine refused the request")
 
 
 @pytest.mark.parametrize(

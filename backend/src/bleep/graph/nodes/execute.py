@@ -36,10 +36,9 @@ from bleep.graph.deps import GraphDeps, IncidentFinished
 from bleep.graph.replan import replan
 from bleep.graph.shown import english
 from bleep.graph.state import IncidentState, Node
-from bleep.graph.targets import UNKNOWN_HOST, UNREACHABLE, read_app_uuid
+from bleep.graph.targets import read_app_uuid, read_container
 from bleep.guard.grant import GrantInvalid, binds_app, step_snapshot
 from bleep.guard.plan_check import step_refusal
-from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.graph import (
     REFUSED_DETAIL,
@@ -57,7 +56,6 @@ from bleep.tools.docker_act import StepRefused
 log = logging.getLogger(__name__)
 
 NOT_APPROVED = Shown.of("notice/not_approved")
-GONE = Shown.of("target/gone")
 CANNOT_RUN_YET_SHOWN = Shown.of("refusal/cannot_run_yet")
 CANNOT_RUN_YET = english(CANNOT_RUN_YET_SHOWN)
 DONE_WORD = {"docker.restart": "restarted", "docker.stop": "stopped", "docker.start": "started"}
@@ -78,20 +76,6 @@ CONFIRM_OTHER = "not confirmed after a restart (Bleep cannot read this step back
 
 def _plan_key(plan: ApprovalRecord) -> str:
     return f"{plan.plan_hash}:{plan.id}"
-
-
-async def _read(
-    deps: GraphDeps, host_id: str, ref: str
-) -> tuple[ContainerSummary, None] | tuple[None, Shown]:
-    """The container as the host shows it now, or None and a fixed reason (never host text)."""
-    try:
-        return (await deps.registry.engine(host_id).inspect(ref)).summary, None
-    except ContainerNotFound:
-        return None, GONE
-    except EngineUnavailable:
-        return None, UNREACHABLE
-    except KeyError:
-        return None, UNKNOWN_HOST
 
 
 async def _changes(
@@ -140,7 +124,7 @@ async def _container_changes(
     where: Shown,
     touched: set[tuple[str, str]],
 ) -> list[Shown]:
-    summary, why = await _read(deps, step.host_id, step.target)
+    summary, why = await read_container(deps.registry, step.host_id, step.target)
     if summary is None:
         return [Shown.of("target/state", where=where, why=why)]
     if summary.id != snapshot.container_id:
@@ -283,8 +267,8 @@ def make(deps: GraphDeps) -> Node:
             await deps.action_log.finish(incident_id, _plan_key(plan), result)
             await publish(incident_id, step, "failed")
             return result
-        summary, why = await _read(
-            deps, step.host_id, (snapshot and snapshot.container_id) or step.target
+        summary, why = await read_container(
+            deps.registry, step.host_id, (snapshot and snapshot.container_id) or step.target
         )
         if summary is not None and snapshot is not None and _took_effect(step, summary, snapshot):
             word = DONE_WORD.get(step.action, "ran")

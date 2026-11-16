@@ -132,6 +132,30 @@ def test_a_startup_failure_closes_what_was_already_opened(settings, monkeypatch)
     assert http.is_closed
 
 
+def test_the_registry_is_closed_when_its_start_fails(settings, monkeypatch):
+    from bleep.hosts.registry import Registry
+
+    closed: list[bool] = []
+    close = Registry.close
+
+    async def boom(self) -> None:
+        raise RuntimeError("registry failed")
+
+    async def recording_close(self) -> None:
+        closed.append(True)
+        await close(self)
+
+    monkeypatch.setattr(Registry, "start", boom)
+    monkeypatch.setattr(Registry, "close", recording_close)
+    parts = build_parts(settings, Registry([]))
+    with (
+        pytest.raises(RuntimeError, match="registry failed"),
+        TestClient(create_app(settings, parts)),
+    ):
+        pass
+    assert closed == [True]
+
+
 def test_memory_is_wired_into_the_graph_and_recall_is_offered(settings, parts):
     from bleep.tools.registry import ToolContext
 
