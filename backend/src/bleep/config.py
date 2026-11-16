@@ -32,7 +32,8 @@ class Settings(BaseSettings):
     cookie_secure: bool = False  # true once the dashboard is served over https
     dev_panel: bool = False  # the dev panel's routes and nav entry (docs/design/dev-panel.md)
     # Where a person's browser reaches the dashboard; the end of an incident on Telegram links to
-    # its page there. Unset, the message has no link (docs/design/notify.md, #380).
+    # its page there. Unset, the message has no link (docs/design/notify.md, #380). A change whose
+    # Origin names it also counts as the dashboard's own (api/deps.py, #619).
     dashboard_url: AnyHttpUrl | None = None
     # The IANA time zone times are shown in until one is chosen on the settings page, which wins
     # (#400): Telegram's "until tomorrow 08:00" and "Quiet until 14:30" (#389) and the dashboard.

@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import SecretStr, ValidationError
+from pydantic import AnyHttpUrl, SecretStr, ValidationError
 
 from bleep.auth.sessions import LoginLimiter
 from bleep.config import Settings, SettingsError
@@ -354,11 +354,19 @@ def test_a_change_through_the_dashboard_rewrite_goes_through(either_client):
     assert refresh(either_client, headers).status_code == 403
 
 
-def test_the_dashboard_url_counts_as_this_origin(settings, parts):
-    named = settings.model_copy(update={"dashboard_url": "https://bleep.example.org/"})
+@pytest.mark.parametrize(
+    ("dashboard_url", "origin"),
+    [
+        ("http://192.168.1.5:3000", "http://192.168.1.5:3000"),
+        ("https://bleep.example.org/", "https://bleep.example.org"),
+    ],
+)
+def test_the_dashboard_url_counts_as_this_origin(settings, parts, dashboard_url, origin):
+    """A proxy over plain http that rewrites the Host leaves only the configured address."""
+    named = settings.model_copy(update={"dashboard_url": AnyHttpUrl(dashboard_url)})
     with TestClient(create_app(named, parts)) as client:
         login(client)
-        headers = {"host": "backend:8000", "origin": "https://bleep.example.org"}
+        headers = {"host": "backend:8000", "origin": origin}
         assert refresh(client, headers).status_code == 202
         headers["origin"] = "https://www.example.org"
         assert refresh(client, headers).status_code == 403
