@@ -40,8 +40,10 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
 
 from bleep import prompts
+from bleep.graph import describe
 from bleep.graph.commits import ShaCheck, read_shas
 from bleep.graph.deps import GraphDeps
+from bleep.graph.describe import part
 from bleep.graph.host_text import incident_title, service_name
 from bleep.graph.language import language_rule
 from bleep.graph.look import bare_look, look_rule
@@ -61,7 +63,6 @@ from bleep.schemas.graph import (
     OUTCOME_TEXT,
     STARTED_AFTER_FIX,
     Decision,
-    Diagnosis,
     Outcome,
     PlantedPlace,
     Proposal,
@@ -248,7 +249,8 @@ def decision_text(
 
 def _steps_text(steps: list[dict]) -> str:
     return "; ".join(
-        f"{s.get('action', '?')} {s.get('target', '?')} on {s.get('host_id', '?')}" for s in steps
+        describe.step(s.get("action", "?"), s.get("target", "?"), s.get("host_id", "?"))
+        for s in steps
     )
 
 
@@ -423,25 +425,13 @@ def planted_follow_up(state: IncidentState) -> tuple[list[PlantedPlace], str | N
     return places, planted_sentence(places, HINT_END)
 
 
-def _describe_diagnosis(diagnosis: Diagnosis | None) -> str:
-    if diagnosis is None:
-        return "(none)"
-    lines = [
-        f"Root cause: {diagnosis.root_cause}",
-        f"Category: {diagnosis.category}, confidence {round(diagnosis.confidence * 100)}%"
-        + (", unsure" if diagnosis.unsure else ""),
-    ]
-    lines += [f"- {e.source}: {e.detail}" for e in diagnosis.evidence]
-    return "\n".join(lines)
-
-
 def _describe_plan(proposal: Proposal | None) -> str:
     if proposal is None:
-        return "(none)"
-    steps = _steps_text([s.model_dump() for s in proposal.steps]) or "no action"
-    lines = [f"Steps: {steps}", f"Reason: {proposal.reason}"]
+        return part("none")
+    steps = _steps_text([s.model_dump() for s in proposal.steps]) or part("report_no_steps")
+    lines = [part("report_plan", steps=steps, reason=proposal.reason)]
     if proposal.human_instructions:
-        lines.append(f"What the human was told to do: {proposal.human_instructions}")
+        lines.append(part("report_plan_told", instructions=proposal.human_instructions))
     return "\n".join(lines)
 
 
@@ -487,7 +477,7 @@ async def _learn(deps: GraphDeps, state: IncidentState) -> None:
         "graph/report_facts",
         service=service_name(subject, context),
         instructions="\n".join(f"{n}. {text}" for n, text in enumerate(instructions, 1)),
-        plan=_steps_text([s.model_dump() for s in steps]) or "no action",
+        plan=_steps_text([s.model_dump() for s in steps]) or part("report_no_steps"),
     )
     try:
         found = await _ask(deps, incident_id, _Facts, prompt)
@@ -560,11 +550,11 @@ def make(deps: GraphDeps) -> Node:
             title=incident_title(state["subject"], signals, incident.title if incident else None),
             look=look_rule("report", signals),
             outcome=said,
-            diagnosis=_describe_diagnosis(diagnosis),
+            diagnosis=describe.diagnosis(diagnosis),
             plan=_describe_plan(proposal),
-            decision=human or "(the human was not asked)",
-            action=taken or "(nothing ran)",
-            timeline="\n".join(f"- {e.at:%H:%M:%S} {e.text}" for e in entries) or "(empty)",
+            decision=human or part("report_not_asked"),
+            action=taken or part("report_nothing_ran"),
+            timeline=describe.bullets([f"{e.at:%H:%M:%S} {e.text}" for e in entries]),
             language=language_rule("graph/report", language),
         )
         schema = _Draft if language == DEFAULT_LANGUAGE else _DraftWithEnglishCause

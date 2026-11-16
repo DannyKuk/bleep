@@ -55,8 +55,18 @@ OVERRIDABLE = frozenset(
 # `graph/verify_unproven` tells it not to start again a container a human approved stopping.
 # `talk/` reads what the person writes and holds the fixed lines that refuse it (#401). `shown/`
 # holds the fixed texts other parts write for the person, stored in English (#427). `api/` holds
-# the API's error texts, which a person reads and no model does (#456).
-NOT_OVERRIDABLE_AREAS = ("api/", "evals/", "notify/", "shown/", "talk/", "untrusted/")
+# the API's error texts, which a person reads and no model does (#456). `graph/parts/` holds the
+# headings, labels and fallbacks the graph nodes fill their prompts' sections with
+# (`graph/describe.py`, #623), which are not prompts of their own.
+NOT_OVERRIDABLE_AREAS = (
+    "api/",
+    "evals/",
+    "graph/parts/",
+    "notify/",
+    "shown/",
+    "talk/",
+    "untrusted/",
+)
 NOT_OVERRIDABLE = frozenset({"graph/propose_mcp", "graph/system", "graph/verify_unproven"})
 # The languages a person may choose (#373). English is the files as they are; each other language
 # has a twin of every text a person reads, at `<area>/<language>/<name>.md` (#375).
