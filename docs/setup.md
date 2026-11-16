@@ -278,6 +278,8 @@ docker run --rm -p 8080:80 bleep-site   # http://localhost:8080
 
 In Coolify, add the repository as an application with the Dockerfile build pack, base directory `/`, Dockerfile location `/site/Dockerfile` and port 80, and give it the page's domain. For local work, `npm ci` and then `npm run dev` in `site/` serve it at http://localhost:3170.
 
+`/benchmarks` reads the latest six-model eval round from `site/lib/benchmarks/round.json` when the page is built. After a new round is merged into that file, press Redeploy on the Coolify app: it has no webhook, so it does not rebuild on its own.
+
 ## Not built
 
 - **Always-on on a small machine that stays up** (a spare Mac or a mini PC), so Bleep watches its hosts while your laptop sleeps.
