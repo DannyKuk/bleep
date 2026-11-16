@@ -117,7 +117,7 @@ async def test_bad_deploy_serves_the_deploy_and_the_commit_touching_api_items():
 
     commits = await github.commits(REPO, START - timedelta(hours=48))
     text = describe_commits(prompts.load, REPO, 48, None, commits)
-    diff = describe_diff(await github.commit(REPO, commits[1].sha), 8000)
+    diff = describe_diff(prompts.load, await github.commit(REPO, commits[1].sha), 8000)
 
     assert "Deploy shop 2" in text and "whole cents" in text
     assert "/api/items" in diff and "price_cents" in diff
@@ -186,7 +186,7 @@ async def test_bad_deploy_old_hides_the_cause_from_the_window_and_shows_it_in_th
     assert running is not None and running.previous is not None
     assert running.since == START - timedelta(hours=72)
     deployed = describe_deploy(
-        REPO, running, await github.compare(REPO, running.previous, running.sha)
+        prompts.load, REPO, running, await github.compare(REPO, running.previous, running.sha)
     )
 
     assert "this deploy brought 2 commits" in deployed
@@ -238,7 +238,7 @@ async def test_bad_deploy_long_hides_the_cause_from_the_window_and_the_first_250
     assert running.since == START - timedelta(days=41)
 
     unpaged = await github.compare(REPO, running.previous, running.sha)
-    first = describe_deploy(REPO, running, unpaged)
+    first = describe_deploy(prompts.load, REPO, running, unpaged)
     assert "this deploy brought 300 commits" in first and "Deploy shop 2" in first
     assert "whole cents" not in first
     assert len(unpaged.commits) == 250 and unpaged.total_commits == 300
@@ -250,14 +250,14 @@ async def test_following_the_notes_skip_reaches_the_cause_in_the_last_part():
     running = await FixtureDeploys(fixture, START).running_commit(SHOP)
     assert running is not None and running.previous is not None
     unpaged = await github.compare(REPO, running.previous, running.sha)
-    parts = [describe_deploy(REPO, running, unpaged)]
+    parts = [describe_deploy(prompts.load, REPO, running, unpaged)]
 
     skips = [0]
     while match := re.search(r"with skip=(\d+) for them\)", parts[-1]):
         skip = int(match[1])
         count = part_size(skip - skips[-1])  # as the tool asks for it
         older = await github.compare_older(REPO, running.previous, running.sha, skip, count)
-        parts.append(describe_deploy(REPO, running, older, skip=skip))
+        parts.append(describe_deploy(prompts.load, REPO, running, older, skip=skip))
         skips.append(skip)
 
     shas = [sha for part in parts for sha in re.findall(r"^- ([0-9a-f]{7}) ", part, re.M)]
@@ -277,7 +277,7 @@ async def test_bad_deploy_deep_puts_the_only_explaining_commits_past_the_first_p
     running = await FixtureDeploys(fixture, START).running_commit(SHOP)
     assert running is not None and running.previous is not None
     unpaged = await github.compare(REPO, running.previous, running.sha)
-    parts = [describe_deploy(REPO, running, unpaged)]
+    parts = [describe_deploy(prompts.load, REPO, running, unpaged)]
 
     skips = [0]
     while match := re.search(r"with skip=(\d+) for them\)", parts[-1]):
@@ -285,7 +285,7 @@ async def test_bad_deploy_deep_puts_the_only_explaining_commits_past_the_first_p
         older = await github.compare_older(
             REPO, running.previous, running.sha, skip, part_size(skip - skips[-1])
         )
-        parts.append(describe_deploy(REPO, running, older, skip=skip))
+        parts.append(describe_deploy(prompts.load, REPO, running, older, skip=skip))
         skips.append(skip)
 
     explaining = ("Deploy shop 2", "whole cents", "SHOP_VERSION", "price")

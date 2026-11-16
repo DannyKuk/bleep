@@ -51,7 +51,7 @@ def listed(*commits: Commit) -> ToolMessage:
 
 
 def shown(detail: CommitDetail) -> ToolMessage:
-    out, _ = guard_text("diff", describe_diff(detail, 8000))
+    out, _ = guard_text("diff", describe_diff(prompts.load, detail, 8000))
     return as_investigate_stores("commit_diff", out)
 
 
@@ -111,7 +111,9 @@ def test_deployed_commits_gives_the_running_commit_and_those_it_lists():
     )
     up_to = describe_up_to("o/shop", running, [commit(DEPLOY, "Deploy shop 2")])
 
-    assert read_shas([deployed(describe_deploy("o/shop", running, found))]) == READ | {EARLIER[:7]}
+    assert read_shas(
+        [deployed(describe_deploy(prompts.load, "o/shop", running, found))]
+    ) == READ | {EARLIER[:7]}
     assert read_shas([deployed(up_to)]) == READ
 
 
@@ -130,14 +132,16 @@ def test_a_part_read_with_skip_adds_its_commits_to_those_of_the_parts_before_it(
         status="ahead", ahead_by=3, total_commits=3, commits=[commit(oldest_sha, "Cents")]
     )
     parts = [
-        deployed(describe_deploy("o/shop", running, newest)),
-        deployed(describe_deploy("o/shop", running, older, skip=2)),
+        deployed(describe_deploy(prompts.load, "o/shop", running, newest)),
+        deployed(describe_deploy(prompts.load, "o/shop", running, older, skip=2)),
     ]
 
     assert read_shas(parts[1:]) == READ | {oldest_sha[:7]}
     assert read_shas(parts) == READ | {EARLIER[:7], oldest_sha[:7]}
     past = deployed(
-        describe_deploy("o/shop", running, older.model_copy(update={"commits": []}), skip=3)
+        describe_deploy(
+            prompts.load, "o/shop", running, older.model_copy(update={"commits": []}), skip=3
+        )
     )
     assert read_shas([past]) == READ  # skipped past the end: no commit is listed
 
@@ -148,10 +152,10 @@ def test_a_rollback_gives_only_the_running_commit_and_unknown_gives_none():
     gone = [f"Running in o/shop: commit {DEPLOY[:7]}, gone"]
     unknown = describe_unknown(prompts.load, "o/shop", gone)
 
-    assert read_shas([deployed(describe_deploy("o/shop", running, back))]) == READ
+    assert read_shas([deployed(describe_deploy(prompts.load, "o/shop", running, back))]) == READ
     assert read_shas([deployed(unknown)]) == set()
     # The same text under another tool's name reads nothing.
-    out, _ = guard_text("deployed", describe_deploy("o/shop", running, back))
+    out, _ = guard_text("deployed", describe_deploy(prompts.load, "o/shop", running, back))
     assert read_shas([as_investigate_stores("container_logs", out)]) == set()
 
 
