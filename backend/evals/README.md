@@ -56,7 +56,27 @@ The reset is test setup, not history of the incident, but its container events (
 
 `evals.run` and `evals.injection` drive the demo shop, so only one of them runs at a time on this machine, from any checkout or worktree. Each holds a lock on `~/.cache/bleep/demo-stack.lock` (`EVAL_STACK_LOCK`) for its whole round; a second one exits with 2 at once and names the eval that holds it (pid, command, folder, since when). Wait until that one finishes and start again. The lock goes with its process, so an eval stopped with Ctrl-C or killed frees the stack at once. `--render` and the other evals, which never touch the demo engine, take no lock (#486).
 
+A round of several shop copies at once (below) runs beside them: its copies are engines of their own, with their own locks.
+
 Neither the reset nor `fault.sh` builds the shop's images. After a change under `demo/`, build them once before the next run: `docker compose -f demo/compose.yaml build` ([demo](../../docs/demo.md#run-it)).
+
+### Several shop copies at once
+
+`python -m evals.parallel` runs `evals.run` scenarios and `evals.injection` cases on several copies of the demo shop at once, one per Docker engine (#657). A run spends most of its time waiting (the reset, the fault, the watcher's 30 to 60 s to open the incident), not on the model, so the copies overlap well. From `backend/`, with the model settings and the judge as for a single run:
+
+```bash
+uv run --group evals python -m evals.parallel --engines 4 --scenarios all --injection all --judge manual
+uv run --group evals python -m evals.parallel --engines 2 --scenarios db-down,oom \
+  --injection log-base64,control-db-down-restart --repeat 3 --judge manual --label "Round 1"
+```
+
+- **The copies.** The launcher builds the shop's images on this machine's engine (`docker compose -f demo/compose.yaml build`), saves them once, and starts N `docker:29.9.3-dind` containers, `bleep-eval-engine-<n>`. They are privileged, so the `oom` memory limit and the `disk-full` tmpfs act as on a real host. Each loads the images and starts the shop with the same container names and Compose project as the real one (`shop-web`, `shop-db`, ...), so the scenarios' plans and the shop's docs fit unchanged. Engine n publishes its Docker API on `127.0.0.1:<23750+n>` and its shop-proxy on `127.0.0.1:<18080+n>`, on this machine only. The engines carry `bleep.self=true`, so a Bleep backend watching this machine's engine ignores them and can keep running.
+- **The split.** The cases are dealt out in turn, scenarios first, with every repeat of a case on one engine, so its runs are numbered as in a single batch. Each engine runs `evals.run` on its scenarios, then `evals.injection` on its cases, each with its own `EVAL_DOCKER_ENDPOINT`, a hosts file that reaches its shop at `localhost:<its port>`, its own `EVAL_STACK_LOCK`, `EVAL_BATCH_TAG` `e<n>` and `EVAL_REPORTS_DIR`. A runner that fails does not stop the next one. Each engine's log is `data/evals/parallel-<time>/e<n>.log`.
+- **What it leaves.** Each engine's batches are copied to `docs/evals/data/`. The scenario batches get one report over all of them (`docs/evals/scenarios-YYYY-MM-DD.md`). Each batch's `.info.json` names the round's other batches and that report, so `evals.report <any batch of the round> --grades ... --grader ...` renders the whole round again with grades by hand. `--append` refuses a batch of a round, since its report covers the others too. The injection batches get one set of tables, beside the first batch as `.md`. A scenario batch whose runner died before writing its setup is listed in the launcher's summary and not published; its runs stay in `data/evals/`.
+- **Cleanup.** The engines and their volumes are removed when the round ends, fails or is stopped (Ctrl-C, SIGTERM). Engines left by a launcher that was killed outright are removed when the next one starts. One launcher runs at a time (`~/.cache/bleep/parallel-evals.lock`). It does not take the demo-stack lock, since it never touches the shop on this machine's engine.
+- **Exit codes.** The launcher exits 0 when every runner did, 1 when one failed, and 2 when its arguments are refused before any engine starts. It refuses a judge that is the model under test, and names a scripted scenario, which needs no engine, to be run with `evals.run`.
+
+**What N to pick.** 4, the default, is what was measured: on a 14-CPU Mac with Docker Desktop's 7.7 GiB, 4 copies ran the whole shop set once (47 runs) in 23 minutes against about 87 one at a time, and gave the same verdicts as Docker Desktop on 7 comparison cases ([parallel shop, 2026-11-16](../../docs/evals/parallel-shop-2026-11-16.md)). A copy at rest takes about 245 MiB and 1.5 GB of disk, so 6 fit, but more than 4 was not measured. Times are noisier under parallel load: the incident opens on the same watcher tick, but the diagnosis came up to 26 s later on a copy, since the copies share the CPUs and reach the model at once. Compare times only between rounds run the same way. A local model serves one request at a time, so it gains little; the launcher is for cloud models.
 
 ## Settings
 
@@ -71,6 +91,8 @@ Read from the environment, then the repo's `.env`.
 | `EVAL_HOST_ID` | `demo` | The host in that file. |
 | `EVAL_FAULT_SCRIPT` | `demo/fault.sh` | The fault switch, called as `<script> <fault> on\|off` from the repo root; exit 0 is switched, any other exit stops the run (`fault.sh` exits 2 on a fault it does not know). |
 | `EVAL_STACK_LOCK` | `~/.cache/bleep/demo-stack.lock` | The file the runners that drive the demo shop lock, one at a time; the same for every checkout and worktree. An absolute path (`~` is expanded); a relative one is refused, since it would name another file in each checkout. |
+| `EVAL_BATCH_TAG` | none | A tag of up to 16 lower-case letters and digits that ends the raw file's name (`scenarios-<time>-<tag>.jsonl`), so batches started in the same second never share a file. The parallel launcher sets `e<n>`. |
+| `EVAL_REPORTS_DIR` | `docs/evals` | Where `evals.run` writes its report. The parallel launcher points each engine at a folder of its own and writes the round's report itself. |
 | `EVAL_SETTLE_S` | `30` | Seconds between runs, for the stack to come back, with `--no-reset` only. |
 | `EVAL_WATCH_INTERVAL_S` | `15` | Seconds between watcher ticks, Bleep's own default. |
 

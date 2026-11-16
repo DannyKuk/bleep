@@ -1,0 +1,5 @@
+{"run_id": "db-down/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-db exited cleanly and shop-web failing on its database"}
+{"run_id": "disk-full/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the uploads volume out of space and the 503 health check"}
+{"run_id": "misroute/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names the live Caddy config loaded from Caddyfile.misroute routing to port 8001, shop-web healthy on 8000"}
+{"run_id": "oom/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names WORKER_BATCH_MB=256 over the 64 MiB limit and the documented default 8"}
+{"run_id": "port-conflict/1", "root_cause_pass": true, "root_cause_score": 1.0, "note": "names shop-canary holding port 8080 so shop-proxy cannot bind it"}

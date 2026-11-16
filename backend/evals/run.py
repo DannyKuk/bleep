@@ -180,6 +180,10 @@ class EvalSettings(BaseSettings):
     language: Language = DEFAULT_LANGUAGE  # what the model writes the person-facing fields in
     # Shared by every checkout and worktree on this machine, so one eval drives the shop at a time
     stack_lock: Path = DEFAULT_STACK_LOCK
+    # Ends the raw file's name, so batches started in the same second on other engines
+    # (evals.parallel) never write the same file
+    batch_tag: str = Field(default="", pattern=r"^[a-z0-9]*$", max_length=16)
+    reports_dir: Path | None = None  # where evals.run writes its report; unset, docs/evals/
     models: ModelSettings = Field(default_factory=lambda: ModelSettings(_env_file=ENV_FILE))
 
     @field_validator("stack_lock")
@@ -1019,6 +1023,11 @@ async def demo_containers(
         await registry.close()
 
 
+def raw_name(kind: str, started: datetime, tag: str = "") -> str:
+    """A batch's raw file name: `<kind>-<YYYYMMDD-HHMMSS>[-<tag>].jsonl`."""
+    return f"{kind}-{started:%Y%m%d-%H%M%S}{f'-{tag}' if tag else ''}.jsonl"
+
+
 def earlier_batch(raw: Path, now: datetime, model: str) -> tuple[list[ScenarioResult], datetime]:
     """The runs an earlier batch wrote to `raw`, and when that batch started, read from the
     file's name (`scenarios-<YYYYMMDD-HHMMSS>.jsonl`, in UTC), else `now`. A suite can run in
@@ -1030,8 +1039,15 @@ def earlier_batch(raw: Path, now: datetime, model: str) -> tuple[list[ScenarioRe
     others = sorted({r.model for r in earlier} - {model})
     if others:
         raise EvalError(f"{raw} has runs of {', '.join(others)}, not of {model}")
+    info = read_info(raw)
+    if info is not None and info.batches:
+        raise EvalError(
+            f"{raw} is one batch of a round run on several engines at once; --append would "
+            "write its report from this batch alone. Start a new round instead"
+        )
+    stamp = raw.stem.removeprefix("scenarios-")[:15]  # a tag may follow the time
     try:
-        started = datetime.strptime(raw.stem, "scenarios-%Y%m%d-%H%M%S").replace(tzinfo=UTC)
+        started = datetime.strptime(stamp, "%Y%m%d-%H%M%S").replace(tzinfo=UTC)
     except ValueError:
         started = now
     return earlier, started
@@ -1172,9 +1188,8 @@ async def _run(
             "incidents and page you. Stop it first: docker compose stop backend"
         )
     earlier, started = batch
-    raw = (
-        REPO / args.append if args.append else RAW_DIR / f"scenarios-{started:%Y%m%d-%H%M%S}.jsonl"
-    )
+    new = RAW_DIR / raw_name("scenarios", started, settings.batch_tag)
+    raw = REPO / args.append if args.append else new
     done: dict[str, int] = {}
     for r in earlier:
         done[r.id] = max(done.get(r.id, 0), r.run)
@@ -1214,8 +1229,9 @@ async def _run(
             scripted_knowledge=scripted_knowledge,
             connector=hide_resets(connect_host, spans),
         )
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    report = report_for(raw, started, REPORTS_DIR)
+    reports_dir = settings.reports_dir or REPORTS_DIR
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    report = report_for(raw, started, reports_dir)
     info = RunInfo(
         started_at=started,
         finished_at=utcnow(),

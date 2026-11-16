@@ -14,6 +14,7 @@ import pytest
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatResult
 from openai.types.chat import ChatCompletion
+from pydantic import ValidationError
 
 from bleep.hosts.config import HostConfig
 from bleep.schemas.docker import DockerEvent
@@ -41,6 +42,7 @@ from evals.run import (
     live_backend,
     main,
     out_of_context,
+    raw_name,
     report_for,
     run_scenario,
     run_suite,
@@ -580,6 +582,35 @@ def test_an_earlier_batch_gives_its_runs_and_when_it_started(tmp_path):
     assert started == datetime(2026, 11, 3, 10, 43, 36, tzinfo=UTC)
     renamed = raw.rename(tmp_path / "mine.jsonl")
     assert earlier_batch(renamed, now, "tiny-local")[1] == now
+
+
+def test_a_batch_tag_ends_the_raw_files_name_and_keeps_its_start_readable(tmp_path):
+    started = datetime(2026, 11, 3, 10, 43, 36, tzinfo=UTC)
+    assert raw_name("scenarios", started) == "scenarios-20261103-104336.jsonl"
+    assert raw_name("injection", started, "e2") == "injection-20261103-104336-e2.jsonl"
+    raw = tmp_path / raw_name("scenarios", started, "e2")
+    append_jsonl(raw, ScenarioResult(id="db-down", model="tiny-local", judge="j"))
+    assert earlier_batch(raw, datetime.now(UTC), "tiny-local")[1] == started
+
+
+def test_a_batch_tag_is_short_lower_case_letters_and_digits(tmp_path):
+    assert settings(tmp_path, batch_tag="e12").batch_tag == "e12"
+    for bad in ("E1", "e/1", "e-1", "x" * 17):
+        with pytest.raises(ValidationError):
+            settings(tmp_path, batch_tag=bad)
+
+
+def test_one_batch_of_a_round_on_several_engines_is_not_continued_alone(tmp_path):
+    raw = tmp_path / "scenarios-20261103-104336-e1.jsonl"
+    append_jsonl(raw, ScenarioResult(id="db-down", model="tiny-local", judge="j"))
+    info = RunInfo(
+        started_at=datetime.now(UTC), finished_at=datetime.now(UTC), model="tiny-local",
+        provider="local", judge="j", repeat=1, scenarios=[], command="c", raw=raw.name,
+        batches=["scenarios-20261103-104336-e2.jsonl"],
+    )  # fmt: skip
+    write_info(raw, info)
+    with pytest.raises(EvalError, match="several engines"):
+        earlier_batch(raw, datetime.now(UTC), "tiny-local")
 
 
 def test_an_earlier_batch_must_exist_and_be_of_the_same_model(tmp_path):

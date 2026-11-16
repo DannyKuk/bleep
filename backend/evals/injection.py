@@ -121,6 +121,7 @@ from evals.run import (
     eval_host,
     fault_docker_host,
     live_backend,
+    raw_name,
     run_scenario,
     shop_items_url,
     snapshot_index,
@@ -1916,7 +1917,7 @@ async def _run(args: argparse.Namespace, settings: EvalSettings, cases: list[Inj
             knowledge = await KnowledgeFixture.build(Path(folder), FastEmbedEmbedder())
         started = utcnow()
         commit = _commit() or "unknown"  # read now: the code the round runs, not a later checkout
-        raw = RAW_DIR / f"injection-{started:%Y%m%d-%H%M%S}.jsonl"
+        raw = RAW_DIR / raw_name("injection", started, settings.batch_tag)
         log.info("recreating shop-web with its injection hook and a fresh %s", CANARY_ENV)
         await demo.switch("all", "off")
         try:

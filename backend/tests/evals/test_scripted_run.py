@@ -4,6 +4,7 @@ API, the plan Propose writes passes the plan check and is scored, and nothing is
 Coolify (#359)."""
 
 import json
+import re
 from typing import Literal
 
 import pytest
@@ -224,6 +225,21 @@ def test_the_command_for_a_scripted_scenario_leaves_the_demo_stack_alone(tmp_pat
 
     assert code == 0 and given["reset"] is None
     assert not scripted.stack_lock.exists()
+
+
+def test_a_batch_tag_names_the_raw_file_and_the_report_goes_where_the_settings_say(
+    tmp_path, monkeypatch
+):
+    """Batches started in the same second on other engines write files of their own (#657)."""
+    patched_suite(monkeypatch, tmp_path)
+    tagged = settings(tmp_path, batch_tag="e3", reports_dir=tmp_path / "e3-reports")
+
+    assert main(["--only", "coolify-set-env", "--no-knowledge"], settings=tagged) == 0
+
+    names = [p.name for p in (tmp_path / "raw").glob("*.info.json")]
+    assert len(names) == 1 and re.fullmatch(r"scenarios-\d{8}-\d{6}-e3\.info\.json", names[0])
+    assert len(list((tmp_path / "e3-reports").glob("scenarios-*.md"))) == 1
+    assert not (tmp_path / "reports").exists()
 
 
 def test_the_command_for_a_demo_fault_still_needs_the_fault_script_and_the_lock(
