@@ -5,8 +5,11 @@ import { useEffect, useState } from "react";
 import { ApiError, apiFetch } from "@/lib/api";
 import type { IncidentEvent } from "@/lib/api-types";
 
-/** `loading` until the history is in; `live` while the stream is open; `reconnecting` between. */
-export type StreamStatus = "loading" | "live" | "reconnecting";
+/**
+ * `loading` until the history is in; `live` while the stream is open; `reconnecting` between;
+ * `stopped` for good, when the backend does not know the incident.
+ */
+export type StreamStatus = "loading" | "live" | "reconnecting" | "stopped";
 
 export interface IncidentStream {
   events: IncidentEvent[];
@@ -103,7 +106,7 @@ export function useIncidentStream(id: string): IncidentStream {
           }),
         );
       } catch (error) {
-        if (error instanceof ApiError && error.status === 404) return;
+        if (error instanceof ApiError && error.status === 404) return setStatus("stopped");
         if (active) later(); // a lost session has already sent the browser to the login page
         return;
       }

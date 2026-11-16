@@ -193,12 +193,13 @@ describe("useIncidentStream", () => {
         }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    renderHook(() => useIncidentStream("gone"));
+    const { result } = renderHook(() => useIncidentStream("gone"));
     await act(async () => {});
     await act(async () => void vi.advanceTimersByTime(RETRY_MS * 5));
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(FakeEventSource.instances).toHaveLength(0);
+    expect(result.current.status).toBe("stopped");
   });
 
   it("waits for the tab to be shown again before reopening a stream it lost", async () => {

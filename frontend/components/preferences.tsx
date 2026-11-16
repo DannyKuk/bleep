@@ -22,27 +22,18 @@ interface TimeZone {
 }
 
 const TimeZoneContext = createContext<TimeZone>({ zone: undefined, setZone: () => {} });
-const LoginContext = createContext(true);
+const LoginContext = createContext<boolean | undefined>(undefined);
 
 /**
  * Bleep's time zone and language for the whole dashboard: the settings' `timezone` and `language`,
  * read once when the app loads and again when the settings page saves one. Until the zone is
  * read, or when none is chosen, times are in the browser's own zone; until the language is read,
  * the page speaks the one it last knew (`readLanguage`), so the dashboard and Telegram match.
- * Also whether Bleep's own login is on: as the server layout saw it (on when it could not
- * tell), then as the settings say.
+ * Also whether Bleep's own login is on, which is unknown until the settings say.
  */
-export function PreferencesProvider({
-  children,
-  loginEnabled: loginEnabledAtStart = true,
-}: {
-  children: ReactNode;
-  /** Whether the login is on, as the server saw it when it drew the page, so a login that is
-   * off never flashes a Log out button before the settings are read. */
-  loginEnabled?: boolean;
-}) {
+export function PreferencesProvider({ children }: { children: ReactNode }) {
   const [zone, setZoneState] = useState<Zone>(undefined);
-  const [loginEnabled, setLoginEnabled] = useState(loginEnabledAtStart);
+  const [loginEnabled, setLoginEnabled] = useState<boolean | undefined>(undefined);
   const language = useLanguage();
   useEffect(() => {
     const controller = new AbortController();
@@ -72,5 +63,6 @@ export const useTimeZone = (): Zone => useContext(TimeZoneContext).zone;
 
 export const useSetTimeZone = () => useContext(TimeZoneContext).setZone;
 
-/** False when BLEEP_LOGIN_ENABLED is false (#611): there is no login to log out of. */
-export const useLoginEnabled = (): boolean => useContext(LoginContext);
+/** False when BLEEP_LOGIN_ENABLED is false (#611): there is no login to log out of. Undefined
+ * until the settings are read. */
+export const useLoginEnabled = (): boolean | undefined => useContext(LoginContext);

@@ -2,14 +2,7 @@
 
 import { ArrowUp, Download, X } from "lucide-react";
 import { usePathname } from "next/navigation";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-  type KeyboardEvent,
-} from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 import { Bleep } from "@/components/bleep/bleep";
 import { Answer } from "@/components/chat/answer";
@@ -227,24 +220,58 @@ export function ChatPanel() {
     }
   }
 
-  function keepFocusInside(event: KeyboardEvent<HTMLElement>) {
-    if (event.key === "Escape") {
-      setOpen(false);
-      return;
-    }
-    if (event.key !== "Tab" || !sheet || !panel.current) return;
-    const inside = [...panel.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
-    const first = inside[0];
-    const last = inside[inside.length - 1];
-    if (!first || !last) return;
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  }
+  // A modal sheet keeps focus to itself: Tab wraps at its ends, and focus that lands outside it or
+  // on a control that just went away (Send disabled by the cleared draft, an offer's buttons
+  // replaced by its line) comes back to the input, so the next Tab never reaches the page behind.
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      const section = panel.current;
+      if (!section) return;
+      const active = document.activeElement;
+      const within = active instanceof HTMLElement && section.contains(active);
+      if (event.key === "Escape") {
+        if (sheet || within) setOpen(false);
+        return;
+      }
+      if (event.key !== "Tab" || !sheet) return;
+      const inside = [...section.querySelectorAll<HTMLElement>(FOCUSABLE)];
+      const first = inside[0];
+      const last = inside[inside.length - 1];
+      if (!first || !last) return;
+      if (!within) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      if (sheet && panel.current && !panel.current.contains(event.target as Node)) {
+        input.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("focusin", onFocusIn);
+    };
+  }, [open, sheet]);
+
+  useEffect(() => {
+    if (!open || !sheet) return;
+    const active = document.activeElement;
+    const gone =
+      !(active instanceof HTMLElement) ||
+      !panel.current?.contains(active) ||
+      active.matches(":disabled");
+    if (gone) input.current?.focus();
+  });
 
   if (!open) {
     return (
@@ -273,7 +300,6 @@ export function ChatPanel() {
       role={sheet ? "dialog" : undefined}
       aria-modal={sheet ? true : undefined}
       aria-label={t.label}
-      onKeyDown={keepFocusInside}
       className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-surface sm:inset-auto sm:right-5 sm:bottom-5 sm:h-[520px] sm:max-h-[calc(100dvh-40px)] sm:w-[360px] sm:rounded-card-sm sm:border sm:border-line sm:shadow-[0_18px_50px_-12px_rgba(40,30,120,0.40)] print:hidden"
     >
       <header className="flex items-center gap-2.5 border-b border-line px-4 py-3">

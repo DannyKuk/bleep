@@ -32,14 +32,17 @@ describe("LogoutButton", () => {
     await vi.waitFor(() => expect(screen.queryByRole("button", { name: /Log out/ })).toBeNull());
   });
 
-  it("never shows while the server layout says the login is off, not even before the settings are read (#626)", async () => {
+  it("is not there while the settings are pending, but keeps its place (#626)", () => {
     vi.stubGlobal("fetch", () => new Promise(() => {})); // the settings never arrive
     render(
-      <PreferencesProvider loginEnabled={false}>
+      <PreferencesProvider>
         <LogoutButton />
       </PreferencesProvider>,
     );
-    await Promise.resolve();
     expect(screen.queryByRole("button", { name: /Log out/ })).toBeNull();
+    const held = document.querySelector("button");
+    expect(held).toHaveClass("invisible");
+    expect(held).toBeDisabled();
+    expect(held).toHaveAttribute("aria-hidden", "true");
   });
 });

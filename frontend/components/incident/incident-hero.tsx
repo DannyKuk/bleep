@@ -21,6 +21,7 @@ const DOT: Record<StreamStatus, string> = {
   loading: "bg-stop",
   live: "bg-ok",
   reconnecting: "bg-warn",
+  stopped: "bg-stop",
 };
 
 function StreamBadge({ status }: { status: StreamStatus }) {

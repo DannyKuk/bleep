@@ -719,6 +719,37 @@ describe("ChatPanel as a dialog on a phone (#626)", () => {
     }
   });
 
+  it("brings focus back to the input when the control that had it goes away, so Tab stays inside", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("button", { name: "Talk to Bleep" }));
+    const dialog = screen.getByRole("dialog", { name: "Chat with Bleep" });
+    const message = within(dialog).getByRole("textbox", { name: "Message to Bleep" });
+
+    await user.type(message, "How is shop?");
+    await user.click(within(dialog).getByRole("button", { name: "Send" })); // disabled once sent
+    await within(dialog).findByText("Everything is fine.");
+    expect(message).toHaveFocus();
+
+    await user.tab();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    await user.tab({ shift: true });
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+  });
+
+  it("pulls focus that lands outside the sheet back in", async () => {
+    const user = userEvent.setup();
+    render(
+      <OverallProvider>
+        <button type="button">Behind the sheet</button>
+        <ChatPanel />
+      </OverallProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Talk to Bleep" }));
+    act(() => screen.getByRole("button", { name: "Behind the sheet" }).focus());
+    expect(screen.getByRole("textbox", { name: "Message to Bleep" })).toHaveFocus();
+  });
+
   it("returns focus to Bleep's button when the panel closes", async () => {
     const user = userEvent.setup();
     renderPanel();

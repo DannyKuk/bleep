@@ -18,9 +18,20 @@ export function LogoutButton() {
       window.location.assign("/login");
     }
   }
-  if (!loginEnabled) return null;
+  if (loginEnabled === false) return null;
+  // Until the settings say the login is on, the button only holds its place, so the header does
+  // not jump when it appears and a login that is off never shows it.
+  const unknown = loginEnabled === undefined;
   return (
-    <Button variant="ghost" size="sm" onClick={logout}>
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={logout}
+      disabled={unknown}
+      aria-hidden={unknown || undefined}
+      tabIndex={unknown ? -1 : undefined}
+      className={unknown ? "invisible" : undefined}
+    >
       <LogOut aria-hidden />
       <span className="hidden sm:inline">{label}</span>
       <span className="sr-only sm:hidden">{label}</span>
