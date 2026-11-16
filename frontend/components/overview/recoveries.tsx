@@ -12,7 +12,7 @@ import { useLanguage, useT } from "@/lib/i18n";
 import { serviceHref } from "@/lib/routes";
 
 const LIMIT = 10;
-const POLL_MS = 30_000;
+const RECOVERIES_POLL_MS = 30_000;
 
 function Container({ recovery }: { recovery: RecoveryEvent }) {
   if (!recovery.service_id) return <span className="font-mono text-sm">{recovery.container}</span>;
@@ -78,7 +78,7 @@ const fetchRecoveries = (signal: AbortSignal) =>
 
 /** Containers that died and came back on their own, newest first. */
 export function Recoveries() {
-  const { data, error } = usePoll(fetchRecoveries, POLL_MS);
+  const { data, error } = usePoll(fetchRecoveries, RECOVERIES_POLL_MS);
   const t = useT().recoveries;
   return (
     <section aria-labelledby="recoveries" className="flex flex-col gap-3">

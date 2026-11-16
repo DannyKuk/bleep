@@ -4,7 +4,7 @@ import { FileText, Loader2, RotateCcw, Save } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 
 import { CodeText } from "@/components/code-text";
-import { useDraft } from "@/components/dev/section";
+import { useDraft } from "@/hooks/use-draft";
 import { Failed, Loading, why } from "@/components/dev/status";
 import { useTimeZone } from "@/components/preferences";
 import { Badge } from "@/components/ui/badge";

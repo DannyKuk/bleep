@@ -192,6 +192,18 @@ describe("HostPage", () => {
     expect(within(list).queryByText("blog")).toBeNull();
   });
 
+  it("reads the services from the overall state and asks for them once, not itself (#626)", async () => {
+    const fetchMock = backend();
+    renderPage();
+
+    const list = await screen.findByRole("list", { name: "Services on M1" });
+    expect(within(list).getAllByRole("link")).toHaveLength(2);
+    const serviceReads = fetchMock.mock.calls.filter(
+      ([input]) => String(input) === "/api/services",
+    );
+    expect(serviceReads).toHaveLength(1);
+  });
+
   it("lets a long unbroken host name wrap instead of widening the page", async () => {
     backend();
     const name = "h".repeat(50);

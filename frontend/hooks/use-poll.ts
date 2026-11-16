@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+/** How often the dashboard's pages read the backend again while the tab is visible. */
+export const POLL_MS = 10_000;
+
 export interface Poll<T> {
   data: T | undefined;
   error: Error | undefined;
@@ -15,12 +18,12 @@ export interface Poll<T> {
  * polling (and aborts what is in flight), and a tab that becomes visible refetches at once.
  * Each tick aborts the previous one and carries a sequence number, so a slow older response can
  * never overwrite newer data. Keeps the last good data when a refresh fails. `fetcher` must be
- * stable (module level or memoised). Until live events arrive (Task 23), this is the refresh.
- * `refresh` reads at once after a change the page made itself, such as an added host.
+ * stable (module level or memoised). `refresh` reads at once after a change the page made
+ * itself, such as an added host.
  */
 export function usePoll<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
-  intervalMs = 10_000,
+  intervalMs = POLL_MS,
 ): Poll<T> {
   const [state, setState] = useState<Omit<Poll<T>, "refresh">>({
     data: undefined,

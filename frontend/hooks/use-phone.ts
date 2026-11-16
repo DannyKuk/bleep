@@ -1,24 +1,28 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 /** Below Tailwind's `lg` breakpoint the incident page is the one-column phone layout. */
 export const PHONE_QUERY = "(max-width: 1023.98px)";
 
-function subscribe(onChange: () => void): () => void {
-  if (typeof window.matchMedia !== "function") return () => {};
-  const query = window.matchMedia(PHONE_QUERY);
-  query.addEventListener("change", onChange);
-  return () => query.removeEventListener("change", onChange);
-}
-
-function isPhone(): boolean {
-  return typeof window.matchMedia === "function" && window.matchMedia(PHONE_QUERY).matches;
+/** Whether a CSS media query matches now; false on the server and where `matchMedia` is missing. */
+export function useMediaQuery(media: string): boolean {
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      if (typeof window.matchMedia !== "function") return () => {};
+      const query = window.matchMedia(media);
+      query.addEventListener("change", onChange);
+      return () => query.removeEventListener("change", onChange);
+    },
+    [media],
+  );
+  const matches = () => typeof window.matchMedia === "function" && window.matchMedia(media).matches;
+  return useSyncExternalStore(subscribe, matches, () => false);
 }
 
 /** Whether the screen is narrower than the desktop layout; false on the server. */
 export function usePhone(): boolean {
-  return useSyncExternalStore(subscribe, isPhone, () => false);
+  return useMediaQuery(PHONE_QUERY);
 }
 
 /**

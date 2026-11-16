@@ -110,7 +110,12 @@ export const en = {
     opened: "opened",
     tokens: (count: string) => `${count} tokens`,
     host: (id: string) => `host ${id}`,
-    stream: { loading: "Connecting", live: "Live", reconnecting: "Reconnecting" },
+    stream: {
+      loading: "Connecting",
+      live: "Live",
+      reconnecting: "Reconnecting",
+      stopped: "Not live",
+    },
     notFound: "There is no incident with this id.",
     loadFailed: (message: string) => `Could not load the incident: ${message}`,
     loading: "Loading the incident",
