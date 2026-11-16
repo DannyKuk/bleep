@@ -9,7 +9,7 @@ import logging
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from bleep.hosts.shell import CommandNotAllowed, allowed_text, run_allowed
+from bleep.hosts.shell import COMMAND_TIMEOUT_S, CommandNotAllowed, allowed_text, run_allowed
 from bleep.hosts.ssh import SshUnavailable
 from bleep.tools.common import UNTRUSTED, guard_result, invalid_arguments
 from bleep.tools.registry import ToolContext, ToolSpec
@@ -38,7 +38,11 @@ async def _host_command(ctx: ToolContext, command: str) -> str:
     if shell is None:
         return NEEDS_SSH
     try:
-        name = (await shell.run(["uname", "-s"], 20.0)).stdout.strip()
+        uname = await shell.run(["uname", "-s"], COMMAND_TIMEOUT_S)
+        if uname.exit_code != 0:
+            failed = f"uname -s exited {uname.exit_code} {uname.stderr.strip()}".strip()
+            return f"host unreachable: {await guard_result(ctx, 'error', failed)}"
+        name = uname.stdout.strip()
         if name != "Linux" and name != "Darwin":
             return f"host commands are not supported on {await guard_result(ctx, 'error', name)}"
         text = await run_allowed(shell, command, name)
