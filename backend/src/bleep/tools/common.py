@@ -6,13 +6,18 @@ from collections.abc import Callable
 from pydantic import ValidationError
 
 from bleep.guard.pipeline import guard_text
-from bleep.tools.registry import ToolContext
+from bleep.tools.registry import Texts, ToolContext
+
+
+def said(texts: Texts, name: str, /, **values: str) -> str:
+    """The prompt file `name` filled with `values`, without its closing line break: a tool's
+    description, or a sentence it answers with instead of data."""
+    return texts(name, **values).strip()
 
 
 def say(ctx: ToolContext, name: str, /, **values: str) -> str:
-    """The prompt file `name` filled with `values`, without its closing line break: a tool's
-    description, or a sentence it answers with instead of data."""
-    return ctx.texts(name, **values).strip()
+    """`said` with the texts of the tool's context."""
+    return said(ctx.texts, name, **values)
 
 
 def untrusted_rule(ctx: ToolContext) -> str:

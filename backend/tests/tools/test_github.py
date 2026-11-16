@@ -773,7 +773,7 @@ async def test_the_revision_label_names_the_running_commit(github):
 
 async def test_a_coolify_failure_falls_back_to_the_label_and_says_so(github):
     registry = await labelled({"shop-web-1": {REVISION_LABEL: HEAD}})
-    down = DeployUnknown("Coolify's deployments could not be read (Coolify answered 502)")
+    down = DeployUnknown("plugins/reply/coolify_deployments_unread", error="Coolify answered 502")
 
     out = await deployed(registry, github, down)
 

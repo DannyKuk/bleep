@@ -35,8 +35,8 @@ from bleep.hosts.github import (
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.github import Commit, CommitDetail, Comparison, FileChange, RunningCommit
 from bleep.schemas.services import Service
-from bleep.tools.common import guard_result, invalid_arguments, say, untrusted_rule
-from bleep.tools.registry import ToolContext, ToolSpec
+from bleep.tools.common import guard_result, invalid_arguments, said, say, untrusted_rule
+from bleep.tools.registry import Texts, ToolContext, ToolSpec
 
 Clock = Callable[[], datetime]
 
@@ -54,18 +54,20 @@ MIN_HEAD = 200  # a patch that does not fit is cut to a head only when this much
 # A little room under the guard's limit, so the guard never cuts a result itself.
 OUTPUT_CHARS = MAX_CHARS - 100
 CUT = "[… cut]"
-NO_SKIP = (
-    f"(skip reads nothing here: with no known end to the deploy, only the {UP_TO} newest commits"
-    " up to the running one are listed; recent_commits with a path reaches older ones.)"
-)
 REVISION_LABEL = "org.opencontainers.image.revision"
 IMAGE_SOURCE_LABEL = "org.opencontainers.image.source"
 SHA = re.compile(r"[0-9a-fA-F]{7,40}")  # a commit sha as GitHub takes one
 
 
 class DeployUnknown(Exception):
-    """A deploy source should know which commit a service runs and cannot say; the text is
-    Bleep's own, a sentence the model reads."""
+    """A deploy source should know which commit a service runs and cannot say. It names the
+    prompt file that says why (`text`) and its `values`, which `deployed_commits` loads: a deploy
+    source has no texts of its own."""
+
+    def __init__(self, text: str, /, **values: str) -> None:
+        super().__init__(text)
+        self.text = text
+        self.values = values
 
 
 class DeploySource(Protocol):
@@ -330,12 +332,9 @@ def describe_up_to(
     return "\n".join(lines)
 
 
-def describe_unknown(repo: str, reasons: list[str]) -> str:
+def describe_unknown(texts: Texts, repo: str, reasons: list[str]) -> str:
     why = "; ".join(reasons)
-    return (
-        f"Bleep does not know which commit of {_one_line(repo)} runs: {why}. recent_commits"
-        " lists the commits of a time window instead; none of them is known to run."
-    )
+    return said(texts, "tools/reply/github/unknown", repo=_one_line(repo), why=why)
 
 
 def _names_repo(source: str, repo: str) -> bool:
@@ -345,7 +344,7 @@ def _names_repo(source: str, repo: str) -> bool:
     return place.endswith((f"github.com/{repo}", f"github.com:{repo}"))
 
 
-def label_commit(service: Service, repo: str) -> RunningCommit | str:
+def label_commit(texts: Texts, service: Service, repo: str) -> RunningCommit | str:
     """The commit the service's images name in their `org.opencontainers.image.revision` label,
     or why there is none. An image whose `org.opencontainers.image.source` names another repo
     is skipped: a base image (a PHP or Node image) carries its own repo's labels into every
@@ -358,10 +357,10 @@ def label_commit(service: Service, repo: str) -> RunningCommit | str:
             continue
         named.setdefault(revision.lower(), []).append(c)
     if not named:
-        return f"no image of the service carries the {REVISION_LABEL} label with a commit of it"
+        return said(texts, "tools/reply/github/no_label", label=REVISION_LABEL)
     if len(named) > 1:
         shas = ", ".join(sorted(sha[:7] for sha in named))
-        return f"the service's images name different commits in {REVISION_LABEL} ({shas})"
+        return said(texts, "tools/reply/github/labels_differ", label=REVISION_LABEL, shas=shas)
     ((sha, containers),) = named.items()
     made = [c.created_at for c in containers if c.created_at is not None]
     return RunningCommit(
@@ -489,7 +488,7 @@ def _tool(
 
 
 async def _running(
-    service: Service, repo: str, deploys: DeploySource | None
+    ctx: ToolContext, service: Service, repo: str, deploys: DeploySource | None
 ) -> tuple[RunningCommit | None, list[str]]:
     """The commit the service runs, from its deploy source first and its image labels then, and
     what Bleep could not learn on the way: why it does not know, when it found none."""
@@ -498,44 +497,44 @@ async def _running(
         try:
             found = await deploys.running_commit(service)
         except DeployUnknown as unknown:
-            trouble.append(str(unknown))
+            trouble.append(say(ctx, unknown.text, **unknown.values))
         else:
             if found is not None:
                 return found, []
-    labelled = label_commit(service, repo)
+    labelled = label_commit(ctx.texts, service, repo)
     if isinstance(labelled, RunningCommit):
-        return labelled, [f"({why}; the image label names the commit instead.)" for why in trouble]
-    coolify = trouble or [
-        "no Coolify deployment of it is known (the Coolify plugin is off, or the service is no"
-        " Coolify application)"
-    ]
+        return labelled, [say(ctx, "tools/reply/github/label_instead", why=why) for why in trouble]
+    coolify = trouble or [say(ctx, "tools/reply/github/no_coolify_deploy")]
     return None, [*coolify, labelled]
 
 
-def _not_shown(repo: str, running: RunningCommit, client: GithubClient) -> str:
+def _not_shown(ctx: ToolContext, repo: str, running: RunningCommit, client: GithubClient) -> str:
     """Why the running commit is not in `repo` as GitHub shows it, in Bleep's own words, naming
     the token as `_failed` does: GitHub answers a missing sha and an unreadable repo alike."""
     sha, repo = running.sha[:7].lower(), _one_line(repo)
     if running.how == "coolify" and running.previous:
-        said = f"Coolify deployed commit {sha} last and {running.previous[:7].lower()}"
-        said += f" before it, but GitHub cannot show both in {repo}"
+        previous = running.previous[:7].lower()
+        shown = say(
+            ctx, "tools/reply/github/not_shown_coolify_both", sha=sha, previous=previous, repo=repo
+        )
     elif running.how == "coolify":
-        said = f"Coolify deployed commit {sha} last, which GitHub cannot show in {repo}"
+        shown = say(ctx, "tools/reply/github/not_shown_coolify", sha=sha, repo=repo)
     else:
         container = _cut(_one_line(running.container or "?"), NAME_CHARS)
-        said = (
-            f"The {REVISION_LABEL} label of the image container {container} runs names commit"
-            f" {sha}, which GitHub cannot show in {repo}"
+        shown = say(
+            ctx,
+            "tools/reply/github/not_shown_label",
+            label=REVISION_LABEL,
+            container=container,
+            sha=sha,
+            repo=repo,
         )
     access = (
-        "the token cannot read the repo"
+        say(ctx, "tools/reply/github/access_token")
         if client.authenticated
-        else f"the repo is private and no GitHub token ({client.token_name}) is set"
+        else say(ctx, "tools/reply/github/access_no_token", token=client.token_name)
     )
-    return (
-        f"{said}: it may be built from another repo, or {access}. Bleep does not know which"
-        " commit runs; recent_commits lists the commits of a time window instead."
-    )
+    return say(ctx, "tools/reply/github/not_shown", said=shown, access=access)
 
 
 def github_specs(
@@ -553,9 +552,9 @@ def github_specs(
             service = ctx.registry.service(ctx.service_id) if ctx.service_id else None
             if service is None:
                 return say(ctx, "tools/reply/no_repo")
-            running, notes = await _running(service, repo, deploys)
+            running, notes = await _running(ctx, service, repo, deploys)
             if running is None:
-                return await guard_result(ctx, "deployed", describe_unknown(repo, notes))
+                return await guard_result(ctx, "deployed", describe_unknown(ctx.texts, repo, notes))
             try:
                 if running.previous:
                     if skip:
@@ -574,10 +573,11 @@ def github_specs(
                     if not found or not found[0].sha.lower().startswith(running.sha.lower()):
                         raise NotFound("not the running commit", "commit")
                     if skip:
-                        notes = [*notes, NO_SKIP]
+                        skip_note = say(ctx, "tools/reply/github/no_skip", count=str(UP_TO))
+                        notes = [*notes, skip_note]
                     text = describe_up_to(repo, running, found, notes)
             except NotFound:
-                text = _not_shown(repo, running, client)
+                text = _not_shown(ctx, repo, running, client)
             return await guard_result(ctx, "deployed", text)
 
         return _tool(ctx, client, "deployed_commits", DeployedArgs, run)

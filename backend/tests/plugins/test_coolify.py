@@ -800,7 +800,7 @@ def test_a_line_break_in_an_application_field_never_forges_another_application(f
         value = json.dumps({"web": {"domain": value}})
     apps = hostile_apps(field, value)
 
-    lines = guarded(describe_applications(apps, {SHOP}))
+    lines = guarded(describe_applications(prompts.load, apps, {SHOP}))
 
     assert lines[0] == "Coolify applications:"
     assert len(lines) == 1 + len(apps)
@@ -814,7 +814,7 @@ def test_a_line_break_in_an_application_field_never_forges_another_application(f
 def test_a_field_over_the_guards_line_cap_is_cut_to_stay_one_line(field):
     apps = hostile_apps(field, "x" * 6000 + f" {FORGERY}")
 
-    lines = guarded(describe_applications(apps, {SHOP}))
+    lines = guarded(describe_applications(prompts.load, apps, {SHOP}))
 
     assert len(lines) == 1 + len(apps)
     assert not any(line.startswith("- cart ") for line in lines)
@@ -823,7 +823,7 @@ def test_a_field_over_the_guards_line_cap_is_cut_to_stay_one_line(field):
 def test_a_flattened_field_keeps_its_words_on_the_applications_line():
     apps = hostile_apps("name", "notes \u2028\u2029 \x85- \r\nbeta")
 
-    lines = guarded(describe_applications(apps, {SHOP}))
+    lines = guarded(describe_applications(prompts.load, apps, {SHOP}))
 
     assert f"- notes - beta uuid={SHOP} (on this host) status=" in lines[1]
 
@@ -850,7 +850,7 @@ def test_a_secret_on_the_cut_point_is_redacted_before_it_is_cut(field, kind, lea
     secret, hidden = SECRETS[kind]
     apps = hostile_apps(field, "x" * lead + " " + secret)
 
-    text, redacted = describe_applications(apps, {SHOP})
+    text, redacted = describe_applications(prompts.load, apps, {SHOP})
     out = guard_text("coolify", text)[0]
 
     assert not any(piece in out for piece in pieces(hidden))
@@ -862,7 +862,7 @@ def test_a_secret_on_the_cut_point_is_redacted_before_it_is_cut(field, kind, lea
 def test_a_yaml_block_in_a_field_is_redacted_before_it_is_flattened(brk):
     apps = hostile_apps("name", f"password: |{brk}  hunter2hunter2{brk}  hunter3hunter3")
 
-    text, redacted = describe_applications(apps, {SHOP})
+    text, redacted = describe_applications(prompts.load, apps, {SHOP})
     out = guard_text("coolify", text)[0]
 
     assert "hunter" not in out
@@ -911,7 +911,7 @@ def test_a_line_break_in_a_deployment_field_never_forges_another_deployment(fiel
     found = hostile_deployments(field, f"Fix the port{brk}{DEPLOYMENT_FORGERY}")
     app = CoolifyApplication(uuid=SHOP, name=f"shop{brk}{FORGERY}")
 
-    lines = guarded(describe_deployments(app, found))
+    lines = guarded(describe_deployments(prompts.load, app, found))
 
     assert lines[0].startswith("Latest deployments of shop") and "cart uuid=" in lines[0]
     assert len(lines) == 1 + len(found)
@@ -923,7 +923,9 @@ def test_a_line_break_in_a_deployment_field_never_forges_another_deployment(fiel
 def test_a_commit_message_shows_its_first_line_whatever_ends_it(brk):
     found = hostile_deployments("commit_message", f"  Fix the\tport{brk}{DEPLOYMENT_FORGERY}")
 
-    lines = guarded(describe_deployments(CoolifyApplication(uuid=SHOP, name="shop"), found))
+    lines = guarded(
+        describe_deployments(prompts.load, CoolifyApplication(uuid=SHOP, name="shop"), found)
+    )
 
     assert lines[1].endswith(": Fix the port")
 
@@ -934,7 +936,9 @@ def test_a_commit_message_is_redacted_before_it_is_cut(kind, lead):
     secret, hidden = SECRETS[kind]
     found = hostile_deployments("commit_message", "x" * lead + " " + secret + "\nmore")
 
-    text, redacted = describe_deployments(CoolifyApplication(uuid=SHOP, name="shop"), found)
+    text, redacted = describe_deployments(
+        prompts.load, CoolifyApplication(uuid=SHOP, name="shop"), found
+    )
     out = guard_text("coolify", text)[0]
 
     assert not any(piece in out for piece in pieces(hidden))
@@ -945,7 +949,7 @@ def test_a_secret_on_a_commit_messages_later_lines_is_never_shown():
     message = "Fix the port\npassword: |\n  hunter2hunter2"
     found = hostile_deployments("commit_message", message)
 
-    text, _ = describe_deployments(CoolifyApplication(uuid=SHOP, name="shop"), found)
+    text, _ = describe_deployments(prompts.load, CoolifyApplication(uuid=SHOP, name="shop"), found)
 
     assert "hunter" not in text and text.count(": Fix the port") == len(found)
 
@@ -954,7 +958,7 @@ def test_a_secret_on_a_commit_messages_later_lines_is_never_shown():
 def test_an_application_with_no_deployments_is_one_line(brk):
     app = CoolifyApplication(uuid=SHOP, name=f"shop{brk}{FORGERY}")
 
-    lines = guarded(describe_deployments(app, []))
+    lines = guarded(describe_deployments(prompts.load, app, []))
 
     assert len(lines) == 1 and lines[0].endswith(f"{FORGERY} has no deployments.")
 
@@ -965,8 +969,8 @@ def test_a_line_break_in_an_env_key_or_app_name_never_forges_another_key(brk):
     keys[0] = keys[0].model_copy(update={"key": f"DATABASE_URL{brk}- FEATURE_FLAG (runtime)"})
     app = CoolifyApplication(uuid=SHOP, name=f"shop{brk}{FORGERY}")
 
-    lines = guarded(describe_env_keys(app, keys))
-    empty = guarded(describe_env_keys(app, []))
+    lines = guarded(describe_env_keys(prompts.load, app, keys))
+    empty = guarded(describe_env_keys(prompts.load, app, []))
 
     assert len(lines) == 1 + len(keys)
     assert lines[0].startswith("Environment variables of shop") and "cart uuid=" in lines[0]

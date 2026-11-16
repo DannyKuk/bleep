@@ -101,22 +101,25 @@ def test_the_registry_gives_its_tools_the_texts():
     assert built["list_containers"] == descriptions()["list_containers"]
 
 
+# The calls that name a prompt file, and which of their arguments is the name.
+NAME_AT = {"say": 1, "said": 1, "DeployUnknown": 0}
+
+
 def said_texts() -> list[tuple[str, str, set[str]]]:
-    """Every `say(ctx, "<name>", ...)` in `tools/` and `plugins/` whose name is written out:
-    where it is, the name and the values it fills. A reply on an error path runs only when that
-    error happens, so a wrong name or value would otherwise show only then."""
+    """Every `say(ctx, "<name>", ...)`, `said(texts, "<name>", ...)` and
+    `DeployUnknown("<name>", ...)` in `tools/` and `plugins/` whose name is written out: where it
+    is, the name and the values it fills. A reply on an error path runs only when that error
+    happens, so a wrong name or value would otherwise show only then."""
     source = Path(prompts.PROMPTS_DIR).parent
     found = []
     for path in sorted([*(source / "tools").rglob("*.py"), *(source / "plugins").rglob("*.py")]):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "say"
-                and isinstance(node.args[1], ast.Constant)
-            ):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+                continue
+            at = NAME_AT.get(node.func.id)
+            if at is not None and isinstance(node.args[at], ast.Constant):
                 where = f"{path.name}:{node.lineno}"
-                found.append((where, node.args[1].value, {k.arg for k in node.keywords}))
+                found.append((where, node.args[at].value, {k.arg for k in node.keywords}))
     return found
 
 

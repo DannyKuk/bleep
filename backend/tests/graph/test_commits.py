@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+from bleep import prompts
 from bleep.graph.commits import ShaCheck, drop_unread, read_shas
 from bleep.graph.nodes.investigate import guard_result
 from bleep.guard.pipeline import guard_text
@@ -142,7 +143,8 @@ def test_a_part_read_with_skip_adds_its_commits_to_those_of_the_parts_before_it(
 def test_a_rollback_gives_only_the_running_commit_and_unknown_gives_none():
     running = RunningCommit(sha=DEPLOY, how="coolify", previous=PREVIOUS)
     back = Comparison(status="behind", behind_by=3)
-    unknown = describe_unknown("o/shop", [f"Running in o/shop: commit {DEPLOY[:7]}, gone"])
+    gone = [f"Running in o/shop: commit {DEPLOY[:7]}, gone"]
+    unknown = describe_unknown(prompts.load, "o/shop", gone)
 
     assert read_shas([deployed(describe_deploy("o/shop", running, back))]) == READ
     assert read_shas([deployed(unknown)]) == set()

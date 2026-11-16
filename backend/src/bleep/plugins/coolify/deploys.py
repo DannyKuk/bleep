@@ -38,17 +38,16 @@ class CoolifyDeploys:
         if not uuids:
             return None
         if any(c.labels.get(PULL_REQUEST, "0") not in ("", "0") for c in service.containers):
-            raise DeployUnknown(
-                "the service is a preview deployment of a Coolify application, which runs a pull"
-                " request's commit, not the application's"
-            )
+            raise DeployUnknown("plugins/reply/coolify_preview")
         if len(uuids) > 1:
-            raise DeployUnknown("the service's containers belong to several Coolify applications")
+            raise DeployUnknown("plugins/reply/coolify_several_apps")
         (uuid,) = uuids
         try:
             found = await self._client.deployments(uuid, take=DEPLOYMENTS)
         except CoolifyError as error:
-            raise DeployUnknown(f"Coolify's deployments could not be read ({error})") from None
+            raise DeployUnknown(
+                "plugins/reply/coolify_deployments_unread", error=str(error)
+            ) from None
         return running_commit(found)
 
 
@@ -59,10 +58,10 @@ def running_commit(deployments: list[CoolifyDeployment]) -> RunningCommit:
     ordered = sorted(deployments, key=lambda d: _time(d.created_at) or OLDEST, reverse=True)
     finished = [d for d in ordered if d.status == "finished" and not d.pull_request_id]
     if not finished:
-        raise DeployUnknown("Coolify lists no finished deployment of the application")
+        raise DeployUnknown("plugins/reply/coolify_no_finished")
     sha = _sha(finished[0].commit)
     if sha is None:
-        raise DeployUnknown("Coolify records no commit for the deployment that runs")
+        raise DeployUnknown("plugins/reply/coolify_no_commit")
     first, previous = finished[0], None
     for d in finished[1:]:
         if _sha(d.commit) != sha:
