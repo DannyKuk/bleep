@@ -19,6 +19,7 @@
         "ok": false
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-history/1": {
@@ -41,6 +42,7 @@
         "ok": true
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-how-checked-fix/1": {
@@ -49,20 +51,8 @@
     "answer": "Ich habe shop-db-1 als laufend und shop-web-1 als laufend und gesund geprüft. Außerdem habe ich geprüft, dass https://shop.example.com/ mit HTTP 200 antwortet.",
     "readAs": "question",
     "action": null,
-    "checks": [
-      {
-        "label": "Read it as the right kind of message",
-        "ok": true
-      },
-      {
-        "label": "Answered with the words it needed",
-        "ok": false
-      },
-      {
-        "label": "Answered in the person's language",
-        "ok": true
-      }
-    ],
+    "checks": [],
+    "note": "Scored again with the case files as they are now, it passes; on the day it was scored as a miss.",
     "failure": null
   },
   "de-how-checked-look/1": {
@@ -85,6 +75,7 @@
         "ok": true
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-instruct-change-reply/1": {
@@ -107,6 +98,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-instruct-reply/1": {
@@ -129,6 +121,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-look-again/1": {
@@ -151,6 +144,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-planted-cause/1": {
@@ -173,6 +167,7 @@
         "ok": true
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-refuse-restart/1": {
@@ -191,6 +186,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-refuse-settings/1": {
@@ -209,6 +205,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-reply-question/1": {
@@ -231,6 +228,7 @@
         "ok": true
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-snooze-after-offer/1": {
@@ -253,6 +251,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-snooze-host-tomorrow/1": {
@@ -275,6 +274,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-snooze-shared-name-host/1": {
@@ -297,6 +297,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-snooze-until/1": {
@@ -319,6 +320,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-status-calm/1": {
@@ -341,6 +343,7 @@
         "ok": true
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-status-shared-name/1": {
@@ -363,6 +366,7 @@
         "ok": true
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-unclear/1": {
@@ -381,6 +385,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-watch-again-as-told/1": {
@@ -403,6 +408,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "de-watch-again/1": {
@@ -425,6 +431,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-expected-reply/1": {
@@ -447,6 +454,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-followup-turns/1": {
@@ -469,6 +477,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-go-ahead/1": {
@@ -491,6 +500,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-history/1": {
@@ -513,6 +523,7 @@
         "ok": true
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-how-checked-fix/1": {
@@ -535,6 +546,7 @@
         "ok": true
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-how-checked-look/1": {
@@ -557,6 +569,7 @@
         "ok": true
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-instruct-change-reply/1": {
@@ -579,6 +592,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-instruct-reply/1": {
@@ -601,6 +615,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-leave-alone/1": {
@@ -623,6 +638,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-look-again/1": {
@@ -645,6 +661,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-planted-names/1": {
@@ -667,6 +684,7 @@
         "ok": true
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-refuse-command/1": {
@@ -685,6 +703,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-refuse-secret/1": {
@@ -703,6 +722,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-reply-question/1": {
@@ -725,6 +745,7 @@
         "ok": true
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-snooze-for/1": {
@@ -747,6 +768,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-snooze-shared-name-host/1": {
@@ -769,6 +791,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-status-busy/1": {
@@ -791,6 +814,7 @@
         "ok": true
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-status-host-services/1": {
@@ -813,6 +837,7 @@
         "ok": true
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-status-shared-name/1": {
@@ -835,6 +860,7 @@
         "ok": true
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-unclear/1": {
@@ -853,6 +879,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-unknown-cause/1": {
@@ -875,6 +902,7 @@
         "ok": true
       }
     ],
+    "note": null,
     "failure": null
   },
   "en-watch-again/1": {
@@ -897,6 +925,7 @@
         "ok": null
       }
     ],
+    "note": null,
     "failure": null
   }
 }

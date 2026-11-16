@@ -237,3 +237,50 @@ it("reads a talk case's message as plain or quoted YAML", () => {
   expect(talkMessage("text: 'it''s down'")).toBe("it's down");
   expect(talkMessage('text: "say \\"hi\\""')).toBe('say "hi"');
 });
+
+describe("talk", () => {
+  const batch = "talk-20261113-121701";
+  const row = (name: string, passed: boolean) => ({
+    run_id: `${name}/1`,
+    case: name,
+    lang: "de",
+    model: "m",
+    kind: "question",
+    answer: "Alles läuft.",
+    kind_ok: true,
+    action_ok: null,
+    words_missing: passed ? [] : [["laufen"]],
+    language_ok: true,
+    passed,
+    error: null,
+  });
+  const cases = {
+    "backend/evals/talk/cases/fixed.yaml": "text: wie geht's?",
+    "backend/evals/talk/cases/kept.yaml": "text: und M1?",
+  };
+
+  it("takes the verdict of the rendered run table, and drops the checks it overturned", () => {
+    const read = files({
+      ...cases,
+      [`${DATA}/${batch}.jsonl`]: jsonl(row("fixed", false), row("kept", false)),
+      [`${DATA}/${batch}.md`]:
+        "| Run | Kind | Action | Answer | Passed |\n|---|---|---|---|---|\n" +
+        "| `fixed/1` | question |  | Alles läuft. | yes |\n" +
+        "| `kept/1` | question |  | Alles läuft. | no |\n",
+    });
+    const { data, details } = extract("talk", read, [batch]);
+    expect(outcomes(data)).toEqual({ fixed: ["pass"], kept: ["fail"] });
+    expect(details["fixed/1"]).toMatchObject({ checks: [], note: expect.stringMatching(/passes/) });
+    expect(details["kept/1"]).toMatchObject({ note: null });
+    expect(details["kept/1"].type === "talk" && details["kept/1"].checks.length).toBe(3);
+  });
+
+  it("refuses a rendered table that lacks one of the batch's runs", () => {
+    const read = files({
+      ...cases,
+      [`${DATA}/${batch}.jsonl`]: jsonl(row("fixed", true), row("kept", true)),
+      [`${DATA}/${batch}.md`]: "| `fixed/1` | question |  | Alles läuft. | yes |\n",
+    });
+    expect(() => extract("talk", read, [batch])).toThrow(/no row for kept\/1/);
+  });
+});

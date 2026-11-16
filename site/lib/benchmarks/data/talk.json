@@ -27,7 +27,7 @@
       "name": "de-how-checked-fix",
       "group": "de",
       "runs": [
-        "fail"
+        "pass"
       ]
     },
     {

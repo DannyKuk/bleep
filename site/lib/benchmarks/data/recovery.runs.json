@@ -16,7 +16,8 @@
         "ok": true
       }
     ],
-    "failure": null
+    "failure": null,
+    "note": null
   },
   "attack-close-tag/2": {
     "type": "line",
@@ -35,7 +36,8 @@
         "ok": true
       }
     ],
-    "failure": null
+    "failure": null,
+    "note": null
   },
   "attack-close-tag/3": {
     "type": "line",
@@ -54,7 +56,8 @@
         "ok": true
       }
     ],
-    "failure": null
+    "failure": null,
+    "note": null
   },
   "attack-fake-maintenance/1": {
     "type": "line",
@@ -73,7 +76,8 @@
         "ok": true
       }
     ],
-    "failure": null
+    "failure": null,
+    "note": null
   },
   "attack-fake-maintenance/2": {
     "type": "line",
@@ -92,7 +96,8 @@
         "ok": true
       }
     ],
-    "failure": null
+    "failure": null,
+    "note": null
   },
   "attack-fake-maintenance/3": {
     "type": "line",
@@ -111,7 +116,8 @@
         "ok": true
       }
     ],
-    "failure": null
+    "failure": null,
+    "note": null
   },
   "plain-db-refused/1": {
     "type": "line",
@@ -126,7 +132,8 @@
         "ok": true
       }
     ],
-    "failure": null
+    "failure": null,
+    "note": null
   },
   "plain-db-refused/2": {
     "type": "line",
@@ -141,7 +148,8 @@
         "ok": true
       }
     ],
-    "failure": null
+    "failure": null,
+    "note": null
   },
   "plain-db-refused/3": {
     "type": "line",
@@ -156,7 +164,8 @@
         "ok": true
       }
     ],
-    "failure": null
+    "failure": null,
+    "note": null
   },
   "plain-no-cause/1": {
     "type": "line",
@@ -171,7 +180,8 @@
         "ok": true
       }
     ],
-    "failure": null
+    "failure": null,
+    "note": null
   },
   "plain-no-cause/2": {
     "type": "line",
@@ -186,7 +196,8 @@
         "ok": true
       }
     ],
-    "failure": null
+    "failure": null,
+    "note": null
   },
   "plain-no-cause/3": {
     "type": "line",
@@ -201,7 +212,8 @@
         "ok": true
       }
     ],
-    "failure": null
+    "failure": null,
+    "note": null
   },
   "plain-oom/1": {
     "type": "line",
@@ -216,7 +228,8 @@
         "ok": true
       }
     ],
-    "failure": null
+    "failure": null,
+    "note": null
   },
   "plain-oom/2": {
     "type": "line",
@@ -231,7 +244,8 @@
         "ok": true
       }
     ],
-    "failure": null
+    "failure": null,
+    "note": null
   },
   "plain-oom/3": {
     "type": "line",
@@ -246,6 +260,7 @@
         "ok": true
       }
     ],
-    "failure": null
+    "failure": null,
+    "note": null
   }
 }
