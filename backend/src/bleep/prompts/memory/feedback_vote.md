@@ -1,0 +1,1 @@
+{finding} was {verdict}

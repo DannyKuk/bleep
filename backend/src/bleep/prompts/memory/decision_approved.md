@@ -1,0 +1,1 @@
+approved {plan} on {day}

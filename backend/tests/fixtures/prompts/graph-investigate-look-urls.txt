@@ -15,9 +15,8 @@ Judge this service by its own containers above, its own recent logs and, when it
 ## Containers
 
 <untrusted source="containers" id="X">
-name | state | health | image | restarts | exit code
-shop-web-1 | exited | none | img:1 | 0 | 1
-shop-db-1 | running | none | img:1 | 0 | -
+- shop-web-1: exited (exit 1), health none, restarts 0, image img:1
+- shop-db-1: running, health none, restarts 0, image img:1
 </untrusted id="X">
 
 ## Recent logs

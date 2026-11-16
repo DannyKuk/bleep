@@ -625,8 +625,8 @@ async def test_the_prompt_says_none_when_bleep_remembers_nothing(tmp_path):
     await propose.make(env.deps)(state)
 
     memory = prompt(env).split("## What Bleep remembers", 1)[1].split("## ", 1)[0]
-    assert "Similar past incidents, the same service's first:\nnone" in memory
-    assert "Facts about this service:\nnone" in memory
+    assert "Similar past incidents, the same service's first:\n(none)" in memory
+    assert "Facts about this service:\n(none)" in memory
 
 
 async def test_a_working_container_no_signal_names_is_refused_and_the_model_tries_again(tmp_path):
@@ -1156,7 +1156,8 @@ def with_mcp(
 )
 async def test_without_mcp_call_enabled_the_prompt_is_byte_for_byte_as_before(tmp_path, plugin):
     """The golden file is Propose's prompt as Bleep rendered it before #118, so the scenario
-    evals measured before still hold while the MCP plugin is off."""
+    evals measured before still hold while the MCP plugin is off. It was rendered again when #623
+    gave every empty list the same `(none)`."""
     env, state = await setup(tmp_path, acting(restart("shop-web-1")))
     if plugin != "none":
         with_mcp(env, None, on=plugin != "switched off", enabled=False)

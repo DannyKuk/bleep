@@ -15,6 +15,7 @@ import logging
 import httpx
 
 from bleep.graph.deps import GraphDeps
+from bleep.graph.describe import part
 from bleep.graph.host_text import service_id_shown
 from bleep.graph.look import bare_look
 from bleep.graph.state import IncidentState, Node
@@ -40,9 +41,9 @@ STATS_AT_ONCE = 8  # concurrent `docker stats` calls on one host
 def _why(error: Exception) -> str:
     """A short, fixed reason: engine messages are host text and do not belong in Bleep's own."""
     if isinstance(error, EngineUnavailable):
-        return "host unreachable"
+        return part("gather_why_unreachable")
     if isinstance(error, ContainerNotFound):
-        return "container not found"
+        return part("gather_why_not_found")
     return type(error).__name__
 
 
@@ -62,15 +63,15 @@ def make(deps: GraphDeps) -> Node:
 
         host = next((h for h in deps.registry.hosts() if h.config.id == subject.host_id), None)
         if host is None:
-            context.gaps.append(f"host {subject.host_id} is not in the hosts file")
+            context.gaps.append(part("gather_unknown_host", host=subject.host_id))
             return {"context": context}
         try:
             await deps.registry.refresh(subject.host_id)  # the state now, not the last poll's
         except Exception as error:
-            context.gaps.append(f"container list: {_why(error)}")
+            context.gaps.append(part("gather_container_list", why=_why(error)))
         host = next(h for h in deps.registry.hosts() if h.config.id == subject.host_id)
         if not host.reachable:
-            context.gaps.append("host unreachable: containers and basics are the last ones seen")
+            context.gaps.append(part("gather_unreachable"))
         context.basics = host.basics
         context.host_rules = list(host.config.rules)
 
@@ -94,7 +95,7 @@ async def _service(
     service = deps.registry.service(subject.service_id or "")
     if service is None:
         shown = service_id_shown(subject)
-        context.gaps.append(f"service {shown} is no longer on host {subject.host_id}")
+        context.gaps.append(part("gather_service_gone", service=shown, host=subject.host_id))
         return
     context.service_name = service.name
     context.containers = list(service.containers)
@@ -118,10 +119,12 @@ async def _read_logs(
             engine = deps.registry.engine(host_id)
             text = await engine.logs(name, tail=LOG_TAIL)
         except Exception as error:
-            context.gaps.append(f"logs of {name}: {_why(error)}")
+            context.gaps.append(part("gather_logs", name=name, why=_why(error)))
             continue
         header = await last_line_header(engine, name)
-        context.logs[name] = header + await guard_result(ctx, "logs", text or "(no log lines)")
+        context.logs[name] = header + await guard_result(
+            ctx, "logs", text or part("gather_no_log_lines")
+        )
 
 
 async def _check_urls(deps: GraphDeps, urls: list[UrlCheckConfig]) -> list[UrlReading]:
@@ -141,7 +144,7 @@ async def _host(deps: GraphDeps, host: HostState, context: GatherContext) -> Non
         engine = deps.registry.engine(host_id)
         listed = await engine.containers()
     except Exception as error:
-        context.gaps.append(f"container list: {_why(error)}")
+        context.gaps.append(part("gather_container_list", why=_why(error)))
         return
     # Bleep's own containers are never read or shown, as in the read tools (#297).
     running = [c.name for c in listed if c.state == "running" and not is_self(c.labels)]
@@ -173,11 +176,11 @@ async def _recall(
         context.similar = await deps.memory.similar(f"{what}: {kinds}", subject.service_id, k=3)
     except Exception as error:
         log.warning("gather: memory recall failed: %s", _why(error))
-        context.gaps.append(f"similar incidents: {_why(error)}")
+        context.gaps.append(part("gather_similar", why=_why(error)))
     if subject.service_id is None:
         return
     try:
         context.facts = await deps.memory.facts(subject.service_id)
     except Exception as error:
         log.warning("gather: reading service facts failed: %s", _why(error))
-        context.gaps.append(f"service facts: {_why(error)}")
+        context.gaps.append(part("gather_facts", why=_why(error)))

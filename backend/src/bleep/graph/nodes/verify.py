@@ -50,6 +50,7 @@ import httpx
 from langchain_core.messages import HumanMessage
 
 from bleep import prompts
+from bleep.graph import describe
 from bleep.graph.deps import GraphDeps
 from bleep.graph.shown import english
 from bleep.graph.state import IncidentState, Node, plan_results
@@ -688,7 +689,7 @@ def loop_back_prompt(result: VerificationResult) -> str:
 
 
 def _describe(result: VerificationResult) -> str:
-    return "\n".join(f"- {c.kind} {c.target}: {c.detail}" for c in result.checks if not c.ok)
+    return describe.bullets([f"{c.kind} {c.target}: {c.detail}" for c in result.checks if not c.ok])
 
 
 async def _one_check(
