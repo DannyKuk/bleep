@@ -83,7 +83,7 @@ Keys found on real application containers (saved in [`captures/labels/`](../spik
 |---|---|---|
 | `coolify.applicationUuid` | 4.5.0, 4.5.3 | unique id of the application |
 | `coolify.applicationId` | 4.1.2 (`4`) | numeric id, instead of the UUID on this older version |
-| `coolify.resourceName` | all three | the application's name (`molecula`, `dkwebsite`); not unique |
+| `coolify.resourceName` | all three | the application's name; not unique |
 | `coolify.type` | all three (`application`) | resource type; the 4.1.2 container carries it too |
 | `coolify.pullRequestId` | all three (`0`) | preview deployments have another value (not seen on this host) |
 | `coolify.managed`, `coolify.name`, `coolify.serviceName`, `coolify.projectName`, `coolify.environmentName`, `coolify.version` | all three | context and display |
@@ -98,7 +98,7 @@ Each container's version is its own `coolify.version` label (the Coolify that de
 - **Preview deployments:** `coolify.pullRequestId` present and not `"0"` makes their own service, keyed `<uuid>-pr-<n>`.
 - **Coolify's own containers** (`coolify`, `coolify-db`, `coolify-redis`, `coolify-sentinel`, `coolify-proxy`) are not excluded. They have no application labels, so they fall back to the compose project (`source`, `coolify-proxy`), else the container name. `coolify-sentinel` has only `coolify.managed`, and no compose project, so it is keyed by its name.
 
-**This differs from the obvious `coolify.resourceName`-first order.** `resourceName` is a name, not an id: two apps in different projects or environments can share it, and it would merge their incidents. The UUID is unique and is on every 4.5.x container, while `applicationId` exists only on older ones. In the saved data `backend` and `frontend` of one app share both `applicationUuid` and `resourceName` (`molecula`), so the UUID key still groups them together.
+**This differs from the obvious `coolify.resourceName`-first order.** `resourceName` is a name, not an id: two apps in different projects or environments can share it, and it would merge their incidents. The UUID is unique and is on every 4.5.x container, while `applicationId` exists only on older ones. In the saved data `backend` and `frontend` of one app share both `applicationUuid` and `resourceName`, so the UUID key still groups them together.
 
 ## Limits
 
