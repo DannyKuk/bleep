@@ -123,11 +123,11 @@ function ModelName({ model }: { model: ModelResult }) {
   );
 }
 
-/** The round's results: a table from medium width, one card per model below it. */
+/** The round's results: a table where it fits (1024 px), one card per model below that. */
 export function Results({ models }: { models: ModelResult[] }) {
   return (
     <>
-      <div className="hidden overflow-hidden rounded-card border border-line bg-surface md:block">
+      <div className="hidden overflow-x-auto rounded-card border border-line bg-surface lg:block">
         <table className="w-full text-left align-top">
           <thead>
             <tr className="border-b border-line text-sm text-ink-2">
@@ -157,7 +157,7 @@ export function Results({ models }: { models: ModelResult[] }) {
           </tbody>
         </table>
       </div>
-      <ul className="grid gap-4 md:hidden">
+      <ul className="grid gap-4 md:grid-cols-2 lg:hidden">
         {models.map((model) => (
           <li key={model.name} className="rounded-card border border-line bg-surface p-5">
             <ModelName model={model} />
