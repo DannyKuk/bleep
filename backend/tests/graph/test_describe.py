@@ -46,9 +46,15 @@ def test_a_diagnosis_names_its_cause_confidence_services_and_evidence():
 
 
 def test_a_diagnosis_without_services_or_evidence_has_no_empty_lines():
-    found = Diagnosis(root_cause="unclear", category="unknown", confidence=0.2)
+    found = Diagnosis(root_cause="unclear", category="unknown", confidence=0.7)
 
-    assert describe.diagnosis(found) == "Root cause: unclear\nCategory: unknown\nConfidence: 0.20"
+    assert describe.diagnosis(found) == "Root cause: unclear\nCategory: unknown\nConfidence: 0.70"
+
+
+def test_an_unsure_diagnosis_says_so_beside_its_confidence():
+    found = Diagnosis(root_cause="unclear", category="unknown", confidence=0.7, unsure=True)
+
+    assert describe.diagnosis(found).endswith("Confidence: 0.70, unsure")
 
 
 def test_a_container_carries_its_exit_code_only_when_it_has_one():

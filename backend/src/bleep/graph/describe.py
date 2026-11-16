@@ -22,16 +22,19 @@ def bullets(lines: list[str]) -> str:
 
 
 def diagnosis(found: Diagnosis | None) -> str:
-    """The root cause, its category and confidence, the services it hurts and each piece of
-    evidence; the `none` part without a diagnosis."""
+    """The root cause, its category and confidence (marked when Diagnose was unsure), the services
+    it hurts and each piece of evidence; the `none` part without a diagnosis."""
     if found is None:
         return part("none")
+    confidence = f"{found.confidence:.2f}"
+    if found.unsure:
+        confidence = part("diagnosis_unsure", confidence=confidence)
     lines = [
         part(
             "diagnosis",
             root_cause=found.root_cause,
             category=found.category,
-            confidence=f"{found.confidence:.2f}",
+            confidence=confidence,
         )
     ]
     if found.affected_services:

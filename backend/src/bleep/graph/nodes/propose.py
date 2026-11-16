@@ -289,9 +289,8 @@ def _unclear_names(proposal: Proposal, registry: Registry) -> list[Violation]:
             continue
         as_id = step.target.lower()
         if any(c.name != step.target and c.id.startswith(as_id) for c in containers):
-            why = part("propose_unclear_name", target=step.target)
             shown = Shown.of("refusal/unclear_name", target=step.target)
-            found.append(step_violation("not_found", number, step, why, shown))
+            found.append(step_violation("not_found", number, step, english(shown), shown))
     return found
 
 
@@ -373,16 +372,16 @@ def _refused(
     shown_steps = [redacted_step(s) for s in proposal.steps]
     advice = _advice(violations, can_instruct=can_instruct, unclear=unclear)
     reasons = [_shown_reason(v) for v in violations]
-    told = [
-        SHOWN[REFUSED],
-        Shown.of("proposal/why"),
-        *(Shown.of("proposal/reason_line", reason=r) for r in reasons),
+    head = [SHOWN[REFUSED], Shown.of("proposal/why")]
+    tail = [
         Shown.of("proposal/refused_plan"),
         *([_step_shown(n, s) for n, s in enumerate(shown_steps, start=1)] or [_NO_STEPS]),
         Shown.of("proposal/model_reason", reason=proposal.reason),
         *(SHOWN[line] for line in advice),
     ]
-    instructions = Shown.joined(told, "\n")
+    told = [*head, *(Shown.of("proposal/reason_line", reason=r) for r in reasons), *tail]
+    # Stored in English with each reason as the plan check wrote it (`Violation.text`).
+    lines = [*map(english, head), _reasons(violations), *map(english, tail)]
     return Proposal(
         kind="no_action",
         refused=True,
@@ -390,8 +389,8 @@ def _refused(
         refusal_reasons=[v.text for v in violations],
         reason=REFUSED,
         verification=proposal.verification,
-        human_instructions=english(instructions),
-        shown={"reason": SHOWN[REFUSED], "human_instructions": instructions},
+        human_instructions="\n".join(lines),
+        shown={"reason": SHOWN[REFUSED], "human_instructions": Shown.joined(told, "\n")},
         refusal_reasons_shown=reasons,
     )
 

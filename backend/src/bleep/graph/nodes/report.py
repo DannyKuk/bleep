@@ -109,7 +109,7 @@ class _Draft(BaseModel):
 class _DraftWithEnglishCause(_Draft):
     """What the model writes, with its cause in English as well."""
 
-    cause_en: str = Field("", description="The same root cause as `cause`, in English.")
+    cause_en: str = Field("", description=part("report_cause_en"))
 
 
 class _Facts(BaseModel):
