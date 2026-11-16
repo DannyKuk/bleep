@@ -21,7 +21,7 @@ import aiosqlite
 import numpy as np
 
 from bleep.memory.embeddings import Embedder
-from bleep.memory.text import clean, describe_feedback
+from bleep.memory.text import clean, describe_feedback, part
 from bleep.schemas.graph import (
     FACT_CHARS,
     NOTE_CHARS,
@@ -38,7 +38,6 @@ from bleep.schemas.graph import (
 from bleep.schemas.incidents import Incident
 from bleep.store.db import Database
 
-NOTHING_RAN = "nothing ran"
 REEMBED_BATCH = 64
 
 
@@ -49,21 +48,22 @@ def decision_memory(decision: Decision | None, proposal: Proposal | None) -> str
         return None
     day = f"{decision.at:%Y-%m-%d}"
     steps = proposal.steps if proposal is not None else []
-    plan = "; ".join(f"{s.action} {s.target}" for s in steps) or "the plan"
+    plan = "; ".join(f"{s.action} {s.target}" for s in steps) or part("decision_no_steps")
     if decision.kind == "approve":
-        return f"approved {plan} on {day}"
+        return part("decision_approved", plan=plan, day=day)
     if decision.kind == "reject":
         if proposal is not None and proposal.refused:
-            return f"let go of the refused plan on {day}"  # not a plan the human turned down
+            # not a plan the human turned down
+            return part("decision_let_go_refused", day=day)
         if proposal is not None and proposal.instruct_only:
-            return f"let go of a fix Bleep could run on {day}"
-        return f"rejected {plan} on {day}"
-    return f"instructed on {day}: {decision.text or ''}"
+            return part("decision_let_go_fix", day=day)
+        return part("decision_rejected", plan=plan, day=day)
+    return part("decision_instructed", day=day, text=decision.text or "")
 
 
 def _embedded_text(title: str, cause: str, action: str) -> str:
     """What a record is found by: what failed and where, why, and what was done."""
-    return f"{title}. Cause: {cause} Action: {action}."
+    return part("embedded", title=title, cause=cause, action=action)
 
 
 def _blob(vector: np.ndarray) -> bytes:
@@ -101,7 +101,7 @@ class MemoryStore:
         # A report in another language carries its cause in English too: memory is kept and
         # searched in English (#374).
         title, cause = clean(report.title), clean(report.cause_en or report.cause)
-        action = clean(report.action_taken or NOTHING_RAN)
+        action = clean(report.action_taken or part("nothing_ran"))
         human = decision_memory(decision, proposal)
         text = _embedded_text(title, cause, action)
         vector = (await self._embed([text]))[0]

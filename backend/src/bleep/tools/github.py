@@ -260,6 +260,7 @@ def _left_out(left: int, skip: int | None = None, which: str = "older") -> list[
 
 
 def describe_deploy(
+    texts: Texts,
     repo: str,
     running: RunningCommit,
     comparison: Comparison,
@@ -273,13 +274,11 @@ def describe_deploy(
     previous = (running.previous or "")[:7].lower()
     lines = [_running_head(repo, running), *notes]
     if comparison.status == "identical":
-        lines.append(f"The deploy before it ran the same commit {previous}: it brought no commits.")
+        lines.append(said(texts, "tools/reply/github/same_commit", previous=previous))
         return "\n".join(lines)
     if comparison.status == "behind":
-        lines.append(
-            f"The deploy before it ran commit {previous}, {comparison.behind_by} commits ahead of"
-            " this one: this deploy went back (a rollback) and brought no new commits."
-        )
+        behind = str(comparison.behind_by)
+        lines.append(said(texts, "tools/reply/github/rollback", previous=previous, behind=behind))
         return "\n".join(lines)
     total = (
         comparison.total_commits if skip else max(comparison.total_commits, len(comparison.commits))
@@ -291,7 +290,10 @@ def describe_deploy(
     )
     brought = f"The deploy before it ran commit {previous}; this deploy brought {total} commits"
     if skip and not comparison.commits:
-        lines.append(f"{brought}{dropped}, and skip={skip} is past the oldest of them.")
+        past = said(
+            texts, "tools/reply/github/skip_past_oldest", brought=brought + dropped, skip=str(skip)
+        )
+        lines.append(past)
         return "\n".join(lines)
     if skip:
         lines.append(
@@ -407,15 +409,15 @@ def _head(detail: CommitDetail, room: int) -> str:
     return "\n".join(lines)
 
 
-def _patch_text(f: FileChange) -> str:
+def _patch_text(texts: Texts, f: FileChange) -> str:
     """GitHub sends no patch for a binary file (counted +0 -0), an empty one, a rename or mode
     change with no edit, or a text file too large to diff; only the line counts tell the last
     from the rest."""
     if f.patch:
         return f.patch
     if f.additions == 0 and f.deletions == 0:
-        return "(no text diff: an empty or binary file, or only its mode or name changed)"
-    return "(no text diff: too large to show)"
+        return said(texts, "tools/reply/github/no_diff_empty")
+    return said(texts, "tools/reply/github/no_diff_too_large")
 
 
 def _patch_head(header: str, patch: str, room: int) -> str:
@@ -425,7 +427,7 @@ def _patch_head(header: str, patch: str, room: int) -> str:
     return header + _shrink(patch, room).rstrip() + f" {CUT}" if room > 0 else ""
 
 
-def describe_diff(detail: CommitDetail, max_chars: int) -> str:
+def describe_diff(texts: Texts, detail: CommitDetail, max_chars: int) -> str:
     """The commit's head (at most half of `max_chars`), then the patches in order until
     `max_chars`, sized as the guard will write them. A patch that does not fit is cut to a head
     and the files after it still get their share, so one huge or long-line file never hides the
@@ -434,7 +436,9 @@ def describe_diff(detail: CommitDetail, max_chars: int) -> str:
     text = _head(detail, budget // 2)
     used = _size(text)
     room = budget - NOTE_CHARS
-    blocks = [(f"\n\n--- {_cut(f.filename, NAME_CHARS)}\n", _patch_text(f)) for f in detail.files]
+    blocks = [
+        (f"\n\n--- {_cut(f.filename, NAME_CHARS)}\n", _patch_text(texts, f)) for f in detail.files
+    ]
     # What a patch costs is measured only while it could still fit and only up to a work limit,
     # so a commit of hundreds of large patches costs about `max_chars`, not its own size.
     later = [0] * (len(blocks) + 1)
@@ -573,7 +577,7 @@ def github_specs(
                         )
                     else:
                         comparison = await client.compare(repo, running.previous, running.sha)
-                    text = describe_deploy(repo, running, comparison, notes, skip)
+                    text = describe_deploy(ctx.texts, repo, running, comparison, notes, skip)
                 else:
                     found = await client.commits(repo, None, limit=UP_TO, sha=running.sha)
                     # GitHub reads `sha` as a branch name too; only the commit itself confirms it.
@@ -603,7 +607,7 @@ def github_specs(
     def diff_tool(ctx: ToolContext) -> StructuredTool:
         async def run(repo: str, sha: str, max_chars: int = 8000) -> str:
             detail = await client.commit(repo, sha)
-            return await guard_result(ctx, "diff", describe_diff(detail, max_chars))
+            return await guard_result(ctx, "diff", describe_diff(ctx.texts, detail, max_chars))
 
         return _tool(ctx, client, "commit_diff", DiffArgs, run)
 

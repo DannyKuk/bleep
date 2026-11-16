@@ -286,7 +286,7 @@ def _result_text(result: CallToolResult) -> str:
             parts.append(f"[{block.type} not shown]")
     if not parts and result.structuredContent is not None:
         parts.append(json.dumps(result.structuredContent))
-    return "\n".join(parts) or "(no output)"
+    return "\n".join(parts)
 
 
 @dataclass(frozen=True)
@@ -477,8 +477,6 @@ def _listing(server: _Server, tools: list[BaseTool], *, name_allowed_left: bool 
     what is left. When something does not fit, the closing lines are paid for before any entry
     that is not allowed: the allowed tools left out by name (`name_allowed_left`) and a count of
     the others. Without the names, every tool left out is only counted."""
-    if not tools:
-        return "(the server lists no tools)"
     tools = _distinct(tools)
     allowed = [t for t in tools if server.kind(t) in ("read", "act")]
     rest = [t for t in tools if server.kind(t) not in ("read", "act")]
@@ -537,7 +535,10 @@ def _read_tools(server: _Server) -> list[ToolSpec]:
     def build_list(ctx: ToolContext) -> BaseTool:
         async def run() -> str:
             try:
-                listing = _listing(server, await server.tools())
+                tools = await server.tools()
+                listing = (
+                    _listing(server, tools) if tools else say(ctx, "plugins/reply/mcp_no_tools")
+                )
                 return await _guard(server, ctx.guard_log, ctx.incident_id, listing)
             except _ServerError as error:
                 return unreachable(ctx, error)
@@ -566,7 +567,8 @@ def _read_tools(server: _Server) -> list[ToolSpec]:
                 return say(ctx, "plugins/reply/mcp_no_such_tool")
             if answer.status == "marked":
                 return say(ctx, "plugins/reply/mcp_marked", tool=tool)
-            guarded = await _guard(server, ctx.guard_log, ctx.incident_id, answer.text)
+            text = answer.text or say(ctx, "plugins/reply/mcp_no_output")
+            guarded = await _guard(server, ctx.guard_log, ctx.incident_id, text)
             if answer.status == "error":
                 return say(ctx, "plugins/reply/mcp_tool_error", output=guarded)
             return guarded

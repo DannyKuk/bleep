@@ -1,6 +1,7 @@
 """A bare look at a service with no URL in Bleep's settings tells Investigate and Diagnose so in a
 line of its own (#445), where a service with URLs gets its URL checks; any other run's prompts
-stay byte for byte as they were."""
+stay byte for byte as they were. The fixtures were rendered again when #623 described the
+containers one way in every node."""
 
 import re
 from pathlib import Path

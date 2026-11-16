@@ -21,10 +21,13 @@ from typing import Literal
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from bleep import prompts
+from bleep.graph import describe
 from bleep.graph.deps import GraphDeps
+from bleep.graph.describe import part
 from bleep.graph.host_text import service_name
 from bleep.graph.language import language_rule
 from bleep.graph.replan import replans_left
+from bleep.graph.shown import english
 from bleep.graph.state import IncidentState, Node
 from bleep.guard.grant import binds_app
 from bleep.guard.plan_check import (
@@ -57,55 +60,38 @@ from bleep.tools.registry import ActCatalog, PlanRules
 
 log = logging.getLogger(__name__)
 
-NO_DIAGNOSIS = "Bleep has no diagnosis to act on, so it proposes no action."
-NO_PLAN = "The model gave no usable plan, so Bleep proposes no action."
-BUDGET = "The incident's token budget or the day's cost cap is spent, so Bleep proposes no action."
-REFUSED = "Bleep's own checks refused the proposed plan twice, so nothing will run."
-MCP_CALL = "mcp.call"
-INSTRUCT = (
-    "You can tell Bleep what to do instead and it will plan again with that; it can also let "
-    "this go. Nothing can be approved from a refused plan."
-)
-BY_HAND = (
-    "A container that works is acted on only when it is this incident's own or when you name it "
-    "in an instruction. If it is the one at fault, name it, or act on it by hand."
-)
-BY_HAND_ONLY = (
-    "A container that works is acted on only when it is this incident's own. If it is the one at "
-    "fault, act on it by hand."
-)
-STOP_BY_HAND = (
-    "A container is stopped only when this incident's signals name it or you name it in an "
-    "instruction. If it should stop, name it, or stop it by hand."
-)
-STOP_BY_HAND_ONLY = (
-    "A container is stopped only when this incident's signals name it. If it should stop, stop it "
-    "by hand."
-)
-
-UNCLEAR_BY_HAND = (
-    "Bleep never acts on a container whose name is also the start of another container's id, "
-    "and an instruction cannot change that. Act on it by hand, or rename it (`docker rename`) so "
-    "its name reads as no container's id."
-)
-HIDDEN_BY_HAND = (
-    "A step runs only when you can read every param of it, and Bleep hides anything that looks "
-    "like a secret. If the change is needed, make it by hand."
-)
-# Each text above as its template.
-SHOWN = {
-    NO_DIAGNOSIS: Shown.of("proposal/no_diagnosis"),
-    NO_PLAN: Shown.of("proposal/no_plan"),
-    BUDGET: Shown.of("proposal/budget"),
-    REFUSED: Shown.of("proposal/refused"),
-    INSTRUCT: Shown.of("proposal/instruct"),
-    BY_HAND: Shown.of("proposal/by_hand"),
-    BY_HAND_ONLY: Shown.of("proposal/by_hand_only"),
-    STOP_BY_HAND: Shown.of("proposal/stop_by_hand"),
-    STOP_BY_HAND_ONLY: Shown.of("proposal/stop_by_hand_only"),
-    UNCLEAR_BY_HAND: Shown.of("proposal/unclear_by_hand"),
-    HIDDEN_BY_HAND: Shown.of("proposal/hidden_by_hand"),
+# Bleep's own texts in place of the model's, kept as templates (`prompts/shown/proposal/`) and
+# stored in English.
+_OWN = {
+    name: Shown.of(f"proposal/{name}")
+    for name in (
+        "no_diagnosis",
+        "no_plan",
+        "budget",
+        "refused",
+        "instruct",
+        "by_hand",
+        "by_hand_only",
+        "stop_by_hand",
+        "stop_by_hand_only",
+        "unclear_by_hand",
+        "hidden_by_hand",
+    )
 }
+NO_DIAGNOSIS = english(_OWN["no_diagnosis"])
+NO_PLAN = english(_OWN["no_plan"])
+BUDGET = english(_OWN["budget"])
+REFUSED = english(_OWN["refused"])
+INSTRUCT = english(_OWN["instruct"])
+BY_HAND = english(_OWN["by_hand"])
+BY_HAND_ONLY = english(_OWN["by_hand_only"])
+STOP_BY_HAND = english(_OWN["stop_by_hand"])
+STOP_BY_HAND_ONLY = english(_OWN["stop_by_hand_only"])
+UNCLEAR_BY_HAND = english(_OWN["unclear_by_hand"])
+HIDDEN_BY_HAND = english(_OWN["hidden_by_hand"])
+# Each text above as its template.
+SHOWN = {english(text): text for text in _OWN.values()}
+MCP_CALL = "mcp.call"
 
 
 def make(deps: GraphDeps) -> Node:
@@ -176,7 +162,7 @@ async def _plan(deps: GraphDeps, state: IncidentState, diagnosis: Diagnosis) -> 
     _record(deps, incident_id, violations)
     messages += [
         AIMessage(proposal.model_dump_json(include=set(ProposalDraft.model_fields))),
-        HumanMessage(prompts.load("graph/propose_retry", violations=_bullets(violations))),
+        HumanMessage(prompts.load("graph/propose_retry", violations=_reasons(violations))),
     ]
     retry = _read(await _ask(deps, incident_id, messages), deps.registry, host_id, source)
     again = check(retry)
@@ -303,13 +289,8 @@ def _unclear_names(proposal: Proposal, registry: Registry) -> list[Violation]:
             continue
         as_id = step.target.lower()
         if any(c.name != step.target and c.id.startswith(as_id) for c in containers):
-            why = (
-                f"{step.target} is a container's name and also the start of another container's"
-                " id, so the human could not tell which one it acts on; leave it out, and if the"
-                " fix needs it, answer no_action and say in human_instructions what to do"
-            )
             shown = Shown.of("refusal/unclear_name", target=step.target)
-            found.append(step_violation("not_found", number, step, why, shown))
+            found.append(step_violation("not_found", number, step, english(shown), shown))
     return found
 
 
@@ -389,21 +370,18 @@ def _refused(
 ) -> Proposal:
     """`no_action` that tells the human what was refused and why, and what they can do next."""
     shown_steps = [redacted_step(s) for s in proposal.steps]
-    steps = [f"{n}. {_step(s)}" for n, s in enumerate(shown_steps, start=1)]
-    lines = [REFUSED, "Why:", _bullets(violations), "The refused plan:", *(steps or ["no steps"])]
-    lines.append(f"The model's reason: {proposal.reason}")
     advice = _advice(violations, can_instruct=can_instruct, unclear=unclear)
-    lines += advice
     reasons = [_shown_reason(v) for v in violations]
-    told = [
-        SHOWN[REFUSED],
-        Shown.of("proposal/why"),
-        *(Shown.of("proposal/reason_line", reason=r) for r in reasons),
+    head = [SHOWN[REFUSED], Shown.of("proposal/why")]
+    tail = [
         Shown.of("proposal/refused_plan"),
         *([_step_shown(n, s) for n, s in enumerate(shown_steps, start=1)] or [_NO_STEPS]),
         Shown.of("proposal/model_reason", reason=proposal.reason),
         *(SHOWN[line] for line in advice),
     ]
+    told = [*head, *(Shown.of("proposal/reason_line", reason=r) for r in reasons), *tail]
+    # Stored in English with each reason as the plan check wrote it (`Violation.text`).
+    lines = [*map(english, head), _reasons(violations), *map(english, tail)]
     return Proposal(
         kind="no_action",
         refused=True,
@@ -451,16 +429,17 @@ def _step_shown(number: int, step: PlanStep) -> Shown:
     return Shown.of("proposal/refused_step", **values, host=step.host_id)
 
 
-def _bullets(violations: list[Violation]) -> str:
-    return "\n".join(f"- {v.text}" for v in violations)
+def _reasons(violations: list[Violation]) -> str:
+    return describe.bullets([v.text for v in violations])
 
 
 def _step(step: PlanStep) -> str:
     params = ", ".join(f"{k}={v}" for k, v in sorted(step.params.items()))
-    return f"{step.action} {step.target} on {step.host_id}" + (f" ({params})" if params else "")
+    return describe.step(step.action, step.target, step.host_id, params)
 
 
-# The prompt's sections are Bleep's own data, one fact per line, "none" when there is nothing.
+# The prompt's sections are Bleep's own data, one fact per line, the `none` part when there is
+# nothing (`graph/describe.py`).
 # Memory is Bleep's own too; `describe_past` and `describe_fact` wrap any quote in it as untrusted.
 
 
@@ -474,18 +453,18 @@ def _prompt(
     return prompts.load(
         "graph/propose",
         subject=_subject(subject, context),
-        source=_source(deps, subject) or "none",
-        diagnosis=_diagnosis(diagnosis),
+        source=_source(deps, subject) or part("propose_no_source"),
+        diagnosis=describe.diagnosis(diagnosis),
         containers=_containers(context),
         off_limits=_off_limits(deps, subject.host_id),
-        rules="\n".join(f"- {r}" for r in rules) or "none",
-        similar=_lines([describe_past(p) for p in context.similar] if context else []),
-        facts=_lines([describe_fact(f) for f in context.facts] if context else []),
-        urls="\n".join(f"- {u}" for u in _urls(deps, subject)) or "none",
+        rules=describe.bullets(rules),
+        similar=describe.bullets([describe_past(p) for p in context.similar] if context else []),
+        facts=describe.bullets([describe_fact(f) for f in context.facts] if context else []),
+        urls=describe.bullets(_urls(deps, subject)),
         host_id=subject.host_id,
-        actions=", ".join(f"`{a}`" for a in sorted(enabled)) or "none",
+        actions=", ".join(f"`{a}`" for a in sorted(enabled)) or part("none"),
         mcp=mcp,
-        instructions="\n".join(f"{n}. {t}" for n, t in enumerate(instructions, 1)) or "none",
+        instructions="\n".join(f"{n}. {t}" for n, t in enumerate(instructions, 1)) or part("none"),
         previous=_previous(state.get("proposal")),
         unsure=prompts.load("graph/propose_unsure") if diagnosis.unsure else "",
         untrusted_rule=prompts.load("untrusted/propose").strip(),
@@ -493,41 +472,20 @@ def _prompt(
     )
 
 
-def _lines(lines: list[str]) -> str:
-    return "\n".join(f"- {line}" for line in lines) or "none"
-
-
 def _subject(subject: Subject, context: GatherContext | None) -> str:
     if subject.kind == "host":
-        return f"Host `{subject.host_id}` as a whole."
+        return part("propose_subject_host", host=subject.host_id)
     name = service_name(subject, context)
     shown = name if name.startswith("<untrusted ") else f"`{name}`"
-    return f"Service {shown} on host `{subject.host_id}`."
-
-
-def _diagnosis(d: Diagnosis) -> str:
-    lines = [
-        f"Root cause: {d.root_cause}",
-        f"Category: {d.category}",
-        f"Confidence: {d.confidence:.2f}",
-    ]
-    if d.affected_services:
-        lines.append(f"Affected services: {', '.join(d.affected_services)}")
-    lines += [f"- {e.source}: {e.detail}" for e in d.evidence]
-    return "\n".join(lines)
+    return part("propose_subject_service", name=shown, host=subject.host_id)
 
 
 def _containers(context: GatherContext | None) -> str:
-    if context is None:
-        return "none known"
-    lines = []
-    for c in context.containers:
-        state = c.state + (f" (exit {c.exit_code})" if c.exit_code is not None else "")
-        lines.append(
-            f"- {c.name}: {state}, health {c.health}, restarts {c.restart_count}, image {c.image}"
-        )
-    lines += [f"- {m.name}: running, {m.mem_percent:.0f}% memory" for m in context.top_memory]
-    return "\n".join(lines) or "none known"
+    """The service's containers and, for a host, the ones using the most memory."""
+    sections = [describe.containers(context)] if context and context.containers else []
+    if memory := describe.top_memory(context):
+        sections.append(memory)
+    return "\n\n".join(sections) or part("none")
 
 
 def _off_limits(deps: GraphDeps, host_id: str) -> str:
@@ -544,10 +502,10 @@ def _off_limits(deps: GraphDeps, host_id: str) -> str:
         and (app := app_protected_by(c, protected))
     ]
     own = [c.name for c in containers if is_self(c.labels)]
-    lines = [f"- {n} (protected)" for n in protected]
-    lines += [f"- {n} (protected: Coolify application {app})" for n, app in apps]
-    lines += [f"- {n} (Bleep itself)" for n in own]
-    return "\n".join(lines) or "none"
+    lines = [part("propose_protected", name=n) for n in protected]
+    lines += [part("propose_protected_app", name=n, app=app) for n, app in apps]
+    lines += [part("propose_self", name=n) for n in own]
+    return describe.bullets(lines)
 
 
 def _urls(deps: GraphDeps, subject: Subject) -> list[str]:
@@ -557,9 +515,9 @@ def _urls(deps: GraphDeps, subject: Subject) -> list[str]:
 
 def _previous(proposal: Proposal | None) -> str:
     if proposal is None:
-        return "none"
+        return part("none")
     lines = [f"{proposal.kind}: {proposal.reason}"]
     lines += [f"{n}. {_step(s)}" for n, s in enumerate(proposal.steps, start=1)]
     if proposal.human_instructions:
-        lines.append(f"Instructions you gave: {proposal.human_instructions}")
+        lines.append(part("propose_previous_told", instructions=proposal.human_instructions))
     return "\n".join(lines)

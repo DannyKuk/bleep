@@ -1,0 +1,1 @@
+instructed on {day}: {text}

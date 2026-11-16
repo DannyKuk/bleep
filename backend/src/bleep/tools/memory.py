@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from bleep.memory.text import describe_past
 from bleep.schemas.graph import PastIncident
-from bleep.tools.common import ArgText, described, invalid_arguments, say
+from bleep.tools.common import ArgText, described, invalid_arguments, say, untrusted_rule
 from bleep.tools.registry import ToolContext, ToolSpec
 
 RECALL_K = 5
@@ -41,7 +41,9 @@ def recall_specs(memory: Recall) -> list[ToolSpec]:
 
         return StructuredTool(
             name="recall_incidents",
-            description=say(ctx, "tools/recall_incidents", k=str(RECALL_K)),
+            description=say(
+                ctx, "tools/recall_incidents", k=str(RECALL_K), untrusted_rule=untrusted_rule(ctx)
+            ),
             args_schema=described(ctx, RecallArgs),
             coroutine=call,
             handle_validation_error=invalid_arguments(ctx),

@@ -55,13 +55,18 @@ OVERRIDABLE = frozenset(
 # `graph/verify_unproven` tells it not to start again a container a human approved stopping.
 # `talk/` reads what the person writes and holds the fixed lines that refuse it (#401). `shown/`
 # holds the fixed texts other parts write for the person, stored in English (#427). `api/` holds
-# the API's error texts, which a person reads and no model does (#456). `tools/` and `plugins/`
-# hold the tool descriptions, their arguments' (`args/`, #636) and the sentences a tool answers
-# with, which say what a tool may do and are filled with `untrusted/tool_output`, the one rule on
-# untrusted tool output (#624).
+# the API's error texts, which a person reads and no model does (#456). `graph/parts/` holds the
+# headings, labels and fallbacks the graph nodes fill their prompts' sections with
+# (`graph/describe.py`, #623), which are not prompts of their own; `memory/` the words of the
+# records memory stores and the lines a prompt shows them in (#623), so an override never changes
+# what is stored. `tools/` and `plugins/` hold the tool descriptions, their arguments' (`args/`,
+# #636) and the sentences a tool answers with, which say what a tool may do and are filled with
+# `untrusted/tool_output`, the one rule on untrusted tool output (#624).
 NOT_OVERRIDABLE_AREAS = (
     "api/",
     "evals/",
+    "graph/parts/",
+    "memory/",
     "notify/",
     "plugins/",
     "shown/",
