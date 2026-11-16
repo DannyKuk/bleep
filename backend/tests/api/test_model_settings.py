@@ -534,7 +534,7 @@ def test_the_view_shows_each_providers_models_with_nothing_stored(app, saved):
         "local": OPENROUTER_IDS,
     }
     assert app.get("/api/settings").json()["models_by_provider"]["local"]["local_model"] == (
-        "openai/gpt-oss-20b"
+        "qwen/qwen3.8-27b"
     )
 
 
@@ -593,5 +593,5 @@ def test_the_view_offers_example_ids_for_each_provider(app):
     assert {provider: ids["examples"] for provider, ids in shown.items()} == {
         "openrouter": ["openai/gpt-6-luna", "openai/gpt-6.1-terra", "openai/gpt-6.1-sol"],
         "anthropic": ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"],
-        "local": ["openai/gpt-oss-20b"],
+        "local": ["qwen/qwen3.8-27b", "openai/gpt-oss-20b"],
     }

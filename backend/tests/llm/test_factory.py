@@ -11,7 +11,7 @@ def test_defaults():
     assert settings.provider == "openrouter"
     assert settings.model == settings.cheap_model == "openai/gpt-6-luna"
     assert settings.local_base_url == "http://host.docker.internal:1234/v1"
-    assert settings.local_model == "openai/gpt-oss-20b"
+    assert settings.local_model == "qwen/qwen3.8-27b"
     assert settings.temperature == 0
 
 
@@ -37,7 +37,7 @@ def test_local_provider_builds_chat_openai_with_base_url():
     model = chat_model(settings, "main")
     assert isinstance(model, ChatOpenAI)
     assert model.openai_api_base == "http://localhost:9/v1"
-    assert model.model_name == "openai/gpt-oss-20b"
+    assert model.model_name == "qwen/qwen3.8-27b"
     assert model.temperature == 0
 
 

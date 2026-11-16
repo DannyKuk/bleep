@@ -18,7 +18,7 @@ How it works and why is in [docs/design/evals.md](../../docs/design/evals.md). T
 3. Point Bleep's model settings at the model under test. For a local model:
 
    ```bash
-   export LLM_PROVIDER=local LOCAL_BASE_URL=http://localhost:1235/v1 LOCAL_MODEL=openai/gpt-oss-20b
+   export LLM_PROVIDER=local LOCAL_BASE_URL=http://localhost:1235/v1 LOCAL_MODEL=qwen/qwen3.8-27b
    ```
 
    The harness runs on this machine, not in a container, so a `host.docker.internal` URL from `.env` is read as `localhost`. The same goes for the hosts file's URLs: the backend checks the shop at `http://host.docker.internal:8080`, shop-proxy's published port, and the harness at `http://localhost:8080`. A URL on a bare container name (`http://shop-web:8000`) does not answer from here; the harness logs it.

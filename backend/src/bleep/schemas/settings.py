@@ -37,7 +37,7 @@ ANTHROPIC_DEFAULT_CHEAP_MODEL = "claude-haiku-5-5"
 MODEL_EXAMPLES: dict[ModelProvider, tuple[str, ...]] = {
     "openrouter": ("openai/gpt-6-luna", "openai/gpt-6.1-terra", "openai/gpt-6.1-sol"),
     "anthropic": ("claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"),
-    "local": ("openai/gpt-oss-20b",),
+    "local": ("qwen/qwen3.8-27b", "openai/gpt-oss-20b"),
 }
 
 
@@ -56,7 +56,7 @@ class ModelSettings(BaseSettings):
         validation_alias=_env("LOCAL_BASE_URL", "local_base_url"),
     )
     local_model: str = Field(
-        "openai/gpt-oss-20b", validation_alias=_env("LOCAL_MODEL", "local_model")
+        "qwen/qwen3.8-27b", validation_alias=_env("LOCAL_MODEL", "local_model")
     )
     temperature: float = 0
     openrouter_api_key: SecretStr | None = Field(

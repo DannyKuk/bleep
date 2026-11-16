@@ -95,7 +95,7 @@ def test_the_other_providers_keep_their_defaults():
     assert (local.model, local.cheap_model, local.local_model) == (
         "openai/gpt-6-luna",
         "openai/gpt-6-luna",
-        "openai/gpt-oss-20b",
+        "qwen/qwen3.8-27b",
     )
 
 

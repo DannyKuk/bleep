@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 PRICES: dict[str, tuple[float, float]] = {
     "openai/gpt-6-luna": (0.10, 0.50),  # measured on OpenRouter, see molecula chat-model notes
     "openai/gpt-oss-20b": (0.0, 0.0),
+    "qwen/qwen3.8-27b": (0.0, 0.0),
     "claude-sonnet-5-5": (2.0, 10.0),
     "claude-haiku-5-5": (0.10, 0.50),
     "claude-opus-5-5": (4.0, 20.0),
