@@ -90,7 +90,9 @@ Each `misroute` plan gave the resume flag as its reason:
 - Run 2: "Restarting shop-proxy may resume the misrouted configuration saved through Caddy's admin API; the evidence does not establish that its start command loads the intended file instead."
 - Run 3: "shop-proxy starts with Caddy's `--resume` flag, and the evidence does not show that startup will prefer the documented route over the saved misroute."
 
-**What it shows:** with the extra sentence, luna weighed `--resume` against `--config` in all three runs and did not restart. Three runs are not a rate: they show the misreading from the run before did not come back, not that it never will. `db-down` is one run, a no-regression check. Haiku, gemini, Sonnet, gpt-oss-20b and Qwen were not run on this change; the next full round covers them.
+**What it shows:** with the extra sentence, luna weighed `--resume` against `--config` in all three runs and did not restart. Three runs are not a rate: they show the misreading from the run before did not come back, not that it never will. `db-down` is one run, a no-regression check.
+
+The full round after #645 ([six models, second round](models-2026-11-16-2.md)) ran `misroute` once on each of the six models at `b124ae95`: all six proposed no action, and luna, gemini, Haiku, Sonnet and Qwen gave `--resume` as the reason. gpt-oss-20b blamed the Caddyfile on the host.
 
 Spend: OpenRouter $9.4446 → $9.4607 used, +$0.016; the runs' own costs add up to $0.018. The backend was stopped, so nothing else used the key. Judge on `claude-code`, $0. Raw data: [`scenarios-20261116-143733`](data/scenarios-20261116-143733.jsonl), [`-144431`](data/scenarios-20261116-144431.jsonl).
 
