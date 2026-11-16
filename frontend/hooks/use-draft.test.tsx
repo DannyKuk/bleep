@@ -1,7 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { useDraft } from "@/components/dev/section";
+import { useDraft } from "@/hooks/use-draft";
 
 type Form = { a: string; b: string };
 

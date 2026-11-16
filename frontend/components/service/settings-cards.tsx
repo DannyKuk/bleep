@@ -5,7 +5,8 @@ import { type ReactNode, useState } from "react";
 
 import { HealthBadge } from "@/components/overview/health-badge";
 import { CheckStrip } from "@/components/service/check-strip";
-import { useLoaded, useStaleSaving } from "@/components/settings/loaded";
+import { useStaleSaving } from "@/components/settings/loaded";
+import { useLoaded } from "@/hooks/use-loaded";
 import { ListEditor } from "@/components/settings/rules";
 import { SaveError, useSaving } from "@/components/settings/save-error";
 import { UrlEditor } from "@/components/settings/urls";

@@ -20,7 +20,7 @@ import {
 import { useOverall } from "@/components/overall-state";
 import { useTimeZone } from "@/components/preferences";
 import { Input } from "@/components/ui/input";
-import { usePoll } from "@/hooks/use-poll";
+import { POLL_MS, usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
 import type { HostView, Incident } from "@/lib/api-types";
 import { formatDateTime } from "@/lib/format";
@@ -28,7 +28,6 @@ import { type Messages, useLanguage, useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 const LIMIT = 50;
-const POLL_MS = 10_000;
 
 export function subjectText({ subject }: Incident, t: Messages): string {
   return subject.kind === "host"

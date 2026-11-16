@@ -14,10 +14,11 @@ import { QuietButton } from "@/components/quiet/quiet-button";
 import { QuietPill } from "@/components/quiet/quiet-pill";
 import { SaveLockProvider } from "@/components/save-lock";
 import { HostSettings } from "@/components/settings/hosts";
-import { useLoaded, useStaleSaving } from "@/components/settings/loaded";
+import { useStaleSaving } from "@/components/settings/loaded";
+import { useLoaded } from "@/hooks/use-loaded";
 import { Failed, Loading } from "@/components/status-notes";
 import { useTimeZone } from "@/components/preferences";
-import { type Poll, usePoll } from "@/hooks/use-poll";
+import { POLL_MS, usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
 import type { HostView, IncidentListItem, QuietView, ServiceView } from "@/lib/api-types";
 import { formatDateTime, formatSince } from "@/lib/format";
@@ -30,13 +31,10 @@ import type { Language, SettingsUpdate, SettingsView } from "@/lib/settings-type
 import { cn } from "@/lib/utils";
 import type { Zone } from "@/lib/zone";
 
-const POLL_MS = 10_000;
 const LINK =
   "font-bold text-accent hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
 
 const TITLE = "text-3xl font-extrabold wrap-anywhere hyphens-auto md:text-4xl";
-
-const fetchServices = (signal: AbortSignal) => apiFetch<ServiceView[]>("/api/services", { signal });
 
 /** The line under a quiet host's title: since or until when Bleep is silent about it. */
 function quietNote(quiet: QuietView, zone: Zone, language: Language): string {
@@ -112,22 +110,25 @@ function ServiceList({
   hostId,
   name,
   services,
+  error,
   configured,
 }: {
   hostId: string;
   name: string;
-  services: Poll<ServiceView[]>;
+  /** Every service the overall poll read; undefined until its first read answers. */
+  services: ServiceView[] | undefined;
+  error: Error | undefined;
   configured: string[];
 }) {
   const t = useT();
-  const read = services.data !== undefined;
-  const seen = (services.data ?? []).filter((service) => service.host_id === hostId);
+  const read = services !== undefined;
+  const seen = (services ?? []).filter((service) => service.host_id === hostId);
   const others = unseenKeys(hostId, configured, seen);
   return (
     <div className="flex flex-col gap-2">
       {!read &&
-        (services.error ? (
-          <Failed>{t.host.loadFailed.services(services.error.message)}</Failed>
+        (error ? (
+          <Failed>{t.host.loadFailed.services(error.message)}</Failed>
         ) : (
           <Loading>{t.host.loading.services}</Loading>
         ))}
@@ -242,7 +243,6 @@ function Host({ id }: { id: string }) {
   const router = useRouter();
   const overall = useOverall();
   const t = useT();
-  const services = usePoll(fetchServices, POLL_MS);
   const fetchLastIncident = useCallback(
     (signal: AbortSignal) =>
       apiFetch<IncidentListItem[]>(`/api/incidents?host_id=${encodeURIComponent(id)}&limit=1`, {
@@ -257,7 +257,7 @@ function Host({ id }: { id: string }) {
   const host = overall.hosts?.find((candidate) => candidate.id === id);
   const view = settings.data;
   const hostSettings = view?.hosts.find((candidate) => candidate.id === id);
-  const onHost = (services.data ?? []).filter((service) => service.host_id === id);
+  const onHost = (overall.services ?? []).filter((service) => service.host_id === id);
   const missing =
     overall.hosts !== undefined &&
     host === undefined &&
@@ -273,10 +273,6 @@ function Host({ id }: { id: string }) {
       async () => settings.set(await putSettings<SettingsView>(update, version)),
       readSettings,
     );
-  const refresh = () => {
-    overall.refresh();
-    services.refresh();
-  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -313,7 +309,7 @@ function Host({ id }: { id: string }) {
               host={host}
               services={onHost.length}
               last={lastIncident.data?.[0]}
-              onChanged={refresh}
+              onChanged={overall.refresh}
             />
           ) : (
             <h1 className={TITLE}>{name}</h1>
@@ -330,7 +326,8 @@ function Host({ id }: { id: string }) {
             <ServiceList
               hostId={id}
               name={name}
-              services={services}
+              services={overall.services}
+              error={overall.servicesError}
               configured={Object.keys(hostSettings?.services ?? {})}
             />
           </Panel>

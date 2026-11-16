@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { IncidentEvent } from "@/lib/api-types";
-import { mergeEvents, RETRY_MS, useIncidentStream } from "@/lib/use-incident-stream";
+import { mergeEvents, RETRY_MS, useIncidentStream } from "@/hooks/use-incident-stream";
 
 function event(seq: number, kind = "notice"): IncidentEvent {
   return {

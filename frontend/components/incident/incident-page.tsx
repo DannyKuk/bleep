@@ -2,7 +2,7 @@
 
 import { ArrowLeft, ChevronRight, Loader2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
 import { DiagnosisCard } from "@/components/incident/diagnosis-card";
 import { ExpectedButton } from "@/components/incident/expected-button";
@@ -22,7 +22,7 @@ import { ReasoningStream, toolSteps } from "@/components/incident/reasoning-stre
 import { Repeats } from "@/components/incident/repeats";
 import { ReportView } from "@/components/incident/report-view";
 import { Timeline } from "@/components/incident/timeline";
-import { usePhone } from "@/components/incident/use-phone";
+import { usePhone } from "@/hooks/use-phone";
 import { useOverall } from "@/components/overall-state";
 import { Panel } from "@/components/panel";
 import { QuietMenu } from "@/components/quiet/quiet-menu";
@@ -35,51 +35,31 @@ import type {
   IncidentStatus,
 } from "@/lib/api-types";
 import { useT } from "@/lib/i18n";
-import { useIncidentStream } from "@/lib/use-incident-stream";
+import { useIncidentStream } from "@/hooks/use-incident-stream";
+import { POLL_MS, type Poll, usePoll } from "@/hooks/use-poll";
 import { cn } from "@/lib/utils";
 
 // Events that never change the incident's findings; every other kind reloads the detail.
 const NO_RELOAD = new Set(["tool_call", "tool_result"]);
-// The runner sets the incident's status after the run's last event (awaiting approval, resolved),
-// so the detail is also read again on this interval while the tab is visible.
-export const DETAIL_POLL_MS = 10_000;
 
 function reloadKey(events: IncidentEvent[]): number {
   return events.findLast((event) => !NO_RELOAD.has(event.kind))?.seq ?? 0;
 }
 
-interface Loaded {
-  data?: IncidentDetail;
-  error?: Error;
-}
-
 /**
- * The incident's findings, read again whenever `version` changes and every `DETAIL_POLL_MS` while
- * the tab is visible; the newest request wins.
+ * The incident's findings, read again whenever `version` changes and on every poll while the tab
+ * is visible (the runner sets the incident's status after the run's last event, so no event
+ * announces it); the newest request wins.
  */
-function useIncidentDetail(id: string, version: string): Loaded {
-  const [state, setState] = useState<Loaded>({});
-  const [ticks, setTicks] = useState(0);
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (document.visibilityState !== "hidden") setTicks((count) => count + 1);
-    }, DETAIL_POLL_MS);
-    return () => clearInterval(timer);
-  }, []);
-  useEffect(() => {
-    const controller = new AbortController();
-    apiFetch<IncidentDetail>(`/api/incidents/${encodeURIComponent(id)}`, {
-      signal: controller.signal,
-    })
-      .then((data) => setState({ data }))
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return;
-        const failure = error instanceof Error ? error : new Error(String(error));
-        setState((prev) => ({ data: prev.data, error: failure }));
-      });
-    return () => controller.abort();
-  }, [id, version, ticks]);
-  return state;
+function useIncidentDetail(id: string, version: string): Poll<IncidentDetail> {
+  const fetchDetail = useCallback(
+    (signal: AbortSignal) =>
+      apiFetch<IncidentDetail>(`/api/incidents/${encodeURIComponent(id)}`, { signal }),
+    // `version` is no input of the fetch: a new one makes a new fetcher, which polls at once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [id, version],
+  );
+  return usePoll(fetchDetail, POLL_MS);
 }
 
 // A quiet choice has nothing left to silence once the incident ended, and would cut short a run

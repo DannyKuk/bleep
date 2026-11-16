@@ -14,7 +14,7 @@ import { formatCount, formatDateTime } from "@/lib/format";
 import { useLanguage, useT } from "@/lib/i18n";
 import { incidentMood } from "@/lib/mood";
 import { serviceHref } from "@/lib/routes";
-import type { StreamStatus } from "@/lib/use-incident-stream";
+import type { StreamStatus } from "@/hooks/use-incident-stream";
 import { cn } from "@/lib/utils";
 
 const DOT: Record<StreamStatus, string> = {
