@@ -1157,8 +1157,8 @@ def with_mcp(
 async def test_without_mcp_call_enabled_the_prompt_is_byte_for_byte_as_before(tmp_path, plugin):
     """The golden file is Propose's prompt as Bleep rendered it before #118, so the scenario
     evals measured before still hold while the MCP plugin is off. It was rendered again when #623
-    gave every empty list the same `(none)` and when #642 added the rule on restarting for a
-    config loaded at runtime."""
+    gave every empty list the same `(none)`, when #642 added the rule on restarting for a
+    config loaded at runtime and when #645 added a resume flag to it."""
     env, state = await setup(tmp_path, acting(restart("shop-web-1")))
     if plugin != "none":
         with_mcp(env, None, on=plugin != "switched off", enabled=False)

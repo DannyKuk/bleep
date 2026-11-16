@@ -1,0 +1,63 @@
+{
+  "started_at": "2026-11-16T14:44:31.725218Z",
+  "finished_at": "2026-11-16T14:46:06.270487Z",
+  "model": "openai/gpt-6-luna",
+  "provider": "openrouter",
+  "judge": "claude-code",
+  "repeat": 1,
+  "scenarios": [
+    {
+      "id": "db-down",
+      "fault": "db-down",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "The database container shop-db is stopped, so shop-web cannot connect to its database and the shop's API fails.",
+        "category": "dependency",
+        "action": {
+          "kind": "act",
+          "steps": [
+            {
+              "action": "docker.start",
+              "target": "shop-db",
+              "tool": null,
+              "arguments": null,
+              "params": null
+            }
+          ],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false,
+      "scripted": null,
+      "coolify": null
+    }
+  ],
+  "commit": "5177536a",
+  "command": "uv run --group evals python -m evals.run --only db-down --repeat 1",
+  "reset_shop": true,
+  "knowledge": true,
+  "repo_docs": [
+    "DannyKuk/bleep: demo/shop/docs/deploy.md",
+    "DannyKuk/bleep: demo/shop/docs/services.md"
+  ],
+  "timeout_s": null,
+  "raw": "../../data/evals/scenarios-20261116-144431.jsonl",
+  "report": "docs/evals/scenarios-2026-11-16-12.md",
+  "grader": null,
+  "grades": null
+}

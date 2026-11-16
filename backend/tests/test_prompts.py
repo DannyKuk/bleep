@@ -233,8 +233,9 @@ def test_the_prompts_with_a_fixed_part_render_as_they_did_before_it_moved_out(na
     a config loaded while it ran, `graph-investigate.txt` when #364 asked for that docs search,
     and `graph-propose.txt` when #276 kept Propose's plan to the steps the diagnosis needs, when
     #365 asked for `could_run`, when #561 kept it for a fix only the person can confirm, when
-    #572 told it the service's source and kept Coolify actions to Coolify's and when #642 kept a
-    restart from fixing a config loaded at runtime without evidence of what it starts from.
+    #572 told it the service's source and kept Coolify actions to Coolify's, when #642 kept a
+    restart from fixing a config loaded at runtime without evidence of what it starts from and
+    when #645 kept a config file in the start command from counting next to a resume flag.
     `{look}` (#410) and `{url_checks}` (#423) are filled as they are for a run no look
     opened, and `{language}` (#374) as it is in English, so the fixtures also show that such a
     run's prompt did not change."""
