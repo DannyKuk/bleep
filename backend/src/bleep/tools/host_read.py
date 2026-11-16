@@ -5,20 +5,28 @@ The command allowlist lives in `hosts.shell` and is enforced there; this tool on
 """
 
 import logging
+from typing import Annotated
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from bleep.hosts.shell import COMMAND_TIMEOUT_S, CommandNotAllowed, allowed_text, run_allowed
 from bleep.hosts.ssh import SshUnavailable
-from bleep.tools.common import guard_result, invalid_arguments, say, untrusted_rule
+from bleep.tools.common import (
+    ArgText,
+    described,
+    guard_result,
+    invalid_arguments,
+    say,
+    untrusted_rule,
+)
 from bleep.tools.registry import ToolContext, ToolSpec
 
 log = logging.getLogger(__name__)
 
 
 class HostCommandArgs(BaseModel):
-    command: str = Field(description="One of the allowed commands, typed exactly as listed.")
+    command: Annotated[str, ArgText("tools/args/command")]
 
 
 async def _host_command(ctx: ToolContext, command: str) -> str:
@@ -62,7 +70,7 @@ def _build(ctx: ToolContext) -> StructuredTool:
         description=say(
             ctx, "tools/host_command", commands=allowed_text(), untrusted_rule=untrusted_rule(ctx)
         ),
-        args_schema=HostCommandArgs,
+        args_schema=described(ctx, HostCommandArgs),
         coroutine=call,
         handle_validation_error=invalid_arguments(ctx),
     )

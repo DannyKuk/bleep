@@ -7,7 +7,7 @@ first and then cut to an equal share of the 8,000 characters, its title, heading
 included, so the final guard has nothing left to grow and the closest hit is never the one cut.
 """
 
-from typing import Protocol
+from typing import Annotated, Protocol
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -16,7 +16,14 @@ from bleep.guard.redact import redact_with_count
 from bleep.guard.sanitize import MAX_CHARS, strip_control
 from bleep.guard.untrusted import escape_untrusted
 from bleep.schemas.knowledge import KnowledgeHit, KnowledgeSource
-from bleep.tools.common import guard_result, invalid_arguments, say, untrusted_rule
+from bleep.tools.common import (
+    ArgText,
+    described,
+    guard_result,
+    invalid_arguments,
+    say,
+    untrusted_rule,
+)
 from bleep.tools.registry import ToolContext, ToolSpec
 
 SEARCH_K = 5
@@ -38,14 +45,10 @@ class Searcher(Protocol):
 
 
 class KnowledgeArgs(BaseModel):
-    query: str = Field(min_length=1, max_length=500, description="A question or an error message.")
-    sources: list[KnowledgeSource] | None = Field(
-        None,
-        description=(
-            "Only these: docker (Docker and Compose docs), repo (the services' repo docs), "
-            "incident (past incident reports). Leave out to search all."
-        ),
+    query: Annotated[str, ArgText("tools/args/knowledge_query")] = Field(
+        min_length=1, max_length=500
     )
+    sources: Annotated[list[KnowledgeSource] | None, ArgText("tools/args/sources")] = None
 
 
 def _cut(text: str, limit: int) -> str:
@@ -107,7 +110,7 @@ def knowledge_specs(index: Searcher) -> list[ToolSpec]:
             description=say(
                 ctx, "tools/knowledge_search", k=str(SEARCH_K), untrusted_rule=untrusted_rule(ctx)
             ),
-            args_schema=KnowledgeArgs,
+            args_schema=described(ctx, KnowledgeArgs),
             coroutine=call,
             handle_validation_error=invalid_arguments(ctx),
         )

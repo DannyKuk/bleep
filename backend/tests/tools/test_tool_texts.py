@@ -1,9 +1,12 @@
 import ast
 from pathlib import Path
+from typing import Annotated
 
 import httpx
 import pytest
-from pydantic import SecretStr
+from langchain_core.tools import BaseTool
+from langchain_core.utils.function_calling import convert_to_openai_tool
+from pydantic import BaseModel, Field, SecretStr, ValidationError
 
 from bleep import prompts
 from bleep.hosts.github import GithubClient
@@ -11,6 +14,7 @@ from bleep.hosts.registry import Registry
 from bleep.plugins.coolify.plugin import CoolifyPlugin
 from bleep.plugins.mcp_url import McpUrlPlugin
 from bleep.plugins.registry import PluginRegistry
+from bleep.tools.common import ArgText, described
 from bleep.tools.default import default_registry
 from bleep.tools.registry import ToolContext, ToolRegistry
 
@@ -66,9 +70,13 @@ def every_tool() -> ToolRegistry:
     return default_registry(prompts.load, Memory(), plugins, github, Index(), deploys=plugins)
 
 
-def descriptions() -> dict[str, str]:
+def built() -> list[BaseTool]:
     ctx = ToolContext("inc-1", "a", Registry([]), texts=prompts.load)
-    return {spec.name: spec.build(ctx).description for spec in every_tool().specs()}
+    return [spec.build(ctx) for spec in every_tool().specs()]
+
+
+def descriptions() -> dict[str, str]:
+    return {tool.name: tool.description for tool in built()}
 
 
 def test_the_table_names_every_registered_tool():
@@ -90,6 +98,36 @@ def test_the_untrusted_note_is_one_text_and_says_how_the_output_is_wrapped():
     assert all(description.count(note) <= 1 for description in descriptions().values())
 
 
+@pytest.mark.parametrize("tool", built(), ids=lambda tool: tool.name)
+def test_every_argument_of_every_tool_has_a_description(tool):
+    schema = convert_to_openai_tool(tool)["function"]["parameters"]
+    for name, argument in schema.get("properties", {}).items():
+        assert argument.get("description", "").strip(), f"{tool.name}.{name}"
+
+
+def test_an_argument_without_a_text_is_refused_when_the_tool_is_built():
+    class Args(BaseModel):
+        container: Annotated[str, ArgText("tools/args/container")]
+        tail: int = 10
+
+    ctx = ToolContext("inc-1", "a", Registry([]), texts=prompts.load)
+    with pytest.raises(TypeError, match=r"Args\.tail needs one ArgText"):
+        described(ctx, Args)
+
+
+def test_the_described_arguments_validate_as_before():
+    class Args(BaseModel):
+        tail: Annotated[int, ArgText("tools/args/tail")] = Field(200, ge=1, le=1000)
+
+    ctx = ToolContext("inc-1", "a", Registry([]), texts=prompts.load)
+    schema = described(ctx, Args)
+    assert schema(tail=5).tail == 5
+    assert schema().tail == 200
+    with pytest.raises(ValidationError):
+        schema(tail=0)
+    assert described(ctx, Args) is schema
+
+
 def test_a_tool_built_outside_the_registry_has_no_texts_to_load():
     spec = next(s for s in every_tool().specs() if s.name == "list_containers")
     with pytest.raises(LookupError, match="read_tools"):
@@ -103,12 +141,12 @@ def test_the_registry_gives_its_tools_the_texts():
 
 
 # The calls that name a prompt file, and which of their arguments is the name.
-NAME_AT = {"say": 1, "said": 1, "DeployUnknown": 0}
+NAME_AT = {"say": 1, "said": 1, "DeployUnknown": 0, "ArgText": 0}
 
 
 def said_texts() -> list[tuple[str, str, set[str]]]:
-    """Every `say(ctx, "<name>", ...)`, `said(texts, "<name>", ...)` and
-    `DeployUnknown("<name>", ...)` in `tools/` and `plugins/` whose name is written out: where it
+    """Every `say(ctx, "<name>", ...)`, `said(texts, "<name>", ...)`, `DeployUnknown("<name>",
+    ...)` and `ArgText("<name>")` in `tools/` and `plugins/` whose name is written out: where it
     is, the name and the values it fills. A reply on an error path runs only when that error
     happens, so a wrong name or value would otherwise show only then."""
     source = Path(prompts.PROMPTS_DIR).parent

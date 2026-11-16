@@ -15,7 +15,7 @@ so. Every GitHub failure comes back as a sentence the model can read and go on f
 import re
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Annotated, Protocol
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -35,7 +35,15 @@ from bleep.hosts.github import (
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.github import Commit, CommitDetail, Comparison, FileChange, RunningCommit
 from bleep.schemas.services import Service
-from bleep.tools.common import guard_result, invalid_arguments, said, say, untrusted_rule
+from bleep.tools.common import (
+    ArgText,
+    described,
+    guard_result,
+    invalid_arguments,
+    said,
+    say,
+    untrusted_rule,
+)
 from bleep.tools.registry import Texts, ToolContext, ToolSpec
 
 Clock = Callable[[], datetime]
@@ -80,28 +88,17 @@ class DeploySource(Protocol):
 
 
 class CommitsArgs(BaseModel):
-    since_hours: int = Field(48, ge=1, le=720, description="How many hours back to look.")
-    path: str | None = Field(
-        None, max_length=200, description="Only commits touching this repo file or folder."
-    )
+    since_hours: Annotated[int, ArgText("tools/args/since_hours")] = Field(48, ge=1, le=720)
+    path: Annotated[str | None, ArgText("tools/args/path")] = Field(None, max_length=200)
 
 
 class DeployedArgs(BaseModel):
-    skip: int = Field(
-        0,
-        ge=0,
-        le=MAX_SKIP,
-        description="How many of the deploy's newest commits to skip; the number the note of "
-        "the part before names.",
-    )
+    skip: Annotated[int, ArgText("tools/args/skip")] = Field(0, ge=0, le=MAX_SKIP)
 
 
 class DiffArgs(BaseModel):
-    sha: str = Field(
-        pattern=r"^[0-9a-fA-F]{7,40}$",
-        description="The commit's sha, as deployed_commits or recent_commits shows it.",
-    )
-    max_chars: int = Field(8000, ge=1000, le=8000, description="Cut the diff at this length.")
+    sha: Annotated[str, ArgText("tools/args/sha")] = Field(pattern=r"^[0-9a-fA-F]{7,40}$")
+    max_chars: Annotated[int, ArgText("tools/args/max_chars")] = Field(8000, ge=1000, le=8000)
 
 
 def _repo(ctx: ToolContext) -> str | None:
@@ -495,7 +492,7 @@ def _tool(
     return StructuredTool(
         name=name,
         description=say(ctx, f"tools/{name}", untrusted_rule=untrusted_rule(ctx)),
-        args_schema=schema,
+        args_schema=described(ctx, schema),
         coroutine=call,
         handle_validation_error=invalid_arguments(ctx),
     )

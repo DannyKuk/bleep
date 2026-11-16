@@ -17,7 +17,8 @@ ToolKind = Literal["read", "act"]
 class Texts(Protocol):
     """Loads a prompt file by name and fills its placeholders: `prompts.load`, which `wiring`
     hands the tool registry, since `tools` and `plugins` cannot import `prompts`. Every tool
-    description and every sentence a tool answers with instead of data is such a file."""
+    description, every argument's description and every sentence a tool answers with instead of
+    data is such a file."""
 
     def __call__(self, name: str, /, **values: str) -> str: ...
 
