@@ -1,3 +1,6 @@
+import ast
+from pathlib import Path
+
 import httpx
 import pytest
 from pydantic import SecretStr
@@ -96,3 +99,37 @@ def test_the_registry_gives_its_tools_the_texts():
     ctx = ToolContext("inc-1", "a", Registry([]))
     built = {t.name: t.description for t in every_tool().read_tools(ctx)}
     assert built["list_containers"] == descriptions()["list_containers"]
+
+
+def said_texts() -> list[tuple[str, str, set[str]]]:
+    """Every `say(ctx, "<name>", ...)` in `tools/` and `plugins/` whose name is written out:
+    where it is, the name and the values it fills. A reply on an error path runs only when that
+    error happens, so a wrong name or value would otherwise show only then."""
+    source = Path(prompts.PROMPTS_DIR).parent
+    found = []
+    for path in sorted([*(source / "tools").rglob("*.py"), *(source / "plugins").rglob("*.py")]):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "say"
+                and isinstance(node.args[1], ast.Constant)
+            ):
+                where = f"{path.name}:{node.lineno}"
+                found.append((where, node.args[1].value, {k.arg for k in node.keywords}))
+    return found
+
+
+def test_every_text_a_tool_says_is_a_prompt_file_filled_with_exactly_its_placeholders():
+    calls = said_texts()
+    assert len(calls) > 30
+    for where, name, values in calls:
+        assert prompts.placeholders(prompts.file_text(name)) == values, where
+
+
+def test_every_tool_text_file_is_a_description_or_said_somewhere():
+    said = {name for _, name, _ in said_texts()}
+    for path in prompts.all_prompt_files():
+        name = path.relative_to(prompts.PROMPTS_DIR).with_suffix("").as_posix()
+        if name.startswith(("tools/", "plugins/")):
+            assert name in said or name.split("/")[-1] in OUTSIDE_TEXT, name
