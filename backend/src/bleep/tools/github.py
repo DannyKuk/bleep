@@ -146,33 +146,29 @@ def _shrink(text: str, room: int) -> str:
     return lines if len(lines) * 2 >= len(part) else part
 
 
-def _failed(error: GithubError, repo: str, client: GithubClient) -> str:
+def _failed(ctx: ToolContext, error: GithubError, repo: str, client: GithubClient) -> str:
     """What went wrong, in Bleep's own words; GitHub's message never reaches the model."""
+    token = client.token_name
     if isinstance(error, RateLimited):
-        until = f" until {error.reset_at:%H:%M} UTC" if error.reset_at else " for now"
-        token = (
-            ""
-            if client.authenticated
-            else f" Without a token ({client.token_name}) it is 60 an hour."
+        until = (
+            say(ctx, "tools/reply/github/until", time=f"{error.reset_at:%H:%M}")
+            if error.reset_at
+            else say(ctx, "tools/reply/github/for_now")
         )
-        return f"GitHub's rate limit is spent{until}.{token} Go on without the repo."
+        if client.authenticated:
+            return say(ctx, "tools/reply/github/rate_limited", until=until)
+        return say(ctx, "tools/reply/github/rate_limited_no_token", until=until, token=token)
     if isinstance(error, TokenRefused):
-        return (
-            f"GitHub refused the token ({client.token_name}): it is wrong, expired or revoked."
-            " Go on without the repo."
-        )
+        return say(ctx, "tools/reply/github/token_refused", token=token)
     if isinstance(error, NotFound):
-        if error.kind == "repo":
-            access = (
-                "the token cannot read it"
-                if client.authenticated
-                else f"it is private and no GitHub token ({client.token_name}) is set"
-            )
-            return f"GitHub has no repo {repo}, or {access}."
-        return f"{error}."
+        if error.kind != "repo":
+            return say(ctx, "tools/reply/github/not_found", error=str(error))
+        if client.authenticated:
+            return say(ctx, "tools/reply/github/no_repo", repo=repo)
+        return say(ctx, "tools/reply/github/no_repo_no_token", repo=repo, token=token)
     if isinstance(error, GithubUnavailable):
-        return f"GitHub could not be read: {error}."
-    return f"GitHub error: {error}."
+        return say(ctx, "tools/reply/github/unavailable", error=str(error))
+    return say(ctx, "tools/reply/github/error", error=str(error))
 
 
 def _commit_lines(c: Commit) -> list[str]:
@@ -481,7 +477,7 @@ def _tool(
         try:
             return await run(repo, **args)
         except GithubError as error:
-            return _failed(error, repo, client)
+            return _failed(ctx, error, repo, client)
 
     return StructuredTool(
         name=name,

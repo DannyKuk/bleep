@@ -11,7 +11,16 @@ import bleep.tools.github as github_tools
 from bleep import prompts
 from bleep.guard.pipeline import guard_text
 from bleep.hosts.config import GithubConfig, SecretRef, ServiceOverrides
-from bleep.hosts.github import GithubClient, github_token, github_token_name
+from bleep.hosts.github import (
+    GithubClient,
+    GithubUnavailable,
+    NotFound,
+    RateLimited,
+    TokenRefused,
+    TooLarge,
+    github_token,
+    github_token_name,
+)
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.github import Commit, CommitDetail, FileChange, RunningCommit
@@ -1052,3 +1061,48 @@ def test_the_description_and_schema_name_skip():
     assert "do not spend them all on commits" in tool.description
     assert "do not read a long deploy" not in tool.description
     assert set(tool.args) == {"skip"}
+
+
+RESET = datetime(2024, 12, 1, 12, 40, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("error", "authenticated", "said"),
+    [
+        (
+            RateLimited("spent", RESET),
+            True,
+            "GitHub's rate limit is spent until 12:40 UTC. Go on without the repo.",
+        ),
+        (
+            RateLimited("spent"),
+            False,
+            "GitHub's rate limit is spent for now. Without a token (GITHUB_TOKEN) it is 60 an"
+            " hour. Go on without the repo.",
+        ),
+        (
+            TokenRefused("401"),
+            True,
+            "GitHub refused the token (GITHUB_TOKEN): it is wrong, expired or revoked."
+            " Go on without the repo.",
+        ),
+        (NotFound("gone", "repo"), True, "GitHub has no repo o/shop, or the token cannot read it."),
+        (
+            NotFound("gone", "repo"),
+            False,
+            "GitHub has no repo o/shop, or it is private and no GitHub token (GITHUB_TOKEN)"
+            " is set.",
+        ),
+        (NotFound("no commit abc1234", "commit"), True, "no commit abc1234."),
+        (
+            GithubUnavailable("GitHub answered 502"),
+            True,
+            "GitHub could not be read: GitHub answered 502.",
+        ),
+        (TooLarge("the file is too large"), True, "GitHub error: the file is too large."),
+    ],
+)
+def test_a_github_failure_is_one_sentence_of_bleeps_own(error, authenticated, said):
+    client = GithubClient(SecretStr("token") if authenticated else None)
+    ctx = ToolContext("inc-1", "a", Registry([]), texts=prompts.load)
+    assert github_tools._failed(ctx, error, "o/shop", client) == said
