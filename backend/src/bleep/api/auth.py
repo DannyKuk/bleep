@@ -1,3 +1,4 @@
+import hashlib
 import hmac
 from typing import Annotated
 
@@ -30,8 +31,9 @@ async def login(
         raise Refusal(429, "too_many_attempts", headers={"Retry-After": str(wait)})
     settings = get_settings(request)
     assert settings.admin_password is not None  # check_settings, and mounted only with a login
-    expected = settings.admin_password.get_secret_value().encode()
-    if not hmac.compare_digest(body.password.encode(), expected):
+    # Digests of equal length, so the time the compare takes says nothing about the length.
+    expected = hashlib.sha256(settings.admin_password.get_secret_value().encode()).digest()
+    if not hmac.compare_digest(hashlib.sha256(body.password.encode()).digest(), expected):
         parts.login_limiter.fail(client)
         raise Refusal(401, "wrong_password")
     response = Response(status_code=204)
