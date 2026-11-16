@@ -3,7 +3,8 @@ import { useRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ChatPanel } from "@/components/chat/chat-panel";
+import { ChatOpenerProvider, useAskBleep } from "@/components/chat/chat-opener";
+import { ChatPanel, SHEET_QUERY } from "@/components/chat/chat-panel";
 import { json } from "@/components/dev/fixtures";
 import { incident } from "@/components/incident/fixtures";
 import { OverallProvider } from "@/components/overall-state";
@@ -662,5 +663,89 @@ describe("ChatPanel in German", () => {
     expect(screen.getByRole("list", { name: "Was ich getan habe" })).toHaveTextContent(
       "Container aufgelistet",
     );
+  });
+});
+
+function AskButton() {
+  const ask = useAskBleep();
+  return (
+    <button type="button" onClick={() => ask("Look at shop")}>
+      Ask from the page
+    </button>
+  );
+}
+
+describe("ChatPanel as a dialog on a phone (#626)", () => {
+  beforeEach(() => {
+    pathname = "/";
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: query === SHEET_QUERY,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    stubBackend(() => json(answer()));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("is a modal dialog, where a wide screen has a plain region", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("button", { name: "Talk to Bleep" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Chat with Bleep" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(screen.queryByRole("region", { name: "Chat with Bleep" })).not.toBeInTheDocument();
+  });
+
+  it("keeps Tab and Shift+Tab inside the panel, so the page behind is out of reach", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("button", { name: "Talk to Bleep" }));
+    const dialog = screen.getByRole("dialog", { name: "Chat with Bleep" });
+    const exportButton = within(dialog).getByRole("button", { name: "Export chat" });
+    const message = within(dialog).getByRole("textbox", { name: "Message to Bleep" });
+
+    expect(message).toHaveFocus(); // the last control while Send is disabled
+    await user.tab();
+    expect(exportButton).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(message).toHaveFocus();
+    for (let step = 0; step < 6; step++) {
+      await user.tab();
+      expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    }
+  });
+
+  it("returns focus to Bleep's button when the panel closes", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("button", { name: "Talk to Bleep" }));
+    await user.click(screen.getByRole("button", { name: "Close chat" }));
+    expect(screen.getByRole("button", { name: "Talk to Bleep" })).toHaveFocus();
+
+    await user.click(screen.getByRole("button", { name: "Talk to Bleep" }));
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("button", { name: "Talk to Bleep" })).toHaveFocus();
+  });
+
+  it("returns focus to the page's button that opened it with words typed in", async () => {
+    const user = userEvent.setup();
+    render(
+      <OverallProvider>
+        <ChatOpenerProvider>
+          <AskButton />
+          <ChatPanel />
+        </ChatOpenerProvider>
+      </OverallProvider>,
+    );
+    const asker = screen.getByRole("button", { name: "Ask from the page" });
+    await user.click(asker);
+    expect(screen.getByRole("textbox", { name: "Message to Bleep" })).toHaveValue("Look at shop");
+
+    await user.click(screen.getByRole("button", { name: "Close chat" }));
+    expect(asker).toHaveFocus();
   });
 });

@@ -1,29 +1,34 @@
 "use client";
 
 import { ArrowUp, Download, X } from "lucide-react";
-import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 
 import { Bleep } from "@/components/bleep/bleep";
+import { Answer } from "@/components/chat/answer";
 import { useRegisterChatOpener } from "@/components/chat/chat-opener";
+import { LookFollow } from "@/components/chat/look-follow";
+import { type Offer, OfferButtons } from "@/components/chat/offer-buttons";
 import { useOverall } from "@/components/overall-state";
 import { usePinnedBarSpace } from "@/components/pinned-bar";
+import { useMediaQuery } from "@/hooks/use-phone";
 import { ApiError } from "@/lib/api";
 import { type Messages, useT } from "@/lib/i18n";
 import { faceMood } from "@/lib/mood";
 import { idFromSegment } from "@/lib/routes";
 import {
   MESSAGE_MAX_CHARS,
-  fetchLook,
   fetchTalkLog,
   isFinished,
-  linkHref,
   pressConfirm,
   sendMessage,
-  splitLinks,
-  type ChatConfirm,
-  type LookProgress,
   type TalkLink,
 } from "@/lib/talk-api";
 
@@ -33,19 +38,11 @@ const BAR_GAP_PX = 12;
 const REVOKE_AFTER_MS = 40_000; // as FileSaver.js waits before freeing a saved file's URL
 // As `schemas/talk.py` `ChatMessage.incident_id`: a page path that is no incident id gets no chip.
 const INCIDENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
-// How often a look the panel follows is asked about (#458): often while it runs, seldom while it
-// waits (for a yes on the incident's page, for the model or for its host).
-const LOOK_RUNNING_MS = 2_000;
-const LOOK_WAITING_MS = 10_000;
-
-type Offer = ChatConfirm & {
-  line?: string;
-  pressing?: boolean;
-  failed?: string;
-  /** The incident a look's press opened or found open: the panel follows it. */
-  looking?: string;
-};
-
+// Below Tailwind's `sm` the panel covers the screen and is a modal dialog; from `sm` up it floats
+// in the corner and the page stays usable beside it.
+export const SHEET_QUERY = "(max-width: 639.98px)";
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
 type Turn =
   | { key: number; who: "you"; text: string }
   | { key: number; who: "bleep"; answer: string; links: TalkLink[]; offer?: Offer }
@@ -97,6 +94,11 @@ export function ChatPanel() {
   const nextKey = useRef(0);
   const list = useRef<HTMLOListElement>(null);
   const input = useRef<HTMLInputElement>(null);
+  const sheet = useMediaQuery(SHEET_QUERY);
+  const panel = useRef<HTMLElement>(null);
+  const launcher = useRef<HTMLButtonElement>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const wasOpen = useRef(false);
 
   const pageIncident = pathname.match(INCIDENT_PAGE)?.[1];
   const segment = pageIncident ? idFromSegment(pageIncident) : null;
@@ -132,11 +134,33 @@ export function ChatPanel() {
     if (open) input.current?.focus();
   }, [open]);
 
-  const openWith = useCallback((text: string) => {
-    setDraft(text);
+  const show = useCallback(() => {
+    const active = document.activeElement;
+    opener.current =
+      active instanceof HTMLElement && active !== document.body && active !== launcher.current
+        ? active
+        : null;
     setOpen(true);
-    input.current?.focus();
   }, []);
+
+  // Closing puts focus back where the person opened the panel from; the launcher the panel
+  // replaced is a new element by then, so it is the fallback.
+  useEffect(() => {
+    if (!open && wasOpen.current) {
+      const back = opener.current?.isConnected ? opener.current : launcher.current;
+      back?.focus();
+    }
+    wasOpen.current = open;
+  }, [open]);
+
+  const openWith = useCallback(
+    (text: string) => {
+      setDraft(text);
+      show();
+      input.current?.focus();
+    },
+    [show],
+  );
   useRegisterChatOpener(openWith);
 
   const add = (turn: NewTurn) =>
@@ -203,12 +227,32 @@ export function ChatPanel() {
     }
   }
 
+  function keepFocusInside(event: KeyboardEvent<HTMLElement>) {
+    if (event.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+    if (event.key !== "Tab" || !sheet || !panel.current) return;
+    const inside = [...panel.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    const first = inside[0];
+    const last = inside[inside.length - 1];
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   if (!open) {
     return (
       <button
+        ref={launcher}
         type="button"
         aria-label={waiting ? t.openAsked : t.open}
-        onClick={() => setOpen(true)}
+        onClick={show}
         style={barSpace ? { bottom: barSpace + BAR_GAP_PX } : undefined}
         className="fixed right-5 bottom-5 z-40 grid size-14 place-items-center rounded-full border border-line bg-surface shadow-[0_8px_28px_-8px_rgba(40,30,120,0.35)] hover:bg-soft focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none print:hidden"
       >
@@ -225,8 +269,11 @@ export function ChatPanel() {
 
   return (
     <section
+      ref={panel}
+      role={sheet ? "dialog" : undefined}
+      aria-modal={sheet ? true : undefined}
       aria-label={t.label}
-      onKeyDown={(event) => event.key === "Escape" && setOpen(false)}
+      onKeyDown={keepFocusInside}
       className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-surface sm:inset-auto sm:right-5 sm:bottom-5 sm:h-[520px] sm:max-h-[calc(100dvh-40px)] sm:w-[360px] sm:rounded-card-sm sm:border sm:border-line sm:shadow-[0_18px_50px_-12px_rgba(40,30,120,0.40)] print:hidden"
     >
       <header className="flex items-center gap-2.5 border-b border-line px-4 py-3">
@@ -349,141 +396,5 @@ export function ChatPanel() {
         </div>
       </form>
     </section>
-  );
-}
-
-function Answer({ text, links }: { text: string; links: TalkLink[] }) {
-  return (
-    <>
-      {splitLinks(text, links).map((piece, index) =>
-        typeof piece === "string" ? (
-          piece
-        ) : (
-          <Link
-            key={index}
-            href={linkHref(piece.link)}
-            className="font-bold text-accent underline-offset-2 hover:underline"
-          >
-            {piece.text}
-          </Link>
-        ),
-      )}
-    </>
-  );
-}
-
-/**
- * A look the panel started, followed until its incident ends (#458): what the run does now, its
- * summary once its plan waits or it ended, and what it did. Asked about every 2 s while it runs
- * and every 10 s while it waits; a failed ask keeps the last answer, says so and asks again. Only
- * an answer that shows something new scrolls the chat down. It stops at the end, or when the
- * panel closes.
- */
-function LookFollow({ incidentId, onChange }: { incidentId: string; onChange: () => void }) {
-  const t = useT().chat;
-  const [look, setLook] = useState<LookProgress | null>(null);
-  const [lost, setLost] = useState(false);
-
-  useEffect(() => {
-    let stopped = false;
-    let timer: number | undefined;
-    let pace = LOOK_RUNNING_MS;
-    async function ask() {
-      try {
-        const now = await fetchLook(incidentId);
-        if (stopped) return;
-        setLook((shown) => (shows(shown, now) ? shown : now));
-        setLost(false);
-        if (now.state === "ended") return;
-        pace = now.state === "waiting" ? LOOK_WAITING_MS : LOOK_RUNNING_MS;
-      } catch {
-        if (stopped) return;
-        setLost(true);
-      }
-      timer = window.setTimeout(ask, pace);
-    }
-    void ask();
-    return () => {
-      stopped = true;
-      window.clearTimeout(timer);
-    };
-  }, [incidentId]);
-
-  useEffect(onChange, [look, lost, onChange]);
-
-  if (!look && !lost) return null;
-  return (
-    <div
-      data-testid="look"
-      className="rounded-[18px] rounded-bl-md border border-line bg-surface px-3.5 py-2.5 break-words whitespace-pre-line"
-    >
-      {look && (
-        <p className={look.state === "running" ? "text-ink-2" : undefined}>
-          <Answer text={look.line} links={look.links} />
-        </p>
-      )}
-      {look && look.steps.length > 0 && (
-        <>
-          <p className="mt-2 text-[13px] font-bold text-ink-2">{t.whatIDid}</p>
-          <ul aria-label={t.whatIDid} className="list-disc pl-5 text-[13.5px] whitespace-normal">
-            {look.steps.map((step, index) => (
-              <li key={index}>{step}</li>
-            ))}
-          </ul>
-        </>
-      )}
-      {lost && (
-        <p role="alert" className="mt-1 text-[13px] font-bold text-down">
-          {t.lost}
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** Whether `next` shows what `shown` does, so a poll that brought nothing new changes nothing. */
-function shows(shown: LookProgress | null, next: LookProgress): boolean {
-  return shown !== null && JSON.stringify(shown) === JSON.stringify(next);
-}
-
-function OfferButtons({
-  offer,
-  expired,
-  onPress,
-}: {
-  offer: Offer;
-  expired: boolean;
-  onPress: (yes: boolean) => void;
-}) {
-  const t = useT().chat;
-  if (offer.line || expired) {
-    return <p className="pl-1 text-[13px] font-bold text-ink-2">{offer.line ?? t.expired}</p>;
-  }
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex gap-2">
-        <button
-          type="button"
-          disabled={offer.pressing}
-          onClick={() => onPress(true)}
-          className="h-9 rounded-full bg-accent px-4 text-[14px] font-bold text-accent-ink disabled:opacity-50"
-        >
-          {offer.yes_label}
-        </button>
-        <button
-          type="button"
-          disabled={offer.pressing}
-          onClick={() => onPress(false)}
-          className="h-9 rounded-full border border-line bg-surface px-4 text-[14px] font-bold disabled:opacity-50"
-        >
-          {offer.no_label}
-        </button>
-      </div>
-      {offer.failed && (
-        <p role="alert" className="pl-1 text-[13px] font-bold text-down">
-          {offer.failed}
-        </p>
-      )}
-    </div>
   );
 }
