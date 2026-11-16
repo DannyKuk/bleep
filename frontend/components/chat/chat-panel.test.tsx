@@ -737,6 +737,20 @@ describe("ChatPanel as a dialog on a phone (#626)", () => {
     expect(dialog).toContainElement(document.activeElement as HTMLElement);
   });
 
+  it("leaves focus alone when a re-render finds it on the page body, as after a tap on the transcript", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderPanel();
+    await user.click(screen.getByRole("button", { name: "Talk to Bleep" }));
+    const message = screen.getByRole("textbox", { name: "Message to Bleep" });
+    expect(message).toHaveFocus();
+
+    act(() => message.blur());
+    expect(document.body).toHaveFocus();
+    rerender();
+    await act(async () => {});
+    expect(document.body).toHaveFocus();
+  });
+
   it("pulls focus that lands outside the sheet back in", async () => {
     const user = userEvent.setup();
     render(

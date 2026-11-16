@@ -92,6 +92,7 @@ export function ChatPanel() {
   const launcher = useRef<HTMLButtonElement>(null);
   const opener = useRef<HTMLElement | null>(null);
   const wasOpen = useRef(false);
+  const focused = useRef<HTMLElement | null>(null);
 
   const pageIncident = pathname.match(INCIDENT_PAGE)?.[1];
   const segment = pageIncident ? idFromSegment(pageIncident) : null;
@@ -263,14 +264,15 @@ export function ChatPanel() {
     };
   }, [open, sheet]);
 
+  // Only a control that had focus and then went away is rescued, once: a tap on the transcript,
+  // which moves focus to the page's body, is the person's own and is left alone.
   useEffect(() => {
-    if (!open || !sheet) return;
-    const active = document.activeElement;
-    const gone =
-      !(active instanceof HTMLElement) ||
-      !panel.current?.contains(active) ||
-      active.matches(":disabled");
-    if (gone) input.current?.focus();
+    const had = focused.current;
+    if (!open || !sheet || !had) return;
+    if (!had.isConnected || had.matches(":disabled")) {
+      focused.current = null;
+      input.current?.focus();
+    }
   });
 
   if (!open) {
@@ -297,10 +299,20 @@ export function ChatPanel() {
   return (
     <section
       ref={panel}
+      tabIndex={-1}
+      onFocus={(event) => {
+        if (event.target !== event.currentTarget) focused.current = event.target;
+      }}
+      onBlur={(event) => {
+        const target = event.target as HTMLElement;
+        if (target === focused.current && target.isConnected && !target.matches(":disabled")) {
+          focused.current = null;
+        }
+      }}
       role={sheet ? "dialog" : undefined}
       aria-modal={sheet ? true : undefined}
       aria-label={t.label}
-      className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-surface sm:inset-auto sm:right-5 sm:bottom-5 sm:h-[520px] sm:max-h-[calc(100dvh-40px)] sm:w-[360px] sm:rounded-card-sm sm:border sm:border-line sm:shadow-[0_18px_50px_-12px_rgba(40,30,120,0.40)] print:hidden"
+      className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-surface outline-none sm:inset-auto sm:right-5 sm:bottom-5 sm:h-[520px] sm:max-h-[calc(100dvh-40px)] sm:w-[360px] sm:rounded-card-sm sm:border sm:border-line sm:shadow-[0_18px_50px_-12px_rgba(40,30,120,0.40)] print:hidden"
     >
       <header className="flex items-center gap-2.5 border-b border-line px-4 py-3">
         <Bleep mood={mood} size={40} />
