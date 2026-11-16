@@ -841,7 +841,7 @@ async def test_without_a_token_the_notifier_is_bus_only(tmp_path):
     db = Database(tmp_path / "bleep.sqlite")
     await db.migrate()
     settings = Settings(
-        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s"),
+        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s" * 32),
         TELEGRAM_BOT_TOKEN=None, TELEGRAM_CHAT_ID=None,
     )  # fmt: skip
     built = setup(settings, db, EventBus(db), ApprovalStore(db, "s"))
@@ -866,7 +866,7 @@ async def test_a_token_with_a_chat_id_builds_the_bot_and_stop_ends_it(tmp_path):
     db = Database(tmp_path / "bleep.sqlite")
     await db.migrate()
     settings = Settings(
-        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s"),
+        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s" * 32),
         TELEGRAM_BOT_TOKEN=TOKEN, TELEGRAM_CHAT_ID=CHAT,
     )  # fmt: skip
     built = setup(settings, db, EventBus(db), ApprovalStore(db, "s"))
@@ -901,7 +901,7 @@ def test_a_chat_id_is_masked_to_its_last_two_characters_at_most(chat_id, masked)
 async def test_status_without_a_token_says_not_configured_and_names_the_variable(tmp_path):
     db = Database(tmp_path / "bleep.sqlite")
     settings = Settings(
-        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s"),
+        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s" * 32),
         TELEGRAM_BOT_TOKEN=None, TELEGRAM_CHAT_ID="123456789",
     )  # fmt: skip
     status = setup(settings, db, EventBus(db), ApprovalStore(db, "s")).status()
@@ -914,7 +914,7 @@ async def test_status_with_a_bot_shows_the_last_poll_and_never_the_token_or_the_
     db = Database(tmp_path / "bleep.sqlite")
     await db.migrate()
     settings = Settings(
-        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s"),
+        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s" * 32),
         TELEGRAM_BOT_TOKEN=TOKEN, TELEGRAM_CHAT_ID="123456789",
     )  # fmt: skip
     built = setup(settings, db, EventBus(db), ApprovalStore(db, "s"))
@@ -1227,7 +1227,7 @@ async def test_a_token_changed_on_the_dashboard_restarts_polling_with_it(tmp_pat
     names = [SecretName("TELEGRAM_BOT_TOKEN"), SecretName("TELEGRAM_CHAT_ID", kind="id")]
     secrets = SecretStore(tmp_path / "secrets.json", names, env={})
     settings = Settings(
-        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s"),
+        data_dir=tmp_path, admin_password=SecretStr("x" * 12), secret=SecretStr("s" * 32),
         TELEGRAM_BOT_TOKEN=None, TELEGRAM_CHAT_ID=None,
     )  # fmt: skip
     built = setup(settings, db, EventBus(db), ApprovalStore(db, "s"), secrets=secrets)

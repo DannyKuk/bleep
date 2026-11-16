@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pydantic import SecretStr
 
 from bleep import prompts
-from bleep.auth.sessions import LoginLimiter, SessionStore
+from bleep.auth.sessions import LoginLimiter, SessionStore, password_mac
 from bleep.config import Settings, SettingsError
 from bleep.graph.deps import (
     GraphDeps,
@@ -237,6 +237,15 @@ def _value(secret: SecretStr | None) -> str | None:
     return secret.get_secret_value() if secret is not None else None
 
 
+def _session_password(settings: Settings) -> str | None:
+    """What the sessions are tied to; None with the login off, when there are none."""
+    if not settings.login_enabled or settings.admin_password is None:
+        return None
+    return password_mac(
+        settings.admin_password.get_secret_value(), settings.secret.get_secret_value()
+    )
+
+
 def start_embedder(store: SettingsStore, secrets: SecretStore) -> Embedder:
     """The embedder the settings in force name, recorded in the store so a change saved later
     shows as needing a restart. An endpoint or a server that is not complete is the built-in
@@ -365,7 +374,7 @@ def build_parts(
         quiet=quiet,
         approvals=approvals,
         guard_log=guard_log,
-        sessions=SessionStore(db),
+        sessions=SessionStore(db, password_mac=_session_password(settings)),
         login_limiter=LoginLimiter(),
         notify=notify,
         memory=memory,

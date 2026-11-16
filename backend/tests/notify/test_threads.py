@@ -667,7 +667,7 @@ def test_every_notify_template_loads_with_its_placeholders():
 
 def settings(**extra) -> Settings:
     return Settings(
-        data_dir=".", admin_password=SecretStr("x" * 12), secret=SecretStr("s"),
+        data_dir=".", admin_password=SecretStr("x" * 12), secret=SecretStr("s" * 32),
         TELEGRAM_BOT_TOKEN=SecretStr("7001:token"), TELEGRAM_CHAT_ID=CHAT, **extra,
     )  # fmt: skip
 
