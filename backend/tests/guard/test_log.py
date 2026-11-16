@@ -205,3 +205,48 @@ async def test_a_dead_database_drops_the_queue_once_and_never_logs_the_text(tmp_
         "guard log: dropped 2 record(s) after 3 failed writes"
     ]
     assert "secret-looking" not in caplog.text
+
+
+def sleep_that_records_once(log: GuardLog, detail: str):
+    """A wait during which another record arrives, as one does while a batch is failing."""
+    calls = 0
+
+    async def sleep(seconds: float) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            log.record("inc-1", "budget", detail)
+
+    return sleep
+
+
+async def test_a_record_made_while_a_batch_retries_lands_once_and_in_order(tmp_path):
+    good = Database(tmp_path / "bleep.sqlite")
+    await good.migrate()
+    db = FailingDatabase(tmp_path / "bleep.sqlite", failures=1)
+    log = GuardLog(db, clock=lambda: T0)
+    log._sleep = sleep_that_records_once(log, "third")
+
+    log.record("inc-1", "budget", "first")
+    log.record("inc-1", "budget", "second")
+    await log.flush()
+
+    assert [e.detail for e in await log.entries("inc-1")] == ["first", "second", "third"]
+
+
+async def test_a_record_made_while_a_dead_database_retries_is_dropped_with_its_own_count(
+    tmp_path, caplog
+):
+    db = FailingDatabase(tmp_path / "bleep.sqlite", failures=None)
+    log = GuardLog(db, clock=lambda: T0)
+    log._sleep = sleep_that_records_once(log, "third")
+
+    log.record("inc-1", "budget", "first")
+    log.record("inc-1", "budget", "second")
+    await log.flush()
+
+    assert log._pending == []
+    assert [r.getMessage() for r in caplog.records if "dropped" in r.getMessage()] == [
+        "guard log: dropped 2 record(s) after 3 failed writes",
+        "guard log: dropped 1 record(s) after 3 failed writes",
+    ]
