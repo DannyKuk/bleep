@@ -32,7 +32,8 @@ const PANEL_ID = "flow-step";
 
 const nextStep = (step: StepId) => STEP_ORDER[(STEP_ORDER.indexOf(step) + 1) % STEP_ORDER.length]!;
 
-/** Starts once half of the diagram is on screen, so the walk never plays unseen. */
+/** True once the top of the diagram is well on screen, so the walk never plays unseen. A share of
+ * the whole would never be reached by the phone's list, which is many screens tall. */
 function useSeen<T extends Element>() {
   const ref = useRef<T>(null);
   const [seen, setSeen] = useState(false);
@@ -49,7 +50,7 @@ function useSeen<T extends Element>() {
           observer.disconnect();
         }
       },
-      { threshold: 0.25 },
+      { rootMargin: "0px 0px -30% 0px" },
     );
     observer.observe(node);
     return () => observer.disconnect();
@@ -72,33 +73,79 @@ function useReducedMotion(): boolean {
   );
 }
 
+const WIDE = "(min-width: 1280px)";
+const LAST_STEP = STEP_ORDER.at(-1)!;
+/** What a visitor does to scroll the page themselves, which ends a guided walk. */
+const OWN_SCROLL = ["wheel", "touchmove", "keydown"] as const;
+const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+
+/** Scrolls the page so the step stands in the middle of the screen, in whichever layout shows. */
+function centre(stage: HTMLElement | null, step: StepId, reduced: boolean) {
+  const layout = window.matchMedia?.(WIDE).matches ? "wide" : "narrow";
+  const node = stage?.querySelector(`[data-step="${step}"][data-layout="${layout}"]`);
+  node?.scrollIntoView?.({ block: "center", behavior: reduced ? "auto" : "smooth" });
+}
+
 /**
  * One incident's way through Bleep, drawn from the model in `flow.ts`. A wide screen gets the
  * diagram with the chosen step beside it; a narrower one gets the same steps as a list, each with
- * its whole text and where it may lead. Bleep walks through the steps until you pick one.
+ * its whole text and where it may lead.
+ *
+ * Bleep walks through the steps by itself, round and round, until you pick one; that walk never
+ * scrolls the page. "Walk me through it" starts a guided walk instead: once to the report, with
+ * the page scrolling so Bleep's step stays in the middle, until you scroll yourself.
  */
 export function FlowDiagram() {
   const [active, setActive] = useState<StepId>(STEP_ORDER[0]!);
-  const [choice, setChoice] = useState<"auto" | "playing" | "paused">("auto");
+  const [choice, setChoice] = useState<"auto" | "guided" | "paused">("auto");
   const [stage, seen] = useSeen<HTMLDivElement>();
   const reduced = useReducedMotion();
-  const playing = choice === "auto" ? !reduced : choice === "playing";
+  const guided = choice === "guided";
+  const playing = choice === "auto" ? !reduced : guided;
 
   useEffect(() => {
-    if (!seen || !playing) return;
-    const timer = window.setTimeout(() => setActive(nextStep), DWELL[active]);
+    if (!playing || !(seen || guided)) return;
+    const timer = window.setTimeout(() => {
+      if (guided && active === LAST_STEP) setChoice("paused");
+      else setActive(nextStep);
+    }, DWELL[active]);
     return () => window.clearTimeout(timer);
-  }, [seen, playing, active]);
+  }, [seen, playing, guided, active]);
+
+  useEffect(() => {
+    if (guided) centre(stage.current, active, reduced);
+  }, [guided, active, reduced, stage]);
+
+  useEffect(() => {
+    if (!guided) return;
+    const stop = (event: Event) => {
+      if (event instanceof KeyboardEvent && !SCROLL_KEYS.has(event.key)) return;
+      setChoice("paused");
+    };
+    for (const kind of OWN_SCROLL) window.addEventListener(kind, stop, { passive: true });
+    return () => {
+      for (const kind of OWN_SCROLL) window.removeEventListener(kind, stop);
+    };
+  }, [guided]);
 
   const pick = (step: StepId) => {
     setChoice("paused");
     setActive(step);
   };
 
+  const walk = () => {
+    if (playing) {
+      setChoice("paused");
+      return;
+    }
+    if (active === LAST_STEP) setActive(STEP_ORDER[0]!);
+    setChoice("guided");
+  };
+
   const toggle = (
     <button
       type="button"
-      onClick={() => setChoice(playing ? "paused" : "playing")}
+      onClick={walk}
       className="inline-flex h-10 items-center rounded-full border-2 border-line px-4 text-sm font-bold hover:bg-surface"
     >
       {playing ? "Pause the walk" : "Walk me through it"}
@@ -259,6 +306,8 @@ function StepBox({
       type="button"
       aria-pressed={active}
       aria-controls={PANEL_ID}
+      data-step={id}
+      data-layout="wide"
       aria-label={`${index + 1}. ${step.title}`}
       onClick={() => onPick(id)}
       onMouseEnter={() => onPick(id)}
@@ -372,6 +421,8 @@ function NarrowStep({ id, index, active }: { id: StepId; index: number; active: 
       )}
       {index > 0 && <span aria-hidden className="mx-auto h-6 w-0.5 rounded-full bg-line" />}
       <div
+        data-step={id}
+        data-layout="narrow"
         className={`relative rounded-row border-2 bg-surface p-5 pr-16 transition-[border-color] ${
           active ? "border-accent" : human ? "border-accent/50" : "border-line"
         }`}

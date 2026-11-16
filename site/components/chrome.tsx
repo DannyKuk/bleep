@@ -1,41 +1,40 @@
-import Link from "next/link";
-
 import { Bleep } from "@/components/bleep/bleep";
 
 export const REPO = "https://github.com/DannyKuk/bleep";
 export const blob = (path: string) => `${REPO}/blob/main/${path}`;
 
 /** The sticky header of every page. `home` says whether this is the landing page, where the
- * section links stay on the page instead of leading back to it. */
+ * section links stay on the page instead of leading back to it.
+ *
+ * The links are plain anchors, not `next/link`: on a client-side move Next scrolls to the first
+ * element below a sticky header, so a new page opened 65 px down, under the header. Two static
+ * pages load fast enough whole, and the browser then starts each at the top. */
 export function SiteHeader({ home = false }: { home?: boolean }) {
   const section = (id: string) => (home ? `#${id}` : `/#${id}`);
   return (
     <header className="site-header sticky top-0 z-40 border-b border-line bg-bg">
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
-        <Link href={home ? "#" : "/"} className="flex items-center gap-2 text-lg font-extrabold">
+        <a href={home ? "#" : "/"} className="flex items-center gap-2 text-lg font-extrabold">
           <Bleep mood="all_good" size={30} />
           Bleep
-        </Link>
+        </a>
         <nav aria-label="Page" className="flex items-center gap-1 text-sm font-bold text-ink-2">
-          <Link
-            href={section("how")}
-            className="hidden rounded-full px-3 py-2 hover:bg-soft sm:block"
-          >
+          <a href={section("how")} className="hidden rounded-full px-3 py-2 hover:bg-soft sm:block">
             How it works
-          </Link>
-          <Link
+          </a>
+          <a
             href={section("safety")}
             className="hidden rounded-full px-3 py-2 hover:bg-soft sm:block"
           >
             Safety
-          </Link>
-          <Link
+          </a>
+          <a
             href="/flow"
             aria-current={home ? undefined : "page"}
             className="rounded-full px-3 py-2 hover:bg-soft aria-[current=page]:text-ink"
           >
             Flow
-          </Link>
+          </a>
           <a
             href={REPO}
             className="rounded-full bg-ink px-4 py-2 text-bg transition-opacity hover:opacity-85"
