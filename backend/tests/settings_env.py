@@ -1,16 +1,24 @@
 """Which environment names the `BaseSettings` classes read, so tests can keep a shell's out."""
 
 import os
+from pathlib import Path
 
 import pytest
 from pydantic import AliasChoices
 from pydantic_settings import BaseSettings
 
+import evals.run
 from bleep.config import Settings
 from bleep.llm.tracing import TracingSettings
 from bleep.schemas.settings import ModelSettings
+from evals.run import EvalSettings
 
-SETTINGS_CLASSES: tuple[type[BaseSettings], ...] = (Settings, ModelSettings, TracingSettings)
+SETTINGS_CLASSES: tuple[type[BaseSettings], ...] = (
+    Settings,
+    ModelSettings,
+    TracingSettings,
+    EvalSettings,
+)
 # Read by the tracing libraries themselves, not by a settings class.
 LIBRARY_NAMES = {"langsmith_tracing", "langchain_tracing_v2"}
 
@@ -38,3 +46,9 @@ def clear_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
     names = LIBRARY_NAMES.union(*(names_read(cls) for cls in SETTINGS_CLASSES))
     for key in [key for key in os.environ if key.lower() in names]:
         monkeypatch.delenv(key)
+
+
+def keep_dotenv_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The eval harness reads the repo's `.env` for real runs; a test must not."""
+    monkeypatch.setitem(EvalSettings.model_config, "env_file", None)
+    monkeypatch.setattr(evals.run, "ENV_FILE", Path("/nonexistent/.env"))

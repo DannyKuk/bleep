@@ -1,14 +1,21 @@
+import os
+from pathlib import Path
+
 import pytest
 
+import evals.run
 from bleep.config import Settings
 from bleep.llm.tracing import TracingSettings
 from bleep.schemas.settings import ModelSettings
+from evals.run import EvalSettings
 from tests.settings_env import SETTINGS_CLASSES, clear_settings_env, names_read
 
 
 def test_settings_read_no_dotenv_file():
     for cls in SETTINGS_CLASSES:
         assert cls.model_config.get("env_file") is None
+    assert not Path(evals.run.ENV_FILE).exists()
+    assert EvalSettings().models.model_config.get("env_file") is None
 
 
 def test_the_names_cover_every_spelling_the_classes_read():
@@ -36,3 +43,19 @@ def test_an_exported_value_is_cleared_before_settings_read_it(monkeypatch, name,
     clear_settings_env(monkeypatch)
 
     assert str(read()).lower() != value.lower()
+
+
+@pytest.fixture(scope="module")
+def exported_before_any_test_fixture():
+    with pytest.MonkeyPatch.context() as shell:
+        shell.setenv("BLEEP_LOGIN_ENABLED", "false")
+        shell.setenv("EVAL_HOST_ID", "leak")
+        yield
+
+
+def test_the_autouse_fixture_keeps_a_shell_export_from_the_settings_fixture(
+    exported_before_any_test_fixture, settings
+):
+    assert os.environ.get("BLEEP_LOGIN_ENABLED") is None
+    assert settings.login_enabled is True
+    assert EvalSettings().host_id == "demo"
