@@ -406,7 +406,7 @@ async def test_inspect_shows_the_start_command_a_restart_runs_again(env):
     ) in out
 
 
-async def test_the_start_command_hides_secrets_from_the_env_and_token_like_words(env):
+async def test_the_start_command_hides_env_secrets_and_tokens_and_escapes_a_wrapper_tag(env):
     raw = hung_shop_web_payload()
     raw["Config"]["Entrypoint"] = ["docker-entrypoint.sh"]
     raw["Config"]["Cmd"] = [
@@ -422,6 +422,38 @@ async def test_the_start_command_hides_secrets_from_the_env_and_token_like_words
     assert line.startswith(START + '["docker-entrypoint.sh", "redis-server", "--requirepass", ')
     assert "s3cretpassw0rd" not in out and "sk-live-abcdef" not in out
     assert out.count("</untrusted") == 1
+
+
+FLAG_SECRETS = ["app", "--password", "hunter", "--token", "abc", "--port", "8000"]
+FLAG_SECRETS_SHOWN = (
+    '["app", "--password", "<redacted>", "--token", "<redacted>", "--port", "8000"]'
+)
+
+
+async def test_the_start_command_hides_a_flag_value_that_is_only_on_the_command_line(env):
+    raw = hung_shop_web_payload()
+    raw["Config"]["Cmd"] = FLAG_SECRETS
+    env.engine.details["shop-web-1"] = _detail(raw)
+    out = await env.run("inspect_container", container="shop-web-1")
+    assert START + FLAG_SECRETS_SHOWN in out
+    assert "hunter" not in out and '"abc"' not in out
+
+
+async def test_a_health_check_hides_a_flag_value_that_is_only_on_the_command_line(env):
+    raw = hung_shop_web_payload()
+    raw["Config"]["Healthcheck"]["Test"] = ["CMD", *FLAG_SECRETS]
+    env.engine.details["shop-web-1"] = _detail(raw)
+    out = await env.run("inspect_container", container="shop-web-1")
+    assert "health check, run without a shell: " + FLAG_SECRETS_SHOWN in out
+    assert "hunter" not in out and '"abc"' not in out
+
+
+async def test_a_flag_value_with_a_space_is_hidden_whole(env):
+    raw = hung_shop_web_payload()
+    raw["Config"]["Cmd"] = ["app", "--secret", "pa ss"]
+    env.engine.details["shop-web-1"] = _detail(raw)
+    out = await env.run("inspect_container", container="shop-web-1")
+    assert START + '["app", "--secret", "<redacted>"]' in out
 
 
 async def test_a_long_start_command_is_cut_to_one_line(env):
