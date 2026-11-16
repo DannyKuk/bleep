@@ -8,10 +8,12 @@ import { OverallProvider } from "@/components/overall-state";
 import { PinnedBarProvider } from "@/components/pinned-bar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { PreferencesProvider } from "@/components/preferences";
+import { loginIsOff } from "@/lib/login-off";
 
-export default function AppLayout({ children }: LayoutProps<"/">) {
+export default async function AppLayout({ children }: LayoutProps<"/">) {
+  const loginOff = await loginIsOff();
   return (
-    <PreferencesProvider>
+    <PreferencesProvider loginEnabled={!loginOff}>
       <OverallProvider>
         <PinnedBarProvider>
           <ChatOpenerProvider>

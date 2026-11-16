@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { apiFetch } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
 import type { IncidentEvent } from "@/lib/api-types";
 
 /** `loading` until the history is in; `live` while the stream is open; `reconnecting` between. */
@@ -13,7 +13,7 @@ export interface IncidentStream {
   status: StreamStatus;
 }
 
-/** How long to wait before reopening a stream the browser gave up on (a 401, 404 or 5xx). */
+/** How long to wait before reopening a stream the browser gave up on (a 401 or 5xx). */
 export const RETRY_MS = 5_000;
 
 /** `incoming` added to `current`: one event per seq, in seq order. Unchanged input is returned as is. */
@@ -44,8 +44,9 @@ function parse(data: unknown): IncidentEvent | undefined {
  * One incident's events: its history from `/events`, then live from `/api/stream`, opened after
  * the last seq it has. A dropped connection is retried by the browser with `Last-Event-ID`, so
  * the backend replays what was missed; a stream the browser gives up on is reopened after
- * `RETRY_MS` by reading the history again from the last seq. Every event is kept once by seq,
- * however the replays overlap.
+ * `RETRY_MS` by reading the history again from the last seq, but only while the tab is visible: a
+ * hidden tab waits until it is shown again. An incident the backend does not know (404) is not
+ * retried. Every event is kept once by seq, however the replays overlap.
  */
 export function useIncidentStream(id: string): IncidentStream {
   const [state, setState] = useState<IncidentStream & { id: string }>({
@@ -61,6 +62,7 @@ export function useIncidentStream(id: string): IncidentStream {
     let last = 0;
     let source: EventSource | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    let unhide: (() => void) | undefined;
     const controller = new AbortController();
     const path = encodeURIComponent(id);
 
@@ -75,9 +77,22 @@ export function useIncidentStream(id: string): IncidentStream {
         return events === prev.events ? prev : { ...prev, events };
       });
     };
+    const whenVisible = () => {
+      if (document.visibilityState !== "hidden") return void connect();
+      const onVisibility = () => {
+        if (document.visibilityState === "hidden") return;
+        unhide?.();
+        void connect();
+      };
+      document.addEventListener("visibilitychange", onVisibility);
+      unhide = () => {
+        document.removeEventListener("visibilitychange", onVisibility);
+        unhide = undefined;
+      };
+    };
     const later = () => {
       setStatus("reconnecting");
-      retry = setTimeout(() => void connect(), RETRY_MS);
+      retry = setTimeout(whenVisible, RETRY_MS);
     };
 
     async function connect() {
@@ -87,7 +102,8 @@ export function useIncidentStream(id: string): IncidentStream {
             signal: controller.signal,
           }),
         );
-      } catch {
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return;
         if (active) later(); // a lost session has already sent the browser to the login page
         return;
       }
@@ -114,6 +130,7 @@ export function useIncidentStream(id: string): IncidentStream {
       active = false;
       controller.abort();
       clearTimeout(retry);
+      unhide?.();
       source?.close();
     };
   }, [id]);

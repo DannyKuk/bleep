@@ -29,11 +29,20 @@ const LoginContext = createContext(true);
  * read once when the app loads and again when the settings page saves one. Until the zone is
  * read, or when none is chosen, times are in the browser's own zone; until the language is read,
  * the page speaks the one it last knew (`readLanguage`), so the dashboard and Telegram match.
- * Also whether Bleep's own login is on, which it is until the settings say otherwise.
+ * Also whether Bleep's own login is on: as the server layout saw it (on when it could not
+ * tell), then as the settings say.
  */
-export function PreferencesProvider({ children }: { children: ReactNode }) {
+export function PreferencesProvider({
+  children,
+  loginEnabled: loginEnabledAtStart = true,
+}: {
+  children: ReactNode;
+  /** Whether the login is on, as the server saw it when it drew the page, so a login that is
+   * off never flashes a Log out button before the settings are read. */
+  loginEnabled?: boolean;
+}) {
   const [zone, setZoneState] = useState<Zone>(undefined);
-  const [loginEnabled, setLoginEnabled] = useState(true);
+  const [loginEnabled, setLoginEnabled] = useState(loginEnabledAtStart);
   const language = useLanguage();
   useEffect(() => {
     const controller = new AbortController();

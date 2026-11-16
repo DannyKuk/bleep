@@ -68,6 +68,11 @@ function stubHistory(...replies: IncidentEvent[][]) {
   return fetchMock;
 }
 
+function setVisibility(state: "visible" | "hidden") {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
 const seqs = (events: IncidentEvent[]) => events.map((item) => item.seq);
 const latest = () => FakeEventSource.instances.at(-1)!;
 
@@ -88,7 +93,10 @@ describe("useIncidentStream", () => {
     FakeEventSource.instances = [];
     vi.stubGlobal("EventSource", FakeEventSource);
   });
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    setVisibility("visible");
+    vi.useRealTimers();
+  });
 
   it("loads the history, then streams from the last seq it has", async () => {
     const fetchMock = stubHistory([event(1), event(2)]);
@@ -173,6 +181,43 @@ describe("useIncidentStream", () => {
     await act(async () => void vi.advanceTimersByTime(RETRY_MS));
     expect(seqs(result.current.events)).toEqual([1]);
     expect(FakeEventSource.instances).toHaveLength(1);
+  });
+
+  it("does not retry an incident the backend does not know (404)", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ detail: "no such incident" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderHook(() => useIncidentStream("gone"));
+    await act(async () => {});
+    await act(async () => void vi.advanceTimersByTime(RETRY_MS * 5));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(FakeEventSource.instances).toHaveLength(0);
+  });
+
+  it("waits for the tab to be shown again before reopening a stream it lost", async () => {
+    vi.useFakeTimers();
+    const fetchMock = stubHistory([event(1)], [event(1), event(2)]);
+    const { result } = renderHook(() => useIncidentStream("inc-1"));
+    await act(async () => {});
+    act(() => latest().open());
+
+    setVisibility("hidden");
+    act(() => latest().fail(FakeEventSource.CLOSED));
+    await act(async () => void vi.advanceTimersByTime(RETRY_MS * 5));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(FakeEventSource.instances).toHaveLength(1);
+
+    await act(async () => setVisibility("visible"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(FakeEventSource.instances).toHaveLength(2);
+    expect(seqs(result.current.events)).toEqual([1, 2]);
   });
 
   it("ignores a message that is not an event", async () => {
