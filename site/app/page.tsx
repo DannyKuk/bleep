@@ -123,7 +123,7 @@ function Section({
 export default function Page() {
   return (
     <>
-      <SiteHeader home />
+      <SiteHeader page="home" />
 
       <main>
         <section className="mx-auto grid w-full max-w-6xl items-center gap-12 px-4 pt-10 pb-16 sm:px-6 lg:grid-cols-[1fr_1.1fr] lg:gap-14 lg:pt-16">
