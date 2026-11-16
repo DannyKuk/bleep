@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
 
-import { usePoll } from "@/hooks/use-poll";
+import { POLL_MS, usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
 import type { HostView, Incident, ServiceView } from "@/lib/api-types";
 import { overallMood, overallState, type Mood, type OverallState } from "@/lib/mood";
@@ -10,7 +10,6 @@ import { overallMood, overallState, type Mood, type OverallState } from "@/lib/m
 /** The newest incidents the header reads: the API's largest page. An unfinished incident is
  * nearly always among them, since the newest come first. */
 export const OVERALL_INCIDENTS = 200;
-const POLL_MS = 10_000;
 
 export interface Overall {
   /** The newest incidents, newest first; undefined until the first read answers. */

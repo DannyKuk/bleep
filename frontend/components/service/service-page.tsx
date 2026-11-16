@@ -25,7 +25,7 @@ import {
   useServiceSettings,
 } from "@/components/service/settings-cards";
 import { useTimeZone } from "@/components/preferences";
-import { usePoll } from "@/hooks/use-poll";
+import { POLL_MS, usePoll } from "@/hooks/use-poll";
 import { ApiError, apiFetch } from "@/lib/api";
 import type {
   ContainerView,
@@ -44,7 +44,6 @@ import { cn } from "@/lib/utils";
 import type { Zone } from "@/lib/zone";
 
 const PAST_INCIDENTS = 20;
-const POLL_MS = 10_000;
 
 interface Loaded<T> {
   data?: T;

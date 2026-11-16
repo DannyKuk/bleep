@@ -10,11 +10,12 @@ import {
   incident,
   report,
 } from "@/components/incident/fixtures";
-import { DETAIL_POLL_MS, IncidentPage } from "@/components/incident/incident-page";
+import { IncidentPage } from "@/components/incident/incident-page";
 import { subjectText } from "@/components/incident/incident-list";
 import { OverallProvider } from "@/components/overall-state";
 import { PreferencesProvider } from "@/components/preferences";
-import { PHONE_QUERY } from "@/components/incident/use-phone";
+import { PHONE_QUERY } from "@/hooks/use-phone";
+import { POLL_MS } from "@/hooks/use-poll";
 import type { IncidentDetail } from "@/lib/api-types";
 import { en } from "@/lib/i18n/en";
 
@@ -236,7 +237,7 @@ describe("IncidentPage", () => {
     expect(screen.getByText("Investigating")).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("I am looking into it.");
 
-    await act(async () => void vi.advanceTimersByTime(DETAIL_POLL_MS));
+    await act(async () => void vi.advanceTimersByTime(POLL_MS));
     expect(detailReads(fetchMock)).toBe(2);
     expect(screen.getByText("Needs your yes")).toBeInTheDocument();
   });

@@ -4,7 +4,7 @@ import { Check, Loader2, type LucideIcon, MessageSquare, TriangleAlert, X } from
 import { useEffect, useId, useRef, useState } from "react";
 
 import { isInstructOnly } from "@/components/incident/headline";
-import { useKeyboardInset } from "@/components/incident/use-phone";
+import { useKeyboardInset } from "@/hooks/use-phone";
 import { useReportPinnedBar } from "@/components/pinned-bar";
 import { useTimeZone } from "@/components/preferences";
 import { Button } from "@/components/ui/button";

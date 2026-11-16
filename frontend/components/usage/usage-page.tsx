@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 
 const RANGES: readonly UsageRange[] = [1, 7, 30, 90];
 const DEFAULT_RANGE: UsageRange = 30;
-const POLL_MS = 60_000;
+const USAGE_POLL_MS = 60_000;
 
 const nothingHappened = (usage: UsageView) =>
   usage.totals.calls === 0 &&
@@ -153,7 +153,7 @@ function UsageRead({ range }: { range: UsageRange }) {
     (signal: AbortSignal) => apiFetch<UsageView>(`/api/usage?days=${range}`, { signal }),
     [range],
   );
-  const { data, error } = usePoll(fetchUsage, POLL_MS);
+  const { data, error } = usePoll(fetchUsage, USAGE_POLL_MS);
   if (!data) {
     return error ? (
       <p role="alert" className="flex items-center gap-2 text-sm text-down">

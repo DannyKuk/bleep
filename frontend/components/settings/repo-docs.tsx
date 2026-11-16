@@ -13,7 +13,7 @@ import { useLanguage, useT } from "@/lib/i18n";
 import { fetchRepoDocs, startRepoRefresh, type RepoDocsState } from "@/lib/knowledge-api";
 
 /** How often the page asks whether a read is over. */
-export const POLL_MS = 2000;
+export const DOCS_POLL_MS = 2000;
 
 /**
  * The docs of the repos services link, as Bleep holds them: when they were last read and the
@@ -23,7 +23,7 @@ export const POLL_MS = 2000;
  */
 export function RepoDocs({
   initial,
-  pollMs = POLL_MS,
+  pollMs = DOCS_POLL_MS,
 }: {
   initial: RepoDocsState;
   pollMs?: number;

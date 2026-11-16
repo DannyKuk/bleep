@@ -31,4 +31,18 @@ describe("LogoutButton", () => {
     );
     await vi.waitFor(() => expect(screen.queryByRole("button", { name: /Log out/ })).toBeNull());
   });
+
+  it("is not there while the settings are pending, but keeps its place (#626)", () => {
+    vi.stubGlobal("fetch", () => new Promise(() => {})); // the settings never arrive
+    render(
+      <PreferencesProvider>
+        <LogoutButton />
+      </PreferencesProvider>,
+    );
+    expect(screen.queryByRole("button", { name: /Log out/ })).toBeNull();
+    const held = document.querySelector("button");
+    expect(held).toHaveClass("invisible");
+    expect(held).toBeDisabled();
+    expect(held).toHaveAttribute("aria-hidden", "true");
+  });
 });

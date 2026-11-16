@@ -9,7 +9,7 @@ import { OverviewHero } from "@/components/overview/hero";
 import { HostTile } from "@/components/overview/host-tile";
 import { heroSituation, reachLine, unsureIds } from "@/components/overview/situation";
 import { Button } from "@/components/ui/button";
-import { usePoll } from "@/hooks/use-poll";
+import { POLL_MS, usePoll } from "@/hooks/use-poll";
 import { apiFetch } from "@/lib/api";
 import type { HostView, Incident, IncidentDetail, ServiceView } from "@/lib/api-types";
 import { useT } from "@/lib/i18n";
@@ -127,8 +127,6 @@ export function OverviewView({
     </div>
   );
 }
-
-const POLL_MS = 10_000;
 
 const isWaiting = (incident: Incident) => incident.status === "awaiting_approval";
 

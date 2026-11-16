@@ -293,8 +293,23 @@ def _event_text(event: IncidentEvent, tool_calls: int) -> Shown | str | None:
         case "verification":
             return _verification_text(payload)
         case "notice":
-            return Shown.in_payload(payload) or str(payload.get("text", "")) or None
+            return _stored_notice(payload)
     return None
+
+
+def _stored_notice(payload: dict) -> Shown | str | None:
+    """A stored notice's shown text, or its stored English when this version has no template for
+    it: an event written before an upgrade may name a template the upgrade removed."""
+    text = str(payload.get("text", "")) or None
+    shown = Shown.in_payload(payload)
+    if shown is None:
+        return text
+    try:
+        english(shown)
+    except prompts.PromptError:
+        log.warning("report: a stored notice names a template this version lacks; using its text")
+        return text
+    return shown
 
 
 def _verification_text(payload: dict) -> Shown:

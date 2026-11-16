@@ -57,7 +57,7 @@ from bleep.guard.plan_check import coolify_members, host_urls
 from bleep.hosts.config import UrlCheckConfig
 from bleep.hosts.coolify_names import COOLIFY_UUID, coolify_container_name
 from bleep.hosts.discovery import expects_exit, is_finished, is_self, service_key
-from bleep.hosts.engine import ContainerNotFound, EngineUnavailable
+from bleep.hosts.engine import ContainerNotFound, EngineError, EngineUnavailable
 from bleep.hosts.readings import past_threshold, readings
 from bleep.hosts.shell import HostUnreadable, host_basics
 from bleep.hosts.ssh import SshUnavailable
@@ -331,7 +331,7 @@ async def _first_reads(
     for name in names:
         try:
             summary = (await deps.registry.engine(host_id).inspect(name)).summary
-        except ContainerNotFound, EngineUnavailable, KeyError:
+        except EngineError:  # gone, unreachable or refused: no first read to compare with
             continue
         if summary.state == "running":
             reads[name] = summary
@@ -370,8 +370,10 @@ async def _check_container(
         summary = (await deps.registry.engine(host_id).inspect(name)).summary
     except ContainerNotFound:
         return _check("container", name, False, Shown.of("verify/not_found"))
-    except EngineUnavailable, KeyError:
+    except EngineUnavailable:
         return _check("container", name, False, Shown.of("verify/host_not_reachable"))
+    except EngineError:
+        return _check("container", name, False, Shown.of("verify/engine_refused"))
     if summary.state != "running":
         return _check("container", name, False, _is(summary.state))
     first = first_running.get(name)
@@ -475,7 +477,7 @@ async def _first_app_reads(deps: GraphDeps, host_id: str, redeploys: list[_Redep
         return
     try:
         listed = await deps.registry.engine(host_id).containers()
-    except EngineUnavailable, KeyError:
+    except EngineError:
         return
     for redeploy in redeploys:
         for c in _made(listed, redeploy):
@@ -522,8 +524,10 @@ async def _check_application(deps: GraphDeps, host_id: str, redeploy: _Redeploy)
         return _check("container", target, False, _NO_SINGLE_APP)
     try:
         listed = await deps.registry.engine(host_id).containers()
-    except EngineUnavailable, KeyError:
+    except EngineUnavailable:
         return _check("container", target, False, Shown.of("verify/host_not_reachable"))
+    except EngineError:
+        return _check("container", target, False, Shown.of("verify/engine_refused"))
     made = _made(listed, redeploy)
     present = {c.id for c in made}
     gone = [name for cid, name in redeploy.seen.items() if cid not in present]
@@ -609,8 +613,10 @@ async def _check_stopped(deps: GraphDeps, host_id: str, name: str) -> Check:
         summary = (await deps.registry.engine(host_id).inspect(name)).summary
     except ContainerNotFound:
         return _check("container", target, False, Shown.of("verify/not_found"))
-    except EngineUnavailable, KeyError:
+    except EngineUnavailable:
         return _check("container", target, False, Shown.of("verify/host_not_reachable"))
+    except EngineError:
+        return _check("container", target, False, Shown.of("verify/engine_refused"))
     if summary.state == "running":
         return _check("container", target, False, Shown.of("verify/running_again"))
     return _check("container", target, True, _is(summary.state))

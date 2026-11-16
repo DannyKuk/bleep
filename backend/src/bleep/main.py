@@ -92,8 +92,8 @@ def create_app(settings: Settings | None = None, parts: AppParts | None = None) 
                 await parts.settings_store.host_changed(HostChange(config.id, "added", config))
             await parts.settings_store.load()  # before the registry starts, so overrides hold
             await _reembed(parts)
+            stack.push_async_callback(parts.registry.close)  # before start: it may raise midway
             await parts.registry.start()
-            stack.push_async_callback(parts.registry.close)
             saver = await stack.enter_async_context(
                 open_checkpointer(settings.data_dir / "checkpoints.sqlite")
             )

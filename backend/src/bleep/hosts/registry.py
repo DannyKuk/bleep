@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 
 from bleep.hosts.config import HostConfig, ServiceOverrides
 from bleep.hosts.discovery import AmbiguousOverride, group_services
-from bleep.hosts.engine import Engine, EngineUnavailable, connect_engine
+from bleep.hosts.engine import Engine, EngineError, EngineUnavailable, connect_engine
 from bleep.hosts.shell import HostShell, engine_basics, host_basics
 from bleep.hosts.ssh import KeysFor, Resolve, SshSession
 from bleep.schemas.docker import ContainerSummary
@@ -19,6 +19,9 @@ log = logging.getLogger(__name__)
 BASICS_EVERY_S = 60  # the host probe cadence
 BASICS_RETRY_S = 10  # after a failed read
 MIN_ID_PREFIX = 12  # the short id Docker prints; a shorter prefix names no container here
+
+ENGINE_REFUSED = "the engine refused the request"
+LISTING_UNREADABLE = "the engine's container listing could not be read"
 
 Connector = Callable[[HostConfig], Awaitable[tuple[SshSession | None, Engine]]]
 
@@ -69,7 +72,13 @@ class Registry:
 
     async def start(self) -> None:
         """Connect every host at once. A host that fails stays, unreachable; nothing is raised."""
-        await asyncio.gather(*(self.reconnect(i) for i in self._entries))
+        host_ids = list(self._entries)
+        results = await asyncio.gather(
+            *(self.reconnect(i) for i in host_ids), return_exceptions=True
+        )
+        for host_id, result in zip(host_ids, results, strict=True):
+            if isinstance(result, BaseException):
+                log.error("connecting host %s failed", host_id, exc_info=result)
 
     async def close(self) -> None:
         self._closed = True
@@ -153,6 +162,11 @@ class Registry:
                     if entry.session is not None:
                         await entry.session.ensure_open()
                     await entry.engine.reconnect()
+            except EngineError as error:
+                # An answer from the daemon carries host text; only a lost connection is described.
+                refused = not isinstance(error, EngineUnavailable)
+                self._mark(entry, reachable=False, error=ENGINE_REFUSED if refused else str(error))
+                return False
             except Exception as error:  # the watcher must never see a connector failure
                 self._mark(entry, reachable=False, error=_describe(error))
                 return False
@@ -250,6 +264,13 @@ class Registry:
             containers = await entry.engine.containers()
         except EngineUnavailable as error:
             self._mark(entry, reachable=False, error=str(error))
+            return
+        except EngineError:  # the engine's own text is the host's, so the error is a fixed one
+            self._mark(entry, reachable=False, error=ENGINE_REFUSED)
+            return
+        except Exception:  # a listing Bleep's own parsing cannot read; the traceback stays here
+            log.exception("%s: the container listing could not be read", host_id)
+            self._mark(entry, reachable=False, error=LISTING_UNREADABLE)
             return
         entry.containers = containers
         error = self._group(host_id, entry)

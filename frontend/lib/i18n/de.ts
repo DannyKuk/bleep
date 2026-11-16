@@ -101,7 +101,12 @@ export const de: Messages = {
     opened: "geöffnet am",
     tokens: (count) => `${count} Tokens`,
     host: (id) => `Host ${id}`,
-    stream: { loading: "Verbindet", live: "Live", reconnecting: "Verbindet neu" },
+    stream: {
+      loading: "Verbindet",
+      live: "Live",
+      reconnecting: "Verbindet neu",
+      stopped: "Nicht live",
+    },
     notFound: "Es gibt keinen Vorfall mit dieser ID.",
     loadFailed: (message) => `Der Vorfall konnte nicht geladen werden: ${message}`,
     loading: "Vorfall wird geladen",
