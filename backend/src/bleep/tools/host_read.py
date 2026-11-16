@@ -16,8 +16,6 @@ from bleep.tools.registry import ToolContext, ToolSpec
 
 log = logging.getLogger(__name__)
 
-NEEDS_SSH = "host commands need an SSH host"
-
 
 class HostCommandArgs(BaseModel):
     command: str = Field(description="One of the allowed commands, typed exactly as listed.")
@@ -26,25 +24,33 @@ class HostCommandArgs(BaseModel):
 async def _host_command(ctx: ToolContext, command: str) -> str:
     shell = ctx.registry.shell(ctx.host_id)
     if shell is None:
-        return NEEDS_SSH
+        return say(ctx, "tools/reply/needs_ssh")
     try:
         uname = await shell.run(["uname", "-s"], COMMAND_TIMEOUT_S)
         if uname.exit_code != 0:
-            failed = f"uname -s exited {uname.exit_code} {uname.stderr.strip()}".strip()
-            return f"host unreachable: {await guard_result(ctx, 'error', failed)}"
+            failed = say(
+                ctx,
+                "tools/reply/uname_failed",
+                code=str(uname.exit_code),
+                stderr=uname.stderr.strip(),
+            )
+            error = await guard_result(ctx, "error", failed)
+            return say(ctx, "tools/reply/host_unreachable", error=error)
         name = uname.stdout.strip()
         if name != "Linux" and name != "Darwin":
-            return f"host commands are not supported on {await guard_result(ctx, 'error', name)}"
+            system = await guard_result(ctx, "error", name)
+            return say(ctx, "tools/reply/not_supported", system=system)
         text = await run_allowed(shell, command, name)
     except CommandNotAllowed as refusal:
         if ctx.guard_log is not None:
             ctx.guard_log.record(ctx.incident_id, "refused_command", command)
         return str(refusal)
     except SshUnavailable as error:
-        return f"host unreachable: {await guard_result(ctx, 'error', str(error))}"
+        reason = await guard_result(ctx, "error", str(error))
+        return say(ctx, "tools/reply/host_unreachable", error=reason)
     except TimeoutError:
-        return "the command timed out"
-    return await guard_result(ctx, "host_command", text or "(no output)")
+        return say(ctx, "tools/reply/timed_out")
+    return await guard_result(ctx, "host_command", text or say(ctx, "tools/reply/no_output"))
 
 
 def _build(ctx: ToolContext) -> StructuredTool:
