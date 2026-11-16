@@ -7,6 +7,7 @@ import json
 import pytest
 from langchain_core.messages import AIMessage
 
+from bleep import prompts
 from bleep.hosts.registry import Registry
 from bleep.schemas.settings import ModelSettings
 from bleep.tools.default import default_registry
@@ -460,7 +461,9 @@ async def inspect_result(c: LookCase) -> str:
     try:
         context = ToolContext("inc-1", HOST_ID, registry, QuietGuardLog())
         [inspect] = [
-            t for t in default_registry().read_tools(context) if t.name == "inspect_container"
+            t
+            for t in default_registry(prompts.load).read_tools(context)
+            if t.name == "inspect_container"
         ]
         return await inspect.ainvoke({"container": c.own()[0]})
     finally:

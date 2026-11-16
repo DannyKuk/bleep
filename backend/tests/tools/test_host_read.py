@@ -1,3 +1,4 @@
+from bleep import prompts
 from bleep.hosts.registry import Registry
 from bleep.hosts.ssh import CommandResult, SshUnavailable
 from bleep.tools.default import default_registry
@@ -31,7 +32,7 @@ async def build(host_kind="ssh", shell=None):
     log = GuardLog()
     from bleep.tools.host_read import SPECS
 
-    return SPECS[0].build(ToolContext("inc-1", "a", registry, log)), log
+    return SPECS[0].build(ToolContext("inc-1", "a", registry, log, texts=prompts.load)), log
 
 
 async def test_output_is_redacted_and_wrapped():
@@ -118,7 +119,7 @@ async def test_timeout():
 def test_description_lists_commands_and_marks_output_untrusted():
     from bleep.tools.host_read import SPECS
 
-    tool = SPECS[0].build(ToolContext("i", "a", None))  # type: ignore[arg-type]
+    tool = SPECS[0].build(ToolContext("i", "a", None, texts=prompts.load))  # type: ignore[arg-type]
     description = tool.description
     for word in ("df -P", "free -b", "journalctl", "vm_stat", "uptime", "untrusted"):
         assert word in description
@@ -135,7 +136,7 @@ async def test_host_command_is_offered_on_ssh_hosts_only():
         registry = Registry([host], connect)
         await registry.start()
         ctx = ToolContext("inc-1", "a", registry, GuardLog())
-        return {t.name for t in default_registry().read_tools(ctx)}
+        return {t.name for t in default_registry(prompts.load).read_tools(ctx)}
 
     assert "host_command" in await names("ssh")
     assert "host_command" not in await names("socket")

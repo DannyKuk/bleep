@@ -1,0 +1,1 @@
+List the Coolify applications: name, uuid, status (running:healthy, exited:unhealthy, ...), domains, git repo and branch, deployed commit and build pack. The ones whose containers run on this host are marked. Use it to find the application behind a service and its uuid. {untrusted_rule}

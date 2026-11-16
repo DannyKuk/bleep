@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.tools import StructuredTool
 from pydantic import SecretStr
 
+from bleep import prompts
 from bleep.graph.build import build_graph, open_checkpointer
 from bleep.graph.deps import StaticSettings
 from bleep.graph.nodes import gather, investigate
@@ -74,7 +75,7 @@ def only_tool(name: str, run_it) -> ToolRegistry:
     def build(ctx) -> StructuredTool:
         return StructuredTool.from_function(coroutine=run_it, name=name, description="A test tool.")
 
-    registry = ToolRegistry()
+    registry = ToolRegistry(prompts.load)
     registry.register(ToolSpec(name, "read", "test", build))
     return registry
 
@@ -413,7 +414,7 @@ async def test_tools_see_the_incidents_service(tmp_path):
 
     script = [asks(call("which", 1)), DONE]
     env, state = await setup(tmp_path, script)
-    env.deps.tools = ToolRegistry()
+    env.deps.tools = ToolRegistry(prompts.load)
     env.deps.tools.register(
         ToolSpec("which", "read", "test", build, lambda ctx: ctx.service_id is not None)
     )
@@ -436,7 +437,7 @@ def with_mcp(env, settings: dict[str, Any] | None, *, on: bool = True) -> None:
         env={"MCP_URL": "https://mcp.example.com/mcp"},
     )
     plugins.set("mcp", settings or {}, on)
-    env.deps.tools = default_registry(plugins=plugins)
+    env.deps.tools = default_registry(prompts.load, plugins=plugins)
 
 
 def task(env) -> str:

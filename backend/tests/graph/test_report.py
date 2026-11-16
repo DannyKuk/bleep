@@ -685,7 +685,7 @@ NAMED_CAUSE = "commit 3f204d3 'Deploy shop 2' set SHOP_VERSION to 2, which reads
 def commits_read() -> list[ToolMessage]:
     """The deploy's commit as `recent_commits` lists it and Investigate keeps the result."""
     listed = Commit(sha=DEPLOY_SHA, date=T0, author="shop-dev", message="Deploy shop 2")
-    out, _ = guard_text("commits", describe_commits("o/shop", 48, None, [listed]))
+    out, _ = guard_text("commits", describe_commits(prompts.load, "o/shop", 48, None, [listed]))
     text, _, _ = guard_result("recent_commits", out)
     return [ToolMessage(text, tool_call_id="c1", name="recent_commits")]
 

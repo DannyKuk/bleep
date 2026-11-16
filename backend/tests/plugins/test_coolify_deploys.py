@@ -6,6 +6,7 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
+from bleep import prompts
 from bleep.plugins.coolify.client import CoolifyClient
 from bleep.plugins.coolify.deploys import CoolifyDeploys, running_commit
 from bleep.plugins.coolify.plugin import CoolifyPlugin
@@ -95,12 +96,18 @@ def test_one_finished_deploy_gives_no_previous_commit():
     assert running.since == datetime(2026, 11, 4, 7, 52, 40, tzinfo=UTC)
 
 
+def why(unknown: DeployUnknown) -> str:
+    """The sentence `deployed_commits` says for `unknown`."""
+    return prompts.load(unknown.text, **unknown.values).strip()
+
+
 def test_a_running_deploy_coolify_records_as_head_names_no_commit():
     found = deployments("deployments-history.json")
     found[1] = found[1].model_copy(update={"commit": "HEAD"})
 
-    with pytest.raises(DeployUnknown, match="no commit"):
+    with pytest.raises(DeployUnknown) as unknown:
         running_commit(found)
+    assert "no commit" in why(unknown.value)
 
 
 def test_a_ref_before_the_running_commit_leaves_the_previous_one_unknown():
@@ -114,8 +121,9 @@ def test_a_ref_before_the_running_commit_leaves_the_previous_one_unknown():
 
 def test_no_finished_deploy_is_unknown():
     found = [d for d in deployments("deployments-history.json") if d.status != "finished"]
-    with pytest.raises(DeployUnknown, match="no finished deployment"):
+    with pytest.raises(DeployUnknown) as unknown:
         running_commit(found)
+    assert "no finished deployment" in why(unknown.value)
 
 
 def test_an_odd_finish_time_is_left_out():
@@ -142,8 +150,9 @@ async def test_a_service_of_no_coolify_app_has_no_word_from_it():
 
 async def test_containers_of_several_apps_are_unknown():
     deploys = CoolifyDeploys(client(Coolify()))
-    with pytest.raises(DeployUnknown, match="several Coolify applications"):
+    with pytest.raises(DeployUnknown) as unknown:
         await deploys.running_commit(service(container("a"), container("b", "blog0uuid00000000b2")))
+    assert "several Coolify applications" in why(unknown.value)
 
 
 async def test_a_preview_deployment_is_unknown_not_its_applications_commit():
@@ -155,8 +164,9 @@ async def test_a_preview_deployment_is_unknown_not_its_applications_commit():
         update={"labels": container("web").labels | {"coolify.pullRequestId": "0"}}
     )
 
-    with pytest.raises(DeployUnknown, match="preview deployment"):
+    with pytest.raises(DeployUnknown) as unknown:
         await CoolifyDeploys(client(coolify)).running_commit(service(preview))
+    assert "preview deployment" in why(unknown.value)
     assert coolify.requests == []
     running = await CoolifyDeploys(client(coolify)).running_commit(service(main))
     assert running is not None and running.sha == HEAD
@@ -166,7 +176,7 @@ async def test_coolify_down_is_unknown_in_bleeps_words():
     deploys = CoolifyDeploys(client(Coolify(502, b"Bad Gateway <html>")))
     with pytest.raises(DeployUnknown) as unknown:
         await deploys.running_commit(service(container("web")))
-    assert str(unknown.value) == "Coolify's deployments could not be read (Coolify answered 502)"
+    assert why(unknown.value) == "Coolify's deployments could not be read (Coolify answered 502)"
 
 
 async def test_the_plugin_registry_answers_only_while_coolify_is_on():

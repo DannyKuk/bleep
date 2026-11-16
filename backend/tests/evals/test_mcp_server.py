@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from bleep import prompts
 from bleep.hosts.registry import Registry
 from bleep.tools.default import default_registry
 from bleep.tools.registry import ToolContext
@@ -65,7 +66,7 @@ async def test_caddy_config_is_a_read_tool_that_shows_the_loaded_upstream_beside
     async with serve(load_mcp_fixture("caddy")) as served:
         plugins = served.plugins(RecordingGuardLog())
         ctx = ToolContext(incident_id="inc_1", host_id="demo", registry=Registry([]))
-        tools = {t.name: t for t in default_registry(plugins=plugins).read_tools(ctx)}
+        tools = {t.name: t for t in default_registry(prompts.load, plugins=plugins).read_tools(ctx)}
         listing = await tools["mcp_tools"].ainvoke({})
         answer = await tools["mcp_call"].ainvoke(
             {"tool": "caddy_config", "arguments": {"container": "shop-proxy"}}

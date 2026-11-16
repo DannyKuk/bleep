@@ -1,6 +1,7 @@
 import pytest
 from pydantic import BaseModel, ConfigDict, SecretBytes, SecretStr
 
+from bleep import prompts
 from bleep.guard.plan_check import check_plan
 from bleep.hosts.registry import Registry
 from bleep.plugins.base import Plugin, PluginContext
@@ -43,7 +44,7 @@ def test_a_plugin_is_off_until_switched_on():
 
 def test_switching_on_adds_its_read_tools_to_the_next_round_and_off_removes_them():
     registry = on(plugins())
-    tools = default_registry(plugins=registry)
+    tools = default_registry(prompts.load, plugins=registry)
     assert "coolify_applications" in {t.name for t in tools.read_tools(ctx())}
     registry.enable("coolify", False)
     assert "coolify_applications" not in {t.name for t in tools.read_tools(ctx())}

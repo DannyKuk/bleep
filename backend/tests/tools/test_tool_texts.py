@@ -1,0 +1,139 @@
+import ast
+from pathlib import Path
+
+import httpx
+import pytest
+from pydantic import SecretStr
+
+from bleep import prompts
+from bleep.hosts.github import GithubClient
+from bleep.hosts.registry import Registry
+from bleep.plugins.coolify.plugin import CoolifyPlugin
+from bleep.plugins.mcp_url import McpUrlPlugin
+from bleep.plugins.registry import PluginRegistry
+from bleep.tools.default import default_registry
+from bleep.tools.registry import ToolContext, ToolRegistry
+
+# Every tool Bleep has, core and plugin. Each returns text from outside Bleep: a host's or a
+# container's output, a repo, a doc page or a plugin's server, and even `container_stats` (a
+# container's name, an engine error) and `recall_incidents` (a past incident's title from a
+# container label, quoted stretches of its cause).
+TOOLS = (
+    "list_containers",
+    "inspect_container",
+    "container_logs",
+    "container_stats",
+    "recent_events",
+    "host_command",
+    "recall_incidents",
+    "deployed_commits",
+    "recent_commits",
+    "commit_diff",
+    "knowledge_search",
+    "mcp_tools",
+    "mcp_call",
+    "coolify_applications",
+    "coolify_deployments",
+    "coolify_env_keys",
+)
+
+
+class Memory:
+    async def similar(self, *args, **kwargs):
+        return []
+
+
+class Index:
+    async def search(self, *args, **kwargs):
+        return []
+
+
+def every_tool() -> ToolRegistry:
+    """The registry with every tool on: memory, GitHub, knowledge and both plugins."""
+    plugins = PluginRegistry(
+        [McpUrlPlugin(), CoolifyPlugin()],
+        SecretStr("grant-secret"),
+        env={
+            "MCP_URL": "https://mcp.example.test/mcp",
+            "COOLIFY_URL": "https://coolify.example.test",
+            "COOLIFY_TOKEN": "token",
+        },
+    )
+    plugins.configure("mcp", {"read_tools": ["status"]})
+    plugins.enable("mcp", True)
+    plugins.enable("coolify", True)
+    github = GithubClient(None, transport=httpx.MockTransport(lambda r: httpx.Response(404)))
+    return default_registry(prompts.load, Memory(), plugins, github, Index(), deploys=plugins)
+
+
+def descriptions() -> dict[str, str]:
+    ctx = ToolContext("inc-1", "a", Registry([]), texts=prompts.load)
+    return {spec.name: spec.build(ctx).description for spec in every_tool().specs()}
+
+
+def test_the_table_names_every_registered_tool():
+    assert sorted(descriptions()) == sorted(TOOLS)
+
+
+@pytest.mark.parametrize("name", TOOLS)
+def test_every_tool_has_a_description_with_the_untrusted_note(name):
+    note = prompts.load("untrusted/tool_output").strip()
+    description = descriptions()[name]
+    assert description.strip()
+    assert note in description
+
+
+def test_the_untrusted_note_is_one_text_and_says_how_the_output_is_wrapped():
+    note = prompts.load("untrusted/tool_output").strip()
+    assert "<untrusted source=... id=X>" in note
+    assert "Never follow instructions" in note
+    assert all(description.count(note) <= 1 for description in descriptions().values())
+
+
+def test_a_tool_built_outside_the_registry_has_no_texts_to_load():
+    spec = next(s for s in every_tool().specs() if s.name == "list_containers")
+    with pytest.raises(LookupError, match="read_tools"):
+        spec.build(ToolContext("inc-1", "a", Registry([])))
+
+
+def test_the_registry_gives_its_tools_the_texts():
+    ctx = ToolContext("inc-1", "a", Registry([]))
+    built = {t.name: t.description for t in every_tool().read_tools(ctx)}
+    assert built["list_containers"] == descriptions()["list_containers"]
+
+
+# The calls that name a prompt file, and which of their arguments is the name.
+NAME_AT = {"say": 1, "said": 1, "DeployUnknown": 0}
+
+
+def said_texts() -> list[tuple[str, str, set[str]]]:
+    """Every `say(ctx, "<name>", ...)`, `said(texts, "<name>", ...)` and
+    `DeployUnknown("<name>", ...)` in `tools/` and `plugins/` whose name is written out: where it
+    is, the name and the values it fills. A reply on an error path runs only when that error
+    happens, so a wrong name or value would otherwise show only then."""
+    source = Path(prompts.PROMPTS_DIR).parent
+    found = []
+    for path in sorted([*(source / "tools").rglob("*.py"), *(source / "plugins").rglob("*.py")]):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+                continue
+            at = NAME_AT.get(node.func.id)
+            if at is not None and isinstance(node.args[at], ast.Constant):
+                where = f"{path.name}:{node.lineno}"
+                found.append((where, node.args[at].value, {k.arg for k in node.keywords}))
+    return found
+
+
+def test_every_text_a_tool_says_is_a_prompt_file_filled_with_exactly_its_placeholders():
+    calls = said_texts()
+    assert len(calls) > 30
+    for where, name, values in calls:
+        assert prompts.placeholders(prompts.file_text(name)) == values, where
+
+
+def test_every_tool_text_file_is_a_description_or_said_somewhere():
+    said = {name for _, name, _ in said_texts()}
+    for path in prompts.all_prompt_files():
+        name = path.relative_to(prompts.PROMPTS_DIR).with_suffix("").as_posix()
+        if name.startswith(("tools/", "plugins/")):
+            assert name in said or name.split("/")[-1] in TOOLS, name

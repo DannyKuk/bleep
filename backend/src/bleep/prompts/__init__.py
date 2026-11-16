@@ -59,15 +59,19 @@ OVERRIDABLE = frozenset(
 # headings, labels and fallbacks the graph nodes fill their prompts' sections with
 # (`graph/describe.py`, #623), which are not prompts of their own; `memory/` the words of the
 # records memory stores and the lines a prompt shows them in (#623), so an override never changes
-# what is stored.
+# what is stored. `tools/` and `plugins/` hold the tool descriptions and the sentences a tool
+# answers with, which say what a tool may do and are filled with `untrusted/tool_output`, the one
+# rule on untrusted tool output (#624).
 NOT_OVERRIDABLE_AREAS = (
     "api/",
     "evals/",
     "graph/parts/",
     "memory/",
     "notify/",
+    "plugins/",
     "shown/",
     "talk/",
+    "tools/",
     "untrusted/",
 )
 NOT_OVERRIDABLE = frozenset({"graph/propose_mcp", "graph/system", "graph/verify_unproven"})

@@ -1,9 +1,10 @@
 import re
 
+from bleep import prompts
 from bleep.guard.sanitize import MAX_CHARS
 from bleep.schemas.knowledge import KnowledgeHit, KnowledgeSource
 from bleep.tools.default import default_registry
-from bleep.tools.knowledge import NOTHING, knowledge_specs
+from bleep.tools.knowledge import knowledge_specs
 from bleep.tools.registry import ToolContext
 
 WRAPPER = re.compile(
@@ -44,7 +45,7 @@ class GuardLog:
 
 def tool(index: Index, guard_log: GuardLog | None = None):
     [spec] = knowledge_specs(index)
-    return spec, spec.build(ToolContext("inc-1", "a", None, guard_log))  # type: ignore[arg-type]
+    return spec, spec.build(ToolContext("inc-1", "a", None, guard_log, texts=prompts.load))  # type: ignore[arg-type]
 
 
 async def test_results_come_back_wrapped_once_as_untrusted_with_title_section_and_link():
@@ -82,7 +83,7 @@ async def test_an_unknown_source_is_a_readable_error_not_a_search():
 async def test_nothing_found_says_so():
     _, search = tool(Index([]))
 
-    assert await search.ainvoke({"query": "q"}) == NOTHING
+    assert await search.ainvoke({"query": "q"}) == prompts.load("tools/reply/no_knowledge").strip()
 
 
 async def test_hostile_page_text_cannot_close_the_wrapper_and_secrets_are_redacted():
@@ -117,8 +118,10 @@ def test_the_tool_is_a_read_tool_and_registered_only_with_an_index():
 
     assert (spec.name, spec.kind) == ("knowledge_search", "read")
     assert "docker" in search.description and "incident" in search.description
-    assert "knowledge_search" not in {s.name for s in default_registry().specs()}
-    assert "knowledge_search" in {s.name for s in default_registry(knowledge=Index([])).specs()}
+    assert "knowledge_search" not in {s.name for s in default_registry(prompts.load).specs()}
+    assert "knowledge_search" in {
+        s.name for s in default_registry(prompts.load, knowledge=Index([])).specs()
+    }
 
 
 async def test_a_page_with_a_huge_heading_or_many_wrapper_tags_cannot_push_the_best_hit_out():

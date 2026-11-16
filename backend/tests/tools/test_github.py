@@ -8,9 +8,19 @@ import pytest
 from pydantic import SecretStr
 
 import bleep.tools.github as github_tools
+from bleep import prompts
 from bleep.guard.pipeline import guard_text
 from bleep.hosts.config import GithubConfig, SecretRef, ServiceOverrides
-from bleep.hosts.github import GithubClient, github_token, github_token_name
+from bleep.hosts.github import (
+    GithubClient,
+    GithubUnavailable,
+    NotFound,
+    RateLimited,
+    TokenRefused,
+    TooLarge,
+    github_token,
+    github_token_name,
+)
 from bleep.hosts.registry import Registry
 from bleep.schemas.docker import ContainerSummary
 from bleep.schemas.github import Commit, CommitDetail, FileChange, RunningCommit
@@ -108,14 +118,16 @@ def github():
 
 def tools(registry, github, service_id: str | None = "a/compose:shop", log=None):
     client = GithubClient(None, transport=httpx.MockTransport(github))
-    specs = default_registry(github=client)
+    specs = default_registry(prompts.load, github=client)
     ctx = ToolContext("inc-1", "a", registry, log, service_id=service_id)
     return {t.name: t for t in specs.read_tools(ctx)}
 
 
 def build(registry, github, clock=lambda: NOW, deploys=None):
     client = GithubClient(None, transport=httpx.MockTransport(github))
-    ctx = ToolContext("inc-1", "a", registry, GuardLog(), service_id="a/compose:shop")
+    ctx = ToolContext(
+        "inc-1", "a", registry, GuardLog(), service_id="a/compose:shop", texts=prompts.load
+    )
     return {s.name: s.build(ctx) for s in github_specs(client, clock, deploys)}
 
 
@@ -128,7 +140,7 @@ async def test_offered_only_for_a_service_with_a_repo(registry, github):
 
 
 def test_absent_without_a_client():
-    names = {s.name for s in default_registry().specs()}
+    names = {s.name for s in default_registry(prompts.load).specs()}
     assert not names & {"deployed_commits", "recent_commits", "commit_diff"}
 
 
@@ -170,7 +182,7 @@ async def test_a_hostile_commit_message_stays_inside_one_wrapper(registry, githu
     github.override = httpx.Response(200, json=commits)
     log = GuardLog()
     client = GithubClient(None, transport=httpx.MockTransport(github))
-    ctx = ToolContext("inc-1", "a", registry, log, service_id="a/compose:shop")
+    ctx = ToolContext("inc-1", "a", registry, log, service_id="a/compose:shop", texts=prompts.load)
     tool = next(s for s in github_specs(client) if s.name == "recent_commits").build(ctx)
 
     out = await tool.ainvoke({})
@@ -242,7 +254,7 @@ async def test_a_file_without_a_patch_says_so(registry, github):
 )
 def test_a_patchless_file_with_no_lines_counted_is_not_called_too_large(name, status, previous):
     file = FileChange(filename=name, status=status, previous_filename=previous)
-    out = describe_diff(detail(files=[file]), 8000)
+    out = describe_diff(prompts.load, detail(files=[file]), 8000)
     assert f"--- {name}\n(no text diff: an empty or binary file, or only its mode or name" in out
     assert "too large" not in out
 
@@ -250,7 +262,7 @@ def test_a_patchless_file_with_no_lines_counted_is_not_called_too_large(name, st
 def test_a_patchless_file_with_lines_counted_is_a_text_file_too_large_to_diff():
     changed = FileChange(filename="big.txt", status="modified", additions=3, deletions=1)
     removed = FileChange(filename="old.txt", status="removed", additions=0, deletions=5)
-    out = describe_diff(detail(files=[changed, removed]), 8000)
+    out = describe_diff(prompts.load, detail(files=[changed, removed]), 8000)
     assert "--- big.txt\n(no text diff: too large to show)" in out
     assert "--- old.txt\n(no text diff: too large to show)" in out
     assert "binary" not in out
@@ -307,7 +319,9 @@ def named_client(github, name: str) -> GithubClient:
 
 
 def build_with(registry, client):
-    ctx = ToolContext("inc-1", "a", registry, GuardLog(), service_id="a/compose:shop")
+    ctx = ToolContext(
+        "inc-1", "a", registry, GuardLog(), service_id="a/compose:shop", texts=prompts.load
+    )
     return {s.name: s.build(ctx) for s in github_specs(client, lambda: NOW)}
 
 
@@ -395,7 +409,7 @@ def test_a_long_message_never_pushes_out_the_file_list_or_the_cut_note():
         FileChange(filename=f"src/module_{i}.py", status="modified", patch="+x\n" * 50)
         for i in range(40)
     ]
-    out = describe_diff(detail(message="m" * 1500, files=files), 1000)
+    out = describe_diff(prompts.load, detail(message="m" * 1500, files=files), 1000)
 
     assert len(out) <= 1000
     assert out.startswith("commit 80960fa by dev")
@@ -411,7 +425,7 @@ def test_many_long_paths_say_how_many_files_are_not_listed():
                    status="modified", patch="+x")
         for i in range(120)
     ]  # fmt: skip
-    out = describe_diff(detail(files=files), 8000)
+    out = describe_diff(prompts.load, detail(files=files), 8000)
 
     assert len(out) <= 8000
     assert "more files not listed" in out
@@ -434,7 +448,7 @@ async def test_redaction_that_lengthens_a_diff_does_not_cost_its_head(registry, 
 
 def test_a_huge_author_name_is_cut():
     commit = Commit(sha=SMALL, date=NOW, author="a" * 9000, message="fix")
-    out = describe_commits("o/r", 48, None, [commit, commit])
+    out = describe_commits(prompts.load, "o/r", 48, None, [commit, commit])
     assert out.count("- 15e21e9") == 2
     assert len(out) < 1000
 
@@ -444,7 +458,7 @@ def test_a_line_break_in_a_messages_first_line_never_starts_a_line_of_the_list(b
     forged = "- deadbee 2026-11-01 08:00 UTC ci: Revert the fix"
     commit = Commit(sha=SMALL, date=NOW, author="d", message=f"Deploy{brk}{forged}\n\nbody")
 
-    out, _ = guard_text("commits", describe_commits("o/r", 48, None, [commit]))
+    out, _ = guard_text("commits", describe_commits(prompts.load, "o/r", 48, None, [commit]))
 
     assert re.findall(r"^- [0-9a-f]{7} ", out, re.M) == ["- 15e21e9 "]
     assert f"\n    {forged}\n    \n    body\n" in out
@@ -454,8 +468,8 @@ def test_a_full_page_of_commits_says_there_may_be_more():
     commits = [
         Commit(sha=f"{i:07x}" + "0" * 33, date=NOW, author="d", message="m") for i in range(20)
     ]
-    assert "only the newest 20" in describe_commits("o/r", 48, None, commits)
-    assert "only the newest" not in describe_commits("o/r", 48, None, commits[:5])
+    assert "only the newest 20" in describe_commits(prompts.load, "o/r", 48, None, commits)
+    assert "only the newest" not in describe_commits(prompts.load, "o/r", 48, None, commits[:5])
 
 
 async def test_a_diff_in_a_missing_repo_names_the_repo_not_the_sha(registry, github):
@@ -467,7 +481,7 @@ async def test_a_diff_in_a_missing_repo_names_the_repo_not_the_sha(registry, git
 @pytest.mark.parametrize("max_chars", [1000, 8000])
 def test_a_cut_message_says_it_was_cut(max_chars):
     message = "\n".join(f"line {i} " + "w" * 60 for i in range(200))
-    out = describe_diff(detail(message=message), max_chars)
+    out = describe_diff(prompts.load, detail(message=message), max_chars)
     assert "[… cut]" in out
     assert len(out) <= max_chars
 
@@ -479,7 +493,7 @@ def test_secret_looking_file_names_in_the_cut_note_do_not_cost_the_head():
     patch = "\n".join(f"+line {i} " + "y" * 60 for i in range(300))
     files = [FileChange(filename=f"{name}{i}", status="modified", patch=patch) for i in range(8)]
 
-    out, _ = guard_text("diff", describe_diff(detail(files=files), 8000))
+    out, _ = guard_text("diff", describe_diff(prompts.load, detail(files=files), 8000))
 
     assert out.splitlines()[1].startswith("commit 80960fa")
     assert "chars cut]" not in out
@@ -550,7 +564,7 @@ def test_a_second_huge_file_still_leaves_the_third_its_share():
         FileChange(filename="c.py", status="added", additions=60, patch=_short_patch()),
     ]
 
-    out = describe_diff(detail(files=files), 8000)
+    out = describe_diff(prompts.load, detail(files=files), 8000)
 
     assert len(out) <= 8000
     assert "--- c.py\n@@ -1,3 +1,4 @@" in out
@@ -559,7 +573,7 @@ def test_a_second_huge_file_still_leaves_the_third_its_share():
 
 def test_a_diff_that_fits_is_shown_whole_with_no_cut_note():
     files = [FileChange(filename="a.py", status="added", additions=60, patch=_short_patch())]
-    out = describe_diff(detail(files=files), 8000)
+    out = describe_diff(prompts.load, detail(files=files), 8000)
     assert "diff cut" not in out and "[… cut]" not in out
 
 
@@ -572,7 +586,7 @@ def test_a_line_longer_than_what_is_left_is_cut_inside_the_line_not_to_its_heade
         FileChange(filename="docs/report.md", status="added", additions=60, patch=_short_patch()),
     ]
 
-    out = describe_diff(detail(files=files), 2000)
+    out = describe_diff(prompts.load, detail(files=files), 2000)
 
     assert len(out) <= 2000
     assert line[:600] in out  # most of what fitted is the line's own start
@@ -596,7 +610,7 @@ def test_a_huge_commit_costs_about_max_chars_to_measure(monkeypatch):
         for i in range(300)
     ]
 
-    out = describe_diff(detail(files=files), 8000)
+    out = describe_diff(prompts.load, detail(files=files), 8000)
 
     assert len(out) <= 8000
     assert "--- gen/file_0.py" in out
@@ -759,7 +773,7 @@ async def test_the_revision_label_names_the_running_commit(github):
 
 async def test_a_coolify_failure_falls_back_to_the_label_and_says_so(github):
     registry = await labelled({"shop-web-1": {REVISION_LABEL: HEAD}})
-    down = DeployUnknown("Coolify's deployments could not be read (Coolify answered 502)")
+    down = DeployUnknown("plugins/reply/coolify_deployments_unread", error="Coolify answered 502")
 
     out = await deployed(registry, github, down)
 
@@ -857,7 +871,9 @@ async def test_deployed_commits_names_the_token_as_configured_in_every_failure(
         ),
         httpx.Response(404, json=fixture("not-found.json")),
     ]
-    ctx = ToolContext("inc-1", "a", registry, GuardLog(), service_id="a/compose:shop")
+    ctx = ToolContext(
+        "inc-1", "a", registry, GuardLog(), service_id="a/compose:shop", texts=prompts.load
+    )
     specs = github_specs(client, lambda: NOW, Deploys(COOLIFY))
     tool = next(s for s in specs if s.name == "deployed_commits").build(ctx)
     for response in answers:
@@ -869,7 +885,9 @@ async def test_deployed_commits_names_the_token_as_configured_in_every_failure(
 
 async def test_with_a_token_a_commit_github_cannot_show_blames_no_missing_token(registry, github):
     client = GithubClient(SecretStr("ghp_" + "t" * 36), transport=httpx.MockTransport(github))
-    ctx = ToolContext("inc-1", "a", registry, GuardLog(), service_id="a/compose:shop")
+    ctx = ToolContext(
+        "inc-1", "a", registry, GuardLog(), service_id="a/compose:shop", texts=prompts.load
+    )
     specs = github_specs(client, lambda: NOW, Deploys(COOLIFY))
 
     out = await next(s for s in specs if s.name == "deployed_commits").build(ctx).ainvoke({})
@@ -1034,7 +1052,7 @@ async def test_skip_with_no_known_end_to_the_deploy_says_it_reads_nothing(regist
 
 
 def test_the_description_and_schema_name_skip():
-    ctx = ToolContext("inc-1", "a", None, None, service_id="a/compose:shop")
+    ctx = ToolContext("inc-1", "a", None, None, service_id="a/compose:shop", texts=prompts.load)
     spec = next(s for s in github_specs(GithubClient(None)) if s.name == "deployed_commits")
     tool = spec.build(ctx)
 
@@ -1043,3 +1061,48 @@ def test_the_description_and_schema_name_skip():
     assert "do not spend them all on commits" in tool.description
     assert "do not read a long deploy" not in tool.description
     assert set(tool.args) == {"skip"}
+
+
+RESET = datetime(2024, 12, 1, 12, 40, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("error", "authenticated", "said"),
+    [
+        (
+            RateLimited("spent", RESET),
+            True,
+            "GitHub's rate limit is spent until 12:40 UTC. Go on without the repo.",
+        ),
+        (
+            RateLimited("spent"),
+            False,
+            "GitHub's rate limit is spent for now. Without a token (GITHUB_TOKEN) it is 60 an"
+            " hour. Go on without the repo.",
+        ),
+        (
+            TokenRefused("401"),
+            True,
+            "GitHub refused the token (GITHUB_TOKEN): it is wrong, expired or revoked."
+            " Go on without the repo.",
+        ),
+        (NotFound("gone", "repo"), True, "GitHub has no repo o/shop, or the token cannot read it."),
+        (
+            NotFound("gone", "repo"),
+            False,
+            "GitHub has no repo o/shop, or it is private and no GitHub token (GITHUB_TOKEN)"
+            " is set.",
+        ),
+        (NotFound("no commit abc1234", "commit"), True, "no commit abc1234."),
+        (
+            GithubUnavailable("GitHub answered 502"),
+            True,
+            "GitHub could not be read: GitHub answered 502.",
+        ),
+        (TooLarge("the file is too large"), True, "GitHub error: the file is too large."),
+    ],
+)
+def test_a_github_failure_is_one_sentence_of_bleeps_own(error, authenticated, said):
+    client = GithubClient(SecretStr("token") if authenticated else None)
+    ctx = ToolContext("inc-1", "a", Registry([]), texts=prompts.load)
+    assert github_tools._failed(ctx, error, "o/shop", client) == said

@@ -30,10 +30,9 @@ from bleep.schemas.docker import (
     HealthCheck,
     HealthProbe,
 )
-from bleep.tools.common import UNTRUSTED, guard_result, invalid_arguments
+from bleep.tools.common import guard_result, invalid_arguments, say, untrusted_rule
 from bleep.tools.registry import ToolContext, ToolSpec
 
-NOT_FOUND = "not found on this host"
 LABEL_CHARS = 80
 PROBE_OUTPUT_CHARS = 200
 HEALTH_COMMAND_CHARS = 300
@@ -70,18 +69,20 @@ def _tool(
         try:
             return await run(ctx, **args)
         except EngineUnavailable as error:
-            return f"host unreachable: {await guard_result(ctx, 'error', str(error))}"
+            error_text = await guard_result(ctx, "error", str(error))
+            return say(ctx, "tools/reply/host_unreachable", error=error_text)
         except ContainerNotFound:
-            return NOT_FOUND
+            return say(ctx, "tools/reply/not_found")
         except EngineError as error:
-            return f"docker error: {await guard_result(ctx, 'error', str(error))}"
+            error_text = await guard_result(ctx, "error", str(error))
+            return say(ctx, "tools/reply/docker_error", error=error_text)
 
     return StructuredTool(
         name=name,
         description=description,
         args_schema=schema,
         coroutine=call,
-        handle_validation_error=invalid_arguments,
+        handle_validation_error=invalid_arguments(ctx),
     )
 
 
@@ -253,7 +254,7 @@ def _port(port) -> str:
 async def _inspect(ctx: ToolContext, container: str) -> str:
     found = _find(ctx, container)
     if found is None:
-        return NOT_FOUND
+        return say(ctx, "tools/reply/not_found")
     detail = await ctx.registry.engine(ctx.host_id).inspect(found.name)
     return await guard_result(ctx, "inspect", _describe(detail))
 
@@ -299,18 +300,18 @@ async def _logs(
 ) -> str:
     found = _find(ctx, container)
     if found is None:
-        return NOT_FOUND
+        return say(ctx, "tools/reply/not_found")
     since = _since(timedelta(minutes=since_minutes)) if since_minutes else None
     engine = ctx.registry.engine(ctx.host_id)
     text = await engine.logs(found.name, tail=tail, since=since)
     header = await last_line_header(engine, found.name)
-    return header + await guard_result(ctx, "logs", text or "(no log lines)")
+    return header + await guard_result(ctx, "logs", text or say(ctx, "tools/reply/no_log_lines"))
 
 
 async def _stats(ctx: ToolContext, container: str) -> str:
     found = _find(ctx, container)
     if found is None:
-        return NOT_FOUND
+        return say(ctx, "tools/reply/not_found")
     s = await ctx.registry.engine(ctx.host_id).stats(found.name)
     return (
         f"{found.name}: cpu {s.cpu_percent:.1f}% (100 = one core), "
@@ -325,7 +326,8 @@ async def _events(ctx: ToolContext, minutes: int = 30) -> str:
     events = await ctx.registry.engine(ctx.host_id).events(now - timedelta(minutes=minutes), now)
     events = [e for e in events if not _own_event(ctx, e)]
     if not events:
-        return await guard_result(ctx, "events", f"(no events in the last {minutes} minutes)")
+        none = say(ctx, "tools/reply/no_events", minutes=str(minutes))
+        return await guard_result(ctx, "events", none)
     lines = [
         f"{e.time.isoformat()} {e.type} {e.action} {e.container_name or e.container_id or ''}"
         for e in sorted(events, key=lambda e: e.time)
@@ -333,96 +335,20 @@ async def _events(ctx: ToolContext, minutes: int = 30) -> str:
     return await guard_result(ctx, "events", "\n".join(lines))
 
 
+def _described(name: str, schema: type[BaseModel], run: Callable[..., Awaitable[str]]) -> ToolSpec:
+    """The spec of the Docker read tool `name`, its description `tools/<name>`."""
+
+    def build(ctx: ToolContext) -> StructuredTool:
+        description = say(ctx, f"tools/{name}", untrusted_rule=untrusted_rule(ctx))
+        return _tool(ctx, name, description, schema, run)
+
+    return ToolSpec(name, "read", "docker", build)
+
+
 SPECS = [
-    ToolSpec(
-        "list_containers",
-        "read",
-        "docker",
-        lambda ctx: _tool(
-            ctx,
-            "list_containers",
-            "List every container on this incident's host as a table: name, service, state, "
-            "health, image and restart count. Use it first to see what is running, what is "
-            "unhealthy and which names to pass to the other tools." + UNTRUSTED,
-            NoArgs,
-            _list,
-        ),
-    ),
-    ToolSpec(
-        "inspect_container",
-        "read",
-        "docker",
-        lambda ctx: _tool(
-            ctx,
-            "inspect_container",
-            "Get a compact summary of one container: image, state, health, its health check "
-            "(command, interval, timeout, retries) and the last probes (up to 5, oldest first), "
-            "restart policy and count, exit code, OOMKilled, start and finish times, ports, "
-            "mounts, memory limit, labels. Use it to learn why a container stopped, keeps "
-            "restarting or is unhealthy. The health check runs its command every interval; "
-            "the container turns unhealthy after retries failed probes in a row. A probe that "
-            "ran longer than the timeout is recorded with exit code -1 and an output starting "
-            "'Health check exceeded timeout'. A probe can also time out inside its own command "
-            "when its client gives up first: the exit code is then the command's own (often 1) "
-            "and the output says so (for example 'timed out'). Both mean the service did not "
-            "answer in time. Any other failing probe has the command's exit code and output. "
-            "A probe's output is cut to about 200 characters, keeping its start and its last "
-            "line. Exit code -1 with another output means Docker could not run the probe. "
-            "Environment "
-            "variable values that are plain settings are shown as they are (for example "
-            "HOST=127.0.0.1, PORT=3000, NODE_ENV=production); a value under a secret-sounding "
-            "name or one that looks like a token or key is hidden. A URL to a "
-            "common network service (http, postgres, redis, amqp and the like) keeps its scheme, "
-            "host and port, so you can see where a setting points (for example "
-            "REDIS_URL=redis://<redacted>@cache.internal:6379/<redacted>); its user, password, "
-            "path, query and fragment stay hidden. A URL is hidden whole when it cannot be read "
-            "unambiguously, its scheme is not such a service or its host looks like a token, so "
-            "a bare <redacted> says nothing about the value's shape." + UNTRUSTED,
-            ContainerArgs,
-            _inspect,
-        ),
-    ),
-    ToolSpec(
-        "container_logs",
-        "read",
-        "docker",
-        lambda ctx: _tool(
-            ctx,
-            "container_logs",
-            "Read the most recent log lines of one container (tail, default 200, max 1000; "
-            "optionally only the last since_minutes, max 1440). Use it to find the error behind "
-            "an incident. Secrets are redacted, repeated lines are collapsed and long output is "
-            "cut to its end. The result starts with how long ago the container last wrote a log "
-            "line, when the engine can tell." + UNTRUSTED,
-            LogsArgs,
-            _logs,
-        ),
-    ),
-    ToolSpec(
-        "container_stats",
-        "read",
-        "docker",
-        lambda ctx: _tool(
-            ctx,
-            "container_stats",
-            "Get one container's current CPU, memory, network, disk and process counts. Use it to "
-            "check for memory pressure or a CPU spike. Only works on a running container.",
-            ContainerArgs,
-            _stats,
-        ),
-    ),
-    ToolSpec(
-        "recent_events",
-        "read",
-        "docker",
-        lambda ctx: _tool(
-            ctx,
-            "recent_events",
-            "List Docker events on this host from the last N minutes (default 30, max 240): "
-            "starts, dies, restarts, health changes, OOM kills. Use it to build a timeline of "
-            "what happened and in which order." + UNTRUSTED,
-            EventsArgs,
-            _events,
-        ),
-    ),
+    _described("list_containers", NoArgs, _list),
+    _described("inspect_container", ContainerArgs, _inspect),
+    _described("container_logs", LogsArgs, _logs),
+    _described("container_stats", ContainerArgs, _stats),
+    _described("recent_events", EventsArgs, _events),
 ]

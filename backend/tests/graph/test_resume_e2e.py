@@ -20,6 +20,7 @@ from pathlib import Path
 import httpx
 from langchain_core.messages import AIMessage
 
+from bleep import prompts
 from bleep.graph.build import build_graph, open_checkpointer
 from bleep.graph.deps import GraphDeps, NullNotifier, StaticSettings
 from bleep.hosts.config import HostConfig, ServiceOverrides, UrlCheckConfig
@@ -191,7 +192,7 @@ async def bleep(
     http = httpx.AsyncClient(transport=httpx.MockTransport(world.urls))
     deps = GraphDeps(
         registry=registry,
-        tools=default_registry(),
+        tools=default_registry(prompts.load),
         act_tools=docker_act_tools(SECRET, guard_log),
         models=lambda _role: world.model,
         bus=events,

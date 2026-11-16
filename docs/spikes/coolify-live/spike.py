@@ -26,6 +26,7 @@ from types import SimpleNamespace
 import httpx
 from pydantic import SecretStr
 
+from bleep import prompts
 from bleep.guard.sanitize import MAX_CHARS
 from bleep.plugins.coolify.client import CoolifyClient
 from bleep.plugins.coolify.plugin import TOKEN_ENV, URL_ENV, check_url, read_specs
@@ -176,6 +177,7 @@ async def main() -> dict:
         host_id="coolify",
         registry=OneHost(uuid),  # type: ignore[arg-type]
         guard_log=recorder,  # type: ignore[arg-type]
+        texts=prompts.load,
     )
     tools = {spec.name: spec.build(ctx) for spec in read_specs(client)}
     report["offered"] = {spec.name: spec.offered(ctx) for spec in read_specs(client)}

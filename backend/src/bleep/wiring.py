@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from pydantic import SecretStr
 
+from bleep import prompts
 from bleep.auth.sessions import LoginLimiter, SessionStore, password_mac
 from bleep.config import Settings, SettingsError
 from bleep.graph.deps import (
@@ -483,7 +484,7 @@ def graph_deps(
     """
     return GraphDeps(
         registry=registry,
-        tools=default_registry(memory, plugins, github, knowledge, deploys=plugins),
+        tools=default_registry(prompts.load, memory, plugins, github, knowledge, deploys=plugins),
         act_tools=plugins.act_tools(docker_act_tools(secret, guard_log)),
         models=model_factory(settings_store),
         bus=bus,

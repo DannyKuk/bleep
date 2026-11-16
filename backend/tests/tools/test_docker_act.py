@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from langchain_core.tools import BaseTool
 
+from bleep import prompts
 from bleep.guard.grant import GrantInvalid, grant_token, plan_hash
 from bleep.hosts.config import ServiceOverrides
 from bleep.schemas.graph import (
@@ -323,7 +324,7 @@ async def test_act_tools_are_never_bound_to_the_model(env):
     assert set(tools) == {"docker.restart", "docker.stop", "docker.start"}
     assert not any(isinstance(t, BaseTool) for t in tools.values())
 
-    registry = default_registry()
+    registry = default_registry(prompts.load)
     assert [s.name for s in registry.specs() if s.kind == "act"] == []
     offered = {t.name for t in registry.read_tools(ToolContext("inc_1", "a", env.registry))}
     assert offered and offered.isdisjoint(tools)

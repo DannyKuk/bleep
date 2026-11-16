@@ -26,6 +26,7 @@ from types import SimpleNamespace
 import httpx
 from pydantic import SecretStr
 
+from bleep import prompts
 from bleep.config import Settings
 from bleep.guard.sanitize import MAX_CHARS
 from bleep.hosts.config import load_hosts_file
@@ -106,6 +107,7 @@ def tools_for(client: GithubClient, repo: str | None, recorder: Recorder) -> dic
         registry=OneService(repo),  # type: ignore[arg-type]
         guard_log=recorder,  # type: ignore[arg-type]
         service_id="spike/compose:shop",
+        texts=prompts.load,
     )
     return {spec.name: spec.build(ctx) for spec in github_specs(client)}
 
@@ -253,7 +255,12 @@ async def knowledge_part(results: dict, client: GithubClient) -> None:
     live = KnowledgeIndex(Database(Path("/data/bleep.db")), embedder)
     step4["live_repo_documents"] = sorted(await live.document_ids("repo:"))
     step4["live_refresh"] = await live.last_refresh("repos")
-    ctx = ToolContext(incident_id="spike-338", host_id="spike", registry=None)  # type: ignore[arg-type]
+    ctx = ToolContext(
+        incident_id="spike-338",
+        host_id="spike",
+        registry=None,  # type: ignore[arg-type]
+        texts=prompts.load,
+    )
     search = knowledge_specs(live)[0].build(ctx)
     for query in (
         "how is the shop deployed",

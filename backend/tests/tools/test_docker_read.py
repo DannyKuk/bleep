@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from bleep import prompts
 from bleep.hosts.config import ServiceOverrides
 from bleep.hosts.engine import EngineError, EngineUnavailable, _detail
 from bleep.hosts.registry import Registry
@@ -44,7 +45,9 @@ class Env:
         self.guard_log = guard_log
         self.tools = {
             t.name: t
-            for t in default_registry().read_tools(ToolContext("inc-1", "a", registry, guard_log))
+            for t in default_registry(prompts.load).read_tools(
+                ToolContext("inc-1", "a", registry, guard_log)
+            )
         }
 
     async def run(self, name: str, **args) -> str:
@@ -593,17 +596,17 @@ async def test_every_tool_documents_untrusted_output(env):
 
 
 def test_every_spec_is_labelled():
-    specs = default_registry().specs()
+    specs = default_registry(prompts.load).specs()
     assert specs
     assert all(s.kind in ("read", "act") for s in specs)
 
 
 def test_read_tools_contains_no_act_tool():
-    registry = ToolRegistry()
+    registry = ToolRegistry(prompts.load)
     registry.register(ToolSpec("sneaky", "act", "docker", lambda ctx: pytest.fail("built")))
     ctx = ToolContext("i", "a", None)  # type: ignore[arg-type]
     assert registry.read_tools(ctx) == []
-    specs = {s.name for s in default_registry().specs() if s.kind == "read"}
+    specs = {s.name for s in default_registry(prompts.load).specs() if s.kind == "read"}
     assert specs == {
         "list_containers",
         "inspect_container",
@@ -615,7 +618,7 @@ def test_read_tools_contains_no_act_tool():
 
 
 def test_register_rejects_duplicates_and_bad_kinds():
-    registry = ToolRegistry()
+    registry = ToolRegistry(prompts.load)
     registry.register(ToolSpec("a", "read", None, lambda ctx: None))  # type: ignore[arg-type, return-value]
     with pytest.raises(ValueError):
         registry.register(ToolSpec("a", "read", None, lambda ctx: None))  # type: ignore[arg-type, return-value]

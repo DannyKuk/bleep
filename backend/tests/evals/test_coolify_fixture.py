@@ -7,6 +7,7 @@ import pytest
 import yaml
 from pydantic import SecretStr
 
+from bleep import prompts
 from bleep.hosts.config import HostConfig
 from bleep.hosts.registry import Registry
 from bleep.plugins.coolify.client import CoolifyClient, CoolifyError
@@ -88,7 +89,7 @@ async def test_the_plugin_reads_the_application_its_env_keys_and_deployments_fro
     await registry.start()
     plugins = served.plugins(RecordingGuardLog())
     ctx = ToolContext(incident_id="inc_1", host_id="demo", registry=registry)
-    tools = {t.name: t for t in default_registry(plugins=plugins).read_tools(ctx)}
+    tools = {t.name: t for t in default_registry(prompts.load, plugins=plugins).read_tools(ctx)}
     apps = await tools["coolify_applications"].ainvoke({})
     keys = await tools["coolify_env_keys"].ainvoke({"app": "storefront"})
     deploys = await tools["coolify_deployments"].ainvoke({"app": "storefront"})

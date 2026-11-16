@@ -66,9 +66,9 @@ from bleep.schemas.plugins import PluginHealth
 from bleep.schemas.services import CheckSuggestions, Service
 from bleep.schemas.settings import has_userinfo
 from bleep.schemas.shown import Shown
-from bleep.tools.common import UNTRUSTED
+from bleep.tools.common import said, say, untrusted_rule
 from bleep.tools.docker_act import StepRefused
-from bleep.tools.registry import ActHandler, ToolContext, ToolSpec
+from bleep.tools.registry import ActHandler, Texts, ToolContext, ToolSpec
 
 log = logging.getLogger(__name__)
 
@@ -109,25 +109,6 @@ _COMPARED_HOST = re.compile(r"[a-z0-9_.-]+|[0-9a-f:.]+")
 _SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
 _HEALTH_PATH = re.compile(r"/[\x21-\x22\x24-\x7e]{0,500}")  # printable, no space or `#`
 SUGGESTED_MAX = 20  # of one service's suggested checks: as many URLs as a service may have
-APPLICATIONS = (
-    "List the Coolify applications: name, uuid, status (running:healthy, exited:unhealthy, ...),"
-    " domains, git repo and branch, deployed commit and build pack. The ones whose containers"
-    " run on this host are marked. Use it to find the application behind a service and its uuid."
-    + UNTRUSTED
-)
-DEPLOYMENTS = (
-    "Show a Coolify application's latest deployments, newest first: when, status (queued,"
-    " in_progress, finished, failed, cancelled-by-user), commit, what started it and the commit"
-    " message. Use it when the incident could follow a deploy. `app` is the application's uuid"
-    " or name from coolify_applications." + UNTRUSTED
-)
-ENV_KEYS = (
-    "List the environment variable keys a Coolify application has, with whether each is used at"
-    " build time, at run time or in previews. Values are never shown. Use it when a setting may be"
-    " missing or misnamed. A coolify.set_env takes effect only at the next deployment, so a plan"
-    " that sets one redeploys the application after it. `app` is the application's uuid or name"
-    " from coolify_applications." + UNTRUSTED
-)
 
 
 class CoolifySettings(BaseModel):
@@ -576,15 +557,13 @@ def stale_checks(service: Service, apps: list[CoolifyApplication]) -> list[UrlCh
     ]
 
 
-def _failed(error: CoolifyError) -> str:
-    return f"Coolify could not be read: {error}."
-
-
-def describe_applications(apps: list[CoolifyApplication], here: set[str]) -> tuple[str, int]:
+def describe_applications(
+    texts: Texts, apps: list[CoolifyApplication], here: set[str]
+) -> tuple[str, int]:
     """The list `coolify_applications` shows, one line each, and the number of secrets redacted
     from it."""
     if not apps:
-        return "Coolify has no applications this token can see.", 0
+        return said(texts, "plugins/reply/coolify_no_apps"), 0
     shown = _Shown()
     lines = ["Coolify applications:"]
     for a in sorted(apps, key=lambda a: (a.uuid not in here, a.name or "")):
@@ -608,14 +587,14 @@ def _via(d: CoolifyDeployment) -> str:
 
 
 def describe_deployments(
-    app: CoolifyApplication, found: list[CoolifyDeployment]
+    texts: Texts, app: CoolifyApplication, found: list[CoolifyDeployment]
 ) -> tuple[str, int]:
     """The list `coolify_deployments` shows, one line each with the first line of its commit
     message, and the number of secrets redacted from it."""
     shown = _Shown()
     name = shown(app.name) or "?"
     if not found:
-        return f"{name} has no deployments.", shown.redacted
+        return said(texts, "plugins/reply/coolify_no_deployments", name=name), shown.redacted
     lines = [f"Latest deployments of {name} ({shown(app.uuid)}), newest first:"]
     for d in found:
         message = shown(d.commit_message, MESSAGE_CHARS, first_line=True)
@@ -628,13 +607,15 @@ def describe_deployments(
     return "\n".join(lines), shown.redacted
 
 
-def describe_env_keys(app: CoolifyApplication, keys: list[CoolifyEnvKey]) -> tuple[str, int]:
+def describe_env_keys(
+    texts: Texts, app: CoolifyApplication, keys: list[CoolifyEnvKey]
+) -> tuple[str, int]:
     """The keys `coolify_env_keys` shows, one line each, and the number of secrets redacted from
     them."""
     shown = _Shown()
     name = shown(app.name) or "?"
     if not keys:
-        return f"{name} has no environment variables.", shown.redacted
+        return said(texts, "plugins/reply/coolify_no_env_keys", name=name), shown.redacted
     lines = [f"Environment variables of {name} (keys only; values are never read):"]
     for k in sorted(keys, key=lambda k: (bool(k.is_preview), k.key)):
         used = [w for w, on in (("build", k.is_buildtime), ("runtime", k.is_runtime)) if on]
@@ -644,7 +625,7 @@ def describe_env_keys(app: CoolifyApplication, keys: list[CoolifyEnvKey]) -> tup
     return "\n".join(lines), shown.redacted
 
 
-def _pick(apps: list[CoolifyApplication], ref: str) -> CoolifyApplication | str:
+def _pick(ctx: ToolContext, apps: list[CoolifyApplication], ref: str) -> CoolifyApplication | str:
     """The application `ref` names by uuid, else by name, as Coolify holds it or as the list
     shows it on one line; a sentence when none or several do."""
     by_uuid = [a for a in apps if a.uuid == ref]
@@ -656,8 +637,8 @@ def _pick(apps: list[CoolifyApplication], ref: str) -> CoolifyApplication | str:
     if len(named) == 1:
         return named[0]
     if named:
-        return f"{len(named)} Coolify applications are named {ref}; pass the uuid instead."
-    return f"Coolify has no application {ref}; coolify_applications lists them."
+        return say(ctx, "plugins/reply/coolify_named_several", count=str(len(named)), ref=ref)
+    return say(ctx, "plugins/reply/coolify_no_app", ref=ref)
 
 
 async def _guard(ctx: ToolContext, text: str, redacted: int = 0) -> str:
@@ -673,17 +654,19 @@ async def _guard(ctx: ToolContext, text: str, redacted: int = 0) -> str:
 
 
 def _tool(
-    name: str, description: str, schema: type[BaseModel], run: Callable[..., Awaitable[str]]
+    ctx: ToolContext, name: str, schema: type[BaseModel], run: Callable[..., Awaitable[str]]
 ) -> StructuredTool:
+    """The Coolify tool `name`, its description `plugins/<name>`."""
+
     async def call(**args) -> str:
         try:
             return await run(**args)
         except CoolifyError as error:
-            return _failed(error)
+            return say(ctx, "plugins/reply/coolify_failed", error=str(error))
 
     return StructuredTool(
         name=name,
-        description=description,
+        description=say(ctx, f"plugins/{name}", untrusted_rule=untrusted_rule(ctx)),
         args_schema=schema,
         coroutine=call,
         handle_validation_error=True,
@@ -695,41 +678,44 @@ def read_specs(client: CoolifyClient) -> list[ToolSpec]:
         async def run() -> str:
             apps = _not_own(await client.applications(), ctx.registry)
             here = _host_apps(ctx.registry, ctx.host_id)
-            return await _guard(ctx, *await asyncio.to_thread(describe_applications, apps, here))
+            return await _guard(
+                ctx, *await asyncio.to_thread(describe_applications, ctx.texts, apps, here)
+            )
 
-        return _tool("coolify_applications", APPLICATIONS, NoArgs, run)
+        return _tool(ctx, "coolify_applications", NoArgs, run)
 
     def per_app(
         name: str,
-        description: str,
-        read: Callable[[CoolifyApplication], Awaitable[tuple[str, int]]],
+        read: Callable[[Texts, CoolifyApplication], Awaitable[tuple[str, int]]],
     ) -> Callable[[ToolContext], BaseTool]:
         def build(ctx: ToolContext) -> BaseTool:
             async def run(app: str) -> str:
-                picked = _pick(_not_own(await client.applications(), ctx.registry), app.strip())
+                picked = _pick(
+                    ctx, _not_own(await client.applications(), ctx.registry), app.strip()
+                )
                 if isinstance(picked, str):
                     return await _guard(ctx, picked)
-                return await _guard(ctx, *await read(picked))
+                return await _guard(ctx, *await read(ctx.texts, picked))
 
-            return _tool(name, description, AppArgs, run)
+            return _tool(ctx, name, AppArgs, run)
 
         return build
 
-    async def deployments(app: CoolifyApplication) -> tuple[str, int]:
+    async def deployments(texts: Texts, app: CoolifyApplication) -> tuple[str, int]:
         found = await client.deployments(app.uuid)
-        return await asyncio.to_thread(describe_deployments, app, found)
+        return await asyncio.to_thread(describe_deployments, texts, app, found)
 
-    async def env_keys(app: CoolifyApplication) -> tuple[str, int]:
+    async def env_keys(texts: Texts, app: CoolifyApplication) -> tuple[str, int]:
         keys = await client.env_keys(app.uuid)
-        return await asyncio.to_thread(describe_env_keys, app, keys)
+        return await asyncio.to_thread(describe_env_keys, texts, app, keys)
 
     def offered(ctx: ToolContext) -> bool:
         return bool(_host_apps(ctx.registry, ctx.host_id))
 
     builds = {
         "coolify_applications": applications_tool,
-        "coolify_deployments": per_app("coolify_deployments", DEPLOYMENTS, deployments),
-        "coolify_env_keys": per_app("coolify_env_keys", ENV_KEYS, env_keys),
+        "coolify_deployments": per_app("coolify_deployments", deployments),
+        "coolify_env_keys": per_app("coolify_env_keys", env_keys),
     }
     return [ToolSpec(name, "read", "coolify", build, offered) for name, build in builds.items()]
 

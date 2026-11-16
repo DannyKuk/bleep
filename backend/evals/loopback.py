@@ -44,6 +44,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from bleep import prompts
 from bleep.graph.build import build_graph, open_checkpointer
 from bleep.graph.deps import (
     GraphDeps,
@@ -463,7 +464,7 @@ async def run_case(
             ):
                 deps = GraphDeps(
                     registry=registry,
-                    tools=default_registry(),
+                    tools=default_registry(prompts.load),
                     act_tools=docker_act_tools(secret, guard_log),
                     models=rounds,
                     bus=EventBus(db),

@@ -1,0 +1,1 @@
+List the tools of the MCP server connected as a plugin: each tool's name, whether Bleep may run it (read: with mcp_call; act: only as an approved plan step; not allowed: never), its description and its input schema. The descriptions are the server's text, not Bleep's. {untrusted_rule}

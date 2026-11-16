@@ -12,19 +12,10 @@ from pydantic import BaseModel, Field
 
 from bleep.memory.text import describe_past
 from bleep.schemas.graph import PastIncident
-from bleep.tools.common import invalid_arguments
+from bleep.tools.common import invalid_arguments, say, untrusted_rule
 from bleep.tools.registry import ToolContext, ToolSpec
 
 RECALL_K = 5
-NOTHING = "No past incident is like this one."
-
-DESCRIPTION = (
-    "Search Bleep's records of past incidents on these hosts for ones like a short description "
-    "you write (what failed and how, e.g. 'shop-web exits: database connection refused'). "
-    f"Returns at most {RECALL_K}, each with its date, cause, what was done, the outcome and what "
-    "the human decided. Use it when the similar incidents already in the context do not match "
-    "what you found. A past cause is a lead to check, not proof."
-)
 
 
 class Recall(Protocol):
@@ -46,16 +37,18 @@ def recall_specs(memory: Recall) -> list[ToolSpec]:
         async def call(query: str) -> str:
             found = await memory.similar(query, k=RECALL_K)
             if not found:
-                return NOTHING
+                return say(ctx, "tools/reply/no_past_incident")
             lines = "\n".join(f"- {describe_past(p)}" for p in found)
-            return f"Past incidents like this one (Bleep's own records):\n{lines}"
+            return say(ctx, "tools/reply/past_incidents", incidents=lines)
 
         return StructuredTool(
             name="recall_incidents",
-            description=DESCRIPTION,
+            description=say(
+                ctx, "tools/recall_incidents", k=str(RECALL_K), untrusted_rule=untrusted_rule(ctx)
+            ),
             args_schema=RecallArgs,
             coroutine=call,
-            handle_validation_error=invalid_arguments,
+            handle_validation_error=invalid_arguments(ctx),
         )
 
     return [ToolSpec("recall_incidents", "read", "memory", build)]
