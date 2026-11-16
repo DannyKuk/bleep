@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import logging
 import sqlite3
@@ -405,7 +406,8 @@ def test_a_new_secret_ends_every_session_at_restart(settings, client):
 def test_the_database_holds_nothing_of_the_password(client, parts):
     login(client)
     for file in parts.db.path.parent.glob(parts.db.path.name + "*"):  # the WAL too
-        assert PASSWORD.encode() not in file.read_bytes()
+        with contextlib.suppress(FileNotFoundError):  # a closing connection removes its -shm
+            assert PASSWORD.encode() not in file.read_bytes()
     with closing(sqlite3.connect(parts.db.path)) as conn:
         dump = "\n".join(conn.iterdump())
     assert PASSWORD not in dump
