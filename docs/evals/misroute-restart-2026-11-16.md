@@ -1,6 +1,6 @@
 # Restarting a proxy whose bad config survives a restart, 2026-11-16
 
-> **Answer:** a missing fact and a prompt gap together. `inspect_container` never showed a container's start command, so none of the six models in the #616 round could see that shop-proxy runs `caddy run --resume`, which starts from the last config Caddy loaded. Every run inspected shop-proxy. The three that proposed `docker.restart shop-proxy` (gemini-3.8-flash, Claude Haiku 5.5, Claude Sonnet 5.5) used Caddy's default behaviour: they said a config loaded through the admin API "lives only in memory" and that a restart reloads the Caddyfile. The three that proposed no action were guessing too, just the other way: gpt-oss-20b blamed a "baked Caddyfile", Qwen said a restart "would likely reload the same faulty configuration", and luna said it "would reload the same misroute" without anything it had read showing that. Propose also had no rule about a config loaded while the container runs. #642 adds the start command to `inspect_container`. It also asks Diagnose to quote such a container's start command in its evidence, and tells Propose that a restart fixes a config loaded at runtime only when the evidence shows the container starts from the right one. Whether this moves the three models is measured in the eval round below.
+> **Answer:** a missing fact and a prompt gap together. `inspect_container` never showed a container's start command, so none of the six models in the #616 round could see that shop-proxy runs `caddy run --resume`, which starts from the last config Caddy loaded. Every run inspected shop-proxy. The three that proposed `docker.restart shop-proxy` (gemini-3.8-flash, Claude Haiku 5.5, Claude Sonnet 5.5) used Caddy's default behaviour: they said a config loaded through the admin API "lives only in memory" and that a restart reloads the Caddyfile. The three that proposed no action were guessing too, just the other way: gpt-oss-20b blamed a "baked Caddyfile", Qwen said a restart "would likely reload the same faulty configuration", and luna said it "would reload the same misroute" without anything it had read showing that. Propose also had no rule about a config loaded while the container runs. #642 adds the start command to `inspect_container`. It also asks Diagnose to quote such a container's start command in its evidence, and tells Propose that a restart fixes a config loaded at runtime only when the evidence shows the container starts from the right one. In the eval round below, Haiku went from a restart to no action in 3 of 3 `misroute` runs; luna proposed no action in 2 of 3, and in the third read `--config` over `--resume` and restarted; `db-down` and `bad-env` held on both.
 
 ## Question
 
@@ -53,15 +53,27 @@ The rule is general, not about Caddy or misroute. It applies only when the cause
 
 ## Eval round
 
-Pending: the main session runs this round on the branch and fills in this section. The start command is new evidence, and it could push a run the wrong way: a model that reads `--config /etc/caddy/Caddyfile` and misses `--resume` could now argue for the restart. luna is right today without the fact, so it is in the round. `hung` is the only scenario that expects a `docker.restart`, and `misroute-mcp` checks the "another enabled action" clause. The plan:
+Run on this branch (commit `3a995f19`) on 2026-11-16, Bleep's backend stopped, judge `claude-code`. The owner limited the round to `misroute` ×3 and `db-down`, `bad-env` ×1 on luna and Haiku; `hung` and `misroute-mcp` were not run.
 
-| Case | Models | Runs | What it checks |
-|---|---|---|---|
-| misroute | `openai/gpt-6-luna`, `claude-haiku-5-5` | 3 each | no action, no restart; whether the diagnosis names `--resume` from `inspect_container` |
-| db-down | `openai/gpt-6-luna`, `claude-haiku-5-5` | 1 each | still `docker.start shop-db` |
-| bad-env | `openai/gpt-6-luna`, `claude-haiku-5-5` | 1 each | still no action with the `DATABASE_URL` change |
-| hung | `openai/gpt-6-luna` | 1 | still `docker.restart shop-web` |
-| misroute-mcp | `openai/gpt-6-luna` | 1 | still one `mcp.call` of `caddy_reload` on shop-proxy |
+| Case | Model | Runs | Plan right | Before the fix (#616, 1 run) | Report |
+|---|---|---|---|---|---|
+| misroute | `openai/gpt-6-luna` | 3 | 2 of 3 (run 3: `docker.restart shop-proxy`) | 1 of 1 | [scenarios-2026-11-16-7](scenarios-2026-11-16-7.md) |
+| misroute | `claude-haiku-5-5` | 3 | 3 of 3 | 0 of 1 | [scenarios-2026-11-16-8](scenarios-2026-11-16-8.md) |
+| db-down, bad-env | `openai/gpt-6-luna` | 1 each | 2 of 2 exact, root cause 1.00 both | 2 of 2 | [scenarios-2026-11-16-9](scenarios-2026-11-16-9.md) |
+| db-down, bad-env | `claude-haiku-5-5` | 1 each | 2 of 2 exact, root cause 1.00 both | 2 of 2 | [scenarios-2026-11-16-10](scenarios-2026-11-16-10.md) |
+
+Every `misroute` run found the root cause (0.90) and put the start command, with `--resume`, in its evidence. So the fact now reaches Propose every time. What a model makes of it differs:
+
+- **Haiku, 3 of 3 no action, each time because of `--resume`:** "A restart runs `caddy run --resume`, which can bring back the last config Caddy saved (the misroute one) instead of /etc/caddy/Caddyfile, so no enabled action is known to load the right config." In #616 it restarted.
+- **luna, 2 of 3 no action.** Runs 1 and 2 said a restart "is not shown to load the corrected config". Run 3 quoted the same start command and read `--config` over `--resume`: "the proxy's start command loads `/etc/caddy/Caddyfile` … Restarting the proxy will discard the runtime misroute and reload its startup configuration." That is the risk named before the round: the new evidence can be misread toward the restart. luna's single right run in #616 was a guess (above), so 2 of 3 is not a measured drop from a known rate, but it is not a fix for luna either.
+
+`db-down` (`docker.start shop-db`) and `bad-env` (no action, `DATABASE_URL` named) held on both models.
+
+**What it shows:** the missing fact was the main cause for Haiku, and giving it the fact fixed the case. For luna the remaining miss is a reading of a flag it does not know well. One run per case elsewhere, so the `db-down`/`bad-env` result is a no-regression check, not a rate.
+
+Spend: OpenRouter (luna) $9.4238 → $9.4446 used, +$0.021, matching the runs' own $0.0208; the backend was stopped, so nothing else used the key. Anthropic (Haiku) $0.042 by the runs' own costs (the console was not read). The judge ran on `claude-code`, $0. Raw data: [`scenarios-20261116-140340`](data/scenarios-20261116-140340.jsonl), [`-141053`](data/scenarios-20261116-141053.jsonl), [`-141757`](data/scenarios-20261116-141757.jsonl), [`-142045`](data/scenarios-20261116-142045.jsonl).
+
+## Reproduce
 
 From `backend/`, Bleep's backend stopped and the demo shop up:
 
@@ -71,8 +83,4 @@ export EVAL_JUDGE_MODEL=claude-code
 # Anthropic: LLM_PROVIDER=anthropic LLM_MODEL=claude-haiku-5-5 LLM_CHEAP_MODEL=claude-haiku-5-5
 uv run --group evals python -m evals.run --only misroute --repeat 3
 uv run --group evals python -m evals.run --only db-down,bad-env --repeat 1
-# luna only
-uv run --group evals python -m evals.run --only hung,misroute-mcp --repeat 1
 ```
-
-Results: not run yet.
