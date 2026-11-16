@@ -7,6 +7,7 @@ from pydantic import AliasChoices, AnyHttpUrl, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 MIN_ADMIN_PASSWORD = 12
+MIN_SECRET = 32  # `openssl rand -hex 32` gives 64
 
 
 class SettingsError(ValueError):
@@ -31,7 +32,8 @@ class Settings(BaseSettings):
     cookie_secure: bool = False  # true once the dashboard is served over https
     dev_panel: bool = False  # the dev panel's routes and nav entry (docs/design/dev-panel.md)
     # Where a person's browser reaches the dashboard; the end of an incident on Telegram links to
-    # its page there. Unset, the message has no link (docs/design/notify.md, #380).
+    # its page there. Unset, the message has no link (docs/design/notify.md, #380). A change whose
+    # Origin names it also counts as the dashboard's own (api/deps.py, #619).
     dashboard_url: AnyHttpUrl | None = None
     # The IANA time zone times are shown in until one is chosen on the settings page, which wins
     # (#400): Telegram's "until tomorrow 08:00" and "Quiet until 14:30" (#389) and the dashboard.
@@ -90,10 +92,16 @@ class Settings(BaseSettings):
 
 
 def check_settings(settings: Settings) -> None:
-    """Refuse to start with the login on and a password missing or quick to guess. An embeddings
+    """Refuse to start with a short `BLEEP_SECRET` (it signs every approval grant, login on or
+    off), or with the login on and a password missing or quick to guess. An embeddings
     endpoint that is only half configured is not refused here: its base URL and model may come
     from the dashboard (#372), and until both are set the local model embeds
     (`wiring.build_embedder`)."""
+    if len(settings.secret.get_secret_value()) < MIN_SECRET:
+        raise SettingsError(
+            f"BLEEP_SECRET must be at least {MIN_SECRET} characters; "
+            "set one in .env with `openssl rand -hex 32`"
+        )
     if not settings.login_enabled:
         return
     if settings.admin_password is None:

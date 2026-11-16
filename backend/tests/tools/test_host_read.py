@@ -1,5 +1,5 @@
 from bleep.hosts.registry import Registry
-from bleep.hosts.ssh import SshUnavailable
+from bleep.hosts.ssh import CommandResult, SshUnavailable
 from bleep.tools.default import default_registry
 from bleep.tools.registry import ToolContext
 from fakes import FakeEngine, FakeShell, socket_host, ssh_host
@@ -80,6 +80,33 @@ async def test_unreachable_host():
     shell = FakeShell("linux", {("uname", "-s"): SshUnavailable("a", "gone")})
     tool, _ = await build(shell=shell)
     assert (await tool.ainvoke({"command": "df -P"})).startswith("host unreachable")
+
+
+async def test_a_failing_os_check_reads_as_unreachable_not_unsupported():
+    failed = CommandResult(exit_code=255, stdout="", stderr="connection reset")
+    shell = FakeShell("linux", {("uname", "-s"): failed})
+    tool, _ = await build(shell=shell)
+    shell.calls.clear()
+    out = await tool.ainvoke({"command": "df -P"})
+    assert out.startswith("host unreachable") and "not supported" not in out
+    assert "255" in out
+    assert shell.calls == [["uname", "-s"]]
+
+
+async def test_the_os_check_waits_the_command_timeout(monkeypatch):
+    monkeypatch.setattr("bleep.hosts.shell.COMMAND_TIMEOUT_S", 7.5)
+    monkeypatch.setattr("bleep.tools.host_read.COMMAND_TIMEOUT_S", 7.5)
+    seen: list[float] = []
+
+    class Timed(FakeShell):
+        async def run(self, argv, timeout=20.0):
+            seen.append(timeout)
+            return await super().run(argv, timeout)
+
+    tool, _ = await build(shell=Timed("linux"))
+    seen.clear()
+    await tool.ainvoke({"command": "df -P"})
+    assert seen == [7.5, 7.5]
 
 
 async def test_timeout():

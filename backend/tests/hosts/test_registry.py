@@ -407,13 +407,51 @@ async def test_socket_host_basics_come_from_the_engine():
     assert basics.disks == []
 
 
-async def test_registry_gives_the_shell_of_an_ssh_host():
+async def test_registry_gives_an_allowlisted_shell_over_the_ssh_session():
     from fakes import FakeShell
 
     shell = FakeShell("linux")
     reg, _ = basics_registry(shell)
     await reg.start()
-    assert reg.shell("a") is shell
+    shell.calls.clear()  # the registry read the basics at start
+    allowed = reg.shell("a")
+    assert allowed is not None and allowed is not shell
+    assert (await allowed.run(["nproc"], 20.0)).stdout.strip() == "2"
+    assert shell.calls == [["nproc"]]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["rm", "-rf", "/"],
+        ["sh", "-c", "df -P"],
+        ["df", "-P", "-h"],
+        ["journalctl", "-n", "501", "--no-pager"],
+        ["/bin/df", "-P"],
+        [],
+    ],
+)
+async def test_the_registrys_shell_refuses_an_argv_off_the_allowlist_before_ssh(argv):
+    from bleep.hosts.shell import CommandNotAllowed
+    from fakes import FakeShell
+
+    shell = FakeShell("linux")
+    reg, _ = basics_registry(shell)
+    await reg.start()
+    shell.calls.clear()
+    allowed = reg.shell("a")
+    assert allowed is not None
+    with pytest.raises(CommandNotAllowed):
+        await allowed.run(argv, 20.0)
+    assert shell.calls == []
+
+
+async def test_the_registrys_shell_offers_nothing_but_the_allowlisted_run():
+    from fakes import FakeShell
+
+    reg, _ = basics_registry(FakeShell("linux"))
+    await reg.start()
+    assert [name for name in dir(reg.shell("a")) if not name.startswith("_")] == ["run"]
 
 
 async def test_failed_basics_retry_after_10_seconds_a_success_waits_60():

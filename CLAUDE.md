@@ -48,13 +48,15 @@ backend/
   evals/           scenarios, runners, judges (real models; not part of pytest)
 frontend/          Next.js app
 site/              public landing page, static export (not part of docker compose)
-demo/              the demo stack (Compose, shop, worker, proxy, fault script)
+demo/              the demo stack (Compose, shop, worker, proxy, fault script); demo/video/ builds the demo film
 config/            hosts.example.yaml, hosts.demo.yaml
 docs/              architecture, setup, demo, design/, decisions/, evals/, spikes/
 scripts/           dev and repo helpers (see "Scripts")
 .github/           issue forms, PR template, workflows
 .githooks/         the pre-commit hook
 docker-compose.yaml
+docker-compose.observability.yaml   optional self-hosted Langfuse for tracing
+secrets/           where SSH keys for real hosts go (only .gitkeep is committed)
 ```
 
 ### Dependency direction
@@ -118,8 +120,12 @@ One arrow goes the other way, held to one module: `schemas` uses the hosts file'
   implementation.
 - Frontend: `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test` and
   `npm run build` must pass.
-- The pre-commit hook runs ruff, the frontend checks and `scripts/check_docs.py`; enable it once
-  per clone with `git config core.hooksPath .githooks`.
+- Landing page (`site/`): the same five checks plus `docker build -f site/Dockerfile .`, as CI's
+  `site` job runs them.
+- The pre-commit hook runs only the parts a commit touches: ruff for `backend/`, the frontend
+  checks (format, lint, typecheck) for `frontend/`, the same three for `site/` (also when the
+  commit touches the dashboard components the landing page draws), and always
+  `scripts/check_docs.py`; enable it once per clone with `git config core.hooksPath .githooks`.
 - `.github/workflows/ci.yml` runs all of the above plus the image builds on a clean machine, on
   every push to `main` and every pull request (see `docs/setup.md`).
 
@@ -214,3 +220,8 @@ These are the guard rules; the code enforces them and the tests prove it.
   the "Bleep roadmap" board (project 4).
 - `uv run --project backend python scripts/check_docs.py`: broken relative links and stale
   phrases in `README.md` and `docs/` (not `docs/superpowers/`).
+- `uv run --project backend python scripts/fetch_docker_docs.py [--ref main]`: refreshes the
+  curated Docker docs snapshot in `backend/knowledge/docker-docs/`; re-run the knowledge eval after.
+- `uv run --project backend python scripts/quote_lookalikes.py <confusables.txt>`: regenerates
+  `backend/src/bleep/guard/quote_lookalikes.py`, the characters that can read as a quote in an
+  incident title.

@@ -1,3 +1,5 @@
+import contextlib
+import hashlib
 import logging
 import sqlite3
 from contextlib import closing
@@ -5,11 +7,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import SecretStr, ValidationError
+from pydantic import AnyHttpUrl, SecretStr, ValidationError
 
 from bleep.auth.sessions import LoginLimiter
 from bleep.config import Settings, SettingsError
+from bleep.hosts.registry import Registry
 from bleep.main import create_app
+from bleep.memory.embeddings import FakeEmbedder
+from bleep.wiring import build_parts
 
 PASSWORD = "test-password"
 T0 = datetime(2026, 11, 2, 10, 0, tzinfo=UTC)
@@ -177,7 +182,11 @@ def test_short_admin_password_is_refused_at_startup(settings, parts):
 
 def test_cookie_secure_defaults_off():
     assert (
-        Settings(admin_password=SecretStr("x" * 12), secret=SecretStr("s")).cookie_secure is False
+        Settings(
+            admin_password=SecretStr("x" * 12),
+            secret=SecretStr("test-secret-that-is-at-least-32-characters"),
+        ).cookie_secure
+        is False
     )
 
 
@@ -189,13 +198,19 @@ def open_settings(settings) -> Settings:
 
 def test_the_login_is_on_by_default(monkeypatch):
     monkeypatch.delenv("BLEEP_LOGIN_ENABLED", raising=False)
-    assert Settings(admin_password=SecretStr("x" * 12), secret=SecretStr("s")).login_enabled
+    assert Settings(
+        admin_password=SecretStr("x" * 12),
+        secret=SecretStr("test-secret-that-is-at-least-32-characters"),
+    ).login_enabled
 
 
 def test_an_unreadable_login_switch_refuses_to_start(monkeypatch):
     monkeypatch.setenv("BLEEP_LOGIN_ENABLED", "perhaps")
     with pytest.raises(ValidationError, match="login_enabled"):
-        Settings(admin_password=SecretStr("x" * 12), secret=SecretStr("s"))
+        Settings(
+            admin_password=SecretStr("x" * 12),
+            secret=SecretStr("test-secret-that-is-at-least-32-characters"),
+        )
 
 
 def test_with_the_login_on_a_missing_password_is_refused_at_startup(settings, parts):
@@ -265,7 +280,156 @@ def test_with_the_login_off_a_change_from_the_dashboard_goes_through(open_settin
         assert response.status_code == 202
 
 
-def test_with_the_login_on_the_site_header_changes_nothing(client):
+@pytest.mark.parametrize("site", ["cross-site", "same-site"])
+def test_with_the_login_on_a_change_from_another_site_is_refused(client, site):
+    """The SameSite=Lax cookie goes along with a post from a sibling subdomain (#619)."""
     login(client)
-    response = client.post("/api/knowledge/repos/refresh", headers={"sec-fetch-site": "cross-site"})
-    assert response.status_code == 202  # the SameSite cookie is the guard here
+    response = client.post("/api/knowledge/repos/refresh", headers={"sec-fetch-site": site})
+    assert response.status_code == 403
+    assert response.json() == {"detail": "not from this dashboard"}
+    assert client.get("/api/hosts", headers={"sec-fetch-site": site}).status_code == 200
+
+
+@pytest.mark.parametrize("site", ["same-origin", "none", None])
+def test_with_the_login_on_a_change_from_the_dashboard_goes_through(client, site):
+    login(client)
+    headers = {"sec-fetch-site": site} if site else {}
+    assert client.post("/api/knowledge/repos/refresh", headers=headers).status_code == 202
+
+
+@pytest.mark.parametrize("site", ["cross-site", "same-site"])
+def test_a_login_from_another_site_is_refused(client, site):
+    response = login_with(client, {"sec-fetch-site": site})
+    assert response.status_code == 403
+    assert "set-cookie" not in response.headers
+
+
+def login_with(client, headers):
+    return client.post("/api/auth/login", json={"password": PASSWORD}, headers=headers)
+
+
+@pytest.fixture(params=["on", "off"])
+def either_client(request, settings, parts):
+    """A client with the login on (and signed in) or off; the site checks hold in both."""
+    if request.param == "off":
+        settings = settings.model_copy(update={"login_enabled": False, "admin_password": None})
+    with TestClient(create_app(settings, parts)) as client:
+        if request.param == "on":
+            login(client)
+        yield client
+
+
+def refresh(client, headers):
+    return client.post("/api/knowledge/repos/refresh", headers=headers)
+
+
+@pytest.mark.parametrize(
+    "origin", ["https://evil.example", "http://other.testserver", "http://testserver:8443", "null"]
+)
+def test_without_the_site_header_a_change_from_another_origin_is_refused(either_client, origin):
+    """A browser too old to send Sec-Fetch-Site still sends Origin with a post."""
+    response = refresh(either_client, {"origin": origin})
+    assert response.status_code == 403
+    assert response.json() == {"detail": "not from this dashboard"}
+
+
+def test_without_the_site_header_a_change_without_an_origin_goes_through(either_client):
+    """Not a browser: a script with the cookie, or the dashboard's own server."""
+    assert refresh(either_client, {}).status_code == 202
+
+
+def test_without_the_site_header_a_change_from_this_origin_goes_through(either_client):
+    assert refresh(either_client, {"origin": "http://testserver"}).status_code == 202
+
+
+def test_a_change_through_the_dashboard_rewrite_goes_through(either_client):
+    """The Next.js rewrite sends its own address as Host and the browser's as X-Forwarded-Host."""
+    headers = {
+        "host": "backend:8000",
+        "x-forwarded-host": "192.168.1.5:3000",
+        "origin": "http://192.168.1.5:3000",
+    }
+    assert refresh(either_client, headers).status_code == 202
+    headers["origin"] = "http://192.168.1.6:3000"
+    assert refresh(either_client, headers).status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("dashboard_url", "origin"),
+    [
+        ("http://192.168.1.5:3000", "http://192.168.1.5:3000"),
+        ("https://bleep.example.org/", "https://bleep.example.org"),
+    ],
+)
+def test_the_dashboard_url_counts_as_this_origin(settings, parts, dashboard_url, origin):
+    """A proxy over plain http that rewrites the Host leaves only the configured address."""
+    named = settings.model_copy(update={"dashboard_url": AnyHttpUrl(dashboard_url)})
+    with TestClient(create_app(named, parts)) as client:
+        login(client)
+        headers = {"host": "backend:8000", "origin": origin}
+        assert refresh(client, headers).status_code == 202
+        headers["origin"] = "https://www.example.org"
+        assert refresh(client, headers).status_code == 403
+
+
+def test_a_login_from_another_origin_is_refused(client):
+    assert login_with(client, {"origin": "https://evil.example"}).status_code == 403
+    assert login_with(client, {"origin": "http://testserver"}).status_code == 204
+
+
+def restarted(settings, **changes) -> TestClient:
+    """The app started again over the same data directory with changed settings."""
+    changed = settings.model_copy(update=changes)
+    parts = build_parts(changed, Registry([]), embedder=FakeEmbedder())
+    return TestClient(create_app(changed, parts))
+
+
+def test_a_restart_with_the_same_password_keeps_the_session(settings, client):
+    login(client)
+    token = client.cookies["bleep_session"]
+    with restarted(settings) as again:
+        again.cookies.set("bleep_session", token)
+        assert again.get("/api/auth/me").status_code == 200
+
+
+def test_a_new_password_ends_every_session_at_restart(settings, parts, client):
+    login(client)
+    token = client.cookies["bleep_session"]
+    with restarted(settings, admin_password=SecretStr("a-new-password")) as again:
+        again.cookies.set("bleep_session", token)
+        assert again.get("/api/auth/me").status_code == 401
+        with closing(sqlite3.connect(parts.db.path)) as conn:
+            assert conn.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0
+        assert login(again, "a-new-password").status_code == 204
+
+
+def test_a_new_secret_ends_every_session_at_restart(settings, client):
+    login(client)
+    token = client.cookies["bleep_session"]
+    with restarted(settings, secret=SecretStr("another-secret-of-at-least-32-chars")) as again:
+        again.cookies.set("bleep_session", token)
+        assert again.get("/api/auth/me").status_code == 401
+
+
+def test_the_database_holds_nothing_of_the_password(client, parts):
+    login(client)
+    for file in parts.db.path.parent.glob(parts.db.path.name + "*"):  # the WAL too
+        with contextlib.suppress(FileNotFoundError):  # a closing connection removes its -shm
+            assert PASSWORD.encode() not in file.read_bytes()
+    with closing(sqlite3.connect(parts.db.path)) as conn:
+        dump = "\n".join(conn.iterdump())
+    assert PASSWORD not in dump
+    assert hashlib.sha256(PASSWORD.encode()).hexdigest() not in dump
+
+
+@pytest.mark.parametrize("login_enabled", [True, False])
+def test_a_short_secret_is_refused_at_startup(settings, parts, login_enabled):
+    short = settings.model_copy(
+        update={"secret": SecretStr("s" * 31), "login_enabled": login_enabled}
+    )
+    with pytest.raises(SettingsError, match="BLEEP_SECRET must be at least 32"):
+        create_app(short, parts)
+
+
+def test_a_secret_of_32_characters_starts(settings, parts):
+    create_app(settings.model_copy(update={"secret": SecretStr("s" * 32)}), parts)

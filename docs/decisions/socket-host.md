@@ -54,6 +54,12 @@ End to end: after `docker compose --profile demo up -d --build`, the backend was
 - **What a compromised backend can still do:** read every container's configuration and logs on the machine (environment variables included), and start, stop or restart any container. It cannot start a new one, run a command in one, delete one, or reach images, volumes or networks.
 - **The proxy has no network route out.** It sits on an internal network shared only with the backend and publishes no port.
 
+## Decided along the way
+
+- **Exact paths, not prefixes.** A first version allowed reads by prefix and refused `archive` and `export` by name; dot segments, `//` and extra path segments walked around it, so every rule is an exact path and a path with `..` or `//` is refused first.
+- **The image is pinned to v0.5.0 and its haproxy template is mounted over it** (`config/socket-proxy.cfg.template`, read-only), so the allowlist changes without building an image of our own.
+- **No published port.** The proxy sits on an internal network shared only with the backend (`docker-compose.yaml`).
+
 ## Limits
 
 - Restart, stop and start of any container are allowed, including the proxy's and Bleep's own. Bleep's own tools decide what the agent may act on; the proxy does not.

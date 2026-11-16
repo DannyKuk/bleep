@@ -30,7 +30,7 @@ def telegram_settings(tmp_path) -> Settings:
         data_dir=tmp_path / "data",
         hosts_file=tmp_path / "hosts.yaml",
         admin_password=SecretStr("test-password"),
-        secret=SecretStr("test-secret"),
+        secret=SecretStr("test-secret-that-is-at-least-32-characters"),
         TELEGRAM_BOT_TOKEN=TOKEN,
         TELEGRAM_CHAT_ID=CHAT,
     )
