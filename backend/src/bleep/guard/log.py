@@ -9,7 +9,7 @@ writes in flight.
 import asyncio
 import logging
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -30,6 +30,8 @@ GuardKind = Literal[
     "prompt_override",
 ]
 DETAIL_CHARS = 500
+WRITE_ATTEMPTS = 3
+RETRY_DELAYS_S = (0.2, 1.0)  # waits between attempts: one fewer than WRITE_ATTEMPTS
 
 
 class GuardLogger(Protocol):
@@ -55,9 +57,15 @@ def _now() -> datetime:
 
 
 class GuardLog:
-    def __init__(self, db: Database, clock: Callable[[], datetime] = _now) -> None:
+    def __init__(
+        self,
+        db: Database,
+        clock: Callable[[], datetime] = _now,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
         self.db = db
         self.clock = clock
+        self._sleep = sleep
         self._pending: list[tuple[str, str, str, str]] = []
         self._writer: asyncio.Task[None] | None = None
 
@@ -86,19 +94,35 @@ class GuardLog:
         return None if writer is None or writer.done() else writer
 
     async def _write(self) -> None:
-        """One writer drains the queue, so records keep the order they were made in."""
+        """One writer drains the queue, so records keep the order they were made in. A batch that
+        fails to write stays queued and is tried again after a short wait; after WRITE_ATTEMPTS
+        failures it is dropped with one log line holding the count (never the records, whose text
+        may be a model's), so a dead database cannot grow the queue or hold up `flush()`."""
         while self._pending:
             rows = list(self._pending)
-            try:
-                conn = await self.db.connect()
+            for attempt in range(WRITE_ATTEMPTS):
                 try:
-                    await conn.executemany(_INSERT, rows)
-                    await conn.commit()
-                finally:
-                    await conn.close()
-            except Exception:
-                log.exception("guard log: could not write %d record(s)", len(rows))
-            del self._pending[: len(rows)]  # kept until written, so a dropped writer loses none
+                    await self._insert(rows)
+                    break
+                except Exception:
+                    if attempt + 1 == WRITE_ATTEMPTS:
+                        log.error(
+                            "guard log: dropped %d record(s) after %d failed writes",
+                            len(rows),
+                            WRITE_ATTEMPTS,
+                            exc_info=True,
+                        )
+                        break
+                    await self._sleep(RETRY_DELAYS_S[attempt])
+            del self._pending[: len(rows)]
+
+    async def _insert(self, rows: list[tuple[str, str, str, str]]) -> None:
+        conn = await self.db.connect()
+        try:
+            await conn.executemany(_INSERT, rows)
+            await conn.commit()
+        finally:
+            await conn.close()
 
     async def flush(self) -> None:
         """Wait until every record made so far is written."""

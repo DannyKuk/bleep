@@ -157,3 +157,51 @@ async def test_counts_since_waits_for_the_records_still_queued_and_cuts_at_the_d
 
     assert await log.counts_since("2026-11-02") == {"redacted": 1, "refused_command": 2}
     assert await log.counts_since("2026-11-03") == {}
+
+
+class FailingDatabase(Database):
+    """Fails the first `failures` connections (all of them when None), then works."""
+
+    def __init__(self, path, failures: int | None) -> None:
+        super().__init__(path)
+        self.failures = failures
+        self.attempts = 0
+
+    async def connect(self):
+        self.attempts += 1
+        if self.failures is None or self.attempts <= self.failures:
+            raise OSError("database is locked")
+        return await super().connect()
+
+
+async def no_wait(seconds: float) -> None:
+    pass
+
+
+async def test_records_survive_a_write_that_fails_once(tmp_path):
+    good = Database(tmp_path / "bleep.sqlite")
+    await good.migrate()
+    db = FailingDatabase(tmp_path / "bleep.sqlite", failures=1)
+    log = GuardLog(db, clock=lambda: T0, sleep=no_wait)
+
+    log.record("inc-1", "refused_command", "rm -rf /")
+    log.record("inc-1", "budget", "daily cost cap spent")
+    await log.flush()
+
+    assert [e.detail for e in await log.entries("inc-1")] == ["rm -rf /", "daily cost cap spent"]
+
+
+async def test_a_dead_database_drops_the_queue_once_and_never_logs_the_text(tmp_path, caplog):
+    db = FailingDatabase(tmp_path / "bleep.sqlite", failures=None)
+    log = GuardLog(db, clock=lambda: T0, sleep=no_wait)
+
+    log.record("inc-1", "refused_command", "secret-looking command text")
+    log.record("inc-1", "budget", "daily cost cap spent")
+    await log.flush()
+
+    assert log._pending == []
+    drops = [r for r in caplog.records if "dropped" in r.getMessage()]
+    assert [r.getMessage() for r in drops] == [
+        "guard log: dropped 2 record(s) after 3 failed writes"
+    ]
+    assert "secret-looking" not in caplog.text
