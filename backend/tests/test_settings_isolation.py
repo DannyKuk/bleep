@@ -1,25 +1,38 @@
-import os
-
 import pytest
 
 from bleep.config import Settings
+from bleep.llm.tracing import TracingSettings
+from bleep.schemas.settings import ModelSettings
+from tests.settings_env import SETTINGS_CLASSES, clear_settings_env, names_read
 
 
 def test_settings_read_no_dotenv_file():
-    assert Settings.model_config.get("env_file") is None
+    for cls in SETTINGS_CLASSES:
+        assert cls.model_config.get("env_file") is None
 
 
-def test_every_setting_name_is_cleared():
-    """The autouse fixture ran before this body, so nothing it names may be in the environment."""
-    from tests.conftest import _names_settings_reads
-
-    names = {name.upper() for name in _names_settings_reads()}
-    assert {"BLEEP_LOGIN_ENABLED", "BLEEP_SECRET", "TELEGRAM_BOT_TOKEN"} <= names
-    assert "EMBEDDINGS_MODEL" in names
-    assert not [name for name in os.environ if name.upper() in names]
+def test_the_names_cover_every_spelling_the_classes_read():
+    assert {"bleep_login_enabled", "bleep_secret", "telegram_bot_token"} <= names_read(Settings)
+    assert {"embeddings_model", "embeddings_api_key"} <= names_read(Settings)
+    assert {"llm_provider", "provider", "temperature"} <= names_read(ModelSettings)
+    assert {"tracing", "langfuse_secret_key"} <= names_read(TracingSettings)
 
 
-@pytest.mark.parametrize("name", ["BLEEP_LOGIN_ENABLED", "BLEEP_WATCH_INTERVAL_S"])
-def test_exported_value_does_not_reach_settings(name, settings):
-    assert settings.login_enabled is True
-    assert settings.watch_interval_s == 15
+@pytest.mark.parametrize(
+    ("name", "value", "read"),
+    [
+        ("BLEEP_LOGIN_ENABLED", "false", lambda: Settings(secret="s").login_enabled),
+        ("Bleep_Watch_Interval_S", "3.5", lambda: Settings(secret="s").watch_interval_s),
+        ("TELEGRAM_CHAT_ID", "9", lambda: Settings(secret="s").telegram_chat_id),
+        ("LLM_PROVIDER", "anthropic", lambda: ModelSettings().provider),
+        ("TEMPERATURE", "0.9", lambda: ModelSettings().temperature),
+        ("TRACING", "langfuse", lambda: TracingSettings().tracing),
+    ],
+)
+def test_an_exported_value_is_cleared_before_settings_read_it(monkeypatch, name, value, read):
+    monkeypatch.setenv(name, value)
+    assert str(read()).lower() == value.lower()  # the leak is real without the clearing
+
+    clear_settings_env(monkeypatch)
+
+    assert str(read()).lower() != value.lower()
