@@ -97,8 +97,11 @@ One arrow goes the other way, held to one module: `schemas` uses the hosts file'
 - Load them only through `prompts.load("area/name", **variables)`. Variables are `{name}`
   placeholders; the loader raises `PromptError` on a missing or unused variable. Literal braces
   are written `{{` and `}}`; anything else in braces fails to load.
-- Tool descriptions are the tool function's docstring, because LangChain reads them from there.
-  That is the only LLM-facing text outside `prompts/`.
+- Tool descriptions and the sentences a tool answers with are prompt files too, under
+  `prompts/tools/` and `prompts/plugins/`. `tools` and `plugins` cannot import `prompts`, so each
+  tool loads them through its `ToolContext`, which the tool registry fills with `prompts.load`. A
+  tool that returns text from outside Bleep fills its description's `{untrusted_rule}` with
+  `untrusted/tool_output.md`, the one untrusted-output note.
 - A test loads every prompt file and checks its placeholders.
 
 ## Tests
@@ -197,7 +200,7 @@ These are the guard rules; the code enforces them and the tests prove it.
   for secrets, and wrapped in tags that are escaped inside it. It never overrides a prompt.
 - **Never claim "fixed" without verification:** the service is healthy again and its URL answers.
 - **Reports say what happened;** they never paste raw logs.
-- Any change to a prompt or tool docstring runs the evals that cover it.
+- Any change to a prompt or a tool description runs the evals that cover it.
 
 ## Git
 
