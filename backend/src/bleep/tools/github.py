@@ -199,11 +199,21 @@ def _fit(lines: list[str], blocks: list[str]) -> int:
     return len(blocks)
 
 
-def describe_commits(repo: str, since_hours: int, path: str | None, commits: list[Commit]) -> str:
+def describe_commits(
+    texts: Texts, repo: str, since_hours: int, path: str | None, commits: list[Commit]
+) -> str:
     repo = _one_line(repo)
     where = f" touching {_one_line(path)}" if path else ""
+    if not commits and path:
+        return said(
+            texts,
+            "tools/reply/github/no_commits_touching",
+            repo=repo,
+            path=_one_line(path),
+            hours=str(since_hours),
+        )
     if not commits:
-        return f"No commits to {repo}{where} in the last {since_hours} hours."
+        return said(texts, "tools/reply/github/no_commits", repo=repo, hours=str(since_hours))
     lines = [f"Commits to {repo}{where} in the last {since_hours} hours, newest first:"]
     shown = _fit(lines, ["\n".join(_commit_lines(c)) for c in commits])
     if shown < len(commits):
@@ -588,7 +598,7 @@ def github_specs(
             since = clock() - timedelta(hours=since_hours)
             found = await client.commits(repo, since, path=path, limit=COMMITS)
             return await guard_result(
-                ctx, "commits", describe_commits(repo, since_hours, path, found)
+                ctx, "commits", describe_commits(ctx.texts, repo, since_hours, path, found)
             )
 
         return _tool(ctx, client, "recent_commits", CommitsArgs, run)

@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from bleep import prompts
 from bleep.hosts.github import NotFound
 from bleep.schemas.services import Service
 from bleep.tools.github import (
@@ -115,7 +116,7 @@ async def test_bad_deploy_serves_the_deploy_and_the_commit_touching_api_items():
     github = fixture_client(load_github_fixture(scenario.github), lambda: START)
 
     commits = await github.commits(REPO, START - timedelta(hours=48))
-    text = describe_commits(REPO, 48, None, commits)
+    text = describe_commits(prompts.load, REPO, 48, None, commits)
     diff = describe_diff(await github.commit(REPO, commits[1].sha), 8000)
 
     assert "Deploy shop 2" in text and "whole cents" in text
@@ -132,7 +133,7 @@ async def test_the_commit_cases_plant_their_payload_as_the_newest_commit():
         github = fixture_client(fixture, lambda: START)
         newest = (await github.commits(REPO, START - timedelta(hours=48)))[0]
         assert newest.message == case.payload
-        assert case.marker in describe_commits(REPO, 48, None, [newest])
+        assert case.marker in describe_commits(prompts.load, REPO, 48, None, [newest])
     assert all(c.github() is None for c in load_cases() if c.channel != "commit")
 
 
@@ -180,7 +181,7 @@ async def test_bad_deploy_old_hides_the_cause_from_the_window_and_shows_it_in_th
 
     for hours in (48, 720):  # the default window and the widest: the newest 20 either way
         window = await github.commits(REPO, START - timedelta(hours=hours), limit=COMMITS)
-        assert "whole cents" not in describe_commits(REPO, hours, None, window)
+        assert "whole cents" not in describe_commits(prompts.load, REPO, hours, None, window)
     running = await FixtureDeploys(fixture, START).running_commit(SHOP)
     assert running is not None and running.previous is not None
     assert running.since == START - timedelta(hours=72)
@@ -230,7 +231,7 @@ async def test_bad_deploy_long_hides_the_cause_from_the_window_and_the_first_250
     narrowed = await github.commits(
         REPO, START - timedelta(hours=720), path="demo/shop", limit=COMMITS
     )
-    assert "whole cents" not in describe_commits(REPO, 720, None, window)
+    assert "whole cents" not in describe_commits(prompts.load, REPO, 720, None, window)
     assert narrowed == []  # the cause is older than the widest window, with or without a path
     running = await FixtureDeploys(fixture, START).running_commit(SHOP)
     assert running is not None and running.previous is not None

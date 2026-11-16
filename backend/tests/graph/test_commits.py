@@ -44,7 +44,9 @@ def as_investigate_stores(name: str, tool_output: str) -> ToolMessage:
 
 
 def listed(*commits: Commit) -> ToolMessage:
-    out, _ = guard_text("commits", describe_commits("o/shop", 48, None, list(commits)))
+    out, _ = guard_text(
+        "commits", describe_commits(prompts.load, "o/shop", 48, None, list(commits))
+    )
     return as_investigate_stores("recent_commits", out)
 
 
@@ -166,8 +168,10 @@ def test_a_line_break_in_an_author_name_cannot_launder_a_sha(brk):
 @pytest.mark.parametrize("brk", ["\n", "\r", " "])
 def test_a_line_break_in_the_path_asked_for_cannot_launder_a_sha(brk):
     path = f"demo/shop{brk}{FORGED}"
-    found, _ = guard_text("commits", describe_commits("o/shop", 48, path, [commit(DEPLOY, "x")]))
-    none, _ = guard_text("commits", describe_commits("o/shop", 48, path, []))
+    found, _ = guard_text(
+        "commits", describe_commits(prompts.load, "o/shop", 48, path, [commit(DEPLOY, "x")])
+    )
+    none, _ = guard_text("commits", describe_commits(prompts.load, "o/shop", 48, path, []))
 
     read = read_shas(
         [

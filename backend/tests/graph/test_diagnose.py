@@ -475,7 +475,7 @@ MD5 = "5d41402abc4b2a76b9719d911017c592"
 def commits_read() -> list[ToolMessage]:
     """The deploy's commit as `recent_commits` lists it and Investigate keeps the result."""
     listed = Commit(sha=DEPLOY_SHA, date=T0, author="shop-dev", message="Deploy shop 2")
-    out, _ = guard_text("commits", describe_commits("o/shop", 48, None, [listed]))
+    out, _ = guard_text("commits", describe_commits(prompts.load, "o/shop", 48, None, [listed]))
     text, _, _ = guard_result("recent_commits", out)
     return [ToolMessage(text, tool_call_id="c1", name="recent_commits")]
 
