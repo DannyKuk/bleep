@@ -2,7 +2,7 @@
 
 ## Running Bleep
 
-The [README's quick start](../README.md#quick-start) runs Bleep with the demo profile, which lets it watch the Docker engine of the machine it runs on through a filtered socket proxy ([why](decisions/socket-host.md)), and the demo shop for it to watch ([Demo](demo.md)). `BLEEP_ADMIN_PASSWORD` needs at least 12 characters and `BLEEP_SECRET` at least 32, or Bleep refuses to start; make the secret random: `openssl rand -hex 32`. Changing either one and restarting logs everyone out of the dashboard; a session also ends 30 days after its login, however often it is used.
+The [README's quick start](../README.md#quick-start) runs Bleep with the demo profile, which lets it watch the Docker engine of the machine it runs on through a filtered socket proxy ([why](decisions/socket-host.md)), and the demo shop for it to watch ([Demo](demo.md)). `BLEEP_ADMIN_PASSWORD` (unless `BLEEP_LOGIN_ENABLED=false`) needs at least 12 characters and `BLEEP_SECRET` at least 32, or Bleep refuses to start; make the secret random: `openssl rand -hex 32`. Changing either one and restarting logs everyone out of the dashboard; a session also ends 30 days after its login, however often it is used.
 
 Without the `demo` profile only the backend and the dashboard start, and the hosts file has to name a host you reach some other way.
 
@@ -10,7 +10,7 @@ The data (the SQLite database, and the secret file below) lives in the `bleep-da
 
 ### Keys and tokens: from the dashboard or `.env`
 
-Only `BLEEP_ADMIN_PASSWORD` and `BLEEP_SECRET` must be in `.env`: the dashboard is behind them. Every other key, token and plugin address can be set in either of two ways.
+Only `BLEEP_ADMIN_PASSWORD` (unless `BLEEP_LOGIN_ENABLED=false`) and `BLEEP_SECRET` must be in `.env`: the dashboard is behind them. Every other key, token and plugin address can be set in either of two ways.
 
 1. **From the dashboard.** Open Settings: the Secrets panel and each plugin's card have a row per key, token and address, with where it is set (the dashboard or `.env`), an input to set it and a button to clear it. Type the value and save: it goes to Bleep's `secrets.json` on the `bleep-data` volume, readable only by the backend's user, never in the database, and is used from the next call without a restart. A value is never shown again, prefilled or sent back: only whether it is set (of a plugin address, only its `https://host`). A value set in `.env` shows as "Set in .env" with no input, since `.env` wins. A new or cleared plugin address clears its token and switches the plugin off; a token has no input until its address is set. An address that no longer passes the checks (the file was edited by hand) shows as "Set, but not valid": enter it again.
 2. **In `.env`**, then restart the backend (`docker compose up -d backend`). A value in `.env` wins over the dashboard's and cannot be changed or cleared from it, which suits Compose files and CI.
@@ -33,7 +33,7 @@ Details: [Settings](design/settings.md#models-embeddings-and-tracing-from-the-da
 
 This runs the whole path from a dead container to the approval question, on the dashboard and in Telegram. It needs a model key and, for the Telegram half, a bot.
 
-1. On the dashboard or in `.env` ([above](#keys-and-tokens-from-the-dashboard-or-env)): `OPENROUTER_API_KEY` (or `LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`, or `LLM_PROVIDER=local` with `LOCAL_BASE_URL` and `LOCAL_MODEL`, [below](#models-embeddings-and-tracing-from-the-dashboard-or-env)), and for Telegram `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (send the bot a message first, then read the chat id from `https://api.telegram.org/bot<token>/getUpdates`).
+1. On the dashboard or in `.env` ([above](#keys-and-tokens-from-the-dashboard-or-env)): `OPENROUTER_API_KEY` (or `LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`, or `LLM_PROVIDER=local` with `LOCAL_BASE_URL` and `LOCAL_MODEL`, [above](#models-embeddings-and-tracing-from-the-dashboard-or-env)), and for Telegram `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (send the bot a message first, then read the chat id from `https://api.telegram.org/bot<token>/getUpdates`).
 2. Start Bleep and a throwaway container for it to watch, with no restart policy:
    ```bash
    docker compose --profile demo up -d --build
@@ -98,7 +98,7 @@ A host the hosts file names is shown on the dashboard as set in the hosts file a
    ssh-keyscan -H your-host >> secrets/ssh/known_hosts
    ```
    Keep the key at mode 600, and make the backend's user able to read it. The backend runs as uid and gid 10001, fixed in its image.
-   - **Linux:** `sudo chown 10001:10001 secrets/ssh/* && chmod 600 secrets/ssh/*`. Without the chown, a 600 key owned by your own user is unreadable inside the container.
+   - **Linux:** `chmod 600 secrets/ssh/* && sudo chown 10001:10001 secrets/ssh/*` (chmod first: after the chown you no longer own the files). Without the chown, a 600 key owned by your own user is unreadable inside the container.
    - **Docker Desktop on macOS:** the bind mount maps ownership to the container's user, so `chmod 600 secrets/ssh/*` is enough.
    `./secrets` is mounted read-only at `/run/secrets`. Check the fingerprint `ssh-keyscan` returned against one you trust before relying on it.
 3. In `.env`, set `BLEEP_HOSTS_FILE=/config/hosts.yaml`. When it is unset, compose uses `/config/hosts.demo.yaml`.
@@ -116,13 +116,13 @@ Secrets inside the hosts file are references, `{env: NAME}` or `{file: PATH}`, n
 
 ## Network and cookies
 
-The dashboard (port 3000) is for a trusted LAN only. It has one admin password, a limit of 5 failed logins a minute shared by every browser ([app](design/app.md)), and nothing more; it is not hardened for the internet. The backend's port 8000 is published on `127.0.0.1` only, so other machines reach Bleep through the dashboard, which forwards `/api` to the backend.
+The dashboard (port 3000) is for a trusted LAN, or behind a login proxy ([below](#behind-a-login-proxy)). It has one admin password, a limit of 5 failed logins a minute shared by every browser ([app](design/app.md)), and nothing more; it is not hardened for the internet on its own. The backend's port 8000 is published on `127.0.0.1` only, so other machines reach Bleep through the dashboard, which forwards `/api` to the backend.
 
 The watcher checks every host every 15 s; `BLEEP_WATCH_INTERVAL_S` in `.env` changes that. When the machine Bleep runs on wakes from sleep, a host that does not answer is not counted for the next 4 checks (`BLEEP_WAKE_GRACE_TICKS`), so the network can come back first.
 
 Bleep's URL checks identify themselves: every request, and each redirect it follows, sends `User-Agent: Bleep/<version> (health check; +https://github.com/DannyKuk/bleep)` (for example `Bleep/0.1.0`). A site owner can filter that out of analytics or allowlist it in a firewall or bot filter by matching `Bleep/` ([design](design/watcher.md)).
 
-The dev panel (prompts, budgets, cost per incident, the guard log; cost per day and per model is on the Usage page) is off; set `BLEEP_DEV_PANEL=true` in `.env` and restart to get it under Dev in the dashboard ([dev panel](design/dev-panel.md)).
+The dev panel (prompts, budgets, cost per incident, the guard log; cost per day and per model is on the Usage page) is off; set `BLEEP_DEV_PANEL=true` in `.env` and restart to get a Dev link on the Settings page ([dev panel](design/dev-panel.md)).
 
 The session cookie is not `Secure` by default, because the dashboard is plain http on the LAN. If you put it behind https, set `BLEEP_COOKIE_SECURE=true` in `.env`.
 
@@ -186,6 +186,8 @@ A plugin switched on whose token is later unset shows **On, waiting for** that v
 Its one setting, `deploy_timeout_s`, is how long a redeploy may take (default 900 s).
 
 ### MCP server by URL
+
+This plugin is experimental: it was tested live only against Coolify's own MCP server, and on Coolify the Coolify plugin gives the same result ([why](design/plugins.md)).
 
 - `MCP_URL`: the server's Streamable HTTP endpoint, required.
 - `MCP_TOKEN`: its bearer token, used when set. Give it the fewest rights the server offers: on a server that scopes its tokens, as Coolify's does, a read-only token keeps it read-only whatever Bleep's settings allow.
@@ -260,6 +262,7 @@ A test that runs for over a minute (the slowest takes under 5 s) prints its trac
 | backend | `uv sync --all-groups`, `ruff check`, `ruff format --check`, `scripts/test.sh -q`, and `pytest tests/evals` with the `evals` group so the GEval judge tests run instead of skipping |
 | docs | `scripts/check_docs.py` |
 | frontend | `npm ci`, `format:check`, `lint`, `typecheck`, `test`, `build` (Node 24, as in the image) |
+| site | in `site/`: `npm ci`, `format:check`, `lint`, `typecheck`, `test`, `build`, then `docker build -f site/Dockerfile .` (Node 24) |
 | compose | `docker compose build` and `docker compose --profile demo build`; `.env` is optional in the Compose file, so no placeholder is needed |
 
 Tests use fakes, so nothing touches the network or a real model. Real-model evals are not part of CI.
@@ -278,4 +281,4 @@ In Coolify, add the repository as an application with the Dockerfile build pack,
 ## Not built
 
 - **Always-on on a small machine that stays up** (a spare Mac or a mini PC), so Bleep watches its hosts while your laptop sleeps.
-- **A public deployment behind a reverse proxy, with hardened auth in front of the dashboard.** Until that exists, never expose port 3000 to the internet.
+- **A public deployment behind a reverse proxy, with hardened auth in front of the dashboard.** Behind a proxy that asks for its own login, the dashboard can run with Bleep's login off ([Behind a login proxy](#behind-a-login-proxy)); what is missing is a tested deployment recipe and auth hardened beyond the one admin password.

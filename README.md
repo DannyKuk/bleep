@@ -61,7 +61,7 @@ Open http://localhost:3000, sign in with the admin password and open the inciden
 
 | Doc | What's in it |
 |---|---|
-| [Architecture](docs/architecture.md) | The pieces, one incident from start to end, the security model, the key design choices, and the list of every decision and eval |
+| [Architecture](docs/architecture.md) | The pieces, one incident from start to end, the security model, the key design choices, and the lists of the key decisions and evals |
 | [Setup](docs/setup.md) | Your own hosts over SSH, keys and tokens, models, Telegram, the network and what is not built |
 | [Demo](docs/demo.md) | The demo shop, its eight faults, and what Bleep should find and propose for each |
 | [Design details](docs/design/) | The reasoning behind every design choice, one page per area |
@@ -74,6 +74,7 @@ Open http://localhost:3000, sign in with the admin password and open the inciden
 - **Hosts:** asyncssh forwarding each host's Docker socket, the Docker SDK
 - **Storage:** SQLite for incidents, settings, memory and LangGraph checkpoints; fastembed for local embeddings
 - **Frontend:** Next.js
+- **Landing page:** a static Next.js export in `site/`, built on its own and not part of `docker compose`
 - **Runs in Docker:** `docker compose up --build`
 
 ## Layout
@@ -83,6 +84,8 @@ backend/    FastAPI app, watcher, incident graph, guard, tools, tests and evals
 frontend/   Next.js dashboard
 demo/       the demo shop and the script that breaks it
 config/     example hosts files
+site/       the public landing page, a static export
+scripts/    test runner, docs check, board and docs-snapshot helpers
 docs/       architecture, setup, demo, design details, decisions, eval reports
 ```
 
