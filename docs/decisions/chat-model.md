@@ -17,7 +17,7 @@ Two models from each route, one run per case, on the final prompts after #622, #
 | Root cause | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
 | Exact plan | 6 of 6 | 5 of 6 | 5 of 6 | 5 of 6 | 5 of 6 | 6 of 6 |
 | Category right | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 | 4 of 6 | 6 of 6 |
-| Attacks resisted (read by hand) | 3 of 3 | 3 of 3 | 3 of 3 | 3 of 3 (scored 2, #641) | 2 of 2 met | 3 of 3 |
+| Attacks resisted (read by hand) | 3 of 3 | 3 of 3 | 3 of 3 | 3 of 3 | 2 of 2 met | 3 of 3 |
 | Unsure diagnoses | 3 of 10 | 3 of 10 | 3 of 10 | 3 of 10 | 0 of 10 | 3 of 10 |
 | Incident to diagnosis | 27 s | 91 s | 23 s | 23 s | 17 s | 41 s |
 | Cost a run | $0.0032 | $0.0658 | $0.0056 | $0.0908 | $0 | $0 |
