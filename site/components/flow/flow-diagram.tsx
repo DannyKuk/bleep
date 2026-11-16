@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Bleep } from "@/components/bleep/bleep";
 
@@ -25,65 +25,30 @@ import {
   boxTop,
   type DrawnEdge,
 } from "./geometry";
+import { followBy } from "./follow";
 
 const REPO_FILE = "https://github.com/DannyKuk/bleep/blob/main/";
 const FIRST_GRAPH_STEP = STEP_ORDER.indexOf(GRAPH_NODES[0]);
 const PANEL_ID = "flow-step";
 
-const nextStep = (step: StepId) => STEP_ORDER[(STEP_ORDER.indexOf(step) + 1) % STEP_ORDER.length]!;
-
-/** True once the top of the diagram is well on screen, so the walk never plays unseen. A share of
- * the whole would never be reached by the phone's list, which is many screens tall. */
-function useSeen<T extends Element>() {
-  const ref = useRef<T>(null);
-  const [seen, setSeen] = useState(false);
-  useEffect(() => {
-    const node = ref.current;
-    if (!node || typeof IntersectionObserver === "undefined") {
-      setSeen(true);
-      return;
-    }
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry?.isIntersecting) {
-          setSeen(true);
-          observer.disconnect();
-        }
-      },
-      { rootMargin: "0px 0px -30% 0px" },
-    );
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
-  return [ref, seen] as const;
-}
-
+const LAST_STEP = STEP_ORDER.at(-1)!;
+const nextStep = (step: StepId) => STEP_ORDER[STEP_ORDER.indexOf(step) + 1] ?? LAST_STEP;
+const WIDE = "(min-width: 1280px)";
 const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
 
-/** With reduced motion the walk waits for a press of its button instead of starting itself. */
-function useReducedMotion(): boolean {
-  return useSyncExternalStore(
-    (changed) => {
-      const query = window.matchMedia?.(REDUCED_MOTION);
-      query?.addEventListener("change", changed);
-      return () => query?.removeEventListener("change", changed);
-    },
-    () => window.matchMedia?.(REDUCED_MOTION).matches ?? false,
-    () => false,
-  );
-}
-
-const WIDE = "(min-width: 1280px)";
-const LAST_STEP = STEP_ORDER.at(-1)!;
-/** What a visitor does to scroll the page themselves, which ends a guided walk. */
-const OWN_SCROLL = ["wheel", "touchmove", "keydown"] as const;
-const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
-
-/** Scrolls the page so the step stands in the middle of the screen, in whichever layout shows. */
-function centre(stage: HTMLElement | null, step: StepId, reduced: boolean) {
+/** Keeps the walk's step on screen, in whichever layout shows (see `followBy`). */
+function follow(stage: HTMLElement | null, step: StepId) {
   const layout = window.matchMedia?.(WIDE).matches ? "wide" : "narrow";
   const node = stage?.querySelector(`[data-step="${step}"][data-layout="${layout}"]`);
-  node?.scrollIntoView?.({ block: "center", behavior: reduced ? "auto" : "smooth" });
+  if (!stage || !node) return;
+  const by = followBy(
+    node.getBoundingClientRect(),
+    stage.getBoundingClientRect(),
+    window.innerHeight,
+  );
+  if (by === 0) return;
+  const reduced = window.matchMedia?.(REDUCED_MOTION).matches ?? false;
+  window.scrollBy({ top: by, behavior: reduced ? "auto" : "smooth" });
 }
 
 /**
@@ -91,71 +56,54 @@ function centre(stage: HTMLElement | null, step: StepId, reduced: boolean) {
  * diagram with the chosen step beside it; a narrower one gets the same steps as a list, each with
  * its whole text and where it may lead.
  *
- * Bleep walks through the steps by itself, round and round, until you pick one; that walk never
- * scrolls the page. "Walk me through it" starts a guided walk instead: once to the report, with
- * the page scrolling so Bleep's step stays in the middle, until you scroll yourself.
+ * Nothing moves until the visitor asks: "Walk me through it" walks Bleep once from the chosen
+ * step to the report, and the page follows so its step stays on screen. Picking a step stops it.
  */
 export function FlowDiagram() {
   const [active, setActive] = useState<StepId>(STEP_ORDER[0]!);
-  const [choice, setChoice] = useState<"auto" | "guided" | "paused">("auto");
-  const [stage, seen] = useSeen<HTMLDivElement>();
-  const reduced = useReducedMotion();
-  const guided = choice === "guided";
-  const playing = choice === "auto" ? !reduced : guided;
+  const [walking, setWalking] = useState(false);
+  const stage = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!playing || !(seen || guided)) return;
+    if (!walking) return;
+    follow(stage.current, active);
     const timer = window.setTimeout(() => {
-      if (guided && active === LAST_STEP) setChoice("paused");
+      if (active === LAST_STEP) setWalking(false);
       else setActive(nextStep);
     }, DWELL[active]);
     return () => window.clearTimeout(timer);
-  }, [seen, playing, guided, active]);
-
-  useEffect(() => {
-    if (guided) centre(stage.current, active, reduced);
-  }, [guided, active, reduced, stage]);
-
-  useEffect(() => {
-    if (!guided) return;
-    const stop = (event: Event) => {
-      if (event instanceof KeyboardEvent && !SCROLL_KEYS.has(event.key)) return;
-      setChoice("paused");
-    };
-    for (const kind of OWN_SCROLL) window.addEventListener(kind, stop, { passive: true });
-    return () => {
-      for (const kind of OWN_SCROLL) window.removeEventListener(kind, stop);
-    };
-  }, [guided]);
+  }, [walking, active]);
 
   const pick = (step: StepId) => {
-    setChoice("paused");
+    setWalking(false);
     setActive(step);
   };
 
+  /** A step under the pointer is chosen too, but not during a walk: the page scrolls then, and
+   * moves the steps under a resting pointer. */
+  const peek = (step: StepId) => {
+    if (!walking) setActive(step);
+  };
+
   const walk = () => {
-    if (playing) {
-      setChoice("paused");
-      return;
-    }
-    if (active === LAST_STEP) setActive(STEP_ORDER[0]!);
-    setChoice("guided");
+    if (!walking && active === LAST_STEP) setActive(STEP_ORDER[0]!);
+    setWalking(!walking);
   };
 
   const toggle = (
     <button
       type="button"
       onClick={walk}
-      className="inline-flex h-10 items-center rounded-full border-2 border-line px-4 text-sm font-bold hover:bg-surface"
+      className="inline-flex h-11 items-center rounded-full bg-accent px-5 font-bold text-accent-ink transition-transform hover:-translate-y-0.5"
     >
-      {playing ? "Pause the walk" : "Walk me through it"}
+      {walking ? "Pause the walk" : "Walk me through it"}
     </button>
   );
 
   return (
     <div ref={stage}>
       <div className="hidden xl:grid xl:grid-cols-[700px_1fr] xl:gap-12">
-        <Wide active={active} onPick={pick} />
+        <Wide active={active} onPick={pick} onPeek={peek} />
         <aside className="self-start xl:sticky xl:top-24">
           <Panel step={active} />
           <div className="mt-6">{toggle}</div>
@@ -169,7 +117,15 @@ export function FlowDiagram() {
   );
 }
 
-function Wide({ active, onPick }: { active: StepId; onPick: (step: StepId) => void }) {
+function Wide({
+  active,
+  onPick,
+  onPeek,
+}: {
+  active: StepId;
+  onPick: (step: StepId) => void;
+  onPeek: (step: StepId) => void;
+}) {
   const lit = new Set(edgesFrom(active).map((edge) => `${edge.from}-${edge.to}`));
   return (
     <div className="relative" style={{ width: WIDTH, height: HEIGHT }}>
@@ -222,7 +178,14 @@ function Wide({ active, onPick }: { active: StepId; onPick: (step: StepId) => vo
         ))}
       </svg>
       {STEP_ORDER.map((id, index) => (
-        <StepBox key={id} id={id} index={index} active={id === active} onPick={onPick} />
+        <StepBox
+          key={id}
+          id={id}
+          index={index}
+          active={id === active}
+          onPick={onPick}
+          onPeek={onPeek}
+        />
       ))}
       <div
         aria-hidden
@@ -293,11 +256,13 @@ function StepBox({
   index,
   active,
   onPick,
+  onPeek,
 }: {
   id: StepId;
   index: number;
   active: boolean;
   onPick: (step: StepId) => void;
+  onPeek: (step: StepId) => void;
 }) {
   const step = STEPS[id];
   const human = id === "approval";
@@ -310,7 +275,7 @@ function StepBox({
       data-layout="wide"
       aria-label={`${index + 1}. ${step.title}`}
       onClick={() => onPick(id)}
-      onMouseEnter={() => onPick(id)}
+      onMouseEnter={() => onPeek(id)}
       onFocus={() => onPick(id)}
       className={`absolute flex flex-col justify-center rounded-row border-2 py-2 pr-16 pl-4 text-left transition-[border-color,box-shadow,background-color] ${
         active

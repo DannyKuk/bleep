@@ -5,6 +5,10 @@ import { DWELL, EDGES, STEP_ORDER, STEPS, edgeId } from "./flow";
 import { FlowDiagram } from "./flow-diagram";
 
 const panel = () => document.getElementById("flow-step")!;
+const walkButton = () =>
+  screen.getAllByRole("button", { name: /Walk me through it|Pause the walk/ })[0]!;
+const stepButton = (number: number) =>
+  screen.getByRole("button", { name: `${number}. ${STEPS[STEP_ORDER[number - 1]!].title}` });
 
 describe("the flow diagram", () => {
   beforeEach(() => vi.useFakeTimers());
@@ -25,47 +29,44 @@ describe("the flow diagram", () => {
     });
   });
 
-  it("walks from step to step until a step is picked, then stays", () => {
+  it("stands still until the visitor asks for the walk", () => {
     render(<FlowDiagram />);
-    expect(panel().textContent).toContain(STEPS.detect.title);
-    act(() => vi.advanceTimersByTime(DWELL.detect));
-    expect(panel().textContent).toContain(STEPS.open.title);
-
-    fireEvent.focus(screen.getByRole("button", { name: `9. ${STEPS.verify.title}` }));
-    expect(panel().textContent).toContain(STEPS.verify.text);
-    act(() => vi.advanceTimersByTime(20_000));
-    expect(panel().textContent).toContain(STEPS.verify.text);
-    expect(screen.getAllByRole("button", { name: "Walk me through it" }).length).toBeGreaterThan(0);
+    act(() => vi.advanceTimersByTime(30_000));
+    expect(panel().textContent).toContain(STEPS.detect.text);
   });
 
-  it("keeps Bleep's step in the middle of a guided walk, once to the report", () => {
-    const scrolled = vi.fn();
-    Element.prototype.scrollIntoView = scrolled;
+  it("walks once to the report when asked, then stops", () => {
+    window.scrollBy = vi.fn();
     render(<FlowDiagram />);
-    fireEvent.click(screen.getByRole("button", { name: `10. ${STEPS.report.title}` }));
-    fireEvent.click(screen.getAllByRole("button", { name: "Walk me through it" })[0]!);
-    expect(panel().textContent).toContain(STEPS.detect.title);
-    expect((scrolled.mock.contexts.at(-1) as HTMLElement).dataset.step).toBe("detect");
-
-    for (const id of STEP_ORDER.slice(0, -1)) act(() => vi.advanceTimersByTime(DWELL[id]));
-    expect((scrolled.mock.contexts.at(-1) as HTMLElement).dataset.step).toBe("report");
-    act(() => vi.advanceTimersByTime(DWELL.report + 20_000));
+    act(() => walkButton().click());
+    for (const id of STEP_ORDER.slice(0, -1)) {
+      expect(panel().textContent, id).toContain(STEPS[id].title);
+      act(() => vi.advanceTimersByTime(DWELL[id]));
+    }
     expect(panel().textContent).toContain(STEPS.report.text);
-    expect(scrolled.mock.calls.length).toBe(STEP_ORDER.length);
+    act(() => vi.advanceTimersByTime(DWELL.report + 30_000));
+    expect(panel().textContent).toContain(STEPS.report.text);
+    expect(walkButton().textContent).toBe("Walk me through it");
   });
 
-  it("ends a guided walk when the visitor scrolls, but not on Tab", () => {
-    Element.prototype.scrollIntoView = vi.fn();
+  it("starts again from the first step after the report", () => {
     render(<FlowDiagram />);
-    fireEvent.click(screen.getByRole("button", { name: `1. ${STEPS.detect.title}` }));
-    fireEvent.click(screen.getAllByRole("button", { name: "Walk me through it" })[0]!);
-    fireEvent.keyDown(window, { key: "Tab" });
-    act(() => vi.advanceTimersByTime(DWELL.detect));
-    expect(panel().textContent).toContain(STEPS.open.title);
+    fireEvent.click(stepButton(10));
+    act(() => walkButton().click());
+    expect(panel().textContent).toContain(STEPS.detect.text);
+  });
 
-    fireEvent.wheel(window);
-    act(() => vi.advanceTimersByTime(20_000));
+  it("stops the walk on a picked step, but not on a step under the pointer", () => {
+    render(<FlowDiagram />);
+    act(() => walkButton().click());
+    fireEvent.mouseEnter(stepButton(7));
+    act(() => vi.advanceTimersByTime(DWELL.detect));
     expect(panel().textContent).toContain(STEPS.open.text);
+
+    fireEvent.click(stepButton(9));
+    act(() => vi.advanceTimersByTime(30_000));
+    expect(panel().textContent).toContain(STEPS.verify.text);
+    expect(walkButton().textContent).toBe("Walk me through it");
   });
 
   it("says where the human step leads", () => {
