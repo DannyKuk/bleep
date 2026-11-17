@@ -11,7 +11,7 @@
 | Scenarios | coolify-set-env, 3 runs each |
 | When | 2026-11-17 08:27 UTC, 2 min |
 | Commit | `0d2571eb` |
-| Raw data | [`scenarios-20261117-082723.jsonl`](../../data/evals/scenarios-20261117-082723.jsonl) |
+| Raw data | [`scenarios-20261117-082723.jsonl`](data/scenarios-20261117-082723.jsonl) |
 | Reproduce | `uv run --group evals python -m evals.run --judge claude-code --only coolify-set-env --repeat 3` (in `backend/`) |
 
 Each run opens the incident from the scenario's scripted signals and runs the graph to the end of Propose. Nothing is executed. Times count from the incident opening; steps are the model's tool calls, and tools lists them in order with their arguments cut short (n/a for a run recorded before they were kept); peak prompt is the largest single prompt of the run; fallbacks are model calls that gave no structured output through tools, so Bleep asked for JSON in the reply instead. A scripted host switches no fault and touches no Docker engine: the run opens the incident from the host's scripted signals, and times count from then. Knowledge search was offered over the shipped Docker docs snapshot, as in the app.
