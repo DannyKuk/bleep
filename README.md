@@ -20,7 +20,7 @@ Bleep watches the containers on your hosts. When one breaks, it opens an inciden
 
 https://github.com/user-attachments/assets/a3fd906c-4b35-498e-bbbb-c9f7c85a612a
 
-**See it on the [landing page](https://bleep.dkwebsite.de/):** a replay of one real incident where you say yes, [how an incident moves through the graph](https://bleep.dkwebsite.de/flow), and [every eval run](https://bleep.dkwebsite.de/benchmarks).
+**See it on the [landing page](https://bleep.dkwebsite.de/):** a replay of one real incident where you say yes, [how an incident moves through the graph](https://bleep.dkwebsite.de/flow) and [how a chat message is handled](https://bleep.dkwebsite.de/flow#message), and [every eval run](https://bleep.dkwebsite.de/benchmarks).
 
 ## How well it does
 
