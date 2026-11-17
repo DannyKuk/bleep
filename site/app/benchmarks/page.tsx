@@ -3,12 +3,13 @@ import type { Metadata } from "next";
 import { DotLegend } from "~/components/benchmarks/dot";
 import { SuiteGrid } from "~/components/benchmarks/dot-grid";
 import { Legend, Results } from "~/components/benchmarks/results";
-import { RunDialogProvider } from "~/components/benchmarks/run-dialog";
+import { type DetailSet, RunDialogProvider } from "~/components/benchmarks/run-dialog";
 import { REPO, SiteFooter, SiteHeader, blob } from "~/components/chrome";
 import { type Round, inWords, longDate, round } from "~/lib/benchmarks/round";
 import {
   SUITES,
   type Suite,
+  legendOf,
   mixedCases,
   modelName,
   runsPerCase,
@@ -70,6 +71,7 @@ function SuiteCard({ suite }: { suite: Suite }) {
 
 function SuiteSection({ suite }: { suite: Suite }) {
   const { data } = suite;
+  const legend = legendOf(suite);
   const model = modelName(data.model);
   const meta = [
     model,
@@ -98,14 +100,32 @@ function SuiteSection({ suite }: { suite: Suite }) {
           suiteName={suite.name}
           model={model ?? "no chat model"}
           cases={data.cases}
-          words={{ verdicts: suite.verdicts, groups: suite.groups ?? {} }}
+          words={{
+            verdicts: suite.verdicts,
+            groupVerdicts: suite.groupVerdicts ?? {},
+            groups: suite.groups ?? {},
+          }}
+          stronger={
+            suite.stronger
+              ? {
+                  set: `${suite.kind}-stronger` as DetailSet,
+                  model: modelName(suite.stronger.model) ?? "",
+                  cases: suite.stronger.cases,
+                }
+              : undefined
+          }
         />
       </div>
       <div className="mt-4">
         <DotLegend
-          pass={suite.legend.pass}
-          fail={suite.legend.fail}
-          unmet={tally(data.cases).unmet ? suite.legend.unmet : undefined}
+          pass={legend.pass}
+          fail={legend.fail}
+          unmet={tally(data.cases).unmet ? legend.unmet : undefined}
+          stronger={
+            suite.stronger
+              ? `The same case run again on ${modelName(suite.stronger.model)}, a stronger model`
+              : undefined
+          }
         />
       </div>
     </section>

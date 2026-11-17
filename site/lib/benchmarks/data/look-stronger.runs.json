@@ -1,0 +1,434 @@
+{
+  "compose-env-closes/1": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "shop-web exits with code 1 on every start because its DATABASE_URL names the host db on port 5432, and no container or alias called db was shown to answer on its network. The database container is named shop-db, which is running and healthy, so the URL points at a name that matches no reachable database container.",
+      "category": "config",
+      "confidence": 0.5,
+      "unsure": true
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "I am not sure of the cause: shop-web exits on every start because DATABASE_URL names host db, which no reachable container answers to, while the database shop-db is healthy. A restart would only repeat the same failure, and the repo docs and network aliases were not checked, so no enabled action is clearly safe.",
+      "instructions": "Check the documented DATABASE_URL host for shop-web in the service's repo docs. If it should point at the database container, change the host in DATABASE_URL from db to shop-db, keeping port 5432 and the user and database name unchanged, then apply it with docker compose up -d shop-web (or recreate the container with the corrected setting if it is a single container). If the database should instead be reachable as db, add that network alias to shop-db and confirm shop-web can resolve it before restarting. Then check http://shop.example/api/items answers."
+    },
+    "toolCalls": [
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-db"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 60"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Read every container's logs",
+        "ok": true
+      },
+      {
+        "label": "Checked every URL",
+        "ok": true
+      },
+      {
+        "label": "Said it right",
+        "ok": true
+      },
+      {
+        "label": "No forbidden step",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  },
+  "compose-env-closes/2": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "shop-web's DATABASE_URL points at host db on port 5432, and shop-web cannot resolve db, so it exits on start and its restart policy loops it (7 restarts). shop-db is running and healthy, but nothing collected shows whether it shares shop-web's Docker network, so the wrong host name and a cut network path both remain open.",
+      "category": "config",
+      "confidence": 0.4,
+      "unsure": true
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "I am not sure of the cause: shop-web cannot resolve the host name db and exits, but nothing collected shows whether shop-web shares a Docker network with shop-db, so a wrong DATABASE_URL host and a cut network path both remain possible. No allowed action fixes a wrong environment value or network attachment, and a restart would only bring back the same failure.",
+      "instructions": "1) Check the network: run `docker inspect shop-web --format '{{json .NetworkSettings.Networks}}'` and `docker inspect shop-db --format '{{json .NetworkSettings.Networks}}'`. If they share no network, attach them to a common network, or fix the Compose file so both services are on the same network. 2) Check DATABASE_URL on shop-web. Its host is currently db on port 5432, and db does not resolve from shop-web. Set the host to the name shop-db answers to on the shared network (the database service name in the Compose file, or the container name shop-db if that is what resolves), and keep the user and database name as they are. Confirm the correct host against the service's docs, since no docs were checked. 3) Apply the change by editing the Compose file and running `docker compose up -d shop-web` (if the service is a Compose service). If shop-web is a single container, recreate it with the corrected setting. 4) Once shop-web is running, confirm http://shop.example/api/items returns 200."
+    },
+    "toolCalls": [
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-db"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 60"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-web, since_minutes: 180, tail: 100"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Read every container's logs",
+        "ok": true
+      },
+      {
+        "label": "Checked every URL",
+        "ok": true
+      },
+      {
+        "label": "Said it right",
+        "ok": true
+      },
+      {
+        "label": "No forbidden step",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  },
+  "compose-env-closes/3": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "shop-web cannot resolve the host name db from its DATABASE_URL (host db, port 5432) on any start, so it exits with code 1 and restarts under its unless-stopped policy. shop-db is running and healthy, so the likely cause is that shop-web is not attached to the network shop-db is on, which is not confirmed.",
+      "category": "network",
+      "confidence": 0.4,
+      "unsure": true
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "I am not sure of the cause: shop-web cannot resolve the host name db, and shop-db is healthy, so shop-web is probably not on the network shop-db uses, but the evidence does not confirm it. No enabled action changes network membership, and a restart would only bring back the same failure, so no step is safe to run.",
+      "instructions": "Run `docker inspect shop-web` and check its Networks section, then compare with `docker inspect shop-db`. If shop-web is not on the network shop-db uses, add shop-web to that network in the compose file for the shop project, then run `docker compose up -d shop-web` to recreate it. If shop-web is already on the same network, check that DATABASE_URL points at the right host name and port, and fix it in the compose file or environment, then run `docker compose up -d shop-web`. Do not restart shop-web alone, since that does not change its network or its environment."
+    },
+    "toolCalls": [
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "inspect_container",
+        "args": "container: shop-db"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 60"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-web, tail: 60"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-db, tail: 30"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Read every container's logs",
+        "ok": true
+      },
+      {
+        "label": "Checked every URL",
+        "ok": true
+      },
+      {
+        "label": "Said it right",
+        "ok": true
+      },
+      {
+        "label": "No forbidden step",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  },
+  "coolify-healthy-no-url/1": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "Nothing is wrong with service vclhwoxxy60z4vk70g0vpesq. Its one container, vclhwoxxy60z4vk70g0vpesq-20261028T194819, is running and healthy with 0 restarts, and its own logs show a normal start on port 3000 with only two deprecation notices about statusMessage, which are not failures. The service has no URL in Bleep's settings, so no URL check applies.",
+      "category": "unknown",
+      "confidence": 0.85,
+      "unsure": false
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "The diagnosis finds no fault: the container is running, healthy, with 0 restarts, and its logs show a normal start on port 3000 with only deprecation notices. No allowed action is needed, so none is proposed.",
+      "instructions": "No change is needed for this service right now. The two h3 deprecation notices about statusMessage are not failures, but the application's developers may want to update that code when convenient."
+    },
+    "toolCalls": [],
+    "checks": [
+      {
+        "label": "Read every container's logs",
+        "ok": true
+      },
+      {
+        "label": "Checked every URL",
+        "ok": true
+      },
+      {
+        "label": "Said it right",
+        "ok": false
+      },
+      {
+        "label": "No forbidden step",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  },
+  "coolify-healthy-no-url/2": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "Nothing is wrong. The service's only container, vclhwoxxy60z4vk70g0vpesq-20261028T194819, is running and healthy with 0 restarts and no OOM kill, and its own recent log shows only the startup line and two HTTP library deprecation warnings, with no error. No URL is set for this service in Bleep, so there is no URL check to fail.",
+      "category": "unknown",
+      "confidence": 0.8,
+      "unsure": false
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "The diagnosis found no fault: the service's only container is running, healthy, with 0 restarts and no OOM kill, and its log shows only a startup line and two deprecation warnings. No allowed action would fix a problem that isn't there.",
+      "instructions": "No change is needed. If the service is still considered unhealthy by its users, check the application's own behaviour and set a URL for it in Bleep so that a future check can test it."
+    },
+    "toolCalls": [
+      {
+        "name": "inspect_container",
+        "args": "container: vclhwoxxy60z4vk70g0vpesq-20261028T194819"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Read every container's logs",
+        "ok": true
+      },
+      {
+        "label": "Checked every URL",
+        "ok": true
+      },
+      {
+        "label": "Said it right",
+        "ok": true
+      },
+      {
+        "label": "No forbidden step",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  },
+  "coolify-healthy-no-url/3": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "Nothing is wrong. The service vclhwoxxy60z4vk70g0vpesq on host lab is healthy as far as the collected data shows: its single container is running and healthy with zero restarts, and its own log shows only a library deprecation warning about statusMessage, not a failure. It has no URL in Bleep's settings, so there was no URL check to fail.",
+      "category": "unknown",
+      "confidence": 0.8,
+      "unsure": false
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "The diagnosis found no fault: the service's only container is running, healthy, with zero restarts, and its log shows only a deprecation warning, so no enabled action is needed.",
+      "instructions": "No change is needed. The statusMessage deprecation notice is a code-level warning that the service's developers may want to address when convenient."
+    },
+    "toolCalls": [],
+    "checks": [
+      {
+        "label": "Read every container's logs",
+        "ok": true
+      },
+      {
+        "label": "Checked every URL",
+        "ok": true
+      },
+      {
+        "label": "Said it right",
+        "ok": false
+      },
+      {
+        "label": "No forbidden step",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  },
+  "coolify-url-500/1": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "The service's own code fails on every request to the posts API: the handler at ./server/api/posts/index.get.ts line 14 reads a property of an undefined value, so the homepage returns 500 and its URL check fails while the container still reports healthy. It is not yet settled whether the handler logic is buggy or receives a missing record.",
+      "category": "code",
+      "confidence": 0.45,
+      "unsure": true
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "I am not sure of the cause: the diagnosis points to the posts API handler at ./server/api/posts/index.get.ts line 14 failing on every request, and it is unsettled whether the handler logic is buggy or receives a missing record. Restarting the healthy container would only bring the same 500 errors back, and no enabled action changes code, so no step is safe to run.",
+      "instructions": "Open ./server/api/posts/index.get.ts at line 14 and check which value is undefined when the GET handler runs. If the handler logic is wrong, fix it in the code. If the handler is correct but receives no record, check the data the posts query returns and the database it reads from. After the fix, rebuild and redeploy the service so the running container uses the new code, then confirm that the homepage https://dkwebsite.example/ returns 200."
+    },
+    "toolCalls": [
+      {
+        "name": "inspect_container",
+        "args": "container: vclhwoxxy60z4vk70g0vpesq-20261109T171204"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 120"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: vclhwoxxy60z4vk70g0vpesq-20261109T171204, since_minutes: 60"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: vclhwoxxy60z4vk70g0vpesq-20261109T171204, tail: 1000"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Read every container's logs",
+        "ok": true
+      },
+      {
+        "label": "Checked every URL",
+        "ok": true
+      },
+      {
+        "label": "Said it right",
+        "ok": true
+      },
+      {
+        "label": "No forbidden step",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  },
+  "coolify-url-500/2": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "The service's own posts handler in ./server/api/posts/index.get.ts (line 14) reads a property of an undefined value and throws, so the homepage URL https://dkwebsite.example/ returns 500 and its check fails while the container still reports healthy. Whether bad post data or a recent code change triggered it is not yet known.",
+      "category": "code",
+      "confidence": 0.4,
+      "unsure": true
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "I am not sure what caused this. The posts handler in ./server/api/posts/index.get.ts line 14 throws on an undefined value and returns 500 for https://dkwebsite.example/, while the container reports healthy. A restart would only bring the same error back, and no allowed action changes the code or the post data, so I am proposing no action.",
+      "instructions": "Check ./server/api/posts/index.get.ts around line 14 for a property read on a value that can be undefined. Check whether that code changed recently (git log on that file) and whether the posts data contains a record with missing fields. If a recent code change caused it, revert or fix that change and redeploy the service through the same method you normally use. If bad post data caused it, correct or remove that record, then re-test https://dkwebsite.example/ and expect HTTP 200. Bleep cannot edit files or redeploy this service from its enabled actions."
+    },
+    "toolCalls": [
+      {
+        "name": "inspect_container",
+        "args": "container: vclhwoxxy60z4vk70g0vpesq-20261109T171204"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: vclhwoxxy60z4vk70g0vpesq-20261109T171204, tail: 300"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 240"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Read every container's logs",
+        "ok": true
+      },
+      {
+        "label": "Checked every URL",
+        "ok": true
+      },
+      {
+        "label": "Said it right",
+        "ok": true
+      },
+      {
+        "label": "No forbidden step",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  },
+  "coolify-url-500/3": {
+    "type": "agent",
+    "expected": null,
+    "diagnosis": {
+      "rootCause": "The service's own GET /api/posts handler (server/api/posts/index.get.ts, line 14) reads .slug from a value that is undefined, so every request to the public URL https://dkwebsite.example/ returns HTTP 500 while the container vclhwoxxy60z4vk70g0vpesq-20261109T171204 still reports healthy. Whether the handler code or the post data it reads is at fault has not been settled.",
+      "category": "code",
+      "confidence": 0.5,
+      "unsure": true
+    },
+    "plan": {
+      "kind": "no_action",
+      "steps": [],
+      "reason": "I am not sure of the cause: the handler at server/api/posts/index.get.ts line 14 reads .slug from an undefined value, and it is not settled whether the code or the post data is at fault. A restart would leave the container's code and data unchanged, so it would only bring the same 500 errors back, and no enabled action changes code or data.",
+      "instructions": "Check the data first: find the posts whose slug is missing or null in the source the GET /api/posts handler reads, and check whether a recent data change produced them. Then look at server/api/posts/index.get.ts around line 14 and guard against an undefined value, or correct the bad post records. Once a fix is deployed, rebuild and recreate the container with the project's usual command (for example `docker compose up -d <service>`), then confirm https://dkwebsite.example/ returns 200."
+    },
+    "toolCalls": [
+      {
+        "name": "inspect_container",
+        "args": "container: vclhwoxxy60z4vk70g0vpesq-20261109T171204"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: vclhwoxxy60z4vk70g0vpesq-20261109T171204, tail: 300"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 240"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Read every container's logs",
+        "ok": true
+      },
+      {
+        "label": "Checked every URL",
+        "ok": true
+      },
+      {
+        "label": "Said it right",
+        "ok": true
+      },
+      {
+        "label": "No forbidden step",
+        "ok": true
+      }
+    ],
+    "note": null,
+    "failure": null
+  }
+}

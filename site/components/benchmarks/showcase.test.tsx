@@ -4,12 +4,13 @@ import { describe, expect, it } from "vitest";
 
 import BenchmarksPage from "~/app/benchmarks/page";
 import attackDetails from "~/lib/benchmarks/data/attacks.runs.json";
+import faultStrongerDetails from "~/lib/benchmarks/data/faults-stronger.runs.json";
 import faultDetails from "~/lib/benchmarks/data/faults.runs.json";
 import roundDetails from "~/lib/benchmarks/data/round.runs.json";
 import talkDetails from "~/lib/benchmarks/data/talk.runs.json";
 import type { AgentRun, Details } from "~/lib/benchmarks/extract";
 import { round } from "~/lib/benchmarks/round";
-import { SUITES, listed, runsPerCase, tally } from "~/lib/benchmarks/suites";
+import { SUITES, listed, modelName, runsPerCase, tally } from "~/lib/benchmarks/suites";
 
 const section = (heading: string) =>
   screen.getByRole("heading", { level: 2, name: heading }).closest("section") as HTMLElement;
@@ -36,7 +37,9 @@ describe("the suites", () => {
       expect(part).toHaveTextContent(suite.answer(suite.data.cases));
       expect(part).toHaveTextContent(runsPerCase(suite.data.cases));
       const dots = within(part).getAllByRole("button");
-      expect(dots).toHaveLength(tally(suite.data.cases).runs);
+      expect(dots).toHaveLength(
+        tally(suite.data.cases).runs + (suite.stronger ? tally(suite.stronger.cases).runs : 0),
+      );
     }
   });
 
@@ -44,6 +47,58 @@ describe("the suites", () => {
     const talk = SUITES.find((suite) => suite.kind === "talk");
     const missed = tally(talk?.data.cases ?? []).missed;
     if (missed.length) expect(talk?.answer(talk.data.cases)).toContain(listed(missed));
+  });
+});
+
+describe("a missed case", () => {
+  const faults = SUITES.find((suite) => suite.kind === "faults");
+  const stronger = faults?.stronger;
+  const strongerModel = modelName(stronger?.model ?? null) ?? "";
+
+  it("shows the stronger model's runs on its row, each opening that model's run", async () => {
+    const user = userEvent.setup();
+    render(<BenchmarksPage />);
+    const [again] = stronger?.cases ?? [];
+    expect(again, "a fault run again on a stronger model").toBeDefined();
+    const dots = within(section(faults?.question ?? "")).getAllByRole("button", {
+      name: new RegExp(`^${again.name}, ${strongerModel}, run `),
+    });
+    expect(dots).toHaveLength(again.runs.length);
+
+    await user.click(dots[0]);
+    const run = (faultStrongerDetails as Details)[`${again.name}/1`] as AgentRun;
+    expect(await within(dialog()).findByText(run.diagnosis?.rootCause ?? "")).toBeInTheDocument();
+    expect(
+      within(dialog()).getByText(new RegExp(`${strongerModel}, a stronger model`)),
+    ).toBeVisible();
+  });
+
+  it("names the stronger model in the answer and the legend", () => {
+    render(<BenchmarksPage />);
+    const part = section(faults?.question ?? "");
+    expect(faults?.answer(faults.data.cases)).toContain(`A stronger model, ${strongerModel}`);
+    expect(part.parentElement).toHaveTextContent(`run again on ${strongerModel}, a stronger model`);
+  });
+});
+
+describe("the attacks' controls", () => {
+  const attacks = SUITES.find((suite) => suite.kind === "attacks");
+  const controls = attacks?.data.cases.filter((c) => c.group === "control") ?? [];
+
+  it("never read a missed cause as an attack that worked", () => {
+    render(<BenchmarksPage />);
+    const part = section(attacks?.question ?? "");
+    for (const c of controls) {
+      for (const dot of within(part).getAllByRole("button", { name: new RegExp(`^${c.name},`) })) {
+        expect(dot.getAttribute("aria-label")).not.toMatch(/planted text asked/);
+      }
+    }
+  });
+
+  it("say in the answer which fault the controls missed", () => {
+    const missed = controls.filter((c) => c.runs.includes("fail"));
+    if (missed.length === 0) return;
+    expect(attacks?.answer(attacks.data.cases)).toMatch(/The control misses are on /);
   });
 });
 

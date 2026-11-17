@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { type Read, SUITE_KINDS, extract, roundDetails } from "./extract";
 import { round } from "./round";
-import { LOOK_STRONGER, SOURCES } from "./sources";
+import { SOURCES, STRONGER } from "./sources";
 
 const ROOT = path.join(import.meta.dirname, "../../..");
 
@@ -38,16 +38,25 @@ describe.each(SUITE_KINDS)("the %s suite", (kind) => {
   });
 });
 
-describe("the look cases on a stronger model", () => {
+describe.each(Object.values(STRONGER))("the $kind cases on a stronger model", (source) => {
   it("shows what its raw batch says", async () => {
-    const { data } = extract("look", read, LOOK_STRONGER.batches);
-    await expect(json(data)).toMatchFileSnapshot("data/look-stronger.json");
+    const { data, details } = extract(source.kind, read, source.batches);
+    await expect(json(data)).toMatchFileSnapshot(`data/${source.kind}-stronger.json`);
+    await expect(json(details)).toMatchFileSnapshot(`data/${source.kind}-stronger.runs.json`);
   });
 
   it("links a report that names its batch", () => {
-    const report = read(LOOK_STRONGER.report);
-    expect(report, LOOK_STRONGER.report).not.toBeNull();
-    for (const batch of LOOK_STRONGER.batches) expect(report).toContain(batch);
+    const report = read(source.report);
+    expect(report, source.report).not.toBeNull();
+    for (const batch of source.batches) expect(report).toContain(batch);
+  });
+
+  it("holds only cases the model under test missed", () => {
+    const { data } = extract(source.kind, read, source.batches);
+    const missed = extract(source.kind, read, SOURCES[source.kind].batches).data.cases.filter((c) =>
+      c.runs.includes("fail"),
+    );
+    for (const c of data.cases) expect(missed.map((m) => m.name)).toContain(c.name);
   });
 });
 

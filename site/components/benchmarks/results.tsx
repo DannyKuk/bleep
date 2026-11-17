@@ -63,7 +63,9 @@ function Score({
       </span>
       <Dots cases={cases} source={source} />
       {missed.length > 0 && (
-        <span className="text-sm whitespace-nowrap text-down">missed {missed.join(", ")}</span>
+        <span className="text-sm [overflow-wrap:anywhere] text-down">
+          missed {missed.join(", ")}
+        </span>
       )}
       {note && <span className="text-sm text-ink-2">{note}</span>}
     </div>
